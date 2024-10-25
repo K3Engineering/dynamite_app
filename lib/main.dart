@@ -11,24 +11,8 @@ class MyApp extends StatelessWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
+    return MaterialApp(      title: 'Bluetooth Demo',
       theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
@@ -60,6 +44,8 @@ class _MyHomePageState extends State<MyHomePage> {
 
   List<BleDevice> _devices = [];
   bool _isScanning = false;
+  BleDevice? _selectedDevice;
+  List<BleService> _services = [];
 
   @override
   void initState() {
@@ -85,8 +71,14 @@ class _MyHomePageState extends State<MyHomePage> {
 
     AvailabilityState state = await UniversalBle.getBluetoothAvailabilityState();
     if (state == AvailabilityState.poweredOn) {
-      UniversalBle.startScan();
+      UniversalBle.startScan(
+        scanFilter: ScanFilter(
+          withServices: ["e331016b-6618-4f8f-8997-1a2c7c9e5fa3"],
+        )
+      );
     } else {
+      if (!mounted) return;
+
       // Handle the case where Bluetooth is not available or not powered on
       setState(() {
         _isScanning = false;
@@ -102,6 +94,26 @@ class _MyHomePageState extends State<MyHomePage> {
     setState(() {
       _isScanning = false;
     });
+  }
+
+  Future<void> _connectToDevice(BleDevice device) async {
+    try {
+      await UniversalBle.connect(device.deviceId);
+
+      // Discover services
+      List<BleService> services = await UniversalBle.discoverServices(device.deviceId);
+
+      setState(() {
+        _selectedDevice = device;
+        _services = services;
+      });
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to connect to ${device.name ?? "Unknown Device"} due to error $e')),
+      );
+    }
   }
 
   void _incrementCounter() {
@@ -134,17 +146,47 @@ class _MyHomePageState extends State<MyHomePage> {
                   final device = _devices[index];
                   return ListTile(
                     title: Text(device.name ?? "Unknown Device"),
-                    subtitle: Text(device.deviceId),
+                    subtitle: Text('device ID: ${device.deviceId}'),
+                    onTap: () => _connectToDevice(device), // Connect when tapped
                   );
                 },
               ),
             ),
-            ElevatedButton(
-              onPressed: _isScanning ? _stopScan : _startScan,
-              child: Text(_isScanning ? 'Stop Scan' : 'Start Scan'),
-            ),
+
+            if (_selectedDevice != null) ...[
+              const Divider(),
+              Text(
+                'Connected to: ${_selectedDevice?.name ?? "Unknown Device"}',
+                style: Theme.of(context).textTheme.headlineSmall,
+              ),
+              const SizedBox(height: 10),
+              Expanded(
+                child: _services.isNotEmpty
+                    ? ListView.builder(
+                        itemCount: _services.length,
+                        itemBuilder: (context, index) {
+                          final service = _services[index];
+                          return ListTile(
+                            title: Text('Service: ${service.uuid}'),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: service.characteristics
+                                  .map((char) => Text('Characteristic: ${char.uuid}'))
+                                  .toList(),
+                            ),
+                          );
+                        },
+                      )
+                    : const Text('No services found for this device.'),
+              ),
+            ],
           ],
         ),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _isScanning ? _stopScan : _startScan,
+        tooltip: 'Toggle scanning',
+        child: Icon( _isScanning ? Icons.stop : Icons.add ),
       ),
     );
   }
