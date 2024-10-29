@@ -1,6 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:universal_ble/universal_ble.dart';
 
+enum DeviceState { None, Interrogating, Available, Irrelevant }
+
+enum ConnectionState { Disconnected, Connecting, Connected }
+
+// const BT_DEVICE_UUID = "E4:B0:63:81:5B:19";
+const BT_GATT_ID = "a659ee73-460b-45d5-8e63-ab6bf0825942";
+const BT_SERVICE_ID = "e331016b-6618-4f8f-8997-1a2c7c9e5fa3";
+const BT_CHARACTERISTIC_ID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+const BT_S2 = "00001800-0000-1000-8000-00805f9b34fb";
+const BT_S3 = "00001801-0000-1000-8000-00805f9b34fb";
+
 void main() {
   runApp(const MyApp());
 }
@@ -46,47 +57,76 @@ class _MyHomePageState extends State<MyHomePage> {
   bool _isScanning = false;
   BleDevice? _selectedDevice;
   List<BleService> _services = [];
+  AvailabilityState _bluetoothState = AvailabilityState.unknown;
 
   @override
   void initState() {
     super.initState();
 
-    // Set up the scan result handler
-    UniversalBle.onScanResult = (BleDevice device) {
-      setState(() {
-        // Avoid duplicates in the list
-        if (!_devices.contains(device)) {
-          _devices.add(device);
-        }
-      });
-    };
+    _updateBluetoothState();
+    UniversalBle.onScanResult = _onScanResult;
+    UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
+    UniversalBle.onPairingStateChange = _onPairingStateChange;
+  }
+
+  Future<void> _updateBluetoothState() async {
+    _bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
+    setState(() {});
+  }
+
+  void _onScanResult(BleDevice device) {
+    setState(() {
+      if (!_devices.contains(device)) {
+        _devices.add(device);
+      }
+    });
+  }
+
+  void _onBluetoothAvailabilityChanged(AvailabilityState state) {
+    setState(() {
+      _bluetoothState = state;
+    });
+  }
+
+  void _onPairingStateChange(deviceId, isPaired){
+    print('pairing state change');
+    print(deviceId);
+    print(isPaired);
   }
 
 
   Future<void> _startScan() async {
-    setState(() {
-      _isScanning = true;
-      _devices.clear(); // Clear list before starting scan
-    });
-
-    AvailabilityState state = await UniversalBle.getBluetoothAvailabilityState();
-    if (state == AvailabilityState.poweredOn) {
-      UniversalBle.startScan(
-        scanFilter: ScanFilter(
-          withServices: ["e331016b-6618-4f8f-8997-1a2c7c9e5fa3"],
-        )
-      );
-    } else {
-      if (!mounted) return;
-
-      // Handle the case where Bluetooth is not available or not powered on
-      setState(() {
-        _isScanning = false;
-      });
+    if (_bluetoothState != AvailabilityState.poweredOn) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Bluetooth is not powered on!')),
       );
+      return;
     }
+
+    setState(() {
+      _isScanning = true;
+      _devices.clear();
+    });
+    UniversalBle.startScan(
+      platformConfig: PlatformConfig(
+          web: WebOptions(
+            optionalServices: [
+                BT_SERVICE_ID,
+              BT_CHARACTERISTIC_ID,
+              BT_S2,
+              BT_S3,]
+          )
+        )
+        // scanFilter: ScanFilter(
+        //   // Needs to be passed for web, can be empty for the rest
+        //   withServices: [
+        //     BT_SERVICE_ID,
+        //     BT_CHARACTERISTIC_ID,
+        //     BT_S2,
+        //     BT_S3,
+        //     ],
+        // )
+    );
   }
 
   void _stopScan() {
@@ -99,19 +139,14 @@ class _MyHomePageState extends State<MyHomePage> {
   Future<void> _connectToDevice(BleDevice device) async {
     try {
       await UniversalBle.connect(device.deviceId);
-
-      // Discover services
       List<BleService> services = await UniversalBle.discoverServices(device.deviceId);
-
       setState(() {
         _selectedDevice = device;
         _services = services;
       });
     } catch (e) {
-      if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to connect to ${device.name ?? "Unknown Device"} due to error $e')),
+        SnackBar(content: Text('Failed to connect to ${device.name ?? "Unknown Device"} due to error: $e')),
       );
     }
   }
@@ -133,6 +168,14 @@ class _MyHomePageState extends State<MyHomePage> {
       appBar: AppBar(
         title: Text(widget.title),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          BluetoothIndicator(bluetoothState: _bluetoothState),
+          IconButton(
+            icon: const Icon(Icons.abc),
+            tooltip: 'ABC Icon',
+            onPressed: () {},
+          ), //IconButton
+        ],
       ),
       body: Center(
         child: Column(
@@ -146,13 +189,12 @@ class _MyHomePageState extends State<MyHomePage> {
                   final device = _devices[index];
                   return ListTile(
                     title: Text(device.name ?? "Unknown Device"),
-                    subtitle: Text('device ID: ${device.deviceId}'),
-                    onTap: () => _connectToDevice(device), // Connect when tapped
+                    subtitle: Text('Device ID: ${device.deviceId}'),
+                    onTap: () => _connectToDevice(device),
                   );
                 },
               ),
             ),
-
             if (_selectedDevice != null) ...[
               const Divider(),
               Text(
@@ -186,8 +228,40 @@ class _MyHomePageState extends State<MyHomePage> {
       floatingActionButton: FloatingActionButton(
         onPressed: _isScanning ? _stopScan : _startScan,
         tooltip: 'Toggle scanning',
-        child: Icon( _isScanning ? Icons.stop : Icons.add ),
+        child: Icon(_isScanning ? Icons.stop : Icons.add),
       ),
+    );
+  }
+}
+
+class BluetoothIndicator extends StatelessWidget {
+  final AvailabilityState bluetoothState;
+
+  const BluetoothIndicator({Key? key, required this.bluetoothState}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    IconData iconData;
+    Color color;
+
+    switch (bluetoothState) {
+      case AvailabilityState.poweredOn:
+        iconData = Icons.bluetooth;
+        color = Colors.blue;
+        break;
+      case AvailabilityState.poweredOff:
+        iconData = Icons.bluetooth_disabled;
+        color = Colors.red;
+        break;
+      default:
+        iconData = Icons.bluetooth_searching;
+        color = Colors.grey;
+        break;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Icon(iconData, color: color),
     );
   }
 }
