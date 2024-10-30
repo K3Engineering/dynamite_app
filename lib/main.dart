@@ -63,6 +63,9 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
 
+    // TODO this doesn't work on web
+    UniversalBle.enableBluetooth();
+
     _updateBluetoothState();
     UniversalBle.onScanResult = _onScanResult;
     UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
