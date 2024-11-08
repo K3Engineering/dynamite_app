@@ -91,8 +91,8 @@ class BluetoothService {
   AvailabilityState bluetoothState = AvailabilityState.unknown;
   ValueNotifier<List<BleDevice>> devices = ValueNotifier<List<BleDevice>>([]);
   ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
-  BleDevice? selectedDevice;
-  List<BleService> services = [];
+  ValueNotifier<BleDevice?> selectedDevice = ValueNotifier<BleDevice?>(null);
+  ValueNotifier<List<BleService>> services = ValueNotifier<List<BleService>>([]);
 
   void initializeBluetooth(BuildContext context) {
     UniversalBle.enableBluetooth(); // TODO this doesn't work on web
@@ -124,6 +124,7 @@ class BluetoothService {
   void startScan() async {
       if (bluetoothState == AvailabilityState.poweredOn) {
         devices.value.clear();
+        services.value.clear();
         isScanning.value = true;
         await UniversalBle.startScan(
           platformConfig: PlatformConfig(
@@ -152,17 +153,16 @@ class BluetoothService {
     }
   }
 
-  void _onPairingStateChange(deviceId, isPaired){
-    print('pairing state change');
-    print(deviceId);
-    print(isPaired);
+  void _onPairingStateChange(String deviceId, bool isPaired){
+    print('isPaired $deviceId, $isPaired');
+    // _addLog("PairingStateChange - isPaired", isPaired);
   }
 
   Future<void> connectToDevice(BleDevice device) async {
     try {
       await UniversalBle.connect(device.deviceId);
-      services = await UniversalBle.discoverServices(device.deviceId);
-      selectedDevice = device;
+      services.value = await UniversalBle.discoverServices(device.deviceId);
+      selectedDevice.value = device;
     } catch (e) {
       // Error handling can be implemented here
     }
@@ -202,8 +202,16 @@ class BluetoothDeviceList extends StatelessWidget {
             },
           ),
         ),
-        if (bluetoothService.selectedDevice != null)
-          BluetoothServiceDetails(bluetoothService: bluetoothService),
+        ValueListenableBuilder<BleDevice?>(
+          valueListenable: bluetoothService.selectedDevice,
+          builder: (context, selectedDevice, _) {
+            if (selectedDevice != null) {
+              return BluetoothServiceDetails(bluetoothService: bluetoothService);
+            } else {
+              return SizedBox.shrink(); // Empty widget if no device is selected
+            }
+          },
+        ),
       ],
     );
   }
@@ -221,15 +229,18 @@ class BluetoothServiceDetails extends StatelessWidget {
       children: [
         const Divider(),
         Text(
-          'Connected to: ${bluetoothService.selectedDevice?.name ?? "Unknown Device"}',
+          'Connected to: ${bluetoothService.selectedDevice.value?.name ?? "Unknown Device"}',
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         Expanded(
-          child: bluetoothService.services.isNotEmpty
-              ? ListView.builder(
-                  itemCount: bluetoothService.services.length,
+          child: ValueListenableBuilder<List<BleService>>(
+            valueListenable: bluetoothService.services,
+            builder: (context, services, _) {
+              if (services.isNotEmpty) {
+                return ListView.builder(
+                  itemCount: services.length,
                   itemBuilder: (context, index) {
-                    final service = bluetoothService.services[index];
+                    final service = services[index];
                     return ListTile(
                       title: Text('Service: ${service.uuid}'),
                       subtitle: Column(
@@ -240,13 +251,18 @@ class BluetoothServiceDetails extends StatelessWidget {
                       ),
                     );
                   },
-                )
-              : const Text('No services found for this device.'),
+                );
+              } else {
+                return const Text('No services found for this device.');
+              }
+            },
+          ),
         ),
       ],
     );
   }
 }
+
 
 
 
