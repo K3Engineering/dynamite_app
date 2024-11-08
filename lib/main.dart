@@ -89,7 +89,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
 class BluetoothService {
   AvailabilityState bluetoothState = AvailabilityState.unknown;
-  List<BleDevice> devices = [];
+  ValueNotifier<List<BleDevice>> devices = ValueNotifier<List<BleDevice>>([]);
   ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
   BleDevice? selectedDevice;
   List<BleService> services = [];
@@ -107,8 +107,8 @@ class BluetoothService {
   }
 
   void _onScanResult(BleDevice device) {
-    if (!devices.contains(device)) {
-      devices.add(device);
+    if (!devices.value.contains(device)) {
+      devices.value = [...devices.value, device];
     }
   }
 
@@ -123,7 +123,7 @@ class BluetoothService {
 
   void startScan() async {
       if (bluetoothState == AvailabilityState.poweredOn) {
-        devices.clear();
+        devices.value.clear();
         isScanning.value = true;
         await UniversalBle.startScan(
           platformConfig: PlatformConfig(
@@ -185,14 +185,19 @@ class BluetoothDeviceList extends StatelessWidget {
       children: [
         if (bluetoothService.isScanning.value) const CircularProgressIndicator(),
         Expanded(
-          child: ListView.builder(
-            itemCount: bluetoothService.devices.length,
-            itemBuilder: (context, index) {
-              final device = bluetoothService.devices[index];
-              return ListTile(
-                title: Text(device.name ?? "Unknown Device"),
-                subtitle: Text('Device ID: ${device.deviceId}'),
-                onTap: () => bluetoothService.connectToDevice(device),
+          child: ValueListenableBuilder<List<BleDevice>>(
+            valueListenable: bluetoothService.devices,
+            builder: (context, devices, _) {
+              return ListView.builder(
+                itemCount: devices.length,
+                itemBuilder: (context, index) {
+                  final device = devices[index];
+                  return ListTile(
+                    title: Text(device.name ?? "Unknown Device"),
+                    subtitle: Text('Device ID: ${device.deviceId}'),
+                    onTap: () => bluetoothService.connectToDevice(device),
+                  );
+                },
               );
             },
           ),
@@ -203,6 +208,7 @@ class BluetoothDeviceList extends StatelessWidget {
     );
   }
 }
+
 
 class BluetoothServiceDetails extends StatelessWidget {
   final BluetoothService bluetoothService;
