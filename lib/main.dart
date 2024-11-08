@@ -34,16 +34,6 @@ class MyApp extends StatelessWidget {
 
 class MyHomePage extends StatefulWidget {
   const MyHomePage({super.key, required this.title});
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
   final String title;
 
   @override
@@ -51,118 +41,20 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+  final BluetoothService _bluetoothService = BluetoothService();
 
-  List<BleDevice> _devices = [];
-  bool _isScanning = false;
-  BleDevice? _selectedDevice;
-  List<BleService> _services = [];
-  AvailabilityState _bluetoothState = AvailabilityState.unknown;
 
   @override
   void initState() {
     super.initState();
 
-    // TODO this doesn't work on web
-    UniversalBle.enableBluetooth();
-
-    _updateBluetoothState();
-    UniversalBle.onScanResult = _onScanResult;
-    UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
-    UniversalBle.onPairingStateChange = _onPairingStateChange;
+    _bluetoothService.initializeBluetooth(context);
   }
 
-  Future<void> _updateBluetoothState() async {
-    _bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
-    setState(() {});
-  }
-
-  void _onScanResult(BleDevice device) {
-    setState(() {
-      if (!_devices.contains(device)) {
-        _devices.add(device);
-      }
-    });
-  }
-
-  void _onBluetoothAvailabilityChanged(AvailabilityState state) {
-    setState(() {
-      _bluetoothState = state;
-    });
-  }
-
-  void _onPairingStateChange(deviceId, isPaired){
-    print('pairing state change');
-    print(deviceId);
-    print(isPaired);
-  }
-
-
-  Future<void> _startScan() async {
-    if (_bluetoothState != AvailabilityState.poweredOn) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Bluetooth is not powered on!')),
-      );
-      return;
-    }
-
-    setState(() {
-      _isScanning = true;
-      _devices.clear();
-    });
-    UniversalBle.startScan(
-      platformConfig: PlatformConfig(
-          web: WebOptions(
-            optionalServices: [
-                BT_SERVICE_ID,
-              BT_CHARACTERISTIC_ID,
-              BT_S2,
-              BT_S3,]
-          )
-        )
-        // scanFilter: ScanFilter(
-        //   // Needs to be passed for web, can be empty for the rest
-        //   withServices: [
-        //     BT_SERVICE_ID,
-        //     BT_CHARACTERISTIC_ID,
-        //     BT_S2,
-        //     BT_S3,
-        //     ],
-        // )
-    );
-  }
-
-  void _stopScan() {
-    UniversalBle.stopScan();
-    setState(() {
-      _isScanning = false;
-    });
-  }
-
-  Future<void> _connectToDevice(BleDevice device) async {
-    try {
-      await UniversalBle.connect(device.deviceId);
-      List<BleService> services = await UniversalBle.discoverServices(device.deviceId);
-      setState(() {
-        _selectedDevice = device;
-        _services = services;
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to connect to ${device.name ?? "Unknown Device"} due to error: $e')),
-      );
-    }
-  }
-
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
-    });
+  @override
+  void dispose() {
+    _bluetoothService.dispose();
+    super.dispose();
   }
 
   @override
@@ -172,70 +64,178 @@ class _MyHomePageState extends State<MyHomePage> {
         title: Text(widget.title),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
-          BluetoothIndicator(bluetoothState: _bluetoothState),
+          BluetoothIndicator(bluetoothState: _bluetoothService.bluetoothState),
           IconButton(
-            icon: const Icon(Icons.abc),
-            tooltip: 'ABC Icon',
-            onPressed: () {},
+            icon: const Icon(Icons.refresh),
+            tooltip: 'refresh BT Icon',
+            onPressed: _bluetoothService.toggleScan,
           ), //IconButton
         ],
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            if (_isScanning) const CircularProgressIndicator(),
-            Expanded(
-              child: ListView.builder(
-                itemCount: _devices.length,
-                itemBuilder: (context, index) {
-                  final device = _devices[index];
-                  return ListTile(
-                    title: Text(device.name ?? "Unknown Device"),
-                    subtitle: Text('Device ID: ${device.deviceId}'),
-                    onTap: () => _connectToDevice(device),
-                  );
-                },
-              ),
-            ),
-            if (_selectedDevice != null) ...[
-              const Divider(),
-              Text(
-                'Connected to: ${_selectedDevice?.name ?? "Unknown Device"}',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
-              const SizedBox(height: 10),
-              Expanded(
-                child: _services.isNotEmpty
-                    ? ListView.builder(
-                        itemCount: _services.length,
-                        itemBuilder: (context, index) {
-                          final service = _services[index];
-                          return ListTile(
-                            title: Text('Service: ${service.uuid}'),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: service.characteristics
-                                  .map((char) => Text('Characteristic: ${char.uuid}'))
-                                  .toList(),
-                            ),
-                          );
-                        },
-                      )
-                    : const Text('No services found for this device.'),
-              ),
-            ],
-          ],
-        ),
-      ),
+      body: BluetoothDeviceList(bluetoothService: _bluetoothService),
       floatingActionButton: FloatingActionButton(
-        onPressed: _isScanning ? _stopScan : _startScan,
+        onPressed: _bluetoothService.toggleScan,
         tooltip: 'Toggle scanning',
-        child: Icon(_isScanning ? Icons.stop : Icons.add),
+        child: Icon(_bluetoothService.isScanning ? Icons.stop : Icons.search),
       ),
     );
   }
 }
+
+class BluetoothService {
+  AvailabilityState bluetoothState = AvailabilityState.unknown;
+  List<BleDevice> devices = [];
+  bool isScanning = false;
+  BleDevice? selectedDevice;
+  List<BleService> services = [];
+
+  void initializeBluetooth(BuildContext context) {
+    UniversalBle.enableBluetooth(); // TODO this doesn't work on web
+    _updateBluetoothState();
+    UniversalBle.onScanResult = _onScanResult;
+    UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
+    UniversalBle.onPairingStateChange = _onPairingStateChange;
+  }
+
+  Future<void> _updateBluetoothState() async {
+    bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
+  }
+
+  void _onScanResult(BleDevice device) {
+    if (!devices.contains(device)) {
+      devices.add(device);
+    }
+  }
+
+  void _onBluetoothAvailabilityChanged(AvailabilityState state) {
+    bluetoothState = state;
+  }
+
+  void stopScan() async {
+    UniversalBle.stopScan();
+    isScanning = false;
+  }
+
+  void startScan() async {
+      if (bluetoothState == AvailabilityState.poweredOn) {
+        devices.clear();
+        isScanning = true;
+        await UniversalBle.startScan(
+          platformConfig: PlatformConfig(
+            web: WebOptions(optionalServices: [BT_SERVICE_ID, BT_CHARACTERISTIC_ID, BT_S2, BT_S3]),
+          ),
+        // scanFilter: ScanFilter(
+        //           // Needs to be passed for web, can be empty for the rest
+        //           withServices: [
+        //             BT_SERVICE_ID,
+        //             BT_CHARACTERISTIC_ID,
+        //             BT_S2,
+        //             BT_S3,
+        //             ],
+        //         )
+        );
+      }
+  }
+
+  void toggleScan() async {
+    if (isScanning) {
+      stopScan();
+    } else {
+      startScan();
+    }
+  }
+
+  void _onPairingStateChange(deviceId, isPaired){
+    print('pairing state change');
+    print(deviceId);
+    print(isPaired);
+  }
+
+  Future<void> connectToDevice(BleDevice device) async {
+    try {
+      await UniversalBle.connect(device.deviceId);
+      services = await UniversalBle.discoverServices(device.deviceId);
+      selectedDevice = device;
+    } catch (e) {
+      // Error handling can be implemented here
+    }
+  }
+
+  void dispose() {
+    UniversalBle.onScanResult = null;
+    UniversalBle.onAvailabilityChange = null;
+  }
+}
+
+class BluetoothDeviceList extends StatelessWidget {
+  final BluetoothService bluetoothService;
+
+  const BluetoothDeviceList({Key? key, required this.bluetoothService}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        if (bluetoothService.isScanning) const CircularProgressIndicator(),
+        Expanded(
+          child: ListView.builder(
+            itemCount: bluetoothService.devices.length,
+            itemBuilder: (context, index) {
+              final device = bluetoothService.devices[index];
+              return ListTile(
+                title: Text(device.name ?? "Unknown Device"),
+                subtitle: Text('Device ID: ${device.deviceId}'),
+                onTap: () => bluetoothService.connectToDevice(device),
+              );
+            },
+          ),
+        ),
+        if (bluetoothService.selectedDevice != null)
+          BluetoothServiceDetails(bluetoothService: bluetoothService),
+      ],
+    );
+  }
+}
+
+class BluetoothServiceDetails extends StatelessWidget {
+  final BluetoothService bluetoothService;
+
+  const BluetoothServiceDetails({Key? key, required this.bluetoothService}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        const Divider(),
+        Text(
+          'Connected to: ${bluetoothService.selectedDevice?.name ?? "Unknown Device"}',
+          style: Theme.of(context).textTheme.headlineSmall,
+        ),
+        Expanded(
+          child: bluetoothService.services.isNotEmpty
+              ? ListView.builder(
+                  itemCount: bluetoothService.services.length,
+                  itemBuilder: (context, index) {
+                    final service = bluetoothService.services[index];
+                    return ListTile(
+                      title: Text('Service: ${service.uuid}'),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: service.characteristics
+                            .map((char) => Text('Characteristic: ${char.uuid}'))
+                            .toList(),
+                      ),
+                    );
+                  },
+                )
+              : const Text('No services found for this device.'),
+        ),
+      ],
+    );
+  }
+}
+
+
 
 class BluetoothIndicator extends StatelessWidget {
   final AvailabilityState bluetoothState;
