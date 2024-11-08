@@ -64,19 +64,24 @@ class _MyHomePageState extends State<MyHomePage> {
         title: Text(widget.title),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
-          BluetoothIndicator(bluetoothState: _bluetoothService.bluetoothState),
+          BluetoothIndicator(bluetoothService: _bluetoothService),
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'refresh BT Icon',
+            tooltip: 'Refresh BT Icon',
             onPressed: _bluetoothService.toggleScan,
-          ), //IconButton
+          ),
         ],
       ),
       body: BluetoothDeviceList(bluetoothService: _bluetoothService),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _bluetoothService.toggleScan,
-        tooltip: 'Toggle scanning',
-        child: Icon(_bluetoothService.isScanning ? Icons.stop : Icons.search),
+      floatingActionButton: ValueListenableBuilder<bool>(
+        valueListenable: _bluetoothService.isScanning,
+        builder: (context, isScanning, child) {
+          return FloatingActionButton(
+            onPressed: _bluetoothService.toggleScan,
+            tooltip: isScanning ? 'Stop scanning' : 'Start scanning',
+            child: Icon(isScanning ? Icons.stop : Icons.search),
+          );
+        },
       ),
     );
   }
@@ -85,7 +90,7 @@ class _MyHomePageState extends State<MyHomePage> {
 class BluetoothService {
   AvailabilityState bluetoothState = AvailabilityState.unknown;
   List<BleDevice> devices = [];
-  bool isScanning = false;
+  ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
   BleDevice? selectedDevice;
   List<BleService> services = [];
 
@@ -113,13 +118,13 @@ class BluetoothService {
 
   void stopScan() async {
     UniversalBle.stopScan();
-    isScanning = false;
+    isScanning.value = false;
   }
 
   void startScan() async {
       if (bluetoothState == AvailabilityState.poweredOn) {
         devices.clear();
-        isScanning = true;
+        isScanning.value = true;
         await UniversalBle.startScan(
           platformConfig: PlatformConfig(
             web: WebOptions(optionalServices: [BT_SERVICE_ID, BT_CHARACTERISTIC_ID, BT_S2, BT_S3]),
@@ -138,7 +143,7 @@ class BluetoothService {
   }
 
   void toggleScan() async {
-    if (isScanning) {
+    if (isScanning.value) {
       stopScan();
     } else {
       startScan();
@@ -176,7 +181,7 @@ class BluetoothDeviceList extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        if (bluetoothService.isScanning) const CircularProgressIndicator(),
+        if (bluetoothService.isScanning.value) const CircularProgressIndicator(),
         Expanded(
           child: ListView.builder(
             itemCount: bluetoothService.devices.length,
@@ -238,33 +243,44 @@ class BluetoothServiceDetails extends StatelessWidget {
 
 
 class BluetoothIndicator extends StatelessWidget {
-  final AvailabilityState bluetoothState;
+  final BluetoothService bluetoothService;
 
-  const BluetoothIndicator({Key? key, required this.bluetoothState}) : super(key: key);
+  const BluetoothIndicator({Key? key, required this.bluetoothService}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    IconData iconData;
-    Color color;
+    return ValueListenableBuilder<bool>(
+      valueListenable: bluetoothService.isScanning,
+      builder: (context, isScanning, child) {
+        IconData iconData;
+        Color color;
 
-    switch (bluetoothState) {
-      case AvailabilityState.poweredOn:
-        iconData = Icons.bluetooth;
-        color = Colors.blue;
-        break;
-      case AvailabilityState.poweredOff:
-        iconData = Icons.bluetooth_disabled;
-        color = Colors.red;
-        break;
-      default:
-        iconData = Icons.bluetooth_searching;
-        color = Colors.grey;
-        break;
-    }
+        // Determine icon based on Bluetooth and scanning states
+        if (isScanning) {
+          iconData = Icons.bluetooth_searching;
+          color = Colors.blueAccent;
+        } else {
+          switch (bluetoothService.bluetoothState) {
+            case AvailabilityState.poweredOn:
+              iconData = Icons.bluetooth;
+              color = Colors.blue;
+              break;
+            case AvailabilityState.poweredOff:
+              iconData = Icons.bluetooth_disabled;
+              color = Colors.red;
+              break;
+            default:
+              iconData = Icons.bluetooth_searching;
+              color = Colors.grey;
+              break;
+          }
+        }
 
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: Icon(iconData, color: color),
+        return Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Icon(iconData, color: color),
+        );
+      },
     );
   }
 }
