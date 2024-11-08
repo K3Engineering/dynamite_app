@@ -103,7 +103,7 @@ class BluetoothService {
   }
 
   Future<void> _updateBluetoothState() async {
-    bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
+    bluetoothState = await UniversalBle.getBluetoothAvailabilityState(); // TODO UnimplementedError
   }
 
   void _onScanResult(BleDevice device) {
@@ -139,6 +139,8 @@ class BluetoothService {
         //             ],
         //         )
         );
+
+        isScanning.value = false;
       }
   }
 
@@ -269,8 +271,24 @@ class BluetoothIndicator extends StatelessWidget {
               iconData = Icons.bluetooth_disabled;
               color = Colors.red;
               break;
+            case AvailabilityState.unknown:
+              iconData = Icons.question_mark;
+              color = Colors.red;
+              break;
+            case AvailabilityState.resetting:
+              iconData = Icons.question_mark;
+              color = Colors.green;
+              break;
+            case AvailabilityState.unsupported:
+              iconData = Icons.stop;
+              color = Colors.red;
+              break;
+            case AvailabilityState.unauthorized:
+              iconData = Icons.stop;
+              color = Colors.blue;
+              break;
             default:
-              iconData = Icons.bluetooth_searching;
+              iconData = Icons.question_mark;
               color = Colors.grey;
               break;
           }
