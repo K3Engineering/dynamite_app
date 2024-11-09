@@ -202,15 +202,15 @@ class BluetoothDeviceList extends StatelessWidget {
             },
           ),
         ),
-        ValueListenableBuilder<BleDevice?>(
-          valueListenable: bluetoothService.selectedDevice,
-          builder: (context, selectedDevice, _) {
-            if (selectedDevice != null) {
-              return BluetoothServiceDetails(bluetoothService: bluetoothService);
-            } else {
-              return SizedBox.shrink(); // Empty widget if no device is selected
-            }
-          },
+        Flexible( // Use Flexible instead of Expanded here to ensure layout stability
+          child: ValueListenableBuilder<BleDevice?>(
+            valueListenable: bluetoothService.selectedDevice,
+            builder: (context, selectedDevice, _) {
+              return selectedDevice != null
+                  ? BluetoothServiceDetails(bluetoothService: bluetoothService)
+                  : SizedBox.shrink();
+            },
+          ),
         ),
       ],
     );
@@ -262,8 +262,6 @@ class BluetoothServiceDetails extends StatelessWidget {
     );
   }
 }
-
-
 
 
 class BluetoothIndicator extends StatelessWidget {
