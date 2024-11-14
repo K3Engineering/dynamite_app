@@ -45,19 +45,19 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  final BluetoothService _bluetoothService = BluetoothService();
+  final BluetoothHandling _bluetoothHanlder = BluetoothHandling();
 
 
   @override
   void initState() {
     super.initState();
 
-    _bluetoothService.initializeBluetooth(context);
+    _bluetoothHanlder.initializeBluetooth(context);
   }
 
   @override
   void dispose() {
-    _bluetoothService.dispose();
+    _bluetoothHanlder.dispose();
     super.dispose();
   }
 
@@ -68,20 +68,20 @@ class _MyHomePageState extends State<MyHomePage> {
         title: Text(widget.title),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
-          BluetoothIndicator(bluetoothService: _bluetoothService),
+          BluetoothIndicator(bluetoothService: _bluetoothHanlder),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh BT Icon',
-            onPressed: _bluetoothService.toggleScan,
+            onPressed: _bluetoothHanlder.toggleScan,
           ),
         ],
       ),
-      body: BluetoothDeviceList(bluetoothService: _bluetoothService),
+      body: BluetoothDeviceList(bluetoothService: _bluetoothHanlder),
       floatingActionButton: ValueListenableBuilder<bool>(
-        valueListenable: _bluetoothService.isScanning,
+        valueListenable: _bluetoothHanlder.isScanning,
         builder: (context, isScanning, child) {
           return FloatingActionButton(
-            onPressed: _bluetoothService.toggleScan,
+            onPressed: _bluetoothHanlder.toggleScan,
             tooltip: isScanning ? 'Stop scanning' : 'Start scanning',
             child: Icon(isScanning ? Icons.stop : Icons.search),
           );
@@ -91,7 +91,7 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
-class BluetoothService {
+class BluetoothHandling {
   AvailabilityState bluetoothState = AvailabilityState.unknown;
   ValueNotifier<List<BleDevice>> devices = ValueNotifier<List<BleDevice>>([]);
   ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
@@ -195,7 +195,7 @@ class BluetoothService {
 }
 
 class BluetoothDeviceList extends StatelessWidget {
-  final BluetoothService bluetoothService;
+  final BluetoothHandling bluetoothService;
 
   const BluetoothDeviceList({Key? key, required this.bluetoothService}) : super(key: key);
 
@@ -239,7 +239,7 @@ class BluetoothDeviceList extends StatelessWidget {
 
 
 class BluetoothServiceDetails extends StatelessWidget {
-  final BluetoothService bluetoothService;
+  final BluetoothHandling bluetoothService;
 
   const BluetoothServiceDetails({Key? key, required this.bluetoothService}) : super(key: key);
 
@@ -286,7 +286,7 @@ class BluetoothServiceDetails extends StatelessWidget {
 
 
 class BluetoothIndicator extends StatelessWidget {
-  final BluetoothService bluetoothService;
+  final BluetoothHandling bluetoothService;
 
   const BluetoothIndicator({Key? key, required this.bluetoothService}) : super(key: key);
 
