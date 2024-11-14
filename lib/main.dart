@@ -95,8 +95,10 @@ class BluetoothService {
   ValueNotifier<List<BleService>> services = ValueNotifier<List<BleService>>([]);
 
   void initializeBluetooth(BuildContext context) {
-    UniversalBle.enableBluetooth(); // TODO this doesn't work on web
     _updateBluetoothState();
+    
+    UniversalBle.enableBluetooth(); // TODO this doesn't work on web
+    
     UniversalBle.onScanResult = _onScanResult;
     UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
     UniversalBle.onPairingStateChange = _onPairingStateChange;
