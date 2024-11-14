@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:universal_ble/universal_ble.dart';
+import 'dart:typed_data';
+import 'package:convert/convert.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
+
 
 enum DeviceState { None, Interrogating, Available, Irrelevant }
 
@@ -97,7 +101,9 @@ class BluetoothService {
   void initializeBluetooth(BuildContext context) {
     _updateBluetoothState();
     
-    UniversalBle.enableBluetooth(); // TODO this doesn't work on web
+    if (!kIsWeb) {
+      UniversalBle.enableBluetooth(); // this isn't implemented on web
+    }
     
     UniversalBle.onScanResult = _onScanResult;
     UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
@@ -105,7 +111,7 @@ class BluetoothService {
   }
 
   Future<void> _updateBluetoothState() async {
-    bluetoothState = await UniversalBle.getBluetoothAvailabilityState(); // TODO UnimplementedError
+    bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
   }
 
   void _onScanResult(BleDevice device) {
@@ -173,6 +179,18 @@ class BluetoothService {
   void dispose() {
     UniversalBle.onScanResult = null;
     UniversalBle.onAvailabilityChange = null;
+  }
+
+  void subscribeToService(BleService service) async {
+    final deviceId = selectedDevice.value?.deviceId;
+    if (deviceId != null) {
+      // TODO can only subscribe once, otherwise I get "DartError: Exception: Already listening to this characteristic"
+      await UniversalBle.setNotifiable(deviceId, service.uuid, service.characteristics[0].uuid, BleInputProperty.notification); 
+
+      UniversalBle.onValueChange = (String deviceId, String characteristicId, Uint8List value) {
+        debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
+      };
+    }
   }
 }
 
@@ -251,6 +269,7 @@ class BluetoothServiceDetails extends StatelessWidget {
                             .map((char) => Text('Characteristic: ${char.uuid}'))
                             .toList(),
                       ),
+                      onTap: () => bluetoothService.subscribeToService(service),
                     );
                   },
                 );
