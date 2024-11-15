@@ -4,11 +4,6 @@ import 'dart:typed_data';
 import 'package:convert/convert.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
-
-enum DeviceState { None, Interrogating, Available, Irrelevant }
-
-enum ConnectionState { Disconnected, Connecting, Connected }
-
 // const BT_DEVICE_UUID = "E4:B0:63:81:5B:19";
 const BT_GATT_ID = "a659ee73-460b-45d5-8e63-ab6bf0825942";
 const BT_SERVICE_ID = "e331016b-6618-4f8f-8997-1a2c7c9e5fa3";
