@@ -52,7 +52,7 @@ class _MyHomePageState extends State<MyHomePage> {
   void initState() {
     super.initState();
 
-    _bluetoothHanlder.initializeBluetooth(context);
+    _bluetoothHanlder.initializeBluetooth();
   }
 
   @override
@@ -91,6 +91,20 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 }
 
+// class BluetoothDevice {
+//   final BluetoothHandling _bluetoothHanlder = BluetoothHandling();
+//   // const BT_DEVICE_UUID = "E4:B0:63:81:5B:19";
+//   static const BT_GATT_ID = "a659ee73-460b-45d5-8e63-ab6bf0825942";
+//   static const BT_SERVICE_ID = "e331016b-6618-4f8f-8997-1a2c7c9e5fa3";
+//   static const BT_CHARACTERISTIC_ID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+//   static const BT_S2 = "00001800-0000-1000-8000-00805f9b34fb";
+//   static const BT_S3 = "00001801-0000-1000-8000-00805f9b34fb";
+
+//   void init() {
+//     _bluetoothHanlder.initializeBluetooth();
+//   }
+// }
+
 class BluetoothHandling {
   AvailabilityState bluetoothState = AvailabilityState.unknown;
   ValueNotifier<List<BleDevice>> devices = ValueNotifier<List<BleDevice>>([]);
@@ -98,7 +112,7 @@ class BluetoothHandling {
   ValueNotifier<BleDevice?> selectedDevice = ValueNotifier<BleDevice?>(null);
   ValueNotifier<List<BleService>> services = ValueNotifier<List<BleService>>([]);
 
-  void initializeBluetooth(BuildContext context) {
+  void initializeBluetooth() {
     _updateBluetoothState();
     
     if (!kIsWeb) {
