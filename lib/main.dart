@@ -124,9 +124,14 @@ class BluetoothHandling {
   }
 
   void _onScanResult(BleDevice device) {
-    if (!devices.value.contains(device)) {
-      devices.value = [...devices.value, device];
+    for (int i = 0; i < devices.value.length; i++) {
+      if (devices.value[i].deviceId == device.deviceId) {
+        if (devices.value[i].name == device.name) {
+          return;
+        }
+      }
     }
+    devices.value = [...devices.value, device];
   }
 
   void _onBluetoothAvailabilityChanged(AvailabilityState state) {
