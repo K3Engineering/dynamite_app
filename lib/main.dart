@@ -21,7 +21,8 @@ class MyApp extends StatelessWidget {
   // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(      title: 'Bluetooth Demo',
+    return MaterialApp(
+      title: 'Bluetooth Demo',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
@@ -151,7 +152,9 @@ class BluetoothHandling {
     isScanning.value = true;
     await UniversalBle.startScan(
       platformConfig: PlatformConfig(
-        web: WebOptions(optionalServices: [BT_SERVICE_ID, BT_CHARACTERISTIC_ID, BT_S2, BT_S3]),
+        web: WebOptions(optionalServices: [
+          BT_SERVICE_ID, BT_CHARACTERISTIC_ID, BT_S2, BT_S3
+          ]),
       ),
     // scanFilter: ScanFilter(
     //           // Needs to be passed for web, can be empty for the rest
@@ -163,7 +166,6 @@ class BluetoothHandling {
     //             ],
     //         )
     );
-  
   }
 
   void toggleScan() async {
@@ -246,7 +248,8 @@ class BluetoothDeviceList extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        if (bluetoothService.isScanning.value) const CircularProgressIndicator(),
+        if (bluetoothService.isScanning.value) 
+          const CircularProgressIndicator(),
         Expanded(
           child: ValueListenableBuilder<List<BleDevice>>(
             valueListenable: bluetoothService.devices,
@@ -265,7 +268,8 @@ class BluetoothDeviceList extends StatelessWidget {
             },
           ),
         ),
-        Flexible( // Use Flexible instead of Expanded here to ensure layout stability
+        Flexible( 
+          // Use Flexible instead of Expanded here to ensure layout stability
           child: ValueListenableBuilder<BleDevice?>(
             valueListenable: bluetoothService.selectedDevice,
             builder: (context, selectedDevice, _) {
@@ -279,7 +283,6 @@ class BluetoothDeviceList extends StatelessWidget {
     );
   }
 }
-
 
 class BluetoothServiceDetails extends StatelessWidget {
   final BluetoothHandling bluetoothService;
@@ -326,7 +329,6 @@ class BluetoothServiceDetails extends StatelessWidget {
     );
   }
 }
-
 
 class BluetoothIndicator extends StatelessWidget {
   final BluetoothHandling bluetoothService;
