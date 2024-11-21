@@ -42,7 +42,6 @@ class MyHomePage extends StatefulWidget {
 class _MyHomePageState extends State<MyHomePage> {
   final BluetoothHandling _bluetoothHanlder = BluetoothHandling();
 
-
   @override
   void initState() {
     super.initState();
@@ -144,25 +143,27 @@ class BluetoothHandling {
   }
 
   void startScan() async {
-      if (bluetoothState == AvailabilityState.poweredOn) {
-        devices.value.clear();
-        services.value.clear();
-        isScanning.value = true;
-        await UniversalBle.startScan(
-          platformConfig: PlatformConfig(
-            web: WebOptions(optionalServices: [BT_SERVICE_ID, BT_CHARACTERISTIC_ID, BT_S2, BT_S3]),
-          ),
-        // scanFilter: ScanFilter(
-        //           // Needs to be passed for web, can be empty for the rest
-        //           withServices: [
-        //             BT_SERVICE_ID,
-        //             BT_CHARACTERISTIC_ID,
-        //             BT_S2,
-        //             BT_S3,
-        //             ],
-        //         )
-        );
-      }
+    if (bluetoothState != AvailabilityState.poweredOn) {
+      return;
+    }
+    devices.value.clear();
+    services.value.clear();
+    isScanning.value = true;
+    await UniversalBle.startScan(
+      platformConfig: PlatformConfig(
+        web: WebOptions(optionalServices: [BT_SERVICE_ID, BT_CHARACTERISTIC_ID, BT_S2, BT_S3]),
+      ),
+    // scanFilter: ScanFilter(
+    //           // Needs to be passed for web, can be empty for the rest
+    //           withServices: [
+    //             BT_SERVICE_ID,
+    //             BT_CHARACTERISTIC_ID,
+    //             BT_S2,
+    //             BT_S3,
+    //             ],
+    //         )
+    );
+  
   }
 
   void toggleScan() async {
@@ -173,12 +174,15 @@ class BluetoothHandling {
     }
   }
 
-  void _onPairingStateChange(String deviceId, bool isPaired){
-    print('isPaired $deviceId, $isPaired');
+  void _onPairingStateChange(String deviceId, bool isPaired) {
+    debugPrint('isPaired $deviceId, $isPaired');
     // _addLog("PairingStateChange - isPaired", isPaired);
   }
 
   Future<void> connectToDevice(BleDevice device) async {
+    if (isScanning.value) {
+      stopScan();
+    }
     try {
       await UniversalBle.connect(device.deviceId);
       services.value = await UniversalBle.discoverServices(device.deviceId);
@@ -227,7 +231,7 @@ class BluetoothHandling {
               // Print comma-separated hex values
               debugPrint('24-bit hex values: ${hexChunks.join(', ')}');
             };
-        
+          return;
       }
     }
   }
