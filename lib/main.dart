@@ -124,9 +124,9 @@ class BluetoothHandling {
   }
 
   void _onScanResult(BleDevice device) {
-    for (int i = 0; i < devices.value.length; i++) {
-      if (devices.value[i].deviceId == device.deviceId) {
-        if (devices.value[i].name == device.name) {
+    for (var deviceListDevice in devices.value) {
+      if (deviceListDevice.deviceId == device.deviceId) {
+        if (deviceListDevice.name == device.name) {
           return;
         }
       }
@@ -162,8 +162,6 @@ class BluetoothHandling {
         //             ],
         //         )
         );
-
-        isScanning.value = false;
       }
   }
 
@@ -200,32 +198,38 @@ class BluetoothHandling {
     if (deviceId == null) return;
     
     // TODO can only subscribe once, otherwise I get "DartError: Exception: Already listening to this characteristic"
-    await UniversalBle.setNotifiable(deviceId, service.uuid, service.characteristics[0].uuid, BleInputProperty.notification); 
+    for (var characteristic in service.characteristics) {
+      if ((characteristic.uuid == BT_CHARACTERISTIC_ID) &&
+          characteristic.properties
+              .contains(CharacteristicProperty.notify)) {
+            await UniversalBle.setNotifiable(deviceId, service.uuid, characteristic.uuid, BleInputProperty.notification); 
 
-    UniversalBle.onValueChange = (String deviceId, String characteristicId, Uint8List value) {
-      debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
+            UniversalBle.onValueChange = (String deviceId, String characteristicId, Uint8List value) {
+              debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
 
-      // Process and print as a comma-separated list of 24-bit hex values with byte reversal
-      List<String> hexChunks = [];
-      for (int i = 0; i < value.length; i += 3) {
-        // Ensure we don't exceed the list length
-        int end = (i + 3 <= value.length) ? i + 3 : value.length;
+              // Process and print as a comma-separated list of 24-bit hex values with byte reversal
+              List<String> hexChunks = [];
+              for (int i = 0; i < value.length; i += 3) {
+                // Ensure we don't exceed the list length
+                int end = (i + 3 <= value.length) ? i + 3 : value.length;
 
-        // Extract 24-bit chunk
-        Uint8List chunk = value.sublist(i, end);
+                // Extract 24-bit chunk
+                Uint8List chunk = value.sublist(i, end);
 
-        // Reverse bytes and convert to hex
-        Uint8List reversedChunk = Uint8List.fromList(chunk.reversed.toList());
-        String hexValue = hex.encode(reversedChunk);
+                // Reverse bytes and convert to hex
+                Uint8List reversedChunk = Uint8List.fromList(chunk.reversed.toList());
+                String hexValue = hex.encode(reversedChunk);
 
-        // Add to the list
-        hexChunks.add(hexValue);
+                // Add to the list
+                hexChunks.add(hexValue);
+              }
+
+              // Print comma-separated hex values
+              debugPrint('24-bit hex values: ${hexChunks.join(', ')}');
+            };
+        
       }
-
-      // Print comma-separated hex values
-      debugPrint('24-bit hex values: ${hexChunks.join(', ')}');
-    };
-    
+    }
   }
 }
 
