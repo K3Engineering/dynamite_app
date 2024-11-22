@@ -42,24 +42,55 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  final BluetoothHandling _bluetoothHanlder = BluetoothHandling();
+  final BluetoothHandling _bluetoothHandler = BluetoothHandling();
   List<Map<String, int>> adcReadings = [ 
-    {'value': 1, 'y': 0},
-    {'value': 2, 'y': 1},
-    {'value': 3, 'y': 2},
-    {'value': 4, 'y': 3},
-    {'value': 1, 'y': 4}];
+    {'x': 1, 'y': 0},
+    {'x': 3, 'y': 1},
+    {'x': 3, 'y': 2},
+    {'x': 4, 'y': 3},
+    {'x': 10, 'y': 4}];
 
   @override
   void initState() {
     super.initState();
 
-    _bluetoothHanlder.initializeBluetooth();
+    _bluetoothHandler.initializeBluetooth();
+
+    // Listen to receivedData changes
+    _bluetoothHandler.receivedData.addListener(() {
+      final value = _bluetoothHandler.receivedData.value;
+      if (value != null) {
+        processReceivedData(value);
+      }
+    });
+  }
+
+  void processReceivedData(Uint8List value) {
+    // Decode 24-bit values into integers
+    List<int> intValues = [];
+    for (int i = 0; i < value.length; i += 3) {
+      if (i + 2 < value.length) {
+        int intValue = (value[i + 2] << 16) | (value[i + 1] << 8) | value[i];
+        intValues.add(intValue);
+      }
+    }
+
+    // Update adcReadings and refresh the chart
+    setState(() {
+      for (int i = 0; i < intValues.length; i++) {
+        adcReadings.add({'x': adcReadings.length + 1, 'y': intValues[i]});
+      }
+
+      // Optional: Limit the number of points on the chart
+      if (adcReadings.length > 1000) {
+        adcReadings.removeRange(0, adcReadings.length - 100);
+      }
+    });
   }
 
   @override
   void dispose() {
-    _bluetoothHanlder.dispose();
+    _bluetoothHandler.dispose();
     super.dispose();
   }
 
@@ -70,18 +101,18 @@ class _MyHomePageState extends State<MyHomePage> {
         title: Text(widget.title),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
-          BluetoothIndicator(bluetoothService: _bluetoothHanlder),
+          BluetoothIndicator(bluetoothService: _bluetoothHandler),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'Refresh BT Icon',
-            onPressed: _bluetoothHanlder.toggleScan,
+            onPressed: _bluetoothHandler.toggleScan,
           ),
         ],
       ),
       body: Row(
         children: [
           Expanded(
-            child: BluetoothDeviceList(bluetoothService: _bluetoothHanlder)),
+            child: BluetoothDeviceList(bluetoothService: _bluetoothHandler)),
           Expanded(
             child: Chart(
               data: adcReadings,
@@ -91,7 +122,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         (map['y'] ?? double.nan) as int,
                   ),
                   'X': Variable(
-                    accessor: (Map map) => map['value'] as int,
+                    accessor: (Map map) => map['x'] as int,
                     scale: LinearScale(tickCount: 5),
                   ),
               },
@@ -128,10 +159,10 @@ class _MyHomePageState extends State<MyHomePage> {
         ],
       ),
       floatingActionButton: ValueListenableBuilder<bool>(
-        valueListenable: _bluetoothHanlder.isScanning,
+        valueListenable: _bluetoothHandler.isScanning,
         builder: (context, isScanning, child) {
           return FloatingActionButton(
-            onPressed: _bluetoothHanlder.toggleScan,
+            onPressed: _bluetoothHandler.toggleScan,
             tooltip: isScanning ? 'Stop scanning' : 'Start scanning',
             child: Icon(isScanning ? Icons.stop : Icons.search),
           );
@@ -161,6 +192,7 @@ class BluetoothHandling {
   ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
   ValueNotifier<BleDevice?> selectedDevice = ValueNotifier<BleDevice?>(null);
   ValueNotifier<List<BleService>> services = ValueNotifier<List<BleService>>([]);
+  ValueNotifier<Uint8List?> receivedData = ValueNotifier<Uint8List?>(null);
 
   void initializeBluetooth() {
     _updateBluetoothState();
@@ -211,15 +243,6 @@ class BluetoothHandling {
           BT_SERVICE_ID, BT_CHARACTERISTIC_ID, BT_S2, BT_S3
           ]),
       ),
-    // scanFilter: ScanFilter(
-    //           // Needs to be passed for web, can be empty for the rest
-    //           withServices: [
-    //             BT_SERVICE_ID,
-    //             BT_CHARACTERISTIC_ID,
-    //             BT_S2,
-    //             BT_S3,
-    //             ],
-    //         )
     );
   }
 
@@ -261,38 +284,19 @@ class BluetoothHandling {
     // TODO can only subscribe once, otherwise I get "DartError: Exception: Already listening to this characteristic"
     for (var characteristic in service.characteristics) {
       if ((characteristic.uuid == BT_CHARACTERISTIC_ID) &&
-          characteristic.properties
-              .contains(CharacteristicProperty.notify)) {
-            await UniversalBle.setNotifiable(deviceId, service.uuid, characteristic.uuid, BleInputProperty.notification); 
+          characteristic.properties.contains(CharacteristicProperty.notify)) {
+        await UniversalBle.setNotifiable(deviceId, service.uuid, characteristic.uuid, BleInputProperty.notification);
 
-            UniversalBle.onValueChange = (String deviceId, String characteristicId, Uint8List value) {
-              debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
-
-              // Process and print as a comma-separated list of 24-bit hex values with byte reversal
-              List<String> hexChunks = [];
-              for (int i = 0; i < value.length; i += 3) {
-                // Ensure we don't exceed the list length
-                int end = (i + 3 <= value.length) ? i + 3 : value.length;
-
-                // Extract 24-bit chunk
-                Uint8List chunk = value.sublist(i, end);
-
-                // Reverse bytes and convert to hex
-                Uint8List reversedChunk = Uint8List.fromList(chunk.reversed.toList());
-                String hexValue = hex.encode(reversedChunk);
-
-                // Add to the list
-                hexChunks.add(hexValue);
-              }
-
-              // Print comma-separated hex values
-              debugPrint('24-bit hex values: ${hexChunks.join(', ')}');
-            };
-          return;
+        UniversalBle.onValueChange = (String deviceId, String characteristicId, Uint8List value) {
+          debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
+          receivedData.value = value; // Notify the UI layer of new data
+        };
+        return;
       }
     }
   }
 }
+
 
 class BluetoothDeviceList extends StatelessWidget {
   final BluetoothHandling bluetoothService;
