@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:universal_ble/universal_ble.dart';
 import 'dart:typed_data';
 import 'package:convert/convert.dart';
+import 'package:graphic/graphic.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 // const BT_DEVICE_UUID = "E4:B0:63:81:5B:19";
@@ -42,6 +43,12 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final BluetoothHandling _bluetoothHanlder = BluetoothHandling();
+  List<Map<String, int>> adcReadings = [ 
+    {'value': 1, 'y': 0},
+    {'value': 2, 'y': 1},
+    {'value': 3, 'y': 2},
+    {'value': 4, 'y': 3},
+    {'value': 1, 'y': 4}];
 
   @override
   void initState() {
@@ -71,7 +78,55 @@ class _MyHomePageState extends State<MyHomePage> {
           ),
         ],
       ),
-      body: BluetoothDeviceList(bluetoothService: _bluetoothHanlder),
+      body: Row(
+        children: [
+          Expanded(
+            child: BluetoothDeviceList(bluetoothService: _bluetoothHanlder)),
+          Expanded(
+            child: Chart(
+              data: adcReadings,
+              variables: {
+                  'Y': Variable(
+                    accessor: (Map map) =>
+                        (map['y'] ?? double.nan) as int,
+                  ),
+                  'X': Variable(
+                    accessor: (Map map) => map['value'] as int,
+                    scale: LinearScale(tickCount: 5),
+                  ),
+              },
+              marks: [
+                LineMark(
+                  shape: ShapeEncode(value: BasicLineShape()), //dash: [5, 2]
+                  selected: {
+                    'touchMove': {1}
+                  },
+                )
+              ],
+              coord: RectCoord(color: const Color(0xffdddddd)),
+              axes: [
+                Defaults.horizontalAxis,
+                Defaults.verticalAxis,
+              ],
+              selections: {
+                'touchMove': PointSelection(
+                  on: {
+                    GestureType.scaleUpdate,
+                    GestureType.tapDown,
+                    GestureType.longPressMoveUpdate
+                  },
+                  dim: Dim.x,
+                )
+              },
+              tooltip: TooltipGuide(
+                followPointer: [false, true],
+                align: Alignment.topLeft,
+                offset: const Offset(-20, -20),
+              ),
+              crosshair: CrosshairGuide(followPointer: [false, true]),
+              )),
+        ],
+      ),
       floatingActionButton: ValueListenableBuilder<bool>(
         valueListenable: _bluetoothHanlder.isScanning,
         builder: (context, isScanning, child) {
