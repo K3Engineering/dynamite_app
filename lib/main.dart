@@ -43,12 +43,8 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
-  List<Map<String, int>> adcReadings = [ 
-    {'x': 1, 'y': 0},
-    {'x': 3, 'y': 1},
-    {'x': 3, 'y': 2},
-    {'x': 4, 'y': 3},
-    {'x': 10, 'y': 4}];
+  List<Map<String, int>> adcReadings = [];
+  int adcReadingX = 0;
 
   @override
   void initState() {
@@ -78,12 +74,13 @@ class _MyHomePageState extends State<MyHomePage> {
     // Update adcReadings and refresh the chart
     setState(() {
       for (int i = 0; i < intValues.length; i++) {
-        adcReadings.add({'x': adcReadings.length + 1, 'y': intValues[i]});
+        adcReadings.add({'x': adcReadingX, 'y': intValues[i]});
+        adcReadingX += 1;
       }
 
       // Optional: Limit the number of points on the chart
-      if (adcReadings.length > 1000) {
-        adcReadings.removeRange(0, adcReadings.length - 100);
+      if (adcReadings.length > 5000) {
+        adcReadings.removeRange(0, 1000);
       }
     });
   }
@@ -117,13 +114,13 @@ class _MyHomePageState extends State<MyHomePage> {
             child: Chart(
               data: adcReadings,
               variables: {
-                  'Y': Variable(
-                    accessor: (Map map) =>
-                        (map['y'] ?? double.nan) as int,
-                  ),
                   'X': Variable(
                     accessor: (Map map) => map['x'] as int,
                     scale: LinearScale(tickCount: 5),
+                  ),
+                  'Y': Variable(
+                    accessor: (Map map) =>
+                        (map['y'] ?? double.nan) as int,
                   ),
               },
               marks: [
