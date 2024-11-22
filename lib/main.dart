@@ -242,7 +242,7 @@ class BluetoothHandling {
 class BluetoothDeviceList extends StatelessWidget {
   final BluetoothHandling bluetoothService;
 
-  const BluetoothDeviceList({Key? key, required this.bluetoothService}) : super(key: key);
+  const BluetoothDeviceList({super.key, required this.bluetoothService});
 
   @override
   Widget build(BuildContext context) {
@@ -287,7 +287,7 @@ class BluetoothDeviceList extends StatelessWidget {
 class BluetoothServiceDetails extends StatelessWidget {
   final BluetoothHandling bluetoothService;
 
-  const BluetoothServiceDetails({Key? key, required this.bluetoothService}) : super(key: key);
+  const BluetoothServiceDetails({super.key, required this.bluetoothService});
 
   @override
   Widget build(BuildContext context) {
@@ -333,7 +333,7 @@ class BluetoothServiceDetails extends StatelessWidget {
 class BluetoothIndicator extends StatelessWidget {
   final BluetoothHandling bluetoothService;
 
-  const BluetoothIndicator({Key? key, required this.bluetoothService}) : super(key: key);
+  const BluetoothIndicator({super.key, required this.bluetoothService});
 
   @override
   Widget build(BuildContext context) {
