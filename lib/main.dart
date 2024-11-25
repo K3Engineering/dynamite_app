@@ -67,6 +67,8 @@ class _MyHomePageState extends State<MyHomePage> {
     for (int i = 0; i < value.length; i += 3) {
       if (i + 2 < value.length) {
         int intValue = (value[i + 2] << 16) | (value[i + 1] << 8) | value[i];
+        intValue = intValue.toSigned(24);
+
         intValues.add(intValue);
       }
     }
@@ -80,7 +82,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
       // Optional: Limit the number of points on the chart
       if (adcReadings.length > 5000) {
-        adcReadings.removeRange(0, 1000);
+        adcReadings.removeRange(0, 200);
       }
     });
   }
@@ -285,7 +287,7 @@ class BluetoothHandling {
         await UniversalBle.setNotifiable(deviceId, service.uuid, characteristic.uuid, BleInputProperty.notification);
 
         UniversalBle.onValueChange = (String deviceId, String characteristicId, Uint8List value) {
-          debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
+          // debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
           receivedData.value = value; // Notify the UI layer of new data
         };
         return;
