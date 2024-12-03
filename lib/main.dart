@@ -3,6 +3,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'dart:typed_data';
 import 'package:convert/convert.dart';
 import 'package:graphic/graphic.dart';
+import 'mockble.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 
 // const BT_DEVICE_UUID = "E4:B0:63:81:5B:19";
@@ -111,50 +112,49 @@ class _MyHomePageState extends State<MyHomePage> {
       body: Row(
         children: [
           Expanded(
-            child: BluetoothDeviceList(bluetoothService: _bluetoothHandler)),
+              child: BluetoothDeviceList(bluetoothService: _bluetoothHandler)),
           Expanded(
-            child: Chart(
-              data: adcReadings,
-              variables: {
-                  'X': Variable(
-                    accessor: (Map map) => map['x'] as int,
-                    scale: LinearScale(tickCount: 5),
-                  ),
-                  'Y': Variable(
-                    accessor: (Map map) =>
-                        (map['y'] ?? double.nan) as int,
-                  ),
-              },
-              marks: [
-                LineMark(
-                  shape: ShapeEncode(value: BasicLineShape()), //dash: [5, 2]
-                  selected: {
-                    'touchMove': {1}
-                  },
-                )
-              ],
-              coord: RectCoord(color: const Color(0xffdddddd)),
-              axes: [
-                Defaults.horizontalAxis,
-                Defaults.verticalAxis,
-              ],
-              selections: {
-                'touchMove': PointSelection(
-                  on: {
-                    GestureType.scaleUpdate,
-                    GestureType.tapDown,
-                    GestureType.longPressMoveUpdate
-                  },
-                  dim: Dim.x,
-                )
-              },
-              tooltip: TooltipGuide(
-                followPointer: [false, true],
-                align: Alignment.topLeft,
-                offset: const Offset(-20, -20),
+              child: Chart(
+            data: adcReadings,
+            variables: {
+              'X': Variable(
+                accessor: (Map map) => map['x'] as int,
+                scale: LinearScale(tickCount: 5),
               ),
-              crosshair: CrosshairGuide(followPointer: [false, true]),
-              )),
+              'Y': Variable(
+                accessor: (Map map) => (map['y'] ?? double.nan) as int,
+              ),
+            },
+            marks: [
+              LineMark(
+                shape: ShapeEncode(value: BasicLineShape()), //dash: [5, 2]
+                selected: {
+                  'touchMove': {1}
+                },
+              )
+            ],
+            coord: RectCoord(color: const Color(0xffdddddd)),
+            axes: [
+              Defaults.horizontalAxis,
+              Defaults.verticalAxis,
+            ],
+            // selections: {
+            //   'touchMove': PointSelection(
+            //     on: {
+            //       GestureType.scaleUpdate,
+            //       GestureType.tapDown,
+            //       GestureType.longPressMoveUpdate
+            //     },
+            //     dim: Dim.x,
+            //   )
+            // },
+            // tooltip: TooltipGuide(
+            //   followPointer: [false, true],
+            //   align: Alignment.topLeft,
+            //   offset: const Offset(-20, -20),
+            // ),
+            // crosshair: CrosshairGuide(followPointer: [false, true]),
+          )),
         ],
       ),
       floatingActionButton: ValueListenableBuilder<bool>(
@@ -190,16 +190,19 @@ class BluetoothHandling {
   ValueNotifier<List<BleDevice>> devices = ValueNotifier<List<BleDevice>>([]);
   ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
   ValueNotifier<BleDevice?> selectedDevice = ValueNotifier<BleDevice?>(null);
-  ValueNotifier<List<BleService>> services = ValueNotifier<List<BleService>>([]);
+  ValueNotifier<List<BleService>> services =
+      ValueNotifier<List<BleService>>([]);
   ValueNotifier<Uint8List?> receivedData = ValueNotifier<Uint8List?>(null);
 
   void initializeBluetooth() {
+    UniversalBle.setInstance(MockBlePlatform.instance);
+
     _updateBluetoothState();
-    
+
     if (!kIsWeb) {
       UniversalBle.enableBluetooth(); // this isn't implemented on web
     }
-    
+
     UniversalBle.onScanResult = _onScanResult;
     UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
     UniversalBle.onPairingStateChange = _onPairingStateChange;
@@ -239,8 +242,11 @@ class BluetoothHandling {
     await UniversalBle.startScan(
       platformConfig: PlatformConfig(
         web: WebOptions(optionalServices: [
-          BT_SERVICE_ID, BT_CHARACTERISTIC_ID, BT_S2, BT_S3
-          ]),
+          BT_SERVICE_ID,
+          BT_CHARACTERISTIC_ID,
+          BT_S2,
+          BT_S3
+        ]),
       ),
     );
   }
@@ -279,15 +285,19 @@ class BluetoothHandling {
   void subscribeToService(BleService service) async {
     final deviceId = selectedDevice.value?.deviceId;
     if (deviceId == null) return;
-    
+
     // TODO can only subscribe once, otherwise I get "DartError: Exception: Already listening to this characteristic"
     for (var characteristic in service.characteristics) {
       if ((characteristic.uuid == BT_CHARACTERISTIC_ID) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
-        await UniversalBle.setNotifiable(deviceId, service.uuid, characteristic.uuid, BleInputProperty.notification);
+        await UniversalBle.setNotifiable(deviceId, service.uuid,
+            characteristic.uuid, BleInputProperty.notification);
 
-        UniversalBle.onValueChange = (String deviceId, String characteristicId, Uint8List value) {
+        UniversalBle.onValueChange =
+            (String deviceId, String characteristicId, Uint8List value) {
           // debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
+          // TODO bug: if the new value is identical then there's no update
+          receivedData.value = null;
           receivedData.value = value; // Notify the UI layer of new data
         };
         return;
@@ -295,7 +305,6 @@ class BluetoothHandling {
     }
   }
 }
-
 
 class BluetoothDeviceList extends StatelessWidget {
   final BluetoothHandling bluetoothService;
@@ -306,7 +315,7 @@ class BluetoothDeviceList extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        if (bluetoothService.isScanning.value) 
+        if (bluetoothService.isScanning.value)
           const CircularProgressIndicator(),
         Expanded(
           child: ValueListenableBuilder<List<BleDevice>>(
@@ -326,7 +335,7 @@ class BluetoothDeviceList extends StatelessWidget {
             },
           ),
         ),
-        Flexible( 
+        Flexible(
           // Use Flexible instead of Expanded here to ensure layout stability
           child: ValueListenableBuilder<BleDevice?>(
             valueListenable: bluetoothService.selectedDevice,
