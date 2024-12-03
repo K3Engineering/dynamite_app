@@ -21,20 +21,14 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<AvailabilityState> getBluetoothAvailabilityState() async {
-    final completer = Completer<AvailabilityState>();
-    Timer(hwDelay, () {
-      completer.complete(AvailabilityState.poweredOn);
-    });
-    return completer.future;
+    await Future.delayed(hwDelay);
+    return AvailabilityState.poweredOn;
   }
 
   @override
   Future<bool> enableBluetooth() async {
-    final completer = Completer<bool>();
-    Timer(hwDelay, () {
-      completer.complete(true);
-    });
-    return completer.future;
+    Future.delayed(hwDelay);
+    return true;
   }
 
   static List<BleDevice> _generateDevices() {
@@ -68,15 +62,22 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
-  Future<void> startScan({ScanFilter? scanFilter, PlatformConfig? platformConfig}) async {
+  Future<void> startScan(
+      {ScanFilter? scanFilter, PlatformConfig? platformConfig}) async {
     if (_scanTimer != null) return;
 
     final rng = Random(555);
     final List<BleDevice> devices = _generateDevices();
     _scanTimer = Timer.periodic(netDelay, (Timer t) {
-      if (0 == rng.nextInt(2)) updateScanResult(devices[rng.nextInt(devices.length)]);
-      if (0 == rng.nextInt(3)) updateScanResult(devices[rng.nextInt(devices.length)]);
-      if (0 == rng.nextInt(4)) updateScanResult(devices[rng.nextInt(devices.length)]);
+      if (0 == rng.nextInt(2)) {
+        updateScanResult(devices[rng.nextInt(devices.length)]);
+      }
+      if (0 == rng.nextInt(3)) {
+        updateScanResult(devices[rng.nextInt(devices.length)]);
+      }
+      if (0 == rng.nextInt(4)) {
+        updateScanResult(devices[rng.nextInt(devices.length)]);
+      }
     });
   }
 
@@ -88,21 +89,20 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<BleConnectionState> getConnectionState(String deviceId) async {
-    return (_connectedDeviceId == deviceId) ? _connectionState : BleConnectionState.disconnected;
+    return (_connectedDeviceId == deviceId)
+        ? _connectionState
+        : BleConnectionState.disconnected;
   }
 
   @override
   Future<void> connect(String deviceId, {Duration? connectionTimeout}) async {
     if (_connectedDeviceId != null) return;
+
     _connectedDeviceId = deviceId;
     _connectionState = BleConnectionState.connecting;
-    final completer = Completer();
-    Timer(netDelay, () {
-      _connectionState = BleConnectionState.connected;
-      updateConnection(deviceId, true);
-      completer.complete();
-    });
-    return completer.future;
+    await Future.delayed(netDelay);
+    _connectionState = BleConnectionState.connected;
+    updateConnection(deviceId, true);
   }
 
   @override
@@ -115,7 +115,8 @@ class MockBlePlatform extends UniversalBlePlatform {
   static List<BleCharacteristic> _generateCharacteristics(String deviceId) {
     if (deviceId == '2') {
       return ([
-        BleCharacteristic("beb5483e-36e1-4688-b7f5-ea07361b26a8", [CharacteristicProperty.notify]),
+        BleCharacteristic("beb5483e-36e1-4688-b7f5-ea07361b26a8",
+            [CharacteristicProperty.notify]),
         BleCharacteristic('c1234567', [CharacteristicProperty.notify]),
         BleCharacteristic('a7654321', [CharacteristicProperty.read])
       ]);
@@ -135,16 +136,13 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<List<BleService>> discoverServices(String deviceId) async {
-    final completer = Completer<List<BleService>>();
-    Timer(netDelay, () {
-      completer.complete(_generateServices(deviceId));
-    });
-    return completer.future;
+    await Future.delayed(netDelay);
+    return _generateServices(deviceId);
   }
 
   @override
-  Future<void> setNotifiable(
-      String deviceId, String service, String characteristic, BleInputProperty bleInputProperty) async {
+  Future<void> setNotifiable(String deviceId, String service,
+      String characteristic, BleInputProperty bleInputProperty) async {
     _notificationTimer?.cancel();
     _notificationTimer = null;
     if (BleInputProperty.notification == bleInputProperty) {
@@ -162,11 +160,16 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic, {
     final Duration? timeout,
   }) async {
+    await Future.delayed(netDelay);
     return Uint8List(0);
   }
 
   @override
-  Future<void> writeValue(String deviceId, String service, String characteristic, Uint8List value,
+  Future<void> writeValue(
+      String deviceId,
+      String service,
+      String characteristic,
+      Uint8List value,
       BleOutputProperty bleOutputProperty) async {}
 
   @override
@@ -181,11 +184,14 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<bool> pair(String deviceId) async {
+    updatePairingState(deviceId, true);
     return true;
   }
 
   @override
-  Future<void> unpair(String deviceId) async {}
+  Future<void> unpair(String deviceId) async {
+    updatePairingState(deviceId, false);
+  }
 
   @override
   Future<List<BleDevice>> getSystemDevices(
