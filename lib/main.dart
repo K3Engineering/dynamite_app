@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:universal_ble/universal_ble.dart';
 import 'dart:typed_data';
-import 'package:convert/convert.dart';
+//import 'package:convert/convert.dart';
 import 'package:graphic/graphic.dart';
 import 'mockble.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -290,9 +290,6 @@ class BluetoothHandling {
     for (var characteristic in service.characteristics) {
       if ((characteristic.uuid == BT_CHARACTERISTIC_ID) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
-        await UniversalBle.setNotifiable(deviceId, service.uuid,
-            characteristic.uuid, BleInputProperty.notification);
-
         UniversalBle.onValueChange =
             (String deviceId, String characteristicId, Uint8List value) {
           // debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
@@ -300,6 +297,10 @@ class BluetoothHandling {
           receivedData.value = null;
           receivedData.value = value; // Notify the UI layer of new data
         };
+
+        await UniversalBle.setNotifiable(deviceId, service.uuid,
+            characteristic.uuid, BleInputProperty.notification);
+
         return;
       }
     }
