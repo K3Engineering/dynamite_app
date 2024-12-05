@@ -4,7 +4,7 @@ import 'dart:typed_data';
 //import 'package:convert/convert.dart';
 import 'package:graphic/graphic.dart';
 import 'mockble.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
 
 // const BT_DEVICE_UUID = "E4:B0:63:81:5B:19";
 const BT_GATT_ID = "a659ee73-460b-45d5-8e63-ab6bf0825942";
@@ -185,13 +185,36 @@ class _MyHomePageState extends State<MyHomePage> {
 //   }
 // }
 
+class ListNotifier<T> extends ChangeNotifier
+    implements ValueListenable<List<T>> {
+  ListNotifier() : _value = [];
+  final List<T> _value;
+  @override
+  List<T> get value => List.unmodifiable(_value);
+
+  void assign(Iterable<T> it) {
+    _value.clear();
+    _value.addAll(it);
+    notifyListeners();
+  }
+
+  void append(T item) {
+    _value.add(item);
+    notifyListeners();
+  }
+
+  void clear() {
+    _value.clear();
+    notifyListeners();
+  }
+}
+
 class BluetoothHandling {
   AvailabilityState bluetoothState = AvailabilityState.unknown;
-  ValueNotifier<List<BleDevice>> devices = ValueNotifier<List<BleDevice>>([]);
+  ListNotifier<BleDevice> devices = ListNotifier<BleDevice>();
   ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
   ValueNotifier<BleDevice?> selectedDevice = ValueNotifier<BleDevice?>(null);
-  ValueNotifier<List<BleService>> services =
-      ValueNotifier<List<BleService>>([]);
+  ListNotifier<BleService> services = ListNotifier<BleService>();
   ValueNotifier<Uint8List?> receivedData = ValueNotifier<Uint8List?>(null);
 
   void initializeBluetooth() {
@@ -220,7 +243,7 @@ class BluetoothHandling {
         }
       }
     }
-    devices.value = [...devices.value, device];
+    devices.append(device);
   }
 
   void _onBluetoothAvailabilityChanged(AvailabilityState state) {
@@ -236,8 +259,8 @@ class BluetoothHandling {
     if (bluetoothState != AvailabilityState.poweredOn) {
       return;
     }
-    devices.value.clear();
-    services.value.clear();
+    devices.clear();
+    services.clear();
     isScanning.value = true;
     await UniversalBle.startScan(
       platformConfig: PlatformConfig(
@@ -270,7 +293,7 @@ class BluetoothHandling {
     }
     try {
       await UniversalBle.connect(device.deviceId);
-      services.value = await UniversalBle.discoverServices(device.deviceId);
+      services.assign(await UniversalBle.discoverServices(device.deviceId));
       selectedDevice.value = device;
     } catch (e) {
       // Error handling can be implemented here
