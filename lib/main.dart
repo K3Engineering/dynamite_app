@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:universal_ble/universal_ble.dart';
 import 'dart:typed_data';
 //import 'package:convert/convert.dart';
-import 'package:graphic/graphic.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'mockble.dart';
 import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
 
@@ -44,8 +44,7 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
-  List<Map<String, int>> adcReadings = [];
-  int adcReadingX = 0;
+  List<FlSpot> adcReadings = [FlSpot(0, 0)];
 
   @override
   void initState() {
@@ -68,22 +67,21 @@ class _MyHomePageState extends State<MyHomePage> {
     for (int i = 0; i < value.length; i += 3) {
       if (i + 2 < value.length) {
         int intValue = (value[i + 2] << 16) | (value[i + 1] << 8) | value[i];
-        intValue = intValue.toSigned(24);
-
-        intValues.add(intValue);
+        intValues.add(intValue.toSigned(24));
       }
     }
 
     // Update adcReadings and refresh the chart
     setState(() {
+      int start = adcReadings.length;
       for (int i = 0; i < intValues.length; i++) {
-        adcReadings.add({'x': adcReadingX, 'y': intValues[i]});
-        adcReadingX += 1;
+        adcReadings
+            .add(FlSpot((start + i).toDouble(), intValues[i].toDouble()));
       }
 
       // Optional: Limit the number of points on the chart
-      if (adcReadings.length > 5000) {
-        adcReadings.removeRange(0, 200);
+      if (adcReadings.length > 100) {
+        adcReadings.removeRange(0, 20);
       }
     });
   }
@@ -114,46 +112,13 @@ class _MyHomePageState extends State<MyHomePage> {
           Expanded(
               child: BluetoothDeviceList(bluetoothService: _bluetoothHandler)),
           Expanded(
-              child: Chart(
-            data: adcReadings,
-            variables: {
-              'X': Variable(
-                accessor: (Map map) => map['x'] as int,
-                scale: LinearScale(tickCount: 5),
-              ),
-              'Y': Variable(
-                accessor: (Map map) => (map['y'] ?? double.nan) as int,
-              ),
-            },
-            marks: [
-              LineMark(
-                shape: ShapeEncode(value: BasicLineShape()), //dash: [5, 2]
-                selected: {
-                  'touchMove': {1}
-                },
-              )
-            ],
-            coord: RectCoord(color: const Color(0xffdddddd)),
-            axes: [
-              Defaults.horizontalAxis,
-              Defaults.verticalAxis,
-            ],
-            // selections: {
-            //   'touchMove': PointSelection(
-            //     on: {
-            //       GestureType.scaleUpdate,
-            //       GestureType.tapDown,
-            //       GestureType.longPressMoveUpdate
-            //     },
-            //     dim: Dim.x,
-            //   )
-            // },
-            // tooltip: TooltipGuide(
-            //   followPointer: [false, true],
-            //   align: Alignment.topLeft,
-            //   offset: const Offset(-20, -20),
-            // ),
-            // crosshair: CrosshairGuide(followPointer: [false, true]),
+              child: LineChart(
+            LineChartData(
+              lineBarsData: ([LineChartBarData(spots: adcReadings)]),
+              //minX: 0,
+              minY: 0,
+            ),
+            //duration: const Duration(milliseconds: 1000),
           )),
         ],
       ),
