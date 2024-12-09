@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:universal_ble/universal_ble.dart';
 import 'dart:typed_data';
 //import 'package:convert/convert.dart';
-import 'package:graphic/graphic.dart';
+import 'package:fl_chart/fl_chart.dart';
 import 'mockble.dart';
 import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
 
@@ -44,8 +44,8 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
-  List<Map<String, int>> adcReadings = [];
-  int adcReadingX = 0;
+  final List<int> deviceData = [];
+  final List<FlSpot> chartData = [FlSpot(0, 0)];
 
   @override
   void initState() {
@@ -55,35 +55,30 @@ class _MyHomePageState extends State<MyHomePage> {
 
     // Listen to receivedData changes
     _bluetoothHandler.receivedData.addListener(() {
-      final value = _bluetoothHandler.receivedData.value;
-      if (value != null) {
-        processReceivedData(value);
-      }
+      processReceivedData(_bluetoothHandler.receivedData.value);
     });
   }
 
-  void processReceivedData(Uint8List value) {
+  void processReceivedData(Uint8List? value) {
+    if ((value == null) || value.isEmpty || (value.length % 3 != 0)) {
+      return;
+    }
     // Decode 24-bit values into integers
-    List<int> intValues = [];
     for (int i = 0; i < value.length; i += 3) {
       if (i + 2 < value.length) {
         int intValue = (value[i + 2] << 16) | (value[i + 1] << 8) | value[i];
-        intValue = intValue.toSigned(24);
-
-        intValues.add(intValue);
+        deviceData.add(intValue.toSigned(24));
       }
     }
 
     // Update adcReadings and refresh the chart
     setState(() {
-      for (int i = 0; i < intValues.length; i++) {
-        adcReadings.add({'x': adcReadingX, 'y': intValues[i]});
-        adcReadingX += 1;
-      }
-
-      // Optional: Limit the number of points on the chart
-      if (adcReadings.length > 5000) {
-        adcReadings.removeRange(0, 200);
+      chartData.clear();
+      const int window = 64;
+      int start =
+          (deviceData.length <= window) ? 0 : deviceData.length - window;
+      for (int i = start; i < deviceData.length; i++) {
+        chartData.add(FlSpot((i).toDouble(), deviceData[i].toDouble()));
       }
     });
   }
@@ -114,46 +109,13 @@ class _MyHomePageState extends State<MyHomePage> {
           Expanded(
               child: BluetoothDeviceList(bluetoothService: _bluetoothHandler)),
           Expanded(
-              child: Chart(
-            data: adcReadings,
-            variables: {
-              'X': Variable(
-                accessor: (Map map) => map['x'] as int,
-                scale: LinearScale(tickCount: 5),
-              ),
-              'Y': Variable(
-                accessor: (Map map) => (map['y'] ?? double.nan) as int,
-              ),
-            },
-            marks: [
-              LineMark(
-                shape: ShapeEncode(value: BasicLineShape()), //dash: [5, 2]
-                selected: {
-                  'touchMove': {1}
-                },
-              )
-            ],
-            coord: RectCoord(color: const Color(0xffdddddd)),
-            axes: [
-              Defaults.horizontalAxis,
-              Defaults.verticalAxis,
-            ],
-            // selections: {
-            //   'touchMove': PointSelection(
-            //     on: {
-            //       GestureType.scaleUpdate,
-            //       GestureType.tapDown,
-            //       GestureType.longPressMoveUpdate
-            //     },
-            //     dim: Dim.x,
-            //   )
-            // },
-            // tooltip: TooltipGuide(
-            //   followPointer: [false, true],
-            //   align: Alignment.topLeft,
-            //   offset: const Offset(-20, -20),
-            // ),
-            // crosshair: CrosshairGuide(followPointer: [false, true]),
+              child: LineChart(
+            LineChartData(
+              lineBarsData: ([LineChartBarData(spots: chartData)]),
+              //minX: 0,
+              minY: 0,
+            ),
+            //duration: const Duration(milliseconds: 1000),
           )),
         ],
       ),
