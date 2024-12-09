@@ -44,7 +44,8 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
-  List<FlSpot> adcReadings = [FlSpot(0, 0)];
+  final List<int> deviceData = [];
+  final List<FlSpot> chartData = [FlSpot(0, 0)];
 
   @override
   void initState() {
@@ -54,34 +55,30 @@ class _MyHomePageState extends State<MyHomePage> {
 
     // Listen to receivedData changes
     _bluetoothHandler.receivedData.addListener(() {
-      final value = _bluetoothHandler.receivedData.value;
-      if (value != null) {
-        processReceivedData(value);
-      }
+      processReceivedData(_bluetoothHandler.receivedData.value);
     });
   }
 
-  void processReceivedData(Uint8List value) {
+  void processReceivedData(Uint8List? value) {
+    if ((value == null) || value.isEmpty || (value.length % 3 != 0)) {
+      return;
+    }
     // Decode 24-bit values into integers
-    List<int> intValues = [];
     for (int i = 0; i < value.length; i += 3) {
       if (i + 2 < value.length) {
         int intValue = (value[i + 2] << 16) | (value[i + 1] << 8) | value[i];
-        intValues.add(intValue.toSigned(24));
+        deviceData.add(intValue.toSigned(24));
       }
     }
 
     // Update adcReadings and refresh the chart
     setState(() {
-      int start = adcReadings.length;
-      for (int i = 0; i < intValues.length; i++) {
-        adcReadings
-            .add(FlSpot((start + i).toDouble(), intValues[i].toDouble()));
-      }
-
-      // Optional: Limit the number of points on the chart
-      if (adcReadings.length > 100) {
-        adcReadings.removeRange(0, 20);
+      chartData.clear();
+      const int window = 64;
+      int start =
+          (deviceData.length <= window) ? 0 : deviceData.length - window;
+      for (int i = start; i < deviceData.length; i++) {
+        chartData.add(FlSpot((i).toDouble(), deviceData[i].toDouble()));
       }
     });
   }
@@ -114,7 +111,7 @@ class _MyHomePageState extends State<MyHomePage> {
           Expanded(
               child: LineChart(
             LineChartData(
-              lineBarsData: ([LineChartBarData(spots: adcReadings)]),
+              lineBarsData: ([LineChartBarData(spots: chartData)]),
               //minX: 0,
               minY: 0,
             ),
