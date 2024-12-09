@@ -65,10 +65,8 @@ class _MyHomePageState extends State<MyHomePage> {
     }
     // Decode 24-bit values into integers
     for (int i = 0; i < value.length; i += 3) {
-      if (i + 2 < value.length) {
-        int intValue = (value[i + 2] << 16) | (value[i + 1] << 8) | value[i];
-        deviceData.add(intValue.toSigned(24));
-      }
+      int intValue = (value[i + 2] << 16) | (value[i + 1] << 8) | value[i];
+      deviceData.add(intValue.toSigned(24));
     }
 
     // Update adcReadings and refresh the chart
@@ -78,7 +76,7 @@ class _MyHomePageState extends State<MyHomePage> {
       int start =
           (deviceData.length <= window) ? 0 : deviceData.length - window;
       for (int i = start; i < deviceData.length; i++) {
-        chartData.add(FlSpot((i).toDouble(), deviceData[i].toDouble()));
+        chartData.add(FlSpot(i.toDouble(), deviceData[i].toDouble()));
       }
     });
   }
@@ -112,10 +110,15 @@ class _MyHomePageState extends State<MyHomePage> {
               child: LineChart(
             LineChartData(
               lineBarsData: ([LineChartBarData(spots: chartData)]),
+              titlesData: FlTitlesData(
+                  topTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false)),
+                  rightTitles: const AxisTitles(
+                      sideTitles: SideTitles(showTitles: false))),
               //minX: 0,
               minY: 0,
             ),
-            //duration: const Duration(milliseconds: 1000),
+            duration: const Duration(milliseconds: 200),
           )),
         ],
       ),
