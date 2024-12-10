@@ -107,19 +107,23 @@ class _MyHomePageState extends State<MyHomePage> {
           Expanded(
               child: BluetoothDeviceList(bluetoothService: _bluetoothHandler)),
           Expanded(
-              child: LineChart(
-            LineChartData(
-              lineBarsData: ([LineChartBarData(spots: chartData)]),
-              titlesData: FlTitlesData(
-                  topTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false)),
-                  rightTitles: const AxisTitles(
-                      sideTitles: SideTitles(showTitles: false))),
-              //minX: 0,
-              minY: 0,
-            ),
-            duration: const Duration(milliseconds: 200),
-          )),
+              child: FractionallySizedBox(
+                  widthFactor: 0.98,
+                  heightFactor: 0.97,
+                  alignment: Alignment.bottomLeft,
+                  child: LineChart(
+                    LineChartData(
+                      lineBarsData: ([LineChartBarData(spots: chartData)]),
+                      titlesData: FlTitlesData(
+                          topTitles: const AxisTitles(
+                              sideTitles: SideTitles(showTitles: false)),
+                          rightTitles: const AxisTitles(
+                              sideTitles: SideTitles(showTitles: false))),
+                      //minX: 0,
+                      minY: 0,
+                    ),
+                    duration: const Duration(milliseconds: 200),
+                  ))),
         ],
       ),
       floatingActionButton: ValueListenableBuilder<bool>(
