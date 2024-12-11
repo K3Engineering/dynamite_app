@@ -44,8 +44,13 @@ class MyHomePage extends StatefulWidget {
 
 class _MyHomePageState extends State<MyHomePage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
-  final List<int> deviceData = [];
-  final List<FlSpot> chartData = [FlSpot(0, 0)];
+
+  final List<List<int>> decodedChannels = [];
+  final List<int> decodedStatus = [];
+  final List<int> decodedCRC = [];
+
+  final List<FlSpot> chartData_ch1 = [FlSpot(0, 0)];
+  final List<FlSpot> chartData_ch2 = [FlSpot(0, 0)];
 
   @override
   void initState() {
@@ -60,25 +65,49 @@ class _MyHomePageState extends State<MyHomePage> {
   }
 
   void processReceivedData(Uint8List? value) {
-    if ((value == null) || value.isEmpty || (value.length % 3 != 0)) {
+    if (value == null || value.isEmpty || value.length % 15 != 0) {
       return;
     }
-    // Decode 24-bit values into integers
-    for (int i = 0; i < value.length; i += 3) {
-      if (i + 2 < value.length) {
-        int intValue = (value[i + 2] << 16) | (value[i + 1] << 8) | value[i];
-        deviceData.add(intValue.toSigned(24));
+
+    for (int packetStart = 0; packetStart < value.length; packetStart += 15) {
+      if (packetStart + 14 < value.length) {
+        // Extract status (2 bytes)
+        int status = (value[packetStart + 1] << 8) | value[packetStart];
+
+        // Extract 4 channels (each 3 bytes)
+        List<int> channels = [];
+        for (int channel = 0; channel < 4; channel++) {
+          int baseIndex = packetStart + 2 + channel * 3;
+          int intValue = (value[baseIndex + 2] << 16) |
+              (value[baseIndex + 1] << 8) |
+              value[baseIndex];
+          channels
+              .add(intValue.toSigned(24)); // Convert to signed 24-bit integer
+        }
+
+        // Extract CRC (1 byte)
+        int crc = value[packetStart + 14];
+
+        // Append the decoded packet as an array
+        decodedChannels.add(channels);
+        decodedStatus.add(status);
+        decodedCRC.add(crc);
       }
     }
 
     // Update adcReadings and refresh the chart
     setState(() {
-      chartData.clear();
-      const int window = 64;
-      int start =
-          (deviceData.length <= window) ? 0 : deviceData.length - window;
-      for (int i = start; i < deviceData.length; i++) {
-        chartData.add(FlSpot((i).toDouble(), deviceData[i].toDouble()));
+      chartData_ch1.clear();
+      chartData_ch2.clear();
+      const int window = 6400;
+      int start = (decodedChannels.length <= window)
+          ? 0
+          : decodedChannels.length - window;
+      for (int i = start; i < decodedChannels.length; i++) {
+        chartData_ch1
+            .add(FlSpot((i).toDouble(), decodedChannels[i][2].toDouble()));
+        chartData_ch2
+            .add(FlSpot((i).toDouble(), decodedChannels[i][1].toDouble()));
       }
     });
   }
@@ -111,9 +140,20 @@ class _MyHomePageState extends State<MyHomePage> {
           Expanded(
               child: LineChart(
             LineChartData(
-              lineBarsData: ([LineChartBarData(spots: chartData)]),
-              //minX: 0,
-              minY: 0,
+              lineBarsData: ([
+                LineChartBarData(
+                    spots: chartData_ch1,
+                    dotData: FlDotData(
+                      show: false,
+                    )),
+                LineChartBarData(
+                    spots: chartData_ch2,
+                    dotData: FlDotData(
+                      show: false,
+                    ))
+              ]),
+              minY:
+                  0, // TODO make this into min(data, 0), as negative values go outside the chart
             ),
             //duration: const Duration(milliseconds: 1000),
           )),
