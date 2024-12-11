@@ -49,8 +49,8 @@ class _MyHomePageState extends State<MyHomePage> {
   final List<int> decodedStatus = [];
   final List<int> decodedCRC = [];
 
-  final List<FlSpot> chartDataCh1 = [FlSpot(0, 0)];
-  final List<FlSpot> chartDataCh2 = [FlSpot(0, 0)];
+  List<FlSpot> chartDataCh1 = [FlSpot(0, 0)];
+  List<FlSpot> chartDataCh2 = [FlSpot(0, 0)];
 
   @override
   void initState() {
@@ -64,52 +64,59 @@ class _MyHomePageState extends State<MyHomePage> {
     });
   }
 
-  void processReceivedData(Uint8List? value) {
-    if (value == null || value.isEmpty || value.length % 15 != 0) {
+  void processReceivedData(Uint8List? receivedData) {
+    if (receivedData != null) {
+      _parseDataPackets(receivedData);
+      setState(() {
+        _updateChartData();
+      });
+    }
+  }
+
+  void _parseDataPackets(Uint8List data) {
+    if (data.isEmpty || data.length % 15 != 0) {
       debugPrint('Incorrect buffer size received');
-      return;
     }
 
-    for (int packetStart = 0; packetStart < value.length; packetStart += 15) {
-      assert(packetStart + 14 < value.length);
+    for (int packetStart = 0; packetStart < data.length; packetStart += 15) {
+      assert(packetStart + 14 < data.length);
+      final status = (data[packetStart + 1] << 8) | data[packetStart];
+      final channels = List.generate(4, (i) {
+        int baseIndex = packetStart + 2 + i * 3;
+        return ((data[baseIndex + 2] << 16) |
+                (data[baseIndex + 1] << 8) |
+                data[baseIndex])
+            .toSigned(24);
+      });
+      final crc = data[packetStart + 14];
 
-      // Extract status (2 bytes)
-      int status = (value[packetStart + 1] << 8) | value[packetStart];
-
-      // Extract 4 channels (each 3 bytes)
-      List<int> channels = [];
-      for (int channel = 0; channel < 4; channel++) {
-        int baseIndex = packetStart + 2 + channel * 3;
-        int intValue = (value[baseIndex + 2] << 16) |
-            (value[baseIndex + 1] << 8) |
-            value[baseIndex];
-        channels.add(intValue.toSigned(24)); // Convert to signed 24-bit integer
-      }
-
-      // Extract CRC (1 byte)
-      int crc = value[packetStart + 14];
-
-      // Append the decoded packet as an array
       decodedChannels.add(channels);
       decodedStatus.add(status);
       decodedCRC.add(crc);
     }
+  }
 
-    // Update adcReadings and refresh the chart
-    setState(() {
-      chartDataCh1.clear();
-      chartDataCh2.clear();
-      const int window = 6400;
-      int start = (decodedChannels.length <= window)
-          ? 0
-          : decodedChannels.length - window;
-      for (int i = start; i < decodedChannels.length; i++) {
-        chartDataCh1
-            .add(FlSpot((i).toDouble(), decodedChannels[i][2].toDouble()));
-        chartDataCh2
-            .add(FlSpot((i).toDouble(), decodedChannels[i][1].toDouble()));
-      }
-    });
+  void _updateChartData() {
+    const int window = 6400;
+    final int start = (decodedChannels.length <= window)
+        ? 0
+        : decodedChannels.length - window;
+
+    chartDataCh1 = List.generate(
+      decodedChannels.length - start,
+      (i) => FlSpot(
+        (i + start).toDouble(),
+        decodedChannels[i + start][2].toDouble(),
+      ),
+    );
+
+    chartDataCh2 = List.generate(
+      decodedChannels.length - start,
+      (i) => FlSpot(
+        (i + start).toDouble(),
+        decodedChannels[i + start][1].toDouble(),
+      ),
+    );
   }
 
   @override
