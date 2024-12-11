@@ -66,6 +66,7 @@ class _MyHomePageState extends State<MyHomePage> {
 
   void processReceivedData(Uint8List? value) {
     if (value == null || value.isEmpty || value.length % 15 != 0) {
+      debugPrint('Incorrect buffer size received');
       return;
     }
 
