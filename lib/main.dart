@@ -62,6 +62,9 @@ class MenuPage extends StatelessWidget {
       child: SizedBox(
         width: double.infinity,
         child: FilledButton.tonal(
+          style: FilledButton.styleFrom(
+              side: BorderSide(
+                  width: 2, color: Theme.of(context).colorScheme.outline)),
           onPressed: () => Navigator.push(
               context, MaterialPageRoute(builder: (context) => page)),
           child: Padding(
