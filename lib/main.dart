@@ -88,7 +88,7 @@ class AboutPage extends StatelessWidget {
         child: Padding(
           padding: EdgeInsets.all(16.0),
           child: Text(
-            'Dynomite App.\n\nVersion: 1.0.0',
+            'Dynamite App.\n\nVersion: 1.0.0',
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 16),
           ),
