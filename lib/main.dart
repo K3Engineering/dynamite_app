@@ -291,7 +291,7 @@ class BluetoothHandling {
   ValueNotifier<Uint8List?> receivedData = ValueNotifier<Uint8List?>(null);
 
   void initializeBluetooth() {
-    //  UniversalBle.setInstance(MockBlePlatform.instance);
+    UniversalBle.setInstance(MockBlePlatform.instance);
 
     _updateBluetoothState();
 
