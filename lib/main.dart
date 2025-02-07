@@ -14,11 +14,11 @@ const BT_S2 = "00001800-0000-1000-8000-00805f9b34fb";
 const BT_S3 = "00001801-0000-1000-8000-00805f9b34fb";
 
 void main() {
-  runApp(const MyApp());
+  runApp(const DynoApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class DynoApp extends StatelessWidget {
+  const DynoApp({super.key});
 
   // This widget is the root of your application.
   @override
@@ -29,20 +29,84 @@ class MyApp extends StatelessWidget {
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
+      home: const MenuPage(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+class MenuPage extends StatelessWidget {
+  const MenuPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Main Menu'),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            _buildMenuButton(
+                context, 'Graph', const GraphPage(title: 'Graph Page')),
+            _buildMenuButton(context, 'About', const AboutPage()),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuButton(BuildContext context, String text, Widget page) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: SizedBox(
+        width: double.infinity,
+        child: FilledButton.tonal(
+          style: FilledButton.styleFrom(
+              side: BorderSide(
+                  width: 2, color: Theme.of(context).colorScheme.outline)),
+          onPressed: () => Navigator.push(
+              context, MaterialPageRoute(builder: (context) => page)),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Text(text),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class AboutPage extends StatelessWidget {
+  const AboutPage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('About')),
+      body: const Center(
+        child: Padding(
+          padding: EdgeInsets.all(16.0),
+          child: Text(
+            'Dynamite App.\n\nVersion: 1.0.0',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 16),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class GraphPage extends StatefulWidget {
+  const GraphPage({super.key, required this.title});
   final String title;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<GraphPage> createState() => _GraphPageState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
+class _GraphPageState extends State<GraphPage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
 
   final List<List<int>> decodedChannels = [];
