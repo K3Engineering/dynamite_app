@@ -210,6 +210,12 @@ class MockBlePlatform extends UniversalBlePlatform {
     return ([]);
   }
 
+  @override
+  Future<bool> disableBluetooth() async {
+    // TODO: implement disableBluetooth
+    return false;
+  }
+
   void _setupListeners() {
     //onValueChange = (String deviceId, String characteristicId, Uint8List value) {};
   }
