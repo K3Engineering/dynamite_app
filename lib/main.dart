@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:fl_chart/fl_chart.dart';
 import 'mockble.dart';
 import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // const BT_DEVICE_UUID = "E4:B0:63:81:5B:19";
 const BT_GATT_ID = "a659ee73-460b-45d5-8e63-ab6bf0825942";
@@ -14,7 +16,12 @@ const BT_S2 = "00001800-0000-1000-8000-00805f9b34fb";
 const BT_S3 = "00001801-0000-1000-8000-00805f9b34fb";
 
 void main() {
-  runApp(const DynoApp());
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => UserProvider(),
+      child: DynoApp(),
+    ),
+  );
 }
 
 class DynoApp extends StatelessWidget {
@@ -24,13 +31,51 @@ class DynoApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Bluetooth Demo',
+      title: 'Dynamite',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
         useMaterial3: true,
       ),
       home: const MenuPage(),
     );
+  }
+}
+
+class UserProvider with ChangeNotifier {
+  List<Map<String, dynamic>> _userList = [];
+  Map<String, dynamic>? _selectedUser;
+
+  List<Map<String, dynamic>> get userList => _userList;
+  Map<String, dynamic>? get selectedUser => _selectedUser;
+
+  UserProvider() {
+    _loadUserList();
+  }
+
+  Future<void> storeUserData(String name, int age) async {
+    final prefs = await SharedPreferences.getInstance();
+    final newUser = {'name': name, 'age': age};
+
+    _userList.add(newUser);
+    await prefs.setStringList('userList',
+        _userList.map((user) => '${user['name']}:${user['age']}').toList());
+    notifyListeners();
+  }
+
+  Future<void> _loadUserList() async {
+    final prefs = await SharedPreferences.getInstance();
+    final storedUserList = prefs.getStringList('userList') ?? [];
+
+    _userList = storedUserList.map((userString) {
+      final parts = userString.split(':');
+      return {'name': parts[0], 'age': int.parse(parts[1])};
+    }).toList();
+    notifyListeners();
+  }
+
+  void selectUser(Map<String, dynamic>? user) {
+    _selectedUser = user;
+    notifyListeners();
   }
 }
 
@@ -47,6 +92,7 @@ class MenuPage extends StatelessWidget {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            _buildMenuButton(context, 'User', UserPage()),
             _buildMenuButton(context, 'Graph', const GraphPage()),
             _buildMenuButton(context, 'About', const AboutPage()),
           ],
@@ -91,6 +137,75 @@ class AboutPage extends StatelessWidget {
             textAlign: TextAlign.center,
             style: TextStyle(fontSize: 16),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class UserPage extends StatelessWidget {
+  UserPage({super.key});
+
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _ageController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    final userProvider = Provider.of<UserProvider>(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Store and Retrieve User Data'),
+      ),
+      body: Padding(
+        padding: EdgeInsets.all(16.0),
+        child: Column(
+          children: <Widget>[
+            TextField(
+              controller: _nameController,
+              decoration: InputDecoration(labelText: 'Enter your name'),
+            ),
+            TextField(
+              controller: _ageController,
+              decoration: InputDecoration(labelText: 'Enter your age'),
+              keyboardType: TextInputType.number,
+            ),
+            SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () {
+                final name = _nameController.text;
+                final age = int.parse(_ageController.text);
+                userProvider.storeUserData(name, age);
+              },
+              child: Text('Store User Data'),
+            ),
+            SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () {
+                //Navigator.pushNamed(context, DetailsScreen.routeName);
+              },
+              child: Text('View Stored Data'),
+            ),
+            SizedBox(height: 60),
+            DropdownButton<Map<String, dynamic>>(
+              hint: Text('Select a user'),
+              value: userProvider.selectedUser,
+              onChanged: (newValue) {
+                userProvider.selectUser(newValue);
+              },
+              items: userProvider.userList.map((user) {
+                return DropdownMenuItem<Map<String, dynamic>>(
+                  value: user,
+                  child: Text('${user['name']} (${user['age']})'),
+                );
+              }).toList(),
+            ),
+            SizedBox(height: 20),
+            Text(
+              'Selected User: ${userProvider.selectedUser != null ? '${userProvider.selectedUser!['name']} (${userProvider.selectedUser!['age']})' : 'None'}',
+              style: TextStyle(fontSize: 18),
+            ),
+          ],
         ),
       ),
     );
@@ -509,20 +624,20 @@ class BluetoothIndicator extends StatelessWidget {
         // Determine icon based on Bluetooth and scanning states
         if (isScanning) {
           iconData = Icons.bluetooth_searching;
-          color = Colors.blueAccent;
+          color = Colors.lightBlue;
         } else {
           switch (bluetoothService.bluetoothState) {
             case AvailabilityState.poweredOn:
               iconData = Icons.bluetooth;
-              color = Colors.blue;
+              color = Colors.blueAccent;
               break;
             case AvailabilityState.poweredOff:
               iconData = Icons.bluetooth_disabled;
-              color = Colors.red;
+              color = Colors.blueGrey;
               break;
             case AvailabilityState.unknown:
               iconData = Icons.question_mark;
-              color = Colors.red;
+              color = Colors.yellow;
               break;
             case AvailabilityState.resetting:
               iconData = Icons.question_mark;
@@ -534,7 +649,7 @@ class BluetoothIndicator extends StatelessWidget {
               break;
             case AvailabilityState.unauthorized:
               iconData = Icons.stop;
-              color = Colors.blue;
+              color = Colors.orange;
               break;
             default:
               iconData = Icons.question_mark;
