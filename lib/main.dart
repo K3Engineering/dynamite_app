@@ -47,8 +47,7 @@ class MenuPage extends StatelessWidget {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            _buildMenuButton(
-                context, 'Graph', const GraphPage(title: 'Graph Page')),
+            _buildMenuButton(context, 'Graph', const GraphPage()),
             _buildMenuButton(context, 'About', const AboutPage()),
           ],
         ),
@@ -99,8 +98,8 @@ class AboutPage extends StatelessWidget {
 }
 
 class GraphPage extends StatefulWidget {
-  const GraphPage({super.key, required this.title});
-  final String title;
+  const GraphPage({super.key});
+  final String title = 'Graph';
 
   @override
   State<GraphPage> createState() => _GraphPageState();
