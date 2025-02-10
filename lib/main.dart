@@ -41,12 +41,29 @@ class DynoApp extends StatelessWidget {
   }
 }
 
-class UserProvider with ChangeNotifier {
-  List<Map<String, dynamic>> _userList = [];
-  Map<String, dynamic>? _selectedUser;
+class DynoUser {
+  final String name;
+  final int age;
 
-  List<Map<String, dynamic>> get userList => _userList;
-  Map<String, dynamic>? get selectedUser => _selectedUser;
+  DynoUser({required this.name, required this.age});
+
+  @override
+  String toString() {
+    return '$name:$age';
+  }
+
+  static DynoUser fromString(String userString) {
+    final parts = userString.split(':');
+    return DynoUser(name: parts[0], age: int.parse(parts[1]));
+  }
+}
+
+class UserProvider with ChangeNotifier {
+  List<DynoUser> _userList = [];
+  String? _selectedUserName;
+
+  List<DynoUser> get userList => _userList;
+  String? get selectedUserName => _selectedUserName;
 
   UserProvider() {
     _loadUserList();
@@ -54,11 +71,11 @@ class UserProvider with ChangeNotifier {
 
   Future<void> storeUserData(String name, int age) async {
     final prefs = await SharedPreferences.getInstance();
-    final newUser = {'name': name, 'age': age};
+    final newUser = DynoUser(name: name, age: age);
 
     _userList.add(newUser);
-    await prefs.setStringList('userList',
-        _userList.map((user) => '${user['name']}:${user['age']}').toList());
+    await prefs.setStringList(
+        'userList', _userList.map((user) => user.toString()).toList());
     notifyListeners();
   }
 
@@ -66,15 +83,14 @@ class UserProvider with ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final storedUserList = prefs.getStringList('userList') ?? [];
 
-    _userList = storedUserList.map((userString) {
-      final parts = userString.split(':');
-      return {'name': parts[0], 'age': int.parse(parts[1])};
-    }).toList();
+    _userList = storedUserList
+        .map((userString) => DynoUser.fromString(userString))
+        .toList();
     notifyListeners();
   }
 
-  void selectUser(Map<String, dynamic>? user) {
-    _selectedUser = user;
+  void selectUser(String? userName) {
+    _selectedUserName = userName;
     notifyListeners();
   }
 }
@@ -84,9 +100,15 @@ class MenuPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final userProvider = Provider.of<UserProvider>(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Main Menu'),
+        title: Text(
+          'User: ${userProvider.selectedUserName ?? 'None'}',
+          style: TextStyle(fontSize: 18),
+        ),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -128,7 +150,10 @@ class AboutPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('About')),
+      appBar: AppBar(
+        title: const Text('About'),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+      ),
       body: const Center(
         child: Padding(
           padding: EdgeInsets.all(16.0),
@@ -155,7 +180,11 @@ class UserPage extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Store and Retrieve User Data'),
+        title: Text(
+          'User: ${userProvider.selectedUserName ?? 'None'}',
+          style: TextStyle(fontSize: 18),
+        ),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Padding(
         padding: EdgeInsets.all(16.0),
@@ -179,30 +208,23 @@ class UserPage extends StatelessWidget {
               },
               child: Text('Store User Data'),
             ),
-            SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: () {
-                //Navigator.pushNamed(context, DetailsScreen.routeName);
-              },
-              child: Text('View Stored Data'),
-            ),
             SizedBox(height: 60),
-            DropdownButton<Map<String, dynamic>>(
+            DropdownButton<String>(
               hint: Text('Select a user'),
-              value: userProvider.selectedUser,
+              value: userProvider.selectedUserName,
               onChanged: (newValue) {
                 userProvider.selectUser(newValue);
               },
               items: userProvider.userList.map((user) {
-                return DropdownMenuItem<Map<String, dynamic>>(
-                  value: user,
-                  child: Text('${user['name']} (${user['age']})'),
+                return DropdownMenuItem<String>(
+                  value: user.name,
+                  child: Text(user.name),
                 );
               }).toList(),
             ),
             SizedBox(height: 20),
             Text(
-              'Selected User: ${userProvider.selectedUser != null ? '${userProvider.selectedUser!['name']} (${userProvider.selectedUser!['age']})' : 'None'}',
+              'Selected User: ${userProvider.userList.firstWhere((element) => element.name == userProvider.selectedUserName, orElse: () => DynoUser(name: 'None', age: 0)).toString()}',
               style: TextStyle(fontSize: 18),
             ),
           ],
