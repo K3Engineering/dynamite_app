@@ -65,6 +65,11 @@ class UserProvider with ChangeNotifier {
   List<DynoUser> get userList => _userList;
   String? get selectedUserName => _selectedUserName;
 
+  DynoUser getSelectedUser() {
+    return _userList.firstWhere((element) => element.name == _selectedUserName,
+        orElse: () => DynoUser(name: '', age: 0));
+  }
+
   UserProvider() {
     _loadUserList();
   }
@@ -224,7 +229,9 @@ class UserPage extends StatelessWidget {
             ),
             SizedBox(height: 20),
             Text(
-              'Selected User: ${userProvider.userList.firstWhere((element) => element.name == userProvider.selectedUserName, orElse: () => DynoUser(name: 'None', age: 0)).toString()}',
+              ((user) {
+                return 'User: ${user.name}, ${user.age} yo.';
+              })(userProvider.getSelectedUser()),
               style: TextStyle(fontSize: 18),
             ),
           ],
