@@ -31,6 +31,15 @@ class MockBlePlatform extends UniversalBlePlatform {
     return true;
   }
 
+  @override
+  Future<bool> disableBluetooth() async {
+    Future.delayed(hwDelay);
+    if (_connectionState != BleConnectionState.disconnected) {
+      disconnect(_connectedDeviceId!);
+    }
+    return true;
+  }
+
   static List<BleDevice> _generateDevices() {
     return [
       BleDevice(
