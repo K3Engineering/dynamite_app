@@ -34,6 +34,13 @@ class DynoApp extends StatelessWidget {
       title: 'Dynamite',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        appBarTheme: AppBarTheme(
+          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+            style: FilledButton.styleFrom(
+                side: BorderSide(
+                    width: 2, color: Theme.of(context).colorScheme.outline))),
         useMaterial3: true,
       ),
       home: const MenuPage(),
@@ -111,9 +118,7 @@ class MenuPage extends StatelessWidget {
       appBar: AppBar(
         title: Text(
           'User: ${userProvider.selectedUserName ?? 'None'}',
-          style: TextStyle(fontSize: 18),
         ),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -134,9 +139,6 @@ class MenuPage extends StatelessWidget {
       child: SizedBox(
         width: double.infinity,
         child: FilledButton.tonal(
-          style: FilledButton.styleFrom(
-              side: BorderSide(
-                  width: 2, color: Theme.of(context).colorScheme.outline)),
           onPressed: () => Navigator.push(
               context, MaterialPageRoute(builder: (context) => page)),
           child: Padding(
@@ -157,7 +159,6 @@ class AboutPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('About'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: const Center(
         child: Padding(
@@ -187,7 +188,6 @@ class UserPage extends StatelessWidget {
       appBar: AppBar(
         title: Text(
           'User: ${userProvider.selectedUserName ?? 'None'}',
-          style: TextStyle(fontSize: 18),
         ),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
@@ -205,7 +205,7 @@ class UserPage extends StatelessWidget {
               keyboardType: TextInputType.number,
             ),
             SizedBox(height: 20),
-            ElevatedButton(
+            FilledButton.tonal(
               onPressed: () {
                 final name = _nameController.text;
                 final age = int.parse(_ageController.text);
@@ -214,16 +214,16 @@ class UserPage extends StatelessWidget {
               child: Text('Store User Data'),
             ),
             SizedBox(height: 60),
-            DropdownButton<String>(
-              hint: Text('Select a user'),
-              value: userProvider.selectedUserName,
-              onChanged: (newValue) {
+            DropdownMenu<String>(
+              hintText: 'Select a user',
+              initialSelection: userProvider.selectedUserName,
+              onSelected: (newValue) {
                 userProvider.selectUser(newValue);
               },
-              items: userProvider.userList.map((user) {
-                return DropdownMenuItem<String>(
+              dropdownMenuEntries: userProvider.userList.map((user) {
+                return DropdownMenuEntry<String>(
                   value: user.name,
-                  child: Text(user.name),
+                  label: user.name,
                 );
               }).toList(),
             ),
@@ -337,7 +337,6 @@ class _GraphPageState extends State<GraphPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
           BluetoothIndicator(bluetoothService: _bluetoothHandler),
           IconButton(
