@@ -38,9 +38,20 @@ class DynoApp extends StatelessWidget {
           backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         ),
         filledButtonTheme: FilledButtonThemeData(
-            style: FilledButton.styleFrom(
-                side: BorderSide(
-                    width: 2, color: Theme.of(context).colorScheme.outline))),
+          style: FilledButton.styleFrom(
+            side: BorderSide(
+              width: 2.0,
+              color: Theme.of(context).colorScheme.outline,
+            ),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          border: OutlineInputBorder(
+            borderRadius: const BorderRadius.all(
+              Radius.circular(30.0),
+            ),
+          ),
+        ),
         useMaterial3: true,
       ),
       home: const MenuPage(),
@@ -192,16 +203,21 @@ class UserPage extends StatelessWidget {
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Padding(
-        padding: EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16.0),
         child: Column(
           children: <Widget>[
             TextField(
               controller: _nameController,
-              decoration: InputDecoration(labelText: 'Enter your name'),
+              decoration: const InputDecoration(
+                hintText: 'Enter your name',
+              ),
             ),
+            SizedBox(height: 4),
             TextField(
               controller: _ageController,
-              decoration: InputDecoration(labelText: 'Enter your age'),
+              decoration: const InputDecoration(
+                labelText: 'Enter your age',
+              ),
               keyboardType: TextInputType.number,
             ),
             SizedBox(height: 20),
@@ -646,8 +662,8 @@ class BluetoothIndicator extends StatelessWidget {
     return ValueListenableBuilder<bool>(
       valueListenable: bluetoothService.isScanning,
       builder: (context, isScanning, child) {
-        IconData iconData;
-        Color color;
+        final IconData iconData;
+        final Color color;
 
         // Determine icon based on Bluetooth and scanning states
         if (isScanning) {
