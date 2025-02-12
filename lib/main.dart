@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:fl_chart/fl_chart.dart';
 import 'mockble.dart';
 import 'package:flutter/foundation.dart' show ValueListenable, kIsWeb;
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 // const BT_DEVICE_UUID = "E4:B0:63:81:5B:19";
 const BT_GATT_ID = "a659ee73-460b-45d5-8e63-ab6bf0825942";
@@ -14,7 +16,12 @@ const BT_S2 = "00001800-0000-1000-8000-00805f9b34fb";
 const BT_S3 = "00001801-0000-1000-8000-00805f9b34fb";
 
 void main() {
-  runApp(const DynoApp());
+  runApp(
+    ChangeNotifierProvider(
+      create: (_) => UserProvider(),
+      child: DynoApp(),
+    ),
+  );
 }
 
 class DynoApp extends StatelessWidget {
@@ -24,13 +31,90 @@ class DynoApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Bluetooth Demo',
+      title: 'Dynamite',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
+        appBarTheme: AppBarTheme(
+          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        ),
+        filledButtonTheme: FilledButtonThemeData(
+          style: FilledButton.styleFrom(
+            side: BorderSide(
+              width: 2.0,
+              color: Theme.of(context).colorScheme.outline,
+            ),
+          ),
+        ),
+        inputDecorationTheme: InputDecorationTheme(
+          border: OutlineInputBorder(
+            borderRadius: const BorderRadius.all(
+              Radius.circular(30.0),
+            ),
+          ),
+        ),
         useMaterial3: true,
       ),
       home: const MenuPage(),
     );
+  }
+}
+
+class DynoUser {
+  final String name;
+  final int age;
+
+  DynoUser({required this.name, required this.age});
+
+  @override
+  String toString() {
+    return '$name:$age';
+  }
+
+  static DynoUser fromString(String userString) {
+    final parts = userString.split(':');
+    return DynoUser(name: parts[0], age: int.parse(parts[1]));
+  }
+}
+
+class UserProvider with ChangeNotifier {
+  List<DynoUser> _userList = [];
+  String? _selectedUserName;
+
+  List<DynoUser> get userList => _userList;
+  String? get selectedUserName => _selectedUserName;
+
+  DynoUser getSelectedUser() {
+    return _userList.firstWhere((element) => element.name == _selectedUserName,
+        orElse: () => DynoUser(name: '', age: 0));
+  }
+
+  UserProvider() {
+    _loadUserList();
+  }
+
+  Future<void> storeUserData(String name, int age) async {
+    final prefs = await SharedPreferences.getInstance();
+    final newUser = DynoUser(name: name, age: age);
+
+    _userList.add(newUser);
+    await prefs.setStringList(
+        'userList', _userList.map((user) => user.toString()).toList());
+    notifyListeners();
+  }
+
+  Future<void> _loadUserList() async {
+    final prefs = await SharedPreferences.getInstance();
+    final storedUserList = prefs.getStringList('userList') ?? [];
+
+    _userList = storedUserList
+        .map((userString) => DynoUser.fromString(userString))
+        .toList();
+    notifyListeners();
+  }
+
+  void selectUser(String? userName) {
+    _selectedUserName = userName;
+    notifyListeners();
   }
 }
 
@@ -39,16 +123,20 @@ class MenuPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final userProvider = Provider.of<UserProvider>(context);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Main Menu'),
+        title: Text(
+          'User: ${userProvider.selectedUserName ?? 'None'}',
+        ),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            _buildMenuButton(
-                context, 'Graph', const GraphPage(title: 'Graph Page')),
+            _buildMenuButton(context, 'User', UserPage()),
+            _buildMenuButton(context, 'Graph', const GraphPage()),
             _buildMenuButton(context, 'About', const AboutPage()),
           ],
         ),
@@ -62,9 +150,6 @@ class MenuPage extends StatelessWidget {
       child: SizedBox(
         width: double.infinity,
         child: FilledButton.tonal(
-          style: FilledButton.styleFrom(
-              side: BorderSide(
-                  width: 2, color: Theme.of(context).colorScheme.outline)),
           onPressed: () => Navigator.push(
               context, MaterialPageRoute(builder: (context) => page)),
           child: Padding(
@@ -83,7 +168,9 @@ class AboutPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('About')),
+      appBar: AppBar(
+        title: const Text('About'),
+      ),
       body: const Center(
         child: Padding(
           padding: EdgeInsets.all(16.0),
@@ -98,9 +185,81 @@ class AboutPage extends StatelessWidget {
   }
 }
 
+class UserPage extends StatelessWidget {
+  UserPage({super.key});
+
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _ageController = TextEditingController();
+
+  @override
+  Widget build(BuildContext context) {
+    final userProvider = Provider.of<UserProvider>(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'User: ${userProvider.selectedUserName ?? 'None'}',
+        ),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: <Widget>[
+            TextField(
+              controller: _nameController,
+              decoration: const InputDecoration(
+                hintText: 'Enter your name',
+              ),
+            ),
+            SizedBox(height: 4),
+            TextField(
+              controller: _ageController,
+              decoration: const InputDecoration(
+                labelText: 'Enter your age',
+              ),
+              keyboardType: TextInputType.number,
+            ),
+            SizedBox(height: 20),
+            FilledButton.tonal(
+              onPressed: () {
+                final name = _nameController.text;
+                final age = int.parse(_ageController.text);
+                userProvider.storeUserData(name, age);
+              },
+              child: Text('Store User Data'),
+            ),
+            SizedBox(height: 60),
+            DropdownMenu<String>(
+              hintText: 'Select a user',
+              initialSelection: userProvider.selectedUserName,
+              onSelected: (newValue) {
+                userProvider.selectUser(newValue);
+              },
+              dropdownMenuEntries: userProvider.userList.map((user) {
+                return DropdownMenuEntry<String>(
+                  value: user.name,
+                  label: user.name,
+                );
+              }).toList(),
+            ),
+            SizedBox(height: 20),
+            Text(
+              ((user) {
+                return 'User: ${user.name}, ${user.age} yo.';
+              })(userProvider.getSelectedUser()),
+              style: TextStyle(fontSize: 18),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class GraphPage extends StatefulWidget {
-  const GraphPage({super.key, required this.title});
-  final String title;
+  const GraphPage({super.key});
+  final String title = 'Graph';
 
   @override
   State<GraphPage> createState() => _GraphPageState();
@@ -194,7 +353,6 @@ class _GraphPageState extends State<GraphPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.title),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
           BluetoothIndicator(bluetoothService: _bluetoothHandler),
           IconButton(
@@ -504,26 +662,26 @@ class BluetoothIndicator extends StatelessWidget {
     return ValueListenableBuilder<bool>(
       valueListenable: bluetoothService.isScanning,
       builder: (context, isScanning, child) {
-        IconData iconData;
-        Color color;
+        final IconData iconData;
+        final Color color;
 
         // Determine icon based on Bluetooth and scanning states
         if (isScanning) {
           iconData = Icons.bluetooth_searching;
-          color = Colors.blueAccent;
+          color = Colors.lightBlue;
         } else {
           switch (bluetoothService.bluetoothState) {
             case AvailabilityState.poweredOn:
               iconData = Icons.bluetooth;
-              color = Colors.blue;
+              color = Colors.blueAccent;
               break;
             case AvailabilityState.poweredOff:
               iconData = Icons.bluetooth_disabled;
-              color = Colors.red;
+              color = Colors.blueGrey;
               break;
             case AvailabilityState.unknown:
               iconData = Icons.question_mark;
-              color = Colors.red;
+              color = Colors.yellow;
               break;
             case AvailabilityState.resetting:
               iconData = Icons.question_mark;
@@ -535,7 +693,7 @@ class BluetoothIndicator extends StatelessWidget {
               break;
             case AvailabilityState.unauthorized:
               iconData = Icons.stop;
-              color = Colors.blue;
+              color = Colors.orange;
               break;
             default:
               iconData = Icons.question_mark;
