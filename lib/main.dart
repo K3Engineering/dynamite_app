@@ -280,17 +280,13 @@ class _GraphPageState extends State<GraphPage> {
     super.initState();
 
     _bluetoothHandler.initializeBluetooth();
-
-    // Listen to receivedData changes
-    _bluetoothHandler.receivedDataRevision.addListener(() {
-      processReceivedData(_bluetoothHandler.receivedData);
-    });
+    _bluetoothHandler.onNewData = processReceivedData;
   }
 
-  void processReceivedData(Uint8List receivedData) {
-    _parseAndAppendDataPacket(receivedData);
+  void processReceivedData(Uint8List data) {
+    _parseAndAppendDataPacket(data);
     setState(() {
-      _updateChartData();
+      _updateChartData(); // Update UI layer
     });
   }
 
@@ -445,8 +441,7 @@ class BluetoothHandling {
   final ValueNotifier<BleDevice?> selectedDevice =
       ValueNotifier<BleDevice?>(null);
   final ListNotifier<BleService> services = ListNotifier<BleService>();
-  final ValueNotifier<int> receivedDataRevision = ValueNotifier<int>(0);
-  Uint8List receivedData = Uint8List(15);
+  late void Function(Uint8List) onNewData;
 
   void initializeBluetooth() {
     UniversalBle.setInstance(MockBlePlatform.instance);
@@ -547,8 +542,7 @@ class BluetoothHandling {
         UniversalBle.onValueChange =
             (String deviceId, String characteristicId, Uint8List newData) {
           // debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
-          receivedData = newData;
-          receivedDataRevision.value++; // Notify the UI layer of new data
+          onNewData(newData);
         };
 
         await UniversalBle.setNotifiable(deviceId, service.uuid,
