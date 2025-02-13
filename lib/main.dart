@@ -280,23 +280,17 @@ class _GraphPageState extends State<GraphPage> {
     super.initState();
 
     _bluetoothHandler.initializeBluetooth();
+    _bluetoothHandler.onNewDataCallback = processReceivedData;
+  }
 
-    // Listen to receivedData changes
-    _bluetoothHandler.receivedData.addListener(() {
-      processReceivedData(_bluetoothHandler.receivedData.value);
+  void processReceivedData(Uint8List data) {
+    _parseAndAppendDataPacket(data);
+    setState(() {
+      _updateChartData(); // Update UI layer
     });
   }
 
-  void processReceivedData(Uint8List? receivedData) {
-    if (receivedData != null) {
-      _parseDataPackets(receivedData);
-      setState(() {
-        _updateChartData();
-      });
-    }
-  }
-
-  void _parseDataPackets(Uint8List data) {
+  void _parseAndAppendDataPacket(Uint8List data) {
     if (data.isEmpty || data.length % 15 != 0) {
       debugPrint('Incorrect buffer size received');
     }
@@ -442,11 +436,12 @@ class ListNotifier<T> extends ChangeNotifier
 
 class BluetoothHandling {
   AvailabilityState bluetoothState = AvailabilityState.unknown;
-  ListNotifier<BleDevice> devices = ListNotifier<BleDevice>();
-  ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
-  ValueNotifier<BleDevice?> selectedDevice = ValueNotifier<BleDevice?>(null);
-  ListNotifier<BleService> services = ListNotifier<BleService>();
-  ValueNotifier<Uint8List?> receivedData = ValueNotifier<Uint8List?>(null);
+  final ListNotifier<BleDevice> devices = ListNotifier<BleDevice>();
+  final ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
+  final ValueNotifier<BleDevice?> selectedDevice =
+      ValueNotifier<BleDevice?>(null);
+  final ListNotifier<BleService> services = ListNotifier<BleService>();
+  late void Function(Uint8List) onNewDataCallback;
 
   void initializeBluetooth() {
     UniversalBle.setInstance(MockBlePlatform.instance);
@@ -545,11 +540,9 @@ class BluetoothHandling {
       if ((characteristic.uuid == BT_CHARACTERISTIC_ID) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
         UniversalBle.onValueChange =
-            (String deviceId, String characteristicId, Uint8List value) {
+            (String deviceId, String characteristicId, Uint8List newData) {
           // debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
-          // TODO bug: if the new value is identical then there's no update
-          receivedData.value = null;
-          receivedData.value = value; // Notify the UI layer of new data
+          onNewDataCallback(newData);
         };
 
         await UniversalBle.setNotifiable(deviceId, service.uuid,
