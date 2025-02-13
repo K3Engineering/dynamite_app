@@ -280,7 +280,7 @@ class _GraphPageState extends State<GraphPage> {
     super.initState();
 
     _bluetoothHandler.initializeBluetooth();
-    _bluetoothHandler.onNewData = processReceivedData;
+    _bluetoothHandler.onNewDataCallback = processReceivedData;
   }
 
   void processReceivedData(Uint8List data) {
@@ -441,7 +441,7 @@ class BluetoothHandling {
   final ValueNotifier<BleDevice?> selectedDevice =
       ValueNotifier<BleDevice?>(null);
   final ListNotifier<BleService> services = ListNotifier<BleService>();
-  late void Function(Uint8List) onNewData;
+  late void Function(Uint8List) onNewDataCallback;
 
   void initializeBluetooth() {
     UniversalBle.setInstance(MockBlePlatform.instance);
@@ -542,7 +542,7 @@ class BluetoothHandling {
         UniversalBle.onValueChange =
             (String deviceId, String characteristicId, Uint8List newData) {
           // debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
-          onNewData(newData);
+          onNewDataCallback(newData);
         };
 
         await UniversalBle.setNotifiable(deviceId, service.uuid,
