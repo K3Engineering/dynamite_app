@@ -440,11 +440,12 @@ class ListNotifier<T> extends ChangeNotifier
 
 class BluetoothHandling {
   AvailabilityState bluetoothState = AvailabilityState.unknown;
-  ListNotifier<BleDevice> devices = ListNotifier<BleDevice>();
-  ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
-  ValueNotifier<BleDevice?> selectedDevice = ValueNotifier<BleDevice?>(null);
-  ListNotifier<BleService> services = ListNotifier<BleService>();
-  ValueNotifier<int> receivedDataRevision = ValueNotifier<int>(0);
+  final ListNotifier<BleDevice> devices = ListNotifier<BleDevice>();
+  final ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
+  final ValueNotifier<BleDevice?> selectedDevice =
+      ValueNotifier<BleDevice?>(null);
+  final ListNotifier<BleService> services = ListNotifier<BleService>();
+  final ValueNotifier<int> receivedDataRevision = ValueNotifier<int>(0);
   Uint8List receivedData = Uint8List(15);
 
   void initializeBluetooth() {
