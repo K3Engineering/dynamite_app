@@ -282,21 +282,19 @@ class _GraphPageState extends State<GraphPage> {
     _bluetoothHandler.initializeBluetooth();
 
     // Listen to receivedData changes
-    _bluetoothHandler.receivedData.addListener(() {
-      processReceivedData(_bluetoothHandler.receivedData.value);
+    _bluetoothHandler.receivedDataRevision.addListener(() {
+      processReceivedData(_bluetoothHandler.receivedData);
     });
   }
 
-  void processReceivedData(Uint8List? receivedData) {
-    if (receivedData != null) {
-      _parseDataPackets(receivedData);
-      setState(() {
-        _updateChartData();
-      });
-    }
+  void processReceivedData(Uint8List receivedData) {
+    _parseAndAppendDataPacket(receivedData);
+    setState(() {
+      _updateChartData();
+    });
   }
 
-  void _parseDataPackets(Uint8List data) {
+  void _parseAndAppendDataPacket(Uint8List data) {
     if (data.isEmpty || data.length % 15 != 0) {
       debugPrint('Incorrect buffer size received');
     }
@@ -446,7 +444,8 @@ class BluetoothHandling {
   ValueNotifier<bool> isScanning = ValueNotifier<bool>(false);
   ValueNotifier<BleDevice?> selectedDevice = ValueNotifier<BleDevice?>(null);
   ListNotifier<BleService> services = ListNotifier<BleService>();
-  ValueNotifier<Uint8List?> receivedData = ValueNotifier<Uint8List?>(null);
+  ValueNotifier<int> receivedDataRevision = ValueNotifier<int>(0);
+  Uint8List receivedData = Uint8List(15);
 
   void initializeBluetooth() {
     UniversalBle.setInstance(MockBlePlatform.instance);
@@ -545,11 +544,10 @@ class BluetoothHandling {
       if ((characteristic.uuid == BT_CHARACTERISTIC_ID) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
         UniversalBle.onValueChange =
-            (String deviceId, String characteristicId, Uint8List value) {
+            (String deviceId, String characteristicId, Uint8List newData) {
           // debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
-          // TODO bug: if the new value is identical then there's no update
-          receivedData.value = null;
-          receivedData.value = value; // Notify the UI layer of new data
+          receivedData = newData;
+          receivedDataRevision.value++; // Notify the UI layer of new data
         };
 
         await UniversalBle.setNotifiable(deviceId, service.uuid,
