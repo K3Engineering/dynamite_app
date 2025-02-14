@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'menu_page.dart';
-import 'user_page.dart';
+import 'menu_page.dart' show MenuPage;
+import 'user_provider.dart' show UserProvider;
 
 void main() {
   runApp(

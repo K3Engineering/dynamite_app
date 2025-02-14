@@ -279,6 +279,7 @@ class BluetoothIndicator extends StatelessWidget {
               iconData = Icons.stop;
               color = Colors.orange;
               break;
+            // ignore: unreachable_switch_default
             default:
               iconData = Icons.question_mark;
               color = Colors.grey;

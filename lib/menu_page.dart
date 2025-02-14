@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import 'about_page.dart';
-import 'user_page.dart';
-import 'graph_page.dart';
+import 'about_page.dart' show AboutPage;
+import 'user_page.dart' show UserPage;
+import 'graph_page.dart' show GraphPage;
+import 'user_provider.dart' show UserProvider;
 
 class MenuPage extends StatelessWidget {
   const MenuPage({super.key});
