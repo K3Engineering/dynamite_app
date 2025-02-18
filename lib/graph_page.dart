@@ -1,10 +1,17 @@
+import 'dart:collection';
 import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:universal_ble/universal_ble.dart'
     show AvailabilityState, BleDevice, BleService;
 
 import 'bt_handling.dart' show BluetoothHandling;
+
+const int numAdcChan = 4;
+const int numGraphLines = 2;
+const int graphWindow = 200;
+const int avgWindow = 256;
 
 class GraphPage extends StatefulWidget {
   const GraphPage({super.key});
@@ -17,12 +24,14 @@ class GraphPage extends StatefulWidget {
 class _GraphPageState extends State<GraphPage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
 
-  final List<List<int>> decodedChannels = [];
-  final List<int> decodedStatus = [];
-  final List<int> decodedCRC = [];
+  final List<Queue<FlSpot>> chartDataCh = List.generate(
+    numGraphLines,
+    (_) => Queue<FlSpot>(),
+    growable: false,
+  );
 
-  List<FlSpot> chartDataCh1 = [FlSpot(0, 0)];
-  List<FlSpot> chartDataCh2 = [FlSpot(0, 0)];
+  final AvgAdcData avgAdcData = AvgAdcData();
+  int xVal = 0;
 
   @override
   void initState() {
@@ -34,9 +43,7 @@ class _GraphPageState extends State<GraphPage> {
 
   void processReceivedData(Uint8List data) {
     _parseAndAppendDataPacket(data);
-    setState(() {
-      _updateChartData(); // Update UI layer
-    });
+    setState(() {}); // Update UI layer
   }
 
   void _parseAndAppendDataPacket(Uint8List data) {
@@ -45,44 +52,31 @@ class _GraphPageState extends State<GraphPage> {
     }
 
     for (int packetStart = 0; packetStart < data.length; packetStart += 15) {
-      assert(packetStart + 14 < data.length);
-      final status = (data[packetStart + 1] << 8) | data[packetStart];
-      final channels = List.generate(4, (i) {
+      assert(packetStart + 15 <= data.length);
+      // final status = (data[packetStart + 1] << 8) | data[packetStart];
+      final Int32List channels = Int32List(numAdcChan);
+      for (int i = 0; i < channels.length; ++i) {
         int baseIndex = packetStart + 2 + i * 3;
-        return ((data[baseIndex + 2] << 16) |
+        channels[i] = ((data[baseIndex + 2] << 16) |
                 (data[baseIndex + 1] << 8) |
                 data[baseIndex])
             .toSigned(24);
-      });
-      final crc = data[packetStart + 14];
+      }
+      // final crc = data[packetStart + 14];
 
-      decodedChannels.add(channels);
-      decodedStatus.add(status);
-      decodedCRC.add(crc);
+      avgAdcData.add(channels);
+      for (int i = 0; i < numGraphLines; ++i) {
+        final int adcChan = i + 1;
+        chartDataCh[i].add(FlSpot(xVal.toDouble(),
+            channels[adcChan].toDouble() - avgAdcData.getAvg(adcChan)));
+      }
+      xVal++;
+      if (chartDataCh[0].length > graphWindow) {
+        for (int i = 0; i < numGraphLines; ++i) {
+          chartDataCh[i].removeFirst();
+        }
+      }
     }
-  }
-
-  void _updateChartData() {
-    const int window = 6400;
-    final int start = (decodedChannels.length <= window)
-        ? 0
-        : decodedChannels.length - window;
-
-    chartDataCh1 = List.generate(
-      decodedChannels.length - start,
-      (i) => FlSpot(
-        (i + start).toDouble(),
-        decodedChannels[i + start][2].toDouble(),
-      ),
-    );
-
-    chartDataCh2 = List.generate(
-      decodedChannels.length - start,
-      (i) => FlSpot(
-        (i + start).toDouble(),
-        decodedChannels[i + start][1].toDouble(),
-      ),
-    );
   }
 
   @override
@@ -114,20 +108,22 @@ class _GraphPageState extends State<GraphPage> {
             LineChartData(
               lineBarsData: ([
                 LineChartBarData(
-                    spots: chartDataCh1,
-                    dotData: FlDotData(
+                    spots: chartDataCh[0].toList(growable: false),
+                    dotData: const FlDotData(
                       show: false,
                     )),
                 LineChartBarData(
-                    spots: chartDataCh2,
-                    dotData: FlDotData(
+                    spots: chartDataCh[1].toList(growable: false),
+                    dotData: const FlDotData(
                       show: false,
                     ))
               ]),
-              minY:
-                  0, // TODO make this into min(data, 0), as negative values go outside the chart
+              minY: 0,
+              clipData: const FlClipData.all(),
             ),
+            duration: Duration.zero,
             //duration: const Duration(milliseconds: 1000),
+            curve: Curves.linear,
           )),
         ],
       ),
@@ -142,6 +138,30 @@ class _GraphPageState extends State<GraphPage> {
         },
       ),
     );
+  }
+}
+
+class AvgAdcData {
+  final Float64List avg = Float64List(numAdcChan);
+  final Int64List runningTotal = Int64List(numAdcChan);
+  int count = avgWindow;
+
+  void add(Int32List val) {
+    for (int i = 0; i < numAdcChan; ++i) {
+      runningTotal[i] += val[i];
+    }
+    count--;
+    if (count == 0) {
+      count = avgWindow;
+      for (int i = 0; i < runningTotal.length; ++i) {
+        avg[i] = runningTotal[i].toDouble() / avgWindow;
+        runningTotal[i] = 0;
+      }
+    }
+  }
+
+  double getAvg(int idx) {
+    return avg[idx];
   }
 }
 
