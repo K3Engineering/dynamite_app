@@ -23,6 +23,7 @@ class GraphPage extends StatefulWidget {
 
 class _GraphPageState extends State<GraphPage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
+  bool _graphFilerAverage = true;
 
   final List<Queue<FlSpot>> chartDataCh = List.generate(
     numGraphLines,
@@ -67,8 +68,11 @@ class _GraphPageState extends State<GraphPage> {
       avgAdcData.add(channels);
       for (int i = 0; i < numGraphLines; ++i) {
         final int adcChan = i + 1;
-        chartDataCh[i].add(FlSpot(xVal.toDouble(),
-            channels[adcChan].toDouble() - avgAdcData.getAvg(adcChan)));
+        chartDataCh[i].add(FlSpot(
+            xVal.toDouble(),
+            channels[adcChan].toDouble() +
+                (xVal % (7 + i * 4)) -
+                (_graphFilerAverage ? avgAdcData.getAvg(adcChan) : 0)));
       }
       xVal++;
       if (chartDataCh[0].length > graphWindow) {
@@ -94,7 +98,7 @@ class _GraphPageState extends State<GraphPage> {
           BluetoothIndicator(bluetoothService: _bluetoothHandler),
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh BT Icon',
+            tooltip: 'Refresh BT',
             onPressed: _bluetoothHandler.toggleScan,
           ),
         ],
@@ -103,28 +107,40 @@ class _GraphPageState extends State<GraphPage> {
         children: [
           Expanded(
               child: BluetoothDeviceList(bluetoothService: _bluetoothHandler)),
+          Checkbox(
+            value: _graphFilerAverage,
+            onChanged: (bool? newValue) {
+              _graphFilerAverage = newValue!;
+              setState(() {});
+            },
+          ),
           Expanded(
-              child: LineChart(
-            LineChartData(
-              lineBarsData: ([
-                LineChartBarData(
+            child: LineChart(
+              LineChartData(
+                lineBarsData: ([
+                  LineChartBarData(
                     spots: chartDataCh[0].toList(growable: false),
                     dotData: const FlDotData(
                       show: false,
-                    )),
-                LineChartBarData(
+                    ),
+                    color: Colors.blueAccent,
+                  ),
+                  LineChartBarData(
                     spots: chartDataCh[1].toList(growable: false),
                     dotData: const FlDotData(
                       show: false,
-                    ))
-              ]),
-              minY: 0,
-              clipData: const FlClipData.all(),
+                    ),
+                    color: Colors.deepOrangeAccent,
+                  )
+                ]),
+                minY: 0,
+                clipData: const FlClipData.all(),
+              ),
+              duration: Duration.zero,
+              //duration: const Duration(milliseconds: 1000),
+              curve: Curves.linear,
             ),
-            duration: Duration.zero,
-            //duration: const Duration(milliseconds: 1000),
-            curve: Curves.linear,
-          )),
+          ),
         ],
       ),
       floatingActionButton: ValueListenableBuilder<bool>(
