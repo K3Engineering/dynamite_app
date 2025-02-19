@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -43,7 +45,7 @@ class UserPage extends StatelessWidget {
               onPressed: () {
                 final name = _nameController.text;
                 final age = int.parse(_ageController.text);
-                userProvider.storeUserData(name, age);
+                unawaited(userProvider.storeUserData(name, age));
               },
               child: Text('Store User Data'),
             ),
