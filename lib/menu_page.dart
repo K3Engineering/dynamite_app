@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart' show Provider;
 
@@ -38,8 +40,8 @@ class MenuPage extends StatelessWidget {
       child: SizedBox(
         width: double.infinity,
         child: FilledButton.tonal(
-          onPressed: () => Navigator.push(
-              context, MaterialPageRoute(builder: (context) => page)),
+          onPressed: () => unawaited(Navigator.push(
+              context, MaterialPageRoute(builder: (context) => page))),
           child: Padding(
             padding: const EdgeInsets.all(16.0),
             child: Text(text),
