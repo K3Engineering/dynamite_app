@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
+
 import 'package:universal_ble/universal_ble.dart';
 
 class MockBlePlatform extends UniversalBlePlatform {
@@ -27,15 +28,15 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<bool> enableBluetooth() async {
-    Future.delayed(hwDelay);
+    await Future.delayed(hwDelay);
     return true;
   }
 
   @override
   Future<bool> disableBluetooth() async {
-    Future.delayed(hwDelay);
+    await Future.delayed(hwDelay);
     if (_connectionState != BleConnectionState.disconnected) {
-      disconnect(_connectedDeviceId!);
+      await disconnect(_connectedDeviceId!);
     }
     return true;
   }

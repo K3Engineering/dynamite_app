@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart'
     show Uint8List, ValueListenable, kIsWeb;
 import 'package:flutter/material.dart';
@@ -48,18 +50,20 @@ class BluetoothHandling {
   void initializeBluetooth() {
     UniversalBle.setInstance(MockBlePlatform.instance);
 
-    _updateBluetoothState();
-
-    if (!kIsWeb) {
-      UniversalBle.enableBluetooth(); // this isn't implemented on web
-    }
-
     UniversalBle.onScanResult = _onScanResult;
     UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
     UniversalBle.onPairingStateChange = _onPairingStateChange;
+    UniversalBle.onValueChange =
+        (String deviceId, String characteristicId, Uint8List newData) {
+      onNewDataCallback(newData);
+    };
+    unawaited(_updateBluetoothState());
   }
 
   Future<void> _updateBluetoothState() async {
+    if (!kIsWeb) {
+      await UniversalBle.enableBluetooth(); // this isn't implemented on web
+    }
     bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
   }
 
@@ -78,15 +82,16 @@ class BluetoothHandling {
     bluetoothState = state;
   }
 
-  void stopScan() async {
-    UniversalBle.stopScan();
+  Future<void> stopScan() async {
+    await UniversalBle.stopScan();
     isScanning.value = false;
   }
 
-  void startScan() async {
+  Future<void> startScan() async {
     if (bluetoothState != AvailabilityState.poweredOn) {
       return;
     }
+    await disconnectSelectedDevice();
     devices.clear();
     services.clear();
     isScanning.value = true;
@@ -102,30 +107,41 @@ class BluetoothHandling {
     );
   }
 
-  void toggleScan() async {
+  Future<void> toggleScan() async {
     if (isScanning.value) {
-      stopScan();
+      await stopScan();
     } else {
-      startScan();
+      await startScan();
     }
   }
 
   void _onPairingStateChange(String deviceId, bool isPaired) {
     debugPrint('isPaired $deviceId, $isPaired');
-    // _addLog("PairingStateChange - isPaired", isPaired);
   }
 
   Future<void> connectToDevice(BleDevice device) async {
     if (isScanning.value) {
-      stopScan();
+      await stopScan();
     }
     try {
+      await disconnectSelectedDevice();
       await UniversalBle.connect(device.deviceId);
-      services.assign(await UniversalBle.discoverServices(device.deviceId));
       selectedDevice.value = device;
+      services.assign(await UniversalBle.discoverServices(device.deviceId));
     } catch (e) {
       // Error handling can be implemented here
     }
+  }
+
+  Future<void> disconnectSelectedDevice() async {
+    final deviceId = selectedDevice.value?.deviceId;
+    if (deviceId == null) {
+      return;
+    }
+
+    await UniversalBle.disconnect(deviceId);
+    selectedDevice.value = null;
+    await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
   }
 
   void dispose() {
@@ -137,19 +153,11 @@ class BluetoothHandling {
     final deviceId = selectedDevice.value?.deviceId;
     if (deviceId == null) return;
 
-    // TODO can only subscribe once, otherwise I get "DartError: Exception: Already listening to this characteristic"
     for (var characteristic in service.characteristics) {
       if ((characteristic.uuid == BT_CHARACTERISTIC_ID) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
-        UniversalBle.onValueChange =
-            (String deviceId, String characteristicId, Uint8List newData) {
-          // debugPrint('onValueChange $deviceId, $characteristicId, ${hex.encode(value)}');
-          onNewDataCallback(newData);
-        };
-
         await UniversalBle.setNotifiable(deviceId, service.uuid,
             characteristic.uuid, BleInputProperty.notification);
-
         return;
       }
     }

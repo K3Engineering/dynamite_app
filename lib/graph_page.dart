@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:typed_data';
 
@@ -40,6 +41,9 @@ class _GraphPageState extends State<GraphPage> {
 
     _bluetoothHandler.initializeBluetooth();
     _bluetoothHandler.onNewDataCallback = processReceivedData;
+    _bluetoothHandler.isScanning.addListener(() {
+      setState(() {}); // Update UI layer
+    });
   }
 
   void processReceivedData(Uint8List data) {
@@ -70,8 +74,7 @@ class _GraphPageState extends State<GraphPage> {
         final int adcChan = i + 1;
         chartDataCh[i].add(FlSpot(
             xVal.toDouble(),
-            channels[adcChan].toDouble() +
-                (xVal % (7 + i * 4)) -
+            channels[adcChan].toDouble() -
                 (_graphFilerAverage ? avgAdcData.getAvg(adcChan) : 0)));
       }
       xVal++;
@@ -96,11 +99,7 @@ class _GraphPageState extends State<GraphPage> {
         title: Text(widget.title),
         actions: [
           BluetoothIndicator(bluetoothService: _bluetoothHandler),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh BT',
-            onPressed: _bluetoothHandler.toggleScan,
-          ),
+          BluetoothIndicator(bluetoothService: _bluetoothHandler),
         ],
       ),
       body: Row(
@@ -111,34 +110,39 @@ class _GraphPageState extends State<GraphPage> {
             value: _graphFilerAverage,
             onChanged: (bool? newValue) {
               _graphFilerAverage = newValue!;
-              setState(() {});
+              setState(() {}); // Update UI layer
             },
           ),
           Expanded(
-            child: LineChart(
-              LineChartData(
-                lineBarsData: ([
-                  LineChartBarData(
-                    spots: chartDataCh[0].toList(growable: false),
-                    dotData: const FlDotData(
-                      show: false,
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: LineChart(
+                LineChartData(
+                  lineBarsData: ([
+                    LineChartBarData(
+                      spots: chartDataCh[0].toList(growable: false),
+                      dotData: const FlDotData(
+                        show: false,
+                      ),
+                      color: Colors.blueAccent,
                     ),
-                    color: Colors.blueAccent,
-                  ),
-                  LineChartBarData(
-                    spots: chartDataCh[1].toList(growable: false),
-                    dotData: const FlDotData(
-                      show: false,
+                    LineChartBarData(
+                      spots: chartDataCh[1].toList(growable: false),
+                      dotData: const FlDotData(
+                        show: false,
+                      ),
+                      color: Colors.deepOrangeAccent,
                     ),
-                    color: Colors.deepOrangeAccent,
-                  )
-                ]),
-                minY: 0,
-                clipData: const FlClipData.all(),
+                  ]),
+                  titlesData: const FlTitlesData(
+                      topTitles: AxisTitles(), leftTitles: AxisTitles()),
+                  minY: 0, // TODO: negative values
+                  clipData: const FlClipData.all(),
+                ),
+                duration: Duration.zero,
+                //duration: const Duration(milliseconds: 1000),
+                curve: Curves.linear,
               ),
-              duration: Duration.zero,
-              //duration: const Duration(milliseconds: 1000),
-              curve: Curves.linear,
             ),
           ),
         ],
@@ -147,7 +151,9 @@ class _GraphPageState extends State<GraphPage> {
         valueListenable: _bluetoothHandler.isScanning,
         builder: (context, isScanning, child) {
           return FloatingActionButton(
-            onPressed: _bluetoothHandler.toggleScan,
+            onPressed: () {
+              unawaited(_bluetoothHandler.toggleScan());
+            },
             tooltip: isScanning ? 'Stop scanning' : 'Start scanning',
             child: Icon(isScanning ? Icons.stop : Icons.search),
           );
@@ -203,7 +209,8 @@ class BluetoothDeviceList extends StatelessWidget {
                   return ListTile(
                     title: Text(device.name ?? "Unknown Device"),
                     subtitle: Text('Device ID: ${device.deviceId}'),
-                    onTap: () => bluetoothService.connectToDevice(device),
+                    onTap: () =>
+                        unawaited(bluetoothService.connectToDevice(device)),
                   );
                 },
               );
