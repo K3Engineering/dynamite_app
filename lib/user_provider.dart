@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -31,7 +33,7 @@ class UserProvider with ChangeNotifier {
   }
 
   UserProvider() {
-    _loadUserList();
+    unawaited(_loadUserList());
   }
 
   Future<void> storeUserData(String name, int age) async {
