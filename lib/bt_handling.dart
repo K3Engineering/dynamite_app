@@ -8,11 +8,11 @@ import 'package:universal_ble/universal_ble.dart';
 import 'mockble.dart';
 
 // const BT_DEVICE_UUID = "E4:B0:63:81:5B:19";
-const BT_GATT_ID = "a659ee73-460b-45d5-8e63-ab6bf0825942";
-const BT_SERVICE_ID = "e331016b-6618-4f8f-8997-1a2c7c9e5fa3";
-const BT_CHARACTERISTIC_ID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
-const BT_S2 = "00001800-0000-1000-8000-00805f9b34fb";
-const BT_S3 = "00001801-0000-1000-8000-00805f9b34fb";
+const btGattId = "a659ee73-460b-45d5-8e63-ab6bf0825942";
+const btServiceId = "e331016b-6618-4f8f-8997-1a2c7c9e5fa3";
+const btCharacteristicsId = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+const btS2 = "00001800-0000-1000-8000-00805f9b34fb";
+const btS3 = "00001801-0000-1000-8000-00805f9b34fb";
 
 class ListNotifier<T> extends ChangeNotifier
     implements ValueListenable<List<T>> {
@@ -97,12 +97,8 @@ class BluetoothHandling {
     isScanning.value = true;
     await UniversalBle.startScan(
       platformConfig: PlatformConfig(
-        web: WebOptions(optionalServices: [
-          BT_SERVICE_ID,
-          BT_CHARACTERISTIC_ID,
-          BT_S2,
-          BT_S3
-        ]),
+        web: WebOptions(
+            optionalServices: [btServiceId, btCharacteristicsId, btS2, btS3]),
       ),
     );
   }
@@ -154,7 +150,7 @@ class BluetoothHandling {
     if (deviceId == null) return;
 
     for (var characteristic in service.characteristics) {
-      if ((characteristic.uuid == BT_CHARACTERISTIC_ID) &&
+      if ((characteristic.uuid == btCharacteristicsId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
         await UniversalBle.setNotifiable(deviceId, service.uuid,
             characteristic.uuid, BleInputProperty.notification);
