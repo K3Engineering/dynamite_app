@@ -29,7 +29,7 @@ class _GraphPageState extends State<GraphPage> {
   );
 
   final AvgAdcData avgAdcData = AvgAdcData(_DataTransformer.numGraphLines);
-  int xVal = 0;
+  int _xVal = 0;
 
   @override
   void initState() {
@@ -55,9 +55,9 @@ class _GraphPageState extends State<GraphPage> {
     avgAdcData._add(val, idx);
 
     if (idx == 0) {
-      xVal++;
+      _xVal++;
     }
-    chartDataCh[idx].add(FlSpot(xVal.toDouble(),
+    chartDataCh[idx].add(FlSpot(_xVal.toDouble(),
         val.toDouble() - (_graphFilerAverage ? avgAdcData.getAvg(idx) : 0)));
     if (chartDataCh[idx].length > _graphWindow) {
       chartDataCh[idx].removeFirst();
@@ -146,7 +146,7 @@ class _DataTransformer {
   static int _chanToLine(int chan) {
     if (chan == 1) return 0;
     if (chan == 2) return 1;
-    return -1;
+    return -1; // No graph line for this chanel
   }
 
   static void _parseAndAppendDataPacket(Uint8List data,
@@ -178,32 +178,32 @@ class _DataTransformer {
 
 class AvgAdcData {
   AvgAdcData(int numLines)
-      : avg = Float64List(numLines),
-        runningTotal = Int64List(numLines);
-  final Float64List avg;
-  final Int64List runningTotal;
-  int avgWindow = 256;
-  int count = 0;
+      : _avg = Float64List(numLines),
+        _runningTotal = Int64List(numLines);
+  final Float64List _avg;
+  final Int64List _runningTotal;
+  int _avgWindow = 256;
+  int _count = 0;
 
   void _add(int val, int idx) {
-    runningTotal[idx] += val;
-    count++;
-    if (count >= avgWindow * runningTotal.length) {
-      count = 0;
-      for (int i = 0; i < runningTotal.length; ++i) {
-        avg[i] = runningTotal[i].toDouble() / avgWindow;
-        runningTotal[i] = 0;
+    _runningTotal[idx] += val;
+    _count++;
+    if (_count >= _avgWindow * _runningTotal.length) {
+      _count = 0;
+      for (int i = 0; i < _runningTotal.length; ++i) {
+        _avg[i] = _runningTotal[i].toDouble() / _avgWindow;
+        _runningTotal[i] = 0;
       }
     }
   }
 
   double getAvg(int idx) {
-    return avg[idx];
+    return _avg[idx];
   }
 
   void setVindow(int w) {
     assert(w > 1);
-    avgWindow = w;
+    _avgWindow = w;
   }
 }
 
