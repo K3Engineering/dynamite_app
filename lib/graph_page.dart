@@ -9,11 +9,6 @@ import 'package:universal_ble/universal_ble.dart'
 
 import 'bt_handling.dart' show BluetoothHandling;
 
-const int numAdcChan = 4;
-const int numGraphLines = 2;
-const int graphWindow = 200;
-const int avgWindow = 256;
-
 class GraphPage extends StatefulWidget {
   const GraphPage({super.key});
   final String title = 'Graph';
@@ -24,15 +19,16 @@ class GraphPage extends StatefulWidget {
 
 class _GraphPageState extends State<GraphPage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
+  static const int _graphWindow = 200;
   bool _graphFilerAverage = true;
 
   final List<Queue<FlSpot>> chartDataCh = List.generate(
-    numGraphLines,
+    _DataTransformer.numGraphLines,
     (_) => Queue<FlSpot>(),
     growable: false,
   );
 
-  final AvgAdcData avgAdcData = AvgAdcData();
+  final AvgAdcData avgAdcData = AvgAdcData(_DataTransformer.numGraphLines);
   int xVal = 0;
 
   @override
@@ -47,43 +43,30 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   void processReceivedData(Uint8List data) {
-    _parseAndAppendDataPacket(data);
+    _DataTransformer._parseAndAppendDataPacket(
+        data, _appendGraphData, _onEndOfData);
+  }
+
+  void _onEndOfData() {
     setState(() {}); // Update UI layer
   }
 
-  void _parseAndAppendDataPacket(Uint8List data) {
-    if (data.isEmpty || data.length % 15 != 0) {
-      debugPrint('Incorrect buffer size received');
-    }
+  void _appendGraphData(int val, int idx) {
+    avgAdcData._add(val, idx);
 
-    for (int packetStart = 0; packetStart < data.length; packetStart += 15) {
-      assert(packetStart + 15 <= data.length);
-      // final status = (data[packetStart + 1] << 8) | data[packetStart];
-      final Int32List channels = Int32List(numAdcChan);
-      for (int i = 0; i < channels.length; ++i) {
-        int baseIndex = packetStart + 2 + i * 3;
-        channels[i] = ((data[baseIndex + 2] << 16) |
-                (data[baseIndex + 1] << 8) |
-                data[baseIndex])
-            .toSigned(24);
-      }
-      // final crc = data[packetStart + 14];
-
-      avgAdcData.add(channels);
-      for (int i = 0; i < numGraphLines; ++i) {
-        final int adcChan = i + 1;
-        chartDataCh[i].add(FlSpot(
-            xVal.toDouble(),
-            channels[adcChan].toDouble() -
-                (_graphFilerAverage ? avgAdcData.getAvg(adcChan) : 0)));
-      }
+    if (idx == 0) {
       xVal++;
-      if (chartDataCh[0].length > graphWindow) {
-        for (int i = 0; i < numGraphLines; ++i) {
-          chartDataCh[i].removeFirst();
-        }
-      }
     }
+    chartDataCh[idx].add(FlSpot(xVal.toDouble(),
+        val.toDouble() - (_graphFilerAverage ? avgAdcData.getAvg(idx) : 0)));
+    if (chartDataCh[idx].length > _graphWindow) {
+      chartDataCh[idx].removeFirst();
+    }
+  }
+
+  static Color _lineColor(int idx) {
+    if (idx == 1) return Colors.deepOrangeAccent;
+    return Colors.blueAccent;
   }
 
   @override
@@ -118,22 +101,16 @@ class _GraphPageState extends State<GraphPage> {
               padding: const EdgeInsets.all(8.0),
               child: LineChart(
                 LineChartData(
-                  lineBarsData: ([
-                    LineChartBarData(
-                      spots: chartDataCh[0].toList(growable: false),
-                      dotData: const FlDotData(
-                        show: false,
-                      ),
-                      color: Colors.blueAccent,
-                    ),
-                    LineChartBarData(
-                      spots: chartDataCh[1].toList(growable: false),
-                      dotData: const FlDotData(
-                        show: false,
-                      ),
-                      color: Colors.deepOrangeAccent,
-                    ),
-                  ]),
+                  lineBarsData: List.generate(
+                      chartDataCh.length,
+                      (i) => LineChartBarData(
+                            spots: chartDataCh[i].toList(growable: false),
+                            dotData: const FlDotData(
+                              show: false,
+                            ),
+                            color: _lineColor(i),
+                          ),
+                      growable: false),
                   titlesData: const FlTitlesData(
                       topTitles: AxisTitles(), leftTitles: AxisTitles()),
                   minY: 0, // TODO: negative values
@@ -163,18 +140,56 @@ class _GraphPageState extends State<GraphPage> {
   }
 }
 
-class AvgAdcData {
-  final Float64List avg = Float64List(numAdcChan);
-  final Int64List runningTotal = Int64List(numAdcChan);
-  int count = avgWindow;
+class _DataTransformer {
+  static const int numGraphLines = 2;
 
-  void add(Int32List val) {
-    for (int i = 0; i < numAdcChan; ++i) {
-      runningTotal[i] += val[i];
+  static int _chanToLine(int chan) {
+    if (chan == 1) return 0;
+    if (chan == 2) return 1;
+    return -1;
+  }
+
+  static void _parseAndAppendDataPacket(Uint8List data,
+      void Function(int val, int idx) dataCb, void Function() eodCb) {
+    if (data.isEmpty || data.length % 15 != 0) {
+      debugPrint('Incorrect buffer size received');
     }
-    count--;
-    if (count == 0) {
-      count = avgWindow;
+
+    for (int packetStart = 0; packetStart < data.length; packetStart += 15) {
+      assert(packetStart + 15 <= data.length);
+      // final status = (data[packetStart + 1] << 8) | data[packetStart];
+      // final crc = data[packetStart + 14];
+      const int numAdcChan = 4;
+      for (int i = 0; i < numAdcChan; ++i) {
+        final int baseIndex = packetStart + 2 + i * 3;
+        int res = ((data[baseIndex + 2] << 16) |
+                (data[baseIndex + 1] << 8) |
+                data[baseIndex])
+            .toSigned(24);
+        int idx = _chanToLine(i);
+        if (idx >= 0) {
+          dataCb(res, idx);
+        }
+      }
+    }
+    eodCb();
+  }
+}
+
+class AvgAdcData {
+  AvgAdcData(int numLines)
+      : avg = Float64List(numLines),
+        runningTotal = Int64List(numLines);
+  final Float64List avg;
+  final Int64List runningTotal;
+  int avgWindow = 256;
+  int count = 0;
+
+  void _add(int val, int idx) {
+    runningTotal[idx] += val;
+    count++;
+    if (count >= avgWindow * runningTotal.length) {
+      count = 0;
       for (int i = 0; i < runningTotal.length; ++i) {
         avg[i] = runningTotal[i].toDouble() / avgWindow;
         runningTotal[i] = 0;
@@ -184,6 +199,11 @@ class AvgAdcData {
 
   double getAvg(int idx) {
     return avg[idx];
+  }
+
+  void setVindow(int w) {
+    assert(w > 1);
+    avgWindow = w;
   }
 }
 
