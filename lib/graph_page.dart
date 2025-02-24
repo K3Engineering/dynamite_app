@@ -102,7 +102,7 @@ class _GraphPageState extends State<GraphPage> {
               child: LineChart(
                 LineChartData(
                   lineBarsData: List.generate(
-                      chartDataCh.length,
+                      chartDataCh[0].isNotEmpty ? chartDataCh.length : 0,
                       (i) => LineChartBarData(
                             spots: chartDataCh[i].toList(growable: false),
                             dotData: const FlDotData(
@@ -179,9 +179,9 @@ class _DataTransformer {
 class AvgAdcData {
   AvgAdcData(int numLines)
       : _avg = Float64List(numLines),
-        _runningTotal = Int64List(numLines);
+        _runningTotal = Float64List(numLines);
   final Float64List _avg;
-  final Int64List _runningTotal;
+  final Float64List _runningTotal;
   int _avgWindow = 256;
   int _count = 0;
 
