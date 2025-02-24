@@ -180,6 +180,7 @@ class AvgAdcData {
   AvgAdcData(int numLines)
       : _avg = Float64List(numLines),
         _runningTotal = Float64List(numLines);
+  // TODO: this is preliminary implementation
   final Float64List _avg;
   final Float64List _runningTotal;
   int _avgWindow = 256;
