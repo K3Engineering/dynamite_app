@@ -5,12 +5,14 @@ import 'package:flutter/foundation.dart'
 import 'package:flutter/material.dart';
 import 'package:universal_ble/universal_ble.dart';
 
+// ignore: unused_import
 import 'mockble.dart';
 
-// const BT_DEVICE_UUID = "E4:B0:63:81:5B:19";
+// const btDeviceUUID = "E4:B0:63:81:5B:19";
 const btGattId = "a659ee73-460b-45d5-8e63-ab6bf0825942";
 const btServiceId = "e331016b-6618-4f8f-8997-1a2c7c9e5fa3";
-const btCharacteristicsId = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+const btChrAdcFeedId = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+const btChrCalibration = "10adce11-68a6-450b-9810-ca11b39fd283";
 const btS2 = "00001800-0000-1000-8000-00805f9b34fb";
 const btS3 = "00001801-0000-1000-8000-00805f9b34fb";
 
@@ -45,7 +47,8 @@ class BluetoothHandling {
   final ValueNotifier<BleDevice?> selectedDevice =
       ValueNotifier<BleDevice?>(null);
   final ListNotifier<BleService> services = ListNotifier<BleService>();
-  late void Function(Uint8List) onNewDataCallback;
+  late final void Function(Uint8List) onNewDataCallback;
+  DeviceCalibration deviceCalibration = DeviceCalibration();
 
   void initializeBluetooth() {
     UniversalBle.setInstance(MockBlePlatform.instance);
@@ -98,7 +101,7 @@ class BluetoothHandling {
     await UniversalBle.startScan(
       platformConfig: PlatformConfig(
         web: WebOptions(
-            optionalServices: [btServiceId, btCharacteristicsId, btS2, btS3]),
+            optionalServices: [btServiceId, btChrAdcFeedId, btS2, btS3]),
       ),
     );
   }
@@ -150,12 +153,24 @@ class BluetoothHandling {
     if (deviceId == null) return;
 
     for (var characteristic in service.characteristics) {
-      if ((characteristic.uuid == btCharacteristicsId) &&
+      if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
+        Uint8List calibrationBytes = await UniversalBle.readValue(
+            deviceId, service.uuid, btChrCalibration);
+        deviceCalibration = parseCalibratiuon(calibrationBytes);
         await UniversalBle.setNotifiable(deviceId, service.uuid,
             characteristic.uuid, BleInputProperty.notification);
         return;
       }
     }
   }
+}
+
+class DeviceCalibration {
+  int x = 1;
+  int y = 1;
+}
+
+DeviceCalibration parseCalibratiuon(Uint8List data) {
+  return DeviceCalibration();
 }

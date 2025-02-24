@@ -172,7 +172,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     final Duration? timeout,
   }) async {
     await Future.delayed(netDelay);
-    return Uint8List(0);
+    return Uint8List(255);
   }
 
   @override
