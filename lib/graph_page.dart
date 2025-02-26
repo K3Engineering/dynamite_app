@@ -28,7 +28,7 @@ class _GraphPageState extends State<GraphPage> {
     growable: false,
   );
 
-  final AvgAdcData avgAdcData = AvgAdcData(_DataTransformer.numGraphLines);
+  final _DataTransformer _dataTransformer = _DataTransformer();
   int _xVal = 0;
 
   @override
@@ -36,15 +36,16 @@ class _GraphPageState extends State<GraphPage> {
     super.initState();
 
     _bluetoothHandler.initializeBluetooth();
-    _bluetoothHandler.onNewDataCallback = processReceivedData;
+    _bluetoothHandler.onNewDataCallback = _processReceivedData;
+    _bluetoothHandler.onCalibrationCallback =
+        _dataTransformer._updateCalibration;
     _bluetoothHandler.isScanning.addListener(() {
       setState(() {}); // Update UI layer
     });
   }
 
-  void processReceivedData(Uint8List data) {
-    _DataTransformer._parseAndAppendDataPacket(
-        data, _appendGraphData, _onEndOfData);
+  void _processReceivedData(Uint8List data) {
+    _DataTransformer._parseDataPacket(data, _appendGraphData, _onEndOfData);
   }
 
   void _onEndOfData() {
@@ -52,13 +53,15 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   void _appendGraphData(int val, int idx) {
-    avgAdcData._add(val, idx);
+    _dataTransformer._add(val, idx);
 
     if (idx == 0) {
       _xVal++;
     }
-    chartDataCh[idx].add(FlSpot(_xVal.toDouble(),
-        val.toDouble() - (_graphFilerAverage ? avgAdcData.getAvg(idx) : 0)));
+    chartDataCh[idx].add(FlSpot(
+        _xVal.toDouble(),
+        val.toDouble() -
+            (_graphFilerAverage ? _dataTransformer.getAvg(idx) : 0)));
     if (chartDataCh[idx].length > _graphWindow) {
       chartDataCh[idx].removeFirst();
     }
@@ -142,6 +145,40 @@ class _GraphPageState extends State<GraphPage> {
 
 class _DataTransformer {
   static const int numGraphLines = 2;
+  // TODO: this is preliminary implementation
+  final Float64List _avg = Float64List(numGraphLines);
+  final Float64List _runningTotal = Float64List(numGraphLines);
+  int _avgWindow = 256;
+  int _count = 0;
+
+  _DeviceCalibration _deviceCalibration = _DeviceCalibration(1, 1);
+
+  void _add(int val, int idx) {
+    _runningTotal[idx] += val;
+    _count++;
+    if (_count >= _avgWindow * _runningTotal.length) {
+      _count = 0;
+      for (int i = 0; i < _runningTotal.length; ++i) {
+        _avg[i] = _runningTotal[i].toDouble() / _avgWindow;
+        _runningTotal[i] = 0;
+      }
+    }
+  }
+
+  double getAvg(int idx) {
+    return _avg[idx];
+  }
+
+  void setVindow(int w) {
+    assert(w > 1);
+    _avgWindow = w;
+  }
+
+  void _updateCalibration(Uint8List data) {
+    // TODO: implement calibration parsing
+    _deviceCalibration = _DeviceCalibration(2, 1);
+    debugPrint('Calibration $_deviceCalibration.x');
+  }
 
   static int _chanToLine(int chan) {
     if (chan == 1) return 0;
@@ -149,7 +186,7 @@ class _DataTransformer {
     return -1; // No graph line for this chanel
   }
 
-  static void _parseAndAppendDataPacket(Uint8List data,
+  static void _parseDataPacket(Uint8List data,
       void Function(int val, int idx) dataCb, void Function() eodCb) {
     if (data.isEmpty || data.length % 15 != 0) {
       debugPrint('Incorrect buffer size received');
@@ -176,36 +213,10 @@ class _DataTransformer {
   }
 }
 
-class AvgAdcData {
-  AvgAdcData(int numLines)
-      : _avg = Float64List(numLines),
-        _runningTotal = Float64List(numLines);
-  // TODO: this is preliminary implementation
-  final Float64List _avg;
-  final Float64List _runningTotal;
-  int _avgWindow = 256;
-  int _count = 0;
-
-  void _add(int val, int idx) {
-    _runningTotal[idx] += val;
-    _count++;
-    if (_count >= _avgWindow * _runningTotal.length) {
-      _count = 0;
-      for (int i = 0; i < _runningTotal.length; ++i) {
-        _avg[i] = _runningTotal[i].toDouble() / _avgWindow;
-        _runningTotal[i] = 0;
-      }
-    }
-  }
-
-  double getAvg(int idx) {
-    return _avg[idx];
-  }
-
-  void setVindow(int w) {
-    assert(w > 1);
-    _avgWindow = w;
-  }
+class _DeviceCalibration {
+  _DeviceCalibration(this.a, this.b);
+  int a;
+  int b;
 }
 
 class BluetoothDeviceList extends StatelessWidget {
@@ -285,7 +296,8 @@ class BluetoothServiceDetails extends StatelessWidget {
                             .map((char) => Text('Characteristic: ${char.uuid}'))
                             .toList(),
                       ),
-                      onTap: () => bluetoothService.subscribeToService(service),
+                      onTap: () => unawaited(
+                          bluetoothService.subscribeToAdcFeed(service)),
                     );
                   },
                 );

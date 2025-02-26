@@ -48,7 +48,7 @@ class BluetoothHandling {
       ValueNotifier<BleDevice?>(null);
   final ListNotifier<BleService> services = ListNotifier<BleService>();
   late final void Function(Uint8List) onNewDataCallback;
-  DeviceCalibration deviceCalibration = DeviceCalibration();
+  late final void Function(Uint8List) onCalibrationCallback;
 
   void initializeBluetooth() {
     UniversalBle.setInstance(MockBlePlatform.instance);
@@ -148,29 +148,19 @@ class BluetoothHandling {
     UniversalBle.onAvailabilityChange = null;
   }
 
-  void subscribeToService(BleService service) async {
+  Future<void> subscribeToAdcFeed(BleService service) async {
     final deviceId = selectedDevice.value?.deviceId;
     if (deviceId == null) return;
 
     for (var characteristic in service.characteristics) {
       if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
-        Uint8List calibrationBytes = await UniversalBle.readValue(
-            deviceId, service.uuid, btChrCalibration);
-        deviceCalibration = parseCalibratiuon(calibrationBytes);
+        onCalibrationCallback(await UniversalBle.readValue(
+            deviceId, service.uuid, btChrCalibration));
         await UniversalBle.setNotifiable(deviceId, service.uuid,
             characteristic.uuid, BleInputProperty.notification);
         return;
       }
     }
   }
-}
-
-class DeviceCalibration {
-  int x = 1;
-  int y = 1;
-}
-
-DeviceCalibration parseCalibratiuon(Uint8List data) {
-  return DeviceCalibration();
 }
