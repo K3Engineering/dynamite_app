@@ -58,10 +58,11 @@ class _GraphPageState extends State<GraphPage> {
     if (idx == 0) {
       _xVal++;
     }
-    chartDataCh[idx].add(FlSpot(
-        _xVal.toDouble(),
-        val.toDouble() -
-            (_graphFilerAverage ? _dataTransformer.getAvg(idx) : 0)));
+    double x = _xVal.toDouble();
+    double y = val.toDouble() -
+        (_graphFilerAverage ? _dataTransformer.getAvg(idx) : 0);
+    y *= _dataTransformer._deviceCalibration._slope;
+    chartDataCh[idx].add(FlSpot(x, y));
     if (chartDataCh[idx].length > _graphWindow) {
       chartDataCh[idx].removeFirst();
     }
@@ -151,7 +152,7 @@ class _DataTransformer {
   int _avgWindow = 256;
   int _count = 0;
 
-  _DeviceCalibration _deviceCalibration = _DeviceCalibration(1, 1);
+  _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, 0.0001117587);
 
   void _add(int val, int idx) {
     _runningTotal[idx] += val;
@@ -176,8 +177,8 @@ class _DataTransformer {
 
   void _updateCalibration(Uint8List data) {
     // TODO: implement calibration parsing
-    _deviceCalibration = _DeviceCalibration(2, 1);
-    debugPrint('Calibration $_deviceCalibration.x');
+    _deviceCalibration = _DeviceCalibration(0, 0.0001117587);
+    debugPrint('Calibration ${_deviceCalibration._slope}');
   }
 
   static int _chanToLine(int chan) {
@@ -214,9 +215,9 @@ class _DataTransformer {
 }
 
 class _DeviceCalibration {
-  _DeviceCalibration(this.a, this.b);
-  int a;
-  int b;
+  _DeviceCalibration(this._offset, this._slope);
+  final int _offset;
+  final double _slope;
 }
 
 class BluetoothDeviceList extends StatelessWidget {

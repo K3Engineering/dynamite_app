@@ -157,7 +157,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     _notificationTimer = null;
     if (BleInputProperty.notification == bleInputProperty) {
       final ev =
-          Uint8List.fromList([0, 0, 0, 5, 0, 0, 6, 0, 0, 7, 0, 0, 8, 0, 0]);
+          Uint8List.fromList([0, 0, 5, 4, 3, 6, 5, 4, 7, 6, 5, 8, 7, 6, 0]);
       _notificationTimer = Timer.periodic(dataInterval, (Timer t) {
         updateCharacteristicValue(deviceId, characteristic, ev);
       });
