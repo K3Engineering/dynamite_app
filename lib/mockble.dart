@@ -118,6 +118,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   @override
   Future<void> disconnect(String deviceId) async {
     _connectionState = BleConnectionState.disconnected;
+    await setNotifiable(deviceId, '', '', BleInputProperty.disabled);
     _connectedDeviceId = null;
     updateConnection(deviceId, false);
   }
