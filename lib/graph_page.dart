@@ -151,8 +151,9 @@ class _DataTransformer {
   final Float64List _runningTotal = Float64List(numGraphLines);
   int _avgWindow = 256;
   int _count = 0;
+  static const double _defaultSlope = 0.0001117587;
 
-  _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, 0.0001117587);
+  _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
 
   void _add(int val, int idx) {
     _runningTotal[idx] += val;
@@ -177,7 +178,7 @@ class _DataTransformer {
 
   void _updateCalibration(Uint8List data) {
     // TODO: implement calibration parsing
-    _deviceCalibration = _DeviceCalibration(0, 0.0001117587);
+    _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
     debugPrint('Calibration ${_deviceCalibration._slope}');
   }
 
