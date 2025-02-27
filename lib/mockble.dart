@@ -9,7 +9,6 @@ class MockBlePlatform extends UniversalBlePlatform {
   static MockBlePlatform get instance => _instance ??= MockBlePlatform._();
   static const netDelay = Duration(seconds: 1);
   static const hwDelay = Duration(milliseconds: 200);
-  static const dataInterval = Duration(milliseconds: 50);
 
   MockBlePlatform._() {
     _setupListeners();
@@ -157,9 +156,19 @@ class MockBlePlatform extends UniversalBlePlatform {
     _notificationTimer?.cancel();
     _notificationTimer = null;
     if (BleInputProperty.notification == bleInputProperty) {
-      final ev =
+      const int samplesPerPack = 16;
+      const dataInterval = Duration(milliseconds: 1 * samplesPerPack);
+      final Uint8List sample =
           Uint8List.fromList([0, 0, 5, 4, 3, 6, 5, 4, 7, 6, 5, 8, 7, 6, 0]);
-      _notificationTimer = Timer.periodic(dataInterval, (Timer t) {
+      final Uint8List ev = Uint8List(sample.length * samplesPerPack);
+      for (int i = 0; i < samplesPerPack; ++i) {
+        for (int j = 0; j < sample.length; ++j) {
+          ev[i * sample.length + j] = sample[j];
+        }
+      }
+      _notificationTimer = Timer.periodic(dataInterval, (_) {
+        ev[2 + 3] = Random().nextInt(32);
+        ev[2 + 6] = Random().nextInt(16);
         updateCharacteristicValue(deviceId, characteristic, ev);
       });
     }
