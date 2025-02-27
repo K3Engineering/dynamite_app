@@ -179,7 +179,8 @@ class _DataTransformer {
   void _updateCalibration(Uint8List data) {
     // TODO: implement calibration parsing
     _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
-    debugPrint('Calibration ${_deviceCalibration._slope}');
+    debugPrint(
+        'Calibration ${_deviceCalibration._slope}, offset${_deviceCalibration._offset}');
   }
 
   static int _chanToLine(int chan) {
