@@ -143,10 +143,8 @@ class _DataTransformer {
   void _add(int val, int idx) {
     _runningTotal[idx] += val;
     if (_timeTick % _avgWindow == 0) {
-      for (int i = 0; i < _runningTotal.length; ++i) {
-        _avg[i] = _runningTotal[i].toDouble() / _avgWindow;
-        _runningTotal[i] = 0;
-      }
+      _avg[idx] = _runningTotal[idx].toDouble() / _avgWindow;
+      _runningTotal[idx] = 0;
     }
   }
 
