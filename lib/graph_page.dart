@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:collection';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -19,17 +18,14 @@ class GraphPage extends StatefulWidget {
 
 class _GraphPageState extends State<GraphPage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
-  static const int _graphWindow = 200;
-  bool _graphFilerAverage = true;
 
-  final List<Queue<FlSpot>> chartDataCh = List.generate(
+  final List<List<FlSpot>> chartDataCh = List.generate(
     _DataTransformer.numGraphLines,
-    (_) => Queue<FlSpot>(),
+    (_) => <FlSpot>[],
     growable: false,
   );
 
   final _DataTransformer _dataTransformer = _DataTransformer();
-  int _xVal = 0;
 
   @override
   void initState() {
@@ -45,27 +41,15 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   void _processReceivedData(Uint8List data) {
-    _DataTransformer._parseDataPacket(data, _appendGraphData, _onEndOfData);
+    _dataTransformer._parseDataPacket(data, _appendGraphData, _onEndOfData);
   }
 
   void _onEndOfData() {
     setState(() {}); // Update UI layer
   }
 
-  void _appendGraphData(int val, int idx) {
-    _dataTransformer._add(val, idx);
-
-    if (idx == 0) {
-      _xVal++;
-    }
-    double x = _xVal.toDouble();
-    double y = val.toDouble() -
-        (_graphFilerAverage ? _dataTransformer.getAvg(idx) : 0);
-    y *= _dataTransformer._deviceCalibration._slope;
-    chartDataCh[idx].add(FlSpot(x, y));
-    if (chartDataCh[idx].length > _graphWindow) {
-      chartDataCh[idx].removeFirst();
-    }
+  void _appendGraphData(FlSpot val, int idx) {
+    chartDataCh[idx].add(val);
   }
 
   static Color _lineColor(int idx) {
@@ -94,9 +78,9 @@ class _GraphPageState extends State<GraphPage> {
           Expanded(
               child: BluetoothDeviceList(bluetoothService: _bluetoothHandler)),
           Checkbox(
-            value: _graphFilerAverage,
+            value: _dataTransformer._graphFilerAverage,
             onChanged: (bool? newValue) {
-              _graphFilerAverage = newValue!;
+              _dataTransformer._graphFilerAverage = newValue!;
               setState(() {}); // Update UI layer
             },
           ),
@@ -150,25 +134,18 @@ class _DataTransformer {
   final Float64List _avg = Float64List(numGraphLines);
   final Float64List _runningTotal = Float64List(numGraphLines);
   int _avgWindow = 256;
-  int _count = 0;
   static const double _defaultSlope = 0.0001117587;
-
+  static const int _samplesPerSec = 1000;
+  bool _graphFilerAverage = true;
+  int _timeTick = 0;
   _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
 
   void _add(int val, int idx) {
     _runningTotal[idx] += val;
-    _count++;
-    if (_count >= _avgWindow * _runningTotal.length) {
-      _count = 0;
-      for (int i = 0; i < _runningTotal.length; ++i) {
-        _avg[i] = _runningTotal[i].toDouble() / _avgWindow;
-        _runningTotal[i] = 0;
-      }
+    if (_timeTick % _avgWindow == 0) {
+      _avg[idx] = _runningTotal[idx].toDouble() / _avgWindow;
+      _runningTotal[idx] = 0;
     }
-  }
-
-  double getAvg(int idx) {
-    return _avg[idx];
   }
 
   void setVindow(int w) {
@@ -189,8 +166,15 @@ class _DataTransformer {
     return -1; // No graph line for this chanel
   }
 
-  static void _parseDataPacket(Uint8List data,
-      void Function(int val, int idx) dataCb, void Function() eodCb) {
+  FlSpot _transform(int count, int val, int idx) {
+    double x = count.toDouble() / _samplesPerSec;
+    double y = val.toDouble() - (_graphFilerAverage ? _avg[idx] : 0);
+    y *= _deviceCalibration._slope;
+    return FlSpot(x, y);
+  }
+
+  void _parseDataPacket(Uint8List data,
+      void Function(FlSpot spot, int idx) graphCb, void Function() eodCb) {
     if (data.isEmpty || data.length % 15 != 0) {
       debugPrint('Incorrect buffer size received');
     }
@@ -199,6 +183,7 @@ class _DataTransformer {
       assert(packetStart + 15 <= data.length);
       // final status = (data[packetStart + 1] << 8) | data[packetStart];
       // final crc = data[packetStart + 14];
+      _timeTick++;
       const int numAdcChan = 4;
       for (int i = 0; i < numAdcChan; ++i) {
         final int baseIndex = packetStart + 2 + i * 3;
@@ -206,9 +191,11 @@ class _DataTransformer {
                 (data[baseIndex + 1] << 8) |
                 data[baseIndex])
             .toSigned(24);
+
         int idx = _chanToLine(i);
         if (idx >= 0) {
-          dataCb(res, idx);
+          _add(res, idx);
+          graphCb(_transform(_timeTick, res, idx), idx);
         }
       }
     }
