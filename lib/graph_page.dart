@@ -3,8 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:universal_ble/universal_ble.dart'
-    show AvailabilityState, BleDevice, BleService;
+import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
 import 'bt_handling.dart' show BluetoothHandling;
 
@@ -35,9 +34,9 @@ class _GraphPageState extends State<GraphPage> {
     _bluetoothHandler.onNewDataCallback = _processReceivedData;
     _bluetoothHandler.onCalibrationCallback =
         _dataTransformer._updateCalibration;
-    _bluetoothHandler.isScanning.addListener(() {
+    _bluetoothHandler.onStateChange = () {
       setState(() {}); // Update UI layer
-    });
+    };
   }
 
   void _processReceivedData(Uint8List data) {
@@ -93,6 +92,22 @@ class _GraphPageState extends State<GraphPage> {
     );
   }
 
+  Widget _buttonRunStop() {
+    return FilledButton.tonal(
+      onPressed: _bluetoothHandler.isScanning
+          ? null
+          : () {
+              _dataTransformer._sessionInProgress =
+                  !_dataTransformer._sessionInProgress;
+              if (_dataTransformer._sessionInProgress) {
+                _resetSession();
+              }
+              setState(() {}); // Update UI layer
+            },
+      child: Text(_dataTransformer._sessionInProgress ? 'Stop' : 'Run'),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -107,17 +122,7 @@ class _GraphPageState extends State<GraphPage> {
           Expanded(
             child: BluetoothDeviceList(bluetoothService: _bluetoothHandler),
           ),
-          FilledButton.tonal(
-            onPressed: () {
-              _dataTransformer._sessionInProgress =
-                  !_dataTransformer._sessionInProgress;
-              if (_dataTransformer._sessionInProgress) {
-                _resetSession();
-              }
-              setState(() {}); // Update UI layer
-            },
-            child: Text(_dataTransformer._sessionInProgress ? 'Stop' : 'Run'),
-          ),
+          _buttonRunStop(),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(8.0),
@@ -126,17 +131,13 @@ class _GraphPageState extends State<GraphPage> {
           ),
         ],
       ),
-      floatingActionButton: ValueListenableBuilder<bool>(
-        valueListenable: _bluetoothHandler.isScanning,
-        builder: (context, isScanning, child) {
-          return FloatingActionButton(
-            onPressed: () {
-              unawaited(_bluetoothHandler.toggleScan());
-            },
-            tooltip: isScanning ? 'Stop scanning' : 'Start scanning',
-            child: Icon(isScanning ? Icons.stop : Icons.search),
-          );
+      floatingActionButton: FloatingActionButton(
+        onPressed: () {
+          unawaited(_bluetoothHandler.toggleScan());
         },
+        tooltip:
+            _bluetoothHandler.isScanning ? 'Stop scanning' : 'Start scanning',
+        child: Icon(_bluetoothHandler.isScanning ? Icons.stop : Icons.search),
       ),
     );
   }
@@ -234,37 +235,26 @@ class BluetoothDeviceList extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        if (bluetoothService.isScanning.value)
-          const CircularProgressIndicator(),
+        if (bluetoothService.isScanning) const CircularProgressIndicator(),
         Expanded(
-          child: ValueListenableBuilder<List<BleDevice>>(
-            valueListenable: bluetoothService.devices,
-            builder: (context, devices, _) {
-              return ListView.builder(
-                itemCount: devices.length,
-                itemBuilder: (context, index) {
-                  final device = devices[index];
-                  return ListTile(
-                    title: Text(device.name ?? "Unknown Device"),
-                    subtitle: Text('Device ID: ${device.deviceId}'),
-                    onTap: () =>
-                        unawaited(bluetoothService.connectToDevice(device)),
-                  );
-                },
+          child: ListView.builder(
+            itemCount: bluetoothService.devices.length,
+            itemBuilder: (context, index) {
+              final device = bluetoothService.devices[index];
+              return ListTile(
+                title: Text(device.name ?? "Unknown Device"),
+                subtitle: Text('Device ID: ${device.deviceId}'),
+                onTap: () =>
+                    unawaited(bluetoothService.connectToDevice(device)),
               );
             },
           ),
         ),
         Flexible(
           // Use Flexible instead of Expanded here to ensure layout stability
-          child: ValueListenableBuilder<BleDevice?>(
-            valueListenable: bluetoothService.selectedDevice,
-            builder: (context, selectedDevice, _) {
-              return selectedDevice != null
-                  ? BluetoothServiceDetails(bluetoothService: bluetoothService)
-                  : SizedBox.shrink();
-            },
-          ),
+          child: bluetoothService.selectedDevice == null
+              ? SizedBox.shrink()
+              : BluetoothServiceDetails(bluetoothService: bluetoothService),
         ),
       ],
     );
@@ -282,18 +272,15 @@ class BluetoothServiceDetails extends StatelessWidget {
       children: [
         const Divider(),
         Text(
-          'Connected to: ${bluetoothService.selectedDevice.value?.name ?? "Unknown Device"}',
+          'Connected to: ${bluetoothService.selectedDevice?.name ?? "Unknown Device"}',
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         Expanded(
-          child: ValueListenableBuilder<List<BleService>>(
-            valueListenable: bluetoothService.services,
-            builder: (context, services, _) {
-              if (services.isNotEmpty) {
-                return ListView.builder(
-                  itemCount: services.length,
+          child: (bluetoothService.services.isNotEmpty)
+              ? (ListView.builder(
+                  itemCount: bluetoothService.services.length,
                   itemBuilder: (context, index) {
-                    final service = services[index];
+                    final service = bluetoothService.services[index];
                     return ListTile(
                       title: Text('Service: ${service.uuid}'),
                       subtitle: Column(
@@ -306,15 +293,55 @@ class BluetoothServiceDetails extends StatelessWidget {
                           bluetoothService.subscribeToAdcFeed(service)),
                     );
                   },
-                );
-              } else {
-                return const Text('No services found for this device.');
-              }
-            },
-          ),
+                ))
+              : (const Text('No services found for this device.')),
         ),
       ],
     );
+  }
+}
+
+Color _btIndicatorColor(BluetoothHandling bt) {
+  if (bt.isScanning) return Colors.lightBlue;
+
+  switch (bt.bluetoothState) {
+    case AvailabilityState.poweredOn:
+      return Colors.blueAccent;
+    case AvailabilityState.poweredOff:
+      return Colors.blueGrey;
+    case AvailabilityState.unknown:
+      return Colors.yellow;
+    case AvailabilityState.resetting:
+      return Colors.green;
+    case AvailabilityState.unsupported:
+      return Colors.red;
+    case AvailabilityState.unauthorized:
+      return Colors.orange;
+    // ignore: unreachable_switch_default
+    default:
+      return Colors.grey;
+  }
+}
+
+IconData _btIndicatorIcon(BluetoothHandling bt) {
+  if (bt.isScanning) return Icons.bluetooth_searching;
+
+  switch (bt.bluetoothState) {
+    case AvailabilityState.poweredOn:
+      return Icons.bluetooth;
+    case AvailabilityState.poweredOff:
+      return Icons.bluetooth_disabled;
+    case AvailabilityState.unknown:
+      return Icons.question_mark;
+    case AvailabilityState.resetting:
+      return Icons.question_mark;
+    case AvailabilityState.unsupported:
+      return Icons.stop;
+    case AvailabilityState.unauthorized:
+      return Icons.stop;
+    // ignore: unreachable_switch_default
+    default:
+      return Icons.question_mark;
   }
 }
 
@@ -325,55 +352,10 @@ class BluetoothIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<bool>(
-      valueListenable: bluetoothService.isScanning,
-      builder: (context, isScanning, child) {
-        final IconData iconData;
-        final Color color;
-
-        // Determine icon based on Bluetooth and scanning states
-        if (isScanning) {
-          iconData = Icons.bluetooth_searching;
-          color = Colors.lightBlue;
-        } else {
-          switch (bluetoothService.bluetoothState) {
-            case AvailabilityState.poweredOn:
-              iconData = Icons.bluetooth;
-              color = Colors.blueAccent;
-              break;
-            case AvailabilityState.poweredOff:
-              iconData = Icons.bluetooth_disabled;
-              color = Colors.blueGrey;
-              break;
-            case AvailabilityState.unknown:
-              iconData = Icons.question_mark;
-              color = Colors.yellow;
-              break;
-            case AvailabilityState.resetting:
-              iconData = Icons.question_mark;
-              color = Colors.green;
-              break;
-            case AvailabilityState.unsupported:
-              iconData = Icons.stop;
-              color = Colors.red;
-              break;
-            case AvailabilityState.unauthorized:
-              iconData = Icons.stop;
-              color = Colors.orange;
-              break;
-            // ignore: unreachable_switch_default
-            default:
-              iconData = Icons.question_mark;
-              color = Colors.grey;
-              break;
-          }
-        }
-
-        return Padding(
-          padding: const EdgeInsets.all(8.0),
-          child: Icon(iconData, color: color),
-        );
-      },
+    return Padding(
+      padding: const EdgeInsets.all(8.0),
+      child: Icon(_btIndicatorIcon(bluetoothService),
+          color: _btIndicatorColor(bluetoothService)),
     );
   }
 }
