@@ -52,6 +52,13 @@ class _GraphPageState extends State<GraphPage> {
     chartDataCh[idx].add(val);
   }
 
+  void _resetSession() {
+    for (var list in chartDataCh) {
+      list.clear();
+    }
+    _dataTransformer._timeTick = 0;
+  }
+
   static Color _lineColor(int idx) {
     if (idx == 1) return Colors.deepOrangeAccent;
     return Colors.blueAccent;
@@ -63,6 +70,29 @@ class _GraphPageState extends State<GraphPage> {
     super.dispose();
   }
 
+  Widget _graphPageLineChart() {
+    return LineChart(
+      LineChartData(
+        lineBarsData: List<LineChartBarData>.generate(
+            chartDataCh[0].isNotEmpty ? chartDataCh.length : 0,
+            (i) => LineChartBarData(
+                  spots: chartDataCh[i],
+                  dotData: const FlDotData(
+                    show: false,
+                  ),
+                  color: _lineColor(i),
+                ),
+            growable: false),
+        titlesData: const FlTitlesData(
+            topTitles: AxisTitles(), leftTitles: AxisTitles()),
+        minY: 0, // TODO: negative values
+        clipData: const FlClipData.all(),
+      ),
+      duration: Duration.zero,
+      curve: Curves.linear,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -70,44 +100,28 @@ class _GraphPageState extends State<GraphPage> {
         title: Text(widget.title),
         actions: [
           BluetoothIndicator(bluetoothService: _bluetoothHandler),
-          BluetoothIndicator(bluetoothService: _bluetoothHandler),
         ],
       ),
       body: Row(
         children: [
           Expanded(
-              child: BluetoothDeviceList(bluetoothService: _bluetoothHandler)),
-          Checkbox(
-            value: _dataTransformer._graphFilerAverage,
-            onChanged: (bool? newValue) {
-              _dataTransformer._graphFilerAverage = newValue!;
+            child: BluetoothDeviceList(bluetoothService: _bluetoothHandler),
+          ),
+          FilledButton.tonal(
+            onPressed: () {
+              _dataTransformer._sessionInProgress =
+                  !_dataTransformer._sessionInProgress;
+              if (_dataTransformer._sessionInProgress) {
+                _resetSession();
+              }
               setState(() {}); // Update UI layer
             },
+            child: Text(_dataTransformer._sessionInProgress ? 'Stop' : 'Run'),
           ),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(8.0),
-              child: LineChart(
-                LineChartData(
-                  lineBarsData: List.generate(
-                      chartDataCh[0].isNotEmpty ? chartDataCh.length : 0,
-                      (i) => LineChartBarData(
-                            spots: chartDataCh[i].toList(growable: false),
-                            dotData: const FlDotData(
-                              show: false,
-                            ),
-                            color: _lineColor(i),
-                          ),
-                      growable: false),
-                  titlesData: const FlTitlesData(
-                      topTitles: AxisTitles(), leftTitles: AxisTitles()),
-                  minY: 0, // TODO: negative values
-                  clipData: const FlClipData.all(),
-                ),
-                duration: Duration.zero,
-                //duration: const Duration(milliseconds: 1000),
-                curve: Curves.linear,
-              ),
+              child: _graphPageLineChart(),
             ),
           ),
         ],
@@ -131,26 +145,22 @@ class _GraphPageState extends State<GraphPage> {
 class _DataTransformer {
   static const int numGraphLines = 2;
   // TODO: this is preliminary implementation
-  final Float64List _avg = Float64List(numGraphLines);
+  final Float64List _tare = Float64List(numGraphLines);
   final Float64List _runningTotal = Float64List(numGraphLines);
-  int _avgWindow = 256;
+  static const int _avgWindow = 1024;
   static const double _defaultSlope = 0.0001117587;
   static const int _samplesPerSec = 1000;
-  bool _graphFilerAverage = true;
+  bool _sessionInProgress = false;
   int _timeTick = 0;
   _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
 
-  void _add(int val, int idx) {
-    _runningTotal[idx] += val;
-    if (_timeTick % _avgWindow == 0) {
-      _avg[idx] = _runningTotal[idx].toDouble() / _avgWindow;
+  void _updateTare(int val, int idx) {
+    if (_timeTick < _avgWindow) {
+      _runningTotal[idx] += val;
+    } else if (_timeTick == _avgWindow) {
+      _tare[idx] = _runningTotal[idx].toDouble() / _avgWindow;
       _runningTotal[idx] = 0;
     }
-  }
-
-  void setVindow(int w) {
-    assert(w > 1);
-    _avgWindow = w;
   }
 
   void _updateCalibration(Uint8List data) {
@@ -168,13 +178,16 @@ class _DataTransformer {
 
   FlSpot _transform(int count, int val, int idx) {
     double x = count.toDouble() / _samplesPerSec;
-    double y = val.toDouble() - (_graphFilerAverage ? _avg[idx] : 0);
+    double y = val.toDouble() - _tare[idx];
     y *= _deviceCalibration._slope;
     return FlSpot(x, y);
   }
 
   void _parseDataPacket(Uint8List data,
       void Function(FlSpot spot, int idx) graphCb, void Function() eodCb) {
+    if (!_sessionInProgress) {
+      return;
+    }
     if (data.isEmpty || data.length % 15 != 0) {
       debugPrint('Incorrect buffer size received');
     }
@@ -194,8 +207,11 @@ class _DataTransformer {
 
         int idx = _chanToLine(i);
         if (idx >= 0) {
-          _add(res, idx);
-          graphCb(_transform(_timeTick, res, idx), idx);
+          if (_timeTick <= _avgWindow) {
+            _updateTare(res, idx);
+          } else {
+            graphCb(_transform(_timeTick, res, idx), idx);
+          }
         }
       }
     }
