@@ -20,6 +20,7 @@ class BluetoothHandling {
   final List<BleDevice> devices = [];
   bool isScanning = false;
   BleDevice? selectedDevice;
+  bool isSubscribed = false;
   final List<BleService> services = [];
   late final void Function(Uint8List) onNewDataCallback;
   late final void Function(Uint8List) onCalibrationCallback;
@@ -62,6 +63,7 @@ class BluetoothHandling {
   }
 
   Future<void> stopScan() async {
+    assert(!isSubscribed);
     await UniversalBle.stopScan();
     isScanning = false;
     onStateChange();
@@ -74,6 +76,7 @@ class BluetoothHandling {
     await disconnectSelectedDevice();
     devices.clear();
     services.clear();
+    assert(!isSubscribed);
     isScanning = true;
     await UniversalBle.startScan(
       platformConfig: PlatformConfig(
@@ -106,6 +109,7 @@ class BluetoothHandling {
       selectedDevice = device;
       services.clear();
       services.addAll(await UniversalBle.discoverServices(device.deviceId));
+      assert(!isSubscribed);
     } catch (e) {
       // Error handling can be implemented here
     }
@@ -119,6 +123,7 @@ class BluetoothHandling {
     }
 
     await UniversalBle.disconnect(deviceId);
+    isSubscribed = false;
     selectedDevice = null;
     await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
     onStateChange();
@@ -140,6 +145,7 @@ class BluetoothHandling {
             deviceId, service.uuid, btChrCalibration));
         await UniversalBle.setNotifiable(deviceId, service.uuid,
             characteristic.uuid, BleInputProperty.notification);
+        isSubscribed = true;
         onStateChange();
         return;
       }
