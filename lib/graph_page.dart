@@ -39,6 +39,12 @@ class _GraphPageState extends State<GraphPage> {
     };
   }
 
+  @override
+  void dispose() {
+    _bluetoothHandler.dispose();
+    super.dispose();
+  }
+
   void _processReceivedData(Uint8List data) {
     _dataTransformer._parseDataPacket(data, _appendGraphData, _onEndOfData);
   }
@@ -51,25 +57,12 @@ class _GraphPageState extends State<GraphPage> {
     chartDataCh[idx].add(val);
   }
 
-  void _resetSession() {
-    for (var list in chartDataCh) {
-      list.clear();
-    }
-    _dataTransformer._timeTick = 0;
-  }
-
-  static Color _lineColor(int idx) {
-    if (idx == 1) return Colors.deepOrangeAccent;
-    return Colors.blueAccent;
-  }
-
-  @override
-  void dispose() {
-    _bluetoothHandler.dispose();
-    super.dispose();
-  }
-
   Widget _graphPageLineChart() {
+    Color lineColor(int idx) {
+      if (idx == 1) return Colors.deepOrangeAccent;
+      return Colors.blueAccent;
+    }
+
     return LineChart(
       LineChartData(
         lineBarsData: List<LineChartBarData>.generate(
@@ -79,7 +72,7 @@ class _GraphPageState extends State<GraphPage> {
                   dotData: const FlDotData(
                     show: false,
                   ),
-                  color: _lineColor(i),
+                  color: lineColor(i),
                 ),
             growable: false),
         titlesData: const FlTitlesData(
@@ -93,18 +86,32 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   Widget _buttonRunStop() {
+    void onRunStop() {
+      assert(_bluetoothHandler.selectedDevice != null);
+
+      _dataTransformer._sessionInProgress =
+          !_dataTransformer._sessionInProgress;
+
+      if (_dataTransformer._sessionInProgress) {
+        {
+          for (var list in chartDataCh) {
+            list.clear();
+          }
+          _dataTransformer._timeTick = 0;
+        }
+      }
+      setState(() {}); // Update UI layer
+    }
+
+    final String title;
+    if (_bluetoothHandler.isSubscribed) {
+      title = _dataTransformer._sessionInProgress ? 'Stop' : 'Run';
+    } else {
+      title = '';
+    }
     return FilledButton.tonal(
-      onPressed: _bluetoothHandler.isScanning
-          ? null
-          : () {
-              _dataTransformer._sessionInProgress =
-                  !_dataTransformer._sessionInProgress;
-              if (_dataTransformer._sessionInProgress) {
-                _resetSession();
-              }
-              setState(() {}); // Update UI layer
-            },
-      child: Text(_dataTransformer._sessionInProgress ? 'Stop' : 'Run'),
+      onPressed: _bluetoothHandler.isSubscribed ? onRunStop : null,
+      child: Text(title),
     );
   }
 
@@ -233,26 +240,32 @@ class BluetoothDeviceList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    ListView deviceList() {
+      return ListView.builder(
+        itemCount: bluetoothService.devices.length,
+        itemBuilder: (_, index) {
+          final device = bluetoothService.devices[index];
+          return ListTile(
+            title: Text(device.name ?? 'Unknown Device'),
+            subtitle: Text('Device ID: ${device.deviceId}'),
+            selected:
+                device.deviceId == bluetoothService.selectedDevice?.deviceId,
+            onTap: () => unawaited(bluetoothService.connectToDevice(device)),
+          );
+        },
+      );
+    }
+
     return Column(
       children: [
         if (bluetoothService.isScanning) const CircularProgressIndicator(),
         Expanded(
-          child: ListView.builder(
-            itemCount: bluetoothService.devices.length,
-            itemBuilder: (context, index) {
-              final device = bluetoothService.devices[index];
-              return ListTile(
-                title: Text(device.name ?? "Unknown Device"),
-                subtitle: Text('Device ID: ${device.deviceId}'),
-                onTap: () =>
-                    unawaited(bluetoothService.connectToDevice(device)),
-              );
-            },
-          ),
+          child: deviceList(),
         ),
+        const Divider(),
         Flexible(
           // Use Flexible instead of Expanded here to ensure layout stability
-          child: bluetoothService.selectedDevice == null
+          child: (bluetoothService.selectedDevice == null)
               ? SizedBox.shrink()
               : BluetoothServiceDetails(bluetoothService: bluetoothService),
         ),
@@ -268,80 +281,39 @@ class BluetoothServiceDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    ListView serviceList() {
+      return ListView.builder(
+        itemCount: bluetoothService.services.length,
+        itemBuilder: (_, index) {
+          final service = bluetoothService.services[index];
+          return ListTile(
+            title: Text('Service: ${service.uuid}'),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: service.characteristics
+                  .map((char) => Text('Characteristic: ${char.uuid}'))
+                  .toList(),
+            ),
+            onTap: () =>
+                unawaited(bluetoothService.subscribeToAdcFeed(service)),
+          );
+        },
+      );
+    }
+
     return Column(
       children: [
-        const Divider(),
         Text(
           'Connected to: ${bluetoothService.selectedDevice?.name ?? "Unknown Device"}',
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         Expanded(
           child: (bluetoothService.services.isNotEmpty)
-              ? (ListView.builder(
-                  itemCount: bluetoothService.services.length,
-                  itemBuilder: (context, index) {
-                    final service = bluetoothService.services[index];
-                    return ListTile(
-                      title: Text('Service: ${service.uuid}'),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: service.characteristics
-                            .map((char) => Text('Characteristic: ${char.uuid}'))
-                            .toList(),
-                      ),
-                      onTap: () => unawaited(
-                          bluetoothService.subscribeToAdcFeed(service)),
-                    );
-                  },
-                ))
-              : (const Text('No services found for this device.')),
+              ? serviceList()
+              : const Text('No services found for this device.'),
         ),
       ],
     );
-  }
-}
-
-Color _btIndicatorColor(BluetoothHandling bt) {
-  if (bt.isScanning) return Colors.lightBlue;
-
-  switch (bt.bluetoothState) {
-    case AvailabilityState.poweredOn:
-      return Colors.blueAccent;
-    case AvailabilityState.poweredOff:
-      return Colors.blueGrey;
-    case AvailabilityState.unknown:
-      return Colors.yellow;
-    case AvailabilityState.resetting:
-      return Colors.green;
-    case AvailabilityState.unsupported:
-      return Colors.red;
-    case AvailabilityState.unauthorized:
-      return Colors.orange;
-    // ignore: unreachable_switch_default
-    default:
-      return Colors.grey;
-  }
-}
-
-IconData _btIndicatorIcon(BluetoothHandling bt) {
-  if (bt.isScanning) return Icons.bluetooth_searching;
-
-  switch (bt.bluetoothState) {
-    case AvailabilityState.poweredOn:
-      return Icons.bluetooth;
-    case AvailabilityState.poweredOff:
-      return Icons.bluetooth_disabled;
-    case AvailabilityState.unknown:
-      return Icons.question_mark;
-    case AvailabilityState.resetting:
-      return Icons.question_mark;
-    case AvailabilityState.unsupported:
-      return Icons.stop;
-    case AvailabilityState.unauthorized:
-      return Icons.stop;
-    // ignore: unreachable_switch_default
-    default:
-      return Icons.question_mark;
   }
 }
 
@@ -350,12 +322,35 @@ class BluetoothIndicator extends StatelessWidget {
 
   const BluetoothIndicator({super.key, required this.bluetoothService});
 
+  (IconData, Color) _btIndicator() {
+    if (bluetoothService.isScanning) {
+      return (Icons.bluetooth_searching, Colors.lightBlue);
+    }
+    switch (bluetoothService.bluetoothState) {
+      case AvailabilityState.poweredOn:
+        return (Icons.bluetooth, Colors.blueAccent);
+      case AvailabilityState.poweredOff:
+        return (Icons.bluetooth_disabled, Colors.blueGrey);
+      case AvailabilityState.unknown:
+        return (Icons.question_mark, Colors.yellow);
+      case AvailabilityState.resetting:
+        return (Icons.question_mark, Colors.green);
+      case AvailabilityState.unsupported:
+        return (Icons.stop, Colors.red);
+      case AvailabilityState.unauthorized:
+        return (Icons.stop, Colors.orange);
+      // ignore: unreachable_switch_default
+      default:
+        return (Icons.question_mark, Colors.grey);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    var (icon, color) = _btIndicator();
     return Padding(
       padding: const EdgeInsets.all(8.0),
-      child: Icon(_btIndicatorIcon(bluetoothService),
-          color: _btIndicatorColor(bluetoothService)),
+      child: Icon(icon, color: color),
     );
   }
 }
