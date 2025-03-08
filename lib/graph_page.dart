@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -89,17 +90,18 @@ class _GraphPageState extends State<GraphPage> {
     void onRunStop() {
       assert(_bluetoothHandler.selectedDevice != null);
 
+      if (_dataTransformer._sessionInProgress) {
+        final File f = File('DynoData.txt');
+        f.writeAsStringSync('Raw ADC data here...');
+      } else {
+        for (var list in chartDataCh) {
+          list.clear();
+        }
+        _dataTransformer._timeTick = 0;
+      }
       _dataTransformer._sessionInProgress =
           !_dataTransformer._sessionInProgress;
 
-      if (_dataTransformer._sessionInProgress) {
-        {
-          for (var list in chartDataCh) {
-            list.clear();
-          }
-          _dataTransformer._timeTick = 0;
-        }
-      }
       setState(() {}); // Update UI layer
     }
 
@@ -322,32 +324,32 @@ class BluetoothIndicator extends StatelessWidget {
 
   const BluetoothIndicator({super.key, required this.bluetoothService});
 
-  (IconData, Color) _btIndicator() {
-    if (bluetoothService.isScanning) {
-      return (Icons.bluetooth_searching, Colors.lightBlue);
-    }
-    switch (bluetoothService.bluetoothState) {
-      case AvailabilityState.poweredOn:
-        return (Icons.bluetooth, Colors.blueAccent);
-      case AvailabilityState.poweredOff:
-        return (Icons.bluetooth_disabled, Colors.blueGrey);
-      case AvailabilityState.unknown:
-        return (Icons.question_mark, Colors.yellow);
-      case AvailabilityState.resetting:
-        return (Icons.question_mark, Colors.green);
-      case AvailabilityState.unsupported:
-        return (Icons.stop, Colors.red);
-      case AvailabilityState.unauthorized:
-        return (Icons.stop, Colors.orange);
-      // ignore: unreachable_switch_default
-      default:
-        return (Icons.question_mark, Colors.grey);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    var (icon, color) = _btIndicator();
+    (IconData, Color) indicator() {
+      if (bluetoothService.isScanning) {
+        return (Icons.bluetooth_searching, Colors.lightBlue);
+      }
+      switch (bluetoothService.bluetoothState) {
+        case AvailabilityState.poweredOn:
+          return (Icons.bluetooth, Colors.blueAccent);
+        case AvailabilityState.poweredOff:
+          return (Icons.bluetooth_disabled, Colors.blueGrey);
+        case AvailabilityState.unknown:
+          return (Icons.question_mark, Colors.yellow);
+        case AvailabilityState.resetting:
+          return (Icons.question_mark, Colors.green);
+        case AvailabilityState.unsupported:
+          return (Icons.stop, Colors.red);
+        case AvailabilityState.unauthorized:
+          return (Icons.stop, Colors.orange);
+        // ignore: unreachable_switch_default
+        default:
+          return (Icons.question_mark, Colors.grey);
+      }
+    }
+
+    var (icon, color) = indicator();
     return Padding(
       padding: const EdgeInsets.all(8.0),
       child: Icon(icon, color: color),
