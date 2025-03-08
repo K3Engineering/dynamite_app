@@ -91,16 +91,16 @@ class _GraphPageState extends State<GraphPage> {
       assert(_bluetoothHandler.selectedDevice != null);
 
       if (_dataTransformer._sessionInProgress) {
+        _dataTransformer._sessionInProgress = false;
         final File f = File('DynoData.txt');
-        f.writeAsStringSync('Raw ADC data here...');
+        f.writeAsStringSync(_dataTransformer._rawData.toString());
       } else {
         for (var list in chartDataCh) {
           list.clear();
         }
-        _dataTransformer._timeTick = 0;
+        _dataTransformer._clear();
+        _dataTransformer._sessionInProgress = true;
       }
-      _dataTransformer._sessionInProgress =
-          !_dataTransformer._sessionInProgress;
 
       setState(() {}); // Update UI layer
     }
@@ -157,6 +157,7 @@ class _DataTransformer {
   // TODO: this is preliminary implementation
   final Float64List _tare = Float64List(numGraphLines);
   final Float64List _runningTotal = Float64List(numGraphLines);
+  final List<int> _rawData = [];
   static const int _avgWindow = 1024;
   static const double _defaultSlope = 0.0001117587;
   static const int _samplesPerSec = 1000;
@@ -164,7 +165,16 @@ class _DataTransformer {
   int _timeTick = 0;
   _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
 
-  void _updateTare(int val, int idx) {
+  void _clear() {
+    _timeTick = 0;
+    _rawData.clear();
+    for (int i = 0; i < _tare.length; ++i) {
+      _tare[i] = 0;
+      _runningTotal[i] = 0;
+    }
+  }
+
+  void _addTare(int val, int idx) {
     if (_timeTick < _avgWindow) {
       _runningTotal[idx] += val;
     } else if (_timeTick == _avgWindow) {
@@ -217,8 +227,9 @@ class _DataTransformer {
 
         int idx = _chanToLine(i);
         if (idx >= 0) {
+          _rawData.add(res);
           if (_timeTick <= _avgWindow) {
-            _updateTare(res, idx);
+            _addTare(res, idx);
           } else {
             graphCb(_transform(_timeTick, res, idx), idx);
           }
