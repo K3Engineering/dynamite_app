@@ -19,23 +19,20 @@ class BluetoothHandling {
   AvailabilityState bluetoothState = AvailabilityState.unknown;
   final List<BleDevice> devices = [];
   bool isScanning = false;
-  BleDevice? selectedDevice;
+  String selectedDeviceId = '';
   bool isSubscribed = false;
   final List<BleService> services = [];
-  late final void Function(Uint8List) onNewDataCallback;
-  late final void Function(Uint8List) onCalibrationCallback;
-  late final void Function() onStateChange;
+  late final void Function(Uint8List) notifyCalibrationUpdated;
+  late final void Function() notifyStateChanged;
 
-  void initializeBluetooth() {
-    UniversalBle.setInstance(MockBlePlatform.instance);
+  void initializeBluetooth(OnValueChange onValueChangeCb) {
+    //UniversalBle.setInstance(MockBlePlatform.instance);
 
     UniversalBle.onScanResult = _onScanResult;
     UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
+    UniversalBle.onConnectionChange = _onConnectionChange;
     UniversalBle.onPairingStateChange = _onPairingStateChange;
-    UniversalBle.onValueChange =
-        (String deviceId, String characteristicId, Uint8List newData) {
-      onNewDataCallback(newData);
-    };
+    UniversalBle.onValueChange = onValueChangeCb;
     unawaited(_updateBluetoothState());
   }
 
@@ -46,16 +43,17 @@ class BluetoothHandling {
     bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
   }
 
-  void _onScanResult(BleDevice device) {
-    for (var deviceListDevice in devices) {
-      if (deviceListDevice.deviceId == device.deviceId) {
-        if (deviceListDevice.name == device.name) {
-          return;
+  void _onScanResult(BleDevice newDevice) {
+    for (var dev in devices) {
+      if (dev.deviceId == newDevice.deviceId) {
+        if ((dev.name == null) && (newDevice.name != null)) {
+          dev = newDevice;
         }
+        return;
       }
     }
-    devices.add(device);
-    onStateChange();
+    devices.add(newDevice);
+    notifyStateChanged();
   }
 
   void _onBluetoothAvailabilityChanged(AvailabilityState state) {
@@ -66,7 +64,7 @@ class BluetoothHandling {
     assert(!isSubscribed);
     await UniversalBle.stopScan();
     isScanning = false;
-    onStateChange();
+    notifyStateChanged();
   }
 
   Future<void> startScan() async {
@@ -84,7 +82,7 @@ class BluetoothHandling {
             optionalServices: [btServiceId, btChrAdcFeedId, btS2, btS3]),
       ),
     );
-    onStateChange();
+    notifyStateChanged();
   }
 
   Future<void> toggleScan() async {
@@ -99,34 +97,38 @@ class BluetoothHandling {
     debugPrint('isPaired $deviceId, $isPaired');
   }
 
-  Future<void> connectToDevice(BleDevice device) async {
+  void _onConnectionChange(
+      String deviceId, bool isConnected, String? err) async {
+    debugPrint('isConnected $deviceId, $isConnected');
+    if (isConnected) {
+      selectedDeviceId = deviceId;
+      services.addAll(await UniversalBle.discoverServices(deviceId));
+    } else {
+      isSubscribed = false;
+      selectedDeviceId = '';
+      services.clear();
+    }
+    notifyStateChanged();
+  }
+
+  Future<void> connectToDevice(String deviceId) async {
     if (isScanning) {
       await stopScan();
     }
     try {
       await disconnectSelectedDevice();
-      await UniversalBle.connect(device.deviceId);
-      selectedDevice = device;
-      services.clear();
-      services.addAll(await UniversalBle.discoverServices(device.deviceId));
-      assert(!isSubscribed);
+      await UniversalBle.connect(deviceId);
     } catch (e) {
-      // Error handling can be implemented here
+      debugPrint('connect $deviceId err: $e');
     }
-    onStateChange();
   }
 
   Future<void> disconnectSelectedDevice() async {
-    final deviceId = selectedDevice?.deviceId;
-    if (deviceId == null) {
+    if (selectedDeviceId.isEmpty) {
       return;
     }
-
-    await UniversalBle.disconnect(deviceId);
-    isSubscribed = false;
-    selectedDevice = null;
+    await UniversalBle.disconnect(selectedDeviceId);
     await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
-    onStateChange();
   }
 
   void dispose() {
@@ -135,18 +137,18 @@ class BluetoothHandling {
   }
 
   Future<void> subscribeToAdcFeed(BleService service) async {
-    final deviceId = selectedDevice?.deviceId;
-    if (deviceId == null) return;
-
+    if (selectedDeviceId.isEmpty) {
+      return;
+    }
     for (var characteristic in service.characteristics) {
       if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
-        onCalibrationCallback(await UniversalBle.readValue(
-            deviceId, service.uuid, btChrCalibration));
-        await UniversalBle.setNotifiable(deviceId, service.uuid,
+        notifyCalibrationUpdated(await UniversalBle.readValue(
+            selectedDeviceId, service.uuid, btChrCalibration));
+        await UniversalBle.setNotifiable(selectedDeviceId, service.uuid,
             characteristic.uuid, BleInputProperty.notification);
         isSubscribed = true;
-        onStateChange();
+        notifyStateChanged();
         return;
       }
     }

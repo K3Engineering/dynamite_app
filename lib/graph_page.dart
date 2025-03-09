@@ -31,11 +31,10 @@ class _GraphPageState extends State<GraphPage> {
   void initState() {
     super.initState();
 
-    _bluetoothHandler.initializeBluetooth();
-    _bluetoothHandler.onNewDataCallback = _processReceivedData;
-    _bluetoothHandler.onCalibrationCallback =
-        _dataTransformer._updateCalibration;
-    _bluetoothHandler.onStateChange = () {
+    _bluetoothHandler.initializeBluetooth(_processReceivedData);
+    _bluetoothHandler.notifyCalibrationUpdated =
+        _dataTransformer._onUpdateCalibration;
+    _bluetoothHandler.notifyStateChanged = () {
       setState(() {}); // Update UI layer
     };
   }
@@ -46,7 +45,7 @@ class _GraphPageState extends State<GraphPage> {
     super.dispose();
   }
 
-  void _processReceivedData(Uint8List data) {
+  void _processReceivedData(String _, String __, Uint8List data) {
     _dataTransformer._parseDataPacket(data, _appendGraphData, _onEndOfData);
   }
 
@@ -88,7 +87,7 @@ class _GraphPageState extends State<GraphPage> {
 
   Widget _buttonRunStop() {
     void onRunStop() {
-      assert(_bluetoothHandler.selectedDevice != null);
+      assert(_bluetoothHandler.selectedDeviceId.isNotEmpty);
 
       if (_dataTransformer._sessionInProgress) {
         _dataTransformer._sessionInProgress = false;
@@ -183,7 +182,7 @@ class _DataTransformer {
     }
   }
 
-  void _updateCalibration(Uint8List data) {
+  void _onUpdateCalibration(Uint8List data) {
     // TODO: implement calibration parsing
     _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
     debugPrint(
@@ -261,9 +260,9 @@ class BluetoothDeviceList extends StatelessWidget {
           return ListTile(
             title: Text(device.name ?? 'Unknown Device'),
             subtitle: Text('Device ID: ${device.deviceId}'),
-            selected:
-                device.deviceId == bluetoothService.selectedDevice?.deviceId,
-            onTap: () => unawaited(bluetoothService.connectToDevice(device)),
+            selected: device.deviceId == bluetoothService.selectedDeviceId,
+            onTap: () =>
+                unawaited(bluetoothService.connectToDevice(device.deviceId)),
           );
         },
       );
@@ -278,7 +277,7 @@ class BluetoothDeviceList extends StatelessWidget {
         const Divider(),
         Flexible(
           // Use Flexible instead of Expanded here to ensure layout stability
-          child: (bluetoothService.selectedDevice == null)
+          child: (bluetoothService.selectedDeviceId.isEmpty)
               ? SizedBox.shrink()
               : BluetoothServiceDetails(bluetoothService: bluetoothService),
         ),
@@ -317,7 +316,7 @@ class BluetoothServiceDetails extends StatelessWidget {
     return Column(
       children: [
         Text(
-          'Connected to: ${bluetoothService.selectedDevice?.name ?? "Unknown Device"}',
+          'Connected to: ${bluetoothService.selectedDeviceId.isEmpty ? "Unknown Device" : bluetoothService.selectedDeviceId}',
           style: Theme.of(context).textTheme.headlineSmall,
         ),
         Expanded(
