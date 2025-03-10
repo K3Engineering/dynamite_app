@@ -16,23 +16,44 @@ const btS2 = "00001800-0000-1000-8000-00805f9b34fb";
 const btS3 = "00001801-0000-1000-8000-00805f9b34fb";
 
 class BluetoothHandling {
-  AvailabilityState bluetoothState = AvailabilityState.unknown;
-  final List<BleDevice> devices = [];
-  bool isScanning = false;
-  String selectedDeviceId = '';
-  bool isSubscribed = false;
-  final List<BleService> services = [];
-  late final void Function(Uint8List) notifyCalibrationUpdated;
-  late final void Function() notifyStateChanged;
+  AvailabilityState _bluetoothState = AvailabilityState.unknown;
+  AvailabilityState get bluetoothState => _bluetoothState;
 
-  void initializeBluetooth(OnValueChange onValueChangeCb) {
-    //UniversalBle.setInstance(MockBlePlatform.instance);
+  final List<BleDevice> _devices = [];
+  List<BleDevice> get devices => _devices;
 
+  final List<BleService> _services = [];
+  List<BleService> get services => _services;
+
+  bool _isScanning = false;
+  bool get isScanning => _isScanning;
+
+  String _selectedDeviceId = '';
+  String get selectedDeviceId => _selectedDeviceId;
+
+  bool _isSubscribed = false;
+  bool get isSubscribed => _isSubscribed;
+
+  bool _sessionInProgress = false;
+  bool get sessionInProgress => _sessionInProgress;
+
+  late final void Function(Uint8List) _notifyCalibrationUpdated;
+  late final void Function() _notifyStateChanged;
+
+  void initializeBluetooth(
+      OnValueChange onValueChangeCb,
+      void Function(Uint8List data) onUpdateCalibration,
+      void Function() onStateChange) {
+    _notifyCalibrationUpdated = onUpdateCalibration;
+    _notifyStateChanged = onStateChange;
+
+    UniversalBle.setInstance(MockBlePlatform.instance);
     UniversalBle.onScanResult = _onScanResult;
     UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
     UniversalBle.onConnectionChange = _onConnectionChange;
     UniversalBle.onPairingStateChange = _onPairingStateChange;
     UniversalBle.onValueChange = onValueChangeCb;
+
     unawaited(_updateBluetoothState());
   }
 
@@ -40,11 +61,11 @@ class BluetoothHandling {
     if (!kIsWeb) {
       await UniversalBle.enableBluetooth(); // this isn't implemented on web
     }
-    bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
+    _bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
   }
 
   void _onScanResult(BleDevice newDevice) {
-    for (var dev in devices) {
+    for (var dev in _devices) {
       if (dev.deviceId == newDevice.deviceId) {
         if ((dev.name == null) && (newDevice.name != null)) {
           dev = newDevice;
@@ -52,45 +73,51 @@ class BluetoothHandling {
         return;
       }
     }
-    devices.add(newDevice);
-    notifyStateChanged();
+    _devices.add(newDevice);
+    _notifyStateChanged();
   }
 
   void _onBluetoothAvailabilityChanged(AvailabilityState state) {
-    bluetoothState = state;
+    _bluetoothState = state;
   }
 
   Future<void> stopScan() async {
-    assert(!isSubscribed);
+    assert(!_isSubscribed);
     await UniversalBle.stopScan();
-    isScanning = false;
-    notifyStateChanged();
+    _isScanning = false;
+    _notifyStateChanged();
   }
 
   Future<void> startScan() async {
-    if (bluetoothState != AvailabilityState.poweredOn) {
+    if (_bluetoothState != AvailabilityState.poweredOn) {
       return;
     }
     await disconnectSelectedDevice();
-    devices.clear();
-    services.clear();
-    assert(!isSubscribed);
-    isScanning = true;
+    _devices.clear();
+    _services.clear();
+    assert(!_isSubscribed);
+    _isScanning = true;
     await UniversalBle.startScan(
       platformConfig: PlatformConfig(
         web: WebOptions(
             optionalServices: [btServiceId, btChrAdcFeedId, btS2, btS3]),
       ),
     );
-    notifyStateChanged();
+    _notifyStateChanged();
   }
 
   Future<void> toggleScan() async {
-    if (isScanning) {
+    if (_isScanning) {
       await stopScan();
     } else {
       await startScan();
     }
+  }
+
+  void toggleSession() {
+    assert(selectedDeviceId.isNotEmpty);
+    _sessionInProgress = !_sessionInProgress;
+    _notifyStateChanged();
   }
 
   void _onPairingStateChange(String deviceId, bool isPaired) {
@@ -101,18 +128,19 @@ class BluetoothHandling {
       String deviceId, bool isConnected, String? err) async {
     debugPrint('isConnected $deviceId, $isConnected');
     if (isConnected) {
-      selectedDeviceId = deviceId;
-      services.addAll(await UniversalBle.discoverServices(deviceId));
+      _selectedDeviceId = deviceId;
+      _services.addAll(await UniversalBle.discoverServices(deviceId));
     } else {
-      isSubscribed = false;
-      selectedDeviceId = '';
-      services.clear();
+      _isSubscribed = false;
+      _selectedDeviceId = '';
+      _services.clear();
+      _sessionInProgress = false;
     }
-    notifyStateChanged();
+    _notifyStateChanged();
   }
 
   Future<void> connectToDevice(String deviceId) async {
-    if (isScanning) {
+    if (_isScanning) {
       await stopScan();
     }
     try {
@@ -127,7 +155,7 @@ class BluetoothHandling {
     if (selectedDeviceId.isEmpty) {
       return;
     }
-    await UniversalBle.disconnect(selectedDeviceId);
+    await UniversalBle.disconnect(_selectedDeviceId);
     await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
   }
 
@@ -137,18 +165,18 @@ class BluetoothHandling {
   }
 
   Future<void> subscribeToAdcFeed(BleService service) async {
-    if (selectedDeviceId.isEmpty) {
+    if (_selectedDeviceId.isEmpty) {
       return;
     }
     for (var characteristic in service.characteristics) {
       if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
-        notifyCalibrationUpdated(await UniversalBle.readValue(
-            selectedDeviceId, service.uuid, btChrCalibration));
-        await UniversalBle.setNotifiable(selectedDeviceId, service.uuid,
+        _notifyCalibrationUpdated(await UniversalBle.readValue(
+            _selectedDeviceId, service.uuid, btChrCalibration));
+        await UniversalBle.setNotifiable(_selectedDeviceId, service.uuid,
             characteristic.uuid, BleInputProperty.notification);
-        isSubscribed = true;
-        notifyStateChanged();
+        _isSubscribed = true;
+        _notifyStateChanged();
         return;
       }
     }

@@ -31,12 +31,10 @@ class _GraphPageState extends State<GraphPage> {
   void initState() {
     super.initState();
 
-    _bluetoothHandler.initializeBluetooth(_processReceivedData);
-    _bluetoothHandler.notifyCalibrationUpdated =
-        _dataTransformer._onUpdateCalibration;
-    _bluetoothHandler.notifyStateChanged = () {
-      setState(() {}); // Update UI layer
-    };
+    _bluetoothHandler.initializeBluetooth(
+        _processReceivedData, _dataTransformer._onUpdateCalibration, () {
+      setState(() {});
+    });
   }
 
   @override
@@ -46,7 +44,9 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   void _processReceivedData(String _, String __, Uint8List data) {
-    _dataTransformer._parseDataPacket(data, _appendGraphData, _onEndOfData);
+    if (_bluetoothHandler.sessionInProgress) {
+      _dataTransformer._parseDataPacket(data, _appendGraphData, _onEndOfData);
+    }
   }
 
   void _onEndOfData() {
@@ -87,10 +87,7 @@ class _GraphPageState extends State<GraphPage> {
 
   Widget _buttonRunStop() {
     void onRunStop() {
-      assert(_bluetoothHandler.selectedDeviceId.isNotEmpty);
-
-      if (_dataTransformer._sessionInProgress) {
-        _dataTransformer._sessionInProgress = false;
+      if (_bluetoothHandler.sessionInProgress) {
         final File f = File('DynoData.txt');
         f.writeAsStringSync(_dataTransformer._rawData.toString());
       } else {
@@ -98,15 +95,13 @@ class _GraphPageState extends State<GraphPage> {
           list.clear();
         }
         _dataTransformer._clear();
-        _dataTransformer._sessionInProgress = true;
       }
-
-      setState(() {}); // Update UI layer
+      _bluetoothHandler.toggleSession();
     }
 
     final String title;
     if (_bluetoothHandler.isSubscribed) {
-      title = _dataTransformer._sessionInProgress ? 'Stop' : 'Run';
+      title = _bluetoothHandler.sessionInProgress ? 'Stop' : 'Run';
     } else {
       title = '';
     }
@@ -160,7 +155,6 @@ class _DataTransformer {
   static const int _avgWindow = 1024;
   static const double _defaultSlope = 0.0001117587;
   static const int _samplesPerSec = 1000;
-  bool _sessionInProgress = false;
   int _timeTick = 0;
   _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
 
@@ -204,9 +198,6 @@ class _DataTransformer {
 
   void _parseDataPacket(Uint8List data,
       void Function(FlSpot spot, int idx) graphCb, void Function() eodCb) {
-    if (!_sessionInProgress) {
-      return;
-    }
     if (data.isEmpty || data.length % 15 != 0) {
       debugPrint('Incorrect buffer size received');
     }
