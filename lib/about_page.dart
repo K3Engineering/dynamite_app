@@ -9,17 +9,18 @@ class AboutPage extends StatelessWidget {
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('About'),
+      floatingActionButton: IconButton(
+        onPressed: () {
+          Navigator.pop(context);
+        },
+        icon: const Icon(Icons.arrow_back_rounded),
       ),
-      body: const Center(
-        child: Padding(
-          padding: EdgeInsets.all(16.0),
-          child: Text(
-            'Dynamite App.\n\nVersion: 1.0.0\n${dart2wasm ? 'WASM' : ''}\n${normalDoubleCmp ? '' : 'JS style cmp(double)'}',
-            textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 16),
-          ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.startTop,
+      body: const Align(
+        child: Text(
+          'Dynamite App.\n\nVersion: 1.0.0${dart2wasm ? '\nWASM' : ''}${normalDoubleCmp ? '' : '\nJS style cmp(double)'}',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 16),
         ),
       ),
     );
