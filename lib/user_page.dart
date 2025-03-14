@@ -16,12 +16,13 @@ class UserPage extends StatelessWidget {
     final userProvider = Provider.of<UserProvider>(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'User: ${userProvider.selectedUserName ?? 'None'}',
-        ),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+      floatingActionButton: IconButton(
+        onPressed: () {
+          Navigator.pop(context);
+        },
+        icon: const Icon(Icons.arrow_back_rounded),
       ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.startTop,
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
