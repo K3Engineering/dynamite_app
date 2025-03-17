@@ -119,7 +119,13 @@ class _GraphPageState extends State<GraphPage> {
           Navigator.pop(context);
         },
         icon: const Icon(Icons.arrow_back_rounded),
+      floatingActionButton: IconButton(
+        onPressed: () {
+          Navigator.pop(context);
+        },
+        icon: const Icon(Icons.arrow_back_rounded),
       ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.startTop,
       floatingActionButtonLocation: FloatingActionButtonLocation.startTop,
       body: Row(
         children: [
@@ -149,9 +155,38 @@ class _GraphPageState extends State<GraphPage> {
               ),
             ],
           ),
+          Column(
+            children: [
+              BluetoothIndicator(bluetoothService: _bluetoothHandler),
+              FilledButton.tonal(
+                onPressed: () {
+                  unawaited(_bluetoothHandler.toggleScan());
+                },
+                child: Text(_bluetoothHandler.isScanning
+                    ? 'Stop scanning'
+                    : 'Start scanning'),
+              ),
+              _buttonRunStop(),
+              Text(_dataTransformer._taring ? 'Tare' : ''),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: CustomPaint(
+                    foregroundPainter: _DynoPainter(_dataTransformer),
+                    child: const SizedBox(
+                      width: 600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
           Expanded(
             child: Padding(
               padding: const EdgeInsets.all(8.0),
+              child: _bluetoothHandler.isSubscribed
+                  ? _graphPageLineChart()
+                  : BluetoothDeviceList(bluetoothService: _bluetoothHandler),
               child: _bluetoothHandler.isSubscribed
                   ? _graphPageLineChart()
                   : BluetoothDeviceList(bluetoothService: _bluetoothHandler),
@@ -201,17 +236,19 @@ class _DynoPainter extends CustomPainter {
     }
 
     final int sz = _data._rawData[0].length;
-    final double yScale = size.height / dataMax;
     final double xScale = size.width / (sz > size.width ? sz : size.width);
+    final double yScale = size.height / dataMax;
+
+    double toY(int n, int line) {
+      return size.height -
+          (_data._rawData[line][n] - _data._tare[line]) * yScale;
+    }
+
     for (int line = 0; line < _DataTransformer.numGraphLines; ++line) {
       final graph = Path();
-      graph.moveTo(0,
-          size.height - (_data._rawData[line][0] - _data._tare[line]) * yScale);
+      graph.moveTo(0, toY(0, line));
       for (int i = 1; i < sz; ++i) {
-        graph.lineTo(
-            i * xScale,
-            size.height -
-                (_data._rawData[line][i] - _data._tare[line]) * yScale);
+        graph.lineTo(i * xScale, toY(i, line));
       }
       p1.strokeWidth = 2;
       p1.color = _lineColor(line);
@@ -235,6 +272,13 @@ class _DataTransformer {
   );
   final Int64List _rawMax = Int64List(numGraphLines);
   static const int _tareWindow = 1024;
+  final List<List<int>> _rawData = List.generate(
+    _DataTransformer.numGraphLines,
+    (_) => <int>[],
+    growable: true,
+  );
+  final Int64List _rawMax = Int64List(numGraphLines);
+  static const int _tareWindow = 1024;
   static const double _defaultSlope = 0.0001117587;
   static const int _samplesPerSec = 1000;
   int _timeTick = 0;
@@ -242,6 +286,9 @@ class _DataTransformer {
 
   void _clear() {
     _timeTick = 0;
+    for (int i = 0; i < numGraphLines; ++i) {
+      _rawData[i].clear();
+      _rawMax[i] = 0;
     for (int i = 0; i < numGraphLines; ++i) {
       _rawData[i].clear();
       _rawMax[i] = 0;
@@ -254,10 +301,25 @@ class _DataTransformer {
 
   bool _addTare(int val, int idx) {
     if (_timeTick < _tareWindow) {
+  bool get _taring => (_timeTick > 0) && (_timeTick <= _tareWindow);
+
+  bool _addTare(int val, int idx) {
+    if (_timeTick < _tareWindow) {
       _runningTotal[idx] += val;
     } else if (_timeTick == _tareWindow) {
       _tare[idx] = _runningTotal[idx].toDouble() / _tareWindow;
+    } else if (_timeTick == _tareWindow) {
+      _tare[idx] = _runningTotal[idx].toDouble() / _tareWindow;
       _runningTotal[idx] = 0;
+    } else {
+      return false;
+    }
+    return true;
+  }
+
+  void _addData(int val, int idx) {
+    _rawData[idx].add(val);
+    if (val > _rawMax[idx]) _rawMax[idx] = val;
     } else {
       return false;
     }
@@ -312,6 +374,8 @@ class _DataTransformer {
         if (idx >= 0) {
           if (!_addTare(res, idx)) {
             _addData(res, idx);
+          if (!_addTare(res, idx)) {
+            _addData(res, idx);
             graphCb(_transform(_timeTick, res, idx), idx);
           }
         }
@@ -352,6 +416,12 @@ class BluetoothDeviceList extends StatelessWidget {
 
     return Column(
       children: [
+        bluetoothService.isScanning
+            ? const CircularProgressIndicator()
+            : const Padding(
+                padding: EdgeInsets.all(18.0),
+              ),
+        Flexible(
         bluetoothService.isScanning
             ? const CircularProgressIndicator()
             : const Padding(
