@@ -53,8 +53,8 @@ class MockBlePlatform extends UniversalBlePlatform {
       BleDevice(
         deviceId: '2',
         name: '2_device',
-        rssi: 50,
-        services: ['2_ser'],
+        rssi: -50,
+        services: ['e331016b-6618-4f8f-8997-1a2c7c9e5fa3'],
         manufacturerDataList: [
           ManufacturerData(0x02, Uint8List.fromList([2, 3, 4]))
         ],
@@ -125,7 +125,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   static List<BleCharacteristic> _generateCharacteristics(String deviceId) {
     if (deviceId == '2') {
       return ([
-        BleCharacteristic("beb5483e-36e1-4688-b7f5-ea07361b26a8",
+        BleCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8',
             [CharacteristicProperty.notify]),
         BleCharacteristic('c1234567', [CharacteristicProperty.notify]),
         BleCharacteristic('a7654321', [CharacteristicProperty.read])
@@ -138,6 +138,13 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   static List<BleService> _generateServices(String deviceId) {
+    if (deviceId == '2') {
+      return ([
+        BleService('e1234567', _generateCharacteristics(deviceId)),
+        BleService('e331016b-6618-4f8f-8997-1a2c7c9e5fa3',
+            _generateCharacteristics(deviceId))
+      ]);
+    }
     return ([
       BleService('e1234567', _generateCharacteristics(deviceId)),
       BleService('e7654321', _generateCharacteristics(deviceId))
