@@ -16,17 +16,15 @@ class MenuPage extends StatelessWidget {
     final userProvider = Provider.of<UserProvider>(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          'User: ${userProvider.selectedUserName ?? 'None'}',
-        ),
-      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
+            Text('User: ${userProvider.selectedUserName ?? 'None'}'),
             _buildMenuButton(context, 'User', UserPage()),
-            _buildMenuButton(context, 'Graph', const GraphPage()),
+            _buildMenuButton(context, 'Connect', const AboutPage()),
+            _buildMenuButton(context, 'Session', const GraphPage()),
+            _buildMenuButton(context, 'History', const AboutPage()),
             _buildMenuButton(context, 'About', const AboutPage()),
           ],
         ),
