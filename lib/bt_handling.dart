@@ -65,16 +65,21 @@ class BluetoothHandling {
   }
 
   void _onScanResult(BleDevice newDevice) {
-    for (var dev in _devices) {
-      if (dev.deviceId == newDevice.deviceId) {
-        if ((dev.name == null) && (newDevice.name != null)) {
-          dev = newDevice;
+    if (newDevice.services.isEmpty) {
+      return;
+    }
+    for (var srv in newDevice.services) {
+      if (srv == btServiceId) {
+        if (devices.isEmpty) {
+          _devices.add(newDevice);
+        } else if (newDevice.rssi! > _devices[0].rssi!) {
+          _devices[0] = newDevice;
+        } else {
+          continue;
         }
-        return;
+        _notifyStateChanged();
       }
     }
-    _devices.add(newDevice);
-    _notifyStateChanged();
   }
 
   void _onBluetoothAvailabilityChanged(AvailabilityState state) {
@@ -130,6 +135,12 @@ class BluetoothHandling {
     if (isConnected) {
       _selectedDeviceId = deviceId;
       _services.addAll(await UniversalBle.discoverServices(deviceId));
+      for (var srv in _services) {
+        if (srv.uuid == btServiceId) {
+          await subscribeToAdcFeed(srv);
+          break;
+        }
+      }
     } else {
       _isSubscribed = false;
       _selectedDeviceId = '';
