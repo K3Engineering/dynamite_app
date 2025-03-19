@@ -22,8 +22,10 @@ class MenuPage extends StatelessWidget {
           children: [
             Text('User: ${userProvider.selectedUserName ?? 'None'}'),
             _buildMenuButton(context, 'User', UserPage()),
+            // TODO: implement 'Connect' page
             _buildMenuButton(context, 'Connect', const AboutPage()),
             _buildMenuButton(context, 'Session', const GraphPage()),
+            // TODO: implement 'History' page
             _buildMenuButton(context, 'History', const AboutPage()),
             _buildMenuButton(context, 'About', const AboutPage()),
           ],
