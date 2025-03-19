@@ -138,7 +138,7 @@ class _GraphPageState extends State<GraphPage> {
               Text(_dataTransformer._taring ? 'Tare' : ''),
               Expanded(
                 child: Padding(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(32),
                   child: CustomPaint(
                     foregroundPainter: _DynoPainter(_dataTransformer),
                     child: const SizedBox(
@@ -151,7 +151,7 @@ class _GraphPageState extends State<GraphPage> {
           ),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.all(8.0),
+              padding: const EdgeInsets.fromLTRB(8, 144, 8, 8),
               child: _bluetoothHandler.isSubscribed
                   ? _graphPageLineChart()
                   : BluetoothDeviceList(bluetoothService: _bluetoothHandler),
@@ -175,49 +175,72 @@ class _DynoPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    Paint p1 = Paint()
+    Paint pen = Paint()
       ..color = Colors.deepPurple
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0;
 
     canvas.drawRect(
-        Rect.fromPoints(Offset(0, 0), Offset(size.width, size.height)), p1);
+        Rect.fromPoints(Offset(0, 0), Offset(size.width, size.height)), pen);
 
-    p1.strokeWidth = 0.2;
+    Path grid = Path();
     double step = size.height / 8;
     for (double x = 0; x < size.width; x += step) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), p1);
+      grid.moveTo(x, 0);
+      grid.lineTo(x, size.height);
     }
     for (double y = 0; y < size.height; y += step) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), p1);
+      grid.moveTo(0, y);
+      grid.lineTo(size.width, y);
     }
+    pen.strokeWidth = 0.2;
+    canvas.drawPath(grid, pen);
 
     if (_data._rawData[0].isEmpty) return;
 
-    double dataMax = 1;
+    double dataMax = 10000; // Above noise level
     for (int line = 0; line < _data._rawData.length; ++line) {
       final double p = _data._rawMax[line] - _data._tare[line];
-      if (p > dataMax) dataMax = p.toDouble();
-    }
-
-    final int sz = _data._rawData[0].length;
-    final double xScale = size.width / (sz > size.width ? sz : size.width);
-    final double yScale = size.height / dataMax;
-
-    double toY(int n, int line) {
-      return size.height -
-          (_data._rawData[line][n] - _data._tare[line]) * yScale;
+      dataMax = (p > dataMax) ? p : dataMax;
     }
 
     for (int line = 0; line < _DataTransformer.numGraphLines; ++line) {
-      final graph = Path();
-      graph.moveTo(0, toY(0, line));
-      for (int i = 1; i < sz; ++i) {
-        graph.lineTo(i * xScale, toY(i, line));
+      final int dataSz = _data._rawData[line].length;
+      final double xScale = dataSz / size.width;
+      final double yScale = size.height / dataMax;
+
+      double toY(double val) {
+        return size.height - (val - _data._tare[line]) * yScale;
       }
-      p1.strokeWidth = 2;
-      p1.color = _lineColor(line);
-      canvas.drawPath(graph, p1);
+
+      final graph = Path();
+      final graph2 = Path();
+      graph.moveTo(0, size.height);
+      for (int i = 0, j = 0; i < size.width; ++i) {
+        double mn = 10000000;
+        double mx = 0;
+        double total = 0;
+        int start = j;
+        for (; (j < dataSz) && (j < i * xScale); ++j) {
+          final int v = _data._rawData[line][j];
+          total += v;
+          mx = (v > mx) ? v.toDouble() : mx;
+          mn = (v < mn) ? v.toDouble() : mn;
+        }
+
+        if (start < j) {
+          final double avg = total / (j - start);
+          graph.lineTo(i.toDouble(), toY(avg));
+          graph2.moveTo(i.toDouble(), toY(mn));
+          graph2.lineTo(i.toDouble(), toY(mx));
+        }
+      }
+
+      pen.strokeWidth = 2;
+      pen.color = _lineColor(line);
+      canvas.drawPath(graph, pen);
+      pen.strokeWidth = 0;
+      canvas.drawPath(graph2, pen);
     }
   }
 
@@ -258,7 +281,7 @@ class _DataTransformer {
     if (_timeTick < _tareWindow) {
       _runningTotal[idx] += val;
     } else if (_timeTick == _tareWindow) {
-      _tare[idx] = _runningTotal[idx].toDouble() / _tareWindow;
+      _tare[idx] = _runningTotal[idx] / (_tareWindow - 1);
       _runningTotal[idx] = 0;
     } else {
       return false;
@@ -293,12 +316,15 @@ class _DataTransformer {
 
   void _parseDataPacket(Uint8List data,
       void Function(FlSpot spot, int idx) graphCb, void Function() eodCb) {
-    if (data.isEmpty || data.length % 15 != 0) {
+    const int sampleLength = 15;
+    if (data.isEmpty || data.length % sampleLength != 0) {
       debugPrint('Incorrect buffer size received');
     }
 
-    for (int packetStart = 0; packetStart < data.length; packetStart += 15) {
-      assert(packetStart + 15 <= data.length);
+    for (int packetStart = 0;
+        packetStart < data.length;
+        packetStart += sampleLength) {
+      assert(packetStart + sampleLength <= data.length);
       // final status = (data[packetStart + 1] << 8) | data[packetStart];
       // final crc = data[packetStart + 14];
       _timeTick++;
