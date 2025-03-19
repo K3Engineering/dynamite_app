@@ -65,9 +65,6 @@ class BluetoothHandling {
   }
 
   void _onScanResult(BleDevice newDevice) {
-    if (newDevice.services.isEmpty) {
-      return;
-    }
     for (var srv in newDevice.services) {
       if (srv == btServiceId) {
         if (devices.isEmpty) {
