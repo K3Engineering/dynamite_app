@@ -114,36 +114,138 @@ class _GraphPageState extends State<GraphPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-        actions: [
-          BluetoothIndicator(bluetoothService: _bluetoothHandler),
-        ],
+      floatingActionButton: IconButton(
+        onPressed: () {
+          Navigator.pop(context);
+        },
+        icon: const Icon(Icons.arrow_back_rounded),
       ),
+      floatingActionButtonLocation: FloatingActionButtonLocation.startTop,
       body: Row(
         children: [
-          Expanded(
-            child: BluetoothDeviceList(bluetoothService: _bluetoothHandler),
+          Column(
+            children: [
+              BluetoothIndicator(bluetoothService: _bluetoothHandler),
+              FilledButton.tonal(
+                onPressed: () {
+                  unawaited(_bluetoothHandler.toggleScan());
+                },
+                child: Text(_bluetoothHandler.isScanning
+                    ? 'Stop scanning'
+                    : 'Start scanning'),
+              ),
+              _buttonRunStop(),
+              Text(_dataTransformer._taring ? 'Tare' : ''),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(32),
+                  child: CustomPaint(
+                    foregroundPainter: _DynoPainter(_dataTransformer),
+                    child: const SizedBox(
+                      width: 600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-          _buttonRunStop(),
           Expanded(
             child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: _graphPageLineChart(),
+              padding: const EdgeInsets.fromLTRB(8, 144, 8, 8),
+              child: _bluetoothHandler.isSubscribed
+                  ? _graphPageLineChart()
+                  : BluetoothDeviceList(bluetoothService: _bluetoothHandler),
             ),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          unawaited(_bluetoothHandler.toggleScan());
-        },
-        tooltip:
-            _bluetoothHandler.isScanning ? 'Stop scanning' : 'Start scanning',
-        child: Icon(_bluetoothHandler.isScanning ? Icons.stop : Icons.search),
-      ),
     );
   }
+}
+
+class _DynoPainter extends CustomPainter {
+  final _DataTransformer _data;
+
+  _DynoPainter(this._data);
+
+  static Color _lineColor(int idx) {
+    if (idx == 1) return Colors.deepOrangeAccent;
+    return Colors.blueAccent;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    Paint pen = Paint()
+      ..color = Colors.deepPurple
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0;
+
+    canvas.drawRect(
+        Rect.fromPoints(Offset(0, 0), Offset(size.width, size.height)), pen);
+
+    Path grid = Path();
+    double step = size.height / 8;
+    for (double x = 0; x < size.width; x += step) {
+      grid.moveTo(x, 0);
+      grid.lineTo(x, size.height);
+    }
+    for (double y = 0; y < size.height; y += step) {
+      grid.moveTo(0, y);
+      grid.lineTo(size.width, y);
+    }
+    pen.strokeWidth = 0.2;
+    canvas.drawPath(grid, pen);
+
+    if (_data._rawData[0].isEmpty) return;
+
+    double dataMax = 10000; // Above noise level
+    for (int line = 0; line < _data._rawData.length; ++line) {
+      final double p = _data._rawMax[line] - _data._tare[line];
+      dataMax = (p > dataMax) ? p : dataMax;
+    }
+
+    for (int line = 0; line < _DataTransformer.numGraphLines; ++line) {
+      final int dataSz = _data._rawData[line].length;
+      final double xScale = dataSz / size.width;
+      final double yScale = size.height / dataMax;
+
+      double toY(double val) {
+        return size.height - (val - _data._tare[line]) * yScale;
+      }
+
+      final graph = Path();
+      final graph2 = Path();
+      graph.moveTo(0, size.height);
+      for (int i = 0, j = 0; i < size.width; ++i) {
+        double mn = 10000000;
+        double mx = 0;
+        double total = 0;
+        int start = j;
+        for (; (j < dataSz) && (j < i * xScale); ++j) {
+          final int v = _data._rawData[line][j];
+          total += v;
+          mx = (v > mx) ? v.toDouble() : mx;
+          mn = (v < mn) ? v.toDouble() : mn;
+        }
+
+        if (start < j) {
+          final double avg = total / (j - start);
+          graph.lineTo(i.toDouble(), toY(avg));
+          graph2.moveTo(i.toDouble(), toY(mn));
+          graph2.lineTo(i.toDouble(), toY(mx));
+        }
+      }
+
+      pen.strokeWidth = 2;
+      pen.color = _lineColor(line);
+      canvas.drawPath(graph, pen);
+      pen.strokeWidth = 0;
+      canvas.drawPath(graph2, pen);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
 class _DataTransformer {
@@ -151,8 +253,13 @@ class _DataTransformer {
   // TODO: this is preliminary implementation
   final Float64List _tare = Float64List(numGraphLines);
   final Float64List _runningTotal = Float64List(numGraphLines);
-  final List<int> _rawData = [];
-  static const int _avgWindow = 1024;
+  final List<List<int>> _rawData = List.generate(
+    _DataTransformer.numGraphLines,
+    (_) => <int>[],
+    growable: true,
+  );
+  final Int64List _rawMax = Int64List(numGraphLines);
+  static const int _tareWindow = 1024;
   static const double _defaultSlope = 0.0001117587;
   static const int _samplesPerSec = 1000;
   int _timeTick = 0;
@@ -160,20 +267,31 @@ class _DataTransformer {
 
   void _clear() {
     _timeTick = 0;
-    _rawData.clear();
-    for (int i = 0; i < _tare.length; ++i) {
+    for (int i = 0; i < numGraphLines; ++i) {
+      _rawData[i].clear();
+      _rawMax[i] = 0;
       _tare[i] = 0;
       _runningTotal[i] = 0;
     }
   }
 
-  void _addTare(int val, int idx) {
-    if (_timeTick < _avgWindow) {
+  bool get _taring => (_timeTick > 0) && (_timeTick <= _tareWindow);
+
+  bool _addTare(int val, int idx) {
+    if (_timeTick < _tareWindow) {
       _runningTotal[idx] += val;
-    } else if (_timeTick == _avgWindow) {
-      _tare[idx] = _runningTotal[idx].toDouble() / _avgWindow;
+    } else if (_timeTick == _tareWindow) {
+      _tare[idx] = _runningTotal[idx] / (_tareWindow - 1);
       _runningTotal[idx] = 0;
+    } else {
+      return false;
     }
+    return true;
+  }
+
+  void _addData(int val, int idx) {
+    _rawData[idx].add(val);
+    if (val > _rawMax[idx]) _rawMax[idx] = val;
   }
 
   void _onUpdateCalibration(Uint8List data) {
@@ -198,12 +316,15 @@ class _DataTransformer {
 
   void _parseDataPacket(Uint8List data,
       void Function(FlSpot spot, int idx) graphCb, void Function() eodCb) {
-    if (data.isEmpty || data.length % 15 != 0) {
+    const int sampleLength = 15;
+    if (data.isEmpty || data.length % sampleLength != 0) {
       debugPrint('Incorrect buffer size received');
     }
 
-    for (int packetStart = 0; packetStart < data.length; packetStart += 15) {
-      assert(packetStart + 15 <= data.length);
+    for (int packetStart = 0;
+        packetStart < data.length;
+        packetStart += sampleLength) {
+      assert(packetStart + sampleLength <= data.length);
       // final status = (data[packetStart + 1] << 8) | data[packetStart];
       // final crc = data[packetStart + 14];
       _timeTick++;
@@ -217,10 +338,8 @@ class _DataTransformer {
 
         int idx = _chanToLine(i);
         if (idx >= 0) {
-          _rawData.add(res);
-          if (_timeTick <= _avgWindow) {
-            _addTare(res, idx);
-          } else {
+          if (!_addTare(res, idx)) {
+            _addData(res, idx);
             graphCb(_transform(_timeTick, res, idx), idx);
           }
         }
@@ -261,59 +380,13 @@ class BluetoothDeviceList extends StatelessWidget {
 
     return Column(
       children: [
-        if (bluetoothService.isScanning) const CircularProgressIndicator(),
-        Expanded(
-          child: deviceList(),
-        ),
-        const Divider(),
+        bluetoothService.isScanning
+            ? const CircularProgressIndicator()
+            : const Padding(
+                padding: EdgeInsets.all(18.0),
+              ),
         Flexible(
-          // Use Flexible instead of Expanded here to ensure layout stability
-          child: (bluetoothService.selectedDeviceId.isEmpty)
-              ? SizedBox.shrink()
-              : BluetoothServiceDetails(bluetoothService: bluetoothService),
-        ),
-      ],
-    );
-  }
-}
-
-class BluetoothServiceDetails extends StatelessWidget {
-  final BluetoothHandling bluetoothService;
-
-  const BluetoothServiceDetails({super.key, required this.bluetoothService});
-
-  @override
-  Widget build(BuildContext context) {
-    ListView serviceList() {
-      return ListView.builder(
-        itemCount: bluetoothService.services.length,
-        itemBuilder: (_, index) {
-          final service = bluetoothService.services[index];
-          return ListTile(
-            title: Text('Service: ${service.uuid}'),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: service.characteristics
-                  .map((char) => Text('Characteristic: ${char.uuid}'))
-                  .toList(),
-            ),
-            onTap: () =>
-                unawaited(bluetoothService.subscribeToAdcFeed(service)),
-          );
-        },
-      );
-    }
-
-    return Column(
-      children: [
-        Text(
-          'Connected to: ${bluetoothService.selectedDeviceId.isEmpty ? "Unknown Device" : bluetoothService.selectedDeviceId}',
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
-        Expanded(
-          child: (bluetoothService.services.isNotEmpty)
-              ? serviceList()
-              : const Text('No services found for this device.'),
+          child: deviceList(),
         ),
       ],
     );
