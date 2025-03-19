@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
+import 'dart:convert';
+import 'dart:io';
 
 import 'package:universal_ble/universal_ble.dart';
 
@@ -11,6 +13,21 @@ class MockBlePlatform extends UniversalBlePlatform {
   static const hwDelay = Duration(milliseconds: 200);
 
   MockBlePlatform._() {
+    _mockData.clear();
+    List<String> data = File('MockData.txt').readAsLinesSync();
+    for (String s in data) {
+      final Map<String, dynamic> parsedData =
+          json.decode(s.replaceAll("'", '"'));
+      List<int> adcList = List<int>.from(parsedData['channels']);
+      assert(adcList.length == 4);
+      Uint8List adcRaw = Uint8List(_mockDataSampleLength);
+      for (int i = 0; i < adcList.length; ++i) {
+        adcRaw.buffer
+            .asByteData()
+            .setInt32(2 + i * 3, adcList[i], Endian.little);
+      }
+      _mockData.add(adcRaw);
+    }
     _setupListeners();
   }
 
@@ -18,6 +35,10 @@ class MockBlePlatform extends UniversalBlePlatform {
   Timer? _notificationTimer;
   String? _connectedDeviceId;
   BleConnectionState _connectionState = BleConnectionState.disconnected;
+
+  late final List<Uint8List> _mockData = [];
+  int _mockDataCount = 0;
+  static const int _mockDataSampleLength = 15;
 
   @override
   Future<AvailabilityState> getBluetoothAvailabilityState() async {
@@ -165,17 +186,20 @@ class MockBlePlatform extends UniversalBlePlatform {
     if (BleInputProperty.notification == bleInputProperty) {
       const int samplesPerPack = 16;
       const dataInterval = Duration(milliseconds: 1 * samplesPerPack);
-      final Uint8List sample =
-          Uint8List.fromList([0, 0, 5, 4, 3, 6, 5, 4, 7, 6, 5, 8, 7, 6, 0]);
-      final Uint8List ev = Uint8List(sample.length * samplesPerPack);
-      for (int i = 0; i < samplesPerPack; ++i) {
-        for (int j = 0; j < sample.length; ++j) {
-          ev[i * sample.length + j] = sample[j];
-        }
-      }
+      //final Uint8List sample =
+      //Uint8List.fromList([0, 0, 5, 4, 3, 6, 5, 4, 7, 6, 5, 8, 7, 6, 0]);
+
       _notificationTimer = Timer.periodic(dataInterval, (_) {
-        ev[2 + 3] = Random().nextInt(32);
-        ev[2 + 6] = Random().nextInt(16);
+        final Uint8List ev = Uint8List(_mockDataSampleLength * samplesPerPack);
+        for (int i = 0; i < samplesPerPack; ++i) {
+          for (int j = 0; j < _mockDataSampleLength; ++j) {
+            ev[i * _mockDataSampleLength + j] = _mockData[_mockDataCount][j];
+          }
+          _mockDataCount++;
+          if (_mockDataCount >= _mockData.length) {
+            _mockDataCount = 0;
+          }
+        }
         updateCharacteristicValue(deviceId, characteristic, ev);
       });
     }
