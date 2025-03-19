@@ -13,22 +13,32 @@ class MockBlePlatform extends UniversalBlePlatform {
   static const hwDelay = Duration(milliseconds: 200);
 
   MockBlePlatform._() {
-    _mockData.clear();
-    List<String> data = File('MockData.txt').readAsLinesSync();
-    for (String s in data) {
-      final Map<String, dynamic> parsedData =
-          json.decode(s.replaceAll("'", '"'));
-      List<int> adcList = List<int>.from(parsedData['channels']);
-      assert(adcList.length == 4);
-      Uint8List adcRaw = Uint8List(_mockDataSampleLength);
-      for (int i = 0; i < adcList.length; ++i) {
-        adcRaw.buffer
-            .asByteData()
-            .setInt32(2 + i * 3, adcList[i], Endian.little);
-      }
-      _mockData.add(adcRaw);
-    }
     _setupListeners();
+    _mockData.clear();
+
+    const String fileName = 'MockData.txt';
+    if (File(fileName).existsSync()) {
+      final List<String> textData =
+          File(fileName).readAsLinesSync(encoding: ascii);
+      for (String s in textData) {
+        final Map<String, dynamic> parsedLine =
+            json.decode(s.replaceAll("'", '"'));
+        List<int> adcSamples = List<int>.from(parsedLine['channels']);
+        assert(adcSamples.length == 4);
+        final Uint8List networkFormatData = Uint8List(_mockDataSampleLength);
+        for (int i = 0; i < adcSamples.length; ++i) {
+          networkFormatData.buffer
+              .asByteData()
+              .setInt32(2 + i * 3, adcSamples[i], Endian.little);
+        }
+        _mockData.add(networkFormatData);
+      }
+    }
+
+    if (_mockData.isEmpty) {
+      _mockData.add(
+          Uint8List.fromList([0, 0, 5, 4, 3, 6, 5, 4, 7, 6, 5, 8, 7, 6, 0]));
+    }
   }
 
   Timer? _scanTimer;
@@ -186,9 +196,6 @@ class MockBlePlatform extends UniversalBlePlatform {
     if (BleInputProperty.notification == bleInputProperty) {
       const int samplesPerPack = 16;
       const dataInterval = Duration(milliseconds: 1 * samplesPerPack);
-      //final Uint8List sample =
-      //Uint8List.fromList([0, 0, 5, 4, 3, 6, 5, 4, 7, 6, 5, 8, 7, 6, 0]);
-
       _notificationTimer = Timer.periodic(dataInterval, (_) {
         final Uint8List ev = Uint8List(_mockDataSampleLength * samplesPerPack);
         for (int i = 0; i < samplesPerPack; ++i) {
