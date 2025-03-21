@@ -12,7 +12,7 @@ class UserPage extends StatelessWidget {
   final TextEditingController _ageController = TextEditingController();
 
   @override
-  Widget build(final BuildContext context) {
+  Widget build(BuildContext context) {
     final userProvider = Provider.of<UserProvider>(context);
 
     return Scaffold(

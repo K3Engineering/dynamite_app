@@ -70,7 +70,7 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   @override
-  Widget build(final BuildContext context) {
+  Widget build(BuildContext context) {
     return Scaffold(
       floatingActionButton: IconButton(
         onPressed: () {
@@ -322,7 +322,7 @@ class BluetoothDeviceList extends StatelessWidget {
   const BluetoothDeviceList({super.key, required this.bluetoothService});
 
   @override
-  Widget build(final BuildContext context) {
+  Widget build(BuildContext context) {
     ListView deviceList() {
       return ListView.builder(
         itemCount: bluetoothService.devices.length,
@@ -360,7 +360,7 @@ class BluetoothIndicator extends StatelessWidget {
   const BluetoothIndicator({super.key, required this.bluetoothService});
 
   @override
-  Widget build(final BuildContext context) {
+  Widget build(BuildContext context) {
     (IconData, Color) indicator() {
       if (bluetoothService.isScanning) {
         return (Icons.bluetooth_searching, Colors.lightBlue);

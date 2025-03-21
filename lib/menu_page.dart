@@ -12,7 +12,7 @@ class MenuPage extends StatelessWidget {
   const MenuPage({super.key});
 
   @override
-  Widget build(final BuildContext context) {
+  Widget build(BuildContext context) {
     final userProvider = Provider.of<UserProvider>(context);
 
     return Scaffold(
@@ -34,8 +34,7 @@ class MenuPage extends StatelessWidget {
     );
   }
 
-  Widget _buildMenuButton(
-      final BuildContext context, String text, Widget page) {
+  Widget _buildMenuButton(BuildContext context, String text, Widget page) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: SizedBox(
