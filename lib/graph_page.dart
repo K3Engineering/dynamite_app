@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:fl_chart/fl_chart.dart';
 import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
 import 'bt_handling.dart' show BluetoothHandling;
@@ -18,12 +17,6 @@ class GraphPage extends StatefulWidget {
 
 class _GraphPageState extends State<GraphPage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
-
-  final List<List<FlSpot>> chartDataCh = List.generate(
-    _DataTransformer.numGraphLines,
-    (_) => <FlSpot>[],
-    growable: false,
-  );
 
   final _DataTransformer _dataTransformer = _DataTransformer();
 
@@ -45,44 +38,12 @@ class _GraphPageState extends State<GraphPage> {
 
   void _processReceivedData(String _, String __, Uint8List data) {
     if (_bluetoothHandler.sessionInProgress) {
-      _dataTransformer._parseDataPacket(data, _appendGraphData, _onEndOfData);
+      _dataTransformer._parseDataPacket(data, _onEndOfData);
     }
   }
 
   void _onEndOfData() {
     setState(() {}); // Update UI layer
-  }
-
-  void _appendGraphData(FlSpot val, int idx) {
-    chartDataCh[idx].add(val);
-  }
-
-  Widget _graphPageLineChart() {
-    Color lineColor(int idx) {
-      if (idx == 1) return Colors.deepOrangeAccent;
-      return Colors.blueAccent;
-    }
-
-    return LineChart(
-      LineChartData(
-        lineBarsData: List<LineChartBarData>.generate(
-            chartDataCh[0].isNotEmpty ? chartDataCh.length : 0,
-            (i) => LineChartBarData(
-                  spots: chartDataCh[i],
-                  dotData: const FlDotData(
-                    show: false,
-                  ),
-                  color: lineColor(i),
-                ),
-            growable: false),
-        titlesData: const FlTitlesData(
-            topTitles: AxisTitles(), leftTitles: AxisTitles()),
-        minY: 0,
-        clipData: const FlClipData.all(),
-      ),
-      duration: Duration.zero,
-      curve: Curves.linear,
-    );
   }
 
   Widget _buttonRunStop() {
@@ -91,9 +52,6 @@ class _GraphPageState extends State<GraphPage> {
         final File f = File('DynoData.txt');
         f.writeAsStringSync(_dataTransformer._rawData.toString());
       } else {
-        for (final list in chartDataCh) {
-          list.clear();
-        }
         _dataTransformer._clear();
       }
       _bluetoothHandler.toggleSession();
@@ -150,12 +108,7 @@ class _GraphPageState extends State<GraphPage> {
             ],
           ),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 144, 8, 8),
-              child: _bluetoothHandler.isSubscribed
-                  ? _graphPageLineChart()
-                  : BluetoothDeviceList(bluetoothService: _bluetoothHandler),
-            ),
+            child: BluetoothDeviceList(bluetoothService: _bluetoothHandler),
           ),
         ],
       ),
@@ -266,13 +219,12 @@ class _DynoPainter extends CustomPainter {
 
 class _DataTransformer {
   static const int numGraphLines = 2;
-  // TODO: this is preliminary implementation
   final Float64List _tare = Float64List(numGraphLines);
   final Float64List _runningTotal = Float64List(numGraphLines);
   final List<List<int>> _rawData = List.generate(
     _DataTransformer.numGraphLines,
     (_) => <int>[],
-    growable: true,
+    growable: false,
   );
   final Int64List _rawMax = Int64List(numGraphLines);
   static const int _tareWindow = 1024;
@@ -325,14 +277,7 @@ class _DataTransformer {
     return -1; // No graph line for this chanel
   }
 
-  FlSpot _transform(int count, int val, int idx) {
-    final double x = count.toDouble() / _samplesPerSec;
-    final double y = (val.toDouble() - _tare[idx]) * _deviceCalibration._slope;
-    return FlSpot(x, y);
-  }
-
-  void _parseDataPacket(Uint8List data,
-      void Function(FlSpot spot, int idx) graphCb, void Function() eodCb) {
+  void _parseDataPacket(Uint8List data, void Function() eodCb) {
     const int sampleLength = 15;
     if (data.isEmpty || data.length % sampleLength != 0) {
       debugPrint('Incorrect buffer size received');
@@ -357,7 +302,6 @@ class _DataTransformer {
         if (idx >= 0) {
           if (!_addTare(res, idx)) {
             _addData(res, idx);
-            graphCb(_transform(_timeTick, res, idx), idx);
           }
         }
       }
