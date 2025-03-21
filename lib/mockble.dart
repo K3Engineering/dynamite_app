@@ -20,10 +20,10 @@ class MockBlePlatform extends UniversalBlePlatform {
     if (File(fileName).existsSync()) {
       final List<String> textData =
           File(fileName).readAsLinesSync(encoding: ascii);
-      for (String s in textData) {
+      for (final String s in textData) {
         final Map<String, dynamic> parsedLine =
             json.decode(s.replaceAll("'", '"'));
-        List<int> adcSamples = List<int>.from(parsedLine['channels']);
+        final List<int> adcSamples = List<int>.from(parsedLine['channels']);
         assert(adcSamples.length == 4);
         final Uint8List networkFormatData = Uint8List(_mockDataSampleLength);
         for (int i = 0; i < adcSamples.length; ++i) {
@@ -52,19 +52,19 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<AvailabilityState> getBluetoothAvailabilityState() async {
-    await Future.delayed(hwDelay);
+    await Future<void>.delayed(hwDelay);
     return AvailabilityState.poweredOn;
   }
 
   @override
   Future<bool> enableBluetooth() async {
-    await Future.delayed(hwDelay);
+    await Future<void>.delayed(hwDelay);
     return true;
   }
 
   @override
   Future<bool> disableBluetooth() async {
-    await Future.delayed(hwDelay);
+    await Future<void>.delayed(hwDelay);
     if (_connectionState != BleConnectionState.disconnected) {
       await disconnect(_connectedDeviceId!);
     }
@@ -140,7 +140,7 @@ class MockBlePlatform extends UniversalBlePlatform {
 
     _connectedDeviceId = deviceId;
     _connectionState = BleConnectionState.connecting;
-    await Future.delayed(netDelay);
+    await Future<void>.delayed(netDelay);
     _connectionState = BleConnectionState.connected;
     updateConnection(deviceId, true);
   }
@@ -184,7 +184,7 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<List<BleService>> discoverServices(String deviceId) async {
-    await Future.delayed(netDelay);
+    await Future<void>.delayed(netDelay);
     return _generateServices(deviceId);
   }
 
@@ -219,7 +219,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic, {
     final Duration? timeout,
   }) async {
-    await Future.delayed(netDelay);
+    await Future<void>.delayed(netDelay);
     return Uint8List(255);
   }
 

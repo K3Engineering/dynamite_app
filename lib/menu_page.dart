@@ -12,12 +12,12 @@ class MenuPage extends StatelessWidget {
   const MenuPage({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(final BuildContext context) {
     final userProvider = Provider.of<UserProvider>(context);
 
     return Scaffold(
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
             Text('User: ${userProvider.selectedUserName ?? 'None'}'),
@@ -34,16 +34,17 @@ class MenuPage extends StatelessWidget {
     );
   }
 
-  Widget _buildMenuButton(BuildContext context, String text, Widget page) {
+  Widget _buildMenuButton(
+      final BuildContext context, String text, Widget page) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: SizedBox(
         width: double.infinity,
         child: FilledButton.tonal(
           onPressed: () => unawaited(Navigator.push(
               context, MaterialPageRoute(builder: (context) => page))),
           child: Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.all(16),
             child: Text(text),
           ),
         ),

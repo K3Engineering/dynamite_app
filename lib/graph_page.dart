@@ -77,7 +77,7 @@ class _GraphPageState extends State<GraphPage> {
             growable: false),
         titlesData: const FlTitlesData(
             topTitles: AxisTitles(), leftTitles: AxisTitles()),
-        minY: 0, // TODO: negative values
+        minY: 0,
         clipData: const FlClipData.all(),
       ),
       duration: Duration.zero,
@@ -91,7 +91,7 @@ class _GraphPageState extends State<GraphPage> {
         final File f = File('DynoData.txt');
         f.writeAsStringSync(_dataTransformer._rawData.toString());
       } else {
-        for (var list in chartDataCh) {
+        for (final list in chartDataCh) {
           list.clear();
         }
         _dataTransformer._clear();
@@ -112,7 +112,7 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(final BuildContext context) {
     return Scaffold(
       floatingActionButton: IconButton(
         onPressed: () {
@@ -173,36 +173,46 @@ class _DynoPainter extends CustomPainter {
     return Colors.blueAccent;
   }
 
+  static Path gridPath(Size size) {
+    final Path grid = Path();
+    final double step = size.height / 8;
+    for (double x = step; x < size.width; x += step) {
+      grid.moveTo(x, 0);
+      grid.lineTo(x, size.height);
+    }
+    for (double y = step; y <= size.height; y += step) {
+      grid.moveTo(0, y);
+      grid.lineTo(size.width, y);
+    }
+    return grid;
+  }
+
+  double extremum() {
+    double dataMax = 10000; // Above noise level
+    for (int line = 0; line < _data._rawData.length; ++line) {
+      final double x = _data._rawMax[line] - _data._tare[line];
+      dataMax = (x > dataMax) ? x : dataMax;
+    }
+    return dataMax;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
-    Paint pen = Paint()
+    final Paint pen = Paint()
       ..color = Colors.deepPurple
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0;
 
     canvas.drawRect(
-        Rect.fromPoints(Offset(0, 0), Offset(size.width, size.height)), pen);
-
-    Path grid = Path();
-    double step = size.height / 8;
-    for (double x = 0; x < size.width; x += step) {
-      grid.moveTo(x, 0);
-      grid.lineTo(x, size.height);
-    }
-    for (double y = 0; y < size.height; y += step) {
-      grid.moveTo(0, y);
-      grid.lineTo(size.width, y);
-    }
-    pen.strokeWidth = 0.2;
-    canvas.drawPath(grid, pen);
+        Rect.fromPoints(const Offset(0, 0), Offset(size.width, size.height)),
+        pen);
 
     if (_data._rawData[0].isEmpty) return;
 
-    double dataMax = 10000; // Above noise level
-    for (int line = 0; line < _data._rawData.length; ++line) {
-      final double p = _data._rawMax[line] - _data._tare[line];
-      dataMax = (p > dataMax) ? p : dataMax;
-    }
+    final double dataMax = extremum();
+    final Path grid = gridPath(size);
+    pen.strokeWidth = 0.2;
+    canvas.drawPath(grid, pen);
 
     for (int line = 0; line < _DataTransformer.numGraphLines; ++line) {
       final int dataSz = _data._rawData[line].length;
@@ -210,17 +220,23 @@ class _DynoPainter extends CustomPainter {
       final double yScale = size.height / dataMax;
 
       double toY(double val) {
-        return size.height - (val - _data._tare[line]) * yScale;
+        final double y = size.height - (val - _data._tare[line]) * yScale;
+        if (y < 0) {
+          return 0;
+        }
+        if (y > size.height) {
+          return size.height;
+        }
+        return y;
       }
 
       final graph = Path();
       final graph2 = Path();
-      graph.moveTo(0, size.height);
+      graph.moveTo(0, toY(_data._tare[line]));
       for (int i = 0, j = 0; i < size.width; ++i) {
-        double mn = 10000000;
-        double mx = 0;
+        double mn = 100000000, mx = 0;
         double total = 0;
-        int start = j;
+        final int start = j;
         for (; (j < dataSz) && (j < i * xScale); ++j) {
           final int v = _data._rawData[line][j];
           total += v;
@@ -291,7 +307,9 @@ class _DataTransformer {
 
   void _addData(int val, int idx) {
     _rawData[idx].add(val);
-    if (val > _rawMax[idx]) _rawMax[idx] = val;
+    if (val > _rawMax[idx]) {
+      _rawMax[idx] = val;
+    }
   }
 
   void _onUpdateCalibration(Uint8List data) {
@@ -308,9 +326,8 @@ class _DataTransformer {
   }
 
   FlSpot _transform(int count, int val, int idx) {
-    double x = count.toDouble() / _samplesPerSec;
-    double y = val.toDouble() - _tare[idx];
-    y *= _deviceCalibration._slope;
+    final double x = count.toDouble() / _samplesPerSec;
+    final double y = (val.toDouble() - _tare[idx]) * _deviceCalibration._slope;
     return FlSpot(x, y);
   }
 
@@ -331,12 +348,12 @@ class _DataTransformer {
       const int numAdcChan = 4;
       for (int i = 0; i < numAdcChan; ++i) {
         final int baseIndex = packetStart + 2 + i * 3;
-        int res = ((data[baseIndex + 2] << 16) |
+        final int res = ((data[baseIndex + 2] << 16) |
                 (data[baseIndex + 1] << 8) |
                 data[baseIndex])
             .toSigned(24);
 
-        int idx = _chanToLine(i);
+        final int idx = _chanToLine(i);
         if (idx >= 0) {
           if (!_addTare(res, idx)) {
             _addData(res, idx);
@@ -361,7 +378,7 @@ class BluetoothDeviceList extends StatelessWidget {
   const BluetoothDeviceList({super.key, required this.bluetoothService});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(final BuildContext context) {
     ListView deviceList() {
       return ListView.builder(
         itemCount: bluetoothService.devices.length,
@@ -383,7 +400,7 @@ class BluetoothDeviceList extends StatelessWidget {
         bluetoothService.isScanning
             ? const CircularProgressIndicator()
             : const Padding(
-                padding: EdgeInsets.all(18.0),
+                padding: EdgeInsets.all(18),
               ),
         Flexible(
           child: deviceList(),
@@ -399,7 +416,7 @@ class BluetoothIndicator extends StatelessWidget {
   const BluetoothIndicator({super.key, required this.bluetoothService});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(final BuildContext context) {
     (IconData, Color) indicator() {
       if (bluetoothService.isScanning) {
         return (Icons.bluetooth_searching, Colors.lightBlue);
@@ -423,9 +440,9 @@ class BluetoothIndicator extends StatelessWidget {
       }
     }
 
-    var (icon, color) = indicator();
+    final (IconData icon, Color color) = indicator();
     return Padding(
-      padding: const EdgeInsets.all(8.0),
+      padding: const EdgeInsets.all(8),
       child: Icon(icon, color: color),
     );
   }
