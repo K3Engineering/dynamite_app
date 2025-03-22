@@ -23,9 +23,9 @@ class MockBlePlatform extends UniversalBlePlatform {
       for (final String s in textData) {
         final Map<String, dynamic> parsedLine =
             json.decode(s.replaceAll("'", '"'));
-        final List<int> adcSamples = List<int>.from(parsedLine['channels']);
+        final adcSamples = List<int>.from(parsedLine['channels']);
         assert(adcSamples.length == 4);
-        final Uint8List networkFormatData = Uint8List(_mockDataSampleLength);
+        final networkFormatData = Uint8List(_mockDataSampleLength);
         for (int i = 0; i < adcSamples.length; ++i) {
           networkFormatData.buffer
               .asByteData()
@@ -197,7 +197,7 @@ class MockBlePlatform extends UniversalBlePlatform {
       const int samplesPerPack = 16;
       const dataInterval = Duration(milliseconds: 1 * samplesPerPack);
       _notificationTimer = Timer.periodic(dataInterval, (_) {
-        final Uint8List ev = Uint8List(_mockDataSampleLength * samplesPerPack);
+        final ev = Uint8List(_mockDataSampleLength * samplesPerPack);
         for (int i = 0; i < samplesPerPack; ++i) {
           for (int j = 0; j < _mockDataSampleLength; ++j) {
             ev[i * _mockDataSampleLength + j] = _mockData[_mockDataCount][j];
