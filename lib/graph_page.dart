@@ -46,29 +46,6 @@ class _GraphPageState extends State<GraphPage> {
     setState(() {}); // Update UI layer
   }
 
-  Widget _buttonRunStop() {
-    void onRunStop() {
-      if (_bluetoothHandler.sessionInProgress) {
-        final File f = File('DynoData.txt');
-        f.writeAsStringSync(_dataTransformer._rawData.toString());
-      } else {
-        _dataTransformer._clear();
-      }
-      _bluetoothHandler.toggleSession();
-    }
-
-    final String title;
-    if (_bluetoothHandler.isSubscribed) {
-      title = _bluetoothHandler.sessionInProgress ? 'Stop' : 'Run';
-    } else {
-      title = '';
-    }
-    return FilledButton.tonal(
-      onPressed: _bluetoothHandler.isSubscribed ? onRunStop : null,
-      child: Text(title),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -79,39 +56,71 @@ class _GraphPageState extends State<GraphPage> {
         icon: const Icon(Icons.arrow_back_rounded),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.startTop,
-      body: Row(
+      body: Column(
         children: [
-          Column(
-            children: [
-              BluetoothIndicator(bluetoothService: _bluetoothHandler),
-              FilledButton.tonal(
-                onPressed: () {
-                  unawaited(_bluetoothHandler.toggleScan());
-                },
-                child: Text(_bluetoothHandler.isScanning
-                    ? 'Stop scanning'
-                    : 'Start scanning'),
-              ),
-              _buttonRunStop(),
-              Text(_dataTransformer._taring ? 'Tare' : ''),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: CustomPaint(
-                    foregroundPainter: _DynoPainter(_dataTransformer),
-                    child: const SizedBox(
-                      width: 600,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
+          BluetoothIndicator(bluetoothService: _bluetoothHandler),
+          _buttonScan(),
+          _buttonBluetoothDevice(),
+          _buttonRunStop(),
+          Text(_dataTransformer._taring ? 'Tare' : ''),
           Expanded(
-            child: BluetoothDeviceList(bluetoothService: _bluetoothHandler),
+            child: CustomPaint(
+              foregroundPainter: _DynoPainter(_dataTransformer),
+              size: MediaQuery.of(context).size,
+              // child: Container(),
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buttonScan() {
+    return FilledButton.tonal(
+      onPressed: () {
+        unawaited(_bluetoothHandler.toggleScan());
+      },
+      child: Text(
+          _bluetoothHandler.isScanning ? 'Stop scanning' : 'Start scanning'),
+    );
+  }
+
+  Widget _buttonRunStop() {
+    void onRunStop() {
+      if (_bluetoothHandler.sessionInProgress) {
+        final f = File('DynoData.txt');
+        f.writeAsStringSync(_dataTransformer._rawData.toString());
+      } else {
+        _dataTransformer._clear();
+      }
+      _bluetoothHandler.toggleSession();
+    }
+
+    String buttonText() {
+      if (_bluetoothHandler.isSubscribed) {
+        return _bluetoothHandler.sessionInProgress ? 'Stop' : 'Run';
+      }
+      return '';
+    }
+
+    return FilledButton.tonal(
+      onPressed: _bluetoothHandler.isSubscribed ? onRunStop : null,
+      child: Text(buttonText()),
+    );
+  }
+
+  Widget _buttonBluetoothDevice() {
+    final String currentDeviceId = _bluetoothHandler.devices.isNotEmpty
+        ? _bluetoothHandler.devices[0].deviceId
+        : '';
+
+    void onConnect() {
+      unawaited(_bluetoothHandler.connectToDevice(currentDeviceId));
+    }
+
+    return FilledButton.tonal(
+      onPressed: currentDeviceId.isNotEmpty ? onConnect : null,
+      child: Text('Device: $currentDeviceId'),
     );
   }
 }
@@ -127,7 +136,7 @@ class _DynoPainter extends CustomPainter {
   }
 
   static Path gridPath(Size size) {
-    final Path grid = Path();
+    final grid = Path();
     final double step = size.height / 8;
     for (double x = step; x < size.width; x += step) {
       grid.moveTo(x, 0);
@@ -151,7 +160,7 @@ class _DynoPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint pen = Paint()
+    final pen = Paint()
       ..color = Colors.deepPurple
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0;
@@ -229,7 +238,7 @@ class _DataTransformer {
   final Int64List _rawMax = Int64List(numGraphLines);
   static const int _tareWindow = 1024;
   static const double _defaultSlope = 0.0001117587;
-  static const int _samplesPerSec = 1000;
+  //static const int _samplesPerSec = 1000;
   int _timeTick = 0;
   _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
 
@@ -316,44 +325,6 @@ class _DeviceCalibration {
   final double _slope;
 }
 
-class BluetoothDeviceList extends StatelessWidget {
-  final BluetoothHandling bluetoothService;
-
-  const BluetoothDeviceList({super.key, required this.bluetoothService});
-
-  @override
-  Widget build(BuildContext context) {
-    ListView deviceList() {
-      return ListView.builder(
-        itemCount: bluetoothService.devices.length,
-        itemBuilder: (_, index) {
-          final device = bluetoothService.devices[index];
-          return ListTile(
-            title: Text(device.name ?? 'Unknown Device'),
-            subtitle: Text('Device ID: ${device.deviceId}'),
-            selected: device.deviceId == bluetoothService.selectedDeviceId,
-            onTap: () =>
-                unawaited(bluetoothService.connectToDevice(device.deviceId)),
-          );
-        },
-      );
-    }
-
-    return Column(
-      children: [
-        bluetoothService.isScanning
-            ? const CircularProgressIndicator()
-            : const Padding(
-                padding: EdgeInsets.all(18),
-              ),
-        Flexible(
-          child: deviceList(),
-        ),
-      ],
-    );
-  }
-}
-
 class BluetoothIndicator extends StatelessWidget {
   final BluetoothHandling bluetoothService;
 
@@ -385,9 +356,17 @@ class BluetoothIndicator extends StatelessWidget {
     }
 
     final (IconData icon, Color color) = indicator();
-    return Padding(
-      padding: const EdgeInsets.all(8),
-      child: Icon(icon, color: color),
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: AlignmentDirectional.center,
+      children: [
+        Icon(icon, color: color),
+        if (bluetoothService.isScanning) const CircularProgressIndicator(),
+        const SizedBox(
+          height: 56,
+          width: 24,
+        ),
+      ],
     );
   }
 }
