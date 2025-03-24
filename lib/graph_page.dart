@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 import 'dart:io';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
@@ -162,32 +163,44 @@ class _DynoPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final pen = Paint()
       ..color = Colors.deepPurple
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0;
+      ..style = PaintingStyle.stroke;
 
-    canvas.drawRect(
-        Rect.fromPoints(const Offset(0, 0), Offset(size.width, size.height)),
-        pen);
+    canvas.translate(8, 0);
+    final frame = Rect.fromLTRB(0, 0, size.width - 32, size.height - 24);
+    canvas.drawRect(frame, pen..strokeWidth = 0);
+
+    final double dataMax = extremum();
+    final Path grid = gridPath(frame.size);
+    canvas.drawPath(grid, pen..strokeWidth = 0.2);
 
     if (_data._rawData[0].isEmpty) return;
 
-    final double dataMax = extremum();
-    final Path grid = gridPath(size);
-    pen.strokeWidth = 0.2;
-    canvas.drawPath(grid, pen);
+    final int dataSz = _data._rawData[0].length;
+    final double xScale = dataSz / frame.size.width;
+    final double yScale = frame.size.height / dataMax;
+
+    int labelIndex = 1;
+    for (; labelIndex < _DataTransformer._xScaleSteps.length; ++labelIndex) {
+      if (_DataTransformer._xScaleSteps[labelIndex] > dataSz) {
+        break;
+      }
+    }
+    labelIndex--;
+    final markPos = Offset(
+        _DataTransformer._xScaleSteps[labelIndex] / xScale, frame.bottom);
+
+    canvas.drawLine(markPos, markPos.translate(0, 8), pen..strokeWidth = 0);
+    canvas.drawParagraph(
+        _DataTransformer._xScaleLabels[labelIndex], markPos.translate(4, 0));
 
     for (int line = 0; line < _DataTransformer.numGraphLines; ++line) {
-      final int dataSz = _data._rawData[line].length;
-      final double xScale = dataSz / size.width;
-      final double yScale = size.height / dataMax;
-
       double toY(double val) {
-        final double y = size.height - (val - _data._tare[line]) * yScale;
+        final double y = frame.size.height - (val - _data._tare[line]) * yScale;
         if (y < 0) {
           return 0;
         }
-        if (y > size.height) {
-          return size.height;
+        if (y > frame.size.height) {
+          return frame.size.height;
         }
         return y;
       }
@@ -195,30 +208,28 @@ class _DynoPainter extends CustomPainter {
       final graph = Path();
       final graph2 = Path();
       graph.moveTo(0, toY(_data._tare[line]));
-      for (int i = 0, j = 0; i < size.width; ++i) {
-        double mn = 100000000, mx = 0;
-        double total = 0;
+      for (int i = 0, j = 0; i < frame.size.width; ++i) {
+        int mn = 100000000, mx = 0;
+        int total = 0;
         final int start = j;
-        for (; (j < dataSz) && (j < i * xScale); ++j) {
+        for (; (j < i * xScale) && (j < dataSz); ++j) {
           final int v = _data._rawData[line][j];
           total += v;
-          mx = (v > mx) ? v.toDouble() : mx;
-          mn = (v < mn) ? v.toDouble() : mn;
+          mx = (v > mx) ? v : mx;
+          mn = (v < mn) ? v : mn;
         }
 
         if (start < j) {
           final double avg = total / (j - start);
           graph.lineTo(i.toDouble(), toY(avg));
-          graph2.moveTo(i.toDouble(), toY(mn));
-          graph2.lineTo(i.toDouble(), toY(mx));
+          graph2.moveTo(i.toDouble(), toY(mn.toDouble()));
+          graph2.lineTo(i.toDouble(), toY(mx.toDouble()));
         }
       }
 
-      pen.strokeWidth = 2;
       pen.color = _lineColor(line);
-      canvas.drawPath(graph, pen);
-      pen.strokeWidth = 0;
-      canvas.drawPath(graph2, pen);
+      canvas.drawPath(graph, pen..strokeWidth = 2);
+      canvas.drawPath(graph2, pen..strokeWidth = 0);
     }
   }
 
@@ -238,9 +249,50 @@ class _DataTransformer {
   final Int64List _rawMax = Int64List(numGraphLines);
   static const int _tareWindow = 1024;
   static const double _defaultSlope = 0.0001117587;
-  //static const int _samplesPerSec = 1000;
+  static const int _samplesPerSec = 1000;
   int _timeTick = 0;
   _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
+  static final List<int> _xScaleSteps = [];
+  static final List<ui.Paragraph> _xScaleLabels = [];
+
+  _DataTransformer() {
+    if (_xScaleSteps.isNotEmpty) return;
+
+    _xScaleSteps.add(5 * _samplesPerSec);
+    int n = 10 * _samplesPerSec;
+    for (; n < 60 * _samplesPerSec; n += 10 * _samplesPerSec) {
+      _xScaleSteps.add(n);
+    }
+    for (; n < 120 * _samplesPerSec; n += 15 * _samplesPerSec) {
+      _xScaleSteps.add(n);
+    }
+    for (; n <= 600 * _samplesPerSec; n += 30 * _samplesPerSec) {
+      _xScaleSteps.add(n);
+    }
+    for (int i = 0; i < _xScaleSteps.length; ++i) {
+      _xScaleLabels.add(_stepTitle(_xScaleSteps[i]));
+    }
+  }
+
+  static ui.Paragraph _stepTitle(int n) {
+    n = n ~/ _samplesPerSec;
+    final textStyle = ui.TextStyle(
+      color: Colors.black,
+      fontSize: 16,
+    );
+    final paragraphStyle =
+        ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1);
+    final paragraphBuilder = ui.ParagraphBuilder(paragraphStyle)
+      ..pushStyle(textStyle);
+    if (n < 60) {
+      paragraphBuilder.addText(n.toString());
+    } else {
+      final s = (n % 60 < 10) ? '0' : '';
+      paragraphBuilder.addText('${n ~/ 60}:$s${n % 60}');
+    }
+    return paragraphBuilder.build()
+      ..layout(const ui.ParagraphConstraints(width: 64));
+  }
 
   void _clear() {
     _timeTick = 0;
