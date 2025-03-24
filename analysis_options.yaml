@@ -46,6 +46,7 @@ linter:
     sized_box_shrink_expand: true
     unnecessary_lambdas: true
     unnecessary_late: true
-    
+    avoid_unnecessary_containers: true
+
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options
