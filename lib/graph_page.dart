@@ -89,8 +89,8 @@ class _GraphPageState extends State<GraphPage> {
   Widget _buttonRunStop() {
     void onRunStop() {
       if (_bluetoothHandler.sessionInProgress) {
-        final f = File('DynoData.txt');
-        f.writeAsStringSync(_dataTransformer._rawData.toString());
+        //final f = File('DynoData.txt');
+        //f.writeAsStringSync(_dataTransformer._rawData.toString());
       } else {
         _dataTransformer._clear();
       }
