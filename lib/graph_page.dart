@@ -20,7 +20,7 @@ class GraphPage extends StatefulWidget {
 class _GraphPageState extends State<GraphPage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
 
-  final _DataTransformer _dataTransformer = _DataTransformer();
+  final _DataHub _dataHub = _DataHub();
 
   static final List<int> _xScaleVals = [];
   static final List<ui.Paragraph> _xScaleLabels = [];
@@ -34,7 +34,7 @@ class _GraphPageState extends State<GraphPage> {
     _initGraphics();
 
     _bluetoothHandler.initializeBluetooth(
-        _processReceivedData, _dataTransformer._onUpdateCalibration, () {
+        _processReceivedData, _dataHub._onUpdateCalibration, () {
       setState(() {});
     });
   }
@@ -71,7 +71,7 @@ class _GraphPageState extends State<GraphPage> {
 
   void _processReceivedData(String _, String __, Uint8List data) {
     if (_bluetoothHandler.sessionInProgress) {
-      _dataTransformer._parseDataPacket(data, _onEndOfData);
+      _dataHub._parseDataPacket(data, _onEndOfData);
     }
   }
 
@@ -95,10 +95,10 @@ class _GraphPageState extends State<GraphPage> {
           _buttonScan(),
           _buttonBluetoothDevice(),
           _buttonRunStop(),
-          Text(_dataTransformer._taring ? 'Tare' : ''),
+          Text(_dataHub._taring ? 'Tare' : ''),
           Expanded(
             child: CustomPaint(
-              foregroundPainter: _DynoPainter(_dataTransformer),
+              foregroundPainter: _DynoPainter(_dataHub),
               size: MediaQuery.of(context).size,
               // child: Container(),
             ),
@@ -128,7 +128,7 @@ class _GraphPageState extends State<GraphPage> {
         //XFile.fromData(Uint8List.fromList(_dataTransformer._rawData[0]));
         //unawaited(xf.saveTo('DynoData.txt'));
       } else {
-        _dataTransformer._clear();
+        _dataHub._clear();
       }
       _bluetoothHandler.toggleSession();
     }
@@ -163,7 +163,7 @@ class _GraphPageState extends State<GraphPage> {
 }
 
 class _DynoPainter extends CustomPainter {
-  final _DataTransformer _data;
+  final _DataHub _data;
 
   _DynoPainter(this._data);
 
@@ -222,13 +222,11 @@ class _DynoPainter extends CustomPainter {
     final double yScale = frame.size.height / dataMax;
 
     int xIdx = _GraphPageState._xScaleVals
-        .indexWhere((e) => e > dataSz ~/ _DataTransformer._samplesPerSec);
+        .indexWhere((e) => e > dataSz ~/ _DataHub._samplesPerSec);
     for (int i = 0; (i < 5) && (xIdx > 0); ++i) {
       xIdx--;
       final xMarkPos = Offset(
-          _GraphPageState._xScaleVals[xIdx] *
-              _DataTransformer._samplesPerSec /
-              xScale,
+          _GraphPageState._xScaleVals[xIdx] * _DataHub._samplesPerSec / xScale,
           frame.bottom);
       canvas.drawLine(xMarkPos, xMarkPos.translate(0, 8), pen..strokeWidth = 0);
       canvas.drawParagraph(_GraphPageState._xScaleLabels[xIdx],
@@ -249,7 +247,7 @@ class _DynoPainter extends CustomPainter {
           yMarkPos.translate(tickLength / 2, 0));
     }
 
-    for (int line = 0; line < _DataTransformer.numGraphLines; ++line) {
+    for (int line = 0; line < _DataHub.numGraphLines; ++line) {
       double toY(double val) {
         final double y = frame.size.height - (val - _data._tare[line]) * yScale;
         if (y < 0) {
@@ -316,12 +314,12 @@ class _DynoPainter extends CustomPainter {
   }
 }
 
-class _DataTransformer {
+class _DataHub {
   static const int numGraphLines = 2;
   final Float64List _tare = Float64List(numGraphLines);
   final Float64List _runningTotal = Float64List(numGraphLines);
   final List<List<int>> _rawData = List.generate(
-    _DataTransformer.numGraphLines,
+    _DataHub.numGraphLines,
     (_) => <int>[],
     growable: false,
   );
