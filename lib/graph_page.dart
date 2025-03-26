@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:io';
+//import 'dart:io';
+//import 'package:cross_file/cross_file.dart';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -21,9 +22,16 @@ class _GraphPageState extends State<GraphPage> {
 
   final _DataTransformer _dataTransformer = _DataTransformer();
 
+  static final List<int> _xScaleVals = [];
+  static final List<ui.Paragraph> _xScaleLabels = [];
+  static final List<int> _yScaleVals = [];
+  static final List<ui.Paragraph> _yScaleLabels = [];
+
   @override
   void initState() {
     super.initState();
+
+    _initGraphics();
 
     _bluetoothHandler.initializeBluetooth(
         _processReceivedData, _dataTransformer._onUpdateCalibration, () {
@@ -35,6 +43,30 @@ class _GraphPageState extends State<GraphPage> {
   void dispose() {
     _bluetoothHandler.dispose();
     super.dispose();
+  }
+
+  static void _initGraphics() {
+    if (_xScaleVals.isNotEmpty) return;
+
+    const List<int> xlimit = [10, 60, 120, 600];
+    const List<int> xdelta = [2, 10, 20, 60];
+    assert(xlimit.length == xdelta.length);
+    for (int i = 0, n = xdelta[0]; i < xlimit.length; ++i) {
+      for (; n < xlimit[i]; n += xdelta[i]) {
+        _xScaleVals.add(n);
+        _xScaleLabels.add(_DynoPainter._title(n, true));
+      }
+    }
+
+    const List<int> ylimit = [10, 100, 1000];
+    const List<int> yde2lta = [1, 10, 100];
+    assert(ylimit.length == yde2lta.length);
+    for (int i = 0, n = yde2lta[0]; i < ylimit.length; ++i) {
+      for (; n < ylimit[i]; n += yde2lta[i]) {
+        _yScaleVals.add(n);
+        _yScaleLabels.add(_DynoPainter._title(n, false));
+      }
+    }
   }
 
   void _processReceivedData(String _, String __, Uint8List data) {
@@ -91,6 +123,10 @@ class _GraphPageState extends State<GraphPage> {
       if (_bluetoothHandler.sessionInProgress) {
         //final f = File('DynoData.txt');
         //f.writeAsStringSync(_dataTransformer._rawData.toString());
+        //-------------
+        //final xf =
+        //XFile.fromData(Uint8List.fromList(_dataTransformer._rawData[0]));
+        //unawaited(xf.saveTo('DynoData.txt'));
       } else {
         _dataTransformer._clear();
       }
@@ -165,8 +201,14 @@ class _DynoPainter extends CustomPainter {
       ..color = Colors.deepPurple
       ..style = PaintingStyle.stroke;
 
-    canvas.translate(8, 0);
-    final frame = Rect.fromLTRB(0, 0, size.width - 32, size.height - 24);
+    const double leftSpace = 8;
+    const double rightSpace = 40;
+    const double bottomSpace = 24;
+    const double tickLength = 8;
+
+    canvas.translate(leftSpace, 0);
+    final frame =
+        Rect.fromLTRB(0, 0, size.width - rightSpace, size.height - bottomSpace);
     canvas.drawRect(frame, pen..strokeWidth = 0);
 
     final double dataMax = extremum();
@@ -179,19 +221,33 @@ class _DynoPainter extends CustomPainter {
     final double xScale = dataSz / frame.size.width;
     final double yScale = frame.size.height / dataMax;
 
-    int labelIndex = 1;
-    for (; labelIndex < _DataTransformer._xScaleSteps.length; ++labelIndex) {
-      if (_DataTransformer._xScaleSteps[labelIndex] > dataSz) {
-        break;
-      }
+    int xIdx = _GraphPageState._xScaleVals
+        .indexWhere((e) => e > dataSz ~/ _DataTransformer._samplesPerSec);
+    for (int i = 0; (i < 5) && (xIdx > 0); ++i) {
+      xIdx--;
+      final xMarkPos = Offset(
+          _GraphPageState._xScaleVals[xIdx] *
+              _DataTransformer._samplesPerSec /
+              xScale,
+          frame.bottom);
+      canvas.drawLine(xMarkPos, xMarkPos.translate(0, 8), pen..strokeWidth = 0);
+      canvas.drawParagraph(_GraphPageState._xScaleLabels[xIdx],
+          xMarkPos.translate(tickLength, 0));
     }
-    labelIndex--;
-    final markPos = Offset(
-        _DataTransformer._xScaleSteps[labelIndex] / xScale, frame.bottom);
 
-    canvas.drawLine(markPos, markPos.translate(0, 8), pen..strokeWidth = 0);
-    canvas.drawParagraph(
-        _DataTransformer._xScaleLabels[labelIndex], markPos.translate(4, 0));
+    int yIdx = _GraphPageState._yScaleVals
+        .indexWhere((e) => e > dataMax * _data._deviceCalibration._slope);
+    for (int i = 0; (i < 2) && (yIdx > 0); ++i) {
+      yIdx--;
+      final double yValSample =
+          _GraphPageState._yScaleVals[yIdx] / _data._deviceCalibration._slope;
+      final yMarkPos =
+          Offset(frame.size.width, frame.size.height - yValSample * yScale);
+      canvas.drawLine(
+          yMarkPos, yMarkPos.translate(tickLength, 0), pen..strokeWidth = 0);
+      canvas.drawParagraph(_GraphPageState._yScaleLabels[yIdx],
+          yMarkPos.translate(tickLength / 2, 0));
+    }
 
     for (int line = 0; line < _DataTransformer.numGraphLines; ++line) {
       double toY(double val) {
@@ -235,6 +291,29 @@ class _DynoPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+
+  static ui.Paragraph _title(int n, bool isTime) {
+    final textStyle = ui.TextStyle(
+      color: Colors.black,
+      fontSize: 16,
+    );
+    final paragraphStyle =
+        ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1);
+    final paragraphBuilder = ui.ParagraphBuilder(paragraphStyle)
+      ..pushStyle(textStyle);
+    if (isTime) {
+      if (n < 60) {
+        paragraphBuilder.addText(n.toString());
+      } else {
+        final s = (n % 60 < 10) ? '0' : '';
+        paragraphBuilder.addText('${n ~/ 60}:$s${n % 60}');
+      }
+    } else {
+      paragraphBuilder.addText(n.toString());
+    }
+    return paragraphBuilder.build()
+      ..layout(const ui.ParagraphConstraints(width: 64));
+  }
 }
 
 class _DataTransformer {
@@ -252,47 +331,6 @@ class _DataTransformer {
   static const int _samplesPerSec = 1000;
   int _timeTick = 0;
   _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
-  static final List<int> _xScaleSteps = [];
-  static final List<ui.Paragraph> _xScaleLabels = [];
-
-  _DataTransformer() {
-    if (_xScaleSteps.isNotEmpty) return;
-
-    _xScaleSteps.add(5 * _samplesPerSec);
-    int n = 10 * _samplesPerSec;
-    for (; n < 60 * _samplesPerSec; n += 10 * _samplesPerSec) {
-      _xScaleSteps.add(n);
-    }
-    for (; n < 120 * _samplesPerSec; n += 15 * _samplesPerSec) {
-      _xScaleSteps.add(n);
-    }
-    for (; n <= 600 * _samplesPerSec; n += 30 * _samplesPerSec) {
-      _xScaleSteps.add(n);
-    }
-    for (int i = 0; i < _xScaleSteps.length; ++i) {
-      _xScaleLabels.add(_stepTitle(_xScaleSteps[i]));
-    }
-  }
-
-  static ui.Paragraph _stepTitle(int n) {
-    n = n ~/ _samplesPerSec;
-    final textStyle = ui.TextStyle(
-      color: Colors.black,
-      fontSize: 16,
-    );
-    final paragraphStyle =
-        ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1);
-    final paragraphBuilder = ui.ParagraphBuilder(paragraphStyle)
-      ..pushStyle(textStyle);
-    if (n < 60) {
-      paragraphBuilder.addText(n.toString());
-    } else {
-      final s = (n % 60 < 10) ? '0' : '';
-      paragraphBuilder.addText('${n ~/ 60}:$s${n % 60}');
-    }
-    return paragraphBuilder.build()
-      ..layout(const ui.ParagraphConstraints(width: 64));
-  }
 
   void _clear() {
     _timeTick = 0;
