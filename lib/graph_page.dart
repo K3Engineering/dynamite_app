@@ -22,10 +22,9 @@ class _GraphPageState extends State<GraphPage> {
 
   final _DataHub _dataHub = _DataHub();
 
-  static const List<int> xlimit = [10, 60, 120, 600];
-  static const List<int> xdelta = [2, 10, 20, 60];
-  static final List<int> _xScaleVals = [];
-  static final List<ui.Paragraph> _xScaleLabels = [];
+  static const List<int> _xLimit = [5, 10, 30, 60, 120, 300, 600];
+  static const List<int> _xDelta = [1, 2, 5, 10, 20, 30, 60];
+  static final Map<int, ui.Paragraph> _xPreparedLabels = HashMap();
 
   static const List<int> _yLimit = [5, 10, 20, 50, 100, 200, 500, 1000];
   static const List<int> _yDelta = [1, 2, 5, 10, 20, 50, 100, 200];
@@ -49,9 +48,12 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   static void _initGraphics() {
-    if (_xScaleLabels.isEmpty) {
-      _generateAxisLabels(
-          xlimit, xdelta, _xScaleVals, _xScaleLabels, _formatTime);
+    for (int i = 0; i < _xLimit.length; ++i) {
+      for (int j = _xDelta[i]; j <= _xLimit[i]; j += _xDelta[i]) {
+        if (!_xPreparedLabels.containsKey(j)) {
+          _xPreparedLabels[j] = _axisLabel(_formatTime(j));
+        }
+      }
     }
     for (int i = 0; i < _yLimit.length; ++i) {
       for (int j = _yDelta[i]; j <= _yLimit[i]; j += _yDelta[i]) {
@@ -63,17 +65,6 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   static void _disposeGraphics() {}
-
-  static void _generateAxisLabels(List<int> limit, List<int> delta,
-      List<int> val, List<ui.Paragraph> text, String Function(int) formatter) {
-    assert(limit.length == delta.length);
-    for (int i = 0, n = delta[0]; i < limit.length; ++i) {
-      for (; n < limit[i]; n += delta[i]) {
-        val.add(n);
-        text.add(_axisLabel(formatter(n)));
-      }
-    }
-  }
 
   static ui.Paragraph _axisLabel(String text) {
     final textStyle = ui.TextStyle(
@@ -237,41 +228,47 @@ class _DynoPainter extends CustomPainter {
     const double tickLength = 8;
 
     canvas.translate(leftSpace, 0);
-    final frame =
-        Rect.fromLTRB(0, 0, size.width - rightSpace, size.height - bottomSpace);
-    canvas.drawRect(frame, pen..strokeWidth = 0);
+    final Size graphSz =
+        Size(size.width - rightSpace, size.height - bottomSpace);
+    canvas.drawRect(Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
+        pen..strokeWidth = 0);
 
     final double dataMax = extremum();
-    final Path grid = gridPath(frame.size);
+    final Path grid = gridPath(graphSz);
     canvas.drawPath(grid, pen..strokeWidth = 0.2);
 
     if (_data._rawData[0].isEmpty) return;
 
     final int dataSz = _data._rawData[0].length;
-    final double xScale = dataSz / frame.size.width;
-    final double yScale = frame.size.height / dataMax;
+    final double xScale = dataSz / graphSz.width;
+    final double yScale = graphSz.height / dataMax;
 
-    int xIdx = _GraphPageState._xScaleVals
-        .indexWhere((e) => e > dataSz ~/ _DataHub._samplesPerSec);
-    for (int i = 0; (i < 5) && (xIdx > 0); ++i) {
-      xIdx--;
-      final xMarkPos = Offset(
-          _GraphPageState._xScaleVals[xIdx] * _DataHub._samplesPerSec / xScale,
-          frame.bottom);
-      canvas.drawLine(xMarkPos, xMarkPos.translate(0, 8), pen..strokeWidth = 0);
-      canvas.drawParagraph(_GraphPageState._xScaleLabels[xIdx],
-          xMarkPos.translate(tickLength, 0));
+    final double xVal = dataSz / _DataHub._samplesPerSec;
+    for (int i = 0; i < _GraphPageState._xLimit.length; ++i) {
+      if (xVal < _GraphPageState._xLimit[i]) {
+        for (int j = _GraphPageState._xDelta[i];
+            j < xVal;
+            j += _GraphPageState._xDelta[i]) {
+          final double xValSample = j.toDouble() * _DataHub._samplesPerSec;
+          final yMarkPos = Offset(xValSample / xScale, graphSz.height);
+          canvas.drawLine(yMarkPos, yMarkPos.translate(0, tickLength),
+              pen..strokeWidth = 0);
+          canvas.drawParagraph(_GraphPageState._xPreparedLabels[j]!,
+              yMarkPos.translate(tickLength, 0));
+        }
+        break;
+      }
     }
 
     final double yVal = dataMax * _data._deviceCalibration._slope;
     for (int i = 0; i < _GraphPageState._yLimit.length; ++i) {
-      if (yVal <= _GraphPageState._yLimit[i]) {
+      if (yVal < _GraphPageState._yLimit[i]) {
         for (int j = _GraphPageState._yDelta[i];
-            j <= yVal;
+            j < yVal;
             j += _GraphPageState._yDelta[i]) {
           final double yValSample = j / _data._deviceCalibration._slope;
           final yMarkPos =
-              Offset(frame.size.width, frame.size.height - yValSample * yScale);
+              Offset(graphSz.width, graphSz.height - yValSample * yScale);
           canvas.drawLine(yMarkPos, yMarkPos.translate(tickLength, 0),
               pen..strokeWidth = 0);
           canvas.drawParagraph(_GraphPageState._yPreparedLabels[j]!,
@@ -282,21 +279,22 @@ class _DynoPainter extends CustomPainter {
     }
 
     for (int line = 0; line < _DataHub.numGraphLines; ++line) {
+      final graph = Path();
+      final graph2 = Path();
+
       double toY(double val) {
-        final double y = frame.size.height - (val - _data._tare[line]) * yScale;
+        final double y = graphSz.height - (val - _data._tare[line]) * yScale;
         if (y < 0) {
           return 0;
         }
-        if (y > frame.size.height) {
-          return frame.size.height;
+        if (y > graphSz.height) {
+          return graphSz.height;
         }
         return y;
       }
 
-      final graph = Path();
-      final graph2 = Path();
       graph.moveTo(0, toY(_data._tare[line]));
-      for (int i = 0, j = 0; i < frame.size.width; ++i) {
+      for (int i = 0, j = 0; i < graphSz.width; ++i) {
         int mn = 100000000, mx = 0;
         int total = 0;
         final int start = j;
