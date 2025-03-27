@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:collection';
 //import 'dart:io';
 //import 'package:cross_file/cross_file.dart';
 import 'dart:ui' as ui;
@@ -11,7 +12,6 @@ import 'bt_handling.dart' show BluetoothHandling;
 
 class GraphPage extends StatefulWidget {
   const GraphPage({super.key});
-  final String title = 'Graph';
 
   @override
   State<GraphPage> createState() => _GraphPageState();
@@ -22,17 +22,19 @@ class _GraphPageState extends State<GraphPage> {
 
   final _DataHub _dataHub = _DataHub();
 
+  static const List<int> xlimit = [10, 60, 120, 600];
+  static const List<int> xdelta = [2, 10, 20, 60];
   static final List<int> _xScaleVals = [];
   static final List<ui.Paragraph> _xScaleLabels = [];
-  static final List<int> _yScaleVals = [];
-  static final List<ui.Paragraph> _yScaleLabels = [];
+
+  static const List<int> _yLimit = [5, 10, 20, 50, 100, 200, 500, 1000];
+  static const List<int> _yDelta = [1, 2, 5, 10, 20, 50, 100, 200];
+  static final Map<int, ui.Paragraph> _yPreparedLabels = HashMap();
 
   @override
   void initState() {
     super.initState();
-
     _initGraphics();
-
     _bluetoothHandler.initializeBluetooth(
         _processReceivedData, _dataHub._onUpdateCalibration, () {
       setState(() {});
@@ -41,42 +43,70 @@ class _GraphPageState extends State<GraphPage> {
 
   @override
   void dispose() {
+    _disposeGraphics();
     _bluetoothHandler.dispose();
     super.dispose();
   }
 
   static void _initGraphics() {
-    if (_xScaleVals.isNotEmpty) return;
-
-    const List<int> xlimit = [10, 60, 120, 600];
-    const List<int> xdelta = [2, 10, 20, 60];
-    assert(xlimit.length == xdelta.length);
-    for (int i = 0, n = xdelta[0]; i < xlimit.length; ++i) {
-      for (; n < xlimit[i]; n += xdelta[i]) {
-        _xScaleVals.add(n);
-        _xScaleLabels.add(_DynoPainter._title(n, true));
+    if (_xScaleLabels.isEmpty) {
+      _generateAxisLabels(
+          xlimit, xdelta, _xScaleVals, _xScaleLabels, _formatTime);
+    }
+    for (int i = 0; i < _yLimit.length; ++i) {
+      for (int j = _yDelta[i]; j <= _yLimit[i]; j += _yDelta[i]) {
+        if (!_yPreparedLabels.containsKey(j)) {
+          _yPreparedLabels[j] = _axisLabel(_formatForce(j));
+        }
       }
     }
+  }
 
-    const List<int> ylimit = [10, 100, 1000];
-    const List<int> yde2lta = [1, 10, 100];
-    assert(ylimit.length == yde2lta.length);
-    for (int i = 0, n = yde2lta[0]; i < ylimit.length; ++i) {
-      for (; n < ylimit[i]; n += yde2lta[i]) {
-        _yScaleVals.add(n);
-        _yScaleLabels.add(_DynoPainter._title(n, false));
+  static void _disposeGraphics() {}
+
+  static void _generateAxisLabels(List<int> limit, List<int> delta,
+      List<int> val, List<ui.Paragraph> text, String Function(int) formatter) {
+    assert(limit.length == delta.length);
+    for (int i = 0, n = delta[0]; i < limit.length; ++i) {
+      for (; n < limit[i]; n += delta[i]) {
+        val.add(n);
+        text.add(_axisLabel(formatter(n)));
       }
     }
+  }
+
+  static ui.Paragraph _axisLabel(String text) {
+    final textStyle = ui.TextStyle(
+      color: Colors.black,
+      fontSize: 16,
+    );
+    final paragraphStyle =
+        ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1);
+    final paragraphBuilder = ui.ParagraphBuilder(paragraphStyle)
+      ..pushStyle(textStyle);
+    paragraphBuilder.addText(text);
+    return paragraphBuilder.build()
+      ..layout(const ui.ParagraphConstraints(width: 64));
+  }
+
+  static String _formatTime(int nSec) {
+    if (nSec < 60) {
+      return nSec.toString();
+    }
+    final String s = (nSec % 60 < 10) ? '0' : '';
+    return '${nSec ~/ 60}:$s${nSec % 60}';
+  }
+
+  static String _formatForce(int nKg) {
+    return nKg.toString();
   }
 
   void _processReceivedData(String _, String __, Uint8List data) {
     if (_bluetoothHandler.sessionInProgress) {
-      _dataHub._parseDataPacket(data, _onEndOfData);
+      _dataHub._parseDataPacket(data, () {
+        setState(() {});
+      });
     }
-  }
-
-  void _onEndOfData() {
-    setState(() {}); // Update UI layer
   }
 
   @override
@@ -202,7 +232,7 @@ class _DynoPainter extends CustomPainter {
       ..style = PaintingStyle.stroke;
 
     const double leftSpace = 8;
-    const double rightSpace = 40;
+    const double rightSpace = 44;
     const double bottomSpace = 24;
     const double tickLength = 8;
 
@@ -233,18 +263,22 @@ class _DynoPainter extends CustomPainter {
           xMarkPos.translate(tickLength, 0));
     }
 
-    int yIdx = _GraphPageState._yScaleVals
-        .indexWhere((e) => e > dataMax * _data._deviceCalibration._slope);
-    for (int i = 0; (i < 2) && (yIdx > 0); ++i) {
-      yIdx--;
-      final double yValSample =
-          _GraphPageState._yScaleVals[yIdx] / _data._deviceCalibration._slope;
-      final yMarkPos =
-          Offset(frame.size.width, frame.size.height - yValSample * yScale);
-      canvas.drawLine(
-          yMarkPos, yMarkPos.translate(tickLength, 0), pen..strokeWidth = 0);
-      canvas.drawParagraph(_GraphPageState._yScaleLabels[yIdx],
-          yMarkPos.translate(tickLength / 2, 0));
+    final double yVal = dataMax * _data._deviceCalibration._slope;
+    for (int i = 0; i < _GraphPageState._yLimit.length; ++i) {
+      if (yVal <= _GraphPageState._yLimit[i]) {
+        for (int j = _GraphPageState._yDelta[i];
+            j <= yVal;
+            j += _GraphPageState._yDelta[i]) {
+          final double yValSample = j / _data._deviceCalibration._slope;
+          final yMarkPos =
+              Offset(frame.size.width, frame.size.height - yValSample * yScale);
+          canvas.drawLine(yMarkPos, yMarkPos.translate(tickLength, 0),
+              pen..strokeWidth = 0);
+          canvas.drawParagraph(_GraphPageState._yPreparedLabels[j]!,
+              yMarkPos.translate(tickLength / 2, 0));
+        }
+        break;
+      }
     }
 
     for (int line = 0; line < _DataHub.numGraphLines; ++line) {
@@ -289,29 +323,6 @@ class _DynoPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-
-  static ui.Paragraph _title(int n, bool isTime) {
-    final textStyle = ui.TextStyle(
-      color: Colors.black,
-      fontSize: 16,
-    );
-    final paragraphStyle =
-        ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1);
-    final paragraphBuilder = ui.ParagraphBuilder(paragraphStyle)
-      ..pushStyle(textStyle);
-    if (isTime) {
-      if (n < 60) {
-        paragraphBuilder.addText(n.toString());
-      } else {
-        final s = (n % 60 < 10) ? '0' : '';
-        paragraphBuilder.addText('${n ~/ 60}:$s${n % 60}');
-      }
-    } else {
-      paragraphBuilder.addText(n.toString());
-    }
-    return paragraphBuilder.build()
-      ..layout(const ui.ParagraphConstraints(width: 64));
-  }
 }
 
 class _DataHub {
