@@ -210,20 +210,6 @@ class _DynoPainter extends CustomPainter {
     return Colors.blueAccent;
   }
 
-  static Path gridPath(Size size) {
-    final grid = Path();
-    final double step = size.height / 8;
-    for (double x = step; x < size.width; x += step) {
-      grid.moveTo(x, 0);
-      grid.lineTo(x, size.height);
-    }
-    for (double y = step; y <= size.height; y += step) {
-      grid.moveTo(0, y);
-      grid.lineTo(size.width, y);
-    }
-    return grid;
-  }
-
   double extremum() {
     double dataMax = 10000; // Above noise level
     for (int line = 0; line < _data._rawData.length; ++line) {
@@ -251,8 +237,7 @@ class _DynoPainter extends CustomPainter {
         pen..strokeWidth = 0);
 
     final double dataMax = extremum();
-    final Path grid = gridPath(graphSz);
-    canvas.drawPath(grid, pen..strokeWidth = 0.2);
+    final Path grid = Path();
 
     if (_data._rawData[0].isEmpty) return;
 
@@ -267,9 +252,8 @@ class _DynoPainter extends CustomPainter {
       return x / _DataHub._samplesPerSec;
     }
 
-    Offset secondsToPos(int sec) {
-      return Offset(sec * _DataHub._samplesPerSec * graphSz.width / dataSz,
-          graphSz.height);
+    double secondsToPos(int sec) {
+      return sec * _DataHub._samplesPerSec * graphSz.width / dataSz;
     }
 
     final double xSpanSec = xSampleToSeconds(dataSz);
@@ -278,11 +262,13 @@ class _DynoPainter extends CustomPainter {
 
     for (int j = xC.delta; j < xSpanSec; j += xC.delta) {
       final yMarkPos = secondsToPos(j);
-      canvas.drawLine(
-          yMarkPos, yMarkPos.translate(0, tickLength), pen..strokeWidth = 0);
+      grid.moveTo(yMarkPos, 0);
+      grid.lineTo(yMarkPos, graphSz.height + tickLength);
+
       final ui.Paragraph? par = _GraphPageState._xPreparedLabels[j];
       if (par != null) {
-        canvas.drawParagraph(par, yMarkPos.translate(tickLength, 0));
+        canvas.drawParagraph(
+            par, Offset(yMarkPos + tickLength / 2, graphSz.height));
       }
     }
 
@@ -290,14 +276,9 @@ class _DynoPainter extends CustomPainter {
       return y * _data._deviceCalibration._slope;
     }
 
-    Offset kiloToPos(int kilo) {
-      return Offset(
-          graphSz.width,
-          graphSz.height -
-              kilo *
-                  graphSz.height /
-                  dataMax /
-                  _data._deviceCalibration._slope);
+    double kiloToY(int kilo) {
+      return graphSz.height -
+          kilo * graphSz.height / dataMax / _data._deviceCalibration._slope;
     }
 
     final double ySpanKilo = ySampleToKilo(dataMax);
@@ -305,14 +286,17 @@ class _DynoPainter extends CustomPainter {
         findScale(ySpanKilo, _GraphPageState._yScaleConfig);
 
     for (int j = yC.delta; j < ySpanKilo; j += yC.delta) {
-      final yMarkPos = kiloToPos(j);
-      canvas.drawLine(
-          yMarkPos, yMarkPos.translate(tickLength, 0), pen..strokeWidth = 0);
+      final yMarkPos = kiloToY(j);
+      grid.moveTo(0, yMarkPos);
+      grid.lineTo(graphSz.width + tickLength, yMarkPos);
+
       final ui.Paragraph? par = _GraphPageState._yPreparedLabels[j];
       if (par != null) {
-        canvas.drawParagraph(par, yMarkPos.translate(tickLength / 2, 0));
+        canvas.drawParagraph(
+            par, Offset(graphSz.width + tickLength / 2, yMarkPos));
       }
     }
+    canvas.drawPath(grid, pen..strokeWidth = 0.2);
 
     for (int line = 0; line < _DataHub.numGraphLines; ++line) {
       final path1 = Path();
