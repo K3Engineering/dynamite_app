@@ -23,6 +23,7 @@ class _GraphPageState extends State<GraphPage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
 
   final _DataHub _dataHub = _DataHub();
+
   // Seconds
   static const List<ScaleConfigItem> _xScaleConfig = [
     (limit: 5, delta: 1),
@@ -34,6 +35,7 @@ class _GraphPageState extends State<GraphPage> {
     (limit: 600, delta: 60),
   ];
   static final Map<int, ui.Paragraph> _xPreparedLabels = HashMap();
+
   // Kilogram
   static const List<ScaleConfigItem> _yScaleConfig = [
     (limit: 5, delta: 1),
@@ -248,27 +250,25 @@ class _DynoPainter extends CustomPainter {
           orElse: () => (limit: 0, delta: 1));
     }
 
-    double xSampleToSeconds(int x) {
-      return x / _DataHub._samplesPerSec;
-    }
-
-    double secondsToPos(int sec) {
+    double secondsToPos(double sec) {
       return sec * _DataHub._samplesPerSec * graphSz.width / dataSz;
     }
 
-    final double xSpanSec = xSampleToSeconds(dataSz);
+    final double xSpanSec = dataSz / _DataHub._samplesPerSec;
     final ScaleConfigItem xC =
         findScale(xSpanSec, _GraphPageState._xScaleConfig);
-
-    for (int j = xC.delta; j < xSpanSec; j += xC.delta) {
-      final yMarkPos = secondsToPos(j);
+    int xMarkerCnt = 0;
+    for (double i = xC.delta / 2; i < xSpanSec; i += xC.delta / 2) {
+      final bool drawMarker = xMarkerCnt++ % 2 > 0;
+      final double yMarkPos = secondsToPos(i);
       grid.moveTo(yMarkPos, 0);
-      grid.lineTo(yMarkPos, graphSz.height + tickLength);
-
-      final ui.Paragraph? par = _GraphPageState._xPreparedLabels[j];
-      if (par != null) {
-        canvas.drawParagraph(
-            par, Offset(yMarkPos + tickLength / 2, graphSz.height));
+      grid.lineTo(yMarkPos, graphSz.height + (drawMarker ? tickLength : 0));
+      if (drawMarker) {
+        final ui.Paragraph? par = _GraphPageState._xPreparedLabels[i];
+        if (par != null) {
+          canvas.drawParagraph(
+              par, Offset(yMarkPos + tickLength / 2, graphSz.height));
+        }
       }
     }
 
@@ -276,7 +276,7 @@ class _DynoPainter extends CustomPainter {
       return y * _data._deviceCalibration._slope;
     }
 
-    double kiloToY(int kilo) {
+    double kiloToY(double kilo) {
       return graphSz.height -
           kilo * graphSz.height / dataMax / _data._deviceCalibration._slope;
     }
@@ -284,16 +284,19 @@ class _DynoPainter extends CustomPainter {
     final double ySpanKilo = ySampleToKilo(dataMax);
     final ScaleConfigItem yC =
         findScale(ySpanKilo, _GraphPageState._yScaleConfig);
-
-    for (int j = yC.delta; j < ySpanKilo; j += yC.delta) {
-      final yMarkPos = kiloToY(j);
+    int yMarkerCnt = 0;
+    for (double i = yC.delta / 2; i < ySpanKilo; i += yC.delta / 2) {
+      final bool drawMarker = yMarkerCnt++ % 2 > 0;
+      final double yMarkPos = kiloToY(i);
       grid.moveTo(0, yMarkPos);
-      grid.lineTo(graphSz.width + tickLength, yMarkPos);
+      grid.lineTo(graphSz.width + (drawMarker ? tickLength : 0), yMarkPos);
 
-      final ui.Paragraph? par = _GraphPageState._yPreparedLabels[j];
-      if (par != null) {
-        canvas.drawParagraph(
-            par, Offset(graphSz.width + tickLength / 2, yMarkPos));
+      if (drawMarker) {
+        final ui.Paragraph? par = _GraphPageState._yPreparedLabels[i];
+        if (par != null) {
+          canvas.drawParagraph(
+              par, Offset(graphSz.width + tickLength / 2, yMarkPos));
+        }
       }
     }
     canvas.drawPath(grid, pen..strokeWidth = 0.2);
