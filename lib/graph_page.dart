@@ -1,114 +1,122 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:io';
+import 'dart:collection';
+//import 'dart:io';
+//import 'package:cross_file/cross_file.dart';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
-import 'package:fl_chart/fl_chart.dart';
 import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
 import 'bt_handling.dart' show BluetoothHandling;
 
 class GraphPage extends StatefulWidget {
   const GraphPage({super.key});
-  final String title = 'Graph';
 
   @override
   State<GraphPage> createState() => _GraphPageState();
 }
 
+typedef ScaleConfigItem = ({int limit, int delta});
+
 class _GraphPageState extends State<GraphPage> {
   final BluetoothHandling _bluetoothHandler = BluetoothHandling();
 
-  final List<List<FlSpot>> chartDataCh = List.generate(
-    _DataTransformer.numGraphLines,
-    (_) => <FlSpot>[],
-    growable: false,
-  );
+  final _DataHub _dataHub = _DataHub();
 
-  final _DataTransformer _dataTransformer = _DataTransformer();
+  // Seconds
+  static const List<ScaleConfigItem> _xScaleConfig = [
+    (limit: 5, delta: 1),
+    (limit: 10, delta: 2),
+    (limit: 30, delta: 5),
+    (limit: 60, delta: 10),
+    (limit: 120, delta: 20),
+    (limit: 300, delta: 30),
+    (limit: 600, delta: 60),
+  ];
+  static final Map<int, ui.Paragraph> _xPreparedLabels = HashMap();
+
+  // Kilogram
+  static const List<ScaleConfigItem> _yScaleConfig = [
+    (limit: 5, delta: 1),
+    (limit: 10, delta: 2),
+    (limit: 20, delta: 5),
+    (limit: 50, delta: 10),
+    (limit: 100, delta: 20),
+    (limit: 200, delta: 50),
+    (limit: 500, delta: 100),
+    (limit: 1000, delta: 200),
+  ];
+  static final Map<int, ui.Paragraph> _yPreparedLabels = HashMap();
 
   @override
   void initState() {
     super.initState();
-
+    _initGraphics();
     _bluetoothHandler.initializeBluetooth(
-        _processReceivedData, _dataTransformer._onUpdateCalibration, () {
+        _processReceivedData, _dataHub._onUpdateCalibration, () {
       setState(() {});
     });
   }
 
   @override
   void dispose() {
+    _disposeGraphics();
     _bluetoothHandler.dispose();
     super.dispose();
   }
 
+  static void _initGraphics() {
+    for (final range in _xScaleConfig) {
+      for (int j = range.delta; j <= range.limit; j += range.delta) {
+        if (!_xPreparedLabels.containsKey(j)) {
+          _xPreparedLabels[j] = _prepareAxisLabel(_formatTime(j));
+        }
+      }
+    }
+    for (final range in _yScaleConfig) {
+      for (int j = range.delta; j <= range.limit; j += range.delta) {
+        if (!_yPreparedLabels.containsKey(j)) {
+          _yPreparedLabels[j] = _prepareAxisLabel(_formatForce(j));
+        }
+      }
+    }
+  }
+
+  static void _disposeGraphics() {}
+
+  static ui.Paragraph _prepareAxisLabel(String text) {
+    final textStyle = ui.TextStyle(
+      color: Colors.black,
+      fontSize: 16,
+    );
+    final paragraphStyle =
+        ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1);
+    final paragraphBuilder = ui.ParagraphBuilder(paragraphStyle)
+      ..pushStyle(textStyle);
+    paragraphBuilder.addText(text);
+    return paragraphBuilder.build()
+      ..layout(const ui.ParagraphConstraints(width: 64));
+  }
+
+  static String _formatTime(int nSec) {
+    if (nSec < 60) {
+      return nSec.toString();
+    }
+    final String s = (nSec % 60 < 10) ? '0' : '';
+    return '${nSec ~/ 60}:$s${nSec % 60}';
+  }
+
+  static String _formatForce(int nKg) {
+    return nKg.toString();
+  }
+
   void _processReceivedData(String _, String __, Uint8List data) {
     if (_bluetoothHandler.sessionInProgress) {
-      _dataTransformer._parseDataPacket(data, _appendGraphData, _onEndOfData);
+      _dataHub._parseDataPacket(data, () {
+        setState(() {});
+      });
     }
-  }
-
-  void _onEndOfData() {
-    setState(() {}); // Update UI layer
-  }
-
-  void _appendGraphData(FlSpot val, int idx) {
-    chartDataCh[idx].add(val);
-  }
-
-  Widget _graphPageLineChart() {
-    Color lineColor(int idx) {
-      if (idx == 1) return Colors.deepOrangeAccent;
-      return Colors.blueAccent;
-    }
-
-    return LineChart(
-      LineChartData(
-        lineBarsData: List<LineChartBarData>.generate(
-            chartDataCh[0].isNotEmpty ? chartDataCh.length : 0,
-            (i) => LineChartBarData(
-                  spots: chartDataCh[i],
-                  dotData: const FlDotData(
-                    show: false,
-                  ),
-                  color: lineColor(i),
-                ),
-            growable: false),
-        titlesData: const FlTitlesData(
-            topTitles: AxisTitles(), leftTitles: AxisTitles()),
-        minY: 0, // TODO: negative values
-        clipData: const FlClipData.all(),
-      ),
-      duration: Duration.zero,
-      curve: Curves.linear,
-    );
-  }
-
-  Widget _buttonRunStop() {
-    void onRunStop() {
-      if (_bluetoothHandler.sessionInProgress) {
-        final File f = File('DynoData.txt');
-        f.writeAsStringSync(_dataTransformer._rawData.toString());
-      } else {
-        for (var list in chartDataCh) {
-          list.clear();
-        }
-        _dataTransformer._clear();
-      }
-      _bluetoothHandler.toggleSession();
-    }
-
-    final String title;
-    if (_bluetoothHandler.isSubscribed) {
-      title = _bluetoothHandler.sessionInProgress ? 'Stop' : 'Run';
-    } else {
-      title = '';
-    }
-    return FilledButton.tonal(
-      onPressed: _bluetoothHandler.isSubscribed ? onRunStop : null,
-      child: Text(title),
-    );
   }
 
   @override
@@ -121,50 +129,81 @@ class _GraphPageState extends State<GraphPage> {
         icon: const Icon(Icons.arrow_back_rounded),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.startTop,
-      body: Row(
+      body: Column(
         children: [
-          Column(
-            children: [
-              BluetoothIndicator(bluetoothService: _bluetoothHandler),
-              FilledButton.tonal(
-                onPressed: () {
-                  unawaited(_bluetoothHandler.toggleScan());
-                },
-                child: Text(_bluetoothHandler.isScanning
-                    ? 'Stop scanning'
-                    : 'Start scanning'),
-              ),
-              _buttonRunStop(),
-              Text(_dataTransformer._taring ? 'Tare' : ''),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: CustomPaint(
-                    foregroundPainter: _DynoPainter(_dataTransformer),
-                    child: const SizedBox(
-                      width: 600,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
+          BluetoothIndicator(bluetoothService: _bluetoothHandler),
+          _buttonScan(),
+          _buttonBluetoothDevice(),
+          _buttonRunStop(),
+          Text(_dataHub._taring ? 'Tare' : ''),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(8, 144, 8, 8),
-              child: _bluetoothHandler.isSubscribed
-                  ? _graphPageLineChart()
-                  : BluetoothDeviceList(bluetoothService: _bluetoothHandler),
+            child: CustomPaint(
+              foregroundPainter: _DynoPainter(_dataHub),
+              size: MediaQuery.of(context).size,
+              // child: Container(),
             ),
           ),
         ],
       ),
     );
   }
+
+  Widget _buttonScan() {
+    return FilledButton.tonal(
+      onPressed: () {
+        unawaited(_bluetoothHandler.toggleScan());
+      },
+      child: Text(
+          _bluetoothHandler.isScanning ? 'Stop scanning' : 'Start scanning'),
+    );
+  }
+
+  Widget _buttonRunStop() {
+    void onRunStop() {
+      if (_bluetoothHandler.sessionInProgress) {
+        //final f = File('DynoData.txt');
+        //f.writeAsStringSync(_dataTransformer._rawData.toString());
+        //-------------
+        //final xf =
+        //XFile.fromData(Uint8List.fromList(_dataTransformer._rawData[0]));
+        //unawaited(xf.saveTo('DynoData.txt'));
+      } else {
+        _dataHub._clear();
+      }
+      _bluetoothHandler.toggleSession();
+    }
+
+    String buttonText() {
+      if (_bluetoothHandler.isSubscribed) {
+        return _bluetoothHandler.sessionInProgress ? 'Stop' : 'Run';
+      }
+      return '';
+    }
+
+    return FilledButton.tonal(
+      onPressed: _bluetoothHandler.isSubscribed ? onRunStop : null,
+      child: Text(buttonText()),
+    );
+  }
+
+  Widget _buttonBluetoothDevice() {
+    final String currentDeviceId = _bluetoothHandler.devices.isNotEmpty
+        ? _bluetoothHandler.devices[0].deviceId
+        : '';
+
+    void onConnect() {
+      unawaited(_bluetoothHandler.connectToDevice(currentDeviceId));
+    }
+
+    return FilledButton.tonal(
+      onPressed: currentDeviceId.isNotEmpty ? onConnect : null,
+      child: Text('Device: $currentDeviceId'),
+    );
+  }
 }
 
 class _DynoPainter extends CustomPainter {
-  final _DataTransformer _data;
+  final _DataHub _data;
 
   _DynoPainter(this._data);
 
@@ -173,74 +212,129 @@ class _DynoPainter extends CustomPainter {
     return Colors.blueAccent;
   }
 
+  double extremum() {
+    double dataMax = 10000; // Above noise level
+    for (int line = 0; line < _data._rawData.length; ++line) {
+      final double x = _data._rawMax[line] - _data._tare[line];
+      dataMax = (x > dataMax) ? x : dataMax;
+    }
+    return dataMax;
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
-    Paint pen = Paint()
+    final pen = Paint()
       ..color = Colors.deepPurple
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0;
+      ..style = PaintingStyle.stroke;
 
-    canvas.drawRect(
-        Rect.fromPoints(Offset(0, 0), Offset(size.width, size.height)), pen);
+    const double leftSpace = 8;
+    const double rightSpace = 44;
+    const double bottomSpace = 24;
 
-    Path grid = Path();
-    double step = size.height / 8;
-    for (double x = 0; x < size.width; x += step) {
-      grid.moveTo(x, 0);
-      grid.lineTo(x, size.height);
-    }
-    for (double y = 0; y < size.height; y += step) {
-      grid.moveTo(0, y);
-      grid.lineTo(size.width, y);
-    }
-    pen.strokeWidth = 0.2;
-    canvas.drawPath(grid, pen);
+    canvas.translate(leftSpace, 0);
+    final Size graphSz =
+        Size(size.width - rightSpace, size.height - bottomSpace);
+    canvas.drawRect(Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
+        pen..strokeWidth = 0);
+
+    final double dataMax = extremum();
+    final Path grid = Path();
 
     if (_data._rawData[0].isEmpty) return;
 
-    double dataMax = 10000; // Above noise level
-    for (int line = 0; line < _data._rawData.length; ++line) {
-      final double p = _data._rawMax[line] - _data._tare[line];
-      dataMax = (p > dataMax) ? p : dataMax;
+    final int dataSz = _data._rawData[0].length;
+
+    ScaleConfigItem findScale(double val, List<ScaleConfigItem> list) {
+      return list.firstWhere((e) => val < e.limit,
+          orElse: () => (limit: 0, delta: 1));
     }
 
-    for (int line = 0; line < _DataTransformer.numGraphLines; ++line) {
-      final int dataSz = _data._rawData[line].length;
-      final double xScale = dataSz / size.width;
-      final double yScale = size.height / dataMax;
+    double secondsToPos(int sec) {
+      return sec * _DataHub._samplesPerSec * graphSz.width / dataSz;
+    }
+
+    final double xSpanSec = dataSz / _DataHub._samplesPerSec;
+    final ScaleConfigItem xC =
+        findScale(xSpanSec, _GraphPageState._xScaleConfig);
+    final double xMinorDelta = secondsToPos(xC.delta) / 2;
+    for (double x = xMinorDelta; x < graphSz.width; x += xMinorDelta) {
+      grid.moveTo(x, 0);
+      grid.lineTo(x, graphSz.height);
+    }
+    for (int i = xC.delta; i < xSpanSec; i += xC.delta) {
+      final double yPos = secondsToPos(i);
+      final ui.Paragraph? par = _GraphPageState._xPreparedLabels[i];
+      if (par != null) {
+        canvas.drawParagraph(
+            par, Offset(yPos - par.longestLine / 2, graphSz.height));
+      }
+    }
+
+    double ySampleToKilo(double y) {
+      return y * _data._deviceCalibration._slope;
+    }
+
+    double kiloToY(int kilo) {
+      return kilo * graphSz.height / dataMax / _data._deviceCalibration._slope;
+    }
+
+    final double ySpanKilo = ySampleToKilo(dataMax);
+    final ScaleConfigItem yC =
+        findScale(ySpanKilo, _GraphPageState._yScaleConfig);
+    final double yMinorDelta = kiloToY(yC.delta) / 2;
+    for (double y = yMinorDelta; y < graphSz.height; y += yMinorDelta) {
+      grid.moveTo(0, graphSz.height - y);
+      grid.lineTo(graphSz.width, graphSz.height - y);
+    }
+    for (int i = yC.delta; i < ySpanKilo; i += yC.delta) {
+      final double yPos = graphSz.height - kiloToY(i);
+      final ui.Paragraph? par = _GraphPageState._yPreparedLabels[i];
+      if (par != null) {
+        canvas.drawParagraph(
+            par, Offset(graphSz.width + par.height / 4, yPos - par.height / 2));
+      }
+    }
+    canvas.drawPath(grid, pen..strokeWidth = 0.2);
+
+    for (int line = 0; line < _DataHub.numGraphLines; ++line) {
+      final path1 = Path();
+      final path2 = Path();
 
       double toY(double val) {
-        return size.height - (val - _data._tare[line]) * yScale;
+        final double y = graphSz.height -
+            (val - _data._tare[line]) * graphSz.height / dataMax;
+        if (y < 0) {
+          return 0;
+        }
+        if (y > graphSz.height) {
+          return graphSz.height;
+        }
+        return y;
       }
 
-      final graph = Path();
-      final graph2 = Path();
-      graph.moveTo(0, size.height);
-      for (int i = 0, j = 0; i < size.width; ++i) {
-        double mn = 10000000;
-        double mx = 0;
-        double total = 0;
-        int start = j;
-        for (; (j < dataSz) && (j < i * xScale); ++j) {
+      path1.moveTo(0, toY(_data._tare[line]));
+      for (int i = 0, j = 0; i < graphSz.width; ++i) {
+        int mn = 100000000, mx = 0;
+        int total = 0;
+        final int start = j;
+        for (; (j * graphSz.width < i * dataSz) && (j < dataSz); ++j) {
           final int v = _data._rawData[line][j];
           total += v;
-          mx = (v > mx) ? v.toDouble() : mx;
-          mn = (v < mn) ? v.toDouble() : mn;
+          mx = (v > mx) ? v : mx;
+          mn = (v < mn) ? v : mn;
         }
 
         if (start < j) {
           final double avg = total / (j - start);
-          graph.lineTo(i.toDouble(), toY(avg));
-          graph2.moveTo(i.toDouble(), toY(mn));
-          graph2.lineTo(i.toDouble(), toY(mx));
+          path1.lineTo(i.toDouble(), toY(avg));
+          path2.moveTo(i.toDouble(), toY(mn.toDouble()));
+          path2.lineTo(i.toDouble(), toY(mx.toDouble()));
         }
       }
 
-      pen.strokeWidth = 2;
       pen.color = _lineColor(line);
-      canvas.drawPath(graph, pen);
-      pen.strokeWidth = 0;
-      canvas.drawPath(graph2, pen);
+      canvas.drawPath(path1, pen..strokeWidth = 2);
+      canvas.drawPath(path2, pen..strokeWidth = 0);
     }
   }
 
@@ -248,15 +342,14 @@ class _DynoPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
-class _DataTransformer {
+class _DataHub {
   static const int numGraphLines = 2;
-  // TODO: this is preliminary implementation
   final Float64List _tare = Float64List(numGraphLines);
   final Float64List _runningTotal = Float64List(numGraphLines);
   final List<List<int>> _rawData = List.generate(
-    _DataTransformer.numGraphLines,
+    _DataHub.numGraphLines,
     (_) => <int>[],
-    growable: true,
+    growable: false,
   );
   final Int64List _rawMax = Int64List(numGraphLines);
   static const int _tareWindow = 1024;
@@ -291,7 +384,9 @@ class _DataTransformer {
 
   void _addData(int val, int idx) {
     _rawData[idx].add(val);
-    if (val > _rawMax[idx]) _rawMax[idx] = val;
+    if (val > _rawMax[idx]) {
+      _rawMax[idx] = val;
+    }
   }
 
   void _onUpdateCalibration(Uint8List data) {
@@ -307,15 +402,7 @@ class _DataTransformer {
     return -1; // No graph line for this chanel
   }
 
-  FlSpot _transform(int count, int val, int idx) {
-    double x = count.toDouble() / _samplesPerSec;
-    double y = val.toDouble() - _tare[idx];
-    y *= _deviceCalibration._slope;
-    return FlSpot(x, y);
-  }
-
-  void _parseDataPacket(Uint8List data,
-      void Function(FlSpot spot, int idx) graphCb, void Function() eodCb) {
+  void _parseDataPacket(Uint8List data, void Function() eodCb) {
     const int sampleLength = 15;
     if (data.isEmpty || data.length % sampleLength != 0) {
       debugPrint('Incorrect buffer size received');
@@ -331,16 +418,15 @@ class _DataTransformer {
       const int numAdcChan = 4;
       for (int i = 0; i < numAdcChan; ++i) {
         final int baseIndex = packetStart + 2 + i * 3;
-        int res = ((data[baseIndex + 2] << 16) |
+        final int res = ((data[baseIndex + 2] << 16) |
                 (data[baseIndex + 1] << 8) |
                 data[baseIndex])
             .toSigned(24);
 
-        int idx = _chanToLine(i);
+        final int idx = _chanToLine(i);
         if (idx >= 0) {
           if (!_addTare(res, idx)) {
             _addData(res, idx);
-            graphCb(_transform(_timeTick, res, idx), idx);
           }
         }
       }
@@ -353,44 +439,6 @@ class _DeviceCalibration {
   _DeviceCalibration(this._offset, this._slope);
   final int _offset;
   final double _slope;
-}
-
-class BluetoothDeviceList extends StatelessWidget {
-  final BluetoothHandling bluetoothService;
-
-  const BluetoothDeviceList({super.key, required this.bluetoothService});
-
-  @override
-  Widget build(BuildContext context) {
-    ListView deviceList() {
-      return ListView.builder(
-        itemCount: bluetoothService.devices.length,
-        itemBuilder: (_, index) {
-          final device = bluetoothService.devices[index];
-          return ListTile(
-            title: Text(device.name ?? 'Unknown Device'),
-            subtitle: Text('Device ID: ${device.deviceId}'),
-            selected: device.deviceId == bluetoothService.selectedDeviceId,
-            onTap: () =>
-                unawaited(bluetoothService.connectToDevice(device.deviceId)),
-          );
-        },
-      );
-    }
-
-    return Column(
-      children: [
-        bluetoothService.isScanning
-            ? const CircularProgressIndicator()
-            : const Padding(
-                padding: EdgeInsets.all(18.0),
-              ),
-        Flexible(
-          child: deviceList(),
-        ),
-      ],
-    );
-  }
 }
 
 class BluetoothIndicator extends StatelessWidget {
@@ -423,10 +471,18 @@ class BluetoothIndicator extends StatelessWidget {
       }
     }
 
-    var (icon, color) = indicator();
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: Icon(icon, color: color),
+    final (IconData icon, Color color) = indicator();
+    return Stack(
+      clipBehavior: Clip.none,
+      alignment: AlignmentDirectional.center,
+      children: [
+        Icon(icon, color: color),
+        if (bluetoothService.isScanning) const CircularProgressIndicator(),
+        const SizedBox(
+          height: 56,
+          width: 24,
+        ),
+      ],
     );
   }
 }

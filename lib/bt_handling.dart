@@ -65,7 +65,7 @@ class BluetoothHandling {
   }
 
   void _onScanResult(BleDevice newDevice) {
-    for (var srv in newDevice.services) {
+    for (final srv in newDevice.services) {
       if (srv == btServiceId) {
         if (devices.isEmpty) {
           _devices.add(newDevice);
@@ -132,7 +132,7 @@ class BluetoothHandling {
     if (isConnected) {
       _selectedDeviceId = deviceId;
       _services.addAll(await UniversalBle.discoverServices(deviceId));
-      for (var srv in _services) {
+      for (final srv in _services) {
         if (srv.uuid == btServiceId) {
           await subscribeToAdcFeed(srv);
           break;
@@ -176,7 +176,7 @@ class BluetoothHandling {
     if (_selectedDeviceId.isEmpty) {
       return;
     }
-    for (var characteristic in service.characteristics) {
+    for (final characteristic in service.characteristics) {
       if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
         _notifyCalibrationUpdated(await UniversalBle.readValue(

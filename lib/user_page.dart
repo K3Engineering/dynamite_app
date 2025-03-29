@@ -24,7 +24,7 @@ class UserPage extends StatelessWidget {
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.startTop,
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: <Widget>[
             TextField(
@@ -33,7 +33,7 @@ class UserPage extends StatelessWidget {
                 hintText: 'Enter your name',
               ),
             ),
-            SizedBox(height: 4),
+            const SizedBox(height: 4),
             TextField(
               controller: _ageController,
               decoration: const InputDecoration(
@@ -41,22 +41,20 @@ class UserPage extends StatelessWidget {
               ),
               keyboardType: TextInputType.number,
             ),
-            SizedBox(height: 20),
+            const SizedBox(height: 20),
             FilledButton.tonal(
               onPressed: () {
                 final name = _nameController.text;
                 final age = int.parse(_ageController.text);
                 unawaited(userProvider.storeUserData(name, age));
               },
-              child: Text('Store User Data'),
+              child: const Text('Store User Data'),
             ),
-            SizedBox(height: 60),
+            const SizedBox(height: 60),
             DropdownMenu<String>(
               hintText: 'Select a user',
               initialSelection: userProvider.selectedUserName,
-              onSelected: (newValue) {
-                userProvider.selectUser(newValue);
-              },
+              onSelected: userProvider.selectUser,
               dropdownMenuEntries: userProvider.userList.map((user) {
                 return DropdownMenuEntry<String>(
                   value: user.name,
@@ -64,12 +62,12 @@ class UserPage extends StatelessWidget {
                 );
               }).toList(),
             ),
-            SizedBox(height: 20),
+            const SizedBox(height: 20),
             Text(
-              ((user) {
+              ((DynoUser user) {
                 return 'User: ${user.name}, ${user.age} yo.';
               })(userProvider.getSelectedUser()),
-              style: TextStyle(fontSize: 18),
+              style: const TextStyle(fontSize: 18),
             ),
           ],
         ),

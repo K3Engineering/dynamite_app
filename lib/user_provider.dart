@@ -50,9 +50,7 @@ class UserProvider with ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final storedUserList = prefs.getStringList('userList') ?? [];
 
-    _userList = storedUserList
-        .map((userString) => DynoUser.fromString(userString))
-        .toList();
+    _userList = storedUserList.map(DynoUser.fromString).toList();
     notifyListeners();
   }
 
