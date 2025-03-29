@@ -230,7 +230,7 @@ class _DynoPainter extends CustomPainter {
     const double leftSpace = 8;
     const double rightSpace = 44;
     const double bottomSpace = 24;
-    const double tickLength = 8;
+    const double textOffset = 4;
 
     canvas.translate(leftSpace, 0);
     final Size graphSz =
@@ -250,25 +250,23 @@ class _DynoPainter extends CustomPainter {
           orElse: () => (limit: 0, delta: 1));
     }
 
-    double secondsToPos(double sec) {
+    double secondsToPos(int sec) {
       return sec * _DataHub._samplesPerSec * graphSz.width / dataSz;
     }
 
     final double xSpanSec = dataSz / _DataHub._samplesPerSec;
     final ScaleConfigItem xC =
         findScale(xSpanSec, _GraphPageState._xScaleConfig);
-    int xMarkerCnt = 0;
-    for (double i = xC.delta / 2; i < xSpanSec; i += xC.delta / 2) {
-      final bool drawMarker = xMarkerCnt++ % 2 > 0;
-      final double yMarkPos = secondsToPos(i);
-      grid.moveTo(yMarkPos, 0);
-      grid.lineTo(yMarkPos, graphSz.height + (drawMarker ? tickLength : 0));
-      if (drawMarker) {
-        final ui.Paragraph? par = _GraphPageState._xPreparedLabels[i];
-        if (par != null) {
-          canvas.drawParagraph(
-              par, Offset(yMarkPos + tickLength / 2, graphSz.height));
-        }
+    final double xMinorDelta = secondsToPos(xC.delta) / 2;
+    for (double x = xMinorDelta; x < graphSz.width; x += xMinorDelta) {
+      grid.moveTo(x, 0);
+      grid.lineTo(x, graphSz.height);
+    }
+    for (int i = xC.delta; i < xSpanSec; i += xC.delta) {
+      final double yPos = secondsToPos(i);
+      final ui.Paragraph? par = _GraphPageState._xPreparedLabels[i];
+      if (par != null) {
+        canvas.drawParagraph(par, Offset(yPos - textOffset, graphSz.height));
       }
     }
 
@@ -276,27 +274,24 @@ class _DynoPainter extends CustomPainter {
       return y * _data._deviceCalibration._slope;
     }
 
-    double kiloToY(double kilo) {
-      return graphSz.height -
-          kilo * graphSz.height / dataMax / _data._deviceCalibration._slope;
+    double kiloToY(int kilo) {
+      return kilo * graphSz.height / dataMax / _data._deviceCalibration._slope;
     }
 
     final double ySpanKilo = ySampleToKilo(dataMax);
     final ScaleConfigItem yC =
         findScale(ySpanKilo, _GraphPageState._yScaleConfig);
-    int yMarkerCnt = 0;
-    for (double i = yC.delta / 2; i < ySpanKilo; i += yC.delta / 2) {
-      final bool drawMarker = yMarkerCnt++ % 2 > 0;
-      final double yMarkPos = kiloToY(i);
-      grid.moveTo(0, yMarkPos);
-      grid.lineTo(graphSz.width + (drawMarker ? tickLength : 0), yMarkPos);
-
-      if (drawMarker) {
-        final ui.Paragraph? par = _GraphPageState._yPreparedLabels[i];
-        if (par != null) {
-          canvas.drawParagraph(
-              par, Offset(graphSz.width + tickLength / 2, yMarkPos));
-        }
+    final double yMinorDelta = kiloToY(yC.delta) / 2;
+    for (double y = yMinorDelta; y < graphSz.height; y += yMinorDelta) {
+      grid.moveTo(0, graphSz.height - y);
+      grid.lineTo(graphSz.width, graphSz.height - y);
+    }
+    for (int i = yC.delta; i < ySpanKilo; i += yC.delta) {
+      final double yPos = graphSz.height - kiloToY(i);
+      final ui.Paragraph? par = _GraphPageState._yPreparedLabels[i];
+      if (par != null) {
+        canvas.drawParagraph(
+            par, Offset(graphSz.width + textOffset, yPos - textOffset * 3));
       }
     }
     canvas.drawPath(grid, pen..strokeWidth = 0.2);
