@@ -230,7 +230,6 @@ class _DynoPainter extends CustomPainter {
     const double leftSpace = 8;
     const double rightSpace = 44;
     const double bottomSpace = 24;
-    const double textOffset = 4;
 
     canvas.translate(leftSpace, 0);
     final Size graphSz =
@@ -266,7 +265,8 @@ class _DynoPainter extends CustomPainter {
       final double yPos = secondsToPos(i);
       final ui.Paragraph? par = _GraphPageState._xPreparedLabels[i];
       if (par != null) {
-        canvas.drawParagraph(par, Offset(yPos - textOffset, graphSz.height));
+        canvas.drawParagraph(
+            par, Offset(yPos - par.longestLine / 2, graphSz.height));
       }
     }
 
@@ -291,7 +291,7 @@ class _DynoPainter extends CustomPainter {
       final ui.Paragraph? par = _GraphPageState._yPreparedLabels[i];
       if (par != null) {
         canvas.drawParagraph(
-            par, Offset(graphSz.width + textOffset, yPos - textOffset * 3));
+            par, Offset(graphSz.width + par.height / 4, yPos - par.height / 2));
       }
     }
     canvas.drawPath(grid, pen..strokeWidth = 0.2);
