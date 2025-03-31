@@ -313,11 +313,12 @@ class _DynoPainter extends CustomPainter {
       }
 
       path1.moveTo(0, toY(_data._tare[line]));
-      for (int i = 0, j = 0; i < graphSz.width; ++i) {
+      final int graphSzWidth = graphSz.width.toInt();
+      for (int i = 0, j = 0; i < graphSzWidth; ++i) {
         int mn = 100000000, mx = 0;
         int total = 0;
         final int start = j;
-        for (; (j * graphSz.width < i * dataSz) && (j < dataSz); ++j) {
+        for (; (j * graphSzWidth < i * dataSz) && (j < dataSz); ++j) {
           final int v = _data._rawData[line][j];
           total += v;
           mx = (v > mx) ? v : mx;
