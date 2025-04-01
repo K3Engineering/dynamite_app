@@ -113,7 +113,10 @@ class _GraphPageState extends State<GraphPage> {
 
   void _processReceivedData(String _, String __, Uint8List data) {
     if (_bluetoothHandler.sessionInProgress) {
-      _dataHub._parseDataPacket(data, () {
+      _dataHub._parseDataPacket(data, (bool stop) {
+        if (stop) {
+          _bluetoothHandler.toggleSession();
+        }
         setState(() {});
       });
     }
@@ -214,7 +217,7 @@ class _DynoPainter extends CustomPainter {
 
   double extremum() {
     double dataMax = 10000; // Above noise level
-    for (int line = 0; line < _data._rawData.length; ++line) {
+    for (int line = 0; line < _data._rawMax.length; ++line) {
       final double x = _data._rawMax[line] - _data._tare[line];
       dataMax = (x > dataMax) ? x : dataMax;
     }
@@ -240,9 +243,7 @@ class _DynoPainter extends CustomPainter {
     final double dataMax = extremum();
     final Path grid = Path();
 
-    if (_data._rawData[0].isEmpty) return;
-
-    final int dataSz = _data._rawData[0].length;
+    if (_data._rawSz == 0) return;
 
     ScaleConfigItem findScale(double val, List<ScaleConfigItem> list) {
       return list.firstWhere((e) => val < e.limit,
@@ -250,10 +251,10 @@ class _DynoPainter extends CustomPainter {
     }
 
     double secondsToPos(int sec) {
-      return sec * _DataHub._samplesPerSec * graphSz.width / dataSz;
+      return sec * _DataHub._samplesPerSec * graphSz.width / _data._rawSz;
     }
 
-    final double xSpanSec = dataSz / _DataHub._samplesPerSec;
+    final double xSpanSec = _data._rawSz / _DataHub._samplesPerSec;
     final ScaleConfigItem xC =
         findScale(xSpanSec, _GraphPageState._xScaleConfig);
     final double xMinorDelta = secondsToPos(xC.delta) / 2;
@@ -318,7 +319,9 @@ class _DynoPainter extends CustomPainter {
         int mn = 100000000, mx = 0;
         int total = 0;
         final int start = j;
-        for (; (j * graphSzWidth < i * dataSz) && (j < dataSz); ++j) {
+        for (;
+            (j * graphSzWidth < i * _data._rawSz) && (j < _data._rawSz);
+            ++j) {
           final int v = _data._rawData[line][j];
           total += v;
           mx = (v > mx) ? v : mx;
@@ -345,24 +348,26 @@ class _DynoPainter extends CustomPainter {
 
 class _DataHub {
   static const int numGraphLines = 2;
-  final Float64List _tare = Float64List(numGraphLines);
-  final Float64List _runningTotal = Float64List(numGraphLines);
-  final List<List<int>> _rawData = List.generate(
-    _DataHub.numGraphLines,
-    (_) => <int>[],
-    growable: false,
-  );
-  final Int64List _rawMax = Int64List(numGraphLines);
   static const int _tareWindow = 1024;
   static const double _defaultSlope = 0.0001117587;
   static const int _samplesPerSec = 1000;
+  static const int _maxDataSz = _samplesPerSec * 60 * 10;
+  final Float64List _tare = Float64List(numGraphLines);
+  final Float64List _runningTotal = Float64List(numGraphLines);
+  final Int64List _rawMax = Int64List(numGraphLines);
+  final List<Int32List> _rawData = List.generate(
+    _DataHub.numGraphLines,
+    (_) => Int32List(_maxDataSz),
+    growable: false,
+  );
   int _timeTick = 0;
+  int _rawSz = 0;
   _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
 
   void _clear() {
     _timeTick = 0;
     for (int i = 0; i < numGraphLines; ++i) {
-      _rawData[i].clear();
+      _rawSz = 0;
       _rawMax[i] = 0;
       _tare[i] = 0;
       _runningTotal[i] = 0;
@@ -372,19 +377,19 @@ class _DataHub {
   bool get _taring => (_timeTick > 0) && (_timeTick <= _tareWindow);
 
   bool _addTare(int val, int idx) {
-    if (_timeTick < _tareWindow) {
-      _runningTotal[idx] += val;
-    } else if (_timeTick == _tareWindow) {
-      _tare[idx] = _runningTotal[idx] / (_tareWindow - 1);
-      _runningTotal[idx] = 0;
-    } else {
+    if (_timeTick > _tareWindow) {
       return false;
+    }
+    _runningTotal[idx] += val;
+    if (_timeTick == _tareWindow) {
+      _tare[idx] = _runningTotal[idx] / _tareWindow;
+      _runningTotal[idx] = 0;
     }
     return true;
   }
 
   void _addData(int val, int idx) {
-    _rawData[idx].add(val);
+    _rawData[idx][_rawSz] = val;
     if (val > _rawMax[idx]) {
       _rawMax[idx] = val;
     }
@@ -403,7 +408,7 @@ class _DataHub {
     return -1; // No graph line for this chanel
   }
 
-  void _parseDataPacket(Uint8List data, void Function() eodCb) {
+  void _parseDataPacket(Uint8List data, void Function(bool) eodCb) {
     const int sampleLength = 15;
     if (data.isEmpty || data.length % sampleLength != 0) {
       debugPrint('Incorrect buffer size received');
@@ -431,8 +436,11 @@ class _DataHub {
           }
         }
       }
+      if (_timeTick > _tareWindow) {
+        _rawSz++;
+      }
     }
-    eodCb();
+    eodCb(_rawSz >= _maxDataSz);
   }
 }
 
