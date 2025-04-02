@@ -356,7 +356,7 @@ class _DataHub {
   static const int _maxDataSz = _samplesPerSec * 60 * 10;
   final Float64List _tare = Float64List(numGraphLines);
   final Float64List _runningTotal = Float64List(numGraphLines);
-  final Int64List _rawMax = Int64List(numGraphLines);
+  final Int32List _rawMax = Int32List(numGraphLines);
   final List<Int32List> _rawData = List.generate(
     _DataHub.numGraphLines,
     (_) => Int32List(_maxDataSz),
