@@ -54,15 +54,27 @@ class MockBlePlatform extends UniversalBlePlatform {
 
     final rng = Random(555);
     final List<BleDevice> devices = _generateDevices();
+    List<BleDevice> filtered = [];
+    if (scanFilter == null || scanFilter.withServices.isEmpty) {
+      filtered = devices;
+    } else {
+      for (final dev in devices) {
+        if (dev.services.any((e) {
+          return scanFilter.withServices.contains(e);
+        })) {
+          filtered.add(dev);
+        }
+      }
+    }
     _scanTimer = Timer.periodic(netDelay, (Timer t) {
       if (0 == rng.nextInt(2)) {
-        updateScanResult(devices[rng.nextInt(devices.length)]);
+        updateScanResult(filtered[rng.nextInt(filtered.length)]);
       }
       if (0 == rng.nextInt(3)) {
-        updateScanResult(devices[rng.nextInt(devices.length)]);
+        updateScanResult(filtered[rng.nextInt(filtered.length)]);
       }
       if (0 == rng.nextInt(4)) {
-        updateScanResult(devices[rng.nextInt(devices.length)]);
+        updateScanResult(filtered[rng.nextInt(filtered.length)]);
       }
     });
   }
