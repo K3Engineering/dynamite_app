@@ -192,17 +192,21 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   Widget _buttonBluetoothDevice() {
-    final String currentDeviceId = _bluetoothHandler.devices.isNotEmpty
-        ? _bluetoothHandler.devices[0].deviceId
-        : '';
+    if (_bluetoothHandler.devices.isEmpty) {
+      return const FilledButton.tonal(
+        onPressed: null,
+        child: Text(''),
+      );
+    }
 
     void onConnect() {
-      unawaited(_bluetoothHandler.connectToDevice(currentDeviceId));
+      unawaited(_bluetoothHandler
+          .connectToDevice(_bluetoothHandler.devices[0].deviceId));
     }
 
     return FilledButton.tonal(
-      onPressed: currentDeviceId.isNotEmpty ? onConnect : null,
-      child: Text('Device: $currentDeviceId'),
+      onPressed: onConnect,
+      child: Text('Device: ${_bluetoothHandler.devices[0].name}'),
     );
   }
 }
