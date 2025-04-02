@@ -134,7 +134,9 @@ class _GraphPageState extends State<GraphPage> {
       floatingActionButtonLocation: FloatingActionButtonLocation.startTop,
       body: Column(
         children: [
-          BluetoothIndicator(bluetoothService: _bluetoothHandler),
+          BluetoothIndicator(
+              isScanning: _bluetoothHandler.isScanning,
+              state: _bluetoothHandler.bluetoothState),
           _buttonScan(),
           _buttonBluetoothDevice(),
           _buttonRunStop(),
@@ -451,17 +453,19 @@ class _DeviceCalibration {
 }
 
 class BluetoothIndicator extends StatelessWidget {
-  final BluetoothHandling bluetoothService;
+  final bool isScanning;
+  final AvailabilityState state;
 
-  const BluetoothIndicator({super.key, required this.bluetoothService});
+  const BluetoothIndicator(
+      {super.key, required this.isScanning, required this.state});
 
   @override
   Widget build(BuildContext context) {
     (IconData, Color) indicator() {
-      if (bluetoothService.isScanning) {
+      if (isScanning) {
         return (Icons.bluetooth_searching, Colors.lightBlue);
       }
-      switch (bluetoothService.bluetoothState) {
+      switch (state) {
         case AvailabilityState.poweredOn:
           return (Icons.bluetooth, Colors.blueAccent);
         case AvailabilityState.poweredOff:
@@ -486,7 +490,7 @@ class BluetoothIndicator extends StatelessWidget {
       alignment: AlignmentDirectional.center,
       children: [
         Icon(icon, color: color),
-        if (bluetoothService.isScanning) const CircularProgressIndicator(),
+        if (isScanning) const CircularProgressIndicator(),
         const SizedBox(
           height: 56,
           width: 24,
