@@ -30,7 +30,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  universal_ble: ^0.16.0
+  universal_ble: ^0.17.0
   shared_preferences: ^2.0.6
   provider: ^6.0.4
 
@@ -38,7 +38,7 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   convert: ^3.1.2
-  fl_chart: ^0.70.2
+  cross_file: ^0.3.4+2
 
 dev_dependencies:
   flutter_test:

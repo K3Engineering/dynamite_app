@@ -12,8 +12,6 @@ const btGattId = "a659ee73-460b-45d5-8e63-ab6bf0825942";
 const btServiceId = "e331016b-6618-4f8f-8997-1a2c7c9e5fa3";
 const btChrAdcFeedId = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 const btChrCalibration = "10adce11-68a6-450b-9810-ca11b39fd283";
-const btS2 = "00001800-0000-1000-8000-00805f9b34fb";
-const btS3 = "00001801-0000-1000-8000-00805f9b34fb";
 
 class BluetoothHandling {
   AvailabilityState _bluetoothState = AvailabilityState.unknown;
@@ -65,18 +63,14 @@ class BluetoothHandling {
   }
 
   void _onScanResult(BleDevice newDevice) {
-    for (var srv in newDevice.services) {
-      if (srv == btServiceId) {
-        if (devices.isEmpty) {
-          _devices.add(newDevice);
-        } else if (newDevice.rssi! > _devices[0].rssi!) {
-          _devices[0] = newDevice;
-        } else {
-          continue;
-        }
-        _notifyStateChanged();
+    if (devices.isEmpty) {
+      _devices.add(newDevice);
+    } else if (newDevice.rssi != null) {
+      if ((_devices[0].rssi == null) || (newDevice.rssi! > _devices[0].rssi!)) {
+        _devices[0] = newDevice;
       }
     }
+    _notifyStateChanged();
   }
 
   void _onBluetoothAvailabilityChanged(AvailabilityState state) {
@@ -100,9 +94,13 @@ class BluetoothHandling {
     assert(!_isSubscribed);
     _isScanning = true;
     await UniversalBle.startScan(
+      scanFilter: ScanFilter(
+        withServices: [btServiceId],
+      ),
       platformConfig: PlatformConfig(
         web: WebOptions(
-            optionalServices: [btServiceId, btChrAdcFeedId, btS2, btS3]),
+          optionalServices: [btServiceId],
+        ),
       ),
     );
     _notifyStateChanged();
@@ -132,7 +130,7 @@ class BluetoothHandling {
     if (isConnected) {
       _selectedDeviceId = deviceId;
       _services.addAll(await UniversalBle.discoverServices(deviceId));
-      for (var srv in _services) {
+      for (final srv in _services) {
         if (srv.uuid == btServiceId) {
           await subscribeToAdcFeed(srv);
           break;
@@ -176,7 +174,7 @@ class BluetoothHandling {
     if (_selectedDeviceId.isEmpty) {
       return;
     }
-    for (var characteristic in service.characteristics) {
+    for (final characteristic in service.characteristics) {
       if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
         _notifyCalibrationUpdated(await UniversalBle.readValue(
