@@ -467,38 +467,40 @@ class BluetoothIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     (IconData, Color) indicator() {
       if (isScanning) {
-        return (Icons.bluetooth_searching, Colors.lightBlue);
+        return const (Icons.bluetooth_searching, Colors.lightBlue);
       }
       switch (state) {
         case AvailabilityState.poweredOn:
-          return (Icons.bluetooth, Colors.blueAccent);
+          return const (Icons.bluetooth, Colors.blueAccent);
         case AvailabilityState.poweredOff:
-          return (Icons.bluetooth_disabled, Colors.blueGrey);
+          return const (Icons.bluetooth_disabled, Colors.blueGrey);
         case AvailabilityState.unknown:
-          return (Icons.question_mark, Colors.yellow);
+          return const (Icons.question_mark, Colors.yellow);
         case AvailabilityState.resetting:
-          return (Icons.question_mark, Colors.green);
+          return const (Icons.question_mark, Colors.green);
         case AvailabilityState.unsupported:
-          return (Icons.stop, Colors.red);
+          return const (Icons.stop, Colors.red);
         case AvailabilityState.unauthorized:
-          return (Icons.stop, Colors.orange);
+          return const (Icons.stop, Colors.orange);
         // ignore: unreachable_switch_default
         default:
-          return (Icons.question_mark, Colors.grey);
+          return const (Icons.question_mark, Colors.grey);
       }
     }
 
     final (IconData icon, Color color) = indicator();
+    const double size = 48;
     return Stack(
       clipBehavior: Clip.none,
-      alignment: AlignmentDirectional.center,
+      alignment: Alignment.center,
       children: [
-        Icon(icon, color: color),
-        if (isScanning) const CircularProgressIndicator(),
-        const SizedBox(
-          height: 56,
-          width: 24,
-        ),
+        Icon(icon, size: size, color: color),
+        if (isScanning)
+          const SizedBox(
+            height: size,
+            width: size,
+            child: CircularProgressIndicator(),
+          ),
       ],
     );
   }
