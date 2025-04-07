@@ -305,7 +305,7 @@ class _DynoPainter extends CustomPainter {
 
     for (int line = 0; line < _DataHub.numGraphLines; ++line) {
       final path1 = Path();
-      final path2 = Path();
+      //final path2 = Path();
 
       double toY(double val) {
         final double y = graphSz.height -
@@ -322,7 +322,7 @@ class _DynoPainter extends CustomPainter {
       path1.moveTo(0, toY(_data._tare[line]));
       final int graphSzWidth = graphSz.width.toInt();
       for (int i = 0, j = 0; i < graphSzWidth; ++i) {
-        int mn = 100000000, mx = 0;
+        //int mn = 100000000, mx = 0;
         int total = 0;
         final int start = j;
         for (;
@@ -330,21 +330,21 @@ class _DynoPainter extends CustomPainter {
             ++j) {
           final int v = _data._rawData[line][j];
           total += v;
-          mx = (v > mx) ? v : mx;
-          mn = (v < mn) ? v : mn;
+          //mx = (v > mx) ? v : mx;
+          //mn = (v < mn) ? v : mn;
         }
 
         if (start < j) {
           final double avg = total / (j - start);
           path1.lineTo(i.toDouble(), toY(avg));
-          path2.moveTo(i.toDouble(), toY(mn.toDouble()));
-          path2.lineTo(i.toDouble(), toY(mx.toDouble()));
+          //path2.moveTo(i.toDouble(), toY(mn.toDouble()));
+          //path2.lineTo(i.toDouble(), toY(mx.toDouble()));
         }
       }
 
       pen.color = _lineColor(line);
       canvas.drawPath(path1, pen..strokeWidth = 2);
-      canvas.drawPath(path2, pen..strokeWidth = 0);
+      //canvas.drawPath(path2, pen..strokeWidth = 0);
     }
   }
 
@@ -430,9 +430,9 @@ class _DataHub {
       const int numAdcChan = 4;
       for (int i = 0; i < numAdcChan; ++i) {
         final int baseIndex = packetStart + 2 + i * 3;
-        final int res = ((data[baseIndex + 2] << 16) |
+        final int res = ((data[baseIndex] << 16) |
                 (data[baseIndex + 1] << 8) |
-                data[baseIndex])
+                data[baseIndex + 2])
             .toSigned(24);
 
         final int idx = _chanToLine(i);

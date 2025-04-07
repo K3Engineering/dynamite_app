@@ -208,10 +208,10 @@ class MockBlePlatform extends UniversalBlePlatform {
         final adcSamples = List<int>.from(parsedLine['channels']);
         assert(adcSamples.length == 4);
         final networkFormatData = Uint8List(_mockDataSampleLength);
-        for (int i = 0; i < adcSamples.length; ++i) {
+        for (int i = adcSamples.length - 1; i >= 0; --i) {
           networkFormatData.buffer
               .asByteData()
-              .setInt32(2 + i * 3, adcSamples[i], Endian.little);
+              .setInt32(1 + i * 3, adcSamples[i], Endian.big);
         }
         _mockData.add(networkFormatData);
       }
