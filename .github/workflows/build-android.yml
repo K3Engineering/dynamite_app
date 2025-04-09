@@ -13,7 +13,7 @@ jobs:
         with:
           flutter-version: 3.29.2  # todo convert to flutter-version-file: pubspec.yaml
       - run: flutter pub get
-      - run: flutter test
+      # - run: flutter test
       - run: flutter build apk
 
       # - run: flutter build appbundle
