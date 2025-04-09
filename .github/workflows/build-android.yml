@@ -11,7 +11,7 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.24.0  # todo convert to flutter-version-file: pubspec.yaml
+          flutter-version: 3.29.2  # todo convert to flutter-version-file: pubspec.yaml
       - run: flutter pub get
       - run: flutter test
       - run: flutter build apk
