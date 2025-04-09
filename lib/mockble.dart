@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
 import 'dart:convert';
-import 'dart:io';
 
+import 'package:cross_file/cross_file.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 class MockBlePlatform extends UniversalBlePlatform {
@@ -15,30 +15,6 @@ class MockBlePlatform extends UniversalBlePlatform {
   MockBlePlatform._() {
     _setupListeners();
     _mockData.clear();
-
-    const String fileName = 'MockData.txt';
-    if (File(fileName).existsSync()) {
-      final List<String> textData =
-          File(fileName).readAsLinesSync(encoding: ascii);
-      for (String s in textData) {
-        final Map<String, dynamic> parsedLine =
-            json.decode(s.replaceAll("'", '"'));
-        List<int> adcSamples = List<int>.from(parsedLine['channels']);
-        assert(adcSamples.length == 4);
-        final Uint8List networkFormatData = Uint8List(_mockDataSampleLength);
-        for (int i = 0; i < adcSamples.length; ++i) {
-          networkFormatData.buffer
-              .asByteData()
-              .setInt32(2 + i * 3, adcSamples[i], Endian.little);
-        }
-        _mockData.add(networkFormatData);
-      }
-    }
-
-    if (_mockData.isEmpty) {
-      _mockData.add(
-          Uint8List.fromList([0, 0, 5, 4, 3, 6, 5, 4, 7, 6, 5, 8, 7, 6, 0]));
-    }
   }
 
   Timer? _scanTimer;
@@ -52,53 +28,23 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<AvailabilityState> getBluetoothAvailabilityState() async {
-    await Future.delayed(hwDelay);
+    await Future<void>.delayed(hwDelay);
     return AvailabilityState.poweredOn;
   }
 
   @override
   Future<bool> enableBluetooth() async {
-    await Future.delayed(hwDelay);
+    await Future<void>.delayed(hwDelay);
     return true;
   }
 
   @override
   Future<bool> disableBluetooth() async {
-    await Future.delayed(hwDelay);
+    await Future<void>.delayed(hwDelay);
     if (_connectionState != BleConnectionState.disconnected) {
       await disconnect(_connectedDeviceId!);
     }
     return true;
-  }
-
-  static List<BleDevice> _generateDevices() {
-    return [
-      BleDevice(
-        deviceId: '1',
-        name: '1_device',
-        services: ['1_ser'],
-        manufacturerDataList: [
-          ManufacturerData(0x01, Uint8List.fromList([1, 2, 3])),
-        ],
-      ),
-      BleDevice(
-        deviceId: '2',
-        name: '2_device',
-        rssi: -50,
-        services: ['e331016b-6618-4f8f-8997-1a2c7c9e5fa3'],
-        manufacturerDataList: [
-          ManufacturerData(0x02, Uint8List.fromList([2, 3, 4]))
-        ],
-      ),
-      BleDevice(
-        deviceId: '3',
-        name: '3_device',
-        services: ['3_ser'],
-        manufacturerDataList: [
-          ManufacturerData(0x03, Uint8List.fromList([3, 4, 5]))
-        ],
-      )
-    ];
   }
 
   @override
@@ -108,15 +54,27 @@ class MockBlePlatform extends UniversalBlePlatform {
 
     final rng = Random(555);
     final List<BleDevice> devices = _generateDevices();
+    List<BleDevice> filtered = [];
+    if (scanFilter == null || scanFilter.withServices.isEmpty) {
+      filtered = devices;
+    } else {
+      for (final dev in devices) {
+        if (dev.services.any((e) {
+          return scanFilter.withServices.contains(e);
+        })) {
+          filtered.add(dev);
+        }
+      }
+    }
     _scanTimer = Timer.periodic(netDelay, (Timer t) {
       if (0 == rng.nextInt(2)) {
-        updateScanResult(devices[rng.nextInt(devices.length)]);
+        updateScanResult(filtered[rng.nextInt(filtered.length)]);
       }
       if (0 == rng.nextInt(3)) {
-        updateScanResult(devices[rng.nextInt(devices.length)]);
+        updateScanResult(filtered[rng.nextInt(filtered.length)]);
       }
       if (0 == rng.nextInt(4)) {
-        updateScanResult(devices[rng.nextInt(devices.length)]);
+        updateScanResult(filtered[rng.nextInt(filtered.length)]);
       }
     });
   }
@@ -136,11 +94,14 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<void> connect(String deviceId, {Duration? connectionTimeout}) async {
+    if (_mockData.isEmpty) {
+      await _setupMockData();
+    }
     if (_connectedDeviceId != null) return;
 
     _connectedDeviceId = deviceId;
     _connectionState = BleConnectionState.connecting;
-    await Future.delayed(netDelay);
+    await Future<void>.delayed(netDelay);
     _connectionState = BleConnectionState.connected;
     updateConnection(deviceId, true);
   }
@@ -153,38 +114,9 @@ class MockBlePlatform extends UniversalBlePlatform {
     updateConnection(deviceId, false);
   }
 
-  static List<BleCharacteristic> _generateCharacteristics(String deviceId) {
-    if (deviceId == '2') {
-      return ([
-        BleCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8',
-            [CharacteristicProperty.notify]),
-        BleCharacteristic('c1234567', [CharacteristicProperty.notify]),
-        BleCharacteristic('a7654321', [CharacteristicProperty.read])
-      ]);
-    }
-    return ([
-      BleCharacteristic('c1234567', [CharacteristicProperty.notify]),
-      BleCharacteristic('a7654321', [CharacteristicProperty.read])
-    ]);
-  }
-
-  static List<BleService> _generateServices(String deviceId) {
-    if (deviceId == '2') {
-      return ([
-        BleService('e1234567', _generateCharacteristics(deviceId)),
-        BleService('e331016b-6618-4f8f-8997-1a2c7c9e5fa3',
-            _generateCharacteristics(deviceId))
-      ]);
-    }
-    return ([
-      BleService('e1234567', _generateCharacteristics(deviceId)),
-      BleService('e7654321', _generateCharacteristics(deviceId))
-    ]);
-  }
-
   @override
   Future<List<BleService>> discoverServices(String deviceId) async {
-    await Future.delayed(netDelay);
+    await Future<void>.delayed(netDelay);
     return _generateServices(deviceId);
   }
 
@@ -197,7 +129,7 @@ class MockBlePlatform extends UniversalBlePlatform {
       const int samplesPerPack = 16;
       const dataInterval = Duration(milliseconds: 1 * samplesPerPack);
       _notificationTimer = Timer.periodic(dataInterval, (_) {
-        final Uint8List ev = Uint8List(_mockDataSampleLength * samplesPerPack);
+        final ev = Uint8List(_mockDataSampleLength * samplesPerPack);
         for (int i = 0; i < samplesPerPack; ++i) {
           for (int j = 0; j < _mockDataSampleLength; ++j) {
             ev[i * _mockDataSampleLength + j] = _mockData[_mockDataCount][j];
@@ -219,7 +151,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic, {
     final Duration? timeout,
   }) async {
-    await Future.delayed(netDelay);
+    await Future<void>.delayed(netDelay);
     return Uint8List(255);
   }
 
@@ -261,5 +193,94 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   void _setupListeners() {
     //onValueChange = (String deviceId, String characteristicId, Uint8List value) {};
+  }
+
+  Future<void> _setupMockData() async {
+    try {
+      final String mem =
+          await XFile('MockData.txt').readAsString(encoding: ascii);
+      final List<String> textData = mem.split('\n');
+      for (final String s in textData) {
+        if (s.isEmpty) continue;
+
+        final Map<String, dynamic> parsedLine =
+            json.decode(s.replaceAll("'", '"'));
+        final adcSamples = List<int>.from(parsedLine['channels']);
+        assert(adcSamples.length == 4);
+        final networkFormatData = Uint8List(_mockDataSampleLength);
+        for (int i = adcSamples.length - 1; i >= 0; --i) {
+          networkFormatData.buffer
+              .asByteData()
+              .setInt32(1 + i * 3, adcSamples[i], Endian.big);
+        }
+        _mockData.add(networkFormatData);
+      }
+    } catch (err) {
+      // Could not read the file
+    }
+
+    if (_mockData.isEmpty) {
+      _mockData.add(
+          Uint8List.fromList([0, 0, 5, 4, 3, 6, 5, 4, 7, 6, 5, 8, 7, 6, 0]));
+    }
+  }
+
+  static List<BleDevice> _generateDevices() {
+    return [
+      BleDevice(
+        deviceId: '1',
+        name: '1_device',
+        services: ['1_ser'],
+        manufacturerDataList: [
+          ManufacturerData(0x01, Uint8List.fromList([1, 2, 3])),
+        ],
+      ),
+      BleDevice(
+        deviceId: '2',
+        name: '2_device',
+        rssi: -50,
+        services: ['e331016b-6618-4f8f-8997-1a2c7c9e5fa3'],
+        manufacturerDataList: [
+          ManufacturerData(0x02, Uint8List.fromList([2, 3, 4]))
+        ],
+      ),
+      BleDevice(
+        deviceId: '3',
+        name: '3_device',
+        services: ['3_ser'],
+        manufacturerDataList: [
+          ManufacturerData(0x03, Uint8List.fromList([3, 4, 5]))
+        ],
+      )
+    ];
+  }
+
+  static List<BleCharacteristic> _generateCharacteristics(String deviceId) {
+    if (deviceId == '2') {
+      return ([
+        BleCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8',
+            [CharacteristicProperty.notify]),
+        BleCharacteristic('c1234567', [CharacteristicProperty.notify]),
+        BleCharacteristic('a7654321', [CharacteristicProperty.read])
+      ]);
+    }
+    return ([
+      BleCharacteristic('c1234567', [CharacteristicProperty.notify]),
+      BleCharacteristic('a7654321', [CharacteristicProperty.read])
+    ]);
+  }
+
+  static List<BleService> _generateServices(String deviceId) {
+    if (deviceId == '2') {
+      return ([
+        BleService('e1234567', _generateCharacteristics(deviceId)),
+        BleService('e331016b-6618-4f8f-8997-1a2c7c9e5fa3',
+            _generateCharacteristics(deviceId))
+      ]);
+    }
+    return ([
+      BleService('e1234567', _generateCharacteristics(deviceId)),
+      BleService('e7654321', _generateCharacteristics(deviceId))
+    ]);
   }
 }

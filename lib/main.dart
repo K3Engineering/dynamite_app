@@ -8,7 +8,7 @@ void main() {
   runApp(
     ChangeNotifierProvider(
       create: (_) => UserProvider(),
-      child: DynoApp(),
+      child: const DynoApp(),
     ),
   );
 }
@@ -29,15 +29,15 @@ class DynoApp extends StatelessWidget {
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             side: BorderSide(
-              width: 2.0,
+              width: 2,
               color: Theme.of(context).colorScheme.outline,
             ),
           ),
         ),
-        inputDecorationTheme: InputDecorationTheme(
+        inputDecorationTheme: const InputDecorationTheme(
           border: OutlineInputBorder(
-            borderRadius: const BorderRadius.all(
-              Radius.circular(30.0),
+            borderRadius: BorderRadius.all(
+              Radius.circular(30),
             ),
           ),
         ),
