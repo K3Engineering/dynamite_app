@@ -5,7 +5,9 @@ import 'package:provider/provider.dart' show Provider;
 
 import 'about_page.dart' show AboutPage;
 import 'user_page.dart' show UserPage;
+import 'connect_page.dart' show ConnectPage;
 import 'graph_page.dart' show GraphPage;
+import 'history_page.dart' show HistoryPage;
 import 'user_provider.dart' show UserProvider;
 
 class MenuPage extends StatelessWidget {
@@ -22,11 +24,9 @@ class MenuPage extends StatelessWidget {
           children: [
             Text('User: ${userProvider.selectedUserName ?? 'None'}'),
             _buildMenuButton(context, 'User', UserPage()),
-            // TODO: implement 'Connect' page
-            _buildMenuButton(context, 'Connect', const AboutPage()),
+            _buildMenuButton(context, 'Connect', const ConnectPage()),
             _buildMenuButton(context, 'Session', const GraphPage()),
-            // TODO: implement 'History' page
-            _buildMenuButton(context, 'History', const AboutPage()),
+            _buildMenuButton(context, 'History', const HistoryPage()),
             _buildMenuButton(context, 'About', const AboutPage()),
           ],
         ),
