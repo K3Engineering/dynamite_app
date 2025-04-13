@@ -22,7 +22,7 @@ class MenuPage extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            Text('User: ${userProvider.selectedUserName ?? 'None'}'),
+            Text('User: ${userProvider.getSelectedUser().name}'),
             _buildMenuButton(context, 'User', UserPage()),
             _buildMenuButton(context, 'Connect', const ConnectPage()),
             _buildMenuButton(context, 'Session', const GraphPage()),

@@ -6,6 +6,7 @@ import 'dart:collection';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
 import 'bt_handling.dart' show BluetoothHandling;
@@ -20,8 +21,6 @@ class GraphPage extends StatefulWidget {
 typedef ScaleConfigItem = ({int limit, int delta});
 
 class _GraphPageState extends State<GraphPage> {
-  final BluetoothHandling _bluetoothHandler = BluetoothHandling();
-
   final _DataHub _dataHub = _DataHub();
 
   // Seconds
@@ -49,19 +48,16 @@ class _GraphPageState extends State<GraphPage> {
   ];
   static final Map<int, ui.Paragraph> _yPreparedLabels = HashMap();
 
+  late BluetoothHandling _bluetoothHandler;
+
   @override
   void initState() {
     super.initState();
     _initGraphics();
-    _bluetoothHandler.initializeBluetooth(
-        _processReceivedData, _dataHub._onUpdateCalibration, () {
-      setState(() {});
-    });
   }
 
   @override
   void dispose() {
-    _disposeGraphics();
     _bluetoothHandler.dispose();
     super.dispose();
   }
@@ -82,8 +78,6 @@ class _GraphPageState extends State<GraphPage> {
       }
     }
   }
-
-  static void _disposeGraphics() {}
 
   static ui.Paragraph _prepareAxisLabel(String text) {
     final textStyle = ui.TextStyle(
@@ -112,18 +106,24 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   void _processReceivedData(String _, String __, Uint8List data) {
-    if (_bluetoothHandler.sessionInProgress) {
-      _dataHub._parseDataPacket(data, (bool stop) {
-        if (stop) {
-          _bluetoothHandler.toggleSession();
-        }
-        setState(() {});
-      });
-    }
+    if (!_bluetoothHandler.sessionInProgress) return;
+
+    _dataHub._parseDataPacket(data, (bool stopSession) {
+      if (stopSession) {
+        _bluetoothHandler.toggleSession();
+      }
+      setState(() {});
+    });
   }
 
   @override
   Widget build(BuildContext context) {
+    _bluetoothHandler = Provider.of<BluetoothHandling>(context);
+    _bluetoothHandler.initializeBluetooth(
+        _processReceivedData, _dataHub._onUpdateCalibration, () {
+      setState(() {});
+    });
+
     return Scaffold(
       floatingActionButton: IconButton(
         onPressed: () {

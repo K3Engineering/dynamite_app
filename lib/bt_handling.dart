@@ -35,8 +35,18 @@ class BluetoothHandling {
   bool _sessionInProgress = false;
   bool get sessionInProgress => _sessionInProgress;
 
-  late final void Function(Uint8List) _notifyCalibrationUpdated;
-  late final void Function() _notifyStateChanged;
+  void Function(Uint8List) _notifyCalibrationUpdated = (_) {};
+  void Function() _notifyStateChanged = () {};
+
+  BluetoothHandling() {
+    UniversalBle.setInstance(MockBlePlatform.instance);
+    UniversalBle.onScanResult = _onScanResult;
+    UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
+    UniversalBle.onConnectionChange = _onConnectionChange;
+    UniversalBle.onPairingStateChange = _onPairingStateChange;
+
+    unawaited(_updateBluetoothState());
+  }
 
   void initializeBluetooth(
       OnValueChange onValueChangeCb,
@@ -45,14 +55,14 @@ class BluetoothHandling {
     _notifyCalibrationUpdated = onUpdateCalibration;
     _notifyStateChanged = onStateChange;
 
-    UniversalBle.setInstance(MockBlePlatform.instance);
-    UniversalBle.onScanResult = _onScanResult;
-    UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
-    UniversalBle.onConnectionChange = _onConnectionChange;
-    UniversalBle.onPairingStateChange = _onPairingStateChange;
     UniversalBle.onValueChange = onValueChangeCb;
+  }
 
-    unawaited(_updateBluetoothState());
+  void dispose() {
+    UniversalBle.onValueChange = null;
+
+    _notifyCalibrationUpdated = (_) {};
+    _notifyStateChanged = () {};
   }
 
   Future<void> _updateBluetoothState() async {
@@ -60,6 +70,7 @@ class BluetoothHandling {
       await UniversalBle.enableBluetooth(); // this isn't implemented on web
     }
     _bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
+    _notifyStateChanged();
   }
 
   void _onScanResult(BleDevice newDevice) {
@@ -163,11 +174,6 @@ class BluetoothHandling {
     }
     await UniversalBle.disconnect(_selectedDeviceId);
     await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
-  }
-
-  void dispose() {
-    UniversalBle.onScanResult = null;
-    UniversalBle.onAvailabilityChange = null;
   }
 
   Future<void> subscribeToAdcFeed(BleService service) async {

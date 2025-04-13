@@ -3,11 +3,19 @@ import 'package:provider/provider.dart';
 
 import 'menu_page.dart' show MenuPage;
 import 'user_provider.dart' show UserProvider;
+import 'bt_handling.dart' show BluetoothHandling;
 
 void main() {
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => UserProvider(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(
+          create: (_) => UserProvider(),
+        ),
+        Provider<BluetoothHandling>(
+          create: (_) => BluetoothHandling(),
+        ),
+      ],
       child: const DynoApp(),
     ),
   );

@@ -53,7 +53,7 @@ class UserPage extends StatelessWidget {
             const SizedBox(height: 60),
             DropdownMenu<String>(
               hintText: 'Select a user',
-              initialSelection: userProvider.selectedUserName,
+              initialSelection: userProvider.getSelectedUser().name,
               onSelected: userProvider.selectUser,
               dropdownMenuEntries: userProvider.userList.map((user) {
                 return DropdownMenuEntry<String>(
