@@ -131,6 +131,10 @@ class BluetoothHandling {
     _notifyStateChanged();
   }
 
+  void stopSession() {
+    _sessionInProgress = false;
+  }
+
   void _onPairingStateChange(String deviceId, bool isPaired) {
     debugPrint('isPaired $deviceId, $isPaired');
   }

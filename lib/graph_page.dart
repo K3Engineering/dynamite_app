@@ -57,7 +57,18 @@ class _GraphPageState extends State<GraphPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _bluetoothHandler = Provider.of<BluetoothHandling>(context);
+    _bluetoothHandler.initializeBluetooth(
+        _processReceivedData, _dataHub._onUpdateCalibration, () {
+      setState(() {});
+    });
+  }
+
+  @override
   void dispose() {
+    _bluetoothHandler.stopSession();
     _bluetoothHandler.dispose();
     super.dispose();
   }
@@ -108,9 +119,9 @@ class _GraphPageState extends State<GraphPage> {
   void _processReceivedData(String _, String __, Uint8List data) {
     if (!_bluetoothHandler.sessionInProgress) return;
 
-    _dataHub._parseDataPacket(data, (bool stopSession) {
-      if (stopSession) {
-        _bluetoothHandler.toggleSession();
+    _dataHub._parseDataPacket(data, (bool needStop) {
+      if (needStop) {
+        _bluetoothHandler.stopSession();
       }
       setState(() {});
     });
@@ -118,12 +129,6 @@ class _GraphPageState extends State<GraphPage> {
 
   @override
   Widget build(BuildContext context) {
-    _bluetoothHandler = Provider.of<BluetoothHandling>(context);
-    _bluetoothHandler.initializeBluetooth(
-        _processReceivedData, _dataHub._onUpdateCalibration, () {
-      setState(() {});
-    });
-
     return Scaffold(
       floatingActionButton: IconButton(
         onPressed: () {
