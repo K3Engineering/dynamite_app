@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show Uint8List, kIsWeb;
 import 'package:flutter/material.dart';
@@ -38,6 +39,8 @@ class BluetoothHandling {
   void Function(Uint8List) _notifyCalibrationUpdated = (_) {};
   void Function() _notifyStateChanged = () {};
 
+  final DataHub dataHub = DataHub();
+
   BluetoothHandling() {
     UniversalBle.setInstance(MockBlePlatform.instance);
     UniversalBle.onScanResult = _onScanResult;
@@ -48,14 +51,11 @@ class BluetoothHandling {
     unawaited(_updateBluetoothState());
   }
 
-  void initializeBluetooth(
-      OnValueChange onValueChangeCb,
-      void Function(Uint8List data) onUpdateCalibration,
-      void Function() onStateChange) {
-    _notifyCalibrationUpdated = onUpdateCalibration;
+  void initializeBluetooth(void Function() onStateChange) {
+    _notifyCalibrationUpdated = dataHub._onUpdateCalibration;
     _notifyStateChanged = onStateChange;
 
-    UniversalBle.onValueChange = onValueChangeCb;
+    UniversalBle.onValueChange = _processReceivedData;
   }
 
   void dispose() {
@@ -197,4 +197,118 @@ class BluetoothHandling {
       }
     }
   }
+
+  void _processReceivedData(String _, String __, Uint8List data) {
+    if (!sessionInProgress) return;
+
+    final canContinue = dataHub._parseDataPacket(data);
+    if (!canContinue) {
+      stopSession();
+    }
+    _notifyStateChanged();
+  }
+}
+
+class DataHub {
+  static const int numGraphLines = 2;
+  static const int _tareWindow = 1024;
+  static const double _defaultSlope = 0.0001117587;
+  static const int samplesPerSec = 1000;
+  static const int _maxDataSz = samplesPerSec * 60 * 10;
+  final Float64List tare = Float64List(numGraphLines);
+  final Float64List _runningTotal = Float64List(numGraphLines);
+  final Int32List rawMax = Int32List(numGraphLines);
+  final List<Int32List> rawData = List.generate(
+    DataHub.numGraphLines,
+    (_) => Int32List(_maxDataSz),
+    growable: false,
+  );
+  int _timeTick = 0;
+  int rawSz = 0;
+  DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
+
+  void clear() {
+    _timeTick = 0;
+    for (int i = 0; i < numGraphLines; ++i) {
+      rawSz = 0;
+      rawMax[i] = 0;
+      tare[i] = 0;
+      _runningTotal[i] = 0;
+    }
+  }
+
+  bool get taring => (_timeTick > 0) && (_timeTick <= _tareWindow);
+
+  bool _addTare(int val, int idx) {
+    if (_timeTick > _tareWindow) {
+      return false;
+    }
+    _runningTotal[idx] += val;
+    if (_timeTick == _tareWindow) {
+      tare[idx] = _runningTotal[idx] / _tareWindow;
+      _runningTotal[idx] = 0;
+    }
+    return true;
+  }
+
+  void _addData(int val, int idx) {
+    rawData[idx][rawSz] = val;
+    if (val > rawMax[idx]) {
+      rawMax[idx] = val;
+    }
+  }
+
+  void _onUpdateCalibration(Uint8List data) {
+    // TODO: implement calibration parsing
+    deviceCalibration = DeviceCalibration(0, _defaultSlope);
+    debugPrint(
+        'Calibration ${deviceCalibration.slope}, offset${deviceCalibration.offset}');
+  }
+
+  static int _chanToLine(int chan) {
+    if (chan == 1) return 0;
+    if (chan == 2) return 1;
+    return -1; // No graph line for this chanel
+  }
+
+  bool _parseDataPacket(Uint8List data) {
+    const int sampleLength = 15;
+    if (data.isEmpty || data.length % sampleLength != 0) {
+      debugPrint('Incorrect buffer size received');
+    }
+
+    for (int packetStart = 0;
+        packetStart < data.length;
+        packetStart += sampleLength) {
+      assert(packetStart + sampleLength <= data.length);
+      // final status = (data[packetStart + 1] << 8) | data[packetStart];
+      // final crc = data[packetStart + 14];
+      _timeTick++;
+      const int numAdcChan = 4;
+      for (int i = 0; i < numAdcChan; ++i) {
+        final int baseIndex = packetStart + 2 + i * 3;
+        final int res = ((data[baseIndex] << 16) |
+                (data[baseIndex + 1] << 8) |
+                data[baseIndex + 2])
+            .toSigned(24);
+
+        final int idx = _chanToLine(i);
+        if (idx >= 0) {
+          if (!_addTare(res, idx)) {
+            _addData(res, idx);
+          }
+        }
+      }
+      if (_timeTick > _tareWindow) {
+        rawSz++;
+      }
+    }
+    return rawSz < _maxDataSz;
+  }
+}
+
+class DeviceCalibration {
+  DeviceCalibration(this.offset, this.slope);
+  final int offset;
+  final double slope;
 }
