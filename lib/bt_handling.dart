@@ -269,15 +269,14 @@ class DataHub {
   }
 
   bool _parseDataPacket(Uint8List data) {
-    const int sampleLength = 15;
-    if (data.isEmpty || data.length % sampleLength != 0) {
+    if (data.isEmpty || data.length % adcSampleLength != 0) {
       debugPrint('Incorrect buffer size received');
     }
 
     for (int packetStart = 0;
         packetStart < data.length;
-        packetStart += sampleLength) {
-      assert(packetStart + sampleLength <= data.length);
+        packetStart += adcSampleLength) {
+      assert(packetStart + adcSampleLength <= data.length);
       // final status = (data[packetStart + 1] << 8) | data[packetStart];
       // final crc = data[packetStart + 14];
       _timeTick++;
