@@ -22,7 +22,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   String? _connectedDeviceId;
   BleConnectionState _connectionState = BleConnectionState.disconnected;
 
-  late final List<Uint8List> _mockData = [];
+  final List<Uint8List> _mockData = [];
   int _mockDataCount = 0;
   static const int _mockDataSampleLength = 15;
 
