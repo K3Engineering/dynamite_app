@@ -1,14 +1,14 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:collection';
 //import 'dart:io';
 //import 'package:cross_file/cross_file.dart';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
-import 'bt_handling.dart' show BluetoothHandling;
+import 'bt_handling.dart' show BluetoothHandling, DataHub;
 
 class GraphPage extends StatefulWidget {
   const GraphPage({super.key});
@@ -20,10 +20,6 @@ class GraphPage extends StatefulWidget {
 typedef ScaleConfigItem = ({int limit, int delta});
 
 class _GraphPageState extends State<GraphPage> {
-  final BluetoothHandling _bluetoothHandler = BluetoothHandling();
-
-  final _DataHub _dataHub = _DataHub();
-
   // Seconds
   static const List<ScaleConfigItem> _xScaleConfig = [
     (limit: 5, delta: 1),
@@ -49,19 +45,26 @@ class _GraphPageState extends State<GraphPage> {
   ];
   static final Map<int, ui.Paragraph> _yPreparedLabels = HashMap();
 
+  late BluetoothHandling _bluetoothHandler;
+
   @override
   void initState() {
     super.initState();
     _initGraphics();
-    _bluetoothHandler.initializeBluetooth(
-        _processReceivedData, _dataHub._onUpdateCalibration, () {
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _bluetoothHandler = Provider.of<BluetoothHandling>(context);
+    _bluetoothHandler.initializeBluetooth(() {
       setState(() {});
     });
   }
 
   @override
   void dispose() {
-    _disposeGraphics();
+    _bluetoothHandler.stopSession();
     _bluetoothHandler.dispose();
     super.dispose();
   }
@@ -82,8 +85,6 @@ class _GraphPageState extends State<GraphPage> {
       }
     }
   }
-
-  static void _disposeGraphics() {}
 
   static ui.Paragraph _prepareAxisLabel(String text) {
     final textStyle = ui.TextStyle(
@@ -111,17 +112,6 @@ class _GraphPageState extends State<GraphPage> {
     return nKg.toString();
   }
 
-  void _processReceivedData(String _, String __, Uint8List data) {
-    if (_bluetoothHandler.sessionInProgress) {
-      _dataHub._parseDataPacket(data, (bool stop) {
-        if (stop) {
-          _bluetoothHandler.toggleSession();
-        }
-        setState(() {});
-      });
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -140,10 +130,10 @@ class _GraphPageState extends State<GraphPage> {
           _buttonScan(),
           _buttonBluetoothDevice(),
           _buttonRunStop(),
-          Text(_dataHub._taring ? 'Tare' : ''),
+          Text(_bluetoothHandler.dataHub.taring ? 'Tare' : ''),
           Expanded(
             child: CustomPaint(
-              foregroundPainter: _DynoPainter(_dataHub),
+              foregroundPainter: _DynoPainter(_bluetoothHandler.dataHub),
               size: MediaQuery.of(context).size,
               // child: Container(),
             ),
@@ -173,7 +163,7 @@ class _GraphPageState extends State<GraphPage> {
         //XFile.fromData(Uint8List.fromList(_dataTransformer._rawData[0]));
         //unawaited(xf.saveTo('DynoData.txt'));
       } else {
-        _dataHub._clear();
+        _bluetoothHandler.dataHub.clear();
       }
       _bluetoothHandler.toggleSession();
     }
@@ -212,7 +202,7 @@ class _GraphPageState extends State<GraphPage> {
 }
 
 class _DynoPainter extends CustomPainter {
-  final _DataHub _data;
+  final DataHub _data;
 
   _DynoPainter(this._data);
 
@@ -223,8 +213,8 @@ class _DynoPainter extends CustomPainter {
 
   double extremum() {
     double dataMax = 10000; // Above noise level
-    for (int line = 0; line < _data._rawMax.length; ++line) {
-      final double x = _data._rawMax[line] - _data._tare[line];
+    for (int line = 0; line < _data.rawMax.length; ++line) {
+      final double x = _data.rawMax[line] - _data.tare[line];
       dataMax = (x > dataMax) ? x : dataMax;
     }
     return dataMax;
@@ -249,7 +239,7 @@ class _DynoPainter extends CustomPainter {
     final double dataMax = extremum();
     final Path grid = Path();
 
-    if (_data._rawSz == 0) return;
+    if (_data.rawSz == 0) return;
 
     ScaleConfigItem findScale(double val, List<ScaleConfigItem> list) {
       return list.firstWhere((e) => val < e.limit,
@@ -257,10 +247,10 @@ class _DynoPainter extends CustomPainter {
     }
 
     double secondsToPos(int sec) {
-      return sec * _DataHub._samplesPerSec * graphSz.width / _data._rawSz;
+      return sec * DataHub.samplesPerSec * graphSz.width / _data.rawSz;
     }
 
-    final double xSpanSec = _data._rawSz / _DataHub._samplesPerSec;
+    final double xSpanSec = _data.rawSz / DataHub.samplesPerSec;
     final ScaleConfigItem xC =
         findScale(xSpanSec, _GraphPageState._xScaleConfig);
     final double xMinorDelta = secondsToPos(xC.delta) / 2;
@@ -278,11 +268,11 @@ class _DynoPainter extends CustomPainter {
     }
 
     double ySampleToKilo(double y) {
-      return y * _data._deviceCalibration._slope;
+      return y * _data.deviceCalibration.slope;
     }
 
     double kiloToY(int kilo) {
-      return kilo * graphSz.height / dataMax / _data._deviceCalibration._slope;
+      return kilo * graphSz.height / dataMax / _data.deviceCalibration.slope;
     }
 
     final double ySpanKilo = ySampleToKilo(dataMax);
@@ -303,13 +293,13 @@ class _DynoPainter extends CustomPainter {
     }
     canvas.drawPath(grid, pen..strokeWidth = 0.2);
 
-    for (int line = 0; line < _DataHub.numGraphLines; ++line) {
+    for (int line = 0; line < DataHub.numGraphLines; ++line) {
       final path1 = Path();
       //final path2 = Path();
 
       double toY(double val) {
         final double y = graphSz.height -
-            (val - _data._tare[line]) * graphSz.height / dataMax;
+            (val - _data.tare[line]) * graphSz.height / dataMax;
         if (y < 0) {
           return 0;
         }
@@ -319,16 +309,14 @@ class _DynoPainter extends CustomPainter {
         return y;
       }
 
-      path1.moveTo(0, toY(_data._tare[line]));
+      path1.moveTo(0, toY(_data.tare[line]));
       final int graphSzWidth = graphSz.width.toInt();
       for (int i = 0, j = 0; i < graphSzWidth; ++i) {
         //int mn = 100000000, mx = 0;
         int total = 0;
         final int start = j;
-        for (;
-            (j * graphSzWidth < i * _data._rawSz) && (j < _data._rawSz);
-            ++j) {
-          final int v = _data._rawData[line][j];
+        for (; (j * graphSzWidth < i * _data.rawSz) && (j < _data.rawSz); ++j) {
+          final int v = _data.rawData[line][j];
           total += v;
           //mx = (v > mx) ? v : mx;
           //mn = (v < mn) ? v : mn;
@@ -350,110 +338,6 @@ class _DynoPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
-
-class _DataHub {
-  static const int numGraphLines = 2;
-  static const int _tareWindow = 1024;
-  static const double _defaultSlope = 0.0001117587;
-  static const int _samplesPerSec = 1000;
-  static const int _maxDataSz = _samplesPerSec * 60 * 10;
-  final Float64List _tare = Float64List(numGraphLines);
-  final Float64List _runningTotal = Float64List(numGraphLines);
-  final Int32List _rawMax = Int32List(numGraphLines);
-  final List<Int32List> _rawData = List.generate(
-    _DataHub.numGraphLines,
-    (_) => Int32List(_maxDataSz),
-    growable: false,
-  );
-  int _timeTick = 0;
-  int _rawSz = 0;
-  _DeviceCalibration _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
-
-  void _clear() {
-    _timeTick = 0;
-    for (int i = 0; i < numGraphLines; ++i) {
-      _rawSz = 0;
-      _rawMax[i] = 0;
-      _tare[i] = 0;
-      _runningTotal[i] = 0;
-    }
-  }
-
-  bool get _taring => (_timeTick > 0) && (_timeTick <= _tareWindow);
-
-  bool _addTare(int val, int idx) {
-    if (_timeTick > _tareWindow) {
-      return false;
-    }
-    _runningTotal[idx] += val;
-    if (_timeTick == _tareWindow) {
-      _tare[idx] = _runningTotal[idx] / _tareWindow;
-      _runningTotal[idx] = 0;
-    }
-    return true;
-  }
-
-  void _addData(int val, int idx) {
-    _rawData[idx][_rawSz] = val;
-    if (val > _rawMax[idx]) {
-      _rawMax[idx] = val;
-    }
-  }
-
-  void _onUpdateCalibration(Uint8List data) {
-    // TODO: implement calibration parsing
-    _deviceCalibration = _DeviceCalibration(0, _defaultSlope);
-    debugPrint(
-        'Calibration ${_deviceCalibration._slope}, offset${_deviceCalibration._offset}');
-  }
-
-  static int _chanToLine(int chan) {
-    if (chan == 1) return 0;
-    if (chan == 2) return 1;
-    return -1; // No graph line for this chanel
-  }
-
-  void _parseDataPacket(Uint8List data, void Function(bool) eodCb) {
-    const int sampleLength = 15;
-    if (data.isEmpty || data.length % sampleLength != 0) {
-      debugPrint('Incorrect buffer size received');
-    }
-
-    for (int packetStart = 0;
-        packetStart < data.length;
-        packetStart += sampleLength) {
-      assert(packetStart + sampleLength <= data.length);
-      // final status = (data[packetStart + 1] << 8) | data[packetStart];
-      // final crc = data[packetStart + 14];
-      _timeTick++;
-      const int numAdcChan = 4;
-      for (int i = 0; i < numAdcChan; ++i) {
-        final int baseIndex = packetStart + 2 + i * 3;
-        final int res = ((data[baseIndex] << 16) |
-                (data[baseIndex + 1] << 8) |
-                data[baseIndex + 2])
-            .toSigned(24);
-
-        final int idx = _chanToLine(i);
-        if (idx >= 0) {
-          if (!_addTare(res, idx)) {
-            _addData(res, idx);
-          }
-        }
-      }
-      if (_timeTick > _tareWindow) {
-        _rawSz++;
-      }
-    }
-    eodCb(_rawSz >= _maxDataSz);
-  }
-}
-
-class _DeviceCalibration {
-  _DeviceCalibration(this._offset, this._slope);
-  final int _offset;
-  final double _slope;
 }
 
 class BluetoothIndicator extends StatelessWidget {

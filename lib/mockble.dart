@@ -6,6 +6,8 @@ import 'dart:convert';
 import 'package:cross_file/cross_file.dart';
 import 'package:universal_ble/universal_ble.dart';
 
+import 'bt_device_config.dart';
+
 class MockBlePlatform extends UniversalBlePlatform {
   static MockBlePlatform? _instance;
   static MockBlePlatform get instance => _instance ??= MockBlePlatform._();
@@ -22,9 +24,8 @@ class MockBlePlatform extends UniversalBlePlatform {
   String? _connectedDeviceId;
   BleConnectionState _connectionState = BleConnectionState.disconnected;
 
-  late final List<Uint8List> _mockData = [];
+  final List<Uint8List> _mockData = [];
   int _mockDataCount = 0;
-  static const int _mockDataSampleLength = 15;
 
   @override
   Future<AvailabilityState> getBluetoothAvailabilityState() async {
@@ -129,10 +130,10 @@ class MockBlePlatform extends UniversalBlePlatform {
       const int samplesPerPack = 16;
       const dataInterval = Duration(milliseconds: 1 * samplesPerPack);
       _notificationTimer = Timer.periodic(dataInterval, (_) {
-        final ev = Uint8List(_mockDataSampleLength * samplesPerPack);
+        final ev = Uint8List(adcSampleLength * samplesPerPack);
         for (int i = 0; i < samplesPerPack; ++i) {
-          for (int j = 0; j < _mockDataSampleLength; ++j) {
-            ev[i * _mockDataSampleLength + j] = _mockData[_mockDataCount][j];
+          for (int j = 0; j < adcSampleLength; ++j) {
+            ev[i * adcSampleLength + j] = _mockData[_mockDataCount][j];
           }
           _mockDataCount++;
           if (_mockDataCount >= _mockData.length) {
@@ -207,7 +208,7 @@ class MockBlePlatform extends UniversalBlePlatform {
             json.decode(s.replaceAll("'", '"'));
         final adcSamples = List<int>.from(parsedLine['channels']);
         assert(adcSamples.length == 4);
-        final networkFormatData = Uint8List(_mockDataSampleLength);
+        final networkFormatData = Uint8List(adcSampleLength);
         for (int i = adcSamples.length - 1; i >= 0; --i) {
           networkFormatData.buffer
               .asByteData()
@@ -239,7 +240,7 @@ class MockBlePlatform extends UniversalBlePlatform {
         deviceId: '2',
         name: '2_device',
         rssi: -50,
-        services: ['e331016b-6618-4f8f-8997-1a2c7c9e5fa3'],
+        services: [btServiceId],
         manufacturerDataList: [
           ManufacturerData(0x02, Uint8List.fromList([2, 3, 4]))
         ],
@@ -258,8 +259,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   static List<BleCharacteristic> _generateCharacteristics(String deviceId) {
     if (deviceId == '2') {
       return ([
-        BleCharacteristic('beb5483e-36e1-4688-b7f5-ea07361b26a8',
-            [CharacteristicProperty.notify]),
+        BleCharacteristic(btChrAdcFeedId, [CharacteristicProperty.notify]),
         BleCharacteristic('c1234567', [CharacteristicProperty.notify]),
         BleCharacteristic('a7654321', [CharacteristicProperty.read])
       ]);
@@ -274,8 +274,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     if (deviceId == '2') {
       return ([
         BleService('e1234567', _generateCharacteristics(deviceId)),
-        BleService('e331016b-6618-4f8f-8997-1a2c7c9e5fa3',
-            _generateCharacteristics(deviceId))
+        BleService(btServiceId, _generateCharacteristics(deviceId))
       ]);
     }
     return ([

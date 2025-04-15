@@ -25,10 +25,10 @@ class UserProvider with ChangeNotifier {
   String? _selectedUserName;
 
   List<DynoUser> get userList => _userList;
-  String? get selectedUserName => _selectedUserName;
 
   DynoUser getSelectedUser() {
-    return _userList.firstWhere((element) => element.name == _selectedUserName,
+    return _userList.firstWhere(
+        (element) => (element.name == _selectedUserName),
         orElse: () => DynoUser(name: '', age: 0));
   }
 
