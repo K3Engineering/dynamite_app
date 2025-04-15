@@ -1,0 +1,22 @@
+// For format details, see https://aka.ms/devcontainer.json.
+{
+	"name": "android-build",
+	// "build": {
+	// 	"dockerfile": "android_build.dockerfile"
+	// },
+	"image": "ghcr.io/cirruslabs/flutter:3.29.2",
+	// Features to add to the dev container. More info: https://containers.dev/features.
+	// "features": {},
+	// Use 'forwardPorts' to make a list of ports inside the container available locally.
+	// "forwardPorts": [],
+	// Configure tool-specific properties.
+	"customizations": {
+		"vscode": {
+			"extensions": [
+				"dart-code.flutter"
+			]
+		}
+	}
+	// Uncomment to connect as root instead. More info: https://aka.ms/dev-containers-non-root.
+	// "remoteUser": "root"
+}
