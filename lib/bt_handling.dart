@@ -33,6 +33,7 @@ class BluetoothHandling {
 
   void Function(Uint8List) _notifyCalibrationUpdated = (_) {};
   void Function() _notifyStateChanged = () {};
+  void Function() _notifyDataReceived = () {};
 
   final DataHub dataHub = DataHub();
 
@@ -48,17 +49,20 @@ class BluetoothHandling {
     unawaited(_updateBluetoothState());
   }
 
-  void initializeBluetooth(void Function() onStateChange) {
+  void setListener(
+      void Function() onStateChange, void Function() onDataReceived) {
     _notifyCalibrationUpdated = dataHub._onUpdateCalibration;
     _notifyStateChanged = onStateChange;
+    _notifyDataReceived = onDataReceived;
 
     UniversalBle.onValueChange = _processReceivedData;
   }
 
-  void dispose() {
+  void resetListener() {
     UniversalBle.onValueChange = null;
 
     _notifyCalibrationUpdated = (_) {};
+    _notifyDataReceived = () {};
     _notifyStateChanged = () {};
   }
 
@@ -130,6 +134,7 @@ class BluetoothHandling {
 
   void stopSession() {
     _sessionInProgress = false;
+    _notifyStateChanged();
   }
 
   void _onPairingStateChange(String deviceId, bool isPaired) {
@@ -202,7 +207,7 @@ class BluetoothHandling {
     if (!canContinue) {
       stopSession();
     }
-    _notifyStateChanged();
+    _notifyDataReceived();
   }
 }
 

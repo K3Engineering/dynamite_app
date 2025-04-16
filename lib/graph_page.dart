@@ -46,6 +46,7 @@ class _GraphPageState extends State<GraphPage> {
   static final Map<int, ui.Paragraph> _yPreparedLabels = HashMap();
 
   late BluetoothHandling _bluetoothHandler;
+  final _repaintNotifier = ValueNotifier<int>(0);
 
   @override
   void initState() {
@@ -57,15 +58,21 @@ class _GraphPageState extends State<GraphPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _bluetoothHandler = Provider.of<BluetoothHandling>(context);
-    _bluetoothHandler.initializeBluetooth(() {
-      setState(() {});
-    });
+    _bluetoothHandler.setListener(
+      () {
+        setState(() {});
+      },
+      () {
+        _repaintNotifier.value++;
+      },
+    );
   }
 
   @override
   void dispose() {
+    _bluetoothHandler.resetListener();
     _bluetoothHandler.stopSession();
-    _bluetoothHandler.dispose();
+
     super.dispose();
   }
 
@@ -125,15 +132,16 @@ class _GraphPageState extends State<GraphPage> {
       body: Column(
         children: [
           BluetoothIndicator(
-              isScanning: _bluetoothHandler.isScanning,
-              state: _bluetoothHandler.bluetoothState),
+            isScanning: _bluetoothHandler.isScanning,
+            state: _bluetoothHandler.bluetoothState,
+          ),
           _buttonScan(),
           _buttonBluetoothDevice(),
           _buttonRunStop(),
-          Text(_bluetoothHandler.dataHub.taring ? 'Tare' : ''),
           Expanded(
             child: CustomPaint(
-              foregroundPainter: _DynoPainter(_bluetoothHandler.dataHub),
+              foregroundPainter:
+                  _DynoPainter(_bluetoothHandler.dataHub, _repaintNotifier),
               size: MediaQuery.of(context).size,
               // child: Container(),
             ),
@@ -204,7 +212,8 @@ class _GraphPageState extends State<GraphPage> {
 class _DynoPainter extends CustomPainter {
   final DataHub _data;
 
-  _DynoPainter(this._data);
+  _DynoPainter(this._data, Listenable needRepaint)
+      : super(repaint: needRepaint);
 
   static Color _lineColor(int idx) {
     if (idx == 1) return Colors.deepOrangeAccent;
