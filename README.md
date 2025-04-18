@@ -1,7 +1,7 @@
 # dynamite-app
 App that connects to the dynamite sampler board
 
-# flutter_application_1
+# dynamite_app
 
 A new Flutter project.
 

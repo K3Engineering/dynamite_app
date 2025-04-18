@@ -1,0 +1,26 @@
+name: Build Android
+
+on: [pull_request, workflow_dispatch]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.29.2  # todo convert to flutter-version-file: pubspec.yaml
+      - run: flutter pub get
+      # - run: flutter test
+      - run: flutter build apk
+
+      # - run: flutter build appbundle
+      
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: build/app/outputs/apk/release/app-release.apk
+
