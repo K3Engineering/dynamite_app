@@ -1,10 +1,12 @@
 // For format details, see https://aka.ms/devcontainer.json.
 {
 	"name": "android-build",
-	// "build": {
-	// 	"dockerfile": "android_build.dockerfile"
-	// },
 	"image": "ghcr.io/cirruslabs/flutter:3.29.2",
+
+	// To share the USB from Windows / WSL2, follow these intrsuctions:
+	// https://learn.microsoft.com/en-us/windows/wsl/connect-usb
+	"mounts": ["type=bind,source=/dev/bus/usb,target=/dev/bus/usb"],
+	"runArgs": ["--privileged"],
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
 	// Use 'forwardPorts' to make a list of ports inside the container available locally.
