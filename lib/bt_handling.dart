@@ -145,10 +145,11 @@ class BluetoothHandling {
       String deviceId, bool isConnected, String? err) async {
     debugPrint('isConnected $deviceId, $isConnected');
     if (isConnected) {
+      _selectedDeviceId = deviceId;
+
       debugPrint('Requested MTU change');
       int mtu = await UniversalBle.requestMtu(deviceId, 247);
       debugPrint('MTU set to: ${mtu}');
-      _selectedDeviceId = deviceId;
       _services.addAll(await UniversalBle.discoverServices(deviceId));
       for (final srv in _services) {
         if (srv.uuid == btServiceId) {
@@ -279,10 +280,12 @@ class DataHub {
   bool _parseDataPacket(Uint8List data) {
     if (data.isEmpty) {
       debugPrint("data isEmpty");
+      return false;
     }
     if (data.length % adcSampleLength != 0) {
       debugPrint('Incorrect buffer size received');
       debugPrint('Expected mod ${adcSampleLength}, got ${data.length}');
+      return false;
     }
 
     for (int packetStart = 0;
