@@ -1,4 +1,4 @@
-const bool useMockBt = true;
+const bool useMockBt = false;
 
 // const btDeviceUUID = "E4:B0:63:81:5B:19";
 const btGattId = "a659ee73-460b-45d5-8e63-ab6bf0825942";

@@ -146,6 +146,10 @@ class BluetoothHandling {
     debugPrint('isConnected $deviceId, $isConnected');
     if (isConnected) {
       _selectedDeviceId = deviceId;
+
+      debugPrint('Requested MTU change');
+      int mtu = await UniversalBle.requestMtu(deviceId, 247);
+      debugPrint('MTU set to: ${mtu}');
       _services.addAll(await UniversalBle.discoverServices(deviceId));
       for (final srv in _services) {
         if (srv.uuid == btServiceId) {
@@ -264,7 +268,7 @@ class DataHub {
     // TODO: implement calibration parsing
     deviceCalibration = DeviceCalibration(0, _defaultSlope);
     debugPrint(
-        'Calibration ${deviceCalibration.slope}, offset${deviceCalibration.offset}');
+        'Calibration ${deviceCalibration.slope}, offset ${deviceCalibration.offset}');
   }
 
   static int _chanToLine(int chan) {
@@ -274,8 +278,14 @@ class DataHub {
   }
 
   bool _parseDataPacket(Uint8List data) {
-    if (data.isEmpty || data.length % adcSampleLength != 0) {
+    if (data.isEmpty) {
+      debugPrint("data isEmpty");
+      return false;
+    }
+    if (data.length % adcSampleLength != 0) {
       debugPrint('Incorrect buffer size received');
+      debugPrint('Expected mod ${adcSampleLength}, got ${data.length}');
+      return false;
     }
 
     for (int packetStart = 0;
