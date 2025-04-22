@@ -32,8 +32,7 @@ class BluetoothHandling {
   bool get sessionInProgress => _sessionInProgress;
 
   void Function(Uint8List) _notifyCalibrationUpdated = (_) {};
-  void Function() _notifyStateChanged = () {};
-  void Function() _notifyDataReceived = () {};
+  VoidCallback _notifyStateChanged = () {};
 
   final DataHub dataHub = DataHub();
 
@@ -49,11 +48,9 @@ class BluetoothHandling {
     unawaited(_updateBluetoothState());
   }
 
-  void setListener(
-      void Function() onStateChange, void Function() onDataReceived) {
+  void setListener(void Function() onStateChange) {
     _notifyCalibrationUpdated = dataHub._onUpdateCalibration;
     _notifyStateChanged = onStateChange;
-    _notifyDataReceived = onDataReceived;
 
     UniversalBle.onValueChange = _processReceivedData;
   }
@@ -62,7 +59,6 @@ class BluetoothHandling {
     UniversalBle.onValueChange = null;
 
     _notifyCalibrationUpdated = (_) {};
-    _notifyDataReceived = () {};
     _notifyStateChanged = () {};
   }
 
@@ -148,8 +144,8 @@ class BluetoothHandling {
       _selectedDeviceId = deviceId;
 
       debugPrint('Requested MTU change');
-      int mtu = await UniversalBle.requestMtu(deviceId, 247);
-      debugPrint('MTU set to: ${mtu}');
+      final int mtu = await UniversalBle.requestMtu(deviceId, 247);
+      debugPrint('MTU set to: $mtu');
       _services.addAll(await UniversalBle.discoverServices(deviceId));
       for (final srv in _services) {
         if (srv.uuid == btServiceId) {
@@ -211,11 +207,10 @@ class BluetoothHandling {
     if (!canContinue) {
       stopSession();
     }
-    _notifyDataReceived();
   }
 }
 
-class DataHub {
+class DataHub extends Listenable {
   static const int numGraphLines = 2;
   static const int _tareWindow = 1024;
   static const double _defaultSlope = 0.0001117587;
@@ -231,6 +226,7 @@ class DataHub {
   );
   int _timeTick = 0;
   int rawSz = 0;
+  final List<VoidCallback> _notifyCb = [];
   DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
 
   void clear() {
@@ -277,6 +273,12 @@ class DataHub {
     return -1; // No graph line for this chanel
   }
 
+  void _notifyDataReceived() {
+    for (final cb in _notifyCb) {
+      cb();
+    }
+  }
+
   bool _parseDataPacket(Uint8List data) {
     if (data.isEmpty) {
       debugPrint("data isEmpty");
@@ -284,7 +286,7 @@ class DataHub {
     }
     if (data.length % adcSampleLength != 0) {
       debugPrint('Incorrect buffer size received');
-      debugPrint('Expected mod ${adcSampleLength}, got ${data.length}');
+      debugPrint('Expected mod $adcSampleLength, got ${data.length}');
       return false;
     }
 
@@ -314,7 +316,18 @@ class DataHub {
         rawSz++;
       }
     }
+    _notifyDataReceived();
     return rawSz < _maxDataSz;
+  }
+
+  @override
+  void addListener(VoidCallback listener) {
+    _notifyCb.add(listener);
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    _notifyCb.remove(listener);
   }
 }
 

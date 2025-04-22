@@ -46,7 +46,6 @@ class _GraphPageState extends State<GraphPage> {
   static final Map<int, ui.Paragraph> _yPreparedLabels = HashMap();
 
   late BluetoothHandling _bluetoothHandler;
-  final _repaintNotifier = ValueNotifier<int>(0);
 
   @override
   void initState() {
@@ -61,9 +60,6 @@ class _GraphPageState extends State<GraphPage> {
     _bluetoothHandler.setListener(
       () {
         setState(() {});
-      },
-      () {
-        _repaintNotifier.value++;
       },
     );
   }
@@ -140,8 +136,7 @@ class _GraphPageState extends State<GraphPage> {
           _buttonRunStop(),
           Expanded(
             child: CustomPaint(
-              foregroundPainter:
-                  _DynoPainter(_bluetoothHandler.dataHub, _repaintNotifier),
+              foregroundPainter: _DynoPainter(_bluetoothHandler.dataHub),
               size: MediaQuery.of(context).size,
               // child: Container(),
             ),
@@ -212,8 +207,7 @@ class _GraphPageState extends State<GraphPage> {
 class _DynoPainter extends CustomPainter {
   final DataHub _data;
 
-  _DynoPainter(this._data, Listenable needRepaint)
-      : super(repaint: needRepaint);
+  _DynoPainter(this._data) : super(repaint: _data);
 
   static Color _lineColor(int idx) {
     if (idx == 1) return Colors.deepOrangeAccent;
