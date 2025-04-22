@@ -32,7 +32,7 @@ class BluetoothHandling {
   bool get sessionInProgress => _sessionInProgress;
 
   void Function(Uint8List) _notifyCalibrationUpdated = (_) {};
-  void Function() _notifyStateChanged = () {};
+  VoidCallback _notifyStateChanged = () {};
 
   final DataHub dataHub = DataHub();
 
@@ -210,7 +210,7 @@ class BluetoothHandling {
   }
 }
 
-class DataHub {
+class DataHub extends Listenable {
   static const int numGraphLines = 2;
   static const int _tareWindow = 1024;
   static const double _defaultSlope = 0.0001117587;
@@ -226,7 +226,7 @@ class DataHub {
   );
   int _timeTick = 0;
   int rawSz = 0;
-  final updateNotifier = ValueNotifier<int>(0);
+  final List<VoidCallback> _notifyCb = [];
   DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
 
   void clear() {
@@ -274,7 +274,9 @@ class DataHub {
   }
 
   void _notifyDataReceived() {
-    updateNotifier.value++;
+    for (final cb in _notifyCb) {
+      cb();
+    }
   }
 
   bool _parseDataPacket(Uint8List data) {
@@ -316,6 +318,16 @@ class DataHub {
     }
     _notifyDataReceived();
     return rawSz < _maxDataSz;
+  }
+
+  @override
+  void addListener(VoidCallback listener) {
+    _notifyCb.add(listener);
+  }
+
+  @override
+  void removeListener(VoidCallback listener) {
+    _notifyCb.remove(listener);
   }
 }
 

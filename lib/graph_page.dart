@@ -207,7 +207,7 @@ class _GraphPageState extends State<GraphPage> {
 class _DynoPainter extends CustomPainter {
   final DataHub _data;
 
-  _DynoPainter(this._data) : super(repaint: _data.updateNotifier);
+  _DynoPainter(this._data) : super(repaint: _data);
 
   static Color _lineColor(int idx) {
     if (idx == 1) return Colors.deepOrangeAccent;
