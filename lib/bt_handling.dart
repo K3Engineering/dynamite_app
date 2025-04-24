@@ -142,9 +142,11 @@ class BluetoothHandling {
     if (isConnected) {
       _selectedDeviceId = deviceId;
 
-      debugPrint('Requested MTU change');
-      final int mtu = await UniversalBle.requestMtu(deviceId, 247);
-      debugPrint('MTU set to: $mtu');
+      if (!kIsWeb) {
+        debugPrint('Requested MTU change');
+        final int mtu = await UniversalBle.requestMtu(deviceId, 247);
+        debugPrint('MTU set to: $mtu');
+      }
       _services.addAll(await UniversalBle.discoverServices(deviceId));
       for (final srv in _services) {
         if (srv.uuid == btServiceId) {
