@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:collection';
 //import 'dart:io';
 //import 'package:cross_file/cross_file.dart';
@@ -6,7 +5,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
 import 'bt_handling.dart' show BluetoothHandling, DataHub;
 
@@ -17,11 +15,11 @@ class GraphPage extends StatefulWidget {
   State<GraphPage> createState() => _GraphPageState();
 }
 
-typedef ScaleConfigItem = ({int limit, int delta});
+typedef _ScaleConfigItem = ({int limit, int delta});
 
 class _GraphPageState extends State<GraphPage> {
   // Seconds
-  static const List<ScaleConfigItem> _xScaleConfig = [
+  static const List<_ScaleConfigItem> _xScaleConfig = [
     (limit: 5, delta: 1),
     (limit: 10, delta: 2),
     (limit: 30, delta: 5),
@@ -33,7 +31,7 @@ class _GraphPageState extends State<GraphPage> {
   static final Map<int, ui.Paragraph> _xPreparedLabels = HashMap();
 
   // Kilogram
-  static const List<ScaleConfigItem> _yScaleConfig = [
+  static const List<_ScaleConfigItem> _yScaleConfig = [
     (limit: 5, delta: 1),
     (limit: 10, delta: 2),
     (limit: 20, delta: 5),
@@ -57,19 +55,19 @@ class _GraphPageState extends State<GraphPage> {
   void didChangeDependencies() {
     super.didChangeDependencies();
     _bluetoothHandler = Provider.of<BluetoothHandling>(context);
-    _bluetoothHandler.setListener(
-      () {
-        setState(() {});
-      },
-    );
+    _bluetoothHandler.startProcessing(_onBtStateChange);
   }
 
   @override
   void dispose() {
-    _bluetoothHandler.resetListener();
+    _bluetoothHandler.stopProcessing(_onBtStateChange);
     _bluetoothHandler.stopSession();
 
     super.dispose();
+  }
+
+  void _onBtStateChange() {
+    setState(() {});
   }
 
   static void _initGraphics() {
@@ -120,19 +118,16 @@ class _GraphPageState extends State<GraphPage> {
     return Scaffold(
       floatingActionButton: IconButton(
         onPressed: () {
-          Navigator.pop(context);
+          _bluetoothHandler.stopProcessing(_onBtStateChange);
+          _bluetoothHandler.stopSession();
+
+          Navigator.pop(context, true);
         },
         icon: const Icon(Icons.arrow_back_rounded),
       ),
       floatingActionButtonLocation: FloatingActionButtonLocation.startTop,
       body: Column(
         children: [
-          BluetoothIndicator(
-            isScanning: _bluetoothHandler.isScanning,
-            state: _bluetoothHandler.bluetoothState,
-          ),
-          _buttonScan(),
-          _buttonBluetoothDevice(),
           _buttonRunStop(),
           Expanded(
             child: CustomPaint(
@@ -143,16 +138,6 @@ class _GraphPageState extends State<GraphPage> {
           ),
         ],
       ),
-    );
-  }
-
-  Widget _buttonScan() {
-    return FilledButton.tonal(
-      onPressed: () {
-        unawaited(_bluetoothHandler.toggleScan());
-      },
-      child: Text(
-          _bluetoothHandler.isScanning ? 'Stop scanning' : 'Start scanning'),
     );
   }
 
@@ -181,25 +166,6 @@ class _GraphPageState extends State<GraphPage> {
     return FilledButton.tonal(
       onPressed: _bluetoothHandler.isSubscribed ? onRunStop : null,
       child: Text(buttonText()),
-    );
-  }
-
-  Widget _buttonBluetoothDevice() {
-    if (_bluetoothHandler.devices.isEmpty) {
-      return const FilledButton.tonal(
-        onPressed: null,
-        child: Text(''),
-      );
-    }
-
-    void onConnect() {
-      unawaited(_bluetoothHandler
-          .connectToDevice(_bluetoothHandler.devices[0].deviceId));
-    }
-
-    return FilledButton.tonal(
-      onPressed: onConnect,
-      child: Text('Device: ${_bluetoothHandler.devices[0].name}'),
     );
   }
 }
@@ -244,7 +210,7 @@ class _DynoPainter extends CustomPainter {
 
     if (_data.rawSz == 0) return;
 
-    ScaleConfigItem findScale(double val, List<ScaleConfigItem> list) {
+    _ScaleConfigItem findScale(double val, List<_ScaleConfigItem> list) {
       return list.firstWhere((e) => val < e.limit,
           orElse: () => (limit: 0, delta: 1));
     }
@@ -254,7 +220,7 @@ class _DynoPainter extends CustomPainter {
     }
 
     final double xSpanSec = _data.rawSz / DataHub.samplesPerSec;
-    final ScaleConfigItem xC =
+    final _ScaleConfigItem xC =
         findScale(xSpanSec, _GraphPageState._xScaleConfig);
     final double xMinorDelta = secondsToPos(xC.delta) / 2;
     for (double x = xMinorDelta; x < graphSz.width; x += xMinorDelta) {
@@ -279,7 +245,7 @@ class _DynoPainter extends CustomPainter {
     }
 
     final double ySpanKilo = ySampleToKilo(dataMax);
-    final ScaleConfigItem yC =
+    final _ScaleConfigItem yC =
         findScale(ySpanKilo, _GraphPageState._yScaleConfig);
     final double yMinorDelta = kiloToY(yC.delta) / 2;
     for (double y = yMinorDelta; y < graphSz.height; y += yMinorDelta) {
@@ -341,54 +307,4 @@ class _DynoPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
-
-class BluetoothIndicator extends StatelessWidget {
-  final bool isScanning;
-  final AvailabilityState state;
-
-  const BluetoothIndicator(
-      {super.key, required this.isScanning, required this.state});
-
-  @override
-  Widget build(BuildContext context) {
-    (IconData, Color) indicator() {
-      if (isScanning) {
-        return const (Icons.bluetooth_searching, Colors.lightBlue);
-      }
-      switch (state) {
-        case AvailabilityState.poweredOn:
-          return const (Icons.bluetooth, Colors.blueAccent);
-        case AvailabilityState.poweredOff:
-          return const (Icons.bluetooth_disabled, Colors.blueGrey);
-        case AvailabilityState.unknown:
-          return const (Icons.question_mark, Colors.yellow);
-        case AvailabilityState.resetting:
-          return const (Icons.question_mark, Colors.green);
-        case AvailabilityState.unsupported:
-          return const (Icons.stop, Colors.red);
-        case AvailabilityState.unauthorized:
-          return const (Icons.stop, Colors.orange);
-        // ignore: unreachable_switch_default
-        default:
-          return const (Icons.question_mark, Colors.grey);
-      }
-    }
-
-    final (IconData icon, Color color) = indicator();
-    const double size = 48;
-    return Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.center,
-      children: [
-        Icon(icon, size: size, color: color),
-        if (isScanning)
-          const SizedBox(
-            height: size,
-            width: size,
-            child: CircularProgressIndicator(),
-          ),
-      ],
-    );
-  }
 }

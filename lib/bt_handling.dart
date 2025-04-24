@@ -31,8 +31,7 @@ class BluetoothHandling {
   bool _sessionInProgress = false;
   bool get sessionInProgress => _sessionInProgress;
 
-  void Function(Uint8List) _notifyCalibrationUpdated = (_) {};
-  VoidCallback _notifyStateChanged = () {};
+  final List<VoidCallback> _btStateListeners = [];
 
   final DataHub dataHub = DataHub();
 
@@ -48,18 +47,16 @@ class BluetoothHandling {
     unawaited(_updateBluetoothState());
   }
 
-  void setListener(void Function() onStateChange) {
-    _notifyCalibrationUpdated = dataHub._onUpdateCalibration;
-    _notifyStateChanged = onStateChange;
+  void startProcessing(VoidCallback listener) {
+    _btStateListeners.add(listener);
 
     UniversalBle.onValueChange = _processReceivedData;
   }
 
-  void resetListener() {
+  void stopProcessing(VoidCallback listener) {
     UniversalBle.onValueChange = null;
 
-    _notifyCalibrationUpdated = (_) {};
-    _notifyStateChanged = () {};
+    _btStateListeners.remove(listener);
   }
 
   Future<void> _updateBluetoothState() async {
@@ -129,8 +126,10 @@ class BluetoothHandling {
   }
 
   void stopSession() {
-    _sessionInProgress = false;
-    _notifyStateChanged();
+    if (_sessionInProgress) {
+      _sessionInProgress = false;
+      _notifyStateChanged();
+    }
   }
 
   void _onPairingStateChange(String deviceId, bool isPaired) {
@@ -189,7 +188,7 @@ class BluetoothHandling {
     for (final characteristic in service.characteristics) {
       if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
-        _notifyCalibrationUpdated(await UniversalBle.readValue(
+        dataHub._updateCalibration(await UniversalBle.readValue(
             _selectedDeviceId, service.uuid, btChrCalibration));
         await UniversalBle.setNotifiable(_selectedDeviceId, service.uuid,
             characteristic.uuid, BleInputProperty.notification);
@@ -197,6 +196,12 @@ class BluetoothHandling {
         _notifyStateChanged();
         return;
       }
+    }
+  }
+
+  void _notifyStateChanged() {
+    for (final cb in _btStateListeners) {
+      cb();
     }
   }
 
@@ -260,7 +265,7 @@ class DataHub extends Listenable {
     }
   }
 
-  void _onUpdateCalibration(Uint8List data) {
+  void _updateCalibration(Uint8List data) {
     // TODO: implement calibration parsing
     deviceCalibration = DeviceCalibration(0, _defaultSlope);
     debugPrint(
