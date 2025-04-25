@@ -82,14 +82,14 @@ class BluetoothHandling {
     _bluetoothState = state;
   }
 
-  Future<void> stopScan() async {
+  Future<void> _stopScan() async {
     assert(!_isSubscribed);
     await UniversalBle.stopScan();
     _isScanning = false;
     _notifyStateChanged();
   }
 
-  Future<void> startScan() async {
+  Future<void> _startScan() async {
     if (_bluetoothState != AvailabilityState.poweredOn) {
       return;
     }
@@ -113,14 +113,14 @@ class BluetoothHandling {
 
   Future<void> toggleScan() async {
     if (_isScanning) {
-      await stopScan();
+      await _stopScan();
     } else {
-      await startScan();
+      await _startScan();
     }
   }
 
   void toggleSession() {
-    assert(selectedDeviceId.isNotEmpty);
+    assert(_selectedDeviceId.isNotEmpty);
     _sessionInProgress = !_sessionInProgress;
     _notifyStateChanged();
   }
@@ -138,7 +138,9 @@ class BluetoothHandling {
 
   void _onConnectionChange(
       String deviceId, bool isConnected, String? err) async {
-    debugPrint('isConnected $deviceId, $isConnected');
+    debugPrint(
+        'isConnected $deviceId, $isConnected ${(err == null) ? '' : err}');
+
     if (isConnected) {
       _selectedDeviceId = deviceId;
 
@@ -165,22 +167,23 @@ class BluetoothHandling {
 
   Future<void> connectToDevice(String deviceId) async {
     if (_isScanning) {
-      await stopScan();
+      await _stopScan();
     }
-    try {
-      await disconnectSelectedDevice();
-      await UniversalBle.connect(deviceId);
-    } catch (e) {
-      debugPrint('connect $deviceId err: $e');
+    if (_selectedDeviceId.isEmpty) {
+      try {
+        await UniversalBle.connect(deviceId);
+      } catch (e) {
+        debugPrint('connect $deviceId err: $e');
+      }
     }
   }
 
   Future<void> disconnectSelectedDevice() async {
-    if (selectedDeviceId.isEmpty) {
-      return;
+    if (_selectedDeviceId.isNotEmpty) {
+      await UniversalBle.disconnect(_selectedDeviceId);
+      await UniversalBle
+          .getBluetoothAvailabilityState(); // fix for a bug in UBle
     }
-    await UniversalBle.disconnect(_selectedDeviceId);
-    await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
   }
 
   Future<void> subscribeToAdcFeed(BleService service) async {

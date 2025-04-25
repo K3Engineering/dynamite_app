@@ -18,6 +18,7 @@ class ConnectPage extends StatefulWidget {
 
 class _ConnectPageState extends State<ConnectPage> {
   late final BluetoothHandling _bluetoothHandler;
+  bool _buttonPressed = false;
 
   @override
   void initState() {
@@ -71,8 +72,12 @@ class _ConnectPageState extends State<ConnectPage> {
 
   Widget _buttonScan() {
     return FilledButton.tonal(
-      onPressed: () {
-        unawaited(_bluetoothHandler.toggleScan());
+      onPressed: () async {
+        if (!_buttonPressed) {
+          _buttonPressed = true;
+          await _bluetoothHandler.toggleScan();
+          _buttonPressed = false;
+        }
       },
       child: Text(
           _bluetoothHandler.isScanning ? 'Stop scanning' : 'Start scanning'),
@@ -87,9 +92,13 @@ class _ConnectPageState extends State<ConnectPage> {
       );
     }
 
-    void onConnect() {
-      unawaited(_bluetoothHandler
-          .connectToDevice(_bluetoothHandler.devices[0].deviceId));
+    void onConnect() async {
+      if (!_buttonPressed) {
+        _buttonPressed = true;
+        await _bluetoothHandler
+            .connectToDevice(_bluetoothHandler.devices[0].deviceId);
+        _buttonPressed = false;
+      }
     }
 
     return FilledButton.tonal(
@@ -100,20 +109,23 @@ class _ConnectPageState extends State<ConnectPage> {
 
   Widget _buttonRunStop() {
     void onRunStop() async {
-      if (!_bluetoothHandler.sessionInProgress) {
-        _bluetoothHandler.dataHub.clear();
-        _bluetoothHandler.toggleSession();
-        _bluetoothHandler.stopProcessing(_onBtStateChange);
-        final bool? res = await Navigator.push(
-            context,
-            MaterialPageRoute<bool>(
-              builder: (_) => const GraphPage(),
-            ));
-        if (res != null) {
-          _bluetoothHandler.startProcessing(_onBtStateChange);
-        }
-        _onBtStateChange();
+      if (_bluetoothHandler.sessionInProgress || _buttonPressed) {
+        return;
       }
+      _buttonPressed = true;
+      _bluetoothHandler.dataHub.clear();
+      _bluetoothHandler.toggleSession();
+      _bluetoothHandler.stopProcessing(_onBtStateChange);
+      final bool? res = await Navigator.push(
+          context,
+          MaterialPageRoute<bool>(
+            builder: (_) => const GraphPage(),
+          ));
+      if (res != null) {
+        _bluetoothHandler.startProcessing(_onBtStateChange);
+      }
+      _onBtStateChange();
+      _buttonPressed = false;
     }
 
     String buttonText() {
