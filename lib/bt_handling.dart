@@ -96,7 +96,9 @@ class BluetoothHandling {
     await disconnectSelectedDevice();
     _devices.clear();
     _services.clear();
-    assert(!_isSubscribed);
+    if (_isSubscribed) {
+      return; // TMP: fix for Android
+    }
     _isScanning = true;
     await UniversalBle.startScan(
       scanFilter: ScanFilter(
