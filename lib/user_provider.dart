@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class DynoUser {
+  static const String _defaultUserName = '';
   final String name;
   final int age;
 
@@ -22,14 +23,14 @@ class DynoUser {
 
 class UserProvider with ChangeNotifier {
   List<DynoUser> _userList = [];
-  String? _selectedUserName;
+  String _selectedUserName = DynoUser._defaultUserName;
 
   List<DynoUser> get userList => _userList;
 
   DynoUser getSelectedUser() {
     return _userList.firstWhere(
         (element) => (element.name == _selectedUserName),
-        orElse: () => DynoUser(name: '', age: 0));
+        orElse: () => DynoUser(name: DynoUser._defaultUserName, age: 0));
   }
 
   UserProvider() {
@@ -55,7 +56,8 @@ class UserProvider with ChangeNotifier {
   }
 
   void selectUser(String? userName) {
-    _selectedUserName = userName;
+    _selectedUserName =
+        (userName == null) ? DynoUser._defaultUserName : userName;
     notifyListeners();
   }
 }
