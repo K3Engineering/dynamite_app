@@ -24,7 +24,7 @@ class MenuPage extends StatelessWidget {
                 _buildChangeUserButton(context),
               ],
             ),
-            _buildMenuButton(context, 'Connect', const ConnectPage()),
+            _buildMenuButton(context, 'Session', const ConnectPage()),
             _buildMenuButton(context, 'History', const HistoryPage()),
             _buildMenuButton(context, 'About', const AboutPage()),
           ],
@@ -58,7 +58,6 @@ Widget _buildChangeUserButton(BuildContext context) {
     initialValue: userProvider.getSelectedUser().name,
     onSelected: (String user) {
       if (user == '+') {
-        debugPrint('New user');
         unawaited(Navigator.push(
             context, MaterialPageRoute(builder: (context) => UserPage())));
       } else {
