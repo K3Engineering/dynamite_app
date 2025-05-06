@@ -31,9 +31,6 @@ class DynoApp extends StatelessWidget {
       title: 'Dynamite',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        appBarTheme: AppBarTheme(
-          backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        ),
         filledButtonTheme: FilledButtonThemeData(
           style: FilledButton.styleFrom(
             side: BorderSide(

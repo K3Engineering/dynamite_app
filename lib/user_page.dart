@@ -51,18 +51,6 @@ class UserPage extends StatelessWidget {
               child: const Text('Store User Data'),
             ),
             const SizedBox(height: 60),
-            DropdownMenu<String>(
-              hintText: 'Select a user',
-              initialSelection: userProvider.getSelectedUser().name,
-              onSelected: userProvider.selectUser,
-              dropdownMenuEntries: userProvider.userList.map((user) {
-                return DropdownMenuEntry<String>(
-                  value: user.name,
-                  label: user.name,
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 20),
             Text(
               ((DynoUser user) {
                 return 'User: ${user.name}, ${user.age} yo.';

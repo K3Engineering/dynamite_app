@@ -31,8 +31,7 @@ class BluetoothHandling {
   bool _sessionInProgress = false;
   bool get sessionInProgress => _sessionInProgress;
 
-  void Function(Uint8List) _notifyCalibrationUpdated = (_) {};
-  VoidCallback _notifyStateChanged = () {};
+  final List<VoidCallback> _btStateListeners = [];
 
   final DataHub dataHub = DataHub();
 
@@ -48,18 +47,16 @@ class BluetoothHandling {
     unawaited(_updateBluetoothState());
   }
 
-  void setListener(void Function() onStateChange) {
-    _notifyCalibrationUpdated = dataHub._onUpdateCalibration;
-    _notifyStateChanged = onStateChange;
+  void startProcessing(VoidCallback listener) {
+    _btStateListeners.add(listener);
 
     UniversalBle.onValueChange = _processReceivedData;
   }
 
-  void resetListener() {
+  void stopProcessing(VoidCallback listener) {
     UniversalBle.onValueChange = null;
 
-    _notifyCalibrationUpdated = (_) {};
-    _notifyStateChanged = () {};
+    _btStateListeners.remove(listener);
   }
 
   Future<void> _updateBluetoothState() async {
@@ -85,21 +82,23 @@ class BluetoothHandling {
     _bluetoothState = state;
   }
 
-  Future<void> stopScan() async {
+  Future<void> _stopScan() async {
     assert(!_isSubscribed);
     await UniversalBle.stopScan();
     _isScanning = false;
     _notifyStateChanged();
   }
 
-  Future<void> startScan() async {
+  Future<void> _startScan() async {
     if (_bluetoothState != AvailabilityState.poweredOn) {
       return;
     }
     await disconnectSelectedDevice();
     _devices.clear();
     _services.clear();
-    assert(!_isSubscribed);
+    if (_isSubscribed) {
+      return; // TMP: fix for Android
+    }
     _isScanning = true;
     await UniversalBle.startScan(
       scanFilter: ScanFilter(
@@ -116,21 +115,23 @@ class BluetoothHandling {
 
   Future<void> toggleScan() async {
     if (_isScanning) {
-      await stopScan();
+      await _stopScan();
     } else {
-      await startScan();
+      await _startScan();
     }
   }
 
   void toggleSession() {
-    assert(selectedDeviceId.isNotEmpty);
+    assert(_selectedDeviceId.isNotEmpty);
     _sessionInProgress = !_sessionInProgress;
     _notifyStateChanged();
   }
 
   void stopSession() {
-    _sessionInProgress = false;
-    _notifyStateChanged();
+    if (_sessionInProgress) {
+      _sessionInProgress = false;
+      _notifyStateChanged();
+    }
   }
 
   void _onPairingStateChange(String deviceId, bool isPaired) {
@@ -139,13 +140,17 @@ class BluetoothHandling {
 
   void _onConnectionChange(
       String deviceId, bool isConnected, String? err) async {
-    debugPrint('isConnected $deviceId, $isConnected');
+    debugPrint(
+        'isConnected $deviceId, $isConnected ${(err == null) ? '' : err}');
+
     if (isConnected) {
       _selectedDeviceId = deviceId;
 
-      debugPrint('Requested MTU change');
-      final int mtu = await UniversalBle.requestMtu(deviceId, 247);
-      debugPrint('MTU set to: $mtu');
+      if (!kIsWeb) {
+        debugPrint('Requested MTU change');
+        final int mtu = await UniversalBle.requestMtu(deviceId, 247);
+        debugPrint('MTU set to: $mtu');
+      }
       _services.addAll(await UniversalBle.discoverServices(deviceId));
       for (final srv in _services) {
         if (srv.uuid == btServiceId) {
@@ -164,22 +169,23 @@ class BluetoothHandling {
 
   Future<void> connectToDevice(String deviceId) async {
     if (_isScanning) {
-      await stopScan();
+      await _stopScan();
     }
-    try {
-      await disconnectSelectedDevice();
-      await UniversalBle.connect(deviceId);
-    } catch (e) {
-      debugPrint('connect $deviceId err: $e');
+    if (_selectedDeviceId.isEmpty) {
+      try {
+        await UniversalBle.connect(deviceId);
+      } catch (e) {
+        debugPrint('connect $deviceId err: $e');
+      }
     }
   }
 
   Future<void> disconnectSelectedDevice() async {
-    if (selectedDeviceId.isEmpty) {
-      return;
+    if (_selectedDeviceId.isNotEmpty) {
+      await UniversalBle.disconnect(_selectedDeviceId);
+      await UniversalBle
+          .getBluetoothAvailabilityState(); // fix for a bug in UBle
     }
-    await UniversalBle.disconnect(_selectedDeviceId);
-    await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
   }
 
   Future<void> subscribeToAdcFeed(BleService service) async {
@@ -189,7 +195,7 @@ class BluetoothHandling {
     for (final characteristic in service.characteristics) {
       if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
-        _notifyCalibrationUpdated(await UniversalBle.readValue(
+        dataHub._updateCalibration(await UniversalBle.readValue(
             _selectedDeviceId, service.uuid, btChrCalibration));
         await UniversalBle.setNotifiable(_selectedDeviceId, service.uuid,
             characteristic.uuid, BleInputProperty.notification);
@@ -197,6 +203,12 @@ class BluetoothHandling {
         _notifyStateChanged();
         return;
       }
+    }
+  }
+
+  void _notifyStateChanged() {
+    for (final cb in _btStateListeners) {
+      cb();
     }
   }
 
@@ -260,7 +272,7 @@ class DataHub extends Listenable {
     }
   }
 
-  void _onUpdateCalibration(Uint8List data) {
+  void _updateCalibration(Uint8List data) {
     // TODO: implement calibration parsing
     deviceCalibration = DeviceCalibration(0, _defaultSlope);
     debugPrint(
