@@ -17,6 +17,8 @@ class ConnectPage extends StatefulWidget {
 
 class _ConnectPageState extends State<ConnectPage> {
   late final BluetoothHandling _bluetoothHandler;
+  // Guards a set of buttons,
+  // to prevent simultaneous action
   bool _buttonPressed = false;
 
   @override
