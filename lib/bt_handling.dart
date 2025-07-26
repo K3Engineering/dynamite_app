@@ -195,10 +195,10 @@ class BluetoothHandling {
     for (final characteristic in service.characteristics) {
       if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
-        dataHub._updateCalibration(await UniversalBle.readValue(
+        dataHub._updateCalibration(await UniversalBle.read(
             _selectedDeviceId, service.uuid, btChrCalibration));
-        await UniversalBle.setNotifiable(_selectedDeviceId, service.uuid,
-            characteristic.uuid, BleInputProperty.notification);
+        await UniversalBle.subscribeNotifications(
+            _selectedDeviceId, service.uuid, characteristic.uuid);
         _isSubscribed = true;
         _notifyStateChanged();
         return;
