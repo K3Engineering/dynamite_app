@@ -280,8 +280,8 @@ class DataHub extends Listenable {
   }
 
   static int _chanToLine(int chan) {
-    if (chan == 1) return 0;
-    if (chan == 2) return 1;
+    if (chan == 0) return 0;
+    if (chan == 1) return 1;
     return -1; // No graph line for this chanel
   }
 
@@ -309,9 +309,9 @@ class DataHub extends Listenable {
       // final status = (data[packetStart + 1] << 8) | data[packetStart];
       // final crc = data[packetStart + 14];
       _timeTick++;
-      const int numAdcChan = 4;
+      const int numAdcChan = 2;
       for (int i = 0; i < numAdcChan; ++i) {
-        final int baseIndex = packetStart + 2 + i * 3;
+        final int baseIndex = packetStart + i * 3;
         final int res = ((data[baseIndex] << 16) |
                 (data[baseIndex + 1] << 8) |
                 data[baseIndex + 2])
