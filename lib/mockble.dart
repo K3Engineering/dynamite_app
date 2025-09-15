@@ -130,10 +130,10 @@ class MockBlePlatform extends UniversalBlePlatform {
       const int samplesPerPack = 16;
       const dataInterval = Duration(milliseconds: 1 * samplesPerPack);
       _notificationTimer = Timer.periodic(dataInterval, (_) {
-        final ev = Uint8List(adcSampleLength * samplesPerPack);
+        final ev = Uint8List(nwAdcSampleLength * samplesPerPack);
         for (int i = 0; i < samplesPerPack; ++i) {
-          for (int j = 0; j < adcSampleLength; ++j) {
-            ev[i * adcSampleLength + j] = _mockData[_mockDataCount][j];
+          for (int j = 0; j < nwAdcSampleLength; ++j) {
+            ev[i * nwAdcSampleLength + j] = _mockData[_mockDataCount][j];
           }
           _mockDataCount++;
           if (_mockDataCount >= _mockData.length) {
@@ -208,7 +208,7 @@ class MockBlePlatform extends UniversalBlePlatform {
             json.decode(s.replaceAll("'", '"'));
         final adcSamples = List<int>.from(parsedLine['channels']);
         assert(adcSamples.length == 4);
-        final networkFormatData = Uint8List(adcSampleLength);
+        final networkFormatData = Uint8List(nwAdcSampleLength);
         for (int i = adcSamples.length - 1; i >= 0; --i) {
           networkFormatData.buffer
               .asByteData()

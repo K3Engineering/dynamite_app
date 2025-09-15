@@ -57,6 +57,7 @@ class BluetoothHandling {
     UniversalBle.onValueChange = null;
 
     _btStateListeners.remove(listener);
+    dataHub._prevPacketCount = -1;
   }
 
   Future<void> _updateBluetoothState() async {
@@ -236,13 +237,14 @@ class DataHub extends Listenable {
     (_) => Int32List(_maxDataSz),
     growable: false,
   );
-  int _timeTick = 0;
+  int _tareCount = 0;
   int rawSz = 0;
+  int _prevPacketCount = -1;
   final List<VoidCallback> _notifyCb = [];
   DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
 
   void clear() {
-    _timeTick = 0;
+    _tareCount = 0;
     for (int i = 0; i < numGraphLines; ++i) {
       rawSz = 0;
       rawMax[i] = 0;
@@ -251,18 +253,14 @@ class DataHub extends Listenable {
     }
   }
 
-  bool get taring => (_timeTick > 0) && (_timeTick <= _tareWindow);
+  bool get taring => (_tareCount <= _tareWindow);
 
-  bool _addTare(int val, int idx) {
-    if (_timeTick > _tareWindow) {
-      return false;
-    }
+  void _addTare(int val, int idx) {
     _runningTotal[idx] += val;
-    if (_timeTick == _tareWindow) {
+    if (_tareCount == _tareWindow) {
       tare[idx] = _runningTotal[idx] / _tareWindow;
       _runningTotal[idx] = 0;
     }
-    return true;
   }
 
   void _addData(int val, int idx) {
@@ -280,8 +278,8 @@ class DataHub extends Listenable {
   }
 
   static int _chanToLine(int chan) {
-    if (chan == 0) return 0;
-    if (chan == 1) return 1;
+    if (chan == 1) return 0;
+    if (chan == 2) return 1;
     return -1; // No graph line for this chanel
   }
 
@@ -296,21 +294,37 @@ class DataHub extends Listenable {
       debugPrint("data isEmpty");
       return false;
     }
-    if (data.length % adcSampleLength != 0) {
-      debugPrint('Incorrect buffer size received');
-      debugPrint('Expected mod $adcSampleLength, got ${data.length}');
+    final int size = data[0];
+    if (data.length < size + nwHeaderSize) {
+      // we do not process packet fragmentation/aggregation yet
+      debugPrint('Incorrect size $size, buffer ${data.length}');
       return false;
     }
 
-    for (int packetStart = 0;
-        packetStart < data.length;
-        packetStart += adcSampleLength) {
-      assert(packetStart + adcSampleLength <= data.length);
+    final int count = data[1] | (data[2] << 8);
+    if (_prevPacketCount != -1) {
+      final int diff = (count - _prevPacketCount) & 0xFFFF;
+      if (diff > 0) {
+        debugPrint('# lost $diff samples');
+        if (!taring) {
+          if (rawSz + diff < _maxDataSz) {
+            for (int i = 0; i < diff; ++i) {
+              _makeUpLostSample();
+              rawSz++;
+            }
+          }
+        }
+      }
+    }
+    _prevPacketCount = (count + size ~/ nwAdcSampleLength) & 0xFFFF;
+
+    for (int packetStart = nwHeaderSize;
+        packetStart < nwHeaderSize + size;
+        packetStart += nwAdcSampleLength) {
+      assert(packetStart + nwAdcSampleLength <= data.length);
       // final status = (data[packetStart + 1] << 8) | data[packetStart];
       // final crc = data[packetStart + 14];
-      _timeTick++;
-      const int numAdcChan = 2;
-      for (int i = 0; i < numAdcChan; ++i) {
+      for (int i = 0; i < nwNumAdcChan; ++i) {
         final int baseIndex = packetStart + i * 3;
         final int res = ((data[baseIndex] << 16) |
                 (data[baseIndex + 1] << 8) |
@@ -319,17 +333,32 @@ class DataHub extends Listenable {
 
         final int idx = _chanToLine(i);
         if (idx >= 0) {
-          if (!_addTare(res, idx)) {
+          if (taring) {
+            _addTare(res, idx);
+          } else {
             _addData(res, idx);
           }
         }
       }
-      if (_timeTick > _tareWindow) {
+
+      if (taring) {
+        _tareCount++;
+      } else {
         rawSz++;
+        if (rawSz >= _maxDataSz) {
+          break;
+        }
       }
     }
+
     _notifyDataReceived();
     return rawSz < _maxDataSz;
+  }
+
+  void _makeUpLostSample() {
+    for (int i = 0; i < rawData.length; ++i) {
+      rawData[i][rawSz] = 0;
+    }
   }
 
   @override
