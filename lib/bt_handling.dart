@@ -237,14 +237,14 @@ class DataHub extends Listenable {
     (_) => Int32List(_maxDataSz),
     growable: false,
   );
-  int _tareCount = 0;
+  int _tareCount = _tareWindow;
   int rawSz = 0;
   int _prevPacketCount = -1;
   final List<VoidCallback> _notifyCb = [];
   DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
 
   void clear() {
-    _tareCount = 0;
+    _tareCount = _tareWindow;
     for (int i = 0; i < numGraphLines; ++i) {
       rawSz = 0;
       rawMax[i] = 0;
@@ -253,14 +253,10 @@ class DataHub extends Listenable {
     }
   }
 
-  bool get taring => (_tareCount <= _tareWindow);
+  bool get taring => (_tareCount > 0);
 
   void _addTare(int val, int idx) {
     _runningTotal[idx] += val;
-    if (_tareCount == _tareWindow) {
-      tare[idx] = _runningTotal[idx] / _tareWindow;
-      _runningTotal[idx] = 0;
-    }
   }
 
   void _addData(int val, int idx) {
@@ -342,7 +338,13 @@ class DataHub extends Listenable {
       }
 
       if (taring) {
-        _tareCount++;
+        _tareCount--;
+        if (!taring) {
+          for (int i = 0; i < _runningTotal.length; ++i) {
+            tare[i] = _runningTotal[i] / _tareWindow;
+            _runningTotal[i] = 0;
+          }
+        }
       } else {
         rawSz++;
         if (rawSz >= _maxDataSz) {
