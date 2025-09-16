@@ -26,6 +26,7 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   final List<Uint8List> _mockData = [];
   int _mockDataCount = 0;
+  int _packetCount = 0;
 
   @override
   Future<AvailabilityState> getBluetoothAvailabilityState() async {
@@ -130,16 +131,21 @@ class MockBlePlatform extends UniversalBlePlatform {
       const int samplesPerPack = 16;
       const dataInterval = Duration(milliseconds: 1 * samplesPerPack);
       _notificationTimer = Timer.periodic(dataInterval, (_) {
-        final ev = Uint8List(nwAdcSampleLength * samplesPerPack);
+        final ev = Uint8List(nwHeaderSize + nwAdcSampleLength * samplesPerPack);
+        ev[0] = samplesPerPack * nwAdcSampleLength;
+        ev[1] = _packetCount & 0xFF;
+        ev[2] = (_packetCount >> 8) & 0xFF;
         for (int i = 0; i < samplesPerPack; ++i) {
           for (int j = 0; j < nwAdcSampleLength; ++j) {
-            ev[i * nwAdcSampleLength + j] = _mockData[_mockDataCount][j];
+            ev[nwHeaderSize + i * nwAdcSampleLength + j] =
+                _mockData[_mockDataCount][j];
           }
           _mockDataCount++;
           if (_mockDataCount >= _mockData.length) {
             _mockDataCount = 0;
           }
         }
+        _packetCount += samplesPerPack;
         updateCharacteristicValue(deviceId, characteristic, ev);
       });
     }
