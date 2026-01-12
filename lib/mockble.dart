@@ -88,6 +88,11 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
+  Future<bool> isScanning() async {
+    return _scanTimer != null;
+  }
+
+  @override
   Future<BleConnectionState> getConnectionState(String deviceId) async {
     return (_connectedDeviceId == deviceId)
         ? _connectionState
@@ -117,7 +122,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
-  Future<List<BleService>> discoverServices(String deviceId) async {
+  Future<List<BleService>> discoverServices(String deviceId, bool _) async {
     await Future<void>.delayed(netDelay);
     return _generateServices(deviceId);
   }
@@ -146,7 +151,7 @@ class MockBlePlatform extends UniversalBlePlatform {
           }
         }
         _packetCount += samplesPerPack;
-        updateCharacteristicValue(deviceId, characteristic, ev);
+        updateCharacteristicValue(deviceId, characteristic, ev, null);
       });
     }
   }
@@ -173,6 +178,11 @@ class MockBlePlatform extends UniversalBlePlatform {
   @override
   Future<int> requestMtu(String deviceId, int expectedMtu) async {
     return 244;
+  }
+
+  @override
+  Future<int> readRssi(String deviceId) async {
+    return 1;
   }
 
   @override
@@ -265,14 +275,14 @@ class MockBlePlatform extends UniversalBlePlatform {
   static List<BleCharacteristic> _generateCharacteristics(String deviceId) {
     if (deviceId == '2') {
       return ([
-        BleCharacteristic(btChrAdcFeedId, [CharacteristicProperty.notify]),
-        BleCharacteristic('c1234567', [CharacteristicProperty.notify]),
-        BleCharacteristic('a7654321', [CharacteristicProperty.read])
+        BleCharacteristic(btChrAdcFeedId, [CharacteristicProperty.notify], []),
+        BleCharacteristic('c1234567', [CharacteristicProperty.notify], []),
+        BleCharacteristic('a7654321', [CharacteristicProperty.read], [])
       ]);
     }
     return ([
-      BleCharacteristic('c1234567', [CharacteristicProperty.notify]),
-      BleCharacteristic('a7654321', [CharacteristicProperty.read])
+      BleCharacteristic('c1234567', [CharacteristicProperty.notify], []),
+      BleCharacteristic('a7654321', [CharacteristicProperty.read], [])
     ]);
   }
 

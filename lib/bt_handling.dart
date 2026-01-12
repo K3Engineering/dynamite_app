@@ -213,7 +213,7 @@ class BluetoothHandling {
     }
   }
 
-  void _processReceivedData(String _, String __, Uint8List data) {
+  void _processReceivedData(String _, String __, Uint8List data, int? ___) {
     if (!sessionInProgress) return;
 
     final canContinue = dataHub._parseDataPacket(data);
