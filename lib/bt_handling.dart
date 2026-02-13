@@ -57,7 +57,7 @@ class BluetoothHandling {
     UniversalBle.onValueChange = null;
 
     _btStateListeners.remove(listener);
-    dataHub._prevPacketCount = -1;
+    dataHub._prevSampleCount = -1;
   }
 
   Future<void> _updateBluetoothState() async {
@@ -239,7 +239,7 @@ class DataHub extends Listenable {
   );
   int _tareCount = _tareWindow;
   int rawSz = 0;
-  int _prevPacketCount = -1;
+  int _prevSampleCount = -1;
   final List<VoidCallback> _notifyCb = [];
   DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
 
@@ -290,41 +290,29 @@ class DataHub extends Listenable {
       debugPrint("data isEmpty");
       return false;
     }
-    final int size = data[0];
-    if (data.length < size + nwHeaderSize) {
-      // we do not process packet fragmentation/aggregation yet
-      debugPrint('Incorrect size $size, buffer ${data.length}');
-      return false;
-    }
 
-    final int count = data[1] | (data[2] << 8);
-    if (_prevPacketCount != -1) {
-      final int diff = (count - _prevPacketCount) & 0xFFFF;
+    final int count = data[0] << 8 + data[1];
+    if (_prevSampleCount != -1) {
+      final int diff = (count - _prevSampleCount) & 0xFFFF;
       if (diff > 0) {
         debugPrint('# lost $diff samples');
-        if (!taring) {
-          if (rawSz + diff < _maxDataSz) {
-            for (int i = 0; i < diff; ++i) {
-              _makeUpLostSample();
-              rawSz++;
-            }
-          }
-        }
+        // _lostPackets += diff;
+        // TODO: signal lost packets
       }
     }
-    _prevPacketCount = (count + size ~/ nwAdcSampleLength) & 0xFFFF;
+    _prevSampleCount = (count + nwAdcNumSamples) & 0xFFFF;
 
     for (int packetStart = nwHeaderSize;
-        packetStart < nwHeaderSize + size;
+        packetStart < nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;
         packetStart += nwAdcSampleLength) {
       assert(packetStart + nwAdcSampleLength <= data.length);
       // final status = (data[packetStart + 1] << 8) | data[packetStart];
       // final crc = data[packetStart + 14];
       for (int i = 0; i < nwNumAdcChan; ++i) {
         final int baseIndex = packetStart + i * 3;
-        final int res = ((data[baseIndex] << 16) |
+        final int res = ((data[baseIndex] << 0) |
                 (data[baseIndex + 1] << 8) |
-                data[baseIndex + 2])
+                data[baseIndex + 2] << 16)
             .toSigned(24);
 
         final int idx = _chanToLine(i);
@@ -355,12 +343,6 @@ class DataHub extends Listenable {
 
     _notifyDataReceived();
     return rawSz < _maxDataSz;
-  }
-
-  void _makeUpLostSample() {
-    for (int i = 0; i < rawData.length; ++i) {
-      rawData[i][rawSz] = 0;
-    }
   }
 
   @override
