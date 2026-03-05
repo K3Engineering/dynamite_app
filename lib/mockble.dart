@@ -100,7 +100,8 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
-  Future<void> connect(String deviceId, {Duration? connectionTimeout}) async {
+  Future<void> connect(String deviceId,
+      {Duration? connectionTimeout, bool autoConnect = false}) async {
     if (_mockData.isEmpty) {
       await _setupMockData();
     }
