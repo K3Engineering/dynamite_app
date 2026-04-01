@@ -50,8 +50,10 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
-  Future<void> startScan(
-      {ScanFilter? scanFilter, PlatformConfig? platformConfig}) async {
+  Future<void> startScan({
+    ScanFilter? scanFilter,
+    PlatformConfig? platformConfig,
+  }) async {
     if (_scanTimer != null) return;
 
     final rng = Random(555);
@@ -100,8 +102,11 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
-  Future<void> connect(String deviceId,
-      {Duration? connectionTimeout, bool autoConnect = false}) async {
+  Future<void> connect(
+    String deviceId, {
+    Duration? connectionTimeout,
+    bool autoConnect = false,
+  }) async {
     if (_mockData.isEmpty) {
       await _setupMockData();
     }
@@ -129,8 +134,12 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
-  Future<void> setNotifiable(String deviceId, String service,
-      String characteristic, BleInputProperty bleInputProperty) async {
+  Future<void> setNotifiable(
+    String deviceId,
+    String service,
+    String characteristic,
+    BleInputProperty bleInputProperty,
+  ) async {
     _notificationTimer?.cancel();
     _notificationTimer = null;
     if (BleInputProperty.notification == bleInputProperty) {
@@ -170,11 +179,12 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<void> writeValue(
-      String deviceId,
-      String service,
-      String characteristic,
-      Uint8List value,
-      BleOutputProperty bleOutputProperty) async {}
+    String deviceId,
+    String service,
+    String characteristic,
+    Uint8List value,
+    BleOutputProperty bleOutputProperty,
+  ) async {}
 
   @override
   Future<int> requestMtu(String deviceId, int expectedMtu) async {
@@ -203,9 +213,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
-  Future<List<BleDevice>> getSystemDevices(
-    List<String>? withServices,
-  ) async {
+  Future<List<BleDevice>> getSystemDevices(List<String>? withServices) async {
     return ([]);
   }
 
@@ -215,21 +223,25 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   Future<void> _setupMockData() async {
     try {
-      final String mem =
-          await XFile('MockData.txt').readAsString(encoding: ascii);
+      final String mem = await XFile(
+        'MockData.txt',
+      ).readAsString(encoding: ascii);
       final List<String> textData = mem.split('\n');
       for (final String s in textData) {
         if (s.isEmpty) continue;
 
-        final Map<String, dynamic> parsedLine =
-            json.decode(s.replaceAll("'", '"'));
+        final Map<String, dynamic> parsedLine = json.decode(
+          s.replaceAll("'", '"'),
+        );
         final adcSamples = List<int>.from(parsedLine['channels']);
         assert(adcSamples.length == 4);
         final networkFormatData = Uint8List(nwAdcSampleLength);
         for (int i = adcSamples.length - 1; i >= 0; --i) {
-          networkFormatData.buffer
-              .asByteData()
-              .setInt32(1 + i * 3, adcSamples[i], Endian.big);
+          networkFormatData.buffer.asByteData().setInt32(
+            1 + i * 3,
+            adcSamples[i],
+            Endian.big,
+          );
         }
         _mockData.add(networkFormatData);
       }
@@ -239,7 +251,8 @@ class MockBlePlatform extends UniversalBlePlatform {
 
     if (_mockData.isEmpty) {
       _mockData.add(
-          Uint8List.fromList([0, 0, 5, 4, 3, 6, 5, 4, 7, 6, 5, 8, 7, 6, 0]));
+        Uint8List.fromList([0, 0, 5, 4, 3, 6, 5, 4, 7, 6, 5, 8, 7, 6, 0]),
+      );
     }
   }
 
@@ -259,7 +272,7 @@ class MockBlePlatform extends UniversalBlePlatform {
         rssi: -50,
         services: [btServiceId],
         manufacturerDataList: [
-          ManufacturerData(0x02, Uint8List.fromList([2, 3, 4]))
+          ManufacturerData(0x02, Uint8List.fromList([2, 3, 4])),
         ],
       ),
       BleDevice(
@@ -267,9 +280,9 @@ class MockBlePlatform extends UniversalBlePlatform {
         name: '3_device',
         services: ['3_ser'],
         manufacturerDataList: [
-          ManufacturerData(0x03, Uint8List.fromList([3, 4, 5]))
+          ManufacturerData(0x03, Uint8List.fromList([3, 4, 5])),
         ],
-      )
+      ),
     ];
   }
 
@@ -278,12 +291,12 @@ class MockBlePlatform extends UniversalBlePlatform {
       return ([
         BleCharacteristic(btChrAdcFeedId, [CharacteristicProperty.notify], []),
         BleCharacteristic('c1234567', [CharacteristicProperty.notify], []),
-        BleCharacteristic('a7654321', [CharacteristicProperty.read], [])
+        BleCharacteristic('a7654321', [CharacteristicProperty.read], []),
       ]);
     }
     return ([
       BleCharacteristic('c1234567', [CharacteristicProperty.notify], []),
-      BleCharacteristic('a7654321', [CharacteristicProperty.read], [])
+      BleCharacteristic('a7654321', [CharacteristicProperty.read], []),
     ]);
   }
 
@@ -291,12 +304,12 @@ class MockBlePlatform extends UniversalBlePlatform {
     if (deviceId == '2') {
       return ([
         BleService('e1234567', _generateCharacteristics(deviceId)),
-        BleService(btServiceId, _generateCharacteristics(deviceId))
+        BleService(btServiceId, _generateCharacteristics(deviceId)),
       ]);
     }
     return ([
       BleService('e1234567', _generateCharacteristics(deviceId)),
-      BleService('e7654321', _generateCharacteristics(deviceId))
+      BleService('e7654321', _generateCharacteristics(deviceId)),
     ]);
   }
 }

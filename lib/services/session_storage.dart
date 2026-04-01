@@ -1,0 +1,227 @@
+import 'dart:io';
+
+import 'package:drift/drift.dart' show Value;
+import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
+
+import 'database.dart';
+import 'bt_handling.dart';
+
+/// Binary file format:
+/// - 4 bytes: magic "DYNO"
+/// - 4 bytes: version (uint32 LE)
+/// - 4 bytes: channel count (uint32 LE)
+/// - 4 bytes: sample count (uint32 LE)
+/// - 4 bytes: sample rate (uint32 LE)
+/// - 4 bytes: reserved
+/// - then: packed int32 LE values, interleaved [ch0_s0, ch1_s0, ch0_s1, ch1_s1, ...]
+///
+/// Total header: 24 bytes
+
+class SessionStorage {
+  static const int _headerSize = 24;
+  static const int _version = 1;
+  static final Uint8List _magic = Uint8List.fromList([
+    0x44,
+    0x59,
+    0x4E,
+    0x4F,
+  ]); // "DYNO"
+
+  /// Save the current DataHub contents to a binary file and create a DB record.
+  /// Returns the session id.
+  static Future<int> saveSession({
+    required DataHub dataHub,
+    required String name,
+    required List<String> channelLabels,
+    required int channelCount,
+    String notes = '',
+  }) async {
+    final dir = await AppDatabase.sessionDataDir;
+    final fileName = AppDatabase.generateDataFileName();
+    final filePath = p.join(dir.path, fileName);
+
+    // Write binary data
+    await _writeBinaryFile(
+      filePath: filePath,
+      dataHub: dataHub,
+      channelCount: channelCount,
+    );
+
+    // Compute peak
+    double peakRaw = 0;
+    int peakChannel = 0;
+    for (int line = 0; line < DataHub.numGraphLines; line++) {
+      final val = (dataHub.rawMax[line] - dataHub.tare[line]).toDouble();
+      if (val > peakRaw) {
+        peakRaw = val;
+        peakChannel = line;
+      }
+    }
+
+    final durationMs = (dataHub.rawSz * 1000) ~/ DataHub.samplesPerSec;
+
+    // Create DB record
+    final id = await AppDatabase.instance.insertSession(
+      SessionsCompanion.insert(
+        name: Value(name),
+        createdAt: DateTime.now(),
+        durationMs: Value(durationMs),
+        sampleRate: Value(DataHub.samplesPerSec),
+        channelCount: Value(channelCount),
+        channelLabels: Value(channelLabels.toString()),
+        peakForceRaw: Value(peakRaw),
+        peakForceChannel: Value(peakChannel),
+        calibrationSlope: Value(dataHub.deviceCalibration.slope),
+        calibrationOffset: Value(dataHub.deviceCalibration.offset),
+        notes: Value(notes),
+        dataFilePath: fileName,
+        sampleCount: Value(dataHub.rawSz),
+      ),
+    );
+
+    return id;
+  }
+
+  /// Write raw data to a binary file.
+  static Future<void> _writeBinaryFile({
+    required String filePath,
+    required DataHub dataHub,
+    required int channelCount,
+  }) async {
+    final numLines = DataHub.numGraphLines;
+    final sampleCount = dataHub.rawSz;
+
+    // Build the binary buffer
+    final totalBytes = _headerSize + sampleCount * numLines * 4;
+    final buffer = ByteData(totalBytes);
+
+    // Header
+    for (int i = 0; i < 4; i++) {
+      buffer.setUint8(i, _magic[i]);
+    }
+    buffer.setUint32(4, _version, Endian.little);
+    buffer.setUint32(8, numLines, Endian.little);
+    buffer.setUint32(12, sampleCount, Endian.little);
+    buffer.setUint32(16, DataHub.samplesPerSec, Endian.little);
+    buffer.setUint32(20, 0, Endian.little); // reserved
+
+    // Interleaved data
+    int offset = _headerSize;
+    for (int s = 0; s < sampleCount; s++) {
+      for (int ch = 0; ch < numLines; ch++) {
+        buffer.setInt32(offset, dataHub.rawData[ch][s], Endian.little);
+        offset += 4;
+      }
+    }
+
+    final file = File(filePath);
+    await file.writeAsBytes(buffer.buffer.asUint8List(), flush: true);
+
+    debugPrint(
+      'Saved $sampleCount samples to $filePath '
+      '(${(totalBytes / 1024).toStringAsFixed(1)} KB)',
+    );
+  }
+
+  /// Read a session's binary data from file.
+  /// Returns a list of Int32Lists (one per channel).
+  static Future<SessionData?> loadSession(Session session) async {
+    final dir = await AppDatabase.sessionDataDir;
+    final filePath = p.join(dir.path, session.dataFilePath);
+    final file = File(filePath);
+
+    if (!await file.exists()) {
+      debugPrint('Session file not found: $filePath');
+      return null;
+    }
+
+    final bytes = await file.readAsBytes();
+    final data = ByteData.sublistView(bytes);
+
+    // Validate header
+    for (int i = 0; i < 4; i++) {
+      if (data.getUint8(i) != _magic[i]) {
+        debugPrint('Invalid file magic');
+        return null;
+      }
+    }
+
+    final version = data.getUint32(4, Endian.little);
+    if (version != _version) {
+      debugPrint('Unsupported version: $version');
+      return null;
+    }
+
+    final channelCount = data.getUint32(8, Endian.little);
+    final sampleCount = data.getUint32(12, Endian.little);
+    final sampleRate = data.getUint32(16, Endian.little);
+
+    final channels = List.generate(channelCount, (_) => Int32List(sampleCount));
+
+    int offset = _headerSize;
+    for (int s = 0; s < sampleCount; s++) {
+      for (int ch = 0; ch < channelCount; ch++) {
+        channels[ch][s] = data.getInt32(offset, Endian.little);
+        offset += 4;
+      }
+    }
+
+    return SessionData(
+      channels: channels,
+      sampleRate: sampleRate,
+      sampleCount: sampleCount,
+      calibrationSlope: session.calibrationSlope,
+      calibrationOffset: session.calibrationOffset,
+    );
+  }
+
+  /// Delete a session's binary file.
+  static Future<void> deleteSessionFile(String dataFilePath) async {
+    final dir = await AppDatabase.sessionDataDir;
+    final file = File(p.join(dir.path, dataFilePath));
+    if (await file.exists()) {
+      await file.delete();
+    }
+  }
+}
+
+/// Loaded session data for playback/review.
+class SessionData {
+  final List<Int32List> channels;
+  final int sampleRate;
+  final int sampleCount;
+  final double calibrationSlope;
+  final int calibrationOffset;
+
+  const SessionData({
+    required this.channels,
+    required this.sampleRate,
+    required this.sampleCount,
+    required this.calibrationSlope,
+    required this.calibrationOffset,
+  });
+
+  /// Get peak raw value for a given channel.
+  int peakRaw(int channel) {
+    int peak = 0;
+    final data = channels[channel];
+    for (int i = 0; i < sampleCount; i++) {
+      if (data[i] > peak) peak = data[i];
+    }
+    return peak;
+  }
+
+  /// Get average raw value for a given channel.
+  double averageRaw(int channel) {
+    double sum = 0;
+    final data = channels[channel];
+    for (int i = 0; i < sampleCount; i++) {
+      sum += data[i];
+    }
+    return sum / sampleCount;
+  }
+
+  /// Duration in seconds.
+  double get durationSeconds => sampleCount / sampleRate;
+}
