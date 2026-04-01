@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
@@ -21,15 +22,14 @@ import 'bt_handling.dart';
 class SessionStorage {
   static const int _headerSize = 24;
   static const int _version = 1;
-  static final Uint8List _magic = Uint8List.fromList([
-    0x44,
-    0x59,
-    0x4E,
-    0x4F,
-  ]); // "DYNO"
+  static final _magic = Uint8List.fromList([0x44, 0x59, 0x4E, 0x4F]); // "DYNO"
 
   /// Save the current DataHub contents to a binary file and create a DB record.
+  /// Only saves the slice from [dataHub.recordingStartIdx] to [dataHub.rawSz].
   /// Returns the session id.
+  ///
+  /// TODO: On web, binary file storage is not supported (dart:io unavailable).
+  /// For now, session saving only works on mobile/desktop platforms.
   static Future<int> saveSession({
     required DataHub dataHub,
     required String name,
@@ -37,29 +37,40 @@ class SessionStorage {
     required int channelCount,
     String notes = '',
   }) async {
-    final dir = await AppDatabase.sessionDataDir;
-    final fileName = AppDatabase.generateDataFileName();
-    final filePath = p.join(dir.path, fileName);
+    final int startIdx = dataHub.recordingStartIdx;
+    final int endIdx = dataHub.rawSz;
+    final int recordedSamples = endIdx - startIdx;
 
-    // Write binary data
-    await _writeBinaryFile(
-      filePath: filePath,
-      dataHub: dataHub,
-      channelCount: channelCount,
-    );
+    String fileName = '';
 
-    // Compute peak
+    // Only write binary file on non-web platforms.
+    if (!kIsWeb) {
+      final dir = await AppDatabase.sessionDataDir;
+      fileName = AppDatabase.generateDataFileName();
+      final filePath = p.join(dir.path, fileName);
+
+      await _writeBinaryFile(
+        filePath: filePath,
+        dataHub: dataHub,
+        startIdx: startIdx,
+        sampleCount: recordedSamples,
+      );
+    }
+
+    // Compute peak over the recorded slice
     double peakRaw = 0;
     int peakChannel = 0;
     for (int line = 0; line < DataHub.numGraphLines; line++) {
-      final val = (dataHub.rawMax[line] - dataHub.tare[line]).toDouble();
-      if (val > peakRaw) {
-        peakRaw = val;
-        peakChannel = line;
+      for (int s = startIdx; s < endIdx; s++) {
+        final val = (dataHub.rawData[line][s] - dataHub.tare[line]);
+        if (val > peakRaw) {
+          peakRaw = val;
+          peakChannel = line;
+        }
       }
     }
 
-    final durationMs = (dataHub.rawSz * 1000) ~/ DataHub.samplesPerSec;
+    final durationMs = (recordedSamples * 1000) ~/ DataHub.samplesPerSec;
 
     // Create DB record
     final id = await AppDatabase.instance.insertSession(
@@ -67,7 +78,7 @@ class SessionStorage {
         name: Value(name),
         createdAt: DateTime.now(),
         durationMs: Value(durationMs),
-        sampleRate: Value(DataHub.samplesPerSec),
+        sampleRate: const Value(DataHub.samplesPerSec),
         channelCount: Value(channelCount),
         channelLabels: Value(channelLabels.toString()),
         peakForceRaw: Value(peakRaw),
@@ -76,21 +87,21 @@ class SessionStorage {
         calibrationOffset: Value(dataHub.deviceCalibration.offset),
         notes: Value(notes),
         dataFilePath: fileName,
-        sampleCount: Value(dataHub.rawSz),
+        sampleCount: Value(recordedSamples),
       ),
     );
 
     return id;
   }
 
-  /// Write raw data to a binary file.
+  /// Write raw data to a binary file (only the recorded slice).
   static Future<void> _writeBinaryFile({
     required String filePath,
     required DataHub dataHub,
-    required int channelCount,
+    required int startIdx,
+    required int sampleCount,
   }) async {
     final numLines = DataHub.numGraphLines;
-    final sampleCount = dataHub.rawSz;
 
     // Build the binary buffer
     final totalBytes = _headerSize + sampleCount * numLines * 4;
@@ -106,9 +117,9 @@ class SessionStorage {
     buffer.setUint32(16, DataHub.samplesPerSec, Endian.little);
     buffer.setUint32(20, 0, Endian.little); // reserved
 
-    // Interleaved data
+    // Interleaved data — write only from startIdx to startIdx + sampleCount
     int offset = _headerSize;
-    for (int s = 0; s < sampleCount; s++) {
+    for (int s = startIdx; s < startIdx + sampleCount; s++) {
       for (int ch = 0; ch < numLines; ch++) {
         buffer.setInt32(offset, dataHub.rawData[ch][s], Endian.little);
         offset += 4;
@@ -125,8 +136,14 @@ class SessionStorage {
   }
 
   /// Read a session's binary data from file.
-  /// Returns a list of Int32Lists (one per channel).
+  ///
+  /// TODO: Not supported on web — returns null.
   static Future<SessionData?> loadSession(Session session) async {
+    if (kIsWeb) {
+      debugPrint('Session file loading not supported on web');
+      return null;
+    }
+
     final dir = await AppDatabase.sessionDataDir;
     final filePath = p.join(dir.path, session.dataFilePath);
     final file = File(filePath);
@@ -177,7 +194,11 @@ class SessionStorage {
   }
 
   /// Delete a session's binary file.
+  ///
+  /// TODO: Not supported on web — no-op.
   static Future<void> deleteSessionFile(String dataFilePath) async {
+    if (kIsWeb) return;
+
     final dir = await AppDatabase.sessionDataDir;
     final file = File(p.join(dir.path, dataFilePath));
     if (await file.exists()) {

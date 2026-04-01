@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
@@ -42,7 +43,13 @@ class AppDatabase extends _$AppDatabase {
   int get schemaVersion => 1;
 
   static QueryExecutor _openDefault() {
-    return driftDatabase(name: 'dynamite_sessions');
+    return driftDatabase(
+      name: 'dynamite_sessions',
+      web: DriftWebOptions(
+        sqlite3Wasm: Uri.parse('sqlite3.wasm'),
+        driftWorker: Uri.parse('drift_worker.js'),
+      ),
+    );
   }
 
   // -- CRUD operations --
@@ -86,7 +93,9 @@ class AppDatabase extends _$AppDatabase {
   // -- Data directory management --
 
   /// Get the directory where session binary files are stored.
+  /// Only available on non-web platforms.
   static Future<Directory> get sessionDataDir async {
+    assert(!kIsWeb, 'sessionDataDir is not available on web');
     final appDir = await getApplicationDocumentsDirectory();
     final dir = Directory(p.join(appDir.path, 'dynamite_sessions'));
     if (!await dir.exists()) {

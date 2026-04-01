@@ -49,8 +49,9 @@ class _LiveTabState extends State<LiveTab> {
     if (_bt.sessionInProgress) {
       _bt.stopSession();
 
-      // Auto-save if there's data
-      if (_bt.dataHub.rawSz > 0) {
+      // Auto-save if there's recorded data
+      final recordedSamples = _bt.dataHub.rawSz - _bt.dataHub.recordingStartIdx;
+      if (recordedSamples > 0) {
         final settings = context.read<AppSettings>();
         final now = DateTime.now();
         final autoName =
@@ -84,7 +85,7 @@ class _LiveTabState extends State<LiveTab> {
         }
       }
     } else {
-      _bt.dataHub.clear();
+      // toggleSession marks the recording start index inside DataHub.
       _bt.toggleSession();
     }
     setState(() {});

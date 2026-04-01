@@ -135,6 +135,10 @@ class BluetoothHandling {
 
   void toggleSession() {
     assert(_selectedDeviceId.isNotEmpty);
+    if (!_sessionInProgress) {
+      // Starting a recording: mark the current buffer position.
+      dataHub._recordingStartIdx = dataHub.rawSz;
+    }
     _sessionInProgress = !_sessionInProgress;
     _notifyStateChanged();
   }
@@ -242,8 +246,7 @@ class BluetoothHandling {
 
   void _processReceivedData(String _, String __, Uint8List data, int? ___) {
     // Always stream data to the DataHub for live display.
-    // The DataHub tracks whether we're recording or just displaying.
-    final canContinue = dataHub._parseDataPacket(data, sessionInProgress);
+    final canContinue = dataHub._parseDataPacket(data);
     if (!canContinue) {
       stopSession();
     }
@@ -275,10 +278,16 @@ class DataHub extends Listenable {
   final List<VoidCallback> _notifyCb = [];
   DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
 
+  /// Index into rawData where the current recording started.
+  /// Used by SessionStorage to know which slice to save.
+  int _recordingStartIdx = 0;
+  int get recordingStartIdx => _recordingStartIdx;
+
   void clear() {
     _tareCount = _tareWindow;
+    rawSz = 0;
+    _recordingStartIdx = 0;
     for (int i = 0; i < numGraphLines; ++i) {
-      rawSz = 0;
       rawMax[i] = 0;
       tare[i] = 0;
       _runningTotal[i] = 0;
@@ -349,9 +358,9 @@ class DataHub extends Listenable {
   }
 
   /// Parse a BLE data packet.
-  /// [recording]: if true, data is stored for later retrieval.
-  /// Always updates live stats and tare regardless.
-  bool _parseDataPacket(Uint8List data, bool recording) {
+  /// Data is always buffered for live display. Recording start/end is
+  /// tracked via [_recordingStartIdx] set by BluetoothHandling.toggleSession().
+  bool _parseDataPacket(Uint8List data) {
     if (data.isEmpty) {
       debugPrint("data isEmpty");
       return false;
@@ -386,7 +395,8 @@ class DataHub extends Listenable {
           _currentRaw[idx] = res;
           if (taring) {
             _addTare(res, idx);
-          } else if (recording) {
+          } else {
+            // Always buffer data for live display.
             _addData(res, idx);
           }
         }
@@ -400,7 +410,7 @@ class DataHub extends Listenable {
             _runningTotal[i] = 0;
           }
         }
-      } else if (recording) {
+      } else {
         rawSz++;
         if (rawSz >= _maxDataSz) {
           break;
