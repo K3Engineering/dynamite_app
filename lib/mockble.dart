@@ -26,6 +26,7 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   final List<Uint8List> _mockData = [];
   int _mockDataCount = 0;
+  int _packetCount = 0;
 
   @override
   Future<AvailabilityState> getBluetoothAvailabilityState() async {
@@ -87,6 +88,11 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
+  Future<bool> isScanning() async {
+    return _scanTimer != null;
+  }
+
+  @override
   Future<BleConnectionState> getConnectionState(String deviceId) async {
     return (_connectedDeviceId == deviceId)
         ? _connectionState
@@ -94,7 +100,8 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
-  Future<void> connect(String deviceId, {Duration? connectionTimeout}) async {
+  Future<void> connect(String deviceId,
+      {Duration? connectionTimeout, bool autoConnect = false}) async {
     if (_mockData.isEmpty) {
       await _setupMockData();
     }
@@ -116,7 +123,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
-  Future<List<BleService>> discoverServices(String deviceId) async {
+  Future<List<BleService>> discoverServices(String deviceId, bool _) async {
     await Future<void>.delayed(netDelay);
     return _generateServices(deviceId);
   }
@@ -130,17 +137,22 @@ class MockBlePlatform extends UniversalBlePlatform {
       const int samplesPerPack = 16;
       const dataInterval = Duration(milliseconds: 1 * samplesPerPack);
       _notificationTimer = Timer.periodic(dataInterval, (_) {
-        final ev = Uint8List(adcSampleLength * samplesPerPack);
+        final ev = Uint8List(nwHeaderSize + nwAdcSampleLength * samplesPerPack);
+        ev[0] = samplesPerPack * nwAdcSampleLength;
+        ev[1] = _packetCount & 0xFF;
+        ev[2] = (_packetCount >> 8) & 0xFF;
         for (int i = 0; i < samplesPerPack; ++i) {
-          for (int j = 0; j < adcSampleLength; ++j) {
-            ev[i * adcSampleLength + j] = _mockData[_mockDataCount][j];
+          for (int j = 0; j < nwAdcSampleLength; ++j) {
+            ev[nwHeaderSize + i * nwAdcSampleLength + j] =
+                _mockData[_mockDataCount][j];
           }
           _mockDataCount++;
           if (_mockDataCount >= _mockData.length) {
             _mockDataCount = 0;
           }
         }
-        updateCharacteristicValue(deviceId, characteristic, ev);
+        _packetCount += samplesPerPack;
+        updateCharacteristicValue(deviceId, characteristic, ev, null);
       });
     }
   }
@@ -167,6 +179,11 @@ class MockBlePlatform extends UniversalBlePlatform {
   @override
   Future<int> requestMtu(String deviceId, int expectedMtu) async {
     return 244;
+  }
+
+  @override
+  Future<int> readRssi(String deviceId) async {
+    return 1;
   }
 
   @override
@@ -208,7 +225,7 @@ class MockBlePlatform extends UniversalBlePlatform {
             json.decode(s.replaceAll("'", '"'));
         final adcSamples = List<int>.from(parsedLine['channels']);
         assert(adcSamples.length == 4);
-        final networkFormatData = Uint8List(adcSampleLength);
+        final networkFormatData = Uint8List(nwAdcSampleLength);
         for (int i = adcSamples.length - 1; i >= 0; --i) {
           networkFormatData.buffer
               .asByteData()
@@ -259,14 +276,14 @@ class MockBlePlatform extends UniversalBlePlatform {
   static List<BleCharacteristic> _generateCharacteristics(String deviceId) {
     if (deviceId == '2') {
       return ([
-        BleCharacteristic(btChrAdcFeedId, [CharacteristicProperty.notify]),
-        BleCharacteristic('c1234567', [CharacteristicProperty.notify]),
-        BleCharacteristic('a7654321', [CharacteristicProperty.read])
+        BleCharacteristic(btChrAdcFeedId, [CharacteristicProperty.notify], []),
+        BleCharacteristic('c1234567', [CharacteristicProperty.notify], []),
+        BleCharacteristic('a7654321', [CharacteristicProperty.read], [])
       ]);
     }
     return ([
-      BleCharacteristic('c1234567', [CharacteristicProperty.notify]),
-      BleCharacteristic('a7654321', [CharacteristicProperty.read])
+      BleCharacteristic('c1234567', [CharacteristicProperty.notify], []),
+      BleCharacteristic('a7654321', [CharacteristicProperty.read], [])
     ]);
   }
 

@@ -57,6 +57,7 @@ class BluetoothHandling {
     UniversalBle.onValueChange = null;
 
     _btStateListeners.remove(listener);
+    dataHub._prevSampleCount = -1;
   }
 
   Future<void> _updateBluetoothState() async {
@@ -212,7 +213,7 @@ class BluetoothHandling {
     }
   }
 
-  void _processReceivedData(String _, String __, Uint8List data) {
+  void _processReceivedData(String _, String __, Uint8List data, int? ___) {
     if (!sessionInProgress) return;
 
     final canContinue = dataHub._parseDataPacket(data);
@@ -236,13 +237,14 @@ class DataHub extends Listenable {
     (_) => Int32List(_maxDataSz),
     growable: false,
   );
-  int _timeTick = 0;
+  int _tareCount = _tareWindow;
   int rawSz = 0;
+  int _prevSampleCount = -1;
   final List<VoidCallback> _notifyCb = [];
   DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
 
   void clear() {
-    _timeTick = 0;
+    _tareCount = _tareWindow;
     for (int i = 0; i < numGraphLines; ++i) {
       rawSz = 0;
       rawMax[i] = 0;
@@ -251,18 +253,10 @@ class DataHub extends Listenable {
     }
   }
 
-  bool get taring => (_timeTick > 0) && (_timeTick <= _tareWindow);
+  bool get taring => (_tareCount > 0);
 
-  bool _addTare(int val, int idx) {
-    if (_timeTick > _tareWindow) {
-      return false;
-    }
+  void _addTare(int val, int idx) {
     _runningTotal[idx] += val;
-    if (_timeTick == _tareWindow) {
-      tare[idx] = _runningTotal[idx] / _tareWindow;
-      _runningTotal[idx] = 0;
-    }
-    return true;
   }
 
   void _addData(int val, int idx) {
@@ -280,8 +274,8 @@ class DataHub extends Listenable {
   }
 
   static int _chanToLine(int chan) {
-    if (chan == 0) return 0;
-    if (chan == 1) return 1;
+    if (chan == 1) return 0;
+    if (chan == 2) return 1;
     return -1; // No graph line for this chanel
   }
 
@@ -296,38 +290,57 @@ class DataHub extends Listenable {
       debugPrint("data isEmpty");
       return false;
     }
-    if (data.length % adcSampleLength != 0) {
-      debugPrint('Incorrect buffer size received');
-      debugPrint('Expected mod $adcSampleLength, got ${data.length}');
-      return false;
-    }
 
-    for (int packetStart = 0;
-        packetStart < data.length;
-        packetStart += adcSampleLength) {
-      assert(packetStart + adcSampleLength <= data.length);
+    final int count = data[0] << 8 + data[1];
+    if (_prevSampleCount != -1) {
+      final int diff = (count - _prevSampleCount) & 0xFFFF;
+      if (diff > 0) {
+        debugPrint('# lost $diff samples');
+        // _lostPackets += diff;
+        // TODO: signal lost packets
+      }
+    }
+    _prevSampleCount = (count + nwAdcNumSamples) & 0xFFFF;
+
+    for (int packetStart = nwHeaderSize;
+        packetStart < nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;
+        packetStart += nwAdcSampleLength) {
+      assert(packetStart + nwAdcSampleLength <= data.length);
       // final status = (data[packetStart + 1] << 8) | data[packetStart];
       // final crc = data[packetStart + 14];
-      _timeTick++;
-      const int numAdcChan = 2;
-      for (int i = 0; i < numAdcChan; ++i) {
+      for (int i = 0; i < nwNumAdcChan; ++i) {
         final int baseIndex = packetStart + i * 3;
-        final int res = ((data[baseIndex] << 16) |
+        final int res = ((data[baseIndex] << 0) |
                 (data[baseIndex + 1] << 8) |
-                data[baseIndex + 2])
+                data[baseIndex + 2] << 16)
             .toSigned(24);
 
         final int idx = _chanToLine(i);
         if (idx >= 0) {
-          if (!_addTare(res, idx)) {
+          if (taring) {
+            _addTare(res, idx);
+          } else {
             _addData(res, idx);
           }
         }
       }
-      if (_timeTick > _tareWindow) {
+
+      if (taring) {
+        _tareCount--;
+        if (!taring) {
+          for (int i = 0; i < _runningTotal.length; ++i) {
+            tare[i] = _runningTotal[i] / _tareWindow;
+            _runningTotal[i] = 0;
+          }
+        }
+      } else {
         rawSz++;
+        if (rawSz >= _maxDataSz) {
+          break;
+        }
       }
     }
+
     _notifyDataReceived();
     return rawSz < _maxDataSz;
   }
