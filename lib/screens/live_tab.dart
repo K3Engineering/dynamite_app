@@ -212,24 +212,29 @@ class _LiveTabState extends State<LiveTab> {
     final hub = _bt.dataHub;
     final indices = settings.activeChannelIndices;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Row(
-        children: [
-          for (int i = 0; i < indices.length; i++) ...[
-            if (i > 0) const SizedBox(width: 16),
-            Expanded(
-              child: _ChannelStatChip(
-                label: settings.channelLabels[indices[i]],
-                color: _channelColor(indices[i]),
-                current: hub.currentForce(indices[i], unit),
-                peak: hub.peakForce(indices[i], unit),
-                unit: unit,
-              ),
-            ),
-          ],
-        ],
-      ),
+    return ListenableBuilder(
+      listenable: hub,
+      builder: (context, _) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Row(
+            children: [
+              for (int i = 0; i < indices.length; i++) ...[
+                if (i > 0) const SizedBox(width: 16),
+                Expanded(
+                  child: _ChannelStatChip(
+                    label: settings.channelLabels[indices[i]],
+                    color: _channelColor(indices[i]),
+                    current: hub.currentForce(indices[i], unit),
+                    peak: hub.peakForce(indices[i], unit),
+                    unit: unit,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
     );
   }
 
