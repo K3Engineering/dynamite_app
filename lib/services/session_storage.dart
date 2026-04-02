@@ -1,8 +1,5 @@
-import 'dart:io';
-
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
-import 'package:path/path.dart' as p;
 
 import 'database.dart';
 import 'bt_handling.dart';
@@ -73,7 +70,6 @@ class SessionStorage {
           calibrationSlope: Value(dataHub.deviceCalibration.slope),
           calibrationOffset: Value(dataHub.deviceCalibration.offset),
           notes: Value(notes),
-          dataFilePath: const Value(null),
           sampleCount: Value(recordedSamples),
         ),
       );
@@ -175,18 +171,6 @@ class SessionStorage {
       calibrationSlope: session.calibrationSlope,
       calibrationOffset: session.calibrationOffset,
     );
-  }
-
-  /// Delete a session's binary file.
-  /// (Deprecated: now handled by SQL ON DELETE CASCADE but kept to remove any old files)
-  static Future<void> deleteSessionFile(String? dataFilePath) async {
-    if (kIsWeb || dataFilePath == null || dataFilePath.isEmpty) return;
-
-    final dir = await AppDatabase.sessionDataDir;
-    final file = File(p.join(dir.path, dataFilePath));
-    if (await file.exists()) {
-      await file.delete();
-    }
   }
 }
 

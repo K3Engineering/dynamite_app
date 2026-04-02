@@ -148,17 +148,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     requiredDuringInsert: false,
     defaultValue: const Constant(''),
   );
-  static const VerificationMeta _dataFilePathMeta = const VerificationMeta(
-    'dataFilePath',
-  );
-  @override
-  late final GeneratedColumn<String> dataFilePath = GeneratedColumn<String>(
-    'data_file_path',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
   static const VerificationMeta _sampleCountMeta = const VerificationMeta(
     'sampleCount',
   );
@@ -185,7 +174,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     calibrationSlope,
     calibrationOffset,
     notes,
-    dataFilePath,
     sampleCount,
   ];
   @override
@@ -289,15 +277,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         notes.isAcceptableOrUnknown(data['notes']!, _notesMeta),
       );
     }
-    if (data.containsKey('data_file_path')) {
-      context.handle(
-        _dataFilePathMeta,
-        dataFilePath.isAcceptableOrUnknown(
-          data['data_file_path']!,
-          _dataFilePathMeta,
-        ),
-      );
-    }
     if (data.containsKey('sample_count')) {
       context.handle(
         _sampleCountMeta,
@@ -364,10 +343,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.string,
         data['${effectivePrefix}notes'],
       )!,
-      dataFilePath: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}data_file_path'],
-      ),
       sampleCount: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}sample_count'],
@@ -394,7 +369,6 @@ class Session extends DataClass implements Insertable<Session> {
   final double calibrationSlope;
   final int calibrationOffset;
   final String notes;
-  final String? dataFilePath;
   final int sampleCount;
   const Session({
     required this.id,
@@ -409,7 +383,6 @@ class Session extends DataClass implements Insertable<Session> {
     required this.calibrationSlope,
     required this.calibrationOffset,
     required this.notes,
-    this.dataFilePath,
     required this.sampleCount,
   });
   @override
@@ -427,9 +400,6 @@ class Session extends DataClass implements Insertable<Session> {
     map['calibration_slope'] = Variable<double>(calibrationSlope);
     map['calibration_offset'] = Variable<int>(calibrationOffset);
     map['notes'] = Variable<String>(notes);
-    if (!nullToAbsent || dataFilePath != null) {
-      map['data_file_path'] = Variable<String>(dataFilePath);
-    }
     map['sample_count'] = Variable<int>(sampleCount);
     return map;
   }
@@ -448,9 +418,6 @@ class Session extends DataClass implements Insertable<Session> {
       calibrationSlope: Value(calibrationSlope),
       calibrationOffset: Value(calibrationOffset),
       notes: Value(notes),
-      dataFilePath: dataFilePath == null && nullToAbsent
-          ? const Value.absent()
-          : Value(dataFilePath),
       sampleCount: Value(sampleCount),
     );
   }
@@ -473,7 +440,6 @@ class Session extends DataClass implements Insertable<Session> {
       calibrationSlope: serializer.fromJson<double>(json['calibrationSlope']),
       calibrationOffset: serializer.fromJson<int>(json['calibrationOffset']),
       notes: serializer.fromJson<String>(json['notes']),
-      dataFilePath: serializer.fromJson<String?>(json['dataFilePath']),
       sampleCount: serializer.fromJson<int>(json['sampleCount']),
     );
   }
@@ -493,7 +459,6 @@ class Session extends DataClass implements Insertable<Session> {
       'calibrationSlope': serializer.toJson<double>(calibrationSlope),
       'calibrationOffset': serializer.toJson<int>(calibrationOffset),
       'notes': serializer.toJson<String>(notes),
-      'dataFilePath': serializer.toJson<String?>(dataFilePath),
       'sampleCount': serializer.toJson<int>(sampleCount),
     };
   }
@@ -511,7 +476,6 @@ class Session extends DataClass implements Insertable<Session> {
     double? calibrationSlope,
     int? calibrationOffset,
     String? notes,
-    Value<String?> dataFilePath = const Value.absent(),
     int? sampleCount,
   }) => Session(
     id: id ?? this.id,
@@ -526,7 +490,6 @@ class Session extends DataClass implements Insertable<Session> {
     calibrationSlope: calibrationSlope ?? this.calibrationSlope,
     calibrationOffset: calibrationOffset ?? this.calibrationOffset,
     notes: notes ?? this.notes,
-    dataFilePath: dataFilePath.present ? dataFilePath.value : this.dataFilePath,
     sampleCount: sampleCount ?? this.sampleCount,
   );
   Session copyWithCompanion(SessionsCompanion data) {
@@ -559,9 +522,6 @@ class Session extends DataClass implements Insertable<Session> {
           ? data.calibrationOffset.value
           : this.calibrationOffset,
       notes: data.notes.present ? data.notes.value : this.notes,
-      dataFilePath: data.dataFilePath.present
-          ? data.dataFilePath.value
-          : this.dataFilePath,
       sampleCount: data.sampleCount.present
           ? data.sampleCount.value
           : this.sampleCount,
@@ -583,7 +543,6 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('calibrationSlope: $calibrationSlope, ')
           ..write('calibrationOffset: $calibrationOffset, ')
           ..write('notes: $notes, ')
-          ..write('dataFilePath: $dataFilePath, ')
           ..write('sampleCount: $sampleCount')
           ..write(')'))
         .toString();
@@ -603,7 +562,6 @@ class Session extends DataClass implements Insertable<Session> {
     calibrationSlope,
     calibrationOffset,
     notes,
-    dataFilePath,
     sampleCount,
   );
   @override
@@ -622,7 +580,6 @@ class Session extends DataClass implements Insertable<Session> {
           other.calibrationSlope == this.calibrationSlope &&
           other.calibrationOffset == this.calibrationOffset &&
           other.notes == this.notes &&
-          other.dataFilePath == this.dataFilePath &&
           other.sampleCount == this.sampleCount);
 }
 
@@ -639,7 +596,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<double> calibrationSlope;
   final Value<int> calibrationOffset;
   final Value<String> notes;
-  final Value<String?> dataFilePath;
   final Value<int> sampleCount;
   const SessionsCompanion({
     this.id = const Value.absent(),
@@ -654,7 +610,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.calibrationSlope = const Value.absent(),
     this.calibrationOffset = const Value.absent(),
     this.notes = const Value.absent(),
-    this.dataFilePath = const Value.absent(),
     this.sampleCount = const Value.absent(),
   });
   SessionsCompanion.insert({
@@ -670,7 +625,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.calibrationSlope = const Value.absent(),
     this.calibrationOffset = const Value.absent(),
     this.notes = const Value.absent(),
-    this.dataFilePath = const Value.absent(),
     this.sampleCount = const Value.absent(),
   }) : createdAt = Value(createdAt);
   static Insertable<Session> custom({
@@ -686,7 +640,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<double>? calibrationSlope,
     Expression<int>? calibrationOffset,
     Expression<String>? notes,
-    Expression<String>? dataFilePath,
     Expression<int>? sampleCount,
   }) {
     return RawValuesInsertable({
@@ -702,7 +655,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (calibrationSlope != null) 'calibration_slope': calibrationSlope,
       if (calibrationOffset != null) 'calibration_offset': calibrationOffset,
       if (notes != null) 'notes': notes,
-      if (dataFilePath != null) 'data_file_path': dataFilePath,
       if (sampleCount != null) 'sample_count': sampleCount,
     });
   }
@@ -720,7 +672,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<double>? calibrationSlope,
     Value<int>? calibrationOffset,
     Value<String>? notes,
-    Value<String?>? dataFilePath,
     Value<int>? sampleCount,
   }) {
     return SessionsCompanion(
@@ -736,7 +687,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       calibrationSlope: calibrationSlope ?? this.calibrationSlope,
       calibrationOffset: calibrationOffset ?? this.calibrationOffset,
       notes: notes ?? this.notes,
-      dataFilePath: dataFilePath ?? this.dataFilePath,
       sampleCount: sampleCount ?? this.sampleCount,
     );
   }
@@ -780,9 +730,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     if (notes.present) {
       map['notes'] = Variable<String>(notes.value);
     }
-    if (dataFilePath.present) {
-      map['data_file_path'] = Variable<String>(dataFilePath.value);
-    }
     if (sampleCount.present) {
       map['sample_count'] = Variable<int>(sampleCount.value);
     }
@@ -804,7 +751,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('calibrationSlope: $calibrationSlope, ')
           ..write('calibrationOffset: $calibrationOffset, ')
           ..write('notes: $notes, ')
-          ..write('dataFilePath: $dataFilePath, ')
           ..write('sampleCount: $sampleCount')
           ..write(')'))
         .toString();
@@ -1038,7 +984,6 @@ typedef $$SessionsTableCreateCompanionBuilder =
       Value<double> calibrationSlope,
       Value<int> calibrationOffset,
       Value<String> notes,
-      Value<String?> dataFilePath,
       Value<int> sampleCount,
     });
 typedef $$SessionsTableUpdateCompanionBuilder =
@@ -1055,7 +1000,6 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<double> calibrationSlope,
       Value<int> calibrationOffset,
       Value<String> notes,
-      Value<String?> dataFilePath,
       Value<int> sampleCount,
     });
 
@@ -1125,11 +1069,6 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<String> get notes => $composableBuilder(
     column: $table.notes,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get dataFilePath => $composableBuilder(
-    column: $table.dataFilePath,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1208,11 +1147,6 @@ class $$SessionsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<String> get dataFilePath => $composableBuilder(
-    column: $table.dataFilePath,
-    builder: (column) => ColumnOrderings(column),
-  );
-
   ColumnOrderings<int> get sampleCount => $composableBuilder(
     column: $table.sampleCount,
     builder: (column) => ColumnOrderings(column),
@@ -1280,11 +1214,6 @@ class $$SessionsTableAnnotationComposer
   GeneratedColumn<String> get notes =>
       $composableBuilder(column: $table.notes, builder: (column) => column);
 
-  GeneratedColumn<String> get dataFilePath => $composableBuilder(
-    column: $table.dataFilePath,
-    builder: (column) => column,
-  );
-
   GeneratedColumn<int> get sampleCount => $composableBuilder(
     column: $table.sampleCount,
     builder: (column) => column,
@@ -1331,7 +1260,6 @@ class $$SessionsTableTableManager
                 Value<double> calibrationSlope = const Value.absent(),
                 Value<int> calibrationOffset = const Value.absent(),
                 Value<String> notes = const Value.absent(),
-                Value<String?> dataFilePath = const Value.absent(),
                 Value<int> sampleCount = const Value.absent(),
               }) => SessionsCompanion(
                 id: id,
@@ -1346,7 +1274,6 @@ class $$SessionsTableTableManager
                 calibrationSlope: calibrationSlope,
                 calibrationOffset: calibrationOffset,
                 notes: notes,
-                dataFilePath: dataFilePath,
                 sampleCount: sampleCount,
               ),
           createCompanionCallback:
@@ -1363,7 +1290,6 @@ class $$SessionsTableTableManager
                 Value<double> calibrationSlope = const Value.absent(),
                 Value<int> calibrationOffset = const Value.absent(),
                 Value<String> notes = const Value.absent(),
-                Value<String?> dataFilePath = const Value.absent(),
                 Value<int> sampleCount = const Value.absent(),
               }) => SessionsCompanion.insert(
                 id: id,
@@ -1378,7 +1304,6 @@ class $$SessionsTableTableManager
                 calibrationSlope: calibrationSlope,
                 calibrationOffset: calibrationOffset,
                 notes: notes,
-                dataFilePath: dataFilePath,
                 sampleCount: sampleCount,
               ),
           withReferenceMapper: (p0) => p0

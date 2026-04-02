@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../models/app_settings.dart';
 import '../models/force_unit.dart';
 import '../services/database.dart';
-import '../services/session_storage.dart';
 import 'session_detail_screen.dart';
 
 class SessionsTab extends StatefulWidget {
@@ -143,7 +142,6 @@ class _SessionsTabState extends State<SessionsTab> {
     );
 
     if (confirm == true) {
-      await SessionStorage.deleteSessionFile(session.dataFilePath);
       await AppDatabase.instance.deleteSession(session.id);
     }
   }

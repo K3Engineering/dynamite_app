@@ -1,10 +1,5 @@
-import 'dart:io';
-
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
-import 'package:path_provider/path_provider.dart';
-import 'package:path/path.dart' as p;
 
 part 'database.g.dart';
 
@@ -24,7 +19,6 @@ class Sessions extends Table {
       real().withDefault(const Constant(0.0001117587))();
   IntColumn get calibrationOffset => integer().withDefault(const Constant(0))();
   TextColumn get notes => text().withDefault(const Constant(''))();
-  TextColumn get dataFilePath => text().nullable()();
   IntColumn get sampleCount => integer().withDefault(const Constant(0))();
 }
 
@@ -48,7 +42,7 @@ class AppDatabase extends _$AppDatabase {
       AppDatabase._(executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration {
@@ -57,8 +51,8 @@ class AppDatabase extends _$AppDatabase {
         await m.createAll();
       },
       onUpgrade: (Migrator m, int from, int to) async {
-        if (from == 1) {
-          // We added the SessionBlobs table and made dataFilePath nullable
+        if (from < 3) {
+          // We added the SessionBlobs table and removed dataFilePath
           await m.createTable(sessionBlobs);
           await m.alterTable(TableMigration(sessions));
         }
@@ -115,25 +109,5 @@ class AppDatabase extends _$AppDatabase {
       await (delete(sessionBlobs)..where((t) => t.sessionId.equals(id))).go();
       return (delete(sessions)..where((t) => t.id.equals(id))).go();
     });
-  }
-
-  // -- Data directory management --
-
-  /// Get the directory where session binary files are stored.
-  /// Only available on non-web platforms.
-  static Future<Directory> get sessionDataDir async {
-    assert(!kIsWeb, 'sessionDataDir is not available on web');
-    final appDir = await getApplicationDocumentsDirectory();
-    final dir = Directory(p.join(appDir.path, 'dynamite_sessions'));
-    if (!await dir.exists()) {
-      await dir.create(recursive: true);
-    }
-    return dir;
-  }
-
-  /// Generate a unique filename for a new session's binary data.
-  static String generateDataFileName() {
-    final now = DateTime.now();
-    return 'session_${now.millisecondsSinceEpoch}.bin';
   }
 }

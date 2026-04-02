@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
@@ -352,7 +353,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     );
 
     if (confirm == true) {
-      await SessionStorage.deleteSessionFile(_session.dataFilePath);
       await AppDatabase.instance.deleteSession(_session.id);
       if (mounted) Navigator.of(context).pop();
     }
@@ -378,7 +378,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     }
 
     // Save to temp file
-    final dir = await AppDatabase.sessionDataDir;
+    final dir = await getTemporaryDirectory();
     final csvName = '${_session.name.isEmpty ? 'session' : _session.name}.csv';
     final csvPath = '${dir.path}/$csvName';
     await File(csvPath).writeAsString(buf.toString());
