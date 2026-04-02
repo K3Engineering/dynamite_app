@@ -1,5 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 import '../models/app_settings.dart';
 import '../models/force_unit.dart';
@@ -10,6 +12,8 @@ class SettingsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
+    const bool normalDoubleCmp = identical(double.nan, double.nan);
+    const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
 
     return SafeArea(
       child: ListView(
@@ -62,7 +66,40 @@ class SettingsTab extends StatelessWidget {
           // About
           Text('About', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
-          const Text('Dynamite App v1.0.0'),
+          FutureBuilder<PackageInfo>(
+            future: PackageInfo.fromPlatform(),
+            builder: (context, snapshot) {
+              if (snapshot.hasData) {
+                final packageInfo = snapshot.data!;
+                final version =
+                    '${packageInfo.version}+${packageInfo.buildNumber}';
+                const buildMode = kDebugMode
+                    ? 'Debug'
+                    : (kProfileMode ? 'Profile' : 'Release');
+
+                String targetInfo = 'Target: ${kIsWeb ? "Web" : "Native"}';
+                if (kIsWeb) {
+                  targetInfo += ' (${dart2wasm ? "WASM" : "JS"})';
+                }
+
+                String jsCmpWarning = '';
+                if (!normalDoubleCmp && kIsWeb) {
+                  jsCmpWarning = '\nWarning: JS style cmp(double) active';
+                }
+
+                return Text(
+                  'Dynamite App v$version\n'
+                  'Build Mode: $buildMode\n'
+                  '$targetInfo'
+                  '$jsCmpWarning',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                );
+              }
+              return const SizedBox.shrink(); // Hide while loading
+            },
+          ),
         ],
       ),
     );
