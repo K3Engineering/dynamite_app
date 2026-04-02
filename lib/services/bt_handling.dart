@@ -127,12 +127,14 @@ class BluetoothHandling extends ChangeNotifier {
       dataHub._recordingStartIdx = dataHub.rawSz;
     }
     _sessionInProgress = !_sessionInProgress;
+    dataHub._prevSampleCount = -1;
     _notifyStateChanged();
   }
 
   void stopSession() {
     if (_sessionInProgress) {
       _sessionInProgress = false;
+      dataHub._prevSampleCount = -1;
       _notifyStateChanged();
     }
   }
@@ -347,7 +349,7 @@ class DataHub extends ChangeNotifier {
     final int count = data[0] + (data[1] << 8);
     if (_prevSampleCount != -1) {
       final int diff = (count - _prevSampleCount) & 0xFFFF;
-      if (diff > 0) {
+      if (diff != 0) {
         debugPrint('# lost $diff samples');
         // TODO: signal lost packets
       }
