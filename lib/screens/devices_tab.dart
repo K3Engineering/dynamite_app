@@ -12,28 +12,10 @@ class DevicesTab extends StatefulWidget {
 }
 
 class _DevicesTabState extends State<DevicesTab> {
-  late BluetoothHandling _bt;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _bt = Provider.of<BluetoothHandling>(context, listen: false);
-    _bt.startProcessing(_onBtStateChange);
-  }
-
-  @override
-  void dispose() {
-    _bt.stopProcessing(_onBtStateChange);
-    super.dispose();
-  }
-
-  void _onBtStateChange() {
-    if (mounted) setState(() {});
-  }
-
   @override
   Widget build(BuildContext context) {
-    final isConnected = _bt.selectedDeviceId.isNotEmpty;
+    final bt = context.watch<BluetoothHandling>();
+    final isConnected = bt.selectedDeviceId.isNotEmpty;
 
     return SafeArea(
       child: ListView(
@@ -57,12 +39,11 @@ class _DevicesTabState extends State<DevicesTab> {
                   Icons.bluetooth_connected,
                   color: Colors.blueAccent,
                 ),
-                title: Text(_bt.connectedDeviceName),
-                subtitle: Text('ID: ${_bt.selectedDeviceId}'),
+                title: Text(bt.connectedDeviceName),
+                subtitle: Text('ID: ${bt.selectedDeviceId}'),
                 trailing: TextButton(
                   onPressed: () async {
-                    await _bt.disconnectSelectedDevice();
-                    setState(() {});
+                    await bt.disconnectSelectedDevice();
                   },
                   child: const Text('Disconnect'),
                 ),
@@ -82,21 +63,21 @@ class _DevicesTabState extends State<DevicesTab> {
               ),
               const Spacer(),
               BluetoothIndicator(
-                isScanning: _bt.isScanning,
-                state: _bt.bluetoothState,
+                isScanning: bt.isScanning,
+                state: bt.bluetoothState,
               ),
               const SizedBox(width: 8),
               FilledButton.tonal(
                 onPressed: () async {
-                  await _bt.toggleScan();
+                  await bt.toggleScan();
                 },
-                child: Text(_bt.isScanning ? 'Stop scanning' : 'Scan'),
+                child: Text(bt.isScanning ? 'Stop scanning' : 'Scan'),
               ),
             ],
           ),
           const SizedBox(height: 8),
 
-          if (_bt.devices.isEmpty && !_bt.isScanning)
+          if (bt.devices.isEmpty && !bt.isScanning)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 32),
               child: Center(
@@ -107,7 +88,7 @@ class _DevicesTabState extends State<DevicesTab> {
               ),
             ),
 
-          for (final device in _bt.devices)
+          for (final device in bt.devices)
             Card(
               child: ListTile(
                 leading: const Icon(Icons.bluetooth, color: Colors.blueGrey),
@@ -119,7 +100,19 @@ class _DevicesTabState extends State<DevicesTab> {
                   onPressed: isConnected
                       ? null
                       : () async {
-                          await _bt.connectToDevice(device.deviceId);
+                          try {
+                            await bt.connectToDevice(device.deviceId);
+                          } catch (e) {
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Failed to connect to ${device.name ?? 'device'}.',
+                                  ),
+                                ),
+                              );
+                            }
+                          }
                         },
                   child: const Text('Connect'),
                 ),

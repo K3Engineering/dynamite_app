@@ -21,36 +21,18 @@ class LiveTab extends StatefulWidget {
 }
 
 class _LiveTabState extends State<LiveTab> {
-  late BluetoothHandling _bt;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    _bt = Provider.of<BluetoothHandling>(context, listen: false);
-    _bt.startProcessing(_onBtStateChange);
-  }
-
-  @override
-  void dispose() {
-    _bt.stopProcessing(_onBtStateChange);
-    super.dispose();
-  }
-
-  void _onBtStateChange() {
-    if (mounted) setState(() {});
-  }
-
   void _onTare() {
-    _bt.dataHub.requestTare();
-    setState(() {});
+    final bt = context.read<BluetoothHandling>();
+    bt.dataHub.requestTare();
   }
 
   Future<void> _onToggleRecord() async {
-    if (_bt.sessionInProgress) {
-      _bt.stopSession();
+    final bt = context.read<BluetoothHandling>();
+    if (bt.sessionInProgress) {
+      bt.stopSession();
 
       // Auto-save if there's recorded data
-      final recordedSamples = _bt.dataHub.rawSz - _bt.dataHub.recordingStartIdx;
+      final recordedSamples = bt.dataHub.rawSz - bt.dataHub.recordingStartIdx;
       if (recordedSamples > 0) {
         final settings = context.read<AppSettings>();
         final now = DateTime.now();
@@ -59,7 +41,7 @@ class _LiveTabState extends State<LiveTab> {
 
         try {
           final id = await SessionStorage.saveSession(
-            dataHub: _bt.dataHub,
+            dataHub: bt.dataHub,
             name: autoName,
             channelLabels: settings.channelLabels,
             channelCount: settings.activeChannelCount,
@@ -86,9 +68,8 @@ class _LiveTabState extends State<LiveTab> {
       }
     } else {
       // toggleSession marks the recording start index inside DataHub.
-      _bt.toggleSession();
+      bt.toggleSession();
     }
-    setState(() {});
   }
 
   Future<void> _showRenameDialog(int sessionId, String currentName) async {
@@ -131,29 +112,50 @@ class _LiveTabState extends State<LiveTab> {
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
-    final isConnected = _bt.isSubscribed;
+    final bt = context.watch<BluetoothHandling>();
+    final isConnected = bt.isSubscribed;
 
     return SafeArea(
       child: Column(
         children: [
-          _buildStatusBar(context, isConnected),
-          if (isConnected) _buildLiveStats(settings),
+          LiveStatusBar(
+            isConnected: isConnected,
+            connectedDeviceName: bt.connectedDeviceName,
+          ),
+          if (isConnected) LiveStats(settings: settings, hub: bt.dataHub),
           Expanded(
             child: isConnected
                 ? CustomPaint(
-                    foregroundPainter: _LiveGraphPainter(_bt.dataHub, settings),
+                    foregroundPainter: _LiveGraphPainter(bt.dataHub, settings),
                     size: Size.infinite,
                   )
-                : _buildDisconnectedPrompt(context),
+                : const DisconnectedPrompt(),
           ),
-          if (isConnected) _buildChannelLegend(settings),
-          if (isConnected) _buildActionButtons(),
+          if (isConnected) ChannelLegend(settings: settings),
+          if (isConnected)
+            ActionButtons(
+              isRecording: bt.sessionInProgress,
+              onToggleRecord: _onToggleRecord,
+              onTare: _onTare,
+            ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildStatusBar(BuildContext context, bool isConnected) {
+class LiveStatusBar extends StatelessWidget {
+  final bool isConnected;
+  final String connectedDeviceName;
+
+  const LiveStatusBar({
+    super.key,
+    required this.isConnected,
+    required this.connectedDeviceName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return GestureDetector(
       onTap: isConnected
           ? null
@@ -183,7 +185,7 @@ class _LiveTabState extends State<LiveTab> {
             Expanded(
               child: Text(
                 isConnected
-                    ? 'Connected: ${_bt.connectedDeviceName}'
+                    ? 'Connected: $connectedDeviceName'
                     : 'Not connected — tap to connect',
                 style: TextStyle(
                   color: isConnected
@@ -206,10 +208,17 @@ class _LiveTabState extends State<LiveTab> {
       ),
     );
   }
+}
 
-  Widget _buildLiveStats(AppSettings settings) {
+class LiveStats extends StatelessWidget {
+  final AppSettings settings;
+  final DataHub hub;
+
+  const LiveStats({super.key, required this.settings, required this.hub});
+
+  @override
+  Widget build(BuildContext context) {
     final unit = settings.displayUnit;
-    final hub = _bt.dataHub;
     final indices = settings.activeChannelIndices;
 
     return ListenableBuilder(
@@ -237,8 +246,13 @@ class _LiveTabState extends State<LiveTab> {
       },
     );
   }
+}
 
-  Widget _buildDisconnectedPrompt(BuildContext context) {
+class DisconnectedPrompt extends StatelessWidget {
+  const DisconnectedPrompt({super.key});
+
+  @override
+  Widget build(BuildContext context) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -267,8 +281,15 @@ class _LiveTabState extends State<LiveTab> {
       ),
     );
   }
+}
 
-  Widget _buildChannelLegend(AppSettings settings) {
+class ChannelLegend extends StatelessWidget {
+  final AppSettings settings;
+
+  const ChannelLegend({super.key, required this.settings});
+
+  @override
+  Widget build(BuildContext context) {
     final indices = settings.activeChannelIndices;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
@@ -301,16 +322,29 @@ class _LiveTabState extends State<LiveTab> {
       ),
     );
   }
+}
 
-  Widget _buildActionButtons() {
-    final isRecording = _bt.sessionInProgress;
+class ActionButtons extends StatelessWidget {
+  final bool isRecording;
+  final VoidCallback onToggleRecord;
+  final VoidCallback onTare;
+
+  const ActionButtons({
+    super.key,
+    required this.isRecording,
+    required this.onToggleRecord,
+    required this.onTare,
+  });
+
+  @override
+  Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           FilledButton.icon(
-            onPressed: _onToggleRecord,
+            onPressed: onToggleRecord,
             icon: Icon(isRecording ? Icons.stop : Icons.fiber_manual_record),
             label: Text(isRecording ? 'STOP' : 'REC'),
             style: FilledButton.styleFrom(
@@ -323,7 +357,7 @@ class _LiveTabState extends State<LiveTab> {
             ),
           ),
           OutlinedButton.icon(
-            onPressed: _onTare,
+            onPressed: onTare,
             icon: const Icon(Icons.exposure_zero),
             label: const Text('TARE'),
           ),

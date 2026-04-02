@@ -10,7 +10,7 @@ import '../models/force_unit.dart';
 // ignore: unused_import
 import 'mockble.dart';
 
-class BluetoothHandling {
+class BluetoothHandling extends ChangeNotifier {
   AvailabilityState _bluetoothState = AvailabilityState.unknown;
   AvailabilityState get bluetoothState => _bluetoothState;
 
@@ -37,8 +37,6 @@ class BluetoothHandling {
   bool _sessionInProgress = false;
   bool get sessionInProgress => _sessionInProgress;
 
-  final List<VoidCallback> _btStateListeners = [];
-
   final DataHub dataHub = DataHub();
 
   BluetoothHandling() {
@@ -49,24 +47,13 @@ class BluetoothHandling {
     UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
     UniversalBle.onConnectionChange = _onConnectionChange;
     UniversalBle.onPairingStateChange = _onPairingStateChange;
+    UniversalBle.onValueChange = _processReceivedData;
 
     unawaited(_updateBluetoothState());
   }
 
-  void startProcessing(VoidCallback listener) {
-    _btStateListeners.add(listener);
-
-    // Always stream data when subscribed (not just during sessions).
-    UniversalBle.onValueChange = _processReceivedData;
-  }
-
-  void stopProcessing(VoidCallback listener) {
-    _btStateListeners.remove(listener);
-
-    // Only null out the callback if no listeners remain.
-    if (_btStateListeners.isEmpty) {
-      UniversalBle.onValueChange = null;
-    }
+  void stopProcessing() {
+    UniversalBle.onValueChange = null;
     dataHub._prevSampleCount = -1;
   }
 
@@ -197,11 +184,7 @@ class BluetoothHandling {
       await _stopScan();
     }
     if (_selectedDeviceId.isEmpty) {
-      try {
-        await UniversalBle.connect(deviceId);
-      } catch (e) {
-        debugPrint('connect $deviceId err: $e');
-      }
+      await UniversalBle.connect(deviceId);
     }
   }
 
@@ -239,9 +222,7 @@ class BluetoothHandling {
   }
 
   void _notifyStateChanged() {
-    for (final cb in _btStateListeners) {
-      cb();
-    }
+    notifyListeners();
   }
 
   void _processReceivedData(String _, String __, Uint8List data, int? ___) {
@@ -253,7 +234,7 @@ class BluetoothHandling {
   }
 }
 
-class DataHub extends Listenable {
+class DataHub extends ChangeNotifier {
   static const int numGraphLines = 2;
   static const int numAdcChannels = 4;
   static const int _tareWindow = 1024;
@@ -275,7 +256,6 @@ class DataHub extends Listenable {
   int _tareCount = _tareWindow;
   int rawSz = 0;
   int _prevSampleCount = -1;
-  final List<VoidCallback> _notifyCb = [];
   DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
 
   /// Index into rawData where the current recording started.
@@ -352,9 +332,7 @@ class DataHub extends Listenable {
   }
 
   void _notifyDataReceived() {
-    for (final cb in _notifyCb) {
-      cb();
-    }
+    notifyListeners();
   }
 
   /// Parse a BLE data packet.
@@ -420,16 +398,6 @@ class DataHub extends Listenable {
 
     _notifyDataReceived();
     return rawSz < _maxDataSz;
-  }
-
-  @override
-  void addListener(VoidCallback listener) {
-    _notifyCb.add(listener);
-  }
-
-  @override
-  void removeListener(VoidCallback listener) {
-    _notifyCb.remove(listener);
   }
 }
 

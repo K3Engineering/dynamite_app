@@ -10,7 +10,7 @@ void main() {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AppSettings()),
-        Provider<BluetoothHandling>(create: (_) => BluetoothHandling()),
+        ChangeNotifierProvider(create: (_) => BluetoothHandling()),
       ],
       child: const DynoApp(),
     ),

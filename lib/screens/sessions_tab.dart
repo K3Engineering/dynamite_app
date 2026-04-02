@@ -38,6 +38,32 @@ class _SessionsTabState extends State<SessionsTab> {
             child: StreamBuilder<List<Session>>(
               stream: AppDatabase.instance.watchAllSessions(),
               builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.error_outline,
+                          size: 64,
+                          color: Colors.red,
+                        ),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Error loading sessions',
+                          style: TextStyle(color: Colors.red, fontSize: 16),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '${snapshot.error}',
+                          style: const TextStyle(color: Colors.grey),
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
                 if (snapshot.connectionState == ConnectionState.waiting &&
                     !snapshot.hasData) {
                   return const Center(child: CircularProgressIndicator());
