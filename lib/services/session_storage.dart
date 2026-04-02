@@ -101,7 +101,7 @@ class SessionStorage {
     required int startIdx,
     required int sampleCount,
   }) async {
-    final numLines = DataHub.numGraphLines;
+    const numLines = DataHub.numGraphLines;
 
     // Build the binary buffer
     final totalBytes = _headerSize + sampleCount * numLines * 4;

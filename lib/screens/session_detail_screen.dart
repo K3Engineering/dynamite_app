@@ -484,7 +484,7 @@ class _SessionGraphPainter extends CustomPainter {
     final grid = Path();
 
     // X grid lines (simple: 5 divisions)
-    final int xDivisions = 5;
+    const int xDivisions = 5;
     for (int i = 1; i < xDivisions; i++) {
       final x = graphSz.width * i / xDivisions;
       grid.moveTo(x, 0);
@@ -500,7 +500,7 @@ class _SessionGraphPainter extends CustomPainter {
     }
 
     // Y grid lines (simple: 5 divisions)
-    final int yDivisions = 5;
+    const int yDivisions = 5;
     for (int i = 1; i < yDivisions; i++) {
       final y = graphSz.height * i / yDivisions;
       grid.moveTo(0, y);
