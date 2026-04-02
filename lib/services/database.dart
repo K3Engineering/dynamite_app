@@ -24,11 +24,19 @@ class Sessions extends Table {
       real().withDefault(const Constant(0.0001117587))();
   IntColumn get calibrationOffset => integer().withDefault(const Constant(0))();
   TextColumn get notes => text().withDefault(const Constant(''))();
-  TextColumn get dataFilePath => text()();
+  TextColumn get dataFilePath => text().nullable()();
   IntColumn get sampleCount => integer().withDefault(const Constant(0))();
 }
 
-@DriftDatabase(tables: [Sessions])
+class SessionBlobs extends Table {
+  IntColumn get sessionId => integer()();
+  BlobColumn get data => blob()();
+
+  @override
+  Set<Column> get primaryKey => {sessionId};
+}
+
+@DriftDatabase(tables: [Sessions, SessionBlobs])
 class AppDatabase extends _$AppDatabase {
   AppDatabase._([QueryExecutor? executor]) : super(executor ?? _openDefault());
 
@@ -40,7 +48,23 @@ class AppDatabase extends _$AppDatabase {
       AppDatabase._(executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration {
+    return MigrationStrategy(
+      onCreate: (Migrator m) async {
+        await m.createAll();
+      },
+      onUpgrade: (Migrator m, int from, int to) async {
+        if (from == 1) {
+          // We added the SessionBlobs table and made dataFilePath nullable
+          await m.createTable(sessionBlobs);
+          await m.alterTable(TableMigration(sessions));
+        }
+      },
+    );
+  }
 
   static QueryExecutor _openDefault() {
     return driftDatabase(
@@ -87,7 +111,10 @@ class AppDatabase extends _$AppDatabase {
 
   /// Delete a session.
   Future<int> deleteSession(int id) {
-    return (delete(sessions)..where((t) => t.id.equals(id))).go();
+    return transaction(() async {
+      await (delete(sessionBlobs)..where((t) => t.sessionId.equals(id))).go();
+      return (delete(sessions)..where((t) => t.id.equals(id))).go();
+    });
   }
 
   // -- Data directory management --
