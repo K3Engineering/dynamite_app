@@ -42,23 +42,7 @@ class AppDatabase extends _$AppDatabase {
       AppDatabase._(executor);
 
   @override
-  int get schemaVersion => 3;
-
-  @override
-  MigrationStrategy get migration {
-    return MigrationStrategy(
-      onCreate: (Migrator m) async {
-        await m.createAll();
-      },
-      onUpgrade: (Migrator m, int from, int to) async {
-        if (from < 3) {
-          // We added the SessionBlobs table and removed dataFilePath
-          await m.createTable(sessionBlobs);
-          await m.alterTable(TableMigration(sessions));
-        }
-      },
-    );
-  }
+  int get schemaVersion => 1;
 
   static QueryExecutor _openDefault() {
     return driftDatabase(
