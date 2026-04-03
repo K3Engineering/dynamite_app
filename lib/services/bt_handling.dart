@@ -227,7 +227,7 @@ class BluetoothHandling extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _processReceivedData(String _, String __, Uint8List data, int? ___) {
+  void _processReceivedData(String _, String _, Uint8List data, int? _) {
     // Always stream data to the DataHub for live display.
     final canContinue = dataHub._parseDataPacket(data);
     if (!canContinue) {
