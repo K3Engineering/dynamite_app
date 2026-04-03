@@ -325,6 +325,15 @@ class DataHub extends ChangeNotifier {
     return unit.fromKgf(kgf);
   }
 
+  /// Get the instantaneous derivative (first-difference) for a channel in unit/s.
+  double currentDerivative(int adcChannel, ForceUnit unit) {
+    final lineIdx = chanToLine(adcChannel);
+    if (lineIdx < 0 || rawSz < 2) return 0;
+    final diff = rawData[lineIdx][rawSz - 1] - rawData[lineIdx][rawSz - 2];
+    final kgfPerSec = diff * deviceCalibration.slope * samplesPerSec;
+    return unit.fromKgf(kgfPerSec);
+  }
+
   void _addTare(int val, int idx) {
     _runningTotal[idx] += val;
   }

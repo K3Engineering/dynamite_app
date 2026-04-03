@@ -1,6 +1,8 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'dart:collection';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -14,6 +16,146 @@ import '../services/database.dart';
 import '../services/session_storage.dart';
 import '../screens/app_shell.dart';
 
+// ---------------------------------------------------------------------------
+// Graph viewport controller (shared between force graph, derivative, minimap)
+// ---------------------------------------------------------------------------
+
+class GraphController extends ChangeNotifier {
+  /// Start of visible window in samples.
+  int _viewStart = 0;
+  int get viewStart => _viewStart;
+
+  /// End of visible window in samples. Null means "follow live edge".
+  int? _viewEnd;
+  int? get viewEnd => _viewEnd;
+
+  /// Whether we're following the live edge (auto-scroll with new data).
+  bool _isLive = true;
+  bool get isLive => _isLive;
+
+  /// When in live mode and zoomed in, this is the fixed span to show
+  /// from the right edge. Null means "show all data from _viewStart".
+  int? _liveSpan;
+
+  /// Snap to live mode -- follow the right edge at current zoom level.
+  void goLive() {
+    if (_viewEnd != null) {
+      _liveSpan = _viewEnd! - _viewStart;
+    }
+    _isLive = true;
+    _viewEnd = null;
+    notifyListeners();
+  }
+
+  /// Snap to live mode showing all data (fully zoomed out).
+  void goLiveFullView() {
+    _viewStart = 0;
+    _viewEnd = null;
+    _liveSpan = null;
+    _isLive = true;
+    notifyListeners();
+  }
+
+  /// Set a specific visible window (exits live mode).
+  void setWindow(int start, int end) {
+    _viewStart = math.max(0, start);
+    _viewEnd = end;
+    _isLive = false;
+    _liveSpan = null;
+    notifyListeners();
+  }
+
+  /// Get the effective visible range given total data size.
+  (int start, int end) effectiveRange(int totalSamples) {
+    if (_isLive || _viewEnd == null) {
+      if (_liveSpan != null && _liveSpan! < totalSamples) {
+        // Zoomed-in live mode: show last _liveSpan samples
+        return (totalSamples - _liveSpan!, totalSamples);
+      }
+      // Full-width live mode
+      return (0, totalSamples);
+    }
+    return (_viewStart, _viewEnd!.clamp(_viewStart + 1, totalSamples));
+  }
+
+  /// Pan by a delta in samples (negative = left, positive = right).
+  void pan(int deltaSamples, int totalSamples) {
+    final (s, e) = effectiveRange(totalSamples);
+    final span = e - s;
+    int newStart = s + deltaSamples;
+    int newEnd = newStart + span;
+
+    // Clamp to valid range
+    if (newStart < 0) {
+      newStart = 0;
+      newEnd = span;
+    }
+    if (newEnd >= totalSamples) {
+      // Snap to live if we pan to the right edge
+      _liveSpan = span < totalSamples ? span : null;
+      _viewStart = math.max(0, totalSamples - span);
+      _viewEnd = null;
+      _isLive = true;
+      notifyListeners();
+      return;
+    }
+
+    _viewStart = newStart;
+    _viewEnd = newEnd;
+    _isLive = false;
+    _liveSpan = null;
+    notifyListeners();
+  }
+
+  /// Zoom by a factor around a focal point (0.0 = left edge, 1.0 = right edge).
+  void zoom(double factor, double focalFraction, int totalSamples) {
+    final (s, e) = effectiveRange(totalSamples);
+    final span = e - s;
+    final newSpan = (span / factor).round().clamp(
+      // Minimum ~50 samples visible (50ms at 1kHz)
+      50,
+      totalSamples,
+    );
+
+    final focal = s + (focalFraction * span).round();
+    int newStart = focal - (focalFraction * newSpan).round();
+    int newEnd = newStart + newSpan;
+
+    if (newStart < 0) {
+      newStart = 0;
+      newEnd = newSpan;
+    }
+    if (newEnd >= totalSamples) {
+      // At the right edge -- enter live mode with this span
+      _liveSpan = newSpan < totalSamples ? newSpan : null;
+      _viewStart = math.max(0, totalSamples - newSpan);
+      _viewEnd = null;
+      _isLive = true;
+      notifyListeners();
+      return;
+    }
+
+    _viewStart = newStart;
+    _viewEnd = newEnd;
+    _isLive = false;
+    _liveSpan = null;
+    notifyListeners();
+  }
+
+  /// Reset to show all data in live mode (fully zoomed out).
+  void reset() {
+    _viewStart = 0;
+    _viewEnd = null;
+    _liveSpan = null;
+    _isLive = true;
+    notifyListeners();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// LiveTab
+// ---------------------------------------------------------------------------
+
 class LiveTab extends StatefulWidget {
   const LiveTab({super.key});
 
@@ -22,6 +164,22 @@ class LiveTab extends StatefulWidget {
 }
 
 class _LiveTabState extends State<LiveTab> {
+  final GraphController _graphCtrl = GraphController();
+  bool _showDerivative = false;
+
+  // Gesture tracking
+  double? _panStartX;
+  int? _panStartSample;
+  int? _panEndSample;
+  double? _scaleStartSpan;
+  double? _pinchFocalX;
+
+  @override
+  void dispose() {
+    _graphCtrl.dispose();
+    super.dispose();
+  }
+
   void _onTare() {
     final bt = context.read<BluetoothHandling>();
     bt.dataHub.requestTare();
@@ -110,6 +268,93 @@ class _LiveTabState extends State<LiveTab> {
     controller.dispose();
   }
 
+  // -- Gesture handlers for zoom/pan --
+
+  void _onScaleStart(ScaleStartDetails details) {
+    final bt = context.read<BluetoothHandling>();
+    final total = bt.dataHub.rawSz;
+    if (total == 0) return;
+
+    final (s, e) = _graphCtrl.effectiveRange(total);
+    _panStartSample = s;
+    _panEndSample = e;
+    _panStartX = details.localFocalPoint.dx;
+    _scaleStartSpan = (e - s).toDouble();
+    _pinchFocalX = details.localFocalPoint.dx;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails details, double graphWidth) {
+    final bt = context.read<BluetoothHandling>();
+    final total = bt.dataHub.rawSz;
+    if (total == 0 || _panStartSample == null || graphWidth <= 0) return;
+
+    final origStart = _panStartSample!;
+    final origEnd = _panEndSample!;
+    final origSpan = origEnd - origStart;
+
+    if (details.scale != 1.0 && _scaleStartSpan != null) {
+      // Pinch zoom
+      final newSpan = (_scaleStartSpan! / details.scale).round().clamp(
+        50,
+        total,
+      );
+
+      // Focal point as fraction of graph width
+      final focalFrac = (_pinchFocalX! / graphWidth).clamp(0.0, 1.0);
+      final focalSample = origStart + (focalFrac * origSpan).round();
+
+      int newStart = focalSample - (focalFrac * newSpan).round();
+      int newEnd = newStart + newSpan;
+
+      if (newStart < 0) {
+        newStart = 0;
+        newEnd = newSpan;
+      }
+      if (newEnd >= total) {
+        newEnd = total;
+        newStart = math.max(0, total - newSpan);
+      }
+
+      _graphCtrl.setWindow(newStart, newEnd);
+      if (newEnd >= total) _graphCtrl.goLive();
+    } else {
+      // Pan
+      final dx = details.localFocalPoint.dx - _panStartX!;
+      final samplesPerPixel = origSpan / graphWidth;
+      final deltaSamples = -(dx * samplesPerPixel).round();
+
+      int newStart = origStart + deltaSamples;
+      int newEnd = newStart + origSpan;
+
+      if (newStart < 0) {
+        newStart = 0;
+        newEnd = origSpan;
+      }
+      if (newEnd >= total) {
+        newEnd = total;
+        newStart = math.max(0, total - origSpan);
+        _graphCtrl.setWindow(newStart, newEnd);
+        _graphCtrl.goLive();
+        return;
+      }
+
+      _graphCtrl.setWindow(newStart, newEnd);
+    }
+  }
+
+  void _onPointerSignal(PointerSignalEvent event, double graphWidth) {
+    if (event is PointerScrollEvent) {
+      final bt = context.read<BluetoothHandling>();
+      final total = bt.dataHub.rawSz;
+      if (total == 0 || graphWidth <= 0) return;
+
+      // Scroll wheel zooms; focal point is mouse position
+      final focalFrac = (event.localPosition.dx / graphWidth).clamp(0.0, 1.0);
+      final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
+      _graphCtrl.zoom(zoomFactor, focalFrac, total);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
@@ -123,16 +368,23 @@ class _LiveTabState extends State<LiveTab> {
             isConnected: isConnected,
             connectedDeviceName: bt.connectedDeviceName,
           ),
-          if (isConnected) LiveStats(settings: settings, hub: bt.dataHub),
-          Expanded(
-            child: isConnected
-                ? CustomPaint(
-                    foregroundPainter: _LiveGraphPainter(bt.dataHub, settings),
-                    size: Size.infinite,
-                  )
-                : const DisconnectedPrompt(),
-          ),
-          if (isConnected) ChannelLegend(settings: settings),
+          if (isConnected)
+            LiveStats(
+              settings: settings,
+              hub: bt.dataHub,
+              showDerivative: _showDerivative,
+            ),
+          if (isConnected)
+            Expanded(child: _buildGraphArea(bt, settings))
+          else
+            const Expanded(child: DisconnectedPrompt()),
+          if (isConnected)
+            ChannelLegend(
+              settings: settings,
+              showDerivative: _showDerivative,
+              onToggleDerivative: () =>
+                  setState(() => _showDerivative = !_showDerivative),
+            ),
           if (isConnected)
             ActionButtons(
               isRecording: bt.sessionInProgress,
@@ -143,7 +395,170 @@ class _LiveTabState extends State<LiveTab> {
       ),
     );
   }
+
+  Widget _buildGraphArea(BluetoothHandling bt, AppSettings settings) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final graphWidth =
+            constraints.maxWidth - 8 - 56; // leftSpace + rightSpace
+        return Stack(
+          children: [
+            Column(
+              children: [
+                // Main force graph
+                Expanded(
+                  flex: _showDerivative ? 6 : 10,
+                  child: Listener(
+                    onPointerSignal: (e) => _onPointerSignal(e, graphWidth),
+                    child: GestureDetector(
+                      onScaleStart: _onScaleStart,
+                      onScaleUpdate: (d) => _onScaleUpdate(d, graphWidth),
+                      child: ListenableBuilder(
+                        listenable: _graphCtrl,
+                        builder: (context, _) => CustomPaint(
+                          foregroundPainter: _LiveGraphPainter(
+                            bt.dataHub,
+                            settings,
+                            _graphCtrl,
+                            showXLabels: !_showDerivative,
+                          ),
+                          size: Size.infinite,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                // Derivative graph (when enabled)
+                if (_showDerivative)
+                  Expanded(
+                    flex: 4,
+                    child: Listener(
+                      onPointerSignal: (e) => _onPointerSignal(e, graphWidth),
+                      child: GestureDetector(
+                        onScaleStart: _onScaleStart,
+                        onScaleUpdate: (d) => _onScaleUpdate(d, graphWidth),
+                        child: ListenableBuilder(
+                          listenable: _graphCtrl,
+                          builder: (context, _) => CustomPaint(
+                            foregroundPainter: _DerivativeGraphPainter(
+                              bt.dataHub,
+                              settings,
+                              _graphCtrl,
+                            ),
+                            size: Size.infinite,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                // Minimap
+                SizedBox(
+                  height: 32,
+                  child: Listener(
+                    onPointerSignal: (e) => _onPointerSignal(e, graphWidth),
+                    child: GestureDetector(
+                      onTapDown: (d) =>
+                          _onMinimapTap(d, graphWidth, bt.dataHub.rawSz),
+                      onHorizontalDragUpdate: (d) =>
+                          _onMinimapDrag(d, graphWidth, bt.dataHub.rawSz),
+                      child: ListenableBuilder(
+                        listenable: _graphCtrl,
+                        builder: (context, _) => CustomPaint(
+                          foregroundPainter: _MinimapPainter(
+                            bt.dataHub,
+                            settings,
+                            _graphCtrl,
+                          ),
+                          size: Size.infinite,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            // LIVE button (appears when not following live edge)
+            ListenableBuilder(
+              listenable: _graphCtrl,
+              builder: (context, _) {
+                if (_graphCtrl.isLive || bt.dataHub.rawSz == 0) {
+                  return const SizedBox.shrink();
+                }
+                return Positioned(
+                  right: 64,
+                  top: 8,
+                  child: FilledButton.tonalIcon(
+                    onPressed: _graphCtrl.goLiveFullView,
+                    icon: const Icon(Icons.fast_forward, size: 16),
+                    label: const Text('LIVE'),
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 4,
+                      ),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _onMinimapTap(TapDownDetails d, double graphWidth, int totalSamples) {
+    if (totalSamples == 0 || graphWidth <= 0) return;
+    const leftSpace = 8.0;
+    final frac = ((d.localPosition.dx - leftSpace) / graphWidth).clamp(
+      0.0,
+      1.0,
+    );
+    final (s, e) = _graphCtrl.effectiveRange(totalSamples);
+    final span = e - s;
+    final center = (frac * totalSamples).round();
+    int newStart = center - span ~/ 2;
+    int newEnd = newStart + span;
+    if (newStart < 0) {
+      newStart = 0;
+      newEnd = span;
+    }
+    if (newEnd >= totalSamples) {
+      _graphCtrl.goLive();
+      return;
+    }
+    _graphCtrl.setWindow(newStart, newEnd);
+  }
+
+  void _onMinimapDrag(
+    DragUpdateDetails d,
+    double graphWidth,
+    int totalSamples,
+  ) {
+    if (totalSamples == 0 || graphWidth <= 0) return;
+    final samplesPerPixel = totalSamples / graphWidth;
+    final deltaSamples = (d.delta.dx * samplesPerPixel).round();
+    final (s, e) = _graphCtrl.effectiveRange(totalSamples);
+    final span = e - s;
+    int newStart = s + deltaSamples;
+    int newEnd = newStart + span;
+    if (newStart < 0) {
+      newStart = 0;
+      newEnd = span;
+    }
+    if (newEnd >= totalSamples) {
+      _graphCtrl.goLive();
+      return;
+    }
+    _graphCtrl.setWindow(newStart, newEnd);
+  }
 }
+
+// ---------------------------------------------------------------------------
+// LiveStatusBar
+// ---------------------------------------------------------------------------
 
 class LiveStatusBar extends StatelessWidget {
   final bool isConnected;
@@ -187,7 +602,7 @@ class LiveStatusBar extends StatelessWidget {
               child: Text(
                 isConnected
                     ? 'Connected: $connectedDeviceName'
-                    : 'Not connected — tap to connect',
+                    : 'Not connected \u2014 tap to connect',
                 style: TextStyle(
                   color: isConnected
                       ? Theme.of(context).colorScheme.onPrimaryContainer
@@ -211,11 +626,21 @@ class LiveStatusBar extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+// LiveStats
+// ---------------------------------------------------------------------------
+
 class LiveStats extends StatelessWidget {
   final AppSettings settings;
   final DataHub hub;
+  final bool showDerivative;
 
-  const LiveStats({super.key, required this.settings, required this.hub});
+  const LiveStats({
+    super.key,
+    required this.settings,
+    required this.hub,
+    this.showDerivative = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -238,6 +663,10 @@ class LiveStats extends StatelessWidget {
                     current: hub.currentForce(indices[i], unit),
                     peak: hub.peakForce(indices[i], unit),
                     unit: unit,
+                    showDerivative: showDerivative,
+                    currentDerivative: showDerivative
+                        ? hub.currentDerivative(indices[i], unit)
+                        : null,
                   ),
                 ),
               ],
@@ -248,6 +677,10 @@ class LiveStats extends StatelessWidget {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// DisconnectedPrompt
+// ---------------------------------------------------------------------------
 
 class DisconnectedPrompt extends StatelessWidget {
   const DisconnectedPrompt({super.key});
@@ -284,19 +717,31 @@ class DisconnectedPrompt extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ChannelLegend (with derivative toggle)
+// ---------------------------------------------------------------------------
+
 class ChannelLegend extends StatelessWidget {
   final AppSettings settings;
+  final bool showDerivative;
+  final VoidCallback onToggleDerivative;
 
-  const ChannelLegend({super.key, required this.settings});
+  const ChannelLegend({
+    super.key,
+    required this.settings,
+    this.showDerivative = false,
+    required this.onToggleDerivative,
+  });
 
   @override
   Widget build(BuildContext context) {
     final indices = settings.activeChannelIndices;
+    final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          // Channel legend items
           for (final idx in indices)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -319,11 +764,35 @@ class ChannelLegend extends StatelessWidget {
                 ],
               ),
             ),
+          const Spacer(),
+          // Derivative toggle
+          SizedBox(
+            height: 28,
+            child: FilterChip(
+              label: Text(
+                'dF/dt',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: showDerivative ? cs.onSecondaryContainer : null,
+                ),
+              ),
+              selected: showDerivative,
+              onSelected: (_) => onToggleDerivative(),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
         ],
       ),
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// ActionButtons
+// ---------------------------------------------------------------------------
 
 class ActionButtons extends StatelessWidget {
   final bool isRecording;
@@ -368,7 +837,9 @@ class ActionButtons extends StatelessWidget {
   }
 }
 
-// -- Channel stat chip widget --
+// ---------------------------------------------------------------------------
+// Channel stat chip widget
+// ---------------------------------------------------------------------------
 
 class _ChannelStatChip extends StatelessWidget {
   const _ChannelStatChip({
@@ -377,6 +848,8 @@ class _ChannelStatChip extends StatelessWidget {
     required this.current,
     required this.peak,
     required this.unit,
+    this.showDerivative = false,
+    this.currentDerivative,
   });
 
   final String label;
@@ -384,9 +857,14 @@ class _ChannelStatChip extends StatelessWidget {
   final double current;
   final double peak;
   final ForceUnit unit;
+  final bool showDerivative;
+  final double? currentDerivative;
 
   @override
   Widget build(BuildContext context) {
+    final monoStyle = GoogleFonts.robotoMono(
+      textStyle: Theme.of(context).textTheme.bodySmall,
+    );
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -409,19 +887,30 @@ class _ChannelStatChip extends StatelessWidget {
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
           ),
-          Text(
-            'Peak: ${unit.format(peak)}',
-            style: GoogleFonts.robotoMono(
-              textStyle: Theme.of(context).textTheme.bodySmall,
+          Text('Peak: ${unit.format(peak)}', style: monoStyle),
+          if (showDerivative && currentDerivative != null)
+            Text(
+              'dF/dt: ${_formatDerivative(currentDerivative!, unit)}',
+              style: monoStyle,
             ),
-          ),
         ],
       ),
     );
   }
+
+  static String _formatDerivative(double value, ForceUnit unit) {
+    final sign = value < 0 ? '' : '+';
+    final abs = value.abs();
+    if (abs >= 1000) return '$sign${value.toStringAsFixed(0)} ${unit.symbol}/s';
+    if (abs >= 100) return '$sign${value.toStringAsFixed(1)} ${unit.symbol}/s';
+    if (abs >= 10) return '$sign${value.toStringAsFixed(2)} ${unit.symbol}/s';
+    return '$sign${value.toStringAsFixed(3)} ${unit.symbol}/s';
+  }
 }
 
-// -- Channel colors --
+// ---------------------------------------------------------------------------
+// Channel colors
+// ---------------------------------------------------------------------------
 
 Color _channelColor(int index) {
   const colors = [
@@ -433,53 +922,118 @@ Color _channelColor(int index) {
   return colors[index % colors.length];
 }
 
-// -- Live graph painter --
+// ---------------------------------------------------------------------------
+// Shared axis-scale helpers
+// ---------------------------------------------------------------------------
 
 typedef _ScaleConfigItem = ({int limit, int delta});
 
-class _LiveGraphPainter extends CustomPainter {
-  final DataHub _data;
-  final AppSettings _settings;
+const List<_ScaleConfigItem> _xScaleConfig = [
+  (limit: 1, delta: 1),
+  (limit: 2, delta: 1),
+  (limit: 5, delta: 1),
+  (limit: 10, delta: 2),
+  (limit: 30, delta: 5),
+  (limit: 60, delta: 10),
+  (limit: 120, delta: 20),
+  (limit: 300, delta: 30),
+  (limit: 600, delta: 60),
+];
 
-  _LiveGraphPainter(this._data, this._settings) : super(repaint: _data);
+_ScaleConfigItem _findScale(double val, List<_ScaleConfigItem> list) {
+  return list.firstWhere((e) => val < e.limit, orElse: () => list.last);
+}
 
-  // Seconds
-  static const List<_ScaleConfigItem> _xScaleConfig = [
-    (limit: 5, delta: 1),
-    (limit: 10, delta: 2),
-    (limit: 30, delta: 5),
-    (limit: 60, delta: 10),
-    (limit: 120, delta: 20),
-    (limit: 300, delta: 30),
-    (limit: 600, delta: 60),
-  ];
-  static final Map<int, ui.Paragraph> _xLabels = HashMap();
+String _fmtTime(int sec) {
+  if (sec < 60) return sec.toString();
+  final s = (sec % 60 < 10) ? '0' : '';
+  return '${sec ~/ 60}:$s${sec % 60}';
+}
 
-  // Y-axis labels are unit-dependent, so we cache per-unit.
-  static final Map<(ForceUnit, int), ui.Paragraph> _yLabels = HashMap();
+/// Format fractional seconds for sub-second X labels.
+String _fmtTimeFrac(double sec) {
+  if (sec >= 60) {
+    final m = sec ~/ 60;
+    final s = sec - m * 60;
+    return '$m:${s.toStringAsFixed(1).padLeft(4, '0')}';
+  }
+  if (sec >= 1) return sec.toStringAsFixed(1);
+  return '${(sec * 1000).round()}ms';
+}
 
-  // Y scale configs per unit (approximate ranges).
-  static const List<_ScaleConfigItem> _yScaleConfigKgf = [
-    (limit: 5, delta: 1),
-    (limit: 10, delta: 2),
-    (limit: 20, delta: 5),
-    (limit: 50, delta: 10),
-    (limit: 100, delta: 20),
-    (limit: 200, delta: 50),
-    (limit: 500, delta: 100),
-    (limit: 1000, delta: 200),
-  ];
+// Label paragraph cache
+final Map<String, ui.Paragraph> _labelCache = HashMap();
 
-  static ui.Paragraph _prepareLabel(String text) {
-    final style = ui.TextStyle(color: Colors.black, fontSize: 12);
+ui.Paragraph _prepareLabel(String text, {Color color = Colors.black}) {
+  final key = '$text|${color.toARGB32()}';
+  return _labelCache.putIfAbsent(key, () {
+    final style = ui.TextStyle(color: color, fontSize: 11);
     final builder =
         ui.ParagraphBuilder(
             ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
           )
           ..pushStyle(style)
           ..addText(text);
-    return builder.build()..layout(const ui.ParagraphConstraints(width: 72));
+    return builder.build()..layout(const ui.ParagraphConstraints(width: 80));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Compute nice Y-axis range for data that spans [dataMin, dataMax] in display units.
+// Returns (yMin, yMax, tickDelta) where yMin <= 0 <= yMax (if data crosses zero)
+// and tickDelta is the spacing between major ticks.
+// ---------------------------------------------------------------------------
+
+({double yMin, double yMax, double tickDelta}) _computeYRange(
+  double dataMin,
+  double dataMax,
+) {
+  // Ensure some minimum range to avoid degenerate axes
+  if (dataMax - dataMin < 0.001) {
+    dataMax = dataMin + 1.0;
   }
+
+  final range = dataMax - dataMin;
+
+  // Pick a nice tick delta: find the order of magnitude, then use 1/2/5 steps
+  final rawStep = range / 5; // aim for ~5 ticks
+  final mag = math.pow(10, (math.log(rawStep) / math.ln10).floor()).toDouble();
+  double tickDelta;
+  if (rawStep / mag < 1.5) {
+    tickDelta = mag;
+  } else if (rawStep / mag < 3.5) {
+    tickDelta = mag * 2;
+  } else if (rawStep / mag < 7.5) {
+    tickDelta = mag * 5;
+  } else {
+    tickDelta = mag * 10;
+  }
+
+  if (tickDelta < 0.001) tickDelta = 0.001;
+
+  // Snap yMin and yMax to tick boundaries
+  final yMin = (dataMin / tickDelta).floor() * tickDelta;
+  final yMax = (dataMax / tickDelta).ceil() * tickDelta;
+
+  return (yMin: yMin, yMax: yMax, tickDelta: tickDelta);
+}
+
+// ---------------------------------------------------------------------------
+// Live graph painter (force)
+// ---------------------------------------------------------------------------
+
+class _LiveGraphPainter extends CustomPainter {
+  final DataHub _data;
+  final AppSettings _settings;
+  final GraphController _ctrl;
+  final bool showXLabels;
+
+  _LiveGraphPainter(
+    this._data,
+    this._settings,
+    this._ctrl, {
+    this.showXLabels = true,
+  }) : super(repaint: _data);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -495,8 +1049,11 @@ class _LiveGraphPainter extends CustomPainter {
     canvas.translate(leftSpace, topSpace);
     final graphSz = Size(
       size.width - leftSpace - rightSpace,
-      size.height - bottomSpace - topSpace,
+      size.height - (showXLabels ? bottomSpace : 4) - topSpace,
     );
+
+    if (graphSz.width <= 0 || graphSz.height <= 0) return;
+
     canvas.drawRect(
       Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
       pen..strokeWidth = 0.5,
@@ -506,101 +1063,236 @@ class _LiveGraphPainter extends CustomPainter {
 
     final unit = _settings.displayUnit;
     final activeIndices = _settings.activeChannelIndices;
+    final (viewStart, viewEnd) = _ctrl.effectiveRange(_data.rawSz);
+    final viewSamples = viewEnd - viewStart;
+    if (viewSamples <= 0) return;
 
-    // Compute data max across active channels (in raw units, tare-subtracted)
-    double dataMax = 10000; // above noise floor
-    for (final ch in activeIndices) {
-      final lineIdx = DataHub.chanToLine(ch);
-      if (lineIdx < 0) continue;
-      final double x = (_data.rawMax[lineIdx] - _data.tare[lineIdx]).toDouble();
-      if (x > dataMax) dataMax = x;
+    // Compute data min/max across active channels in visible window (raw, tare-subtracted).
+    // Start with actual extremes then enforce a minimum visible range.
+    double rawMax = 0;
+    double rawMin = 0;
+    bool hasData = false;
+
+    if (_ctrl.isLive && viewStart == 0) {
+      // Full view -- use pre-tracked global min/max (O(1))
+      for (final ch in activeIndices) {
+        final lineIdx = DataHub.chanToLine(ch);
+        if (lineIdx < 0) continue;
+        final mx = (_data.rawMax[lineIdx] - _data.tare[lineIdx]).toDouble();
+        final mn = (_data.rawMin[lineIdx] - _data.tare[lineIdx]).toDouble();
+        if (!hasData || mx > rawMax) rawMax = mx;
+        if (!hasData || mn < rawMin) rawMin = mn;
+        hasData = true;
+      }
+    } else {
+      // Zoomed/panned -- scan visible window for actual min/max
+      for (final ch in activeIndices) {
+        final lineIdx = DataHub.chanToLine(ch);
+        if (lineIdx < 0) continue;
+        final line = _data.rawData[lineIdx];
+        final tare = _data.tare[lineIdx];
+        for (int i = viewStart; i < viewEnd; i++) {
+          final v = line[i] - tare;
+          if (!hasData || v > rawMax) rawMax = v.toDouble();
+          if (!hasData || v < rawMin) rawMin = v.toDouble();
+          hasData = true;
+        }
+      }
     }
 
-    final double dataMaxKgf = dataMax * _data.deviceCalibration.slope;
-    final double dataMaxUnit = unit.fromKgf(dataMaxKgf);
-
-    // X axis
-    final double xSpanSec = _data.rawSz / DataHub.samplesPerSec;
-    final xC = _findScale(xSpanSec, _xScaleConfig);
-
-    double secondsToX(int sec) =>
-        sec * DataHub.samplesPerSec * graphSz.width / _data.rawSz;
-
-    final grid = Path();
-    final double xMinorDelta = secondsToX(xC.delta) / 2;
-    for (double x = xMinorDelta; x < graphSz.width; x += xMinorDelta) {
-      grid.moveTo(x, 0);
-      grid.lineTo(x, graphSz.height);
-    }
-    for (int i = xC.delta; i.toDouble() < xSpanSec; i += xC.delta) {
-      final double xPos = secondsToX(i);
-      final par = _xLabels.putIfAbsent(i, () => _prepareLabel(_fmtTime(i)));
-      canvas.drawParagraph(
-        par,
-        Offset(xPos - par.longestLine / 2, graphSz.height),
-      );
+    // Enforce a minimum visible range (noise floor) so the graph isn't degenerate
+    const double noiseFloor = 10000; // raw counts
+    if (rawMax - rawMin < noiseFloor) {
+      final mid = (rawMax + rawMin) / 2;
+      rawMax = mid + noiseFloor / 2;
+      rawMin = mid - noiseFloor / 2;
     }
 
-    // Y axis (in display units)
-    // We scale yScaleConfig by the unit conversion factor
-    final double unitScale = unit.fromKgf(1.0); // units per kgf
-    final yC = _findScale(
-      dataMaxUnit,
-      _yScaleConfigKgf
-          .map(
-            (e) => (
-              limit: (e.limit * unitScale).ceil(),
-              delta: (e.delta * unitScale).ceil().clamp(1, 999999),
-            ),
-          )
-          .toList(),
+    final double dataMaxUnit = unit.fromKgf(
+      rawMax * _data.deviceCalibration.slope,
+    );
+    final double dataMinUnit = unit.fromKgf(
+      rawMin * _data.deviceCalibration.slope,
     );
 
-    double unitToY(double val) => val * graphSz.height / dataMaxUnit;
+    // Compute nice Y axis range
+    final yRange = _computeYRange(dataMinUnit, dataMaxUnit);
 
-    final double yMinorDelta = unitToY(yC.delta.toDouble()) / 2;
-    for (double y = yMinorDelta; y < graphSz.height; y += yMinorDelta) {
-      grid.moveTo(0, graphSz.height - y);
-      grid.lineTo(graphSz.width, graphSz.height - y);
+    // Map a value in display units to Y pixel
+    double unitToY(double val) {
+      return graphSz.height -
+          (val - yRange.yMin) * graphSz.height / (yRange.yMax - yRange.yMin);
     }
-    for (int i = yC.delta; i < dataMaxUnit.ceil(); i += yC.delta) {
-      final double yPos = graphSz.height - unitToY(i.toDouble());
-      final par = _yLabels.putIfAbsent((
-        unit,
-        i,
-      ), () => _prepareLabel('$i ${unit.symbol}'));
-      canvas.drawParagraph(
-        par,
-        Offset(graphSz.width + 4, yPos - par.height / 2),
-      );
+
+    // -- Grid and labels --
+    final grid = Path();
+
+    // X axis
+    final double xSpanSec = viewSamples / DataHub.samplesPerSec;
+
+    if (xSpanSec < 1.0) {
+      // Sub-second: use fractional labels
+      final stepMs = xSpanSec * 1000 / 5; // aim for ~5 labels
+      final niceStepMs = _niceNum(stepMs);
+      final startSec = viewStart / DataHub.samplesPerSec;
+
+      final firstTickMs = ((startSec * 1000 / niceStepMs).ceil() * niceStepMs);
+      for (
+        double tMs = firstTickMs;
+        tMs < (viewEnd / DataHub.samplesPerSec) * 1000;
+        tMs += niceStepMs
+      ) {
+        final tSec = tMs / 1000;
+        final xPos =
+            (tSec - startSec) *
+            DataHub.samplesPerSec *
+            graphSz.width /
+            viewSamples;
+        grid.moveTo(xPos, 0);
+        grid.lineTo(xPos, graphSz.height);
+        if (showXLabels) {
+          final par = _prepareLabel(_fmtTimeFrac(tSec));
+          canvas.drawParagraph(
+            par,
+            Offset(xPos - par.longestLine / 2, graphSz.height + 2),
+          );
+        }
+      }
+    } else {
+      final xC = _findScale(xSpanSec, _xScaleConfig);
+      final double startSec = viewStart / DataHub.samplesPerSec;
+
+      // Major grid + labels
+      final int firstTick = ((startSec / xC.delta).ceil() * xC.delta).toInt();
+      final double endSec = viewEnd / DataHub.samplesPerSec;
+      for (int sec = firstTick; sec.toDouble() < endSec; sec += xC.delta) {
+        final double xPos =
+            (sec - startSec) *
+            DataHub.samplesPerSec *
+            graphSz.width /
+            viewSamples;
+        grid.moveTo(xPos, 0);
+        grid.lineTo(xPos, graphSz.height);
+        if (showXLabels) {
+          final par = _prepareLabel(_fmtTime(sec));
+          canvas.drawParagraph(
+            par,
+            Offset(xPos - par.longestLine / 2, graphSz.height + 2),
+          );
+        }
+      }
+
+      // Minor grid (half delta)
+      final double minorDeltaSec = xC.delta / 2;
+      final double firstMinor =
+          (startSec / minorDeltaSec).ceil() * minorDeltaSec;
+      for (double sec = firstMinor; sec < endSec; sec += minorDeltaSec) {
+        final double xPos =
+            (sec - startSec) *
+            DataHub.samplesPerSec *
+            graphSz.width /
+            viewSamples;
+        grid.moveTo(xPos, 0);
+        grid.lineTo(xPos, graphSz.height);
+      }
+    }
+
+    // Y axis grid + labels
+    {
+      final delta = yRange.tickDelta;
+      // Start from the first tick at or above yMin
+      double tick = (yRange.yMin / delta).ceil() * delta;
+      while (tick <= yRange.yMax + delta * 0.01) {
+        final yPos = unitToY(tick);
+        if (yPos >= -1 && yPos <= graphSz.height + 1) {
+          grid.moveTo(0, yPos);
+          grid.lineTo(graphSz.width, yPos);
+
+          // Label
+          final labelStr = _formatTickLabel(tick, unit.symbol);
+          final par = _prepareLabel(labelStr);
+          canvas.drawParagraph(
+            par,
+            Offset(graphSz.width + 4, yPos - par.height / 2),
+          );
+        }
+        tick += delta;
+      }
+
+      // Minor grid (half delta)
+      final minorDelta = delta / 2;
+      double minorTick = (yRange.yMin / minorDelta).ceil() * minorDelta;
+      while (minorTick <= yRange.yMax + minorDelta * 0.01) {
+        final yPos = unitToY(minorTick);
+        if (yPos >= -1 && yPos <= graphSz.height + 1) {
+          grid.moveTo(0, yPos);
+          grid.lineTo(graphSz.width, yPos);
+        }
+        minorTick += minorDelta;
+      }
     }
 
     canvas.drawPath(grid, pen..strokeWidth = 0.2);
 
-    // Draw data lines for each active channel
+    // -- Zero baseline --
+    if (yRange.yMin < 0 && yRange.yMax > 0) {
+      final zeroY = unitToY(0);
+      final zeroPaint = Paint()
+        ..color = Colors.black54
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8;
+      canvas.drawLine(
+        Offset(0, zeroY),
+        Offset(graphSz.width, zeroY),
+        zeroPaint,
+      );
+    }
+
+    // -- Data lines --
+    final rawRange = yRange.yMax - yRange.yMin;
+    final slopeToUnit =
+        _data.deviceCalibration.slope *
+        (unit == ForceUnit.kgf
+            ? 1.0
+            : unit == ForceUnit.n
+            ? 9.80665
+            : unit == ForceUnit.kN
+            ? 9.80665 / 1000.0
+            : 2.20462);
+
     for (final ch in activeIndices) {
       final lineIdx = DataHub.chanToLine(ch);
       if (lineIdx < 0) continue;
 
       final path = Path();
+      final line = _data.rawData[lineIdx];
+      final tare = _data.tare[lineIdx];
 
-      double rawToY(double val) {
-        final double y =
-            graphSz.height -
-            (val - _data.tare[lineIdx]) * graphSz.height / dataMax;
-        return y.clamp(0, graphSz.height);
-      }
-
-      path.moveTo(0, rawToY(_data.tare[lineIdx]));
       final int graphW = graphSz.width.toInt();
-      for (int i = 0, j = 0; i < graphW; ++i) {
-        int total = 0;
-        final int start = j;
-        for (; (j * graphW < i * _data.rawSz) && (j < _data.rawSz); ++j) {
-          total += _data.rawData[lineIdx][j];
+      bool first = true;
+
+      for (int i = 0; i < graphW; ++i) {
+        // Map pixel i to sample range
+        final int sStart = viewStart + (i * viewSamples ~/ graphW);
+        final int sEnd = viewStart + ((i + 1) * viewSamples ~/ graphW);
+        if (sStart >= sEnd) continue;
+
+        double total = 0;
+        for (int j = sStart; j < sEnd; j++) {
+          total += line[j];
         }
-        if (start < j) {
-          path.lineTo(i.toDouble(), rawToY(total / (j - start)));
+        final avg = total / (sEnd - sStart);
+        final valUnit = (avg - tare) * slopeToUnit;
+        final yPos =
+            (graphSz.height -
+                    (valUnit - yRange.yMin) * graphSz.height / rawRange)
+                .clamp(0.0, graphSz.height);
+
+        if (first) {
+          path.moveTo(i.toDouble(), yPos);
+          first = false;
+        } else {
+          path.lineTo(i.toDouble(), yPos);
         }
       }
 
@@ -609,16 +1301,384 @@ class _LiveGraphPainter extends CustomPainter {
     }
   }
 
-  static _ScaleConfigItem _findScale(double val, List<_ScaleConfigItem> list) {
-    return list.firstWhere((e) => val < e.limit, orElse: () => list.last);
-  }
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
 
-  static String _fmtTime(int sec) {
-    if (sec < 60) return sec.toString();
-    final s = (sec % 60 < 10) ? '0' : '';
-    return '${sec ~/ 60}:$s${sec % 60}';
+// ---------------------------------------------------------------------------
+// Derivative graph painter
+// ---------------------------------------------------------------------------
+
+class _DerivativeGraphPainter extends CustomPainter {
+  final DataHub _data;
+  final AppSettings _settings;
+  final GraphController _ctrl;
+
+  _DerivativeGraphPainter(this._data, this._settings, this._ctrl)
+    : super(repaint: _data);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final pen = Paint()
+      ..color = Colors.deepPurple
+      ..style = PaintingStyle.stroke;
+
+    const double leftSpace = 8;
+    const double rightSpace = 56;
+    const double bottomSpace = 24;
+    const double topSpace = 2;
+
+    canvas.translate(leftSpace, topSpace);
+    final graphSz = Size(
+      size.width - leftSpace - rightSpace,
+      size.height - bottomSpace - topSpace,
+    );
+
+    if (graphSz.width <= 0 || graphSz.height <= 0) return;
+
+    canvas.drawRect(
+      Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
+      pen..strokeWidth = 0.5,
+    );
+
+    if (_data.rawSz < 2) return;
+
+    final unit = _settings.displayUnit;
+    final activeIndices = _settings.activeChannelIndices;
+    final (viewStart, viewEnd) = _ctrl.effectiveRange(_data.rawSz);
+    final viewSamples = viewEnd - viewStart;
+    if (viewSamples < 2) return;
+
+    final double slopeToUnit =
+        _data.deviceCalibration.slope *
+        (unit == ForceUnit.kgf
+            ? 1.0
+            : unit == ForceUnit.n
+            ? 9.80665
+            : unit == ForceUnit.kN
+            ? 9.80665 / 1000.0
+            : 2.20462);
+    final double sampleRate = DataHub.samplesPerSec.toDouble();
+
+    // Compute derivative min/max in visible window
+    double dMin = 0;
+    double dMax = 0;
+    bool first = true;
+    for (final ch in activeIndices) {
+      final lineIdx = DataHub.chanToLine(ch);
+      if (lineIdx < 0) continue;
+      final line = _data.rawData[lineIdx];
+      final startI = math.max(viewStart, 1);
+      for (int i = startI; i < viewEnd; i++) {
+        final d = (line[i] - line[i - 1]).toDouble() * slopeToUnit * sampleRate;
+        if (first) {
+          dMin = d;
+          dMax = d;
+          first = false;
+        } else {
+          if (d < dMin) dMin = d;
+          if (d > dMax) dMax = d;
+        }
+      }
+    }
+
+    // Add some padding
+    if (dMax - dMin < 0.001) {
+      dMax = dMin + 1.0;
+    }
+
+    final yRange = _computeYRange(dMin, dMax);
+
+    double valToY(double val) {
+      return graphSz.height -
+          (val - yRange.yMin) * graphSz.height / (yRange.yMax - yRange.yMin);
+    }
+
+    // Grid + labels
+    final grid = Path();
+
+    // X axis labels
+    final double xSpanSec = viewSamples / DataHub.samplesPerSec;
+    final double startSec = viewStart / DataHub.samplesPerSec;
+    final double endSec = viewEnd / DataHub.samplesPerSec;
+
+    if (xSpanSec < 1.0) {
+      final stepMs = xSpanSec * 1000 / 5;
+      final niceStepMs = _niceNum(stepMs);
+      final firstTickMs = ((startSec * 1000 / niceStepMs).ceil() * niceStepMs);
+      for (double tMs = firstTickMs; tMs < endSec * 1000; tMs += niceStepMs) {
+        final tSec = tMs / 1000;
+        final xPos =
+            (tSec - startSec) *
+            DataHub.samplesPerSec *
+            graphSz.width /
+            viewSamples;
+        grid.moveTo(xPos, 0);
+        grid.lineTo(xPos, graphSz.height);
+        final par = _prepareLabel(_fmtTimeFrac(tSec));
+        canvas.drawParagraph(
+          par,
+          Offset(xPos - par.longestLine / 2, graphSz.height + 2),
+        );
+      }
+    } else {
+      final xC = _findScale(xSpanSec, _xScaleConfig);
+      final int firstTick = ((startSec / xC.delta).ceil() * xC.delta).toInt();
+      for (int sec = firstTick; sec.toDouble() < endSec; sec += xC.delta) {
+        final double xPos =
+            (sec - startSec) *
+            DataHub.samplesPerSec *
+            graphSz.width /
+            viewSamples;
+        grid.moveTo(xPos, 0);
+        grid.lineTo(xPos, graphSz.height);
+        final par = _prepareLabel(_fmtTime(sec));
+        canvas.drawParagraph(
+          par,
+          Offset(xPos - par.longestLine / 2, graphSz.height + 2),
+        );
+      }
+    }
+
+    // Y axis grid + labels
+    {
+      final delta = yRange.tickDelta;
+      double tick = (yRange.yMin / delta).ceil() * delta;
+      while (tick <= yRange.yMax + delta * 0.01) {
+        final yPos = valToY(tick);
+        if (yPos >= -1 && yPos <= graphSz.height + 1) {
+          grid.moveTo(0, yPos);
+          grid.lineTo(graphSz.width, yPos);
+
+          final labelStr = '${_formatTickValue(tick)}/s';
+          final par = _prepareLabel(labelStr);
+          canvas.drawParagraph(
+            par,
+            Offset(graphSz.width + 4, yPos - par.height / 2),
+          );
+        }
+        tick += delta;
+      }
+    }
+
+    canvas.drawPath(grid, pen..strokeWidth = 0.2);
+
+    // Zero baseline
+    if (yRange.yMin < 0 && yRange.yMax > 0) {
+      final zeroY = valToY(0);
+      final zeroPaint = Paint()
+        ..color = Colors.black54
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8;
+      canvas.drawLine(
+        Offset(0, zeroY),
+        Offset(graphSz.width, zeroY),
+        zeroPaint,
+      );
+    }
+
+    // "dF/dt" label in top-left
+    final dLabel = _prepareLabel(
+      'dF/dt (${unit.symbol}/s)',
+      color: Colors.black45,
+    );
+    canvas.drawParagraph(dLabel, const Offset(4, 2));
+
+    // Data lines
+    final rawYRange = yRange.yMax - yRange.yMin;
+    for (final ch in activeIndices) {
+      final lineIdx = DataHub.chanToLine(ch);
+      if (lineIdx < 0) continue;
+
+      final path = Path();
+      final line = _data.rawData[lineIdx];
+      final int graphW = graphSz.width.toInt();
+      bool pathFirst = true;
+
+      for (int px = 0; px < graphW; ++px) {
+        final int sStart = math.max(
+          viewStart + (px * viewSamples ~/ graphW),
+          1,
+        );
+        final int sEnd = math.max(
+          viewStart + ((px + 1) * viewSamples ~/ graphW),
+          2,
+        );
+        if (sStart >= sEnd || sStart >= _data.rawSz) continue;
+
+        double total = 0;
+        int count = 0;
+        for (int j = sStart; j < sEnd && j < _data.rawSz; j++) {
+          total += (line[j] - line[j - 1]).toDouble();
+          count++;
+        }
+        if (count == 0) continue;
+        final avgDerivRaw = total / count;
+        final derivUnit = avgDerivRaw * slopeToUnit * sampleRate;
+        final yPos =
+            (graphSz.height -
+                    (derivUnit - yRange.yMin) * graphSz.height / rawYRange)
+                .clamp(0.0, graphSz.height);
+
+        if (pathFirst) {
+          path.moveTo(px.toDouble(), yPos);
+          pathFirst = false;
+        } else {
+          path.lineTo(px.toDouble(), yPos);
+        }
+      }
+
+      pen.color = _channelColor(ch);
+      canvas.drawPath(path, pen..strokeWidth = 1.5);
+    }
   }
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+// ---------------------------------------------------------------------------
+// Minimap painter
+// ---------------------------------------------------------------------------
+
+class _MinimapPainter extends CustomPainter {
+  final DataHub _data;
+  final AppSettings _settings;
+  final GraphController _ctrl;
+
+  _MinimapPainter(this._data, this._settings, this._ctrl)
+    : super(repaint: _data);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const double leftSpace = 8;
+    const double rightSpace = 56;
+    const double vPad = 2;
+
+    canvas.translate(leftSpace, vPad);
+    final gw = size.width - leftSpace - rightSpace;
+    final gh = size.height - vPad * 2;
+
+    if (gw <= 0 || gh <= 0) return;
+
+    // Background
+    final bgPaint = Paint()..color = Colors.grey.shade200;
+    canvas.drawRect(Rect.fromLTWH(0, 0, gw, gh), bgPaint);
+
+    if (_data.rawSz == 0) return;
+
+    final activeIndices = _settings.activeChannelIndices;
+
+    // Compute global min/max (raw, tare-subtracted) for full data
+    double rawMax = 10000;
+    double rawMin = -10000;
+    for (final ch in activeIndices) {
+      final lineIdx = DataHub.chanToLine(ch);
+      if (lineIdx < 0) continue;
+      final mx = (_data.rawMax[lineIdx] - _data.tare[lineIdx]).toDouble();
+      final mn = (_data.rawMin[lineIdx] - _data.tare[lineIdx]).toDouble();
+      if (mx > rawMax) rawMax = mx;
+      if (mn < rawMin) rawMin = mn;
+    }
+
+    final dataRange = rawMax - rawMin;
+    if (dataRange <= 0) return;
+
+    // Draw simplified waveform for each channel
+    final pen = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+
+    final int gwInt = gw.toInt();
+    for (final ch in activeIndices) {
+      final lineIdx = DataHub.chanToLine(ch);
+      if (lineIdx < 0) continue;
+
+      final path = Path();
+      final line = _data.rawData[lineIdx];
+      final tare = _data.tare[lineIdx];
+      bool first = true;
+
+      for (int px = 0; px < gwInt; px++) {
+        final int sStart = px * _data.rawSz ~/ gwInt;
+        final int sEnd = (px + 1) * _data.rawSz ~/ gwInt;
+        if (sStart >= sEnd) continue;
+
+        double total = 0;
+        for (int j = sStart; j < sEnd; j++) {
+          total += line[j];
+        }
+        final avg = total / (sEnd - sStart);
+        final valTared = avg - tare;
+        final y = (gh - (valTared - rawMin) * gh / dataRange).clamp(0.0, gh);
+
+        if (first) {
+          path.moveTo(px.toDouble(), y);
+          first = false;
+        } else {
+          path.lineTo(px.toDouble(), y);
+        }
+      }
+
+      pen.color = _channelColor(ch).withAlpha(180);
+      canvas.drawPath(path, pen);
+    }
+
+    // Viewport highlight
+    final (viewStart, viewEnd) = _ctrl.effectiveRange(_data.rawSz);
+    final double x1 = viewStart * gw / _data.rawSz;
+    final double x2 = viewEnd * gw / _data.rawSz;
+
+    // Dim areas outside viewport
+    final dimPaint = Paint()..color = Colors.black.withAlpha(60);
+    if (x1 > 0) canvas.drawRect(Rect.fromLTWH(0, 0, x1, gh), dimPaint);
+    if (x2 < gw) canvas.drawRect(Rect.fromLTWH(x2, 0, gw - x2, gh), dimPaint);
+
+    // Viewport border
+    final vpBorder = Paint()
+      ..color = Colors.deepPurple
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawRect(Rect.fromLTRB(x1, 0, x2, gh), vpBorder);
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Format a tick value with appropriate precision.
+String _formatTickLabel(double value, String unitSymbol) {
+  final formatted = _formatTickValue(value);
+  return '$formatted $unitSymbol';
+}
+
+String _formatTickValue(double value) {
+  if (value == 0) return '0';
+  final abs = value.abs();
+  if (abs >= 100) return value.toStringAsFixed(0);
+  if (abs >= 1) return value.toStringAsFixed(1);
+  if (abs >= 0.1) return value.toStringAsFixed(2);
+  return value.toStringAsFixed(3);
+}
+
+/// Return a "nice" number close to [value] for axis step sizes.
+double _niceNum(double value) {
+  if (value <= 0) return 1;
+  final exp = (math.log(value) / math.ln10).floor();
+  final frac = value / math.pow(10, exp);
+  double nice;
+  if (frac < 1.5) {
+    nice = 1;
+  } else if (frac < 3.5) {
+    nice = 2;
+  } else if (frac < 7.5) {
+    nice = 5;
+  } else {
+    nice = 10;
+  }
+  return nice * math.pow(10, exp);
 }
