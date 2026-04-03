@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
 
@@ -64,7 +66,7 @@ class SessionStorage {
           durationMs: Value(durationMs),
           sampleRate: const Value(DataHub.samplesPerSec),
           channelCount: Value(channelCount),
-          channelLabels: Value(channelLabels.toString()),
+          channelLabels: Value(jsonEncode(channelLabels)),
           peakForceRaw: Value(peakRaw),
           peakForceChannel: Value(peakChannel),
           calibrationSlope: Value(dataHub.deviceCalibration.slope),
