@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -113,11 +111,9 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   void _openDetail(Session session) {
-    unawaited(
-      Navigator.of(context).push<void>(
-        MaterialPageRoute<void>(
-          builder: (_) => SessionDetailScreen(session: session),
-        ),
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => SessionDetailScreen(session: session),
       ),
     );
   }

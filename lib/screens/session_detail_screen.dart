@@ -3,6 +3,9 @@ import 'dart:io';
 import 'dart:ui' as ui;
 
 import 'package:drift/drift.dart' show Value;
+import 'dart:convert';
+
+import 'package:cross_file/cross_file.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
@@ -47,6 +50,24 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         _error = e.toString();
         _loading = false;
       });
+    }
+  }
+
+  List<String> _parseChannelLabels(String jsonLabels) {
+    try {
+      final List<dynamic> decoded = jsonDecode(jsonLabels);
+      return decoded.map((e) => e.toString()).toList();
+    } catch (e) {
+      // Fallback for older sessions that saved labels via .toString() -> "[A, B]"
+      final trimmed = jsonLabels.trim();
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        return trimmed
+            .substring(1, trimmed.length - 1)
+            .split(',')
+            .map((e) => e.trim())
+            .toList();
+      }
+      return [];
     }
   }
 
@@ -169,7 +190,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 for (int ch = 0; ch < data.channels.length; ch++) ...[
                   const Divider(height: 16),
                   Text(
-                    'Channel ${ch + 1}',
+                    _parseChannelLabels(_session.channelLabels).length > ch
+                        ? _parseChannelLabels(_session.channelLabels)[ch]
+                        : 'Channel ${ch + 1}',
                     style: TextStyle(
                       fontWeight: FontWeight.w500,
                       color: _channelColor(ch),
