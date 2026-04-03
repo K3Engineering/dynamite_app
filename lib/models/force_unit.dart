@@ -19,8 +19,10 @@ enum ForceUnit {
 
   /// Format a value (already in this unit) for display.
   String format(double value) {
-    if (value.abs() >= 100) return '${value.toStringAsFixed(1)} $symbol';
-    if (value.abs() >= 10) return '${value.toStringAsFixed(2)} $symbol';
-    return '${value.toStringAsFixed(3)} $symbol';
+    /// a minus sign doesn't need to be added explicitly
+    final sign = value < 0 ? '' : '+';
+    if (value.abs() >= 100) return '$sign${value.toStringAsFixed(1)} $symbol';
+    if (value.abs() >= 10) return '$sign${value.toStringAsFixed(2)} $symbol';
+    return '$sign${value.toStringAsFixed(3)} $symbol';
   }
 }

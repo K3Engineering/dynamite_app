@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../models/app_settings.dart';
 import '../models/force_unit.dart';
 import 'package:drift/drift.dart' show Value;
+import 'package:google_fonts/google_fonts.dart';
 
 import '../services/bt_handling.dart';
 import '../services/database.dart';
@@ -402,13 +403,17 @@ class _ChannelStatChip extends StatelessWidget {
           ),
           Text(
             unit.format(current),
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            style: GoogleFonts.robotoMono(
+              textStyle: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+            ),
           ),
           Text(
             'Peak: ${unit.format(peak)}',
-            style: Theme.of(context).textTheme.bodySmall,
+            style: GoogleFonts.robotoMono(
+              textStyle: Theme.of(context).textTheme.bodySmall,
+            ),
           ),
         ],
       ),
