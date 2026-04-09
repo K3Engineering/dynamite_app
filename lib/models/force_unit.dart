@@ -25,4 +25,11 @@ enum ForceUnit {
     final numStr = value.abs().toStringAsFixed(3).padLeft(7);
     return '$sign$numStr $symbol';
   }
+
+  /// Format a rate of change (derivative) in this unit for display.
+  String formatRate(double value) {
+    final sign = value < 0 ? '-' : '+';
+    final numStr = value.abs().toStringAsFixed(3).padLeft(7);
+    return '$sign$numStr $symbol/s';
+  }
 }

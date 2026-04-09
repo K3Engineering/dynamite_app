@@ -571,18 +571,12 @@ class _ChannelStatChip extends StatelessWidget {
           Text('Peak: ${unit.format(peak)}', style: monoStyle),
           if (showDerivative && currentDerivative != null)
             Text(
-              'dF/dt: ${_formatDerivative(currentDerivative!, unit)}',
+              'dF/dt: ${unit.formatRate(currentDerivative!)}',
               style: monoStyle,
             ),
         ],
       ),
     );
-  }
-
-  static String _formatDerivative(double value, ForceUnit unit) {
-    final sign = value < 0 ? '-' : '+';
-    final absStr = value.abs().toStringAsFixed(3).padLeft(7);
-    return '$sign$absStr ${unit.symbol}/s';
   }
 }
 
