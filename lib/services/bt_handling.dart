@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
+
 import 'package:isolate_manager/isolate_manager.dart';
 
 import 'package:flutter/foundation.dart' show Uint8List, kIsWeb;
@@ -257,12 +258,15 @@ class DataHub extends ChangeNotifier {
   _isolateManager;
   bool _isolateStarted = false;
 
-  // Render requests mapping to track Future completors for slices, etc.
+  /// Completes when the isolate is started and the initial [InitRequest] has
+  /// been acknowledged. Safe to await multiple times.
+  late final Future<void> isolateReady;
+
   int _lastRenderWidth = -1;
   final Map<int, Float32List> renderData = {};
 
   DataHub() {
-    _initIsolate();
+    isolateReady = _initIsolate();
   }
 
   Future<void> _initIsolate() async {
@@ -272,53 +276,59 @@ class DataHub extends ChangeNotifier {
     );
 
     await _isolateManager.start();
-    _isolateStarted = true;
-
-    _isolateManager.compute(
+    await _isolateManager.compute(
       InitRequest(
         samplesPerSec,
         _maxDataDurationSeconds,
         numGraphLines,
       ).toMap(),
     );
+    _isolateStarted = true;
   }
 
-  void _handleIsolateResponse(Map<dynamic, dynamic> messageMap) {
-    if (messageMap.isEmpty) return;
-    final message = DataIsolateResponse.fromMap(messageMap);
+  // ---------------------------------------------------------------------------
+  // Stats (BLE packet) handling
+  // ---------------------------------------------------------------------------
 
-    if (message is StatsUpdateResponse) {
-      rawSz = message.rawSz;
-      _currentRaw = message.currentRaw;
-      rawMax = message.peakRaw;
-      tare = message.tare;
-      _recordingStartIdx = message.recordingStartIdx;
-      notifyListeners();
-      _autoRequestRender();
-    } else if (message is RenderBatchResponse) {
-      for (int i = 0; i < message.linesMinMax.length; i++) {
-        renderData[i] = message.linesMinMax[i];
-      }
-      notifyListeners();
-    } else if (message is SliceResultResponse) {
-      _sliceCompleter?.complete(message.channelsData);
-      _sliceCompleter = null;
+  void _applyStats(StatsUpdateResponse stats) {
+    rawSz = stats.rawSz;
+    _currentRaw = stats.currentRaw;
+    rawMax = stats.peakRaw;
+    tare = stats.tare;
+    _recordingStartIdx = stats.recordingStartIdx;
+    notifyListeners();
+    _autoRequestRender();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Render handling
+  // ---------------------------------------------------------------------------
+
+  void _applyRender(RenderBatchResponse render) {
+    for (int i = 0; i < render.linesMinMax.length; i++) {
+      renderData[i] = render.linesMinMax[i];
     }
+    notifyListeners();
   }
 
   void _autoRequestRender() {
     if (_lastRenderWidth > 0 && _isolateStarted) {
-      int endTimeMs = (rawSz * 1000) ~/ samplesPerSec;
-      // Request full available range
-      _isolateManager
-          .compute(
-            RenderRequest(
-              startTimeMs: 0,
-              endTimeMs: endTimeMs,
-              pixelWidth: _lastRenderWidth,
-            ).toMap(),
-          )
-          .then(_handleIsolateResponse);
+      final int endTimeMs = (rawSz * 1000) ~/ samplesPerSec;
+      unawaited(
+        _isolateManager
+            .compute(
+              RenderRequest(
+                startTimeMs: 0,
+                endTimeMs: endTimeMs,
+                pixelWidth: _lastRenderWidth,
+              ).toMap(),
+            )
+            .then((map) {
+              if (map.isNotEmpty) {
+                _applyRender(RenderBatchResponse.fromMap(map));
+              }
+            }),
+      );
     }
   }
 
@@ -329,41 +339,54 @@ class DataHub extends ChangeNotifier {
     }
   }
 
-  Completer<List<Int32List>>? _sliceCompleter;
+  // ---------------------------------------------------------------------------
+  // Slice fetching
+  // ---------------------------------------------------------------------------
 
-  Future<List<Int32List>> fetchSlice(int startIdx, int endIdx) {
-    if (!_isolateStarted) return Future.value([]);
-    _sliceCompleter = Completer<List<Int32List>>();
-    _isolateManager
-        .compute(FetchSliceRequest(startIdx: startIdx, endIdx: endIdx).toMap())
-        .then(_handleIsolateResponse);
-    return _sliceCompleter!.future;
+  Future<List<Int32List>> fetchSlice(int startIdx, int endIdx) async {
+    if (!_isolateStarted) return [];
+    final map = await _isolateManager.compute(
+      FetchSliceRequest(startIdx: startIdx, endIdx: endIdx).toMap(),
+    );
+    if (map.isEmpty) return [];
+    return SliceResultResponse.fromMap(map).channelsData;
   }
 
+  // ---------------------------------------------------------------------------
+  // Fire-and-forget commands
+  // ---------------------------------------------------------------------------
+
   void clear() {
-    // Usually restarting connection
     if (_isolateStarted) {
-      _isolateManager.compute(
-        InitRequest(
-          samplesPerSec,
-          _maxDataDurationSeconds,
-          numGraphLines,
-        ).toMap(),
+      unawaited(
+        _isolateManager.compute(
+          InitRequest(
+            samplesPerSec,
+            _maxDataDurationSeconds,
+            numGraphLines,
+          ).toMap(),
+        ),
       );
     }
   }
 
   void requestTare() {
     if (_isolateStarted) {
-      _isolateManager.compute(TareRequest().toMap());
+      unawaited(_isolateManager.compute(TareRequest().toMap()));
     }
   }
 
   void setRecordingStart() {
     if (_isolateStarted) {
-      _isolateManager.compute(SetSessionRecordingStartRequest().toMap());
+      unawaited(
+        _isolateManager.compute(SetSessionRecordingStartRequest().toMap()),
+      );
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Utilities
+  // ---------------------------------------------------------------------------
 
   static int chanToLine(int chan) {
     if (chan == 1) return 0;
@@ -393,10 +416,12 @@ class DataHub extends ChangeNotifier {
 
   bool _parseDataPacket(Uint8List data) {
     if (!_isolateStarted) return true;
-    _isolateManager
-        .compute(BlePacketRequest(data).toMap())
-        .then(_handleIsolateResponse);
-    return true; // We can always accept data
+    unawaited(
+      _isolateManager.compute(BlePacketRequest(data).toMap()).then((map) {
+        if (map.isNotEmpty) _applyStats(StatsUpdateResponse.fromMap(map));
+      }),
+    );
+    return true;
   }
 }
 

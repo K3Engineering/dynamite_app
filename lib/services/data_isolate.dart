@@ -116,47 +116,6 @@ class RenderRequest extends DataIsolateRequest {
 // Messages FROM Isolate
 abstract class DataIsolateResponse {
   Map<String, dynamic> toMap();
-
-  static DataIsolateResponse fromMap(Map<dynamic, dynamic> map) {
-    switch (map['type']) {
-      case 'StatsUpdateResponse':
-        return StatsUpdateResponse(
-          rawSz: (map['rawSz'] as num).toInt(),
-          currentRaw: Int32List.fromList(
-            (map['currentRaw'] as List)
-                .cast<num>()
-                .map((e) => e.toInt())
-                .toList(),
-          ),
-          peakRaw: Int32List.fromList(
-            (map['peakRaw'] as List).cast<num>().map((e) => e.toInt()).toList(),
-          ),
-          tare: Float64List.fromList(
-            (map['tare'] as List).cast<num>().map((e) => e.toDouble()).toList(),
-          ),
-          recordingStartIdx: (map['recordingStartIdx'] as num).toInt(),
-        );
-      case 'RenderBatchResponse':
-        return RenderBatchResponse(
-          (map['linesMinMax'] as List).map((l) {
-            return Float32List.fromList(
-              (l as List).cast<num>().map((e) => e.toDouble()).toList(),
-            );
-          }).toList(),
-          (map['pointCount'] as num).toInt(),
-        );
-      case 'SliceResultResponse':
-        return SliceResultResponse(
-          (map['channelsData'] as List).map((l) {
-            return Int32List.fromList(
-              (l as List).cast<num>().map((e) => e.toInt()).toList(),
-            );
-          }).toList(),
-        );
-      default:
-        throw Exception('Unknown response type: ${map['type']}');
-    }
-  }
 }
 
 class StatsUpdateResponse extends DataIsolateResponse {
@@ -173,6 +132,22 @@ class StatsUpdateResponse extends DataIsolateResponse {
     required this.tare,
     required this.recordingStartIdx,
   });
+
+  static StatsUpdateResponse fromMap(Map<dynamic, dynamic> map) {
+    return StatsUpdateResponse(
+      rawSz: (map['rawSz'] as num).toInt(),
+      currentRaw: Int32List.fromList(
+        (map['currentRaw'] as List).cast<num>().map((e) => e.toInt()).toList(),
+      ),
+      peakRaw: Int32List.fromList(
+        (map['peakRaw'] as List).cast<num>().map((e) => e.toInt()).toList(),
+      ),
+      tare: Float64List.fromList(
+        (map['tare'] as List).cast<num>().map((e) => e.toDouble()).toList(),
+      ),
+      recordingStartIdx: (map['recordingStartIdx'] as num).toInt(),
+    );
+  }
 
   @override
   Map<String, dynamic> toMap() => {
@@ -193,6 +168,17 @@ class RenderBatchResponse extends DataIsolateResponse {
 
   RenderBatchResponse(this.linesMinMax, this.pointCount);
 
+  static RenderBatchResponse fromMap(Map<dynamic, dynamic> map) {
+    return RenderBatchResponse(
+      (map['linesMinMax'] as List).map((l) {
+        return Float32List.fromList(
+          (l as List).cast<num>().map((e) => e.toDouble()).toList(),
+        );
+      }).toList(),
+      (map['pointCount'] as num).toInt(),
+    );
+  }
+
   @override
   Map<String, dynamic> toMap() => {
     'type': 'RenderBatchResponse',
@@ -204,6 +190,16 @@ class RenderBatchResponse extends DataIsolateResponse {
 class SliceResultResponse extends DataIsolateResponse {
   final List<Int32List> channelsData;
   SliceResultResponse(this.channelsData);
+
+  static SliceResultResponse fromMap(Map<dynamic, dynamic> map) {
+    return SliceResultResponse(
+      (map['channelsData'] as List).map((l) {
+        return Int32List.fromList(
+          (l as List).cast<num>().map((e) => e.toInt()).toList(),
+        );
+      }).toList(),
+    );
+  }
 
   @override
   Map<String, dynamic> toMap() => {
@@ -221,6 +217,8 @@ class SliceResultResponse extends DataIsolateResponse {
 void dataIsolateWorker(dynamic params) {
   _DataProcessor? processor;
 
+  // isolate_manager API; registers the onEvent callback, not awaited.
+  // ignore: discarded_futures
   IsolateManagerFunction.customFunction<
     Map<dynamic, dynamic>,
     Map<dynamic, dynamic>
@@ -477,7 +475,7 @@ class _DataProcessor {
         final double bucketStartIdx = startIdx + p * samplesPerPixel;
         final double bucketEndIdx = startIdx + (p + 1) * samplesPerPixel;
 
-        int bStart = bucketStartIdx.floor();
+        final int bStart = bucketStartIdx.floor();
         int bEnd = bucketEndIdx.floor();
         if (bStart == bEnd) bEnd++;
 
