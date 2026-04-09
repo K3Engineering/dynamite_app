@@ -272,7 +272,7 @@ class DataHub extends ChangeNotifier {
     );
 
     _isolateManager.stream.listen((messageMap) {
-      if (messageMap.isEmpty) return; // Ignore event indicator if returned
+      if (messageMap.isEmpty) return; // Ignore empty maps
       final message = DataIsolateResponse.fromMap(messageMap);
 
       if (message is StatsUpdateResponse) {
@@ -283,11 +283,12 @@ class DataHub extends ChangeNotifier {
         _recordingStartIdx = message.recordingStartIdx;
         notifyListeners();
         _autoRequestRender();
-      } else if (message is RenderResultResponse) {
-        renderData[message.lineIdx] = message.minMaxData;
+      } else if (message is RenderBatchResponse) {
+        for (int i = 0; i < message.linesMinMax.length; i++) {
+          renderData[i] = message.linesMinMax[i];
+        }
         notifyListeners();
       } else if (message is SliceResultResponse) {
-        // Find matching completor. We can store one global completor for simplicity.
         _sliceCompleter?.complete(message.channelsData);
         _sliceCompleter = null;
       }

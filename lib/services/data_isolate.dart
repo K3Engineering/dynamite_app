@@ -120,11 +120,10 @@ abstract class DataIsolateResponse {
           tare: map['tare'] as Float64List,
           recordingStartIdx: map['recordingStartIdx'],
         );
-      case 'RenderResultResponse':
-        return RenderResultResponse(
-          lineIdx: map['lineIdx'],
-          minMaxData: map['minMaxData'] as Float32List,
-          pointCount: map['pointCount'],
+      case 'RenderBatchResponse':
+        return RenderBatchResponse(
+          List<Float32List>.from(map['linesMinMax']),
+          map['pointCount'] as int,
         );
       case 'SliceResultResponse':
         return SliceResultResponse(List<Int32List>.from(map['channelsData']));
@@ -160,22 +159,18 @@ class StatsUpdateResponse extends DataIsolateResponse {
   };
 }
 
-class RenderResultResponse extends DataIsolateResponse {
-  final int lineIdx;
-  final Float32List minMaxData;
+/// Batched render result containing min/max data for ALL lines in one response.
+class RenderBatchResponse extends DataIsolateResponse {
+  /// One Float32List per line, each containing [min0, max0, min1, max1, ...].
+  final List<Float32List> linesMinMax;
   final int pointCount;
 
-  RenderResultResponse({
-    required this.lineIdx,
-    required this.minMaxData,
-    required this.pointCount,
-  });
+  RenderBatchResponse(this.linesMinMax, this.pointCount);
 
   @override
   Map<String, dynamic> toMap() => {
-    'type': 'RenderResultResponse',
-    'lineIdx': lineIdx,
-    'minMaxData': minMaxData,
+    'type': 'RenderBatchResponse',
+    'linesMinMax': linesMinMax,
     'pointCount': pointCount,
   };
 }
@@ -206,43 +201,41 @@ void dataIsolateWorker(dynamic params) {
   >(
     params,
     onEvent: (controller, messageMap) {
-      if (messageMap.isEmpty) return {};
+      if (messageMap.isEmpty) return <String, dynamic>{};
 
       final message = DataIsolateRequest.fromMap(messageMap);
 
       if (message is InitRequest) {
         processor = _DataProcessor(
-          controller: controller,
           samplesPerSec: message.samplesPerSec,
           maxDurationSeconds: message.maxDurationSeconds,
           numChannels: message.numChannels,
         );
+        return <String, dynamic>{};
       } else if (message is BlePacketRequest) {
-        processor?.processBlePacket(message.data);
+        return processor?.processBlePacket(message.data) ?? <String, dynamic>{};
       } else if (message is TareRequest) {
         processor?.requestTare();
+        return <String, dynamic>{};
       } else if (message is SetSessionRecordingStartRequest) {
         processor?.setRecordingStart();
+        return <String, dynamic>{};
       } else if (message is RenderRequest) {
-        processor?.handleRenderRequest(message);
+        return processor?.handleRenderRequest(message) ?? <String, dynamic>{};
       } else if (message is FetchSliceRequest) {
-        processor?.handleFetchSlice(message);
+        return processor?.handleFetchSlice(message) ?? <String, dynamic>{};
       }
 
-      controller.sendResultWithAutoTransfer({});
-      return {}; // empty map as event indicator
+      return <String, dynamic>{};
     },
     onInit: (controller) {
       // Nothing needed on init
     },
     autoHandleException: false,
-    autoHandleResult: false,
   );
 }
 
 class _DataProcessor {
-  final IsolateManagerController<Map<String, dynamic>, Map<String, dynamic>>
-  controller;
   final int samplesPerSec;
   final int numChannels;
   final int capacity; // max samples in circular buffer
@@ -270,10 +263,7 @@ class _DataProcessor {
   late final Int32List _peakRaw;
   int _recordingStartIdx = 0;
 
-  DateTime? _lastStatsSent;
-
   _DataProcessor({
-    required this.controller,
     required this.samplesPerSec,
     required int maxDurationSeconds,
     required this.numChannels,
@@ -295,7 +285,7 @@ class _DataProcessor {
   }
 
   static int _alignCapacity(int cap) {
-    int rem = cap % 4096;
+    final int rem = cap % 4096;
     if (rem == 0) return cap;
     return cap + (4096 - rem);
   }
@@ -321,14 +311,14 @@ class _DataProcessor {
     return -1;
   }
 
-  void processBlePacket(Uint8List data) {
-    if (data.isEmpty) return;
+  /// Process a BLE packet and return a StatsUpdateResponse map (always).
+  Map<String, dynamic> processBlePacket(Uint8List data) {
+    if (data.isEmpty) {
+      return _buildStatsMap();
+    }
 
     if (data.length < nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength) {
-      print(
-        'WARNING: Isolate received malformed packet of length ${data.length}',
-      );
-      return; // prevent range error crash
+      return _buildStatsMap();
     }
 
     for (
@@ -391,29 +381,26 @@ class _DataProcessor {
       }
     }
 
-    final now = DateTime.now();
-    if (_lastStatsSent == null ||
-        now.difference(_lastStatsSent!).inMilliseconds > 16) {
-      _lastStatsSent = now;
-      final response = StatsUpdateResponse(
-        rawSz: _totalWritten,
-        currentRaw: Int32List.fromList(_currentRaw),
-        peakRaw: Int32List.fromList(_peakRaw),
-        tare: Float64List.fromList(_tare),
-        recordingStartIdx: _recordingStartIdx,
-      );
-      controller.sendResultWithAutoTransfer(response.toMap());
-    }
+    return _buildStatsMap();
   }
 
-  void handleFetchSlice(FetchSliceRequest req) {
+  Map<String, dynamic> _buildStatsMap() {
+    return StatsUpdateResponse(
+      rawSz: _totalWritten,
+      currentRaw: Int32List.fromList(_currentRaw),
+      peakRaw: Int32List.fromList(_peakRaw),
+      tare: Float64List.fromList(_tare),
+      recordingStartIdx: _recordingStartIdx,
+    ).toMap();
+  }
+
+  Map<String, dynamic> handleFetchSlice(FetchSliceRequest req) {
     int start = req.startIdx;
     int end = req.endIdx;
     if (start < 0) start = 0;
     if (end > _totalWritten) end = _totalWritten;
     if (start > end) {
-      controller.sendResultWithAutoTransfer(SliceResultResponse([]).toMap());
-      return;
+      return SliceResultResponse([]).toMap();
     }
 
     final len = end - start;
@@ -421,45 +408,41 @@ class _DataProcessor {
 
     for (int i = 0; i < numChannels; i++) {
       for (int k = 0; k < len; k++) {
-        int logicalIdx = start + k;
+        final int logicalIdx = start + k;
         if (logicalIdx < _totalWritten - capacity) {
           list[i][k] = 0;
         } else {
-          int physicalIdx = logicalIdx % capacity;
+          final int physicalIdx = logicalIdx % capacity;
           list[i][k] = _layer1x[i][physicalIdx].toInt();
         }
       }
     }
 
-    controller.sendResultWithAutoTransfer(SliceResultResponse(list).toMap());
+    return SliceResultResponse(list).toMap();
   }
 
-  void handleRenderRequest(RenderRequest req) {
+  Map<String, dynamic> handleRenderRequest(RenderRequest req) {
     final startTimeS = req.startTimeMs / 1000.0;
     final endTimeS = req.endTimeMs / 1000.0;
     int startIdx = (startTimeS * samplesPerSec).floor();
     int endIdx = (endTimeS * samplesPerSec).ceil();
 
-    if (startIdx < _totalWritten - capacity)
+    if (startIdx < _totalWritten - capacity) {
       startIdx = _totalWritten - capacity;
+    }
     if (startIdx < 0) startIdx = 0;
     if (endIdx > _totalWritten) endIdx = _totalWritten;
 
     if (startIdx >= endIdx || req.pixelWidth <= 0) {
-      for (int line = 0; line < numChannels; line++) {
-        controller.sendResultWithAutoTransfer(
-          RenderResultResponse(
-            lineIdx: line,
-            minMaxData: Float32List(0),
-            pointCount: 0,
-          ).toMap(),
-        );
-      }
-      return;
+      return RenderBatchResponse(
+        List.generate(numChannels, (_) => Float32List(0)),
+        0,
+      ).toMap();
     }
 
     final int points = req.pixelWidth;
     final double samplesPerPixel = (endIdx - startIdx) / points;
+    final List<Float32List> allLines = [];
 
     for (int line = 0; line < numChannels; line++) {
       final outMinMax = Float32List(points * 2);
@@ -477,25 +460,25 @@ class _DataProcessor {
 
         int current = bStart;
         while (current < bEnd) {
-          int remaining = bEnd - current;
-          int physicalIdx = current % capacity;
+          final int remaining = bEnd - current;
+          final int physicalIdx = current % capacity;
 
           if (remaining >= 4096 && physicalIdx % 4096 == 0) {
-            int p4096 = physicalIdx ~/ 4096;
-            double cMin = _min4096x[line][p4096];
-            double cMax = _max4096x[line][p4096];
+            final int p4096 = physicalIdx ~/ 4096;
+            final double cMin = _min4096x[line][p4096];
+            final double cMax = _max4096x[line][p4096];
             if (cMin < minV) minV = cMin;
             if (cMax > maxV) maxV = cMax;
             current += 4096;
           } else if (remaining >= 64 && physicalIdx % 64 == 0) {
-            int p64 = physicalIdx ~/ 64;
-            double cMin = _min64x[line][p64];
-            double cMax = _max64x[line][p64];
+            final int p64 = physicalIdx ~/ 64;
+            final double cMin = _min64x[line][p64];
+            final double cMax = _max64x[line][p64];
             if (cMin < minV) minV = cMin;
             if (cMax > maxV) maxV = cMax;
             current += 64;
           } else {
-            double v = _layer1x[line][physicalIdx];
+            final double v = _layer1x[line][physicalIdx];
             if (v < minV) minV = v;
             if (v > maxV) maxV = v;
             current++;
@@ -509,13 +492,9 @@ class _DataProcessor {
         outMinMax[p * 2 + 1] = maxV;
       }
 
-      controller.sendResultWithAutoTransfer(
-        RenderResultResponse(
-          lineIdx: line,
-          minMaxData: outMinMax,
-          pointCount: points,
-        ).toMap(),
-      );
+      allLines.add(outMinMax);
     }
+
+    return RenderBatchResponse(allLines, points).toMap();
   }
 }
