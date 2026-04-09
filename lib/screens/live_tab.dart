@@ -1264,7 +1264,8 @@ class _LiveGraphPainter extends CustomPainter {
       final lineIdx = DataHub.chanToLine(ch);
       if (lineIdx < 0) continue;
 
-      final path = Path();
+      final avgPath = Path();
+      final envPath = Path();
       final line = _data.rawData[lineIdx];
       final tare = _data.tare[lineIdx];
 
@@ -1278,26 +1279,56 @@ class _LiveGraphPainter extends CustomPainter {
         if (sStart >= sEnd) continue;
 
         double total = 0;
+        double minRaw = double.infinity;
+        double maxRaw = double.negativeInfinity;
+
         for (int j = sStart; j < sEnd; j++) {
-          total += line[j];
+          final val = line[j];
+          total += val;
+          if (val < minRaw) minRaw = val.toDouble();
+          if (val > maxRaw) maxRaw = val.toDouble();
         }
-        final avg = total / (sEnd - sStart);
-        final valUnit = (avg - tare) * slopeToUnit;
-        final yPos =
+
+        final avgRaw = total / (sEnd - sStart);
+
+        final avgUnit = (avgRaw - tare) * slopeToUnit;
+        final minUnit = (minRaw - tare) * slopeToUnit;
+        final maxUnit = (maxRaw - tare) * slopeToUnit;
+
+        final avgY =
             (graphSz.height -
-                    (valUnit - yRange.yMin) * graphSz.height / rawRange)
+                    (avgUnit - yRange.yMin) * graphSz.height / rawRange)
+                .clamp(0.0, graphSz.height);
+        final minY =
+            (graphSz.height -
+                    (minUnit - yRange.yMin) * graphSz.height / rawRange)
+                .clamp(0.0, graphSz.height);
+        final maxY =
+            (graphSz.height -
+                    (maxUnit - yRange.yMin) * graphSz.height / rawRange)
                 .clamp(0.0, graphSz.height);
 
         if (first) {
-          path.moveTo(i.toDouble(), yPos);
+          avgPath.moveTo(i.toDouble(), avgY);
+          envPath.moveTo(i.toDouble(), minY);
+          envPath.lineTo(i.toDouble(), maxY);
           first = false;
         } else {
-          path.lineTo(i.toDouble(), yPos);
+          avgPath.lineTo(i.toDouble(), avgY);
+          envPath.moveTo(i.toDouble(), minY);
+          envPath.lineTo(i.toDouble(), maxY);
         }
       }
 
-      pen.color = _channelColor(ch);
-      canvas.drawPath(path, pen..strokeWidth = 1.5);
+      final chColor = _channelColor(ch);
+
+      // Draw envelope first (lighter)
+      pen.color = chColor.withAlpha(60);
+      canvas.drawPath(envPath, pen..strokeWidth = 1.0);
+
+      // Draw average line on top
+      pen.color = chColor;
+      canvas.drawPath(avgPath, pen..strokeWidth = 1.5);
     }
   }
 
@@ -1490,7 +1521,8 @@ class _DerivativeGraphPainter extends CustomPainter {
       final lineIdx = DataHub.chanToLine(ch);
       if (lineIdx < 0) continue;
 
-      final path = Path();
+      final avgPath = Path();
+      final envPath = Path();
       final line = _data.rawData[lineIdx];
       final int graphW = graphSz.width.toInt();
       bool pathFirst = true;
@@ -1508,28 +1540,58 @@ class _DerivativeGraphPainter extends CustomPainter {
 
         double total = 0;
         int count = 0;
+        double minDerivRaw = double.infinity;
+        double maxDerivRaw = double.negativeInfinity;
+
         for (int j = sStart; j < sEnd && j < _data.rawSz; j++) {
-          total += (line[j] - line[j - 1]).toDouble();
+          final double d = (line[j] - line[j - 1]).toDouble();
+          total += d;
           count++;
+          if (d < minDerivRaw) minDerivRaw = d;
+          if (d > maxDerivRaw) maxDerivRaw = d;
         }
         if (count == 0) continue;
+
         final avgDerivRaw = total / count;
-        final derivUnit = avgDerivRaw * slopeToUnit * sampleRate;
-        final yPos =
+
+        final avgDerivUnit = avgDerivRaw * slopeToUnit * sampleRate;
+        final minDerivUnit = minDerivRaw * slopeToUnit * sampleRate;
+        final maxDerivUnit = maxDerivRaw * slopeToUnit * sampleRate;
+
+        final avgY =
             (graphSz.height -
-                    (derivUnit - yRange.yMin) * graphSz.height / rawYRange)
+                    (avgDerivUnit - yRange.yMin) * graphSz.height / rawYRange)
+                .clamp(0.0, graphSz.height);
+        final minY =
+            (graphSz.height -
+                    (minDerivUnit - yRange.yMin) * graphSz.height / rawYRange)
+                .clamp(0.0, graphSz.height);
+        final maxY =
+            (graphSz.height -
+                    (maxDerivUnit - yRange.yMin) * graphSz.height / rawYRange)
                 .clamp(0.0, graphSz.height);
 
         if (pathFirst) {
-          path.moveTo(px.toDouble(), yPos);
+          avgPath.moveTo(px.toDouble(), avgY);
+          envPath.moveTo(px.toDouble(), minY);
+          envPath.lineTo(px.toDouble(), maxY);
           pathFirst = false;
         } else {
-          path.lineTo(px.toDouble(), yPos);
+          avgPath.lineTo(px.toDouble(), avgY);
+          envPath.moveTo(px.toDouble(), minY);
+          envPath.lineTo(px.toDouble(), maxY);
         }
       }
 
-      pen.color = _channelColor(ch);
-      canvas.drawPath(path, pen..strokeWidth = 1.5);
+      final chColor = _channelColor(ch);
+
+      // Envelope
+      pen.color = chColor.withAlpha(60);
+      canvas.drawPath(envPath, pen..strokeWidth = 1.0);
+
+      // Average
+      pen.color = chColor;
+      canvas.drawPath(avgPath, pen..strokeWidth = 1.5);
     }
   }
 
@@ -1594,7 +1656,8 @@ class _MinimapPainter extends CustomPainter {
       final lineIdx = DataHub.chanToLine(ch);
       if (lineIdx < 0) continue;
 
-      final path = Path();
+      final avgPath = Path();
+      final envPath = Path();
       final line = _data.rawData[lineIdx];
       final tare = _data.tare[lineIdx];
       bool first = true;
@@ -1605,23 +1668,47 @@ class _MinimapPainter extends CustomPainter {
         if (sStart >= sEnd) continue;
 
         double total = 0;
+        double minRaw = double.infinity;
+        double maxRaw = double.negativeInfinity;
+
         for (int j = sStart; j < sEnd; j++) {
-          total += line[j];
+          final val = line[j];
+          total += val;
+          if (val < minRaw) minRaw = val.toDouble();
+          if (val > maxRaw) maxRaw = val.toDouble();
         }
-        final avg = total / (sEnd - sStart);
-        final valTared = avg - tare;
-        final y = (gh - (valTared - rawMin) * gh / dataRange).clamp(0.0, gh);
+
+        final avgRaw = total / (sEnd - sStart);
+
+        final avgTared = avgRaw - tare;
+        final minTared = minRaw - tare;
+        final maxTared = maxRaw - tare;
+
+        final avgY = (gh - (avgTared - rawMin) * gh / dataRange).clamp(0.0, gh);
+        final minY = (gh - (minTared - rawMin) * gh / dataRange).clamp(0.0, gh);
+        final maxY = (gh - (maxTared - rawMin) * gh / dataRange).clamp(0.0, gh);
 
         if (first) {
-          path.moveTo(px.toDouble(), y);
+          avgPath.moveTo(px.toDouble(), avgY);
+          envPath.moveTo(px.toDouble(), minY);
+          envPath.lineTo(px.toDouble(), maxY);
           first = false;
         } else {
-          path.lineTo(px.toDouble(), y);
+          avgPath.lineTo(px.toDouble(), avgY);
+          envPath.moveTo(px.toDouble(), minY);
+          envPath.lineTo(px.toDouble(), maxY);
         }
       }
 
-      pen.color = _channelColor(ch).withAlpha(180);
-      canvas.drawPath(path, pen);
+      final chColor = _channelColor(ch);
+
+      // Draw envelope first (lighter)
+      pen.color = chColor.withAlpha(40); // very faint for minimap
+      canvas.drawPath(envPath, pen..strokeWidth = 1.0);
+
+      // Draw average line on top
+      pen.color = chColor.withAlpha(180);
+      canvas.drawPath(avgPath, pen..strokeWidth = 1.0);
     }
 
     // Viewport highlight

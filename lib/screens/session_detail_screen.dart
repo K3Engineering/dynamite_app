@@ -537,30 +537,64 @@ class _SessionGraphPainter extends CustomPainter {
 
     // Draw data lines
     for (final ch in activeChannels) {
-      final path = Path();
+      final avgPath = Path();
+      final envPath = Path();
       final chData = data.channels[ch];
 
-      path.moveTo(0, graphSz.height);
+      bool first = true;
       final int graphW = graphSz.width.toInt();
       for (int i = 0, j = 0; i < graphW; ++i) {
         int total = 0;
+        int minRaw = 2147483647; // Max Int32
+        int maxRaw = -2147483648; // Min Int32
         final int start = j;
+
         for (
           ;
           (j * graphW < i * data.sampleCount) && (j < data.sampleCount);
           ++j
         ) {
-          total += chData[j];
+          final val = chData[j];
+          total += val;
+          if (val < minRaw) minRaw = val;
+          if (val > maxRaw) maxRaw = val;
         }
+
         if (start < j) {
           final double avg = total / (j - start);
-          final double y = graphSz.height - avg * graphSz.height / dataMax;
-          path.lineTo(i.toDouble(), y.clamp(0, graphSz.height));
+
+          final double avgY = graphSz.height - avg * graphSz.height / dataMax;
+          final double minY =
+              graphSz.height - minRaw * graphSz.height / dataMax;
+          final double maxY =
+              graphSz.height - maxRaw * graphSz.height / dataMax;
+
+          final clampAvgY = avgY.clamp(0.0, graphSz.height);
+          final clampMinY = minY.clamp(0.0, graphSz.height);
+          final clampMaxY = maxY.clamp(0.0, graphSz.height);
+
+          if (first) {
+            avgPath.moveTo(i.toDouble(), clampAvgY);
+            envPath.moveTo(i.toDouble(), clampMinY);
+            envPath.lineTo(i.toDouble(), clampMaxY);
+            first = false;
+          } else {
+            avgPath.lineTo(i.toDouble(), clampAvgY);
+            envPath.moveTo(i.toDouble(), clampMinY);
+            envPath.lineTo(i.toDouble(), clampMaxY);
+          }
         }
       }
 
-      pen.color = _channelColor(ch);
-      canvas.drawPath(path, pen..strokeWidth = 1.5);
+      final chColor = _channelColor(ch);
+
+      // Envelope
+      pen.color = chColor.withAlpha(60);
+      canvas.drawPath(envPath, pen..strokeWidth = 1.0);
+
+      // Average line
+      pen.color = chColor;
+      canvas.drawPath(avgPath, pen..strokeWidth = 1.5);
     }
   }
 
