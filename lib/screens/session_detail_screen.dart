@@ -78,6 +78,7 @@ class _SessionMinimapDataSource extends ChangeNotifier
 
 class _SessionDetailScreenState extends State<SessionDetailScreen> {
   SessionData? _data;
+  _SessionMinimapDataSource? _dataSource;
   bool _loading = true;
   String? _error;
 
@@ -93,6 +94,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   void dispose() {
+    _dataSource?.dispose();
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -100,11 +102,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Future<void> _loadData() async {
     try {
       final data = await SessionStorage.loadSession(_session);
+      if (!mounted) return;
       setState(() {
         _data = data;
+        if (data != null) {
+          _dataSource = _SessionMinimapDataSource(data);
+        }
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -171,18 +178,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Graph
-          SizedBox(
-            height: 332,
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: GraphWorkspace(
-                data: _SessionMinimapDataSource(data),
-                ctrl: _graphCtrl,
-                settings: settings,
-                showDerivative: false,
+          if (_dataSource != null)
+            SizedBox(
+              height: 332,
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: GraphWorkspace(
+                  data: _dataSource!,
+                  ctrl: _graphCtrl,
+                  settings: settings,
+                  showDerivative: false,
+                  isLiveGraph: false,
+                ),
               ),
             ),
-          ),
 
           // Channel legend
           Padding(

@@ -76,9 +76,23 @@ class _LiveMinimapDataSource extends ChangeNotifier implements GraphDataSource {
 class _LiveTabState extends State<LiveTab> {
   final GraphController _graphCtrl = GraphController();
   bool _showDerivative = false;
+  _LiveMinimapDataSource? _dataSource;
+  BluetoothHandling? _btHandling;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bt = context.watch<BluetoothHandling>();
+    if (_btHandling != bt) {
+      _btHandling = bt;
+      _dataSource?.dispose();
+      _dataSource = _LiveMinimapDataSource(bt.dataHub);
+    }
+  }
 
   @override
   void dispose() {
+    _dataSource?.dispose();
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -213,8 +227,9 @@ class _LiveTabState extends State<LiveTab> {
   }
 
   Widget _buildGraphArea(BluetoothHandling bt, AppSettings settings) {
+    if (_dataSource == null) return const SizedBox.shrink();
     return GraphWorkspace(
-      data: _LiveMinimapDataSource(bt.dataHub),
+      data: _dataSource!,
       ctrl: _graphCtrl,
       settings: settings,
       showDerivative: _showDerivative,

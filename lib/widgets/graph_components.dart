@@ -68,6 +68,7 @@ class GraphController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// TODO this isn't used anywhere
   /// Snap to live mode showing all data (fully zoomed out).
   void goLiveFullView() {
     _viewStart = 0;
@@ -592,6 +593,7 @@ class GraphWorkspace extends StatelessWidget {
   final GraphController ctrl;
   final AppSettings settings;
   final bool showDerivative;
+  final bool isLiveGraph;
 
   const GraphWorkspace({
     super.key,
@@ -599,6 +601,7 @@ class GraphWorkspace extends StatelessWidget {
     required this.ctrl,
     required this.settings,
     this.showDerivative = false,
+    this.isLiveGraph = true,
   });
 
   @override
@@ -667,14 +670,14 @@ class GraphWorkspace extends StatelessWidget {
             ListenableBuilder(
               listenable: ctrl,
               builder: (context, _) {
-                if (ctrl.isLive || data.sampleCount == 0) {
+                if (ctrl.isLive || data.sampleCount == 0 || !isLiveGraph) {
                   return const SizedBox.shrink();
                 }
                 return Positioned(
                   right: 64,
                   top: 8,
                   child: FilledButton.tonalIcon(
-                    onPressed: ctrl.goLiveFullView,
+                    onPressed: ctrl.goLive,
                     icon: const Icon(Icons.fast_forward, size: 16),
                     label: const Text('LIVE'),
                     style: FilledButton.styleFrom(
@@ -691,7 +694,7 @@ class GraphWorkspace extends StatelessWidget {
             ),
             // Zoom buttons
             Positioned(
-              right: 8,
+              right: 72,
               bottom: 40,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -700,7 +703,8 @@ class GraphWorkspace extends StatelessWidget {
                     heroTag: 'zoomIn_${data.hashCode}',
                     onPressed: () {
                       if (data.sampleCount > 0) {
-                        ctrl.zoom(1.2, 0.5, data.sampleCount);
+                        final focal = ctrl.isLive ? 1.0 : 0.5;
+                        ctrl.zoom(1.2, focal, data.sampleCount);
                       }
                     },
                     child: const Icon(Icons.zoom_in),
@@ -710,7 +714,8 @@ class GraphWorkspace extends StatelessWidget {
                     heroTag: 'zoomOut_${data.hashCode}',
                     onPressed: () {
                       if (data.sampleCount > 0) {
-                        ctrl.zoom(1 / 1.2, 0.5, data.sampleCount);
+                        final focal = ctrl.isLive ? 1.0 : 0.5;
+                        ctrl.zoom(1 / 1.2, focal, data.sampleCount);
                       }
                     },
                     child: const Icon(Icons.zoom_out),
