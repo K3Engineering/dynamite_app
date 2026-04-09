@@ -271,29 +271,6 @@ class DataHub extends ChangeNotifier {
       workerName: 'dataIsolateWorker',
     );
 
-    _isolateManager.stream.listen((messageMap) {
-      if (messageMap.isEmpty) return; // Ignore empty maps
-      final message = DataIsolateResponse.fromMap(messageMap);
-
-      if (message is StatsUpdateResponse) {
-        rawSz = message.rawSz;
-        _currentRaw = message.currentRaw;
-        rawMax = message.peakRaw;
-        tare = message.tare;
-        _recordingStartIdx = message.recordingStartIdx;
-        notifyListeners();
-        _autoRequestRender();
-      } else if (message is RenderBatchResponse) {
-        for (int i = 0; i < message.linesMinMax.length; i++) {
-          renderData[i] = message.linesMinMax[i];
-        }
-        notifyListeners();
-      } else if (message is SliceResultResponse) {
-        _sliceCompleter?.complete(message.channelsData);
-        _sliceCompleter = null;
-      }
-    });
-
     await _isolateManager.start();
     _isolateStarted = true;
 
@@ -301,22 +278,47 @@ class DataHub extends ChangeNotifier {
       InitRequest(
         samplesPerSec,
         _maxDataDurationSeconds,
-        numAdcChannels,
+        numGraphLines,
       ).toMap(),
     );
+  }
+
+  void _handleIsolateResponse(Map<String, dynamic> messageMap) {
+    if (messageMap.isEmpty) return;
+    final message = DataIsolateResponse.fromMap(messageMap);
+
+    if (message is StatsUpdateResponse) {
+      rawSz = message.rawSz;
+      _currentRaw = message.currentRaw;
+      rawMax = message.peakRaw;
+      tare = message.tare;
+      _recordingStartIdx = message.recordingStartIdx;
+      notifyListeners();
+      _autoRequestRender();
+    } else if (message is RenderBatchResponse) {
+      for (int i = 0; i < message.linesMinMax.length; i++) {
+        renderData[i] = message.linesMinMax[i];
+      }
+      notifyListeners();
+    } else if (message is SliceResultResponse) {
+      _sliceCompleter?.complete(message.channelsData);
+      _sliceCompleter = null;
+    }
   }
 
   void _autoRequestRender() {
     if (_lastRenderWidth > 0 && _isolateStarted) {
       int endTimeMs = (rawSz * 1000) ~/ samplesPerSec;
       // Request full available range
-      _isolateManager.compute(
-        RenderRequest(
-          startTimeMs: 0,
-          endTimeMs: endTimeMs,
-          pixelWidth: _lastRenderWidth,
-        ).toMap(),
-      );
+      _isolateManager
+          .compute(
+            RenderRequest(
+              startTimeMs: 0,
+              endTimeMs: endTimeMs,
+              pixelWidth: _lastRenderWidth,
+            ).toMap(),
+          )
+          .then(_handleIsolateResponse);
     }
   }
 
@@ -332,9 +334,9 @@ class DataHub extends ChangeNotifier {
   Future<List<Int32List>> fetchSlice(int startIdx, int endIdx) {
     if (!_isolateStarted) return Future.value([]);
     _sliceCompleter = Completer<List<Int32List>>();
-    _isolateManager.compute(
-      FetchSliceRequest(startIdx: startIdx, endIdx: endIdx).toMap(),
-    );
+    _isolateManager
+        .compute(FetchSliceRequest(startIdx: startIdx, endIdx: endIdx).toMap())
+        .then(_handleIsolateResponse);
     return _sliceCompleter!.future;
   }
 
@@ -345,7 +347,7 @@ class DataHub extends ChangeNotifier {
         InitRequest(
           samplesPerSec,
           _maxDataDurationSeconds,
-          numAdcChannels,
+          numGraphLines,
         ).toMap(),
       );
     }
@@ -391,7 +393,9 @@ class DataHub extends ChangeNotifier {
 
   bool _parseDataPacket(Uint8List data) {
     if (!_isolateStarted) return true;
-    _isolateManager.compute(BlePacketRequest(data).toMap());
+    _isolateManager
+        .compute(BlePacketRequest(data).toMap())
+        .then(_handleIsolateResponse);
     return true; // We can always accept data
   }
 }
