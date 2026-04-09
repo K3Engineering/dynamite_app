@@ -20,9 +20,9 @@ enum ForceUnit {
   /// Format a value (already in this unit) for display.
   String format(double value) {
     /// a minus sign doesn't need to be added explicitly
-    final sign = value < 0 ? '' : '+';
-    if (value.abs() >= 100) return '$sign${value.toStringAsFixed(1)} $symbol';
-    if (value.abs() >= 10) return '$sign${value.toStringAsFixed(2)} $symbol';
-    return '$sign${value.toStringAsFixed(3)} $symbol';
+    final sign = value < 0 ? '-' : '+';
+    // Max value < 1000 is 999.999 (7 chars: 3 digits + 1 dot + 3 decimals)
+    final numStr = value.abs().toStringAsFixed(3).padLeft(7);
+    return '$sign$numStr $symbol';
   }
 }

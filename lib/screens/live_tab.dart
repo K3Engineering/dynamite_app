@@ -580,12 +580,9 @@ class _ChannelStatChip extends StatelessWidget {
   }
 
   static String _formatDerivative(double value, ForceUnit unit) {
-    final sign = value < 0 ? '' : '+';
-    final abs = value.abs();
-    if (abs >= 1000) return '$sign${value.toStringAsFixed(0)} ${unit.symbol}/s';
-    if (abs >= 100) return '$sign${value.toStringAsFixed(1)} ${unit.symbol}/s';
-    if (abs >= 10) return '$sign${value.toStringAsFixed(2)} ${unit.symbol}/s';
-    return '$sign${value.toStringAsFixed(3)} ${unit.symbol}/s';
+    final sign = value < 0 ? '-' : '+';
+    final absStr = value.abs().toStringAsFixed(3).padLeft(7);
+    return '$sign$absStr ${unit.symbol}/s';
   }
 }
 
