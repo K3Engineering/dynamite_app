@@ -253,7 +253,7 @@ class DataHub extends ChangeNotifier {
   DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
 
   // IsolateManager instance
-  late final IsolateManager<Map<String, dynamic>, Map<String, dynamic>>
+  late final IsolateManager<Map<dynamic, dynamic>, Map<dynamic, dynamic>>
   _isolateManager;
   bool _isolateStarted = false;
 
@@ -283,7 +283,7 @@ class DataHub extends ChangeNotifier {
     );
   }
 
-  void _handleIsolateResponse(Map<String, dynamic> messageMap) {
+  void _handleIsolateResponse(Map<dynamic, dynamic> messageMap) {
     if (messageMap.isEmpty) return;
     final message = DataIsolateResponse.fromMap(messageMap);
 

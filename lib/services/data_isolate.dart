@@ -7,30 +7,34 @@ import 'bt_device_config.dart';
 abstract class DataIsolateRequest {
   Map<String, dynamic> toMap();
 
-  static DataIsolateRequest fromMap(Map<String, dynamic> map) {
+  static DataIsolateRequest fromMap(Map<dynamic, dynamic> map) {
     switch (map['type']) {
       case 'InitRequest':
         return InitRequest(
-          map['samplesPerSec'],
-          map['maxDurationSeconds'],
-          map['numChannels'],
+          (map['samplesPerSec'] as num).toInt(),
+          (map['maxDurationSeconds'] as num).toInt(),
+          (map['numChannels'] as num).toInt(),
         );
       case 'BlePacketRequest':
-        return BlePacketRequest(map['data'] as Uint8List);
+        return BlePacketRequest(
+          Uint8List.fromList(
+            (map['data'] as List).cast<num>().map((e) => e.toInt()).toList(),
+          ),
+        );
       case 'TareRequest':
         return TareRequest();
       case 'SetSessionRecordingStartRequest':
         return SetSessionRecordingStartRequest();
       case 'FetchSliceRequest':
         return FetchSliceRequest(
-          startIdx: map['startIdx'],
-          endIdx: map['endIdx'],
+          startIdx: (map['startIdx'] as num).toInt(),
+          endIdx: (map['endIdx'] as num).toInt(),
         );
       case 'RenderRequest':
         return RenderRequest(
-          startTimeMs: map['startTimeMs'],
-          endTimeMs: map['endTimeMs'],
-          pixelWidth: map['pixelWidth'],
+          startTimeMs: (map['startTimeMs'] as num).toInt(),
+          endTimeMs: (map['endTimeMs'] as num).toInt(),
+          pixelWidth: (map['pixelWidth'] as num).toInt(),
         );
       default:
         throw Exception('Unknown request type: ${map['type']}');
@@ -59,7 +63,10 @@ class BlePacketRequest extends DataIsolateRequest {
   BlePacketRequest(this.data);
 
   @override
-  Map<String, dynamic> toMap() => {'type': 'BlePacketRequest', 'data': data};
+  Map<String, dynamic> toMap() => {
+    'type': 'BlePacketRequest',
+    'data': data.toList(),
+  };
 }
 
 class TareRequest extends DataIsolateRequest {
@@ -110,23 +117,42 @@ class RenderRequest extends DataIsolateRequest {
 abstract class DataIsolateResponse {
   Map<String, dynamic> toMap();
 
-  static DataIsolateResponse fromMap(Map<String, dynamic> map) {
+  static DataIsolateResponse fromMap(Map<dynamic, dynamic> map) {
     switch (map['type']) {
       case 'StatsUpdateResponse':
         return StatsUpdateResponse(
-          rawSz: map['rawSz'],
-          currentRaw: map['currentRaw'] as Int32List,
-          peakRaw: map['peakRaw'] as Int32List,
-          tare: map['tare'] as Float64List,
-          recordingStartIdx: map['recordingStartIdx'],
+          rawSz: (map['rawSz'] as num).toInt(),
+          currentRaw: Int32List.fromList(
+            (map['currentRaw'] as List)
+                .cast<num>()
+                .map((e) => e.toInt())
+                .toList(),
+          ),
+          peakRaw: Int32List.fromList(
+            (map['peakRaw'] as List).cast<num>().map((e) => e.toInt()).toList(),
+          ),
+          tare: Float64List.fromList(
+            (map['tare'] as List).cast<num>().map((e) => e.toDouble()).toList(),
+          ),
+          recordingStartIdx: (map['recordingStartIdx'] as num).toInt(),
         );
       case 'RenderBatchResponse':
         return RenderBatchResponse(
-          List<Float32List>.from(map['linesMinMax']),
-          map['pointCount'] as int,
+          (map['linesMinMax'] as List).map((l) {
+            return Float32List.fromList(
+              (l as List).cast<num>().map((e) => e.toDouble()).toList(),
+            );
+          }).toList(),
+          (map['pointCount'] as num).toInt(),
         );
       case 'SliceResultResponse':
-        return SliceResultResponse(List<Int32List>.from(map['channelsData']));
+        return SliceResultResponse(
+          (map['channelsData'] as List).map((l) {
+            return Int32List.fromList(
+              (l as List).cast<num>().map((e) => e.toInt()).toList(),
+            );
+          }).toList(),
+        );
       default:
         throw Exception('Unknown response type: ${map['type']}');
     }
@@ -152,9 +178,9 @@ class StatsUpdateResponse extends DataIsolateResponse {
   Map<String, dynamic> toMap() => {
     'type': 'StatsUpdateResponse',
     'rawSz': rawSz,
-    'currentRaw': currentRaw,
-    'peakRaw': peakRaw,
-    'tare': tare,
+    'currentRaw': currentRaw.toList(),
+    'peakRaw': peakRaw.toList(),
+    'tare': tare.toList(),
     'recordingStartIdx': recordingStartIdx,
   };
 }
@@ -170,7 +196,7 @@ class RenderBatchResponse extends DataIsolateResponse {
   @override
   Map<String, dynamic> toMap() => {
     'type': 'RenderBatchResponse',
-    'linesMinMax': linesMinMax,
+    'linesMinMax': linesMinMax.map((l) => l.toList()).toList(),
     'pointCount': pointCount,
   };
 }
@@ -182,7 +208,7 @@ class SliceResultResponse extends DataIsolateResponse {
   @override
   Map<String, dynamic> toMap() => {
     'type': 'SliceResultResponse',
-    'channelsData': channelsData,
+    'channelsData': channelsData.map((l) => l.toList()).toList(),
   };
 }
 
@@ -196,8 +222,8 @@ void dataIsolateWorker(dynamic params) {
   _DataProcessor? processor;
 
   IsolateManagerFunction.customFunction<
-    Map<String, dynamic>,
-    Map<String, dynamic>
+    Map<dynamic, dynamic>,
+    Map<dynamic, dynamic>
   >(
     params,
     onEvent: (controller, messageMap) {
