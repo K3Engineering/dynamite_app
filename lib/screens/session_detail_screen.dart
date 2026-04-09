@@ -16,6 +16,7 @@ import '../models/force_unit.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
 import 'live_tab.dart' show GraphController;
+import '../widgets/graph_components.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   const SessionDetailScreen({super.key, required this.session});
@@ -24,6 +25,53 @@ class SessionDetailScreen extends StatefulWidget {
 
   @override
   State<SessionDetailScreen> createState() => _SessionDetailScreenState();
+}
+
+class _SessionMinimapDataSource implements MinimapDataSource {
+  final SessionData _data;
+  final List<double> _mins;
+  final List<double> _maxs;
+
+  _SessionMinimapDataSource(this._data)
+    : _mins = List.filled(_data.channels.length, 0.0),
+      _maxs = List.filled(_data.channels.length, 0.0) {
+    for (int ch = 0; ch < _data.channels.length; ch++) {
+      if (_data.sampleCount == 0) continue;
+      double min = double.infinity;
+      double max = double.negativeInfinity;
+      for (final val in _data.channels[ch]) {
+        if (val < min) min = val.toDouble();
+        if (val > max) max = val.toDouble();
+      }
+      _mins[ch] = min;
+      _maxs[ch] = max;
+    }
+  }
+
+  @override
+  int get sampleCount => _data.sampleCount;
+
+  @override
+  List<int> getChannelData(int channelIndex) {
+    if (channelIndex < 0 || channelIndex >= _data.channels.length) return [];
+    return _data.channels[channelIndex]
+        .toList(); // Data is Uint32List usually, cast to int
+  }
+
+  @override
+  double getChannelMin(int channelIndex) {
+    if (channelIndex < 0 || channelIndex >= _mins.length) return 0.0;
+    return _mins[channelIndex];
+  }
+
+  @override
+  double getChannelMax(int channelIndex) {
+    if (channelIndex < 0 || channelIndex >= _maxs.length) return 0.0;
+    return _maxs[channelIndex];
+  }
+
+  @override
+  double getChannelTare(int channelIndex) => 0.0; // Sessions are already tared
 }
 
 class _SessionDetailScreenState extends State<SessionDetailScreen> {
@@ -207,13 +255,17 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     final unit = settings.displayUnit;
     final slope = data.calibrationSlope;
 
+    final activeChannels = settings.activeChannelIndices
+        .where((i) => i < data.channels.length)
+        .toList();
+
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Graph
           SizedBox(
-            height: 300,
+            height: 332,
             child: Padding(
               padding: const EdgeInsets.all(8.0),
               child: LayoutBuilder(
@@ -221,32 +273,46 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   final graphWidth = constraints.maxWidth - 8 - 56;
                   return Stack(
                     children: [
-                      Listener(
-                        behavior: HitTestBehavior.opaque,
-                        onPointerSignal: (e) => _onPointerSignal(e, graphWidth),
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onScaleStart: _onScaleStart,
-                          onScaleUpdate: (d) => _onScaleUpdate(d, graphWidth),
-                          child: ListenableBuilder(
-                            listenable: _graphCtrl,
-                            builder: (context, _) => CustomPaint(
-                              painter: _SessionGraphPainter(
-                                data: data,
-                                unit: unit,
-                                activeChannels: settings.activeChannelIndices
-                                    .where((i) => i < data.channels.length)
-                                    .toList(),
-                                ctrl: _graphCtrl,
+                      Column(
+                        children: [
+                          Expanded(
+                            child: Listener(
+                              behavior: HitTestBehavior.opaque,
+                              onPointerSignal: (e) =>
+                                  _onPointerSignal(e, graphWidth),
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onScaleStart: _onScaleStart,
+                                onScaleUpdate: (d) =>
+                                    _onScaleUpdate(d, graphWidth),
+                                child: ListenableBuilder(
+                                  listenable: _graphCtrl,
+                                  builder: (context, _) => CustomPaint(
+                                    painter: _SessionGraphPainter(
+                                      data: data,
+                                      unit: unit,
+                                      activeChannels: activeChannels,
+                                      ctrl: _graphCtrl,
+                                    ),
+                                    size: Size.infinite,
+                                  ),
+                                ),
                               ),
-                              size: Size.infinite,
                             ),
                           ),
-                        ),
+                          Minimap(
+                            dataSource: _SessionMinimapDataSource(data),
+                            activeChannels: activeChannels,
+                            graphCtrl: _graphCtrl,
+                            channelColors: activeChannels
+                                .map((i) => _channelColor(i))
+                                .toList(),
+                          ),
+                        ],
                       ),
                       Positioned(
                         right: 8,
-                        bottom: 8,
+                        bottom: 40,
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [

@@ -15,6 +15,7 @@ import '../services/bt_handling.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
 import '../screens/app_shell.dart';
+import '../widgets/graph_components.dart';
 
 // ---------------------------------------------------------------------------
 // Graph viewport controller (shared between force graph, derivative, minimap)
@@ -161,6 +162,42 @@ class LiveTab extends StatefulWidget {
 
   @override
   State<LiveTab> createState() => _LiveTabState();
+}
+
+class _LiveMinimapDataSource implements MinimapDataSource {
+  final DataHub _hub;
+  _LiveMinimapDataSource(this._hub);
+
+  @override
+  int get sampleCount => _hub.rawSz;
+
+  @override
+  List<int> getChannelData(int channelIndex) {
+    final lineIdx = DataHub.chanToLine(channelIndex);
+    if (lineIdx < 0) return [];
+    return _hub.rawData[lineIdx];
+  }
+
+  @override
+  double getChannelMin(int channelIndex) {
+    final lineIdx = DataHub.chanToLine(channelIndex);
+    if (lineIdx < 0) return 0.0;
+    return _hub.rawMin[lineIdx].toDouble();
+  }
+
+  @override
+  double getChannelMax(int channelIndex) {
+    final lineIdx = DataHub.chanToLine(channelIndex);
+    if (lineIdx < 0) return 0.0;
+    return _hub.rawMax[lineIdx].toDouble();
+  }
+
+  @override
+  double getChannelTare(int channelIndex) {
+    final lineIdx = DataHub.chanToLine(channelIndex);
+    if (lineIdx < 0) return 0.0;
+    return _hub.tare[lineIdx];
+  }
 }
 
 class _LiveTabState extends State<LiveTab> {
@@ -459,29 +496,15 @@ class _LiveTabState extends State<LiveTab> {
                     ),
                   ),
                 // Minimap
-                SizedBox(
-                  height: 32,
-                  child: Listener(
-                    behavior: HitTestBehavior.opaque,
-                    onPointerSignal: (e) => _onPointerSignal(e, graphWidth),
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTapDown: (d) =>
-                          _onMinimapTap(d, graphWidth, bt.dataHub.rawSz),
-                      onHorizontalDragUpdate: (d) =>
-                          _onMinimapDrag(d, graphWidth, bt.dataHub.rawSz),
-                      child: ListenableBuilder(
-                        listenable: _graphCtrl,
-                        builder: (context, _) => CustomPaint(
-                          foregroundPainter: _MinimapPainter(
-                            bt.dataHub,
-                            settings,
-                            _graphCtrl,
-                          ),
-                          size: Size.infinite,
-                        ),
-                      ),
-                    ),
+                ListenableBuilder(
+                  listenable: bt.dataHub,
+                  builder: (context, _) => Minimap(
+                    dataSource: _LiveMinimapDataSource(bt.dataHub),
+                    activeChannels: settings.activeChannelIndices,
+                    graphCtrl: _graphCtrl,
+                    channelColors: settings.activeChannelIndices
+                        .map((i) => _channelColor(i))
+                        .toList(),
                   ),
                 ),
               ],
@@ -545,52 +568,6 @@ class _LiveTabState extends State<LiveTab> {
         );
       },
     );
-  }
-
-  void _onMinimapTap(TapDownDetails d, double graphWidth, int totalSamples) {
-    if (totalSamples == 0 || graphWidth <= 0) return;
-    const leftSpace = 8.0;
-    final frac = ((d.localPosition.dx - leftSpace) / graphWidth).clamp(
-      0.0,
-      1.0,
-    );
-    final (s, e) = _graphCtrl.effectiveRange(totalSamples);
-    final span = e - s;
-    final center = (frac * totalSamples).round();
-    int newStart = center - span ~/ 2;
-    int newEnd = newStart + span;
-    if (newStart < 0) {
-      newStart = 0;
-      newEnd = span;
-    }
-    if (newEnd >= totalSamples) {
-      _graphCtrl.goLive();
-      return;
-    }
-    _graphCtrl.setWindow(newStart, newEnd);
-  }
-
-  void _onMinimapDrag(
-    DragUpdateDetails d,
-    double graphWidth,
-    int totalSamples,
-  ) {
-    if (totalSamples == 0 || graphWidth <= 0) return;
-    final samplesPerPixel = totalSamples / graphWidth;
-    final deltaSamples = (d.delta.dx * samplesPerPixel).round();
-    final (s, e) = _graphCtrl.effectiveRange(totalSamples);
-    final span = e - s;
-    int newStart = s + deltaSamples;
-    int newEnd = newStart + span;
-    if (newStart < 0) {
-      newStart = 0;
-      newEnd = span;
-    }
-    if (newEnd >= totalSamples) {
-      _graphCtrl.goLive();
-      return;
-    }
-    _graphCtrl.setWindow(newStart, newEnd);
   }
 }
 
@@ -1631,140 +1608,6 @@ class _DerivativeGraphPainter extends CustomPainter {
       pen.color = chColor;
       canvas.drawPath(avgPath, pen..strokeWidth = 1.5);
     }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
-}
-
-// ---------------------------------------------------------------------------
-// Minimap painter
-// ---------------------------------------------------------------------------
-
-class _MinimapPainter extends CustomPainter {
-  final DataHub _data;
-  final AppSettings _settings;
-  final GraphController _ctrl;
-
-  _MinimapPainter(this._data, this._settings, this._ctrl)
-    : super(repaint: _data);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    const double leftSpace = 8;
-    const double rightSpace = 56;
-    const double vPad = 2;
-
-    canvas.translate(leftSpace, vPad);
-    final gw = size.width - leftSpace - rightSpace;
-    final gh = size.height - vPad * 2;
-
-    if (gw <= 0 || gh <= 0) return;
-
-    // Background
-    final bgPaint = Paint()..color = Colors.grey.shade200;
-    canvas.drawRect(Rect.fromLTWH(0, 0, gw, gh), bgPaint);
-
-    if (_data.rawSz == 0) return;
-
-    final activeIndices = _settings.activeChannelIndices;
-
-    // Compute global min/max (raw, tare-subtracted) for full data
-    double rawMax = 10000;
-    double rawMin = -10000;
-    for (final ch in activeIndices) {
-      final lineIdx = DataHub.chanToLine(ch);
-      if (lineIdx < 0) continue;
-      final mx = (_data.rawMax[lineIdx] - _data.tare[lineIdx]).toDouble();
-      final mn = (_data.rawMin[lineIdx] - _data.tare[lineIdx]).toDouble();
-      if (mx > rawMax) rawMax = mx;
-      if (mn < rawMin) rawMin = mn;
-    }
-
-    final dataRange = rawMax - rawMin;
-    if (dataRange <= 0) return;
-
-    // Draw simplified waveform for each channel
-    final pen = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-
-    final int gwInt = gw.toInt();
-    for (final ch in activeIndices) {
-      final lineIdx = DataHub.chanToLine(ch);
-      if (lineIdx < 0) continue;
-
-      final avgPath = Path();
-      final envPath = Path();
-      final line = _data.rawData[lineIdx];
-      final tare = _data.tare[lineIdx];
-      bool first = true;
-
-      for (int px = 0; px < gwInt; px++) {
-        final int sStart = px * _data.rawSz ~/ gwInt;
-        final int sEnd = (px + 1) * _data.rawSz ~/ gwInt;
-        if (sStart >= sEnd) continue;
-
-        double total = 0;
-        double minRaw = double.infinity;
-        double maxRaw = double.negativeInfinity;
-
-        for (int j = sStart; j < sEnd; j++) {
-          final val = line[j];
-          total += val;
-          if (val < minRaw) minRaw = val.toDouble();
-          if (val > maxRaw) maxRaw = val.toDouble();
-        }
-
-        final avgRaw = total / (sEnd - sStart);
-
-        final avgTared = avgRaw - tare;
-        final minTared = minRaw - tare;
-        final maxTared = maxRaw - tare;
-
-        final avgY = (gh - (avgTared - rawMin) * gh / dataRange).clamp(0.0, gh);
-        final minY = (gh - (minTared - rawMin) * gh / dataRange).clamp(0.0, gh);
-        final maxY = (gh - (maxTared - rawMin) * gh / dataRange).clamp(0.0, gh);
-
-        if (first) {
-          avgPath.moveTo(px.toDouble(), avgY);
-          envPath.moveTo(px.toDouble(), minY);
-          envPath.lineTo(px.toDouble(), maxY);
-          first = false;
-        } else {
-          avgPath.lineTo(px.toDouble(), avgY);
-          envPath.moveTo(px.toDouble(), minY);
-          envPath.lineTo(px.toDouble(), maxY);
-        }
-      }
-
-      final chColor = _channelColor(ch);
-
-      // Draw envelope first (lighter)
-      pen.color = chColor.withAlpha(40); // very faint for minimap
-      canvas.drawPath(envPath, pen..strokeWidth = 1.0);
-
-      // Draw average line on top
-      pen.color = chColor.withAlpha(180);
-      canvas.drawPath(avgPath, pen..strokeWidth = 1.0);
-    }
-
-    // Viewport highlight
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(_data.rawSz);
-    final double x1 = viewStart * gw / _data.rawSz;
-    final double x2 = viewEnd * gw / _data.rawSz;
-
-    // Dim areas outside viewport
-    final dimPaint = Paint()..color = Colors.black.withAlpha(60);
-    if (x1 > 0) canvas.drawRect(Rect.fromLTWH(0, 0, x1, gh), dimPaint);
-    if (x2 < gw) canvas.drawRect(Rect.fromLTWH(x2, 0, gw - x2, gh), dimPaint);
-
-    // Viewport border
-    final vpBorder = Paint()
-      ..color = Colors.deepPurple
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.5;
-    canvas.drawRect(Rect.fromLTRB(x1, 0, x2, gh), vpBorder);
   }
 
   @override
