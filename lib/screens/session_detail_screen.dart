@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
+import 'dart:math' as math;
 
 import 'package:drift/drift.dart' show Value;
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
@@ -13,6 +15,7 @@ import '../models/app_settings.dart';
 import '../models/force_unit.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
+import 'live_tab.dart' show GraphController;
 
 class SessionDetailScreen extends StatefulWidget {
   const SessionDetailScreen({super.key, required this.session});
@@ -29,12 +32,26 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   String? _error;
 
   late Session _session;
+  final GraphController _graphCtrl = GraphController();
+
+  // Gesture tracking
+  double? _panStartX;
+  int? _panStartSample;
+  int? _panEndSample;
+  double? _scaleStartSpan;
+  double? _pinchFocalX;
 
   @override
   void initState() {
     super.initState();
     _session = widget.session;
     unawaited(_loadData());
+  }
+
+  @override
+  void dispose() {
+    _graphCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadData() async {
@@ -67,6 +84,88 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             .toList();
       }
       return [];
+    }
+  }
+
+  void _onScaleStart(ScaleStartDetails details) {
+    if (_data == null) return;
+    final total = _data!.sampleCount;
+    if (total == 0) return;
+
+    final (s, e) = _graphCtrl.effectiveRange(total);
+    _panStartSample = s;
+    _panEndSample = e;
+    _panStartX = details.localFocalPoint.dx;
+    _scaleStartSpan = (e - s).toDouble();
+    _pinchFocalX = details.localFocalPoint.dx;
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails details, double graphWidth) {
+    if (_data == null) return;
+    final total = _data!.sampleCount;
+    if (total == 0 || _panStartSample == null || graphWidth <= 0) return;
+
+    final origStart = _panStartSample!;
+    final origEnd = _panEndSample!;
+    final origSpan = origEnd - origStart;
+
+    if (details.scale != 1.0 && _scaleStartSpan != null) {
+      // Pinch zoom
+      final newSpan = (_scaleStartSpan! / details.scale).round().clamp(
+        50,
+        total,
+      );
+
+      final focalFrac = (_pinchFocalX! / graphWidth).clamp(0.0, 1.0);
+      final focalSample = origStart + (focalFrac * origSpan).round();
+
+      int newStart = focalSample - (focalFrac * newSpan).round();
+      int newEnd = newStart + newSpan;
+
+      if (newStart < 0) {
+        newStart = 0;
+        newEnd = newSpan;
+      }
+      if (newEnd >= total) {
+        newEnd = total;
+        newStart = math.max(0, total - newSpan);
+      }
+
+      _graphCtrl.setWindow(newStart, newEnd);
+    } else {
+      // Pan
+      final dx = details.localFocalPoint.dx - _panStartX!;
+      final samplesPerPixel = origSpan / graphWidth;
+      final deltaSamples = -(dx * samplesPerPixel).round();
+
+      int newStart = origStart + deltaSamples;
+      int newEnd = newStart + origSpan;
+
+      if (newStart < 0) {
+        newStart = 0;
+        newEnd = origSpan;
+      }
+      if (newEnd >= total) {
+        newEnd = total;
+        newStart = math.max(0, total - origSpan);
+      }
+
+      _graphCtrl.setWindow(newStart, newEnd);
+    }
+  }
+
+  void _onPointerSignal(PointerSignalEvent event, double graphWidth) {
+    if (event is PointerScrollEvent) {
+      if (_data == null) return;
+      final total = _data!.sampleCount;
+      if (total == 0 || graphWidth <= 0) return;
+
+      final focalFrac = ((event.localPosition.dx - 8.0) / graphWidth).clamp(
+        0.0,
+        1.0,
+      );
+      final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
+      _graphCtrl.zoom(zoomFactor, focalFrac, total);
     }
   }
 
@@ -117,15 +216,69 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             height: 300,
             child: Padding(
               padding: const EdgeInsets.all(8.0),
-              child: CustomPaint(
-                painter: _SessionGraphPainter(
-                  data: data,
-                  unit: unit,
-                  activeChannels: settings.activeChannelIndices
-                      .where((i) => i < data.channels.length)
-                      .toList(),
-                ),
-                size: Size.infinite,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final graphWidth = constraints.maxWidth - 8 - 56;
+                  return Stack(
+                    children: [
+                      Listener(
+                        behavior: HitTestBehavior.opaque,
+                        onPointerSignal: (e) => _onPointerSignal(e, graphWidth),
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onScaleStart: _onScaleStart,
+                          onScaleUpdate: (d) => _onScaleUpdate(d, graphWidth),
+                          child: ListenableBuilder(
+                            listenable: _graphCtrl,
+                            builder: (context, _) => CustomPaint(
+                              painter: _SessionGraphPainter(
+                                data: data,
+                                unit: unit,
+                                activeChannels: settings.activeChannelIndices
+                                    .where((i) => i < data.channels.length)
+                                    .toList(),
+                                ctrl: _graphCtrl,
+                              ),
+                              size: Size.infinite,
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        right: 8,
+                        bottom: 8,
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            FloatingActionButton.small(
+                              heroTag: 'sessionZoomIn',
+                              onPressed: () {
+                                if (data.sampleCount > 0) {
+                                  _graphCtrl.zoom(1.2, 0.5, data.sampleCount);
+                                }
+                              },
+                              child: const Icon(Icons.zoom_in),
+                            ),
+                            const SizedBox(height: 8),
+                            FloatingActionButton.small(
+                              heroTag: 'sessionZoomOut',
+                              onPressed: () {
+                                if (data.sampleCount > 0) {
+                                  _graphCtrl.zoom(
+                                    1 / 1.2,
+                                    0.5,
+                                    data.sampleCount,
+                                  );
+                                }
+                              },
+                              child: const Icon(Icons.zoom_out),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ),
@@ -461,11 +614,13 @@ class _SessionGraphPainter extends CustomPainter {
   final SessionData data;
   final ForceUnit unit;
   final List<int> activeChannels;
+  final GraphController ctrl;
 
   _SessionGraphPainter({
     required this.data,
     required this.unit,
     required this.activeChannels,
+    required this.ctrl,
   });
 
   @override
@@ -491,18 +646,26 @@ class _SessionGraphPainter extends CustomPainter {
 
     if (data.sampleCount == 0) return;
 
-    // Compute data max across active channels
+    final (viewStart, viewEnd) = ctrl.effectiveRange(data.sampleCount);
+    final viewSamples = viewEnd - viewStart;
+    if (viewSamples <= 0) return;
+
+    // Compute data max across active channels in visible window
     double dataMax = 10000;
     for (final ch in activeChannels) {
-      final peak = data.peakRaw(ch).toDouble();
-      if (peak > dataMax) dataMax = peak;
+      final chData = data.channels[ch];
+      for (int i = viewStart; i < viewEnd; i++) {
+        final peak = chData[i].toDouble();
+        if (peak > dataMax) dataMax = peak;
+      }
     }
 
     final double dataMaxKgf = dataMax * data.calibrationSlope;
     final double dataMaxUnit = unit.fromKgf(dataMaxKgf);
 
     // X axis
-    final double xSpanSec = data.sampleCount / data.sampleRate;
+    final double xSpanSec = viewSamples / data.sampleRate;
+    final double startSec = viewStart / data.sampleRate;
     final grid = Path();
 
     // X grid lines (simple: 5 divisions)
@@ -513,7 +676,7 @@ class _SessionGraphPainter extends CustomPainter {
       grid.lineTo(x, graphSz.height);
 
       final label = _prepareLabel(
-        '${(xSpanSec * i / xDivisions).toStringAsFixed(1)}s',
+        '${(startSec + xSpanSec * i / xDivisions).toStringAsFixed(1)}s',
       );
       canvas.drawParagraph(
         label,
@@ -543,46 +706,42 @@ class _SessionGraphPainter extends CustomPainter {
 
       bool first = true;
       final int graphW = graphSz.width.toInt();
-      for (int i = 0, j = 0; i < graphW; ++i) {
+      for (int i = 0; i < graphW; ++i) {
+        // Map pixel i to sample range
+        final int sStart = viewStart + (i * viewSamples ~/ graphW);
+        final int sEnd = viewStart + ((i + 1) * viewSamples ~/ graphW);
+        if (sStart >= sEnd) continue;
+
         int total = 0;
         int minRaw = 2147483647; // Max Int32
         int maxRaw = -2147483648; // Min Int32
-        final int start = j;
 
-        for (
-          ;
-          (j * graphW < i * data.sampleCount) && (j < data.sampleCount);
-          ++j
-        ) {
+        for (int j = sStart; j < sEnd; j++) {
           final val = chData[j];
           total += val;
           if (val < minRaw) minRaw = val;
           if (val > maxRaw) maxRaw = val;
         }
 
-        if (start < j) {
-          final double avg = total / (j - start);
+        final double avg = total / (sEnd - sStart);
 
-          final double avgY = graphSz.height - avg * graphSz.height / dataMax;
-          final double minY =
-              graphSz.height - minRaw * graphSz.height / dataMax;
-          final double maxY =
-              graphSz.height - maxRaw * graphSz.height / dataMax;
+        final double avgY = graphSz.height - avg * graphSz.height / dataMax;
+        final double minY = graphSz.height - minRaw * graphSz.height / dataMax;
+        final double maxY = graphSz.height - maxRaw * graphSz.height / dataMax;
 
-          final clampAvgY = avgY.clamp(0.0, graphSz.height);
-          final clampMinY = minY.clamp(0.0, graphSz.height);
-          final clampMaxY = maxY.clamp(0.0, graphSz.height);
+        final clampAvgY = avgY.clamp(0.0, graphSz.height);
+        final clampMinY = minY.clamp(0.0, graphSz.height);
+        final clampMaxY = maxY.clamp(0.0, graphSz.height);
 
-          if (first) {
-            avgPath.moveTo(i.toDouble(), clampAvgY);
-            envPath.moveTo(i.toDouble(), clampMinY);
-            envPath.lineTo(i.toDouble(), clampMaxY);
-            first = false;
-          } else {
-            avgPath.lineTo(i.toDouble(), clampAvgY);
-            envPath.moveTo(i.toDouble(), clampMinY);
-            envPath.lineTo(i.toDouble(), clampMaxY);
-          }
+        if (first) {
+          avgPath.moveTo(i.toDouble(), clampAvgY);
+          envPath.moveTo(i.toDouble(), clampMinY);
+          envPath.lineTo(i.toDouble(), clampMaxY);
+          first = false;
+        } else {
+          avgPath.lineTo(i.toDouble(), clampAvgY);
+          envPath.moveTo(i.toDouble(), clampMinY);
+          envPath.lineTo(i.toDouble(), clampMaxY);
         }
       }
 

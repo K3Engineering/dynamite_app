@@ -348,8 +348,11 @@ class _LiveTabState extends State<LiveTab> {
       final total = bt.dataHub.rawSz;
       if (total == 0 || graphWidth <= 0) return;
 
-      // Scroll wheel zooms; focal point is mouse position
-      final focalFrac = (event.localPosition.dx / graphWidth).clamp(0.0, 1.0);
+      // Scroll wheel zooms; focal point is mouse position (accounting for left margin)
+      final focalFrac = ((event.localPosition.dx - 8.0) / graphWidth).clamp(
+        0.0,
+        1.0,
+      );
       final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
       _graphCtrl.zoom(zoomFactor, focalFrac, total);
     }
@@ -409,8 +412,10 @@ class _LiveTabState extends State<LiveTab> {
                 Expanded(
                   flex: _showDerivative ? 6 : 10,
                   child: Listener(
+                    behavior: HitTestBehavior.opaque,
                     onPointerSignal: (e) => _onPointerSignal(e, graphWidth),
                     child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onScaleStart: _onScaleStart,
                       onScaleUpdate: (d) => _onScaleUpdate(d, graphWidth),
                       child: ListenableBuilder(
@@ -433,8 +438,10 @@ class _LiveTabState extends State<LiveTab> {
                   Expanded(
                     flex: 4,
                     child: Listener(
+                      behavior: HitTestBehavior.opaque,
                       onPointerSignal: (e) => _onPointerSignal(e, graphWidth),
                       child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
                         onScaleStart: _onScaleStart,
                         onScaleUpdate: (d) => _onScaleUpdate(d, graphWidth),
                         child: ListenableBuilder(
@@ -455,8 +462,10 @@ class _LiveTabState extends State<LiveTab> {
                 SizedBox(
                   height: 32,
                   child: Listener(
+                    behavior: HitTestBehavior.opaque,
                     onPointerSignal: (e) => _onPointerSignal(e, graphWidth),
                     child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
                       onTapDown: (d) =>
                           _onMinimapTap(d, graphWidth, bt.dataHub.rawSz),
                       onHorizontalDragUpdate: (d) =>
@@ -502,6 +511,35 @@ class _LiveTabState extends State<LiveTab> {
                   ),
                 );
               },
+            ),
+            // Zoom buttons
+            Positioned(
+              right: 8,
+              bottom: 40,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FloatingActionButton.small(
+                    heroTag: 'liveZoomIn',
+                    onPressed: () {
+                      if (bt.dataHub.rawSz > 0) {
+                        _graphCtrl.zoom(1.2, 0.5, bt.dataHub.rawSz);
+                      }
+                    },
+                    child: const Icon(Icons.zoom_in),
+                  ),
+                  const SizedBox(height: 8),
+                  FloatingActionButton.small(
+                    heroTag: 'liveZoomOut',
+                    onPressed: () {
+                      if (bt.dataHub.rawSz > 0) {
+                        _graphCtrl.zoom(1 / 1.2, 0.5, bt.dataHub.rawSz);
+                      }
+                    },
+                    child: const Icon(Icons.zoom_out),
+                  ),
+                ],
+              ),
             ),
           ],
         );
