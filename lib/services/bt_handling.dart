@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:isolate';
 
 import 'package:flutter/foundation.dart' show Uint8List, kIsWeb;
 import 'package:flutter/material.dart';
@@ -9,6 +10,7 @@ import 'bt_device_config.dart';
 import '../models/force_unit.dart';
 // ignore: unused_import
 import 'mockble.dart';
+import 'data_isolate.dart';
 
 class BluetoothHandling extends ChangeNotifier {
   AvailabilityState _bluetoothState = AvailabilityState.unknown;
@@ -54,7 +56,6 @@ class BluetoothHandling extends ChangeNotifier {
 
   void stopProcessing() {
     UniversalBle.onValueChange = null;
-    dataHub._prevSampleCount = -1;
   }
 
   Future<void> _updateBluetoothState() async {
@@ -124,17 +125,15 @@ class BluetoothHandling extends ChangeNotifier {
     assert(_selectedDeviceId.isNotEmpty);
     if (!_sessionInProgress) {
       // Starting a recording: mark the current buffer position.
-      dataHub._recordingStartIdx = dataHub.rawSz;
+      dataHub.setRecordingStart();
     }
     _sessionInProgress = !_sessionInProgress;
-    dataHub._prevSampleCount = -1;
     _notifyStateChanged();
   }
 
   void stopSession() {
     if (_sessionInProgress) {
       _sessionInProgress = false;
-      dataHub._prevSampleCount = -1;
       _notifyStateChanged();
     }
   }
@@ -239,64 +238,121 @@ class BluetoothHandling extends ChangeNotifier {
 class DataHub extends ChangeNotifier {
   static const int numGraphLines = 2;
   static const int numAdcChannels = 4;
-  static const int _tareWindow = 1024;
   static const double _defaultSlope = 0.0001117587;
   static const int samplesPerSec = 1000;
-  static const int _maxDataSz = samplesPerSec * 60 * 10;
-  final Float64List tare = Float64List(numGraphLines);
-  final Float64List _runningTotal = Float64List(numGraphLines);
-  final Int32List rawMax = Int32List(numGraphLines);
+  static const int _maxDataDurationSeconds = 60 * 10;
 
-  /// Latest raw value per graph line (for live stats display).
-  final Int32List _currentRaw = Int32List(numGraphLines);
+  Float64List tare = Float64List(numGraphLines);
+  Int32List rawMax = Int32List(numGraphLines);
+  Int32List _currentRaw = Int32List(numGraphLines);
 
-  final List<Int32List> rawData = List.generate(
-    DataHub.numGraphLines,
-    (_) => Int32List(_maxDataSz),
-    growable: false,
-  );
-  int _tareCount = _tareWindow;
   int rawSz = 0;
-  int _prevSampleCount = -1;
-  DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
-
-  /// Index into rawData where the current recording started.
-  /// Used by SessionStorage to know which slice to save.
   int _recordingStartIdx = 0;
   int get recordingStartIdx => _recordingStartIdx;
 
+  DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
+
+  // Isolate stuff
+  SendPort? _isolateSendPort;
+  late final ReceivePort _receivePort;
+
+  // Render requests mapping to track Future completors for slices, etc.
+  int _lastRenderWidth = -1;
+  final Map<int, Float32List> renderData = {};
+
+  DataHub() {
+    _initIsolate();
+  }
+
+  Future<void> _initIsolate() async {
+    _receivePort = ReceivePort();
+    await Isolate.spawn(dataIsolateEntryPoint, _receivePort.sendPort);
+
+    _receivePort.listen((message) {
+      if (message is SendPort) {
+        _isolateSendPort = message;
+        _isolateSendPort!.send(
+          InitRequest(samplesPerSec, _maxDataDurationSeconds, numAdcChannels),
+        );
+      } else if (message is StatsUpdateResponse) {
+        rawSz = message.rawSz;
+        _currentRaw = message.currentRaw;
+        rawMax = message.peakRaw;
+        tare = message.tare;
+        _recordingStartIdx = message.recordingStartIdx;
+        notifyListeners();
+        _autoRequestRender();
+      } else if (message is RenderResultResponse) {
+        renderData[message.lineIdx] = message.minMaxData
+            .materialize()
+            .asFloat32List();
+        notifyListeners();
+      } else if (message is SliceResultResponse) {
+        // Find matching completor. We can store one global completor for simplicity.
+        _sliceCompleter?.complete(message.channelsData);
+        _sliceCompleter = null;
+      }
+    });
+  }
+
+  void _autoRequestRender() {
+    if (_lastRenderWidth > 0 && _isolateSendPort != null) {
+      int endTimeMs = (rawSz * 1000) ~/ samplesPerSec;
+      // Request full available range
+      _isolateSendPort!.send(
+        RenderRequest(
+          startTimeMs: 0,
+          endTimeMs: endTimeMs,
+          pixelWidth: _lastRenderWidth,
+          replyPort: _receivePort.sendPort,
+        ),
+      );
+    }
+  }
+
+  void requestRenderWidth(int width) {
+    if (_lastRenderWidth != width) {
+      _lastRenderWidth = width;
+      _autoRequestRender();
+    }
+  }
+
+  Completer<List<Int32List>>? _sliceCompleter;
+
+  Future<List<Int32List>> fetchSlice(int startIdx, int endIdx) {
+    if (_isolateSendPort == null) return Future.value([]);
+    _sliceCompleter = Completer<List<Int32List>>();
+    _isolateSendPort!.send(
+      FetchSliceRequest(
+        startIdx: startIdx,
+        endIdx: endIdx,
+        replyPort: _receivePort.sendPort,
+      ),
+    );
+    return _sliceCompleter!.future;
+  }
+
   void clear() {
-    _tareCount = _tareWindow;
-    rawSz = 0;
-    _recordingStartIdx = 0;
-    for (int i = 0; i < numGraphLines; ++i) {
-      rawMax[i] = 0;
-      tare[i] = 0;
-      _runningTotal[i] = 0;
-      _currentRaw[i] = 0;
-    }
+    // Usually restarting connection
+    _isolateSendPort?.send(
+      InitRequest(samplesPerSec, _maxDataDurationSeconds, numAdcChannels),
+    );
   }
 
-  bool get taring => (_tareCount > 0);
-
-  /// Request a new tare operation (zeros readings using next N samples).
   void requestTare() {
-    _tareCount = _tareWindow;
-    for (int i = 0; i < numGraphLines; ++i) {
-      tare[i] = 0;
-      _runningTotal[i] = 0;
-    }
+    _isolateSendPort?.send(TareRequest());
   }
 
-  /// Map ADC channel index (0-3) to graph line index (0-1).
-  /// Returns -1 if channel has no graph line.
+  void setRecordingStart() {
+    _isolateSendPort?.send(SetSessionRecordingStartRequest());
+  }
+
   static int chanToLine(int chan) {
     if (chan == 1) return 0;
     if (chan == 2) return 1;
     return -1;
   }
 
-  /// Get current force for a given ADC channel in the specified unit.
   double currentForce(int adcChannel, ForceUnit unit) {
     final lineIdx = chanToLine(adcChannel);
     if (lineIdx < 0) return 0;
@@ -305,7 +361,6 @@ class DataHub extends ChangeNotifier {
     return unit.fromKgf(kgf);
   }
 
-  /// Get peak force for a given ADC channel in the specified unit.
   double peakForce(int adcChannel, ForceUnit unit) {
     final lineIdx = chanToLine(adcChannel);
     if (lineIdx < 0) return 0;
@@ -314,92 +369,14 @@ class DataHub extends ChangeNotifier {
     return unit.fromKgf(kgf);
   }
 
-  void _addTare(int val, int idx) {
-    _runningTotal[idx] += val;
-  }
-
-  void _addData(int val, int idx) {
-    rawData[idx][rawSz] = val;
-    if (val > rawMax[idx]) {
-      rawMax[idx] = val;
-    }
-  }
-
   void _updateCalibration(Uint8List data) {
-    // TODO: implement calibration parsing
     deviceCalibration = DeviceCalibration(0, _defaultSlope);
-    debugPrint(
-      'Calibration ${deviceCalibration.slope}, offset ${deviceCalibration.offset}',
-    );
   }
 
-  void _notifyDataReceived() {
-    notifyListeners();
-  }
-
-  /// Parse a BLE data packet.
-  /// Data is always buffered for live display. Recording start/end is
-  /// tracked via [_recordingStartIdx] set by BluetoothHandling.toggleSession().
   bool _parseDataPacket(Uint8List data) {
-    if (data.isEmpty) {
-      debugPrint("data isEmpty");
-      return false;
-    }
-
-    final int count = data[0] + (data[1] << 8);
-    if (_prevSampleCount != -1) {
-      final int diff = (count - _prevSampleCount) & 0xFFFF;
-      if (diff != 0) {
-        debugPrint('# lost $diff samples');
-        // TODO: signal lost packets
-      }
-    }
-    _prevSampleCount = (count + nwAdcNumSamples) & 0xFFFF;
-
-    for (
-      int packetStart = nwHeaderSize;
-      packetStart < nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;
-      packetStart += nwAdcSampleLength
-    ) {
-      assert(packetStart + nwAdcSampleLength <= data.length);
-      for (int i = 0; i < nwNumAdcChan; ++i) {
-        final int baseIndex = packetStart + i * 3;
-        final int res =
-            ((data[baseIndex] << 0) |
-                    (data[baseIndex + 1] << 8) |
-                    data[baseIndex + 2] << 16)
-                .toSigned(24);
-
-        final int idx = chanToLine(i);
-        if (idx >= 0) {
-          _currentRaw[idx] = res;
-          if (taring) {
-            _addTare(res, idx);
-          } else {
-            // Always buffer data for live display.
-            _addData(res, idx);
-          }
-        }
-      }
-
-      if (taring) {
-        _tareCount--;
-        if (!taring) {
-          for (int i = 0; i < _runningTotal.length; ++i) {
-            tare[i] = _runningTotal[i] / _tareWindow;
-            _runningTotal[i] = 0;
-          }
-        }
-      } else {
-        rawSz++;
-        if (rawSz >= _maxDataSz) {
-          break;
-        }
-      }
-    }
-
-    _notifyDataReceived();
-    return rawSz < _maxDataSz;
+    if (_isolateSendPort == null) return true;
+    _isolateSendPort!.send(BlePacketRequest(data));
+    return true; // We can always accept data
   }
 }
 

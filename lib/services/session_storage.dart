@@ -36,9 +36,10 @@ class SessionStorage {
     final int endIdx = dataHub.rawSz;
     final int recordedSamples = endIdx - startIdx;
 
+    final channelsData = await dataHub.fetchSlice(startIdx, endIdx);
+
     final blobData = _createBinaryData(
-      dataHub: dataHub,
-      startIdx: startIdx,
+      channelsData: channelsData,
       sampleCount: recordedSamples,
     );
 
@@ -46,8 +47,9 @@ class SessionStorage {
     double peakRaw = 0;
     int peakChannel = 0;
     for (int line = 0; line < DataHub.numGraphLines; line++) {
-      for (int s = startIdx; s < endIdx; s++) {
-        final val = (dataHub.rawData[line][s] - dataHub.tare[line]);
+      if (channelsData.isEmpty) break;
+      for (int s = 0; s < recordedSamples; s++) {
+        final val = (channelsData[line][s] - dataHub.tare[line]);
         if (val > peakRaw) {
           peakRaw = val;
           peakChannel = line;
@@ -93,8 +95,7 @@ class SessionStorage {
 
   /// Build the binary buffer.
   static Uint8List _createBinaryData({
-    required DataHub dataHub,
-    required int startIdx,
+    required List<Int32List> channelsData,
     required int sampleCount,
   }) {
     const numLines = DataHub.numGraphLines;
@@ -113,12 +114,14 @@ class SessionStorage {
     buffer.setUint32(16, DataHub.samplesPerSec, Endian.little);
     buffer.setUint32(20, 0, Endian.little); // reserved
 
-    // Interleaved data — write only from startIdx to startIdx + sampleCount
+    // Interleaved data
     int offset = _headerSize;
-    for (int s = startIdx; s < startIdx + sampleCount; s++) {
-      for (int ch = 0; ch < numLines; ch++) {
-        buffer.setInt32(offset, dataHub.rawData[ch][s], Endian.little);
-        offset += 4;
+    if (channelsData.isNotEmpty) {
+      for (int s = 0; s < sampleCount; s++) {
+        for (int ch = 0; ch < numLines; ch++) {
+          buffer.setInt32(offset, channelsData[ch][s], Endian.little);
+          offset += 4;
+        }
       }
     }
 

@@ -1,5 +1,6 @@
 import 'dart:ui' as ui;
 import 'dart:collection';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -577,12 +578,15 @@ class _LiveGraphPainter extends CustomPainter {
 
     canvas.drawPath(grid, pen..strokeWidth = 0.2);
 
+    final int graphW = graphSz.width.toInt();
+    if (graphW > 0) {
+      _data.requestRenderWidth(graphW);
+    }
+
     // Draw data lines for each active channel
     for (final ch in activeIndices) {
       final lineIdx = DataHub.chanToLine(ch);
       if (lineIdx < 0) continue;
-
-      final path = Path();
 
       double rawToY(double val) {
         final double y =
@@ -591,21 +595,26 @@ class _LiveGraphPainter extends CustomPainter {
         return y.clamp(0, graphSz.height);
       }
 
-      path.moveTo(0, rawToY(_data.tare[lineIdx]));
-      final int graphW = graphSz.width.toInt();
-      for (int i = 0, j = 0; i < graphW; ++i) {
-        int total = 0;
-        final int start = j;
-        for (; (j * graphW < i * _data.rawSz) && (j < _data.rawSz); ++j) {
-          total += _data.rawData[lineIdx][j];
-        }
-        if (start < j) {
-          path.lineTo(i.toDouble(), rawToY(total / (j - start)));
-        }
-      }
+      final renderData = _data.renderData[lineIdx];
+      if (renderData != null && renderData.isNotEmpty) {
+        final int count = renderData.length ~/ 2;
+        final int drawCount = count < graphW ? count : graphW;
 
-      pen.color = _channelColor(ch);
-      canvas.drawPath(path, pen..strokeWidth = 1.5);
+        final Float32List pts = Float32List(drawCount * 4);
+        for (int i = 0; i < drawCount; ++i) {
+          final double minV = renderData[i * 2];
+          final double maxV = renderData[i * 2 + 1];
+
+          final xPos = i.toDouble();
+          pts[i * 4] = xPos;
+          pts[i * 4 + 1] = rawToY(minV);
+          pts[i * 4 + 2] = xPos;
+          pts[i * 4 + 3] = rawToY(maxV);
+        }
+
+        pen.color = _channelColor(ch);
+        canvas.drawRawPoints(ui.PointMode.polygon, pts, pen..strokeWidth = 1.0);
+      }
     }
   }
 
