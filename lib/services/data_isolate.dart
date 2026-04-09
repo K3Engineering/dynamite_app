@@ -229,6 +229,7 @@ void dataIsolateWorker(dynamic params) {
         processor?.handleFetchSlice(message);
       }
 
+      controller.sendResultWithAutoTransfer({});
       return {}; // empty map as event indicator
     },
     onInit: (controller) {
@@ -322,6 +323,13 @@ class _DataProcessor {
 
   void processBlePacket(Uint8List data) {
     if (data.isEmpty) return;
+
+    if (data.length < nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength) {
+      print(
+        'WARNING: Isolate received malformed packet of length ${data.length}',
+      );
+      return; // prevent range error crash
+    }
 
     for (
       int packetStart = nwHeaderSize;
