@@ -45,3 +45,6 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 /android/app/.cxx
+web/dataIsolateWorker.js
+web/dataIsolateWorker.js.deps
+web/dataIsolateWorker.js.map

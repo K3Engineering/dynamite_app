@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
-import 'dart:isolate';
+import 'package:isolate_manager/isolate_manager.dart';
 
 import 'package:flutter/foundation.dart' show Uint8List, kIsWeb;
 import 'package:flutter/material.dart';
@@ -252,9 +252,10 @@ class DataHub extends ChangeNotifier {
 
   DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
 
-  // Isolate stuff
-  SendPort? _isolateSendPort;
-  late final ReceivePort _receivePort;
+  // IsolateManager instance
+  late final IsolateManager<Map<String, dynamic>, Map<String, dynamic>>
+  _isolateManager;
+  bool _isolateStarted = false;
 
   // Render requests mapping to track Future completors for slices, etc.
   int _lastRenderWidth = -1;
@@ -265,16 +266,16 @@ class DataHub extends ChangeNotifier {
   }
 
   Future<void> _initIsolate() async {
-    _receivePort = ReceivePort();
-    await Isolate.spawn(dataIsolateEntryPoint, _receivePort.sendPort);
+    _isolateManager = IsolateManager.createCustom(
+      dataIsolateWorker,
+      workerName: 'dataIsolateWorker',
+    );
 
-    _receivePort.listen((message) {
-      if (message is SendPort) {
-        _isolateSendPort = message;
-        _isolateSendPort!.send(
-          InitRequest(samplesPerSec, _maxDataDurationSeconds, numAdcChannels),
-        );
-      } else if (message is StatsUpdateResponse) {
+    _isolateManager.stream.listen((messageMap) {
+      if (messageMap.isEmpty) return; // Ignore event indicator if returned
+      final message = DataIsolateResponse.fromMap(messageMap);
+
+      if (message is StatsUpdateResponse) {
         rawSz = message.rawSz;
         _currentRaw = message.currentRaw;
         rawMax = message.peakRaw;
@@ -283,9 +284,7 @@ class DataHub extends ChangeNotifier {
         notifyListeners();
         _autoRequestRender();
       } else if (message is RenderResultResponse) {
-        renderData[message.lineIdx] = message.minMaxData
-            .materialize()
-            .asFloat32List();
+        renderData[message.lineIdx] = message.minMaxData;
         notifyListeners();
       } else if (message is SliceResultResponse) {
         // Find matching completor. We can store one global completor for simplicity.
@@ -293,19 +292,29 @@ class DataHub extends ChangeNotifier {
         _sliceCompleter = null;
       }
     });
+
+    await _isolateManager.start();
+    _isolateStarted = true;
+
+    _isolateManager.compute(
+      InitRequest(
+        samplesPerSec,
+        _maxDataDurationSeconds,
+        numAdcChannels,
+      ).toMap(),
+    );
   }
 
   void _autoRequestRender() {
-    if (_lastRenderWidth > 0 && _isolateSendPort != null) {
+    if (_lastRenderWidth > 0 && _isolateStarted) {
       int endTimeMs = (rawSz * 1000) ~/ samplesPerSec;
       // Request full available range
-      _isolateSendPort!.send(
+      _isolateManager.compute(
         RenderRequest(
           startTimeMs: 0,
           endTimeMs: endTimeMs,
           pixelWidth: _lastRenderWidth,
-          replyPort: _receivePort.sendPort,
-        ),
+        ).toMap(),
       );
     }
   }
@@ -320,31 +329,37 @@ class DataHub extends ChangeNotifier {
   Completer<List<Int32List>>? _sliceCompleter;
 
   Future<List<Int32List>> fetchSlice(int startIdx, int endIdx) {
-    if (_isolateSendPort == null) return Future.value([]);
+    if (!_isolateStarted) return Future.value([]);
     _sliceCompleter = Completer<List<Int32List>>();
-    _isolateSendPort!.send(
-      FetchSliceRequest(
-        startIdx: startIdx,
-        endIdx: endIdx,
-        replyPort: _receivePort.sendPort,
-      ),
+    _isolateManager.compute(
+      FetchSliceRequest(startIdx: startIdx, endIdx: endIdx).toMap(),
     );
     return _sliceCompleter!.future;
   }
 
   void clear() {
     // Usually restarting connection
-    _isolateSendPort?.send(
-      InitRequest(samplesPerSec, _maxDataDurationSeconds, numAdcChannels),
-    );
+    if (_isolateStarted) {
+      _isolateManager.compute(
+        InitRequest(
+          samplesPerSec,
+          _maxDataDurationSeconds,
+          numAdcChannels,
+        ).toMap(),
+      );
+    }
   }
 
   void requestTare() {
-    _isolateSendPort?.send(TareRequest());
+    if (_isolateStarted) {
+      _isolateManager.compute(TareRequest().toMap());
+    }
   }
 
   void setRecordingStart() {
-    _isolateSendPort?.send(SetSessionRecordingStartRequest());
+    if (_isolateStarted) {
+      _isolateManager.compute(SetSessionRecordingStartRequest().toMap());
+    }
   }
 
   static int chanToLine(int chan) {
@@ -374,8 +389,8 @@ class DataHub extends ChangeNotifier {
   }
 
   bool _parseDataPacket(Uint8List data) {
-    if (_isolateSendPort == null) return true;
-    _isolateSendPort!.send(BlePacketRequest(data));
+    if (!_isolateStarted) return true;
+    _isolateManager.compute(BlePacketRequest(data).toMap());
     return true; // We can always accept data
   }
 }

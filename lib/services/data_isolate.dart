@@ -1,11 +1,42 @@
-import 'dart:isolate';
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart';
+import 'package:isolate_manager/isolate_manager.dart';
 
 import 'bt_device_config.dart';
 
 // Messages TO Isolate
-abstract class DataIsolateRequest {}
+abstract class DataIsolateRequest {
+  Map<String, dynamic> toMap();
+
+  static DataIsolateRequest fromMap(Map<String, dynamic> map) {
+    switch (map['type']) {
+      case 'InitRequest':
+        return InitRequest(
+          map['samplesPerSec'],
+          map['maxDurationSeconds'],
+          map['numChannels'],
+        );
+      case 'BlePacketRequest':
+        return BlePacketRequest(map['data'] as Uint8List);
+      case 'TareRequest':
+        return TareRequest();
+      case 'SetSessionRecordingStartRequest':
+        return SetSessionRecordingStartRequest();
+      case 'FetchSliceRequest':
+        return FetchSliceRequest(
+          startIdx: map['startIdx'],
+          endIdx: map['endIdx'],
+        );
+      case 'RenderRequest':
+        return RenderRequest(
+          startTimeMs: map['startTimeMs'],
+          endTimeMs: map['endTimeMs'],
+          pixelWidth: map['pixelWidth'],
+        );
+      default:
+        throw Exception('Unknown request type: ${map['type']}');
+    }
+  }
+}
 
 class InitRequest extends DataIsolateRequest {
   final int samplesPerSec;
@@ -13,49 +44,99 @@ class InitRequest extends DataIsolateRequest {
   final int numChannels;
 
   InitRequest(this.samplesPerSec, this.maxDurationSeconds, this.numChannels);
+
+  @override
+  Map<String, dynamic> toMap() => {
+    'type': 'InitRequest',
+    'samplesPerSec': samplesPerSec,
+    'maxDurationSeconds': maxDurationSeconds,
+    'numChannels': numChannels,
+  };
 }
 
 class BlePacketRequest extends DataIsolateRequest {
   final Uint8List data;
   BlePacketRequest(this.data);
+
+  @override
+  Map<String, dynamic> toMap() => {'type': 'BlePacketRequest', 'data': data};
 }
 
-class TareRequest extends DataIsolateRequest {}
+class TareRequest extends DataIsolateRequest {
+  @override
+  Map<String, dynamic> toMap() => {'type': 'TareRequest'};
+}
 
-class SetSessionRecordingStartRequest extends DataIsolateRequest {}
+class SetSessionRecordingStartRequest extends DataIsolateRequest {
+  @override
+  Map<String, dynamic> toMap() => {'type': 'SetSessionRecordingStartRequest'};
+}
 
 class FetchSliceRequest extends DataIsolateRequest {
   final int startIdx;
   final int endIdx;
-  final SendPort replyPort;
 
-  FetchSliceRequest({
-    required this.startIdx,
-    required this.endIdx,
-    required this.replyPort,
-  });
+  FetchSliceRequest({required this.startIdx, required this.endIdx});
+
+  @override
+  Map<String, dynamic> toMap() => {
+    'type': 'FetchSliceRequest',
+    'startIdx': startIdx,
+    'endIdx': endIdx,
+  };
 }
 
 class RenderRequest extends DataIsolateRequest {
-  final int startTimeMs; // start time in milliseconds from 0
+  final int startTimeMs;
   final int endTimeMs;
   final int pixelWidth;
-  final SendPort replyPort;
 
   RenderRequest({
     required this.startTimeMs,
     required this.endTimeMs,
     required this.pixelWidth,
-    required this.replyPort,
   });
+
+  @override
+  Map<String, dynamic> toMap() => {
+    'type': 'RenderRequest',
+    'startTimeMs': startTimeMs,
+    'endTimeMs': endTimeMs,
+    'pixelWidth': pixelWidth,
+  };
 }
 
 // Messages FROM Isolate
-abstract class DataIsolateResponse {}
+abstract class DataIsolateResponse {
+  Map<String, dynamic> toMap();
+
+  static DataIsolateResponse fromMap(Map<String, dynamic> map) {
+    switch (map['type']) {
+      case 'StatsUpdateResponse':
+        return StatsUpdateResponse(
+          rawSz: map['rawSz'],
+          currentRaw: map['currentRaw'] as Int32List,
+          peakRaw: map['peakRaw'] as Int32List,
+          tare: map['tare'] as Float64List,
+          recordingStartIdx: map['recordingStartIdx'],
+        );
+      case 'RenderResultResponse':
+        return RenderResultResponse(
+          lineIdx: map['lineIdx'],
+          minMaxData: map['minMaxData'] as Float32List,
+          pointCount: map['pointCount'],
+        );
+      case 'SliceResultResponse':
+        return SliceResultResponse(List<Int32List>.from(map['channelsData']));
+      default:
+        throw Exception('Unknown response type: ${map['type']}');
+    }
+  }
+}
 
 class StatsUpdateResponse extends DataIsolateResponse {
   final int rawSz;
-  final Int32List currentRaw; // one per channel
+  final Int32List currentRaw;
   final Int32List peakRaw;
   final Float64List tare;
   final int recordingStartIdx;
@@ -67,12 +148,21 @@ class StatsUpdateResponse extends DataIsolateResponse {
     required this.tare,
     required this.recordingStartIdx,
   });
+
+  @override
+  Map<String, dynamic> toMap() => {
+    'type': 'StatsUpdateResponse',
+    'rawSz': rawSz,
+    'currentRaw': currentRaw,
+    'peakRaw': peakRaw,
+    'tare': tare,
+    'recordingStartIdx': recordingStartIdx,
+  };
 }
 
 class RenderResultResponse extends DataIsolateResponse {
   final int lineIdx;
-  final TransferableTypedData
-  minMaxData; // packed [min, max, min, max, ...] per pixel
+  final Float32List minMaxData;
   final int pointCount;
 
   RenderResultResponse({
@@ -80,47 +170,78 @@ class RenderResultResponse extends DataIsolateResponse {
     required this.minMaxData,
     required this.pointCount,
   });
+
+  @override
+  Map<String, dynamic> toMap() => {
+    'type': 'RenderResultResponse',
+    'lineIdx': lineIdx,
+    'minMaxData': minMaxData,
+    'pointCount': pointCount,
+  };
 }
 
 class SliceResultResponse extends DataIsolateResponse {
   final List<Int32List> channelsData;
   SliceResultResponse(this.channelsData);
+
+  @override
+  Map<String, dynamic> toMap() => {
+    'type': 'SliceResultResponse',
+    'channelsData': channelsData,
+  };
 }
 
 // ----------------------------------------------------------------------------
 // The actual Isolate process
 // ----------------------------------------------------------------------------
 
-void dataIsolateEntryPoint(SendPort mainSendPort) {
-  final receivePort = ReceivePort();
-  mainSendPort.send(receivePort.sendPort);
-
+@pragma('vm:entry-point')
+@isolateManagerCustomWorker
+void dataIsolateWorker(dynamic params) {
   _DataProcessor? processor;
 
-  receivePort.listen((message) {
-    if (message is InitRequest) {
-      processor = _DataProcessor(
-        mainSendPort: mainSendPort,
-        samplesPerSec: message.samplesPerSec,
-        maxDurationSeconds: message.maxDurationSeconds,
-        numChannels: message.numChannels,
-      );
-    } else if (message is BlePacketRequest) {
-      processor?.processBlePacket(message.data);
-    } else if (message is TareRequest) {
-      processor?.requestTare();
-    } else if (message is SetSessionRecordingStartRequest) {
-      processor?.setRecordingStart();
-    } else if (message is RenderRequest) {
-      processor?.handleRenderRequest(message);
-    } else if (message is FetchSliceRequest) {
-      processor?.handleFetchSlice(message);
-    }
-  });
+  IsolateManagerFunction.customFunction<
+    Map<String, dynamic>,
+    Map<String, dynamic>
+  >(
+    params,
+    onEvent: (controller, messageMap) {
+      if (messageMap.isEmpty) return {};
+
+      final message = DataIsolateRequest.fromMap(messageMap);
+
+      if (message is InitRequest) {
+        processor = _DataProcessor(
+          controller: controller,
+          samplesPerSec: message.samplesPerSec,
+          maxDurationSeconds: message.maxDurationSeconds,
+          numChannels: message.numChannels,
+        );
+      } else if (message is BlePacketRequest) {
+        processor?.processBlePacket(message.data);
+      } else if (message is TareRequest) {
+        processor?.requestTare();
+      } else if (message is SetSessionRecordingStartRequest) {
+        processor?.setRecordingStart();
+      } else if (message is RenderRequest) {
+        processor?.handleRenderRequest(message);
+      } else if (message is FetchSliceRequest) {
+        processor?.handleFetchSlice(message);
+      }
+
+      return {}; // empty map as event indicator
+    },
+    onInit: (controller) {
+      // Nothing needed on init
+    },
+    autoHandleException: false,
+    autoHandleResult: false,
+  );
 }
 
 class _DataProcessor {
-  final SendPort mainSendPort;
+  final IsolateManagerController<Map<String, dynamic>, Map<String, dynamic>>
+  controller;
   final int samplesPerSec;
   final int numChannels;
   final int capacity; // max samples in circular buffer
@@ -129,8 +250,6 @@ class _DataProcessor {
   late final List<Float32List> _layer1x; // size: capacity
 
   // Tracking bounds per decimation layer per channel.
-  // For 64x layer, each element stores [min, max] = 2 floats.
-  // Actually, wait, simpler: separate Float32Lists for Min and Max.
   late final List<Float32List> _min64x;
   late final List<Float32List> _max64x;
   late final List<Float32List> _min4096x;
@@ -153,7 +272,7 @@ class _DataProcessor {
   DateTime? _lastStatsSent;
 
   _DataProcessor({
-    required this.mainSendPort,
+    required this.controller,
     required this.samplesPerSec,
     required int maxDurationSeconds,
     required this.numChannels,
@@ -204,8 +323,6 @@ class _DataProcessor {
   void processBlePacket(Uint8List data) {
     if (data.isEmpty) return;
 
-    // Ignore packet sequence count for now
-
     for (
       int packetStart = nwHeaderSize;
       packetStart < nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;
@@ -228,11 +345,9 @@ class _DataProcessor {
           } else {
             if (res > _peakRaw[idx]) _peakRaw[idx] = res;
 
-            // Write to layer 1x
             final val = res.toDouble();
             _layer1x[idx][_head] = val;
 
-            // Update 64x layer
             final int idx64 = _head ~/ 64;
             if (_head % 64 == 0) {
               _min64x[idx][idx64] = val;
@@ -242,7 +357,6 @@ class _DataProcessor {
               if (val > _max64x[idx][idx64]) _max64x[idx][idx64] = val;
             }
 
-            // Update 4096x layer
             final int idx4096 = _head ~/ 4096;
             if (_head % 4096 == 0) {
               _min4096x[idx][idx4096] = val;
@@ -269,35 +383,31 @@ class _DataProcessor {
       }
     }
 
-    // Throttle stats updates to ~60Hz
     final now = DateTime.now();
     if (_lastStatsSent == null ||
         now.difference(_lastStatsSent!).inMilliseconds > 16) {
       _lastStatsSent = now;
-      mainSendPort.send(
-        StatsUpdateResponse(
-          rawSz: _totalWritten,
-          currentRaw: Int32List.fromList(_currentRaw),
-          peakRaw: Int32List.fromList(_peakRaw),
-          tare: Float64List.fromList(_tare),
-          recordingStartIdx: _recordingStartIdx,
-        ),
+      final response = StatsUpdateResponse(
+        rawSz: _totalWritten,
+        currentRaw: Int32List.fromList(_currentRaw),
+        peakRaw: Int32List.fromList(_peakRaw),
+        tare: Float64List.fromList(_tare),
+        recordingStartIdx: _recordingStartIdx,
       );
+      controller.sendResultWithAutoTransfer(response.toMap());
     }
   }
 
   void handleFetchSlice(FetchSliceRequest req) {
-    // Only fetch what is available
     int start = req.startIdx;
     int end = req.endIdx;
     if (start < 0) start = 0;
     if (end > _totalWritten) end = _totalWritten;
     if (start > end) {
-      req.replyPort.send(SliceResultResponse([]));
+      controller.sendResultWithAutoTransfer(SliceResultResponse([]).toMap());
       return;
     }
 
-    // Extract raw samples from circular buffer
     final len = end - start;
     final list = List.generate(numChannels, (_) => Int32List(len));
 
@@ -305,7 +415,6 @@ class _DataProcessor {
       for (int k = 0; k < len; k++) {
         int logicalIdx = start + k;
         if (logicalIdx < _totalWritten - capacity) {
-          // Lost data, fill with 0
           list[i][k] = 0;
         } else {
           int physicalIdx = logicalIdx % capacity;
@@ -314,7 +423,7 @@ class _DataProcessor {
       }
     }
 
-    req.replyPort.send(SliceResultResponse(list));
+    controller.sendResultWithAutoTransfer(SliceResultResponse(list).toMap());
   }
 
   void handleRenderRequest(RenderRequest req) {
@@ -323,7 +432,6 @@ class _DataProcessor {
     int startIdx = (startTimeS * samplesPerSec).floor();
     int endIdx = (endTimeS * samplesPerSec).ceil();
 
-    // Clamp to available data
     if (startIdx < _totalWritten - capacity)
       startIdx = _totalWritten - capacity;
     if (startIdx < 0) startIdx = 0;
@@ -331,12 +439,12 @@ class _DataProcessor {
 
     if (startIdx >= endIdx || req.pixelWidth <= 0) {
       for (int line = 0; line < numChannels; line++) {
-        req.replyPort.send(
+        controller.sendResultWithAutoTransfer(
           RenderResultResponse(
             lineIdx: line,
-            minMaxData: TransferableTypedData.fromList([Float32List(0)]),
+            minMaxData: Float32List(0),
             pointCount: 0,
-          ),
+          ).toMap(),
         );
       }
       return;
@@ -354,7 +462,7 @@ class _DataProcessor {
 
         int bStart = bucketStartIdx.floor();
         int bEnd = bucketEndIdx.floor();
-        if (bStart == bEnd) bEnd++; // ensure at least 1 sample
+        if (bStart == bEnd) bEnd++;
 
         double minV = double.maxFinite;
         double maxV = -double.maxFinite;
@@ -364,7 +472,6 @@ class _DataProcessor {
           int remaining = bEnd - current;
           int physicalIdx = current % capacity;
 
-          // Can we use 4096x layer?
           if (remaining >= 4096 && physicalIdx % 4096 == 0) {
             int p4096 = physicalIdx ~/ 4096;
             double cMin = _min4096x[line][p4096];
@@ -372,18 +479,14 @@ class _DataProcessor {
             if (cMin < minV) minV = cMin;
             if (cMax > maxV) maxV = cMax;
             current += 4096;
-          }
-          // Can we use 64x layer?
-          else if (remaining >= 64 && physicalIdx % 64 == 0) {
+          } else if (remaining >= 64 && physicalIdx % 64 == 0) {
             int p64 = physicalIdx ~/ 64;
             double cMin = _min64x[line][p64];
             double cMax = _max64x[line][p64];
             if (cMin < minV) minV = cMin;
             if (cMax > maxV) maxV = cMax;
             current += 64;
-          }
-          // Use 1x layer
-          else {
+          } else {
             double v = _layer1x[line][physicalIdx];
             if (v < minV) minV = v;
             if (v > maxV) maxV = v;
@@ -398,12 +501,12 @@ class _DataProcessor {
         outMinMax[p * 2 + 1] = maxV;
       }
 
-      req.replyPort.send(
+      controller.sendResultWithAutoTransfer(
         RenderResultResponse(
           lineIdx: line,
-          minMaxData: TransferableTypedData.fromList([outMinMax]),
+          minMaxData: outMinMax,
           pointCount: points,
-        ),
+        ).toMap(),
       );
     }
   }
