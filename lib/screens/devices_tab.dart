@@ -21,7 +21,23 @@ class _DevicesTabState extends State<DevicesTab> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
+          Row(
+            children: [
+              Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
+              const Spacer(),
+              BluetoothIndicator(
+                isScanning: bt.isScanning,
+                state: bt.bluetoothState,
+              ),
+              const SizedBox(width: 8),
+              FilledButton.tonal(
+                onPressed: () async {
+                  await bt.toggleScan();
+                },
+                child: Text(bt.isScanning ? 'Stop' : 'Scan'),
+              ),
+            ],
+          ),
           const SizedBox(height: 16),
 
           // Connected section
@@ -52,41 +68,43 @@ class _DevicesTabState extends State<DevicesTab> {
             const SizedBox(height: 24),
           ],
 
-          // Available section
-          Row(
-            children: [
-              Text(
-                'Available',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: Theme.of(context).colorScheme.secondary,
-                ),
-              ),
-              const Spacer(),
-              BluetoothIndicator(
-                isScanning: bt.isScanning,
-                state: bt.bluetoothState,
-              ),
-              const SizedBox(width: 8),
-              FilledButton.tonal(
-                onPressed: () async {
-                  await bt.toggleScan();
-                },
-                child: Text(bt.isScanning ? 'Stop scanning' : 'Scan'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-
-          if (bt.devices.isEmpty && !bt.isScanning)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 32),
+          if (!isConnected && bt.devices.isEmpty && !bt.isScanning)
+            Padding(
+              padding: const EdgeInsets.only(top: 64),
               child: Center(
-                child: Text(
-                  'Tap Scan to search for devices',
-                  style: TextStyle(color: Colors.grey),
+                child: Column(
+                  children: [
+                    Icon(
+                      Icons.bluetooth_searching,
+                      size: 64,
+                      color: Colors.grey.shade400,
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'No devices found',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        color: Colors.grey.shade600,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Tap Scan at the top to search for nearby devices',
+                      style: TextStyle(color: Colors.grey.shade500),
+                    ),
+                  ],
                 ),
               ),
             ),
+
+          if (bt.devices.isNotEmpty || bt.isScanning) ...[
+            Text(
+              'Available Devices',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: Theme.of(context).colorScheme.secondary,
+              ),
+            ),
+            const SizedBox(height: 8),
+          ],
 
           for (final device in bt.devices)
             Card(
