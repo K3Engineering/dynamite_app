@@ -1,6 +1,3 @@
-import 'dart:ui' as ui;
-import 'dart:collection';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -13,6 +10,11 @@ import '../services/bt_handling.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
 import '../screens/app_shell.dart';
+import '../widgets/graph_components.dart';
+
+// ---------------------------------------------------------------------------
+// LiveTab
+// ---------------------------------------------------------------------------
 
 class LiveTab extends StatefulWidget {
   const LiveTab({super.key});
@@ -21,7 +23,80 @@ class LiveTab extends StatefulWidget {
   State<LiveTab> createState() => _LiveTabState();
 }
 
+class _LiveMinimapDataSource extends ChangeNotifier implements GraphDataSource {
+  final DataHub _hub;
+  _LiveMinimapDataSource(this._hub) {
+    _hub.addListener(notifyListeners);
+  }
+
+  @override
+  void dispose() {
+    _hub.removeListener(notifyListeners);
+    super.dispose();
+  }
+
+  @override
+  int get sampleCount => _hub.rawSz;
+
+  @override
+  int get sampleRate => DataHub.samplesPerSec;
+
+  @override
+  double get calibrationSlope => _hub.deviceCalibration.slope;
+
+  @override
+  List<int> getChannelData(int channelIndex) {
+    final lineIdx = DataHub.chanToLine(channelIndex);
+    if (lineIdx < 0) return [];
+    return _hub.rawData[lineIdx];
+  }
+
+  @override
+  double getChannelMin(int channelIndex) {
+    final lineIdx = DataHub.chanToLine(channelIndex);
+    if (lineIdx < 0) return 0.0;
+    return _hub.rawMin[lineIdx].toDouble();
+  }
+
+  @override
+  double getChannelMax(int channelIndex) {
+    final lineIdx = DataHub.chanToLine(channelIndex);
+    if (lineIdx < 0) return 0.0;
+    return _hub.rawMax[lineIdx].toDouble();
+  }
+
+  @override
+  double getChannelTare(int channelIndex) {
+    final lineIdx = DataHub.chanToLine(channelIndex);
+    if (lineIdx < 0) return 0.0;
+    return _hub.tare[lineIdx];
+  }
+}
+
 class _LiveTabState extends State<LiveTab> {
+  final GraphController _graphCtrl = GraphController();
+  bool _showDerivative = false;
+  _LiveMinimapDataSource? _dataSource;
+  BluetoothHandling? _btHandling;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final bt = context.watch<BluetoothHandling>();
+    if (_btHandling != bt) {
+      _btHandling = bt;
+      _dataSource?.dispose();
+      _dataSource = _LiveMinimapDataSource(bt.dataHub);
+    }
+  }
+
+  @override
+  void dispose() {
+    _dataSource?.dispose();
+    _graphCtrl.dispose();
+    super.dispose();
+  }
+
   void _onTare() {
     final bt = context.read<BluetoothHandling>();
     bt.dataHub.requestTare();
@@ -123,16 +198,23 @@ class _LiveTabState extends State<LiveTab> {
             isConnected: isConnected,
             connectedDeviceName: bt.connectedDeviceName,
           ),
-          if (isConnected) LiveStats(settings: settings, hub: bt.dataHub),
-          Expanded(
-            child: isConnected
-                ? CustomPaint(
-                    foregroundPainter: _LiveGraphPainter(bt.dataHub, settings),
-                    size: Size.infinite,
-                  )
-                : const DisconnectedPrompt(),
-          ),
-          if (isConnected) ChannelLegend(settings: settings),
+          if (isConnected)
+            LiveStats(
+              settings: settings,
+              hub: bt.dataHub,
+              showDerivative: _showDerivative,
+            ),
+          if (isConnected)
+            Expanded(child: _buildGraphArea(bt, settings))
+          else
+            const Expanded(child: DisconnectedPrompt()),
+          if (isConnected)
+            ChannelLegend(
+              settings: settings,
+              showDerivative: _showDerivative,
+              onToggleDerivative: () =>
+                  setState(() => _showDerivative = !_showDerivative),
+            ),
           if (isConnected)
             ActionButtons(
               isRecording: bt.sessionInProgress,
@@ -143,7 +225,21 @@ class _LiveTabState extends State<LiveTab> {
       ),
     );
   }
+
+  Widget _buildGraphArea(BluetoothHandling bt, AppSettings settings) {
+    if (_dataSource == null) return const SizedBox.shrink();
+    return GraphWorkspace(
+      data: _dataSource!,
+      ctrl: _graphCtrl,
+      settings: settings,
+      showDerivative: _showDerivative,
+    );
+  }
 }
+
+// ---------------------------------------------------------------------------
+// LiveStatusBar
+// ---------------------------------------------------------------------------
 
 class LiveStatusBar extends StatelessWidget {
   final bool isConnected;
@@ -187,7 +283,7 @@ class LiveStatusBar extends StatelessWidget {
               child: Text(
                 isConnected
                     ? 'Connected: $connectedDeviceName'
-                    : 'Not connected — tap to connect',
+                    : 'Not connected \u2014 tap to connect',
                 style: TextStyle(
                   color: isConnected
                       ? Theme.of(context).colorScheme.onPrimaryContainer
@@ -211,11 +307,21 @@ class LiveStatusBar extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+// LiveStats
+// ---------------------------------------------------------------------------
+
 class LiveStats extends StatelessWidget {
   final AppSettings settings;
   final DataHub hub;
+  final bool showDerivative;
 
-  const LiveStats({super.key, required this.settings, required this.hub});
+  const LiveStats({
+    super.key,
+    required this.settings,
+    required this.hub,
+    this.showDerivative = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -238,6 +344,10 @@ class LiveStats extends StatelessWidget {
                     current: hub.currentForce(indices[i], unit),
                     peak: hub.peakForce(indices[i], unit),
                     unit: unit,
+                    showDerivative: showDerivative,
+                    currentDerivative: showDerivative
+                        ? hub.currentDerivative(indices[i], unit)
+                        : null,
                   ),
                 ),
               ],
@@ -248,6 +358,10 @@ class LiveStats extends StatelessWidget {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// DisconnectedPrompt
+// ---------------------------------------------------------------------------
 
 class DisconnectedPrompt extends StatelessWidget {
   const DisconnectedPrompt({super.key});
@@ -284,19 +398,31 @@ class DisconnectedPrompt extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+// ChannelLegend (with derivative toggle)
+// ---------------------------------------------------------------------------
+
 class ChannelLegend extends StatelessWidget {
   final AppSettings settings;
+  final bool showDerivative;
+  final VoidCallback onToggleDerivative;
 
-  const ChannelLegend({super.key, required this.settings});
+  const ChannelLegend({
+    super.key,
+    required this.settings,
+    this.showDerivative = false,
+    required this.onToggleDerivative,
+  });
 
   @override
   Widget build(BuildContext context) {
     final indices = settings.activeChannelIndices;
+    final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          // Channel legend items
           for (final idx in indices)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -319,11 +445,35 @@ class ChannelLegend extends StatelessWidget {
                 ],
               ),
             ),
+          const Spacer(),
+          // Derivative toggle
+          SizedBox(
+            height: 28,
+            child: FilterChip(
+              label: Text(
+                'dF/dt',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: showDerivative ? cs.onSecondaryContainer : null,
+                ),
+              ),
+              selected: showDerivative,
+              onSelected: (_) => onToggleDerivative(),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
         ],
       ),
     );
   }
 }
+
+// ---------------------------------------------------------------------------
+// ActionButtons
+// ---------------------------------------------------------------------------
 
 class ActionButtons extends StatelessWidget {
   final bool isRecording;
@@ -368,7 +518,9 @@ class ActionButtons extends StatelessWidget {
   }
 }
 
-// -- Channel stat chip widget --
+// ---------------------------------------------------------------------------
+// Channel stat chip widget
+// ---------------------------------------------------------------------------
 
 class _ChannelStatChip extends StatelessWidget {
   const _ChannelStatChip({
@@ -377,6 +529,8 @@ class _ChannelStatChip extends StatelessWidget {
     required this.current,
     required this.peak,
     required this.unit,
+    this.showDerivative = false,
+    this.currentDerivative,
   });
 
   final String label;
@@ -384,9 +538,14 @@ class _ChannelStatChip extends StatelessWidget {
   final double current;
   final double peak;
   final ForceUnit unit;
+  final bool showDerivative;
+  final double? currentDerivative;
 
   @override
   Widget build(BuildContext context) {
+    final monoStyle = GoogleFonts.robotoMono(
+      textStyle: Theme.of(context).textTheme.bodySmall,
+    );
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -409,19 +568,30 @@ class _ChannelStatChip extends StatelessWidget {
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
             ),
           ),
-          Text(
-            'Peak: ${unit.format(peak)}',
-            style: GoogleFonts.robotoMono(
-              textStyle: Theme.of(context).textTheme.bodySmall,
+          Text('Peak: ${unit.format(peak)}', style: monoStyle),
+          if (showDerivative && currentDerivative != null)
+            Text(
+              'dF/dt: ${_formatDerivative(currentDerivative!, unit)}',
+              style: monoStyle,
             ),
-          ),
         ],
       ),
     );
   }
+
+  static String _formatDerivative(double value, ForceUnit unit) {
+    final sign = value < 0 ? '' : '+';
+    final abs = value.abs();
+    if (abs >= 1000) return '$sign${value.toStringAsFixed(0)} ${unit.symbol}/s';
+    if (abs >= 100) return '$sign${value.toStringAsFixed(1)} ${unit.symbol}/s';
+    if (abs >= 10) return '$sign${value.toStringAsFixed(2)} ${unit.symbol}/s';
+    return '$sign${value.toStringAsFixed(3)} ${unit.symbol}/s';
+  }
 }
 
-// -- Channel colors --
+// ---------------------------------------------------------------------------
+// Channel colors
+// ---------------------------------------------------------------------------
 
 Color _channelColor(int index) {
   const colors = [
@@ -431,194 +601,4 @@ Color _channelColor(int index) {
     Colors.purple,
   ];
   return colors[index % colors.length];
-}
-
-// -- Live graph painter --
-
-typedef _ScaleConfigItem = ({int limit, int delta});
-
-class _LiveGraphPainter extends CustomPainter {
-  final DataHub _data;
-  final AppSettings _settings;
-
-  _LiveGraphPainter(this._data, this._settings) : super(repaint: _data);
-
-  // Seconds
-  static const List<_ScaleConfigItem> _xScaleConfig = [
-    (limit: 5, delta: 1),
-    (limit: 10, delta: 2),
-    (limit: 30, delta: 5),
-    (limit: 60, delta: 10),
-    (limit: 120, delta: 20),
-    (limit: 300, delta: 30),
-    (limit: 600, delta: 60),
-  ];
-  static final Map<int, ui.Paragraph> _xLabels = HashMap();
-
-  // Y-axis labels are unit-dependent, so we cache per-unit.
-  static final Map<(ForceUnit, int), ui.Paragraph> _yLabels = HashMap();
-
-  // Y scale configs per unit (approximate ranges).
-  static const List<_ScaleConfigItem> _yScaleConfigKgf = [
-    (limit: 5, delta: 1),
-    (limit: 10, delta: 2),
-    (limit: 20, delta: 5),
-    (limit: 50, delta: 10),
-    (limit: 100, delta: 20),
-    (limit: 200, delta: 50),
-    (limit: 500, delta: 100),
-    (limit: 1000, delta: 200),
-  ];
-
-  static ui.Paragraph _prepareLabel(String text) {
-    final style = ui.TextStyle(color: Colors.black, fontSize: 12);
-    final builder =
-        ui.ParagraphBuilder(
-            ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
-          )
-          ..pushStyle(style)
-          ..addText(text);
-    return builder.build()..layout(const ui.ParagraphConstraints(width: 72));
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final pen = Paint()
-      ..color = Colors.deepPurple
-      ..style = PaintingStyle.stroke;
-
-    const double leftSpace = 8;
-    const double rightSpace = 56;
-    const double bottomSpace = 24;
-    const double topSpace = 4;
-
-    canvas.translate(leftSpace, topSpace);
-    final graphSz = Size(
-      size.width - leftSpace - rightSpace,
-      size.height - bottomSpace - topSpace,
-    );
-    canvas.drawRect(
-      Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
-      pen..strokeWidth = 0.5,
-    );
-
-    if (_data.rawSz == 0) return;
-
-    final unit = _settings.displayUnit;
-    final activeIndices = _settings.activeChannelIndices;
-
-    // Compute data max across active channels (in raw units, tare-subtracted)
-    double dataMax = 10000; // above noise floor
-    for (final ch in activeIndices) {
-      final lineIdx = DataHub.chanToLine(ch);
-      if (lineIdx < 0) continue;
-      final double x = (_data.rawMax[lineIdx] - _data.tare[lineIdx]).toDouble();
-      if (x > dataMax) dataMax = x;
-    }
-
-    final double dataMaxKgf = dataMax * _data.deviceCalibration.slope;
-    final double dataMaxUnit = unit.fromKgf(dataMaxKgf);
-
-    // X axis
-    final double xSpanSec = _data.rawSz / DataHub.samplesPerSec;
-    final xC = _findScale(xSpanSec, _xScaleConfig);
-
-    double secondsToX(int sec) =>
-        sec * DataHub.samplesPerSec * graphSz.width / _data.rawSz;
-
-    final grid = Path();
-    final double xMinorDelta = secondsToX(xC.delta) / 2;
-    for (double x = xMinorDelta; x < graphSz.width; x += xMinorDelta) {
-      grid.moveTo(x, 0);
-      grid.lineTo(x, graphSz.height);
-    }
-    for (int i = xC.delta; i.toDouble() < xSpanSec; i += xC.delta) {
-      final double xPos = secondsToX(i);
-      final par = _xLabels.putIfAbsent(i, () => _prepareLabel(_fmtTime(i)));
-      canvas.drawParagraph(
-        par,
-        Offset(xPos - par.longestLine / 2, graphSz.height),
-      );
-    }
-
-    // Y axis (in display units)
-    // We scale yScaleConfig by the unit conversion factor
-    final double unitScale = unit.fromKgf(1.0); // units per kgf
-    final yC = _findScale(
-      dataMaxUnit,
-      _yScaleConfigKgf
-          .map(
-            (e) => (
-              limit: (e.limit * unitScale).ceil(),
-              delta: (e.delta * unitScale).ceil().clamp(1, 999999),
-            ),
-          )
-          .toList(),
-    );
-
-    double unitToY(double val) => val * graphSz.height / dataMaxUnit;
-
-    final double yMinorDelta = unitToY(yC.delta.toDouble()) / 2;
-    for (double y = yMinorDelta; y < graphSz.height; y += yMinorDelta) {
-      grid.moveTo(0, graphSz.height - y);
-      grid.lineTo(graphSz.width, graphSz.height - y);
-    }
-    for (int i = yC.delta; i < dataMaxUnit.ceil(); i += yC.delta) {
-      final double yPos = graphSz.height - unitToY(i.toDouble());
-      final par = _yLabels.putIfAbsent((
-        unit,
-        i,
-      ), () => _prepareLabel('$i ${unit.symbol}'));
-      canvas.drawParagraph(
-        par,
-        Offset(graphSz.width + 4, yPos - par.height / 2),
-      );
-    }
-
-    canvas.drawPath(grid, pen..strokeWidth = 0.2);
-
-    // Draw data lines for each active channel
-    for (final ch in activeIndices) {
-      final lineIdx = DataHub.chanToLine(ch);
-      if (lineIdx < 0) continue;
-
-      final path = Path();
-
-      double rawToY(double val) {
-        final double y =
-            graphSz.height -
-            (val - _data.tare[lineIdx]) * graphSz.height / dataMax;
-        return y.clamp(0, graphSz.height);
-      }
-
-      path.moveTo(0, rawToY(_data.tare[lineIdx]));
-      final int graphW = graphSz.width.toInt();
-      for (int i = 0, j = 0; i < graphW; ++i) {
-        int total = 0;
-        final int start = j;
-        for (; (j * graphW < i * _data.rawSz) && (j < _data.rawSz); ++j) {
-          total += _data.rawData[lineIdx][j];
-        }
-        if (start < j) {
-          path.lineTo(i.toDouble(), rawToY(total / (j - start)));
-        }
-      }
-
-      pen.color = _channelColor(ch);
-      canvas.drawPath(path, pen..strokeWidth = 1.5);
-    }
-  }
-
-  static _ScaleConfigItem _findScale(double val, List<_ScaleConfigItem> list) {
-    return list.firstWhere((e) => val < e.limit, orElse: () => list.last);
-  }
-
-  static String _fmtTime(int sec) {
-    if (sec < 60) return sec.toString();
-    final s = (sec % 60 < 10) ? '0' : '';
-    return '${sec ~/ 60}:$s${sec % 60}';
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

@@ -246,6 +246,7 @@ class DataHub extends ChangeNotifier {
   final Float64List tare = Float64List(numGraphLines);
   final Float64List _runningTotal = Float64List(numGraphLines);
   final Int32List rawMax = Int32List(numGraphLines);
+  final Int32List rawMin = Int32List(numGraphLines);
 
   /// Latest raw value per graph line (for live stats display).
   final Int32List _currentRaw = Int32List(numGraphLines);
@@ -271,6 +272,7 @@ class DataHub extends ChangeNotifier {
     _recordingStartIdx = 0;
     for (int i = 0; i < numGraphLines; ++i) {
       rawMax[i] = 0;
+      rawMin[i] = 0;
       tare[i] = 0;
       _runningTotal[i] = 0;
       _currentRaw[i] = 0;
@@ -314,6 +316,24 @@ class DataHub extends ChangeNotifier {
     return unit.fromKgf(kgf);
   }
 
+  /// Get minimum (most negative) force for a given ADC channel in the specified unit.
+  double minForce(int adcChannel, ForceUnit unit) {
+    final lineIdx = chanToLine(adcChannel);
+    if (lineIdx < 0) return 0;
+    final rawTared = rawMin[lineIdx] - tare[lineIdx];
+    final kgf = rawTared * deviceCalibration.slope;
+    return unit.fromKgf(kgf);
+  }
+
+  /// Get the instantaneous derivative (first-difference) for a channel in unit/s.
+  double currentDerivative(int adcChannel, ForceUnit unit) {
+    final lineIdx = chanToLine(adcChannel);
+    if (lineIdx < 0 || rawSz < 2) return 0;
+    final diff = rawData[lineIdx][rawSz - 1] - rawData[lineIdx][rawSz - 2];
+    final kgfPerSec = diff * deviceCalibration.slope * samplesPerSec;
+    return unit.fromKgf(kgfPerSec);
+  }
+
   void _addTare(int val, int idx) {
     _runningTotal[idx] += val;
   }
@@ -322,6 +342,9 @@ class DataHub extends ChangeNotifier {
     rawData[idx][rawSz] = val;
     if (val > rawMax[idx]) {
       rawMax[idx] = val;
+    }
+    if (val < rawMin[idx]) {
+      rawMin[idx] = val;
     }
   }
 

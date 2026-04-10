@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' as ui;
 
 import 'package:drift/drift.dart' show Value;
 import 'dart:convert';
@@ -10,9 +9,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
-import '../models/force_unit.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
+import '../widgets/graph_components.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   const SessionDetailScreen({super.key, required this.session});
@@ -23,12 +22,68 @@ class SessionDetailScreen extends StatefulWidget {
   State<SessionDetailScreen> createState() => _SessionDetailScreenState();
 }
 
+class _SessionMinimapDataSource extends ChangeNotifier
+    implements GraphDataSource {
+  final SessionData _data;
+  final List<double> _mins;
+  final List<double> _maxs;
+
+  _SessionMinimapDataSource(this._data)
+    : _mins = List.filled(_data.channels.length, 0.0),
+      _maxs = List.filled(_data.channels.length, 0.0) {
+    for (int ch = 0; ch < _data.channels.length; ch++) {
+      if (_data.sampleCount == 0) continue;
+      double min = double.infinity;
+      double max = double.negativeInfinity;
+      for (final val in _data.channels[ch]) {
+        if (val < min) min = val.toDouble();
+        if (val > max) max = val.toDouble();
+      }
+      _mins[ch] = min;
+      _maxs[ch] = max;
+    }
+  }
+
+  @override
+  int get sampleCount => _data.sampleCount;
+
+  @override
+  int get sampleRate => _data.sampleRate;
+
+  @override
+  double get calibrationSlope => _data.calibrationSlope;
+
+  @override
+  List<int> getChannelData(int channelIndex) {
+    if (channelIndex < 0 || channelIndex >= _data.channels.length) return [];
+    return _data.channels[channelIndex]
+        .toList(); // Data is Uint32List usually, cast to int
+  }
+
+  @override
+  double getChannelMin(int channelIndex) {
+    if (channelIndex < 0 || channelIndex >= _mins.length) return 0.0;
+    return _mins[channelIndex];
+  }
+
+  @override
+  double getChannelMax(int channelIndex) {
+    if (channelIndex < 0 || channelIndex >= _maxs.length) return 0.0;
+    return _maxs[channelIndex];
+  }
+
+  @override
+  double getChannelTare(int channelIndex) => 0.0; // Sessions are already tared
+}
+
 class _SessionDetailScreenState extends State<SessionDetailScreen> {
   SessionData? _data;
+  _SessionMinimapDataSource? _dataSource;
   bool _loading = true;
   String? _error;
 
   late Session _session;
+  final GraphController _graphCtrl = GraphController();
 
   @override
   void initState() {
@@ -37,14 +92,26 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     unawaited(_loadData());
   }
 
+  @override
+  void dispose() {
+    _dataSource?.dispose();
+    _graphCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadData() async {
     try {
       final data = await SessionStorage.loadSession(_session);
+      if (!mounted) return;
       setState(() {
         _data = data;
+        if (data != null) {
+          _dataSource = _SessionMinimapDataSource(data);
+        }
         _loading = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
@@ -105,30 +172,26 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Widget _buildContent(AppSettings settings) {
     final data = _data!;
-    final unit = settings.displayUnit;
-    final slope = data.calibrationSlope;
 
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Graph
-          SizedBox(
-            height: 300,
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: CustomPaint(
-                painter: _SessionGraphPainter(
-                  data: data,
-                  unit: unit,
-                  activeChannels: settings.activeChannelIndices
-                      .where((i) => i < data.channels.length)
-                      .toList(),
+          if (_dataSource != null)
+            SizedBox(
+              height: 332,
+              child: Padding(
+                padding: const EdgeInsets.all(8.0),
+                child: GraphWorkspace(
+                  data: _dataSource!,
+                  ctrl: _graphCtrl,
+                  settings: settings,
+                  showDerivative: false,
+                  isLiveGraph: false,
                 ),
-                size: Size.infinite,
               ),
             ),
-          ),
 
           // Channel legend
           Padding(
@@ -146,7 +209,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                           width: 12,
                           height: 12,
                           decoration: BoxDecoration(
-                            color: _channelColor(i),
+                            color: getChannelColor(i),
                             borderRadius: BorderRadius.circular(2),
                           ),
                         ),
@@ -194,19 +257,23 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                         : 'Channel ${ch + 1}',
                     style: TextStyle(
                       fontWeight: FontWeight.w500,
-                      color: _channelColor(ch),
+                      color: getChannelColor(ch),
                     ),
                   ),
                   _StatRow(
                     label: 'Peak',
-                    value: unit.format(
-                      unit.fromKgf(data.peakRaw(ch).toDouble() * slope),
+                    value: settings.displayUnit.format(
+                      settings.displayUnit.fromKgf(
+                        data.peakRaw(ch).toDouble() * data.calibrationSlope,
+                      ),
                     ),
                   ),
                   _StatRow(
                     label: 'Average',
-                    value: unit.format(
-                      unit.fromKgf(data.averageRaw(ch) * slope),
+                    value: settings.displayUnit.format(
+                      settings.displayUnit.fromKgf(
+                        data.averageRaw(ch) * data.calibrationSlope,
+                      ),
                     ),
                   ),
                 ],
@@ -441,140 +508,4 @@ class _StatRow extends StatelessWidget {
       ),
     );
   }
-}
-
-// -- Channel colors (shared) --
-
-Color _channelColor(int index) {
-  const colors = [
-    Colors.blueAccent,
-    Colors.deepOrangeAccent,
-    Colors.green,
-    Colors.purple,
-  ];
-  return colors[index % colors.length];
-}
-
-// -- Session graph painter (static data, similar to live painter) --
-
-class _SessionGraphPainter extends CustomPainter {
-  final SessionData data;
-  final ForceUnit unit;
-  final List<int> activeChannels;
-
-  _SessionGraphPainter({
-    required this.data,
-    required this.unit,
-    required this.activeChannels,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final pen = Paint()
-      ..color = Colors.deepPurple
-      ..style = PaintingStyle.stroke;
-
-    const double leftSpace = 8;
-    const double rightSpace = 56;
-    const double bottomSpace = 24;
-    const double topSpace = 4;
-
-    canvas.translate(leftSpace, topSpace);
-    final graphSz = Size(
-      size.width - leftSpace - rightSpace,
-      size.height - bottomSpace - topSpace,
-    );
-    canvas.drawRect(
-      Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
-      pen..strokeWidth = 0.5,
-    );
-
-    if (data.sampleCount == 0) return;
-
-    // Compute data max across active channels
-    double dataMax = 10000;
-    for (final ch in activeChannels) {
-      final peak = data.peakRaw(ch).toDouble();
-      if (peak > dataMax) dataMax = peak;
-    }
-
-    final double dataMaxKgf = dataMax * data.calibrationSlope;
-    final double dataMaxUnit = unit.fromKgf(dataMaxKgf);
-
-    // X axis
-    final double xSpanSec = data.sampleCount / data.sampleRate;
-    final grid = Path();
-
-    // X grid lines (simple: 5 divisions)
-    const int xDivisions = 5;
-    for (int i = 1; i < xDivisions; i++) {
-      final x = graphSz.width * i / xDivisions;
-      grid.moveTo(x, 0);
-      grid.lineTo(x, graphSz.height);
-
-      final label = _prepareLabel(
-        '${(xSpanSec * i / xDivisions).toStringAsFixed(1)}s',
-      );
-      canvas.drawParagraph(
-        label,
-        Offset(x - label.longestLine / 2, graphSz.height),
-      );
-    }
-
-    // Y grid lines (simple: 5 divisions)
-    const int yDivisions = 5;
-    for (int i = 1; i < yDivisions; i++) {
-      final y = graphSz.height * i / yDivisions;
-      grid.moveTo(0, y);
-      grid.lineTo(graphSz.width, y);
-
-      final val = dataMaxUnit * (yDivisions - i) / yDivisions;
-      final label = _prepareLabel(unit.format(val));
-      canvas.drawParagraph(label, Offset(graphSz.width + 4, y - 8));
-    }
-
-    canvas.drawPath(grid, pen..strokeWidth = 0.2);
-
-    // Draw data lines
-    for (final ch in activeChannels) {
-      final path = Path();
-      final chData = data.channels[ch];
-
-      path.moveTo(0, graphSz.height);
-      final int graphW = graphSz.width.toInt();
-      for (int i = 0, j = 0; i < graphW; ++i) {
-        int total = 0;
-        final int start = j;
-        for (
-          ;
-          (j * graphW < i * data.sampleCount) && (j < data.sampleCount);
-          ++j
-        ) {
-          total += chData[j];
-        }
-        if (start < j) {
-          final double avg = total / (j - start);
-          final double y = graphSz.height - avg * graphSz.height / dataMax;
-          path.lineTo(i.toDouble(), y.clamp(0, graphSz.height));
-        }
-      }
-
-      pen.color = _channelColor(ch);
-      canvas.drawPath(path, pen..strokeWidth = 1.5);
-    }
-  }
-
-  static ui.Paragraph _prepareLabel(String text) {
-    final style = ui.TextStyle(color: Colors.black, fontSize: 10);
-    final builder =
-        ui.ParagraphBuilder(
-            ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
-          )
-          ..pushStyle(style)
-          ..addText(text);
-    return builder.build()..layout(const ui.ParagraphConstraints(width: 72));
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
