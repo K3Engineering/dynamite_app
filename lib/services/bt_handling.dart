@@ -356,6 +356,38 @@ class DataHub extends ChangeNotifier {
     return unit.fromRaw(rmsRaw, deviceCalibration.slope);
   }
 
+  void injectTestData(int samples) {
+    final startIdx = rawSz;
+    int added = 0;
+    for (int i = 0; i < samples; i++) {
+      if (rawSz >= _maxDataSz) break;
+
+      // Generate some dummy sine wave data
+      // Channel 1 (line 0): Sine wave
+      final val0 =
+          (math.sin(rawSz * 2 * math.pi / samplesPerSec * 0.5) * 50000 + 50000)
+              .toInt();
+      rawData[0][rawSz] = val0;
+      _currentRaw[0] = val0;
+      _addData(val0, 0);
+
+      // Channel 2 (line 1): Cosine wave (or phase shifted)
+      final val1 =
+          (math.cos(rawSz * 2 * math.pi / samplesPerSec * 0.5) * 30000 + 30000)
+              .toInt();
+      rawData[1][rawSz] = val1;
+      _currentRaw[1] = val1;
+      _addData(val1, 1);
+
+      rawSz++;
+      added++;
+    }
+
+    if (added > 0) {
+      notifyListeners();
+    }
+  }
+
   void _addTare(int val, int idx) {
     _runningTotal[idx] += val;
   }
