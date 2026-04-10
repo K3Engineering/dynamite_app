@@ -126,6 +126,9 @@ class _LiveTabState extends State<LiveTab> {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
                 content: const Text('Session saved'),
+                behavior: SnackBarBehavior.floating,
+                showCloseIcon: true,
+                persist: false,
                 action: SnackBarAction(
                   label: 'Name it',
                   onPressed: () => _showRenameDialog(id, autoName),
@@ -136,9 +139,14 @@ class _LiveTabState extends State<LiveTab> {
           }
         } catch (e) {
           if (mounted) {
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('Failed to save: $e')));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Failed to save: $e'),
+                behavior: SnackBarBehavior.floating,
+                persist: true,
+                showCloseIcon: true,
+              ),
+            );
           }
         }
       }
