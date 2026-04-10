@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -100,6 +103,13 @@ class _LiveTabState extends State<LiveTab> {
   void _onTare() {
     final bt = context.read<BluetoothHandling>();
     bt.dataHub.requestTare();
+  }
+
+  void _onInjectTestSineWave() {
+    final bt = context.read<BluetoothHandling>();
+    // Inject 5 minutes of test data at 1000 Hz
+    final samples = DataHub.samplesPerSec * 60 * 5;
+    bt.dataHub.injectTestData(samples);
   }
 
   Future<void> _onToggleRecord() async {
@@ -228,6 +238,7 @@ class _LiveTabState extends State<LiveTab> {
               isRecording: bt.sessionInProgress,
               onToggleRecord: _onToggleRecord,
               onTare: _onTare,
+              onInjectTest: _onInjectTestSineWave,
             ),
         ],
       ),
@@ -488,12 +499,14 @@ class ActionButtons extends StatelessWidget {
   final bool isRecording;
   final VoidCallback onToggleRecord;
   final VoidCallback onTare;
+  final VoidCallback onInjectTest;
 
   const ActionButtons({
     super.key,
     required this.isRecording,
     required this.onToggleRecord,
     required this.onTare,
+    required this.onInjectTest,
   });
 
   @override
@@ -520,6 +533,12 @@ class ActionButtons extends StatelessWidget {
             onPressed: onTare,
             icon: const Icon(Icons.exposure_zero),
             label: const Text('TARE'),
+          ),
+          // Test button to inject dummy data for profiling
+          OutlinedButton.icon(
+            onPressed: onInjectTest,
+            icon: const Icon(Icons.bug_report),
+            label: const Text('TEST SINE'),
           ),
         ],
       ),
