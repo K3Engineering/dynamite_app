@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'dart:collection';
-import 'dart:developer';
+import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -374,11 +374,11 @@ class _MinimapPainter extends CustomPainter {
 
       final tare = _data.getChannelTare(ch);
 
-      final avgPath = Path();
-      final envPath = Path();
-      bool first = true;
+      final Float32List avgPts = Float32List(gwInt * 2);
+      final Float32List envPts = Float32List(gwInt * 4);
+      int avgIdx = 0;
+      int envIdx = 0;
 
-      Timeline.startSync('Minimap Build Paths');
       for (int px = 0; px < gwInt; px++) {
         final int sStart = px * totalSamples ~/ gwInt;
         final int sEnd = (px + 1) * totalSamples ~/ gwInt;
@@ -405,30 +405,37 @@ class _MinimapPainter extends CustomPainter {
         final minY = (gh - (minTared - rawMin) * gh / dataRange).clamp(0.0, gh);
         final maxY = (gh - (maxTared - rawMin) * gh / dataRange).clamp(0.0, gh);
 
-        if (first) {
-          avgPath.moveTo(px.toDouble(), avgY);
-          envPath.moveTo(px.toDouble(), minY);
-          envPath.lineTo(px.toDouble(), maxY);
-          first = false;
-        } else {
-          avgPath.lineTo(px.toDouble(), avgY);
-          envPath.moveTo(px.toDouble(), minY);
-          envPath.lineTo(px.toDouble(), maxY);
-        }
+        final xPos = px.toDouble();
+        avgPts[avgIdx++] = xPos;
+        avgPts[avgIdx++] = avgY;
+
+        envPts[envIdx++] = xPos;
+        envPts[envIdx++] = maxY;
+        envPts[envIdx++] = xPos;
+        envPts[envIdx++] = minY;
       }
-      Timeline.finishSync();
 
       final chColor = _colors[ch % _colors.length];
 
-      Timeline.startSync('Minimap Draw Paths');
-      // Draw envelope first (lighter)
-      pen.color = chColor.withAlpha(40); // very faint for minimap
-      canvas.drawPath(envPath, pen..strokeWidth = 1.0);
+      if (envIdx > 0) {
+        final vertices = ui.Vertices.raw(
+          ui.VertexMode.triangleStrip,
+          Float32List.sublistView(envPts, 0, envIdx),
+        );
+        pen.color = chColor.withAlpha(40);
+        pen.style = PaintingStyle.fill;
+        canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
+      }
 
-      // Draw average line on top
-      pen.color = chColor.withAlpha(180);
-      canvas.drawPath(avgPath, pen..strokeWidth = 1.0);
-      Timeline.finishSync();
+      if (avgIdx > 0) {
+        pen.color = chColor.withAlpha(180);
+        pen.style = PaintingStyle.stroke;
+        canvas.drawRawPoints(
+          ui.PointMode.polygon,
+          Float32List.sublistView(avgPts, 0, avgIdx),
+          pen..strokeWidth = 1.0,
+        );
+      }
     }
 
     // Viewport highlight
@@ -1051,12 +1058,12 @@ class ForceGraphPainter extends CustomPainter {
       if (line.isEmpty) continue;
       final tare = _data.getChannelTare(ch);
 
-      final avgPath = Path();
-      final envPath = Path();
       final int graphW = graphSz.width.toInt();
-      bool first = true;
+      final Float32List avgPts = Float32List(graphW * 2);
+      final Float32List envPts = Float32List(graphW * 4);
+      int avgIdx = 0;
+      int envIdx = 0;
 
-      Timeline.startSync('ForceGraph Build Paths');
       for (int i = 0; i < graphW; ++i) {
         // Map pixel i to sample range
         final int sStart = viewStart + (i * viewSamples ~/ graphW);
@@ -1093,30 +1100,37 @@ class ForceGraphPainter extends CustomPainter {
                     (maxUnit - yRange.yMin) * graphSz.height / rawRange)
                 .clamp(0.0, graphSz.height);
 
-        if (first) {
-          avgPath.moveTo(i.toDouble(), avgY);
-          envPath.moveTo(i.toDouble(), minY);
-          envPath.lineTo(i.toDouble(), maxY);
-          first = false;
-        } else {
-          avgPath.lineTo(i.toDouble(), avgY);
-          envPath.moveTo(i.toDouble(), minY);
-          envPath.lineTo(i.toDouble(), maxY);
-        }
+        final xPos = i.toDouble();
+        avgPts[avgIdx++] = xPos;
+        avgPts[avgIdx++] = avgY;
+
+        envPts[envIdx++] = xPos;
+        envPts[envIdx++] = maxY;
+        envPts[envIdx++] = xPos;
+        envPts[envIdx++] = minY;
       }
-      Timeline.finishSync();
 
       final chColor = getChannelColor(ch);
 
-      Timeline.startSync('ForceGraph Draw Paths');
-      // Draw envelope first (lighter)
-      pen.color = chColor.withAlpha(60);
-      canvas.drawPath(envPath, pen..strokeWidth = 1.0);
+      if (envIdx > 0) {
+        final vertices = ui.Vertices.raw(
+          ui.VertexMode.triangleStrip,
+          Float32List.sublistView(envPts, 0, envIdx),
+        );
+        pen.color = chColor.withAlpha(60);
+        pen.style = PaintingStyle.fill;
+        canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
+      }
 
-      // Draw average line on top
-      pen.color = chColor;
-      canvas.drawPath(avgPath, pen..strokeWidth = 1.5);
-      Timeline.finishSync();
+      if (avgIdx > 0) {
+        pen.color = chColor;
+        pen.style = PaintingStyle.stroke;
+        canvas.drawRawPoints(
+          ui.PointMode.polygon,
+          Float32List.sublistView(avgPts, 0, avgIdx),
+          pen..strokeWidth = 1.5,
+        );
+      }
     }
   }
 
@@ -1295,12 +1309,12 @@ class DerivativeGraphPainter extends CustomPainter {
       final line = _data.getChannelData(ch);
       if (line.isEmpty) continue;
 
-      final avgPath = Path();
-      final envPath = Path();
       final int graphW = graphSz.width.toInt();
-      bool pathFirst = true;
+      final Float32List avgPts = Float32List(graphW * 2);
+      final Float32List envPts = Float32List(graphW * 4);
+      int avgIdx = 0;
+      int envIdx = 0;
 
-      Timeline.startSync('DerivativeGraph Build Paths');
       for (int px = 0; px < graphW; ++px) {
         final int sStart = math.max(
           viewStart + (px * viewSamples ~/ graphW),
@@ -1345,30 +1359,37 @@ class DerivativeGraphPainter extends CustomPainter {
                     (maxDerivUnit - yRange.yMin) * graphSz.height / rawYRange)
                 .clamp(0.0, graphSz.height);
 
-        if (pathFirst) {
-          avgPath.moveTo(px.toDouble(), avgY);
-          envPath.moveTo(px.toDouble(), minY);
-          envPath.lineTo(px.toDouble(), maxY);
-          pathFirst = false;
-        } else {
-          avgPath.lineTo(px.toDouble(), avgY);
-          envPath.moveTo(px.toDouble(), minY);
-          envPath.lineTo(px.toDouble(), maxY);
-        }
+        final xPos = px.toDouble();
+        avgPts[avgIdx++] = xPos;
+        avgPts[avgIdx++] = avgY;
+
+        envPts[envIdx++] = xPos;
+        envPts[envIdx++] = maxY;
+        envPts[envIdx++] = xPos;
+        envPts[envIdx++] = minY;
       }
-      Timeline.finishSync();
 
       final chColor = getChannelColor(ch);
 
-      Timeline.startSync('DerivativeGraph Draw Paths');
-      // Envelope
-      pen.color = chColor.withAlpha(60);
-      canvas.drawPath(envPath, pen..strokeWidth = 1.0);
+      if (envIdx > 0) {
+        final vertices = ui.Vertices.raw(
+          ui.VertexMode.triangleStrip,
+          Float32List.sublistView(envPts, 0, envIdx),
+        );
+        pen.color = chColor.withAlpha(60);
+        pen.style = PaintingStyle.fill;
+        canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
+      }
 
-      // Average
-      pen.color = chColor;
-      canvas.drawPath(avgPath, pen..strokeWidth = 1.5);
-      Timeline.finishSync();
+      if (avgIdx > 0) {
+        pen.color = chColor;
+        pen.style = PaintingStyle.stroke;
+        canvas.drawRawPoints(
+          ui.PointMode.polygon,
+          Float32List.sublistView(avgPts, 0, avgIdx),
+          pen..strokeWidth = 1.5,
+        );
+      }
     }
   }
 
