@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'dart:collection';
+import 'dart:developer';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -377,6 +378,7 @@ class _MinimapPainter extends CustomPainter {
       final envPath = Path();
       bool first = true;
 
+      Timeline.startSync('Minimap Build Paths');
       for (int px = 0; px < gwInt; px++) {
         final int sStart = px * totalSamples ~/ gwInt;
         final int sEnd = (px + 1) * totalSamples ~/ gwInt;
@@ -414,9 +416,11 @@ class _MinimapPainter extends CustomPainter {
           envPath.lineTo(px.toDouble(), maxY);
         }
       }
+      Timeline.finishSync();
 
       final chColor = _colors[ch % _colors.length];
 
+      Timeline.startSync('Minimap Draw Paths');
       // Draw envelope first (lighter)
       pen.color = chColor.withAlpha(40); // very faint for minimap
       canvas.drawPath(envPath, pen..strokeWidth = 1.0);
@@ -424,6 +428,7 @@ class _MinimapPainter extends CustomPainter {
       // Draw average line on top
       pen.color = chColor.withAlpha(180);
       canvas.drawPath(avgPath, pen..strokeWidth = 1.0);
+      Timeline.finishSync();
     }
 
     // Viewport highlight
@@ -1051,6 +1056,7 @@ class ForceGraphPainter extends CustomPainter {
       final int graphW = graphSz.width.toInt();
       bool first = true;
 
+      Timeline.startSync('ForceGraph Build Paths');
       for (int i = 0; i < graphW; ++i) {
         // Map pixel i to sample range
         final int sStart = viewStart + (i * viewSamples ~/ graphW);
@@ -1098,9 +1104,11 @@ class ForceGraphPainter extends CustomPainter {
           envPath.lineTo(i.toDouble(), maxY);
         }
       }
+      Timeline.finishSync();
 
       final chColor = getChannelColor(ch);
 
+      Timeline.startSync('ForceGraph Draw Paths');
       // Draw envelope first (lighter)
       pen.color = chColor.withAlpha(60);
       canvas.drawPath(envPath, pen..strokeWidth = 1.0);
@@ -1108,6 +1116,7 @@ class ForceGraphPainter extends CustomPainter {
       // Draw average line on top
       pen.color = chColor;
       canvas.drawPath(avgPath, pen..strokeWidth = 1.5);
+      Timeline.finishSync();
     }
   }
 
@@ -1291,6 +1300,7 @@ class DerivativeGraphPainter extends CustomPainter {
       final int graphW = graphSz.width.toInt();
       bool pathFirst = true;
 
+      Timeline.startSync('DerivativeGraph Build Paths');
       for (int px = 0; px < graphW; ++px) {
         final int sStart = math.max(
           viewStart + (px * viewSamples ~/ graphW),
@@ -1346,9 +1356,11 @@ class DerivativeGraphPainter extends CustomPainter {
           envPath.lineTo(px.toDouble(), maxY);
         }
       }
+      Timeline.finishSync();
 
       final chColor = getChannelColor(ch);
 
+      Timeline.startSync('DerivativeGraph Draw Paths');
       // Envelope
       pen.color = chColor.withAlpha(60);
       canvas.drawPath(envPath, pen..strokeWidth = 1.0);
@@ -1356,6 +1368,7 @@ class DerivativeGraphPainter extends CustomPainter {
       // Average
       pen.color = chColor;
       canvas.drawPath(avgPath, pen..strokeWidth = 1.5);
+      Timeline.finishSync();
     }
   }
 
