@@ -375,7 +375,7 @@ class _MinimapPainter extends CustomPainter {
       final tare = _data.getChannelTare(ch);
 
       final Float32List avgPts = Float32List(gwInt * 2);
-      final Float32List envPts = Float32List(gwInt * 4);
+      final Float32List envPts = Float32List(gwInt * 8);
       int avgIdx = 0;
       int envIdx = 0;
 
@@ -412,6 +412,11 @@ class _MinimapPainter extends CustomPainter {
         envPts[envIdx++] = xPos;
         envPts[envIdx++] = maxY;
         envPts[envIdx++] = xPos;
+        envPts[envIdx++] = minY;
+
+        envPts[envIdx++] = xPos + 1.0;
+        envPts[envIdx++] = maxY;
+        envPts[envIdx++] = xPos + 1.0;
         envPts[envIdx++] = minY;
       }
 
@@ -1060,7 +1065,7 @@ class ForceGraphPainter extends CustomPainter {
 
       final int graphW = graphSz.width.toInt();
       final Float32List avgPts = Float32List(graphW * 2);
-      final Float32List envPts = Float32List(graphW * 4);
+      final Float32List envPts = Float32List(graphW * 8);
       int avgIdx = 0;
       int envIdx = 0;
 
@@ -1107,6 +1112,11 @@ class ForceGraphPainter extends CustomPainter {
         envPts[envIdx++] = xPos;
         envPts[envIdx++] = maxY;
         envPts[envIdx++] = xPos;
+        envPts[envIdx++] = minY;
+
+        envPts[envIdx++] = xPos + 1.0;
+        envPts[envIdx++] = maxY;
+        envPts[envIdx++] = xPos + 1.0;
         envPts[envIdx++] = minY;
       }
 
@@ -1311,7 +1321,7 @@ class DerivativeGraphPainter extends CustomPainter {
 
       final int graphW = graphSz.width.toInt();
       final Float32List avgPts = Float32List(graphW * 2);
-      final Float32List envPts = Float32List(graphW * 4);
+      final Float32List envPts = Float32List(graphW * 8);
       int avgIdx = 0;
       int envIdx = 0;
 
@@ -1366,6 +1376,11 @@ class DerivativeGraphPainter extends CustomPainter {
         envPts[envIdx++] = xPos;
         envPts[envIdx++] = maxY;
         envPts[envIdx++] = xPos;
+        envPts[envIdx++] = minY;
+
+        envPts[envIdx++] = xPos + 1.0;
+        envPts[envIdx++] = maxY;
+        envPts[envIdx++] = xPos + 1.0;
         envPts[envIdx++] = minY;
       }
 
