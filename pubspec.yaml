@@ -20,7 +20,7 @@ version: 1.0.0+1
 
 environment:
   sdk: ">=3.9.0 <4.0.0"
-  flutter: 3.41.6
+  flutter: 3.41.7
 
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
@@ -35,8 +35,7 @@ dependencies:
   shared_preferences: ^2.5.4
   provider: ^6.1.5+1
   drift: ^2.26.0
-  sqlite3_flutter_libs: ^0.5.32
-  drift_flutter: ^0.2.4
+  drift_flutter: ^0.3.0
   path_provider: ^2.1.5
   path: ^1.9.1
 
@@ -45,7 +44,7 @@ dependencies:
   cupertino_icons: ^1.0.8
   convert: ^3.1.2
   cross_file: ^0.3.4+2
-  package_info_plus: ^9.0.1
+  package_info_plus: ^10.1.0
   google_fonts: ^8.0.2
 
 dev_dependencies:
