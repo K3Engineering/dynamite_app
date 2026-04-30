@@ -918,34 +918,19 @@ class ForceGraphPainter extends CustomPainter {
     double rawMin = 0;
     bool hasData = false;
 
-    if (_ctrl.isLive && viewStart == oldestSample) {
-      // Full view -- use pre-tracked global min/max (O(1))
-      // TODO: the global rawMax/rawMin is an all-time tracker, so it won't 
-      // shrink when a massive peak falls off the back of the 10-minute circular buffer.
-      for (final ch in activeIndices) {
-        final mx = (_data.getChannelMax(ch) - _data.getChannelTare(ch))
-            .toDouble();
-        final mn = (_data.getChannelMin(ch) - _data.getChannelTare(ch))
-            .toDouble();
-        if (!hasData || mx > rawMax) rawMax = mx;
-        if (!hasData || mn < rawMin) rawMin = mn;
+    // Zoomed/panned -- scan visible window for actual min/max
+    for (final ch in activeIndices) {
+      final line = _data.getChannelData(ch);
+      if (line.isEmpty) continue;
+      final tare = _data.getChannelTare(ch);
+      final bufferCap = _data.bufferCapacity;
+      final sScanStart = math.max(viewStart, oldestSample);
+      final sScanEnd = math.min(viewEnd, totalSamples);
+      for (int i = sScanStart; i < sScanEnd; i++) {
+        final v = line[i % bufferCap] - tare;
+        if (!hasData || v > rawMax) rawMax = v.toDouble();
+        if (!hasData || v < rawMin) rawMin = v.toDouble();
         hasData = true;
-      }
-    } else {
-      // Zoomed/panned -- scan visible window for actual min/max
-      for (final ch in activeIndices) {
-        final line = _data.getChannelData(ch);
-        if (line.isEmpty) continue;
-        final tare = _data.getChannelTare(ch);
-        final bufferCap = _data.bufferCapacity;
-        final sScanStart = math.max(viewStart, oldestSample);
-        final sScanEnd = math.min(viewEnd, totalSamples);
-        for (int i = sScanStart; i < sScanEnd; i++) {
-          final v = line[i % bufferCap] - tare;
-          if (!hasData || v > rawMax) rawMax = v.toDouble();
-          if (!hasData || v < rawMin) rawMin = v.toDouble();
-          hasData = true;
-        }
       }
     }
 
