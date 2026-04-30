@@ -4,7 +4,8 @@ enum ForceUnit {
   lbf('lbf', 'Pounds-force', true),
   kgf('kgf', 'Kilogram-force', true),
   n('N', 'Newtons', true),
-  mV('mV', 'Raw Voltage', false);
+  mV('mV', 'Raw Voltage', false),
+  raw('Raw', 'ADC Counts', false);
 
   const ForceUnit(this.symbol, this.label, this.isForce);
   final String symbol;
@@ -20,6 +21,7 @@ enum ForceUnit {
         ForceUnit.kN => 9.80665 / 1000.0,
         ForceUnit.lbf => 2.20462,
         ForceUnit.mV => 1.0, // Fallback, not typically used
+        ForceUnit.raw => 1.0, // Fallback, not typically used
       };
 
   /// Convert a value in kgf (the device's native calibrated unit) to this unit.
@@ -30,6 +32,9 @@ enum ForceUnit {
     if (this == ForceUnit.mV) {
       return rawTared * rawToMvMultiplier;
     }
+    if (this == ForceUnit.raw) {
+      return rawTared;
+    }
     return rawTared * calibrationSlope * _kgfMultiplier;
   }
 
@@ -38,6 +43,9 @@ enum ForceUnit {
     if (this == ForceUnit.mV) {
       return rawToMvMultiplier;
     }
+    if (this == ForceUnit.raw) {
+      return 1.0;
+    }
     return calibrationSlope * _kgfMultiplier;
   }
 
@@ -45,8 +53,8 @@ enum ForceUnit {
   String format(double value) {
     /// a minus sign doesn't need to be added explicitly
     final sign = value < 0 ? '-' : '+';
-    final decimals = this == ForceUnit.mV ? 4 : 3;
-    final padding = this == ForceUnit.mV ? 8 : 7;
+    final decimals = this == ForceUnit.mV ? 4 : (this == ForceUnit.raw ? 0 : 3);
+    final padding = this == ForceUnit.mV ? 8 : (this == ForceUnit.raw ? 6 : 7);
     final numStr = value.abs().toStringAsFixed(decimals).padLeft(padding);
     return '$sign$numStr $symbol';
   }
@@ -54,8 +62,8 @@ enum ForceUnit {
   /// Format a rate of change (derivative) in this unit for display.
   String formatRate(double value) {
     final sign = value < 0 ? '-' : '+';
-    final decimals = this == ForceUnit.mV ? 4 : 3;
-    final padding = this == ForceUnit.mV ? 8 : 7;
+    final decimals = this == ForceUnit.mV ? 4 : (this == ForceUnit.raw ? 0 : 3);
+    final padding = this == ForceUnit.mV ? 8 : (this == ForceUnit.raw ? 6 : 7);
     final numStr = value.abs().toStringAsFixed(decimals).padLeft(padding);
     return '$sign$numStr $symbol/s';
   }
