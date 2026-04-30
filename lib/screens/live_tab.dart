@@ -39,7 +39,13 @@ class _LiveMinimapDataSource extends ChangeNotifier implements GraphDataSource {
   }
 
   @override
-  int get sampleCount => _hub.rawSz;
+  int get bufferCapacity => DataHub.maxDataSz;
+
+  @override
+  int get oldestSample => _hub.totalSamples > DataHub.maxDataSz ? _hub.totalSamples - DataHub.maxDataSz : 0;
+
+  @override
+  int get totalSamples => _hub.totalSamples;
 
   @override
   int get sampleRate => DataHub.samplesPerSec;
@@ -77,7 +83,7 @@ class _LiveMinimapDataSource extends ChangeNotifier implements GraphDataSource {
 }
 
 class _LiveTabState extends State<LiveTab> {
-  final GraphController _graphCtrl = GraphController();
+  final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * DataHub.samplesPerSec);
   bool _showDerivative = false;
   _LiveMinimapDataSource? _dataSource;
   BluetoothHandling? _btHandling;
@@ -118,7 +124,7 @@ class _LiveTabState extends State<LiveTab> {
       bt.stopSession();
 
       // Auto-save if there's recorded data
-      final recordedSamples = bt.dataHub.rawSz - bt.dataHub.recordingStartIdx;
+      final recordedSamples = bt.dataHub.totalSamples - bt.dataHub.recordingStartIdx;
       if (recordedSamples > 0) {
         final settings = context.read<AppSettings>();
         final now = DateTime.now();

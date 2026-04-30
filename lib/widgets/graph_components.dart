@@ -15,8 +15,14 @@ import '../models/app_settings.dart';
 /// Data interface required by the shared graph components (main graph, minimap, etc).
 /// This allows the components to render either live DataHub data or static SessionData.
 abstract class GraphDataSource extends ChangeNotifier {
-  /// Total number of samples currently available.
-  int get sampleCount;
+  /// Total number of logical samples generated so far (can exceed bufferCapacity).
+  int get totalSamples;
+
+  /// The size of the circular buffer. Used to modulus array indices.
+  int get bufferCapacity;
+
+  /// The oldest available sample index (absolute time).
+  int get oldestSample;
 
   /// The sample rate of the data (Hz).
   int get sampleRate;
@@ -42,6 +48,10 @@ abstract class GraphDataSource extends ChangeNotifier {
 // ---------------------------------------------------------------------------
 
 class GraphController extends ChangeNotifier {
+  final int minLiveSpan;
+
+  GraphController({this.minLiveSpan = 0}) : _liveSpan = minLiveSpan > 0 ? minLiveSpan : null;
+
   /// Start of visible window in samples.
   int _viewStart = 0;
   int get viewStart => _viewStart;
@@ -55,7 +65,7 @@ class GraphController extends ChangeNotifier {
   bool get isLive => _isLive;
 
   /// When in live mode and zoomed in, this is the fixed span to show
-  /// from the right edge. Null means "show all data from _viewStart".
+  /// from the right edge. Null means "show all data from _viewStart" (up to 10 minutes).
   int? _liveSpan;
 
   /// Snap to live mode -- follow the right edge at current zoom level.
@@ -88,34 +98,36 @@ class GraphController extends ChangeNotifier {
   }
 
   /// Get the effective visible range given total data size.
-  (int start, int end) effectiveRange(int totalSamples) {
+  (int start, int end) effectiveRange(int totalSamples, {int? bufferCapacity}) {
+    final effectiveEnd = math.max(totalSamples, minLiveSpan);
     if (_isLive || _viewEnd == null) {
-      if (_liveSpan != null && _liveSpan! < totalSamples) {
-        // Zoomed-in live mode: show last _liveSpan samples
-        return (totalSamples - _liveSpan!, totalSamples);
+      // Show `_liveSpan` if it's set, otherwise show everything we have.
+      int span = _liveSpan ?? math.max(minLiveSpan, totalSamples);
+      if (bufferCapacity != null && span > bufferCapacity) {
+        span = bufferCapacity;
       }
-      // Full-width live mode
-      return (0, totalSamples);
+      return (math.max(0, effectiveEnd - span), effectiveEnd);
     }
-    return (_viewStart, _viewEnd!.clamp(_viewStart + 1, totalSamples));
+    return (_viewStart, _viewEnd!.clamp(_viewStart + 1, effectiveEnd));
   }
 
   /// Pan by a delta in samples (negative = left, positive = right).
-  void pan(int deltaSamples, int totalSamples) {
-    final (s, e) = effectiveRange(totalSamples);
+  void pan(int deltaSamples, int totalSamples, int oldestSample, int bufferCapacity) {
+    final effectiveEnd = math.max(totalSamples, minLiveSpan);
+    final (s, e) = effectiveRange(totalSamples, bufferCapacity: bufferCapacity);
     final span = e - s;
     int newStart = s + deltaSamples;
     int newEnd = newStart + span;
 
     // Clamp to valid range
-    if (newStart < 0) {
-      newStart = 0;
-      newEnd = span;
+    if (newStart < oldestSample) {
+      newStart = oldestSample;
+      newEnd = newStart + span;
     }
-    if (newEnd >= totalSamples) {
+    if (newEnd >= effectiveEnd) {
       // Snap to live if we pan to the right edge
-      _liveSpan = span < totalSamples ? span : null;
-      _viewStart = math.max(0, totalSamples - span);
+      _liveSpan = span < effectiveEnd ? span : null;
+      _viewStart = math.max(oldestSample, effectiveEnd - span);
       _viewEnd = null;
       _isLive = true;
       notifyListeners();
@@ -130,27 +142,28 @@ class GraphController extends ChangeNotifier {
   }
 
   /// Zoom by a factor around a focal point (0.0 = left edge, 1.0 = right edge).
-  void zoom(double factor, double focalFraction, int totalSamples) {
-    final (s, e) = effectiveRange(totalSamples);
+  void zoom(double factor, double focalFraction, int totalSamples, int oldestSample, int bufferCapacity) {
+    final effectiveEnd = math.max(totalSamples, minLiveSpan);
+    final (s, e) = effectiveRange(totalSamples, bufferCapacity: bufferCapacity);
     final span = e - s;
     final newSpan = (span / factor).round().clamp(
       // Minimum ~50 samples visible (50ms at 1kHz)
       50,
-      totalSamples,
+      effectiveEnd,
     );
 
     final focal = s + (focalFraction * span).round();
     int newStart = focal - (focalFraction * newSpan).round();
     int newEnd = newStart + newSpan;
 
-    if (newStart < 0) {
-      newStart = 0;
-      newEnd = newSpan;
+    if (newStart < oldestSample) {
+      newStart = oldestSample;
+      newEnd = newStart + newSpan;
     }
-    if (newEnd >= totalSamples) {
+    if (newEnd >= effectiveEnd) {
       // At the right edge -- enter live mode with this span
-      _liveSpan = newSpan < totalSamples ? newSpan : null;
-      _viewStart = math.max(0, totalSamples - newSpan);
+      _liveSpan = newSpan < effectiveEnd ? newSpan : null;
+      _viewStart = math.max(oldestSample, effectiveEnd - newSpan);
       _viewEnd = null;
       _isLive = true;
       notifyListeners();
@@ -206,6 +219,8 @@ class Minimap extends StatelessWidget {
     PointerSignalEvent event,
     double graphWidth,
     int totalSamples,
+    int oldestSample,
+    int bufferCapacity,
   ) {
     if (event is PointerScrollEvent) {
       if (totalSamples == 0 || graphWidth <= 0) return;
@@ -215,37 +230,33 @@ class Minimap extends StatelessWidget {
         1.0,
       );
       final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
-      graphCtrl.zoom(zoomFactor, focalFrac, totalSamples);
+      graphCtrl.zoom(zoomFactor, focalFrac, totalSamples, oldestSample, bufferCapacity);
     }
   }
 
-  void _onMinimapTap(TapDownDetails d, double graphWidth, int totalSamples) {
+  void _onMinimapTap(TapDownDetails d, double graphWidth, int totalSamples, int oldestSample, int bufferCapacity) {
     if (totalSamples == 0 || graphWidth <= 0) return;
     const leftSpace = 8.0;
     final frac = ((d.localPosition.dx - leftSpace) / graphWidth).clamp(
       0.0,
       1.0,
     );
-    final (s, e) = graphCtrl.effectiveRange(totalSamples);
+    final effectiveEnd = math.max(totalSamples, graphCtrl.minLiveSpan);
+    final (s, e) = graphCtrl.effectiveRange(totalSamples, bufferCapacity: bufferCapacity);
     final span = e - s;
-    final center = (frac * totalSamples).round();
+    final center = oldestSample + (frac * (effectiveEnd - oldestSample)).round();
     int newStart = center - span ~/ 2;
     int newEnd = newStart + span;
-    if (newStart < 0) {
-      newStart = 0;
-      newEnd = span;
+    if (newStart < oldestSample) {
+      newStart = oldestSample;
+      newEnd = newStart + span;
     }
-    if (newEnd >= totalSamples) {
-      // In live mode this snaps to live. In static mode it just clamps to the end.
-      newEnd = totalSamples;
+    if (newEnd >= effectiveEnd) {
+      newEnd = effectiveEnd;
       newStart = newEnd - span;
-      if (newStart < 0) newStart = 0;
+      if (newStart < oldestSample) newStart = oldestSample;
       graphCtrl.setWindow(newStart, newEnd);
-      // It's up to the controller's internal logic if it sets `isLive` to true.
-      // We manually call goLive() if we hit the edge to match previous behavior,
-      // but only if it's actually live data (which we can guess by the controller state).
-      // A better way is to just let the controller handle it, but for now we mimic live_tab:
-      if (graphCtrl.isLive || newEnd == totalSamples) {
+      if (graphCtrl.isLive || newEnd == effectiveEnd) {
         graphCtrl.goLive();
       }
       return;
@@ -257,24 +268,27 @@ class Minimap extends StatelessWidget {
     DragUpdateDetails d,
     double graphWidth,
     int totalSamples,
+    int oldestSample,
+    int bufferCapacity,
   ) {
     if (totalSamples == 0 || graphWidth <= 0) return;
-    final samplesPerPixel = totalSamples / graphWidth;
+    final effectiveEnd = math.max(totalSamples, graphCtrl.minLiveSpan);
+    final samplesPerPixel = (effectiveEnd - oldestSample) / graphWidth;
     final deltaSamples = (d.delta.dx * samplesPerPixel).round();
-    final (s, e) = graphCtrl.effectiveRange(totalSamples);
+    final (s, e) = graphCtrl.effectiveRange(totalSamples, bufferCapacity: bufferCapacity);
     final span = e - s;
     int newStart = s + deltaSamples;
     int newEnd = newStart + span;
-    if (newStart < 0) {
-      newStart = 0;
-      newEnd = span;
+    if (newStart < oldestSample) {
+      newStart = oldestSample;
+      newEnd = newStart + span;
     }
-    if (newEnd >= totalSamples) {
-      newEnd = totalSamples;
+    if (newEnd >= effectiveEnd) {
+      newEnd = effectiveEnd;
       newStart = newEnd - span;
-      if (newStart < 0) newStart = 0;
+      if (newStart < oldestSample) newStart = oldestSample;
       graphCtrl.setWindow(newStart, newEnd);
-      if (graphCtrl.isLive || newEnd == totalSamples) {
+      if (graphCtrl.isLive || newEnd == effectiveEnd) {
         graphCtrl.goLive();
       }
       return;
@@ -293,13 +307,13 @@ class Minimap extends StatelessWidget {
           child: Listener(
             behavior: HitTestBehavior.opaque,
             onPointerSignal: (e) =>
-                _onPointerSignal(e, graphWidth, dataSource.sampleCount),
+                _onPointerSignal(e, graphWidth, dataSource.totalSamples, dataSource.oldestSample, dataSource.bufferCapacity),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTapDown: (d) =>
-                  _onMinimapTap(d, graphWidth, dataSource.sampleCount),
+                  _onMinimapTap(d, graphWidth, dataSource.totalSamples, dataSource.oldestSample, dataSource.bufferCapacity),
               onHorizontalDragUpdate: (d) =>
-                  _onMinimapDrag(d, graphWidth, dataSource.sampleCount),
+                  _onMinimapDrag(d, graphWidth, dataSource.totalSamples, dataSource.oldestSample, dataSource.bufferCapacity),
               child: ListenableBuilder(
                 listenable: graphCtrl,
                 builder: (context, _) => CustomPaint(
@@ -345,8 +359,12 @@ class _MinimapPainter extends CustomPainter {
     final bgPaint = Paint()..color = Colors.grey.shade200;
     canvas.drawRect(Rect.fromLTWH(0, 0, gw, gh), bgPaint);
 
-    final totalSamples = _data.sampleCount;
+    final totalSamples = _data.totalSamples;
     if (totalSamples == 0) return;
+
+    final oldestSample = _data.oldestSample;
+    final effectiveEnd = math.max(totalSamples, _ctrl.minLiveSpan);
+    final mapSpan = effectiveEnd - oldestSample;
 
     // Compute global min/max (raw, tare-subtracted) for full data
     double rawMax = 10000;
@@ -373,6 +391,7 @@ class _MinimapPainter extends CustomPainter {
       if (line.isEmpty) continue;
 
       final tare = _data.getChannelTare(ch);
+      final bufferCapacity = _data.bufferCapacity;
 
       final Float32List avgPts = Float32List(gwInt * 2);
       final Float32List envPts = Float32List(gwInt * 8);
@@ -380,22 +399,24 @@ class _MinimapPainter extends CustomPainter {
       int envIdx = 0;
 
       for (int px = 0; px < gwInt; px++) {
-        final int sStart = px * totalSamples ~/ gwInt;
-        final int sEnd = (px + 1) * totalSamples ~/ gwInt;
-        if (sStart >= sEnd) continue;
+        final int sStart = oldestSample + px * mapSpan ~/ gwInt;
+        final int sEnd = oldestSample + (px + 1) * mapSpan ~/ gwInt;
+        final int drawEnd = math.min(sEnd, totalSamples);
+        
+        if (sStart >= drawEnd) continue;
 
         double total = 0;
         double minRaw = double.infinity;
         double maxRaw = double.negativeInfinity;
 
-        for (int j = sStart; j < sEnd; j++) {
-          final val = line[j].toDouble();
+        for (int j = sStart; j < drawEnd; j++) {
+          final val = line[j % bufferCapacity].toDouble();
           total += val;
           if (val < minRaw) minRaw = val;
           if (val > maxRaw) maxRaw = val;
         }
 
-        final avgRaw = total / (sEnd - sStart);
+        final avgRaw = total / (drawEnd - sStart);
 
         final avgTared = avgRaw - tare;
         final minTared = minRaw - tare;
@@ -444,9 +465,9 @@ class _MinimapPainter extends CustomPainter {
     }
 
     // Viewport highlight
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples);
-    final double x1 = viewStart * gw / totalSamples;
-    final double x2 = viewEnd * gw / totalSamples;
+    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, bufferCapacity: _data.bufferCapacity);
+    final double x1 = (viewStart - oldestSample) * gw / mapSpan;
+    final double x2 = (viewEnd - oldestSample) * gw / mapSpan;
 
     // Dim areas outside viewport
     final dimPaint = Paint()..color = Colors.black.withAlpha(60);
@@ -464,7 +485,7 @@ class _MinimapPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _MinimapPainter oldDelegate) {
     // Only repaint if the viewport changed or data size changed
-    return oldDelegate._data.sampleCount != _data.sampleCount ||
+    return oldDelegate._data.totalSamples != _data.totalSamples ||
         oldDelegate._ctrl.viewStart != _ctrl.viewStart ||
         oldDelegate._ctrl.viewEnd != _ctrl.viewEnd;
   }
@@ -498,10 +519,10 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
   double? _pinchFocalX;
 
   void _onScaleStart(ScaleStartDetails details) {
-    final total = widget.data.sampleCount;
+    final total = widget.data.totalSamples;
     if (total == 0) return;
 
-    final (s, e) = widget.ctrl.effectiveRange(total);
+    final (s, e) = widget.ctrl.effectiveRange(total, bufferCapacity: widget.data.bufferCapacity);
     _panStartSample = s;
     _panEndSample = e;
     _panStartX = details.localFocalPoint.dx;
@@ -510,18 +531,20 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details, double graphWidth) {
-    final total = widget.data.sampleCount;
+    final total = widget.data.totalSamples;
     if (total == 0 || _panStartSample == null || graphWidth <= 0) return;
 
     final origStart = _panStartSample!;
     final origEnd = _panEndSample!;
     final origSpan = origEnd - origStart;
+    final oldestSample = widget.data.oldestSample;
+    final effectiveEnd = math.max(total, widget.ctrl.minLiveSpan);
 
     if (details.scale != 1.0 && _scaleStartSpan != null) {
       // Pinch zoom
       final newSpan = (_scaleStartSpan! / details.scale).round().clamp(
         50,
-        total,
+        effectiveEnd,
       );
 
       final focalFrac = (_pinchFocalX! / graphWidth).clamp(0.0, 1.0);
@@ -530,17 +553,17 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
       int newStart = focalSample - (focalFrac * newSpan).round();
       int newEnd = (newStart + newSpan).round();
 
-      if (newStart < 0) {
-        newStart = 0;
-        newEnd = newSpan;
+      if (newStart < oldestSample) {
+        newStart = oldestSample;
+        newEnd = newStart + newSpan;
       }
-      if (newEnd >= total) {
-        newEnd = total;
-        newStart = math.max(0, total - newSpan);
+      if (newEnd >= effectiveEnd) {
+        newEnd = effectiveEnd;
+        newStart = math.max(oldestSample, effectiveEnd - newSpan);
       }
 
       widget.ctrl.setWindow(newStart, newEnd);
-      if (newEnd >= total) widget.ctrl.goLive();
+      if (newEnd >= effectiveEnd) widget.ctrl.goLive();
     } else {
       // Pan
       final dx = details.localFocalPoint.dx - _panStartX!;
@@ -550,13 +573,13 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
       int newStart = origStart + deltaSamples;
       int newEnd = (newStart + origSpan).round();
 
-      if (newStart < 0) {
-        newStart = 0;
-        newEnd = origSpan;
+      if (newStart < oldestSample) {
+        newStart = oldestSample;
+        newEnd = newStart + origSpan;
       }
-      if (newEnd >= total) {
-        newEnd = total;
-        newStart = math.max(0, total - origSpan);
+      if (newEnd >= effectiveEnd) {
+        newEnd = effectiveEnd;
+        newStart = math.max(oldestSample, effectiveEnd - origSpan);
         widget.ctrl.setWindow(newStart, newEnd);
         widget.ctrl.goLive();
         return;
@@ -568,15 +591,15 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
 
   void _onPointerSignal(PointerSignalEvent event, double graphWidth) {
     if (event is PointerScrollEvent) {
-      final total = widget.data.sampleCount;
-      if (total == 0 || graphWidth <= 0) return;
+      final totalSamples = widget.data.totalSamples;
+      if (totalSamples == 0 || graphWidth <= 0) return;
 
       final focalFrac = ((event.localPosition.dx - 8.0) / graphWidth).clamp(
         0.0,
         1.0,
       );
       final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
-      widget.ctrl.zoom(zoomFactor, focalFrac, total);
+      widget.ctrl.zoom(zoomFactor, focalFrac, totalSamples, widget.data.oldestSample, widget.data.bufferCapacity);
     }
   }
 
@@ -686,7 +709,7 @@ class GraphWorkspace extends StatelessWidget {
             ListenableBuilder(
               listenable: ctrl,
               builder: (context, _) {
-                if (ctrl.isLive || data.sampleCount == 0 || !isLiveGraph) {
+                if (ctrl.isLive || data.totalSamples == 0 || !isLiveGraph) {
                   return const SizedBox.shrink();
                 }
                 return Positioned(
@@ -718,9 +741,9 @@ class GraphWorkspace extends StatelessWidget {
                   FloatingActionButton.small(
                     heroTag: 'zoomIn_${data.hashCode}',
                     onPressed: () {
-                      if (data.sampleCount > 0) {
+                      if (data.totalSamples > 0) {
                         final focal = ctrl.isLive ? 1.0 : 0.5;
-                        ctrl.zoom(1.2, focal, data.sampleCount);
+                        ctrl.zoom(1.2, focal, data.totalSamples, data.oldestSample, data.bufferCapacity);
                       }
                     },
                     child: const Icon(Icons.zoom_in),
@@ -729,9 +752,9 @@ class GraphWorkspace extends StatelessWidget {
                   FloatingActionButton.small(
                     heroTag: 'zoomOut_${data.hashCode}',
                     onPressed: () {
-                      if (data.sampleCount > 0) {
+                      if (data.totalSamples > 0) {
                         final focal = ctrl.isLive ? 1.0 : 0.5;
-                        ctrl.zoom(1 / 1.2, focal, data.sampleCount);
+                        ctrl.zoom(1 / 1.2, focal, data.totalSamples, data.oldestSample, data.bufferCapacity);
                       }
                     },
                     child: const Icon(Icons.zoom_out),
@@ -879,11 +902,13 @@ class ForceGraphPainter extends CustomPainter {
       pen..strokeWidth = 0.5,
     );
 
-    if (_data.sampleCount == 0) return;
+    if (_data.totalSamples == 0) return;
 
     final unit = _settings.displayUnit;
     final activeIndices = _settings.activeChannelIndices;
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(_data.sampleCount);
+    final oldestSample = _data.oldestSample;
+    final totalSamples = _data.totalSamples;
+    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, bufferCapacity: _data.bufferCapacity);
     final viewSamples = viewEnd - viewStart;
     if (viewSamples <= 0) return;
 
@@ -893,8 +918,10 @@ class ForceGraphPainter extends CustomPainter {
     double rawMin = 0;
     bool hasData = false;
 
-    if (_ctrl.isLive && viewStart == 0) {
+    if (_ctrl.isLive && viewStart == oldestSample) {
       // Full view -- use pre-tracked global min/max (O(1))
+      // TODO: the global rawMax/rawMin is an all-time tracker, so it won't 
+      // shrink when a massive peak falls off the back of the 10-minute circular buffer.
       for (final ch in activeIndices) {
         final mx = (_data.getChannelMax(ch) - _data.getChannelTare(ch))
             .toDouble();
@@ -910,8 +937,11 @@ class ForceGraphPainter extends CustomPainter {
         final line = _data.getChannelData(ch);
         if (line.isEmpty) continue;
         final tare = _data.getChannelTare(ch);
-        for (int i = viewStart; i < viewEnd; i++) {
-          final v = line[i] - tare;
+        final bufferCap = _data.bufferCapacity;
+        final sScanStart = math.max(viewStart, oldestSample);
+        final sScanEnd = math.min(viewEnd, totalSamples);
+        for (int i = sScanStart; i < sScanEnd; i++) {
+          final v = line[i % bufferCap] - tare;
           if (!hasData || v > rawMax) rawMax = v.toDouble();
           if (!hasData || v < rawMin) rawMin = v.toDouble();
           hasData = true;
@@ -949,12 +979,12 @@ class ForceGraphPainter extends CustomPainter {
       // Sub-second: use fractional labels
       final stepMs = xSpanSec * 1000 / 5; // aim for ~5 labels
       final niceStepMs = _niceNum(stepMs);
-      final startSec = viewStart / _data.sampleRate;
+      final startSec = (viewStart - oldestSample) / _data.sampleRate;
 
       final firstTickMs = ((startSec * 1000 / niceStepMs).ceil() * niceStepMs);
       for (
         double tMs = firstTickMs;
-        tMs < (viewEnd / _data.sampleRate) * 1000;
+        tMs < ((viewEnd - oldestSample) / _data.sampleRate) * 1000;
         tMs += niceStepMs
       ) {
         final tSec = tMs / 1000;
@@ -972,11 +1002,11 @@ class ForceGraphPainter extends CustomPainter {
       }
     } else {
       final xC = _findScale(xSpanSec, _xScaleConfig);
-      final double startSec = viewStart / _data.sampleRate;
+      final double startSec = (viewStart - oldestSample) / _data.sampleRate;
 
       // Major grid + labels
       final int firstTick = ((startSec / xC.delta).ceil() * xC.delta).toInt();
-      final double endSec = viewEnd / _data.sampleRate;
+      final double endSec = (viewEnd - oldestSample) / _data.sampleRate;
       for (int sec = firstTick; sec.toDouble() < endSec; sec += xC.delta) {
         final double xPos =
             (sec - startSec) * _data.sampleRate * graphSz.width / viewSamples;
@@ -1062,6 +1092,7 @@ class ForceGraphPainter extends CustomPainter {
       final line = _data.getChannelData(ch);
       if (line.isEmpty) continue;
       final tare = _data.getChannelTare(ch);
+      final bufferCap = _data.bufferCapacity;
 
       final int graphW = graphSz.width.toInt();
       final Float32List avgPts = Float32List(graphW * 2);
@@ -1073,20 +1104,24 @@ class ForceGraphPainter extends CustomPainter {
         // Map pixel i to sample range
         final int sStart = viewStart + (i * viewSamples ~/ graphW);
         final int sEnd = viewStart + ((i + 1) * viewSamples ~/ graphW);
-        if (sStart >= sEnd) continue;
+        
+        final int drawStart = math.max(sStart, oldestSample);
+        final int drawEnd = math.min(sEnd, totalSamples);
+
+        if (drawStart >= drawEnd) continue;
 
         double total = 0;
         double minRaw = double.infinity;
         double maxRaw = double.negativeInfinity;
 
-        for (int j = sStart; j < sEnd; j++) {
-          final val = line[j];
+        for (int j = drawStart; j < drawEnd; j++) {
+          final val = line[j % bufferCap];
           total += val;
           if (val < minRaw) minRaw = val.toDouble();
           if (val > maxRaw) maxRaw = val.toDouble();
         }
 
-        final avgRaw = total / (sEnd - sStart);
+        final avgRaw = total / (drawEnd - drawStart);
 
         final avgUnit = (avgRaw - tare) * slopeToUnit;
         final minUnit = (minRaw - tare) * slopeToUnit;
@@ -1184,11 +1219,13 @@ class DerivativeGraphPainter extends CustomPainter {
       pen..strokeWidth = 0.5,
     );
 
-    if (_data.sampleCount < 2) return;
+    if (_data.totalSamples < 2) return;
 
     final unit = _settings.displayUnit;
     final activeIndices = _settings.activeChannelIndices;
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(_data.sampleCount);
+    final oldestSample = _data.oldestSample;
+    final totalSamples = _data.totalSamples;
+    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, bufferCapacity: _data.bufferCapacity);
     final viewSamples = viewEnd - viewStart;
     if (viewSamples < 2) return;
 
@@ -1202,10 +1239,12 @@ class DerivativeGraphPainter extends CustomPainter {
     for (final ch in activeIndices) {
       final line = _data.getChannelData(ch);
       if (line.isEmpty) continue;
+      final bufferCap = _data.bufferCapacity;
 
-      final startI = math.max(viewStart, 1);
-      for (int i = startI; i < viewEnd; i++) {
-        final d = (line[i] - line[i - 1]).toDouble() * slopeToUnit * sampleRate;
+      final startI = math.max(viewStart, oldestSample + 1);
+      final endI = math.min(viewEnd, totalSamples);
+      for (int i = startI; i < endI; i++) {
+        final d = (line[i % bufferCap] - line[(i - 1) % bufferCap]).toDouble() * slopeToUnit * sampleRate;
         if (first) {
           dMin = d;
           dMax = d;
@@ -1234,8 +1273,8 @@ class DerivativeGraphPainter extends CustomPainter {
 
     // X axis labels
     final double xSpanSec = viewSamples / _data.sampleRate;
-    final double startSec = viewStart / _data.sampleRate;
-    final double endSec = viewEnd / _data.sampleRate;
+    final double startSec = (viewStart - oldestSample) / _data.sampleRate;
+    final double endSec = (viewEnd - oldestSample) / _data.sampleRate;
 
     if (xSpanSec < 1.0) {
       final stepMs = xSpanSec * 1000 / 5;
@@ -1318,6 +1357,7 @@ class DerivativeGraphPainter extends CustomPainter {
     for (final ch in activeIndices) {
       final line = _data.getChannelData(ch);
       if (line.isEmpty) continue;
+      final bufferCap = _data.bufferCapacity;
 
       final int graphW = graphSz.width.toInt();
       final Float32List avgPts = Float32List(graphW * 2);
@@ -1328,21 +1368,23 @@ class DerivativeGraphPainter extends CustomPainter {
       for (int px = 0; px < graphW; ++px) {
         final int sStart = math.max(
           viewStart + (px * viewSamples ~/ graphW),
-          1,
+          oldestSample + 1,
         );
         final int sEnd = math.max(
           viewStart + ((px + 1) * viewSamples ~/ graphW),
-          2,
+          oldestSample + 2,
         );
-        if (sStart >= sEnd || sStart >= _data.sampleCount) continue;
+        
+        final drawEnd = math.min(sEnd, totalSamples);
+        if (sStart >= drawEnd) continue;
 
         double total = 0;
         int count = 0;
         double minDerivRaw = double.infinity;
         double maxDerivRaw = double.negativeInfinity;
 
-        for (int j = sStart; j < sEnd && j < _data.sampleCount; j++) {
-          final double d = (line[j] - line[j - 1]).toDouble();
+        for (int j = sStart; j < drawEnd; j++) {
+          final double d = (line[j % bufferCap] - line[(j - 1) % bufferCap]).toDouble();
           total += d;
           count++;
           if (d < minDerivRaw) minDerivRaw = d;
