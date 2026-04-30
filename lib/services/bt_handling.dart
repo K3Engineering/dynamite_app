@@ -241,7 +241,6 @@ class DataHub extends ChangeNotifier {
   static const int numGraphLines = 2;
   static const int numAdcChannels = 4;
   static const int _tareWindow = 1024;
-  static const double _defaultSlope = 0.0001117587;
   static const int samplesPerSec = 1000;
   static const int _maxDataSz = samplesPerSec * 60 * 10;
   final Float64List tare = Float64List(numGraphLines);
@@ -260,7 +259,7 @@ class DataHub extends ChangeNotifier {
   int _tareCount = _tareWindow;
   int rawSz = 0;
   int _prevSampleCount = -1;
-  DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
+  DeviceCalibration deviceCalibration = DeviceCalibration();
 
   /// Index into rawData where the current recording started.
   /// Used by SessionStorage to know which slice to save.
@@ -373,7 +372,7 @@ class DataHub extends ChangeNotifier {
 
   void _updateCalibration(Uint8List data) {
     // TODO: implement calibration parsing
-    deviceCalibration = DeviceCalibration(0, _defaultSlope);
+    deviceCalibration = DeviceCalibration();
     debugPrint(
       'Calibration ${deviceCalibration.slope}, offset ${deviceCalibration.offset}',
     );
@@ -450,7 +449,21 @@ class DataHub extends ChangeNotifier {
 }
 
 class DeviceCalibration {
-  DeviceCalibration(this.offset, this.slope);
+  DeviceCalibration({
+    this.offset = 0,
+    this.capacityKg = 200.0,
+    this.sensitivityMvV = 2.0,
+    this.excitationV = 4.5,
+  });
+
   final int offset;
-  final double slope;
+  final double capacityKg;
+  final double sensitivityMvV;
+  final double excitationV;
+
+  /// Calculates kgf per raw count dynamically based on the parameters
+  double get slope {
+    final maxMv = sensitivityMvV * excitationV;
+    return (capacityKg * ForceUnit.rawToMvMultiplier) / maxMv;
+  }
 }
