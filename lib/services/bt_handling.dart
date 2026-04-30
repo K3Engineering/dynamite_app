@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show Uint8List, kIsWeb;
@@ -240,7 +241,6 @@ class DataHub extends ChangeNotifier {
   static const int numGraphLines = 2;
   static const int numAdcChannels = 4;
   static const int _tareWindow = 1024;
-  static const double _defaultSlope = 0.0001117587;
   static const int samplesPerSec = 1000;
   static const int _maxDataSz = samplesPerSec * 60 * 10;
   final Float64List tare = Float64List(numGraphLines);
@@ -259,7 +259,7 @@ class DataHub extends ChangeNotifier {
   int _tareCount = _tareWindow;
   int rawSz = 0;
   int _prevSampleCount = -1;
-  DeviceCalibration deviceCalibration = DeviceCalibration(0, _defaultSlope);
+  DeviceCalibration deviceCalibration = DeviceCalibration();
 
   /// Index into rawData where the current recording started.
   /// Used by SessionStorage to know which slice to save.
@@ -303,8 +303,7 @@ class DataHub extends ChangeNotifier {
     final lineIdx = chanToLine(adcChannel);
     if (lineIdx < 0) return 0;
     final rawTared = _currentRaw[lineIdx] - tare[lineIdx];
-    final kgf = rawTared * deviceCalibration.slope;
-    return unit.fromKgf(kgf);
+    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
   /// Get peak force for a given ADC channel in the specified unit.
@@ -312,8 +311,7 @@ class DataHub extends ChangeNotifier {
     final lineIdx = chanToLine(adcChannel);
     if (lineIdx < 0) return 0;
     final rawTared = rawMax[lineIdx] - tare[lineIdx];
-    final kgf = rawTared * deviceCalibration.slope;
-    return unit.fromKgf(kgf);
+    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
   /// Get minimum (most negative) force for a given ADC channel in the specified unit.
@@ -321,8 +319,7 @@ class DataHub extends ChangeNotifier {
     final lineIdx = chanToLine(adcChannel);
     if (lineIdx < 0) return 0;
     final rawTared = rawMin[lineIdx] - tare[lineIdx];
-    final kgf = rawTared * deviceCalibration.slope;
-    return unit.fromKgf(kgf);
+    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
   /// Get the instantaneous derivative (first-difference) for a channel in unit/s.
@@ -330,8 +327,33 @@ class DataHub extends ChangeNotifier {
     final lineIdx = chanToLine(adcChannel);
     if (lineIdx < 0 || rawSz < 2) return 0;
     final diff = rawData[lineIdx][rawSz - 1] - rawData[lineIdx][rawSz - 2];
-    final kgfPerSec = diff * deviceCalibration.slope * samplesPerSec;
-    return unit.fromKgf(kgfPerSec);
+    // Derivative is raw diff per sample * samplesPerSec to get raw per sec
+    return unit.fromRaw(diff.toDouble() * samplesPerSec, deviceCalibration.slope);
+  }
+
+  /// Get the AC RMS for a given ADC channel in the specified unit over the last 1 second window.
+  double acRmsForce(int adcChannel, ForceUnit unit) {
+    final lineIdx = chanToLine(adcChannel);
+    if (lineIdx < 0 || rawSz == 0) return 0;
+    
+    final int count = math.min(samplesPerSec, rawSz);
+    final lineData = rawData[lineIdx];
+    final startIdx = rawSz - count;
+    
+    double sum = 0;
+    for (int i = startIdx; i < rawSz; i++) {
+      sum += lineData[i];
+    }
+    final mean = sum / count;
+    
+    double sumSq = 0;
+    for (int i = startIdx; i < rawSz; i++) {
+      final diff = lineData[i] - mean;
+      sumSq += diff * diff;
+    }
+    final rmsRaw = math.sqrt(sumSq / count);
+    
+    return unit.fromRaw(rmsRaw, deviceCalibration.slope);
   }
 
   void _addTare(int val, int idx) {
@@ -350,7 +372,7 @@ class DataHub extends ChangeNotifier {
 
   void _updateCalibration(Uint8List data) {
     // TODO: implement calibration parsing
-    deviceCalibration = DeviceCalibration(0, _defaultSlope);
+    deviceCalibration = DeviceCalibration();
     debugPrint(
       'Calibration ${deviceCalibration.slope}, offset ${deviceCalibration.offset}',
     );
@@ -427,7 +449,21 @@ class DataHub extends ChangeNotifier {
 }
 
 class DeviceCalibration {
-  DeviceCalibration(this.offset, this.slope);
+  DeviceCalibration({
+    this.offset = 0,
+    this.capacityKg = 200.0,
+    this.sensitivityMvV = 2.0,
+    this.excitationV = 4.5,
+  });
+
   final int offset;
-  final double slope;
+  final double capacityKg;
+  final double sensitivityMvV;
+  final double excitationV;
+
+  /// Calculates kgf per raw count dynamically based on the parameters
+  double get slope {
+    final maxMv = sensitivityMvV * excitationV;
+    return (capacityKg * ForceUnit.rawToMvMultiplier) / maxMv;
+  }
 }

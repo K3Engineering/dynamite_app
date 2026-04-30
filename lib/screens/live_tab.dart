@@ -351,6 +351,7 @@ class LiveStats extends StatelessWidget {
                     color: _channelColor(indices[i]),
                     current: hub.currentForce(indices[i], unit),
                     peak: hub.peakForce(indices[i], unit),
+                    acRms: hub.acRmsForce(indices[i], unit),
                     unit: unit,
                     showDerivative: showDerivative,
                     currentDerivative: showDerivative
@@ -536,6 +537,7 @@ class _ChannelStatChip extends StatelessWidget {
     required this.color,
     required this.current,
     required this.peak,
+    required this.acRms,
     required this.unit,
     this.showDerivative = false,
     this.currentDerivative,
@@ -545,6 +547,7 @@ class _ChannelStatChip extends StatelessWidget {
   final Color color;
   final double current;
   final double peak;
+  final double acRms;
   final ForceUnit unit;
   final bool showDerivative;
   final double? currentDerivative;
@@ -577,6 +580,7 @@ class _ChannelStatChip extends StatelessWidget {
             ),
           ),
           Text('Peak: ${unit.format(peak)}', style: monoStyle),
+          Text('AC RMS: ${unit.format(acRms)}', style: monoStyle),
           if (showDerivative && currentDerivative != null)
             Text(
               'dF/dt: ${unit.formatRate(currentDerivative!)}',

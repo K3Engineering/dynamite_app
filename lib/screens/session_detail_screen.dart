@@ -263,16 +263,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   _StatRow(
                     label: 'Peak',
                     value: settings.displayUnit.format(
-                      settings.displayUnit.fromKgf(
-                        data.peakRaw(ch).toDouble() * data.calibrationSlope,
+                      settings.displayUnit.fromRaw(
+                        data.peakRaw(ch).toDouble(), data.calibrationSlope,
                       ),
                     ),
                   ),
                   _StatRow(
                     label: 'Average',
                     value: settings.displayUnit.format(
-                      settings.displayUnit.fromKgf(
-                        data.averageRaw(ch) * data.calibrationSlope,
+                      settings.displayUnit.fromRaw(
+                        data.averageRaw(ch), data.calibrationSlope,
                       ),
                     ),
                   ),

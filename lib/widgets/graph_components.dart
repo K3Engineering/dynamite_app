@@ -6,7 +6,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../models/app_settings.dart';
-import '../models/force_unit.dart';
 
 // ---------------------------------------------------------------------------
 // Shared Graph Data Source
@@ -660,7 +659,7 @@ class GraphWorkspace extends StatelessWidget {
                     activeChannels: settings.activeChannelIndices,
                     graphCtrl: ctrl,
                     channelColors: settings.activeChannelIndices
-                        .map((i) => getChannelColor(i))
+                        .map(getChannelColor)
                         .toList(),
                   ),
                 ),
@@ -911,8 +910,8 @@ class ForceGraphPainter extends CustomPainter {
       rawMin = mid - noiseFloor / 2;
     }
 
-    final double dataMaxUnit = unit.fromKgf(rawMax * _data.calibrationSlope);
-    final double dataMinUnit = unit.fromKgf(rawMin * _data.calibrationSlope);
+    final double dataMaxUnit = unit.fromRaw(rawMax, _data.calibrationSlope);
+    final double dataMinUnit = unit.fromRaw(rawMin, _data.calibrationSlope);
 
     // Compute nice Y axis range
     final yRange = _computeYRange(dataMinUnit, dataMaxUnit);
@@ -1040,15 +1039,7 @@ class ForceGraphPainter extends CustomPainter {
 
     // -- Data lines --
     final rawRange = yRange.yMax - yRange.yMin;
-    final slopeToUnit =
-        _data.calibrationSlope *
-        (unit == ForceUnit.kgf
-            ? 1.0
-            : unit == ForceUnit.n
-            ? 9.80665
-            : unit == ForceUnit.kN
-            ? 9.80665 / 1000.0
-            : 2.20462);
+    final slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
 
     for (final ch in activeIndices) {
       final line = _data.getChannelData(ch);
@@ -1168,15 +1159,7 @@ class DerivativeGraphPainter extends CustomPainter {
     final viewSamples = viewEnd - viewStart;
     if (viewSamples < 2) return;
 
-    final double slopeToUnit =
-        _data.calibrationSlope *
-        (unit == ForceUnit.kgf
-            ? 1.0
-            : unit == ForceUnit.n
-            ? 9.80665
-            : unit == ForceUnit.kN
-            ? 9.80665 / 1000.0
-            : 2.20462);
+    final double slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
     final double sampleRate = _data.sampleRate.toDouble();
 
     // Compute derivative min/max in visible window
