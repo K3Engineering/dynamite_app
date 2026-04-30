@@ -266,10 +266,20 @@ class DataHub extends ChangeNotifier {
   int _recordingStartIdx = 0;
   int get recordingStartIdx => _recordingStartIdx;
 
+  /// When paused, incoming BLE data is discarded (not buffered).
+  bool _paused = false;
+  bool get paused => _paused;
+
+  void togglePause() {
+    _paused = !_paused;
+    notifyListeners();
+  }
+
   void clear() {
     _tareCount = _tareWindow;
     rawSz = 0;
     _recordingStartIdx = 0;
+    _paused = false;
     for (int i = 0; i < numGraphLines; ++i) {
       rawMax[i] = 0;
       rawMin[i] = 0;
@@ -277,6 +287,7 @@ class DataHub extends ChangeNotifier {
       _runningTotal[i] = 0;
       _currentRaw[i] = 0;
     }
+    notifyListeners();
   }
 
   bool get taring => (_tareCount > 0);
@@ -398,8 +409,8 @@ class DataHub extends ChangeNotifier {
           _currentRaw[idx] = res;
           if (taring) {
             _addTare(res, idx);
-          } else {
-            // Always buffer data for live display.
+          } else if (!_paused) {
+            // Buffer data for live display (skipped when paused).
             _addData(res, idx);
           }
         }
@@ -413,7 +424,7 @@ class DataHub extends ChangeNotifier {
             _runningTotal[i] = 0;
           }
         }
-      } else {
+      } else if (!_paused) {
         rawSz++;
         if (rawSz >= _maxDataSz) {
           break;

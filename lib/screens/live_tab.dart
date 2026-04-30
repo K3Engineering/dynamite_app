@@ -102,6 +102,18 @@ class _LiveTabState extends State<LiveTab> {
     bt.dataHub.requestTare();
   }
 
+  void _onTogglePause() {
+    final bt = context.read<BluetoothHandling>();
+    bt.dataHub.togglePause();
+    setState(() {}); // rebuild to update button label
+  }
+
+  void _onClear() {
+    final bt = context.read<BluetoothHandling>();
+    bt.dataHub.clear();
+    setState(() {}); // rebuild to update button states
+  }
+
   Future<void> _onToggleRecord() async {
     final bt = context.read<BluetoothHandling>();
     if (bt.sessionInProgress) {
@@ -226,8 +238,11 @@ class _LiveTabState extends State<LiveTab> {
           if (isConnected)
             ActionButtons(
               isRecording: bt.sessionInProgress,
+              isPaused: bt.dataHub.paused,
               onToggleRecord: _onToggleRecord,
+              onTogglePause: _onTogglePause,
               onTare: _onTare,
+              onClear: bt.sessionInProgress ? null : _onClear,
             ),
         ],
       ),
@@ -485,18 +500,25 @@ class ChannelLegend extends StatelessWidget {
 
 class ActionButtons extends StatelessWidget {
   final bool isRecording;
+  final bool isPaused;
   final VoidCallback onToggleRecord;
+  final VoidCallback onTogglePause;
   final VoidCallback onTare;
+  final VoidCallback? onClear;
 
   const ActionButtons({
     super.key,
     required this.isRecording,
+    required this.isPaused,
     required this.onToggleRecord,
+    required this.onTogglePause,
     required this.onTare,
+    required this.onClear,
   });
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
@@ -507,18 +529,30 @@ class ActionButtons extends StatelessWidget {
             icon: Icon(isRecording ? Icons.stop : Icons.fiber_manual_record),
             label: Text(isRecording ? 'STOP' : 'REC'),
             style: FilledButton.styleFrom(
-              backgroundColor: isRecording
-                  ? Theme.of(context).colorScheme.error
-                  : Theme.of(context).colorScheme.primary,
-              foregroundColor: isRecording
-                  ? Theme.of(context).colorScheme.onError
-                  : Theme.of(context).colorScheme.onPrimary,
+              backgroundColor: isRecording ? cs.error : cs.primary,
+              foregroundColor: isRecording ? cs.onError : cs.onPrimary,
             ),
+          ),
+          OutlinedButton.icon(
+            onPressed: onTogglePause,
+            icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
+            label: Text(isPaused ? 'RESUME' : 'PAUSE'),
+            style: isPaused
+                ? OutlinedButton.styleFrom(
+                    foregroundColor: cs.tertiary,
+                    side: BorderSide(color: cs.tertiary),
+                  )
+                : null,
           ),
           OutlinedButton.icon(
             onPressed: onTare,
             icon: const Icon(Icons.exposure_zero),
             label: const Text('TARE'),
+          ),
+          TextButton.icon(
+            onPressed: onClear,
+            icon: const Icon(Icons.delete_outline),
+            label: const Text('CLEAR'),
           ),
         ],
       ),
