@@ -36,7 +36,7 @@ class SessionStorage {
     final int endIdx = dataHub.totalSamples;
     
     // If the recording was longer than the buffer, we can only save the tail
-    final int maxAvailable = DataHub.maxDataSz;
+    const int maxAvailable = DataHub.maxDataSz;
     final int actualStartIdx = (endIdx - startIdx) > maxAvailable 
         ? endIdx - maxAvailable 
         : startIdx;

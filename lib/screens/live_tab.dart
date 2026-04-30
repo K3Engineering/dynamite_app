@@ -1,6 +1,3 @@
-import 'dart:math' as math;
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -114,7 +111,7 @@ class _LiveTabState extends State<LiveTab> {
   void _onInjectTestSineWave() {
     final bt = context.read<BluetoothHandling>();
     // Inject 5 minutes of test data at 1000 Hz
-    final samples = DataHub.samplesPerSec * 60 * 5;
+    const samples = DataHub.samplesPerSec * 60 * 5;
     bt.dataHub.injectTestData(samples);
   }
 
