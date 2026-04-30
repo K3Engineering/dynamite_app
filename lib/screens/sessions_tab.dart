@@ -110,8 +110,8 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  void _openDetail(Session session) {
-    Navigator.of(context).push<void>(
+  Future<void> _openDetail(Session session) async {
+    await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => SessionDetailScreen(session: session),
       ),
@@ -166,7 +166,9 @@ class _SessionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final duration = Duration(milliseconds: session.durationMs);
     final durationStr = _formatDuration(duration);
-    final peakDisplay = unit.format(unit.fromRaw(session.peakForceRaw.toDouble(), calibrationSlope));
+    final peakDisplay = unit.format(
+      unit.fromRaw(session.peakForceRaw.toDouble(), calibrationSlope),
+    );
 
     return Dismissible(
       key: ValueKey(session.id),
