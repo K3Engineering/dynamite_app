@@ -166,8 +166,7 @@ class _SessionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final duration = Duration(milliseconds: session.durationMs);
     final durationStr = _formatDuration(duration);
-    final peakKgf = session.peakForceRaw * calibrationSlope;
-    final peakDisplay = unit.format(unit.fromKgf(peakKgf));
+    final peakDisplay = unit.format(unit.fromRaw(session.peakForceRaw.toDouble(), calibrationSlope));
 
     return Dismissible(
       key: ValueKey(session.id),

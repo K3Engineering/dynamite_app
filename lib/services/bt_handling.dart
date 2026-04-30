@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart' show Uint8List, kIsWeb;
@@ -303,8 +304,7 @@ class DataHub extends ChangeNotifier {
     final lineIdx = chanToLine(adcChannel);
     if (lineIdx < 0) return 0;
     final rawTared = _currentRaw[lineIdx] - tare[lineIdx];
-    final kgf = rawTared * deviceCalibration.slope;
-    return unit.fromKgf(kgf);
+    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
   /// Get peak force for a given ADC channel in the specified unit.
@@ -312,8 +312,7 @@ class DataHub extends ChangeNotifier {
     final lineIdx = chanToLine(adcChannel);
     if (lineIdx < 0) return 0;
     final rawTared = rawMax[lineIdx] - tare[lineIdx];
-    final kgf = rawTared * deviceCalibration.slope;
-    return unit.fromKgf(kgf);
+    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
   /// Get minimum (most negative) force for a given ADC channel in the specified unit.
@@ -321,8 +320,7 @@ class DataHub extends ChangeNotifier {
     final lineIdx = chanToLine(adcChannel);
     if (lineIdx < 0) return 0;
     final rawTared = rawMin[lineIdx] - tare[lineIdx];
-    final kgf = rawTared * deviceCalibration.slope;
-    return unit.fromKgf(kgf);
+    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
   /// Get the instantaneous derivative (first-difference) for a channel in unit/s.
@@ -330,8 +328,33 @@ class DataHub extends ChangeNotifier {
     final lineIdx = chanToLine(adcChannel);
     if (lineIdx < 0 || rawSz < 2) return 0;
     final diff = rawData[lineIdx][rawSz - 1] - rawData[lineIdx][rawSz - 2];
-    final kgfPerSec = diff * deviceCalibration.slope * samplesPerSec;
-    return unit.fromKgf(kgfPerSec);
+    // Derivative is raw diff per sample * samplesPerSec to get raw per sec
+    return unit.fromRaw(diff.toDouble() * samplesPerSec, deviceCalibration.slope);
+  }
+
+  /// Get the AC RMS for a given ADC channel in the specified unit over the last 1 second window.
+  double acRmsForce(int adcChannel, ForceUnit unit) {
+    final lineIdx = chanToLine(adcChannel);
+    if (lineIdx < 0 || rawSz == 0) return 0;
+    
+    final int count = math.min(samplesPerSec, rawSz);
+    final lineData = rawData[lineIdx];
+    final startIdx = rawSz - count;
+    
+    double sum = 0;
+    for (int i = startIdx; i < rawSz; i++) {
+      sum += lineData[i];
+    }
+    final mean = sum / count;
+    
+    double sumSq = 0;
+    for (int i = startIdx; i < rawSz; i++) {
+      final diff = lineData[i] - mean;
+      sumSq += diff * diff;
+    }
+    final rmsRaw = math.sqrt(sumSq / count);
+    
+    return unit.fromRaw(rmsRaw, deviceCalibration.slope);
   }
 
   void _addTare(int val, int idx) {
