@@ -166,8 +166,15 @@ class GraphController extends ChangeNotifier {
       maxSpan,
     );
 
-    final focal = s + (focalFraction * span).round();
-    int newStart = focal - (focalFraction * newSpan).round();
+    // Smart anchor: If we are live and zooming near the right edge,
+    // anchor the zoom perfectly to the right edge to stay live.
+    double effectiveFocal = focalFraction;
+    if (_isLive && focalFraction > 0.8) {
+      effectiveFocal = 1.0;
+    }
+
+    final focal = s + (effectiveFocal * span).round();
+    int newStart = focal - (effectiveFocal * newSpan).round();
     int newEnd = newStart + newSpan;
 
     final minStart = math.min(oldestSample, totalSamples - newSpan);
@@ -177,16 +184,12 @@ class GraphController extends ChangeNotifier {
       newEnd = newStart + newSpan;
     }
     
-    // Tolerance for staying live: if we were live, and the new right edge is within 5% of totalSamples
-    final tolerance = (newSpan * 0.05).round();
-    if (newEnd >= totalSamples || (_isLive && (totalSamples - newEnd) <= tolerance)) {
-      // At the right edge (or close enough while live) -- enter/stay live
+    if (newEnd >= totalSamples) {
+      // At the right edge -- enter/stay live
       _viewStart = totalSamples - newSpan; // Force right-align
       _viewEnd = totalSamples;
-      // If we hit the absolute max span, we explicitly pass the span to goLive
-      // so it knows we hit the ceiling and might need to go full-screen.
       if (newSpan >= maxSpan) {
-         goLive(span: null, totalSamples: totalSamples, oldestSample: oldestSample); // Re-evaluate full-screen
+         goLive(span: null, totalSamples: totalSamples, oldestSample: oldestSample);
       } else {
          goLive(span: newSpan, totalSamples: totalSamples, oldestSample: oldestSample);
       }
@@ -545,6 +548,7 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
   int? _panEndSample;
   double? _scaleStartSpan;
   double? _pinchFocalX;
+  bool _wasLiveOnScaleStart = false;
 
   void _onScaleStart(ScaleStartDetails details) {
     final total = widget.data.totalSamples;
@@ -556,6 +560,7 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
     _panStartX = details.localFocalPoint.dx;
     _scaleStartSpan = (e - s).toDouble();
     _pinchFocalX = details.localFocalPoint.dx;
+    _wasLiveOnScaleStart = widget.ctrl.isLive;
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details, double graphWidth) {
@@ -575,9 +580,15 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
         maxSpan,
       );
 
-      final focalFrac = (_pinchFocalX! / graphWidth).clamp(0.0, 1.0);
-      final focalSample = origStart + (focalFrac * origSpan).round();
+      double focalFrac = (_pinchFocalX! / graphWidth).clamp(0.0, 1.0);
+      
+      // Smart anchor: If we started scaling while live and are pinching near the right edge,
+      // anchor perfectly to the right edge. This prevents tracking jitter as totalSamples grows.
+      if (_wasLiveOnScaleStart && focalFrac > 0.8) {
+        focalFrac = 1.0;
+      }
 
+      final focalSample = origStart + (focalFrac * origSpan).round();
       int newStart = focalSample - (focalFrac * newSpan).round();
       int newEnd = (newStart + newSpan).round();
 
@@ -588,8 +599,7 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
         newEnd = newStart + newSpan;
       }
       
-      final tolerance = (newSpan * 0.05).round();
-      if (newEnd >= total || (widget.ctrl.isLive && (total - newEnd) <= tolerance)) {
+      if (newEnd >= total) {
         newEnd = total;
         newStart = total - newSpan;
         if (newStart < minStart) newStart = minStart;
