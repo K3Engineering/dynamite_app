@@ -68,23 +68,35 @@ class GraphController extends ChangeNotifier {
   /// from the right edge. Null means "show all data from _viewStart" (up to 10 minutes).
   int? _liveSpan;
 
-  /// Snap to live mode -- follow the right edge at current zoom level.
-  void goLive() {
-    if (_viewEnd != null) {
+  /// Snap to live mode -- follow the right edge.
+  /// If [span] is provided, locks to that scrolling window.
+  /// If not provided, it intelligently decides between full view or default scrolling window.
+  void goLive({int? span, int? totalSamples, int? oldestSample}) {
+    if (span != null) {
+      _liveSpan = span;
+    } else if (totalSamples != null && oldestSample != null) {
+      final availableData = totalSamples - oldestSample;
+      if (_viewEnd == null) {
+         // Already live, don't change the span
+      } else if (_viewEnd! - _viewStart >= availableData) {
+        // User zoomed out to see all available data
+        if (availableData > minLiveSpan) {
+          // If we have more than the minimum span, enter auto-expanding full view
+          _liveSpan = null;
+        } else {
+          // Otherwise, lock to the minimum span so it scrolls once it hits that size
+          _liveSpan = minLiveSpan;
+        }
+      } else {
+        // User is zoomed in, lock to current span
+        _liveSpan = _viewEnd! - _viewStart;
+      }
+    } else if (_viewEnd != null) {
       _liveSpan = _viewEnd! - _viewStart;
     }
-    _isLive = true;
-    _viewEnd = null;
-    notifyListeners();
-  }
 
-  /// TODO this isn't used anywhere
-  /// Snap to live mode showing all data (fully zoomed out).
-  void goLiveFullView() {
-    _viewStart = 0;
-    _viewEnd = null;
-    _liveSpan = null;
     _isLive = true;
+    _viewEnd = null;
     notifyListeners();
   }
 
@@ -126,11 +138,9 @@ class GraphController extends ChangeNotifier {
     }
     if (newEnd >= totalSamples) {
       // Snap to live if we pan to the right edge
-      _liveSpan = span;
-      _viewStart = totalSamples - span;
-      _viewEnd = null;
-      _isLive = true;
-      notifyListeners();
+      _viewStart = newStart;
+      _viewEnd = newEnd;
+      goLive(totalSamples: totalSamples, oldestSample: oldestSample);
       return;
     }
 
@@ -164,11 +174,9 @@ class GraphController extends ChangeNotifier {
     }
     if (newEnd >= totalSamples) {
       // At the right edge -- enter live mode with this span
-      _liveSpan = newSpan;
-      _viewStart = totalSamples - newSpan;
-      _viewEnd = null;
-      _isLive = true;
-      notifyListeners();
+      _viewStart = newStart;
+      _viewEnd = newEnd;
+      goLive(totalSamples: totalSamples, oldestSample: oldestSample);
       return;
     }
 
@@ -263,9 +271,7 @@ class Minimap extends StatelessWidget {
       newStart = newEnd - span;
       if (newStart < minStart) newStart = minStart;
       graphCtrl.setWindow(newStart, newEnd);
-      if (graphCtrl.isLive || newEnd == totalSamples) {
-        graphCtrl.goLive();
-      }
+      graphCtrl.goLive(totalSamples: totalSamples, oldestSample: oldestSample);
       return;
     }
     graphCtrl.setWindow(newStart, newEnd);
@@ -298,9 +304,7 @@ class Minimap extends StatelessWidget {
       newStart = newEnd - span;
       if (newStart < minStart) newStart = minStart;
       graphCtrl.setWindow(newStart, newEnd);
-      if (graphCtrl.isLive || newEnd == totalSamples) {
-        graphCtrl.goLive();
-      }
+      graphCtrl.goLive(totalSamples: totalSamples, oldestSample: oldestSample);
       return;
     }
     graphCtrl.setWindow(newStart, newEnd);
@@ -576,7 +580,7 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
       }
 
       widget.ctrl.setWindow(newStart, newEnd);
-      if (newEnd >= total) widget.ctrl.goLive();
+      if (newEnd >= total) widget.ctrl.goLive(totalSamples: total, oldestSample: oldestSample);
     } else {
       // Pan
       final dx = details.localFocalPoint.dx - _panStartX!;
@@ -596,7 +600,7 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
         newEnd = total;
         newStart = math.max(minStart, total - origSpan);
         widget.ctrl.setWindow(newStart, newEnd);
-        widget.ctrl.goLive();
+        widget.ctrl.goLive(totalSamples: total, oldestSample: oldestSample);
         return;
       }
 
@@ -731,7 +735,7 @@ class GraphWorkspace extends StatelessWidget {
                   right: 64,
                   top: 8,
                   child: FilledButton.tonalIcon(
-                    onPressed: ctrl.goLive,
+                    onPressed: () => ctrl.goLive(totalSamples: data.totalSamples, oldestSample: data.oldestSample),
                     icon: const Icon(Icons.fast_forward, size: 16),
                     label: const Text('LIVE'),
                     style: FilledButton.styleFrom(
