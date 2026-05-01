@@ -90,7 +90,7 @@ class GraphController extends ChangeNotifier {
 
   /// Set a specific visible window (exits live mode).
   void setWindow(int start, int end) {
-    _viewStart = math.max(0, start);
+    _viewStart = start;
     _viewEnd = end;
     _isLive = false;
     _liveSpan = null;
@@ -98,36 +98,36 @@ class GraphController extends ChangeNotifier {
   }
 
   /// Get the effective visible range given total data size.
-  (int start, int end) effectiveRange(int totalSamples, {int? bufferCapacity}) {
-    final effectiveEnd = math.max(totalSamples, minLiveSpan);
+  (int start, int end) effectiveRange(int totalSamples, int oldestSample, {int? bufferCapacity}) {
     if (_isLive || _viewEnd == null) {
-      // Show `_liveSpan` if it's set, otherwise show everything we have.
-      int span = _liveSpan ?? math.max(minLiveSpan, totalSamples);
+      int maxSpan = math.max(minLiveSpan, totalSamples - oldestSample);
+      int span = _liveSpan ?? maxSpan;
       if (bufferCapacity != null && span > bufferCapacity) {
         span = bufferCapacity;
       }
-      return (math.max(0, effectiveEnd - span), effectiveEnd);
+      return (totalSamples - span, totalSamples);
     }
-    return (_viewStart, _viewEnd!.clamp(_viewStart + 1, effectiveEnd));
+    return (_viewStart, _viewEnd!.clamp(_viewStart + 1, totalSamples));
   }
 
   /// Pan by a delta in samples (negative = left, positive = right).
   void pan(int deltaSamples, int totalSamples, int oldestSample, int bufferCapacity) {
-    final effectiveEnd = math.max(totalSamples, minLiveSpan);
-    final (s, e) = effectiveRange(totalSamples, bufferCapacity: bufferCapacity);
+    final (s, e) = effectiveRange(totalSamples, oldestSample, bufferCapacity: bufferCapacity);
     final span = e - s;
     int newStart = s + deltaSamples;
     int newEnd = newStart + span;
 
+    final minStart = math.min(oldestSample, totalSamples - span);
+
     // Clamp to valid range
-    if (newStart < oldestSample) {
-      newStart = oldestSample;
+    if (newStart < minStart) {
+      newStart = minStart;
       newEnd = newStart + span;
     }
-    if (newEnd >= effectiveEnd) {
+    if (newEnd >= totalSamples) {
       // Snap to live if we pan to the right edge
-      _liveSpan = span < effectiveEnd ? span : null;
-      _viewStart = math.max(oldestSample, effectiveEnd - span);
+      _liveSpan = span;
+      _viewStart = totalSamples - span;
       _viewEnd = null;
       _isLive = true;
       notifyListeners();
@@ -143,27 +143,29 @@ class GraphController extends ChangeNotifier {
 
   /// Zoom by a factor around a focal point (0.0 = left edge, 1.0 = right edge).
   void zoom(double factor, double focalFraction, int totalSamples, int oldestSample, int bufferCapacity) {
-    final effectiveEnd = math.max(totalSamples, minLiveSpan);
-    final (s, e) = effectiveRange(totalSamples, bufferCapacity: bufferCapacity);
+    final (s, e) = effectiveRange(totalSamples, oldestSample, bufferCapacity: bufferCapacity);
     final span = e - s;
+    final maxSpan = math.max(totalSamples - oldestSample, minLiveSpan);
     final newSpan = (span / factor).round().clamp(
       // Minimum ~50 samples visible (50ms at 1kHz)
       50,
-      effectiveEnd,
+      maxSpan,
     );
 
     final focal = s + (focalFraction * span).round();
     int newStart = focal - (focalFraction * newSpan).round();
     int newEnd = newStart + newSpan;
 
-    if (newStart < oldestSample) {
-      newStart = oldestSample;
+    final minStart = math.min(oldestSample, totalSamples - newSpan);
+
+    if (newStart < minStart) {
+      newStart = minStart;
       newEnd = newStart + newSpan;
     }
-    if (newEnd >= effectiveEnd) {
+    if (newEnd >= totalSamples) {
       // At the right edge -- enter live mode with this span
-      _liveSpan = newSpan < effectiveEnd ? newSpan : null;
-      _viewStart = math.max(oldestSample, effectiveEnd - newSpan);
+      _liveSpan = newSpan;
+      _viewStart = totalSamples - newSpan;
       _viewEnd = null;
       _isLive = true;
       notifyListeners();
@@ -241,22 +243,27 @@ class Minimap extends StatelessWidget {
       0.0,
       1.0,
     );
-    final effectiveEnd = math.max(totalSamples, graphCtrl.minLiveSpan);
-    final (s, e) = graphCtrl.effectiveRange(totalSamples, bufferCapacity: bufferCapacity);
+    final maxSpan = math.max(totalSamples - oldestSample, graphCtrl.minLiveSpan);
+    final mapStart = totalSamples - maxSpan;
+    
+    final (s, e) = graphCtrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: bufferCapacity);
     final span = e - s;
-    final center = oldestSample + (frac * (effectiveEnd - oldestSample)).round();
+    final center = mapStart + (frac * maxSpan).round();
     int newStart = center - span ~/ 2;
     int newEnd = newStart + span;
-    if (newStart < oldestSample) {
-      newStart = oldestSample;
+
+    final minStart = math.min(oldestSample, totalSamples - span);
+
+    if (newStart < minStart) {
+      newStart = minStart;
       newEnd = newStart + span;
     }
-    if (newEnd >= effectiveEnd) {
-      newEnd = effectiveEnd;
+    if (newEnd >= totalSamples) {
+      newEnd = totalSamples;
       newStart = newEnd - span;
-      if (newStart < oldestSample) newStart = oldestSample;
+      if (newStart < minStart) newStart = minStart;
       graphCtrl.setWindow(newStart, newEnd);
-      if (graphCtrl.isLive || newEnd == effectiveEnd) {
+      if (graphCtrl.isLive || newEnd == totalSamples) {
         graphCtrl.goLive();
       }
       return;
@@ -272,23 +279,26 @@ class Minimap extends StatelessWidget {
     int bufferCapacity,
   ) {
     if (totalSamples == 0 || graphWidth <= 0) return;
-    final effectiveEnd = math.max(totalSamples, graphCtrl.minLiveSpan);
-    final samplesPerPixel = (effectiveEnd - oldestSample) / graphWidth;
+    final maxSpan = math.max(totalSamples - oldestSample, graphCtrl.minLiveSpan);
+    final samplesPerPixel = maxSpan / graphWidth;
     final deltaSamples = (d.delta.dx * samplesPerPixel).round();
-    final (s, e) = graphCtrl.effectiveRange(totalSamples, bufferCapacity: bufferCapacity);
+    final (s, e) = graphCtrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: bufferCapacity);
     final span = e - s;
     int newStart = s + deltaSamples;
     int newEnd = newStart + span;
-    if (newStart < oldestSample) {
-      newStart = oldestSample;
+    
+    final minStart = math.min(oldestSample, totalSamples - span);
+
+    if (newStart < minStart) {
+      newStart = minStart;
       newEnd = newStart + span;
     }
-    if (newEnd >= effectiveEnd) {
-      newEnd = effectiveEnd;
+    if (newEnd >= totalSamples) {
+      newEnd = totalSamples;
       newStart = newEnd - span;
-      if (newStart < oldestSample) newStart = oldestSample;
+      if (newStart < minStart) newStart = minStart;
       graphCtrl.setWindow(newStart, newEnd);
-      if (graphCtrl.isLive || newEnd == effectiveEnd) {
+      if (graphCtrl.isLive || newEnd == totalSamples) {
         graphCtrl.goLive();
       }
       return;
@@ -363,8 +373,8 @@ class _MinimapPainter extends CustomPainter {
     if (totalSamples == 0) return;
 
     final oldestSample = _data.oldestSample;
-    final effectiveEnd = math.max(totalSamples, _ctrl.minLiveSpan);
-    final mapSpan = effectiveEnd - oldestSample;
+    final mapSpan = math.max(totalSamples - oldestSample, _ctrl.minLiveSpan);
+    final mapStart = totalSamples - mapSpan;
 
     // Compute global min/max (raw, tare-subtracted) for full data
     double rawMax = 10000;
@@ -399,24 +409,25 @@ class _MinimapPainter extends CustomPainter {
       int envIdx = 0;
 
       for (int px = 0; px < gwInt; px++) {
-        final int sStart = oldestSample + px * mapSpan ~/ gwInt;
-        final int sEnd = oldestSample + (px + 1) * mapSpan ~/ gwInt;
+        final int sStart = mapStart + px * mapSpan ~/ gwInt;
+        final int sEnd = mapStart + (px + 1) * mapSpan ~/ gwInt;
+        final int drawStart = math.max(sStart, oldestSample);
         final int drawEnd = math.min(sEnd, totalSamples);
         
-        if (sStart >= drawEnd) continue;
+        if (drawStart >= drawEnd) continue;
 
         double total = 0;
         double minRaw = double.infinity;
         double maxRaw = double.negativeInfinity;
 
-        for (int j = sStart; j < drawEnd; j++) {
+        for (int j = drawStart; j < drawEnd; j++) {
           final val = line[j % bufferCapacity].toDouble();
           total += val;
           if (val < minRaw) minRaw = val;
           if (val > maxRaw) maxRaw = val;
         }
 
-        final avgRaw = total / (drawEnd - sStart);
+        final avgRaw = total / (drawEnd - drawStart);
 
         final avgTared = avgRaw - tare;
         final minTared = minRaw - tare;
@@ -465,9 +476,9 @@ class _MinimapPainter extends CustomPainter {
     }
 
     // Viewport highlight
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, bufferCapacity: _data.bufferCapacity);
-    final double x1 = (viewStart - oldestSample) * gw / mapSpan;
-    final double x2 = (viewEnd - oldestSample) * gw / mapSpan;
+    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: _data.bufferCapacity);
+    final double x1 = (viewStart - mapStart) * gw / mapSpan;
+    final double x2 = (viewEnd - mapStart) * gw / mapSpan;
 
     // Dim areas outside viewport
     final dimPaint = Paint()..color = Colors.black.withAlpha(60);
@@ -522,7 +533,7 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
     final total = widget.data.totalSamples;
     if (total == 0) return;
 
-    final (s, e) = widget.ctrl.effectiveRange(total, bufferCapacity: widget.data.bufferCapacity);
+    final (s, e) = widget.ctrl.effectiveRange(total, widget.data.oldestSample, bufferCapacity: widget.data.bufferCapacity);
     _panStartSample = s;
     _panEndSample = e;
     _panStartX = details.localFocalPoint.dx;
@@ -538,13 +549,13 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
     final origEnd = _panEndSample!;
     final origSpan = origEnd - origStart;
     final oldestSample = widget.data.oldestSample;
-    final effectiveEnd = math.max(total, widget.ctrl.minLiveSpan);
+    final maxSpan = math.max(total - oldestSample, widget.ctrl.minLiveSpan);
 
     if (details.scale != 1.0 && _scaleStartSpan != null) {
       // Pinch zoom
       final newSpan = (_scaleStartSpan! / details.scale).round().clamp(
         50,
-        effectiveEnd,
+        maxSpan,
       );
 
       final focalFrac = (_pinchFocalX! / graphWidth).clamp(0.0, 1.0);
@@ -553,17 +564,19 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
       int newStart = focalSample - (focalFrac * newSpan).round();
       int newEnd = (newStart + newSpan).round();
 
-      if (newStart < oldestSample) {
-        newStart = oldestSample;
+      final minStart = math.min(oldestSample, total - newSpan);
+
+      if (newStart < minStart) {
+        newStart = minStart;
         newEnd = newStart + newSpan;
       }
-      if (newEnd >= effectiveEnd) {
-        newEnd = effectiveEnd;
-        newStart = math.max(oldestSample, effectiveEnd - newSpan);
+      if (newEnd >= total) {
+        newEnd = total;
+        newStart = math.max(minStart, total - newSpan);
       }
 
       widget.ctrl.setWindow(newStart, newEnd);
-      if (newEnd >= effectiveEnd) widget.ctrl.goLive();
+      if (newEnd >= total) widget.ctrl.goLive();
     } else {
       // Pan
       final dx = details.localFocalPoint.dx - _panStartX!;
@@ -573,13 +586,15 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
       int newStart = origStart + deltaSamples;
       int newEnd = (newStart + origSpan).round();
 
-      if (newStart < oldestSample) {
-        newStart = oldestSample;
+      final minStart = math.min(oldestSample, total - origSpan);
+
+      if (newStart < minStart) {
+        newStart = minStart;
         newEnd = newStart + origSpan;
       }
-      if (newEnd >= effectiveEnd) {
-        newEnd = effectiveEnd;
-        newStart = math.max(oldestSample, effectiveEnd - origSpan);
+      if (newEnd >= total) {
+        newEnd = total;
+        newStart = math.max(minStart, total - origSpan);
         widget.ctrl.setWindow(newStart, newEnd);
         widget.ctrl.goLive();
         return;
@@ -788,6 +803,7 @@ _ScaleConfigItem _findScale(double val, List<_ScaleConfigItem> list) {
 }
 
 String _fmtTime(int sec) {
+  if (sec < 0) return '-' + _fmtTime(-sec);
   if (sec < 60) return sec.toString();
   final s = (sec % 60 < 10) ? '0' : '';
   return '${sec ~/ 60}:$s${sec % 60}';
@@ -795,6 +811,7 @@ String _fmtTime(int sec) {
 
 /// Format fractional seconds for sub-second X labels.
 String _fmtTimeFrac(double sec) {
+  if (sec < 0) return '-' + _fmtTimeFrac(-sec);
   if (sec >= 60) {
     final m = sec ~/ 60;
     final s = sec - m * 60;
@@ -908,7 +925,7 @@ class ForceGraphPainter extends CustomPainter {
     final activeIndices = _settings.activeChannelIndices;
     final oldestSample = _data.oldestSample;
     final totalSamples = _data.totalSamples;
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, bufferCapacity: _data.bufferCapacity);
+    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: _data.bufferCapacity);
     final viewSamples = viewEnd - viewStart;
     if (viewSamples <= 0) return;
 
@@ -987,11 +1004,11 @@ class ForceGraphPainter extends CustomPainter {
       }
     } else {
       final xC = _findScale(xSpanSec, _xScaleConfig);
-      final double startSec = (viewStart - oldestSample) / _data.sampleRate;
+      final double startSec = viewStart / _data.sampleRate;
 
       // Major grid + labels
       final int firstTick = ((startSec / xC.delta).ceil() * xC.delta).toInt();
-      final double endSec = (viewEnd - oldestSample) / _data.sampleRate;
+      final double endSec = viewEnd / _data.sampleRate;
       for (int sec = firstTick; sec.toDouble() < endSec; sec += xC.delta) {
         final double xPos =
             (sec - startSec) * _data.sampleRate * graphSz.width / viewSamples;
@@ -1210,7 +1227,7 @@ class DerivativeGraphPainter extends CustomPainter {
     final activeIndices = _settings.activeChannelIndices;
     final oldestSample = _data.oldestSample;
     final totalSamples = _data.totalSamples;
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, bufferCapacity: _data.bufferCapacity);
+    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: _data.bufferCapacity);
     final viewSamples = viewEnd - viewStart;
     if (viewSamples < 2) return;
 
@@ -1258,8 +1275,8 @@ class DerivativeGraphPainter extends CustomPainter {
 
     // X axis labels
     final double xSpanSec = viewSamples / _data.sampleRate;
-    final double startSec = (viewStart - oldestSample) / _data.sampleRate;
-    final double endSec = (viewEnd - oldestSample) / _data.sampleRate;
+    final double startSec = viewStart / _data.sampleRate;
+    final double endSec = viewEnd / _data.sampleRate;
 
     if (xSpanSec < 1.0) {
       final stepMs = xSpanSec * 1000 / 5;
