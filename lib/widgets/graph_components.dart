@@ -73,25 +73,29 @@ class GraphController extends ChangeNotifier {
   /// If not provided, it intelligently decides between full view or default scrolling window.
   void goLive({int? span, int? totalSamples, int? oldestSample}) {
     if (span != null) {
+      // Explicitly lock to a span (used by zoom out when it hits max)
       _liveSpan = span;
-    } else if (totalSamples != null && oldestSample != null) {
+    } else if (totalSamples != null && oldestSample != null && _viewEnd != null) {
+      final currentSpan = _viewEnd! - _viewStart;
       final availableData = totalSamples - oldestSample;
-      if (_viewEnd == null) {
-         // Already live, don't change the span
-      } else if (_viewEnd! - _viewStart >= availableData) {
+      
+      if (currentSpan >= availableData) {
         // User zoomed out to see all available data
-        if (availableData > minLiveSpan) {
-          // If we have more than the minimum span, enter auto-expanding full view
+        if (currentSpan > minLiveSpan) {
+          // If they zoomed out beyond the minLiveSpan (or available data is huge),
+          // they want to see everything auto-expand.
           _liveSpan = null;
         } else {
-          // Otherwise, lock to the minimum span so it scrolls once it hits that size
+          // They zoomed out, but we don't have much data yet.
+          // Lock to minimum span so it cleanly starts scrolling once it hits 20s.
           _liveSpan = minLiveSpan;
         }
       } else {
-        // User is zoomed in, lock to current span
-        _liveSpan = _viewEnd! - _viewStart;
+        // User is zoomed in to a specific window, lock to it
+        _liveSpan = currentSpan;
       }
     } else if (_viewEnd != null) {
+      // Fallback
       _liveSpan = _viewEnd! - _viewStart;
     }
 
@@ -172,11 +176,20 @@ class GraphController extends ChangeNotifier {
       newStart = minStart;
       newEnd = newStart + newSpan;
     }
-    if (newEnd >= totalSamples) {
-      // At the right edge -- enter live mode with this span
-      _viewStart = newStart;
-      _viewEnd = newEnd;
-      goLive(totalSamples: totalSamples, oldestSample: oldestSample);
+    
+    // Tolerance for staying live: if we were live, and the new right edge is within 5% of totalSamples
+    final tolerance = (newSpan * 0.05).round();
+    if (newEnd >= totalSamples || (_isLive && (totalSamples - newEnd) <= tolerance)) {
+      // At the right edge (or close enough while live) -- enter/stay live
+      _viewStart = totalSamples - newSpan; // Force right-align
+      _viewEnd = totalSamples;
+      // If we hit the absolute max span, we explicitly pass the span to goLive
+      // so it knows we hit the ceiling and might need to go full-screen.
+      if (newSpan >= maxSpan) {
+         goLive(span: null, totalSamples: totalSamples, oldestSample: oldestSample); // Re-evaluate full-screen
+      } else {
+         goLive(span: newSpan, totalSamples: totalSamples, oldestSample: oldestSample);
+      }
       return;
     }
 
@@ -574,13 +587,23 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
         newStart = minStart;
         newEnd = newStart + newSpan;
       }
-      if (newEnd >= total) {
+      
+      final tolerance = (newSpan * 0.05).round();
+      if (newEnd >= total || (widget.ctrl.isLive && (total - newEnd) <= tolerance)) {
         newEnd = total;
-        newStart = math.max(minStart, total - newSpan);
+        newStart = total - newSpan;
+        if (newStart < minStart) newStart = minStart;
+        widget.ctrl.setWindow(newStart, newEnd);
+        
+        if (newSpan >= maxSpan) {
+           widget.ctrl.goLive(totalSamples: total, oldestSample: oldestSample);
+        } else {
+           widget.ctrl.goLive(span: newSpan, totalSamples: total, oldestSample: oldestSample);
+        }
+        return;
       }
 
       widget.ctrl.setWindow(newStart, newEnd);
-      if (newEnd >= total) widget.ctrl.goLive(totalSamples: total, oldestSample: oldestSample);
     } else {
       // Pan
       final dx = details.localFocalPoint.dx - _panStartX!;
