@@ -197,6 +197,12 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
+  Future<void> requestConnectionPriority(
+    String deviceId,
+    BleConnectionPriority priority,
+  ) async {}
+
+  @override
   Future<bool> isPaired(String deviceId) async {
     return true;
   }
