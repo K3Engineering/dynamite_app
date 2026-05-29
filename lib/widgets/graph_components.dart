@@ -423,10 +423,43 @@ class _MinimapPainter extends CustomPainter {
       final tare = _data.getChannelTare(ch);
       final bufferCapacity = _data.bufferCapacity;
 
-      final Float32List avgPts = Float32List(gwInt * 2);
-      final Float32List envPts = Float32List(gwInt * 8);
+      // Safe stack allocation size for Emscripten/Skwasm. 
+      // 4096 floats = 16KB per chunk.
+      const int maxEnvFloats = 4096;
+      const int maxAvgFloats = 4096;
+
+      final Float32List avgPts = Float32List(maxAvgFloats);
+      final Float32List envPts = Float32List(maxEnvFloats);
       int avgIdx = 0;
       int envIdx = 0;
+      final chColor = _colors[ch % _colors.length];
+
+      void flushEnv() {
+        if (envIdx > 0) {
+          final vertices = ui.Vertices.raw(
+            ui.VertexMode.triangleStrip,
+            Float32List.sublistView(envPts, 0, envIdx),
+          );
+          pen.color = chColor.withAlpha(60);
+          pen.style = PaintingStyle.fill;
+          canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
+          vertices.dispose();
+          envIdx = 0;
+        }
+      }
+
+      void flushAvg() {
+        if (avgIdx > 0) {
+          pen.color = chColor.withAlpha(180);
+          pen.style = PaintingStyle.stroke;
+          canvas.drawRawPoints(
+            ui.PointMode.polygon,
+            Float32List.sublistView(avgPts, 0, avgIdx),
+            pen..strokeWidth = 1.0,
+          );
+          avgIdx = 0;
+        }
+      }
 
       for (int px = 0; px < gwInt; px++) {
         final int sStart = mapStart + px * mapSpan ~/ gwInt;
@@ -470,29 +503,15 @@ class _MinimapPainter extends CustomPainter {
         envPts[envIdx++] = maxY;
         envPts[envIdx++] = xPos + 1.0;
         envPts[envIdx++] = minY;
+
+        // Flush chunks if we are getting close to the array limits
+        if (envIdx + 8 > maxEnvFloats) flushEnv();
+        if (avgIdx + 2 > maxAvgFloats) flushAvg();
       }
 
-      final chColor = _colors[ch % _colors.length];
-
-      if (envIdx > 0) {
-        final vertices = ui.Vertices.raw(
-          ui.VertexMode.triangleStrip,
-          Float32List.sublistView(envPts, 0, envIdx),
-        );
-        pen.color = chColor.withAlpha(40);
-        pen.style = PaintingStyle.fill;
-        canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
-      }
-
-      if (avgIdx > 0) {
-        pen.color = chColor.withAlpha(180);
-        pen.style = PaintingStyle.stroke;
-        canvas.drawRawPoints(
-          ui.PointMode.polygon,
-          Float32List.sublistView(avgPts, 0, avgIdx),
-          pen..strokeWidth = 1.0,
-        );
-      }
+      // Flush remaining data
+      flushEnv();
+      flushAvg();
     }
 
     // Viewport highlight
@@ -1134,10 +1153,40 @@ class ForceGraphPainter extends CustomPainter {
       final bufferCap = _data.bufferCapacity;
 
       final int graphW = graphSz.width.toInt();
-      final Float32List avgPts = Float32List(graphW * 2);
-      final Float32List envPts = Float32List(graphW * 8);
+      const int maxEnvFloats = 4096;
+      const int maxAvgFloats = 4096;
+      final Float32List avgPts = Float32List(maxAvgFloats);
+      final Float32List envPts = Float32List(maxEnvFloats);
       int avgIdx = 0;
       int envIdx = 0;
+      final chColor = getChannelColor(ch);
+
+      void flushEnv() {
+        if (envIdx > 0) {
+          final vertices = ui.Vertices.raw(
+            ui.VertexMode.triangleStrip,
+            Float32List.sublistView(envPts, 0, envIdx),
+          );
+          pen.color = chColor.withAlpha(60);
+          pen.style = PaintingStyle.fill;
+          canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
+          vertices.dispose();
+          envIdx = 0;
+        }
+      }
+
+      void flushAvg() {
+        if (avgIdx > 0) {
+          pen.color = chColor;
+          pen.style = PaintingStyle.stroke;
+          canvas.drawRawPoints(
+            ui.PointMode.polygon,
+            Float32List.sublistView(avgPts, 0, avgIdx),
+            pen..strokeWidth = 1.5,
+          );
+          avgIdx = 0;
+        }
+      }
 
       for (int i = 0; i < graphW; ++i) {
         // Map pixel i to sample range
@@ -1192,29 +1241,13 @@ class ForceGraphPainter extends CustomPainter {
         envPts[envIdx++] = maxY;
         envPts[envIdx++] = xPos + 1.0;
         envPts[envIdx++] = minY;
+
+        if (envIdx + 8 > maxEnvFloats) flushEnv();
+        if (avgIdx + 2 > maxAvgFloats) flushAvg();
       }
 
-      final chColor = getChannelColor(ch);
-
-      if (envIdx > 0) {
-        final vertices = ui.Vertices.raw(
-          ui.VertexMode.triangleStrip,
-          Float32List.sublistView(envPts, 0, envIdx),
-        );
-        pen.color = chColor.withAlpha(60);
-        pen.style = PaintingStyle.fill;
-        canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
-      }
-
-      if (avgIdx > 0) {
-        pen.color = chColor;
-        pen.style = PaintingStyle.stroke;
-        canvas.drawRawPoints(
-          ui.PointMode.polygon,
-          Float32List.sublistView(avgPts, 0, avgIdx),
-          pen..strokeWidth = 1.5,
-        );
-      }
+      flushEnv();
+      flushAvg();
     }
   }
 
@@ -1399,10 +1432,40 @@ class DerivativeGraphPainter extends CustomPainter {
       final bufferCap = _data.bufferCapacity;
 
       final int graphW = graphSz.width.toInt();
-      final Float32List avgPts = Float32List(graphW * 2);
-      final Float32List envPts = Float32List(graphW * 8);
+      const int maxEnvFloats = 4096;
+      const int maxAvgFloats = 4096;
+      final Float32List avgPts = Float32List(maxAvgFloats);
+      final Float32List envPts = Float32List(maxEnvFloats);
       int avgIdx = 0;
       int envIdx = 0;
+      final chColor = getChannelColor(ch);
+
+      void flushEnv() {
+        if (envIdx > 0) {
+          final vertices = ui.Vertices.raw(
+            ui.VertexMode.triangleStrip,
+            Float32List.sublistView(envPts, 0, envIdx),
+          );
+          pen.color = chColor.withAlpha(60);
+          pen.style = PaintingStyle.fill;
+          canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
+          vertices.dispose();
+          envIdx = 0;
+        }
+      }
+
+      void flushAvg() {
+        if (avgIdx > 0) {
+          pen.color = chColor;
+          pen.style = PaintingStyle.stroke;
+          canvas.drawRawPoints(
+            ui.PointMode.polygon,
+            Float32List.sublistView(avgPts, 0, avgIdx),
+            pen..strokeWidth = 1.5,
+          );
+          avgIdx = 0;
+        }
+      }
 
       for (int px = 0; px < graphW; ++px) {
         final int sStart = math.max(
@@ -1463,29 +1526,13 @@ class DerivativeGraphPainter extends CustomPainter {
         envPts[envIdx++] = maxY;
         envPts[envIdx++] = xPos + 1.0;
         envPts[envIdx++] = minY;
+
+        if (envIdx + 8 > maxEnvFloats) flushEnv();
+        if (avgIdx + 2 > maxAvgFloats) flushAvg();
       }
 
-      final chColor = getChannelColor(ch);
-
-      if (envIdx > 0) {
-        final vertices = ui.Vertices.raw(
-          ui.VertexMode.triangleStrip,
-          Float32List.sublistView(envPts, 0, envIdx),
-        );
-        pen.color = chColor.withAlpha(60);
-        pen.style = PaintingStyle.fill;
-        canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
-      }
-
-      if (avgIdx > 0) {
-        pen.color = chColor;
-        pen.style = PaintingStyle.stroke;
-        canvas.drawRawPoints(
-          ui.PointMode.polygon,
-          Float32List.sublistView(avgPts, 0, avgIdx),
-          pen..strokeWidth = 1.5,
-        );
-      }
+      flushEnv();
+      flushAvg();
     }
   }
 
