@@ -52,30 +52,26 @@ class _LiveMinimapDataSource extends ChangeNotifier implements GraphDataSource {
 
   @override
   List<int> getChannelData(int channelIndex) {
-    final lineIdx = DataHub.chanToLine(channelIndex);
-    if (lineIdx < 0) return [];
-    return _hub.rawData[lineIdx];
+    if (channelIndex < 0 || channelIndex >= DataHub.numAdcChannels) return [];
+    return _hub.rawData[channelIndex];
   }
 
   @override
   double getChannelMin(int channelIndex) {
-    final lineIdx = DataHub.chanToLine(channelIndex);
-    if (lineIdx < 0) return 0.0;
-    return _hub.rawMin[lineIdx].toDouble();
+    if (channelIndex < 0 || channelIndex >= DataHub.numAdcChannels) return 0.0;
+    return _hub.rawMin[channelIndex].toDouble();
   }
 
   @override
   double getChannelMax(int channelIndex) {
-    final lineIdx = DataHub.chanToLine(channelIndex);
-    if (lineIdx < 0) return 0.0;
-    return _hub.rawMax[lineIdx].toDouble();
+    if (channelIndex < 0 || channelIndex >= DataHub.numAdcChannels) return 0.0;
+    return _hub.rawMax[channelIndex].toDouble();
   }
 
   @override
   double getChannelTare(int channelIndex) {
-    final lineIdx = DataHub.chanToLine(channelIndex);
-    if (lineIdx < 0) return 0.0;
-    return _hub.tare[lineIdx];
+    if (channelIndex < 0 || channelIndex >= DataHub.numAdcChannels) return 0.0;
+    return _hub.tare[channelIndex];
   }
 }
 

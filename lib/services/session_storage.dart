@@ -52,7 +52,7 @@ class SessionStorage {
     // Compute peak over the recorded slice
     double peakRaw = 0;
     int peakChannel = 0;
-    for (int line = 0; line < DataHub.numGraphLines; line++) {
+    for (int line = 0; line < DataHub.numAdcChannels; line++) {
       for (int s = actualStartIdx; s < endIdx; s++) {
         final val = (dataHub.rawData[line][s % DataHub.maxDataSz] - dataHub.tare[line]);
         if (val > peakRaw) {
@@ -104,7 +104,7 @@ class SessionStorage {
     required int startIdx,
     required int sampleCount,
   }) {
-    const numLines = DataHub.numGraphLines;
+    const numLines = DataHub.numAdcChannels;
 
     // Build the binary buffer
     final totalBytes = _headerSize + sampleCount * numLines * 4;

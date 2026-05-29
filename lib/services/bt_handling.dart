@@ -238,21 +238,22 @@ class BluetoothHandling extends ChangeNotifier {
 }
 
 class DataHub extends ChangeNotifier {
-  static const int numGraphLines = 2;
-  static const int numAdcChannels = 4;
+  /// Number of ADC channels the device streams. This is also the number of
+  /// lines stored and displayed: channel index == storage index == display index.
+  static const int numAdcChannels = nwNumAdcChan;
   static const int _tareWindow = 1024;
   static const int samplesPerSec = 1000;
   static const int maxDataSz = samplesPerSec * 60 * 10;
-  final Float64List tare = Float64List(numGraphLines);
-  final Float64List _runningTotal = Float64List(numGraphLines);
-  final Int32List rawMax = Int32List(numGraphLines);
-  final Int32List rawMin = Int32List(numGraphLines);
+  final Float64List tare = Float64List(numAdcChannels);
+  final Float64List _runningTotal = Float64List(numAdcChannels);
+  final Int32List rawMax = Int32List(numAdcChannels);
+  final Int32List rawMin = Int32List(numAdcChannels);
 
-  /// Latest raw value per graph line (for live stats display).
-  final Int32List _currentRaw = Int32List(numGraphLines);
+  /// Latest raw value per channel (for live stats display).
+  final Int32List _currentRaw = Int32List(numAdcChannels);
 
   final List<Int32List> rawData = List.generate(
-    DataHub.numGraphLines,
+    DataHub.numAdcChannels,
     (_) => Int32List(maxDataSz),
     growable: false,
   );
@@ -270,7 +271,7 @@ class DataHub extends ChangeNotifier {
     _tareCount = _tareWindow;
     totalSamples = 0;
     _recordingStartIdx = 0;
-    for (int i = 0; i < numGraphLines; ++i) {
+    for (int i = 0; i < numAdcChannels; ++i) {
       rawMax[i] = 0;
       rawMin[i] = 0;
       tare[i] = 0;
@@ -284,101 +285,90 @@ class DataHub extends ChangeNotifier {
   /// Request a new tare operation (zeros readings using next N samples).
   void requestTare() {
     _tareCount = _tareWindow;
-    for (int i = 0; i < numGraphLines; ++i) {
+    for (int i = 0; i < numAdcChannels; ++i) {
       tare[i] = 0;
       _runningTotal[i] = 0;
     }
   }
 
-  /// Map ADC channel index (0-3) to graph line index (0-1).
-  /// Returns -1 if channel has no graph line.
-  static int chanToLine(int chan) {
-    if (chan == 1) return 0;
-    if (chan == 2) return 1;
-    return -1;
-  }
-
   /// Get current force for a given ADC channel in the specified unit.
   double currentForce(int adcChannel, ForceUnit unit) {
-    final lineIdx = chanToLine(adcChannel);
-    if (lineIdx < 0) return 0;
-    final rawTared = _currentRaw[lineIdx] - tare[lineIdx];
+    if (adcChannel < 0 || adcChannel >= numAdcChannels) return 0;
+    final rawTared = _currentRaw[adcChannel] - tare[adcChannel];
     return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
   /// Get peak force for a given ADC channel in the specified unit.
   double peakForce(int adcChannel, ForceUnit unit) {
-    final lineIdx = chanToLine(adcChannel);
-    if (lineIdx < 0) return 0;
-    final rawTared = rawMax[lineIdx] - tare[lineIdx];
+    if (adcChannel < 0 || adcChannel >= numAdcChannels) return 0;
+    final rawTared = rawMax[adcChannel] - tare[adcChannel];
     return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
   /// Get minimum (most negative) force for a given ADC channel in the specified unit.
   double minForce(int adcChannel, ForceUnit unit) {
-    final lineIdx = chanToLine(adcChannel);
-    if (lineIdx < 0) return 0;
-    final rawTared = rawMin[lineIdx] - tare[lineIdx];
+    if (adcChannel < 0 || adcChannel >= numAdcChannels) return 0;
+    final rawTared = rawMin[adcChannel] - tare[adcChannel];
     return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
   /// Get the instantaneous derivative (first-difference) for a channel in unit/s.
   double currentDerivative(int adcChannel, ForceUnit unit) {
-    final lineIdx = chanToLine(adcChannel);
-    if (lineIdx < 0 || totalSamples < 2) return 0;
-    
-    // Don't calculate derivative if we don't have recent data
-    if (totalSamples == 0) return 0;
-    
-    final diff = rawData[lineIdx][(totalSamples - 1) % maxDataSz] - rawData[lineIdx][(totalSamples - 2) % maxDataSz];
+    if (adcChannel < 0 || adcChannel >= numAdcChannels || totalSamples < 2) {
+      return 0;
+    }
+
+    final diff = rawData[adcChannel][(totalSamples - 1) % maxDataSz] - rawData[adcChannel][(totalSamples - 2) % maxDataSz];
     // Derivative is raw diff per sample * samplesPerSec to get raw per sec
     return unit.fromRaw(diff.toDouble() * samplesPerSec, deviceCalibration.slope);
   }
 
   /// Get the AC RMS for a given ADC channel in the specified unit over the last 1 second window.
   double acRmsForce(int adcChannel, ForceUnit unit) {
-    final lineIdx = chanToLine(adcChannel);
-    if (lineIdx < 0 || totalSamples == 0) return 0;
-    
+    if (adcChannel < 0 || adcChannel >= numAdcChannels || totalSamples == 0) {
+      return 0;
+    }
+
     final int count = math.min(samplesPerSec, totalSamples);
-    final lineData = rawData[lineIdx];
+    final lineData = rawData[adcChannel];
     final startIdx = totalSamples - count;
-    
+
     double sum = 0;
     for (int i = startIdx; i < totalSamples; i++) {
       sum += lineData[i % maxDataSz];
     }
     final mean = sum / count;
-    
+
     double sumSq = 0;
     for (int i = startIdx; i < totalSamples; i++) {
       final diff = lineData[i % maxDataSz] - mean;
       sumSq += diff * diff;
     }
     final rmsRaw = math.sqrt(sumSq / count);
-    
+
     return unit.fromRaw(rmsRaw, deviceCalibration.slope);
   }
 
   void injectTestData(int samples) {
     int added = 0;
     for (int i = 0; i < samples; i++) {
-      // Generate some dummy sine wave data
-      // Channel 1 (line 0): Sine wave
-      final val0 =
-          (math.sin(totalSamples * 2 * math.pi / samplesPerSec * 0.5) * 50000 + 50000)
-              .toInt();
-      rawData[0][totalSamples % maxDataSz] = val0;
-      _currentRaw[0] = val0;
-      _addData(val0, 0);
+      final double phase = totalSamples * 2 * math.pi / samplesPerSec * 0.5;
 
-      // Channel 2 (line 1): Cosine wave (or phase shifted)
-      final val1 =
-          (math.cos(totalSamples * 2 * math.pi / samplesPerSec * 0.5) * 30000 + 30000)
-              .toInt();
-      rawData[1][totalSamples % maxDataSz] = val1;
-      _currentRaw[1] = val1;
-      _addData(val1, 1);
+      // Generate dummy waveforms for all channels so every line is exercised.
+      // ch0: sine, ch1: cosine, ch2: half-amplitude sine, ch3: phase-shifted sine
+      final values = <int>[
+        (math.sin(phase) * 50000 + 50000).toInt(),
+        (math.cos(phase) * 30000 + 30000).toInt(),
+        (math.sin(phase) * 25000 + 25000).toInt(),
+        (math.sin(phase + math.pi / 4) * 40000 + 40000).toInt(),
+      ];
+
+      for (int ch = 0; ch < numAdcChannels; ch++) {
+        final val = values[ch];
+        rawData[ch][totalSamples % maxDataSz] = val;
+        _currentRaw[ch] = val;
+        _addData(val, ch);
+      }
 
       totalSamples++;
       added++;
@@ -448,14 +438,14 @@ class DataHub extends ChangeNotifier {
                     data[baseIndex + 2] << 16)
                 .toSigned(24);
 
-        final int idx = chanToLine(i);
-        if (idx >= 0) {
-          _currentRaw[idx] = res;
+        // Channel index == storage line index.
+        if (i < numAdcChannels) {
+          _currentRaw[i] = res;
           if (taring) {
-            _addTare(res, idx);
+            _addTare(res, i);
           } else {
             // Always buffer data for live display.
-            _addData(res, idx);
+            _addData(res, i);
           }
         }
       }
