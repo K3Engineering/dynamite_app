@@ -49,22 +49,19 @@ enum ForceUnit {
     return calibrationSlope * _kgfMultiplier;
   }
 
-  /// Format a value (already in this unit) for display.
-  String format(double value) {
-    /// a minus sign doesn't need to be added explicitly
+  /// Format a [value] (already in this unit) with an explicit sign and a
+  /// trailing [suffix] (e.g. the unit symbol, optionally with "/s").
+  String _formatValue(double value, String suffix) {
     final sign = value < 0 ? '-' : '+';
     final decimals = this == ForceUnit.mV ? 4 : (this == ForceUnit.raw ? 0 : 3);
     final padding = this == ForceUnit.mV ? 8 : (this == ForceUnit.raw ? 6 : 7);
     final numStr = value.abs().toStringAsFixed(decimals).padLeft(padding);
-    return '$sign$numStr $symbol';
+    return '$sign$numStr $suffix';
   }
 
+  /// Format a value (already in this unit) for display.
+  String format(double value) => _formatValue(value, symbol);
+
   /// Format a rate of change (derivative) in this unit for display.
-  String formatRate(double value) {
-    final sign = value < 0 ? '-' : '+';
-    final decimals = this == ForceUnit.mV ? 4 : (this == ForceUnit.raw ? 0 : 3);
-    final padding = this == ForceUnit.mV ? 8 : (this == ForceUnit.raw ? 6 : 7);
-    final numStr = value.abs().toStringAsFixed(decimals).padLeft(padding);
-    return '$sign$numStr $symbol/s';
-  }
+  String formatRate(double value) => _formatValue(value, '$symbol/s');
 }
