@@ -183,7 +183,8 @@ class SessionStorage {
   }
 }
 
-/// Loaded session data for playback/review.
+/// Loaded session data for playback/review. A plain immutable data holder;
+/// the UI wraps it in a GraphDataSource adapter for rendering.
 class SessionData {
   final List<Int32List> channels;
   final int sampleRate;
@@ -191,18 +192,35 @@ class SessionData {
   final double calibrationSlope;
   final int calibrationOffset;
 
-  const SessionData({
+  /// Per-channel extremes, computed once on construction.
+  final List<double> mins;
+  final List<double> maxs;
+
+  SessionData({
     required this.channels,
     required this.sampleRate,
     required this.sampleCount,
     required this.calibrationSlope,
     required this.calibrationOffset,
-  });
+  })  : mins = List.filled(channels.length, 0.0),
+        maxs = List.filled(channels.length, 0.0) {
+    for (int ch = 0; ch < channels.length; ch++) {
+      if (sampleCount == 0) continue;
+      double mn = double.infinity;
+      double mx = double.negativeInfinity;
+      for (final v in channels[ch]) {
+        if (v < mn) mn = v.toDouble();
+        if (v > mx) mx = v.toDouble();
+      }
+      mins[ch] = mn;
+      maxs[ch] = mx;
+    }
+  }
 
   /// Get peak raw value for a given channel.
-  int peakRaw(int channel) {
+  int peakRaw(int ch) {
     int peak = 0;
-    final data = channels[channel];
+    final data = channels[ch];
     for (int i = 0; i < sampleCount; i++) {
       if (data[i] > peak) peak = data[i];
     }
@@ -210,9 +228,9 @@ class SessionData {
   }
 
   /// Get average raw value for a given channel.
-  double averageRaw(int channel) {
+  double averageRaw(int ch) {
     double sum = 0;
-    final data = channels[channel];
+    final data = channels[ch];
     for (int i = 0; i < sampleCount; i++) {
       sum += data[i];
     }

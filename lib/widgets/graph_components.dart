@@ -9,12 +9,35 @@ import 'package:flutter/material.dart';
 import '../models/app_settings.dart';
 
 // ---------------------------------------------------------------------------
+// Shared graph layout constants
+// ---------------------------------------------------------------------------
+
+/// Horizontal/vertical padding shared by the graph painters and the gesture
+/// areas. [kGraphRightSpace] reserves room for the Y-axis labels.
+const double kGraphLeftSpace = 8;
+const double kGraphRightSpace = 56;
+const double kGraphBottomSpace = 24;
+
+/// Width available for plotting given a full widget [totalWidth].
+double graphPlotWidth(double totalWidth) =>
+    totalWidth - kGraphLeftSpace - kGraphRightSpace;
+
+// ---------------------------------------------------------------------------
 // Shared Graph Data Source
 // ---------------------------------------------------------------------------
 
+/// A single channel's raw circular-buffer data plus its precomputed extremes
+/// and tare offset. Returned by [GraphDataSource.channel].
+typedef ChannelSeries = ({List<int> data, double min, double max, double tare});
+
 /// Data interface required by the shared graph components (main graph, minimap, etc).
 /// This allows the components to render either live DataHub data or static SessionData.
-abstract class GraphDataSource extends ChangeNotifier {
+///
+/// Sources are not required to be [ChangeNotifier]s; instead they expose a
+/// [repaint] [Listenable] that fires when their data changes (a never-firing
+/// listenable is fine for static data). This keeps the interface usable by both
+/// live and static sources, and leaves room for composed/derived sources later.
+abstract interface class GraphDataSource {
   /// Total number of logical samples generated so far (can exceed bufferCapacity).
   int get totalSamples;
 
@@ -30,17 +53,22 @@ abstract class GraphDataSource extends ChangeNotifier {
   /// The calibration slope used to convert raw counts to kgf.
   double get calibrationSlope;
 
-  /// Returns the raw data array for a given channel index.
-  List<int> getChannelData(int channelIndex);
+  /// Notifies listeners when the underlying data changes.
+  Listenable get repaint;
 
-  /// Returns the minimum raw value for a given channel index.
-  double getChannelMin(int channelIndex);
+  /// Returns the series (data + extremes + tare) for a given channel index.
+  ChannelSeries channel(int channelIndex);
+}
 
-  /// Returns the maximum raw value for a given channel index.
-  double getChannelMax(int channelIndex);
+/// A [Listenable] that never fires; use as [GraphDataSource.repaint] for static
+/// data sources (e.g. a loaded session).
+final Listenable kNeverRepaints = _NeverListenable();
 
-  /// Returns the tare offset for a given channel index (0 for pre-tared data).
-  double getChannelTare(int channelIndex);
+class _NeverListenable extends Listenable {
+  @override
+  void addListener(VoidCallback listener) {}
+  @override
+  void removeListener(VoidCallback listener) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -116,7 +144,7 @@ class GraphController extends ChangeNotifier {
   /// Get the effective visible range given total data size.
   (int start, int end) effectiveRange(int totalSamples, int oldestSample, {int? bufferCapacity}) {
     if (_isLive || _viewEnd == null) {
-      int maxSpan = math.max(minLiveSpan, totalSamples - oldestSample);
+      final int maxSpan = math.max(minLiveSpan, totalSamples - oldestSample);
       int span = _liveSpan ?? maxSpan;
       if (bufferCapacity != null && span > bufferCapacity) {
         span = bufferCapacity;
@@ -251,7 +279,7 @@ class Minimap extends StatelessWidget {
     if (event is PointerScrollEvent) {
       if (totalSamples == 0 || graphWidth <= 0) return;
 
-      final focalFrac = ((event.localPosition.dx - 8.0) / graphWidth).clamp(
+      final focalFrac = ((event.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
         0.0,
         1.0,
       );
@@ -262,8 +290,7 @@ class Minimap extends StatelessWidget {
 
   void _onMinimapTap(TapDownDetails d, double graphWidth, int totalSamples, int oldestSample, int bufferCapacity) {
     if (totalSamples == 0 || graphWidth <= 0) return;
-    const leftSpace = 8.0;
-    final frac = ((d.localPosition.dx - leftSpace) / graphWidth).clamp(
+    final frac = ((d.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
       0.0,
       1.0,
     );
@@ -330,8 +357,7 @@ class Minimap extends StatelessWidget {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final graphWidth =
-            constraints.maxWidth - 8 - 56; // leftSpace + rightSpace
+        final graphWidth = graphPlotWidth(constraints.maxWidth);
         return SizedBox(
           height: 32,
           child: Listener(
@@ -371,7 +397,7 @@ class _MinimapPainter extends CustomPainter {
   final List<Color> _colors;
 
   _MinimapPainter(this._data, this._activeIndices, this._ctrl, this._colors)
-    : super(repaint: _data);
+    : super(repaint: _data.repaint);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -400,8 +426,9 @@ class _MinimapPainter extends CustomPainter {
     double rawMax = 10000;
     double rawMin = -10000;
     for (final ch in _activeIndices) {
-      final mx = _data.getChannelMax(ch) - _data.getChannelTare(ch);
-      final mn = _data.getChannelMin(ch) - _data.getChannelTare(ch);
+      final s = _data.channel(ch);
+      final mx = s.max - s.tare;
+      final mn = s.min - s.tare;
       if (mx > rawMax) rawMax = mx;
       if (mn < rawMin) rawMin = mn;
     }
@@ -417,10 +444,10 @@ class _MinimapPainter extends CustomPainter {
     final int gwInt = gw.toInt();
     for (int i = 0; i < _activeIndices.length; i++) {
       final ch = _activeIndices[i];
-      final line = _data.getChannelData(ch);
+      final line = _data.channel(ch).data;
       if (line.isEmpty) continue;
 
-      final tare = _data.getChannelTare(ch);
+      final tare = _data.channel(ch).tare;
       final bufferCapacity = _data.bufferCapacity;
 
       // Safe stack allocation size for Emscripten/Skwasm. 
@@ -665,7 +692,7 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
       final totalSamples = widget.data.totalSamples;
       if (totalSamples == 0 || graphWidth <= 0) return;
 
-      final focalFrac = ((event.localPosition.dx - 8.0) / graphWidth).clamp(
+      final focalFrac = ((event.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
         0.0,
         1.0,
       );
@@ -678,7 +705,7 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final graphWidth = constraints.maxWidth - 8 - 56;
+        final graphWidth = graphPlotWidth(constraints.maxWidth);
         return Listener(
           behavior: HitTestBehavior.opaque,
           onPointerSignal: (e) => _onPointerSignal(e, graphWidth),
@@ -729,7 +756,7 @@ class GraphWorkspace extends StatelessWidget {
                     data: data,
                     ctrl: ctrl,
                     child: ListenableBuilder(
-                      listenable: Listenable.merge([ctrl, data]),
+                      listenable: Listenable.merge([ctrl, data.repaint]),
                       builder: (context, _) => CustomPaint(
                         foregroundPainter: ForceGraphPainter(
                           data,
@@ -750,7 +777,7 @@ class GraphWorkspace extends StatelessWidget {
                       data: data,
                       ctrl: ctrl,
                       child: ListenableBuilder(
-                        listenable: Listenable.merge([ctrl, data]),
+                        listenable: Listenable.merge([ctrl, data.repaint]),
                         builder: (context, _) => CustomPaint(
                           foregroundPainter: DerivativeGraphPainter(
                             data,
@@ -764,7 +791,7 @@ class GraphWorkspace extends StatelessWidget {
                   ),
                 // Minimap
                 ListenableBuilder(
-                  listenable: data,
+                  listenable: data.repaint,
                   builder: (context, _) => Minimap(
                     dataSource: data,
                     activeChannels: settings.activeChannelIndices,
@@ -859,7 +886,7 @@ _ScaleConfigItem _findScale(double val, List<_ScaleConfigItem> list) {
 }
 
 String _fmtTime(int sec) {
-  if (sec < 0) return '-' + _fmtTime(-sec);
+  if (sec < 0) return '-${_fmtTime(-sec)}';
   if (sec < 60) return sec.toString();
   final s = (sec % 60 < 10) ? '0' : '';
   return '${sec ~/ 60}:$s${sec % 60}';
@@ -867,7 +894,7 @@ String _fmtTime(int sec) {
 
 /// Format fractional seconds for sub-second X labels.
 String _fmtTimeFrac(double sec) {
-  if (sec < 0) return '-' + _fmtTimeFrac(-sec);
+  if (sec < 0) return '-${_fmtTimeFrac(-sec)}';
   if (sec >= 60) {
     final m = sec ~/ 60;
     final s = sec - m * 60;
@@ -935,6 +962,241 @@ ui.Paragraph _prepareLabel(String text, {Color color = Colors.black}) {
 }
 
 // ---------------------------------------------------------------------------
+// Shared plot toolkit
+//
+// Small reusable drawing primitives used by every graph painter (force,
+// derivative, and future X-Y / FFT plots). Keeping them as free functions lets
+// new plot types reuse axis and envelope rendering instead of copy-pasting.
+// ---------------------------------------------------------------------------
+
+/// Append vertical X-axis grid lines (and optional time labels) for the visible
+/// window [viewStart, viewEnd) to [grid]. Handles both sub-second and >=1s
+/// scales. When [drawMinor] is true, half-delta minor lines are added too.
+void drawTimeAxis(
+  Canvas canvas,
+  Path grid,
+  Size graphSz, {
+  required int viewStart,
+  required int viewEnd,
+  required int oldestSample,
+  required int sampleRate,
+  required bool showLabels,
+  bool drawMinor = false,
+}) {
+  final viewSamples = viewEnd - viewStart;
+  if (viewSamples <= 0) return;
+
+  double xOf(double sec, double startSec) =>
+      (sec - startSec) * sampleRate * graphSz.width / viewSamples;
+
+  void vline(double xPos, String? label) {
+    grid.moveTo(xPos, 0);
+    grid.lineTo(xPos, graphSz.height);
+    if (label != null) {
+      final par = _prepareLabel(label);
+      canvas.drawParagraph(
+        par,
+        Offset(xPos - par.longestLine / 2, graphSz.height + 2),
+      );
+    }
+  }
+
+  final double xSpanSec = viewSamples / sampleRate;
+
+  if (xSpanSec < 1.0) {
+    // Sub-second: fractional labels relative to the oldest sample.
+    final niceStepMs = _niceNum(xSpanSec * 1000 / 5); // aim for ~5 labels
+    final startSec = (viewStart - oldestSample) / sampleRate;
+    final endMs = ((viewEnd - oldestSample) / sampleRate) * 1000;
+    final firstTickMs = (startSec * 1000 / niceStepMs).ceil() * niceStepMs;
+    for (double tMs = firstTickMs; tMs < endMs; tMs += niceStepMs) {
+      final tSec = tMs / 1000;
+      vline(xOf(tSec, startSec), showLabels ? _fmtTimeFrac(tSec) : null);
+    }
+  } else {
+    final xC = _findScale(xSpanSec, _xScaleConfig);
+    final startSec = viewStart / sampleRate;
+    final endSec = viewEnd / sampleRate;
+
+    final int firstTick = ((startSec / xC.delta).ceil() * xC.delta).toInt();
+    for (int sec = firstTick; sec.toDouble() < endSec; sec += xC.delta) {
+      vline(xOf(sec.toDouble(), startSec), showLabels ? _fmtTime(sec) : null);
+    }
+
+    if (drawMinor) {
+      final minorDeltaSec = xC.delta / 2;
+      final firstMinor = (startSec / minorDeltaSec).ceil() * minorDeltaSec;
+      for (double sec = firstMinor; sec < endSec; sec += minorDeltaSec) {
+        vline(xOf(sec, startSec), null);
+      }
+    }
+  }
+}
+
+/// Append horizontal Y-axis grid lines and labels (formatted by [labelFor]) for
+/// [yRange] to [grid]. When [drawMinor] is true, half-delta minor lines are
+/// added. [valueToY] maps an axis value to a pixel Y.
+void drawValueAxis(
+  Canvas canvas,
+  Path grid,
+  Size graphSz,
+  ({double yMin, double yMax, double tickDelta}) yRange,
+  double Function(double value) valueToY, {
+  required String Function(double tick) labelFor,
+  bool drawMinor = false,
+}) {
+  final delta = yRange.tickDelta;
+  for (double tick = (yRange.yMin / delta).ceil() * delta;
+      tick <= yRange.yMax + delta * 0.01;
+      tick += delta) {
+    final yPos = valueToY(tick);
+    if (yPos >= -1 && yPos <= graphSz.height + 1) {
+      grid.moveTo(0, yPos);
+      grid.lineTo(graphSz.width, yPos);
+      final par = _prepareLabel(labelFor(tick));
+      canvas.drawParagraph(
+        par,
+        Offset(graphSz.width + 4, yPos - par.height / 2),
+      );
+    }
+  }
+
+  if (drawMinor) {
+    final minorDelta = delta / 2;
+    for (double tick = (yRange.yMin / minorDelta).ceil() * minorDelta;
+        tick <= yRange.yMax + minorDelta * 0.01;
+        tick += minorDelta) {
+      final yPos = valueToY(tick);
+      if (yPos >= -1 && yPos <= graphSz.height + 1) {
+        grid.moveTo(0, yPos);
+        grid.lineTo(graphSz.width, yPos);
+      }
+    }
+  }
+}
+
+/// Draw a horizontal zero baseline if the axis range crosses zero.
+void drawZeroBaseline(
+  Canvas canvas,
+  Size graphSz,
+  ({double yMin, double yMax, double tickDelta}) yRange,
+  double Function(double value) valueToY,
+) {
+  if (yRange.yMin < 0 && yRange.yMax > 0) {
+    final zeroY = valueToY(0);
+    canvas.drawLine(
+      Offset(0, zeroY),
+      Offset(graphSz.width, zeroY),
+      Paint()
+        ..color = Colors.black54
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8,
+    );
+  }
+}
+
+/// Render one channel as a min/avg/max envelope across [graphW] pixel columns.
+///
+/// For each pixel column the samples mapped to it are reduced to min/avg/max via
+/// [sampleAt] (raw per-sample value), then projected with [valueToY]. The shaded
+/// envelope is filled at low alpha and the average is stroked on top.
+///
+/// Vertices are flushed in <=4096-float chunks to stay within the web
+/// (Skwasm/Emscripten) stack-allocation limit.
+void drawChannelEnvelope(
+  Canvas canvas, {
+  required Color color,
+  required int graphW,
+  required int viewStart,
+  required int viewSamples,
+  required int oldestSample,
+  required int totalSamples,
+  required int firstUsableSample,
+  required double Function(int sampleIndex) sampleAt,
+  required double Function(double rawReduced) valueToY,
+}) {
+  const int maxFloats = 4096; // 16KB per chunk
+  final Float32List avgPts = Float32List(maxFloats);
+  final Float32List envPts = Float32List(maxFloats);
+  int avgIdx = 0;
+  int envIdx = 0;
+
+  final pen = Paint();
+
+  void flushEnv() {
+    if (envIdx > 0) {
+      final vertices = ui.Vertices.raw(
+        ui.VertexMode.triangleStrip,
+        Float32List.sublistView(envPts, 0, envIdx),
+      );
+      pen
+        ..color = color.withAlpha(60)
+        ..style = PaintingStyle.fill;
+      canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
+      vertices.dispose();
+      envIdx = 0;
+    }
+  }
+
+  void flushAvg() {
+    if (avgIdx > 0) {
+      pen
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+      canvas.drawRawPoints(
+        ui.PointMode.polygon,
+        Float32List.sublistView(avgPts, 0, avgIdx),
+        pen,
+      );
+      avgIdx = 0;
+    }
+  }
+
+  for (int px = 0; px < graphW; px++) {
+    final int sStart = viewStart + (px * viewSamples ~/ graphW);
+    final int sEnd = viewStart + ((px + 1) * viewSamples ~/ graphW);
+    final int drawStart = math.max(sStart, firstUsableSample);
+    final int drawEnd = math.min(sEnd, totalSamples);
+    if (drawStart >= drawEnd) continue;
+
+    double total = 0;
+    double minRaw = double.infinity;
+    double maxRaw = double.negativeInfinity;
+    for (int j = drawStart; j < drawEnd; j++) {
+      final v = sampleAt(j);
+      total += v;
+      if (v < minRaw) minRaw = v;
+      if (v > maxRaw) maxRaw = v;
+    }
+    final avg = total / (drawEnd - drawStart);
+
+    final avgY = valueToY(avg);
+    final minY = valueToY(minRaw);
+    final maxY = valueToY(maxRaw);
+
+    final xPos = px.toDouble();
+    avgPts[avgIdx++] = xPos;
+    avgPts[avgIdx++] = avgY;
+
+    envPts[envIdx++] = xPos;
+    envPts[envIdx++] = maxY;
+    envPts[envIdx++] = xPos;
+    envPts[envIdx++] = minY;
+    envPts[envIdx++] = xPos + 1.0;
+    envPts[envIdx++] = maxY;
+    envPts[envIdx++] = xPos + 1.0;
+    envPts[envIdx++] = minY;
+
+    if (envIdx + 8 > maxFloats) flushEnv();
+    if (avgIdx + 2 > maxFloats) flushAvg();
+  }
+
+  flushEnv();
+  flushAvg();
+}
+
+// ---------------------------------------------------------------------------
 // Live graph painter (force)
 // ---------------------------------------------------------------------------
 
@@ -949,7 +1211,7 @@ class ForceGraphPainter extends CustomPainter {
     this._settings,
     this._ctrl, {
     this.showXLabels = true,
-  }) : super(repaint: _data);
+  }) : super(repaint: _data.repaint);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -957,15 +1219,12 @@ class ForceGraphPainter extends CustomPainter {
       ..color = Colors.deepPurple
       ..style = PaintingStyle.stroke;
 
-    const double leftSpace = 8;
-    const double rightSpace = 56;
-    const double bottomSpace = 24;
     const double topSpace = 4;
 
-    canvas.translate(leftSpace, topSpace);
+    canvas.translate(kGraphLeftSpace, topSpace);
     final graphSz = Size(
-      size.width - leftSpace - rightSpace,
-      size.height - (showXLabels ? bottomSpace : 4) - topSpace,
+      size.width - kGraphLeftSpace - kGraphRightSpace,
+      size.height - (showXLabels ? kGraphBottomSpace : 4) - topSpace,
     );
 
     if (graphSz.width <= 0 || graphSz.height <= 0) return;
@@ -993,9 +1252,10 @@ class ForceGraphPainter extends CustomPainter {
 
     // Zoomed/panned -- scan visible window for actual min/max
     for (final ch in activeIndices) {
-      final line = _data.getChannelData(ch);
+      final s = _data.channel(ch);
+      final line = s.data;
       if (line.isEmpty) continue;
-      final tare = _data.getChannelTare(ch);
+      final tare = s.tare;
       final bufferCap = _data.bufferCapacity;
       final sScanStart = math.max(viewStart, oldestSample);
       final sScanEnd = math.min(viewEnd, totalSamples);
@@ -1029,225 +1289,53 @@ class ForceGraphPainter extends CustomPainter {
 
     // -- Grid and labels --
     final grid = Path();
-
-    // X axis
-    final double xSpanSec = viewSamples / _data.sampleRate;
-
-    if (xSpanSec < 1.0) {
-      // Sub-second: use fractional labels
-      final stepMs = xSpanSec * 1000 / 5; // aim for ~5 labels
-      final niceStepMs = _niceNum(stepMs);
-      final startSec = (viewStart - oldestSample) / _data.sampleRate;
-
-      final firstTickMs = ((startSec * 1000 / niceStepMs).ceil() * niceStepMs);
-      for (
-        double tMs = firstTickMs;
-        tMs < ((viewEnd - oldestSample) / _data.sampleRate) * 1000;
-        tMs += niceStepMs
-      ) {
-        final tSec = tMs / 1000;
-        final xPos =
-            (tSec - startSec) * _data.sampleRate * graphSz.width / viewSamples;
-        grid.moveTo(xPos, 0);
-        grid.lineTo(xPos, graphSz.height);
-        if (showXLabels) {
-          final par = _prepareLabel(_fmtTimeFrac(tSec));
-          canvas.drawParagraph(
-            par,
-            Offset(xPos - par.longestLine / 2, graphSz.height + 2),
-          );
-        }
-      }
-    } else {
-      final xC = _findScale(xSpanSec, _xScaleConfig);
-      final double startSec = viewStart / _data.sampleRate;
-
-      // Major grid + labels
-      final int firstTick = ((startSec / xC.delta).ceil() * xC.delta).toInt();
-      final double endSec = viewEnd / _data.sampleRate;
-      for (int sec = firstTick; sec.toDouble() < endSec; sec += xC.delta) {
-        final double xPos =
-            (sec - startSec) * _data.sampleRate * graphSz.width / viewSamples;
-        grid.moveTo(xPos, 0);
-        grid.lineTo(xPos, graphSz.height);
-        if (showXLabels) {
-          final par = _prepareLabel(_fmtTime(sec));
-          canvas.drawParagraph(
-            par,
-            Offset(xPos - par.longestLine / 2, graphSz.height + 2),
-          );
-        }
-      }
-
-      // Minor grid (half delta)
-      final double minorDeltaSec = xC.delta / 2;
-      final double firstMinor =
-          (startSec / minorDeltaSec).ceil() * minorDeltaSec;
-      for (double sec = firstMinor; sec < endSec; sec += minorDeltaSec) {
-        final double xPos =
-            (sec - startSec) * _data.sampleRate * graphSz.width / viewSamples;
-        grid.moveTo(xPos, 0);
-        grid.lineTo(xPos, graphSz.height);
-      }
-    }
-
-    // Y axis grid + labels
-    {
-      final delta = yRange.tickDelta;
-      // Start from the first tick at or above yMin
-      double tick = (yRange.yMin / delta).ceil() * delta;
-      while (tick <= yRange.yMax + delta * 0.01) {
-        final yPos = unitToY(tick);
-        if (yPos >= -1 && yPos <= graphSz.height + 1) {
-          grid.moveTo(0, yPos);
-          grid.lineTo(graphSz.width, yPos);
-
-          // Label
-          final labelStr = _formatTickLabel(tick, unit.symbol);
-          final par = _prepareLabel(labelStr);
-          canvas.drawParagraph(
-            par,
-            Offset(graphSz.width + 4, yPos - par.height / 2),
-          );
-        }
-        tick += delta;
-      }
-
-      // Minor grid (half delta)
-      final minorDelta = delta / 2;
-      double minorTick = (yRange.yMin / minorDelta).ceil() * minorDelta;
-      while (minorTick <= yRange.yMax + minorDelta * 0.01) {
-        final yPos = unitToY(minorTick);
-        if (yPos >= -1 && yPos <= graphSz.height + 1) {
-          grid.moveTo(0, yPos);
-          grid.lineTo(graphSz.width, yPos);
-        }
-        minorTick += minorDelta;
-      }
-    }
-
+    drawTimeAxis(
+      canvas,
+      grid,
+      graphSz,
+      viewStart: viewStart,
+      viewEnd: viewEnd,
+      oldestSample: oldestSample,
+      sampleRate: _data.sampleRate,
+      showLabels: showXLabels,
+      drawMinor: true,
+    );
+    drawValueAxis(
+      canvas,
+      grid,
+      graphSz,
+      yRange,
+      unitToY,
+      labelFor: (tick) => _formatTickLabel(tick, unit.symbol),
+      drawMinor: true,
+    );
     canvas.drawPath(grid, pen..strokeWidth = 0.2);
 
-    // -- Zero baseline --
-    if (yRange.yMin < 0 && yRange.yMax > 0) {
-      final zeroY = unitToY(0);
-      final zeroPaint = Paint()
-        ..color = Colors.black54
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8;
-      canvas.drawLine(
-        Offset(0, zeroY),
-        Offset(graphSz.width, zeroY),
-        zeroPaint,
-      );
-    }
+    drawZeroBaseline(canvas, graphSz, yRange, unitToY);
 
     // -- Data lines --
-    final rawRange = yRange.yMax - yRange.yMin;
     final slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
 
     for (final ch in activeIndices) {
-      final line = _data.getChannelData(ch);
+      final s = _data.channel(ch);
+      final line = s.data;
       if (line.isEmpty) continue;
-      final tare = _data.getChannelTare(ch);
+      final tare = s.tare;
       final bufferCap = _data.bufferCapacity;
 
-      final int graphW = graphSz.width.toInt();
-      const int maxEnvFloats = 4096;
-      const int maxAvgFloats = 4096;
-      final Float32List avgPts = Float32List(maxAvgFloats);
-      final Float32List envPts = Float32List(maxEnvFloats);
-      int avgIdx = 0;
-      int envIdx = 0;
-      final chColor = getChannelColor(ch);
-
-      void flushEnv() {
-        if (envIdx > 0) {
-          final vertices = ui.Vertices.raw(
-            ui.VertexMode.triangleStrip,
-            Float32List.sublistView(envPts, 0, envIdx),
-          );
-          pen.color = chColor.withAlpha(60);
-          pen.style = PaintingStyle.fill;
-          canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
-          vertices.dispose();
-          envIdx = 0;
-        }
-      }
-
-      void flushAvg() {
-        if (avgIdx > 0) {
-          pen.color = chColor;
-          pen.style = PaintingStyle.stroke;
-          canvas.drawRawPoints(
-            ui.PointMode.polygon,
-            Float32List.sublistView(avgPts, 0, avgIdx),
-            pen..strokeWidth = 1.5,
-          );
-          avgIdx = 0;
-        }
-      }
-
-      for (int i = 0; i < graphW; ++i) {
-        // Map pixel i to sample range
-        final int sStart = viewStart + (i * viewSamples ~/ graphW);
-        final int sEnd = viewStart + ((i + 1) * viewSamples ~/ graphW);
-        
-        final int drawStart = math.max(sStart, oldestSample);
-        final int drawEnd = math.min(sEnd, totalSamples);
-
-        if (drawStart >= drawEnd) continue;
-
-        double total = 0;
-        double minRaw = double.infinity;
-        double maxRaw = double.negativeInfinity;
-
-        for (int j = drawStart; j < drawEnd; j++) {
-          final val = line[j % bufferCap];
-          total += val;
-          if (val < minRaw) minRaw = val.toDouble();
-          if (val > maxRaw) maxRaw = val.toDouble();
-        }
-
-        final avgRaw = total / (drawEnd - drawStart);
-
-        final avgUnit = (avgRaw - tare) * slopeToUnit;
-        final minUnit = (minRaw - tare) * slopeToUnit;
-        final maxUnit = (maxRaw - tare) * slopeToUnit;
-
-        final avgY =
-            (graphSz.height -
-                    (avgUnit - yRange.yMin) * graphSz.height / rawRange)
-                .clamp(0.0, graphSz.height);
-        final minY =
-            (graphSz.height -
-                    (minUnit - yRange.yMin) * graphSz.height / rawRange)
-                .clamp(0.0, graphSz.height);
-        final maxY =
-            (graphSz.height -
-                    (maxUnit - yRange.yMin) * graphSz.height / rawRange)
-                .clamp(0.0, graphSz.height);
-
-        final xPos = i.toDouble();
-        avgPts[avgIdx++] = xPos;
-        avgPts[avgIdx++] = avgY;
-
-        envPts[envIdx++] = xPos;
-        envPts[envIdx++] = maxY;
-        envPts[envIdx++] = xPos;
-        envPts[envIdx++] = minY;
-
-        envPts[envIdx++] = xPos + 1.0;
-        envPts[envIdx++] = maxY;
-        envPts[envIdx++] = xPos + 1.0;
-        envPts[envIdx++] = minY;
-
-        if (envIdx + 8 > maxEnvFloats) flushEnv();
-        if (avgIdx + 2 > maxAvgFloats) flushAvg();
-      }
-
-      flushEnv();
-      flushAvg();
+      drawChannelEnvelope(
+        canvas,
+        color: getChannelColor(ch),
+        graphW: graphSz.width.toInt(),
+        viewStart: viewStart,
+        viewSamples: viewSamples,
+        oldestSample: oldestSample,
+        totalSamples: totalSamples,
+        firstUsableSample: oldestSample,
+        sampleAt: (j) => line[j % bufferCap].toDouble(),
+        valueToY: (raw) =>
+            unitToY((raw - tare) * slopeToUnit).clamp(0.0, graphSz.height),
+      );
     }
   }
 
@@ -1265,7 +1353,7 @@ class DerivativeGraphPainter extends CustomPainter {
   final GraphController _ctrl;
 
   DerivativeGraphPainter(this._data, this._settings, this._ctrl)
-    : super(repaint: _data);
+    : super(repaint: _data.repaint);
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1273,15 +1361,12 @@ class DerivativeGraphPainter extends CustomPainter {
       ..color = Colors.deepPurple
       ..style = PaintingStyle.stroke;
 
-    const double leftSpace = 8;
-    const double rightSpace = 56;
-    const double bottomSpace = 24;
     const double topSpace = 2;
 
-    canvas.translate(leftSpace, topSpace);
+    canvas.translate(kGraphLeftSpace, topSpace);
     final graphSz = Size(
-      size.width - leftSpace - rightSpace,
-      size.height - bottomSpace - topSpace,
+      size.width - kGraphLeftSpace - kGraphRightSpace,
+      size.height - kGraphBottomSpace - topSpace,
     );
 
     if (graphSz.width <= 0 || graphSz.height <= 0) return;
@@ -1304,19 +1389,23 @@ class DerivativeGraphPainter extends CustomPainter {
     final double slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
     final double sampleRate = _data.sampleRate.toDouble();
 
-    // Compute derivative min/max in visible window
+    // Raw first-difference for sample j (requires j-1 to exist).
+    double derivRawAt(List<int> line, int bufferCap, int j) =>
+        (line[j % bufferCap] - line[(j - 1) % bufferCap]).toDouble();
+
+    // Compute derivative min/max (in display units) across the visible window.
     double dMin = 0;
     double dMax = 0;
     bool first = true;
     for (final ch in activeIndices) {
-      final line = _data.getChannelData(ch);
+      final line = _data.channel(ch).data;
       if (line.isEmpty) continue;
       final bufferCap = _data.bufferCapacity;
 
       final startI = math.max(viewStart, oldestSample + 1);
       final endI = math.min(viewEnd, totalSamples);
       for (int i = startI; i < endI; i++) {
-        final d = (line[i % bufferCap] - line[(i - 1) % bufferCap]).toDouble() * slopeToUnit * sampleRate;
+        final d = derivRawAt(line, bufferCap, i) * slopeToUnit * sampleRate;
         if (first) {
           dMin = d;
           dMax = d;
@@ -1340,82 +1429,29 @@ class DerivativeGraphPainter extends CustomPainter {
           (val - yRange.yMin) * graphSz.height / (yRange.yMax - yRange.yMin);
     }
 
-    // Grid + labels
+    // Grid + labels (axes shared with the force graph above).
     final grid = Path();
-
-    // X axis labels
-    final double xSpanSec = viewSamples / _data.sampleRate;
-    final double startSec = viewStart / _data.sampleRate;
-    final double endSec = viewEnd / _data.sampleRate;
-
-    if (xSpanSec < 1.0) {
-      final stepMs = xSpanSec * 1000 / 5;
-      final niceStepMs = _niceNum(stepMs);
-      final firstTickMs = ((startSec * 1000 / niceStepMs).ceil() * niceStepMs);
-      for (double tMs = firstTickMs; tMs < endSec * 1000; tMs += niceStepMs) {
-        final tSec = tMs / 1000;
-        final xPos =
-            (tSec - startSec) * _data.sampleRate * graphSz.width / viewSamples;
-        grid.moveTo(xPos, 0);
-        grid.lineTo(xPos, graphSz.height);
-        final par = _prepareLabel(_fmtTimeFrac(tSec));
-        canvas.drawParagraph(
-          par,
-          Offset(xPos - par.longestLine / 2, graphSz.height + 2),
-        );
-      }
-    } else {
-      final xC = _findScale(xSpanSec, _xScaleConfig);
-      final int firstTick = ((startSec / xC.delta).ceil() * xC.delta).toInt();
-      for (int sec = firstTick; sec.toDouble() < endSec; sec += xC.delta) {
-        final double xPos =
-            (sec - startSec) * _data.sampleRate * graphSz.width / viewSamples;
-        grid.moveTo(xPos, 0);
-        grid.lineTo(xPos, graphSz.height);
-        final par = _prepareLabel(_fmtTime(sec));
-        canvas.drawParagraph(
-          par,
-          Offset(xPos - par.longestLine / 2, graphSz.height + 2),
-        );
-      }
-    }
-
-    // Y axis grid + labels
-    {
-      final delta = yRange.tickDelta;
-      double tick = (yRange.yMin / delta).ceil() * delta;
-      while (tick <= yRange.yMax + delta * 0.01) {
-        final yPos = valToY(tick);
-        if (yPos >= -1 && yPos <= graphSz.height + 1) {
-          grid.moveTo(0, yPos);
-          grid.lineTo(graphSz.width, yPos);
-
-          final labelStr = '${_formatTickValue(tick)}/s';
-          final par = _prepareLabel(labelStr);
-          canvas.drawParagraph(
-            par,
-            Offset(graphSz.width + 4, yPos - par.height / 2),
-          );
-        }
-        tick += delta;
-      }
-    }
-
+    drawTimeAxis(
+      canvas,
+      grid,
+      graphSz,
+      viewStart: viewStart,
+      viewEnd: viewEnd,
+      oldestSample: oldestSample,
+      sampleRate: _data.sampleRate,
+      showLabels: true,
+    );
+    drawValueAxis(
+      canvas,
+      grid,
+      graphSz,
+      yRange,
+      valToY,
+      labelFor: (tick) => '${_formatTickValue(tick)}/s',
+    );
     canvas.drawPath(grid, pen..strokeWidth = 0.2);
 
-    // Zero baseline
-    if (yRange.yMin < 0 && yRange.yMax > 0) {
-      final zeroY = valToY(0);
-      final zeroPaint = Paint()
-        ..color = Colors.black54
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.8;
-      canvas.drawLine(
-        Offset(0, zeroY),
-        Offset(graphSz.width, zeroY),
-        zeroPaint,
-      );
-    }
+    drawZeroBaseline(canvas, graphSz, yRange, valToY);
 
     // "dF/dt" label in top-left
     final dLabel = _prepareLabel(
@@ -1425,114 +1461,23 @@ class DerivativeGraphPainter extends CustomPainter {
     canvas.drawParagraph(dLabel, const Offset(4, 2));
 
     // Data lines
-    final rawYRange = yRange.yMax - yRange.yMin;
     for (final ch in activeIndices) {
-      final line = _data.getChannelData(ch);
+      final line = _data.channel(ch).data;
       if (line.isEmpty) continue;
       final bufferCap = _data.bufferCapacity;
 
-      final int graphW = graphSz.width.toInt();
-      const int maxEnvFloats = 4096;
-      const int maxAvgFloats = 4096;
-      final Float32List avgPts = Float32List(maxAvgFloats);
-      final Float32List envPts = Float32List(maxEnvFloats);
-      int avgIdx = 0;
-      int envIdx = 0;
-      final chColor = getChannelColor(ch);
-
-      void flushEnv() {
-        if (envIdx > 0) {
-          final vertices = ui.Vertices.raw(
-            ui.VertexMode.triangleStrip,
-            Float32List.sublistView(envPts, 0, envIdx),
-          );
-          pen.color = chColor.withAlpha(60);
-          pen.style = PaintingStyle.fill;
-          canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
-          vertices.dispose();
-          envIdx = 0;
-        }
-      }
-
-      void flushAvg() {
-        if (avgIdx > 0) {
-          pen.color = chColor;
-          pen.style = PaintingStyle.stroke;
-          canvas.drawRawPoints(
-            ui.PointMode.polygon,
-            Float32List.sublistView(avgPts, 0, avgIdx),
-            pen..strokeWidth = 1.5,
-          );
-          avgIdx = 0;
-        }
-      }
-
-      for (int px = 0; px < graphW; ++px) {
-        final int sStart = math.max(
-          viewStart + (px * viewSamples ~/ graphW),
-          oldestSample + 1,
-        );
-        final int sEnd = math.max(
-          viewStart + ((px + 1) * viewSamples ~/ graphW),
-          oldestSample + 2,
-        );
-        
-        final drawEnd = math.min(sEnd, totalSamples);
-        if (sStart >= drawEnd) continue;
-
-        double total = 0;
-        int count = 0;
-        double minDerivRaw = double.infinity;
-        double maxDerivRaw = double.negativeInfinity;
-
-        for (int j = sStart; j < drawEnd; j++) {
-          final double d = (line[j % bufferCap] - line[(j - 1) % bufferCap]).toDouble();
-          total += d;
-          count++;
-          if (d < minDerivRaw) minDerivRaw = d;
-          if (d > maxDerivRaw) maxDerivRaw = d;
-        }
-        if (count == 0) continue;
-
-        final avgDerivRaw = total / count;
-
-        final avgDerivUnit = avgDerivRaw * slopeToUnit * sampleRate;
-        final minDerivUnit = minDerivRaw * slopeToUnit * sampleRate;
-        final maxDerivUnit = maxDerivRaw * slopeToUnit * sampleRate;
-
-        final avgY =
-            (graphSz.height -
-                    (avgDerivUnit - yRange.yMin) * graphSz.height / rawYRange)
-                .clamp(0.0, graphSz.height);
-        final minY =
-            (graphSz.height -
-                    (minDerivUnit - yRange.yMin) * graphSz.height / rawYRange)
-                .clamp(0.0, graphSz.height);
-        final maxY =
-            (graphSz.height -
-                    (maxDerivUnit - yRange.yMin) * graphSz.height / rawYRange)
-                .clamp(0.0, graphSz.height);
-
-        final xPos = px.toDouble();
-        avgPts[avgIdx++] = xPos;
-        avgPts[avgIdx++] = avgY;
-
-        envPts[envIdx++] = xPos;
-        envPts[envIdx++] = maxY;
-        envPts[envIdx++] = xPos;
-        envPts[envIdx++] = minY;
-
-        envPts[envIdx++] = xPos + 1.0;
-        envPts[envIdx++] = maxY;
-        envPts[envIdx++] = xPos + 1.0;
-        envPts[envIdx++] = minY;
-
-        if (envIdx + 8 > maxEnvFloats) flushEnv();
-        if (avgIdx + 2 > maxAvgFloats) flushAvg();
-      }
-
-      flushEnv();
-      flushAvg();
+      drawChannelEnvelope(
+        canvas,
+        color: getChannelColor(ch),
+        graphW: graphSz.width.toInt(),
+        viewStart: viewStart,
+        viewSamples: viewSamples,
+        oldestSample: oldestSample,
+        totalSamples: totalSamples,
+        firstUsableSample: oldestSample + 1,
+        sampleAt: (j) => derivRawAt(line, bufferCap, j) * slopeToUnit * sampleRate,
+        valueToY: (deriv) => valToY(deriv).clamp(0.0, graphSz.height),
+      );
     }
   }
 

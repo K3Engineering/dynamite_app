@@ -22,27 +22,14 @@ class SessionDetailScreen extends StatefulWidget {
   State<SessionDetailScreen> createState() => _SessionDetailScreenState();
 }
 
-class _SessionMinimapDataSource extends ChangeNotifier
-    implements GraphDataSource {
+/// Adapts static [SessionData] to the [GraphDataSource] interface. Session data
+/// never changes, so [repaint] is a never-firing listenable.
+class _SessionDataSource implements GraphDataSource {
   final SessionData _data;
-  final List<double> _mins;
-  final List<double> _maxs;
+  const _SessionDataSource(this._data);
 
-  _SessionMinimapDataSource(this._data)
-    : _mins = List.filled(_data.channels.length, 0.0),
-      _maxs = List.filled(_data.channels.length, 0.0) {
-    for (int ch = 0; ch < _data.channels.length; ch++) {
-      if (_data.sampleCount == 0) continue;
-      double min = double.infinity;
-      double max = double.negativeInfinity;
-      for (final val in _data.channels[ch]) {
-        if (val < min) min = val.toDouble();
-        if (val > max) max = val.toDouble();
-      }
-      _mins[ch] = min;
-      _maxs[ch] = max;
-    }
-  }
+  @override
+  int get totalSamples => _data.sampleCount;
 
   @override
   int get bufferCapacity => _data.sampleCount;
@@ -51,40 +38,25 @@ class _SessionMinimapDataSource extends ChangeNotifier
   int get oldestSample => 0;
 
   @override
-  int get totalSamples => _data.sampleCount;
-
-  @override
   int get sampleRate => _data.sampleRate;
 
   @override
   double get calibrationSlope => _data.calibrationSlope;
 
   @override
-  List<int> getChannelData(int channelIndex) {
-    if (channelIndex < 0 || channelIndex >= _data.channels.length) return [];
-    return _data.channels[channelIndex]
-        .toList(); // Data is Uint32List usually, cast to int
-  }
+  Listenable get repaint => kNeverRepaints;
 
   @override
-  double getChannelMin(int channelIndex) {
-    if (channelIndex < 0 || channelIndex >= _mins.length) return 0.0;
-    return _mins[channelIndex];
-  }
-
-  @override
-  double getChannelMax(int channelIndex) {
-    if (channelIndex < 0 || channelIndex >= _maxs.length) return 0.0;
-    return _maxs[channelIndex];
-  }
-
-  @override
-  double getChannelTare(int channelIndex) => 0.0; // Sessions are already tared
+  ChannelSeries channel(int channelIndex) => (
+        data: _data.channels[channelIndex],
+        min: _data.mins[channelIndex],
+        max: _data.maxs[channelIndex],
+        tare: 0.0, // sessions are stored already tared
+      );
 }
 
 class _SessionDetailScreenState extends State<SessionDetailScreen> {
   SessionData? _data;
-  _SessionMinimapDataSource? _dataSource;
   bool _loading = true;
   String? _error;
 
@@ -100,7 +72,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   void dispose() {
-    _dataSource?.dispose();
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -111,9 +82,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       if (!mounted) return;
       setState(() {
         _data = data;
-        if (data != null) {
-          _dataSource = _SessionMinimapDataSource(data);
-        }
         _loading = false;
       });
     } catch (e) {
@@ -184,20 +152,19 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           // Graph
-          if (_dataSource != null)
-            SizedBox(
-              height: 332,
-              child: Padding(
-                padding: const EdgeInsets.all(8.0),
-                child: GraphWorkspace(
-                  data: _dataSource!,
-                  ctrl: _graphCtrl,
-                  settings: settings,
-                  showDerivative: false,
-                  isLiveGraph: false,
-                ),
+          SizedBox(
+            height: 332,
+            child: Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: GraphWorkspace(
+                data: _SessionDataSource(data),
+                ctrl: _graphCtrl,
+                settings: settings,
+                showDerivative: false,
+                isLiveGraph: false,
               ),
             ),
+          ),
 
           // Channel legend
           Padding(

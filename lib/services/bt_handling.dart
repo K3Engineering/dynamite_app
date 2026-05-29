@@ -63,7 +63,7 @@ class BluetoothHandling extends ChangeNotifier {
       await UniversalBle.enableBluetooth();
     }
     _bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
-    _notifyStateChanged();
+    notifyListeners();
   }
 
   void _onScanResult(BleDevice newDevice) {
@@ -80,7 +80,7 @@ class BluetoothHandling extends ChangeNotifier {
     } else {
       _devices.add(newDevice);
     }
-    _notifyStateChanged();
+    notifyListeners();
   }
 
   void _onBluetoothAvailabilityChanged(AvailabilityState state) {
@@ -90,7 +90,7 @@ class BluetoothHandling extends ChangeNotifier {
   Future<void> _stopScan() async {
     await UniversalBle.stopScan();
     _isScanning = false;
-    _notifyStateChanged();
+    notifyListeners();
   }
 
   Future<void> _startScan() async {
@@ -110,7 +110,7 @@ class BluetoothHandling extends ChangeNotifier {
         web: WebOptions(optionalServices: [btServiceId]),
       ),
     );
-    _notifyStateChanged();
+    notifyListeners();
   }
 
   Future<void> toggleScan() async {
@@ -129,14 +129,14 @@ class BluetoothHandling extends ChangeNotifier {
     }
     _sessionInProgress = !_sessionInProgress;
     dataHub._prevSampleCount = -1;
-    _notifyStateChanged();
+    notifyListeners();
   }
 
   void stopSession() {
     if (_sessionInProgress) {
       _sessionInProgress = false;
       dataHub._prevSampleCount = -1;
-      _notifyStateChanged();
+      notifyListeners();
     }
   }
 
@@ -179,7 +179,7 @@ class BluetoothHandling extends ChangeNotifier {
       _services.clear();
       _sessionInProgress = false;
     }
-    _notifyStateChanged();
+    notifyListeners();
   }
 
   Future<void> connectToDevice(String deviceId) async {
@@ -218,14 +218,10 @@ class BluetoothHandling extends ChangeNotifier {
           characteristic.uuid,
         );
         _isSubscribed = true;
-        _notifyStateChanged();
+        notifyListeners();
         return;
       }
     }
-  }
-
-  void _notifyStateChanged() {
-    notifyListeners();
   }
 
   void _processReceivedData(String _, String _, Uint8List data, int? _) {
@@ -401,10 +397,6 @@ class DataHub extends ChangeNotifier {
     );
   }
 
-  void _notifyDataReceived() {
-    notifyListeners();
-  }
-
   /// Parse a BLE data packet.
   /// Data is always buffered for live display. Recording start/end is
   /// tracked via [_recordingStartIdx] set by BluetoothHandling.toggleSession().
@@ -463,7 +455,7 @@ class DataHub extends ChangeNotifier {
       }
     }
 
-    _notifyDataReceived();
+    notifyListeners();
     return true; // We never run out of space now
   }
 }
