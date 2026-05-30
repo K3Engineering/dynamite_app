@@ -45,7 +45,13 @@ class _SessionMinimapDataSource extends ChangeNotifier
   }
 
   @override
-  int get sampleCount => _data.sampleCount;
+  int get bufferCapacity => _data.sampleCount;
+
+  @override
+  int get oldestSample => 0;
+
+  @override
+  int get totalSamples => _data.sampleCount;
 
   @override
   int get sampleRate => _data.sampleRate;

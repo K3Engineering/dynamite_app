@@ -36,7 +36,13 @@ class _LiveMinimapDataSource extends ChangeNotifier implements GraphDataSource {
   }
 
   @override
-  int get sampleCount => _hub.rawSz;
+  int get bufferCapacity => DataHub.maxDataSz;
+
+  @override
+  int get oldestSample => _hub.totalSamples > DataHub.maxDataSz ? _hub.totalSamples - DataHub.maxDataSz : 0;
+
+  @override
+  int get totalSamples => _hub.totalSamples;
 
   @override
   int get sampleRate => DataHub.samplesPerSec;
@@ -74,7 +80,7 @@ class _LiveMinimapDataSource extends ChangeNotifier implements GraphDataSource {
 }
 
 class _LiveTabState extends State<LiveTab> {
-  final GraphController _graphCtrl = GraphController();
+  final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * DataHub.samplesPerSec);
   bool _showDerivative = false;
   _LiveMinimapDataSource? _dataSource;
   BluetoothHandling? _btHandling;
@@ -102,13 +108,20 @@ class _LiveTabState extends State<LiveTab> {
     bt.dataHub.requestTare();
   }
 
+  void _onInjectTestSineWave() {
+    final bt = context.read<BluetoothHandling>();
+    // Inject 5 minutes of test data at 1000 Hz
+    const samples = DataHub.samplesPerSec * 60 * 5;
+    bt.dataHub.injectTestData(samples);
+  }
+
   Future<void> _onToggleRecord() async {
     final bt = context.read<BluetoothHandling>();
     if (bt.sessionInProgress) {
       bt.stopSession();
 
       // Auto-save if there's recorded data
-      final recordedSamples = bt.dataHub.rawSz - bt.dataHub.recordingStartIdx;
+      final recordedSamples = bt.dataHub.totalSamples - bt.dataHub.recordingStartIdx;
       if (recordedSamples > 0) {
         final settings = context.read<AppSettings>();
         final now = DateTime.now();
@@ -228,6 +241,7 @@ class _LiveTabState extends State<LiveTab> {
               isRecording: bt.sessionInProgress,
               onToggleRecord: _onToggleRecord,
               onTare: _onTare,
+              onInjectTest: _onInjectTestSineWave,
             ),
         ],
       ),
@@ -488,12 +502,14 @@ class ActionButtons extends StatelessWidget {
   final bool isRecording;
   final VoidCallback onToggleRecord;
   final VoidCallback onTare;
+  final VoidCallback onInjectTest;
 
   const ActionButtons({
     super.key,
     required this.isRecording,
     required this.onToggleRecord,
     required this.onTare,
+    required this.onInjectTest,
   });
 
   @override
@@ -520,6 +536,12 @@ class ActionButtons extends StatelessWidget {
             onPressed: onTare,
             icon: const Icon(Icons.exposure_zero),
             label: const Text('TARE'),
+          ),
+          // Test button to inject dummy data for profiling
+          OutlinedButton.icon(
+            onPressed: onInjectTest,
+            icon: const Icon(Icons.bug_report),
+            label: const Text('TEST SINE'),
           ),
         ],
       ),

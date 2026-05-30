@@ -23,7 +23,7 @@ class SessionStorage {
   static final _magic = Uint8List.fromList([0x44, 0x59, 0x4E, 0x4F]); // "DYNO"
 
   /// Save the current DataHub contents to a binary DB blob and create a DB record.
-  /// Only saves the slice from [dataHub.recordingStartIdx] to [dataHub.rawSz].
+  /// Only saves the slice from [dataHub.recordingStartIdx] to [dataHub.totalSamples].
   /// Returns the session id.
   static Future<int> saveSession({
     required DataHub dataHub,
@@ -33,12 +33,19 @@ class SessionStorage {
     String notes = '',
   }) async {
     final int startIdx = dataHub.recordingStartIdx;
-    final int endIdx = dataHub.rawSz;
-    final int recordedSamples = endIdx - startIdx;
+    final int endIdx = dataHub.totalSamples;
+    
+    // If the recording was longer than the buffer, we can only save the tail
+    const int maxAvailable = DataHub.maxDataSz;
+    final int actualStartIdx = (endIdx - startIdx) > maxAvailable 
+        ? endIdx - maxAvailable 
+        : startIdx;
+        
+    final int recordedSamples = endIdx - actualStartIdx;
 
     final blobData = _createBinaryData(
       dataHub: dataHub,
-      startIdx: startIdx,
+      startIdx: actualStartIdx,
       sampleCount: recordedSamples,
     );
 
@@ -46,10 +53,10 @@ class SessionStorage {
     double peakRaw = 0;
     int peakChannel = 0;
     for (int line = 0; line < DataHub.numGraphLines; line++) {
-      for (int s = startIdx; s < endIdx; s++) {
-        final val = (dataHub.rawData[line][s] - dataHub.tare[line]);
+      for (int s = actualStartIdx; s < endIdx; s++) {
+        final val = (dataHub.rawData[line][s % DataHub.maxDataSz] - dataHub.tare[line]);
         if (val > peakRaw) {
-          peakRaw = val;
+          peakRaw = val.toDouble();
           peakChannel = line;
         }
       }
@@ -117,7 +124,7 @@ class SessionStorage {
     int offset = _headerSize;
     for (int s = startIdx; s < startIdx + sampleCount; s++) {
       for (int ch = 0; ch < numLines; ch++) {
-        buffer.setInt32(offset, dataHub.rawData[ch][s], Endian.little);
+        buffer.setInt32(offset, dataHub.rawData[ch][s % DataHub.maxDataSz], Endian.little);
         offset += 4;
       }
     }

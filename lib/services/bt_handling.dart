@@ -124,8 +124,8 @@ class BluetoothHandling extends ChangeNotifier {
   void toggleSession() {
     assert(_selectedDeviceId.isNotEmpty);
     if (!_sessionInProgress) {
-      // Starting a recording: mark the current buffer position.
-      dataHub._recordingStartIdx = dataHub.rawSz;
+      // Starting a recording: mark the current logical time.
+      dataHub._recordingStartIdx = dataHub.totalSamples;
     }
     _sessionInProgress = !_sessionInProgress;
     dataHub._prevSampleCount = -1;
@@ -242,7 +242,7 @@ class DataHub extends ChangeNotifier {
   static const int numAdcChannels = 4;
   static const int _tareWindow = 1024;
   static const int samplesPerSec = 1000;
-  static const int _maxDataSz = samplesPerSec * 60 * 10;
+  static const int maxDataSz = samplesPerSec * 60 * 10;
   final Float64List tare = Float64List(numGraphLines);
   final Float64List _runningTotal = Float64List(numGraphLines);
   final Int32List rawMax = Int32List(numGraphLines);
@@ -253,22 +253,22 @@ class DataHub extends ChangeNotifier {
 
   final List<Int32List> rawData = List.generate(
     DataHub.numGraphLines,
-    (_) => Int32List(_maxDataSz),
+    (_) => Int32List(maxDataSz),
     growable: false,
   );
   int _tareCount = _tareWindow;
-  int rawSz = 0;
+  int totalSamples = 0;
   int _prevSampleCount = -1;
   DeviceCalibration deviceCalibration = DeviceCalibration();
 
-  /// Index into rawData where the current recording started.
+  /// Index into logical time where the current recording started.
   /// Used by SessionStorage to know which slice to save.
   int _recordingStartIdx = 0;
   int get recordingStartIdx => _recordingStartIdx;
 
   void clear() {
     _tareCount = _tareWindow;
-    rawSz = 0;
+    totalSamples = 0;
     _recordingStartIdx = 0;
     for (int i = 0; i < numGraphLines; ++i) {
       rawMax[i] = 0;
@@ -325,8 +325,12 @@ class DataHub extends ChangeNotifier {
   /// Get the instantaneous derivative (first-difference) for a channel in unit/s.
   double currentDerivative(int adcChannel, ForceUnit unit) {
     final lineIdx = chanToLine(adcChannel);
-    if (lineIdx < 0 || rawSz < 2) return 0;
-    final diff = rawData[lineIdx][rawSz - 1] - rawData[lineIdx][rawSz - 2];
+    if (lineIdx < 0 || totalSamples < 2) return 0;
+    
+    // Don't calculate derivative if we don't have recent data
+    if (totalSamples == 0) return 0;
+    
+    final diff = rawData[lineIdx][(totalSamples - 1) % maxDataSz] - rawData[lineIdx][(totalSamples - 2) % maxDataSz];
     // Derivative is raw diff per sample * samplesPerSec to get raw per sec
     return unit.fromRaw(diff.toDouble() * samplesPerSec, deviceCalibration.slope);
   }
@@ -334,21 +338,21 @@ class DataHub extends ChangeNotifier {
   /// Get the AC RMS for a given ADC channel in the specified unit over the last 1 second window.
   double acRmsForce(int adcChannel, ForceUnit unit) {
     final lineIdx = chanToLine(adcChannel);
-    if (lineIdx < 0 || rawSz == 0) return 0;
+    if (lineIdx < 0 || totalSamples == 0) return 0;
     
-    final int count = math.min(samplesPerSec, rawSz);
+    final int count = math.min(samplesPerSec, totalSamples);
     final lineData = rawData[lineIdx];
-    final startIdx = rawSz - count;
+    final startIdx = totalSamples - count;
     
     double sum = 0;
-    for (int i = startIdx; i < rawSz; i++) {
-      sum += lineData[i];
+    for (int i = startIdx; i < totalSamples; i++) {
+      sum += lineData[i % maxDataSz];
     }
     final mean = sum / count;
     
     double sumSq = 0;
-    for (int i = startIdx; i < rawSz; i++) {
-      final diff = lineData[i] - mean;
+    for (int i = startIdx; i < totalSamples; i++) {
+      final diff = lineData[i % maxDataSz] - mean;
       sumSq += diff * diff;
     }
     final rmsRaw = math.sqrt(sumSq / count);
@@ -356,12 +360,41 @@ class DataHub extends ChangeNotifier {
     return unit.fromRaw(rmsRaw, deviceCalibration.slope);
   }
 
+  void injectTestData(int samples) {
+    int added = 0;
+    for (int i = 0; i < samples; i++) {
+      // Generate some dummy sine wave data
+      // Channel 1 (line 0): Sine wave
+      final val0 =
+          (math.sin(totalSamples * 2 * math.pi / samplesPerSec * 0.5) * 50000 + 50000)
+              .toInt();
+      rawData[0][totalSamples % maxDataSz] = val0;
+      _currentRaw[0] = val0;
+      _addData(val0, 0);
+
+      // Channel 2 (line 1): Cosine wave (or phase shifted)
+      final val1 =
+          (math.cos(totalSamples * 2 * math.pi / samplesPerSec * 0.5) * 30000 + 30000)
+              .toInt();
+      rawData[1][totalSamples % maxDataSz] = val1;
+      _currentRaw[1] = val1;
+      _addData(val1, 1);
+
+      totalSamples++;
+      added++;
+    }
+
+    if (added > 0) {
+      notifyListeners();
+    }
+  }
+
   void _addTare(int val, int idx) {
     _runningTotal[idx] += val;
   }
 
   void _addData(int val, int idx) {
-    rawData[idx][rawSz] = val;
+    rawData[idx][totalSamples % maxDataSz] = val;
     if (val > rawMax[idx]) {
       rawMax[idx] = val;
     }
@@ -436,15 +469,12 @@ class DataHub extends ChangeNotifier {
           }
         }
       } else {
-        rawSz++;
-        if (rawSz >= _maxDataSz) {
-          break;
-        }
+        totalSamples++;
       }
     }
 
     _notifyDataReceived();
-    return rawSz < _maxDataSz;
+    return true; // We never run out of space now
   }
 }
 
