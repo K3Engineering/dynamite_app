@@ -79,6 +79,22 @@ class BluetoothHandling extends ChangeNotifier {
   /// How long to wait for a disconnect callback before force-exiting the
   /// [BtLinkState.disconnecting] state, so a silent stack can't strand the UI.
   static const Duration disconnectTimeout = Duration(milliseconds: 2500);
+
+  /// After a device disconnects, some BLE stacks (notably Web Bluetooth on
+  /// Chrome) need a moment to finish tearing down GATT before they will accept
+  /// a fresh connection to the SAME device. Reconnecting sooner makes Chrome
+  /// briefly accept then drop the link (and throws "Cannot discover services if
+  /// the device is not connected"). We wait out the remainder of this window
+  /// before reconnecting to a recently-disconnected device.
+  static const Duration reconnectSettleDelay = Duration(milliseconds: 600);
+
+  /// Timestamp of the last observed disconnect, keyed by deviceId. Kept on the
+  /// handler (not on [DeviceLink], which gets reset on disconnect) so the
+  /// settle window survives the reset.
+  ///
+  /// MULTI-DEVICE (Path A): already per-device via this map.
+  final Map<String, DateTime> _lastDisconnectAt = {};
+
   AvailabilityState _bluetoothState = AvailabilityState.unknown;
   AvailabilityState get bluetoothState => _bluetoothState;
 
@@ -127,6 +143,11 @@ class BluetoothHandling extends ChangeNotifier {
   /// MULTI-DEVICE (Path A): already carries the device identity, so the message
   /// can name the specific device that failed to disconnect.
   void Function(String deviceName)? onDisconnectTimeout;
+
+  /// Called when a connection drops or fails during post-connect setup (e.g.
+  /// the device disappears mid service-discovery). The argument is the device's
+  /// display name (or id). The UI uses this to surface a brief notice.
+  void Function(String deviceName)? onConnectionFailed;
 
   final DataHub dataHub = DataHub();
 
@@ -265,25 +286,51 @@ class BluetoothHandling extends ChangeNotifier {
       final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
       _link.name = device?.name ?? deviceId;
 
-      if (!kIsWeb) {
-        debugPrint('Requested MTU change');
-        final int mtu = await UniversalBle.requestMtu(deviceId, 247);
-        debugPrint('MTU set to: $mtu');
-      }
-      _link.services.addAll(await UniversalBle.discoverServices(deviceId));
-      for (final srv in _link.services) {
-        if (srv.uuid == btServiceId) {
-          await subscribeToAdcFeed(srv);
-          break;
+      // Reflect "Connected" in the UI immediately, BEFORE the awaited setup
+      // work below. Otherwise the label stays on "Connecting…" until discovery
+      // finishes (and never updates at all if discovery throws).
+      notifyListeners();
+
+      // Post-connect setup. If the device drops mid-setup (common when Chrome
+      // accepts a too-soon reconnect then tears it down ~2.5s later), these
+      // calls throw "Cannot discover services…". Catch it, treat it as a failed
+      // connection, and reset to idle instead of leaving an uncaught exception
+      // and a half-connected limbo.
+      try {
+        if (!kIsWeb) {
+          debugPrint('Requested MTU change');
+          final int mtu = await UniversalBle.requestMtu(deviceId, 247);
+          debugPrint('MTU set to: $mtu');
         }
+        _link.services.addAll(await UniversalBle.discoverServices(deviceId));
+        for (final srv in _link.services) {
+          if (srv.uuid == btServiceId) {
+            await subscribeToAdcFeed(srv);
+            break;
+          }
+        }
+      } catch (e) {
+        debugPrint('Post-connect setup failed for $deviceId: $e');
+        final String name = _link.name.isEmpty ? deviceId : _link.name;
+        // Only reset if this is still the link we were setting up (a real
+        // disconnect callback may have already reset/replaced it).
+        if (_link.deviceId == deviceId) {
+          _lastDisconnectAt[deviceId] = DateTime.now();
+          _link.reset();
+          _sessionInProgress = false;
+        }
+        onConnectionFailed?.call(name);
+        notifyListeners();
       }
     } else {
-      // Disconnect resolved (whether user-requested or unexpected): reset the
-      // link to the idle sentinel and cancel the safety timeout.
+      // Disconnect resolved (whether user-requested or unexpected): record the
+      // time (for the reconnect settle window), reset the link to the idle
+      // sentinel, and cancel the safety timeout.
+      _lastDisconnectAt[deviceId] = DateTime.now();
       _link.reset();
       _sessionInProgress = false;
+      notifyListeners();
     }
-    notifyListeners();
   }
 
   Future<void> connectToDevice(String deviceId) async {
@@ -303,6 +350,21 @@ class BluetoothHandling extends ChangeNotifier {
     _link.deviceId = deviceId;
     _link.state = BtLinkState.connecting;
     notifyListeners();
+
+    // Fix 1: if this device was disconnected very recently, wait out the
+    // remainder of the settle window so the stack (Chrome especially) finishes
+    // GATT teardown before we ask it to reconnect. We're already showing
+    // "Connecting…", which is honest — we are about to connect.
+    final lastDisconnect = _lastDisconnectAt[deviceId];
+    if (lastDisconnect != null) {
+      final elapsed = DateTime.now().difference(lastDisconnect);
+      final remaining = reconnectSettleDelay - elapsed;
+      if (remaining > Duration.zero) {
+        debugPrint('Waiting ${remaining.inMilliseconds}ms for $deviceId to settle');
+        await Future<void>.delayed(remaining);
+      }
+    }
+
     try {
       await UniversalBle.connect(deviceId);
     } catch (e) {
@@ -333,6 +395,7 @@ class BluetoothHandling extends ChangeNotifier {
       if (_link.deviceId == deviceId &&
           _link.state == BtLinkState.disconnecting) {
         debugPrint('Disconnect timed out for $deviceId; forcing idle');
+        _lastDisconnectAt[deviceId] = DateTime.now();
         _link.reset();
         _sessionInProgress = false;
         onDisconnectTimeout?.call(deviceName);

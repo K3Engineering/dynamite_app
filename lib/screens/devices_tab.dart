@@ -17,13 +17,15 @@ class _DevicesTabState extends State<DevicesTab> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Register the disconnect-timeout notice once. Using read (not watch) so we
-    // don't rebuild on it; the callback shows a transient SnackBar.
+    // Register transient-notice callbacks once. Using read (not watch) so we
+    // don't rebuild on them; the callbacks show transient SnackBars.
     final bt = context.read<BluetoothHandling>();
     if (!identical(_bt, bt)) {
       _bt?.onDisconnectTimeout = null;
+      _bt?.onConnectionFailed = null;
       _bt = bt;
       bt.onDisconnectTimeout = _showDisconnectTimeoutNotice;
+      bt.onConnectionFailed = _showConnectionFailedNotice;
     }
   }
 
@@ -32,6 +34,9 @@ class _DevicesTabState extends State<DevicesTab> {
     if (_bt?.onDisconnectTimeout == _showDisconnectTimeoutNotice) {
       _bt?.onDisconnectTimeout = null;
     }
+    if (_bt?.onConnectionFailed == _showConnectionFailedNotice) {
+      _bt?.onConnectionFailed = null;
+    }
     super.dispose();
   }
 
@@ -39,6 +44,13 @@ class _DevicesTabState extends State<DevicesTab> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('$deviceName didn\'t disconnect cleanly.')),
+    );
+  }
+
+  void _showConnectionFailedNotice(String deviceName) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Lost connection to $deviceName during setup.')),
     );
   }
 
@@ -58,11 +70,12 @@ class _DevicesTabState extends State<DevicesTab> {
           Row(
             children: [
               Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
-              const Spacer(),
+              const SizedBox(width: 12),
               // Right cluster: status text + icon + Scan button, flush right.
-              Flexible(
+              // Expanded gives the cluster the remaining width; the cluster's
+              // own Row right-aligns its content within it.
+              Expanded(
                 child: Row(
-                  mainAxisSize: MainAxisSize.min,
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     Flexible(
