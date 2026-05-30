@@ -25,9 +25,12 @@ class _DevicesTabState extends State<DevicesTab> {
             children: [
               Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
               const Spacer(),
-              BluetoothIndicator(
-                isScanning: bt.isScanning,
-                state: bt.bluetoothState,
+              Flexible(
+                child: BluetoothIndicator(
+                  isScanning: bt.isScanning,
+                  isConnected: isConnected,
+                  state: bt.bluetoothState,
+                ),
               ),
               const SizedBox(width: 8),
               FilledButton.tonal(
