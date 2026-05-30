@@ -7,6 +7,7 @@ class BluetoothIndicator extends StatelessWidget {
   final bool isScanning;
   final bool isConnecting;
   final bool isConnected;
+  final bool isDisconnecting;
   final bool hasDevices;
   final bool showLabel;
   final AvailabilityState state;
@@ -17,6 +18,7 @@ class BluetoothIndicator extends StatelessWidget {
     required this.state,
     this.isConnecting = false,
     this.isConnected = false,
+    this.isDisconnecting = false,
     this.hasDevices = false,
     this.showLabel = true,
   });
@@ -25,6 +27,13 @@ class BluetoothIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     (IconData, Color, String) indicator() {
       // Order matters: most definite / in-progress states first.
+      if (isDisconnecting) {
+        return const (
+          Icons.bluetooth_searching,
+          Colors.lightBlue,
+          'Disconnecting…',
+        );
+      }
       if (isConnected) {
         return const (
           Icons.bluetooth_connected,
@@ -105,7 +114,7 @@ class BluetoothIndicator extends StatelessWidget {
 
     final (IconData icon, Color color, String label) = indicator();
     const double size = 32;
-    final bool showSpinner = isScanning || isConnecting;
+    final bool showSpinner = isScanning || isConnecting || isDisconnecting;
 
     final iconStack = Stack(
       clipBehavior: Clip.none,

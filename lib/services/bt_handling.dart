@@ -11,38 +11,122 @@ import '../models/force_unit.dart';
 // ignore: unused_import
 import 'mockble.dart';
 
+/// Lifecycle of a single device's BLE link.
+///
+/// This is intentionally a *per-device* concept even though, today, the app
+/// only tracks one link at a time (see [DeviceLink] / [BluetoothHandling]).
+///
+/// MULTI-DEVICE (Path A): when we support N simultaneous devices, this enum
+/// stays exactly as-is. The only change is that [BluetoothHandling] will hold a
+/// `Map<String /*deviceId*/, DeviceLink>` instead of the single [_link] below,
+/// and the UI will read each row's state from its own [DeviceLink]. The
+/// adapter-availability and scanning state remain *global* (one radio), so they
+/// do NOT move into [DeviceLink].
+enum BtLinkState {
+  /// No connection to this device; it may or may not be in the discovered list.
+  idle,
+
+  /// A `connect()` call is outstanding; not yet usable.
+  connecting,
+
+  /// Connected (and, once [DeviceLink.isSubscribed] is true, streaming).
+  connected,
+
+  /// A `disconnect()` was requested; awaiting the platform callback (or the
+  /// safety timeout). Connect must stay blocked while in this state so we never
+  /// issue a connect against a half-torn-down link.
+  disconnecting,
+}
+
+/// All per-device link state for a single BLE device.
+///
+/// MULTI-DEVICE (Path A): promote the single [BluetoothHandling._link] to a
+/// `Map<String, DeviceLink>` keyed by [deviceId]. Each map entry owns its own
+/// state/name/services/subscription/timer. The migration is mechanical because
+/// every field that is logically per-device already lives here rather than as a
+/// loose field on [BluetoothHandling].
+class DeviceLink {
+  DeviceLink({this.deviceId = ''});
+
+  /// Empty string means "no device" (the [BtLinkState.idle] sentinel).
+  String deviceId;
+  String name = '';
+  BtLinkState state = BtLinkState.idle;
+  bool isSubscribed = false;
+  final List<BleService> services = [];
+
+  /// Safety timer that force-exits [BtLinkState.disconnecting] if the platform
+  /// never delivers a disconnect callback.
+  Timer? disconnectTimeoutTimer;
+
+  bool get isConnecting => state == BtLinkState.connecting;
+  bool get isConnected => state == BtLinkState.connected;
+  bool get isDisconnecting => state == BtLinkState.disconnecting;
+
+  /// Reset back to the idle sentinel (used on disconnect / forced timeout).
+  void reset() {
+    disconnectTimeoutTimer?.cancel();
+    disconnectTimeoutTimer = null;
+    deviceId = '';
+    name = '';
+    state = BtLinkState.idle;
+    isSubscribed = false;
+    services.clear();
+  }
+}
+
 class BluetoothHandling extends ChangeNotifier {
+  /// How long to wait for a disconnect callback before force-exiting the
+  /// [BtLinkState.disconnecting] state, so a silent stack can't strand the UI.
+  static const Duration disconnectTimeout = Duration(milliseconds: 2500);
   AvailabilityState _bluetoothState = AvailabilityState.unknown;
   AvailabilityState get bluetoothState => _bluetoothState;
 
   final List<BleDevice> _devices = [];
   List<BleDevice> get devices => _devices;
 
-  final List<BleService> _services = [];
-  List<BleService> get services => _services;
+  /// Discovered services for the active link.
+  List<BleService> get services => _link.services;
 
   bool _isScanning = false;
   bool get isScanning => _isScanning;
 
+  /// The single active device link.
+  ///
+  /// MULTI-DEVICE (Path A): replace with
+  /// `final Map<String, DeviceLink> _links = {};` and add per-device accessors.
+  /// The getters below currently project this single link into the flat API the
+  /// UI consumes today; in the multi-device world the UI will read each
+  /// [DeviceLink] directly instead of via these singular getters.
+  final DeviceLink _link = DeviceLink();
+  DeviceLink get link => _link;
+
   /// True between a connect request and the connection result (success or
   /// failure). Used purely for UI status; never assume the device is usable
   /// while this is true.
-  bool _isConnecting = false;
-  bool get isConnecting => _isConnecting;
+  bool get isConnecting => _link.isConnecting;
 
-  String _selectedDeviceId = '';
-  String get selectedDeviceId => _selectedDeviceId;
+  /// True while a disconnect has been requested but not yet confirmed.
+  bool get isDisconnecting => _link.isDisconnecting;
+
+  String get selectedDeviceId => _link.isConnected ? _link.deviceId : '';
 
   /// Name of the currently connected device.
-  String _connectedDeviceName = '';
   String get connectedDeviceName =>
-      _connectedDeviceName.isEmpty ? _selectedDeviceId : _connectedDeviceName;
+      _link.name.isEmpty ? _link.deviceId : _link.name;
 
-  bool _isSubscribed = false;
-  bool get isSubscribed => _isSubscribed;
+  bool get isSubscribed => _link.isSubscribed;
 
   bool _sessionInProgress = false;
   bool get sessionInProgress => _sessionInProgress;
+
+  /// Called when a disconnect is forced to give up after [disconnectTimeout]
+  /// without a platform callback. The argument is the affected device's display
+  /// name (or id). The UI uses this to surface a brief notice.
+  ///
+  /// MULTI-DEVICE (Path A): already carries the device identity, so the message
+  /// can name the specific device that failed to disconnect.
+  void Function(String deviceName)? onDisconnectTimeout;
 
   final DataHub dataHub = DataHub();
 
@@ -106,12 +190,15 @@ class BluetoothHandling extends ChangeNotifier {
     // Guard before any destructive clears: if we can't/shouldn't start a scan,
     // don't wipe the existing device list (which would leave the UI showing an
     // empty list with no picker having opened).
-    if (_isSubscribed) {
+    //
+    // MULTI-DEVICE (Path A): this becomes "if any link is mid-transition"
+    // (connecting/disconnecting) rather than a single subscribed flag.
+    if (_link.isSubscribed) {
       return;
     }
     await disconnectSelectedDevice();
     _devices.clear();
-    _services.clear();
+    _link.services.clear();
     _isScanning = true;
     await UniversalBle.startScan(
       scanFilter: ScanFilter(withServices: [btServiceId]),
@@ -131,7 +218,7 @@ class BluetoothHandling extends ChangeNotifier {
   }
 
   void toggleSession() {
-    assert(_selectedDeviceId.isNotEmpty);
+    assert(_link.isConnected);
     if (!_sessionInProgress) {
       // Starting a recording: mark the current logical time.
       dataHub._recordingStartIdx = dataHub.totalSamples;
@@ -162,34 +249,38 @@ class BluetoothHandling extends ChangeNotifier {
       'isConnected $deviceId, $isConnected ${(err == null) ? '' : err}',
     );
 
-    // The connect attempt has resolved (either connected or disconnected);
-    // clear the transient UI flag regardless of outcome.
-    _isConnecting = false;
+    // MULTI-DEVICE (Path A): look up `_links[deviceId]` instead of assuming the
+    // event is for the single active link. For now we only track one link, so a
+    // callback for a different deviceId is ignored.
+    if (_link.deviceId.isNotEmpty && _link.deviceId != deviceId) {
+      debugPrint('Ignoring connection change for non-active device $deviceId');
+      return;
+    }
 
     if (isConnected) {
-      _selectedDeviceId = deviceId;
+      _link.deviceId = deviceId;
+      _link.state = BtLinkState.connected;
 
       // Store the device name
       final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
-      _connectedDeviceName = device?.name ?? deviceId;
+      _link.name = device?.name ?? deviceId;
 
       if (!kIsWeb) {
         debugPrint('Requested MTU change');
         final int mtu = await UniversalBle.requestMtu(deviceId, 247);
         debugPrint('MTU set to: $mtu');
       }
-      _services.addAll(await UniversalBle.discoverServices(deviceId));
-      for (final srv in _services) {
+      _link.services.addAll(await UniversalBle.discoverServices(deviceId));
+      for (final srv in _link.services) {
         if (srv.uuid == btServiceId) {
           await subscribeToAdcFeed(srv);
           break;
         }
       }
     } else {
-      _isSubscribed = false;
-      _selectedDeviceId = '';
-      _connectedDeviceName = '';
-      _services.clear();
+      // Disconnect resolved (whether user-requested or unexpected): reset the
+      // link to the idle sentinel and cancel the safety timeout.
+      _link.reset();
       _sessionInProgress = false;
     }
     notifyListeners();
@@ -199,31 +290,64 @@ class BluetoothHandling extends ChangeNotifier {
     if (_isScanning) {
       await _stopScan();
     }
-    if (_selectedDeviceId.isEmpty) {
-      _isConnecting = true;
+    // Block connecting while a link is busy (connecting/connected/disconnecting).
+    // The disconnecting case is what stops the "double-click after Disconnect"
+    // race: the device row's Connect button is disabled until the link returns
+    // to idle (via callback or the safety timeout), so we never reach here.
+    //
+    // MULTI-DEVICE (Path A): this guard becomes per-device — a different,
+    // idle device can connect while another is mid-transition.
+    if (_link.state != BtLinkState.idle) {
+      return;
+    }
+    _link.deviceId = deviceId;
+    _link.state = BtLinkState.connecting;
+    notifyListeners();
+    try {
+      await UniversalBle.connect(deviceId);
+    } catch (e) {
+      // Connection result (success) arrives via _onConnectionChange; on a
+      // failed connect attempt that callback may never fire, so reset the
+      // link here and let the caller surface the error.
+      _link.reset();
       notifyListeners();
-      try {
-        await UniversalBle.connect(deviceId);
-      } catch (e) {
-        // Connection result (success) arrives via _onConnectionChange; on a
-        // failed connect attempt that callback may never fire, so clear the
-        // transient flag here and let the caller surface the error.
-        _isConnecting = false;
-        notifyListeners();
-        rethrow;
-      }
+      rethrow;
     }
   }
 
   Future<void> disconnectSelectedDevice() async {
-    if (_selectedDeviceId.isNotEmpty) {
-      await UniversalBle.disconnect(_selectedDeviceId);
-      await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
+    if (!_link.isConnected) {
+      return;
     }
+    final String deviceId = _link.deviceId;
+    final String deviceName = _link.name.isEmpty ? deviceId : _link.name;
+    _link.state = BtLinkState.disconnecting;
+
+    // Safety net: if the platform never delivers the disconnect callback, force
+    // the link back to idle so the UI can't get stuck on "Disconnecting…".
+    //
+    // MULTI-DEVICE (Path A): the timer lives on the per-device DeviceLink, so
+    // each device times out independently and the message can name that device.
+    _link.disconnectTimeoutTimer?.cancel();
+    _link.disconnectTimeoutTimer = Timer(disconnectTimeout, () {
+      if (_link.deviceId == deviceId &&
+          _link.state == BtLinkState.disconnecting) {
+        debugPrint('Disconnect timed out for $deviceId; forcing idle');
+        _link.reset();
+        _sessionInProgress = false;
+        onDisconnectTimeout?.call(deviceName);
+        notifyListeners();
+      }
+    });
+    notifyListeners();
+
+    await UniversalBle.disconnect(deviceId);
+    await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
   }
 
   Future<void> subscribeToAdcFeed(BleService service) async {
-    if (_selectedDeviceId.isEmpty) {
+    final String deviceId = _link.deviceId;
+    if (deviceId.isEmpty) {
       return;
     }
     for (final characteristic in service.characteristics) {
@@ -231,17 +355,17 @@ class BluetoothHandling extends ChangeNotifier {
           characteristic.properties.contains(CharacteristicProperty.notify)) {
         dataHub._updateCalibration(
           await UniversalBle.read(
-            _selectedDeviceId,
+            deviceId,
             service.uuid,
             btChrCalibration,
           ),
         );
         await UniversalBle.subscribeNotifications(
-          _selectedDeviceId,
+          deviceId,
           service.uuid,
           characteristic.uuid,
         );
-        _isSubscribed = true;
+        _link.isSubscribed = true;
         notifyListeners();
         return;
       }

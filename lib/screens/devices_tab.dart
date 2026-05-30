@@ -12,10 +12,44 @@ class DevicesTab extends StatefulWidget {
 }
 
 class _DevicesTabState extends State<DevicesTab> {
+  BluetoothHandling? _bt;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Register the disconnect-timeout notice once. Using read (not watch) so we
+    // don't rebuild on it; the callback shows a transient SnackBar.
+    final bt = context.read<BluetoothHandling>();
+    if (!identical(_bt, bt)) {
+      _bt?.onDisconnectTimeout = null;
+      _bt = bt;
+      bt.onDisconnectTimeout = _showDisconnectTimeoutNotice;
+    }
+  }
+
+  @override
+  void dispose() {
+    if (_bt?.onDisconnectTimeout == _showDisconnectTimeoutNotice) {
+      _bt?.onDisconnectTimeout = null;
+    }
+    super.dispose();
+  }
+
+  void _showDisconnectTimeoutNotice(String deviceName) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('$deviceName didn\'t disconnect cleanly.')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final bt = context.watch<BluetoothHandling>();
     final isConnected = bt.selectedDeviceId.isNotEmpty;
+    // A link is "busy" whenever it is mid-transition or active; device-row
+    // Connect buttons stay disabled until the link returns to idle. This is
+    // what prevents the disconnect→reconnect double-click race.
+    final isBusy = isConnected || bt.isConnecting || bt.isDisconnecting;
 
     return SafeArea(
       child: ListView(
@@ -25,21 +59,31 @@ class _DevicesTabState extends State<DevicesTab> {
             children: [
               Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
               const Spacer(),
+              // Right cluster: status text + icon + Scan button, flush right.
               Flexible(
-                child: BluetoothIndicator(
-                  isScanning: bt.isScanning,
-                  isConnecting: bt.isConnecting,
-                  isConnected: isConnected,
-                  hasDevices: bt.devices.isNotEmpty,
-                  state: bt.bluetoothState,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Flexible(
+                      child: BluetoothIndicator(
+                        isScanning: bt.isScanning,
+                        isConnecting: bt.isConnecting,
+                        isConnected: isConnected,
+                        isDisconnecting: bt.isDisconnecting,
+                        hasDevices: bt.devices.isNotEmpty,
+                        state: bt.bluetoothState,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    FilledButton.tonal(
+                      onPressed: () async {
+                        await bt.toggleScan();
+                      },
+                      child: Text(bt.isScanning ? 'Stop' : 'Scan'),
+                    ),
+                  ],
                 ),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.tonal(
-                onPressed: () async {
-                  await bt.toggleScan();
-                },
-                child: Text(bt.isScanning ? 'Stop' : 'Scan'),
               ),
             ],
           ),
@@ -63,10 +107,16 @@ class _DevicesTabState extends State<DevicesTab> {
                 title: Text(bt.connectedDeviceName),
                 subtitle: Text('ID: ${bt.selectedDeviceId}'),
                 trailing: TextButton(
-                  onPressed: () async {
-                    await bt.disconnectSelectedDevice();
-                  },
-                  child: const Text('Disconnect'),
+                  // Disabled while the disconnect is in flight so the button
+                  // truthfully reflects the in-progress teardown.
+                  onPressed: bt.isDisconnecting
+                      ? null
+                      : () async {
+                          await bt.disconnectSelectedDevice();
+                        },
+                  child: Text(
+                    bt.isDisconnecting ? 'Disconnecting…' : 'Disconnect',
+                  ),
                 ),
               ),
             ),
@@ -120,7 +170,11 @@ class _DevicesTabState extends State<DevicesTab> {
                   device.rssi != null ? 'RSSI: ${device.rssi} dBm' : 'RSSI: --',
                 ),
                 trailing: FilledButton(
-                  onPressed: isConnected
+                  // Disabled whenever a link is busy (connecting/connected/
+                  // disconnecting) so we never issue a connect against a link
+                  // that is still tearing down — this is the fix for needing a
+                  // second Connect click right after Disconnect.
+                  onPressed: isBusy
                       ? null
                       : () async {
                           try {
