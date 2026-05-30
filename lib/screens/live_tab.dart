@@ -23,9 +23,11 @@ class LiveTab extends StatefulWidget {
   State<LiveTab> createState() => _LiveTabState();
 }
 
-class _LiveMinimapDataSource extends ChangeNotifier implements GraphDataSource {
+/// Adapts a live [DataHub] to the [GraphDataSource] interface consumed by the
+/// shared graph widgets. Forwards the hub's change notifications.
+class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
   final DataHub _hub;
-  _LiveMinimapDataSource(this._hub) {
+  _LiveDataSource(this._hub) {
     _hub.addListener(notifyListeners);
   }
 
@@ -36,13 +38,14 @@ class _LiveMinimapDataSource extends ChangeNotifier implements GraphDataSource {
   }
 
   @override
+  int get totalSamples => _hub.totalSamples;
+
+  @override
   int get bufferCapacity => DataHub.maxDataSz;
 
   @override
-  int get oldestSample => _hub.totalSamples > DataHub.maxDataSz ? _hub.totalSamples - DataHub.maxDataSz : 0;
-
-  @override
-  int get totalSamples => _hub.totalSamples;
+  int get oldestSample =>
+      _hub.totalSamples > DataHub.maxDataSz ? _hub.totalSamples - DataHub.maxDataSz : 0;
 
   @override
   int get sampleRate => DataHub.samplesPerSec;
@@ -51,34 +54,21 @@ class _LiveMinimapDataSource extends ChangeNotifier implements GraphDataSource {
   double get calibrationSlope => _hub.deviceCalibration.slope;
 
   @override
-  List<int> getChannelData(int channelIndex) {
-    if (channelIndex < 0 || channelIndex >= DataHub.numAdcChannels) return [];
-    return _hub.rawData[channelIndex];
-  }
+  Listenable get repaint => this;
 
   @override
-  double getChannelMin(int channelIndex) {
-    if (channelIndex < 0 || channelIndex >= DataHub.numAdcChannels) return 0.0;
-    return _hub.rawMin[channelIndex].toDouble();
-  }
-
-  @override
-  double getChannelMax(int channelIndex) {
-    if (channelIndex < 0 || channelIndex >= DataHub.numAdcChannels) return 0.0;
-    return _hub.rawMax[channelIndex].toDouble();
-  }
-
-  @override
-  double getChannelTare(int channelIndex) {
-    if (channelIndex < 0 || channelIndex >= DataHub.numAdcChannels) return 0.0;
-    return _hub.tare[channelIndex];
-  }
+  ChannelSeries channel(int channelIndex) => (
+        data: _hub.rawData[channelIndex],
+        min: _hub.rawMin[channelIndex].toDouble(),
+        max: _hub.rawMax[channelIndex].toDouble(),
+        tare: _hub.tare[channelIndex],
+      );
 }
 
 class _LiveTabState extends State<LiveTab> {
   final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * DataHub.samplesPerSec);
   bool _showDerivative = false;
-  _LiveMinimapDataSource? _dataSource;
+  _LiveDataSource? _dataSource;
   BluetoothHandling? _btHandling;
 
   @override
@@ -88,7 +78,7 @@ class _LiveTabState extends State<LiveTab> {
     if (_btHandling != bt) {
       _btHandling = bt;
       _dataSource?.dispose();
-      _dataSource = _LiveMinimapDataSource(bt.dataHub);
+      _dataSource = _LiveDataSource(bt.dataHub);
     }
   }
 
@@ -358,7 +348,7 @@ class LiveStats extends StatelessWidget {
                 Expanded(
                   child: _ChannelStatChip(
                     label: settings.channelLabels[indices[i]],
-                    color: _channelColor(indices[i]),
+                    color: getChannelColor(indices[i]),
                     current: hub.currentForce(indices[i], unit),
                     peak: hub.peakForce(indices[i], unit),
                     acRms: hub.acRmsForce(indices[i], unit),
@@ -452,7 +442,7 @@ class ChannelLegend extends StatelessWidget {
                     width: 12,
                     height: 12,
                     decoration: BoxDecoration(
-                      color: _channelColor(idx),
+                      color: getChannelColor(idx),
                       borderRadius: BorderRadius.circular(2),
                     ),
                   ),
@@ -608,18 +598,4 @@ class _ChannelStatChip extends StatelessWidget {
       ),
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Channel colors
-// ---------------------------------------------------------------------------
-
-Color _channelColor(int index) {
-  const colors = [
-    Colors.blueAccent,
-    Colors.deepOrangeAccent,
-    Colors.green,
-    Colors.purple,
-  ];
-  return colors[index % colors.length];
 }

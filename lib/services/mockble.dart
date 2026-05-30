@@ -241,13 +241,14 @@ class MockBlePlatform extends UniversalBlePlatform {
         );
         final adcSamples = List<int>.from(parsedLine['channels']);
         assert(adcSamples.length == 4);
+        // Match the real wire format: 4 channels x 3 bytes, little-endian,
+        // packed at offset i*3 (see DataHub._parseDataPacket).
         final networkFormatData = Uint8List(nwAdcSampleLength);
-        for (int i = adcSamples.length - 1; i >= 0; --i) {
-          networkFormatData.buffer.asByteData().setInt32(
-            1 + i * 3,
-            adcSamples[i],
-            Endian.big,
-          );
+        for (int i = 0; i < adcSamples.length; ++i) {
+          final v = adcSamples[i];
+          networkFormatData[i * 3] = v & 0xFF;
+          networkFormatData[i * 3 + 1] = (v >> 8) & 0xFF;
+          networkFormatData[i * 3 + 2] = (v >> 16) & 0xFF;
         }
         _mockData.add(networkFormatData);
       }
