@@ -462,7 +462,7 @@ class _MinimapPainter extends CustomPainter {
       final chColor = _colors[ch % _colors.length];
 
       void flushEnv() {
-        if (envIdx > 0) {
+        if (envIdx > 4) {
           final vertices = ui.Vertices.raw(
             ui.VertexMode.triangleStrip,
             Float32List.sublistView(envPts, 0, envIdx),
@@ -471,12 +471,18 @@ class _MinimapPainter extends CustomPainter {
           pen.style = PaintingStyle.fill;
           canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
           vertices.dispose();
-          envIdx = 0;
+          
+          // Preserve the last two vertices (4 floats) to continue the strip
+          envPts[0] = envPts[envIdx - 4];
+          envPts[1] = envPts[envIdx - 3];
+          envPts[2] = envPts[envIdx - 2];
+          envPts[3] = envPts[envIdx - 1];
+          envIdx = 4;
         }
       }
 
       void flushAvg() {
-        if (avgIdx > 0) {
+        if (avgIdx > 2) {
           pen.color = chColor.withAlpha(180);
           pen.style = PaintingStyle.stroke;
           canvas.drawRawPoints(
@@ -484,7 +490,11 @@ class _MinimapPainter extends CustomPainter {
             Float32List.sublistView(avgPts, 0, avgIdx),
             pen..strokeWidth = 1.0,
           );
-          avgIdx = 0;
+          
+          // Preserve the last point (2 floats) to connect the polygon
+          avgPts[0] = avgPts[avgIdx - 2];
+          avgPts[1] = avgPts[avgIdx - 1];
+          avgIdx = 2;
         }
       }
 
@@ -1124,7 +1134,7 @@ void drawChannelEnvelope(
   final pen = Paint();
 
   void flushEnv() {
-    if (envIdx > 0) {
+    if (envIdx > 4) {
       final vertices = ui.Vertices.raw(
         ui.VertexMode.triangleStrip,
         Float32List.sublistView(envPts, 0, envIdx),
@@ -1134,12 +1144,17 @@ void drawChannelEnvelope(
         ..style = PaintingStyle.fill;
       canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
       vertices.dispose();
-      envIdx = 0;
+      
+      envPts[0] = envPts[envIdx - 4];
+      envPts[1] = envPts[envIdx - 3];
+      envPts[2] = envPts[envIdx - 2];
+      envPts[3] = envPts[envIdx - 1];
+      envIdx = 4;
     }
   }
 
   void flushAvg() {
-    if (avgIdx > 0) {
+    if (avgIdx > 2) {
       pen
         ..color = color
         ..style = PaintingStyle.stroke
@@ -1149,7 +1164,10 @@ void drawChannelEnvelope(
         Float32List.sublistView(avgPts, 0, avgIdx),
         pen,
       );
-      avgIdx = 0;
+      
+      avgPts[0] = avgPts[avgIdx - 2];
+      avgPts[1] = avgPts[avgIdx - 1];
+      avgIdx = 2;
     }
   }
 
