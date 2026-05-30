@@ -26,6 +26,41 @@ double graphPlotWidth(double totalWidth) =>
 // Shared Graph Data Source
 // ---------------------------------------------------------------------------
 
+class CacheConfig {
+  final double graphW;
+  final double graphH;
+  final int viewSamples;
+  final double yMin;
+  final double yMax;
+  final List<double> tares;
+
+  CacheConfig(this.graphW, this.graphH, this.viewSamples, this.yMin, this.yMax, this.tares);
+
+  bool matches(CacheConfig other) {
+    if ((graphW - other.graphW).abs() > 0.1) return false;
+    if ((graphH - other.graphH).abs() > 0.1) return false;
+    if (viewSamples != other.viewSamples) return false;
+    if ((yMin - other.yMin).abs() > 1e-6) return false;
+    if ((yMax - other.yMax).abs() > 1e-6) return false;
+    if (tares.length != other.tares.length) return false;
+    for (int i = 0; i < tares.length; i++) {
+      if ((tares[i] - other.tares[i]).abs() > 1e-6) return false;
+    }
+    return true;
+  }
+}
+
+class GraphLineCache {
+  CacheConfig? config;
+  int chunkSamples = 1000;
+  final Map<int, ui.Picture> chunks = {};
+
+  void invalidate() {
+    chunks.clear();
+    config = null;
+  }
+}
+
 /// A single channel's raw circular-buffer data plus its precomputed extremes
 /// and tare offset. Returned by [GraphDataSource.channel].
 typedef ChannelSeries = ({List<int> data, double min, double max, double tare});
@@ -735,12 +770,13 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
 // Graph Workspace Widget
 // ---------------------------------------------------------------------------
 
-class GraphWorkspace extends StatelessWidget {
+class GraphWorkspace extends StatefulWidget {
   final GraphDataSource data;
   final GraphController ctrl;
   final AppSettings settings;
   final bool showDerivative;
   final bool isLiveGraph;
+  final bool showEnvelope;
 
   const GraphWorkspace({
     super.key,
@@ -749,7 +785,23 @@ class GraphWorkspace extends StatelessWidget {
     required this.settings,
     this.showDerivative = false,
     this.isLiveGraph = true,
+    this.showEnvelope = true,
   });
+
+  @override
+  State<GraphWorkspace> createState() => _GraphWorkspaceState();
+}
+
+class _GraphWorkspaceState extends State<GraphWorkspace> {
+  final GraphLineCache _forceCache = GraphLineCache();
+  final GraphLineCache _derivCache = GraphLineCache();
+
+  @override
+  void dispose() {
+    _forceCache.invalidate();
+    _derivCache.invalidate();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -761,18 +813,20 @@ class GraphWorkspace extends StatelessWidget {
               children: [
                 // Main force graph
                 Expanded(
-                  flex: showDerivative ? 6 : 10,
+                  flex: widget.showDerivative ? 6 : 10,
                   child: InteractiveGraphArea(
-                    data: data,
-                    ctrl: ctrl,
+                    data: widget.data,
+                    ctrl: widget.ctrl,
                     child: ListenableBuilder(
-                      listenable: Listenable.merge([ctrl, data.repaint]),
+                      listenable: Listenable.merge([widget.ctrl, widget.data.repaint]),
                       builder: (context, _) => CustomPaint(
                         foregroundPainter: ForceGraphPainter(
-                          data,
-                          settings,
-                          ctrl,
-                          showXLabels: !showDerivative,
+                          widget.data,
+                          widget.settings,
+                          widget.ctrl,
+                          showXLabels: !widget.showDerivative,
+                          showEnvelope: widget.showEnvelope,
+                          cache: _forceCache,
                         ),
                         size: Size.infinite,
                       ),
@@ -780,19 +834,21 @@ class GraphWorkspace extends StatelessWidget {
                   ),
                 ),
                 // Derivative graph (when enabled)
-                if (showDerivative)
+                if (widget.showDerivative)
                   Expanded(
                     flex: 4,
                     child: InteractiveGraphArea(
-                      data: data,
-                      ctrl: ctrl,
+                      data: widget.data,
+                      ctrl: widget.ctrl,
                       child: ListenableBuilder(
-                        listenable: Listenable.merge([ctrl, data.repaint]),
+                        listenable: Listenable.merge([widget.ctrl, widget.data.repaint]),
                         builder: (context, _) => CustomPaint(
                           foregroundPainter: DerivativeGraphPainter(
-                            data,
-                            settings,
-                            ctrl,
+                            widget.data,
+                            widget.settings,
+                            widget.ctrl,
+                            showEnvelope: widget.showEnvelope,
+                            cache: _derivCache,
                           ),
                           size: Size.infinite,
                         ),
@@ -801,12 +857,12 @@ class GraphWorkspace extends StatelessWidget {
                   ),
                 // Minimap
                 ListenableBuilder(
-                  listenable: data.repaint,
+                  listenable: widget.data.repaint,
                   builder: (context, _) => Minimap(
-                    dataSource: data,
-                    activeChannels: settings.activeChannelIndices,
-                    graphCtrl: ctrl,
-                    channelColors: settings.activeChannelIndices
+                    dataSource: widget.data,
+                    activeChannels: widget.settings.activeChannelIndices,
+                    graphCtrl: widget.ctrl,
+                    channelColors: widget.settings.activeChannelIndices
                         .map(getChannelColor)
                         .toList(),
                   ),
@@ -815,16 +871,16 @@ class GraphWorkspace extends StatelessWidget {
             ),
             // LIVE button (appears when not following live edge)
             ListenableBuilder(
-              listenable: ctrl,
+              listenable: widget.ctrl,
               builder: (context, _) {
-                if (ctrl.isLive || data.totalSamples == 0 || !isLiveGraph) {
+                if (widget.ctrl.isLive || widget.data.totalSamples == 0 || !widget.isLiveGraph) {
                   return const SizedBox.shrink();
                 }
                 return Positioned(
                   right: 64,
                   top: 8,
                   child: FilledButton.tonalIcon(
-                    onPressed: () => ctrl.goLive(totalSamples: data.totalSamples, oldestSample: data.oldestSample),
+                    onPressed: () => widget.ctrl.goLive(totalSamples: widget.data.totalSamples, oldestSample: widget.data.oldestSample),
                     icon: const Icon(Icons.fast_forward, size: 16),
                     label: const Text('LIVE'),
                     style: FilledButton.styleFrom(
@@ -847,22 +903,22 @@ class GraphWorkspace extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   FloatingActionButton.small(
-                    heroTag: 'zoomIn_${data.hashCode}',
+                    heroTag: 'zoomIn_${widget.data.hashCode}',
                     onPressed: () {
-                      if (data.totalSamples > 0) {
-                        final focal = ctrl.isLive ? 1.0 : 0.5;
-                        ctrl.zoom(1.2, focal, data.totalSamples, data.oldestSample, data.bufferCapacity);
+                      if (widget.data.totalSamples > 0) {
+                        final focal = widget.ctrl.isLive ? 1.0 : 0.5;
+                        widget.ctrl.zoom(1.2, focal, widget.data.totalSamples, widget.data.oldestSample, widget.data.bufferCapacity);
                       }
                     },
                     child: const Icon(Icons.zoom_in),
                   ),
                   const SizedBox(height: 8),
                   FloatingActionButton.small(
-                    heroTag: 'zoomOut_${data.hashCode}',
+                    heroTag: 'zoomOut_${widget.data.hashCode}',
                     onPressed: () {
-                      if (data.totalSamples > 0) {
-                        final focal = ctrl.isLive ? 1.0 : 0.5;
-                        ctrl.zoom(1 / 1.2, focal, data.totalSamples, data.oldestSample, data.bufferCapacity);
+                      if (widget.data.totalSamples > 0) {
+                        final focal = widget.ctrl.isLive ? 1.0 : 0.5;
+                        widget.ctrl.zoom(1 / 1.2, focal, widget.data.totalSamples, widget.data.oldestSample, widget.data.bufferCapacity);
                       }
                     },
                     child: const Icon(Icons.zoom_out),
@@ -1116,7 +1172,7 @@ void drawZeroBaseline(
 void drawChannelEnvelope(
   Canvas canvas, {
   required Color color,
-  required int graphW,
+  required double graphW,
   required int viewStart,
   required int viewSamples,
   required int oldestSample,
@@ -1124,6 +1180,8 @@ void drawChannelEnvelope(
   required int firstUsableSample,
   required double Function(int sampleIndex) sampleAt,
   required double Function(double rawReduced) valueToY,
+  bool showEnvelope = true,
+  int? clipEnvelopeSamples,
 }) {
   const int maxFloats = 4096; // 16KB per chunk
   final Float32List avgPts = Float32List(maxFloats);
@@ -1164,7 +1222,7 @@ void drawChannelEnvelope(
         Float32List.sublistView(avgPts, 0, avgIdx),
         pen,
       );
-      
+
       avgPts[0] = avgPts[avgIdx - 2];
       avgPts[1] = avgPts[avgIdx - 1];
       avgIdx = 2;
@@ -1177,7 +1235,8 @@ void drawChannelEnvelope(
 
   // Determine the range of absolute data blocks that overlap the view
   final int startBlock = (math.max(viewStart, firstUsableSample) / blockSize).floor();
-  final int endBlock = (math.min(viewStart + viewSamples, totalSamples) / blockSize).ceil();
+  final int endBlock = (totalSamples / blockSize).ceil();
+  final int envelopeLimit = clipEnvelopeSamples ?? totalSamples;
 
   for (int k = startBlock; k < endBlock; k++) {
     final int sStart = k * blockSize;
@@ -1214,20 +1273,23 @@ void drawChannelEnvelope(
     avgPts[avgIdx++] = xPos;
     avgPts[avgIdx++] = avgY;
 
-    envPts[envIdx++] = xPos;
-    envPts[envIdx++] = maxY;
-    envPts[envIdx++] = xPos;
-    envPts[envIdx++] = minY;
-    envPts[envIdx++] = nextXPos;
-    envPts[envIdx++] = maxY;
-    envPts[envIdx++] = nextXPos;
-    envPts[envIdx++] = minY;
+    if (showEnvelope && sStart < envelopeLimit) {
+      envPts[envIdx++] = xPos;
+      envPts[envIdx++] = maxY;
+      envPts[envIdx++] = xPos;
+      envPts[envIdx++] = minY;
+      envPts[envIdx++] = nextXPos;
+      envPts[envIdx++] = maxY;
+      envPts[envIdx++] = nextXPos;
+      envPts[envIdx++] = minY;
 
-    if (envIdx + 8 > maxFloats) flushEnv();
+      if (showEnvelope && envIdx + 8 > maxFloats) flushEnv();
+    }
+
     if (avgIdx + 2 > maxFloats) flushAvg();
   }
 
-  flushEnv();
+  if (showEnvelope) flushEnv();
   flushAvg();
 }
 
@@ -1240,12 +1302,16 @@ class ForceGraphPainter extends CustomPainter {
   final AppSettings _settings;
   final GraphController _ctrl;
   final bool showXLabels;
+  final bool showEnvelope;
+  final GraphLineCache cache;
 
   ForceGraphPainter(
     this._data,
     this._settings,
     this._ctrl, {
     this.showXLabels = true,
+    this.showEnvelope = true,
+    required this.cache,
   }) : super(repaint: _data.repaint);
 
   @override
@@ -1351,26 +1417,81 @@ class ForceGraphPainter extends CustomPainter {
     // -- Data lines --
     final slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
 
-    for (final ch in activeIndices) {
-      final s = _data.channel(ch);
-      final line = s.data;
-      if (line.isEmpty) continue;
-      final tare = s.tare;
-      final bufferCap = _data.bufferCapacity;
+    final currentTares = activeIndices.map((ch) => _data.channel(ch).tare).toList();
+    final currentConfig = CacheConfig(
+      graphSz.width,
+      graphSz.height,
+      viewSamples,
+      yRange.yMin,
+      yRange.yMax,
+      currentTares,
+    );
 
-      drawChannelEnvelope(
-        canvas,
-        color: getChannelColor(ch),
-        graphW: graphSz.width.toInt(),
-        viewStart: viewStart,
-        viewSamples: viewSamples,
-        oldestSample: oldestSample,
-        totalSamples: totalSamples,
-        firstUsableSample: oldestSample,
-        sampleAt: (j) => line[j % bufferCap].toDouble(),
-        valueToY: (raw) =>
-            unitToY((raw - tare) * slopeToUnit).clamp(0.0, graphSz.height),
-      );
+    final double samplesPerPixel = viewSamples / graphSz.width;
+    final int blockSize = math.max(1, samplesPerPixel.floor());
+
+    if (cache.config == null || !cache.config!.matches(currentConfig)) {
+      cache.invalidate();
+      cache.config = currentConfig;
+      
+      int targetChunkSamples = (200 * samplesPerPixel).round();
+      targetChunkSamples = math.max(blockSize, targetChunkSamples);
+      cache.chunkSamples = (targetChunkSamples ~/ blockSize) * blockSize;
+      if (cache.chunkSamples == 0) cache.chunkSamples = blockSize;
+    }
+
+    final int startChunk = viewStart ~/ cache.chunkSamples;
+    final int endChunk = viewEnd ~/ cache.chunkSamples;
+
+    for (int c = startChunk; c <= endChunk; c++) {
+      final int chunkStartSample = c * cache.chunkSamples;
+      final int chunkEndSample = chunkStartSample + cache.chunkSamples;
+      
+      final bool isFullyPopulated = chunkEndSample <= totalSamples && chunkStartSample >= oldestSample;
+      
+      ui.Picture? pic = cache.chunks[c];
+      
+      if (pic == null) {
+        final recorder = ui.PictureRecorder();
+        final cCanvas = Canvas(recorder);
+        
+        final int limitSamples = math.min(chunkEndSample + blockSize, totalSamples);
+
+        for (final ch in activeIndices) {
+          final s = _data.channel(ch);
+          final line = s.data;
+          if (line.isEmpty) continue;
+          final tare = s.tare;
+          final bufferCap = _data.bufferCapacity;
+
+          drawChannelEnvelope(
+            cCanvas,
+            color: getChannelColor(ch),
+            graphW: graphSz.width,
+            viewStart: chunkStartSample,
+            viewSamples: viewSamples,
+            oldestSample: oldestSample,
+            totalSamples: limitSamples,
+            firstUsableSample: math.max(oldestSample, chunkStartSample),
+            sampleAt: (j) => line[j % bufferCap].toDouble(),
+            valueToY: (raw) =>
+                unitToY((raw - tare) * slopeToUnit).clamp(0.0, graphSz.height),
+            showEnvelope: showEnvelope,
+            clipEnvelopeSamples: chunkEndSample,
+          );
+        }
+        
+        pic = recorder.endRecording();
+        if (isFullyPopulated) {
+          cache.chunks[c] = pic;
+        }
+      }
+      
+      final double xOffset = (chunkStartSample - viewStart) * graphSz.width / viewSamples;
+      canvas.save();
+      canvas.translate(xOffset, 0);
+      canvas.drawPicture(pic);
+      canvas.restore();
     }
   }
 
@@ -1386,8 +1507,10 @@ class DerivativeGraphPainter extends CustomPainter {
   final GraphDataSource _data;
   final AppSettings _settings;
   final GraphController _ctrl;
+  final bool showEnvelope;
+  final GraphLineCache cache;
 
-  DerivativeGraphPainter(this._data, this._settings, this._ctrl)
+  DerivativeGraphPainter(this._data, this._settings, this._ctrl, {this.showEnvelope = true, required this.cache})
     : super(repaint: _data.repaint);
 
   @override
@@ -1496,23 +1619,77 @@ class DerivativeGraphPainter extends CustomPainter {
     canvas.drawParagraph(dLabel, const Offset(4, 2));
 
     // Data lines
-    for (final ch in activeIndices) {
-      final line = _data.channel(ch).data;
-      if (line.isEmpty) continue;
-      final bufferCap = _data.bufferCapacity;
+    final currentConfig = CacheConfig(
+      graphSz.width,
+      graphSz.height,
+      viewSamples,
+      yRange.yMin,
+      yRange.yMax,
+      [],
+    );
 
-      drawChannelEnvelope(
-        canvas,
-        color: getChannelColor(ch),
-        graphW: graphSz.width.toInt(),
-        viewStart: viewStart,
-        viewSamples: viewSamples,
-        oldestSample: oldestSample,
-        totalSamples: totalSamples,
-        firstUsableSample: oldestSample + 1,
-        sampleAt: (j) => derivRawAt(line, bufferCap, j) * slopeToUnit * sampleRate,
-        valueToY: (deriv) => valToY(deriv).clamp(0.0, graphSz.height),
-      );
+    final double samplesPerPixel = viewSamples / graphSz.width;
+    final int blockSize = math.max(1, samplesPerPixel.floor());
+
+    if (cache.config == null || !cache.config!.matches(currentConfig)) {
+      cache.invalidate();
+      cache.config = currentConfig;
+      
+      int targetChunkSamples = (200 * samplesPerPixel).round();
+      targetChunkSamples = math.max(blockSize, targetChunkSamples);
+      cache.chunkSamples = (targetChunkSamples ~/ blockSize) * blockSize;
+      if (cache.chunkSamples == 0) cache.chunkSamples = blockSize;
+    }
+
+    final int startChunk = viewStart ~/ cache.chunkSamples;
+    final int endChunk = viewEnd ~/ cache.chunkSamples;
+
+    for (int c = startChunk; c <= endChunk; c++) {
+      final int chunkStartSample = c * cache.chunkSamples;
+      final int chunkEndSample = chunkStartSample + cache.chunkSamples;
+      
+      final bool isFullyPopulated = chunkEndSample <= totalSamples && chunkStartSample >= oldestSample;
+      
+      ui.Picture? pic = cache.chunks[c];
+      
+      if (pic == null) {
+        final recorder = ui.PictureRecorder();
+        final cCanvas = Canvas(recorder);
+        
+        final int limitSamples = math.min(chunkEndSample + blockSize, totalSamples);
+
+        for (final ch in activeIndices) {
+          final line = _data.channel(ch).data;
+          if (line.isEmpty) continue;
+          final bufferCap = _data.bufferCapacity;
+
+          drawChannelEnvelope(
+            cCanvas,
+            color: getChannelColor(ch),
+            graphW: graphSz.width,
+            viewStart: chunkStartSample,
+            viewSamples: viewSamples,
+            oldestSample: oldestSample,
+            totalSamples: limitSamples,
+            firstUsableSample: math.max(oldestSample + 1, chunkStartSample),
+            sampleAt: (j) => derivRawAt(line, bufferCap, j) * slopeToUnit * sampleRate,
+            valueToY: (deriv) => valToY(deriv).clamp(0.0, graphSz.height),
+            showEnvelope: showEnvelope,
+            clipEnvelopeSamples: chunkEndSample,
+          );
+        }
+        
+        pic = recorder.endRecording();
+        if (isFullyPopulated) {
+          cache.chunks[c] = pic;
+        }
+      }
+      
+      final double xOffset = (chunkStartSample - viewStart) * graphSz.width / viewSamples;
+      canvas.save();
+      canvas.translate(xOffset, 0);
+      canvas.drawPicture(pic);
+      canvas.restore();
     }
   }
 
