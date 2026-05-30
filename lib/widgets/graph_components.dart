@@ -1171,29 +1171,46 @@ void drawChannelEnvelope(
     }
   }
 
-  for (int px = 0; px < graphW; px++) {
-    final int sStart = viewStart + (px * viewSamples ~/ graphW);
-    final int sEnd = viewStart + ((px + 1) * viewSamples ~/ graphW);
+  // Calculate alignment block size
+  final double samplesPerPixel = viewSamples / graphW;
+  final int blockSize = math.max(1, samplesPerPixel.floor());
+
+  // Determine the range of absolute data blocks that overlap the view
+  final int startBlock = (math.max(viewStart, firstUsableSample) / blockSize).floor();
+  final int endBlock = (math.min(viewStart + viewSamples, totalSamples) / blockSize).ceil();
+
+  for (int k = startBlock; k < endBlock; k++) {
+    final int sStart = k * blockSize;
+    final int sEnd = math.min(sStart + blockSize, totalSamples);
+    
+    // Safety check: ensure block is within bounds
     final int drawStart = math.max(sStart, firstUsableSample);
-    final int drawEnd = math.min(sEnd, totalSamples);
-    if (drawStart >= drawEnd) continue;
+    if (drawStart >= sEnd) continue;
 
     double total = 0;
     double minRaw = double.infinity;
     double maxRaw = double.negativeInfinity;
-    for (int j = drawStart; j < drawEnd; j++) {
+    
+    for (int j = drawStart; j < sEnd; j++) {
       final v = sampleAt(j);
       total += v;
       if (v < minRaw) minRaw = v;
       if (v > maxRaw) maxRaw = v;
     }
-    final avg = total / (drawEnd - drawStart);
+    
+    final avg = total / (sEnd - drawStart);
 
     final avgY = valueToY(avg);
     final minY = valueToY(minRaw);
     final maxY = valueToY(maxRaw);
 
-    final xPos = px.toDouble();
+    // Calculate absolute floating-point X coordinate for this block
+    final double xPos = (sStart - viewStart) * graphW / viewSamples;
+    
+    // Width of this block in screen pixels (usually ~1.0, but may vary slightly
+    // due to sub-pixel math, especially at the edges)
+    final double nextXPos = (sEnd - viewStart) * graphW / viewSamples;
+
     avgPts[avgIdx++] = xPos;
     avgPts[avgIdx++] = avgY;
 
@@ -1201,9 +1218,9 @@ void drawChannelEnvelope(
     envPts[envIdx++] = maxY;
     envPts[envIdx++] = xPos;
     envPts[envIdx++] = minY;
-    envPts[envIdx++] = xPos + 1.0;
+    envPts[envIdx++] = nextXPos;
     envPts[envIdx++] = maxY;
-    envPts[envIdx++] = xPos + 1.0;
+    envPts[envIdx++] = nextXPos;
     envPts[envIdx++] = minY;
 
     if (envIdx + 8 > maxFloats) flushEnv();
