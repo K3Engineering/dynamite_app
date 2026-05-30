@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
@@ -44,8 +45,9 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
   int get bufferCapacity => DataHub.maxDataSz;
 
   @override
-  int get oldestSample =>
-      _hub.totalSamples > DataHub.maxDataSz ? _hub.totalSamples - DataHub.maxDataSz : 0;
+  int get oldestSample => _hub.totalSamples > DataHub.maxDataSz
+      ? _hub.totalSamples - DataHub.maxDataSz
+      : 0;
 
   @override
   int get sampleRate => DataHub.samplesPerSec;
@@ -58,18 +60,37 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
 
   @override
   ChannelSeries channel(int channelIndex) => (
-        data: _hub.rawData[channelIndex],
-        min: _hub.rawMin[channelIndex].toDouble(),
-        max: _hub.rawMax[channelIndex].toDouble(),
-        tare: _hub.tare[channelIndex],
-      );
+    data: _hub.rawData[channelIndex],
+    min: _hub.rawMin[channelIndex].toDouble(),
+    max: _hub.rawMax[channelIndex].toDouble(),
+    tare: _hub.tare[channelIndex],
+  );
 }
 
 class _LiveTabState extends State<LiveTab> {
-  final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * DataHub.samplesPerSec);
+  final GraphController _graphCtrl = GraphController(
+    minLiveSpan: 20 * DataHub.samplesPerSec,
+  );
   bool _showDerivative = false;
+  bool _showMinimap = true;
   _LiveDataSource? _dataSource;
   BluetoothHandling? _btHandling;
+
+  @override
+  void initState() {
+    super.initState();
+    // TEMP PERF: capture worker-thread raster time + build time per frame.
+    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
+  }
+
+  void _onFrameTimings(List<FrameTiming> timings) {
+    for (final t in timings) {
+      PerfStats.addFrame(
+        t.rasterDuration.inMicroseconds,
+        t.buildDuration.inMicroseconds,
+      );
+    }
+  }
 
   @override
   void didChangeDependencies() {
@@ -84,6 +105,7 @@ class _LiveTabState extends State<LiveTab> {
 
   @override
   void dispose() {
+    SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
     _dataSource?.dispose();
     _graphCtrl.dispose();
     super.dispose();
@@ -107,7 +129,8 @@ class _LiveTabState extends State<LiveTab> {
       bt.stopSession();
 
       // Auto-save if there's recorded data
-      final recordedSamples = bt.dataHub.totalSamples - bt.dataHub.recordingStartIdx;
+      final recordedSamples =
+          bt.dataHub.totalSamples - bt.dataHub.recordingStartIdx;
       if (recordedSamples > 0) {
         final settings = context.read<AppSettings>();
         final now = DateTime.now();
@@ -221,6 +244,9 @@ class _LiveTabState extends State<LiveTab> {
               showDerivative: _showDerivative,
               onToggleDerivative: () =>
                   setState(() => _showDerivative = !_showDerivative),
+              showMinimap: _showMinimap,
+              onToggleMinimap: () =>
+                  setState(() => _showMinimap = !_showMinimap),
             ),
           if (isConnected)
             ActionButtons(
@@ -241,6 +267,7 @@ class _LiveTabState extends State<LiveTab> {
       ctrl: _graphCtrl,
       settings: settings,
       showDerivative: _showDerivative,
+      showMinimap: _showMinimap,
     );
   }
 }
@@ -415,12 +442,16 @@ class ChannelLegend extends StatelessWidget {
   final AppSettings settings;
   final bool showDerivative;
   final VoidCallback onToggleDerivative;
+  final bool showMinimap;
+  final VoidCallback onToggleMinimap;
 
   const ChannelLegend({
     super.key,
     required this.settings,
     this.showDerivative = false,
     required this.onToggleDerivative,
+    this.showMinimap = true,
+    required this.onToggleMinimap,
   });
 
   @override
@@ -455,6 +486,26 @@ class ChannelLegend extends StatelessWidget {
               ),
             ),
           const Spacer(),
+          // Minimap toggle
+          SizedBox(
+            height: 28,
+            child: FilterChip(
+              label: Text(
+                'Minimap',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: showMinimap ? cs.onSecondaryContainer : null,
+                ),
+              ),
+              selected: showMinimap,
+              onSelected: (_) => onToggleMinimap(),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          const SizedBox(width: 8),
           // Derivative toggle
           SizedBox(
             height: 28,

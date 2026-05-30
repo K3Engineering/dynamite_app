@@ -877,6 +877,7 @@ class GraphWorkspace extends StatefulWidget {
   final bool showDerivative;
   final bool isLiveGraph;
   final bool showEnvelope;
+  final bool showMinimap;
 
   const GraphWorkspace({
     super.key,
@@ -886,6 +887,7 @@ class GraphWorkspace extends StatefulWidget {
     this.showDerivative = false,
     this.isLiveGraph = true,
     this.showEnvelope = true,
+    this.showMinimap = true,
   });
 
   @override
@@ -962,17 +964,18 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                     ),
                   ),
                 // Minimap
-                ListenableBuilder(
-                  listenable: widget.data.repaint,
-                  builder: (context, _) => Minimap(
-                    dataSource: widget.data,
-                    activeChannels: widget.settings.activeChannelIndices,
-                    graphCtrl: widget.ctrl,
-                    channelColors: widget.settings.activeChannelIndices
-                        .map(getChannelColor)
-                        .toList(),
+                if (widget.showMinimap)
+                  ListenableBuilder(
+                    listenable: widget.data.repaint,
+                    builder: (context, _) => Minimap(
+                      dataSource: widget.data,
+                      activeChannels: widget.settings.activeChannelIndices,
+                      graphCtrl: widget.ctrl,
+                      channelColors: widget.settings.activeChannelIndices
+                          .map(getChannelColor)
+                          .toList(),
+                    ),
                   ),
-                ),
               ],
             ),
             // LIVE button (appears when not following live edge)
@@ -1565,6 +1568,63 @@ void paintCachedChannels(
 }
 
 // ---------------------------------------------------------------------------
+// TEMP PERF INSTRUMENTATION (remove after profiling)
+//
+// Aggregates two independent measurements and prints them together every
+// [_reportEvery] frames:
+//   * Dart paint time   -- time the UI thread spends in ForceGraphPainter.paint
+//                          building the draw calls (recorded via [addPaint]).
+//   * Skwasm raster time -- FrameTiming.rasterDuration, the worker/GPU thread
+//                          time to execute the recorded display list.
+//   * Build time         -- FrameTiming.buildDuration, for context.
+// Frame timings are fed in via SchedulerBinding.addTimingsCallback (see
+// _LiveTabState); the report is emitted from there once 60 frames accrue.
+// ---------------------------------------------------------------------------
+class PerfStats {
+  static const int _reportEvery = 60;
+
+  // Dart paint accumulation (UI thread).
+  static int _paintCount = 0;
+  static int _paintMicros = 0;
+
+  /// Record one ForceGraphPainter.paint() duration.
+  static void addPaint(int micros) {
+    _paintMicros += micros;
+    _paintCount++;
+  }
+
+  /// Feed one frame's timing. Emits a combined report every 60 frames.
+  static void addFrame(int rasterMicros, int buildMicros) {
+    _rasterMicros += rasterMicros;
+    _buildMicros += buildMicros;
+    _frameCount++;
+    if (_frameCount >= _reportEvery) _report();
+  }
+
+  static int _frameCount = 0;
+  static int _rasterMicros = 0;
+  static int _buildMicros = 0;
+
+  static void _report() {
+    final dartAvg = _paintCount > 0 ? _paintMicros / _paintCount : 0;
+    final rasterAvg = _frameCount > 0 ? _rasterMicros / _frameCount : 0;
+    final buildAvg = _frameCount > 0 ? _buildMicros / _frameCount : 0;
+    debugPrint(
+      '[PERF] over $_frameCount frames | '
+      'Dart paint (UI): ${dartAvg.toStringAsFixed(0)}us '
+      '(${_paintCount}x) | '
+      'Skwasm raster: ${rasterAvg.toStringAsFixed(0)}us | '
+      'build: ${buildAvg.toStringAsFixed(0)}us',
+    );
+    _paintCount = 0;
+    _paintMicros = 0;
+    _frameCount = 0;
+    _rasterMicros = 0;
+    _buildMicros = 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Live graph painter (force)
 // ---------------------------------------------------------------------------
 
@@ -1645,6 +1705,17 @@ class ForceGraphPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // TEMP PERF: measure Dart-side draw-call construction time (UI thread).
+    final sw = Stopwatch()..start();
+    try {
+      _paint(canvas, size);
+    } finally {
+      sw.stop();
+      PerfStats.addPaint(sw.elapsedMicroseconds);
+    }
+  }
+
+  void _paint(Canvas canvas, Size size) {
     final layout = _setupGraphFrame(
       canvas,
       size,
