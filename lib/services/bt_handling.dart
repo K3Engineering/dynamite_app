@@ -24,6 +24,12 @@ class BluetoothHandling extends ChangeNotifier {
   bool _isScanning = false;
   bool get isScanning => _isScanning;
 
+  /// True between a connect request and the connection result (success or
+  /// failure). Used purely for UI status; never assume the device is usable
+  /// while this is true.
+  bool _isConnecting = false;
+  bool get isConnecting => _isConnecting;
+
   String _selectedDeviceId = '';
   String get selectedDeviceId => _selectedDeviceId;
 
@@ -97,12 +103,15 @@ class BluetoothHandling extends ChangeNotifier {
     if (_bluetoothState != AvailabilityState.poweredOn) {
       return;
     }
-    await disconnectSelectedDevice();
-    _devices.clear();
-    _services.clear();
+    // Guard before any destructive clears: if we can't/shouldn't start a scan,
+    // don't wipe the existing device list (which would leave the UI showing an
+    // empty list with no picker having opened).
     if (_isSubscribed) {
       return;
     }
+    await disconnectSelectedDevice();
+    _devices.clear();
+    _services.clear();
     _isScanning = true;
     await UniversalBle.startScan(
       scanFilter: ScanFilter(withServices: [btServiceId]),
@@ -153,6 +162,10 @@ class BluetoothHandling extends ChangeNotifier {
       'isConnected $deviceId, $isConnected ${(err == null) ? '' : err}',
     );
 
+    // The connect attempt has resolved (either connected or disconnected);
+    // clear the transient UI flag regardless of outcome.
+    _isConnecting = false;
+
     if (isConnected) {
       _selectedDeviceId = deviceId;
 
@@ -187,7 +200,18 @@ class BluetoothHandling extends ChangeNotifier {
       await _stopScan();
     }
     if (_selectedDeviceId.isEmpty) {
-      await UniversalBle.connect(deviceId);
+      _isConnecting = true;
+      notifyListeners();
+      try {
+        await UniversalBle.connect(deviceId);
+      } catch (e) {
+        // Connection result (success) arrives via _onConnectionChange; on a
+        // failed connect attempt that callback may never fire, so clear the
+        // transient flag here and let the caller surface the error.
+        _isConnecting = false;
+        notifyListeners();
+        rethrow;
+      }
     }
   }
 

@@ -1,10 +1,13 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
 class BluetoothIndicator extends StatelessWidget {
   final bool isScanning;
+  final bool isConnecting;
   final bool isConnected;
+  final bool hasDevices;
   final bool showLabel;
   final AvailabilityState state;
 
@@ -12,13 +15,16 @@ class BluetoothIndicator extends StatelessWidget {
     super.key,
     required this.isScanning,
     required this.state,
+    this.isConnecting = false,
     this.isConnected = false,
+    this.hasDevices = false,
     this.showLabel = true,
   });
 
   @override
   Widget build(BuildContext context) {
     (IconData, Color, String) indicator() {
+      // Order matters: most definite / in-progress states first.
       if (isConnected) {
         return const (
           Icons.bluetooth_connected,
@@ -26,16 +32,41 @@ class BluetoothIndicator extends StatelessWidget {
           'Connected',
         );
       }
-      if (isScanning) {
+      if (isConnecting) {
         return const (
           Icons.bluetooth_searching,
           Colors.lightBlue,
-          'Scanning — pick a device, then Connect',
+          'Connecting…',
+        );
+      }
+      if (isScanning) {
+        // On web the device list lives in the browser's own picker popup, not
+        // in our list, so we tell the user to choose there.
+        return (
+          Icons.bluetooth_searching,
+          Colors.lightBlue,
+          kIsWeb ? 'Choose a device…' : 'Scanning for devices…',
         );
       }
       switch (state) {
         case AvailabilityState.poweredOn:
-          return const (Icons.bluetooth, Colors.blueAccent, 'Ready — tap Scan');
+          // A previously-discovered device can remain connectable after a scan
+          // stops, so surface that rather than implying a scan is required.
+          if (hasDevices) {
+            return const (
+              Icons.bluetooth,
+              Colors.blueAccent,
+              'Tap a device to connect',
+            );
+          }
+          // NOTE: availability is not reliably signalled on all platforms
+          // (e.g. web, or Bluetooth already off at launch), so we avoid
+          // claiming "ready" and just state the action the user can take.
+          return const (
+            Icons.bluetooth,
+            Colors.blueAccent,
+            'Tap Scan to find devices',
+          );
         case AvailabilityState.poweredOff:
           return const (
             Icons.bluetooth_disabled,
@@ -74,13 +105,14 @@ class BluetoothIndicator extends StatelessWidget {
 
     final (IconData icon, Color color, String label) = indicator();
     const double size = 32;
+    final bool showSpinner = isScanning || isConnecting;
 
     final iconStack = Stack(
       clipBehavior: Clip.none,
       alignment: Alignment.center,
       children: [
         Icon(icon, size: size, color: color),
-        if (isScanning)
+        if (showSpinner)
           const SizedBox(
             height: size,
             width: size,

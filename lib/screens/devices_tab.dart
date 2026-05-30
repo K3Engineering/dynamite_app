@@ -28,7 +28,9 @@ class _DevicesTabState extends State<DevicesTab> {
               Flexible(
                 child: BluetoothIndicator(
                   isScanning: bt.isScanning,
+                  isConnecting: bt.isConnecting,
                   isConnected: isConnected,
+                  hasDevices: bt.devices.isNotEmpty,
                   state: bt.bluetoothState,
                 ),
               ),
