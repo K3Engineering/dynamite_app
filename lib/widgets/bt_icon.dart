@@ -9,7 +9,6 @@ class BluetoothIndicator extends StatelessWidget {
   final bool isConnected;
   final bool isDisconnecting;
   final bool hasDevices;
-  final bool showLabel;
   final AvailabilityState state;
 
   const BluetoothIndicator({
@@ -20,7 +19,6 @@ class BluetoothIndicator extends StatelessWidget {
     this.isConnected = false,
     this.isDisconnecting = false,
     this.hasDevices = false,
-    this.showLabel = true,
   });
 
   @override
@@ -129,10 +127,6 @@ class BluetoothIndicator extends StatelessWidget {
           ),
       ],
     );
-
-    if (!showLabel) {
-      return iconStack;
-    }
 
     return Row(
       mainAxisSize: MainAxisSize.min,
