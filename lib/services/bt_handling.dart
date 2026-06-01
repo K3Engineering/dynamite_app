@@ -511,6 +511,18 @@ class BluetoothHandling extends ChangeNotifier {
       final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
       _link.name = device?.name ?? deviceId;
 
+      // Fine-grained setup tracing. Each stage logs start/end with a delta so we
+      // can see *which* of the four post-connect stages (MTU / discovery /
+      // calibration read / subscribe) dominates the "connected-but-no-data"
+      // window. `swStage` times the current stage; `swTotal` times the whole
+      // setup pass from link-up to streaming.
+      final Stopwatch swTotal = Stopwatch()..start();
+      final Stopwatch swStage = Stopwatch();
+      debugPrint(
+        '[setup] gen=$gen $deviceId: link up → state=connected '
+        '("Setting up…"), beginning post-connect setup',
+      );
+
       // Reflect "Setting up…" in the UI immediately, BEFORE the awaited setup
       // work below. Otherwise the label stays on "Connecting…" until discovery
       // finishes (and never updates at all if discovery throws).
@@ -523,10 +535,20 @@ class BluetoothHandling extends ChangeNotifier {
       // so a stale pass can't clobber a newer attempt or emit a spurious toast.
       try {
         if (!kIsWeb) {
-          debugPrint('Requested MTU change');
+          debugPrint('[setup] gen=$gen $deviceId: stage 1/4 (MTU) → requesting MTU 247');
+          swStage
+            ..reset()
+            ..start();
           final int mtu = await UniversalBle.requestMtu(deviceId, 247);
-          debugPrint('MTU set to: $mtu');
-          if (_setupSuperseded(gen, deviceId)) return;
+          swStage.stop();
+          debugPrint(
+            '[setup] gen=$gen $deviceId: stage 1/4 (MTU) ✓ negotiated $mtu '
+            'in ${swStage.elapsedMilliseconds}ms',
+          );
+          if (_setupSuperseded(gen, deviceId)) {
+            debugPrint('[setup] gen=$gen $deviceId: superseded after MTU; bailing');
+            return;
+          }
           // TODO(perf): investigate requesting high-performance connection
           // priority here for the 1 kHz ADC stream:
           //   await UniversalBle.requestConnectionPriority(
@@ -535,20 +557,65 @@ class BluetoothHandling extends ChangeNotifier {
           // notSupported elsewhere. Should run after MTU negotiation. Measure
           // whether the tighter connection interval actually reduces dropped
           // samples before enabling.
+        } else {
+          debugPrint('[setup] gen=$gen $deviceId: stage 1/4 (MTU) skipped on web');
         }
+        debugPrint('[setup] gen=$gen $deviceId: stage 2/4 (discover) → discovering services');
+        swStage
+          ..reset()
+          ..start();
         final discovered = await UniversalBle.discoverServices(deviceId);
-        if (_setupSuperseded(gen, deviceId)) return;
+        swStage.stop();
+        debugPrint(
+          '[setup] gen=$gen $deviceId: stage 2/4 (discover) ✓ found '
+          '${discovered.length} service(s) in ${swStage.elapsedMilliseconds}ms: '
+          '${discovered.map((s) => s.uuid).toList()}',
+        );
+        if (_setupSuperseded(gen, deviceId)) {
+          debugPrint('[setup] gen=$gen $deviceId: superseded after discovery; bailing');
+          return;
+        }
         _link.services.addAll(discovered);
+        bool foundService = false;
         for (final srv in _link.services) {
           if (srv.uuid == btServiceId) {
+            foundService = true;
+            debugPrint(
+              '[setup] gen=$gen $deviceId: stage 3/4 (subscribe) → matched ADC '
+              'service $btServiceId; subscribing to feed',
+            );
+            swStage
+              ..reset()
+              ..start();
             await subscribeToAdcFeed(srv);
-            if (_setupSuperseded(gen, deviceId)) return;
+            swStage.stop();
+            debugPrint(
+              '[setup] gen=$gen $deviceId: stage 3/4 (subscribe) ✓ completed '
+              'in ${swStage.elapsedMilliseconds}ms',
+            );
+            if (_setupSuperseded(gen, deviceId)) {
+              debugPrint('[setup] gen=$gen $deviceId: superseded after subscribe; bailing');
+              return;
+            }
             break;
           }
+        }
+        if (!foundService) {
+          debugPrint(
+            '[setup] gen=$gen $deviceId: WARNING stage 3/4 (subscribe) — ADC '
+            'service $btServiceId not present among discovered services; '
+            'no feed subscription made',
+          );
         }
         // Setup complete: advance to the usable "streaming" state and begin live
         // RSSI polling for the signal display.
         _link.state = BtLinkState.streaming;
+        swTotal.stop();
+        debugPrint(
+          '[setup] gen=$gen $deviceId: stage 4/4 (streaming) ✓ state=streaming '
+          '("Connected") — data should now flow; total setup '
+          '${swTotal.elapsedMilliseconds}ms',
+        );
         notifyListeners();
         _startRssiPolling(deviceId);
       } catch (e) {
@@ -559,6 +626,11 @@ class BluetoothHandling extends ChangeNotifier {
           debugPrint('Ignoring stale post-connect failure for $deviceId: $e');
           return;
         }
+        debugPrint(
+          '[setup] gen=$gen $deviceId: FAILED after '
+          '${swTotal.elapsedMilliseconds}ms (current stage ran '
+          '${swStage.elapsedMilliseconds}ms): $e',
+        );
         debugPrint('Post-connect setup failed for $deviceId: $e');
         final String name = _link.name.isEmpty ? deviceId : _link.name;
         _endLink(deviceId, name);
@@ -671,22 +743,43 @@ class BluetoothHandling extends ChangeNotifier {
   Future<void> subscribeToAdcFeed(BleService service) async {
     final String deviceId = _link.deviceId;
     if (deviceId.isEmpty) {
+      debugPrint('[setup]   subscribeToAdcFeed: no active device; skipping');
       return;
     }
     for (final characteristic in service.characteristics) {
       if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
-        dataHub._updateCalibration(
-          await UniversalBle.read(
-            deviceId,
-            service.uuid,
-            btChrCalibration,
-          ),
+        final Stopwatch sw = Stopwatch()..start();
+        debugPrint(
+          '[setup]   subscribe step a/b (calib read) → reading '
+          '$btChrCalibration on ${service.uuid}',
+        );
+        final calib = await UniversalBle.read(
+          deviceId,
+          service.uuid,
+          btChrCalibration,
+        );
+        debugPrint(
+          '[setup]   subscribe step a/b (calib read) ✓ ${calib.length} byte(s) '
+          'in ${sw.elapsedMilliseconds}ms',
+        );
+        dataHub._updateCalibration(calib);
+
+        sw
+          ..reset()
+          ..start();
+        debugPrint(
+          '[setup]   subscribe step b/b (notify) → subscribing to '
+          '${characteristic.uuid}',
         );
         await UniversalBle.subscribeNotifications(
           deviceId,
           service.uuid,
           characteristic.uuid,
+        );
+        debugPrint(
+          '[setup]   subscribe step b/b (notify) ✓ subscribed in '
+          '${sw.elapsedMilliseconds}ms',
         );
         // The link's transition to the usable [BtLinkState.streaming] state is
         // driven by the caller ([_onConnectionChange]) once this returns and the
@@ -694,6 +787,10 @@ class BluetoothHandling extends ChangeNotifier {
         return;
       }
     }
+    debugPrint(
+      '[setup]   subscribeToAdcFeed: WARNING no notify-capable ADC feed '
+      'characteristic ($btChrAdcFeedId) found on service ${service.uuid}',
+    );
   }
 
   void _processReceivedData(String _, String _, Uint8List data, int? _) {
