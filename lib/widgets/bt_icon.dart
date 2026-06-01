@@ -1,55 +1,170 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
 class BluetoothIndicator extends StatelessWidget {
   final bool isScanning;
+  final bool isConnecting;
+  final bool isSettingUp;
+  final bool isConnected;
+  final bool isDisconnecting;
+  final bool isCoolingDown;
+  final bool hasDevices;
   final AvailabilityState state;
 
   const BluetoothIndicator({
     super.key,
     required this.isScanning,
     required this.state,
+    this.isConnecting = false,
+    this.isSettingUp = false,
+    this.isConnected = false,
+    this.isDisconnecting = false,
+    this.isCoolingDown = false,
+    this.hasDevices = false,
   });
 
   @override
   Widget build(BuildContext context) {
-    (IconData, Color) indicator() {
+    (IconData, Color, String) indicator() {
+      // Order matters: most definite / in-progress states first.
+      if (isDisconnecting) {
+        return const (
+          Icons.bluetooth_searching,
+          Colors.lightBlue,
+          'Disconnecting…',
+        );
+      }
+      if (isCoolingDown) {
+        // Web: the link has torn down but the stack isn't ready to reconnect
+        // yet. Connect stays disabled through this settle window.
+        return const (
+          Icons.bluetooth_searching,
+          Colors.lightBlue,
+          'Almost ready…',
+        );
+      }
+      if (isConnected) {
+        return const (
+          Icons.bluetooth_connected,
+          Colors.blueAccent,
+          'Connected',
+        );
+      }
+      if (isSettingUp) {
+        // GATT link is up but service discovery / ADC subscription is still in
+        // progress. Not usable yet.
+        return const (
+          Icons.bluetooth_searching,
+          Colors.lightBlue,
+          'Setting up…',
+        );
+      }
+      if (isConnecting) {
+        return const (
+          Icons.bluetooth_searching,
+          Colors.lightBlue,
+          'Connecting…',
+        );
+      }
       if (isScanning) {
-        return const (Icons.bluetooth_searching, Colors.lightBlue);
+        // On web the device list lives in the browser's own picker popup, not
+        // in our list, so we tell the user to choose there.
+        return (
+          Icons.bluetooth_searching,
+          Colors.lightBlue,
+          kIsWeb ? 'Choose a device…' : 'Scanning for devices…',
+        );
       }
       switch (state) {
         case AvailabilityState.poweredOn:
-          return const (Icons.bluetooth, Colors.blueAccent);
+          // A previously-discovered device can remain connectable after a scan
+          // stops, so surface that rather than implying a scan is required.
+          if (hasDevices) {
+            return const (
+              Icons.bluetooth,
+              Colors.blueAccent,
+              'Tap a device to connect',
+            );
+          }
+          // NOTE: availability is not reliably signalled on all platforms
+          // (e.g. web, or Bluetooth already off at launch), so we avoid
+          // claiming "ready" and just state the action the user can take.
+          return const (
+            Icons.bluetooth,
+            Colors.blueAccent,
+            'Tap Scan to find devices',
+          );
         case AvailabilityState.poweredOff:
-          return const (Icons.bluetooth_disabled, Colors.blueGrey);
+          return const (
+            Icons.bluetooth_disabled,
+            Colors.blueGrey,
+            'Bluetooth is off',
+          );
         case AvailabilityState.unknown:
-          return const (Icons.question_mark, Colors.yellow);
+          return const (
+            Icons.question_mark,
+            Colors.yellow,
+            'Starting up Bluetooth…',
+          );
         case AvailabilityState.resetting:
-          return const (Icons.question_mark, Colors.green);
+          return const (
+            Icons.question_mark,
+            Colors.green,
+            'Bluetooth resetting…',
+          );
         case AvailabilityState.unsupported:
-          return const (Icons.stop, Colors.red);
+          return const (Icons.stop, Colors.red, 'Bluetooth not supported');
         case AvailabilityState.unauthorized:
-          return const (Icons.stop, Colors.orange);
+          return const (
+            Icons.stop,
+            Colors.orange,
+            'Bluetooth permission needed',
+          );
         // ignore: unreachable_switch_default
         default:
-          return const (Icons.question_mark, Colors.grey);
+          return const (
+            Icons.question_mark,
+            Colors.grey,
+            'Bluetooth unavailable',
+          );
       }
     }
 
-    final (IconData icon, Color color) = indicator();
+    final (IconData icon, Color color, String label) = indicator();
     const double size = 32;
-    return Stack(
+    final bool showSpinner =
+        isScanning || isConnecting || isSettingUp || isDisconnecting || isCoolingDown;
+
+    final iconStack = Stack(
       clipBehavior: Clip.none,
       alignment: Alignment.center,
       children: [
         Icon(icon, size: size, color: color),
-        if (isScanning)
+        if (showSpinner)
           const SizedBox(
             height: size,
             width: size,
             child: CircularProgressIndicator(strokeWidth: 2),
           ),
+      ],
+    );
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Flexible(
+          child: Text(
+            label,
+            textAlign: TextAlign.right,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
+          ),
+        ),
+        const SizedBox(width: 8),
+        iconStack,
       ],
     );
   }
