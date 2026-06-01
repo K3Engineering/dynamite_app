@@ -8,6 +8,7 @@ class BluetoothIndicator extends StatelessWidget {
   final bool isConnecting;
   final bool isConnected;
   final bool isDisconnecting;
+  final bool isCoolingDown;
   final bool hasDevices;
   final AvailabilityState state;
 
@@ -18,6 +19,7 @@ class BluetoothIndicator extends StatelessWidget {
     this.isConnecting = false,
     this.isConnected = false,
     this.isDisconnecting = false,
+    this.isCoolingDown = false,
     this.hasDevices = false,
   });
 
@@ -30,6 +32,15 @@ class BluetoothIndicator extends StatelessWidget {
           Icons.bluetooth_searching,
           Colors.lightBlue,
           'Disconnecting…',
+        );
+      }
+      if (isCoolingDown) {
+        // Web: the link has torn down but the stack isn't ready to reconnect
+        // yet. Connect stays disabled through this settle window.
+        return const (
+          Icons.bluetooth_searching,
+          Colors.lightBlue,
+          'Almost ready…',
         );
       }
       if (isConnected) {
@@ -112,7 +123,7 @@ class BluetoothIndicator extends StatelessWidget {
 
     final (IconData icon, Color color, String label) = indicator();
     const double size = 32;
-    final bool showSpinner = isScanning || isConnecting || isDisconnecting;
+    final bool showSpinner = isScanning || isConnecting || isDisconnecting || isCoolingDown;
 
     final iconStack = Stack(
       clipBehavior: Clip.none,

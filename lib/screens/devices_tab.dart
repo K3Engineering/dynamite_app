@@ -58,10 +58,16 @@ class _DevicesTabState extends State<DevicesTab> {
   Widget build(BuildContext context) {
     final bt = context.watch<BluetoothHandling>();
     final isConnected = bt.selectedDeviceId.isNotEmpty;
-    // A link is "busy" whenever it is mid-transition or active; device-row
-    // Connect buttons stay disabled until the link returns to idle. This is
-    // what prevents the disconnect→reconnect double-click race.
-    final isBusy = isConnected || bt.isConnecting || bt.isDisconnecting;
+    // A link is "busy" whenever it is mid-transition, active, or cooling down
+    // after a disconnect; device-row Connect buttons stay disabled until the
+    // link returns to idle. This is what prevents the disconnect→reconnect
+    // double-click race — including the web post-disconnect settle window where
+    // the stack isn't yet ready to accept a fresh connection.
+    final isBusy =
+        isConnected || bt.isConnecting || bt.isDisconnecting || bt.isCoolingDown;
+    // The specific device currently in its post-disconnect cooldown window (web
+    // only); its row shows "Please wait…" instead of "Connect".
+    final coolingDownDeviceId = bt.isCoolingDown ? bt.link.deviceId : '';
 
     return SafeArea(
       child: ListView(
@@ -84,6 +90,7 @@ class _DevicesTabState extends State<DevicesTab> {
                         isConnecting: bt.isConnecting,
                         isConnected: isConnected,
                         isDisconnecting: bt.isDisconnecting,
+                        isCoolingDown: bt.isCoolingDown,
                         hasDevices: bt.devices.isNotEmpty,
                         state: bt.bluetoothState,
                       ),
@@ -208,7 +215,11 @@ class _DevicesTabState extends State<DevicesTab> {
                             }
                           }
                         },
-                  child: const Text('Connect'),
+                  child: Text(
+                    device.deviceId == coolingDownDeviceId
+                        ? 'Please wait…'
+                        : 'Connect',
+                  ),
                 ),
               ),
             ),

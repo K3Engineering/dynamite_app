@@ -36,6 +36,14 @@ enum BtLinkState {
   /// disconnect() timeout). Connect must stay blocked while in this state so we
   /// never issue a connect against a half-torn-down link.
   disconnecting,
+
+  /// The link has fully disconnected, but the platform stack (Web Bluetooth on
+  /// Chrome in particular) may not yet be ready to accept a fresh connection to
+  /// the SAME device. We hold the link here for [BluetoothHandling.reconnectSettleDelay]
+  /// after teardown so the UI keeps Connect disabled (with a "please wait" hint)
+  /// instead of silently sleeping inside the connect call. Web-only; native
+  /// stacks go straight back to [idle] on disconnect.
+  cooldown,
 }
 
 /// All per-device link state for a single BLE device.
@@ -64,12 +72,26 @@ class DeviceLink {
   bool get isConnecting => state == BtLinkState.connecting;
   bool get isConnected => state == BtLinkState.connected;
   bool get isDisconnecting => state == BtLinkState.disconnecting;
+  bool get isCoolingDown => state == BtLinkState.cooldown;
 
   /// Reset back to the idle sentinel (used on disconnect).
   void reset() {
     deviceId = '';
     name = '';
     state = BtLinkState.idle;
+    isSubscribed = false;
+    rssi = null;
+    services.clear();
+  }
+
+  /// Like [reset], but parks the link in [BtLinkState.cooldown] for the given
+  /// [deviceId] (the device just torn down). Keeps [deviceId]/[name] so the UI
+  /// can label that specific device's row while the reconnect settle window
+  /// elapses; everything else is cleared as in [reset].
+  void enterCooldown(String deviceId, String name) {
+    this.deviceId = deviceId;
+    this.name = name;
+    state = BtLinkState.cooldown;
     isSubscribed = false;
     rssi = null;
     services.clear();
@@ -91,9 +113,11 @@ class BluetoothHandling extends ChangeNotifier {
   /// Chrome) need a moment to finish tearing down GATT before they will accept
   /// a fresh connection to the SAME device. Reconnecting sooner makes Chrome
   /// briefly accept then drop the link (and throws "Cannot discover services if
-  /// the device is not connected"). We wait out the remainder of this window
-  /// before reconnecting to a recently-disconnected device.
-  static const Duration reconnectSettleDelay = Duration(milliseconds: 600);
+  /// the device is not connected"). On web we hold the link in
+  /// [BtLinkState.cooldown] for this window after teardown — Connect stays
+  /// disabled (with a hint) until it elapses, instead of silently sleeping
+  /// inside [connectToDevice].
+  static const Duration reconnectSettleDelay = Duration(milliseconds: 1000);
 
   /// Timestamp of the last observed disconnect, keyed by deviceId. Kept on the
   /// handler (not on [DeviceLink], which gets reset on disconnect) so the
@@ -101,6 +125,12 @@ class BluetoothHandling extends ChangeNotifier {
   ///
   /// MULTI-DEVICE (Path A): already per-device via this map.
   final Map<String, DateTime> _lastDisconnectAt = {};
+
+  /// One-shot timer that returns the active link from [BtLinkState.cooldown]
+  /// back to [BtLinkState.idle] once [reconnectSettleDelay] has elapsed since
+  /// the last teardown. Web-only (see [_enterCooldownOrIdle]). Cancelled if the
+  /// link is superseded before it fires.
+  Timer? _cooldownTimer;
 
   AvailabilityState _bluetoothState = AvailabilityState.unknown;
   AvailabilityState get bluetoothState => _bluetoothState;
@@ -131,6 +161,11 @@ class BluetoothHandling extends ChangeNotifier {
 
   /// True while a disconnect has been requested but not yet confirmed.
   bool get isDisconnecting => _link.isDisconnecting;
+
+  /// True during the post-disconnect settle window (web only) — the link has
+  /// fully torn down but the stack isn't yet ready to reconnect to the same
+  /// device. Connect stays blocked while this is true.
+  bool get isCoolingDown => _link.isCoolingDown;
 
   String get selectedDeviceId => _link.isConnected ? _link.deviceId : '';
 
@@ -190,6 +225,8 @@ class BluetoothHandling extends ChangeNotifier {
   void stopProcessing() {
     UniversalBle.onValueChange = null;
     _stopRssiPolling();
+    _cooldownTimer?.cancel();
+    _cooldownTimer = null;
     dataHub._prevSampleCount = -1;
   }
 
@@ -345,6 +382,40 @@ class BluetoothHandling extends ChangeNotifier {
     _rssiPollTimer = null;
   }
 
+  /// Common teardown for every path that ends a link (clean disconnect, failed
+  /// post-connect setup, disconnect timeout): stop RSSI polling, stamp the
+  /// disconnect time, end any recording session, and clear the link.
+  ///
+  /// On web we don't go straight to [BtLinkState.idle]: we park the link in
+  /// [BtLinkState.cooldown] for the remainder of [reconnectSettleDelay] so the
+  /// UI keeps Connect disabled (with a hint) until Chrome has finished GATT
+  /// teardown. Native stacks don't exhibit the too-soon-reconnect race, so they
+  /// reset directly to idle. Does NOT call [notifyListeners] — callers do.
+  void _endLink(String deviceId, String name) {
+    _stopRssiPolling();
+    _lastDisconnectAt[deviceId] = DateTime.now();
+    _sessionInProgress = false;
+    _cooldownTimer?.cancel();
+    _cooldownTimer = null;
+
+    if (!kIsWeb) {
+      _link.reset();
+      return;
+    }
+
+    // Web: hold the link in cooldown for the settle window, then release it.
+    _link.enterCooldown(deviceId, name);
+    _cooldownTimer = Timer(reconnectSettleDelay, () {
+      _cooldownTimer = null;
+      // Only release if we're still cooling down THIS device (a new connect
+      // attempt to a different device, or a fresh teardown, may have moved on).
+      if (_link.isCoolingDown && _link.deviceId == deviceId) {
+        _link.reset();
+        notifyListeners();
+      }
+    });
+  }
+
   void _onConnectionChange(
     String deviceId,
     bool isConnected,
@@ -411,22 +482,17 @@ class BluetoothHandling extends ChangeNotifier {
         // Only reset if this is still the link we were setting up (a real
         // disconnect callback may have already reset/replaced it).
         if (_link.deviceId == deviceId) {
-          _stopRssiPolling();
-          _lastDisconnectAt[deviceId] = DateTime.now();
-          _link.reset();
-          _sessionInProgress = false;
+          _endLink(deviceId, name);
         }
         onConnectionFailed?.call(name);
         notifyListeners();
       }
     } else {
-      // Disconnect resolved (whether user-requested or unexpected): record the
-      // time (for the reconnect settle window) and reset the link to the idle
-      // sentinel.
-      _stopRssiPolling();
-      _lastDisconnectAt[deviceId] = DateTime.now();
-      _link.reset();
-      _sessionInProgress = false;
+      // Disconnect resolved (whether user-requested or unexpected): run the
+      // common teardown, which (on web) parks the link in cooldown for the
+      // reconnect settle window before returning it to the idle sentinel.
+      final String name = _link.name.isEmpty ? deviceId : _link.name;
+      _endLink(deviceId, name);
       notifyListeners();
     }
   }
@@ -435,11 +501,13 @@ class BluetoothHandling extends ChangeNotifier {
     if (_isScanning) {
       await _stopScan();
     }
-    // Block connecting while a link is busy (connecting/connected/disconnecting).
-    // The disconnecting case is what stops the "double-click after Disconnect"
-    // race: the device row's Connect button is disabled until the link returns
-    // to idle (via the disconnect callback or the disconnect() timeout
-    // reconciliation), so we never reach here.
+    // Block connecting while a link is busy (connecting/connected/disconnecting)
+    // or cooling down. The disconnecting/cooldown cases are what stop the
+    // "double-click after Disconnect" race: the device row's Connect button is
+    // disabled until the link returns to idle — first via the disconnect
+    // callback (or the disconnect() timeout reconciliation), then through the
+    // post-disconnect cooldown window on web — so we never reach here against a
+    // link that the stack isn't yet ready to reconnect.
     //
     // NOTE: we deliberately track link state from the event callbacks
     // (_onConnectionChange) rather than from UniversalBle.getConnectionState().
@@ -453,23 +521,19 @@ class BluetoothHandling extends ChangeNotifier {
     if (_link.state != BtLinkState.idle) {
       return;
     }
+    // A pending cooldown timer (from a prior teardown) is now moot: its guard
+    // would no-op once we move to `connecting`, but cancel it eagerly so it
+    // can't fire against this new attempt.
+    _cooldownTimer?.cancel();
+    _cooldownTimer = null;
     _link.deviceId = deviceId;
     _link.state = BtLinkState.connecting;
     notifyListeners();
 
-    // Fix 1: if this device was disconnected very recently, wait out the
-    // remainder of the settle window so the stack (Chrome especially) finishes
-    // GATT teardown before we ask it to reconnect. We're already showing
-    // "Connecting…", which is honest — we are about to connect.
-    final lastDisconnect = _lastDisconnectAt[deviceId];
-    if (lastDisconnect != null) {
-      final elapsed = DateTime.now().difference(lastDisconnect);
-      final remaining = reconnectSettleDelay - elapsed;
-      if (remaining > Duration.zero) {
-        debugPrint('Waiting ${remaining.inMilliseconds}ms for $deviceId to settle');
-        await Future<void>.delayed(remaining);
-      }
-    }
+    // The post-disconnect settle window is now enforced as the visible
+    // [BtLinkState.cooldown] state (see [_endLink]) BEFORE Connect is re-enabled,
+    // so by the time we get here the stack has already had time to finish GATT
+    // teardown. No inline sleep is needed.
 
     try {
       await UniversalBle.connect(deviceId);
@@ -513,10 +577,7 @@ class BluetoothHandling extends ChangeNotifier {
 
     if (_link.deviceId == deviceId && _link.state == BtLinkState.disconnecting) {
       debugPrint('Disconnect did not settle for $deviceId; forcing idle');
-      _stopRssiPolling();
-      _lastDisconnectAt[deviceId] = DateTime.now();
-      _link.reset();
-      _sessionInProgress = false;
+      _endLink(deviceId, deviceName);
       onDisconnectTimeout?.call(deviceName);
       notifyListeners();
     }
