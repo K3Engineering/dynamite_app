@@ -42,7 +42,7 @@ class BluetoothIndicator extends StatelessWidget {
         return const (
           Icons.bluetooth_searching,
           Colors.lightBlue,
-          'Almost ready…',
+          'Disconnecting…',
         );
       }
       if (isConnected) {
@@ -135,7 +135,11 @@ class BluetoothIndicator extends StatelessWidget {
     final (IconData icon, Color color, String label) = indicator();
     const double size = 32;
     final bool showSpinner =
-        isScanning || isConnecting || isSettingUp || isDisconnecting || isCoolingDown;
+        isScanning ||
+        isConnecting ||
+        isSettingUp ||
+        isDisconnecting ||
+        isCoolingDown;
 
     final iconStack = Stack(
       clipBehavior: Clip.none,
