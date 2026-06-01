@@ -118,7 +118,11 @@ class _DevicesTabState extends State<DevicesTab> {
                   color: Colors.blueAccent,
                 ),
                 title: Text(bt.connectedDeviceName),
-                subtitle: Text('ID: ${bt.selectedDeviceId}'),
+                subtitle: Text(
+                  bt.connectedRssi != null
+                      ? 'ID: ${bt.selectedDeviceId}  •  RSSI: ${bt.connectedRssi} dBm'
+                      : 'ID: ${bt.selectedDeviceId}',
+                ),
                 trailing: TextButton(
                   // Disabled while the disconnect is in flight so the button
                   // truthfully reflects the in-progress teardown.

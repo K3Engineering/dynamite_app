@@ -32,9 +32,9 @@ enum BtLinkState {
   /// Connected (and, once [DeviceLink.isSubscribed] is true, streaming).
   connected,
 
-  /// A `disconnect()` was requested; awaiting the platform callback (or the
-  /// safety timeout). Connect must stay blocked while in this state so we never
-  /// issue a connect against a half-torn-down link.
+  /// A `disconnect()` was requested; awaiting the connection callback (or the
+  /// disconnect() timeout). Connect must stay blocked while in this state so we
+  /// never issue a connect against a half-torn-down link.
   disconnecting,
 }
 
@@ -42,7 +42,7 @@ enum BtLinkState {
 ///
 /// MULTI-DEVICE (Path A): promote the single [BluetoothHandling._link] to a
 /// `Map<String, DeviceLink>` keyed by [deviceId]. Each map entry owns its own
-/// state/name/services/subscription/timer. The migration is mechanical because
+/// state/name/services/subscription. The migration is mechanical because
 /// every field that is logically per-device already lives here rather than as a
 /// loose field on [BluetoothHandling].
 class DeviceLink {
@@ -55,30 +55,37 @@ class DeviceLink {
   bool isSubscribed = false;
   final List<BleService> services = [];
 
-  /// Safety timer that force-exits [BtLinkState.disconnecting] if the platform
-  /// never delivers a disconnect callback.
-  Timer? disconnectTimeoutTimer;
+  /// Most recent live RSSI (dBm) for the connected device, polled while
+  /// connected. Null until the first successful read (and after reset). This is
+  /// the *connected* signal strength — distinct from the scan-time RSSI carried
+  /// on each discovered [BleDevice].
+  int? rssi;
 
   bool get isConnecting => state == BtLinkState.connecting;
   bool get isConnected => state == BtLinkState.connected;
   bool get isDisconnecting => state == BtLinkState.disconnecting;
 
-  /// Reset back to the idle sentinel (used on disconnect / forced timeout).
+  /// Reset back to the idle sentinel (used on disconnect).
   void reset() {
-    disconnectTimeoutTimer?.cancel();
-    disconnectTimeoutTimer = null;
     deviceId = '';
     name = '';
     state = BtLinkState.idle;
     isSubscribed = false;
+    rssi = null;
     services.clear();
   }
 }
 
 class BluetoothHandling extends ChangeNotifier {
-  /// How long to wait for a disconnect callback before force-exiting the
-  /// [BtLinkState.disconnecting] state, so a silent stack can't strand the UI.
+  /// Upper bound we pass to [UniversalBle.disconnect] so a silent stack can't
+  /// strand the UI on "Disconnecting…". The package's own `disconnect()` sets
+  /// up a completer over its connection-event stream and applies this timeout
+  /// internally, then drives our [_onConnectionChange] callback (even in the
+  /// already-disconnected case), so we no longer hand-roll a parallel Timer.
   static const Duration disconnectTimeout = Duration(milliseconds: 2500);
+
+  /// How often to poll the connected device's RSSI for the live signal display.
+  static const Duration rssiPollInterval = Duration(seconds: 2);
 
   /// After a device disconnects, some BLE stacks (notably Web Bluetooth on
   /// Chrome) need a moment to finish tearing down GATT before they will accept
@@ -133,12 +140,27 @@ class BluetoothHandling extends ChangeNotifier {
 
   bool get isSubscribed => _link.isSubscribed;
 
+  /// Live RSSI (dBm) of the connected device, or null when not connected, not
+  /// yet read, or unsupported on this platform. Polled every [rssiPollInterval]
+  /// while connected.
+  int? get connectedRssi => _link.isConnected ? _link.rssi : null;
+
+  /// Whether the platform implements [UniversalBle.readRssi]. Web throws
+  /// `notImplemented` for it; all native platforms (Android/Apple/Windows/Linux)
+  /// support it. universal_ble has no dedicated capability flag for RSSI, so we
+  /// gate on `!kIsWeb`.
+  bool get _supportsRssi => !kIsWeb;
+
+  /// Periodic poller for [connectedRssi]; runs only while a link is connected
+  /// and the platform supports RSSI reads.
+  Timer? _rssiPollTimer;
+
   bool _sessionInProgress = false;
   bool get sessionInProgress => _sessionInProgress;
 
-  /// Called when a disconnect is forced to give up after [disconnectTimeout]
-  /// without a platform callback. The argument is the affected device's display
-  /// name (or id). The UI uses this to surface a brief notice.
+  /// Called when a disconnect gives up after [disconnectTimeout] without the
+  /// link returning to idle. The argument is the affected device's display name
+  /// (or id). The UI uses this to surface a brief notice.
   ///
   /// MULTI-DEVICE (Path A): already carries the device identity, so the message
   /// can name the specific device that failed to disconnect.
@@ -159,6 +181,7 @@ class BluetoothHandling extends ChangeNotifier {
     UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
     UniversalBle.onConnectionChange = _onConnectionChange;
     UniversalBle.onPairingStateChange = _onPairingStateChange;
+    UniversalBle.onConnectionParametersChange = _onConnectionParametersChange;
     UniversalBle.onValueChange = _processReceivedData;
 
     unawaited(_updateBluetoothState());
@@ -166,6 +189,7 @@ class BluetoothHandling extends ChangeNotifier {
 
   void stopProcessing() {
     UniversalBle.onValueChange = null;
+    _stopRssiPolling();
     dataHub._prevSampleCount = -1;
   }
 
@@ -179,6 +203,12 @@ class BluetoothHandling extends ChangeNotifier {
 
   void _onScanResult(BleDevice newDevice) {
     // Keep all discovered devices (replace if same ID seen again with better RSSI).
+    //
+    // TODO(firmware): once the device advertises manufacturer data, parse
+    // `newDevice.manufacturerDataList` (companyId + payload) into a device model
+    // (e.g. "K3 Sampler Pro") and hardware variant (V1/V2) and surface them on
+    // the device row / connected card. `serviceData` and `services` are also
+    // available here for filtering. Not wired yet — firmware doesn't emit it.
     final existingIdx = _devices.indexWhere(
       (d) => d.deviceId == newDevice.deviceId,
     );
@@ -261,6 +291,60 @@ class BluetoothHandling extends ChangeNotifier {
     debugPrint('isPaired $deviceId, $isPaired');
   }
 
+  /// Live connection-parameter updates. Only fires on Android (API 26+); a
+  /// no-op on every other platform (see [BleCapabilities.supportsConnectionParametersUpdates]).
+  /// In particular, the web platform never emits these — universal_ble only
+  /// calls updateConnectionParameters from its native (pigeon) channel — so the
+  /// absence of these logs on web is expected, not a bug.
+  /// Diagnostic only for now — surfaced via debugPrint rather than the UI.
+  void _onConnectionParametersChange(BleConnectionParametersUpdated update) {
+    if (_link.deviceId.isNotEmpty && _link.deviceId != update.deviceId) {
+      return;
+    }
+    debugPrint(
+      'connParams ${update.deviceId}: '
+      'interval=${update.intervalMs}ms, '
+      'latency=${update.latency}, '
+      'supervisionTimeout=${update.supervisionTimeoutMs}ms, '
+      'estimatedPriority=${update.estimatedPriority}, '
+      'success=${update.isSuccess}',
+    );
+  }
+
+  /// Begin polling the connected device's RSSI for the live signal display.
+  /// No-op on platforms that don't implement readRssi (e.g. web). Cancels any
+  /// previous poller first. Reads are best-effort: a failed read is swallowed
+  /// silently and retried on the next tick (no per-tick logging — it would spam
+  /// the console).
+  void _startRssiPolling(String deviceId) {
+    _stopRssiPolling();
+    if (!_supportsRssi) {
+      return;
+    }
+    _rssiPollTimer = Timer.periodic(rssiPollInterval, (_) async {
+      // Stop polling if the link is no longer this connected device.
+      if (!_link.isConnected || _link.deviceId != deviceId) {
+        _stopRssiPolling();
+        return;
+      }
+      try {
+        final int rssi = await UniversalBle.readRssi(deviceId);
+        // Guard again: the link may have changed during the await.
+        if (_link.isConnected && _link.deviceId == deviceId) {
+          _link.rssi = rssi;
+          notifyListeners();
+        }
+      } catch (_) {
+        // Swallow: transient read failures are expected; the next tick retries.
+      }
+    });
+  }
+
+  void _stopRssiPolling() {
+    _rssiPollTimer?.cancel();
+    _rssiPollTimer = null;
+  }
+
   void _onConnectionChange(
     String deviceId,
     bool isConnected,
@@ -301,6 +385,14 @@ class BluetoothHandling extends ChangeNotifier {
           debugPrint('Requested MTU change');
           final int mtu = await UniversalBle.requestMtu(deviceId, 247);
           debugPrint('MTU set to: $mtu');
+          // TODO(perf): investigate requesting high-performance connection
+          // priority here for the 1 kHz ADC stream:
+          //   await UniversalBle.requestConnectionPriority(
+          //     deviceId, BleConnectionPriority.highPerformance);
+          // Android-only (BleCapabilities.supportsConnectionPriorityApi); throws
+          // notSupported elsewhere. Should run after MTU negotiation. Measure
+          // whether the tighter connection interval actually reduces dropped
+          // samples before enabling.
         }
         _link.services.addAll(await UniversalBle.discoverServices(deviceId));
         for (final srv in _link.services) {
@@ -309,12 +401,17 @@ class BluetoothHandling extends ChangeNotifier {
             break;
           }
         }
+        // Connected and set up: begin live RSSI polling for the signal display.
+        if (_link.deviceId == deviceId && _link.isConnected) {
+          _startRssiPolling(deviceId);
+        }
       } catch (e) {
         debugPrint('Post-connect setup failed for $deviceId: $e');
         final String name = _link.name.isEmpty ? deviceId : _link.name;
         // Only reset if this is still the link we were setting up (a real
         // disconnect callback may have already reset/replaced it).
         if (_link.deviceId == deviceId) {
+          _stopRssiPolling();
           _lastDisconnectAt[deviceId] = DateTime.now();
           _link.reset();
           _sessionInProgress = false;
@@ -324,8 +421,9 @@ class BluetoothHandling extends ChangeNotifier {
       }
     } else {
       // Disconnect resolved (whether user-requested or unexpected): record the
-      // time (for the reconnect settle window), reset the link to the idle
-      // sentinel, and cancel the safety timeout.
+      // time (for the reconnect settle window) and reset the link to the idle
+      // sentinel.
+      _stopRssiPolling();
       _lastDisconnectAt[deviceId] = DateTime.now();
       _link.reset();
       _sessionInProgress = false;
@@ -340,7 +438,15 @@ class BluetoothHandling extends ChangeNotifier {
     // Block connecting while a link is busy (connecting/connected/disconnecting).
     // The disconnecting case is what stops the "double-click after Disconnect"
     // race: the device row's Connect button is disabled until the link returns
-    // to idle (via callback or the safety timeout), so we never reach here.
+    // to idle (via the disconnect callback or the disconnect() timeout
+    // reconciliation), so we never reach here.
+    //
+    // NOTE: we deliberately track link state from the event callbacks
+    // (_onConnectionChange) rather than from UniversalBle.getConnectionState().
+    // The latter is a one-shot async *query*, not an event source — it can't
+    // push updates, so it can't replace callback-driven state without polling
+    // (just a different timer). It's only worth a one-shot reconciliation call
+    // (e.g. on app resume), which we don't need today.
     //
     // MULTI-DEVICE (Path A): this guard becomes per-device — a different,
     // idle device can connect while another is mid-transition.
@@ -384,28 +490,36 @@ class BluetoothHandling extends ChangeNotifier {
     final String deviceId = _link.deviceId;
     final String deviceName = _link.name.isEmpty ? deviceId : _link.name;
     _link.state = BtLinkState.disconnecting;
-
-    // Safety net: if the platform never delivers the disconnect callback, force
-    // the link back to idle so the UI can't get stuck on "Disconnecting…".
-    //
-    // MULTI-DEVICE (Path A): the timer lives on the per-device DeviceLink, so
-    // each device times out independently and the message can name that device.
-    _link.disconnectTimeoutTimer?.cancel();
-    _link.disconnectTimeoutTimer = Timer(disconnectTimeout, () {
-      if (_link.deviceId == deviceId &&
-          _link.state == BtLinkState.disconnecting) {
-        debugPrint('Disconnect timed out for $deviceId; forcing idle');
-        _lastDisconnectAt[deviceId] = DateTime.now();
-        _link.reset();
-        _sessionInProgress = false;
-        onDisconnectTimeout?.call(deviceName);
-        notifyListeners();
-      }
-    });
     notifyListeners();
 
-    await UniversalBle.disconnect(deviceId);
+    // Option B: lean on the package's own disconnect() instead of a parallel
+    // safety Timer. UniversalBle.disconnect() sets up a completer over its
+    // connection-event stream, applies [disconnectTimeout], and — even when the
+    // device is already gone — calls updateConnection(deviceId, false), which
+    // drives our [_onConnectionChange] handler. That handler is the single place
+    // the link is reset to idle, so on a clean disconnect we simply await here
+    // and the callback does the work.
+    //
+    // The returned future is opaque (disconnect() swallows its own errors), so
+    // it can't tell us clean-vs-timeout. After it resolves we do one cheap
+    // reconciliation: if the link is still stuck in `disconnecting` on this
+    // device, the callback never landed within the window — force it idle and
+    // surface the "didn't disconnect cleanly" notice ourselves.
+    //
+    // MULTI-DEVICE (Path A): operate on `_links[deviceId]` so each device
+    // settles independently and the notice can name that specific device.
+    await UniversalBle.disconnect(deviceId, timeout: disconnectTimeout);
     await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
+
+    if (_link.deviceId == deviceId && _link.state == BtLinkState.disconnecting) {
+      debugPrint('Disconnect did not settle for $deviceId; forcing idle');
+      _stopRssiPolling();
+      _lastDisconnectAt[deviceId] = DateTime.now();
+      _link.reset();
+      _sessionInProgress = false;
+      onDisconnectTimeout?.call(deviceName);
+      notifyListeners();
+    }
   }
 
   Future<void> subscribeToAdcFeed(BleService service) async {
