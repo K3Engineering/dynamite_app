@@ -57,14 +57,21 @@ class _DevicesTabState extends State<DevicesTab> {
   @override
   Widget build(BuildContext context) {
     final bt = context.watch<BluetoothHandling>();
-    final isConnected = bt.selectedDeviceId.isNotEmpty;
+    // Usable connection (services discovered + ADC feed streaming). "Connected"
+    // in the UI means this — not merely that a GATT link exists.
+    final isStreaming = bt.isStreaming;
+    // GATT link is up but post-connect setup is still running ("Setting up…").
+    final isSettingUp = bt.isSettingUp;
+    // The link is up (setting up OR streaming) — the connected card is shown for
+    // both so the user can see progress and cancel a stuck setup.
+    final isLinkUp = bt.selectedDeviceId.isNotEmpty;
     // A link is "busy" whenever it is mid-transition, active, or cooling down
     // after a disconnect; device-row Connect buttons stay disabled until the
     // link returns to idle. This is what prevents the disconnect→reconnect
     // double-click race — including the web post-disconnect settle window where
     // the stack isn't yet ready to accept a fresh connection.
     final isBusy =
-        isConnected || bt.isConnecting || bt.isDisconnecting || bt.isCoolingDown;
+        isLinkUp || bt.isConnecting || bt.isDisconnecting || bt.isCoolingDown;
     // The specific device currently in its post-disconnect cooldown window (web
     // only); its row shows "Please wait…" instead of "Connect".
     final coolingDownDeviceId = bt.isCoolingDown ? bt.link.deviceId : '';
@@ -88,7 +95,8 @@ class _DevicesTabState extends State<DevicesTab> {
                       child: BluetoothIndicator(
                         isScanning: bt.isScanning,
                         isConnecting: bt.isConnecting,
-                        isConnected: isConnected,
+                        isSettingUp: isSettingUp,
+                        isConnected: isStreaming,
                         isDisconnecting: bt.isDisconnecting,
                         isCoolingDown: bt.isCoolingDown,
                         hasDevices: bt.devices.isNotEmpty,
@@ -109,10 +117,12 @@ class _DevicesTabState extends State<DevicesTab> {
           ),
           const SizedBox(height: 16),
 
-          // Connected section
-          if (isConnected) ...[
+          // Connected section — shown while the link is up (setting up OR
+          // streaming) so the user can watch setup progress and cancel a stuck
+          // one. The header/icon distinguish "Setting up…" from "Connected".
+          if (isLinkUp) ...[
             Text(
-              'Connected',
+              isStreaming ? 'Connected' : 'Setting up…',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 color: Theme.of(context).colorScheme.primary,
               ),
@@ -120,8 +130,10 @@ class _DevicesTabState extends State<DevicesTab> {
             const SizedBox(height: 8),
             Card(
               child: ListTile(
-                leading: const Icon(
-                  Icons.bluetooth_connected,
+                leading: Icon(
+                  isStreaming
+                      ? Icons.bluetooth_connected
+                      : Icons.bluetooth_searching,
                   color: Colors.blueAccent,
                 ),
                 title: Text(bt.connectedDeviceName),
@@ -147,7 +159,7 @@ class _DevicesTabState extends State<DevicesTab> {
             const SizedBox(height: 24),
           ],
 
-          if (!isConnected && bt.devices.isEmpty && !bt.isScanning)
+          if (!isLinkUp && bt.devices.isEmpty && !bt.isScanning)
             Padding(
               padding: const EdgeInsets.only(top: 64),
               child: Center(

@@ -6,6 +6,7 @@ import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 class BluetoothIndicator extends StatelessWidget {
   final bool isScanning;
   final bool isConnecting;
+  final bool isSettingUp;
   final bool isConnected;
   final bool isDisconnecting;
   final bool isCoolingDown;
@@ -17,6 +18,7 @@ class BluetoothIndicator extends StatelessWidget {
     required this.isScanning,
     required this.state,
     this.isConnecting = false,
+    this.isSettingUp = false,
     this.isConnected = false,
     this.isDisconnecting = false,
     this.isCoolingDown = false,
@@ -48,6 +50,15 @@ class BluetoothIndicator extends StatelessWidget {
           Icons.bluetooth_connected,
           Colors.blueAccent,
           'Connected',
+        );
+      }
+      if (isSettingUp) {
+        // GATT link is up but service discovery / ADC subscription is still in
+        // progress. Not usable yet.
+        return const (
+          Icons.bluetooth_searching,
+          Colors.lightBlue,
+          'Setting up…',
         );
       }
       if (isConnecting) {
@@ -123,7 +134,8 @@ class BluetoothIndicator extends StatelessWidget {
 
     final (IconData icon, Color color, String label) = indicator();
     const double size = 32;
-    final bool showSpinner = isScanning || isConnecting || isDisconnecting || isCoolingDown;
+    final bool showSpinner =
+        isScanning || isConnecting || isSettingUp || isDisconnecting || isCoolingDown;
 
     final iconStack = Stack(
       clipBehavior: Clip.none,

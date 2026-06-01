@@ -196,7 +196,7 @@ class _LiveTabState extends State<LiveTab> {
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
     final bt = context.watch<BluetoothHandling>();
-    final isConnected = bt.isSubscribed;
+    final isConnected = bt.isStreaming;
 
     return SafeArea(
       child: Column(

@@ -29,8 +29,17 @@ enum BtLinkState {
   /// A `connect()` call is outstanding; not yet usable.
   connecting,
 
-  /// Connected (and, once [DeviceLink.isSubscribed] is true, streaming).
+  /// The GATT link is up but post-connect setup (service discovery + ADC feed
+  /// subscription) is still running. NOT yet usable — no data is flowing. The
+  /// UI shows "Setting up…" here. The link advances to [streaming] only once the
+  /// ADC feed subscription succeeds, or is torn down on failure.
   connected,
+
+  /// Fully set up: services discovered and the ADC feed subscription is active,
+  /// so data is flowing. This is the single "usable / connected" state every
+  /// screen keys off — the Devices tab shows "Connected" and the Live tab shows
+  /// the graph only in this state.
+  streaming,
 
   /// A `disconnect()` was requested; awaiting the connection callback (or the
   /// disconnect() timeout). Connect must stay blocked while in this state so we
@@ -60,7 +69,6 @@ class DeviceLink {
   String deviceId;
   String name = '';
   BtLinkState state = BtLinkState.idle;
-  bool isSubscribed = false;
   final List<BleService> services = [];
 
   /// Most recent live RSSI (dBm) for the connected device, polled while
@@ -70,7 +78,14 @@ class DeviceLink {
   int? rssi;
 
   bool get isConnecting => state == BtLinkState.connecting;
-  bool get isConnected => state == BtLinkState.connected;
+
+  /// The GATT link is up. True for both the "setting up" ([BtLinkState.connected])
+  /// window and the usable ([streaming]) state — use [isStreaming] for "usable".
+  bool get isLinkUp =>
+      state == BtLinkState.connected || state == BtLinkState.streaming;
+
+  /// The single "usable / connected" truth: link up AND the ADC feed is flowing.
+  bool get isStreaming => state == BtLinkState.streaming;
   bool get isDisconnecting => state == BtLinkState.disconnecting;
   bool get isCoolingDown => state == BtLinkState.cooldown;
 
@@ -79,7 +94,6 @@ class DeviceLink {
     deviceId = '';
     name = '';
     state = BtLinkState.idle;
-    isSubscribed = false;
     rssi = null;
     services.clear();
   }
@@ -92,7 +106,6 @@ class DeviceLink {
     this.deviceId = deviceId;
     this.name = name;
     state = BtLinkState.cooldown;
-    isSubscribed = false;
     rssi = null;
     services.clear();
   }
@@ -132,6 +145,14 @@ class BluetoothHandling extends ChangeNotifier {
   /// link is superseded before it fires.
   Timer? _cooldownTimer;
 
+  /// Monotonic counter bumped on every connect request, disconnect request, and
+  /// teardown. The async post-connect setup in [_onConnectionChange] captures
+  /// the value at its start and re-checks it after each `await`; if it changed,
+  /// a newer connect/disconnect superseded this setup pass, so it bails out
+  /// silently (no state writes, no failure toast). This is what stops the
+  /// "furious clicking" races from corrupting link state or spamming toasts.
+  int _setupGeneration = 0;
+
   AvailabilityState _bluetoothState = AvailabilityState.unknown;
   AvailabilityState get bluetoothState => _bluetoothState;
 
@@ -159,6 +180,15 @@ class BluetoothHandling extends ChangeNotifier {
   /// while this is true.
   bool get isConnecting => _link.isConnecting;
 
+  /// True while the GATT link is up but post-connect setup (service discovery +
+  /// ADC subscription) hasn't finished. The device is NOT usable yet — the UI
+  /// shows "Setting up…". Distinct from [isStreaming].
+  bool get isSettingUp => _link.state == BtLinkState.connected;
+
+  /// The single "usable / connected" truth: link up AND the ADC feed is
+  /// streaming. Every screen keys its connected UI off this.
+  bool get isStreaming => _link.isStreaming;
+
   /// True while a disconnect has been requested but not yet confirmed.
   bool get isDisconnecting => _link.isDisconnecting;
 
@@ -167,18 +197,18 @@ class BluetoothHandling extends ChangeNotifier {
   /// device. Connect stays blocked while this is true.
   bool get isCoolingDown => _link.isCoolingDown;
 
-  String get selectedDeviceId => _link.isConnected ? _link.deviceId : '';
+  /// Device id of the active link whenever the GATT link is up (during setup or
+  /// while streaming); empty otherwise.
+  String get selectedDeviceId => _link.isLinkUp ? _link.deviceId : '';
 
   /// Name of the currently connected device.
   String get connectedDeviceName =>
       _link.name.isEmpty ? _link.deviceId : _link.name;
 
-  bool get isSubscribed => _link.isSubscribed;
-
-  /// Live RSSI (dBm) of the connected device, or null when not connected, not
+  /// Live RSSI (dBm) of the connected device, or null when not streaming, not
   /// yet read, or unsupported on this platform. Polled every [rssiPollInterval]
-  /// while connected.
-  int? get connectedRssi => _link.isConnected ? _link.rssi : null;
+  /// while streaming.
+  int? get connectedRssi => _link.isStreaming ? _link.rssi : null;
 
   /// Whether the platform implements [UniversalBle.readRssi]. Web throws
   /// `notImplemented` for it; all native platforms (Android/Apple/Windows/Linux)
@@ -212,6 +242,17 @@ class BluetoothHandling extends ChangeNotifier {
     if (useMockBt) {
       UniversalBle.setInstance(MockBlePlatform.instance);
     }
+    // Run each device's BLE commands in its own queue. With the default
+    // `global` queue, a command stuck against a half-torn-down device (common on
+    // web when the user rapidly connects/disconnects) blocks and serially times
+    // out every later command — producing a storm of 10s "Future not completed"
+    // failures. `perDevice` isolates a dead device's stuck commands from a fresh
+    // attempt, and aligns with the multi-device roadmap (Path A).
+    UniversalBle.queueType = QueueType.perDevice;
+    // Fail stuck commands faster than the 10s default so a hung web GATT promise
+    // surfaces (and our generation guard / teardown proceeds) without a long
+    // visible stall.
+    UniversalBle.timeout = const Duration(seconds: 5);
     UniversalBle.onScanResult = _onScanResult;
     UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
     UniversalBle.onConnectionChange = _onConnectionChange;
@@ -280,8 +321,11 @@ class BluetoothHandling extends ChangeNotifier {
     // empty list with no picker having opened).
     //
     // MULTI-DEVICE (Path A): this becomes "if any link is mid-transition"
-    // (connecting/disconnecting) rather than a single subscribed flag.
-    if (_link.isSubscribed) {
+    // (connecting/disconnecting/cooldown) rather than a single flag.
+    if (_link.isConnecting ||
+        _link.isDisconnecting ||
+        _link.isCoolingDown ||
+        _link.state == BtLinkState.connected) {
       return;
     }
     await disconnectSelectedDevice();
@@ -306,7 +350,7 @@ class BluetoothHandling extends ChangeNotifier {
   }
 
   void toggleSession() {
-    assert(_link.isConnected);
+    assert(_link.isStreaming);
     if (!_sessionInProgress) {
       // Starting a recording: mark the current logical time.
       dataHub._recordingStartIdx = dataHub.totalSamples;
@@ -359,15 +403,15 @@ class BluetoothHandling extends ChangeNotifier {
       return;
     }
     _rssiPollTimer = Timer.periodic(rssiPollInterval, (_) async {
-      // Stop polling if the link is no longer this connected device.
-      if (!_link.isConnected || _link.deviceId != deviceId) {
+      // Stop polling if the link is no longer streaming this device.
+      if (!_link.isStreaming || _link.deviceId != deviceId) {
         _stopRssiPolling();
         return;
       }
       try {
         final int rssi = await UniversalBle.readRssi(deviceId);
         // Guard again: the link may have changed during the await.
-        if (_link.isConnected && _link.deviceId == deviceId) {
+        if (_link.isStreaming && _link.deviceId == deviceId) {
           _link.rssi = rssi;
           notifyListeners();
         }
@@ -392,6 +436,9 @@ class BluetoothHandling extends ChangeNotifier {
   /// teardown. Native stacks don't exhibit the too-soon-reconnect race, so they
   /// reset directly to idle. Does NOT call [notifyListeners] — callers do.
   void _endLink(String deviceId, String name) {
+    // Supersede any in-flight post-connect setup pass so it bails out instead of
+    // writing state for a link we're tearing down.
+    _setupGeneration++;
     _stopRssiPolling();
     _lastDisconnectAt[deviceId] = DateTime.now();
     _sessionInProgress = false;
@@ -416,6 +463,13 @@ class BluetoothHandling extends ChangeNotifier {
     });
   }
 
+  /// True if the post-connect setup pass that captured [gen] for [deviceId] has
+  /// been superseded — i.e. the generation moved on (a newer connect or a
+  /// teardown happened) or the active link is no longer this device. Setup code
+  /// calls this after each await and bails out silently when true.
+  bool _setupSuperseded(int gen, String deviceId) =>
+      gen != _setupGeneration || _link.deviceId != deviceId;
+
   void _onConnectionChange(
     String deviceId,
     bool isConnected,
@@ -434,28 +488,35 @@ class BluetoothHandling extends ChangeNotifier {
     }
 
     if (isConnected) {
+      // Capture the generation for this setup pass. Every connect/disconnect/
+      // teardown bumps [_setupGeneration]; if it changes under us (user clicked
+      // again, the device dropped, etc.) we abandon this pass without touching
+      // state or surfacing a toast — see [_setupSuperseded].
+      final int gen = ++_setupGeneration;
+
       _link.deviceId = deviceId;
-      _link.state = BtLinkState.connected;
+      _link.state = BtLinkState.connected; // "Setting up…" until streaming.
 
       // Store the device name
       final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
       _link.name = device?.name ?? deviceId;
 
-      // Reflect "Connected" in the UI immediately, BEFORE the awaited setup
+      // Reflect "Setting up…" in the UI immediately, BEFORE the awaited setup
       // work below. Otherwise the label stays on "Connecting…" until discovery
       // finishes (and never updates at all if discovery throws).
       notifyListeners();
 
       // Post-connect setup. If the device drops mid-setup (common when Chrome
-      // accepts a too-soon reconnect then tears it down ~2.5s later), these
-      // calls throw "Cannot discover services…". Catch it, treat it as a failed
-      // connection, and reset to idle instead of leaving an uncaught exception
-      // and a half-connected limbo.
+      // accepts a too-soon reconnect then tears it down), these calls throw
+      // ("Cannot discover services…") or time out via the command queue. We
+      // re-check the generation after every await: if superseded, bail silently
+      // so a stale pass can't clobber a newer attempt or emit a spurious toast.
       try {
         if (!kIsWeb) {
           debugPrint('Requested MTU change');
           final int mtu = await UniversalBle.requestMtu(deviceId, 247);
           debugPrint('MTU set to: $mtu');
+          if (_setupSuperseded(gen, deviceId)) return;
           // TODO(perf): investigate requesting high-performance connection
           // priority here for the 1 kHz ADC stream:
           //   await UniversalBle.requestConnectionPriority(
@@ -465,25 +526,32 @@ class BluetoothHandling extends ChangeNotifier {
           // whether the tighter connection interval actually reduces dropped
           // samples before enabling.
         }
-        _link.services.addAll(await UniversalBle.discoverServices(deviceId));
+        final discovered = await UniversalBle.discoverServices(deviceId);
+        if (_setupSuperseded(gen, deviceId)) return;
+        _link.services.addAll(discovered);
         for (final srv in _link.services) {
           if (srv.uuid == btServiceId) {
             await subscribeToAdcFeed(srv);
+            if (_setupSuperseded(gen, deviceId)) return;
             break;
           }
         }
-        // Connected and set up: begin live RSSI polling for the signal display.
-        if (_link.deviceId == deviceId && _link.isConnected) {
-          _startRssiPolling(deviceId);
-        }
+        // Setup complete: advance to the usable "streaming" state and begin live
+        // RSSI polling for the signal display.
+        _link.state = BtLinkState.streaming;
+        notifyListeners();
+        _startRssiPolling(deviceId);
       } catch (e) {
+        // A superseded pass failing is expected (the device was torn down or a
+        // queued command was cancelled/timed out) — swallow it silently. Only a
+        // genuine failure of the *current* attempt resets the link and toasts.
+        if (_setupSuperseded(gen, deviceId)) {
+          debugPrint('Ignoring stale post-connect failure for $deviceId: $e');
+          return;
+        }
         debugPrint('Post-connect setup failed for $deviceId: $e');
         final String name = _link.name.isEmpty ? deviceId : _link.name;
-        // Only reset if this is still the link we were setting up (a real
-        // disconnect callback may have already reset/replaced it).
-        if (_link.deviceId == deviceId) {
-          _endLink(deviceId, name);
-        }
+        _endLink(deviceId, name);
         onConnectionFailed?.call(name);
         notifyListeners();
       }
@@ -526,6 +594,8 @@ class BluetoothHandling extends ChangeNotifier {
     // can't fire against this new attempt.
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
+    // Supersede any lingering setup pass from a prior attempt.
+    _setupGeneration++;
     _link.deviceId = deviceId;
     _link.state = BtLinkState.connecting;
     notifyListeners();
@@ -548,11 +618,16 @@ class BluetoothHandling extends ChangeNotifier {
   }
 
   Future<void> disconnectSelectedDevice() async {
-    if (!_link.isConnected) {
+    // Allow disconnecting whenever the GATT link is up — whether still "setting
+    // up" or fully streaming — so the user can cancel a stuck setup too.
+    if (!_link.isLinkUp) {
       return;
     }
     final String deviceId = _link.deviceId;
     final String deviceName = _link.name.isEmpty ? deviceId : _link.name;
+    // Supersede any in-flight post-connect setup pass immediately so it stops
+    // mutating state while we tear the link down.
+    _setupGeneration++;
     _link.state = BtLinkState.disconnecting;
     notifyListeners();
 
@@ -603,8 +678,9 @@ class BluetoothHandling extends ChangeNotifier {
           service.uuid,
           characteristic.uuid,
         );
-        _link.isSubscribed = true;
-        notifyListeners();
+        // The link's transition to the usable [BtLinkState.streaming] state is
+        // driven by the caller ([_onConnectionChange]) once this returns and the
+        // generation guard confirms the pass wasn't superseded.
         return;
       }
     }
