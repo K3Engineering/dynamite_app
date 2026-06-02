@@ -26,6 +26,73 @@ double graphPlotWidth(double totalWidth) =>
 // Shared Graph Data Source
 // ---------------------------------------------------------------------------
 
+class CacheConfig {
+  final double graphW;
+  final double graphH;
+  final int viewSamples;
+  final double yMin;
+  final double yMax;
+  final List<double> tares;
+
+  CacheConfig(
+    this.graphW,
+    this.graphH,
+    this.viewSamples,
+    this.yMin,
+    this.yMax,
+    this.tares,
+  );
+
+  bool matches(CacheConfig other) {
+    if ((graphW - other.graphW).abs() > 0.1) return false;
+    if ((graphH - other.graphH).abs() > 0.1) return false;
+    if (viewSamples != other.viewSamples) return false;
+    if ((yMin - other.yMin).abs() > 1e-6) return false;
+    if ((yMax - other.yMax).abs() > 1e-6) return false;
+    if (tares.length != other.tares.length) return false;
+    for (int i = 0; i < tares.length; i++) {
+      if ((tares[i] - other.tares[i]).abs() > 1e-6) return false;
+    }
+    return true;
+  }
+}
+
+class GraphLineCache {
+  CacheConfig? config;
+  int chunkSamples = 1000;
+  final Map<int, ui.Picture> chunks = {};
+
+  void invalidate() {
+    chunks.clear();
+    config = null;
+  }
+}
+
+/// Number of samples reduced into a single envelope/line "block".
+///
+/// One block becomes one min/avg/max reduction and one polyline vertex. When
+/// zoomed in past 1 sample/pixel this clamps to 1 (one block per sample). The
+/// last block in a range is allowed to be short.
+int blockSizeFor(int viewSamples, double graphW) {
+  if (graphW <= 0) return 1;
+  // floor => >= 1 sample/block, so the polyline never has more vertices than
+  // pixels. The remainder (viewSamples % blockSize) lands in the short final block.
+  return math.max(1, (viewSamples / graphW).floor());
+}
+
+/// Pick a cache tile size (in samples) for the given zoom. Aims for ~200 px
+/// wide tiles and rounds down to a whole multiple of [blockSize] so block
+/// boundaries never straddle a tile boundary.
+int chunkSamplesFor(double samplesPerPixel, int blockSize) {
+  int target = (200 * samplesPerPixel).round();
+  target = math.max(blockSize, target);
+  // Snap down to a whole multiple of blockSize: tiles must tile the block grid
+  // exactly, otherwise a block straddling a seam would be reduced twice.
+  final snapped = (target ~/ blockSize) * blockSize;
+  assert(snapped % blockSize == 0);
+  return snapped == 0 ? blockSize : snapped;
+}
+
 /// A single channel's raw circular-buffer data plus its precomputed extremes
 /// and tare offset. Returned by [GraphDataSource.channel].
 typedef ChannelSeries = ({List<int> data, double min, double max, double tare});
@@ -78,7 +145,8 @@ class _NeverListenable extends Listenable {
 class GraphController extends ChangeNotifier {
   final int minLiveSpan;
 
-  GraphController({this.minLiveSpan = 0}) : _liveSpan = minLiveSpan > 0 ? minLiveSpan : null;
+  GraphController({this.minLiveSpan = 0})
+    : _liveSpan = minLiveSpan > 0 ? minLiveSpan : null;
 
   /// Start of visible window in samples.
   int _viewStart = 0;
@@ -103,10 +171,12 @@ class GraphController extends ChangeNotifier {
     if (span != null) {
       // Explicitly lock to a span (used by zoom out when it hits max)
       _liveSpan = span;
-    } else if (totalSamples != null && oldestSample != null && _viewEnd != null) {
+    } else if (totalSamples != null &&
+        oldestSample != null &&
+        _viewEnd != null) {
       final currentSpan = _viewEnd! - _viewStart;
       final availableData = totalSamples - oldestSample;
-      
+
       if (currentSpan >= availableData) {
         // User zoomed out to see all available data
         if (currentSpan > minLiveSpan) {
@@ -142,7 +212,11 @@ class GraphController extends ChangeNotifier {
   }
 
   /// Get the effective visible range given total data size.
-  (int start, int end) effectiveRange(int totalSamples, int oldestSample, {int? bufferCapacity}) {
+  (int start, int end) effectiveRange(
+    int totalSamples,
+    int oldestSample, {
+    int? bufferCapacity,
+  }) {
     if (_isLive || _viewEnd == null) {
       final int maxSpan = math.max(minLiveSpan, totalSamples - oldestSample);
       int span = _liveSpan ?? maxSpan;
@@ -155,8 +229,17 @@ class GraphController extends ChangeNotifier {
   }
 
   /// Pan by a delta in samples (negative = left, positive = right).
-  void pan(int deltaSamples, int totalSamples, int oldestSample, int bufferCapacity) {
-    final (s, e) = effectiveRange(totalSamples, oldestSample, bufferCapacity: bufferCapacity);
+  void pan(
+    int deltaSamples,
+    int totalSamples,
+    int oldestSample,
+    int bufferCapacity,
+  ) {
+    final (s, e) = effectiveRange(
+      totalSamples,
+      oldestSample,
+      bufferCapacity: bufferCapacity,
+    );
     final span = e - s;
     int newStart = s + deltaSamples;
     int newEnd = newStart + span;
@@ -184,8 +267,18 @@ class GraphController extends ChangeNotifier {
   }
 
   /// Zoom by a factor around a focal point (0.0 = left edge, 1.0 = right edge).
-  void zoom(double factor, double focalFraction, int totalSamples, int oldestSample, int bufferCapacity) {
-    final (s, e) = effectiveRange(totalSamples, oldestSample, bufferCapacity: bufferCapacity);
+  void zoom(
+    double factor,
+    double focalFraction,
+    int totalSamples,
+    int oldestSample,
+    int bufferCapacity,
+  ) {
+    final (s, e) = effectiveRange(
+      totalSamples,
+      oldestSample,
+      bufferCapacity: bufferCapacity,
+    );
     final span = e - s;
     final maxSpan = math.max(totalSamples - oldestSample, minLiveSpan);
     final newSpan = (span / factor).round().clamp(
@@ -211,15 +304,23 @@ class GraphController extends ChangeNotifier {
       newStart = minStart;
       newEnd = newStart + newSpan;
     }
-    
+
     if (newEnd >= totalSamples) {
       // At the right edge -- enter/stay live
       _viewStart = totalSamples - newSpan; // Force right-align
       _viewEnd = totalSamples;
       if (newSpan >= maxSpan) {
-         goLive(span: null, totalSamples: totalSamples, oldestSample: oldestSample);
+        goLive(
+          span: null,
+          totalSamples: totalSamples,
+          oldestSample: oldestSample,
+        );
       } else {
-         goLive(span: newSpan, totalSamples: totalSamples, oldestSample: oldestSample);
+        goLive(
+          span: newSpan,
+          totalSamples: totalSamples,
+          oldestSample: oldestSample,
+        );
       }
       return;
     }
@@ -279,25 +380,45 @@ class Minimap extends StatelessWidget {
     if (event is PointerScrollEvent) {
       if (totalSamples == 0 || graphWidth <= 0) return;
 
-      final focalFrac = ((event.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
-        0.0,
-        1.0,
-      );
+      final focalFrac =
+          ((event.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
+            0.0,
+            1.0,
+          );
       final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
-      graphCtrl.zoom(zoomFactor, focalFrac, totalSamples, oldestSample, bufferCapacity);
+      graphCtrl.zoom(
+        zoomFactor,
+        focalFrac,
+        totalSamples,
+        oldestSample,
+        bufferCapacity,
+      );
     }
   }
 
-  void _onMinimapTap(TapDownDetails d, double graphWidth, int totalSamples, int oldestSample, int bufferCapacity) {
+  void _onMinimapTap(
+    TapDownDetails d,
+    double graphWidth,
+    int totalSamples,
+    int oldestSample,
+    int bufferCapacity,
+  ) {
     if (totalSamples == 0 || graphWidth <= 0) return;
     final frac = ((d.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
       0.0,
       1.0,
     );
-    final maxSpan = math.max(totalSamples - oldestSample, graphCtrl.minLiveSpan);
+    final maxSpan = math.max(
+      totalSamples - oldestSample,
+      graphCtrl.minLiveSpan,
+    );
     final mapStart = totalSamples - maxSpan;
-    
-    final (s, e) = graphCtrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: bufferCapacity);
+
+    final (s, e) = graphCtrl.effectiveRange(
+      totalSamples,
+      oldestSample,
+      bufferCapacity: bufferCapacity,
+    );
     final span = e - s;
     final center = mapStart + (frac * maxSpan).round();
     int newStart = center - span ~/ 2;
@@ -328,14 +449,21 @@ class Minimap extends StatelessWidget {
     int bufferCapacity,
   ) {
     if (totalSamples == 0 || graphWidth <= 0) return;
-    final maxSpan = math.max(totalSamples - oldestSample, graphCtrl.minLiveSpan);
+    final maxSpan = math.max(
+      totalSamples - oldestSample,
+      graphCtrl.minLiveSpan,
+    );
     final samplesPerPixel = maxSpan / graphWidth;
     final deltaSamples = (d.delta.dx * samplesPerPixel).round();
-    final (s, e) = graphCtrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: bufferCapacity);
+    final (s, e) = graphCtrl.effectiveRange(
+      totalSamples,
+      oldestSample,
+      bufferCapacity: bufferCapacity,
+    );
     final span = e - s;
     int newStart = s + deltaSamples;
     int newEnd = newStart + span;
-    
+
     final minStart = math.min(oldestSample, totalSamples - span);
 
     if (newStart < minStart) {
@@ -362,14 +490,29 @@ class Minimap extends StatelessWidget {
           height: 32,
           child: Listener(
             behavior: HitTestBehavior.opaque,
-            onPointerSignal: (e) =>
-                _onPointerSignal(e, graphWidth, dataSource.totalSamples, dataSource.oldestSample, dataSource.bufferCapacity),
+            onPointerSignal: (e) => _onPointerSignal(
+              e,
+              graphWidth,
+              dataSource.totalSamples,
+              dataSource.oldestSample,
+              dataSource.bufferCapacity,
+            ),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTapDown: (d) =>
-                  _onMinimapTap(d, graphWidth, dataSource.totalSamples, dataSource.oldestSample, dataSource.bufferCapacity),
-              onHorizontalDragUpdate: (d) =>
-                  _onMinimapDrag(d, graphWidth, dataSource.totalSamples, dataSource.oldestSample, dataSource.bufferCapacity),
+              onTapDown: (d) => _onMinimapTap(
+                d,
+                graphWidth,
+                dataSource.totalSamples,
+                dataSource.oldestSample,
+                dataSource.bufferCapacity,
+              ),
+              onHorizontalDragUpdate: (d) => _onMinimapDrag(
+                d,
+                graphWidth,
+                dataSource.totalSamples,
+                dataSource.oldestSample,
+                dataSource.bufferCapacity,
+              ),
               child: ListenableBuilder(
                 listenable: graphCtrl,
                 builder: (context, _) => CustomPaint(
@@ -450,60 +593,39 @@ class _MinimapPainter extends CustomPainter {
       final tare = _data.channel(ch).tare;
       final bufferCapacity = _data.bufferCapacity;
 
-      // Safe stack allocation size for Emscripten/Skwasm. 
-      // 4096 floats = 16KB per chunk.
-      const int maxEnvFloats = 4096;
-      const int maxAvgFloats = 4096;
-
-      final Float32List avgPts = Float32List(maxAvgFloats);
-      final Float32List envPts = Float32List(maxEnvFloats);
-      int avgIdx = 0;
-      int envIdx = 0;
       final chColor = _colors[ch % _colors.length];
 
-      void flushEnv() {
-        if (envIdx > 4) {
-          final vertices = ui.Vertices.raw(
-            ui.VertexMode.triangleStrip,
-            Float32List.sublistView(envPts, 0, envIdx),
-          );
-          pen.color = chColor.withAlpha(60);
-          pen.style = PaintingStyle.fill;
+      final avg = VertexBatcher(
+        preserveFloats: 2,
+        drawThreshold: 2,
+        onFlush: (view) {
+          pen
+            ..color = chColor.withAlpha(180)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.0;
+          canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
+        },
+      );
+
+      final env = VertexBatcher(
+        preserveFloats: 4,
+        drawThreshold: 4,
+        onFlush: (view) {
+          final vertices = ui.Vertices.raw(ui.VertexMode.triangleStrip, view);
+          pen
+            ..color = chColor.withAlpha(60)
+            ..style = PaintingStyle.fill;
           canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
           vertices.dispose();
-          
-          // Preserve the last two vertices (4 floats) to continue the strip
-          envPts[0] = envPts[envIdx - 4];
-          envPts[1] = envPts[envIdx - 3];
-          envPts[2] = envPts[envIdx - 2];
-          envPts[3] = envPts[envIdx - 1];
-          envIdx = 4;
-        }
-      }
-
-      void flushAvg() {
-        if (avgIdx > 2) {
-          pen.color = chColor.withAlpha(180);
-          pen.style = PaintingStyle.stroke;
-          canvas.drawRawPoints(
-            ui.PointMode.polygon,
-            Float32List.sublistView(avgPts, 0, avgIdx),
-            pen..strokeWidth = 1.0,
-          );
-          
-          // Preserve the last point (2 floats) to connect the polygon
-          avgPts[0] = avgPts[avgIdx - 2];
-          avgPts[1] = avgPts[avgIdx - 1];
-          avgIdx = 2;
-        }
-      }
+        },
+      );
 
       for (int px = 0; px < gwInt; px++) {
         final int sStart = mapStart + px * mapSpan ~/ gwInt;
         final int sEnd = mapStart + (px + 1) * mapSpan ~/ gwInt;
         final int drawStart = math.max(sStart, oldestSample);
         final int drawEnd = math.min(sEnd, totalSamples);
-        
+
         if (drawStart >= drawEnd) continue;
 
         double total = 0;
@@ -528,31 +650,29 @@ class _MinimapPainter extends CustomPainter {
         final maxY = (gh - (maxTared - rawMin) * gh / dataRange).clamp(0.0, gh);
 
         final xPos = px.toDouble();
-        avgPts[avgIdx++] = xPos;
-        avgPts[avgIdx++] = avgY;
+        avg.add(xPos, avgY);
 
-        envPts[envIdx++] = xPos;
-        envPts[envIdx++] = maxY;
-        envPts[envIdx++] = xPos;
-        envPts[envIdx++] = minY;
-
-        envPts[envIdx++] = xPos + 1.0;
-        envPts[envIdx++] = maxY;
-        envPts[envIdx++] = xPos + 1.0;
-        envPts[envIdx++] = minY;
+        env.add(xPos, maxY);
+        env.add(xPos, minY);
+        env.add(xPos + 1.0, maxY);
+        env.add(xPos + 1.0, minY);
 
         // Flush chunks if we are getting close to the array limits
-        if (envIdx + 8 > maxEnvFloats) flushEnv();
-        if (avgIdx + 2 > maxAvgFloats) flushAvg();
+        if (env.wouldOverflow(8)) env.flush();
+        if (avg.wouldOverflow(2)) avg.flush();
       }
 
       // Flush remaining data
-      flushEnv();
-      flushAvg();
+      env.flush();
+      avg.flush();
     }
 
     // Viewport highlight
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: _data.bufferCapacity);
+    final (viewStart, viewEnd) = _ctrl.effectiveRange(
+      totalSamples,
+      oldestSample,
+      bufferCapacity: _data.bufferCapacity,
+    );
     final double x1 = (viewStart - mapStart) * gw / mapSpan;
     final double x2 = (viewEnd - mapStart) * gw / mapSpan;
 
@@ -610,7 +730,11 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
     final total = widget.data.totalSamples;
     if (total == 0) return;
 
-    final (s, e) = widget.ctrl.effectiveRange(total, widget.data.oldestSample, bufferCapacity: widget.data.bufferCapacity);
+    final (s, e) = widget.ctrl.effectiveRange(
+      total,
+      widget.data.oldestSample,
+      bufferCapacity: widget.data.bufferCapacity,
+    );
     _panStartSample = s;
     _panEndSample = e;
     _panStartX = details.localFocalPoint.dx;
@@ -637,7 +761,7 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
       );
 
       double focalFrac = (_pinchFocalX! / graphWidth).clamp(0.0, 1.0);
-      
+
       // Smart anchor: If we started scaling while live and are pinching near the right edge,
       // anchor perfectly to the right edge. This prevents tracking jitter as totalSamples grows.
       if (_wasLiveOnScaleStart && focalFrac > 0.8) {
@@ -654,17 +778,21 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
         newStart = minStart;
         newEnd = newStart + newSpan;
       }
-      
+
       if (newEnd >= total) {
         newEnd = total;
         newStart = total - newSpan;
         if (newStart < minStart) newStart = minStart;
         widget.ctrl.setWindow(newStart, newEnd);
-        
+
         if (newSpan >= maxSpan) {
-           widget.ctrl.goLive(totalSamples: total, oldestSample: oldestSample);
+          widget.ctrl.goLive(totalSamples: total, oldestSample: oldestSample);
         } else {
-           widget.ctrl.goLive(span: newSpan, totalSamples: total, oldestSample: oldestSample);
+          widget.ctrl.goLive(
+            span: newSpan,
+            totalSamples: total,
+            oldestSample: oldestSample,
+          );
         }
         return;
       }
@@ -702,12 +830,19 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
       final totalSamples = widget.data.totalSamples;
       if (totalSamples == 0 || graphWidth <= 0) return;
 
-      final focalFrac = ((event.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
-        0.0,
-        1.0,
-      );
+      final focalFrac =
+          ((event.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
+            0.0,
+            1.0,
+          );
       final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
-      widget.ctrl.zoom(zoomFactor, focalFrac, totalSamples, widget.data.oldestSample, widget.data.bufferCapacity);
+      widget.ctrl.zoom(
+        zoomFactor,
+        focalFrac,
+        totalSamples,
+        widget.data.oldestSample,
+        widget.data.bufferCapacity,
+      );
     }
   }
 
@@ -735,12 +870,13 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
 // Graph Workspace Widget
 // ---------------------------------------------------------------------------
 
-class GraphWorkspace extends StatelessWidget {
+class GraphWorkspace extends StatefulWidget {
   final GraphDataSource data;
   final GraphController ctrl;
   final AppSettings settings;
   final bool showDerivative;
   final bool isLiveGraph;
+  final bool showEnvelope;
 
   const GraphWorkspace({
     super.key,
@@ -749,7 +885,23 @@ class GraphWorkspace extends StatelessWidget {
     required this.settings,
     this.showDerivative = false,
     this.isLiveGraph = true,
+    this.showEnvelope = true,
   });
+
+  @override
+  State<GraphWorkspace> createState() => _GraphWorkspaceState();
+}
+
+class _GraphWorkspaceState extends State<GraphWorkspace> {
+  final GraphLineCache _forceCache = GraphLineCache();
+  final GraphLineCache _derivCache = GraphLineCache();
+
+  @override
+  void dispose() {
+    _forceCache.invalidate();
+    _derivCache.invalidate();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -761,18 +913,23 @@ class GraphWorkspace extends StatelessWidget {
               children: [
                 // Main force graph
                 Expanded(
-                  flex: showDerivative ? 6 : 10,
+                  flex: widget.showDerivative ? 6 : 10,
                   child: InteractiveGraphArea(
-                    data: data,
-                    ctrl: ctrl,
+                    data: widget.data,
+                    ctrl: widget.ctrl,
                     child: ListenableBuilder(
-                      listenable: Listenable.merge([ctrl, data.repaint]),
+                      listenable: Listenable.merge([
+                        widget.ctrl,
+                        widget.data.repaint,
+                      ]),
                       builder: (context, _) => CustomPaint(
                         foregroundPainter: ForceGraphPainter(
-                          data,
-                          settings,
-                          ctrl,
-                          showXLabels: !showDerivative,
+                          widget.data,
+                          widget.settings,
+                          widget.ctrl,
+                          showXLabels: !widget.showDerivative,
+                          showEnvelope: widget.showEnvelope,
+                          cache: _forceCache,
                         ),
                         size: Size.infinite,
                       ),
@@ -780,19 +937,24 @@ class GraphWorkspace extends StatelessWidget {
                   ),
                 ),
                 // Derivative graph (when enabled)
-                if (showDerivative)
+                if (widget.showDerivative)
                   Expanded(
                     flex: 4,
                     child: InteractiveGraphArea(
-                      data: data,
-                      ctrl: ctrl,
+                      data: widget.data,
+                      ctrl: widget.ctrl,
                       child: ListenableBuilder(
-                        listenable: Listenable.merge([ctrl, data.repaint]),
+                        listenable: Listenable.merge([
+                          widget.ctrl,
+                          widget.data.repaint,
+                        ]),
                         builder: (context, _) => CustomPaint(
                           foregroundPainter: DerivativeGraphPainter(
-                            data,
-                            settings,
-                            ctrl,
+                            widget.data,
+                            widget.settings,
+                            widget.ctrl,
+                            showEnvelope: widget.showEnvelope,
+                            cache: _derivCache,
                           ),
                           size: Size.infinite,
                         ),
@@ -801,12 +963,12 @@ class GraphWorkspace extends StatelessWidget {
                   ),
                 // Minimap
                 ListenableBuilder(
-                  listenable: data.repaint,
+                  listenable: widget.data.repaint,
                   builder: (context, _) => Minimap(
-                    dataSource: data,
-                    activeChannels: settings.activeChannelIndices,
-                    graphCtrl: ctrl,
-                    channelColors: settings.activeChannelIndices
+                    dataSource: widget.data,
+                    activeChannels: widget.settings.activeChannelIndices,
+                    graphCtrl: widget.ctrl,
+                    channelColors: widget.settings.activeChannelIndices
                         .map(getChannelColor)
                         .toList(),
                   ),
@@ -815,16 +977,21 @@ class GraphWorkspace extends StatelessWidget {
             ),
             // LIVE button (appears when not following live edge)
             ListenableBuilder(
-              listenable: ctrl,
+              listenable: widget.ctrl,
               builder: (context, _) {
-                if (ctrl.isLive || data.totalSamples == 0 || !isLiveGraph) {
+                if (widget.ctrl.isLive ||
+                    widget.data.totalSamples == 0 ||
+                    !widget.isLiveGraph) {
                   return const SizedBox.shrink();
                 }
                 return Positioned(
                   right: 64,
                   top: 8,
                   child: FilledButton.tonalIcon(
-                    onPressed: () => ctrl.goLive(totalSamples: data.totalSamples, oldestSample: data.oldestSample),
+                    onPressed: () => widget.ctrl.goLive(
+                      totalSamples: widget.data.totalSamples,
+                      oldestSample: widget.data.oldestSample,
+                    ),
                     icon: const Icon(Icons.fast_forward, size: 16),
                     label: const Text('LIVE'),
                     style: FilledButton.styleFrom(
@@ -847,22 +1014,34 @@ class GraphWorkspace extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   FloatingActionButton.small(
-                    heroTag: 'zoomIn_${data.hashCode}',
+                    heroTag: 'zoomIn_${widget.data.hashCode}',
                     onPressed: () {
-                      if (data.totalSamples > 0) {
-                        final focal = ctrl.isLive ? 1.0 : 0.5;
-                        ctrl.zoom(1.2, focal, data.totalSamples, data.oldestSample, data.bufferCapacity);
+                      if (widget.data.totalSamples > 0) {
+                        final focal = widget.ctrl.isLive ? 1.0 : 0.5;
+                        widget.ctrl.zoom(
+                          1.2,
+                          focal,
+                          widget.data.totalSamples,
+                          widget.data.oldestSample,
+                          widget.data.bufferCapacity,
+                        );
                       }
                     },
                     child: const Icon(Icons.zoom_in),
                   ),
                   const SizedBox(height: 8),
                   FloatingActionButton.small(
-                    heroTag: 'zoomOut_${data.hashCode}',
+                    heroTag: 'zoomOut_${widget.data.hashCode}',
                     onPressed: () {
-                      if (data.totalSamples > 0) {
-                        final focal = ctrl.isLive ? 1.0 : 0.5;
-                        ctrl.zoom(1 / 1.2, focal, data.totalSamples, data.oldestSample, data.bufferCapacity);
+                      if (widget.data.totalSamples > 0) {
+                        final focal = widget.ctrl.isLive ? 1.0 : 0.5;
+                        widget.ctrl.zoom(
+                          1 / 1.2,
+                          focal,
+                          widget.data.totalSamples,
+                          widget.data.oldestSample,
+                          widget.data.bufferCapacity,
+                        );
                       }
                     },
                     child: const Icon(Icons.zoom_out),
@@ -1056,9 +1235,11 @@ void drawValueAxis(
   bool drawMinor = false,
 }) {
   final delta = yRange.tickDelta;
-  for (double tick = (yRange.yMin / delta).ceil() * delta;
-      tick <= yRange.yMax + delta * 0.01;
-      tick += delta) {
+  for (
+    double tick = (yRange.yMin / delta).ceil() * delta;
+    tick <= yRange.yMax + delta * 0.01;
+    tick += delta
+  ) {
     final yPos = valueToY(tick);
     if (yPos >= -1 && yPos <= graphSz.height + 1) {
       grid.moveTo(0, yPos);
@@ -1073,9 +1254,11 @@ void drawValueAxis(
 
   if (drawMinor) {
     final minorDelta = delta / 2;
-    for (double tick = (yRange.yMin / minorDelta).ceil() * minorDelta;
-        tick <= yRange.yMax + minorDelta * 0.01;
-        tick += minorDelta) {
+    for (
+      double tick = (yRange.yMin / minorDelta).ceil() * minorDelta;
+      tick <= yRange.yMax + minorDelta * 0.01;
+      tick += minorDelta
+    ) {
       final yPos = valueToY(tick);
       if (yPos >= -1 && yPos <= graphSz.height + 1) {
         grid.moveTo(0, yPos);
@@ -1105,6 +1288,59 @@ void drawZeroBaseline(
   }
 }
 
+/// Accumulates 2D vertices into a fixed [Float32List] and flushes them in
+/// bounded chunks, staying within the web (Skwasm/Emscripten) stack-allocation
+/// limit of 4096 floats per draw call.
+///
+/// On flush, the trailing [preserveFloats] floats are carried over to the front
+/// of the buffer so a continuous primitive (triangle strip or polyline) is not
+/// broken across flushes. [drawThreshold] is the minimum filled-float count
+/// required before a flush actually emits anything.
+///
+/// NOTE: this batching only exists for the web stack limit; with the current
+/// architecture it can eventually be removed once that limit is lifted/tested.
+class VertexBatcher {
+  VertexBatcher({
+    required this.preserveFloats,
+    required this.drawThreshold,
+    required this.onFlush,
+    int capacity = 4096,
+  }) : _buf = Float32List(capacity);
+
+  final Float32List _buf;
+  final int preserveFloats;
+  final int drawThreshold;
+
+  /// Draws the populated `[0, length)` view of the backing buffer.
+  final void Function(Float32List view) onFlush;
+
+  int _len = 0;
+
+  /// Remaining capacity before a flush is forced.
+  int get _capacity => _buf.length;
+
+  /// Append a single (x, y) vertex.
+  void add(double x, double y) {
+    _buf[_len++] = x;
+    _buf[_len++] = y;
+  }
+
+  /// Whether [extraFloats] more floats would overflow the buffer.
+  bool wouldOverflow(int extraFloats) => _len + extraFloats > _capacity;
+
+  /// Emit the accumulated vertices (if past [drawThreshold]) and reset, keeping
+  /// the trailing [preserveFloats] floats so the primitive stays continuous.
+  void flush() {
+    if (_len > drawThreshold) {
+      onFlush(Float32List.sublistView(_buf, 0, _len));
+      for (int i = 0; i < preserveFloats; i++) {
+        _buf[i] = _buf[_len - preserveFloats + i];
+      }
+      _len = preserveFloats;
+    }
+  }
+}
+
 /// Render one channel as a min/avg/max envelope across [graphW] pixel columns.
 ///
 /// For each pixel column the samples mapped to it are reduced to min/avg/max via
@@ -1116,7 +1352,7 @@ void drawZeroBaseline(
 void drawChannelEnvelope(
   Canvas canvas, {
   required Color color,
-  required int graphW,
+  required double graphW,
   required int viewStart,
   required int viewSamples,
   required int oldestSample,
@@ -1124,143 +1360,315 @@ void drawChannelEnvelope(
   required int firstUsableSample,
   required double Function(int sampleIndex) sampleAt,
   required double Function(double rawReduced) valueToY,
+  bool showEnvelope = true,
+  int? clipEnvelopeSamples,
 }) {
-  const int maxFloats = 4096; // 16KB per chunk
-  final Float32List avgPts = Float32List(maxFloats);
-  final Float32List envPts = Float32List(maxFloats);
-  int avgIdx = 0;
-  int envIdx = 0;
-
   final pen = Paint();
 
-  void flushEnv() {
-    if (envIdx > 4) {
-      final vertices = ui.Vertices.raw(
-        ui.VertexMode.triangleStrip,
-        Float32List.sublistView(envPts, 0, envIdx),
-      );
+  final avg = VertexBatcher(
+    preserveFloats: 2,
+    drawThreshold: 2,
+    onFlush: (view) {
+      pen
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+      canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
+    },
+  );
+
+  final env = VertexBatcher(
+    preserveFloats: 4,
+    drawThreshold: 4,
+    onFlush: (view) {
+      final vertices = ui.Vertices.raw(ui.VertexMode.triangleStrip, view);
       pen
         ..color = color.withAlpha(60)
         ..style = PaintingStyle.fill;
       canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
       vertices.dispose();
-      
-      envPts[0] = envPts[envIdx - 4];
-      envPts[1] = envPts[envIdx - 3];
-      envPts[2] = envPts[envIdx - 2];
-      envPts[3] = envPts[envIdx - 1];
-      envIdx = 4;
-    }
-  }
+    },
+  );
 
-  void flushAvg() {
-    if (avgIdx > 2) {
-      pen
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5;
-      canvas.drawRawPoints(
-        ui.PointMode.polygon,
-        Float32List.sublistView(avgPts, 0, avgIdx),
-        pen,
-      );
-      
-      avgPts[0] = avgPts[avgIdx - 2];
-      avgPts[1] = avgPts[avgIdx - 1];
-      avgIdx = 2;
-    }
-  }
+  // Calculate alignment block size
+  final int blockSize = blockSizeFor(viewSamples, graphW);
 
-  for (int px = 0; px < graphW; px++) {
-    final int sStart = viewStart + (px * viewSamples ~/ graphW);
-    final int sEnd = viewStart + ((px + 1) * viewSamples ~/ graphW);
+  // Blocks are anchored to absolute sample 0 (sStart = k * blockSize), NOT to
+  // viewStart. This is what lets a block fall on the same pixels regardless of
+  // scroll, so paintCachedChannels can record it once and reuse it.
+  final int startBlock = (math.max(viewStart, firstUsableSample) / blockSize)
+      .floor();
+  final int endBlock = (totalSamples / blockSize).ceil();
+  final int envelopeLimit = clipEnvelopeSamples ?? totalSamples;
+
+  for (int k = startBlock; k < endBlock; k++) {
+    final int sStart = k * blockSize;
+    final int sEnd = math.min(
+      sStart + blockSize,
+      totalSamples,
+    ); // last block may be short
+
     final int drawStart = math.max(sStart, firstUsableSample);
-    final int drawEnd = math.min(sEnd, totalSamples);
-    if (drawStart >= drawEnd) continue;
+    if (drawStart >= sEnd) continue;
+    // sEnd - drawStart in [1, blockSize]; the full-blockSize case is the common
+    // one, but do NOT assert it: the trailing block and a block clipped by
+    // firstUsableSample are both legitimately shorter.
+    assert(sEnd - drawStart >= 1 && sEnd - drawStart <= blockSize);
 
     double total = 0;
     double minRaw = double.infinity;
     double maxRaw = double.negativeInfinity;
-    for (int j = drawStart; j < drawEnd; j++) {
+
+    for (int j = drawStart; j < sEnd; j++) {
       final v = sampleAt(j);
       total += v;
       if (v < minRaw) minRaw = v;
       if (v > maxRaw) maxRaw = v;
     }
-    final avg = total / (drawEnd - drawStart);
 
-    final avgY = valueToY(avg);
+    final avgVal =
+        total / (sEnd - drawStart); // divide by actual count, not blockSize
+
+    final avgY = valueToY(avgVal);
     final minY = valueToY(minRaw);
     final maxY = valueToY(maxRaw);
 
-    final xPos = px.toDouble();
-    avgPts[avgIdx++] = xPos;
-    avgPts[avgIdx++] = avgY;
+    // Absolute X (in this canvas's local space): a cached tile passes its own
+    // start as viewStart, so xPos is tile-local and the tile slides as a whole.
+    final double xPos = (sStart - viewStart) * graphW / viewSamples;
+    final double nextXPos = (sEnd - viewStart) * graphW / viewSamples;
 
-    envPts[envIdx++] = xPos;
-    envPts[envIdx++] = maxY;
-    envPts[envIdx++] = xPos;
-    envPts[envIdx++] = minY;
-    envPts[envIdx++] = xPos + 1.0;
-    envPts[envIdx++] = maxY;
-    envPts[envIdx++] = xPos + 1.0;
-    envPts[envIdx++] = minY;
+    avg.add(xPos, avgY);
 
-    if (envIdx + 8 > maxFloats) flushEnv();
-    if (avgIdx + 2 > maxFloats) flushAvg();
+    if (showEnvelope && sStart < envelopeLimit) {
+      env.add(xPos, maxY);
+      env.add(xPos, minY);
+      env.add(nextXPos, maxY);
+      env.add(nextXPos, minY);
+
+      if (env.wouldOverflow(8)) env.flush();
+    }
+
+    if (avg.wouldOverflow(2)) avg.flush();
   }
 
-  flushEnv();
-  flushAvg();
+  if (showEnvelope) env.flush();
+  avg.flush();
+}
+
+/// Draws a graph's data layer using the chunked [ui.Picture] tile cache.
+///
+/// The visible window is split into fixed sample-count tiles. Each tile is
+/// recorded once into a [ui.Picture] (in its own local coordinate space, as if
+/// the tile's start were the view start) and then blitted at the right screen
+/// offset via [Canvas.translate]. Panning at constant zoom reuses tiles; a
+/// changed [config] (zoom, size, Y-range, tares) drops the whole cache.
+///
+/// Only tiles that are fully populated (entirely between [oldestSample] and
+/// [totalSamples]) are stored; the live edge and the buffer's trailing edge are
+/// recomputed every frame so they never go stale.
+///
+/// [drawChunk] is invoked to record one tile. It receives the tile's canvas,
+/// the tile's absolute start sample (used as the local view start), and
+/// [limitSamples] (one block past the tile end, so the average polyline joins
+/// the next tile without a gap). [drawChunk] should clip its envelope fill to
+/// [chunkEndSample] to avoid double-blending across tile seams.
+///
+/// All sample arguments ([viewStart], [viewEnd], ...) are absolute sample
+/// indices (the monotonic clock), not buffer slots or pixels; the window is the
+/// half-open range [viewStart, viewEnd). Invariant within one cache generation:
+/// a sample's tile is `sample ~/ chunkSamples`, a pure function of its index, so
+/// a sample never migrates between tiles. Re-tiling only happens together with a
+/// full cache clear (config change), which is why a recorded tile is safe to keep.
+void paintCachedChannels(
+  Canvas canvas,
+  GraphLineCache cache,
+  CacheConfig config, {
+  required int viewStart,
+  required int viewEnd,
+  required int totalSamples,
+  required int oldestSample,
+  required double graphW,
+  required void Function(
+    Canvas chunkCanvas,
+    int chunkStartSample,
+    int chunkEndSample,
+    int limitSamples,
+  )
+  drawChunk,
+}) {
+  final int viewSamples = config.viewSamples;
+  final int blockSize = blockSizeFor(viewSamples, graphW);
+
+  if (cache.config == null || !cache.config!.matches(config)) {
+    cache.invalidate();
+    cache.config = config;
+    cache.chunkSamples = chunkSamplesFor(viewSamples / graphW, blockSize);
+  }
+  assert(
+    cache.chunkSamples % blockSize == 0,
+  ); // tiles tile the block grid exactly
+
+  // `~/` truncates toward zero. For viewStart >= 0, startChunk's tile begins at
+  // or LEFT of viewStart. If viewStart < 0 (empty space before the first sample),
+  // it truncates *up* toward zero, so the first tile begins RIGHT of viewStart.
+  // In both cases, the loop covers all populated tiles that overlap the view.
+  final int startChunk = viewStart ~/ cache.chunkSamples;
+  final int endChunk = viewEnd ~/ cache.chunkSamples;
+
+  for (int c = startChunk; c <= endChunk; c++) {
+    final int chunkStartSample = c * cache.chunkSamples;
+    final int chunkEndSample = chunkStartSample + cache.chunkSamples;
+
+    // Only fully-buffered tiles are cached. The live edge (chunkEndSample past
+    // totalSamples) and the trailing edge (chunkStartSample below oldestSample)
+    // change every frame, so they are re-recorded and never stored.
+    final bool isFullyPopulated =
+        chunkEndSample <= totalSamples && chunkStartSample >= oldestSample;
+    // NB: do NOT assert chunkStartSample >= viewStart (false for startChunk) nor
+    // >= oldestSample (false for the leftmost tile) -- that's exactly the case
+    // isFullyPopulated guards against.
+
+    ui.Picture? pic = cache.chunks[c];
+
+    if (pic == null) {
+      final recorder = ui.PictureRecorder();
+      final cCanvas = Canvas(recorder);
+
+      final int limitSamples = math.min(
+        chunkEndSample + blockSize,
+        totalSamples,
+      );
+      drawChunk(cCanvas, chunkStartSample, chunkEndSample, limitSamples);
+
+      pic = recorder.endRecording();
+      if (isFullyPopulated) {
+        cache.chunks[c] = pic;
+      }
+    }
+
+    // The tile was recorded with chunkStartSample as its local origin, so shift
+    // it bodily into place; cached tiles only ever differ by this offset.
+    final double xOffset =
+        (chunkStartSample - viewStart) * graphW / viewSamples;
+    // chunkStart can be left OR right of viewStart: ~/ truncates toward zero, so for
+    // negative viewStart (large minLiveSpan on a nearly-empty buffer) the first tile
+    // starts right of viewStart and xOffset > 0. So no sign guarantee on xOffset.
+    assert(
+      chunkEndSample > viewStart && chunkStartSample < viewEnd,
+    ); // tile overlaps view
+    canvas.save();
+    canvas.translate(xOffset, 0);
+    canvas.drawPicture(pic);
+    canvas.restore();
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Live graph painter (force)
 // ---------------------------------------------------------------------------
 
+/// Common painter prologue shared by the force and derivative graphs: translate
+/// into the plot area, compute the plot [Size], draw the frame border, and
+/// resolve the visible window.
+///
+/// Returns null when there is nothing to draw (degenerate size, too few
+/// samples, or a degenerate window). [minSamples] is the smallest sample count
+/// the graph needs (1 for force, 2 for the derivative's first difference).
+typedef _GraphLayout = ({
+  Size graphSz,
+  int viewStart,
+  int viewEnd,
+  int viewSamples,
+});
+
+_GraphLayout? _setupGraphFrame(
+  Canvas canvas,
+  Size size,
+  GraphDataSource data,
+  GraphController ctrl, {
+  required double topSpace,
+  required double bottomSpace,
+  required int minSamples,
+}) {
+  final pen = Paint()
+    ..color = Colors.deepPurple
+    ..style = PaintingStyle.stroke;
+
+  canvas.translate(kGraphLeftSpace, topSpace);
+  final graphSz = Size(
+    size.width - kGraphLeftSpace - kGraphRightSpace,
+    size.height - bottomSpace - topSpace,
+  );
+
+  if (graphSz.width <= 0 || graphSz.height <= 0) return null;
+
+  canvas.drawRect(
+    Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
+    pen..strokeWidth = 0.5,
+  );
+
+  if (data.totalSamples < minSamples) return null;
+
+  final (viewStart, viewEnd) = ctrl.effectiveRange(
+    data.totalSamples,
+    data.oldestSample,
+    bufferCapacity: data.bufferCapacity,
+  );
+  final viewSamples = viewEnd - viewStart;
+  if (viewSamples < minSamples) return null;
+
+  return (
+    graphSz: graphSz,
+    viewStart: viewStart,
+    viewEnd: viewEnd,
+    viewSamples: viewSamples,
+  );
+}
+
 class ForceGraphPainter extends CustomPainter {
   final GraphDataSource _data;
   final AppSettings _settings;
   final GraphController _ctrl;
   final bool showXLabels;
+  final bool showEnvelope;
+  final GraphLineCache cache;
 
   ForceGraphPainter(
     this._data,
     this._settings,
     this._ctrl, {
     this.showXLabels = true,
+    this.showEnvelope = true,
+    required this.cache,
   }) : super(repaint: _data.repaint);
 
   @override
   void paint(Canvas canvas, Size size) {
+    final layout = _setupGraphFrame(
+      canvas,
+      size,
+      _data,
+      _ctrl,
+      topSpace: 4,
+      bottomSpace: showXLabels ? kGraphBottomSpace : 4,
+      minSamples: 1,
+    );
+    if (layout == null) return;
+
+    final graphSz = layout.graphSz;
+    final viewStart = layout.viewStart;
+    final viewEnd = layout.viewEnd;
+    final viewSamples = layout.viewSamples;
+
     final pen = Paint()
       ..color = Colors.deepPurple
       ..style = PaintingStyle.stroke;
-
-    const double topSpace = 4;
-
-    canvas.translate(kGraphLeftSpace, topSpace);
-    final graphSz = Size(
-      size.width - kGraphLeftSpace - kGraphRightSpace,
-      size.height - (showXLabels ? kGraphBottomSpace : 4) - topSpace,
-    );
-
-    if (graphSz.width <= 0 || graphSz.height <= 0) return;
-
-    canvas.drawRect(
-      Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
-      pen..strokeWidth = 0.5,
-    );
-
-    if (_data.totalSamples == 0) return;
 
     final unit = _settings.displayUnit;
     final activeIndices = _settings.activeChannelIndices;
     final oldestSample = _data.oldestSample;
     final totalSamples = _data.totalSamples;
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: _data.bufferCapacity);
-    final viewSamples = viewEnd - viewStart;
-    if (viewSamples <= 0) return;
 
     // Compute data min/max across active channels in visible window (raw, tare-subtracted).
     // Start with actual extremes then enforce a minimum visible range.
@@ -1334,27 +1742,53 @@ class ForceGraphPainter extends CustomPainter {
     // -- Data lines --
     final slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
 
-    for (final ch in activeIndices) {
-      final s = _data.channel(ch);
-      final line = s.data;
-      if (line.isEmpty) continue;
-      final tare = s.tare;
-      final bufferCap = _data.bufferCapacity;
+    final currentTares = activeIndices
+        .map((ch) => _data.channel(ch).tare)
+        .toList();
+    final currentConfig = CacheConfig(
+      graphSz.width,
+      graphSz.height,
+      viewSamples,
+      yRange.yMin,
+      yRange.yMax,
+      currentTares,
+    );
 
-      drawChannelEnvelope(
-        canvas,
-        color: getChannelColor(ch),
-        graphW: graphSz.width.toInt(),
-        viewStart: viewStart,
-        viewSamples: viewSamples,
-        oldestSample: oldestSample,
-        totalSamples: totalSamples,
-        firstUsableSample: oldestSample,
-        sampleAt: (j) => line[j % bufferCap].toDouble(),
-        valueToY: (raw) =>
-            unitToY((raw - tare) * slopeToUnit).clamp(0.0, graphSz.height),
-      );
-    }
+    paintCachedChannels(
+      canvas,
+      cache,
+      currentConfig,
+      viewStart: viewStart,
+      viewEnd: viewEnd,
+      totalSamples: totalSamples,
+      oldestSample: oldestSample,
+      graphW: graphSz.width,
+      drawChunk: (cCanvas, chunkStartSample, chunkEndSample, limitSamples) {
+        for (final ch in activeIndices) {
+          final s = _data.channel(ch);
+          final line = s.data;
+          if (line.isEmpty) continue;
+          final tare = s.tare;
+          final bufferCap = _data.bufferCapacity;
+
+          drawChannelEnvelope(
+            cCanvas,
+            color: getChannelColor(ch),
+            graphW: graphSz.width,
+            viewStart: chunkStartSample,
+            viewSamples: viewSamples,
+            oldestSample: oldestSample,
+            totalSamples: limitSamples,
+            firstUsableSample: math.max(oldestSample, chunkStartSample),
+            sampleAt: (j) => line[j % bufferCap].toDouble(),
+            valueToY: (raw) =>
+                unitToY((raw - tare) * slopeToUnit).clamp(0.0, graphSz.height),
+            showEnvelope: showEnvelope,
+            clipEnvelopeSamples: chunkEndSample,
+          );
+        }
+      },
+    );
   }
 
   @override
@@ -1369,40 +1803,43 @@ class DerivativeGraphPainter extends CustomPainter {
   final GraphDataSource _data;
   final AppSettings _settings;
   final GraphController _ctrl;
+  final bool showEnvelope;
+  final GraphLineCache cache;
 
-  DerivativeGraphPainter(this._data, this._settings, this._ctrl)
-    : super(repaint: _data.repaint);
+  DerivativeGraphPainter(
+    this._data,
+    this._settings,
+    this._ctrl, {
+    this.showEnvelope = true,
+    required this.cache,
+  }) : super(repaint: _data.repaint);
 
   @override
   void paint(Canvas canvas, Size size) {
+    final layout = _setupGraphFrame(
+      canvas,
+      size,
+      _data,
+      _ctrl,
+      topSpace: 2,
+      bottomSpace: kGraphBottomSpace,
+      minSamples: 2,
+    );
+    if (layout == null) return;
+
+    final graphSz = layout.graphSz;
+    final viewStart = layout.viewStart;
+    final viewEnd = layout.viewEnd;
+    final viewSamples = layout.viewSamples;
+
     final pen = Paint()
       ..color = Colors.deepPurple
       ..style = PaintingStyle.stroke;
-
-    const double topSpace = 2;
-
-    canvas.translate(kGraphLeftSpace, topSpace);
-    final graphSz = Size(
-      size.width - kGraphLeftSpace - kGraphRightSpace,
-      size.height - kGraphBottomSpace - topSpace,
-    );
-
-    if (graphSz.width <= 0 || graphSz.height <= 0) return;
-
-    canvas.drawRect(
-      Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
-      pen..strokeWidth = 0.5,
-    );
-
-    if (_data.totalSamples < 2) return;
 
     final unit = _settings.displayUnit;
     final activeIndices = _settings.activeChannelIndices;
     final oldestSample = _data.oldestSample;
     final totalSamples = _data.totalSamples;
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: _data.bufferCapacity);
-    final viewSamples = viewEnd - viewStart;
-    if (viewSamples < 2) return;
 
     final double slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
     final double sampleRate = _data.sampleRate.toDouble();
@@ -1479,24 +1916,48 @@ class DerivativeGraphPainter extends CustomPainter {
     canvas.drawParagraph(dLabel, const Offset(4, 2));
 
     // Data lines
-    for (final ch in activeIndices) {
-      final line = _data.channel(ch).data;
-      if (line.isEmpty) continue;
-      final bufferCap = _data.bufferCapacity;
+    final currentConfig = CacheConfig(
+      graphSz.width,
+      graphSz.height,
+      viewSamples,
+      yRange.yMin,
+      yRange.yMax,
+      [],
+    );
 
-      drawChannelEnvelope(
-        canvas,
-        color: getChannelColor(ch),
-        graphW: graphSz.width.toInt(),
-        viewStart: viewStart,
-        viewSamples: viewSamples,
-        oldestSample: oldestSample,
-        totalSamples: totalSamples,
-        firstUsableSample: oldestSample + 1,
-        sampleAt: (j) => derivRawAt(line, bufferCap, j) * slopeToUnit * sampleRate,
-        valueToY: (deriv) => valToY(deriv).clamp(0.0, graphSz.height),
-      );
-    }
+    paintCachedChannels(
+      canvas,
+      cache,
+      currentConfig,
+      viewStart: viewStart,
+      viewEnd: viewEnd,
+      totalSamples: totalSamples,
+      oldestSample: oldestSample,
+      graphW: graphSz.width,
+      drawChunk: (cCanvas, chunkStartSample, chunkEndSample, limitSamples) {
+        for (final ch in activeIndices) {
+          final line = _data.channel(ch).data;
+          if (line.isEmpty) continue;
+          final bufferCap = _data.bufferCapacity;
+
+          drawChannelEnvelope(
+            cCanvas,
+            color: getChannelColor(ch),
+            graphW: graphSz.width,
+            viewStart: chunkStartSample,
+            viewSamples: viewSamples,
+            oldestSample: oldestSample,
+            totalSamples: limitSamples,
+            firstUsableSample: math.max(oldestSample + 1, chunkStartSample),
+            sampleAt: (j) =>
+                derivRawAt(line, bufferCap, j) * slopeToUnit * sampleRate,
+            valueToY: (deriv) => valToY(deriv).clamp(0.0, graphSz.height),
+            showEnvelope: showEnvelope,
+            clipEnvelopeSamples: chunkEndSample,
+          );
+        }
+      },
+    );
   }
 
   @override
