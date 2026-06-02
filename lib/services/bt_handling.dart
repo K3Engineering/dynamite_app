@@ -304,6 +304,11 @@ class BluetoothHandling extends ChangeNotifier {
 
   void _onBluetoothAvailabilityChanged(AvailabilityState state) {
     _bluetoothState = state;
+    if (state == AvailabilityState.poweredOff) {
+      _isScanning = false;
+      _devices.clear();
+    }
+    notifyListeners();
   }
 
   Future<void> _stopScan() async {
