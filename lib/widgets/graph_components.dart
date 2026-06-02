@@ -1,8 +1,8 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'dart:collection';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
@@ -172,6 +172,7 @@ class GraphController extends ChangeNotifier {
   /// When in live mode and zoomed in, this is the fixed span to show
   /// from the right edge. Null means "show all data from _viewStart" (up to 10 minutes).
   int? _liveSpan;
+  int? get liveSpan => _liveSpan;
 
   /// Snap to live mode -- follow the right edge.
   /// If [span] is provided, locks to that scrolling window.
@@ -733,10 +734,17 @@ class _MinimapPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _MinimapPainter oldDelegate) {
-    // Only repaint if the viewport changed or data size changed
+    // Repaint if any input the paint() method reads has changed. The viewport
+    // highlight derives from _ctrl.effectiveRange(), which depends on isLive and
+    // liveSpan in addition to viewStart/viewEnd, so all of those must be compared.
     return oldDelegate._data.totalSamples != _data.totalSamples ||
+        oldDelegate._data.oldestSample != _data.oldestSample ||
         oldDelegate._ctrl.viewStart != _ctrl.viewStart ||
-        oldDelegate._ctrl.viewEnd != _ctrl.viewEnd;
+        oldDelegate._ctrl.viewEnd != _ctrl.viewEnd ||
+        oldDelegate._ctrl.isLive != _ctrl.isLive ||
+        oldDelegate._ctrl.liveSpan != _ctrl.liveSpan ||
+        !listEquals(oldDelegate._activeIndices, _activeIndices) ||
+        !listEquals(oldDelegate._colors, _colors);
   }
 }
 // ---------------------------------------------------------------------------
