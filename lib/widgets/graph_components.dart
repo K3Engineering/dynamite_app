@@ -61,6 +61,26 @@ class GraphLineCache {
   }
 }
 
+/// Number of samples reduced into a single envelope/line "block".
+///
+/// One block becomes one min/avg/max reduction and one polyline vertex. When
+/// zoomed in past 1 sample/pixel this clamps to 1 (one block per sample). The
+/// last block in a range is allowed to be short.
+int blockSizeFor(int viewSamples, double graphW) {
+  if (graphW <= 0) return 1;
+  return math.max(1, (viewSamples / graphW).floor());
+}
+
+/// Pick a cache tile size (in samples) for the given zoom. Aims for ~200 px
+/// wide tiles and rounds down to a whole multiple of [blockSize] so block
+/// boundaries never straddle a tile boundary.
+int chunkSamplesFor(double samplesPerPixel, int blockSize) {
+  int target = (200 * samplesPerPixel).round();
+  target = math.max(blockSize, target);
+  final snapped = (target ~/ blockSize) * blockSize;
+  return snapped == 0 ? blockSize : snapped;
+}
+
 /// A single channel's raw circular-buffer data plus its precomputed extremes
 /// and tare offset. Returned by [GraphDataSource.channel].
 typedef ChannelSeries = ({List<int> data, double min, double max, double tare});
@@ -485,53 +505,32 @@ class _MinimapPainter extends CustomPainter {
       final tare = _data.channel(ch).tare;
       final bufferCapacity = _data.bufferCapacity;
 
-      // Safe stack allocation size for Emscripten/Skwasm. 
-      // 4096 floats = 16KB per chunk.
-      const int maxEnvFloats = 4096;
-      const int maxAvgFloats = 4096;
-
-      final Float32List avgPts = Float32List(maxAvgFloats);
-      final Float32List envPts = Float32List(maxEnvFloats);
-      int avgIdx = 0;
-      int envIdx = 0;
       final chColor = _colors[ch % _colors.length];
 
-      void flushEnv() {
-        if (envIdx > 4) {
-          final vertices = ui.Vertices.raw(
-            ui.VertexMode.triangleStrip,
-            Float32List.sublistView(envPts, 0, envIdx),
-          );
-          pen.color = chColor.withAlpha(60);
-          pen.style = PaintingStyle.fill;
+      final avg = VertexBatcher(
+        preserveFloats: 2,
+        drawThreshold: 2,
+        onFlush: (view) {
+          pen
+            ..color = chColor.withAlpha(180)
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 1.0;
+          canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
+        },
+      );
+
+      final env = VertexBatcher(
+        preserveFloats: 4,
+        drawThreshold: 4,
+        onFlush: (view) {
+          final vertices = ui.Vertices.raw(ui.VertexMode.triangleStrip, view);
+          pen
+            ..color = chColor.withAlpha(60)
+            ..style = PaintingStyle.fill;
           canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
           vertices.dispose();
-          
-          // Preserve the last two vertices (4 floats) to continue the strip
-          envPts[0] = envPts[envIdx - 4];
-          envPts[1] = envPts[envIdx - 3];
-          envPts[2] = envPts[envIdx - 2];
-          envPts[3] = envPts[envIdx - 1];
-          envIdx = 4;
-        }
-      }
-
-      void flushAvg() {
-        if (avgIdx > 2) {
-          pen.color = chColor.withAlpha(180);
-          pen.style = PaintingStyle.stroke;
-          canvas.drawRawPoints(
-            ui.PointMode.polygon,
-            Float32List.sublistView(avgPts, 0, avgIdx),
-            pen..strokeWidth = 1.0,
-          );
-          
-          // Preserve the last point (2 floats) to connect the polygon
-          avgPts[0] = avgPts[avgIdx - 2];
-          avgPts[1] = avgPts[avgIdx - 1];
-          avgIdx = 2;
-        }
-      }
+        },
+      );
 
       for (int px = 0; px < gwInt; px++) {
         final int sStart = mapStart + px * mapSpan ~/ gwInt;
@@ -563,27 +562,21 @@ class _MinimapPainter extends CustomPainter {
         final maxY = (gh - (maxTared - rawMin) * gh / dataRange).clamp(0.0, gh);
 
         final xPos = px.toDouble();
-        avgPts[avgIdx++] = xPos;
-        avgPts[avgIdx++] = avgY;
+        avg.add(xPos, avgY);
 
-        envPts[envIdx++] = xPos;
-        envPts[envIdx++] = maxY;
-        envPts[envIdx++] = xPos;
-        envPts[envIdx++] = minY;
-
-        envPts[envIdx++] = xPos + 1.0;
-        envPts[envIdx++] = maxY;
-        envPts[envIdx++] = xPos + 1.0;
-        envPts[envIdx++] = minY;
+        env.add(xPos, maxY);
+        env.add(xPos, minY);
+        env.add(xPos + 1.0, maxY);
+        env.add(xPos + 1.0, minY);
 
         // Flush chunks if we are getting close to the array limits
-        if (envIdx + 8 > maxEnvFloats) flushEnv();
-        if (avgIdx + 2 > maxAvgFloats) flushAvg();
+        if (env.wouldOverflow(8)) env.flush();
+        if (avg.wouldOverflow(2)) avg.flush();
       }
 
       // Flush remaining data
-      flushEnv();
-      flushAvg();
+      env.flush();
+      avg.flush();
     }
 
     // Viewport highlight
@@ -1161,6 +1154,59 @@ void drawZeroBaseline(
   }
 }
 
+/// Accumulates 2D vertices into a fixed [Float32List] and flushes them in
+/// bounded chunks, staying within the web (Skwasm/Emscripten) stack-allocation
+/// limit of 4096 floats per draw call.
+///
+/// On flush, the trailing [preserveFloats] floats are carried over to the front
+/// of the buffer so a continuous primitive (triangle strip or polyline) is not
+/// broken across flushes. [drawThreshold] is the minimum filled-float count
+/// required before a flush actually emits anything.
+///
+/// NOTE: this batching only exists for the web stack limit; with the current
+/// architecture it can eventually be removed once that limit is lifted/tested.
+class VertexBatcher {
+  VertexBatcher({
+    required this.preserveFloats,
+    required this.drawThreshold,
+    required this.onFlush,
+    int capacity = 4096,
+  }) : _buf = Float32List(capacity);
+
+  final Float32List _buf;
+  final int preserveFloats;
+  final int drawThreshold;
+
+  /// Draws the populated `[0, length)` view of the backing buffer.
+  final void Function(Float32List view) onFlush;
+
+  int _len = 0;
+
+  /// Remaining capacity before a flush is forced.
+  int get _capacity => _buf.length;
+
+  /// Append a single (x, y) vertex.
+  void add(double x, double y) {
+    _buf[_len++] = x;
+    _buf[_len++] = y;
+  }
+
+  /// Whether [extraFloats] more floats would overflow the buffer.
+  bool wouldOverflow(int extraFloats) => _len + extraFloats > _capacity;
+
+  /// Emit the accumulated vertices (if past [drawThreshold]) and reset, keeping
+  /// the trailing [preserveFloats] floats so the primitive stays continuous.
+  void flush() {
+    if (_len > drawThreshold) {
+      onFlush(Float32List.sublistView(_buf, 0, _len));
+      for (int i = 0; i < preserveFloats; i++) {
+        _buf[i] = _buf[_len - preserveFloats + i];
+      }
+      _len = preserveFloats;
+    }
+  }
+}
+
 /// Render one channel as a min/avg/max envelope across [graphW] pixel columns.
 ///
 /// For each pixel column the samples mapped to it are reduced to min/avg/max via
@@ -1183,55 +1229,35 @@ void drawChannelEnvelope(
   bool showEnvelope = true,
   int? clipEnvelopeSamples,
 }) {
-  const int maxFloats = 4096; // 16KB per chunk
-  final Float32List avgPts = Float32List(maxFloats);
-  final Float32List envPts = Float32List(maxFloats);
-  int avgIdx = 0;
-  int envIdx = 0;
-
   final pen = Paint();
 
-  void flushEnv() {
-    if (envIdx > 4) {
-      final vertices = ui.Vertices.raw(
-        ui.VertexMode.triangleStrip,
-        Float32List.sublistView(envPts, 0, envIdx),
-      );
+  final avg = VertexBatcher(
+    preserveFloats: 2,
+    drawThreshold: 2,
+    onFlush: (view) {
+      pen
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5;
+      canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
+    },
+  );
+
+  final env = VertexBatcher(
+    preserveFloats: 4,
+    drawThreshold: 4,
+    onFlush: (view) {
+      final vertices = ui.Vertices.raw(ui.VertexMode.triangleStrip, view);
       pen
         ..color = color.withAlpha(60)
         ..style = PaintingStyle.fill;
       canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
       vertices.dispose();
-      
-      envPts[0] = envPts[envIdx - 4];
-      envPts[1] = envPts[envIdx - 3];
-      envPts[2] = envPts[envIdx - 2];
-      envPts[3] = envPts[envIdx - 1];
-      envIdx = 4;
-    }
-  }
-
-  void flushAvg() {
-    if (avgIdx > 2) {
-      pen
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5;
-      canvas.drawRawPoints(
-        ui.PointMode.polygon,
-        Float32List.sublistView(avgPts, 0, avgIdx),
-        pen,
-      );
-
-      avgPts[0] = avgPts[avgIdx - 2];
-      avgPts[1] = avgPts[avgIdx - 1];
-      avgIdx = 2;
-    }
-  }
+    },
+  );
 
   // Calculate alignment block size
-  final double samplesPerPixel = viewSamples / graphW;
-  final int blockSize = math.max(1, samplesPerPixel.floor());
+  final int blockSize = blockSizeFor(viewSamples, graphW);
 
   // Determine the range of absolute data blocks that overlap the view
   final int startBlock = (math.max(viewStart, firstUsableSample) / blockSize).floor();
@@ -1257,9 +1283,9 @@ void drawChannelEnvelope(
       if (v > maxRaw) maxRaw = v;
     }
     
-    final avg = total / (sEnd - drawStart);
+    final avgVal = total / (sEnd - drawStart);
 
-    final avgY = valueToY(avg);
+    final avgY = valueToY(avgVal);
     final minY = valueToY(minRaw);
     final maxY = valueToY(maxRaw);
 
@@ -1270,32 +1296,155 @@ void drawChannelEnvelope(
     // due to sub-pixel math, especially at the edges)
     final double nextXPos = (sEnd - viewStart) * graphW / viewSamples;
 
-    avgPts[avgIdx++] = xPos;
-    avgPts[avgIdx++] = avgY;
+    avg.add(xPos, avgY);
 
     if (showEnvelope && sStart < envelopeLimit) {
-      envPts[envIdx++] = xPos;
-      envPts[envIdx++] = maxY;
-      envPts[envIdx++] = xPos;
-      envPts[envIdx++] = minY;
-      envPts[envIdx++] = nextXPos;
-      envPts[envIdx++] = maxY;
-      envPts[envIdx++] = nextXPos;
-      envPts[envIdx++] = minY;
+      env.add(xPos, maxY);
+      env.add(xPos, minY);
+      env.add(nextXPos, maxY);
+      env.add(nextXPos, minY);
 
-      if (showEnvelope && envIdx + 8 > maxFloats) flushEnv();
+      if (env.wouldOverflow(8)) env.flush();
     }
 
-    if (avgIdx + 2 > maxFloats) flushAvg();
+    if (avg.wouldOverflow(2)) avg.flush();
   }
 
-  if (showEnvelope) flushEnv();
-  flushAvg();
+  if (showEnvelope) env.flush();
+  avg.flush();
+}
+
+/// Draws a graph's data layer using the chunked [ui.Picture] tile cache.
+///
+/// The visible window is split into fixed sample-count tiles. Each tile is
+/// recorded once into a [ui.Picture] (in its own local coordinate space, as if
+/// the tile's start were the view start) and then blitted at the right screen
+/// offset via [Canvas.translate]. Panning at constant zoom reuses tiles; a
+/// changed [config] (zoom, size, Y-range, tares) drops the whole cache.
+///
+/// Only tiles that are fully populated (entirely between [oldestSample] and
+/// [totalSamples]) are stored; the live edge and the buffer's trailing edge are
+/// recomputed every frame so they never go stale.
+///
+/// [drawChunk] is invoked to record one tile. It receives the tile's canvas,
+/// the tile's absolute start sample (used as the local view start), and
+/// [limitSamples] (one block past the tile end, so the average polyline joins
+/// the next tile without a gap). [drawChunk] should clip its envelope fill to
+/// [chunkEndSample] to avoid double-blending across tile seams.
+void paintCachedChannels(
+  Canvas canvas,
+  GraphLineCache cache,
+  CacheConfig config, {
+  required int viewStart,
+  required int viewEnd,
+  required int totalSamples,
+  required int oldestSample,
+  required double graphW,
+  required void Function(
+    Canvas chunkCanvas,
+    int chunkStartSample,
+    int chunkEndSample,
+    int limitSamples,
+  ) drawChunk,
+}) {
+  final int viewSamples = config.viewSamples;
+  final int blockSize = blockSizeFor(viewSamples, graphW);
+
+  if (cache.config == null || !cache.config!.matches(config)) {
+    cache.invalidate();
+    cache.config = config;
+    cache.chunkSamples = chunkSamplesFor(viewSamples / graphW, blockSize);
+  }
+
+  final int startChunk = viewStart ~/ cache.chunkSamples;
+  final int endChunk = viewEnd ~/ cache.chunkSamples;
+
+  for (int c = startChunk; c <= endChunk; c++) {
+    final int chunkStartSample = c * cache.chunkSamples;
+    final int chunkEndSample = chunkStartSample + cache.chunkSamples;
+
+    final bool isFullyPopulated =
+        chunkEndSample <= totalSamples && chunkStartSample >= oldestSample;
+
+    ui.Picture? pic = cache.chunks[c];
+
+    if (pic == null) {
+      final recorder = ui.PictureRecorder();
+      final cCanvas = Canvas(recorder);
+
+      final int limitSamples = math.min(chunkEndSample + blockSize, totalSamples);
+      drawChunk(cCanvas, chunkStartSample, chunkEndSample, limitSamples);
+
+      pic = recorder.endRecording();
+      if (isFullyPopulated) {
+        cache.chunks[c] = pic;
+      }
+    }
+
+    final double xOffset = (chunkStartSample - viewStart) * graphW / viewSamples;
+    canvas.save();
+    canvas.translate(xOffset, 0);
+    canvas.drawPicture(pic);
+    canvas.restore();
+  }
 }
 
 // ---------------------------------------------------------------------------
 // Live graph painter (force)
 // ---------------------------------------------------------------------------
+
+/// Common painter prologue shared by the force and derivative graphs: translate
+/// into the plot area, compute the plot [Size], draw the frame border, and
+/// resolve the visible window.
+///
+/// Returns null when there is nothing to draw (degenerate size, too few
+/// samples, or a degenerate window). [minSamples] is the smallest sample count
+/// the graph needs (1 for force, 2 for the derivative's first difference).
+typedef _GraphLayout = ({Size graphSz, int viewStart, int viewEnd, int viewSamples});
+
+_GraphLayout? _setupGraphFrame(
+  Canvas canvas,
+  Size size,
+  GraphDataSource data,
+  GraphController ctrl, {
+  required double topSpace,
+  required double bottomSpace,
+  required int minSamples,
+}) {
+  final pen = Paint()
+    ..color = Colors.deepPurple
+    ..style = PaintingStyle.stroke;
+
+  canvas.translate(kGraphLeftSpace, topSpace);
+  final graphSz = Size(
+    size.width - kGraphLeftSpace - kGraphRightSpace,
+    size.height - bottomSpace - topSpace,
+  );
+
+  if (graphSz.width <= 0 || graphSz.height <= 0) return null;
+
+  canvas.drawRect(
+    Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
+    pen..strokeWidth = 0.5,
+  );
+
+  if (data.totalSamples < minSamples) return null;
+
+  final (viewStart, viewEnd) = ctrl.effectiveRange(
+    data.totalSamples,
+    data.oldestSample,
+    bufferCapacity: data.bufferCapacity,
+  );
+  final viewSamples = viewEnd - viewStart;
+  if (viewSamples < minSamples) return null;
+
+  return (
+    graphSz: graphSz,
+    viewStart: viewStart,
+    viewEnd: viewEnd,
+    viewSamples: viewSamples,
+  );
+}
 
 class ForceGraphPainter extends CustomPainter {
   final GraphDataSource _data;
@@ -1316,34 +1465,30 @@ class ForceGraphPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final layout = _setupGraphFrame(
+      canvas,
+      size,
+      _data,
+      _ctrl,
+      topSpace: 4,
+      bottomSpace: showXLabels ? kGraphBottomSpace : 4,
+      minSamples: 1,
+    );
+    if (layout == null) return;
+
+    final graphSz = layout.graphSz;
+    final viewStart = layout.viewStart;
+    final viewEnd = layout.viewEnd;
+    final viewSamples = layout.viewSamples;
+
     final pen = Paint()
       ..color = Colors.deepPurple
       ..style = PaintingStyle.stroke;
-
-    const double topSpace = 4;
-
-    canvas.translate(kGraphLeftSpace, topSpace);
-    final graphSz = Size(
-      size.width - kGraphLeftSpace - kGraphRightSpace,
-      size.height - (showXLabels ? kGraphBottomSpace : 4) - topSpace,
-    );
-
-    if (graphSz.width <= 0 || graphSz.height <= 0) return;
-
-    canvas.drawRect(
-      Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
-      pen..strokeWidth = 0.5,
-    );
-
-    if (_data.totalSamples == 0) return;
 
     final unit = _settings.displayUnit;
     final activeIndices = _settings.activeChannelIndices;
     final oldestSample = _data.oldestSample;
     final totalSamples = _data.totalSamples;
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: _data.bufferCapacity);
-    final viewSamples = viewEnd - viewStart;
-    if (viewSamples <= 0) return;
 
     // Compute data min/max across active channels in visible window (raw, tare-subtracted).
     // Start with actual extremes then enforce a minimum visible range.
@@ -1427,36 +1572,16 @@ class ForceGraphPainter extends CustomPainter {
       currentTares,
     );
 
-    final double samplesPerPixel = viewSamples / graphSz.width;
-    final int blockSize = math.max(1, samplesPerPixel.floor());
-
-    if (cache.config == null || !cache.config!.matches(currentConfig)) {
-      cache.invalidate();
-      cache.config = currentConfig;
-      
-      int targetChunkSamples = (200 * samplesPerPixel).round();
-      targetChunkSamples = math.max(blockSize, targetChunkSamples);
-      cache.chunkSamples = (targetChunkSamples ~/ blockSize) * blockSize;
-      if (cache.chunkSamples == 0) cache.chunkSamples = blockSize;
-    }
-
-    final int startChunk = viewStart ~/ cache.chunkSamples;
-    final int endChunk = viewEnd ~/ cache.chunkSamples;
-
-    for (int c = startChunk; c <= endChunk; c++) {
-      final int chunkStartSample = c * cache.chunkSamples;
-      final int chunkEndSample = chunkStartSample + cache.chunkSamples;
-      
-      final bool isFullyPopulated = chunkEndSample <= totalSamples && chunkStartSample >= oldestSample;
-      
-      ui.Picture? pic = cache.chunks[c];
-      
-      if (pic == null) {
-        final recorder = ui.PictureRecorder();
-        final cCanvas = Canvas(recorder);
-        
-        final int limitSamples = math.min(chunkEndSample + blockSize, totalSamples);
-
+    paintCachedChannels(
+      canvas,
+      cache,
+      currentConfig,
+      viewStart: viewStart,
+      viewEnd: viewEnd,
+      totalSamples: totalSamples,
+      oldestSample: oldestSample,
+      graphW: graphSz.width,
+      drawChunk: (cCanvas, chunkStartSample, chunkEndSample, limitSamples) {
         for (final ch in activeIndices) {
           final s = _data.channel(ch);
           final line = s.data;
@@ -1480,19 +1605,8 @@ class ForceGraphPainter extends CustomPainter {
             clipEnvelopeSamples: chunkEndSample,
           );
         }
-        
-        pic = recorder.endRecording();
-        if (isFullyPopulated) {
-          cache.chunks[c] = pic;
-        }
-      }
-      
-      final double xOffset = (chunkStartSample - viewStart) * graphSz.width / viewSamples;
-      canvas.save();
-      canvas.translate(xOffset, 0);
-      canvas.drawPicture(pic);
-      canvas.restore();
-    }
+      },
+    );
   }
 
   @override
@@ -1515,34 +1629,30 @@ class DerivativeGraphPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final layout = _setupGraphFrame(
+      canvas,
+      size,
+      _data,
+      _ctrl,
+      topSpace: 2,
+      bottomSpace: kGraphBottomSpace,
+      minSamples: 2,
+    );
+    if (layout == null) return;
+
+    final graphSz = layout.graphSz;
+    final viewStart = layout.viewStart;
+    final viewEnd = layout.viewEnd;
+    final viewSamples = layout.viewSamples;
+
     final pen = Paint()
       ..color = Colors.deepPurple
       ..style = PaintingStyle.stroke;
-
-    const double topSpace = 2;
-
-    canvas.translate(kGraphLeftSpace, topSpace);
-    final graphSz = Size(
-      size.width - kGraphLeftSpace - kGraphRightSpace,
-      size.height - kGraphBottomSpace - topSpace,
-    );
-
-    if (graphSz.width <= 0 || graphSz.height <= 0) return;
-
-    canvas.drawRect(
-      Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
-      pen..strokeWidth = 0.5,
-    );
-
-    if (_data.totalSamples < 2) return;
 
     final unit = _settings.displayUnit;
     final activeIndices = _settings.activeChannelIndices;
     final oldestSample = _data.oldestSample;
     final totalSamples = _data.totalSamples;
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(totalSamples, oldestSample, bufferCapacity: _data.bufferCapacity);
-    final viewSamples = viewEnd - viewStart;
-    if (viewSamples < 2) return;
 
     final double slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
     final double sampleRate = _data.sampleRate.toDouble();
@@ -1628,36 +1738,16 @@ class DerivativeGraphPainter extends CustomPainter {
       [],
     );
 
-    final double samplesPerPixel = viewSamples / graphSz.width;
-    final int blockSize = math.max(1, samplesPerPixel.floor());
-
-    if (cache.config == null || !cache.config!.matches(currentConfig)) {
-      cache.invalidate();
-      cache.config = currentConfig;
-      
-      int targetChunkSamples = (200 * samplesPerPixel).round();
-      targetChunkSamples = math.max(blockSize, targetChunkSamples);
-      cache.chunkSamples = (targetChunkSamples ~/ blockSize) * blockSize;
-      if (cache.chunkSamples == 0) cache.chunkSamples = blockSize;
-    }
-
-    final int startChunk = viewStart ~/ cache.chunkSamples;
-    final int endChunk = viewEnd ~/ cache.chunkSamples;
-
-    for (int c = startChunk; c <= endChunk; c++) {
-      final int chunkStartSample = c * cache.chunkSamples;
-      final int chunkEndSample = chunkStartSample + cache.chunkSamples;
-      
-      final bool isFullyPopulated = chunkEndSample <= totalSamples && chunkStartSample >= oldestSample;
-      
-      ui.Picture? pic = cache.chunks[c];
-      
-      if (pic == null) {
-        final recorder = ui.PictureRecorder();
-        final cCanvas = Canvas(recorder);
-        
-        final int limitSamples = math.min(chunkEndSample + blockSize, totalSamples);
-
+    paintCachedChannels(
+      canvas,
+      cache,
+      currentConfig,
+      viewStart: viewStart,
+      viewEnd: viewEnd,
+      totalSamples: totalSamples,
+      oldestSample: oldestSample,
+      graphW: graphSz.width,
+      drawChunk: (cCanvas, chunkStartSample, chunkEndSample, limitSamples) {
         for (final ch in activeIndices) {
           final line = _data.channel(ch).data;
           if (line.isEmpty) continue;
@@ -1678,19 +1768,8 @@ class DerivativeGraphPainter extends CustomPainter {
             clipEnvelopeSamples: chunkEndSample,
           );
         }
-        
-        pic = recorder.endRecording();
-        if (isFullyPopulated) {
-          cache.chunks[c] = pic;
-        }
-      }
-      
-      final double xOffset = (chunkStartSample - viewStart) * graphSz.width / viewSamples;
-      canvas.save();
-      canvas.translate(xOffset, 0);
-      canvas.drawPicture(pic);
-      canvas.restore();
-    }
+      },
+    );
   }
 
   @override
