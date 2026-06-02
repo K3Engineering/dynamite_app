@@ -12,7 +12,7 @@
 
 
     <application
-        android:label="dynamite_app"
+        android:label="Dynamite Sampler"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
