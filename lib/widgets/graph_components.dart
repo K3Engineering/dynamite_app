@@ -522,17 +522,14 @@ class Minimap extends StatelessWidget {
                 dataSource.oldestSample,
                 dataSource.bufferCapacity,
               ),
-              child: ListenableBuilder(
-                listenable: graphCtrl,
-                builder: (context, _) => CustomPaint(
-                  foregroundPainter: _MinimapPainter(
-                    dataSource,
-                    activeChannels,
-                    graphCtrl,
-                    channelColors,
-                  ),
-                  size: Size.infinite,
+              child: CustomPaint(
+                foregroundPainter: _MinimapPainter(
+                  dataSource,
+                  activeChannels,
+                  graphCtrl,
+                  channelColors,
                 ),
+                size: Size.infinite,
               ),
             ),
           ),
@@ -549,7 +546,7 @@ class _MinimapPainter extends CustomPainter {
   final List<Color> _colors;
 
   _MinimapPainter(this._data, this._activeIndices, this._ctrl, this._colors)
-    : super(repaint: _data.repaint);
+    : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -960,22 +957,16 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                   child: InteractiveGraphArea(
                     data: widget.data,
                     ctrl: widget.ctrl,
-                    child: ListenableBuilder(
-                      listenable: Listenable.merge([
+                    child: CustomPaint(
+                      foregroundPainter: ForceGraphPainter(
+                        widget.data,
+                        widget.settings,
                         widget.ctrl,
-                        widget.data.repaint,
-                      ]),
-                      builder: (context, _) => CustomPaint(
-                        foregroundPainter: ForceGraphPainter(
-                          widget.data,
-                          widget.settings,
-                          widget.ctrl,
-                          showXLabels: !widget.showDerivative,
-                          showEnvelope: widget.showEnvelope,
-                          cache: _forceCache,
-                        ),
-                        size: Size.infinite,
+                        showXLabels: !widget.showDerivative,
+                        showEnvelope: widget.showEnvelope,
+                        cache: _forceCache,
                       ),
+                      size: Size.infinite,
                     ),
                   ),
                 ),
@@ -986,36 +977,27 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                     child: InteractiveGraphArea(
                       data: widget.data,
                       ctrl: widget.ctrl,
-                      child: ListenableBuilder(
-                        listenable: Listenable.merge([
+                      child: CustomPaint(
+                        foregroundPainter: DerivativeGraphPainter(
+                          widget.data,
+                          widget.settings,
                           widget.ctrl,
-                          widget.data.repaint,
-                        ]),
-                        builder: (context, _) => CustomPaint(
-                          foregroundPainter: DerivativeGraphPainter(
-                            widget.data,
-                            widget.settings,
-                            widget.ctrl,
-                            showEnvelope: widget.showEnvelope,
-                            cache: _derivCache,
-                          ),
-                          size: Size.infinite,
+                          showEnvelope: widget.showEnvelope,
+                          cache: _derivCache,
                         ),
+                        size: Size.infinite,
                       ),
                     ),
                   ),
                 // Minimap
                 if (widget.showMinimap)
-                  ListenableBuilder(
-                    listenable: widget.data.repaint,
-                    builder: (context, _) => Minimap(
-                      dataSource: widget.data,
-                      activeChannels: widget.settings.activeChannelIndices,
-                      graphCtrl: widget.ctrl,
-                      channelColors: widget.settings.activeChannelIndices
-                          .map(getChannelColor)
-                          .toList(),
-                    ),
+                  Minimap(
+                    dataSource: widget.data,
+                    activeChannels: widget.settings.activeChannelIndices,
+                    graphCtrl: widget.ctrl,
+                    channelColors: widget.settings.activeChannelIndices
+                        .map(getChannelColor)
+                        .toList(),
                   ),
               ],
             ),
@@ -1761,7 +1743,7 @@ class ForceGraphPainter extends CustomPainter {
     this.showXLabels = true,
     this.showEnvelope = true,
     required this.cache,
-  }) : super(repaint: _data.repaint);
+  }) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1943,7 +1925,7 @@ class DerivativeGraphPainter extends CustomPainter {
     this._ctrl, {
     this.showEnvelope = true,
     required this.cache,
-  }) : super(repaint: _data.repaint);
+  }) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
 
   @override
   void paint(Canvas canvas, Size size) {
