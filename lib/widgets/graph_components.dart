@@ -651,31 +651,56 @@ class _MinimapPainter extends CustomPainter {
 
         final chSeries = _data.channel(ch);
         final int bucketSize = chSeries.bucketSize;
-        final int bStart = drawStart ~/ bucketSize;
-        final int bEnd = drawEnd ~/ bucketSize;
+        final int samplesInPixel = drawEnd - drawStart;
 
-        final bucketMins = chSeries.bucketMins;
-        final bucketMaxs = chSeries.bucketMaxs;
-        final bucketSums = chSeries.bucketSums;
-        final int numBuckets = bucketMins.length;
-
-        for (int b = bStart; b <= bEnd; b++) {
-          final int listIdx = b % numBuckets;
-
-          if (bucketMins[listIdx] < minRaw)
-            minRaw = bucketMins[listIdx].toDouble();
-          if (bucketMaxs[listIdx] > maxRaw)
-            maxRaw = bucketMaxs[listIdx].toDouble();
-
-          int count = bucketSize;
-          if (b == bEnd &&
-              (totalSamples % bucketSize != 0) &&
-              drawEnd == totalSamples) {
-            count = totalSamples % bucketSize;
+        if (samplesInPixel <= bucketSize * 2) {
+          // High-res mode: loop the raw array to avoid blockiness when zoomed in
+          final rawData = chSeries.data;
+          final bufferCap = _data.bufferCapacity;
+          for (int j = drawStart; j < drawEnd; j++) {
+            final double v = rawData[j % bufferCap].toDouble();
+            if (v < minRaw) minRaw = v;
+            if (v > maxRaw) maxRaw = v;
+            total += v;
+            samplesCounted++;
           }
+        } else {
+          // Squished mode: use the bucket array
+          final int bStart = drawStart ~/ bucketSize;
+          final int bEnd = drawEnd ~/ bucketSize;
 
-          total += bucketSums[listIdx];
-          samplesCounted += count;
+          final bucketMins = chSeries.bucketMins;
+          final bucketMaxs = chSeries.bucketMaxs;
+          final bucketSums = chSeries.bucketSums;
+          final int numBuckets = bucketMins.length;
+
+          for (int b = bStart; b <= bEnd; b++) {
+            final int listIdx = b % numBuckets;
+
+            if (bucketMins[listIdx] < minRaw)
+              minRaw = bucketMins[listIdx].toDouble();
+            if (bucketMaxs[listIdx] > maxRaw)
+              maxRaw = bucketMaxs[listIdx].toDouble();
+
+            int count = bucketSize;
+            if (b == bStart) {
+              // Only count a fraction of the first bucket if it's partially covered
+              final int bucketEndSample = (b + 1) * bucketSize;
+              count = bucketEndSample - drawStart;
+              if (count > bucketSize) count = bucketSize;
+            } else if (b == bEnd) {
+              // Only count a fraction of the last bucket
+              final int bucketStartSample = b * bucketSize;
+              count = drawEnd - bucketStartSample;
+              if (count > bucketSize) count = bucketSize;
+            }
+            if (count < 0) count = 0;
+
+            // Approximate the sum contribution
+            final double avgOfBucket = bucketSums[listIdx] / bucketSize;
+            total += avgOfBucket * count;
+            samplesCounted += count;
+          }
         }
         loopMicros += sw.elapsedMicroseconds - loopStart;
 
@@ -695,11 +720,9 @@ class _MinimapPainter extends CustomPainter {
 
         env.add(xPos, maxY);
         env.add(xPos, minY);
-        env.add(xPos + 1.0, maxY);
-        env.add(xPos + 1.0, minY);
 
         // Flush chunks if we are getting close to the array limits
-        if (env.wouldOverflow(8)) env.flush();
+        if (env.wouldOverflow(4)) env.flush();
         if (avg.wouldOverflow(2)) avg.flush();
       }
 
