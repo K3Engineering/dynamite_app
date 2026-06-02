@@ -647,12 +647,12 @@ class _MinimapPainter extends CustomPainter {
         int samplesCounted = 0;
 
         final loopStart = sw.elapsedMicroseconds;
-        
+
         final chSeries = _data.channel(ch);
         final int bucketSize = chSeries.bucketSize;
         final int bStart = drawStart ~/ bucketSize;
         final int bEnd = drawEnd ~/ bucketSize;
-        
+
         final bucketMins = chSeries.bucketMins;
         final bucketMaxs = chSeries.bucketMaxs;
         final bucketSums = chSeries.bucketSums;
@@ -660,15 +660,19 @@ class _MinimapPainter extends CustomPainter {
 
         for (int b = bStart; b <= bEnd; b++) {
           final int listIdx = b % numBuckets;
-          
-          if (bucketMins[listIdx] < minRaw) minRaw = bucketMins[listIdx].toDouble();
-          if (bucketMaxs[listIdx] > maxRaw) maxRaw = bucketMaxs[listIdx].toDouble();
-          
+
+          if (bucketMins[listIdx] < minRaw)
+            minRaw = bucketMins[listIdx].toDouble();
+          if (bucketMaxs[listIdx] > maxRaw)
+            maxRaw = bucketMaxs[listIdx].toDouble();
+
           int count = bucketSize;
-          if (b == bEnd && (totalSamples % bucketSize != 0) && drawEnd == totalSamples) {
+          if (b == bEnd &&
+              (totalSamples % bucketSize != 0) &&
+              drawEnd == totalSamples) {
             count = totalSamples % bucketSize;
           }
-          
+
           total += bucketSums[listIdx];
           samplesCounted += count;
         }
@@ -1643,8 +1647,12 @@ class PerfStats {
   static void _report() {
     final dartAvg = _paintCount > 0 ? _paintMicros / _paintCount : 0;
     final mmAvg = _minimapCount > 0 ? _minimapMicros / _minimapCount : 0;
-    final mmLoopAvg = _minimapCount > 0 ? _minimapLoopMicros / _minimapCount : 0;
-    final mmDrawAvg = _minimapCount > 0 ? _minimapDrawMicros / _minimapCount : 0;
+    final mmLoopAvg = _minimapCount > 0
+        ? _minimapLoopMicros / _minimapCount
+        : 0;
+    final mmDrawAvg = _minimapCount > 0
+        ? _minimapDrawMicros / _minimapCount
+        : 0;
     final rasterAvg = _frameCount > 0 ? _rasterMicros / _frameCount : 0;
     final buildAvg = _frameCount > 0 ? _buildMicros / _frameCount : 0;
     debugPrint(
