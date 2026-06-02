@@ -195,6 +195,11 @@ class SessionData {
   /// Per-channel extremes, computed once on construction.
   final List<double> mins;
   final List<double> maxs;
+  
+  final int bucketSize = 100;
+  late final List<Int32List> bucketMins;
+  late final List<Int32List> bucketMaxs;
+  late final List<Int32List> bucketSums;
 
   SessionData({
     required this.channels,
@@ -204,13 +209,33 @@ class SessionData {
     required this.calibrationOffset,
   })  : mins = List.filled(channels.length, 0.0),
         maxs = List.filled(channels.length, 0.0) {
+    int numBuckets = (sampleCount == 0) ? 0 : ((sampleCount - 1) ~/ bucketSize) + 1;
+    bucketMins = List.generate(channels.length, (_) => Int32List(numBuckets));
+    bucketMaxs = List.generate(channels.length, (_) => Int32List(numBuckets));
+    bucketSums = List.generate(channels.length, (_) => Int32List(numBuckets));
+
     for (int ch = 0; ch < channels.length; ch++) {
       if (sampleCount == 0) continue;
       double mn = double.infinity;
       double mx = double.negativeInfinity;
-      for (final v in channels[ch]) {
+      
+      for (int i = 0; i < sampleCount; i++) {
+        final v = channels[ch][i];
         if (v < mn) mn = v.toDouble();
         if (v > mx) mx = v.toDouble();
+        
+        int bIdx = i ~/ bucketSize;
+        int sIdx = i % bucketSize;
+        
+        if (sIdx == 0) {
+          bucketMins[ch][bIdx] = v;
+          bucketMaxs[ch][bIdx] = v;
+          bucketSums[ch][bIdx] = v;
+        } else {
+          if (v < bucketMins[ch][bIdx]) bucketMins[ch][bIdx] = v;
+          if (v > bucketMaxs[ch][bIdx]) bucketMaxs[ch][bIdx] = v;
+          bucketSums[ch][bIdx] += v;
+        }
       }
       mins[ch] = mn;
       maxs[ch] = mx;

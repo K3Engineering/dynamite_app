@@ -95,7 +95,16 @@ int chunkSamplesFor(double samplesPerPixel, int blockSize) {
 
 /// A single channel's raw circular-buffer data plus its precomputed extremes
 /// and tare offset. Returned by [GraphDataSource.channel].
-typedef ChannelSeries = ({List<int> data, double min, double max, double tare});
+typedef ChannelSeries = ({
+  List<int> data,
+  double min,
+  double max,
+  double tare,
+  int bucketSize,
+  Int32List bucketMins,
+  Int32List bucketMaxs,
+  Int32List bucketSums,
+});
 
 /// Data interface required by the shared graph components (main graph, minimap, etc).
 /// This allows the components to render either live DataHub data or static SessionData.
@@ -595,7 +604,6 @@ class _MinimapPainter extends CustomPainter {
       if (line.isEmpty) continue;
 
       final tare = _data.channel(ch).tare;
-      final bufferCapacity = _data.bufferCapacity;
 
       final chColor = _colors[ch % _colors.length];
 
@@ -639,17 +647,38 @@ class _MinimapPainter extends CustomPainter {
         double total = 0;
         double minRaw = double.infinity;
         double maxRaw = double.negativeInfinity;
+        int samplesCounted = 0;
 
         final loopStart = sw.elapsedMicroseconds;
-        for (int j = drawStart; j < drawEnd; j++) {
-          final val = line[j % bufferCapacity].toDouble();
-          total += val;
-          if (val < minRaw) minRaw = val;
-          if (val > maxRaw) maxRaw = val;
+        
+        final chSeries = _data.channel(ch);
+        final int bucketSize = chSeries.bucketSize;
+        final int bStart = drawStart ~/ bucketSize;
+        final int bEnd = drawEnd ~/ bucketSize;
+        
+        final bucketMins = chSeries.bucketMins;
+        final bucketMaxs = chSeries.bucketMaxs;
+        final bucketSums = chSeries.bucketSums;
+        final int numBuckets = bucketMins.length;
+
+        for (int b = bStart; b <= bEnd; b++) {
+          final int listIdx = b % numBuckets;
+          
+          if (bucketMins[listIdx] < minRaw) minRaw = bucketMins[listIdx].toDouble();
+          if (bucketMaxs[listIdx] > maxRaw) maxRaw = bucketMaxs[listIdx].toDouble();
+          
+          int count = bucketSize;
+          if (b == bEnd && (totalSamples % bucketSize != 0) && drawEnd == totalSamples) {
+            count = totalSamples % bucketSize;
+          }
+          
+          total += bucketSums[listIdx];
+          samplesCounted += count;
         }
         loopMicros += sw.elapsedMicroseconds - loopStart;
 
-        final avgRaw = total / (drawEnd - drawStart);
+        if (samplesCounted == 0) continue;
+        final avgRaw = total / samplesCounted;
 
         final avgTared = avgRaw - tare;
         final minTared = minRaw - tare;

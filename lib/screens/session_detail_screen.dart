@@ -48,11 +48,15 @@ class _SessionDataSource implements GraphDataSource {
 
   @override
   ChannelSeries channel(int channelIndex) => (
-        data: _data.channels[channelIndex],
-        min: _data.mins[channelIndex],
-        max: _data.maxs[channelIndex],
-        tare: 0.0, // sessions are stored already tared
-      );
+    data: _data.channels[channelIndex],
+    min: _data.mins[channelIndex],
+    max: _data.maxs[channelIndex],
+    tare: 0.0, // sessions are stored already tared
+    bucketSize: _data.bucketSize,
+    bucketMins: _data.bucketMins[channelIndex],
+    bucketMaxs: _data.bucketMaxs[channelIndex],
+    bucketSums: _data.bucketSums[channelIndex],
+  );
 }
 
 class _SessionDetailScreenState extends State<SessionDetailScreen> {
@@ -237,7 +241,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                     label: 'Peak',
                     value: settings.displayUnit.format(
                       settings.displayUnit.fromRaw(
-                        data.peakRaw(ch).toDouble(), data.calibrationSlope,
+                        data.peakRaw(ch).toDouble(),
+                        data.calibrationSlope,
                       ),
                     ),
                   ),
@@ -245,7 +250,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                     label: 'Average',
                     value: settings.displayUnit.format(
                       settings.displayUnit.fromRaw(
-                        data.averageRaw(ch), data.calibrationSlope,
+                        data.averageRaw(ch),
+                        data.calibrationSlope,
                       ),
                     ),
                   ),
