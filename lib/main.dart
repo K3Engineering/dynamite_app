@@ -47,28 +47,14 @@ class DynoApp extends StatelessWidget {
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFF121212),
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF455A64),
+          primary: Color.fromARGB(255, 103, 155, 179),
           onPrimary: Colors.white,
-          secondary: Color(0xFFEF5350),
+          secondary: Color.fromARGB(255, 137, 178, 197),
           onSecondary: Colors.black,
           tertiary: Color(0xFFEF5350),
-          onTertiary: Colors.black,
+          onTertiary: Color.fromARGB(255, 255, 55, 55),
           surface: Color(0xFF1E1E1E),
           onSurface: Colors.white,
-        ),
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF1E1E1E),
-          foregroundColor: Colors.white,
-        ),
-        floatingActionButtonTheme: const FloatingActionButtonThemeData(
-          backgroundColor: Color(0xFFEF5350),
-          foregroundColor: Colors.white,
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFF455A64),
-            foregroundColor: Colors.white,
-          ),
         ),
       ),
       home: const AppShell(),
