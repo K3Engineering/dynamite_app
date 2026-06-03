@@ -701,6 +701,12 @@ class BluetoothHandling extends ChangeNotifier {
 }
 
 class DataHub extends ChangeNotifier {
+  DataHub() {
+    assert(
+        kDroppedSampleSentinel < -8388608 || kDroppedSampleSentinel > 8388607,
+        "Sentinel must be outside 24-bit ADC range");
+  }
+
   /// Number of ADC channels the device streams. This is also the number of
   /// lines stored and displayed: channel index == storage index == display index.
   static const int numAdcChannels = nwNumAdcChan;
@@ -757,6 +763,7 @@ class DataHub extends ChangeNotifier {
   /// Get current force for a given ADC channel in the specified unit.
   double currentForce(int adcChannel, ForceUnit unit) {
     if (adcChannel < 0 || adcChannel >= numAdcChannels) return 0;
+    if (_currentRaw[adcChannel] == kDroppedSampleSentinel) return 0;
     final rawTared = _currentRaw[adcChannel] - tare[adcChannel];
     return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
@@ -781,7 +788,13 @@ class DataHub extends ChangeNotifier {
       return 0;
     }
 
-    final diff = rawData[adcChannel][(totalSamples - 1) % maxDataSz] - rawData[adcChannel][(totalSamples - 2) % maxDataSz];
+    final raw1 = rawData[adcChannel][(totalSamples - 1) % maxDataSz];
+    final raw2 = rawData[adcChannel][(totalSamples - 2) % maxDataSz];
+    if (raw1 == kDroppedSampleSentinel || raw2 == kDroppedSampleSentinel) {
+      return 0;
+    }
+
+    final diff = raw1 - raw2;
     // Derivative is raw diff per sample * samplesPerSec to get raw per sec
     return unit.fromRaw(diff.toDouble() * samplesPerSec, deviceCalibration.slope);
   }
@@ -797,17 +810,27 @@ class DataHub extends ChangeNotifier {
     final startIdx = totalSamples - count;
 
     double sum = 0;
+    int validCount = 0;
     for (int i = startIdx; i < totalSamples; i++) {
-      sum += lineData[i % maxDataSz];
+      final val = lineData[i % maxDataSz];
+      if (val != kDroppedSampleSentinel) {
+        sum += val;
+        validCount++;
+      }
     }
-    final mean = sum / count;
+    
+    if (validCount == 0) return 0;
+    final mean = sum / validCount;
 
     double sumSq = 0;
     for (int i = startIdx; i < totalSamples; i++) {
-      final diff = lineData[i % maxDataSz] - mean;
-      sumSq += diff * diff;
+      final val = lineData[i % maxDataSz];
+      if (val != kDroppedSampleSentinel) {
+        final diff = val - mean;
+        sumSq += diff * diff;
+      }
     }
-    final rmsRaw = math.sqrt(sumSq / count);
+    final rmsRaw = math.sqrt(sumSq / validCount);
 
     return unit.fromRaw(rmsRaw, deviceCalibration.slope);
   }
@@ -848,11 +871,13 @@ class DataHub extends ChangeNotifier {
 
   void _addData(int val, int idx) {
     rawData[idx][totalSamples % maxDataSz] = val;
-    if (val > rawMax[idx]) {
-      rawMax[idx] = val;
-    }
-    if (val < rawMin[idx]) {
-      rawMin[idx] = val;
+    if (val != kDroppedSampleSentinel) {
+      if (val > rawMax[idx]) {
+        rawMax[idx] = val;
+      }
+      if (val < rawMin[idx]) {
+        rawMin[idx] = val;
+      }
     }
   }
 
@@ -878,7 +903,20 @@ class DataHub extends ChangeNotifier {
       final int diff = (count - _prevSampleCount) & 0xFFFF;
       if (diff != 0) {
         debugPrint('# lost $diff samples');
-        // TODO: signal lost packets
+        // Inject sentinels for dropped samples. Cap at maxDataSz to avoid OOM
+        // if the device reboots and the counter jumps.
+        int toInject = diff;
+        if (toInject > maxDataSz) toInject = maxDataSz;
+        for (int d = 0; d < toInject; d++) {
+          if (!taring) {
+            for (int i = 0; i < numAdcChannels; ++i) {
+              _addData(kDroppedSampleSentinel, i);
+              _currentRaw[i] = kDroppedSampleSentinel;
+            }
+            totalSamples++;
+          }
+        }
+        // TODO: signal lost packets to the UI?
       }
     }
     _prevSampleCount = (count + nwAdcNumSamples) & 0xFFFF;
