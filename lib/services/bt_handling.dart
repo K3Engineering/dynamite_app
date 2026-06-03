@@ -718,6 +718,9 @@ class DataHub extends ChangeNotifier {
   static const int _tareWindow = 1024;
   static const int samplesPerSec = 1000;
   static const int maxDataSz = samplesPerSec * 60 * 10;
+  static const int bucketSize = 100;
+  static const int numBuckets = maxDataSz ~/ bucketSize;
+
   final Float64List tare = Float64List(numAdcChannels);
   final Float64List _runningTotal = Float64List(numAdcChannels);
   final Int32List rawMax = Int32List(numAdcChannels);
@@ -729,6 +732,26 @@ class DataHub extends ChangeNotifier {
   final List<Int32List> rawData = List.generate(
     DataHub.numAdcChannels,
     (_) => Int32List(maxDataSz),
+    growable: false,
+  );
+
+  /// Per-channel, per-bucket aggregates over [bucketSize]-sample windows.
+  /// Used by the minimap to render a downsampled overview cheaply.
+  final List<Int32List> bucketMins = List.generate(
+    DataHub.numAdcChannels,
+    (_) => Int32List(numBuckets),
+    growable: false,
+  );
+
+  final List<Int32List> bucketMaxs = List.generate(
+    DataHub.numAdcChannels,
+    (_) => Int32List(numBuckets),
+    growable: false,
+  );
+
+  final List<Int32List> bucketSums = List.generate(
+    DataHub.numAdcChannels,
+    (_) => Int32List(numBuckets),
     growable: false,
   );
   int _tareCount = _tareWindow;
@@ -823,7 +846,7 @@ class DataHub extends ChangeNotifier {
         validCount++;
       }
     }
-    
+
     if (validCount == 0) return 0;
     final mean = sum / validCount;
 
@@ -882,6 +905,18 @@ class DataHub extends ChangeNotifier {
       }
       if (val < rawMin[idx]) {
         rawMin[idx] = val;
+      }
+
+      final int bIdx = (totalSamples % maxDataSz) ~/ bucketSize;
+      final int sIdx = (totalSamples % maxDataSz) % bucketSize;
+      if (sIdx == 0) {
+        bucketMins[idx][bIdx] = val;
+        bucketMaxs[idx][bIdx] = val;
+        bucketSums[idx][bIdx] = val;
+      } else {
+        if (val < bucketMins[idx][bIdx]) bucketMins[idx][bIdx] = val;
+        if (val > bucketMaxs[idx][bIdx]) bucketMaxs[idx][bIdx] = val;
+        bucketSums[idx][bIdx] += val;
       }
     }
   }

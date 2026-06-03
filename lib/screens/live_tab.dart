@@ -63,6 +63,10 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
         min: _hub.rawMin[channelIndex].toDouble(),
         max: _hub.rawMax[channelIndex].toDouble(),
         tare: _hub.tare[channelIndex],
+        bucketSize: DataHub.bucketSize,
+        bucketMins: _hub.bucketMins[channelIndex],
+        bucketMaxs: _hub.bucketMaxs[channelIndex],
+        bucketSums: _hub.bucketSums[channelIndex],
       );
 
   @override

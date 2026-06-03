@@ -34,7 +34,7 @@ class SessionStorage {
   }) async {
     final int startIdx = dataHub.recordingStartIdx;
     final int endIdx = dataHub.totalSamples;
-    
+
     // If the recording was longer than the buffer, we can only save the tail
     const int maxAvailable = DataHub.maxDataSz;
     final int actualStartIdx = (endIdx - startIdx) > maxAvailable 
@@ -196,6 +196,13 @@ class SessionData {
   final List<double> mins;
   final List<double> maxs;
 
+  /// Per-channel, per-bucket aggregates over [bucketSize]-sample windows.
+  /// Mirrors DataHub's live buckets so the minimap can downsample cheaply.
+  final int bucketSize = 100;
+  late final List<Int32List> bucketMins;
+  late final List<Int32List> bucketMaxs;
+  late final List<Int32List> bucketSums;
+
   SessionData({
     required this.channels,
     required this.sampleRate,
@@ -204,13 +211,33 @@ class SessionData {
     required this.calibrationOffset,
   })  : mins = List.filled(channels.length, 0.0),
         maxs = List.filled(channels.length, 0.0) {
+    final int numBuckets =
+        (sampleCount == 0) ? 0 : ((sampleCount - 1) ~/ bucketSize) + 1;
+    bucketMins = List.generate(channels.length, (_) => Int32List(numBuckets));
+    bucketMaxs = List.generate(channels.length, (_) => Int32List(numBuckets));
+    bucketSums = List.generate(channels.length, (_) => Int32List(numBuckets));
+
     for (int ch = 0; ch < channels.length; ch++) {
       if (sampleCount == 0) continue;
       double mn = double.infinity;
       double mx = double.negativeInfinity;
-      for (final v in channels[ch]) {
+
+      for (int i = 0; i < sampleCount; i++) {
+        final v = channels[ch][i];
         if (v < mn) mn = v.toDouble();
         if (v > mx) mx = v.toDouble();
+
+        final int bIdx = i ~/ bucketSize;
+        final int sIdx = i % bucketSize;
+        if (sIdx == 0) {
+          bucketMins[ch][bIdx] = v;
+          bucketMaxs[ch][bIdx] = v;
+          bucketSums[ch][bIdx] = v;
+        } else {
+          if (v < bucketMins[ch][bIdx]) bucketMins[ch][bIdx] = v;
+          if (v > bucketMaxs[ch][bIdx]) bucketMaxs[ch][bIdx] = v;
+          bucketSums[ch][bIdx] += v;
+        }
       }
       mins[ch] = mn;
       maxs[ch] = mx;

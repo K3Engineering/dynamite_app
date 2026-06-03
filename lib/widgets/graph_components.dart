@@ -1,8 +1,8 @@
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'dart:collection';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
@@ -95,7 +95,16 @@ int chunkSamplesFor(double samplesPerPixel, int blockSize) {
 
 /// A single channel's raw circular-buffer data plus its precomputed extremes
 /// and tare offset. Returned by [GraphDataSource.channel].
-typedef ChannelSeries = ({List<int> data, double min, double max, double tare});
+typedef ChannelSeries = ({
+  List<int> data,
+  double min,
+  double max,
+  double tare,
+  int bucketSize,
+  Int32List bucketMins,
+  Int32List bucketMaxs,
+  Int32List bucketSums,
+});
 
 /// Data interface required by the shared graph components (main graph, minimap, etc).
 /// This allows the components to render either live DataHub data or static SessionData.
@@ -167,6 +176,7 @@ class GraphController extends ChangeNotifier {
   /// When in live mode and zoomed in, this is the fixed span to show
   /// from the right edge. Null means "show all data from _viewStart" (up to 10 minutes).
   int? _liveSpan;
+  int? get liveSpan => _liveSpan;
 
   /// Snap to live mode -- follow the right edge.
   /// If [span] is provided, locks to that scrolling window.
@@ -518,18 +528,15 @@ class Minimap extends StatelessWidget {
                 dataSource.oldestSample,
                 dataSource.bufferCapacity,
               ),
-              child: ListenableBuilder(
-                listenable: graphCtrl,
-                builder: (context, _) => CustomPaint(
-                  foregroundPainter: _MinimapPainter(
-                    dataSource,
-                    activeChannels,
-                    graphCtrl,
-                    channelColors,
-                    colorScheme,
-                  ),
-                  size: Size.infinite,
+              child: CustomPaint(
+                foregroundPainter: _MinimapPainter(
+                  dataSource,
+                  activeChannels,
+                  graphCtrl,
+                  channelColors,
+                  colorScheme,
                 ),
+                size: Size.infinite,
               ),
             ),
           ),
@@ -546,8 +553,13 @@ class _MinimapPainter extends CustomPainter {
   final List<Color> _colors;
   final ColorScheme _colorScheme;
 
-  _MinimapPainter(this._data, this._activeIndices, this._ctrl, this._colors, this._colorScheme)
-    : super(repaint: _data.repaint);
+  _MinimapPainter(
+    this._data,
+    this._activeIndices,
+    this._ctrl,
+    this._colors,
+    this._colorScheme,
+  ) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -627,6 +639,13 @@ class _MinimapPainter extends CustomPainter {
         },
       );
 
+      final chSeries = _data.channel(ch);
+      final int bucketSize = chSeries.bucketSize;
+      final bucketMins = chSeries.bucketMins;
+      final bucketMaxs = chSeries.bucketMaxs;
+      final bucketSums = chSeries.bucketSums;
+      final int numBuckets = bucketMins.length;
+
       for (int px = 0; px < gwInt; px++) {
         final int sStart = mapStart + px * mapSpan ~/ gwInt;
         final int sEnd = mapStart + (px + 1) * mapSpan ~/ gwInt;
@@ -640,14 +659,56 @@ class _MinimapPainter extends CustomPainter {
         double maxRaw = double.negativeInfinity;
         int validSamples = 0;
 
-        for (int j = drawStart; j < drawEnd; j++) {
-          final val = line[j % bufferCapacity];
-          if (_data.missingSampleSentinel != null && val == _data.missingSampleSentinel) continue;
-          final valDouble = val.toDouble();
-          total += valDouble;
-          if (valDouble < minRaw) minRaw = valDouble;
-          if (valDouble > maxRaw) maxRaw = valDouble;
-          validSamples++;
+        final int samplesInPixel = drawEnd - drawStart;
+
+        if (samplesInPixel <= bucketSize * 2) {
+          // High-res mode: loop the raw array to avoid blockiness when zoomed
+          // in. Honors the dropped-sample sentinel so gaps don't skew the plot.
+          for (int j = drawStart; j < drawEnd; j++) {
+            final val = line[j % bufferCapacity];
+            if (_data.missingSampleSentinel != null &&
+                val == _data.missingSampleSentinel) {
+              continue;
+            }
+            final valDouble = val.toDouble();
+            total += valDouble;
+            if (valDouble < minRaw) minRaw = valDouble;
+            if (valDouble > maxRaw) maxRaw = valDouble;
+            validSamples++;
+          }
+        } else {
+          // Squished mode: aggregate from the precomputed bucket arrays.
+          // Sentinels are already excluded from the buckets at ingest time.
+          final int bStart = drawStart ~/ bucketSize;
+          final int bEnd = drawEnd ~/ bucketSize;
+
+          for (int b = bStart; b <= bEnd; b++) {
+            final int listIdx = b % numBuckets;
+
+            final double bMin = bucketMins[listIdx].toDouble();
+            final double bMax = bucketMaxs[listIdx].toDouble();
+            if (bMin < minRaw) minRaw = bMin;
+            if (bMax > maxRaw) maxRaw = bMax;
+
+            int count = bucketSize;
+            if (b == bStart) {
+              // Only count the covered portion of the first bucket.
+              final int bucketEndSample = (b + 1) * bucketSize;
+              count = bucketEndSample - drawStart;
+              if (count > bucketSize) count = bucketSize;
+            } else if (b == bEnd) {
+              // Only count the covered portion of the last bucket.
+              final int bucketStartSample = b * bucketSize;
+              count = drawEnd - bucketStartSample;
+              if (count > bucketSize) count = bucketSize;
+            }
+            if (count < 0) count = 0;
+
+            // Approximate the sum contribution of the covered portion.
+            final double avgOfBucket = bucketSums[listIdx] / bucketSize;
+            total += avgOfBucket * count;
+            validSamples += count;
+          }
         }
 
         if (validSamples == 0) {
@@ -671,11 +732,9 @@ class _MinimapPainter extends CustomPainter {
 
         env.add(xPos, maxY);
         env.add(xPos, minY);
-        env.add(xPos + 1.0, maxY);
-        env.add(xPos + 1.0, minY);
 
         // Flush chunks if we are getting close to the array limits
-        if (env.wouldOverflow(8)) env.flush();
+        if (env.wouldOverflow(4)) env.flush();
         if (avg.wouldOverflow(2)) avg.flush();
       }
 
@@ -708,10 +767,17 @@ class _MinimapPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _MinimapPainter oldDelegate) {
-    // Only repaint if the viewport changed or data size changed
+    // Repaint if any input the paint() method reads has changed. The viewport
+    // highlight derives from _ctrl.effectiveRange(), which depends on isLive and
+    // liveSpan in addition to viewStart/viewEnd, so all of those must be compared.
     return oldDelegate._data.totalSamples != _data.totalSamples ||
+        oldDelegate._data.oldestSample != _data.oldestSample ||
         oldDelegate._ctrl.viewStart != _ctrl.viewStart ||
-        oldDelegate._ctrl.viewEnd != _ctrl.viewEnd;
+        oldDelegate._ctrl.viewEnd != _ctrl.viewEnd ||
+        oldDelegate._ctrl.isLive != _ctrl.isLive ||
+        oldDelegate._ctrl.liveSpan != _ctrl.liveSpan ||
+        !listEquals(oldDelegate._activeIndices, _activeIndices) ||
+        !listEquals(oldDelegate._colors, _colors);
   }
 }
 // ---------------------------------------------------------------------------
@@ -935,23 +1001,17 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                   child: InteractiveGraphArea(
                     data: widget.data,
                     ctrl: widget.ctrl,
-                    child: ListenableBuilder(
-                      listenable: Listenable.merge([
+                    child: CustomPaint(
+                      foregroundPainter: ForceGraphPainter(
+                        widget.data,
+                        widget.settings,
                         widget.ctrl,
-                        widget.data.repaint,
-                      ]),
-                      builder: (context, _) => CustomPaint(
-                        foregroundPainter: ForceGraphPainter(
-                          widget.data,
-                          widget.settings,
-                          widget.ctrl,
-                          showXLabels: !widget.showDerivative,
-                          showEnvelope: widget.showEnvelope,
-                          cache: _forceCache,
-                          colorScheme: colorScheme,
-                        ),
-                        size: Size.infinite,
+                        showXLabels: !widget.showDerivative,
+                        showEnvelope: widget.showEnvelope,
+                        cache: _forceCache,
+                        colorScheme: colorScheme,
                       ),
+                      size: Size.infinite,
                     ),
                   ),
                 ),
@@ -962,36 +1022,27 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                     child: InteractiveGraphArea(
                       data: widget.data,
                       ctrl: widget.ctrl,
-                      child: ListenableBuilder(
-                        listenable: Listenable.merge([
+                      child: CustomPaint(
+                        foregroundPainter: DerivativeGraphPainter(
+                          widget.data,
+                          widget.settings,
                           widget.ctrl,
-                          widget.data.repaint,
-                        ]),
-                        builder: (context, _) => CustomPaint(
-                          foregroundPainter: DerivativeGraphPainter(
-                            widget.data,
-                            widget.settings,
-                            widget.ctrl,
-                            showEnvelope: widget.showEnvelope,
-                            cache: _derivCache,
-                            colorScheme: colorScheme,
-                          ),
-                          size: Size.infinite,
+                          showEnvelope: widget.showEnvelope,
+                          cache: _derivCache,
+                          colorScheme: colorScheme,
                         ),
+                        size: Size.infinite,
                       ),
                     ),
                   ),
                 // Minimap
-                ListenableBuilder(
-                  listenable: widget.data.repaint,
-                  builder: (context, _) => Minimap(
-                    dataSource: widget.data,
-                    activeChannels: widget.settings.activeChannelIndices,
-                    graphCtrl: widget.ctrl,
-                    channelColors: widget.settings.activeChannelIndices
-                        .map(getChannelColor)
-                        .toList(),
-                  ),
+                Minimap(
+                  dataSource: widget.data,
+                  activeChannels: widget.settings.activeChannelIndices,
+                  graphCtrl: widget.ctrl,
+                  channelColors: widget.settings.activeChannelIndices
+                      .map(getChannelColor)
+                      .toList(),
                 ),
               ],
             ),
@@ -1759,7 +1810,7 @@ class ForceGraphPainter extends CustomPainter {
     this.showEnvelope = true,
     required this.cache,
     required this.colorScheme,
-  }) : super(repaint: _data.repaint);
+  }) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1950,7 +2001,7 @@ class DerivativeGraphPainter extends CustomPainter {
     this.showEnvelope = true,
     required this.cache,
     required this.colorScheme,
-  }) : super(repaint: _data.repaint);
+  }) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
 
   @override
   void paint(Canvas canvas, Size size) {
