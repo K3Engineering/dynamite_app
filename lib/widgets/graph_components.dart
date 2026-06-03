@@ -483,6 +483,7 @@ class Minimap extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
         final graphWidth = graphPlotWidth(constraints.maxWidth);
@@ -521,6 +522,7 @@ class Minimap extends StatelessWidget {
                     activeChannels,
                     graphCtrl,
                     channelColors,
+                    colorScheme,
                   ),
                   size: Size.infinite,
                 ),
@@ -538,8 +540,9 @@ class _MinimapPainter extends CustomPainter {
   final List<int> _activeIndices;
   final GraphController _ctrl;
   final List<Color> _colors;
+  final ColorScheme _colorScheme;
 
-  _MinimapPainter(this._data, this._activeIndices, this._ctrl, this._colors)
+  _MinimapPainter(this._data, this._activeIndices, this._ctrl, this._colors, this._colorScheme)
     : super(repaint: _data.repaint);
 
   @override
@@ -555,7 +558,7 @@ class _MinimapPainter extends CustomPainter {
     if (gw <= 0 || gh <= 0) return;
 
     // Background
-    final bgPaint = Paint()..color = Colors.grey.shade200;
+    final bgPaint = Paint()..color = _colorScheme.surface;
     canvas.drawRect(Rect.fromLTWH(0, 0, gw, gh), bgPaint);
 
     final totalSamples = _data.totalSamples;
@@ -677,13 +680,13 @@ class _MinimapPainter extends CustomPainter {
     final double x2 = (viewEnd - mapStart) * gw / mapSpan;
 
     // Dim areas outside viewport
-    final dimPaint = Paint()..color = Colors.black.withAlpha(60);
+    final dimPaint = Paint()..color = _colorScheme.onSurface.withAlpha(60);
     if (x1 > 0) canvas.drawRect(Rect.fromLTWH(0, 0, x1, gh), dimPaint);
     if (x2 < gw) canvas.drawRect(Rect.fromLTWH(x2, 0, gw - x2, gh), dimPaint);
 
     // Viewport border
     final vpBorder = Paint()
-      ..color = Colors.deepPurple
+      ..color = _colorScheme.primary
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     canvas.drawRect(Rect.fromLTRB(x1, 0, x2, gh), vpBorder);
@@ -905,6 +908,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return LayoutBuilder(
       builder: (context, constraints) {
         return Stack(
@@ -930,6 +934,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                           showXLabels: !widget.showDerivative,
                           showEnvelope: widget.showEnvelope,
                           cache: _forceCache,
+                          colorScheme: colorScheme,
                         ),
                         size: Size.infinite,
                       ),
@@ -955,6 +960,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                             widget.ctrl,
                             showEnvelope: widget.showEnvelope,
                             cache: _derivCache,
+                            colorScheme: colorScheme,
                           ),
                           size: Size.infinite,
                         ),
@@ -1171,6 +1177,7 @@ void drawTimeAxis(
   required int sampleRate,
   required bool showLabels,
   bool drawMinor = false,
+  Color textColor = Colors.black,
 }) {
   final viewSamples = viewEnd - viewStart;
   if (viewSamples <= 0) return;
@@ -1182,7 +1189,7 @@ void drawTimeAxis(
     grid.moveTo(xPos, 0);
     grid.lineTo(xPos, graphSz.height);
     if (label != null) {
-      final par = _prepareLabel(label);
+      final par = _prepareLabel(label, color: textColor);
       canvas.drawParagraph(
         par,
         Offset(xPos - par.longestLine / 2, graphSz.height + 2),
@@ -1233,6 +1240,7 @@ void drawValueAxis(
   double Function(double value) valueToY, {
   required String Function(double tick) labelFor,
   bool drawMinor = false,
+  Color textColor = Colors.black,
 }) {
   final delta = yRange.tickDelta;
   for (
@@ -1244,7 +1252,7 @@ void drawValueAxis(
     if (yPos >= -1 && yPos <= graphSz.height + 1) {
       grid.moveTo(0, yPos);
       grid.lineTo(graphSz.width, yPos);
-      final par = _prepareLabel(labelFor(tick));
+      final par = _prepareLabel(labelFor(tick), color: textColor);
       canvas.drawParagraph(
         par,
         Offset(graphSz.width + 4, yPos - par.height / 2),
@@ -1274,6 +1282,7 @@ void drawZeroBaseline(
   Size graphSz,
   ({double yMin, double yMax, double tickDelta}) yRange,
   double Function(double value) valueToY,
+  Color color,
 ) {
   if (yRange.yMin < 0 && yRange.yMax > 0) {
     final zeroY = valueToY(0);
@@ -1281,7 +1290,7 @@ void drawZeroBaseline(
       Offset(0, zeroY),
       Offset(graphSz.width, zeroY),
       Paint()
-        ..color = Colors.black54
+        ..color = color
         ..style = PaintingStyle.stroke
         ..strokeWidth = 0.8,
     );
@@ -1590,9 +1599,10 @@ _GraphLayout? _setupGraphFrame(
   required double topSpace,
   required double bottomSpace,
   required int minSamples,
+  required Color frameColor,
 }) {
   final pen = Paint()
-    ..color = Colors.deepPurple
+    ..color = frameColor
     ..style = PaintingStyle.stroke;
 
   canvas.translate(kGraphLeftSpace, topSpace);
@@ -1633,6 +1643,7 @@ class ForceGraphPainter extends CustomPainter {
   final bool showXLabels;
   final bool showEnvelope;
   final GraphLineCache cache;
+  final ColorScheme colorScheme;
 
   ForceGraphPainter(
     this._data,
@@ -1641,6 +1652,7 @@ class ForceGraphPainter extends CustomPainter {
     this.showXLabels = true,
     this.showEnvelope = true,
     required this.cache,
+    required this.colorScheme,
   }) : super(repaint: _data.repaint);
 
   @override
@@ -1653,6 +1665,7 @@ class ForceGraphPainter extends CustomPainter {
       topSpace: 4,
       bottomSpace: showXLabels ? kGraphBottomSpace : 4,
       minSamples: 1,
+      frameColor: colorScheme.primary.withAlpha(150),
     );
     if (layout == null) return;
 
@@ -1660,10 +1673,6 @@ class ForceGraphPainter extends CustomPainter {
     final viewStart = layout.viewStart;
     final viewEnd = layout.viewEnd;
     final viewSamples = layout.viewSamples;
-
-    final pen = Paint()
-      ..color = Colors.deepPurple
-      ..style = PaintingStyle.stroke;
 
     final unit = _settings.displayUnit;
     final activeIndices = _settings.activeChannelIndices;
@@ -1725,6 +1734,7 @@ class ForceGraphPainter extends CustomPainter {
       sampleRate: _data.sampleRate,
       showLabels: showXLabels,
       drawMinor: true,
+      textColor: colorScheme.onSurface,
     );
     drawValueAxis(
       canvas,
@@ -1734,10 +1744,15 @@ class ForceGraphPainter extends CustomPainter {
       unitToY,
       labelFor: (tick) => _formatTickLabel(tick, unit.symbol),
       drawMinor: true,
+      textColor: colorScheme.onSurface,
     );
-    canvas.drawPath(grid, pen..strokeWidth = 0.2);
+    final gridPen = Paint()
+      ..color = colorScheme.onSurface.withAlpha(50)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.2;
+    canvas.drawPath(grid, gridPen);
 
-    drawZeroBaseline(canvas, graphSz, yRange, unitToY);
+    drawZeroBaseline(canvas, graphSz, yRange, unitToY, colorScheme.onSurface.withAlpha(130));
 
     // -- Data lines --
     final slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
@@ -1805,6 +1820,7 @@ class DerivativeGraphPainter extends CustomPainter {
   final GraphController _ctrl;
   final bool showEnvelope;
   final GraphLineCache cache;
+  final ColorScheme colorScheme;
 
   DerivativeGraphPainter(
     this._data,
@@ -1812,6 +1828,7 @@ class DerivativeGraphPainter extends CustomPainter {
     this._ctrl, {
     this.showEnvelope = true,
     required this.cache,
+    required this.colorScheme,
   }) : super(repaint: _data.repaint);
 
   @override
@@ -1824,6 +1841,7 @@ class DerivativeGraphPainter extends CustomPainter {
       topSpace: 2,
       bottomSpace: kGraphBottomSpace,
       minSamples: 2,
+      frameColor: colorScheme.primary.withAlpha(150),
     );
     if (layout == null) return;
 
@@ -1831,10 +1849,6 @@ class DerivativeGraphPainter extends CustomPainter {
     final viewStart = layout.viewStart;
     final viewEnd = layout.viewEnd;
     final viewSamples = layout.viewSamples;
-
-    final pen = Paint()
-      ..color = Colors.deepPurple
-      ..style = PaintingStyle.stroke;
 
     final unit = _settings.displayUnit;
     final activeIndices = _settings.activeChannelIndices;
@@ -1895,6 +1909,7 @@ class DerivativeGraphPainter extends CustomPainter {
       oldestSample: oldestSample,
       sampleRate: _data.sampleRate,
       showLabels: true,
+      textColor: colorScheme.onSurface,
     );
     drawValueAxis(
       canvas,
@@ -1903,15 +1918,20 @@ class DerivativeGraphPainter extends CustomPainter {
       yRange,
       valToY,
       labelFor: (tick) => '${_formatTickValue(tick)}/s',
+      textColor: colorScheme.onSurface,
     );
-    canvas.drawPath(grid, pen..strokeWidth = 0.2);
+    final gridPen = Paint()
+      ..color = colorScheme.onSurface.withAlpha(50)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.2;
+    canvas.drawPath(grid, gridPen);
 
-    drawZeroBaseline(canvas, graphSz, yRange, valToY);
+    drawZeroBaseline(canvas, graphSz, yRange, valToY, colorScheme.onSurface.withAlpha(130));
 
     // "dF/dt" label in top-left
     final dLabel = _prepareLabel(
       'dF/dt (${unit.symbol}/s)',
-      color: Colors.black45,
+      color: colorScheme.onSurface.withAlpha(150),
     );
     canvas.drawParagraph(dLabel, const Offset(4, 2));
 
