@@ -53,6 +53,10 @@ class _SessionDataSource implements GraphDataSource {
         min: _data.mins[channelIndex],
         max: _data.maxs[channelIndex],
         tare: 0.0, // sessions are stored already tared
+        bucketSize: _data.bucketSize,
+        bucketMins: _data.bucketMins[channelIndex],
+        bucketMaxs: _data.bucketMaxs[channelIndex],
+        bucketSums: _data.bucketSums[channelIndex],
       );
 
   @override
