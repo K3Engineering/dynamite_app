@@ -973,6 +973,7 @@ class GraphWorkspace extends StatefulWidget {
   final bool showDerivative;
   final bool isLiveGraph;
   final bool showEnvelope;
+  final bool showMinimap;
 
   const GraphWorkspace({
     super.key,
@@ -982,6 +983,7 @@ class GraphWorkspace extends StatefulWidget {
     this.showDerivative = false,
     this.isLiveGraph = true,
     this.showEnvelope = true,
+    this.showMinimap = true,
   });
 
   @override
@@ -1049,14 +1051,15 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                     ),
                   ),
                 // Minimap
-                Minimap(
-                  dataSource: widget.data,
-                  activeChannels: widget.settings.activeChannelIndices,
-                  graphCtrl: widget.ctrl,
-                  channelColors: widget.settings.activeChannelIndices
-                      .map(getChannelColor)
-                      .toList(),
-                ),
+                if (widget.showMinimap)
+                  Minimap(
+                    dataSource: widget.data,
+                    activeChannels: widget.settings.activeChannelIndices,
+                    graphCtrl: widget.ctrl,
+                    channelColors: widget.settings.activeChannelIndices
+                        .map(getChannelColor)
+                        .toList(),
+                  ),
               ],
             ),
             // LIVE button (appears when not following live edge)

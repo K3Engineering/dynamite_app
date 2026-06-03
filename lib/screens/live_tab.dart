@@ -77,6 +77,7 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
 class _LiveTabState extends State<LiveTab> {
   final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * DataHub.samplesPerSec);
   bool _showDerivative = false;
+  bool _showMinimap = true;
   _LiveDataSource? _dataSource;
   BluetoothHandling? _btHandling;
 
@@ -279,6 +280,9 @@ class _LiveTabState extends State<LiveTab> {
               showDerivative: _showDerivative,
               onToggleDerivative: () =>
                   setState(() => _showDerivative = !_showDerivative),
+              showMinimap: _showMinimap,
+              onToggleMinimap: () =>
+                  setState(() => _showMinimap = !_showMinimap),
             ),
           if (isConnected)
             ActionButtons(
@@ -299,6 +303,7 @@ class _LiveTabState extends State<LiveTab> {
       ctrl: _graphCtrl,
       settings: settings,
       showDerivative: _showDerivative,
+      showMinimap: _showMinimap,
     );
   }
 }
@@ -473,12 +478,16 @@ class ChannelLegend extends StatelessWidget {
   final AppSettings settings;
   final bool showDerivative;
   final VoidCallback onToggleDerivative;
+  final bool showMinimap;
+  final VoidCallback onToggleMinimap;
 
   const ChannelLegend({
     super.key,
     required this.settings,
     this.showDerivative = false,
     required this.onToggleDerivative,
+    this.showMinimap = true,
+    required this.onToggleMinimap,
   });
 
   @override
@@ -513,6 +522,26 @@ class ChannelLegend extends StatelessWidget {
               ),
             ),
           const Spacer(),
+          // Minimap toggle
+          SizedBox(
+            height: 28,
+            child: FilterChip(
+              label: Text(
+                'Minimap',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: showMinimap ? cs.onSecondaryContainer : null,
+                ),
+              ),
+              selected: showMinimap,
+              onSelected: (_) => onToggleMinimap(),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              labelPadding: const EdgeInsets.symmetric(horizontal: 4),
+              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          const SizedBox(width: 8),
           // Derivative toggle
           SizedBox(
             height: 28,
