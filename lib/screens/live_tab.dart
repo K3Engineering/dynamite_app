@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
@@ -80,6 +81,22 @@ class _LiveTabState extends State<LiveTab> {
   BluetoothHandling? _btHandling;
 
   @override
+  void initState() {
+    super.initState();
+    // TEMP PERF: capture worker-thread raster time + build time per frame.
+    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
+  }
+
+  void _onFrameTimings(List<FrameTiming> timings) {
+    for (final t in timings) {
+      PerfStats.addFrame(
+        t.rasterDuration.inMicroseconds,
+        t.buildDuration.inMicroseconds,
+      );
+    }
+  }
+
+  @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     final bt = context.watch<BluetoothHandling>();
@@ -110,6 +127,7 @@ class _LiveTabState extends State<LiveTab> {
 
   @override
   void dispose() {
+    SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
     _dataSource?.dispose();
     _graphCtrl.dispose();
     super.dispose();

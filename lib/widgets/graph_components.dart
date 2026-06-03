@@ -563,6 +563,10 @@ class _MinimapPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    final sw = Stopwatch()..start();
+    int loopMicros = 0;
+    int drawMicros = 0;
+
     const double leftSpace = 8;
     const double rightSpace = 56;
     const double vPad = 2;
@@ -622,7 +626,9 @@ class _MinimapPainter extends CustomPainter {
             ..color = chColor.withAlpha(180)
             ..style = PaintingStyle.stroke
             ..strokeWidth = 1.0;
+          final start = sw.elapsedMicroseconds;
           canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
+          drawMicros += sw.elapsedMicroseconds - start;
         },
       );
 
@@ -634,7 +640,9 @@ class _MinimapPainter extends CustomPainter {
           pen
             ..color = chColor.withAlpha(60)
             ..style = PaintingStyle.fill;
+          final start = sw.elapsedMicroseconds;
           canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
+          drawMicros += sw.elapsedMicroseconds - start;
           vertices.dispose();
         },
       );
@@ -660,6 +668,8 @@ class _MinimapPainter extends CustomPainter {
         int validSamples = 0;
 
         final int samplesInPixel = drawEnd - drawStart;
+
+        final loopStart = sw.elapsedMicroseconds;
 
         if (samplesInPixel <= bucketSize * 2) {
           // High-res mode: loop the raw array to avoid blockiness when zoomed
@@ -710,6 +720,7 @@ class _MinimapPainter extends CustomPainter {
             validSamples += count;
           }
         }
+        loopMicros += sw.elapsedMicroseconds - loopStart;
 
         if (validSamples == 0) {
           env.flush();
@@ -763,6 +774,8 @@ class _MinimapPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     canvas.drawRect(Rect.fromLTRB(x1, 0, x2, gh), vpBorder);
+
+    PerfStats.addMinimapPaint(sw.elapsedMicroseconds, loopMicros, drawMicros);
   }
 
   @override
@@ -1793,6 +1806,86 @@ _GraphLayout? _setupGraphFrame(
   );
 }
 
+// ---------------------------------------------------------------------------
+// TEMP PERF INSTRUMENTATION (remove after profiling)
+//
+// Aggregates two independent measurements and prints them together every
+// [_reportEvery] frames:
+//   * Dart paint time   -- time the UI thread spends in ForceGraphPainter.paint
+//                          building the draw calls (recorded via [addPaint]).
+//   * Skwasm raster time -- FrameTiming.rasterDuration, the worker/GPU thread
+//                          time to execute the recorded display list.
+//   * Build time         -- FrameTiming.buildDuration, for context.
+// Frame timings are fed in via SchedulerBinding.addTimingsCallback (see
+// _LiveTabState); the report is emitted from there once 60 frames accrue.
+// ---------------------------------------------------------------------------
+class PerfStats {
+  static const int _reportEvery = 60;
+
+  // Dart paint accumulation (UI thread).
+  static int _paintCount = 0;
+  static int _paintMicros = 0;
+
+  static int _minimapCount = 0;
+  static int _minimapMicros = 0;
+  static int _minimapLoopMicros = 0;
+  static int _minimapDrawMicros = 0;
+
+  /// Record one ForceGraphPainter.paint() duration.
+  static void addPaint(int micros) {
+    _paintMicros += micros;
+    _paintCount++;
+  }
+
+  static void addMinimapPaint(int total, int loop, int draw) {
+    _minimapCount++;
+    _minimapMicros += total;
+    _minimapLoopMicros += loop;
+    _minimapDrawMicros += draw;
+  }
+
+  /// Feed one frame's timing. Emits a combined report every 60 frames.
+  static void addFrame(int rasterMicros, int buildMicros) {
+    _rasterMicros += rasterMicros;
+    _buildMicros += buildMicros;
+    _frameCount++;
+    if (_frameCount >= _reportEvery) _report();
+  }
+
+  static int _frameCount = 0;
+  static int _rasterMicros = 0;
+  static int _buildMicros = 0;
+
+  static void _report() {
+    final dartAvg = _paintCount > 0 ? _paintMicros / _paintCount : 0;
+    final mmAvg = _minimapCount > 0 ? _minimapMicros / _minimapCount : 0;
+    final mmLoopAvg = _minimapCount > 0
+        ? _minimapLoopMicros / _minimapCount
+        : 0;
+    final mmDrawAvg = _minimapCount > 0
+        ? _minimapDrawMicros / _minimapCount
+        : 0;
+    final rasterAvg = _frameCount > 0 ? _rasterMicros / _frameCount : 0;
+    final buildAvg = _frameCount > 0 ? _buildMicros / _frameCount : 0;
+    debugPrint(
+      '[PERF] over $_frameCount frames | '
+      'Main paint: ${dartAvg.toStringAsFixed(0)}us (${_paintCount}x) | '
+      'Minimap: ${mmAvg.toStringAsFixed(0)}us (loop: ${mmLoopAvg.toStringAsFixed(0)}us, draw: ${mmDrawAvg.toStringAsFixed(0)}us) | '
+      'Skwasm raster: ${rasterAvg.toStringAsFixed(0)}us | '
+      'build: ${buildAvg.toStringAsFixed(0)}us',
+    );
+    _paintCount = 0;
+    _paintMicros = 0;
+    _minimapCount = 0;
+    _minimapMicros = 0;
+    _minimapLoopMicros = 0;
+    _minimapDrawMicros = 0;
+    _frameCount = 0;
+    _rasterMicros = 0;
+    _buildMicros = 0;
+  }
+}
+
 class ForceGraphPainter extends CustomPainter {
   final GraphDataSource _data;
   final AppSettings _settings;
@@ -1814,6 +1907,17 @@ class ForceGraphPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // TEMP PERF: measure Dart-side draw-call construction time (UI thread).
+    final sw = Stopwatch()..start();
+    try {
+      _paint(canvas, size);
+    } finally {
+      sw.stop();
+      PerfStats.addPaint(sw.elapsedMicroseconds);
+    }
+  }
+
+  void _paint(Canvas canvas, Size size) {
     final layout = _setupGraphFrame(
       canvas,
       size,
