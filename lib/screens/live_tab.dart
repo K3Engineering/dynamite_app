@@ -6,6 +6,7 @@ import '../models/force_unit.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:google_fonts/google_fonts.dart';
 
+import '../services/bt_device_config.dart';
 import '../services/bt_handling.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
@@ -63,6 +64,9 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
         max: _hub.rawMax[channelIndex].toDouble(),
         tare: _hub.tare[channelIndex],
       );
+
+  @override
+  int? get missingSampleSentinel => kDroppedSampleSentinel;
 }
 
 class _LiveTabState extends State<LiveTab> {

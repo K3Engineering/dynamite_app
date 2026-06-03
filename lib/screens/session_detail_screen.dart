@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
+import '../services/bt_device_config.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
 import '../widgets/graph_components.dart';
@@ -53,6 +54,9 @@ class _SessionDataSource implements GraphDataSource {
         max: _data.maxs[channelIndex],
         tare: 0.0, // sessions are stored already tared
       );
+
+  @override
+  int? get missingSampleSentinel => kDroppedSampleSentinel;
 }
 
 class _SessionDetailScreenState extends State<SessionDetailScreen> {

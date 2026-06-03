@@ -10,3 +10,7 @@ const int nwAdcSampleLength = 12;
 const int nwAdcNumSamples = 20;
 const int nwNumAdcChan = 4;
 const int nwHeaderSize = 2;
+
+/// Sentinel value injected into the circular buffer when BLE packets are dropped.
+/// Must be outside the valid range of the 24-bit ADC (-8388608 to 8388607).
+const int kDroppedSampleSentinel = -2147483648; // Minimum Int32
