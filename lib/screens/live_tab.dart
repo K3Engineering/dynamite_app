@@ -78,6 +78,7 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
 class _LiveTabState extends State<LiveTab> {
   final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * DataHub.samplesPerSec);
   bool _showDerivative = false;
+  bool _showMinimap = true;
   _LiveDataSource? _dataSource;
   DataHub? _hub;
 
@@ -267,6 +268,9 @@ class _LiveTabState extends State<LiveTab> {
               showDerivative: _showDerivative,
               onToggleDerivative: () =>
                   setState(() => _showDerivative = !_showDerivative),
+              showMinimap: _showMinimap,
+              onToggleMinimap: () =>
+                  setState(() => _showMinimap = !_showMinimap),
             ),
           if (isConnected)
             ActionButtons(
@@ -287,6 +291,7 @@ class _LiveTabState extends State<LiveTab> {
       ctrl: _graphCtrl,
       settings: settings,
       showDerivative: _showDerivative,
+      showMinimap: _showMinimap,
     );
   }
 }
@@ -460,11 +465,15 @@ class DisconnectedPrompt extends StatelessWidget {
 class ViewToggles extends StatelessWidget {
   final bool showDerivative;
   final VoidCallback onToggleDerivative;
+  final bool showMinimap;
+  final VoidCallback onToggleMinimap;
 
   const ViewToggles({
     super.key,
     this.showDerivative = false,
     required this.onToggleDerivative,
+    this.showMinimap = true,
+    required this.onToggleMinimap,
   });
 
   @override
@@ -475,6 +484,17 @@ class ViewToggles extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
+          FilterChip(
+            label: const Text('Minimap'),
+            selected: showMinimap,
+            onSelected: (_) => onToggleMinimap(),
+            visualDensity: VisualDensity.compact,
+            labelStyle: TextStyle(
+              fontSize: 12,
+              color: showMinimap ? cs.onSecondaryContainer : null,
+            ),
+          ),
+          const SizedBox(width: 8),
           FilterChip(
             label: const Text('dF/dt'),
             selected: showDerivative,
