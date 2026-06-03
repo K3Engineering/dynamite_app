@@ -272,11 +272,21 @@ class BluetoothHandling extends ChangeNotifier {
   }
 
   Future<void> _updateBluetoothState() async {
-    if (!kIsWeb) {
-      await UniversalBle.enableBluetooth();
+    try {
+      if (!kIsWeb) {
+        await UniversalBle.enableBluetooth();
+      }
+      _bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
+      notifyListeners();
+    } catch (e) {
+      // Best-effort initial probe. On web/wasm, `navigator.bluetooth.getAvailability()`
+      // can sometimes hang at startup (due to missing user gesture context or WASM thread
+      // starvation) and exceed the 5-second `UniversalBle.timeout`.
+      // We swallow this so it doesn't crash the WASM instance.
+      // Alternative: We could skip this check entirely on Web (lazy check) and rely
+      // solely on `onAvailabilityChange`, since Web requires a user gesture to scan anyway.
+      debugPrint('Initial bluetooth state probe failed: $e');
     }
-    _bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
-    notifyListeners();
   }
 
   void _onScanResult(BleDevice newDevice) {
@@ -653,7 +663,15 @@ class BluetoothHandling extends ChangeNotifier {
     // MULTI-DEVICE (Path A): operate on `_links[deviceId]` so each device
     // settles independently and the notice can name that specific device.
     await UniversalBle.disconnect(deviceId, timeout: disconnectTimeout);
-    await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
+    try {
+      await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
+    } catch (e) {
+      // Swallowed: If the browser's Bluetooth context hangs, this state query
+      // will hit `UniversalBle.timeout` and throw. We swallow it so the subsequent
+      // fallback logic (checking `_link.state == BtLinkState.disconnecting`)
+      // can force the link to idle gracefully.
+      debugPrint('Bluetooth availability check post-disconnect failed: $e');
+    }
 
     if (_link.deviceId == deviceId && _link.state == BtLinkState.disconnecting) {
       debugPrint('Disconnect did not settle for $deviceId; forcing idle');
