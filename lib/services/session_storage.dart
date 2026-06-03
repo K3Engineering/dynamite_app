@@ -1,185 +1,189 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
-import 'package:drift/drift.dart' show Value;
+import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 
 import 'database.dart';
 import 'bt_handling.dart';
 
-/// Binary file format:
-/// - 4 bytes: magic "DYNO"
-/// - 4 bytes: version (uint32 LE)
-/// - 4 bytes: channel count (uint32 LE)
-/// - 4 bytes: sample count (uint32 LE)
-/// - 4 bytes: sample rate (uint32 LE)
-/// - 4 bytes: reserved
-/// - then: packed int32 LE values, interleaved [ch0_s0, ch1_s0, ch0_s1, ch1_s1, ...]
-///
-/// Total header: 24 bytes
-
+/// Chunk format: packed int32 LE values, interleaved
+/// `[ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]`, with one value per ADC channel
+/// ([DataHub.numAdcChannels]) per sample. Each [SessionChunks] row holds a
+/// whole number of samples. The owning [Sessions] row carries all metadata
+/// (channel count, sample rate, calibration, etc.).
 class SessionStorage {
-  static const int _headerSize = 24;
-  static const int _version = 1;
-  static final _magic = Uint8List.fromList([0x44, 0x59, 0x4E, 0x4F]); // "DYNO"
-
-  /// Save the current DataHub contents to a binary DB blob and create a DB record.
-  /// Only saves the slice from [dataHub.recordingStartIdx] to [dataHub.totalSamples].
-  /// Returns the session id.
-  static Future<int> saveSession({
+  /// Start a new streaming session. The returned [LiveSessionWriter] is fed
+  /// sample slices via [LiveSessionWriter.appendData] as data arrives and is
+  /// passed to [finalizeSession] when recording stops.
+  ///
+  /// Note: every session stores all [DataHub.numAdcChannels]; [channelCount]
+  /// and [channelLabels] are retained for display only.
+  static Future<LiveSessionWriter> startSession({
     required DataHub dataHub,
     required String name,
     required List<String> channelLabels,
     required int channelCount,
     String notes = '',
   }) async {
-    final int startIdx = dataHub.recordingStartIdx;
-    final int endIdx = dataHub.totalSamples;
-
-    // If the recording was longer than the buffer, we can only save the tail
-    const int maxAvailable = DataHub.maxDataSz;
-    final int actualStartIdx = (endIdx - startIdx) > maxAvailable 
-        ? endIdx - maxAvailable 
-        : startIdx;
-        
-    final int recordedSamples = endIdx - actualStartIdx;
-
-    final blobData = _createBinaryData(
-      dataHub: dataHub,
-      startIdx: actualStartIdx,
-      sampleCount: recordedSamples,
+    final sessionId = await AppDatabase.instance.insertSession(
+      SessionsCompanion.insert(
+        name: Value(name),
+        createdAt: DateTime.now(),
+        sampleRate: const Value(DataHub.samplesPerSec),
+        // We always persist every ADC channel, so the stored channel count must
+        // match what the writer packs (and what loadSession reads back).
+        channelCount: const Value(DataHub.numAdcChannels),
+        channelLabels: Value(jsonEncode(channelLabels)),
+        calibrationSlope: Value(dataHub.deviceCalibration.slope),
+        calibrationOffset: Value(dataHub.deviceCalibration.offset),
+        notes: Value(notes),
+        isCompleted: const Value(false),
+      ),
     );
 
-    // Compute peak over the recorded slice
-    double peakRaw = 0;
-    int peakChannel = 0;
-    for (int line = 0; line < DataHub.numAdcChannels; line++) {
-      for (int s = actualStartIdx; s < endIdx; s++) {
-        final val = (dataHub.rawData[line][s % DataHub.maxDataSz] - dataHub.tare[line]);
-        if (val > peakRaw) {
-          peakRaw = val.toDouble();
-          peakChannel = line;
-        }
+    return LiveSessionWriter(sessionId);
+  }
+
+  /// Finalize a streaming session: flush any buffered samples, then record the
+  /// aggregates the writer accumulated and mark the session completed.
+  ///
+  /// Returns the writer's latched write error (if any). When non-null, the
+  /// session may be short/truncated; the caller should surface it.
+  static Future<Object?> finalizeSession({
+    required LiveSessionWriter writer,
+    required DataHub dataHub,
+  }) async {
+    await writer.flush();
+
+    await AppDatabase.instance.updateSession(
+      writer.sessionId,
+      SessionsCompanion(
+        sampleCount: Value(writer.totalSamplesRecorded),
+        durationMs: Value(
+          (writer.totalSamplesRecorded * 1000) ~/ DataHub.samplesPerSec,
+        ),
+        peakForceRaw: Value(writer.peakRaw),
+        peakForceChannel: Value(writer.peakChannel),
+        isCompleted: const Value(true),
+      ),
+    );
+
+    return writer.writeError;
+  }
+
+  /// Recovers any sessions left incomplete (e.g. the app crashed mid-recording)
+  /// by scanning their persisted chunks to rebuild aggregates and marking them
+  /// completed. Sessions with no chunks are deleted.
+  static Future<void> recoverIncompleteSessions() async {
+    final incomplete = await (AppDatabase.instance.select(
+      AppDatabase.instance.sessions,
+    )..where((t) => t.isCompleted.equals(false))).get();
+
+    for (final session in incomplete) {
+      debugPrint('Recovering incomplete session: ${session.id}');
+
+      final chunks = await (AppDatabase.instance.select(
+        AppDatabase.instance.sessionChunks,
+      )..where((t) => t.sessionId.equals(session.id))).get();
+
+      if (chunks.isEmpty) {
+        // Started but never wrote a chunk. Nothing to keep.
+        await AppDatabase.instance.deleteSession(session.id);
+        continue;
       }
-    }
 
-    final durationMs = (recordedSamples * 1000) ~/ DataHub.samplesPerSec;
+      // The tare in effect at crash time isn't persisted, so recovered peaks
+      // are best-effort (computed against a zero tare).
+      final agg = _ChunkAggregate(session.channelCount);
+      for (final chunk in chunks) {
+        agg.scan(chunk.data, _zeroTare);
+      }
 
-    // Create DB record
-    final id = await AppDatabase.instance.transaction(() async {
-      final sessionId = await AppDatabase.instance.insertSession(
-        SessionsCompanion.insert(
-          name: Value(name),
-          createdAt: DateTime.now(),
-          durationMs: Value(durationMs),
-          sampleRate: const Value(DataHub.samplesPerSec),
-          channelCount: Value(channelCount),
-          channelLabels: Value(jsonEncode(channelLabels)),
-          peakForceRaw: Value(peakRaw),
-          peakForceChannel: Value(peakChannel),
-          calibrationSlope: Value(dataHub.deviceCalibration.slope),
-          calibrationOffset: Value(dataHub.deviceCalibration.offset),
-          notes: Value(notes),
-          sampleCount: Value(recordedSamples),
+      await AppDatabase.instance.updateSession(
+        session.id,
+        SessionsCompanion(
+          sampleCount: Value(agg.samples),
+          durationMs: Value((agg.samples * 1000) ~/ session.sampleRate),
+          peakForceRaw: Value(agg.peakRaw),
+          peakForceChannel: Value(agg.peakChannel),
+          isCompleted: const Value(true),
         ),
       );
-
-      await AppDatabase.instance
-          .into(AppDatabase.instance.sessionBlobs)
-          .insert(
-            SessionBlobsCompanion.insert(
-              sessionId: Value(sessionId),
-              data: blobData,
-            ),
-          );
-
-      return sessionId;
-    });
-
-    return id;
+    }
   }
 
-  /// Build the binary buffer.
-  static Uint8List _createBinaryData({
-    required DataHub dataHub,
-    required int startIdx,
-    required int sampleCount,
-  }) {
-    const numLines = DataHub.numAdcChannels;
-
-    // Build the binary buffer
-    final totalBytes = _headerSize + sampleCount * numLines * 4;
-    final buffer = ByteData(totalBytes);
-
-    // Header
-    for (int i = 0; i < 4; i++) {
-      buffer.setUint8(i, _magic[i]);
-    }
-    buffer.setUint32(4, _version, Endian.little);
-    buffer.setUint32(8, numLines, Endian.little);
-    buffer.setUint32(12, sampleCount, Endian.little);
-    buffer.setUint32(16, DataHub.samplesPerSec, Endian.little);
-    buffer.setUint32(20, 0, Endian.little); // reserved
-
-    // Interleaved data — write only from startIdx to startIdx + sampleCount
-    int offset = _headerSize;
-    for (int s = startIdx; s < startIdx + sampleCount; s++) {
-      for (int ch = 0; ch < numLines; ch++) {
-        buffer.setInt32(offset, dataHub.rawData[ch][s % DataHub.maxDataSz], Endian.little);
-        offset += 4;
-      }
-    }
-
-    return buffer.buffer.asUint8List();
-  }
-
-  /// Read a session's binary data from the DB.
+  /// Read a session's recorded data back from its chunks.
   static Future<SessionData?> loadSession(Session session) async {
-    final blob = await (AppDatabase.instance.select(
-      AppDatabase.instance.sessionBlobs,
-    )..where((t) => t.sessionId.equals(session.id))).getSingleOrNull();
+    final chunks = await (AppDatabase.instance.select(
+      AppDatabase.instance.sessionChunks,
+    )..where((t) => t.sessionId.equals(session.id))
+     ..orderBy([(t) => OrderingTerm(expression: t.chunkIndex)])).get();
 
-    if (blob == null) {
-      debugPrint('Session blob not found in DB for session: ${session.id}');
+    if (chunks.isEmpty) {
+      debugPrint('No chunks found for session: ${session.id}');
       return null;
     }
 
-    final data = ByteData.sublistView(blob.data);
-
-    // Validate header
-    for (int i = 0; i < 4; i++) {
-      if (data.getUint8(i) != _magic[i]) {
-        debugPrint('Invalid file magic');
-        return null;
-      }
-    }
-
-    final version = data.getUint32(4, Endian.little);
-    if (version != _version) {
-      debugPrint('Unsupported version: $version');
-      return null;
-    }
-
-    final channelCount = data.getUint32(8, Endian.little);
-    final sampleCount = data.getUint32(12, Endian.little);
-    final sampleRate = data.getUint32(16, Endian.little);
-
+    final channelCount = session.channelCount;
+    final sampleCount = session.sampleCount;
     final channels = List.generate(channelCount, (_) => Int32List(sampleCount));
 
-    int offset = _headerSize;
-    for (int s = 0; s < sampleCount; s++) {
-      for (int ch = 0; ch < channelCount; ch++) {
-        channels[ch][s] = data.getInt32(offset, Endian.little);
-        offset += 4;
+    int globalS = 0;
+    for (final chunk in chunks) {
+      final data = ByteData.sublistView(chunk.data);
+      final chunkSamples = data.lengthInBytes ~/ (channelCount * 4);
+      int offset = 0;
+      for (int s = 0; s < chunkSamples; s++) {
+        if (globalS >= sampleCount) break;
+        for (int ch = 0; ch < channelCount; ch++) {
+          channels[ch][globalS] = data.getInt32(offset, Endian.little);
+          offset += 4;
+        }
+        globalS++;
       }
     }
 
     return SessionData(
       channels: channels,
-      sampleRate: sampleRate,
-      sampleCount: sampleCount,
+      sampleRate: session.sampleRate,
+      sampleCount: globalS,
       calibrationSlope: session.calibrationSlope,
       calibrationOffset: session.calibrationOffset,
     );
+  }
+}
+
+/// Zero tare used when no tare is available (recovery path).
+final Float64List _zeroTare = Float64List(DataHub.numAdcChannels);
+
+/// Scans interleaved int32 chunk bytes, accumulating sample count and the
+/// tare-adjusted peak. Shared by the live writer and the recovery path so the
+/// two can never compute peaks differently.
+class _ChunkAggregate {
+  _ChunkAggregate(this.channelCount);
+
+  final int channelCount;
+  int samples = 0;
+  double peakRaw = 0.0;
+  int peakChannel = 0;
+
+  void scan(Uint8List bytes, Float64List tare) {
+    final data = ByteData.sublistView(bytes);
+    final chunkSamples = data.lengthInBytes ~/ (channelCount * 4);
+    int offset = 0;
+    for (int s = 0; s < chunkSamples; s++) {
+      for (int ch = 0; ch < channelCount; ch++) {
+        final raw = data.getInt32(offset, Endian.little);
+        offset += 4;
+        final val = raw - (ch < tare.length ? tare[ch] : 0);
+        if (val > peakRaw) {
+          peakRaw = val.toDouble();
+          peakChannel = ch;
+        }
+      }
+    }
+    samples += chunkSamples;
   }
 }
 
@@ -266,4 +270,109 @@ class SessionData {
 
   /// Duration in seconds.
   double get durationSeconds => sampleCount / sampleRate;
+}
+
+/// Streams recorded samples to the DB as they arrive, flushing in chunks so a
+/// session can outlive the in-memory ring buffer and survive a crash.
+///
+/// All DB writes are serialized through [_writeQueue] so concurrent (unawaited)
+/// [appendData] calls and the finalizing [flush] cannot interleave or reorder
+/// chunks. The first write error is latched in [writeError] rather than thrown
+/// into the void, so the caller can surface it.
+class LiveSessionWriter {
+  LiveSessionWriter(this.sessionId);
+
+  final int sessionId;
+
+  int _chunkIndex = 0;
+  int totalSamplesRecorded = 0;
+  double peakRaw = 0.0;
+  int peakChannel = 0;
+
+  /// Accumulates sample count and peak; shared scan logic with recovery.
+  final _ChunkAggregate _agg = _ChunkAggregate(DataHub.numAdcChannels);
+
+  /// First write failure encountered, if any. Once set it stays set.
+  Object? writeError;
+  bool get hasError => writeError != null;
+
+  final BytesBuilder _staging = BytesBuilder(copy: false);
+
+  /// Serializes all DB writes. Each enqueued op awaits the previous one.
+  Future<void> _writeQueue = Future.value();
+
+  /// Flush whenever the staging buffer reaches ~this many bytes
+  /// (~2 s at 1 kHz, 2 ch, 4 B/value).
+  static const int _flushThreshold = 16384;
+
+  /// Append [count] samples starting at ring-buffer logical index [startIdx].
+  /// Returns when this slice has been buffered (and flushed, if the threshold
+  /// was crossed). Safe to call without awaiting; calls are serialized.
+  Future<void> appendData(DataHub dataHub, int startIdx, int count) {
+    return _enqueue(() async {
+      if (writeError != null) return;
+      const numLines = DataHub.numAdcChannels;
+      final buffer = ByteData(count * numLines * 4);
+      int offset = 0;
+      for (int s = startIdx; s < startIdx + count; s++) {
+        for (int ch = 0; ch < numLines; ch++) {
+          buffer.setInt32(
+            offset,
+            dataHub.rawData[ch][s % DataHub.maxDataSz],
+            Endian.little,
+          );
+          offset += 4;
+        }
+      }
+
+      final bytes = buffer.buffer.asUint8List();
+      // Update peak/sample-count via the same scan logic recovery uses.
+      _agg.scan(bytes, dataHub.tare);
+      totalSamplesRecorded = _agg.samples;
+      peakRaw = _agg.peakRaw;
+      peakChannel = _agg.peakChannel;
+
+      _staging.add(bytes);
+
+      if (_staging.length >= _flushThreshold) {
+        await _flushStaging();
+      }
+    });
+  }
+
+  /// Flush any buffered samples to a chunk. Serialized with appends.
+  Future<void> flush() => _enqueue(_flushStaging);
+
+  /// Performs the actual chunk write. Must run inside [_enqueue].
+  Future<void> _flushStaging() async {
+    if (_staging.isEmpty || writeError != null) return;
+    // takeBytes() clears the builder, so a concurrent append can't see it.
+    final dataToSave = _staging.takeBytes();
+    final chunkIdx = _chunkIndex++;
+    try {
+      await AppDatabase.instance
+          .into(AppDatabase.instance.sessionChunks)
+          .insert(
+            SessionChunksCompanion.insert(
+              sessionId: sessionId,
+              chunkIndex: chunkIdx,
+              data: dataToSave,
+            ),
+          );
+    } catch (e) {
+      // Latch the first failure; stop accumulating so we don't grow unbounded
+      // after the sink has gone away (e.g. disk full / web quota exceeded).
+      writeError ??= e;
+      debugPrint('Session chunk write failed (session $sessionId): $e');
+    }
+  }
+
+  /// Chain [op] after all previously enqueued writes and return its completion.
+  Future<void> _enqueue(Future<void> Function() op) {
+    final next = _writeQueue.then((_) => op());
+    // Swallow errors on the queue itself so one failure doesn't poison the
+    // chain; real failures are latched in [writeError].
+    _writeQueue = next.catchError((_) {});
+    return next;
+  }
 }

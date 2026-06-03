@@ -1,12 +1,12 @@
 import 'dart:async';
-import 'dart:io';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:drift/drift.dart' show Value;
-import 'dart:convert';
-
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:file_selector/file_selector.dart';
 
 import '../models/app_settings.dart';
 import '../services/bt_device_config.dart';
@@ -447,16 +447,39 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       buf.writeln();
     }
 
-    // Save to temp file
-    final dir = await getTemporaryDirectory();
+    // Save via a native "Save As" dialog. On web there is no save-location
+    // picker, so hand the bytes to the browser, which downloads the file.
+    final bytes = Uint8List.fromList(utf8.encode(buf.toString()));
     final csvName = '${_session.name.isEmpty ? 'session' : _session.name}.csv';
-    final csvPath = '${dir.path}/$csvName';
-    await File(csvPath).writeAsString(buf.toString());
+    final xFile = XFile.fromData(bytes, mimeType: 'text/csv', name: csvName);
+
+    String savedTo;
+    if (kIsWeb) {
+      // Triggers a browser download to the user's Downloads folder.
+      await xFile.saveTo(csvName);
+      savedTo = csvName;
+    } else {
+      const typeGroup = XTypeGroup(
+        label: 'CSV',
+        extensions: ['csv'],
+        mimeTypes: ['text/csv'],
+      );
+      final location = await getSaveLocation(
+        suggestedName: csvName,
+        acceptedTypeGroups: const [typeGroup],
+      );
+      if (location == null) {
+        // User cancelled the dialog.
+        return;
+      }
+      await xFile.saveTo(location.path);
+      savedTo = location.path;
+    }
 
     if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Exported to $csvPath')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Exported to $savedTo')),
+      );
     }
   }
 
