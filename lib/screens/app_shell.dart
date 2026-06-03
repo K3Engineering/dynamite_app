@@ -35,7 +35,12 @@ class AppShellState extends State<AppShell> {
     return Scaffold(
       body: IndexedStack(
         index: _currentIndex,
-        children: const [LiveTab(), SessionsTab(), DevicesTab(), SettingsTab()],
+        children: [
+          const LiveTab(),
+          const SessionsTab(),
+          DevicesTab(isActive: _currentIndex == 2),
+          const SettingsTab(),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,

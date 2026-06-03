@@ -272,11 +272,16 @@ class BluetoothHandling extends ChangeNotifier {
   }
 
   Future<void> _updateBluetoothState() async {
-    if (!kIsWeb) {
-      await UniversalBle.enableBluetooth();
-    }
     _bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
     notifyListeners();
+  }
+
+  /// Request the system to enable Bluetooth (e.g. pop the permission/enable dialog).
+  Future<void> requestEnableBluetooth() async {
+    if (!kIsWeb) {
+      await UniversalBle.enableBluetooth();
+      await _updateBluetoothState();
+    }
   }
 
   void _onScanResult(BleDevice newDevice) {

@@ -5,7 +5,9 @@ import '../services/bt_handling.dart';
 import '../widgets/bt_icon.dart';
 
 class DevicesTab extends StatefulWidget {
-  const DevicesTab({super.key});
+  final bool isActive;
+  
+  const DevicesTab({super.key, this.isActive = false});
 
   @override
   State<DevicesTab> createState() => _DevicesTabState();
@@ -13,6 +15,33 @@ class DevicesTab extends StatefulWidget {
 
 class _DevicesTabState extends State<DevicesTab> {
   BluetoothHandling? _bt;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.isActive) {
+      _requestBluetoothIfActive();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant DevicesTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.isActive && !oldWidget.isActive) {
+      _requestBluetoothIfActive();
+    }
+  }
+
+  void _requestBluetoothIfActive() {
+    // Post-frame callback ensures we don't try to access providers before
+    // the widget tree is fully initialized during the first build.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        // ignore: discarded_futures
+        context.read<BluetoothHandling>().requestEnableBluetooth();
+      }
+    });
+  }
 
   @override
   void didChangeDependencies() {
