@@ -10,6 +10,7 @@ import 'bt_device_config.dart';
 import '../models/force_unit.dart';
 // ignore: unused_import
 import 'mockble.dart';
+import 'session_storage.dart';
 
 /// Lifecycle of a single device's BLE link.
 ///
@@ -223,6 +224,14 @@ class BluetoothHandling extends ChangeNotifier {
   bool _sessionInProgress = false;
   bool get sessionInProgress => _sessionInProgress;
 
+  LiveSessionWriter? _sessionWriter;
+
+  /// Set when a recording is auto-stopped because its storage writer started
+  /// failing (e.g. disk full / web quota). Consumed and cleared by the UI.
+  Object? _sessionWriteError;
+  Object? get sessionWriteError => _sessionWriteError;
+  void clearSessionWriteError() => _sessionWriteError = null;
+
   /// Called when a disconnect gives up after [disconnectTimeout] without the
   /// link returning to idle. The argument is the affected device's display name
   /// (or id). The UI uses this to surface a brief notice.
@@ -359,23 +368,40 @@ class BluetoothHandling extends ChangeNotifier {
     }
   }
 
-  void toggleSession() {
+  Future<void> startSession(LiveSessionWriter writer) async {
     assert(_link.isStreaming);
-    if (!_sessionInProgress) {
-      // Starting a recording: mark the current logical time.
-      dataHub._recordingStartIdx = dataHub.totalSamples;
-    }
-    _sessionInProgress = !_sessionInProgress;
+    if (_sessionInProgress) return;
+
+    _sessionWriter = writer;
+    _sessionWriteError = null;
+    dataHub._recordingStartIdx = dataHub.totalSamples;
+    _sessionInProgress = true;
     dataHub._prevSampleCount = -1;
     notifyListeners();
   }
 
-  void stopSession() {
+  /// Stop the current recording and finalize it. Returns the saved session id
+  /// (or null if nothing was recording) and any write error the storage writer
+  /// latched (non-null means the session may be truncated).
+  Future<({int? sessionId, Object? error})> stopSession() async {
     if (_sessionInProgress) {
       _sessionInProgress = false;
+      final writer = _sessionWriter;
+      _sessionWriter = null;
       dataHub._prevSampleCount = -1;
       notifyListeners();
+
+      if (writer != null) {
+        // finalizeSession flushes through the writer's serialized queue, which
+        // drains any in-flight (unawaited) appends first.
+        final error = await SessionStorage.finalizeSession(
+          writer: writer,
+          dataHub: dataHub,
+        );
+        return (sessionId: writer.sessionId, error: error);
+      }
     }
+    return (sessionId: null, error: null);
   }
 
   void _onPairingStateChange(String deviceId, bool isPaired) {
@@ -697,10 +723,25 @@ class BluetoothHandling extends ChangeNotifier {
   }
 
   void _processReceivedData(String _, String _, Uint8List data, int? _) {
+    final startIdx = dataHub.totalSamples;
     // Always stream data to the DataHub for live display.
     final canContinue = dataHub._parseDataPacket(data);
+    final count = dataHub.totalSamples - startIdx;
+
+    final writer = _sessionWriter;
+    if (_sessionInProgress && writer != null && count > 0) {
+      // If the storage writer has started failing, abort the recording rather
+      // than silently record into a void.
+      if (writer.hasError) {
+        _sessionWriteError = writer.writeError;
+        unawaited(stopSession());
+      } else {
+        unawaited(writer.appendData(dataHub, startIdx, count));
+      }
+    }
+
     if (!canContinue) {
-      stopSession();
+      unawaited(stopSession());
     }
   }
 }
@@ -931,7 +972,7 @@ class DataHub extends ChangeNotifier {
 
   /// Parse a BLE data packet.
   /// Data is always buffered for live display. Recording start/end is
-  /// tracked via [_recordingStartIdx] set by BluetoothHandling.toggleSession().
+  /// tracked via [_recordingStartIdx] set by BluetoothHandling.startSession().
   bool _parseDataPacket(Uint8List data) {
     if (data.isEmpty) {
       debugPrint("data isEmpty");

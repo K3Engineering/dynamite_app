@@ -160,6 +160,21 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
+  static const VerificationMeta _isCompletedMeta = const VerificationMeta(
+    'isCompleted',
+  );
+  @override
+  late final GeneratedColumn<bool> isCompleted = GeneratedColumn<bool>(
+    'is_completed',
+    aliasedName,
+    false,
+    type: DriftSqlType.bool,
+    requiredDuringInsert: false,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'CHECK ("is_completed" IN (0, 1))',
+    ),
+    defaultValue: const Constant(true),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -175,6 +190,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     calibrationOffset,
     notes,
     sampleCount,
+    isCompleted,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -286,6 +302,15 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         ),
       );
     }
+    if (data.containsKey('is_completed')) {
+      context.handle(
+        _isCompletedMeta,
+        isCompleted.isAcceptableOrUnknown(
+          data['is_completed']!,
+          _isCompletedMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -347,6 +372,10 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.int,
         data['${effectivePrefix}sample_count'],
       )!,
+      isCompleted: attachedDatabase.typeMapping.read(
+        DriftSqlType.bool,
+        data['${effectivePrefix}is_completed'],
+      )!,
     );
   }
 
@@ -370,6 +399,7 @@ class Session extends DataClass implements Insertable<Session> {
   final int calibrationOffset;
   final String notes;
   final int sampleCount;
+  final bool isCompleted;
   const Session({
     required this.id,
     required this.name,
@@ -384,6 +414,7 @@ class Session extends DataClass implements Insertable<Session> {
     required this.calibrationOffset,
     required this.notes,
     required this.sampleCount,
+    required this.isCompleted,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -401,6 +432,7 @@ class Session extends DataClass implements Insertable<Session> {
     map['calibration_offset'] = Variable<int>(calibrationOffset);
     map['notes'] = Variable<String>(notes);
     map['sample_count'] = Variable<int>(sampleCount);
+    map['is_completed'] = Variable<bool>(isCompleted);
     return map;
   }
 
@@ -419,6 +451,7 @@ class Session extends DataClass implements Insertable<Session> {
       calibrationOffset: Value(calibrationOffset),
       notes: Value(notes),
       sampleCount: Value(sampleCount),
+      isCompleted: Value(isCompleted),
     );
   }
 
@@ -441,6 +474,7 @@ class Session extends DataClass implements Insertable<Session> {
       calibrationOffset: serializer.fromJson<int>(json['calibrationOffset']),
       notes: serializer.fromJson<String>(json['notes']),
       sampleCount: serializer.fromJson<int>(json['sampleCount']),
+      isCompleted: serializer.fromJson<bool>(json['isCompleted']),
     );
   }
   @override
@@ -460,6 +494,7 @@ class Session extends DataClass implements Insertable<Session> {
       'calibrationOffset': serializer.toJson<int>(calibrationOffset),
       'notes': serializer.toJson<String>(notes),
       'sampleCount': serializer.toJson<int>(sampleCount),
+      'isCompleted': serializer.toJson<bool>(isCompleted),
     };
   }
 
@@ -477,6 +512,7 @@ class Session extends DataClass implements Insertable<Session> {
     int? calibrationOffset,
     String? notes,
     int? sampleCount,
+    bool? isCompleted,
   }) => Session(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -491,6 +527,7 @@ class Session extends DataClass implements Insertable<Session> {
     calibrationOffset: calibrationOffset ?? this.calibrationOffset,
     notes: notes ?? this.notes,
     sampleCount: sampleCount ?? this.sampleCount,
+    isCompleted: isCompleted ?? this.isCompleted,
   );
   Session copyWithCompanion(SessionsCompanion data) {
     return Session(
@@ -525,6 +562,9 @@ class Session extends DataClass implements Insertable<Session> {
       sampleCount: data.sampleCount.present
           ? data.sampleCount.value
           : this.sampleCount,
+      isCompleted: data.isCompleted.present
+          ? data.isCompleted.value
+          : this.isCompleted,
     );
   }
 
@@ -543,7 +583,8 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('calibrationSlope: $calibrationSlope, ')
           ..write('calibrationOffset: $calibrationOffset, ')
           ..write('notes: $notes, ')
-          ..write('sampleCount: $sampleCount')
+          ..write('sampleCount: $sampleCount, ')
+          ..write('isCompleted: $isCompleted')
           ..write(')'))
         .toString();
   }
@@ -563,6 +604,7 @@ class Session extends DataClass implements Insertable<Session> {
     calibrationOffset,
     notes,
     sampleCount,
+    isCompleted,
   );
   @override
   bool operator ==(Object other) =>
@@ -580,7 +622,8 @@ class Session extends DataClass implements Insertable<Session> {
           other.calibrationSlope == this.calibrationSlope &&
           other.calibrationOffset == this.calibrationOffset &&
           other.notes == this.notes &&
-          other.sampleCount == this.sampleCount);
+          other.sampleCount == this.sampleCount &&
+          other.isCompleted == this.isCompleted);
 }
 
 class SessionsCompanion extends UpdateCompanion<Session> {
@@ -597,6 +640,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<int> calibrationOffset;
   final Value<String> notes;
   final Value<int> sampleCount;
+  final Value<bool> isCompleted;
   const SessionsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
@@ -611,6 +655,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.calibrationOffset = const Value.absent(),
     this.notes = const Value.absent(),
     this.sampleCount = const Value.absent(),
+    this.isCompleted = const Value.absent(),
   });
   SessionsCompanion.insert({
     this.id = const Value.absent(),
@@ -626,6 +671,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.calibrationOffset = const Value.absent(),
     this.notes = const Value.absent(),
     this.sampleCount = const Value.absent(),
+    this.isCompleted = const Value.absent(),
   }) : createdAt = Value(createdAt);
   static Insertable<Session> custom({
     Expression<int>? id,
@@ -641,6 +687,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<int>? calibrationOffset,
     Expression<String>? notes,
     Expression<int>? sampleCount,
+    Expression<bool>? isCompleted,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -656,6 +703,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (calibrationOffset != null) 'calibration_offset': calibrationOffset,
       if (notes != null) 'notes': notes,
       if (sampleCount != null) 'sample_count': sampleCount,
+      if (isCompleted != null) 'is_completed': isCompleted,
     });
   }
 
@@ -673,6 +721,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<int>? calibrationOffset,
     Value<String>? notes,
     Value<int>? sampleCount,
+    Value<bool>? isCompleted,
   }) {
     return SessionsCompanion(
       id: id ?? this.id,
@@ -688,6 +737,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       calibrationOffset: calibrationOffset ?? this.calibrationOffset,
       notes: notes ?? this.notes,
       sampleCount: sampleCount ?? this.sampleCount,
+      isCompleted: isCompleted ?? this.isCompleted,
     );
   }
 
@@ -733,6 +783,9 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     if (sampleCount.present) {
       map['sample_count'] = Variable<int>(sampleCount.value);
     }
+    if (isCompleted.present) {
+      map['is_completed'] = Variable<bool>(isCompleted.value);
+    }
     return map;
   }
 
@@ -751,18 +804,19 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('calibrationSlope: $calibrationSlope, ')
           ..write('calibrationOffset: $calibrationOffset, ')
           ..write('notes: $notes, ')
-          ..write('sampleCount: $sampleCount')
+          ..write('sampleCount: $sampleCount, ')
+          ..write('isCompleted: $isCompleted')
           ..write(')'))
         .toString();
   }
 }
 
-class $SessionBlobsTable extends SessionBlobs
-    with TableInfo<$SessionBlobsTable, SessionBlob> {
+class $SessionChunksTable extends SessionChunks
+    with TableInfo<$SessionChunksTable, SessionChunk> {
   @override
   final GeneratedDatabase attachedDatabase;
   final String? _alias;
-  $SessionBlobsTable(this.attachedDatabase, [this._alias]);
+  $SessionChunksTable(this.attachedDatabase, [this._alias]);
   static const VerificationMeta _sessionIdMeta = const VerificationMeta(
     'sessionId',
   );
@@ -772,7 +826,18 @@ class $SessionBlobsTable extends SessionBlobs
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: false,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _chunkIndexMeta = const VerificationMeta(
+    'chunkIndex',
+  );
+  @override
+  late final GeneratedColumn<int> chunkIndex = GeneratedColumn<int>(
+    'chunk_index',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _dataMeta = const VerificationMeta('data');
   @override
@@ -784,15 +849,15 @@ class $SessionBlobsTable extends SessionBlobs
     requiredDuringInsert: true,
   );
   @override
-  List<GeneratedColumn> get $columns => [sessionId, data];
+  List<GeneratedColumn> get $columns => [sessionId, chunkIndex, data];
   @override
   String get aliasedName => _alias ?? actualTableName;
   @override
   String get actualTableName => $name;
-  static const String $name = 'session_blobs';
+  static const String $name = 'session_chunks';
   @override
   VerificationContext validateIntegrity(
-    Insertable<SessionBlob> instance, {
+    Insertable<SessionChunk> instance, {
     bool isInserting = false,
   }) {
     final context = VerificationContext();
@@ -802,6 +867,16 @@ class $SessionBlobsTable extends SessionBlobs
         _sessionIdMeta,
         sessionId.isAcceptableOrUnknown(data['session_id']!, _sessionIdMeta),
       );
+    } else if (isInserting) {
+      context.missing(_sessionIdMeta);
+    }
+    if (data.containsKey('chunk_index')) {
+      context.handle(
+        _chunkIndexMeta,
+        chunkIndex.isAcceptableOrUnknown(data['chunk_index']!, _chunkIndexMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_chunkIndexMeta);
     }
     if (data.containsKey('data')) {
       context.handle(
@@ -815,14 +890,18 @@ class $SessionBlobsTable extends SessionBlobs
   }
 
   @override
-  Set<GeneratedColumn> get $primaryKey => {sessionId};
+  Set<GeneratedColumn> get $primaryKey => {sessionId, chunkIndex};
   @override
-  SessionBlob map(Map<String, dynamic> data, {String? tablePrefix}) {
+  SessionChunk map(Map<String, dynamic> data, {String? tablePrefix}) {
     final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return SessionBlob(
+    return SessionChunk(
       sessionId: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}session_id'],
+      )!,
+      chunkIndex: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}chunk_index'],
       )!,
       data: attachedDatabase.typeMapping.read(
         DriftSqlType.blob,
@@ -832,37 +911,45 @@ class $SessionBlobsTable extends SessionBlobs
   }
 
   @override
-  $SessionBlobsTable createAlias(String alias) {
-    return $SessionBlobsTable(attachedDatabase, alias);
+  $SessionChunksTable createAlias(String alias) {
+    return $SessionChunksTable(attachedDatabase, alias);
   }
 }
 
-class SessionBlob extends DataClass implements Insertable<SessionBlob> {
+class SessionChunk extends DataClass implements Insertable<SessionChunk> {
   final int sessionId;
+  final int chunkIndex;
   final Uint8List data;
-  const SessionBlob({required this.sessionId, required this.data});
+  const SessionChunk({
+    required this.sessionId,
+    required this.chunkIndex,
+    required this.data,
+  });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
     final map = <String, Expression>{};
     map['session_id'] = Variable<int>(sessionId);
+    map['chunk_index'] = Variable<int>(chunkIndex);
     map['data'] = Variable<Uint8List>(data);
     return map;
   }
 
-  SessionBlobsCompanion toCompanion(bool nullToAbsent) {
-    return SessionBlobsCompanion(
+  SessionChunksCompanion toCompanion(bool nullToAbsent) {
+    return SessionChunksCompanion(
       sessionId: Value(sessionId),
+      chunkIndex: Value(chunkIndex),
       data: Value(data),
     );
   }
 
-  factory SessionBlob.fromJson(
+  factory SessionChunk.fromJson(
     Map<String, dynamic> json, {
     ValueSerializer? serializer,
   }) {
     serializer ??= driftRuntimeOptions.defaultSerializer;
-    return SessionBlob(
+    return SessionChunk(
       sessionId: serializer.fromJson<int>(json['sessionId']),
+      chunkIndex: serializer.fromJson<int>(json['chunkIndex']),
       data: serializer.fromJson<Uint8List>(json['data']),
     );
   }
@@ -871,68 +958,93 @@ class SessionBlob extends DataClass implements Insertable<SessionBlob> {
     serializer ??= driftRuntimeOptions.defaultSerializer;
     return <String, dynamic>{
       'sessionId': serializer.toJson<int>(sessionId),
+      'chunkIndex': serializer.toJson<int>(chunkIndex),
       'data': serializer.toJson<Uint8List>(data),
     };
   }
 
-  SessionBlob copyWith({int? sessionId, Uint8List? data}) => SessionBlob(
-    sessionId: sessionId ?? this.sessionId,
-    data: data ?? this.data,
-  );
-  SessionBlob copyWithCompanion(SessionBlobsCompanion data) {
-    return SessionBlob(
+  SessionChunk copyWith({int? sessionId, int? chunkIndex, Uint8List? data}) =>
+      SessionChunk(
+        sessionId: sessionId ?? this.sessionId,
+        chunkIndex: chunkIndex ?? this.chunkIndex,
+        data: data ?? this.data,
+      );
+  SessionChunk copyWithCompanion(SessionChunksCompanion data) {
+    return SessionChunk(
       sessionId: data.sessionId.present ? data.sessionId.value : this.sessionId,
+      chunkIndex: data.chunkIndex.present
+          ? data.chunkIndex.value
+          : this.chunkIndex,
       data: data.data.present ? data.data.value : this.data,
     );
   }
 
   @override
   String toString() {
-    return (StringBuffer('SessionBlob(')
+    return (StringBuffer('SessionChunk(')
           ..write('sessionId: $sessionId, ')
+          ..write('chunkIndex: $chunkIndex, ')
           ..write('data: $data')
           ..write(')'))
         .toString();
   }
 
   @override
-  int get hashCode => Object.hash(sessionId, $driftBlobEquality.hash(data));
+  int get hashCode =>
+      Object.hash(sessionId, chunkIndex, $driftBlobEquality.hash(data));
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      (other is SessionBlob &&
+      (other is SessionChunk &&
           other.sessionId == this.sessionId &&
+          other.chunkIndex == this.chunkIndex &&
           $driftBlobEquality.equals(other.data, this.data));
 }
 
-class SessionBlobsCompanion extends UpdateCompanion<SessionBlob> {
+class SessionChunksCompanion extends UpdateCompanion<SessionChunk> {
   final Value<int> sessionId;
+  final Value<int> chunkIndex;
   final Value<Uint8List> data;
-  const SessionBlobsCompanion({
+  final Value<int> rowid;
+  const SessionChunksCompanion({
     this.sessionId = const Value.absent(),
+    this.chunkIndex = const Value.absent(),
     this.data = const Value.absent(),
+    this.rowid = const Value.absent(),
   });
-  SessionBlobsCompanion.insert({
-    this.sessionId = const Value.absent(),
+  SessionChunksCompanion.insert({
+    required int sessionId,
+    required int chunkIndex,
     required Uint8List data,
-  }) : data = Value(data);
-  static Insertable<SessionBlob> custom({
+    this.rowid = const Value.absent(),
+  }) : sessionId = Value(sessionId),
+       chunkIndex = Value(chunkIndex),
+       data = Value(data);
+  static Insertable<SessionChunk> custom({
     Expression<int>? sessionId,
+    Expression<int>? chunkIndex,
     Expression<Uint8List>? data,
+    Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
       if (sessionId != null) 'session_id': sessionId,
+      if (chunkIndex != null) 'chunk_index': chunkIndex,
       if (data != null) 'data': data,
+      if (rowid != null) 'rowid': rowid,
     });
   }
 
-  SessionBlobsCompanion copyWith({
+  SessionChunksCompanion copyWith({
     Value<int>? sessionId,
+    Value<int>? chunkIndex,
     Value<Uint8List>? data,
+    Value<int>? rowid,
   }) {
-    return SessionBlobsCompanion(
+    return SessionChunksCompanion(
       sessionId: sessionId ?? this.sessionId,
+      chunkIndex: chunkIndex ?? this.chunkIndex,
       data: data ?? this.data,
+      rowid: rowid ?? this.rowid,
     );
   }
 
@@ -942,17 +1054,25 @@ class SessionBlobsCompanion extends UpdateCompanion<SessionBlob> {
     if (sessionId.present) {
       map['session_id'] = Variable<int>(sessionId.value);
     }
+    if (chunkIndex.present) {
+      map['chunk_index'] = Variable<int>(chunkIndex.value);
+    }
     if (data.present) {
       map['data'] = Variable<Uint8List>(data.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
     }
     return map;
   }
 
   @override
   String toString() {
-    return (StringBuffer('SessionBlobsCompanion(')
+    return (StringBuffer('SessionChunksCompanion(')
           ..write('sessionId: $sessionId, ')
-          ..write('data: $data')
+          ..write('chunkIndex: $chunkIndex, ')
+          ..write('data: $data, ')
+          ..write('rowid: $rowid')
           ..write(')'))
         .toString();
   }
@@ -962,12 +1082,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
   late final $SessionsTable sessions = $SessionsTable(this);
-  late final $SessionBlobsTable sessionBlobs = $SessionBlobsTable(this);
+  late final $SessionChunksTable sessionChunks = $SessionChunksTable(this);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
   @override
-  List<DatabaseSchemaEntity> get allSchemaEntities => [sessions, sessionBlobs];
+  List<DatabaseSchemaEntity> get allSchemaEntities => [sessions, sessionChunks];
 }
 
 typedef $$SessionsTableCreateCompanionBuilder =
@@ -985,6 +1105,7 @@ typedef $$SessionsTableCreateCompanionBuilder =
       Value<int> calibrationOffset,
       Value<String> notes,
       Value<int> sampleCount,
+      Value<bool> isCompleted,
     });
 typedef $$SessionsTableUpdateCompanionBuilder =
     SessionsCompanion Function({
@@ -1001,6 +1122,7 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<int> calibrationOffset,
       Value<String> notes,
       Value<int> sampleCount,
+      Value<bool> isCompleted,
     });
 
 class $$SessionsTableFilterComposer
@@ -1074,6 +1196,11 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<int> get sampleCount => $composableBuilder(
     column: $table.sampleCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<bool> get isCompleted => $composableBuilder(
+    column: $table.isCompleted,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1151,6 +1278,11 @@ class $$SessionsTableOrderingComposer
     column: $table.sampleCount,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<bool> get isCompleted => $composableBuilder(
+    column: $table.isCompleted,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SessionsTableAnnotationComposer
@@ -1218,6 +1350,11 @@ class $$SessionsTableAnnotationComposer
     column: $table.sampleCount,
     builder: (column) => column,
   );
+
+  GeneratedColumn<bool> get isCompleted => $composableBuilder(
+    column: $table.isCompleted,
+    builder: (column) => column,
+  );
 }
 
 class $$SessionsTableTableManager
@@ -1261,6 +1398,7 @@ class $$SessionsTableTableManager
                 Value<int> calibrationOffset = const Value.absent(),
                 Value<String> notes = const Value.absent(),
                 Value<int> sampleCount = const Value.absent(),
+                Value<bool> isCompleted = const Value.absent(),
               }) => SessionsCompanion(
                 id: id,
                 name: name,
@@ -1275,6 +1413,7 @@ class $$SessionsTableTableManager
                 calibrationOffset: calibrationOffset,
                 notes: notes,
                 sampleCount: sampleCount,
+                isCompleted: isCompleted,
               ),
           createCompanionCallback:
               ({
@@ -1291,6 +1430,7 @@ class $$SessionsTableTableManager
                 Value<int> calibrationOffset = const Value.absent(),
                 Value<String> notes = const Value.absent(),
                 Value<int> sampleCount = const Value.absent(),
+                Value<bool> isCompleted = const Value.absent(),
               }) => SessionsCompanion.insert(
                 id: id,
                 name: name,
@@ -1305,6 +1445,7 @@ class $$SessionsTableTableManager
                 calibrationOffset: calibrationOffset,
                 notes: notes,
                 sampleCount: sampleCount,
+                isCompleted: isCompleted,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
@@ -1328,20 +1469,24 @@ typedef $$SessionsTableProcessedTableManager =
       Session,
       PrefetchHooks Function()
     >;
-typedef $$SessionBlobsTableCreateCompanionBuilder =
-    SessionBlobsCompanion Function({
-      Value<int> sessionId,
+typedef $$SessionChunksTableCreateCompanionBuilder =
+    SessionChunksCompanion Function({
+      required int sessionId,
+      required int chunkIndex,
       required Uint8List data,
+      Value<int> rowid,
     });
-typedef $$SessionBlobsTableUpdateCompanionBuilder =
-    SessionBlobsCompanion Function({
+typedef $$SessionChunksTableUpdateCompanionBuilder =
+    SessionChunksCompanion Function({
       Value<int> sessionId,
+      Value<int> chunkIndex,
       Value<Uint8List> data,
+      Value<int> rowid,
     });
 
-class $$SessionBlobsTableFilterComposer
-    extends Composer<_$AppDatabase, $SessionBlobsTable> {
-  $$SessionBlobsTableFilterComposer({
+class $$SessionChunksTableFilterComposer
+    extends Composer<_$AppDatabase, $SessionChunksTable> {
+  $$SessionChunksTableFilterComposer({
     required super.$db,
     required super.$table,
     super.joinBuilder,
@@ -1353,15 +1498,20 @@ class $$SessionBlobsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<int> get chunkIndex => $composableBuilder(
+    column: $table.chunkIndex,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnFilters<Uint8List> get data => $composableBuilder(
     column: $table.data,
     builder: (column) => ColumnFilters(column),
   );
 }
 
-class $$SessionBlobsTableOrderingComposer
-    extends Composer<_$AppDatabase, $SessionBlobsTable> {
-  $$SessionBlobsTableOrderingComposer({
+class $$SessionChunksTableOrderingComposer
+    extends Composer<_$AppDatabase, $SessionChunksTable> {
+  $$SessionChunksTableOrderingComposer({
     required super.$db,
     required super.$table,
     super.joinBuilder,
@@ -1373,15 +1523,20 @@ class $$SessionBlobsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get chunkIndex => $composableBuilder(
+    column: $table.chunkIndex,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<Uint8List> get data => $composableBuilder(
     column: $table.data,
     builder: (column) => ColumnOrderings(column),
   );
 }
 
-class $$SessionBlobsTableAnnotationComposer
-    extends Composer<_$AppDatabase, $SessionBlobsTable> {
-  $$SessionBlobsTableAnnotationComposer({
+class $$SessionChunksTableAnnotationComposer
+    extends Composer<_$AppDatabase, $SessionChunksTable> {
+  $$SessionChunksTableAnnotationComposer({
     required super.$db,
     required super.$table,
     super.joinBuilder,
@@ -1391,51 +1546,67 @@ class $$SessionBlobsTableAnnotationComposer
   GeneratedColumn<int> get sessionId =>
       $composableBuilder(column: $table.sessionId, builder: (column) => column);
 
+  GeneratedColumn<int> get chunkIndex => $composableBuilder(
+    column: $table.chunkIndex,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<Uint8List> get data =>
       $composableBuilder(column: $table.data, builder: (column) => column);
 }
 
-class $$SessionBlobsTableTableManager
+class $$SessionChunksTableTableManager
     extends
         RootTableManager<
           _$AppDatabase,
-          $SessionBlobsTable,
-          SessionBlob,
-          $$SessionBlobsTableFilterComposer,
-          $$SessionBlobsTableOrderingComposer,
-          $$SessionBlobsTableAnnotationComposer,
-          $$SessionBlobsTableCreateCompanionBuilder,
-          $$SessionBlobsTableUpdateCompanionBuilder,
+          $SessionChunksTable,
+          SessionChunk,
+          $$SessionChunksTableFilterComposer,
+          $$SessionChunksTableOrderingComposer,
+          $$SessionChunksTableAnnotationComposer,
+          $$SessionChunksTableCreateCompanionBuilder,
+          $$SessionChunksTableUpdateCompanionBuilder,
           (
-            SessionBlob,
-            BaseReferences<_$AppDatabase, $SessionBlobsTable, SessionBlob>,
+            SessionChunk,
+            BaseReferences<_$AppDatabase, $SessionChunksTable, SessionChunk>,
           ),
-          SessionBlob,
+          SessionChunk,
           PrefetchHooks Function()
         > {
-  $$SessionBlobsTableTableManager(_$AppDatabase db, $SessionBlobsTable table)
+  $$SessionChunksTableTableManager(_$AppDatabase db, $SessionChunksTable table)
     : super(
         TableManagerState(
           db: db,
           table: table,
           createFilteringComposer: () =>
-              $$SessionBlobsTableFilterComposer($db: db, $table: table),
+              $$SessionChunksTableFilterComposer($db: db, $table: table),
           createOrderingComposer: () =>
-              $$SessionBlobsTableOrderingComposer($db: db, $table: table),
+              $$SessionChunksTableOrderingComposer($db: db, $table: table),
           createComputedFieldComposer: () =>
-              $$SessionBlobsTableAnnotationComposer($db: db, $table: table),
+              $$SessionChunksTableAnnotationComposer($db: db, $table: table),
           updateCompanionCallback:
               ({
                 Value<int> sessionId = const Value.absent(),
+                Value<int> chunkIndex = const Value.absent(),
                 Value<Uint8List> data = const Value.absent(),
-              }) => SessionBlobsCompanion(sessionId: sessionId, data: data),
+                Value<int> rowid = const Value.absent(),
+              }) => SessionChunksCompanion(
+                sessionId: sessionId,
+                chunkIndex: chunkIndex,
+                data: data,
+                rowid: rowid,
+              ),
           createCompanionCallback:
               ({
-                Value<int> sessionId = const Value.absent(),
+                required int sessionId,
+                required int chunkIndex,
                 required Uint8List data,
-              }) => SessionBlobsCompanion.insert(
+                Value<int> rowid = const Value.absent(),
+              }) => SessionChunksCompanion.insert(
                 sessionId: sessionId,
+                chunkIndex: chunkIndex,
                 data: data,
+                rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
@@ -1445,21 +1616,21 @@ class $$SessionBlobsTableTableManager
       );
 }
 
-typedef $$SessionBlobsTableProcessedTableManager =
+typedef $$SessionChunksTableProcessedTableManager =
     ProcessedTableManager<
       _$AppDatabase,
-      $SessionBlobsTable,
-      SessionBlob,
-      $$SessionBlobsTableFilterComposer,
-      $$SessionBlobsTableOrderingComposer,
-      $$SessionBlobsTableAnnotationComposer,
-      $$SessionBlobsTableCreateCompanionBuilder,
-      $$SessionBlobsTableUpdateCompanionBuilder,
+      $SessionChunksTable,
+      SessionChunk,
+      $$SessionChunksTableFilterComposer,
+      $$SessionChunksTableOrderingComposer,
+      $$SessionChunksTableAnnotationComposer,
+      $$SessionChunksTableCreateCompanionBuilder,
+      $$SessionChunksTableUpdateCompanionBuilder,
       (
-        SessionBlob,
-        BaseReferences<_$AppDatabase, $SessionBlobsTable, SessionBlob>,
+        SessionChunk,
+        BaseReferences<_$AppDatabase, $SessionChunksTable, SessionChunk>,
       ),
-      SessionBlob,
+      SessionChunk,
       PrefetchHooks Function()
     >;
 
@@ -1468,6 +1639,6 @@ class $AppDatabaseManager {
   $AppDatabaseManager(this._db);
   $$SessionsTableTableManager get sessions =>
       $$SessionsTableTableManager(_db, _db.sessions);
-  $$SessionBlobsTableTableManager get sessionBlobs =>
-      $$SessionBlobsTableTableManager(_db, _db.sessionBlobs);
+  $$SessionChunksTableTableManager get sessionChunks =>
+      $$SessionChunksTableTableManager(_db, _db.sessionChunks);
 }

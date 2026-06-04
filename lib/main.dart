@@ -3,9 +3,15 @@ import 'package:provider/provider.dart';
 
 import 'models/app_settings.dart';
 import 'services/bt_handling.dart';
+import 'services/session_storage.dart';
 import 'screens/app_shell.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Repair any sessions left incomplete by a crash before the UI reads the
+  // session list, so partial sessions are finalized (or pruned) first.
+  await SessionStorage.recoverIncompleteSessions();
+
   runApp(
     MultiProvider(
       providers: [

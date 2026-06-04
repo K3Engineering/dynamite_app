@@ -20,17 +20,19 @@ class Sessions extends Table {
   IntColumn get calibrationOffset => integer().withDefault(const Constant(0))();
   TextColumn get notes => text().withDefault(const Constant(''))();
   IntColumn get sampleCount => integer().withDefault(const Constant(0))();
+  BoolColumn get isCompleted => boolean().withDefault(const Constant(true))();
 }
 
-class SessionBlobs extends Table {
+class SessionChunks extends Table {
   IntColumn get sessionId => integer()();
+  IntColumn get chunkIndex => integer()();
   BlobColumn get data => blob()();
 
   @override
-  Set<Column> get primaryKey => {sessionId};
+  Set<Column> get primaryKey => {sessionId, chunkIndex};
 }
 
-@DriftDatabase(tables: [Sessions, SessionBlobs])
+@DriftDatabase(tables: [Sessions, SessionChunks])
 class AppDatabase extends _$AppDatabase {
   AppDatabase._([QueryExecutor? executor]) : super(executor ?? _openDefault());
 
@@ -65,14 +67,16 @@ class AppDatabase extends _$AppDatabase {
   Future<List<Session>> allSessions() {
     return (select(
       sessions,
-    )..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).get();
+    )..where((t) => t.isCompleted.equals(true))
+     ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).get();
   }
 
   /// Stream all sessions (reactive).
   Stream<List<Session>> watchAllSessions() {
     return (select(
       sessions,
-    )..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
+    )..where((t) => t.isCompleted.equals(true))
+     ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
   }
 
   /// Get a single session by id.
@@ -90,7 +94,7 @@ class AppDatabase extends _$AppDatabase {
   /// Delete a session.
   Future<int> deleteSession(int id) {
     return transaction(() async {
-      await (delete(sessionBlobs)..where((t) => t.sessionId.equals(id))).go();
+      await (delete(sessionChunks)..where((t) => t.sessionId.equals(id))).go();
       return (delete(sessions)..where((t) => t.id.equals(id))).go();
     });
   }

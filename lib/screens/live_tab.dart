@@ -88,6 +88,24 @@ class _LiveTabState extends State<LiveTab> {
       _dataSource?.dispose();
       _dataSource = _LiveDataSource(bt.dataHub);
     }
+
+    // A recording can be auto-stopped if its storage writer starts failing.
+    // Surface that to the user once (then clear it).
+    final writeError = bt.sessionWriteError;
+    if (writeError != null) {
+      bt.clearSessionWriteError();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Recording stopped — storage error: $writeError'),
+            behavior: SnackBarBehavior.floating,
+            persist: true,
+            showCloseIcon: true,
+          ),
+        );
+      });
+    }
   }
 
   @override
@@ -111,55 +129,69 @@ class _LiveTabState extends State<LiveTab> {
 
   Future<void> _onToggleRecord() async {
     final bt = context.read<BluetoothHandling>();
+    final settings = context.read<AppSettings>();
+    
     if (bt.sessionInProgress) {
-      bt.stopSession();
+      final result = await bt.stopSession();
+      final sessionId = result.sessionId;
 
-      // Auto-save if there's recorded data
-      final recordedSamples = bt.dataHub.totalSamples - bt.dataHub.recordingStartIdx;
-      if (recordedSamples > 0) {
-        final settings = context.read<AppSettings>();
-        final now = DateTime.now();
-        final autoName =
-            '${now.month}/${now.day} ${now.hour}:${now.minute.toString().padLeft(2, '0')}';
+      if (!mounted) return;
 
-        try {
-          final id = await SessionStorage.saveSession(
-            dataHub: bt.dataHub,
-            name: autoName,
-            channelLabels: settings.channelLabels,
-            channelCount: settings.activeChannelCount,
-          );
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: const Text('Session saved'),
-                behavior: SnackBarBehavior.floating,
-                showCloseIcon: true,
-                persist: false,
-                action: SnackBarAction(
-                  label: 'Name it',
-                  onPressed: () => _showRenameDialog(id, autoName),
-                ),
-                duration: const Duration(seconds: 4),
-              ),
-            );
-          }
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Failed to save: $e'),
-                behavior: SnackBarBehavior.floating,
-                persist: true,
-                showCloseIcon: true,
-              ),
-            );
-          }
-        }
+      if (result.error != null) {
+        // Storage failed mid-recording; the session may be truncated.
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Recording failed to save fully: ${result.error}'),
+            behavior: SnackBarBehavior.floating,
+            persist: true,
+            showCloseIcon: true,
+          ),
+        );
+      } else if (sessionId != null) {
+        // Need to get the name we used when starting
+        final session = await AppDatabase.instance.sessionById(sessionId);
+        if (!mounted) return;
+        final sessionName = session?.name ?? 'Session';
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Session saved'),
+            behavior: SnackBarBehavior.floating,
+            showCloseIcon: true,
+            persist: false,
+            action: SnackBarAction(
+              label: 'Name it',
+              onPressed: () => _showRenameDialog(sessionId, sessionName),
+            ),
+            duration: const Duration(seconds: 4),
+          ),
+        );
       }
     } else {
-      // toggleSession marks the recording start index inside DataHub.
-      bt.toggleSession();
+      final now = DateTime.now();
+      final autoName =
+          '${now.month}/${now.day} ${now.hour}:${now.minute.toString().padLeft(2, '0')}';
+
+      try {
+        final writer = await SessionStorage.startSession(
+          dataHub: bt.dataHub,
+          name: autoName,
+          channelLabels: settings.channelLabels,
+          channelCount: settings.activeChannelCount,
+        );
+        await bt.startSession(writer);
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to start recording: $e'),
+              behavior: SnackBarBehavior.floating,
+              persist: true,
+              showCloseIcon: true,
+            ),
+          );
+        }
+      }
     }
   }
 
