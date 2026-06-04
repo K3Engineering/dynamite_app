@@ -44,9 +44,13 @@ class CacheConfig {
   );
 
   bool matches(CacheConfig other) {
+    if (viewSamples != other.viewSamples) return false;
+    return matchesExceptViewSamples(other);
+  }
+
+  bool matchesExceptViewSamples(CacheConfig other) {
     if ((graphW - other.graphW).abs() > 0.1) return false;
     if ((graphH - other.graphH).abs() > 0.1) return false;
-    if (viewSamples != other.viewSamples) return false;
     if ((yMin - other.yMin).abs() > 1e-6) return false;
     if ((yMax - other.yMax).abs() > 1e-6) return false;
     if (tares.length != other.tares.length) return false;
@@ -57,10 +61,16 @@ class CacheConfig {
   }
 }
 
+class CachedChunk {
+  final ui.Picture picture;
+  final int viewSamples;
+  CachedChunk(this.picture, this.viewSamples);
+}
+
 class GraphLineCache {
   CacheConfig? config;
   int chunkSamples = 1000;
-  final Map<int, ui.Picture> chunks = {};
+  final Map<int, CachedChunk> chunks = {};
 
   void invalidate() {
     chunks.clear();
@@ -375,6 +385,7 @@ class Minimap extends StatelessWidget {
   final List<int> activeChannels;
   final GraphController graphCtrl;
   final List<Color> channelColors;
+  final GraphLineCache cache;
 
   const Minimap({
     super.key,
@@ -382,6 +393,7 @@ class Minimap extends StatelessWidget {
     required this.activeChannels,
     required this.graphCtrl,
     required this.channelColors,
+    required this.cache,
   });
 
   void _onPointerSignal(
@@ -535,6 +547,7 @@ class Minimap extends StatelessWidget {
                   graphCtrl,
                   channelColors,
                   colorScheme,
+                  cache,
                 ),
                 size: Size.infinite,
               ),
@@ -552,6 +565,7 @@ class _MinimapPainter extends CustomPainter {
   final GraphController _ctrl;
   final List<Color> _colors;
   final ColorScheme _colorScheme;
+  final GraphLineCache _cache;
 
   _MinimapPainter(
     this._data,
@@ -559,6 +573,7 @@ class _MinimapPainter extends CustomPainter {
     this._ctrl,
     this._colors,
     this._colorScheme,
+    this._cache,
   ) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
 
   @override
@@ -598,150 +613,55 @@ class _MinimapPainter extends CustomPainter {
     final dataRange = rawMax - rawMin;
     if (dataRange <= 0) return;
 
-    // Draw simplified waveform for each channel
-    final pen = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
+    final config = CacheConfig(
+      gw,
+      gh,
+      mapSpan,
+      rawMin,
+      rawMax,
+      _activeIndices.map((ch) => _data.channel(ch).tare).toList(),
+    );
 
-    final int gwInt = gw.toInt();
-    for (int i = 0; i < _activeIndices.length; i++) {
-      final ch = _activeIndices[i];
-      final line = _data.channel(ch).data;
-      if (line.isEmpty) continue;
+    // Lock chunk size to 1 minute to ensure the chunks grid is absolute and stable.
+    final int fixedChunkSize = _data.sampleRate * 60;
 
-      final tare = _data.channel(ch).tare;
-      final bufferCapacity = _data.bufferCapacity;
+    paintCachedChannels(
+      canvas,
+      _cache,
+      config,
+      viewStart: mapStart,
+      viewEnd: mapStart + mapSpan,
+      totalSamples: totalSamples,
+      oldestSample: oldestSample,
+      graphW: gw,
+      fixedChunkSamples: fixedChunkSize,
+      drawChunk: (cCanvas, chunkStartSample, chunkEndSample, limitSamples) {
+        for (int i = 0; i < _activeIndices.length; i++) {
+          final ch = _activeIndices[i];
+          final s = _data.channel(ch);
+          if (s.data.isEmpty) continue;
+          
+          final tare = s.tare;
+          final chColor = _colors[ch % _colors.length];
 
-      final chColor = _colors[ch % _colors.length];
-
-      final avg = VertexBatcher(
-        preserveFloats: 2,
-        drawThreshold: 2,
-        onFlush: (view) {
-          pen
-            ..color = chColor.withAlpha(180)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.0;
-          canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
-        },
-      );
-
-      final env = VertexBatcher(
-        preserveFloats: 4,
-        drawThreshold: 4,
-        onFlush: (view) {
-          final vertices = ui.Vertices.raw(ui.VertexMode.triangleStrip, view);
-          pen
-            ..color = chColor.withAlpha(60)
-            ..style = PaintingStyle.fill;
-          canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
-          vertices.dispose();
-        },
-      );
-
-      final chSeries = _data.channel(ch);
-      final int bucketSize = chSeries.bucketSize;
-      final bucketMins = chSeries.bucketMins;
-      final bucketMaxs = chSeries.bucketMaxs;
-      final bucketSums = chSeries.bucketSums;
-      final int numBuckets = bucketMins.length;
-
-      for (int px = 0; px < gwInt; px++) {
-        final int sStart = mapStart + px * mapSpan ~/ gwInt;
-        final int sEnd = mapStart + (px + 1) * mapSpan ~/ gwInt;
-        final int drawStart = math.max(sStart, oldestSample);
-        final int drawEnd = math.min(sEnd, totalSamples);
-
-        if (drawStart >= drawEnd) continue;
-
-        double total = 0;
-        double minRaw = double.infinity;
-        double maxRaw = double.negativeInfinity;
-        int validSamples = 0;
-
-        final int samplesInPixel = drawEnd - drawStart;
-
-        if (samplesInPixel <= bucketSize * 2) {
-          // High-res mode: loop the raw array to avoid blockiness when zoomed
-          // in. Honors the dropped-sample sentinel so gaps don't skew the plot.
-          for (int j = drawStart; j < drawEnd; j++) {
-            final val = line[j % bufferCapacity];
-            if (_data.missingSampleSentinel != null &&
-                val == _data.missingSampleSentinel) {
-              continue;
-            }
-            final valDouble = val.toDouble();
-            total += valDouble;
-            if (valDouble < minRaw) minRaw = valDouble;
-            if (valDouble > maxRaw) maxRaw = valDouble;
-            validSamples++;
-          }
-        } else {
-          // Squished mode: aggregate from the precomputed bucket arrays.
-          // Sentinels are already excluded from the buckets at ingest time.
-          final int bStart = drawStart ~/ bucketSize;
-          final int bEnd = drawEnd ~/ bucketSize;
-
-          for (int b = bStart; b <= bEnd; b++) {
-            final int listIdx = b % numBuckets;
-
-            final double bMin = bucketMins[listIdx].toDouble();
-            final double bMax = bucketMaxs[listIdx].toDouble();
-            if (bMin < minRaw) minRaw = bMin;
-            if (bMax > maxRaw) maxRaw = bMax;
-
-            int count = bucketSize;
-            if (b == bStart) {
-              // Only count the covered portion of the first bucket.
-              final int bucketEndSample = (b + 1) * bucketSize;
-              count = bucketEndSample - drawStart;
-              if (count > bucketSize) count = bucketSize;
-            } else if (b == bEnd) {
-              // Only count the covered portion of the last bucket.
-              final int bucketStartSample = b * bucketSize;
-              count = drawEnd - bucketStartSample;
-              if (count > bucketSize) count = bucketSize;
-            }
-            if (count < 0) count = 0;
-
-            // Approximate the sum contribution of the covered portion.
-            final double avgOfBucket = bucketSums[listIdx] / bucketSize;
-            total += avgOfBucket * count;
-            validSamples += count;
-          }
+          drawChannelEnvelope(
+            cCanvas,
+            color: chColor,
+            graphW: gw,
+            viewStart: chunkStartSample,
+            viewSamples: mapSpan,
+            oldestSample: oldestSample,
+            totalSamples: limitSamples,
+            firstUsableSample: math.max(oldestSample, chunkStartSample),
+            series: s,
+            missingSampleSentinel: _data.missingSampleSentinel,
+            valueToY: (raw) => (gh - (raw - tare - rawMin) * gh / dataRange).clamp(0.0, gh),
+            showEnvelope: true,
+            clipEnvelopeSamples: chunkEndSample,
+          );
         }
-
-        if (validSamples == 0) {
-          env.flush();
-          avg.flush();
-          continue;
-        }
-
-        final avgRaw = total / validSamples;
-
-        final avgTared = avgRaw - tare;
-        final minTared = minRaw - tare;
-        final maxTared = maxRaw - tare;
-
-        final avgY = (gh - (avgTared - rawMin) * gh / dataRange).clamp(0.0, gh);
-        final minY = (gh - (minTared - rawMin) * gh / dataRange).clamp(0.0, gh);
-        final maxY = (gh - (maxTared - rawMin) * gh / dataRange).clamp(0.0, gh);
-
-        final xPos = px.toDouble();
-        avg.add(xPos, avgY);
-
-        env.add(xPos, maxY);
-        env.add(xPos, minY);
-
-        // Flush chunks if we are getting close to the array limits
-        if (env.wouldOverflow(4)) env.flush();
-        if (avg.wouldOverflow(2)) avg.flush();
-      }
-
-      // Flush remaining data
-      env.flush();
-      avg.flush();
-    }
+      },
+    );
 
     // Viewport highlight
     final (viewStart, viewEnd) = _ctrl.effectiveRange(
@@ -978,11 +898,13 @@ class GraphWorkspace extends StatefulWidget {
 class _GraphWorkspaceState extends State<GraphWorkspace> {
   final GraphLineCache _forceCache = GraphLineCache();
   final GraphLineCache _derivCache = GraphLineCache();
+  final GraphLineCache _minimapCache = GraphLineCache();
 
   @override
   void dispose() {
     _forceCache.invalidate();
     _derivCache.invalidate();
+    _minimapCache.invalidate();
     super.dispose();
   }
 
@@ -1043,6 +965,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                   channelColors: widget.settings.activeChannelIndices
                       .map(getChannelColor)
                       .toList(),
+                  cache: _minimapCache,
                 ),
               ],
             ),
@@ -1515,8 +1438,10 @@ void drawChannelEnvelope(
   required int oldestSample,
   required int totalSamples,
   required int firstUsableSample,
-  required double Function(int sampleIndex) sampleAt,
   required double Function(double rawReduced) valueToY,
+  double Function(int sampleIndex)? sampleAt,
+  ChannelSeries? series,
+  int? missingSampleSentinel,
   bool showEnvelope = true,
   int? clipEnvelopeSamples,
 }) {
@@ -1553,37 +1478,76 @@ void drawChannelEnvelope(
   // Blocks are anchored to absolute sample 0 (sStart = k * blockSize), NOT to
   // viewStart. This is what lets a block fall on the same pixels regardless of
   // scroll, so paintCachedChannels can record it once and reuse it.
-  final int startBlock = (math.max(viewStart, firstUsableSample) / blockSize)
-      .floor();
+  final int startBlock = (math.max(viewStart, firstUsableSample) / blockSize).floor();
   final int endBlock = (totalSamples / blockSize).ceil();
   final int envelopeLimit = clipEnvelopeSamples ?? totalSamples;
 
   for (int k = startBlock; k < endBlock; k++) {
     final int sStart = k * blockSize;
-    final int sEnd = math.min(
-      sStart + blockSize,
-      totalSamples,
-    ); // last block may be short
+    final int sEnd = math.min(sStart + blockSize, totalSamples); // last block may be short
 
     final int drawStart = math.max(sStart, firstUsableSample);
     if (drawStart >= sEnd) continue;
     // sEnd - drawStart in [1, blockSize]; the full-blockSize case is the common
     // one, but do NOT assert it: the trailing block and a block clipped by
     // firstUsableSample are both legitimately shorter.
-    assert(sEnd - drawStart >= 1 && sEnd - drawStart <= blockSize);
 
     double total = 0;
     double minRaw = double.infinity;
     double maxRaw = double.negativeInfinity;
     int validSamples = 0;
 
-    for (int j = drawStart; j < sEnd; j++) {
-      final v = sampleAt(j);
-      if (v.isNaN) continue;
-      total += v;
-      if (v < minRaw) minRaw = v;
-      if (v > maxRaw) maxRaw = v;
-      validSamples++;
+    if (sampleAt != null) {
+      for (int j = drawStart; j < sEnd; j++) {
+        final v = sampleAt(j);
+        if (v.isNaN) continue;
+        total += v;
+        if (v < minRaw) minRaw = v;
+        if (v > maxRaw) maxRaw = v;
+        validSamples++;
+      }
+    } else if (series != null) {
+      final int samplesInBlock = sEnd - drawStart;
+      if (samplesInBlock <= series.bucketSize * 2) {
+        final line = series.data;
+        final cap = line.length;
+        for (int j = drawStart; j < sEnd; j++) {
+          final val = line[j % cap];
+          if (missingSampleSentinel != null && val == missingSampleSentinel) continue;
+          final v = val.toDouble();
+          total += v;
+          if (v < minRaw) minRaw = v;
+          if (v > maxRaw) maxRaw = v;
+          validSamples++;
+        }
+      } else {
+        final int bStart = drawStart ~/ series.bucketSize;
+        final int bEnd = (sEnd - 1) ~/ series.bucketSize;
+        final int numBuckets = series.bucketMins.length;
+        
+        for (int b = bStart; b <= bEnd; b++) {
+          final int listIdx = b % numBuckets;
+          final double bMin = series.bucketMins[listIdx].toDouble();
+          final double bMax = series.bucketMaxs[listIdx].toDouble();
+          if (bMin < minRaw) minRaw = bMin;
+          if (bMax > maxRaw) maxRaw = bMax;
+
+          int count = series.bucketSize;
+          if (b == bStart) {
+            final int bucketEndSample = (b + 1) * series.bucketSize;
+            count = bucketEndSample - drawStart;
+            if (count > series.bucketSize) count = series.bucketSize;
+          } else if (b == bEnd) {
+            final int bucketStartSample = b * series.bucketSize;
+            count = sEnd - bucketStartSample;
+            if (count > series.bucketSize) count = series.bucketSize;
+          }
+          if (count < 0) count = 0;
+
+          total += (series.bucketSums[listIdx] / series.bucketSize) * count;
+          validSamples += count;
+        }
+      }
     }
 
     if (validSamples == 0) {
@@ -1660,20 +1624,26 @@ void paintCachedChannels(
     int chunkStartSample,
     int chunkEndSample,
     int limitSamples,
-  )
-  drawChunk,
+  ) drawChunk,
+  int? fixedChunkSamples,
 }) {
   final int viewSamples = config.viewSamples;
   final int blockSize = blockSizeFor(viewSamples, graphW);
 
+  bool viewSamplesChanged = false;
   if (cache.config == null || !cache.config!.matches(config)) {
-    cache.invalidate();
-    cache.config = config;
-    cache.chunkSamples = chunkSamplesFor(viewSamples / graphW, blockSize);
+    if (cache.config != null && cache.config!.matchesExceptViewSamples(config)) {
+      viewSamplesChanged = true;
+      cache.config = config;
+    } else {
+      cache.invalidate();
+      cache.config = config;
+    }
   }
-  assert(
-    cache.chunkSamples % blockSize == 0,
-  ); // tiles tile the block grid exactly
+  
+  if (cache.chunks.isEmpty) {
+    cache.chunkSamples = fixedChunkSamples ?? chunkSamplesFor(viewSamples / graphW, blockSize);
+  }
 
   // `~/` truncates toward zero. For viewStart >= 0, startChunk's tile begins at
   // or LEFT of viewStart. If viewStart < 0 (empty space before the first sample),
@@ -1681,6 +1651,24 @@ void paintCachedChannels(
   // In both cases, the loop covers all populated tiles that overlap the view.
   final int startChunk = viewStart ~/ cache.chunkSamples;
   final int endChunk = viewEnd ~/ cache.chunkSamples;
+
+  // Round robin redraw: If we are scaling the minimap, pick ONE fully populated
+  // chunk that was recorded at a different viewSamples and redraw it this frame.
+  int chunkToRedraw = -1;
+  if (viewSamplesChanged) {
+    for (int c = startChunk; c <= endChunk; c++) {
+      final chunkStartSample = c * cache.chunkSamples;
+      final chunkEndSample = chunkStartSample + cache.chunkSamples;
+      final isFullyPopulated = chunkEndSample <= totalSamples && chunkStartSample >= oldestSample;
+      if (isFullyPopulated) {
+        final chunk = cache.chunks[c];
+        if (chunk != null && chunk.viewSamples != viewSamples) {
+          chunkToRedraw = c;
+          break; // Just redraw one per frame to maintain 60fps
+        }
+      }
+    }
+  }
 
   for (int c = startChunk; c <= endChunk; c++) {
     final int chunkStartSample = c * cache.chunkSamples;
@@ -1691,15 +1679,17 @@ void paintCachedChannels(
     // change every frame, so they are re-recorded and never stored.
     final bool isFullyPopulated =
         chunkEndSample <= totalSamples && chunkStartSample >= oldestSample;
-    // NB: do NOT assert chunkStartSample >= viewStart (false for startChunk) nor
-    // >= oldestSample (false for the leftmost tile) -- that's exactly the case
-    // isFullyPopulated guards against.
 
-    ui.Picture? pic = cache.chunks[c];
+    CachedChunk? chunkData = cache.chunks[c];
 
-    if (pic == null) {
+    if (chunkData == null || (isFullyPopulated && c == chunkToRedraw)) {
       final recorder = ui.PictureRecorder();
       final cCanvas = Canvas(recorder);
+
+      // Clip strictly to chunk boundaries to prevent double-blending envelopes 
+      // when scaled or when block boundaries straddle chunks.
+      final double chunkPixelsW = (chunkEndSample - chunkStartSample) * graphW / viewSamples;
+      cCanvas.clipRect(Rect.fromLTRB(0, -1000, chunkPixelsW, config.graphH + 1000));
 
       final int limitSamples = math.min(
         chunkEndSample + blockSize,
@@ -1707,11 +1697,14 @@ void paintCachedChannels(
       );
       drawChunk(cCanvas, chunkStartSample, chunkEndSample, limitSamples);
 
-      pic = recorder.endRecording();
+      final pic = recorder.endRecording();
+      chunkData = CachedChunk(pic, viewSamples);
       if (isFullyPopulated) {
-        cache.chunks[c] = pic;
+        cache.chunks[c] = chunkData;
       }
     }
+
+    final ui.Picture pic = chunkData.picture;
 
     // The tile was recorded with chunkStartSample as its local origin, so shift
     // it bodily into place; cached tiles only ever differ by this offset.
@@ -1724,7 +1717,20 @@ void paintCachedChannels(
       chunkEndSample > viewStart && chunkStartSample < viewEnd,
     ); // tile overlaps view
     canvas.save();
-    canvas.translate(xOffset, 0);
+    
+    // Calculate precise scaling for old chunks that have a different recorded viewSamples.
+    // Because we recorded the chunk stretching its viewSamples across graphW pixels,
+    // and we want it to stretch the SAME samples across graphW pixels NOW that the
+    // global viewSamples is different, we scale it.
+    if (chunkData.viewSamples != viewSamples) {
+       final double scaleRatio = chunkData.viewSamples / viewSamples;
+       
+       canvas.translate(xOffset, 0);
+       canvas.scale(scaleRatio, 1.0);
+    } else {
+       canvas.translate(xOffset, 0);
+    }
+    
     canvas.drawPicture(pic);
     canvas.restore();
   }
@@ -1791,6 +1797,70 @@ _GraphLayout? _setupGraphFrame(
     viewEnd: viewEnd,
     viewSamples: viewSamples,
   );
+}
+
+void paintTimeGraphAxesAndGrid(
+  Canvas canvas,
+  Size graphSz, {
+  required int viewStart,
+  required int viewEnd,
+  required int oldestSample,
+  required int sampleRate,
+  required ({double yMin, double yMax, double tickDelta}) yRange,
+  required double Function(double value) valueToY,
+  required String Function(double tick) yLabelFor,
+  required ColorScheme colorScheme,
+  bool showXLabels = true,
+  String? topLeftLabel,
+  required GraphDataSource data,
+}) {
+  final grid = Path();
+  drawTimeAxis(
+    canvas,
+    grid,
+    graphSz,
+    viewStart: viewStart,
+    viewEnd: viewEnd,
+    oldestSample: oldestSample,
+    sampleRate: sampleRate,
+    showLabels: showXLabels,
+    drawMinor: true,
+    textColor: colorScheme.onSurface,
+  );
+  drawValueAxis(
+    canvas,
+    grid,
+    graphSz,
+    yRange,
+    valueToY,
+    labelFor: yLabelFor,
+    drawMinor: true,
+    textColor: colorScheme.onSurface,
+  );
+  final gridPen = Paint()
+    ..color = colorScheme.onSurface.withAlpha(50)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 0.2;
+  canvas.drawPath(grid, gridPen);
+
+  drawZeroBaseline(canvas, graphSz, yRange, valueToY, colorScheme.onSurface.withAlpha(130));
+
+  drawMissingDataHatching(
+    canvas,
+    graphSz,
+    viewStart: viewStart,
+    viewEnd: viewEnd,
+    data: data,
+    color: colorScheme.error,
+  );
+
+  if (topLeftLabel != null) {
+    final dLabel = _prepareLabel(
+      topLeftLabel,
+      color: colorScheme.onSurface.withAlpha(150),
+    );
+    canvas.drawParagraph(dLabel, const Offset(4, 2));
+  }
 }
 
 class ForceGraphPainter extends CustomPainter {
@@ -1882,44 +1952,19 @@ class ForceGraphPainter extends CustomPainter {
     }
 
     // -- Grid and labels --
-    final grid = Path();
-    drawTimeAxis(
+    paintTimeGraphAxesAndGrid(
       canvas,
-      grid,
       graphSz,
       viewStart: viewStart,
       viewEnd: viewEnd,
       oldestSample: oldestSample,
       sampleRate: _data.sampleRate,
-      showLabels: showXLabels,
-      drawMinor: true,
-      textColor: colorScheme.onSurface,
-    );
-    drawValueAxis(
-      canvas,
-      grid,
-      graphSz,
-      yRange,
-      unitToY,
-      labelFor: (tick) => _formatTickLabel(tick, unit.symbol),
-      drawMinor: true,
-      textColor: colorScheme.onSurface,
-    );
-    final gridPen = Paint()
-      ..color = colorScheme.onSurface.withAlpha(50)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.2;
-    canvas.drawPath(grid, gridPen);
-
-    drawZeroBaseline(canvas, graphSz, yRange, unitToY, colorScheme.onSurface.withAlpha(130));
-
-    drawMissingDataHatching(
-      canvas,
-      graphSz,
-      viewStart: viewStart,
-      viewEnd: viewEnd,
+      yRange: yRange,
+      valueToY: unitToY,
+      yLabelFor: (tick) => _formatTickLabel(tick, unit.symbol),
+      colorScheme: colorScheme,
+      showXLabels: showXLabels,
       data: _data,
-      color: colorScheme.error,
     );
 
     // -- Data lines --
@@ -1949,10 +1994,8 @@ class ForceGraphPainter extends CustomPainter {
       drawChunk: (cCanvas, chunkStartSample, chunkEndSample, limitSamples) {
         for (final ch in activeIndices) {
           final s = _data.channel(ch);
-          final line = s.data;
-          if (line.isEmpty) continue;
+          if (s.data.isEmpty) continue;
           final tare = s.tare;
-          final bufferCap = _data.bufferCapacity;
 
           drawChannelEnvelope(
             cCanvas,
@@ -1963,11 +2006,8 @@ class ForceGraphPainter extends CustomPainter {
             oldestSample: oldestSample,
             totalSamples: limitSamples,
             firstUsableSample: math.max(oldestSample, chunkStartSample),
-            sampleAt: (j) {
-              final val = line[j % bufferCap];
-              if (_data.missingSampleSentinel != null && val == _data.missingSampleSentinel) return double.nan;
-              return val.toDouble();
-            },
+            series: s,
+            missingSampleSentinel: _data.missingSampleSentinel,
             valueToY: (raw) =>
                 unitToY((raw - tare) * slopeToUnit).clamp(0.0, graphSz.height),
             showEnvelope: showEnvelope,
@@ -2079,50 +2119,21 @@ class DerivativeGraphPainter extends CustomPainter {
     }
 
     // Grid + labels (axes shared with the force graph above).
-    final grid = Path();
-    drawTimeAxis(
+    paintTimeGraphAxesAndGrid(
       canvas,
-      grid,
       graphSz,
       viewStart: viewStart,
       viewEnd: viewEnd,
       oldestSample: oldestSample,
       sampleRate: _data.sampleRate,
-      showLabels: true,
-      textColor: colorScheme.onSurface,
-    );
-    drawValueAxis(
-      canvas,
-      grid,
-      graphSz,
-      yRange,
-      valToY,
-      labelFor: (tick) => '${_formatTickValue(tick)}/s',
-      textColor: colorScheme.onSurface,
-    );
-    final gridPen = Paint()
-      ..color = colorScheme.onSurface.withAlpha(50)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.2;
-    canvas.drawPath(grid, gridPen);
-
-    drawZeroBaseline(canvas, graphSz, yRange, valToY, colorScheme.onSurface.withAlpha(130));
-
-    drawMissingDataHatching(
-      canvas,
-      graphSz,
-      viewStart: viewStart,
-      viewEnd: viewEnd,
+      yRange: yRange,
+      valueToY: valToY,
+      yLabelFor: (tick) => '${_formatTickValue(tick)}/s',
+      colorScheme: colorScheme,
+      showXLabels: true,
+      topLeftLabel: 'dF/dt (${unit.symbol}/s)',
       data: _data,
-      color: colorScheme.error,
     );
-
-    // "dF/dt" label in top-left
-    final dLabel = _prepareLabel(
-      'dF/dt (${unit.symbol}/s)',
-      color: colorScheme.onSurface.withAlpha(150),
-    );
-    canvas.drawParagraph(dLabel, const Offset(4, 2));
 
     // Data lines
     final currentConfig = CacheConfig(
