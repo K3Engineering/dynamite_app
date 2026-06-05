@@ -3,7 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
 import '../models/force_unit.dart';
-import '../services/database.dart';
+import '../models/session_model.dart';
+import '../services/session_repository.dart';
 import 'session_detail_screen.dart';
 
 class SessionsTab extends StatefulWidget {
@@ -34,8 +35,8 @@ class _SessionsTabState extends State<SessionsTab> {
             ),
           ),
           Expanded(
-            child: StreamBuilder<List<Session>>(
-              stream: AppDatabase.instance.watchAllSessions(),
+            child: StreamBuilder<List<SessionModel>>(
+              stream: SessionRepository.instance.watchAllSessions(),
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
                   return Center(
@@ -110,7 +111,7 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  Future<void> _openDetail(Session session) async {
+  Future<void> _openDetail(SessionModel session) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => SessionDetailScreen(session: session),
@@ -118,7 +119,7 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  Future<void> _deleteSession(Session session) async {
+  Future<void> _deleteSession(SessionModel session) async {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -142,7 +143,7 @@ class _SessionsTabState extends State<SessionsTab> {
     );
 
     if (confirm == true) {
-      await AppDatabase.instance.deleteSession(session.id);
+      await SessionRepository.instance.deleteSession(session.id);
     }
   }
 }
@@ -156,7 +157,7 @@ class _SessionCard extends StatelessWidget {
     required this.onDelete,
   });
 
-  final Session session;
+  final SessionModel session;
   final ForceUnit unit;
   final double calibrationSlope;
   final VoidCallback onTap;

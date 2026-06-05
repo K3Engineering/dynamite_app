@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 
-import 'database.dart';
+import 'session_repository.dart';
+import '../models/session_model.dart';
 import 'bt_handling.dart';
 
 /// Chunk format: packed int32 LE values, interleaved
@@ -26,20 +26,16 @@ class SessionStorage {
     required int channelCount,
     String notes = '',
   }) async {
-    final sessionId = await AppDatabase.instance.insertSession(
-      SessionsCompanion.insert(
-        name: Value(name),
-        createdAt: DateTime.now(),
-        sampleRate: const Value(DataHub.samplesPerSec),
-        // We always persist every ADC channel, so the stored channel count must
-        // match what the writer packs (and what loadSession reads back).
-        channelCount: const Value(DataHub.numAdcChannels),
-        channelLabels: Value(jsonEncode(channelLabels)),
-        calibrationSlope: Value(dataHub.deviceCalibration.slope),
-        calibrationOffset: Value(dataHub.deviceCalibration.offset),
-        notes: Value(notes),
-        isCompleted: const Value(false),
-      ),
+    final sessionId = await SessionRepository.instance.createSession(
+      name: name,
+      sampleRate: DataHub.samplesPerSec,
+      // We always persist every ADC channel, so the stored channel count must
+      // match what the writer packs (and what loadSession reads back).
+      channelCount: DataHub.numAdcChannels,
+      channelLabels: jsonEncode(channelLabels),
+      calibrationSlope: dataHub.deviceCalibration.slope,
+      calibrationOffset: dataHub.deviceCalibration.offset,
+      notes: notes,
     );
 
     return LiveSessionWriter(sessionId);
@@ -56,17 +52,13 @@ class SessionStorage {
   }) async {
     await writer.flush();
 
-    await AppDatabase.instance.updateSession(
-      writer.sessionId,
-      SessionsCompanion(
-        sampleCount: Value(writer.totalSamplesRecorded),
-        durationMs: Value(
-          (writer.totalSamplesRecorded * 1000) ~/ DataHub.samplesPerSec,
-        ),
-        peakForceRaw: Value(writer.peakRaw),
-        peakForceChannel: Value(writer.peakChannel),
-        isCompleted: const Value(true),
-      ),
+    await SessionRepository.instance.updateSessionCompletion(
+      id: writer.sessionId,
+      sampleCount: writer.totalSamplesRecorded,
+      durationMs: (writer.totalSamplesRecorded * 1000) ~/ DataHub.samplesPerSec,
+      peakForceRaw: writer.peakRaw,
+      peakForceChannel: writer.peakChannel,
+      isCompleted: true,
     );
 
     return writer.writeError;
@@ -76,20 +68,16 @@ class SessionStorage {
   /// by scanning their persisted chunks to rebuild aggregates and marking them
   /// completed. Sessions with no chunks are deleted.
   static Future<void> recoverIncompleteSessions() async {
-    final incomplete = await (AppDatabase.instance.select(
-      AppDatabase.instance.sessions,
-    )..where((t) => t.isCompleted.equals(false))).get();
+    final incomplete = await SessionRepository.instance.getIncompleteSessions();
 
     for (final session in incomplete) {
       debugPrint('Recovering incomplete session: ${session.id}');
 
-      final chunks = await (AppDatabase.instance.select(
-        AppDatabase.instance.sessionChunks,
-      )..where((t) => t.sessionId.equals(session.id))).get();
+      final chunks = await SessionRepository.instance.getSessionChunks(session.id);
 
       if (chunks.isEmpty) {
         // Started but never wrote a chunk. Nothing to keep.
-        await AppDatabase.instance.deleteSession(session.id);
+        await SessionRepository.instance.deleteSession(session.id);
         continue;
       }
 
@@ -97,28 +85,23 @@ class SessionStorage {
       // are best-effort (computed against a zero tare).
       final agg = _ChunkAggregate(session.channelCount);
       for (final chunk in chunks) {
-        agg.scan(chunk.data, _zeroTare);
+        agg.scan(chunk, _zeroTare);
       }
 
-      await AppDatabase.instance.updateSession(
-        session.id,
-        SessionsCompanion(
-          sampleCount: Value(agg.samples),
-          durationMs: Value((agg.samples * 1000) ~/ session.sampleRate),
-          peakForceRaw: Value(agg.peakRaw),
-          peakForceChannel: Value(agg.peakChannel),
-          isCompleted: const Value(true),
-        ),
+      await SessionRepository.instance.updateSessionCompletion(
+        id: session.id,
+        sampleCount: agg.samples,
+        durationMs: (agg.samples * 1000) ~/ session.sampleRate,
+        peakForceRaw: agg.peakRaw,
+        peakForceChannel: agg.peakChannel,
+        isCompleted: true,
       );
     }
   }
 
   /// Read a session's recorded data back from its chunks.
-  static Future<SessionData?> loadSession(Session session) async {
-    final chunks = await (AppDatabase.instance.select(
-      AppDatabase.instance.sessionChunks,
-    )..where((t) => t.sessionId.equals(session.id))
-     ..orderBy([(t) => OrderingTerm(expression: t.chunkIndex)])).get();
+  static Future<SessionData?> loadSession(SessionModel session) async {
+    final chunks = await SessionRepository.instance.getSessionChunks(session.id);
 
     if (chunks.isEmpty) {
       debugPrint('No chunks found for session: ${session.id}');
@@ -131,7 +114,7 @@ class SessionStorage {
 
     int globalS = 0;
     for (final chunk in chunks) {
-      final data = ByteData.sublistView(chunk.data);
+      final data = ByteData.sublistView(chunk);
       final chunkSamples = data.lengthInBytes ~/ (channelCount * 4);
       int offset = 0;
       for (int s = 0; s < chunkSamples; s++) {
@@ -350,15 +333,7 @@ class LiveSessionWriter {
     final dataToSave = _staging.takeBytes();
     final chunkIdx = _chunkIndex++;
     try {
-      await AppDatabase.instance
-          .into(AppDatabase.instance.sessionChunks)
-          .insert(
-            SessionChunksCompanion.insert(
-              sessionId: sessionId,
-              chunkIndex: chunkIdx,
-              data: dataToSave,
-            ),
-          );
+      await SessionRepository.instance.writeChunk(sessionId, chunkIdx, dataToSave);
     } catch (e) {
       // Latch the first failure; stop accumulating so we don't grow unbounded
       // after the sink has gone away (e.g. disk full / web quota exceeded).

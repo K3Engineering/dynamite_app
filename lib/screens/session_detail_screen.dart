@@ -2,22 +2,22 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../models/app_settings.dart';
+import '../models/session_model.dart';
 import '../services/bt_device_config.dart';
-import '../services/database.dart';
+import '../services/session_repository.dart';
 import '../services/session_storage.dart';
 import '../widgets/graph_components.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   const SessionDetailScreen({super.key, required this.session});
 
-  final Session session;
+  final SessionModel session;
 
   @override
   State<SessionDetailScreen> createState() => _SessionDetailScreenState();
@@ -68,7 +68,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   bool _loading = true;
   String? _error;
 
-  late Session _session;
+  late SessionModel _session;
   final GraphController _graphCtrl = GraphController();
 
   @override
@@ -345,12 +345,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     controller.dispose();
 
     if (newName != null && newName.isNotEmpty) {
-      await AppDatabase.instance.updateSession(
-        _session.id,
-        SessionsCompanion(name: Value(newName)),
-      );
+      await SessionRepository.instance.updateSessionName(_session.id, newName);
       // Reload session from DB
-      final updated = await AppDatabase.instance.sessionById(_session.id);
+      final updated = await SessionRepository.instance.getSessionById(_session.id);
       if (updated != null && mounted) {
         setState(() => _session = updated);
       }
@@ -388,11 +385,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     controller.dispose();
 
     if (newNotes != null) {
-      await AppDatabase.instance.updateSession(
-        _session.id,
-        SessionsCompanion(notes: Value(newNotes)),
-      );
-      final updated = await AppDatabase.instance.sessionById(_session.id);
+      await SessionRepository.instance.updateSessionNotes(_session.id, newNotes);
+      final updated = await SessionRepository.instance.getSessionById(_session.id);
       if (updated != null && mounted) {
         setState(() => _session = updated);
       }
@@ -423,7 +417,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     );
 
     if (confirm == true) {
-      await AppDatabase.instance.deleteSession(_session.id);
+      await SessionRepository.instance.deleteSession(_session.id);
       if (mounted) Navigator.of(context).pop();
     }
   }

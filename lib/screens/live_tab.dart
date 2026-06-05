@@ -3,12 +3,11 @@ import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
 import '../models/force_unit.dart';
-import 'package:drift/drift.dart' show Value;
 import 'package:google_fonts/google_fonts.dart';
 
 import '../services/bt_device_config.dart';
 import '../services/bt_handling.dart';
-import '../services/database.dart';
+import '../services/session_repository.dart';
 import '../services/session_storage.dart';
 import '../screens/app_shell.dart';
 import '../widgets/graph_components.dart';
@@ -149,7 +148,7 @@ class _LiveTabState extends State<LiveTab> {
         );
       } else if (sessionId != null) {
         // Need to get the name we used when starting
-        final session = await AppDatabase.instance.sessionById(sessionId);
+        final session = await SessionRepository.instance.getSessionById(sessionId);
         if (!mounted) return;
         final sessionName = session?.name ?? 'Session';
 
@@ -224,10 +223,7 @@ class _LiveTabState extends State<LiveTab> {
     );
 
     if (newName != null && newName.isNotEmpty) {
-      await AppDatabase.instance.updateSession(
-        sessionId,
-        SessionsCompanion(name: Value(newName)),
-      );
+      await SessionRepository.instance.updateSessionName(sessionId, newName);
     }
     controller.dispose();
   }
