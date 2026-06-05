@@ -256,8 +256,7 @@ class _LiveTabState extends State<LiveTab> {
           else
             const Expanded(child: DisconnectedPrompt()),
           if (isConnected)
-            ChannelLegend(
-              settings: settings,
+            ViewToggles(
               showDerivative: _showDerivative,
               onToggleDerivative: () =>
                   setState(() => _showDerivative = !_showDerivative),
@@ -448,72 +447,40 @@ class DisconnectedPrompt extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// ChannelLegend (with derivative toggle)
+// ViewToggles
 // ---------------------------------------------------------------------------
 
-class ChannelLegend extends StatelessWidget {
-  final AppSettings settings;
+class ViewToggles extends StatelessWidget {
   final bool showDerivative;
   final VoidCallback onToggleDerivative;
 
-  const ChannelLegend({
+  const ViewToggles({
     super.key,
-    required this.settings,
     this.showDerivative = false,
     required this.onToggleDerivative,
   });
 
   @override
   Widget build(BuildContext context) {
-    final indices = settings.activeChannelIndices;
     final cs = Theme.of(context).colorScheme;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // Channel legend items
-          for (final idx in indices)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 12,
-                    height: 12,
-                    decoration: BoxDecoration(
-                      color: getChannelColor(idx),
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    settings.channelLabels[idx],
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-          const Spacer(),
-          // Derivative toggle
-          SizedBox(
-            height: 28,
-            child: FilterChip(
-              label: Text(
-                'dF/dt',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: showDerivative ? cs.onSecondaryContainer : null,
-                ),
-              ),
-              selected: showDerivative,
-              onSelected: (_) => onToggleDerivative(),
-              visualDensity: VisualDensity.compact,
-              padding: EdgeInsets.zero,
-              labelPadding: const EdgeInsets.symmetric(horizontal: 4),
-              materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          FilterChip(
+            label: const Text('dF/dt'),
+            selected: showDerivative,
+            onSelected: (_) => onToggleDerivative(),
+            visualDensity: VisualDensity.compact,
+            labelStyle: TextStyle(
+              fontSize: 12,
+              color: showDerivative ? cs.onSecondaryContainer : null,
             ),
           ),
+          // Placeholders for future modes can be added here easily
+          // const SizedBox(width: 8),
+          // FilterChip(label: const Text('FFT'), onSelected: (_) {}),
         ],
       ),
     );
