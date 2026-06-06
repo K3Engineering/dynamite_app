@@ -76,6 +76,9 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
 class _LiveTabState extends State<LiveTab> {
   final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * DataHub.samplesPerSec);
   bool _showDerivative = false;
+  GraphMode _graphMode = GraphMode.timeSeries;
+  AxisSource? _xAxisSelection;
+  AxisSource? _yAxisSelection;
   _LiveDataSource? _dataSource;
   BluetoothHandling? _btHandling;
 
@@ -249,7 +252,9 @@ class _LiveTabState extends State<LiveTab> {
             LiveStats(
               settings: settings,
               hub: bt.dataHub,
-              showDerivative: _showDerivative,
+              showDerivative: _showDerivative || 
+                  (_graphMode == GraphMode.xyPlot && 
+                   ((_xAxisSelection?.isDerivative ?? false) || (_yAxisSelection?.isDerivative ?? false))),
             ),
           if (isConnected)
             Expanded(child: _buildGraphArea(bt, settings))
@@ -258,8 +263,29 @@ class _LiveTabState extends State<LiveTab> {
           if (isConnected)
             ViewToggles(
               showDerivative: _showDerivative,
+              graphMode: _graphMode,
+              xAxisSelection: _xAxisSelection,
+              yAxisSelection: _yAxisSelection,
+              settings: settings,
               onToggleDerivative: () =>
                   setState(() => _showDerivative = !_showDerivative),
+              onChangeGraphMode: (mode) => setState(() {
+                _graphMode = mode;
+                if (mode == GraphMode.xyPlot) {
+                  if (_xAxisSelection == null || _yAxisSelection == null) {
+                    final channels = settings.activeChannelIndices;
+                    if (channels.length >= 2) {
+                      _xAxisSelection ??= AxisSource(channels[0]);
+                      _yAxisSelection ??= AxisSource(channels[1]);
+                    } else if (channels.isNotEmpty) {
+                      _xAxisSelection ??= AxisSource(channels[0]);
+                      _yAxisSelection ??= AxisSource(channels[0], isDerivative: true);
+                    }
+                  }
+                }
+              }),
+              onChangeXAxis: (source) => setState(() => _xAxisSelection = source),
+              onChangeYAxis: (source) => setState(() => _yAxisSelection = source),
             ),
           if (isConnected)
             ActionButtons(
@@ -280,6 +306,9 @@ class _LiveTabState extends State<LiveTab> {
       ctrl: _graphCtrl,
       settings: settings,
       showDerivative: _showDerivative,
+      graphMode: _graphMode,
+      xAxisSource: _xAxisSelection,
+      yAxisSource: _yAxisSelection,
     );
   }
 }
@@ -452,35 +481,110 @@ class DisconnectedPrompt extends StatelessWidget {
 
 class ViewToggles extends StatelessWidget {
   final bool showDerivative;
+  final GraphMode graphMode;
+  final AxisSource? xAxisSelection;
+  final AxisSource? yAxisSelection;
+  final AppSettings settings;
   final VoidCallback onToggleDerivative;
+  final ValueChanged<GraphMode> onChangeGraphMode;
+  final ValueChanged<AxisSource> onChangeXAxis;
+  final ValueChanged<AxisSource> onChangeYAxis;
 
   const ViewToggles({
     super.key,
     this.showDerivative = false,
+    this.graphMode = GraphMode.timeSeries,
+    this.xAxisSelection,
+    this.yAxisSelection,
+    required this.settings,
     required this.onToggleDerivative,
+    required this.onChangeGraphMode,
+    required this.onChangeXAxis,
+    required this.onChangeYAxis,
   });
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    
+    final List<DropdownMenuItem<AxisSource>> axisOptions = [];
+    for (final int ch in settings.activeChannelIndices) {
+      final label = settings.channelLabels[ch];
+      axisOptions.add(DropdownMenuItem(
+        value: AxisSource(ch, isDerivative: false),
+        child: Text(label),
+      ));
+      axisOptions.add(DropdownMenuItem(
+        value: AxisSource(ch, isDerivative: true),
+        child: Text('$label dF/dt'),
+      ));
+    }
+
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          FilterChip(
-            label: const Text('dF/dt'),
-            selected: showDerivative,
-            onSelected: (_) => onToggleDerivative(),
-            visualDensity: VisualDensity.compact,
-            labelStyle: TextStyle(
-              fontSize: 12,
-              color: showDerivative ? cs.onSecondaryContainer : null,
-            ),
+          SegmentedButton<GraphMode>(
+            segments: const [
+              ButtonSegment(
+                value: GraphMode.timeSeries,
+                label: Text('Time'),
+                icon: Icon(Icons.show_chart),
+              ),
+              ButtonSegment(
+                value: GraphMode.xyPlot,
+                label: Text('X-Y'),
+                icon: Icon(Icons.scatter_plot),
+              ),
+            ],
+            selected: {graphMode},
+            onSelectionChanged: (Set<GraphMode> newSelection) {
+              onChangeGraphMode(newSelection.first);
+            },
+            showSelectedIcon: false,
+            style: const ButtonStyle(visualDensity: VisualDensity.compact),
           ),
-          // Placeholders for future modes can be added here easily
-          // const SizedBox(width: 8),
-          // FilterChip(label: const Text('FFT'), onSelected: (_) {}),
+          const SizedBox(width: 16),
+          if (graphMode == GraphMode.timeSeries)
+            FilterChip(
+              label: const Text('dF/dt'),
+              selected: showDerivative,
+              onSelected: (_) => onToggleDerivative(),
+              visualDensity: VisualDensity.compact,
+              labelStyle: TextStyle(
+                fontSize: 12,
+                color: showDerivative ? cs.onSecondaryContainer : null,
+              ),
+            )
+          else ...[
+            DropdownButton<AxisSource>(
+              value: xAxisSelection,
+              items: axisOptions,
+              onChanged: (val) {
+                if (val != null) onChangeXAxis(val);
+              },
+              isDense: true,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.onSurface),
+              underline: const SizedBox.shrink(),
+              icon: const Icon(Icons.arrow_drop_down, size: 16),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8),
+              child: Text('vs', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            ),
+            DropdownButton<AxisSource>(
+              value: yAxisSelection,
+              items: axisOptions,
+              onChanged: (val) {
+                if (val != null) onChangeYAxis(val);
+              },
+              isDense: true,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: cs.onSurface),
+              underline: const SizedBox.shrink(),
+              icon: const Icon(Icons.arrow_drop_down, size: 16),
+            ),
+          ],
         ],
       ),
     );

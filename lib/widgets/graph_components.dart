@@ -26,6 +26,25 @@ double graphPlotWidth(double totalWidth) =>
 // Shared Graph Data Source
 // ---------------------------------------------------------------------------
 
+enum GraphMode { timeSeries, xyPlot }
+
+class AxisSource {
+  final int channelIndex;
+  final bool isDerivative;
+  const AxisSource(this.channelIndex, {this.isDerivative = false});
+  
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is AxisSource &&
+          runtimeType == other.runtimeType &&
+          channelIndex == other.channelIndex &&
+          isDerivative == other.isDerivative;
+
+  @override
+  int get hashCode => channelIndex.hashCode ^ isDerivative.hashCode;
+}
+
 class CacheConfig {
   final double graphW;
   final double graphH;
@@ -958,6 +977,9 @@ class GraphWorkspace extends StatefulWidget {
   final GraphController ctrl;
   final AppSettings settings;
   final bool showDerivative;
+  final GraphMode graphMode;
+  final AxisSource? xAxisSource;
+  final AxisSource? yAxisSource;
   final bool isLiveGraph;
   final bool showEnvelope;
 
@@ -967,6 +989,9 @@ class GraphWorkspace extends StatefulWidget {
     required this.ctrl,
     required this.settings,
     this.showDerivative = false,
+    this.graphMode = GraphMode.timeSeries,
+    this.xAxisSource,
+    this.yAxisSource,
     this.isLiveGraph = true,
     this.showEnvelope = true,
   });
@@ -997,26 +1022,38 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
               children: [
                 // Main force graph
                 Expanded(
-                  flex: widget.showDerivative ? 6 : 10,
-                  child: InteractiveGraphArea(
-                    data: widget.data,
-                    ctrl: widget.ctrl,
-                    child: CustomPaint(
-                      foregroundPainter: ForceGraphPainter(
-                        widget.data,
-                        widget.settings,
-                        widget.ctrl,
-                        showXLabels: !widget.showDerivative,
-                        showEnvelope: widget.showEnvelope,
-                        cache: _forceCache,
-                        colorScheme: colorScheme,
-                      ),
-                      size: Size.infinite,
-                    ),
-                  ),
+                  flex: widget.showDerivative && widget.graphMode == GraphMode.timeSeries ? 6 : 10,
+                  child: widget.graphMode == GraphMode.xyPlot
+                      ? CustomPaint(
+                          foregroundPainter: XYGraphPainter(
+                            widget.data,
+                            widget.settings,
+                            widget.ctrl,
+                            xAxisSource: widget.xAxisSource ?? const AxisSource(0),
+                            yAxisSource: widget.yAxisSource ?? const AxisSource(0),
+                            colorScheme: colorScheme,
+                          ),
+                          size: Size.infinite,
+                        )
+                      : InteractiveGraphArea(
+                          data: widget.data,
+                          ctrl: widget.ctrl,
+                          child: CustomPaint(
+                            foregroundPainter: ForceGraphPainter(
+                              widget.data,
+                              widget.settings,
+                              widget.ctrl,
+                              showXLabels: !widget.showDerivative,
+                              showEnvelope: widget.showEnvelope,
+                              cache: _forceCache,
+                              colorScheme: colorScheme,
+                            ),
+                            size: Size.infinite,
+                          ),
+                        ),
                 ),
                 // Derivative graph (when enabled)
-                if (widget.showDerivative)
+                if (widget.showDerivative && widget.graphMode == GraphMode.timeSeries)
                   Expanded(
                     flex: 4,
                     child: InteractiveGraphArea(
@@ -2211,4 +2248,177 @@ double _niceNum(double value) {
     nice = 10;
   }
   return nice * math.pow(10, exp);
+}
+
+// ---------------------------------------------------------------------------
+// XY Graph Painter
+// ---------------------------------------------------------------------------
+
+class XYGraphPainter extends CustomPainter {
+  final GraphDataSource _data;
+  final AppSettings _settings;
+  final GraphController _ctrl;
+  final AxisSource xAxisSource;
+  final AxisSource yAxisSource;
+  final ColorScheme colorScheme;
+
+  XYGraphPainter(
+    this._data,
+    this._settings,
+    this._ctrl, {
+    required this.xAxisSource,
+    required this.yAxisSource,
+    required this.colorScheme,
+  }) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final bool needsDeriv = xAxisSource.isDerivative || yAxisSource.isDerivative;
+    final layout = _setupGraphFrame(
+      canvas,
+      size,
+      _data,
+      _ctrl,
+      topSpace: 12,
+      bottomSpace: kGraphBottomSpace,
+      minSamples: needsDeriv ? 2 : 1,
+      frameColor: colorScheme.primary.withAlpha(150),
+    );
+    if (layout == null) return;
+
+    final graphSz = layout.graphSz;
+    final viewStart = layout.viewStart;
+    final viewEnd = layout.viewEnd;
+    
+    final unit = _settings.displayUnit;
+    final oldestSample = _data.oldestSample;
+    final totalSamples = _data.totalSamples;
+
+    final double slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
+    final double sampleRate = _data.sampleRate.toDouble();
+
+    double getValue(AxisSource source, int j) {
+      final s = _data.channel(source.channelIndex);
+      final line = s.data;
+      if (line.isEmpty) return double.nan;
+      
+      final bufferCap = _data.bufferCapacity;
+      if (source.isDerivative) {
+        final v1 = line[j % bufferCap];
+        final v2 = line[(j - 1) % bufferCap];
+        if (_data.missingSampleSentinel != null && (v1 == _data.missingSampleSentinel || v2 == _data.missingSampleSentinel)) {
+          return double.nan;
+        }
+        return (v1 - v2).toDouble() * slopeToUnit * sampleRate;
+      } else {
+        final val = line[j % bufferCap];
+        if (_data.missingSampleSentinel != null && val == _data.missingSampleSentinel) return double.nan;
+        return (val - s.tare) * slopeToUnit;
+      }
+    }
+
+    double minX = double.infinity, maxX = double.negativeInfinity;
+    double minY = double.infinity, maxY = double.negativeInfinity;
+    int validPoints = 0;
+    
+    final startI = math.max(viewStart, oldestSample + (needsDeriv ? 1 : 0));
+    final endI = math.min(viewEnd, totalSamples);
+    
+    for (int i = startI; i < endI; i++) {
+      final x = getValue(xAxisSource, i);
+      final y = getValue(yAxisSource, i);
+      if (x.isNaN || y.isNaN) continue;
+      
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      validPoints++;
+    }
+
+    if (validPoints == 0) return;
+
+    if (maxX - minX < 0.001) { maxX += 0.5; minX -= 0.5; }
+    if (maxY - minY < 0.001) { maxY += 0.5; minY -= 0.5; }
+
+    final xRange = _computeYRange(minX, maxX);
+    final yRange = _computeYRange(minY, maxY);
+
+    double valToX(double val) {
+      return (val - xRange.yMin) * graphSz.width / (xRange.yMax - xRange.yMin);
+    }
+    double valToY(double val) {
+      return graphSz.height - (val - yRange.yMin) * graphSz.height / (yRange.yMax - yRange.yMin);
+    }
+
+    final grid = Path();
+    drawValueAxis(
+      canvas,
+      grid,
+      graphSz,
+      yRange,
+      valToY,
+      labelFor: (tick) => _formatTickLabel(tick, yAxisSource.isDerivative ? '${unit.symbol}/s' : unit.symbol),
+      drawMinor: true,
+      textColor: colorScheme.onSurface,
+    );
+    
+    final xDelta = xRange.tickDelta;
+    for (double tick = (xRange.yMin / xDelta).ceil() * xDelta; tick <= xRange.yMax + xDelta * 0.01; tick += xDelta) {
+      final xPos = valToX(tick);
+      if (xPos >= -1 && xPos <= graphSz.width + 1) {
+        grid.moveTo(xPos, 0);
+        grid.lineTo(xPos, graphSz.height);
+        
+        final labelStr = _formatTickLabel(tick, xAxisSource.isDerivative ? '${unit.symbol}/s' : unit.symbol);
+        final par = _prepareLabel(labelStr, color: colorScheme.onSurface);
+        canvas.drawParagraph(par, Offset(xPos - par.longestLine / 2, graphSz.height + 2));
+      }
+    }
+    
+    final gridPen = Paint()
+      ..color = colorScheme.onSurface.withAlpha(50)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.2;
+    canvas.drawPath(grid, gridPen);
+
+    drawZeroBaseline(canvas, graphSz, yRange, valToY, colorScheme.onSurface.withAlpha(130));
+    if (xRange.yMin < 0 && xRange.yMax > 0) {
+      final zeroX = valToX(0);
+      canvas.drawLine(
+        Offset(zeroX, 0),
+        Offset(zeroX, graphSz.height),
+        Paint()..color = colorScheme.onSurface.withAlpha(130)..style = PaintingStyle.stroke..strokeWidth = 0.8,
+      );
+    }
+
+    final linePen = Paint()
+      ..color = colorScheme.primary
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+
+    final batcher = VertexBatcher(
+      preserveFloats: 2,
+      drawThreshold: 2,
+      onFlush: (view) {
+        canvas.drawRawPoints(ui.PointMode.polygon, view, linePen);
+      },
+    );
+
+    for (int i = startI; i < endI; i++) {
+      final x = getValue(xAxisSource, i);
+      final y = getValue(yAxisSource, i);
+      if (x.isNaN || y.isNaN) {
+        batcher.flush();
+        continue;
+      }
+      
+      batcher.add(valToX(x), valToY(y));
+      if (batcher.wouldOverflow(2)) batcher.flush();
+    }
+    batcher.flush();
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
