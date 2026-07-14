@@ -34,6 +34,10 @@ class CacheConfig {
   final double yMax;
   final List<double> tares;
 
+  /// Device pixel ratio the tile images are rasterized at. A dpr change
+  /// (browser zoom, monitor move) must drop the bitmap cache.
+  final double dpr;
+
   CacheConfig(
     this.graphW,
     this.graphH,
@@ -41,6 +45,7 @@ class CacheConfig {
     this.yMin,
     this.yMax,
     this.tares,
+    this.dpr,
   );
 
   bool matches(CacheConfig other) {
@@ -49,6 +54,7 @@ class CacheConfig {
     if (viewSamples != other.viewSamples) return false;
     if ((yMin - other.yMin).abs() > 1e-6) return false;
     if ((yMax - other.yMax).abs() > 1e-6) return false;
+    if (dpr != other.dpr) return false;
     if (tares.length != other.tares.length) return false;
     for (int i = 0; i < tares.length; i++) {
       if ((tares[i] - other.tares[i]).abs() > 1e-6) return false;
@@ -60,11 +66,29 @@ class CacheConfig {
 class GraphLineCache {
   CacheConfig? config;
   int chunkSamples = 1000;
-  final Map<int, ui.Picture> chunks = {};
+
+  /// Fully-populated tiles rasterized once via [ui.Picture.toImageSync].
+  ///
+  /// On web there is no engine raster cache: a cached [ui.Picture] is re-
+  /// rasterized every frame (measured ~1.2ms of Skwasm raster per tile), so
+  /// pictures only save Dart-side recording time. Baking each immutable tile
+  /// into a GPU-resident [ui.Image] pays that raster cost once and makes the
+  /// per-frame cost a texture blit.
+  final Map<int, ui.Image> images = {};
+
+  /// Number of consecutive paints whose [config] matched. Image creation is
+  /// gated on this so squeeze mode (viewSamples grows every frame => config
+  /// mismatch => full invalidate every frame) never pays toImageSync for
+  /// tiles that are dropped on the next frame.
+  int stableFrames = 0;
 
   void invalidate() {
-    chunks.clear();
+    for (final img in images.values) {
+      img.dispose();
+    }
+    images.clear();
     config = null;
+    stableFrames = 0;
   }
 }
 
@@ -793,6 +817,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         return Stack(
@@ -814,6 +839,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                         showEnvelope: widget.showEnvelope,
                         cache: _forceCache,
                         colorScheme: colorScheme,
+                        dpr: dpr,
                       ),
                       size: Size.infinite,
                     ),
@@ -834,6 +860,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                           showEnvelope: widget.showEnvelope,
                           cache: _derivCache,
                           colorScheme: colorScheme,
+                          dpr: dpr,
                         ),
                         size: Size.infinite,
                       ),
@@ -1618,17 +1645,39 @@ void drawSqueezedEnvelope(
   avg.flush();
 }
 
-/// Draws a graph's data layer using the chunked [ui.Picture] tile cache.
+/// Blit filter for cached tile images. [FilterQuality.low] (bilinear) hides
+/// the fractional-pixel offsets tiles land on while sliding; flip to
+/// [FilterQuality.none] to A/B sharpness.
+const FilterQuality kTileImageFilterQuality = FilterQuality.low;
+
+/// Padding (logical px) baked around a tile image so AA stroke bleed and the
+/// one-block polyline overshoot past the tile edge are not clipped. The
+/// horizontal pad additionally covers one block width (see
+/// [paintCachedChannels]), which exceeds this when zoomed in past 1 sample/px.
+const double kTileImagePad = 4;
+
+/// Max tiles converted to [ui.Image] per frame. A pan/zoom into uncached
+/// territory can miss ~13 tiles at once; capping spreads the toImageSync cost
+/// (~1-2ms UI-thread each) over a few frames. Overflow tiles are drawn as
+/// plain pictures this frame and retried on the next one.
+const int kMaxTileImagesPerFrame = 3;
+
+/// Cached tiles more than this many tiles outside the view are evicted.
+/// Bitmap tiles are ~0.5-2MB each, so the cache cannot be unbounded the way
+/// the picture cache was.
+const int kTileEvictionMargin = 8;
+
+/// Draws a graph's data layer using the chunked tile cache.
 ///
 /// The visible window is split into fixed sample-count tiles. Each tile is
-/// recorded once into a [ui.Picture] (in its own local coordinate space, as if
-/// the tile's start were the view start) and then blitted at the right screen
-/// offset via [Canvas.translate]. Panning at constant zoom reuses tiles; a
-/// changed [config] (zoom, size, Y-range, tares) drops the whole cache.
+/// recorded once (in its own local coordinate space, as if the tile's start
+/// were the view start), rasterized once into a [ui.Image], and then blitted
+/// at the right screen offset. Panning at constant zoom reuses tile images; a
+/// changed [config] (zoom, size, Y-range, tares, dpr) drops the whole cache.
 ///
 /// Only tiles that are fully populated (entirely between [oldestSample] and
-/// [totalSamples]) are stored; the live edge and the buffer's trailing edge are
-/// recomputed every frame so they never go stale.
+/// [totalSamples]) are cached; the live edge and the buffer's trailing edge
+/// are re-recorded every frame as plain [ui.Picture]s so they never go stale.
 ///
 /// [drawChunk] is invoked to record one tile. It receives the tile's canvas,
 /// the tile's absolute start sample (used as the local view start), and
@@ -1666,6 +1715,8 @@ void paintCachedChannels(
     cache.invalidate();
     cache.config = config;
     cache.chunkSamples = chunkSamplesFor(viewSamples / graphW, blockSize);
+  } else {
+    cache.stableFrames++;
   }
   assert(
     cache.chunkSamples % blockSize == 0,
@@ -1677,6 +1728,23 @@ void paintCachedChannels(
   // In both cases, the loop covers all populated tiles that overlap the view.
   final int startChunk = viewStart ~/ cache.chunkSamples;
   final int endChunk = (viewEnd - 1) ~/ cache.chunkSamples;
+
+  // Tile width in logical pixels (fractional in general).
+  final double tileW = cache.chunkSamples * graphW / viewSamples;
+  final double dpr = config.dpr;
+
+  // The recorded polyline overshoots the tile's right edge by one block
+  // (limitSamples joins it to the next tile), and one block can be many px
+  // when zoomed in past 1 sample/px -- the horizontal pad must cover it.
+  // Derived purely from the config, so it is identical on every frame of one
+  // cache generation (creation and blit must agree).
+  final double hPad = math.max(
+    kTileImagePad,
+    blockSize * graphW / viewSamples + 2,
+  );
+  const double vPad = kTileImagePad;
+
+  int imagesCreated = 0;
 
   for (int c = startChunk; c <= endChunk; c++) {
     final int chunkStartSample = c * cache.chunkSamples;
@@ -1691,24 +1759,6 @@ void paintCachedChannels(
     // >= oldestSample (false for the leftmost tile) -- that's exactly the case
     // isFullyPopulated guards against.
 
-    ui.Picture? pic = cache.chunks[c];
-
-    if (pic == null) {
-      final recorder = ui.PictureRecorder();
-      final cCanvas = Canvas(recorder);
-
-      final int limitSamples = math.min(
-        chunkEndSample + blockSize,
-        totalSamples,
-      );
-      drawChunk(cCanvas, chunkStartSample, chunkEndSample, limitSamples);
-
-      pic = recorder.endRecording();
-      if (isFullyPopulated) {
-        cache.chunks[c] = pic;
-      }
-    }
-
     // The tile was recorded with chunkStartSample as its local origin, so shift
     // it bodily into place; cached tiles only ever differ by this offset.
     final double xOffset =
@@ -1719,11 +1769,75 @@ void paintCachedChannels(
     assert(
       chunkEndSample > viewStart && chunkStartSample < viewEnd,
     ); // tile overlaps view
+
+    ui.Image? img = cache.images[c];
+    ui.Picture? pic;
+
+    if (img == null) {
+      // Record the tile. Cacheable tiles are recorded with a padding
+      // translate so stroke AA and the one-block overshoot survive the image
+      // crop; live/trailing tiles are recorded pad-free and drawn directly.
+      final bool tryImage =
+          isFullyPopulated &&
+          cache.stableFrames >= 2 &&
+          imagesCreated < kMaxTileImagesPerFrame;
+
+      final recorder = ui.PictureRecorder();
+      final cCanvas = Canvas(recorder);
+      if (tryImage) {
+        cCanvas.scale(dpr);
+        cCanvas.translate(hPad, vPad);
+      }
+
+      final int limitSamples = math.min(
+        chunkEndSample + blockSize,
+        totalSamples,
+      );
+      drawChunk(cCanvas, chunkStartSample, chunkEndSample, limitSamples);
+
+      pic = recorder.endRecording();
+      if (tryImage) {
+        img = pic.toImageSync(
+          ((tileW + 2 * hPad) * dpr).ceil(),
+          ((config.graphH + 2 * vPad) * dpr).ceil(),
+        );
+        pic.dispose();
+        pic = null;
+        cache.images[c] = img;
+        imagesCreated++;
+        PerfStats.addTileImaged(); // TEMP PERF
+      }
+    }
+
     canvas.save();
     canvas.translate(xOffset, 0);
-    canvas.drawPicture(pic);
+    if (img != null) {
+      canvas.drawImageRect(
+        img,
+        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+        Rect.fromLTWH(-hPad, -vPad, img.width / dpr, img.height / dpr),
+        Paint()..filterQuality = kTileImageFilterQuality,
+      );
+      PerfStats.addTile(TileDraw.blit); // TEMP PERF
+    } else {
+      canvas.drawPicture(pic!);
+      PerfStats.addTile(
+        isFullyPopulated ? TileDraw.recorded : TileDraw.live,
+      ); // TEMP PERF
+    }
     canvas.restore();
   }
+
+  // Evict cached tiles far outside the view; bitmap tiles are too big to keep
+  // unboundedly (the picture cache could get away with it).
+  cache.images.removeWhere((c, img) {
+    if (c >= startChunk - kTileEvictionMargin &&
+        c <= endChunk + kTileEvictionMargin) {
+      return false;
+    }
+    img.dispose();
+    return true;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -1828,6 +1942,28 @@ class PerfStats {
     _minimapDrawMicros += draw;
   }
 
+  // Tile accounting for paintCachedChannels (see TileDraw).
+  static int _tilesBlit = 0;
+  static int _tilesLive = 0;
+  static int _tilesRecorded = 0;
+  static int _tilesImaged = 0;
+
+  /// Record how one tile was drawn this frame. Imaged tiles count as both
+  /// created ([_tilesImaged]) and blitted.
+  static void addTile(TileDraw kind) {
+    switch (kind) {
+      case TileDraw.blit:
+        _tilesBlit++;
+      case TileDraw.live:
+        _tilesLive++;
+      case TileDraw.recorded:
+        _tilesRecorded++;
+    }
+  }
+
+  /// Record one ui.Image tile creation (toImageSync).
+  static void addTileImaged() => _tilesImaged++;
+
   /// Feed one frame's timing. Emits a combined report every 60 frames.
   static void addFrame(int rasterMicros, int buildMicros) {
     _rasterMicros += rasterMicros;
@@ -1851,10 +1987,15 @@ class PerfStats {
         : 0;
     final rasterAvg = _frameCount > 0 ? _rasterMicros / _frameCount : 0;
     final buildAvg = _frameCount > 0 ? _buildMicros / _frameCount : 0;
+    final fc = _frameCount > 0 ? _frameCount : 1;
     debugPrint(
       '[PERF] over $_frameCount frames | '
       'Main paint: ${dartAvg.toStringAsFixed(0)}us (${_paintCount}x) | '
       'Minimap: ${mmAvg.toStringAsFixed(0)}us (loop: ${mmLoopAvg.toStringAsFixed(0)}us, draw: ${mmDrawAvg.toStringAsFixed(0)}us) | '
+      'tiles/frame: ${(_tilesBlit / fc).toStringAsFixed(1)} blit, '
+      '${(_tilesLive / fc).toStringAsFixed(1)} live, '
+      '${(_tilesRecorded / fc).toStringAsFixed(1)} recorded '
+      '($_tilesImaged imaged) | '
       'Skwasm raster: ${rasterAvg.toStringAsFixed(0)}us | '
       'build: ${buildAvg.toStringAsFixed(0)}us',
     );
@@ -1864,11 +2005,22 @@ class PerfStats {
     _minimapMicros = 0;
     _minimapLoopMicros = 0;
     _minimapDrawMicros = 0;
+    _tilesBlit = 0;
+    _tilesLive = 0;
+    _tilesRecorded = 0;
+    _tilesImaged = 0;
     _frameCount = 0;
     _rasterMicros = 0;
     _buildMicros = 0;
   }
 }
+
+/// TEMP PERF: how a tile got onto the screen this frame.
+///   * blit     -- cached ui.Image drawn via drawImageRect (the cheap path)
+///   * live     -- live/trailing-edge tile, re-recorded picture (expected ~1/frame)
+///   * recorded -- fully-populated tile drawn as a fresh picture (image
+///                 creation deferred by the stability gate or per-frame cap)
+enum TileDraw { blit, live, recorded }
 
 /// Shared engine for the windowed time-series graphs (force, derivative).
 ///
@@ -1885,6 +2037,9 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final GraphLineCache cache;
   final ColorScheme colorScheme;
 
+  /// Device pixel ratio used when rasterizing tile images.
+  final double dpr;
+
   _TimeSeriesGraphPainter(
     this._data,
     this._settings,
@@ -1892,6 +2047,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     this.showEnvelope = true,
     required this.cache,
     required this.colorScheme,
+    required this.dpr,
   }) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
 
   // --- Layout hooks --------------------------------------------------------
@@ -2027,6 +2183,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       yRange.yMin,
       yRange.yMax,
       cacheKeyTares(),
+      dpr,
     );
 
     paintCachedChannels(
@@ -2081,6 +2238,7 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
     super.showEnvelope,
     required super.cache,
     required super.colorScheme,
+    required super.dpr,
   });
 
   @override
@@ -2171,6 +2329,7 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     super.showEnvelope,
     required super.cache,
     required super.colorScheme,
+    required super.dpr,
   });
 
   @override
