@@ -14,8 +14,6 @@ class DevicesTab extends StatefulWidget {
 }
 
 class _DevicesTabState extends State<DevicesTab> {
-  BleLinkManager? _bt;
-
   @override
   void initState() {
     super.initState();
@@ -41,46 +39,6 @@ class _DevicesTabState extends State<DevicesTab> {
         context.read<BleLinkManager>().requestEnableBluetooth();
       }
     });
-  }
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    // Register transient-notice callbacks once. Using read (not watch) so we
-    // don't rebuild on them; the callbacks show transient SnackBars.
-    final bt = context.read<BleLinkManager>();
-    if (!identical(_bt, bt)) {
-      _bt?.onDisconnectTimeout = null;
-      _bt?.onConnectionFailed = null;
-      _bt = bt;
-      bt.onDisconnectTimeout = _showDisconnectTimeoutNotice;
-      bt.onConnectionFailed = _showConnectionFailedNotice;
-    }
-  }
-
-  @override
-  void dispose() {
-    if (_bt?.onDisconnectTimeout == _showDisconnectTimeoutNotice) {
-      _bt?.onDisconnectTimeout = null;
-    }
-    if (_bt?.onConnectionFailed == _showConnectionFailedNotice) {
-      _bt?.onConnectionFailed = null;
-    }
-    super.dispose();
-  }
-
-  void _showDisconnectTimeoutNotice(String deviceName) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$deviceName didn\'t disconnect cleanly.')),
-    );
-  }
-
-  void _showConnectionFailedNotice(String deviceName) {
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Lost connection to $deviceName during setup.')),
-    );
   }
 
   @override

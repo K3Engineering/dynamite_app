@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
+import 'app_events.dart';
 import 'bt_device_config.dart';
 // ignore: unused_import
 import 'mockble.dart';
@@ -224,19 +225,6 @@ class BleLinkManager extends ChangeNotifier {
   /// and the platform supports RSSI reads.
   Timer? _rssiPollTimer;
 
-  /// Called when a disconnect gives up after [disconnectTimeout] without the
-  /// link returning to idle. The argument is the affected device's display name
-  /// (or id). The UI uses this to surface a brief notice.
-  ///
-  /// MULTI-DEVICE (Path A): already carries the device identity, so the message
-  /// can name the specific device that failed to disconnect.
-  void Function(String deviceName)? onDisconnectTimeout;
-
-  /// Called when a connection drops or fails during post-connect setup (e.g.
-  /// the device disappears mid service-discovery). The argument is the device's
-  /// display name (or id). The UI uses this to surface a brief notice.
-  void Function(String deviceName)? onConnectionFailed;
-
   /// Raw ADC-feed notification bytes, exactly as received. Wired to the
   /// protocol layer ([AdcPacketDecoder.onDataPacket]) at app startup; the link
   /// manager itself never interprets them.
@@ -246,7 +234,11 @@ class BleLinkManager extends ChangeNotifier {
   /// setup. Wired to [AdcPacketDecoder.onCalibrationPacket] at app startup.
   void Function(Uint8List data)? onCalibrationData;
 
-  BleLinkManager() {
+  /// One-shot user notices ([BleDisconnectTimeout], [BleConnectionFailed])
+  /// go here; the shell shows them regardless of which tab is mounted.
+  final AppEvents _events;
+
+  BleLinkManager({required AppEvents events}) : _events = events {
     if (useMockBt) {
       UniversalBle.setInstance(MockBlePlatform.instance);
     }
@@ -544,7 +536,7 @@ class BleLinkManager extends ChangeNotifier {
         debugPrint('Post-connect setup failed for $deviceId: $e');
         final String name = _link.name.isEmpty ? deviceId : _link.name;
         _endLink(deviceId, name);
-        onConnectionFailed?.call(name);
+        _events.emit(BleConnectionFailed(name));
         notifyListeners();
       }
     } else {
@@ -646,7 +638,7 @@ class BleLinkManager extends ChangeNotifier {
         _link.state == BtLinkState.disconnecting) {
       debugPrint('Disconnect did not settle for $deviceId; forcing idle');
       _endLink(deviceId, deviceName);
-      onDisconnectTimeout?.call(deviceName);
+      _events.emit(BleDisconnectTimeout(deviceName));
       notifyListeners();
     }
   }

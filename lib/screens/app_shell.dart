@@ -1,11 +1,19 @@
-import 'package:flutter/material.dart';
+import 'dart:async';
 
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../services/app_events.dart';
 import 'live_tab.dart';
 import 'sessions_tab.dart';
 import 'devices_tab.dart';
 import 'settings_tab.dart';
 
 /// Root scaffold with bottom navigation tabs.
+///
+/// Also the single consumer of [AppEvents]: one-shot notices from the service
+/// layer surface here as SnackBars, so delivery doesn't depend on which tab
+/// happens to be mounted or rebuilding.
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 
@@ -15,6 +23,7 @@ class AppShell extends StatefulWidget {
 
 class AppShellState extends State<AppShell> {
   int _currentIndex = 0;
+  StreamSubscription<AppEvent>? _eventsSub;
 
   static const _tabs = [
     _TabDef(icon: Icons.show_chart, label: 'Live'),
@@ -22,6 +31,44 @@ class AppShellState extends State<AppShell> {
     _TabDef(icon: Icons.bluetooth, label: 'Devices'),
     _TabDef(icon: Icons.settings, label: 'Settings'),
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    _eventsSub = context.read<AppEvents>().stream.listen(_onAppEvent);
+  }
+
+  @override
+  void dispose() {
+    unawaited(_eventsSub?.cancel());
+    super.dispose();
+  }
+
+  void _onAppEvent(AppEvent event) {
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    switch (event) {
+      case BleDisconnectTimeout(:final deviceName):
+        messenger.showSnackBar(
+          SnackBar(content: Text('$deviceName didn\'t disconnect cleanly.')),
+        );
+      case BleConnectionFailed(:final deviceName):
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Lost connection to $deviceName during setup.'),
+          ),
+        );
+      case RecordingStorageError(:final error):
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text('Recording stopped — storage error: $error'),
+            behavior: SnackBarBehavior.floating,
+            persist: true,
+            showCloseIcon: true,
+          ),
+        );
+    }
+  }
 
   /// Navigate to a specific tab programmatically (e.g. from status bar tap).
   void switchToTab(int index) {

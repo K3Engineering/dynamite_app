@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'models/app_settings.dart';
 import 'services/adc_packet_decoder.dart';
+import 'services/app_events.dart';
 import 'services/ble_link_manager.dart';
 import 'services/data_hub.dart';
 import 'services/recording_controller.dart';
@@ -19,15 +20,18 @@ void main() async {
   //   BleLinkManager (link state machine) --raw bytes--> AdcPacketDecoder
   //   (wire protocol) --decoded samples--> DataHub (storage + stats)
   //   <--observed by-- RecordingController (session lifecycle + persistence).
+  // AppEvents is the one-shot notice bus: producers emit, AppShell consumes.
+  final appEvents = AppEvents();
   final dataHub = DataHub();
   final decoder = AdcPacketDecoder(dataHub);
-  final linkManager = BleLinkManager()
+  final linkManager = BleLinkManager(events: appEvents)
     ..onAdcData = decoder.onDataPacket
     ..onCalibrationData = decoder.onCalibrationPacket;
   final recording = RecordingController(
     dataHub: dataHub,
     linkManager: linkManager,
     decoder: decoder,
+    events: appEvents,
   );
 
   runApp(
@@ -37,6 +41,7 @@ void main() async {
         // App-lifetime singletons created above (never disposed — the app
         // root never unmounts), provided individually so each screen depends
         // only on the layer it actually uses.
+        Provider.value(value: appEvents),
         ChangeNotifierProvider.value(value: dataHub),
         ChangeNotifierProvider.value(value: linkManager),
         ChangeNotifierProvider.value(value: recording),

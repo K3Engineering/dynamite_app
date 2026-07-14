@@ -93,25 +93,6 @@ class _LiveTabState extends State<LiveTab> {
       _dataSource?.dispose();
       _dataSource = _LiveDataSource(hub);
     }
-
-    // A recording can be auto-stopped if its storage writer starts failing.
-    // Surface that to the user once (then clear it).
-    final recording = context.watch<RecordingController>();
-    final writeError = recording.sessionWriteError;
-    if (writeError != null) {
-      recording.clearSessionWriteError();
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Recording stopped — storage error: $writeError'),
-            behavior: SnackBarBehavior.floating,
-            persist: true,
-            showCloseIcon: true,
-          ),
-        );
-      });
-    }
   }
 
   @override
@@ -142,17 +123,9 @@ class _LiveTabState extends State<LiveTab> {
 
       if (!mounted) return;
 
-      if (result.error != null) {
-        // Storage failed mid-recording; the session may be truncated.
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Recording failed to save fully: ${result.error}'),
-            behavior: SnackBarBehavior.floating,
-            persist: true,
-            showCloseIcon: true,
-          ),
-        );
-      } else if (sessionId != null) {
+      // On a storage error stopSession already emitted a RecordingStorageError
+      // (surfaced by the shell), so only announce a cleanly saved session.
+      if (result.error == null && sessionId != null) {
         // Need to get the name we used when starting
         final session = await AppDatabase.instance.sessionById(sessionId);
         if (!mounted) return;
