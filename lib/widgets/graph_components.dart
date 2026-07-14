@@ -1,4 +1,4 @@
-import 'dart:math' as math;
+﻿import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'dart:collection';
 
@@ -1380,7 +1380,7 @@ void drawMissingDataHatching(
   // We only need to check channel 0 since dropped packets are dropped for all channels simultaneously.
   final line = data.channel(0).data;
   final bufferCap = data.bufferCapacity;
-  
+
   final viewSamples = viewEnd - viewStart;
   if (viewSamples <= 0) return;
 
@@ -1392,43 +1392,48 @@ void drawMissingDataHatching(
   void drawHatchRegion(int startIdx, int endIdx) {
     final xStart = xOf(startIdx);
     final xEnd = xOf(endIdx);
-    
+
     // Draw the hatch pattern
     final pen = Paint()
       ..color = color.withAlpha(60)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0;
-      
+
     // Hatch line spacing
     const double spacing = 8.0;
-    
+
     // Draw diagonals from bottom-left to top-right
     final cStart = xStart - graphSz.height;
     final cEnd = xEnd;
-    
+
     canvas.save();
     canvas.clipRect(Rect.fromLTRB(xStart, 0, xEnd, graphSz.height));
-    
-    for (double c = (cStart / spacing).floor() * spacing; c <= cEnd; c += spacing) {
+
+    for (
+      double c = (cStart / spacing).floor() * spacing;
+      c <= cEnd;
+      c += spacing
+    ) {
       canvas.drawLine(
         Offset(c, graphSz.height),
         Offset(c + graphSz.height, 0),
         pen,
       );
     }
-    
+
     // Also draw a light background fill to make it pop
     final bgPen = Paint()
       ..color = color.withAlpha(20)
       ..style = PaintingStyle.fill;
     canvas.drawRect(Rect.fromLTRB(xStart, 0, xEnd, graphSz.height), bgPen);
-    
+
     canvas.restore();
   }
 
   for (int i = sScanStart; i < sScanEnd; i++) {
     final rawVal = line[i % bufferCap];
-    if (data.missingSampleSentinel != null && rawVal == data.missingSampleSentinel) {
+    if (data.missingSampleSentinel != null &&
+        rawVal == data.missingSampleSentinel) {
       if (gapStart == -1) {
         gapStart = i;
       }
@@ -1680,7 +1685,7 @@ void paintCachedChannels(
   // it truncates *up* toward zero, so the first tile begins RIGHT of viewStart.
   // In both cases, the loop covers all populated tiles that overlap the view.
   final int startChunk = viewStart ~/ cache.chunkSamples;
-  final int endChunk = viewEnd ~/ cache.chunkSamples;
+  final int endChunk = (viewEnd - 1) ~/ cache.chunkSamples;
 
   for (int c = startChunk; c <= endChunk; c++) {
     final int chunkStartSample = c * cache.chunkSamples;
@@ -1853,7 +1858,9 @@ class ForceGraphPainter extends CustomPainter {
       final sScanEnd = math.min(viewEnd, totalSamples);
       for (int i = sScanStart; i < sScanEnd; i++) {
         final rawVal = line[i % bufferCap];
-        if (_data.missingSampleSentinel != null && rawVal == _data.missingSampleSentinel) continue;
+        if (_data.missingSampleSentinel != null &&
+            rawVal == _data.missingSampleSentinel)
+          continue;
         final v = rawVal - tare;
         if (!hasData || v > rawMax) rawMax = v.toDouble();
         if (!hasData || v < rawMin) rawMin = v.toDouble();
@@ -1911,7 +1918,13 @@ class ForceGraphPainter extends CustomPainter {
       ..strokeWidth = 0.2;
     canvas.drawPath(grid, gridPen);
 
-    drawZeroBaseline(canvas, graphSz, yRange, unitToY, colorScheme.onSurface.withAlpha(130));
+    drawZeroBaseline(
+      canvas,
+      graphSz,
+      yRange,
+      unitToY,
+      colorScheme.onSurface.withAlpha(130),
+    );
 
     drawMissingDataHatching(
       canvas,
@@ -1965,7 +1978,9 @@ class ForceGraphPainter extends CustomPainter {
             firstUsableSample: math.max(oldestSample, chunkStartSample),
             sampleAt: (j) {
               final val = line[j % bufferCap];
-              if (_data.missingSampleSentinel != null && val == _data.missingSampleSentinel) return double.nan;
+              if (_data.missingSampleSentinel != null &&
+                  val == _data.missingSampleSentinel)
+                return double.nan;
               return val.toDouble();
             },
             valueToY: (raw) =>
@@ -2034,7 +2049,9 @@ class DerivativeGraphPainter extends CustomPainter {
     double derivRawAt(List<int> line, int bufferCap, int j) {
       final v1 = line[j % bufferCap];
       final v2 = line[(j - 1) % bufferCap];
-      if (_data.missingSampleSentinel != null && (v1 == _data.missingSampleSentinel || v2 == _data.missingSampleSentinel)) {
+      if (_data.missingSampleSentinel != null &&
+          (v1 == _data.missingSampleSentinel ||
+              v2 == _data.missingSampleSentinel)) {
         return double.nan;
       }
       return (v1 - v2).toDouble();
@@ -2106,7 +2123,13 @@ class DerivativeGraphPainter extends CustomPainter {
       ..strokeWidth = 0.2;
     canvas.drawPath(grid, gridPen);
 
-    drawZeroBaseline(canvas, graphSz, yRange, valToY, colorScheme.onSurface.withAlpha(130));
+    drawZeroBaseline(
+      canvas,
+      graphSz,
+      yRange,
+      valToY,
+      colorScheme.onSurface.withAlpha(130),
+    );
 
     drawMissingDataHatching(
       canvas,
