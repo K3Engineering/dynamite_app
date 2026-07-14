@@ -70,22 +70,70 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  // -- CRUD operations --
+  // -- Session access --
+  //
+  // Every access pattern the app needs is a named method here; no drift query
+  // expressions or Companions are constructed outside this file.
 
-  /// Insert a new session, returns the generated id.
-  Future<int> insertSession(SessionsCompanion entry) {
-    return into(sessions).insert(entry);
+  /// Create a new recording session row, marked incomplete until
+  /// [completeSession] finalizes it. Returns the generated id.
+  Future<int> createSession({
+    required String name,
+    required int sampleRate,
+    required int channelCount,
+    required String channelLabels,
+    required String tares,
+    required double calibrationSlope,
+    required int calibrationOffset,
+    required String notes,
+  }) {
+    return into(sessions).insert(
+      SessionsCompanion.insert(
+        name: Value(name),
+        createdAt: DateTime.now(),
+        sampleRate: Value(sampleRate),
+        channelCount: Value(channelCount),
+        channelLabels: Value(channelLabels),
+        tares: Value(tares),
+        calibrationSlope: Value(calibrationSlope),
+        calibrationOffset: Value(calibrationOffset),
+        notes: Value(notes),
+        isCompleted: const Value(false),
+      ),
+    );
   }
 
-  /// Get all sessions ordered by creation date descending.
-  Future<List<Session>> allSessions() {
-    return (select(sessions)
-          ..where((t) => t.isCompleted.equals(true))
-          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
-        .get();
+  /// Record a session's final aggregates and mark it completed.
+  Future<void> completeSession(
+    int id, {
+    required int sampleCount,
+    required int durationMs,
+    required double peakForceRaw,
+    required int peakForceChannel,
+  }) {
+    return _updateSession(
+      id,
+      SessionsCompanion(
+        sampleCount: Value(sampleCount),
+        durationMs: Value(durationMs),
+        peakForceRaw: Value(peakForceRaw),
+        peakForceChannel: Value(peakForceChannel),
+        isCompleted: const Value(true),
+      ),
+    );
   }
 
-  /// Stream all sessions (reactive).
+  /// Rename a session.
+  Future<void> renameSession(int id, String name) {
+    return _updateSession(id, SessionsCompanion(name: Value(name)));
+  }
+
+  /// Replace a session's notes.
+  Future<void> setSessionNotes(int id, String notes) {
+    return _updateSession(id, SessionsCompanion(notes: Value(notes)));
+  }
+
+  /// Stream all completed sessions, newest first (reactive).
   Stream<List<Session>> watchAllSessions() {
     return (select(sessions)
           ..where((t) => t.isCompleted.equals(true))
@@ -98,18 +146,41 @@ class AppDatabase extends _$AppDatabase {
     return (select(sessions)..where((t) => t.id.equals(id))).getSingleOrNull();
   }
 
-  /// Update a session.
-  Future<bool> updateSession(int id, SessionsCompanion entry) {
-    return (update(
-      sessions,
-    )..where((t) => t.id.equals(id))).write(entry).then((rows) => rows > 0);
+  /// Sessions that were never finalized (e.g. the app died mid-recording).
+  Future<List<Session>> incompleteSessions() {
+    return (select(sessions)..where((t) => t.isCompleted.equals(false))).get();
   }
 
-  /// Delete a session.
+  /// Delete a session and its chunks.
   Future<int> deleteSession(int id) {
     return transaction(() async {
       await (delete(sessionChunks)..where((t) => t.sessionId.equals(id))).go();
       return (delete(sessions)..where((t) => t.id.equals(id))).go();
     });
+  }
+
+  /// Append one chunk of packed sample bytes to a session.
+  Future<void> insertChunk(int sessionId, int chunkIndex, Uint8List data) {
+    return into(sessionChunks).insert(
+      SessionChunksCompanion.insert(
+        sessionId: sessionId,
+        chunkIndex: chunkIndex,
+        data: data,
+      ),
+    );
+  }
+
+  /// A session's chunk payloads, ordered by chunk index.
+  Future<List<Uint8List>> sessionChunkData(int sessionId) async {
+    final rows =
+        await (select(sessionChunks)
+              ..where((t) => t.sessionId.equals(sessionId))
+              ..orderBy([(t) => OrderingTerm(expression: t.chunkIndex)]))
+            .get();
+    return [for (final r in rows) r.data];
+  }
+
+  Future<void> _updateSession(int id, SessionsCompanion entry) async {
+    await (update(sessions)..where((t) => t.id.equals(id))).write(entry);
   }
 }

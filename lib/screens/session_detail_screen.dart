@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -347,10 +346,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     controller.dispose();
 
     if (newName != null && newName.isNotEmpty) {
-      await AppDatabase.instance.updateSession(
-        _session.id,
-        SessionsCompanion(name: Value(newName)),
-      );
+      await AppDatabase.instance.renameSession(_session.id, newName);
       // Reload session from DB
       final updated = await AppDatabase.instance.sessionById(_session.id);
       if (updated != null && mounted) {
@@ -390,10 +386,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     controller.dispose();
 
     if (newNotes != null) {
-      await AppDatabase.instance.updateSession(
-        _session.id,
-        SessionsCompanion(notes: Value(newNotes)),
-      );
+      await AppDatabase.instance.setSessionNotes(_session.id, newNotes);
       final updated = await AppDatabase.instance.sessionById(_session.id);
       if (updated != null && mounted) {
         setState(() => _session = updated);
