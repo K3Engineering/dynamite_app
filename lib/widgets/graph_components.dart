@@ -467,7 +467,25 @@ void _handleGraphPointerScroll(
   );
 }
 
-class Minimap extends StatelessWidget {
+// ---------------------------------------------------------------------------
+// Minimap
+// ---------------------------------------------------------------------------
+
+/// Max relative scale drift (horizontal or vertical) tolerated when reusing
+/// the baked minimap image via an affine blit before rebaking. Bounds the
+/// transient quality loss: a 1px feature is at worst (1 - drift) of its true
+/// size between rebakes.
+const double kMinimapMaxDrift = 0.02;
+
+/// Max width (logical px) of the fresh-data sliver (samples newer than the
+/// baked image) drawn as vectors each frame before rebaking absorbs it.
+const double kMinimapMaxSliverPx = 40;
+
+/// Every this many incremental rebakes, do a full vector rebake to purge the
+/// blur that repeated image->image resampling accumulates.
+const int kMinimapFullRebakeEvery = 20;
+
+class Minimap extends StatefulWidget {
   final GraphDataSource dataSource;
   final List<int> activeChannels;
   final GraphController graphCtrl;
@@ -481,44 +499,58 @@ class Minimap extends StatelessWidget {
     required this.channelColors,
   });
 
+  @override
+  State<Minimap> createState() => _MinimapState();
+}
+
+class _MinimapState extends State<Minimap> {
+  final _MinimapBakeCache _cache = _MinimapBakeCache();
+
+  @override
+  void dispose() {
+    _cache.dispose();
+    super.dispose();
+  }
+
   /// Span of the samples the minimap squeezes into its width.
   int _mapSpan(int totalSamples, int oldestSample) =>
-      math.max(totalSamples - oldestSample, graphCtrl.minLiveSpan);
+      math.max(totalSamples - oldestSample, widget.graphCtrl.minLiveSpan);
 
   void _onMinimapTap(TapDownDetails d, double graphWidth) {
-    final totalSamples = dataSource.totalSamples;
+    final totalSamples = widget.dataSource.totalSamples;
     if (totalSamples == 0 || graphWidth <= 0) return;
-    final oldestSample = dataSource.oldestSample;
+    final oldestSample = widget.dataSource.oldestSample;
     final frac = ((d.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
       0.0,
       1.0,
     );
     final mapSpan = _mapSpan(totalSamples, oldestSample);
     final mapStart = totalSamples - mapSpan;
-    graphCtrl.centerOn(
+    widget.graphCtrl.centerOn(
       mapStart + (frac * mapSpan).round(),
       totalSamples,
       oldestSample,
-      dataSource.bufferCapacity,
+      widget.dataSource.bufferCapacity,
     );
   }
 
   void _onMinimapDrag(DragUpdateDetails d, double graphWidth) {
-    final totalSamples = dataSource.totalSamples;
+    final totalSamples = widget.dataSource.totalSamples;
     if (totalSamples == 0 || graphWidth <= 0) return;
-    final oldestSample = dataSource.oldestSample;
+    final oldestSample = widget.dataSource.oldestSample;
     final samplesPerPixel = _mapSpan(totalSamples, oldestSample) / graphWidth;
-    graphCtrl.pan(
+    widget.graphCtrl.pan(
       (d.delta.dx * samplesPerPixel).round(),
       totalSamples,
       oldestSample,
-      dataSource.bufferCapacity,
+      widget.dataSource.bufferCapacity,
     );
   }
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final graphWidth = graphPlotWidth(constraints.maxWidth);
@@ -526,19 +558,25 @@ class Minimap extends StatelessWidget {
           height: 32,
           child: Listener(
             behavior: HitTestBehavior.opaque,
-            onPointerSignal: (e) =>
-                _handleGraphPointerScroll(e, dataSource, graphCtrl, graphWidth),
+            onPointerSignal: (e) => _handleGraphPointerScroll(
+              e,
+              widget.dataSource,
+              widget.graphCtrl,
+              graphWidth,
+            ),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
               onTapDown: (d) => _onMinimapTap(d, graphWidth),
               onHorizontalDragUpdate: (d) => _onMinimapDrag(d, graphWidth),
               child: CustomPaint(
                 foregroundPainter: _MinimapPainter(
-                  dataSource,
-                  activeChannels,
-                  graphCtrl,
-                  channelColors,
+                  widget.dataSource,
+                  widget.activeChannels,
+                  widget.graphCtrl,
+                  widget.channelColors,
                   colorScheme,
+                  dpr,
+                  _cache,
                 ),
                 size: Size.infinite,
               ),
@@ -550,12 +588,57 @@ class Minimap extends StatelessWidget {
   }
 }
 
+/// Affine-reuse cache for the minimap's squeezed waveform.
+///
+/// On web every [ui.Picture] is re-executed by Skia each frame, so re-drawing
+/// the full waveform (~one AA polyline vertex + two envelope vertices per
+/// pixel column per channel) costs ~13ms of raster time per frame. Both axis
+/// mappings are affine, so a baked bitmap stays valid under squeeze/slide up
+/// to a small scale drift: each frame it is blitted with a corrective affine
+/// transform and only the fresh-data sliver is drawn as vectors. When drift
+/// or sliver exceed their thresholds the image is rebaked -- usually
+/// incrementally (old image blit + sliver -> new image, cheap), with a full
+/// vector rebake every [kMinimapFullRebakeEvery] incrementals to purge
+/// accumulated resampling blur.
+class _MinimapBakeCache {
+  ui.Image? image;
+
+  // Mapping the image was baked under: image x in [0, gw) covers samples
+  // [start, start + span); y in [0, gh) covers tare-subtracted raw values
+  // [rawMax, rawMin] (shared by all channels -- tares cancel out of the
+  // affine, see _MinimapPainter._blitBaked).
+  int start = 0;
+  int span = 1;
+
+  /// totalSamples at bake time; content right of x(end) is not in the image.
+  int end = 0;
+  double rawMin = 0;
+  double rawMax = 1;
+
+  // Config the image was baked under (mismatch => full rebake).
+  double gw = -1;
+  double gh = -1;
+  double dpr = -1;
+  List<int> channels = const [];
+  List<double> tares = const [];
+  List<Color> colors = const [];
+
+  int incrementalBakes = 0;
+
+  void dispose() {
+    image?.dispose();
+    image = null;
+  }
+}
+
 class _MinimapPainter extends CustomPainter {
   final GraphDataSource _data;
   final List<int> _activeIndices;
   final GraphController _ctrl;
   final List<Color> _colors;
   final ColorScheme _colorScheme;
+  final double _dpr;
+  final _MinimapBakeCache _cache;
 
   _MinimapPainter(
     this._data,
@@ -563,6 +646,8 @@ class _MinimapPainter extends CustomPainter {
     this._ctrl,
     this._colors,
     this._colorScheme,
+    this._dpr,
+    this._cache,
   ) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
 
   @override
@@ -606,26 +691,20 @@ class _MinimapPainter extends CustomPainter {
     final dataRange = rawMax - rawMin;
     if (dataRange <= 0) return;
 
-    // Draw the squeezed (full-history) waveform for each channel.
-    final int gwInt = gw.toInt();
-    for (final ch in _activeIndices) {
-      final tare = _data.channel(ch).tare;
-      final chColor = _colors[ch % _colors.length];
+    final tares = [for (final ch in _activeIndices) _data.channel(ch).tare];
 
-      drawSqueezedEnvelope(
-        canvas,
-        data: _data,
-        channel: ch,
-        pixelWidth: gwInt,
-        rangeStart: mapStart,
-        rangeSpan: mapSpan,
-        valueToY: (raw) =>
-            (gh - (raw - tare - rawMin) * gh / dataRange).clamp(0.0, gh),
-        avgColor: chColor.withAlpha(180),
-        envColor: chColor.withAlpha(60),
-        perf: perf, // TEMP PERF
-      );
-    }
+    _paintWaveform(
+      canvas,
+      gw,
+      gh,
+      totalSamples,
+      mapStart,
+      mapSpan,
+      rawMin,
+      rawMax,
+      tares,
+      perf,
+    );
 
     // Viewport highlight
     final (viewStart, viewEnd) = _ctrl.effectiveRange(
@@ -653,6 +732,216 @@ class _MinimapPainter extends CustomPainter {
       perf.loopMicros,
       perf.drawMicros,
     );
+  }
+
+  /// Blit the baked waveform under the current mapping and draw the fresh
+  /// sliver as vectors, rebaking first (incrementally or fully) if drift or
+  /// sliver width exceed their thresholds.
+  void _paintWaveform(
+    Canvas canvas,
+    double gw,
+    double gh,
+    int totalSamples,
+    int mapStart,
+    int mapSpan,
+    double rawMin,
+    double rawMax,
+    List<double> tares,
+    EnvelopePerf perf,
+  ) {
+    final c = _cache;
+
+    bool fullRebake =
+        c.image == null ||
+        (gw - c.gw).abs() > 0.1 ||
+        (gh - c.gh).abs() > 0.1 ||
+        _dpr != c.dpr ||
+        !listEquals(_activeIndices, c.channels) ||
+        !listEquals(tares, c.tares) ||
+        !listEquals(_colors, c.colors);
+
+    bool needsBake = fullRebake;
+    if (!needsBake) {
+      final double xScale = c.span / mapSpan;
+      final double yScale = (c.rawMax - c.rawMin) / (rawMax - rawMin);
+      final double sliverPx = (totalSamples - c.end) * gw / mapSpan;
+      needsBake =
+          (1 - xScale).abs() > kMinimapMaxDrift ||
+          (1 - yScale).abs() > kMinimapMaxDrift ||
+          sliverPx > kMinimapMaxSliverPx;
+      if (needsBake) {
+        // Not worth incremental reuse if the baked content has mostly
+        // scrolled off, or if it's time to purge resampling blur.
+        final double bakedRightPx = (c.end - mapStart) * gw / mapSpan;
+        if (bakedRightPx < gw * 0.25 ||
+            c.incrementalBakes >= kMinimapFullRebakeEvery) {
+          fullRebake = true;
+        }
+      }
+    }
+
+    if (needsBake) {
+      final recorder = ui.PictureRecorder();
+      final bake = Canvas(recorder);
+      bake.scale(_dpr);
+      if (fullRebake) {
+        _drawWaveformColumns(
+          bake,
+          gw,
+          gh,
+          mapStart,
+          mapSpan,
+          rawMin,
+          rawMax,
+          tares,
+          pxFrom: 0,
+          perf: perf,
+        );
+        c.incrementalBakes = 0;
+      } else {
+        // Incremental: reproject the previous bake and vector-render only the
+        // sliver. Raster cost of this bake is one blit + a few columns.
+        _blitBaked(bake, gw, gh, mapStart, mapSpan, rawMin, rawMax);
+        _drawSliver(bake, gw, gh, mapStart, mapSpan, rawMin, rawMax, tares, perf);
+        c.incrementalBakes++;
+      }
+      final pic = recorder.endRecording();
+      final img = pic.toImageSync((gw * _dpr).ceil(), (gh * _dpr).ceil());
+      pic.dispose();
+      c.image?.dispose();
+      c.image = img;
+      c.start = mapStart;
+      c.span = mapSpan;
+      c.end = totalSamples;
+      c.rawMin = rawMin;
+      c.rawMax = rawMax;
+      c.gw = gw;
+      c.gh = gh;
+      c.dpr = _dpr;
+      c.channels = List.of(_activeIndices);
+      c.tares = tares;
+      c.colors = List.of(_colors);
+      PerfStats.addMinimapBake(full: fullRebake); // TEMP PERF
+    }
+
+    _blitBaked(canvas, gw, gh, mapStart, mapSpan, rawMin, rawMax);
+    _drawSliver(canvas, gw, gh, mapStart, mapSpan, rawMin, rawMax, tares, perf);
+  }
+
+  /// First pixel column not covered by the baked image (where the vector
+  /// sliver starts). The image blit is clipped here so image and sliver never
+  /// double-blend.
+  int _sliverStartCol(double gw, int mapStart, int mapSpan) {
+    final int gwInt = gw.toInt();
+    final double x = (_cache.end - mapStart) * gwInt / mapSpan;
+    return x.floor().clamp(0, gwInt);
+  }
+
+  /// Draw the baked image under the current mapping.
+  ///
+  /// Image x-pixel u covers sample s = start + u * span / gw, which today
+  /// lands at x = (s - mapStart) * gw / mapSpan = xOffset + u * xScale --
+  /// affine, so one drawImageRect repositions the content exactly. Same
+  /// derivation vertically from valueToY: y = gh - (v - tare - rawMin) * gh /
+  /// range is affine in (rawMin, range) and the per-channel tare cancels out.
+  void _blitBaked(
+    Canvas canvas,
+    double gw,
+    double gh,
+    int mapStart,
+    int mapSpan,
+    double rawMin,
+    double rawMax,
+  ) {
+    final c = _cache;
+    final img = c.image;
+    if (img == null) return;
+
+    final double xScale = c.span / mapSpan;
+    final double xOffset = (c.start - mapStart) * gw / mapSpan;
+    final double yScale = (c.rawMax - c.rawMin) / (rawMax - rawMin);
+    final double yOffset =
+        gh * (1 - yScale) + (rawMin - c.rawMin) * gh / (rawMax - rawMin);
+
+    final double xClip = _sliverStartCol(gw, mapStart, mapSpan).toDouble();
+    if (xClip <= 0) return;
+
+    canvas.save();
+    canvas.clipRect(Rect.fromLTRB(0, 0, xClip, gh));
+    canvas.drawImageRect(
+      img,
+      Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+      Rect.fromLTWH(xOffset, yOffset, gw * xScale, gh * yScale),
+      Paint()..filterQuality = FilterQuality.low,
+    );
+    canvas.restore();
+  }
+
+  /// Vector-render the columns not covered by the baked image.
+  void _drawSliver(
+    Canvas canvas,
+    double gw,
+    double gh,
+    int mapStart,
+    int mapSpan,
+    double rawMin,
+    double rawMax,
+    List<double> tares,
+    EnvelopePerf perf,
+  ) {
+    final int col = _sliverStartCol(gw, mapStart, mapSpan);
+    if (col >= gw.toInt()) return;
+    _drawWaveformColumns(
+      canvas,
+      gw,
+      gh,
+      mapStart,
+      mapSpan,
+      rawMin,
+      rawMax,
+      tares,
+      pxFrom: col,
+      perf: perf,
+    );
+  }
+
+  /// Vector-render waveform columns [pxFrom, gw) of the current mapping.
+  /// Columns are anchored to the global pixel grid (pxFrom only skips work),
+  /// so sliver columns land exactly where a full render would put them.
+  void _drawWaveformColumns(
+    Canvas canvas,
+    double gw,
+    double gh,
+    int mapStart,
+    int mapSpan,
+    double rawMin,
+    double rawMax,
+    List<double> tares, {
+    required int pxFrom,
+    required EnvelopePerf perf,
+  }) {
+    final dataRange = rawMax - rawMin;
+    final int gwInt = gw.toInt();
+    for (int i = 0; i < _activeIndices.length; i++) {
+      final ch = _activeIndices[i];
+      final tare = tares[i];
+      final chColor = _colors[ch % _colors.length];
+
+      drawSqueezedEnvelope(
+        canvas,
+        data: _data,
+        channel: ch,
+        pixelWidth: gwInt,
+        pxFrom: pxFrom,
+        rangeStart: mapStart,
+        rangeSpan: mapSpan,
+        valueToY: (raw) =>
+            (gh - (raw - tare - rawMin) * gh / dataRange).clamp(0.0, gh),
+        avgColor: chColor.withAlpha(180),
+        envColor: chColor.withAlpha(60),
+        perf: perf, // TEMP PERF
+      );
+    }
   }
 
   @override
@@ -1512,6 +1801,11 @@ void drawChannelEnvelope(
 ///
 /// Reduction happens in raw counts; [valueToY] projects a reduced raw value
 /// (not tare-subtracted) to a pixel Y.
+///
+/// [pxFrom] skips columns before it without changing the column->sample grid
+/// (columns stay anchored to the full [pixelWidth] mapping), so a partial
+/// render (e.g. the minimap's fresh-data sliver) lands exactly where a full
+/// render would put it.
 void drawSqueezedEnvelope(
   Canvas canvas, {
   required GraphDataSource data,
@@ -1523,6 +1817,7 @@ void drawSqueezedEnvelope(
   required Color avgColor,
   required Color envColor,
   double avgStrokeWidth = 1.0,
+  int pxFrom = 0,
   EnvelopePerf? perf, // TEMP PERF
 }) {
   final series = data.channel(channel);
@@ -1548,7 +1843,7 @@ void drawSqueezedEnvelope(
   final bucketSums = series.bucketSums;
   final int numBuckets = bucketMins.length;
 
-  for (int px = 0; px < pixelWidth; px++) {
+  for (int px = pxFrom; px < pixelWidth; px++) {
     final int sStart = rangeStart + px * rangeSpan ~/ pixelWidth;
     final int sEnd = rangeStart + (px + 1) * rangeSpan ~/ pixelWidth;
     final int drawStart = math.max(sStart, oldestSample);
@@ -1942,6 +2237,19 @@ class PerfStats {
     _minimapDrawMicros += draw;
   }
 
+  // Minimap affine-reuse bake accounting.
+  static int _minimapIncBakes = 0;
+  static int _minimapFullBakes = 0;
+
+  /// Record one minimap image rebake (incremental or full vector).
+  static void addMinimapBake({required bool full}) {
+    if (full) {
+      _minimapFullBakes++;
+    } else {
+      _minimapIncBakes++;
+    }
+  }
+
   // Tile accounting for paintCachedChannels (see TileDraw).
   static int _tilesBlit = 0;
   static int _tilesLive = 0;
@@ -1991,7 +2299,7 @@ class PerfStats {
     debugPrint(
       '[PERF] over $_frameCount frames | '
       'Main paint: ${dartAvg.toStringAsFixed(0)}us (${_paintCount}x) | '
-      'Minimap: ${mmAvg.toStringAsFixed(0)}us (loop: ${mmLoopAvg.toStringAsFixed(0)}us, draw: ${mmDrawAvg.toStringAsFixed(0)}us) | '
+      'Minimap: ${mmAvg.toStringAsFixed(0)}us (loop: ${mmLoopAvg.toStringAsFixed(0)}us, draw: ${mmDrawAvg.toStringAsFixed(0)}us, bakes: ${_minimapIncBakes}i+${_minimapFullBakes}f) | '
       'tiles/frame: ${(_tilesBlit / fc).toStringAsFixed(1)} blit, '
       '${(_tilesLive / fc).toStringAsFixed(1)} live, '
       '${(_tilesRecorded / fc).toStringAsFixed(1)} recorded '
@@ -2005,6 +2313,8 @@ class PerfStats {
     _minimapMicros = 0;
     _minimapLoopMicros = 0;
     _minimapDrawMicros = 0;
+    _minimapIncBakes = 0;
+    _minimapFullBakes = 0;
     _tilesBlit = 0;
     _tilesLive = 0;
     _tilesRecorded = 0;
