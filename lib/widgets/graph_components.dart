@@ -1103,10 +1103,9 @@ ui.Paragraph _prepareLabel(String text, {Color color = Colors.black}) {
 // and tickDelta is the spacing between major ticks.
 // ---------------------------------------------------------------------------
 
-({double yMin, double yMax, double tickDelta}) _computeYRange(
-  double dataMin,
-  double dataMax,
-) {
+typedef YAxisRange = ({double yMin, double yMax, double tickDelta});
+
+YAxisRange _computeYRange(double dataMin, double dataMax) {
   // Ensure some minimum range to avoid degenerate axes
   if (dataMax - dataMin < 0.001) {
     dataMax = dataMin + 1.0;
@@ -1217,7 +1216,7 @@ void drawValueAxis(
   Canvas canvas,
   Path grid,
   Size graphSz,
-  ({double yMin, double yMax, double tickDelta}) yRange,
+  YAxisRange yRange,
   double Function(double value) valueToY, {
   required String Function(double tick) labelFor,
   bool drawMinor = false,
@@ -1261,7 +1260,7 @@ void drawValueAxis(
 void drawZeroBaseline(
   Canvas canvas,
   Size graphSz,
-  ({double yMin, double yMax, double tickDelta}) yRange,
+  YAxisRange yRange,
   double Function(double value) valueToY,
   Color color,
 ) {
@@ -1652,7 +1651,7 @@ void paintCachedChannels(
 }
 
 // ---------------------------------------------------------------------------
-// Live graph painter (force)
+// Windowed time-series graph painters (force, derivative)
 // ---------------------------------------------------------------------------
 
 /// Common painter prologue shared by the force and derivative graphs: translate
@@ -1714,24 +1713,63 @@ _GraphLayout? _setupGraphFrame(
   );
 }
 
-class ForceGraphPainter extends CustomPainter {
+/// Shared engine for the windowed time-series graphs (force, derivative).
+///
+/// Handles the pipeline common to both: frame setup, Y-range for the visible
+/// window, axes/grid, zero baseline, missing-data hatching, and the
+/// tile-cached envelope rendering. Subclasses define the series being
+/// plotted -- [sampleAt] (per-channel value in display units), [computeYRange],
+/// [yTickLabel] -- plus layout tweaks and cache-key extras.
+abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final GraphDataSource _data;
   final AppSettings _settings;
   final GraphController _ctrl;
-  final bool showXLabels;
   final bool showEnvelope;
   final GraphLineCache cache;
   final ColorScheme colorScheme;
 
-  ForceGraphPainter(
+  _TimeSeriesGraphPainter(
     this._data,
     this._settings,
     this._ctrl, {
-    this.showXLabels = true,
     this.showEnvelope = true,
     required this.cache,
     required this.colorScheme,
   }) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
+
+  // --- Layout hooks --------------------------------------------------------
+
+  /// Padding above the plot area.
+  double get topSpace;
+
+  /// Whether to draw time labels below the X axis.
+  bool get showXLabels => true;
+
+  /// Whether to add half-delta minor grid lines on both axes.
+  bool get drawMinorGrid => false;
+
+  /// Offset from [GraphDataSource.oldestSample] of the first sample the
+  /// series can be evaluated at (1 for a first difference).
+  int get firstSampleOffset => 0;
+
+  // --- Series hooks --------------------------------------------------------
+
+  /// Returns the series evaluator for [channel]: the value at an absolute
+  /// sample index, in display units. NaN marks a missing sample.
+  double Function(int j) sampleAt(int channel);
+
+  /// Y-axis range (display units) for the visible window.
+  YAxisRange computeYRange(int viewStart, int viewEnd);
+
+  /// Label for a Y-axis tick.
+  String yTickLabel(double tick);
+
+  /// Per-channel values mixed into the tile-cache key; return the tares when
+  /// the series depends on them.
+  List<double> cacheKeyTares() => const [];
+
+  /// Optional chrome drawn after the axes, before the data lines.
+  void drawOverlay(Canvas canvas, Size graphSz) {}
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1740,9 +1778,9 @@ class ForceGraphPainter extends CustomPainter {
       size,
       _data,
       _ctrl,
-      topSpace: 4,
+      topSpace: topSpace,
       bottomSpace: showXLabels ? kGraphBottomSpace : 4,
-      minSamples: 1,
+      minSamples: 1 + firstSampleOffset,
       frameColor: colorScheme.primary.withAlpha(150),
     );
     if (layout == null) return;
@@ -1752,54 +1790,14 @@ class ForceGraphPainter extends CustomPainter {
     final viewEnd = layout.viewEnd;
     final viewSamples = layout.viewSamples;
 
-    final unit = _settings.displayUnit;
     final activeIndices = _settings.activeChannelIndices;
     final oldestSample = _data.oldestSample;
     final totalSamples = _data.totalSamples;
 
-    // Compute data min/max across active channels in visible window (raw, tare-subtracted).
-    // Start with actual extremes then enforce a minimum visible range.
-    double rawMax = 0;
-    double rawMin = 0;
-    bool hasData = false;
-
-    // Zoomed/panned -- scan visible window for actual min/max
-    for (final ch in activeIndices) {
-      final s = _data.channel(ch);
-      final line = s.data;
-      if (line.isEmpty) continue;
-      final tare = s.tare;
-      final bufferCap = _data.bufferCapacity;
-      final sScanStart = math.max(viewStart, oldestSample);
-      final sScanEnd = math.min(viewEnd, totalSamples);
-      for (int i = sScanStart; i < sScanEnd; i++) {
-        final rawVal = line[i % bufferCap];
-        if (_data.missingSampleSentinel != null &&
-            rawVal == _data.missingSampleSentinel)
-          continue;
-        final v = rawVal - tare;
-        if (!hasData || v > rawMax) rawMax = v.toDouble();
-        if (!hasData || v < rawMin) rawMin = v.toDouble();
-        hasData = true;
-      }
-    }
-
-    // Enforce a minimum visible range (noise floor) so the graph isn't degenerate
-    const double noiseFloor = 10000; // raw counts
-    if (rawMax - rawMin < noiseFloor) {
-      final mid = (rawMax + rawMin) / 2;
-      rawMax = mid + noiseFloor / 2;
-      rawMin = mid - noiseFloor / 2;
-    }
-
-    final double dataMaxUnit = unit.fromRaw(rawMax, _data.calibrationSlope);
-    final double dataMinUnit = unit.fromRaw(rawMin, _data.calibrationSlope);
-
-    // Compute nice Y axis range
-    final yRange = _computeYRange(dataMinUnit, dataMaxUnit);
+    final yRange = computeYRange(viewStart, viewEnd);
 
     // Map a value in display units to Y pixel
-    double unitToY(double val) {
+    double valueToY(double val) {
       return graphSz.height -
           (val - yRange.yMin) * graphSz.height / (yRange.yMax - yRange.yMin);
     }
@@ -1815,7 +1813,7 @@ class ForceGraphPainter extends CustomPainter {
       oldestSample: oldestSample,
       sampleRate: _data.sampleRate,
       showLabels: showXLabels,
-      drawMinor: true,
+      drawMinor: drawMinorGrid,
       textColor: colorScheme.onSurface,
     );
     drawValueAxis(
@@ -1823,9 +1821,9 @@ class ForceGraphPainter extends CustomPainter {
       grid,
       graphSz,
       yRange,
-      unitToY,
-      labelFor: (tick) => _formatTickLabel(tick, unit.symbol),
-      drawMinor: true,
+      valueToY,
+      labelFor: yTickLabel,
+      drawMinor: drawMinorGrid,
       textColor: colorScheme.onSurface,
     );
     final gridPen = Paint()
@@ -1838,7 +1836,7 @@ class ForceGraphPainter extends CustomPainter {
       canvas,
       graphSz,
       yRange,
-      unitToY,
+      valueToY,
       colorScheme.onSurface.withAlpha(130),
     );
 
@@ -1851,19 +1849,16 @@ class ForceGraphPainter extends CustomPainter {
       color: colorScheme.error,
     );
 
-    // -- Data lines --
-    final slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
+    drawOverlay(canvas, graphSz);
 
-    final currentTares = activeIndices
-        .map((ch) => _data.channel(ch).tare)
-        .toList();
+    // -- Data lines (tile-cached envelope) --
     final currentConfig = CacheConfig(
       graphSz.width,
       graphSz.height,
       viewSamples,
       yRange.yMin,
       yRange.yMax,
-      currentTares,
+      cacheKeyTares(),
     );
 
     paintCachedChannels(
@@ -1877,11 +1872,7 @@ class ForceGraphPainter extends CustomPainter {
       graphW: graphSz.width,
       drawChunk: (cCanvas, chunkStartSample, chunkEndSample, limitSamples) {
         for (final ch in activeIndices) {
-          final s = _data.channel(ch);
-          final line = s.data;
-          if (line.isEmpty) continue;
-          final tare = s.tare;
-          final bufferCap = _data.bufferCapacity;
+          if (_data.channel(ch).data.isEmpty) continue;
 
           drawChannelEnvelope(
             cCanvas,
@@ -1891,16 +1882,12 @@ class ForceGraphPainter extends CustomPainter {
             viewSamples: viewSamples,
             oldestSample: oldestSample,
             totalSamples: limitSamples,
-            firstUsableSample: math.max(oldestSample, chunkStartSample),
-            sampleAt: (j) {
-              final val = line[j % bufferCap];
-              if (_data.missingSampleSentinel != null &&
-                  val == _data.missingSampleSentinel)
-                return double.nan;
-              return val.toDouble();
-            },
-            valueToY: (raw) =>
-                unitToY((raw - tare) * slopeToUnit).clamp(0.0, graphSz.height),
+            firstUsableSample: math.max(
+              oldestSample + firstSampleOffset,
+              chunkStartSample,
+            ),
+            sampleAt: sampleAt(ch),
+            valueToY: (v) => valueToY(v).clamp(0.0, graphSz.height),
             showEnvelope: showEnvelope,
             clipEnvelopeSamples: chunkEndSample,
           );
@@ -1913,81 +1900,149 @@ class ForceGraphPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
-// ---------------------------------------------------------------------------
-// Derivative graph painter
-// ---------------------------------------------------------------------------
+/// Force graph: each channel's tared value in the selected display unit.
+class ForceGraphPainter extends _TimeSeriesGraphPainter {
+  @override
+  final bool showXLabels;
 
-class DerivativeGraphPainter extends CustomPainter {
-  final GraphDataSource _data;
-  final AppSettings _settings;
-  final GraphController _ctrl;
-  final bool showEnvelope;
-  final GraphLineCache cache;
-  final ColorScheme colorScheme;
-
-  DerivativeGraphPainter(
-    this._data,
-    this._settings,
-    this._ctrl, {
-    this.showEnvelope = true,
-    required this.cache,
-    required this.colorScheme,
-  }) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
+  ForceGraphPainter(
+    super.data,
+    super.settings,
+    super.ctrl, {
+    this.showXLabels = true,
+    super.showEnvelope,
+    required super.cache,
+    required super.colorScheme,
+  });
 
   @override
-  void paint(Canvas canvas, Size size) {
-    final layout = _setupGraphFrame(
-      canvas,
-      size,
-      _data,
-      _ctrl,
-      topSpace: 2,
-      bottomSpace: kGraphBottomSpace,
-      minSamples: 2,
-      frameColor: colorScheme.primary.withAlpha(150),
+  double get topSpace => 4;
+
+  @override
+  bool get drawMinorGrid => true;
+
+  @override
+  List<double> cacheKeyTares() => _settings.activeChannelIndices
+      .map((ch) => _data.channel(ch).tare)
+      .toList();
+
+  @override
+  double Function(int j) sampleAt(int channel) {
+    final s = _data.channel(channel);
+    final line = s.data;
+    final tare = s.tare;
+    final bufferCap = _data.bufferCapacity;
+    final sentinel = _data.missingSampleSentinel;
+    final slopeToUnit = _settings.displayUnit.multiplierFromRaw(
+      _data.calibrationSlope,
     );
-    if (layout == null) return;
+    return (j) {
+      final val = line[j % bufferCap];
+      if (sentinel != null && val == sentinel) return double.nan;
+      return (val - tare) * slopeToUnit;
+    };
+  }
 
-    final graphSz = layout.graphSz;
-    final viewStart = layout.viewStart;
-    final viewEnd = layout.viewEnd;
-    final viewSamples = layout.viewSamples;
-
-    final unit = _settings.displayUnit;
-    final activeIndices = _settings.activeChannelIndices;
+  @override
+  YAxisRange computeYRange(int viewStart, int viewEnd) {
+    // Compute data min/max across active channels in visible window (raw,
+    // tare-subtracted) so the noise floor stays a raw-count threshold, then
+    // convert to display units.
     final oldestSample = _data.oldestSample;
     final totalSamples = _data.totalSamples;
+    double rawMax = 0;
+    double rawMin = 0;
+    bool hasData = false;
 
-    final double slopeToUnit = unit.multiplierFromRaw(_data.calibrationSlope);
-    final double sampleRate = _data.sampleRate.toDouble();
-
-    // Raw first-difference for sample j (requires j-1 to exist).
-    double derivRawAt(List<int> line, int bufferCap, int j) {
-      final v1 = line[j % bufferCap];
-      final v2 = line[(j - 1) % bufferCap];
-      if (_data.missingSampleSentinel != null &&
-          (v1 == _data.missingSampleSentinel ||
-              v2 == _data.missingSampleSentinel)) {
-        return double.nan;
+    for (final ch in _settings.activeChannelIndices) {
+      final s = _data.channel(ch);
+      final line = s.data;
+      if (line.isEmpty) continue;
+      final tare = s.tare;
+      final bufferCap = _data.bufferCapacity;
+      final sentinel = _data.missingSampleSentinel;
+      final sScanStart = math.max(viewStart, oldestSample);
+      final sScanEnd = math.min(viewEnd, totalSamples);
+      for (int i = sScanStart; i < sScanEnd; i++) {
+        final rawVal = line[i % bufferCap];
+        if (sentinel != null && rawVal == sentinel) continue;
+        final v = rawVal - tare;
+        if (!hasData || v > rawMax) rawMax = v.toDouble();
+        if (!hasData || v < rawMin) rawMin = v.toDouble();
+        hasData = true;
       }
-      return (v1 - v2).toDouble();
     }
 
+    // Enforce a minimum visible range (noise floor) so the graph isn't degenerate
+    const double noiseFloor = 10000; // raw counts
+    if (rawMax - rawMin < noiseFloor) {
+      final mid = (rawMax + rawMin) / 2;
+      rawMax = mid + noiseFloor / 2;
+      rawMin = mid - noiseFloor / 2;
+    }
+
+    final unit = _settings.displayUnit;
+    return _computeYRange(
+      unit.fromRaw(rawMin, _data.calibrationSlope),
+      unit.fromRaw(rawMax, _data.calibrationSlope),
+    );
+  }
+
+  @override
+  String yTickLabel(double tick) =>
+      _formatTickLabel(tick, _settings.displayUnit.symbol);
+}
+
+/// Derivative graph: the first difference of each channel, scaled to display
+/// units per second.
+class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
+  DerivativeGraphPainter(
+    super.data,
+    super.settings,
+    super.ctrl, {
+    super.showEnvelope,
+    required super.cache,
+    required super.colorScheme,
+  });
+
+  @override
+  double get topSpace => 2;
+
+  @override
+  int get firstSampleOffset => 1; // first difference needs sample j-1
+
+  @override
+  double Function(int j) sampleAt(int channel) {
+    final line = _data.channel(channel).data;
+    final bufferCap = _data.bufferCapacity;
+    final sentinel = _data.missingSampleSentinel;
+    final scale =
+        _settings.displayUnit.multiplierFromRaw(_data.calibrationSlope) *
+        _data.sampleRate;
+    return (j) {
+      final v1 = line[j % bufferCap];
+      final v2 = line[(j - 1) % bufferCap];
+      if (sentinel != null && (v1 == sentinel || v2 == sentinel)) {
+        return double.nan;
+      }
+      return (v1 - v2) * scale;
+    };
+  }
+
+  @override
+  YAxisRange computeYRange(int viewStart, int viewEnd) {
     // Compute derivative min/max (in display units) across the visible window.
     double dMin = 0;
     double dMax = 0;
     bool first = true;
-    for (final ch in activeIndices) {
-      final line = _data.channel(ch).data;
-      if (line.isEmpty) continue;
-      final bufferCap = _data.bufferCapacity;
-
-      final startI = math.max(viewStart, oldestSample + 1);
-      final endI = math.min(viewEnd, totalSamples);
+    final startI = math.max(viewStart, _data.oldestSample + 1);
+    final endI = math.min(viewEnd, _data.totalSamples);
+    for (final ch in _settings.activeChannelIndices) {
+      if (_data.channel(ch).data.isEmpty) continue;
+      final valueAt = sampleAt(ch);
       for (int i = startI; i < endI; i++) {
-        final rawDeriv = derivRawAt(line, bufferCap, i);
-        if (rawDeriv.isNaN) continue;
-        final d = rawDeriv * slopeToUnit * sampleRate;
+        final d = valueAt(i);
+        if (d.isNaN) continue;
         if (first) {
           dMin = d;
           dMax = d;
@@ -1998,121 +2053,21 @@ class DerivativeGraphPainter extends CustomPainter {
         }
       }
     }
-
-    // Add some padding
-    if (dMax - dMin < 0.001) {
-      dMax = dMin + 1.0;
-    }
-
-    final yRange = _computeYRange(dMin, dMax);
-
-    double valToY(double val) {
-      return graphSz.height -
-          (val - yRange.yMin) * graphSz.height / (yRange.yMax - yRange.yMin);
-    }
-
-    // Grid + labels (axes shared with the force graph above).
-    final grid = Path();
-    drawTimeAxis(
-      canvas,
-      grid,
-      graphSz,
-      viewStart: viewStart,
-      viewEnd: viewEnd,
-      oldestSample: oldestSample,
-      sampleRate: _data.sampleRate,
-      showLabels: true,
-      textColor: colorScheme.onSurface,
-    );
-    drawValueAxis(
-      canvas,
-      grid,
-      graphSz,
-      yRange,
-      valToY,
-      labelFor: (tick) => '${_formatTickValue(tick)}/s',
-      textColor: colorScheme.onSurface,
-    );
-    final gridPen = Paint()
-      ..color = colorScheme.onSurface.withAlpha(50)
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.2;
-    canvas.drawPath(grid, gridPen);
-
-    drawZeroBaseline(
-      canvas,
-      graphSz,
-      yRange,
-      valToY,
-      colorScheme.onSurface.withAlpha(130),
-    );
-
-    drawMissingDataHatching(
-      canvas,
-      graphSz,
-      viewStart: viewStart,
-      viewEnd: viewEnd,
-      data: _data,
-      color: colorScheme.error,
-    );
-
-    // "dF/dt" label in top-left
-    final dLabel = _prepareLabel(
-      'dF/dt (${unit.symbol}/s)',
-      color: colorScheme.onSurface.withAlpha(150),
-    );
-    canvas.drawParagraph(dLabel, const Offset(4, 2));
-
-    // Data lines
-    final currentConfig = CacheConfig(
-      graphSz.width,
-      graphSz.height,
-      viewSamples,
-      yRange.yMin,
-      yRange.yMax,
-      [],
-    );
-
-    paintCachedChannels(
-      canvas,
-      cache,
-      currentConfig,
-      viewStart: viewStart,
-      viewEnd: viewEnd,
-      totalSamples: totalSamples,
-      oldestSample: oldestSample,
-      graphW: graphSz.width,
-      drawChunk: (cCanvas, chunkStartSample, chunkEndSample, limitSamples) {
-        for (final ch in activeIndices) {
-          final line = _data.channel(ch).data;
-          if (line.isEmpty) continue;
-          final bufferCap = _data.bufferCapacity;
-
-          drawChannelEnvelope(
-            cCanvas,
-            color: getChannelColor(ch),
-            graphW: graphSz.width,
-            viewStart: chunkStartSample,
-            viewSamples: viewSamples,
-            oldestSample: oldestSample,
-            totalSamples: limitSamples,
-            firstUsableSample: math.max(oldestSample + 1, chunkStartSample),
-            sampleAt: (j) {
-              final raw = derivRawAt(line, bufferCap, j);
-              if (raw.isNaN) return double.nan;
-              return raw * slopeToUnit * sampleRate;
-            },
-            valueToY: (deriv) => valToY(deriv).clamp(0.0, graphSz.height),
-            showEnvelope: showEnvelope,
-            clipEnvelopeSamples: chunkEndSample,
-          );
-        }
-      },
-    );
+    return _computeYRange(dMin, dMax);
   }
 
   @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
+  String yTickLabel(double tick) => '${_formatTickValue(tick)}/s';
+
+  @override
+  void drawOverlay(Canvas canvas, Size graphSz) {
+    // "dF/dt" label in top-left
+    final dLabel = _prepareLabel(
+      'dF/dt (${_settings.displayUnit.symbol}/s)',
+      color: colorScheme.onSurface.withAlpha(150),
+    );
+    canvas.drawParagraph(dLabel, const Offset(4, 2));
+  }
 }
 
 // ---------------------------------------------------------------------------
