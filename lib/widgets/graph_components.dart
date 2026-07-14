@@ -242,6 +242,103 @@ class GraphController extends ChangeNotifier {
     return (_viewStart, _viewEnd!.clamp(_viewStart + 1, totalSamples));
   }
 
+  /// Whether the current window covers all available data.
+  ///
+  /// Every plot renders in one of two modes:
+  ///   * squeeze -- the window spans the whole history, so the x-mapping of
+  ///     every sample recompresses as new data arrives;
+  ///   * slide   -- a fixed-span window slides over the data.
+  bool isSqueeze(int totalSamples, int oldestSample) {
+    final (s, e) = effectiveRange(totalSamples, oldestSample);
+    return e - s >= totalSamples - oldestSample;
+  }
+
+  /// Apply the window [newStart, newStart + span), clamped to the available
+  /// data. Snaps to live mode when the window reaches the right edge.
+  ///
+  /// This is the single funnel for every window-moving interaction (pan,
+  /// minimap tap/drag, gesture pan); [zoomTo] handles the zooming ones.
+  void applyWindow(int newStart, int span, int totalSamples, int oldestSample) {
+    int newEnd = newStart + span;
+    final minStart = math.min(oldestSample, totalSamples - span);
+
+    if (newStart < minStart) {
+      newStart = minStart;
+      newEnd = newStart + span;
+    }
+    if (newEnd >= totalSamples) {
+      // Snap to live if the window reaches the right edge. goLive derives the
+      // locked span from the window set here.
+      _viewStart = newStart;
+      _viewEnd = newEnd;
+      goLive(totalSamples: totalSamples, oldestSample: oldestSample);
+      return;
+    }
+
+    _viewStart = newStart;
+    _viewEnd = newEnd;
+    _isLive = false;
+    _liveSpan = null;
+    notifyListeners();
+  }
+
+  /// Zoom so the window becomes [newSpan] samples (clamped to a ~50 sample
+  /// minimum and the available data), anchored at [focalFraction] (0.0 = left
+  /// edge, 1.0 = right edge) of the base window [baseStart, baseStart +
+  /// baseSpan). The base window is the current one for wheel/button zoom, or
+  /// the gesture-start window for pinch.
+  ///
+  /// When [anchorLiveEdge] and the focal point is near the right edge, the
+  /// anchor snaps to the right edge so we stay live without tracking jitter.
+  void zoomTo(
+    int newSpan,
+    double focalFraction, {
+    required int baseStart,
+    required int baseSpan,
+    required bool anchorLiveEdge,
+    required int totalSamples,
+    required int oldestSample,
+  }) {
+    final maxSpan = math.max(totalSamples - oldestSample, minLiveSpan);
+    // Minimum ~50 samples visible (50ms at 1kHz)
+    final span = newSpan.clamp(50, maxSpan);
+
+    double effectiveFocal = focalFraction;
+    if (anchorLiveEdge && focalFraction > 0.8) {
+      effectiveFocal = 1.0;
+    }
+
+    final focal = baseStart + (effectiveFocal * baseSpan).round();
+    int newStart = focal - (effectiveFocal * span).round();
+    int newEnd = newStart + span;
+
+    final minStart = math.min(oldestSample, totalSamples - span);
+
+    if (newStart < minStart) {
+      newStart = minStart;
+      newEnd = newStart + span;
+    }
+
+    if (newEnd >= totalSamples) {
+      // At the right edge -- enter/stay live. Unlike applyWindow, a zoom that
+      // hits max span means "show everything" (liveSpan = null, auto-expand).
+      _viewStart = totalSamples - span; // Force right-align
+      _viewEnd = totalSamples;
+      goLive(
+        span: span >= maxSpan ? null : span,
+        totalSamples: totalSamples,
+        oldestSample: oldestSample,
+      );
+      return;
+    }
+
+    _viewStart = newStart;
+    _viewEnd = newEnd;
+    _isLive = false;
+    _liveSpan = null;
+    notifyListeners();
+  }
+
   /// Pan by a delta in samples (negative = left, positive = right).
   void pan(
     int deltaSamples,
@@ -254,30 +351,23 @@ class GraphController extends ChangeNotifier {
       oldestSample,
       bufferCapacity: bufferCapacity,
     );
+    applyWindow(s + deltaSamples, e - s, totalSamples, oldestSample);
+  }
+
+  /// Center the current window (span preserved) on [centerSample].
+  void centerOn(
+    int centerSample,
+    int totalSamples,
+    int oldestSample,
+    int bufferCapacity,
+  ) {
+    final (s, e) = effectiveRange(
+      totalSamples,
+      oldestSample,
+      bufferCapacity: bufferCapacity,
+    );
     final span = e - s;
-    int newStart = s + deltaSamples;
-    int newEnd = newStart + span;
-
-    final minStart = math.min(oldestSample, totalSamples - span);
-
-    // Clamp to valid range
-    if (newStart < minStart) {
-      newStart = minStart;
-      newEnd = newStart + span;
-    }
-    if (newEnd >= totalSamples) {
-      // Snap to live if we pan to the right edge
-      _viewStart = newStart;
-      _viewEnd = newEnd;
-      goLive(totalSamples: totalSamples, oldestSample: oldestSample);
-      return;
-    }
-
-    _viewStart = newStart;
-    _viewEnd = newEnd;
-    _isLive = false;
-    _liveSpan = null;
-    notifyListeners();
+    applyWindow(centerSample - span ~/ 2, span, totalSamples, oldestSample);
   }
 
   /// Zoom by a factor around a focal point (0.0 = left edge, 1.0 = right edge).
@@ -294,56 +384,15 @@ class GraphController extends ChangeNotifier {
       bufferCapacity: bufferCapacity,
     );
     final span = e - s;
-    final maxSpan = math.max(totalSamples - oldestSample, minLiveSpan);
-    final newSpan = (span / factor).round().clamp(
-      // Minimum ~50 samples visible (50ms at 1kHz)
-      50,
-      maxSpan,
+    zoomTo(
+      (span / factor).round(),
+      focalFraction,
+      baseStart: s,
+      baseSpan: span,
+      anchorLiveEdge: _isLive,
+      totalSamples: totalSamples,
+      oldestSample: oldestSample,
     );
-
-    // Smart anchor: If we are live and zooming near the right edge,
-    // anchor the zoom perfectly to the right edge to stay live.
-    double effectiveFocal = focalFraction;
-    if (_isLive && focalFraction > 0.8) {
-      effectiveFocal = 1.0;
-    }
-
-    final focal = s + (effectiveFocal * span).round();
-    int newStart = focal - (effectiveFocal * newSpan).round();
-    int newEnd = newStart + newSpan;
-
-    final minStart = math.min(oldestSample, totalSamples - newSpan);
-
-    if (newStart < minStart) {
-      newStart = minStart;
-      newEnd = newStart + newSpan;
-    }
-
-    if (newEnd >= totalSamples) {
-      // At the right edge -- enter/stay live
-      _viewStart = totalSamples - newSpan; // Force right-align
-      _viewEnd = totalSamples;
-      if (newSpan >= maxSpan) {
-        goLive(
-          span: null,
-          totalSamples: totalSamples,
-          oldestSample: oldestSample,
-        );
-      } else {
-        goLive(
-          span: newSpan,
-          totalSamples: totalSamples,
-          oldestSample: oldestSample,
-        );
-      }
-      return;
-    }
-
-    _viewStart = newStart;
-    _viewEnd = newEnd;
-    _isLive = false;
-    _liveSpan = null;
-    notifyListeners();
   }
 
   /// Reset to show all data in live mode (fully zoomed out).
