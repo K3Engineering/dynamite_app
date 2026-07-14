@@ -578,149 +578,24 @@ class _MinimapPainter extends CustomPainter {
     final dataRange = rawMax - rawMin;
     if (dataRange <= 0) return;
 
-    // Draw simplified waveform for each channel
-    final pen = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.0;
-
+    // Draw the squeezed (full-history) waveform for each channel.
     final int gwInt = gw.toInt();
-    for (int i = 0; i < _activeIndices.length; i++) {
-      final ch = _activeIndices[i];
-      final line = _data.channel(ch).data;
-      if (line.isEmpty) continue;
-
+    for (final ch in _activeIndices) {
       final tare = _data.channel(ch).tare;
-      final bufferCapacity = _data.bufferCapacity;
-
       final chColor = _colors[ch % _colors.length];
 
-      final avg = VertexBatcher(
-        preserveFloats: 2,
-        drawThreshold: 2,
-        onFlush: (view) {
-          pen
-            ..color = chColor.withAlpha(180)
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1.0;
-          canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
-        },
+      drawSqueezedEnvelope(
+        canvas,
+        data: _data,
+        channel: ch,
+        pixelWidth: gwInt,
+        rangeStart: mapStart,
+        rangeSpan: mapSpan,
+        valueToY: (raw) =>
+            (gh - (raw - tare - rawMin) * gh / dataRange).clamp(0.0, gh),
+        avgColor: chColor.withAlpha(180),
+        envColor: chColor.withAlpha(60),
       );
-
-      final env = VertexBatcher(
-        preserveFloats: 4,
-        drawThreshold: 4,
-        onFlush: (view) {
-          final vertices = ui.Vertices.raw(ui.VertexMode.triangleStrip, view);
-          pen
-            ..color = chColor.withAlpha(60)
-            ..style = PaintingStyle.fill;
-          canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
-          vertices.dispose();
-        },
-      );
-
-      final chSeries = _data.channel(ch);
-      final int bucketSize = chSeries.bucketSize;
-      final bucketMins = chSeries.bucketMins;
-      final bucketMaxs = chSeries.bucketMaxs;
-      final bucketSums = chSeries.bucketSums;
-      final int numBuckets = bucketMins.length;
-
-      for (int px = 0; px < gwInt; px++) {
-        final int sStart = mapStart + px * mapSpan ~/ gwInt;
-        final int sEnd = mapStart + (px + 1) * mapSpan ~/ gwInt;
-        final int drawStart = math.max(sStart, oldestSample);
-        final int drawEnd = math.min(sEnd, totalSamples);
-
-        if (drawStart >= drawEnd) continue;
-
-        double total = 0;
-        double minRaw = double.infinity;
-        double maxRaw = double.negativeInfinity;
-        int validSamples = 0;
-
-        final int samplesInPixel = drawEnd - drawStart;
-
-        if (samplesInPixel <= bucketSize * 2) {
-          // High-res mode: loop the raw array to avoid blockiness when zoomed
-          // in. Honors the dropped-sample sentinel so gaps don't skew the plot.
-          for (int j = drawStart; j < drawEnd; j++) {
-            final val = line[j % bufferCapacity];
-            if (_data.missingSampleSentinel != null &&
-                val == _data.missingSampleSentinel) {
-              continue;
-            }
-            final valDouble = val.toDouble();
-            total += valDouble;
-            if (valDouble < minRaw) minRaw = valDouble;
-            if (valDouble > maxRaw) maxRaw = valDouble;
-            validSamples++;
-          }
-        } else {
-          // Squished mode: aggregate from the precomputed bucket arrays.
-          // Sentinels are already excluded from the buckets at ingest time.
-          final int bStart = drawStart ~/ bucketSize;
-          final int bEnd = drawEnd ~/ bucketSize;
-
-          for (int b = bStart; b <= bEnd; b++) {
-            final int listIdx = b % numBuckets;
-
-            final double bMin = bucketMins[listIdx].toDouble();
-            final double bMax = bucketMaxs[listIdx].toDouble();
-            if (bMin < minRaw) minRaw = bMin;
-            if (bMax > maxRaw) maxRaw = bMax;
-
-            int count = bucketSize;
-            if (b == bStart) {
-              // Only count the covered portion of the first bucket.
-              final int bucketEndSample = (b + 1) * bucketSize;
-              count = bucketEndSample - drawStart;
-              if (count > bucketSize) count = bucketSize;
-            } else if (b == bEnd) {
-              // Only count the covered portion of the last bucket.
-              final int bucketStartSample = b * bucketSize;
-              count = drawEnd - bucketStartSample;
-              if (count > bucketSize) count = bucketSize;
-            }
-            if (count < 0) count = 0;
-
-            // Approximate the sum contribution of the covered portion.
-            final double avgOfBucket = bucketSums[listIdx] / bucketSize;
-            total += avgOfBucket * count;
-            validSamples += count;
-          }
-        }
-
-        if (validSamples == 0) {
-          env.flush();
-          avg.flush();
-          continue;
-        }
-
-        final avgRaw = total / validSamples;
-
-        final avgTared = avgRaw - tare;
-        final minTared = minRaw - tare;
-        final maxTared = maxRaw - tare;
-
-        final avgY = (gh - (avgTared - rawMin) * gh / dataRange).clamp(0.0, gh);
-        final minY = (gh - (minTared - rawMin) * gh / dataRange).clamp(0.0, gh);
-        final maxY = (gh - (maxTared - rawMin) * gh / dataRange).clamp(0.0, gh);
-
-        final xPos = px.toDouble();
-        avg.add(xPos, avgY);
-
-        env.add(xPos, maxY);
-        env.add(xPos, minY);
-
-        // Flush chunks if we are getting close to the array limits
-        if (env.wouldOverflow(4)) env.flush();
-        if (avg.wouldOverflow(2)) avg.flush();
-      }
-
-      // Flush remaining data
-      env.flush();
-      avg.flush();
     }
 
     // Viewport highlight
@@ -1418,11 +1293,54 @@ class VertexBatcher {
   }
 }
 
+/// The (average polyline, min/max envelope fill) [VertexBatcher] pair shared
+/// by the envelope renderers. Both batchers reuse one [Paint], restyled per
+/// flush.
+({VertexBatcher avg, VertexBatcher env}) _envelopeBatchers(
+  Canvas canvas, {
+  required Color avgColor,
+  required double avgStrokeWidth,
+  required Color envColor,
+}) {
+  final pen = Paint();
+
+  final avg = VertexBatcher(
+    preserveFloats: 2,
+    drawThreshold: 2,
+    onFlush: (view) {
+      pen
+        ..color = avgColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = avgStrokeWidth;
+      canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
+    },
+  );
+
+  final env = VertexBatcher(
+    preserveFloats: 4,
+    drawThreshold: 4,
+    onFlush: (view) {
+      final vertices = ui.Vertices.raw(ui.VertexMode.triangleStrip, view);
+      pen
+        ..color = envColor
+        ..style = PaintingStyle.fill;
+      canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
+      vertices.dispose();
+    },
+  );
+
+  return (avg: avg, env: env);
+}
+
 /// Render one channel as a min/avg/max envelope across [graphW] pixel columns.
 ///
 /// For each pixel column the samples mapped to it are reduced to min/avg/max via
 /// [sampleAt] (raw per-sample value), then projected with [valueToY]. The shaded
 /// envelope is filled at low alpha and the average is stroked on top.
+///
+/// Blocks are anchored to absolute sample indices so the geometry is
+/// tile-cacheable (slide mode); [drawSqueezedEnvelope] is the squeeze-mode
+/// counterpart.
 ///
 /// Vertices are flushed in <=4096-float chunks to stay within the web
 /// (Skwasm/Emscripten) stack-allocation limit.
@@ -1440,31 +1358,11 @@ void drawChannelEnvelope(
   bool showEnvelope = true,
   int? clipEnvelopeSamples,
 }) {
-  final pen = Paint();
-
-  final avg = VertexBatcher(
-    preserveFloats: 2,
-    drawThreshold: 2,
-    onFlush: (view) {
-      pen
-        ..color = color
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.5;
-      canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
-    },
-  );
-
-  final env = VertexBatcher(
-    preserveFloats: 4,
-    drawThreshold: 4,
-    onFlush: (view) {
-      final vertices = ui.Vertices.raw(ui.VertexMode.triangleStrip, view);
-      pen
-        ..color = color.withAlpha(60)
-        ..style = PaintingStyle.fill;
-      canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
-      vertices.dispose();
-    },
+  final (avg: avg, env: env) = _envelopeBatchers(
+    canvas,
+    avgColor: color,
+    avgStrokeWidth: 1.5,
+    envColor: color.withAlpha(60),
   );
 
   // Calculate alignment block size
@@ -1539,6 +1437,144 @@ void drawChannelEnvelope(
   }
 
   if (showEnvelope) env.flush();
+  avg.flush();
+}
+
+/// Render one channel as a min/avg/max envelope with one block per pixel
+/// column, squeezing the sample range [rangeStart, rangeStart + rangeSpan)
+/// into [pixelWidth] columns.
+///
+/// This is the squeeze-mode counterpart of [drawChannelEnvelope]: the whole
+/// history is in view, so the x-mapping of every sample changes as data
+/// arrives and the geometry is recomputed every frame instead of tile-cached.
+/// Columns spanning many samples aggregate from the channel's precomputed
+/// bucket arrays; columns spanning few (zoomed in past ~2 buckets/column)
+/// loop the raw ring buffer to avoid blockiness.
+///
+/// Reduction happens in raw counts; [valueToY] projects a reduced raw value
+/// (not tare-subtracted) to a pixel Y.
+void drawSqueezedEnvelope(
+  Canvas canvas, {
+  required GraphDataSource data,
+  required int channel,
+  required int pixelWidth,
+  required int rangeStart,
+  required int rangeSpan,
+  required double Function(double raw) valueToY,
+  required Color avgColor,
+  required Color envColor,
+  double avgStrokeWidth = 1.0,
+}) {
+  final series = data.channel(channel);
+  final line = series.data;
+  if (line.isEmpty) return;
+
+  final bufferCapacity = data.bufferCapacity;
+  final totalSamples = data.totalSamples;
+  final oldestSample = data.oldestSample;
+  final sentinel = data.missingSampleSentinel;
+
+  final (avg: avg, env: env) = _envelopeBatchers(
+    canvas,
+    avgColor: avgColor,
+    avgStrokeWidth: avgStrokeWidth,
+    envColor: envColor,
+  );
+
+  final int bucketSize = series.bucketSize;
+  final bucketMins = series.bucketMins;
+  final bucketMaxs = series.bucketMaxs;
+  final bucketSums = series.bucketSums;
+  final int numBuckets = bucketMins.length;
+
+  for (int px = 0; px < pixelWidth; px++) {
+    final int sStart = rangeStart + px * rangeSpan ~/ pixelWidth;
+    final int sEnd = rangeStart + (px + 1) * rangeSpan ~/ pixelWidth;
+    final int drawStart = math.max(sStart, oldestSample);
+    final int drawEnd = math.min(sEnd, totalSamples);
+
+    if (drawStart >= drawEnd) continue;
+
+    double total = 0;
+    double minRaw = double.infinity;
+    double maxRaw = double.negativeInfinity;
+    int validSamples = 0;
+
+    final int samplesInPixel = drawEnd - drawStart;
+
+    if (samplesInPixel <= bucketSize * 2) {
+      // High-res mode: loop the raw array to avoid blockiness when zoomed
+      // in. Honors the dropped-sample sentinel so gaps don't skew the plot.
+      for (int j = drawStart; j < drawEnd; j++) {
+        final val = line[j % bufferCapacity];
+        if (sentinel != null && val == sentinel) {
+          continue;
+        }
+        final valDouble = val.toDouble();
+        total += valDouble;
+        if (valDouble < minRaw) minRaw = valDouble;
+        if (valDouble > maxRaw) maxRaw = valDouble;
+        validSamples++;
+      }
+    } else {
+      // Squished mode: aggregate from the precomputed bucket arrays.
+      // Sentinels are already excluded from the buckets at ingest time.
+      final int bStart = drawStart ~/ bucketSize;
+      final int bEnd = drawEnd ~/ bucketSize;
+
+      for (int b = bStart; b <= bEnd; b++) {
+        final int listIdx = b % numBuckets;
+
+        final double bMin = bucketMins[listIdx].toDouble();
+        final double bMax = bucketMaxs[listIdx].toDouble();
+        if (bMin < minRaw) minRaw = bMin;
+        if (bMax > maxRaw) maxRaw = bMax;
+
+        int count = bucketSize;
+        if (b == bStart) {
+          // Only count the covered portion of the first bucket.
+          final int bucketEndSample = (b + 1) * bucketSize;
+          count = bucketEndSample - drawStart;
+          if (count > bucketSize) count = bucketSize;
+        } else if (b == bEnd) {
+          // Only count the covered portion of the last bucket.
+          final int bucketStartSample = b * bucketSize;
+          count = drawEnd - bucketStartSample;
+          if (count > bucketSize) count = bucketSize;
+        }
+        if (count < 0) count = 0;
+
+        // Approximate the sum contribution of the covered portion.
+        final double avgOfBucket = bucketSums[listIdx] / bucketSize;
+        total += avgOfBucket * count;
+        validSamples += count;
+      }
+    }
+
+    if (validSamples == 0) {
+      // Entire column is dropped samples. Break the polyline.
+      env.flush();
+      avg.flush();
+      continue;
+    }
+
+    final avgY = valueToY(total / validSamples);
+    final minY = valueToY(minRaw);
+    final maxY = valueToY(maxRaw);
+
+    final xPos = px.toDouble();
+    avg.add(xPos, avgY);
+
+    env.add(xPos, maxY);
+    env.add(xPos, minY);
+
+    // Flush chunks if we are getting close to the array limits
+    if (env.wouldOverflow(4)) env.flush();
+    if (avg.wouldOverflow(2)) avg.flush();
+  }
+
+  // Flush remaining data
+  env.flush();
   avg.flush();
 }
 
