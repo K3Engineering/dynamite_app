@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'models/app_settings.dart';
-import 'services/bt_handling.dart';
+import 'services/adc_packet_decoder.dart';
+import 'services/ble_link_manager.dart';
+import 'services/data_hub.dart';
+import 'services/recording_controller.dart';
 import 'services/session_storage.dart';
 import 'screens/app_shell.dart';
 
@@ -12,11 +15,31 @@ void main() async {
   // session list, so partial sessions are finalized (or pruned) first.
   await SessionStorage.recoverIncompleteSessions();
 
+  // Object graph, one layer per concern:
+  //   BleLinkManager (link state machine) --raw bytes--> AdcPacketDecoder
+  //   (wire protocol) --decoded samples--> DataHub (storage + stats)
+  //   <--observed by-- RecordingController (session lifecycle + persistence).
+  final dataHub = DataHub();
+  final decoder = AdcPacketDecoder(dataHub);
+  final linkManager = BleLinkManager()
+    ..onAdcData = decoder.onDataPacket
+    ..onCalibrationData = decoder.onCalibrationPacket;
+  final recording = RecordingController(
+    dataHub: dataHub,
+    linkManager: linkManager,
+    decoder: decoder,
+  );
+
   runApp(
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => AppSettings()),
-        ChangeNotifierProvider(create: (_) => BluetoothHandling()),
+        // App-lifetime singletons created above (never disposed — the app
+        // root never unmounts), provided individually so each screen depends
+        // only on the layer it actually uses.
+        ChangeNotifierProvider.value(value: dataHub),
+        ChangeNotifierProvider.value(value: linkManager),
+        ChangeNotifierProvider.value(value: recording),
       ],
       child: const DynoApp(),
     ),

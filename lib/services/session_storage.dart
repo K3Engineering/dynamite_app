@@ -5,7 +5,7 @@ import 'package:drift/drift.dart';
 import 'package:flutter/foundation.dart';
 
 import 'database.dart';
-import 'bt_handling.dart';
+import 'data_hub.dart';
 
 /// Chunk format: packed int32 LE values, interleaved
 /// `[ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]`, with one value per ADC channel
@@ -58,7 +58,6 @@ class SessionStorage {
   /// session may be short/truncated; the caller should surface it.
   static Future<Object?> finalizeSession({
     required LiveSessionWriter writer,
-    required DataHub dataHub,
   }) async {
     await writer.flush();
 

@@ -1,24 +1,19 @@
 import 'dart:async';
-import 'dart:math' as math;
-import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show Uint8List, kIsWeb;
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'bt_device_config.dart';
-import '../models/force_unit.dart';
 // ignore: unused_import
 import 'mockble.dart';
-import 'session_storage.dart';
 
 /// Lifecycle of a single device's BLE link.
 ///
 /// This is intentionally a *per-device* concept even though, today, the app
-/// only tracks one link at a time (see [DeviceLink] / [BluetoothHandling]).
+/// only tracks one link at a time (see [DeviceLink] / [BleLinkManager]).
 ///
 /// MULTI-DEVICE (Path A): when we support N simultaneous devices, this enum
-/// stays exactly as-is. The only change is that [BluetoothHandling] will hold a
+/// stays exactly as-is. The only change is that [BleLinkManager] will hold a
 /// `Map<String /*deviceId*/, DeviceLink>` instead of the single [_link] below,
 /// and the UI will read each row's state from its own [DeviceLink]. The
 /// adapter-availability and scanning state remain *global* (one radio), so they
@@ -49,7 +44,7 @@ enum BtLinkState {
 
   /// The link has fully disconnected, but the platform stack (Web Bluetooth on
   /// Chrome in particular) may not yet be ready to accept a fresh connection to
-  /// the SAME device. We hold the link here for [BluetoothHandling.reconnectSettleDelay]
+  /// the SAME device. We hold the link here for [BleLinkManager.reconnectSettleDelay]
   /// after teardown so the UI keeps Connect disabled (with a "please wait" hint)
   /// instead of silently sleeping inside the connect call. Web-only; native
   /// stacks go straight back to [idle] on disconnect.
@@ -58,11 +53,11 @@ enum BtLinkState {
 
 /// All per-device link state for a single BLE device.
 ///
-/// MULTI-DEVICE (Path A): promote the single [BluetoothHandling._link] to a
+/// MULTI-DEVICE (Path A): promote the single [BleLinkManager._link] to a
 /// `Map<String, DeviceLink>` keyed by [deviceId]. Each map entry owns its own
 /// state/name/services/subscription. The migration is mechanical because
 /// every field that is logically per-device already lives here rather than as a
-/// loose field on [BluetoothHandling].
+/// loose field on [BleLinkManager].
 class DeviceLink {
   DeviceLink({this.deviceId = ''});
 
@@ -112,7 +107,15 @@ class DeviceLink {
   }
 }
 
-class BluetoothHandling extends ChangeNotifier {
+/// The BLE link state machine: adapter availability, scanning, connect /
+/// post-connect setup / disconnect / cooldown, and live RSSI polling.
+///
+/// This class owns *only* the link. It knows nothing about the wire protocol
+/// or recording: raw notification bytes and calibration reads are handed off
+/// via [onAdcData] / [onCalibrationData] (wired to [AdcPacketDecoder] at app
+/// startup), and recording observes this notifier's state changes (see
+/// [RecordingController]).
+class BleLinkManager extends ChangeNotifier {
   /// Upper bound we pass to [UniversalBle.disconnect] so a silent stack can't
   /// strand the UI on "Disconnecting…". The package's own `disconnect()` sets
   /// up a completer over its connection-event stream and applies this timeout
@@ -134,7 +137,7 @@ class BluetoothHandling extends ChangeNotifier {
   static const Duration reconnectSettleDelay = Duration(milliseconds: 1000);
 
   /// Timestamp of the last observed disconnect, keyed by deviceId. Kept on the
-  /// handler (not on [DeviceLink], which gets reset on disconnect) so the
+  /// manager (not on [DeviceLink], which gets reset on disconnect) so the
   /// settle window survives the reset.
   ///
   /// MULTI-DEVICE (Path A): already per-device via this map.
@@ -142,7 +145,7 @@ class BluetoothHandling extends ChangeNotifier {
 
   /// One-shot timer that returns the active link from [BtLinkState.cooldown]
   /// back to [BtLinkState.idle] once [reconnectSettleDelay] has elapsed since
-  /// the last teardown. Web-only (see [_enterCooldownOrIdle]). Cancelled if the
+  /// the last teardown. Web-only (see [_endLink]). Cancelled if the
   /// link is superseded before it fires.
   Timer? _cooldownTimer;
 
@@ -221,17 +224,6 @@ class BluetoothHandling extends ChangeNotifier {
   /// and the platform supports RSSI reads.
   Timer? _rssiPollTimer;
 
-  bool _sessionInProgress = false;
-  bool get sessionInProgress => _sessionInProgress;
-
-  LiveSessionWriter? _sessionWriter;
-
-  /// Set when a recording is auto-stopped because its storage writer started
-  /// failing (e.g. disk full / web quota). Consumed and cleared by the UI.
-  Object? _sessionWriteError;
-  Object? get sessionWriteError => _sessionWriteError;
-  void clearSessionWriteError() => _sessionWriteError = null;
-
   /// Called when a disconnect gives up after [disconnectTimeout] without the
   /// link returning to idle. The argument is the affected device's display name
   /// (or id). The UI uses this to surface a brief notice.
@@ -245,9 +237,16 @@ class BluetoothHandling extends ChangeNotifier {
   /// display name (or id). The UI uses this to surface a brief notice.
   void Function(String deviceName)? onConnectionFailed;
 
-  final DataHub dataHub = DataHub();
+  /// Raw ADC-feed notification bytes, exactly as received. Wired to the
+  /// protocol layer ([AdcPacketDecoder.onDataPacket]) at app startup; the link
+  /// manager itself never interprets them.
+  void Function(Uint8List data)? onAdcData;
 
-  BluetoothHandling() {
+  /// Raw bytes of the calibration characteristic, read once during post-connect
+  /// setup. Wired to [AdcPacketDecoder.onCalibrationPacket] at app startup.
+  void Function(Uint8List data)? onCalibrationData;
+
+  BleLinkManager() {
     if (useMockBt) {
       UniversalBle.setInstance(MockBlePlatform.instance);
     }
@@ -267,17 +266,9 @@ class BluetoothHandling extends ChangeNotifier {
     UniversalBle.onConnectionChange = _onConnectionChange;
     UniversalBle.onPairingStateChange = _onPairingStateChange;
     UniversalBle.onConnectionParametersChange = _onConnectionParametersChange;
-    UniversalBle.onValueChange = _processReceivedData;
+    UniversalBle.onValueChange = _onValueChange;
 
     unawaited(_updateBluetoothState());
-  }
-
-  void stopProcessing() {
-    UniversalBle.onValueChange = null;
-    _stopRssiPolling();
-    _cooldownTimer?.cancel();
-    _cooldownTimer = null;
-    dataHub._prevSampleCount = -1;
   }
 
   Future<void> _updateBluetoothState() async {
@@ -368,42 +359,6 @@ class BluetoothHandling extends ChangeNotifier {
     }
   }
 
-  Future<void> startSession(LiveSessionWriter writer) async {
-    assert(_link.isStreaming);
-    if (_sessionInProgress) return;
-
-    _sessionWriter = writer;
-    _sessionWriteError = null;
-    dataHub._recordingStartIdx = dataHub.totalSamples;
-    _sessionInProgress = true;
-    dataHub._prevSampleCount = -1;
-    notifyListeners();
-  }
-
-  /// Stop the current recording and finalize it. Returns the saved session id
-  /// (or null if nothing was recording) and any write error the storage writer
-  /// latched (non-null means the session may be truncated).
-  Future<({int? sessionId, Object? error})> stopSession() async {
-    if (_sessionInProgress) {
-      _sessionInProgress = false;
-      final writer = _sessionWriter;
-      _sessionWriter = null;
-      dataHub._prevSampleCount = -1;
-      notifyListeners();
-
-      if (writer != null) {
-        // finalizeSession flushes through the writer's serialized queue, which
-        // drains any in-flight (unawaited) appends first.
-        final error = await SessionStorage.finalizeSession(
-          writer: writer,
-          dataHub: dataHub,
-        );
-        return (sessionId: writer.sessionId, error: error);
-      }
-    }
-    return (sessionId: null, error: null);
-  }
-
   void _onPairingStateChange(String deviceId, bool isPaired) {
     debugPrint('isPaired $deviceId, $isPaired');
   }
@@ -464,7 +419,9 @@ class BluetoothHandling extends ChangeNotifier {
 
   /// Common teardown for every path that ends a link (clean disconnect, failed
   /// post-connect setup, disconnect timeout): stop RSSI polling, stamp the
-  /// disconnect time, end any recording session, and clear the link.
+  /// disconnect time, and clear the link. Recording is NOT handled here —
+  /// [RecordingController] observes this notifier and stops its session when
+  /// streaming ends.
   ///
   /// On web we don't go straight to [BtLinkState.idle]: we park the link in
   /// [BtLinkState.cooldown] for the remainder of [reconnectSettleDelay] so the
@@ -477,7 +434,6 @@ class BluetoothHandling extends ChangeNotifier {
     _setupGeneration++;
     _stopRssiPolling();
     _lastDisconnectAt[deviceId] = DateTime.now();
-    _sessionInProgress = false;
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
 
@@ -703,7 +659,7 @@ class BluetoothHandling extends ChangeNotifier {
     for (final characteristic in service.characteristics) {
       if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
-        dataHub._updateCalibration(
+        onCalibrationData?.call(
           await UniversalBle.read(deviceId, service.uuid, btChrCalibration),
         );
         await UniversalBle.subscribeNotifications(
@@ -719,350 +675,9 @@ class BluetoothHandling extends ChangeNotifier {
     }
   }
 
-  void _processReceivedData(String _, String _, Uint8List data, int? _) {
-    final startIdx = dataHub.totalSamples;
-    // Always stream data to the DataHub for live display.
-    final canContinue = dataHub._parseDataPacket(data);
-    final count = dataHub.totalSamples - startIdx;
-
-    final writer = _sessionWriter;
-    if (_sessionInProgress && writer != null && count > 0) {
-      // If the storage writer has started failing, abort the recording rather
-      // than silently record into a void.
-      if (writer.hasError) {
-        _sessionWriteError = writer.writeError;
-        unawaited(stopSession());
-      } else {
-        unawaited(writer.appendData(dataHub, startIdx, count));
-      }
-    }
-
-    if (!canContinue) {
-      unawaited(stopSession());
-    }
-  }
-}
-
-class DataHub extends ChangeNotifier {
-  DataHub() {
-    assert(
-      kDroppedSampleSentinel < -8388608 || kDroppedSampleSentinel > 8388607,
-      "Sentinel must be outside 24-bit ADC range",
-    );
-  }
-
-  /// Number of ADC channels the device streams. This is also the number of
-  /// lines stored and displayed: channel index == storage index == display index.
-  static const int numAdcChannels = nwNumAdcChan;
-  static const int _tareWindow = 1024;
-  static const int samplesPerSec = 1000;
-  static const int maxDataSz = samplesPerSec * 60 * 10;
-  static const int bucketSize = 100;
-  static const int numBuckets = maxDataSz ~/ bucketSize;
-
-  final Float64List tare = Float64List(numAdcChannels);
-  final Float64List _runningTotal = Float64List(numAdcChannels);
-  final Int32List rawMax = Int32List(numAdcChannels);
-  final Int32List rawMin = Int32List(numAdcChannels);
-
-  /// Latest raw value per channel (for live stats display).
-  final Int32List _currentRaw = Int32List(numAdcChannels);
-
-  final List<Int32List> rawData = List.generate(
-    DataHub.numAdcChannels,
-    (_) => Int32List(maxDataSz),
-    growable: false,
-  );
-
-  /// Per-channel, per-bucket aggregates over [bucketSize]-sample windows.
-  /// Used by the minimap to render a downsampled overview cheaply.
-  final List<Int32List> bucketMins = List.generate(
-    DataHub.numAdcChannels,
-    (_) => Int32List(numBuckets),
-    growable: false,
-  );
-
-  final List<Int32List> bucketMaxs = List.generate(
-    DataHub.numAdcChannels,
-    (_) => Int32List(numBuckets),
-    growable: false,
-  );
-
-  final List<Int32List> bucketSums = List.generate(
-    DataHub.numAdcChannels,
-    (_) => Int32List(numBuckets),
-    growable: false,
-  );
-  int _tareCount = 0;
-  int totalSamples = 0;
-  int _prevSampleCount = -1;
-  DeviceCalibration deviceCalibration = DeviceCalibration();
-
-  /// Index into logical time where the current recording started.
-  /// Used by SessionStorage to know which slice to save.
-  int _recordingStartIdx = 0;
-  int get recordingStartIdx => _recordingStartIdx;
-
-  void clear() {
-    _tareCount = 0;
-    totalSamples = 0;
-    _recordingStartIdx = 0;
-    for (int i = 0; i < numAdcChannels; ++i) {
-      rawMax[i] = 0;
-      rawMin[i] = 0;
-      tare[i] = 0;
-      _runningTotal[i] = 0;
-      _currentRaw[i] = 0;
-    }
-  }
-
-  bool get taring => (_tareCount > 0);
-
-  /// Request a new tare operation (zeros readings using next N samples).
-  void requestTare() {
-    _tareCount = _tareWindow;
-    for (int i = 0; i < numAdcChannels; ++i) {
-      tare[i] = 0;
-      _runningTotal[i] = 0;
-    }
-  }
-
-  /// Get current force for a given ADC channel in the specified unit.
-  double currentForce(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels) return 0;
-    if (_currentRaw[adcChannel] == kDroppedSampleSentinel) return 0;
-    final rawTared = _currentRaw[adcChannel] - tare[adcChannel];
-    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
-  }
-
-  /// Get peak force for a given ADC channel in the specified unit.
-  double peakForce(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels) return 0;
-    final rawTared = rawMax[adcChannel] - tare[adcChannel];
-    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
-  }
-
-  /// Get minimum (most negative) force for a given ADC channel in the specified unit.
-  double minForce(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels) return 0;
-    final rawTared = rawMin[adcChannel] - tare[adcChannel];
-    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
-  }
-
-  /// Get the instantaneous derivative (first-difference) for a channel in unit/s.
-  double currentDerivative(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels || totalSamples < 2) {
-      return 0;
-    }
-
-    final raw1 = rawData[adcChannel][(totalSamples - 1) % maxDataSz];
-    final raw2 = rawData[adcChannel][(totalSamples - 2) % maxDataSz];
-    if (raw1 == kDroppedSampleSentinel || raw2 == kDroppedSampleSentinel) {
-      return 0;
-    }
-
-    final diff = raw1 - raw2;
-    // Derivative is raw diff per sample * samplesPerSec to get raw per sec
-    return unit.fromRaw(
-      diff.toDouble() * samplesPerSec,
-      deviceCalibration.slope,
-    );
-  }
-
-  /// Get the AC RMS for a given ADC channel in the specified unit over the last 1 second window.
-  double acRmsForce(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels || totalSamples == 0) {
-      return 0;
-    }
-
-    final int count = math.min(samplesPerSec, totalSamples);
-    final lineData = rawData[adcChannel];
-    final startIdx = totalSamples - count;
-
-    double sum = 0;
-    int validCount = 0;
-    for (int i = startIdx; i < totalSamples; i++) {
-      final val = lineData[i % maxDataSz];
-      if (val != kDroppedSampleSentinel) {
-        sum += val;
-        validCount++;
-      }
-    }
-
-    if (validCount == 0) return 0;
-    final mean = sum / validCount;
-
-    double sumSq = 0;
-    for (int i = startIdx; i < totalSamples; i++) {
-      final val = lineData[i % maxDataSz];
-      if (val != kDroppedSampleSentinel) {
-        final diff = val - mean;
-        sumSq += diff * diff;
-      }
-    }
-    final rmsRaw = math.sqrt(sumSq / validCount);
-
-    return unit.fromRaw(rmsRaw, deviceCalibration.slope);
-  }
-
-  void injectTestData(int samples) {
-    int added = 0;
-    for (int i = 0; i < samples; i++) {
-      final double phase = totalSamples * 2 * math.pi / samplesPerSec * 0.5;
-
-      // Generate dummy waveforms for all channels so every line is exercised.
-      // ch0: sine, ch1: cosine, ch2: half-amplitude sine, ch3: phase-shifted sine
-      final values = <int>[
-        (math.sin(phase) * 50000 + 50000).toInt(),
-        (math.cos(phase) * 30000 + 30000).toInt(),
-        (math.sin(phase) * 25000 + 25000).toInt(),
-        (math.sin(phase + math.pi / 4) * 40000 + 40000).toInt(),
-      ];
-
-      for (int ch = 0; ch < numAdcChannels; ch++) {
-        final val = values[ch];
-        rawData[ch][totalSamples % maxDataSz] = val;
-        _currentRaw[ch] = val;
-        _addData(val, ch);
-      }
-
-      totalSamples++;
-      added++;
-    }
-
-    if (added > 0) {
-      notifyListeners();
-    }
-  }
-
-  void _addTare(int val, int idx) {
-    _runningTotal[idx] += val;
-  }
-
-  void _addData(int val, int idx) {
-    rawData[idx][totalSamples % maxDataSz] = val;
-    if (val != kDroppedSampleSentinel) {
-      if (val > rawMax[idx]) {
-        rawMax[idx] = val;
-      }
-      if (val < rawMin[idx]) {
-        rawMin[idx] = val;
-      }
-
-      final int bIdx = (totalSamples % maxDataSz) ~/ bucketSize;
-      final int sIdx = (totalSamples % maxDataSz) % bucketSize;
-      if (sIdx == 0) {
-        bucketMins[idx][bIdx] = val;
-        bucketMaxs[idx][bIdx] = val;
-        bucketSums[idx][bIdx] = val;
-      } else {
-        if (val < bucketMins[idx][bIdx]) bucketMins[idx][bIdx] = val;
-        if (val > bucketMaxs[idx][bIdx]) bucketMaxs[idx][bIdx] = val;
-        bucketSums[idx][bIdx] += val;
-      }
-    }
-  }
-
-  void _updateCalibration(Uint8List data) {
-    // TODO: implement calibration parsing
-    deviceCalibration = DeviceCalibration();
-    debugPrint(
-      'Calibration ${deviceCalibration.slope}, offset ${deviceCalibration.offset}',
-    );
-  }
-
-  /// Parse a BLE data packet.
-  /// Data is always buffered for live display. Recording start/end is
-  /// tracked via [_recordingStartIdx] set by BluetoothHandling.startSession().
-  bool _parseDataPacket(Uint8List data) {
-    if (data.isEmpty) {
-      debugPrint("data isEmpty");
-      return false;
-    }
-
-    final int count = data[0] + (data[1] << 8);
-    if (_prevSampleCount != -1) {
-      final int diff = (count - _prevSampleCount) & 0xFFFF;
-      if (diff != 0) {
-        debugPrint('# lost $diff samples');
-        // Inject sentinels for dropped samples. Cap at maxDataSz to avoid OOM
-        // if the device reboots and the counter jumps.
-        int toInject = diff;
-        if (toInject > maxDataSz) toInject = maxDataSz;
-        for (int d = 0; d < toInject; d++) {
-          if (!taring) {
-            for (int i = 0; i < numAdcChannels; ++i) {
-              _addData(kDroppedSampleSentinel, i);
-              _currentRaw[i] = kDroppedSampleSentinel;
-            }
-            totalSamples++;
-          }
-        }
-        // TODO: signal lost packets to the UI?
-      }
-    }
-    _prevSampleCount = (count + nwAdcNumSamples) & 0xFFFF;
-
-    for (
-      int packetStart = nwHeaderSize;
-      packetStart < nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;
-      packetStart += nwAdcSampleLength
-    ) {
-      assert(packetStart + nwAdcSampleLength <= data.length);
-      for (int i = 0; i < nwNumAdcChan; ++i) {
-        final int baseIndex = packetStart + i * 3;
-        final int res =
-            ((data[baseIndex] << 0) |
-                    (data[baseIndex + 1] << 8) |
-                    data[baseIndex + 2] << 16)
-                .toSigned(24);
-
-        // Channel index == storage line index.
-        if (i < numAdcChannels) {
-          _currentRaw[i] = res;
-          if (taring) {
-            _addTare(res, i);
-          } else {
-            // Always buffer data for live display.
-            _addData(res, i);
-          }
-        }
-      }
-
-      if (taring) {
-        _tareCount--;
-        if (!taring) {
-          for (int i = 0; i < _runningTotal.length; ++i) {
-            tare[i] = _runningTotal[i] / _tareWindow;
-            _runningTotal[i] = 0;
-          }
-        }
-      } else {
-        totalSamples++;
-      }
-    }
-
-    notifyListeners();
-    return true; // We never run out of space now
-  }
-}
-
-class DeviceCalibration {
-  DeviceCalibration({
-    this.offset = 0,
-    this.capacityKg = 200.0,
-    this.sensitivityMvV = 2.0,
-    this.excitationV = 4.5,
-  });
-
-  final int offset;
-  final double capacityKg;
-  final double sensitivityMvV;
-  final double excitationV;
-
-  /// Calculates kgf per raw count dynamically based on the parameters
-  double get slope {
-    final maxMv = sensitivityMvV * excitationV;
-    return (capacityKg * ForceUnit.rawToMvMultiplier) / maxMv;
+  void _onValueChange(String _, String _, Uint8List data, int? _) {
+    // Hand the raw packet straight to the protocol layer; the link manager
+    // never interprets feed bytes itself.
+    onAdcData?.call(data);
   }
 }

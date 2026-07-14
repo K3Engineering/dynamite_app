@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../services/bt_handling.dart';
+import '../services/ble_link_manager.dart';
 import '../widgets/bt_icon.dart';
 
 class DevicesTab extends StatefulWidget {
@@ -14,7 +14,7 @@ class DevicesTab extends StatefulWidget {
 }
 
 class _DevicesTabState extends State<DevicesTab> {
-  BluetoothHandling? _bt;
+  BleLinkManager? _bt;
 
   @override
   void initState() {
@@ -38,7 +38,7 @@ class _DevicesTabState extends State<DevicesTab> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         // ignore: discarded_futures
-        context.read<BluetoothHandling>().requestEnableBluetooth();
+        context.read<BleLinkManager>().requestEnableBluetooth();
       }
     });
   }
@@ -48,7 +48,7 @@ class _DevicesTabState extends State<DevicesTab> {
     super.didChangeDependencies();
     // Register transient-notice callbacks once. Using read (not watch) so we
     // don't rebuild on them; the callbacks show transient SnackBars.
-    final bt = context.read<BluetoothHandling>();
+    final bt = context.read<BleLinkManager>();
     if (!identical(_bt, bt)) {
       _bt?.onDisconnectTimeout = null;
       _bt?.onConnectionFailed = null;
@@ -85,7 +85,7 @@ class _DevicesTabState extends State<DevicesTab> {
 
   @override
   Widget build(BuildContext context) {
-    final bt = context.watch<BluetoothHandling>();
+    final bt = context.watch<BleLinkManager>();
     // Usable connection (services discovered + ADC feed streaming). "Connected"
     // in the UI means this — not merely that a GATT link exists.
     final isStreaming = bt.isStreaming;

@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:cross_file/cross_file.dart';
 import 'package:universal_ble/universal_ble.dart';
 
+import 'adc_protocol.dart';
 import 'bt_device_config.dart';
 
 class MockBlePlatform extends UniversalBlePlatform {

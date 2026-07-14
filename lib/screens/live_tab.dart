@@ -6,9 +6,11 @@ import '../models/force_unit.dart';
 import 'package:drift/drift.dart' show Value;
 import 'package:google_fonts/google_fonts.dart';
 
-import '../services/bt_device_config.dart';
-import '../services/bt_handling.dart';
+import '../services/adc_protocol.dart';
+import '../services/ble_link_manager.dart';
+import '../services/data_hub.dart';
 import '../services/database.dart';
+import '../services/recording_controller.dart';
 import '../services/session_storage.dart';
 import '../screens/app_shell.dart';
 import '../widgets/graph_components.dart';
@@ -77,23 +79,27 @@ class _LiveTabState extends State<LiveTab> {
   final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * DataHub.samplesPerSec);
   bool _showDerivative = false;
   _LiveDataSource? _dataSource;
-  BluetoothHandling? _btHandling;
+  DataHub? _hub;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final bt = context.watch<BluetoothHandling>();
-    if (_btHandling != bt) {
-      _btHandling = bt;
+    // read (not watch): the hub notifies on every decoded packet, which must
+    // NOT retrigger didChangeDependencies/build. It's an app-lifetime
+    // singleton, so the identity check below only fires once.
+    final hub = context.read<DataHub>();
+    if (_hub != hub) {
+      _hub = hub;
       _dataSource?.dispose();
-      _dataSource = _LiveDataSource(bt.dataHub);
+      _dataSource = _LiveDataSource(hub);
     }
 
     // A recording can be auto-stopped if its storage writer starts failing.
     // Surface that to the user once (then clear it).
-    final writeError = bt.sessionWriteError;
+    final recording = context.watch<RecordingController>();
+    final writeError = recording.sessionWriteError;
     if (writeError != null) {
-      bt.clearSessionWriteError();
+      recording.clearSessionWriteError();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -116,23 +122,22 @@ class _LiveTabState extends State<LiveTab> {
   }
 
   void _onTare() {
-    final bt = context.read<BluetoothHandling>();
-    bt.dataHub.requestTare();
+    context.read<DataHub>().requestTare();
   }
 
   void _onInjectTestSineWave() {
-    final bt = context.read<BluetoothHandling>();
     // Inject 5 minutes of test data at 1000 Hz
     const samples = DataHub.samplesPerSec * 60 * 5;
-    bt.dataHub.injectTestData(samples);
+    context.read<DataHub>().injectTestData(samples);
   }
 
   Future<void> _onToggleRecord() async {
-    final bt = context.read<BluetoothHandling>();
+    final recording = context.read<RecordingController>();
+    final hub = context.read<DataHub>();
     final settings = context.read<AppSettings>();
-    
-    if (bt.sessionInProgress) {
-      final result = await bt.stopSession();
+
+    if (recording.sessionInProgress) {
+      final result = await recording.stopSession();
       final sessionId = result.sessionId;
 
       if (!mounted) return;
@@ -168,7 +173,7 @@ class _LiveTabState extends State<LiveTab> {
         );
       }
     } else {
-      if (bt.dataHub.taring) {
+      if (hub.taring) {
         // A tare is still averaging; recording now would persist a zero tare.
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -185,12 +190,12 @@ class _LiveTabState extends State<LiveTab> {
 
       try {
         final writer = await SessionStorage.startSession(
-          dataHub: bt.dataHub,
+          dataHub: hub,
           name: autoName,
           channelLabels: settings.channelLabels,
           channelCount: settings.activeChannelCount,
         );
-        await bt.startSession(writer);
+        await recording.startSession(writer);
       } catch (e) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -246,24 +251,28 @@ class _LiveTabState extends State<LiveTab> {
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
-    final bt = context.watch<BluetoothHandling>();
-    final isConnected = bt.isStreaming;
+    final link = context.watch<BleLinkManager>();
+    final recording = context.watch<RecordingController>();
+    // read (not watch): rebuilding this whole tab per packet would be a
+    // rebuild storm — LiveStats/graph subscribe to the hub themselves.
+    final hub = context.read<DataHub>();
+    final isConnected = link.isStreaming;
 
     return SafeArea(
       child: Column(
         children: [
           LiveStatusBar(
             isConnected: isConnected,
-            connectedDeviceName: bt.connectedDeviceName,
+            connectedDeviceName: link.connectedDeviceName,
           ),
           if (isConnected)
             LiveStats(
               settings: settings,
-              hub: bt.dataHub,
+              hub: hub,
               showDerivative: _showDerivative,
             ),
           if (isConnected)
-            Expanded(child: _buildGraphArea(bt, settings))
+            Expanded(child: _buildGraphArea(settings))
           else
             const Expanded(child: DisconnectedPrompt()),
           if (isConnected)
@@ -274,7 +283,7 @@ class _LiveTabState extends State<LiveTab> {
             ),
           if (isConnected)
             ActionButtons(
-              isRecording: bt.sessionInProgress,
+              isRecording: recording.sessionInProgress,
               onToggleRecord: _onToggleRecord,
               onTare: _onTare,
               onInjectTest: _onInjectTestSineWave,
@@ -284,7 +293,7 @@ class _LiveTabState extends State<LiveTab> {
     );
   }
 
-  Widget _buildGraphArea(BluetoothHandling bt, AppSettings settings) {
+  Widget _buildGraphArea(AppSettings settings) {
     if (_dataSource == null) return const SizedBox.shrink();
     return GraphWorkspace(
       data: _dataSource!,

@@ -9,7 +9,7 @@ import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../models/app_settings.dart';
-import '../services/bt_device_config.dart';
+import '../services/adc_protocol.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
 import '../widgets/graph_components.dart';
