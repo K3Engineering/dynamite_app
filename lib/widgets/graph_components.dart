@@ -1,4 +1,4 @@
-﻿import 'dart:math' as math;
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'dart:collection';
 
@@ -419,6 +419,30 @@ Color getChannelColor(int index) {
   return colors[index % colors.length];
 }
 
+/// Shared mouse-wheel zoom for graph surfaces (main graphs and minimap):
+/// zooms the controller window about the cursor position.
+void _handleGraphPointerScroll(
+  PointerSignalEvent event,
+  GraphDataSource data,
+  GraphController ctrl,
+  double graphWidth,
+) {
+  if (event is! PointerScrollEvent) return;
+  final totalSamples = data.totalSamples;
+  if (totalSamples == 0 || graphWidth <= 0) return;
+
+  final focalFrac = ((event.localPosition.dx - kGraphLeftSpace) / graphWidth)
+      .clamp(0.0, 1.0);
+  final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
+  ctrl.zoom(
+    zoomFactor,
+    focalFrac,
+    totalSamples,
+    data.oldestSample,
+    data.bufferCapacity,
+  );
+}
+
 class Minimap extends StatelessWidget {
   final GraphDataSource dataSource;
   final List<int> activeChannels;
@@ -433,115 +457,39 @@ class Minimap extends StatelessWidget {
     required this.channelColors,
   });
 
-  void _onPointerSignal(
-    PointerSignalEvent event,
-    double graphWidth,
-    int totalSamples,
-    int oldestSample,
-    int bufferCapacity,
-  ) {
-    if (event is PointerScrollEvent) {
-      if (totalSamples == 0 || graphWidth <= 0) return;
+  /// Span of the samples the minimap squeezes into its width.
+  int _mapSpan(int totalSamples, int oldestSample) =>
+      math.max(totalSamples - oldestSample, graphCtrl.minLiveSpan);
 
-      final focalFrac =
-          ((event.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
-            0.0,
-            1.0,
-          );
-      final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
-      graphCtrl.zoom(
-        zoomFactor,
-        focalFrac,
-        totalSamples,
-        oldestSample,
-        bufferCapacity,
-      );
-    }
-  }
-
-  void _onMinimapTap(
-    TapDownDetails d,
-    double graphWidth,
-    int totalSamples,
-    int oldestSample,
-    int bufferCapacity,
-  ) {
+  void _onMinimapTap(TapDownDetails d, double graphWidth) {
+    final totalSamples = dataSource.totalSamples;
     if (totalSamples == 0 || graphWidth <= 0) return;
+    final oldestSample = dataSource.oldestSample;
     final frac = ((d.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
       0.0,
       1.0,
     );
-    final maxSpan = math.max(
-      totalSamples - oldestSample,
-      graphCtrl.minLiveSpan,
-    );
-    final mapStart = totalSamples - maxSpan;
-
-    final (s, e) = graphCtrl.effectiveRange(
+    final mapSpan = _mapSpan(totalSamples, oldestSample);
+    final mapStart = totalSamples - mapSpan;
+    graphCtrl.centerOn(
+      mapStart + (frac * mapSpan).round(),
       totalSamples,
       oldestSample,
-      bufferCapacity: bufferCapacity,
+      dataSource.bufferCapacity,
     );
-    final span = e - s;
-    final center = mapStart + (frac * maxSpan).round();
-    int newStart = center - span ~/ 2;
-    int newEnd = newStart + span;
-
-    final minStart = math.min(oldestSample, totalSamples - span);
-
-    if (newStart < minStart) {
-      newStart = minStart;
-      newEnd = newStart + span;
-    }
-    if (newEnd >= totalSamples) {
-      newEnd = totalSamples;
-      newStart = newEnd - span;
-      if (newStart < minStart) newStart = minStart;
-      graphCtrl.setWindow(newStart, newEnd);
-      graphCtrl.goLive(totalSamples: totalSamples, oldestSample: oldestSample);
-      return;
-    }
-    graphCtrl.setWindow(newStart, newEnd);
   }
 
-  void _onMinimapDrag(
-    DragUpdateDetails d,
-    double graphWidth,
-    int totalSamples,
-    int oldestSample,
-    int bufferCapacity,
-  ) {
+  void _onMinimapDrag(DragUpdateDetails d, double graphWidth) {
+    final totalSamples = dataSource.totalSamples;
     if (totalSamples == 0 || graphWidth <= 0) return;
-    final maxSpan = math.max(
-      totalSamples - oldestSample,
-      graphCtrl.minLiveSpan,
-    );
-    final samplesPerPixel = maxSpan / graphWidth;
-    final deltaSamples = (d.delta.dx * samplesPerPixel).round();
-    final (s, e) = graphCtrl.effectiveRange(
+    final oldestSample = dataSource.oldestSample;
+    final samplesPerPixel = _mapSpan(totalSamples, oldestSample) / graphWidth;
+    graphCtrl.pan(
+      (d.delta.dx * samplesPerPixel).round(),
       totalSamples,
       oldestSample,
-      bufferCapacity: bufferCapacity,
+      dataSource.bufferCapacity,
     );
-    final span = e - s;
-    int newStart = s + deltaSamples;
-    int newEnd = newStart + span;
-
-    final minStart = math.min(oldestSample, totalSamples - span);
-
-    if (newStart < minStart) {
-      newStart = minStart;
-      newEnd = newStart + span;
-    }
-    if (newEnd >= totalSamples) {
-      newEnd = totalSamples;
-      newStart = newEnd - span;
-      if (newStart < minStart) newStart = minStart;
-      graphCtrl.setWindow(newStart, newEnd);
-      graphCtrl.goLive(totalSamples: totalSamples, oldestSample: oldestSample);
-      return;
-    }
-    graphCtrl.setWindow(newStart, newEnd);
   }
 
   @override
@@ -554,29 +502,12 @@ class Minimap extends StatelessWidget {
           height: 32,
           child: Listener(
             behavior: HitTestBehavior.opaque,
-            onPointerSignal: (e) => _onPointerSignal(
-              e,
-              graphWidth,
-              dataSource.totalSamples,
-              dataSource.oldestSample,
-              dataSource.bufferCapacity,
-            ),
+            onPointerSignal: (e) =>
+                _handleGraphPointerScroll(e, dataSource, graphCtrl, graphWidth),
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onTapDown: (d) => _onMinimapTap(
-                d,
-                graphWidth,
-                dataSource.totalSamples,
-                dataSource.oldestSample,
-                dataSource.bufferCapacity,
-              ),
-              onHorizontalDragUpdate: (d) => _onMinimapDrag(
-                d,
-                graphWidth,
-                dataSource.totalSamples,
-                dataSource.oldestSample,
-                dataSource.bufferCapacity,
-              ),
+              onTapDown: (d) => _onMinimapTap(d, graphWidth),
+              onHorizontalDragUpdate: (d) => _onMinimapDrag(d, graphWidth),
               child: CustomPaint(
                 foregroundPainter: _MinimapPainter(
                   dataSource,
@@ -880,100 +811,31 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
     if (total == 0 || _panStartSample == null || graphWidth <= 0) return;
 
     final origStart = _panStartSample!;
-    final origEnd = _panEndSample!;
-    final origSpan = origEnd - origStart;
+    final origSpan = _panEndSample! - origStart;
     final oldestSample = widget.data.oldestSample;
-    final maxSpan = math.max(total - oldestSample, widget.ctrl.minLiveSpan);
 
     if (details.scale != 1.0 && _scaleStartSpan != null) {
-      // Pinch zoom
-      final newSpan = (_scaleStartSpan! / details.scale).round().clamp(
-        50,
-        maxSpan,
+      // Pinch zoom, anchored to the gesture-start window so tracking stays
+      // stable while totalSamples grows.
+      widget.ctrl.zoomTo(
+        (_scaleStartSpan! / details.scale).round(),
+        (_pinchFocalX! / graphWidth).clamp(0.0, 1.0),
+        baseStart: origStart,
+        baseSpan: origSpan,
+        anchorLiveEdge: _wasLiveOnScaleStart,
+        totalSamples: total,
+        oldestSample: oldestSample,
       );
-
-      double focalFrac = (_pinchFocalX! / graphWidth).clamp(0.0, 1.0);
-
-      // Smart anchor: If we started scaling while live and are pinching near the right edge,
-      // anchor perfectly to the right edge. This prevents tracking jitter as totalSamples grows.
-      if (_wasLiveOnScaleStart && focalFrac > 0.8) {
-        focalFrac = 1.0;
-      }
-
-      final focalSample = origStart + (focalFrac * origSpan).round();
-      int newStart = focalSample - (focalFrac * newSpan).round();
-      int newEnd = (newStart + newSpan).round();
-
-      final minStart = math.min(oldestSample, total - newSpan);
-
-      if (newStart < minStart) {
-        newStart = minStart;
-        newEnd = newStart + newSpan;
-      }
-
-      if (newEnd >= total) {
-        newEnd = total;
-        newStart = total - newSpan;
-        if (newStart < minStart) newStart = minStart;
-        widget.ctrl.setWindow(newStart, newEnd);
-
-        if (newSpan >= maxSpan) {
-          widget.ctrl.goLive(totalSamples: total, oldestSample: oldestSample);
-        } else {
-          widget.ctrl.goLive(
-            span: newSpan,
-            totalSamples: total,
-            oldestSample: oldestSample,
-          );
-        }
-        return;
-      }
-
-      widget.ctrl.setWindow(newStart, newEnd);
     } else {
-      // Pan
+      // Pan by the horizontal drag distance, relative to the gesture-start
+      // window.
       final dx = details.localFocalPoint.dx - _panStartX!;
-      final samplesPerPixel = origSpan / graphWidth;
-      final deltaSamples = -(dx * samplesPerPixel).round();
-
-      int newStart = origStart + deltaSamples;
-      int newEnd = (newStart + origSpan).round();
-
-      final minStart = math.min(oldestSample, total - origSpan);
-
-      if (newStart < minStart) {
-        newStart = minStart;
-        newEnd = newStart + origSpan;
-      }
-      if (newEnd >= total) {
-        newEnd = total;
-        newStart = math.max(minStart, total - origSpan);
-        widget.ctrl.setWindow(newStart, newEnd);
-        widget.ctrl.goLive(totalSamples: total, oldestSample: oldestSample);
-        return;
-      }
-
-      widget.ctrl.setWindow(newStart, newEnd);
-    }
-  }
-
-  void _onPointerSignal(PointerSignalEvent event, double graphWidth) {
-    if (event is PointerScrollEvent) {
-      final totalSamples = widget.data.totalSamples;
-      if (totalSamples == 0 || graphWidth <= 0) return;
-
-      final focalFrac =
-          ((event.localPosition.dx - kGraphLeftSpace) / graphWidth).clamp(
-            0.0,
-            1.0,
-          );
-      final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
-      widget.ctrl.zoom(
-        zoomFactor,
-        focalFrac,
-        totalSamples,
-        widget.data.oldestSample,
-        widget.data.bufferCapacity,
+      final deltaSamples = -(dx * origSpan / graphWidth).round();
+      widget.ctrl.applyWindow(
+        origStart + deltaSamples,
+        origSpan,
+        total,
+        oldestSample,
       );
     }
   }
@@ -985,7 +847,12 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
         final graphWidth = graphPlotWidth(constraints.maxWidth);
         return Listener(
           behavior: HitTestBehavior.opaque,
-          onPointerSignal: (e) => _onPointerSignal(e, graphWidth),
+          onPointerSignal: (e) => _handleGraphPointerScroll(
+            e,
+            widget.data,
+            widget.ctrl,
+            graphWidth,
+          ),
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
             onScaleStart: _onScaleStart,
