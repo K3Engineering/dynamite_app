@@ -686,7 +686,8 @@ class BluetoothHandling extends ChangeNotifier {
     await UniversalBle.disconnect(deviceId, timeout: disconnectTimeout);
     await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
 
-    if (_link.deviceId == deviceId && _link.state == BtLinkState.disconnecting) {
+    if (_link.deviceId == deviceId &&
+        _link.state == BtLinkState.disconnecting) {
       debugPrint('Disconnect did not settle for $deviceId; forcing idle');
       _endLink(deviceId, deviceName);
       onDisconnectTimeout?.call(deviceName);
@@ -703,11 +704,7 @@ class BluetoothHandling extends ChangeNotifier {
       if ((characteristic.uuid == btChrAdcFeedId) &&
           characteristic.properties.contains(CharacteristicProperty.notify)) {
         dataHub._updateCalibration(
-          await UniversalBle.read(
-            deviceId,
-            service.uuid,
-            btChrCalibration,
-          ),
+          await UniversalBle.read(deviceId, service.uuid, btChrCalibration),
         );
         await UniversalBle.subscribeNotifications(
           deviceId,
@@ -749,8 +746,9 @@ class BluetoothHandling extends ChangeNotifier {
 class DataHub extends ChangeNotifier {
   DataHub() {
     assert(
-        kDroppedSampleSentinel < -8388608 || kDroppedSampleSentinel > 8388607,
-        "Sentinel must be outside 24-bit ADC range");
+      kDroppedSampleSentinel < -8388608 || kDroppedSampleSentinel > 8388607,
+      "Sentinel must be outside 24-bit ADC range",
+    );
   }
 
   /// Number of ADC channels the device streams. This is also the number of
@@ -795,7 +793,7 @@ class DataHub extends ChangeNotifier {
     (_) => Int32List(numBuckets),
     growable: false,
   );
-  int _tareCount = _tareWindow;
+  int _tareCount = 0;
   int totalSamples = 0;
   int _prevSampleCount = -1;
   DeviceCalibration deviceCalibration = DeviceCalibration();
@@ -806,7 +804,7 @@ class DataHub extends ChangeNotifier {
   int get recordingStartIdx => _recordingStartIdx;
 
   void clear() {
-    _tareCount = _tareWindow;
+    _tareCount = 0;
     totalSamples = 0;
     _recordingStartIdx = 0;
     for (int i = 0; i < numAdcChannels; ++i) {
@@ -865,7 +863,10 @@ class DataHub extends ChangeNotifier {
 
     final diff = raw1 - raw2;
     // Derivative is raw diff per sample * samplesPerSec to get raw per sec
-    return unit.fromRaw(diff.toDouble() * samplesPerSec, deviceCalibration.slope);
+    return unit.fromRaw(
+      diff.toDouble() * samplesPerSec,
+      deviceCalibration.slope,
+    );
   }
 
   /// Get the AC RMS for a given ADC channel in the specified unit over the last 1 second window.

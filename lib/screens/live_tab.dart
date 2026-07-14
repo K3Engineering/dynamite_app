@@ -168,6 +168,17 @@ class _LiveTabState extends State<LiveTab> {
         );
       }
     } else {
+      if (bt.dataHub.taring) {
+        // A tare is still averaging; recording now would persist a zero tare.
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Taring in progress — try again in a moment'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+
       final now = DateTime.now();
       final autoName =
           '${now.month}/${now.day} ${now.hour}:${now.minute.toString().padLeft(2, '0')}';

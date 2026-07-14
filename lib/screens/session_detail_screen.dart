@@ -49,15 +49,15 @@ class _SessionDataSource implements GraphDataSource {
 
   @override
   ChannelSeries channel(int channelIndex) => (
-        data: _data.channels[channelIndex],
-        min: _data.mins[channelIndex],
-        max: _data.maxs[channelIndex],
-        tare: 0.0, // sessions are stored already tared
-        bucketSize: _data.bucketSize,
-        bucketMins: _data.bucketMins[channelIndex],
-        bucketMaxs: _data.bucketMaxs[channelIndex],
-        bucketSums: _data.bucketSums[channelIndex],
-      );
+    data: _data.channels[channelIndex],
+    min: _data.mins[channelIndex],
+    max: _data.maxs[channelIndex],
+    tare: _data.tares[channelIndex],
+    bucketSize: _data.bucketSize,
+    bucketMins: _data.bucketMins[channelIndex],
+    bucketMaxs: _data.bucketMaxs[channelIndex],
+    bucketSums: _data.bucketSums[channelIndex],
+  );
 
   @override
   int? get missingSampleSentinel => kDroppedSampleSentinel;
@@ -245,7 +245,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                     label: 'Peak',
                     value: settings.displayUnit.format(
                       settings.displayUnit.fromRaw(
-                        data.peakRaw(ch).toDouble(), data.calibrationSlope,
+                        data.peakRaw(ch).toDouble() - data.tares[ch],
+                        data.calibrationSlope,
                       ),
                     ),
                   ),
@@ -253,7 +254,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                     label: 'Average',
                     value: settings.displayUnit.format(
                       settings.displayUnit.fromRaw(
-                        data.averageRaw(ch), data.calibrationSlope,
+                        data.averageRaw(ch) - data.tares[ch],
+                        data.calibrationSlope,
                       ),
                     ),
                   ),
@@ -441,7 +443,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       buf.write((s / data.sampleRate).toStringAsFixed(4));
       for (int ch = 0; ch < data.channels.length; ch++) {
         final raw = data.channels[ch][s];
-        final kgf = raw * data.calibrationSlope;
+        final kgf = (raw - data.tares[ch]) * data.calibrationSlope;
         buf.write(',$raw,${kgf.toStringAsFixed(6)}');
       }
       buf.writeln();
@@ -477,9 +479,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     }
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Exported to $savedTo')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Exported to $savedTo')));
     }
   }
 
@@ -502,11 +504,11 @@ class _StatRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(color: Colors.grey)),
-          const Spacer(),
+          Text(label, style: Theme.of(context).textTheme.bodyMedium),
           Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),
         ],
       ),

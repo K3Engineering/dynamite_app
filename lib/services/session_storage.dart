@@ -26,6 +26,11 @@ class SessionStorage {
     required int channelCount,
     String notes = '',
   }) async {
+    // Snapshot the tare once; the same values are persisted below and used by
+    // the writer's peak scan, so stored peaks, stored tares and playback can
+    // never disagree even if the user re-tares mid-recording.
+    final tare = Float64List.fromList(dataHub.tare);
+
     final sessionId = await AppDatabase.instance.insertSession(
       SessionsCompanion.insert(
         name: Value(name),
@@ -35,6 +40,7 @@ class SessionStorage {
         // match what the writer packs (and what loadSession reads back).
         channelCount: const Value(DataHub.numAdcChannels),
         channelLabels: Value(jsonEncode(channelLabels)),
+        tares: Value(jsonEncode(tare.toList())),
         calibrationSlope: Value(dataHub.deviceCalibration.slope),
         calibrationOffset: Value(dataHub.deviceCalibration.offset),
         notes: Value(notes),
@@ -42,7 +48,7 @@ class SessionStorage {
       ),
     );
 
-    return LiveSessionWriter(sessionId);
+    return LiveSessionWriter(sessionId, tare);
   }
 
   /// Finalize a streaming session: flush any buffered samples, then record the
@@ -93,11 +99,12 @@ class SessionStorage {
         continue;
       }
 
-      // The tare in effect at crash time isn't persisted, so recovered peaks
-      // are best-effort (computed against a zero tare).
+      // Rebuild aggregates against the tare persisted at recording start, the
+      // same one loadSession applies, so recovered peaks match playback.
       final agg = _ChunkAggregate(session.channelCount);
+      final tare = _parseTares(session.tares, session.channelCount);
       for (final chunk in chunks) {
-        agg.scan(chunk.data, _zeroTare);
+        agg.scan(chunk.data, tare);
       }
 
       await AppDatabase.instance.updateSession(
@@ -115,10 +122,11 @@ class SessionStorage {
 
   /// Read a session's recorded data back from its chunks.
   static Future<SessionData?> loadSession(Session session) async {
-    final chunks = await (AppDatabase.instance.select(
-      AppDatabase.instance.sessionChunks,
-    )..where((t) => t.sessionId.equals(session.id))
-     ..orderBy([(t) => OrderingTerm(expression: t.chunkIndex)])).get();
+    final chunks =
+        await (AppDatabase.instance.select(AppDatabase.instance.sessionChunks)
+              ..where((t) => t.sessionId.equals(session.id))
+              ..orderBy([(t) => OrderingTerm(expression: t.chunkIndex)]))
+            .get();
 
     if (chunks.isEmpty) {
       debugPrint('No chunks found for session: ${session.id}');
@@ -150,12 +158,25 @@ class SessionStorage {
       sampleCount: globalS,
       calibrationSlope: session.calibrationSlope,
       calibrationOffset: session.calibrationOffset,
+      tares: _parseTares(session.tares, channelCount),
     );
   }
-}
 
-/// Zero tare used when no tare is available (recovery path).
-final Float64List _zeroTare = Float64List(DataHub.numAdcChannels);
+  /// Parse the JSON-encoded per-channel tares stored on a [Session] row.
+  /// Missing or malformed entries fall back to zero.
+  static Float64List _parseTares(String json, int channelCount) {
+    final tares = Float64List(channelCount);
+    try {
+      final List<dynamic> parsed = jsonDecode(json);
+      for (int i = 0; i < channelCount && i < parsed.length; i++) {
+        tares[i] = (parsed[i] as num).toDouble();
+      }
+    } catch (e) {
+      debugPrint('Failed to parse session tares "$json": $e');
+    }
+    return tares;
+  }
+}
 
 /// Scans interleaved int32 chunk bytes, accumulating sample count and the
 /// tare-adjusted peak. Shared by the live writer and the recovery path so the
@@ -195,6 +216,7 @@ class SessionData {
   final int sampleCount;
   final double calibrationSlope;
   final int calibrationOffset;
+  final List<double> tares;
 
   /// Per-channel extremes, computed once on construction.
   final List<double> mins;
@@ -213,10 +235,12 @@ class SessionData {
     required this.sampleCount,
     required this.calibrationSlope,
     required this.calibrationOffset,
-  })  : mins = List.filled(channels.length, 0.0),
-        maxs = List.filled(channels.length, 0.0) {
-    final int numBuckets =
-        (sampleCount == 0) ? 0 : ((sampleCount - 1) ~/ bucketSize) + 1;
+    required this.tares,
+  }) : mins = List.filled(channels.length, 0.0),
+       maxs = List.filled(channels.length, 0.0) {
+    final int numBuckets = (sampleCount == 0)
+        ? 0
+        : ((sampleCount - 1) ~/ bucketSize) + 1;
     bucketMins = List.generate(channels.length, (_) => Int32List(numBuckets));
     bucketMaxs = List.generate(channels.length, (_) => Int32List(numBuckets));
     bucketSums = List.generate(channels.length, (_) => Int32List(numBuckets));
@@ -280,9 +304,14 @@ class SessionData {
 /// chunks. The first write error is latched in [writeError] rather than thrown
 /// into the void, so the caller can surface it.
 class LiveSessionWriter {
-  LiveSessionWriter(this.sessionId);
+  LiveSessionWriter(this.sessionId, this.tare);
 
   final int sessionId;
+
+  /// Tare snapshot taken at recording start. Identical to the values persisted
+  /// in the session's `tares` column, so the peak computed here always matches
+  /// what playback shows, regardless of later re-tares.
+  final Float64List tare;
 
   int _chunkIndex = 0;
   int totalSamplesRecorded = 0;
@@ -327,7 +356,7 @@ class LiveSessionWriter {
 
       final bytes = buffer.buffer.asUint8List();
       // Update peak/sample-count via the same scan logic recovery uses.
-      _agg.scan(bytes, dataHub.tare);
+      _agg.scan(bytes, tare);
       totalSamplesRecorded = _agg.samples;
       peakRaw = _agg.peakRaw;
       peakChannel = _agg.peakChannel;

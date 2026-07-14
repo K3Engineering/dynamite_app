@@ -13,6 +13,7 @@ class Sessions extends Table {
   IntColumn get channelCount => integer().withDefault(const Constant(2))();
   TextColumn get channelLabels =>
       text().withDefault(const Constant('["Load Cell 1","Load Cell 2"]'))();
+  TextColumn get tares => text().withDefault(const Constant('[]'))();
   RealColumn get peakForceRaw => real().withDefault(const Constant(0.0))();
   IntColumn get peakForceChannel => integer().withDefault(const Constant(0))();
   RealColumn get calibrationSlope =>
@@ -44,7 +45,20 @@ class AppDatabase extends _$AppDatabase {
       AppDatabase._(executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  /// DEV ONLY: any schema version bump wipes the database and recreates it
+  /// from scratch. No user data is migrated. Replace with real per-version
+  /// migrations before release.
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+    onUpgrade: (Migrator m, int from, int to) async {
+      for (final table in allTables) {
+        await m.deleteTable(table.actualTableName);
+      }
+      await m.createAll();
+    },
+  );
 
   static QueryExecutor _openDefault() {
     return driftDatabase(
@@ -65,18 +79,18 @@ class AppDatabase extends _$AppDatabase {
 
   /// Get all sessions ordered by creation date descending.
   Future<List<Session>> allSessions() {
-    return (select(
-      sessions,
-    )..where((t) => t.isCompleted.equals(true))
-     ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).get();
+    return (select(sessions)
+          ..where((t) => t.isCompleted.equals(true))
+          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+        .get();
   }
 
   /// Stream all sessions (reactive).
   Stream<List<Session>> watchAllSessions() {
-    return (select(
-      sessions,
-    )..where((t) => t.isCompleted.equals(true))
-     ..orderBy([(t) => OrderingTerm.desc(t.createdAt)])).watch();
+    return (select(sessions)
+          ..where((t) => t.isCompleted.equals(true))
+          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+        .watch();
   }
 
   /// Get a single session by id.

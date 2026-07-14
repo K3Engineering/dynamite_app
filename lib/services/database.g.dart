@@ -90,6 +90,16 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     requiredDuringInsert: false,
     defaultValue: const Constant('["Load Cell 1","Load Cell 2"]'),
   );
+  static const VerificationMeta _taresMeta = const VerificationMeta('tares');
+  @override
+  late final GeneratedColumn<String> tares = GeneratedColumn<String>(
+    'tares',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
   static const VerificationMeta _peakForceRawMeta = const VerificationMeta(
     'peakForceRaw',
   );
@@ -184,6 +194,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     sampleRate,
     channelCount,
     channelLabels,
+    tares,
     peakForceRaw,
     peakForceChannel,
     calibrationSlope,
@@ -249,6 +260,12 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
           data['channel_labels']!,
           _channelLabelsMeta,
         ),
+      );
+    }
+    if (data.containsKey('tares')) {
+      context.handle(
+        _taresMeta,
+        tares.isAcceptableOrUnknown(data['tares']!, _taresMeta),
       );
     }
     if (data.containsKey('peak_force_raw')) {
@@ -348,6 +365,10 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.string,
         data['${effectivePrefix}channel_labels'],
       )!,
+      tares: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}tares'],
+      )!,
       peakForceRaw: attachedDatabase.typeMapping.read(
         DriftSqlType.double,
         data['${effectivePrefix}peak_force_raw'],
@@ -393,6 +414,7 @@ class Session extends DataClass implements Insertable<Session> {
   final int sampleRate;
   final int channelCount;
   final String channelLabels;
+  final String tares;
   final double peakForceRaw;
   final int peakForceChannel;
   final double calibrationSlope;
@@ -408,6 +430,7 @@ class Session extends DataClass implements Insertable<Session> {
     required this.sampleRate,
     required this.channelCount,
     required this.channelLabels,
+    required this.tares,
     required this.peakForceRaw,
     required this.peakForceChannel,
     required this.calibrationSlope,
@@ -426,6 +449,7 @@ class Session extends DataClass implements Insertable<Session> {
     map['sample_rate'] = Variable<int>(sampleRate);
     map['channel_count'] = Variable<int>(channelCount);
     map['channel_labels'] = Variable<String>(channelLabels);
+    map['tares'] = Variable<String>(tares);
     map['peak_force_raw'] = Variable<double>(peakForceRaw);
     map['peak_force_channel'] = Variable<int>(peakForceChannel);
     map['calibration_slope'] = Variable<double>(calibrationSlope);
@@ -445,6 +469,7 @@ class Session extends DataClass implements Insertable<Session> {
       sampleRate: Value(sampleRate),
       channelCount: Value(channelCount),
       channelLabels: Value(channelLabels),
+      tares: Value(tares),
       peakForceRaw: Value(peakForceRaw),
       peakForceChannel: Value(peakForceChannel),
       calibrationSlope: Value(calibrationSlope),
@@ -468,6 +493,7 @@ class Session extends DataClass implements Insertable<Session> {
       sampleRate: serializer.fromJson<int>(json['sampleRate']),
       channelCount: serializer.fromJson<int>(json['channelCount']),
       channelLabels: serializer.fromJson<String>(json['channelLabels']),
+      tares: serializer.fromJson<String>(json['tares']),
       peakForceRaw: serializer.fromJson<double>(json['peakForceRaw']),
       peakForceChannel: serializer.fromJson<int>(json['peakForceChannel']),
       calibrationSlope: serializer.fromJson<double>(json['calibrationSlope']),
@@ -488,6 +514,7 @@ class Session extends DataClass implements Insertable<Session> {
       'sampleRate': serializer.toJson<int>(sampleRate),
       'channelCount': serializer.toJson<int>(channelCount),
       'channelLabels': serializer.toJson<String>(channelLabels),
+      'tares': serializer.toJson<String>(tares),
       'peakForceRaw': serializer.toJson<double>(peakForceRaw),
       'peakForceChannel': serializer.toJson<int>(peakForceChannel),
       'calibrationSlope': serializer.toJson<double>(calibrationSlope),
@@ -506,6 +533,7 @@ class Session extends DataClass implements Insertable<Session> {
     int? sampleRate,
     int? channelCount,
     String? channelLabels,
+    String? tares,
     double? peakForceRaw,
     int? peakForceChannel,
     double? calibrationSlope,
@@ -521,6 +549,7 @@ class Session extends DataClass implements Insertable<Session> {
     sampleRate: sampleRate ?? this.sampleRate,
     channelCount: channelCount ?? this.channelCount,
     channelLabels: channelLabels ?? this.channelLabels,
+    tares: tares ?? this.tares,
     peakForceRaw: peakForceRaw ?? this.peakForceRaw,
     peakForceChannel: peakForceChannel ?? this.peakForceChannel,
     calibrationSlope: calibrationSlope ?? this.calibrationSlope,
@@ -546,6 +575,7 @@ class Session extends DataClass implements Insertable<Session> {
       channelLabels: data.channelLabels.present
           ? data.channelLabels.value
           : this.channelLabels,
+      tares: data.tares.present ? data.tares.value : this.tares,
       peakForceRaw: data.peakForceRaw.present
           ? data.peakForceRaw.value
           : this.peakForceRaw,
@@ -578,6 +608,7 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('sampleRate: $sampleRate, ')
           ..write('channelCount: $channelCount, ')
           ..write('channelLabels: $channelLabels, ')
+          ..write('tares: $tares, ')
           ..write('peakForceRaw: $peakForceRaw, ')
           ..write('peakForceChannel: $peakForceChannel, ')
           ..write('calibrationSlope: $calibrationSlope, ')
@@ -598,6 +629,7 @@ class Session extends DataClass implements Insertable<Session> {
     sampleRate,
     channelCount,
     channelLabels,
+    tares,
     peakForceRaw,
     peakForceChannel,
     calibrationSlope,
@@ -617,6 +649,7 @@ class Session extends DataClass implements Insertable<Session> {
           other.sampleRate == this.sampleRate &&
           other.channelCount == this.channelCount &&
           other.channelLabels == this.channelLabels &&
+          other.tares == this.tares &&
           other.peakForceRaw == this.peakForceRaw &&
           other.peakForceChannel == this.peakForceChannel &&
           other.calibrationSlope == this.calibrationSlope &&
@@ -634,6 +667,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<int> sampleRate;
   final Value<int> channelCount;
   final Value<String> channelLabels;
+  final Value<String> tares;
   final Value<double> peakForceRaw;
   final Value<int> peakForceChannel;
   final Value<double> calibrationSlope;
@@ -649,6 +683,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.sampleRate = const Value.absent(),
     this.channelCount = const Value.absent(),
     this.channelLabels = const Value.absent(),
+    this.tares = const Value.absent(),
     this.peakForceRaw = const Value.absent(),
     this.peakForceChannel = const Value.absent(),
     this.calibrationSlope = const Value.absent(),
@@ -665,6 +700,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.sampleRate = const Value.absent(),
     this.channelCount = const Value.absent(),
     this.channelLabels = const Value.absent(),
+    this.tares = const Value.absent(),
     this.peakForceRaw = const Value.absent(),
     this.peakForceChannel = const Value.absent(),
     this.calibrationSlope = const Value.absent(),
@@ -681,6 +717,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<int>? sampleRate,
     Expression<int>? channelCount,
     Expression<String>? channelLabels,
+    Expression<String>? tares,
     Expression<double>? peakForceRaw,
     Expression<int>? peakForceChannel,
     Expression<double>? calibrationSlope,
@@ -697,6 +734,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (sampleRate != null) 'sample_rate': sampleRate,
       if (channelCount != null) 'channel_count': channelCount,
       if (channelLabels != null) 'channel_labels': channelLabels,
+      if (tares != null) 'tares': tares,
       if (peakForceRaw != null) 'peak_force_raw': peakForceRaw,
       if (peakForceChannel != null) 'peak_force_channel': peakForceChannel,
       if (calibrationSlope != null) 'calibration_slope': calibrationSlope,
@@ -715,6 +753,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<int>? sampleRate,
     Value<int>? channelCount,
     Value<String>? channelLabels,
+    Value<String>? tares,
     Value<double>? peakForceRaw,
     Value<int>? peakForceChannel,
     Value<double>? calibrationSlope,
@@ -731,6 +770,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       sampleRate: sampleRate ?? this.sampleRate,
       channelCount: channelCount ?? this.channelCount,
       channelLabels: channelLabels ?? this.channelLabels,
+      tares: tares ?? this.tares,
       peakForceRaw: peakForceRaw ?? this.peakForceRaw,
       peakForceChannel: peakForceChannel ?? this.peakForceChannel,
       calibrationSlope: calibrationSlope ?? this.calibrationSlope,
@@ -764,6 +804,9 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     }
     if (channelLabels.present) {
       map['channel_labels'] = Variable<String>(channelLabels.value);
+    }
+    if (tares.present) {
+      map['tares'] = Variable<String>(tares.value);
     }
     if (peakForceRaw.present) {
       map['peak_force_raw'] = Variable<double>(peakForceRaw.value);
@@ -799,6 +842,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('sampleRate: $sampleRate, ')
           ..write('channelCount: $channelCount, ')
           ..write('channelLabels: $channelLabels, ')
+          ..write('tares: $tares, ')
           ..write('peakForceRaw: $peakForceRaw, ')
           ..write('peakForceChannel: $peakForceChannel, ')
           ..write('calibrationSlope: $calibrationSlope, ')
@@ -1099,6 +1143,7 @@ typedef $$SessionsTableCreateCompanionBuilder =
       Value<int> sampleRate,
       Value<int> channelCount,
       Value<String> channelLabels,
+      Value<String> tares,
       Value<double> peakForceRaw,
       Value<int> peakForceChannel,
       Value<double> calibrationSlope,
@@ -1116,6 +1161,7 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<int> sampleRate,
       Value<int> channelCount,
       Value<String> channelLabels,
+      Value<String> tares,
       Value<double> peakForceRaw,
       Value<int> peakForceChannel,
       Value<double> calibrationSlope,
@@ -1166,6 +1212,11 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<String> get channelLabels => $composableBuilder(
     column: $table.channelLabels,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get tares => $composableBuilder(
+    column: $table.tares,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1249,6 +1300,11 @@ class $$SessionsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get tares => $composableBuilder(
+    column: $table.tares,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<double> get peakForceRaw => $composableBuilder(
     column: $table.peakForceRaw,
     builder: (column) => ColumnOrderings(column),
@@ -1323,6 +1379,9 @@ class $$SessionsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get tares =>
+      $composableBuilder(column: $table.tares, builder: (column) => column);
+
   GeneratedColumn<double> get peakForceRaw => $composableBuilder(
     column: $table.peakForceRaw,
     builder: (column) => column,
@@ -1392,6 +1451,7 @@ class $$SessionsTableTableManager
                 Value<int> sampleRate = const Value.absent(),
                 Value<int> channelCount = const Value.absent(),
                 Value<String> channelLabels = const Value.absent(),
+                Value<String> tares = const Value.absent(),
                 Value<double> peakForceRaw = const Value.absent(),
                 Value<int> peakForceChannel = const Value.absent(),
                 Value<double> calibrationSlope = const Value.absent(),
@@ -1407,6 +1467,7 @@ class $$SessionsTableTableManager
                 sampleRate: sampleRate,
                 channelCount: channelCount,
                 channelLabels: channelLabels,
+                tares: tares,
                 peakForceRaw: peakForceRaw,
                 peakForceChannel: peakForceChannel,
                 calibrationSlope: calibrationSlope,
@@ -1424,6 +1485,7 @@ class $$SessionsTableTableManager
                 Value<int> sampleRate = const Value.absent(),
                 Value<int> channelCount = const Value.absent(),
                 Value<String> channelLabels = const Value.absent(),
+                Value<String> tares = const Value.absent(),
                 Value<double> peakForceRaw = const Value.absent(),
                 Value<int> peakForceChannel = const Value.absent(),
                 Value<double> calibrationSlope = const Value.absent(),
@@ -1439,6 +1501,7 @@ class $$SessionsTableTableManager
                 sampleRate: sampleRate,
                 channelCount: channelCount,
                 channelLabels: channelLabels,
+                tares: tares,
                 peakForceRaw: peakForceRaw,
                 peakForceChannel: peakForceChannel,
                 calibrationSlope: calibrationSlope,
