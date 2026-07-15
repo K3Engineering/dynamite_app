@@ -870,7 +870,11 @@ class _MinimapPainter extends CustomPainter {
     canvas.clipRect(Rect.fromLTRB(0, 0, xClip, gh));
     canvas.drawImageRect(
       img,
-      Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
+      // Source is the CONTENT rect (gw*dpr x gh*dpr), not the ceil'd image
+      // bounds: using img.width/height would bake a ~0.999 scale into every
+      // blit (and compound it through incremental rebakes), blurring the
+      // whole strip even at identity mapping.
+      Rect.fromLTWH(0, 0, c.gw * c.dpr, c.gh * c.dpr),
       Rect.fromLTWH(xOffset, yOffset, gw * xScale, gh * yScale),
       Paint()..filterQuality = FilterQuality.low,
     );
