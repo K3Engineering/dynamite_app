@@ -1281,7 +1281,6 @@ class GraphWorkspace extends StatefulWidget {
   final AppSettings settings;
   final bool showDerivative;
   final bool isLiveGraph;
-  final bool showEnvelope;
   final bool showMinimap;
 
   const GraphWorkspace({
@@ -1291,7 +1290,6 @@ class GraphWorkspace extends StatefulWidget {
     required this.settings,
     this.showDerivative = false,
     this.isLiveGraph = true,
-    this.showEnvelope = true,
     this.showMinimap = true,
   });
 
@@ -1349,7 +1347,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                         widget.settings,
                         widget.ctrl,
                         showXLabels: !widget.showDerivative,
-                        showEnvelope: widget.showEnvelope,
                         cache: _forceCache,
                         colorScheme: colorScheme,
                         dpr: dpr,
@@ -1372,7 +1369,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                           widget.data,
                           widget.settings,
                           widget.ctrl,
-                          showEnvelope: widget.showEnvelope,
                           cache: _derivCache,
                           colorScheme: colorScheme,
                           dpr: dpr,
@@ -1887,7 +1883,6 @@ void drawChannelEnvelope(
   required double Function(int sampleIndex) sampleAt,
   required double Function(double rawReduced) valueToY,
   required int clipEnvelopeSamples,
-  bool showEnvelope = true,
 }) {
   final (avg: avg, env: env) = _envelopeBatchers(
     canvas,
@@ -1936,7 +1931,7 @@ void drawChannelEnvelope(
 
     if (validSamples == 0) {
       // Entire block is dropped samples. Break the polyline.
-      if (showEnvelope) env.flush();
+      env.flush();
       avg.flush();
       continue;
     }
@@ -1955,7 +1950,7 @@ void drawChannelEnvelope(
 
     avg.add(xPos, avgY);
 
-    if (showEnvelope && sStart < clipEnvelopeSamples) {
+    if (sStart < clipEnvelopeSamples) {
       env.add(xPos, maxY);
       env.add(xPos, minY);
       env.add(nextXPos, maxY);
@@ -1967,7 +1962,7 @@ void drawChannelEnvelope(
     if (avg.wouldOverflow(2)) avg.flush();
   }
 
-  if (showEnvelope) env.flush();
+  env.flush();
   avg.flush();
 }
 
@@ -2181,7 +2176,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final GraphDataSource _data;
   final AppSettings _settings;
   final GraphController _ctrl;
-  final bool showEnvelope;
   final SegmentedGraphCache cache;
   final ColorScheme colorScheme;
 
@@ -2197,7 +2191,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     this._data,
     this._settings,
     this._ctrl, {
-    this.showEnvelope = true,
     required this.cache,
     required this.colorScheme,
     required this.dpr,
@@ -2330,7 +2323,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
         ...cacheKeyTares(),
         _settings.displayUnit,
         _data.calibrationSlope,
-        showEnvelope,
       ],
       gw: graphSz.width,
       gh: graphSz.height,
@@ -2366,7 +2358,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
             firstUsableSample: oldestSample + firstSampleOffset,
             sampleAt: sampleAt(ch),
             valueToY: (v) => valueToY(v).clamp(0.0, graphSz.height),
-            showEnvelope: showEnvelope,
             clipEnvelopeSamples: end,
           );
         }
@@ -2391,7 +2382,6 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
     super.settings,
     super.ctrl, {
     this.showXLabels = true,
-    super.showEnvelope,
     required super.cache,
     required super.colorScheme,
     required super.dpr,
@@ -2484,7 +2474,6 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     super.data,
     super.settings,
     super.ctrl, {
-    super.showEnvelope,
     required super.cache,
     required super.colorScheme,
     required super.dpr,
