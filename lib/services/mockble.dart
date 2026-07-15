@@ -141,6 +141,10 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic,
     BleInputProperty bleInputProperty,
   ) async {
+    // TODO: the mock feed is currently fully untested and never drops
+    // packets, so the gap pipeline (decoder counter diff -> DataHub.gaps ->
+    // hatching/stale stats) can only be exercised on real hardware. Add an
+    // induced-drop option (skip a packet every N) to verify it here.
     _notificationTimer?.cancel();
     _notificationTimer = null;
     if (BleInputProperty.notification == bleInputProperty) {

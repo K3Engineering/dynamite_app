@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'database.dart';
 import 'data_hub.dart';
+import '../models/gap_list.dart';
 
 /// Chunk format: packed int32 LE values, interleaved
 /// `[ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]`, with one value per ADC channel
@@ -62,6 +63,7 @@ class SessionStorage {
       durationMs: (writer.totalSamplesRecorded * 1000) ~/ DataHub.samplesPerSec,
       peakForceRaw: writer.peakRaw,
       peakForceChannel: writer.peakChannel,
+      gaps: writer.gaps.toJson(),
     );
 
     return writer.writeError;
@@ -137,6 +139,7 @@ class SessionStorage {
       calibrationSlope: session.calibrationSlope,
       calibrationOffset: session.calibrationOffset,
       tares: _parseTares(session.tares, channelCount),
+      gaps: GapList.fromJson(session.gaps),
     );
   }
 
@@ -196,6 +199,12 @@ class SessionData {
   final int calibrationOffset;
   final List<double> tares;
 
+  /// Dropped-sample ranges (session-relative). The channel data holds held
+  /// values across these ranges, so stats/buckets need no exclusion logic;
+  /// renderers use this to hatch and break the polyline, and CSV export
+  /// blanks these rows. Empty for crash-recovered sessions (gap info lost).
+  final GapList gaps;
+
   /// Per-channel extremes, computed once on construction.
   final List<double> mins;
   final List<double> maxs;
@@ -214,7 +223,9 @@ class SessionData {
     required this.calibrationSlope,
     required this.calibrationOffset,
     required this.tares,
-  }) : mins = List.filled(channels.length, 0.0),
+    GapList? gaps,
+  }) : gaps = gaps ?? GapList(),
+       mins = List.filled(channels.length, 0.0),
        maxs = List.filled(channels.length, 0.0) {
     final int numBuckets = (sampleCount == 0)
         ? 0
@@ -296,6 +307,14 @@ class LiveSessionWriter {
   double peakRaw = 0.0;
   int peakChannel = 0;
 
+  /// Dropped-sample ranges accumulated across the recording, relative to the
+  /// session's first sample. Persisted by [SessionStorage.finalizeSession].
+  final GapList gaps = GapList();
+
+  /// Hub-absolute index of the session's first sample; latched on the first
+  /// [appendData] call and used to make [gaps] session-relative.
+  int? _originIdx;
+
   /// Accumulates sample count and peak; shared scan logic with recovery.
   final _ChunkAggregate _agg = _ChunkAggregate(DataHub.numAdcChannels);
 
@@ -316,6 +335,12 @@ class LiveSessionWriter {
   /// Returns when this slice has been buffered (and flushed, if the threshold
   /// was crossed). Safe to call without awaiting; calls are serialized.
   Future<void> appendData(DataHub dataHub, int startIdx, int count) {
+    // Capture this slice's gap ranges synchronously (hub state is only
+    // guaranteed fresh at call time), rebased to session-relative indices.
+    final int origin = _originIdx ??= startIdx;
+    for (final (s, e) in dataHub.gaps.rangesIn(startIdx, startIdx + count)) {
+      gaps.append(s - origin, e - origin);
+    }
     return _enqueue(() async {
       if (writeError != null) return;
       const numLines = DataHub.numAdcChannels;

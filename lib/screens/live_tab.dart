@@ -3,9 +3,9 @@ import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
 import '../models/force_unit.dart';
+import '../models/gap_list.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../services/adc_protocol.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/database.dart';
@@ -71,7 +71,7 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
       );
 
   @override
-  int? get missingSampleSentinel => kDroppedSampleSentinel;
+  GapList get gaps => _hub.gaps;
 }
 
 class _LiveTabState extends State<LiveTab> {
@@ -360,6 +360,9 @@ class LiveStats extends StatelessWidget {
     return ListenableBuilder(
       listenable: hub,
       builder: (context, _) {
+        // During a live gap (dropped packets) the hub reports held values;
+        // gray them out so they read as stale rather than fresh readings.
+        final stale = hub.liveEdgeIsGap;
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: Row(
@@ -374,6 +377,7 @@ class LiveStats extends StatelessWidget {
                     peak: hub.peakForce(indices[i], unit),
                     acRms: hub.acRmsForce(indices[i], unit),
                     unit: unit,
+                    stale: stale,
                     showDerivative: showDerivative,
                     currentDerivative: showDerivative
                         ? hub.currentDerivative(indices[i], unit)
@@ -528,6 +532,7 @@ class _ChannelStatChip extends StatelessWidget {
     required this.peak,
     required this.acRms,
     required this.unit,
+    this.stale = false,
     this.showDerivative = false,
     this.currentDerivative,
   });
@@ -538,6 +543,10 @@ class _ChannelStatChip extends StatelessWidget {
   final double peak;
   final double acRms;
   final ForceUnit unit;
+
+  /// True while the newest sample is a dropped one: [current] (and the
+  /// derivative) are held values, rendered grayed-out.
+  final bool stale;
   final bool showDerivative;
   final double? currentDerivative;
 
@@ -546,6 +555,7 @@ class _ChannelStatChip extends StatelessWidget {
     final monoStyle = GoogleFonts.robotoMono(
       textStyle: Theme.of(context).textTheme.bodySmall,
     );
+    final staleColor = Theme.of(context).colorScheme.outline;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -563,9 +573,10 @@ class _ChannelStatChip extends StatelessWidget {
           Text(
             unit.format(current),
             style: GoogleFonts.robotoMono(
-              textStyle: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+              textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: stale ? staleColor : null,
+              ),
             ),
           ),
           Text('Peak: ${unit.format(peak)}', style: monoStyle),
@@ -573,7 +584,7 @@ class _ChannelStatChip extends StatelessWidget {
           if (showDerivative && currentDerivative != null)
             Text(
               'dF/dt: ${unit.formatRate(currentDerivative!)}',
-              style: monoStyle,
+              style: stale ? monoStyle.copyWith(color: staleColor) : monoStyle,
             ),
         ],
       ),

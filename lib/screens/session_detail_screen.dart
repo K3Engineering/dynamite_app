@@ -8,7 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../models/app_settings.dart';
-import '../services/adc_protocol.dart';
+import '../models/gap_list.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
 import '../widgets/graph_components.dart';
@@ -59,7 +59,7 @@ class _SessionDataSource implements GraphDataSource {
   );
 
   @override
-  int? get missingSampleSentinel => kDroppedSampleSentinel;
+  GapList get gaps => _data.gaps;
 }
 
 class _SessionDetailScreenState extends State<SessionDetailScreen> {
@@ -434,10 +434,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
     for (int s = 0; s < data.sampleCount; s++) {
       buf.write((s / data.sampleRate).toStringAsFixed(4));
-      for (int ch = 0; ch < data.channels.length; ch++) {
-        final raw = data.channels[ch][s];
-        final kgf = (raw - data.tares[ch]) * data.calibrationSlope;
-        buf.write(',$raw,${kgf.toStringAsFixed(6)}');
+      if (data.gaps.contains(s)) {
+        // Dropped sample: the buffer holds a fabricated (held) value, so emit
+        // blank cells rather than fake data.
+        for (int ch = 0; ch < data.channels.length; ch++) {
+          buf.write(',,');
+        }
+      } else {
+        for (int ch = 0; ch < data.channels.length; ch++) {
+          final raw = data.channels[ch][s];
+          final kgf = (raw - data.tares[ch]) * data.calibrationSlope;
+          buf.write(',$raw,${kgf.toStringAsFixed(6)}');
+        }
       }
       buf.writeln();
     }
