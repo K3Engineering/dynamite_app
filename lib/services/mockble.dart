@@ -17,7 +17,12 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   MockBlePlatform._() {
     _setupListeners();
-    _mockData.clear();
+    // Always have a synthetic feed available synchronously so [connect] never
+    // blocks on file I/O (which would stall under a fake-async test clock).
+    // [loadMockDataFile] can later override this with real captured samples.
+    _mockData
+      ..clear()
+      ..addAll(_generateSyntheticFrames(2000));
   }
 
   Timer? _scanTimer;
@@ -28,6 +33,16 @@ class MockBlePlatform extends UniversalBlePlatform {
   final List<Uint8List> _mockData = [];
   int _mockDataCount = 0;
   int _packetCount = 0;
+
+  /// Number of generated packets (emitted or dropped) since the feed started.
+  int _generatedPacketCount = 0;
+
+  /// When > 0, every [dropEveryNPackets]-th packet is *not* delivered to the
+  /// client (its sample counter is still consumed), so the running sample
+  /// counter jumps and [AdcPacketDecoder] reports the dropped range to
+  /// [DataHub.gaps]. 0 disables induced drops (the default). The very first
+  /// packet is always delivered so the decoder can establish continuity.
+  int dropEveryNPackets = 0;
 
   @override
   Future<AvailabilityState> getBluetoothAvailabilityState() async {
@@ -108,9 +123,6 @@ class MockBlePlatform extends UniversalBlePlatform {
     Duration? connectionTimeout,
     bool autoConnect = false,
   }) async {
-    if (_mockData.isEmpty) {
-      await _setupMockData();
-    }
     if (_connectedDeviceId != null) return;
 
     _connectedDeviceId = deviceId;
@@ -141,31 +153,43 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic,
     BleInputProperty bleInputProperty,
   ) async {
-    // TODO: the mock feed is currently fully untested and never drops
-    // packets, so the gap pipeline (decoder counter diff -> DataHub.gaps ->
-    // hatching/stale stats) can only be exercised on real hardware. Add an
-    // induced-drop option (skip a packet every N) to verify it here.
+    // The feed is reset on every (re)subscription: continuity counter and the
+    // synthetic-data cursor both restart from zero so reconnects behave like a
+    // fresh device, and an induced-drop run can be repeated deterministically.
     _notificationTimer?.cancel();
     _notificationTimer = null;
+    _packetCount = 0;
+    _mockDataCount = 0;
+    _generatedPacketCount = 0;
+
     if (BleInputProperty.notification == bleInputProperty) {
-      const int samplesPerPack = 16;
-      const dataInterval = Duration(milliseconds: 1 * samplesPerPack);
+      // One packet every [nwAdcNumSamples] ms => 1000 samples/sec (matches
+      // DataHub.samplesPerSec), with [nwAdcNumSamples] samples per packet.
+      const dataInterval = Duration(milliseconds: nwAdcNumSamples);
       _notificationTimer = Timer.periodic(dataInterval, (_) {
-        final ev = Uint8List(nwHeaderSize + nwAdcSampleLength * samplesPerPack);
-        ev[0] = samplesPerPack * nwAdcSampleLength;
-        ev[1] = _packetCount & 0xFF;
-        ev[2] = (_packetCount >> 8) & 0xFF;
-        for (int i = 0; i < samplesPerPack; ++i) {
-          for (int j = 0; j < nwAdcSampleLength; ++j) {
-            ev[nwHeaderSize + i * nwAdcSampleLength + j] =
-                _mockData[_mockDataCount][j];
-          }
-          _mockDataCount++;
-          if (_mockDataCount >= _mockData.length) {
-            _mockDataCount = 0;
-          }
+        final int thisCounter = _packetCount;
+        // Always advance the running counter by a full packet, whether or not
+        // we deliver this packet, so a dropped packet produces a real gap.
+        _packetCount = (_packetCount + nwAdcNumSamples) & 0xFFFF;
+
+        final bool drop = dropEveryNPackets > 0 &&
+            _generatedPacketCount > 0 &&
+            (_generatedPacketCount % dropEveryNPackets) == 0;
+        _generatedPacketCount++;
+        if (drop) return;
+
+        final ev = Uint8List(
+          nwHeaderSize + nwAdcSampleLength * nwAdcNumSamples,
+        );
+        // 2-byte little-endian running sample counter (the *starting* sample
+        // index of this packet), per adc_protocol.dart.
+        ev[0] = thisCounter & 0xFF;
+        ev[1] = (thisCounter >> 8) & 0xFF;
+        for (int i = 0; i < nwAdcNumSamples; ++i) {
+          final frame = _mockData[_mockDataCount];
+          ev.setAll(nwHeaderSize + i * nwAdcSampleLength, frame);
+          _mockDataCount = (_mockDataCount + 1) % _mockData.length;
         }
-        _packetCount += samplesPerPack;
         updateCharacteristicValue(deviceId, characteristic, ev, null);
       });
     }
@@ -232,40 +256,83 @@ class MockBlePlatform extends UniversalBlePlatform {
     //onValueChange = (String deviceId, String characteristicId, Uint8List value) {};
   }
 
-  Future<void> _setupMockData() async {
+  /// Optionally override the synthetic feed with real captured samples from a
+  /// text file (one JSON object per line, `{"channels": [c0,c1,c2,c3]}`).
+  ///
+  /// This is an explicit opt-in for replaying recorded data: [connect] never
+  /// awaits this, so the feed always has the synthetic frames ready even if the
+  /// file is missing or unreadable. On success the data cursor is reset so the
+  /// next subscription starts from the first captured sample.
+  Future<void> loadMockDataFile(String path) async {
+    final loaded = <Uint8List>[];
     try {
-      final String mem = await XFile(
-        'MockData.txt',
-      ).readAsString(encoding: ascii);
-      final List<String> textData = mem.split('\n');
-      for (final String s in textData) {
+      final String mem = await XFile(path).readAsString(encoding: ascii);
+      for (final String s in mem.split('\n')) {
         if (s.isEmpty) continue;
-
         final Map<String, dynamic> parsedLine = json.decode(
           s.replaceAll("'", '"'),
         );
         final adcSamples = List<int>.from(parsedLine['channels']);
-        assert(adcSamples.length == 4);
-        // Match the real wire format: 4 channels x 3 bytes, little-endian,
-        // packed at offset i*3 (see DataHub._parseDataPacket).
-        final networkFormatData = Uint8List(nwAdcSampleLength);
-        for (int i = 0; i < adcSamples.length; ++i) {
-          final v = adcSamples[i];
-          networkFormatData[i * 3] = v & 0xFF;
-          networkFormatData[i * 3 + 1] = (v >> 8) & 0xFF;
-          networkFormatData[i * 3 + 2] = (v >> 16) & 0xFF;
-        }
-        _mockData.add(networkFormatData);
+        assert(adcSamples.length == nwNumAdcChan);
+        loaded.add(_packSampleList(adcSamples));
       }
-    } catch (err) {
-      // Could not read the file
+    } catch (_) {
+      // Could not read/parse the file: keep the existing synthetic feed.
+      return;
     }
+    if (loaded.isNotEmpty) {
+      _mockData
+        ..clear()
+        ..addAll(loaded);
+      _mockDataCount = 0;
+    }
+  }
 
-    if (_mockData.isEmpty) {
-      _mockData.add(
-        Uint8List.fromList([0, 0, 5, 4, 3, 6, 5, 4, 7, 6, 5, 8, 7, 6, 0]),
-      );
+  /// Pack a list of channel values (24-bit signed) into the 12-byte wire sample.
+  static Uint8List _packSampleList(List<int> ch) {
+    final out = Uint8List(nwAdcSampleLength);
+    for (int i = 0; i < nwNumAdcChan && i < ch.length; ++i) {
+      final v = ch[i] & 0xFFFFFF;
+      out[i * 3] = v & 0xFF;
+      out[i * 3 + 1] = (v >> 8) & 0xFF;
+      out[i * 3 + 2] = (v >> 16) & 0xFF;
     }
+    return out;
+  }
+
+  /// Pack 4 channel values (24-bit signed) into the 12-byte wire sample.
+  static Uint8List _packSample(int c0, int c1, int c2, int c3) {
+    final out = Uint8List(nwAdcSampleLength);
+    final ch = [c0, c1, c2, c3];
+    for (int i = 0; i < nwNumAdcChan; ++i) {
+      final v = ch[i] & 0xFFFFFF;
+      out[i * 3] = v & 0xFF;
+      out[i * 3 + 1] = (v >> 8) & 0xFF;
+      out[i * 3 + 2] = (v >> 16) & 0xFF;
+    }
+    return out;
+  }
+
+  /// Generate [count] deterministic multi-channel frames so the mock feed
+  /// looks like real data when no MockData.txt is present. Channel 0/1 are
+  /// sines with a phase offset, channel 2 a cosine, channel 3 a slow sawtooth;
+  /// amplitudes stay well inside the signed 24-bit range.
+  static List<Uint8List> _generateSyntheticFrames(int count) {
+    const amp0 = 4000000;
+    const amp1 = 3000000;
+    const amp2 = 2500000;
+    const amp3 = 20000;
+    const cycles = 5.0;
+    final frames = <Uint8List>[];
+    for (int s = 0; s < count; ++s) {
+      final t = s / count;
+      final c0 = (sin(2 * pi * cycles * t) * amp0).round();
+      final c1 = (sin(2 * pi * cycles * t + pi / 4) * amp1).round();
+      final c2 = (cos(2 * pi * cycles * t) * amp2).round();
+      final c3 = ((s % 200) - 100) * amp3;
+      frames.add(_packSample(c0, c1, c2, c3));
+    }
+    return frames;
   }
 
   static List<BleDevice> _generateDevices() {
