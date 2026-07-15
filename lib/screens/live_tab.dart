@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
@@ -55,6 +56,22 @@ class _LiveTabState extends State<LiveTab> {
   /// How long the stream may be silent (while the link reports streaming)
   /// before the live stats read as stalled. Packets normally arrive at 50 Hz.
   static const Duration _stallThreshold = Duration(seconds: 2);
+
+  @override
+  void initState() {
+    super.initState();
+    // TEMP PERF: capture worker-thread raster time + build time per frame.
+    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
+  }
+
+  void _onFrameTimings(List<FrameTiming> timings) {
+    for (final t in timings) {
+      PerfStats.addFrame(
+        t.rasterDuration.inMicroseconds,
+        t.buildDuration.inMicroseconds,
+      );
+    }
+  }
 
   @override
   void didChangeDependencies() {
@@ -121,6 +138,7 @@ class _LiveTabState extends State<LiveTab> {
     _link?.removeListener(_onLinkChanged);
     _showDerivative.dispose();
     _stalled.dispose();
+    SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
     _graphCtrl.dispose();
     super.dispose();
   }
