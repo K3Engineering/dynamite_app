@@ -323,7 +323,6 @@ class SegmentedGraphCache {
         at,
         _bake(start, end, pps, gh, yMin, yMax, hPad, vPad, render),
       );
-      PerfStats.addSegmentBake(gap: true);
       return true;
     }
 
@@ -399,7 +398,6 @@ class SegmentedGraphCache {
       _segments[k].dispose();
     }
     _segments.replaceRange(worst, removeTo + 1, [seg]);
-    PerfStats.addSegmentBake(gap: false);
     return true;
   }
 
@@ -496,7 +494,6 @@ class SegmentedGraphCache {
         paint,
       );
       canvas.restore();
-      PerfStats.addSegmentDraw(blit: true);
     }
   }
 
@@ -524,7 +521,6 @@ class SegmentedGraphCache {
       canvas.translate(x, 0);
       render(canvas, gs, ge, math.max(1, w.ceil()));
       canvas.restore();
-      PerfStats.addSegmentDraw(blit: false);
     }
   }
 }
@@ -1038,10 +1034,6 @@ class _MinimapPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // TEMP PERF: measure total minimap paint plus loop/draw split.
-    final sw = Stopwatch()..start();
-    final perf = EnvelopePerf();
-
     const double vPad = 2;
 
     canvas.translate(kGraphLeftSpace, vPad);
@@ -1103,7 +1095,6 @@ class _MinimapPainter extends CustomPainter {
           rawMin,
           rawMax,
           tares,
-          perf,
         );
         // drawSqueezedEnvelope spreads the range over exactly texW columns.
         return texW.toDouble();
@@ -1131,12 +1122,6 @@ class _MinimapPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     canvas.drawRect(Rect.fromLTRB(x1, 0, x2, gh), vpBorder);
-
-    PerfStats.addMinimapPaint(
-      sw.elapsedMicroseconds,
-      perf.loopMicros,
-      perf.drawMicros,
-    );
   }
 
   /// Vector-render samples [rangeStart, rangeStart + rangeSpan) as min/avg/
@@ -1152,7 +1137,6 @@ class _MinimapPainter extends CustomPainter {
     double rawMin,
     double rawMax,
     List<double> tares,
-    EnvelopePerf perf,
   ) {
     final dataRange = rawMax - rawMin;
     for (int i = 0; i < _activeIndices.length; i++) {
@@ -1171,7 +1155,6 @@ class _MinimapPainter extends CustomPainter {
             (gh - (raw - tare - rawMin) * gh / dataRange).clamp(0.0, gh),
         avgColor: chColor.withAlpha(180),
         envColor: chColor.withAlpha(60),
-        perf: perf, // TEMP PERF
       );
     }
   }
@@ -1841,15 +1824,6 @@ class VertexBatcher {
   }
 }
 
-// TEMP PERF (remove after profiling): timing sink threaded through the
-// squeeze-envelope renderer so the minimap can report reduction-loop time and
-// canvas-draw time separately.
-class EnvelopePerf {
-  final Stopwatch sw = Stopwatch()..start();
-  int loopMicros = 0;
-  int drawMicros = 0;
-}
-
 /// The (average polyline, min/max envelope fill) [VertexBatcher] pair shared
 /// by the envelope renderers. Both batchers reuse one [Paint], restyled per
 /// flush.
@@ -1858,7 +1832,6 @@ class EnvelopePerf {
   required Color avgColor,
   required double avgStrokeWidth,
   required Color envColor,
-  EnvelopePerf? perf,
 }) {
   final pen = Paint();
 
@@ -1870,11 +1843,7 @@ class EnvelopePerf {
         ..color = avgColor
         ..style = PaintingStyle.stroke
         ..strokeWidth = avgStrokeWidth;
-      final start = perf?.sw.elapsedMicroseconds;
       canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
-      if (start != null) {
-        perf!.drawMicros += perf.sw.elapsedMicroseconds - start;
-      }
     },
   );
 
@@ -1886,11 +1855,7 @@ class EnvelopePerf {
       pen
         ..color = envColor
         ..style = PaintingStyle.fill;
-      final start = perf?.sw.elapsedMicroseconds;
       canvas.drawVertices(vertices, ui.BlendMode.srcOver, pen);
-      if (start != null) {
-        perf!.drawMicros += perf.sw.elapsedMicroseconds - start;
-      }
       vertices.dispose();
     },
   );
@@ -2028,7 +1993,6 @@ void drawSqueezedEnvelope(
   required Color avgColor,
   required Color envColor,
   double avgStrokeWidth = 1.0,
-  EnvelopePerf? perf, // TEMP PERF
 }) {
   final series = data.channel(channel);
   final line = series.data;
@@ -2044,7 +2008,6 @@ void drawSqueezedEnvelope(
     avgColor: avgColor,
     avgStrokeWidth: avgStrokeWidth,
     envColor: envColor,
-    perf: perf,
   );
 
   final int bucketSize = series.bucketSize;
@@ -2067,8 +2030,6 @@ void drawSqueezedEnvelope(
     int validSamples = 0;
 
     final int samplesInPixel = drawEnd - drawStart;
-
-    final loopStart = perf?.sw.elapsedMicroseconds; // TEMP PERF
 
     if (samplesInPixel <= bucketSize * 2) {
       // High-res mode: loop the raw array to avoid blockiness when zoomed
@@ -2117,10 +2078,6 @@ void drawSqueezedEnvelope(
         total += avgOfBucket * count;
         validSamples += count;
       }
-    }
-
-    if (loopStart != null) {
-      perf!.loopMicros += perf.sw.elapsedMicroseconds - loopStart; // TEMP PERF
     }
 
     if (validSamples == 0) {
@@ -2213,121 +2170,6 @@ _GraphLayout? _setupGraphFrame(
   );
 }
 
-// ---------------------------------------------------------------------------
-// TEMP PERF INSTRUMENTATION (remove after profiling)
-//
-// Aggregates two independent measurements and prints them together every
-// [_reportEvery] frames:
-//   * Dart paint time   -- time the UI thread spends in the time-series
-//                          painters' paint (force + derivative) building the
-//                          draw calls (recorded via [addPaint]).
-//   * Skwasm raster time -- FrameTiming.rasterDuration, the worker/GPU thread
-//                          time to execute the recorded display list.
-//   * Build time         -- FrameTiming.buildDuration, for context.
-// Frame timings are fed in via SchedulerBinding.addTimingsCallback (see
-// _LiveTabState); the report is emitted from there once 60 frames accrue.
-// ---------------------------------------------------------------------------
-class PerfStats {
-  static const int _reportEvery = 60;
-
-  // Dart paint accumulation (UI thread).
-  static int _paintCount = 0;
-  static int _paintMicros = 0;
-
-  static int _minimapCount = 0;
-  static int _minimapMicros = 0;
-  static int _minimapLoopMicros = 0;
-  static int _minimapDrawMicros = 0;
-
-  /// Record one _TimeSeriesGraphPainter.paint() duration.
-  static void addPaint(int micros) {
-    _paintMicros += micros;
-    _paintCount++;
-  }
-
-  static void addMinimapPaint(int total, int loop, int draw) {
-    _minimapCount++;
-    _minimapMicros += total;
-    _minimapLoopMicros += loop;
-    _minimapDrawMicros += draw;
-  }
-
-  // Segment-cache accounting (shared by minimap, force, derivative).
-  static int _segGapBakes = 0;
-  static int _segRefreshBakes = 0;
-  static int _segBlits = 0;
-  static int _segDirect = 0;
-
-  /// Record one segment bake: [gap] fills uncovered ranges (live-edge
-  /// sliver, bootstrap, pan/zoom exposure) vs. staleness refreshes.
-  static void addSegmentBake({required bool gap}) {
-    if (gap) {
-      _segGapBakes++;
-    } else {
-      _segRefreshBakes++;
-    }
-  }
-
-  /// Record one segment draw: a texture [blit], or a gap vector-drawn
-  /// directly to the frame canvas.
-  static void addSegmentDraw({required bool blit}) {
-    if (blit) {
-      _segBlits++;
-    } else {
-      _segDirect++;
-    }
-  }
-
-  /// Feed one frame's timing. Emits a combined report every 60 frames.
-  static void addFrame(int rasterMicros, int buildMicros) {
-    _rasterMicros += rasterMicros;
-    _buildMicros += buildMicros;
-    _frameCount++;
-    if (_frameCount >= _reportEvery) _report();
-  }
-
-  static int _frameCount = 0;
-  static int _rasterMicros = 0;
-  static int _buildMicros = 0;
-
-  static void _report() {
-    final dartAvg = _paintCount > 0 ? _paintMicros / _paintCount : 0;
-    final mmAvg = _minimapCount > 0 ? _minimapMicros / _minimapCount : 0;
-    final mmLoopAvg = _minimapCount > 0
-        ? _minimapLoopMicros / _minimapCount
-        : 0;
-    final mmDrawAvg = _minimapCount > 0
-        ? _minimapDrawMicros / _minimapCount
-        : 0;
-    final rasterAvg = _frameCount > 0 ? _rasterMicros / _frameCount : 0;
-    final buildAvg = _frameCount > 0 ? _buildMicros / _frameCount : 0;
-    final fc = _frameCount > 0 ? _frameCount : 1;
-    debugPrint(
-      '[PERF] over $_frameCount frames | '
-      'Main paint: ${dartAvg.toStringAsFixed(0)}us (${_paintCount}x) | '
-      'Minimap: ${mmAvg.toStringAsFixed(0)}us (loop: ${mmLoopAvg.toStringAsFixed(0)}us, draw: ${mmDrawAvg.toStringAsFixed(0)}us) | '
-      'segs/frame: ${(_segBlits / fc).toStringAsFixed(1)} blit, '
-      '${(_segDirect / fc).toStringAsFixed(1)} direct | '
-      'bakes: ${_segGapBakes}g+${_segRefreshBakes}r | '
-      'Skwasm raster: ${rasterAvg.toStringAsFixed(0)}us | '
-      'build: ${buildAvg.toStringAsFixed(0)}us',
-    );
-    _paintCount = 0;
-    _paintMicros = 0;
-    _minimapCount = 0;
-    _minimapMicros = 0;
-    _minimapLoopMicros = 0;
-    _minimapDrawMicros = 0;
-    _segGapBakes = 0;
-    _segRefreshBakes = 0;
-    _segBlits = 0;
-    _segDirect = 0;
-    _frameCount = 0;
-    _rasterMicros = 0;
-    _buildMicros = 0;
-  }
-}
-
 /// Shared engine for the windowed time-series graphs (force, derivative).
 ///
 /// Handles the pipeline common to both: frame setup, Y-range for the visible
@@ -2400,17 +2242,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // TEMP PERF: measure Dart-side draw-call construction time (UI thread).
-    final sw = Stopwatch()..start();
-    try {
-      _paint(canvas, size);
-    } finally {
-      sw.stop();
-      PerfStats.addPaint(sw.elapsedMicroseconds);
-    }
-  }
-
-  void _paint(Canvas canvas, Size size) {
     final layout = _setupGraphFrame(
       canvas,
       size,
