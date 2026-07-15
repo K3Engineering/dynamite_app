@@ -43,7 +43,9 @@ class DataHub extends ChangeNotifier {
   );
 
   /// Per-channel, per-bucket aggregates over [bucketSize]-sample windows.
-  /// Used by the minimap to render a downsampled overview cheaply.
+  /// Used by the graph envelope renderers to downsample cheaply. Gap samples
+  /// hold the previous real value, so buckets are always fully populated and
+  /// need no missing-data handling.
   final List<Int32List> bucketMins = List.generate(
     DataHub.numAdcChannels,
     (_) => Int32List(numBuckets),

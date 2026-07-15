@@ -210,7 +210,9 @@ class SessionData {
   final List<double> maxs;
 
   /// Per-channel, per-bucket aggregates over [bucketSize]-sample windows.
-  /// Mirrors DataHub's live buckets so the minimap can downsample cheaply.
+  /// Mirrors DataHub's live buckets so the graphs can downsample cheaply.
+  /// Gap samples hold the previous real value, so buckets are always fully
+  /// populated and need no missing-data handling.
   final int bucketSize = 100;
   late final List<Int32List> bucketMins;
   late final List<Int32List> bucketMaxs;
