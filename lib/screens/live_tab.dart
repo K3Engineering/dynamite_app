@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
+import '../models/bucket_series.dart';
 import '../models/force_unit.dart';
 import '../models/gap_list.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -64,21 +65,12 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
         min: _hub.rawMin[channelIndex].toDouble(),
         max: _hub.rawMax[channelIndex].toDouble(),
         tare: _hub.tare[channelIndex],
-        buckets: (
-          bucketSize: DataHub.bucketSize,
-          mins: _hub.bucketMins[channelIndex],
-          maxs: _hub.bucketMaxs[channelIndex],
-          sums: _hub.bucketSums[channelIndex],
-        ),
+        buckets: _hub.valueBuckets[channelIndex].series,
       );
 
   @override
-  BucketSeries? diffBuckets(int channelIndex) => (
-        bucketSize: DataHub.bucketSize,
-        mins: _hub.diffBucketMins[channelIndex],
-        maxs: _hub.diffBucketMaxs[channelIndex],
-        sums: _hub.diffBucketSums[channelIndex],
-      );
+  BucketSeries? diffBuckets(int channelIndex) =>
+      _hub.diffBuckets[channelIndex].series;
 
   @override
   GapList get gaps => _hub.gaps;
