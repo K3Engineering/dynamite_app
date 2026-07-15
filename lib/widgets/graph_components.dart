@@ -1859,10 +1859,12 @@ class VertexBatcher {
 ///  2. avg: a partially covered bucket contributes `bucketMean * covered`,
 ///     i.e. its mean is assumed uniform across the bucket.
 ///
-/// Gap handling also differs between the paths: [sampleAt] returns NaN
-/// inside gaps, so the exact path breaks the polyline there, while the
-/// buckets contain the held values and the fast path draws them (the
-/// hatching marks the range as missing either way).
+/// Gap handling: [paintEnvelopeDataLayer] clips all data ink out of the gap
+/// x-ranges, so neither path draws inside a gap. Within the remaining
+/// (clipped-in) area the paths still differ slightly at gap edges: [sampleAt]
+/// returns NaN inside gaps, so the exact path reduces boundary blocks from
+/// their real samples only, while the buckets contain held values, biasing
+/// the fast path's boundary blocks toward the pre-gap value.
 ///
 /// The exact per-sample path has none of these differences; the derivative
 /// graph always uses it (first differences cannot be reconstructed from
@@ -2129,6 +2131,18 @@ bool paintEnvelopeDataLayer(
       // segment; the envelope fill is clipped at the seam so the alpha
       // fills of adjacent segments never double-blend.
       final int limit = math.min(end + blockSize, totalSamples);
+
+      // No data ink inside gaps: clip out their x-ranges so neither the
+      // exact path's boundary blocks nor the bucket path's held-value line
+      // can draw where no data exists (the hatching, drawn by the graph
+      // chrome outside this layer, is the only marker there). Safe to apply
+      // at bake time: gaps are append-only at the live edge, so the gap set
+      // inside an already-baked segment can never change.
+      final clip = _gapClipPath(data.gaps, start, limit, gw / viewSpan);
+      if (clip != null) {
+        cCanvas.save();
+        cCanvas.clipPath(clip);
+      }
       for (final ch in activeChannels) {
         if (data.channel(ch).data.isEmpty) continue;
 
@@ -2150,10 +2164,36 @@ bool paintEnvelopeDataLayer(
           rawToDisplay: rawToDisplayFor?.call(ch),
         );
       }
+      if (clip != null) cCanvas.restore();
       // drawChannelEnvelope maps sample s to (s - start) * gw / viewSpan.
       return (end - start) * gw / viewSpan;
     },
   );
+}
+
+/// Everything-except-gaps clip for the sample window [start, end) under the
+/// mapping `x = (s - start) * pxPerSample`, or null when no gap overlaps the
+/// window (the common case; callers skip save/clip/restore entirely). Built
+/// as one huge rect with even-odd gap holes; gap ranges are disjoint, so
+/// even-odd punches each exactly once.
+Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
+  if (gaps.isEmpty) return null;
+  const double big = 1e9; // covers any pad/overdraw around the plot area
+  Path? path;
+  for (final (gs, ge) in gaps.rangesIn(start, end)) {
+    path ??= Path()
+      ..fillType = PathFillType.evenOdd
+      ..addRect(const Rect.fromLTRB(-big, -big, big, big));
+    path.addRect(
+      Rect.fromLTRB(
+        (gs - start) * pxPerSample,
+        -big,
+        (ge - start) * pxPerSample,
+        big,
+      ),
+    );
+  }
+  return path;
 }
 
 // ---------------------------------------------------------------------------
