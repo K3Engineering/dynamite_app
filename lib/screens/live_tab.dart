@@ -147,6 +147,12 @@ class _LiveTabState extends State<LiveTab> {
     context.read<DataHub>().requestTare();
   }
 
+  void _onInjectTestSineWave() {
+    // Inject 5 minutes of test data at 1000 Hz
+    const samples = DataHub.samplesPerSec * 60 * 5;
+    context.read<DataHub>().injectTestData(samples);
+  }
+
   Future<void> _onToggleRecord() async {
     final recording = context.read<RecordingController>();
 
@@ -295,6 +301,7 @@ class _LiveTabState extends State<LiveTab> {
               isRecording: recording.sessionInProgress,
               onToggleRecord: _onToggleRecord,
               onTare: _onTare,
+              onInjectTest: _onInjectTestSineWave,
             ),
         ],
       ),
@@ -584,12 +591,14 @@ class ActionButtons extends StatelessWidget {
   final bool isRecording;
   final VoidCallback onToggleRecord;
   final VoidCallback onTare;
+  final VoidCallback onInjectTest;
 
   const ActionButtons({
     super.key,
     required this.isRecording,
     required this.onToggleRecord,
     required this.onTare,
+    required this.onInjectTest,
   });
 
   @override
@@ -619,6 +628,12 @@ class ActionButtons extends StatelessWidget {
             onPressed: onTare,
             icon: const Icon(Icons.exposure_zero),
             label: Text(taring ? 'TARING' : 'TARE'),
+          ),
+          // Test button to inject dummy data for profiling
+          OutlinedButton.icon(
+            onPressed: onInjectTest,
+            icon: const Icon(Icons.bug_report),
+            label: const Text('TEST SINE'),
           ),
         ],
       ),

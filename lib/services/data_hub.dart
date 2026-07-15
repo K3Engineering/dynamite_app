@@ -166,7 +166,8 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// appended by the decoder for one packet. This is how
   /// [RecordingController] observes new data without the hub knowing anything
   /// about recording. [ObserverList] (the same mechanism [ChangeNotifier]
-  /// uses) keeps removal-during-dispatch safe.
+  /// uses) keeps removal-during-dispatch safe. Deliberately NOT fired by
+  /// [injectTestData] — injected test data is displayed but never recorded.
   final ObserverList<SamplesAppendedListener> _samplesAppendedListeners =
       ObserverList<SamplesAppendedListener>();
 
@@ -499,6 +500,36 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     // Difference the converter output (not the raw diff): exact under the
     // piecewise map, and tare cancels. Scaled to units per second.
     return (conv(raw1.toDouble()) - conv(raw2.toDouble())) * samplesPerSec;
+  }
+
+  void injectTestData(int samples) {
+    int added = 0;
+    for (int i = 0; i < samples; i++) {
+      final double phase = totalSamples * 2 * math.pi / samplesPerSec * 0.5;
+
+      // Generate dummy waveforms for all channels so every line is exercised.
+      // ch0: sine, ch1: cosine, ch2: half-amplitude sine, ch3: phase-shifted sine
+      final values = <int>[
+        (math.sin(phase) * 50000 + 50000).toInt(),
+        (math.cos(phase) * 30000 + 30000).toInt(),
+        (math.sin(phase) * 25000 + 25000).toInt(),
+        (math.sin(phase + math.pi / 4) * 40000 + 40000).toInt(),
+      ];
+
+      for (int ch = 0; ch < numAdcChannels; ch++) {
+        final val = values[ch];
+        rawData[ch][totalSamples % maxDataSz] = val;
+        _currentRaw[ch] = val;
+        _addData(val, ch);
+      }
+
+      totalSamples++;
+      added++;
+    }
+
+    if (added > 0) {
+      notifyListeners();
+    }
   }
 
   void _addTare(int val, int idx) {
