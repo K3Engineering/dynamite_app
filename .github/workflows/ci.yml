@@ -1,26 +1,36 @@
-name: Build Android
+name: CI
 
 on: [pull_request, workflow_dispatch]
 
 jobs:
-  build:
+  analyze_and_test:
+    name: Analyze & Test
     runs-on: ubuntu-latest
     steps:
-      - name: Clone repository
-        uses: actions/checkout@v4
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
         with:
           flutter-version-file: pubspec.yaml
       - run: flutter pub get
-      # - run: flutter test
-      - run: flutter build apk
+      - name: Analyze code
+        run: flutter analyze
+      - name: Run tests
+        run: flutter test
 
-      # - run: flutter build appbundle
-      
+  build_android:
+    name: Build Android
+    needs: [analyze_and_test] # Only builds if tests pass
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version-file: pubspec.yaml
+      - run: flutter pub get
+      - name: Build APK
+        run: flutter build apk
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
           path: build/app/outputs/apk/release/app-release.apk
-
