@@ -1252,9 +1252,9 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
 
 typedef _ScaleConfigItem = ({int limit, int delta});
 
+/// Clock-nice major tick steps for >= 1s spans (only consulted there, so the
+/// smallest limit is the first one a span >= 1 can match).
 const List<_ScaleConfigItem> _xScaleConfig = [
-  (limit: 1, delta: 1),
-  (limit: 2, delta: 1),
   (limit: 5, delta: 1),
   (limit: 10, delta: 2),
   (limit: 30, delta: 5),
@@ -1268,23 +1268,17 @@ _ScaleConfigItem _findScale(double val, List<_ScaleConfigItem> list) {
   return list.firstWhere((e) => val < e.limit, orElse: () => list.last);
 }
 
-String _fmtTime(int sec) {
-  if (sec < 0) return '-${_fmtTime(-sec)}';
-  if (sec < 60) return sec.toString();
-  final s = (sec % 60 < 10) ? '0' : '';
-  return '${sec ~/ 60}:$s${sec % 60}';
-}
-
-/// Format fractional seconds for sub-second X labels.
-String _fmtTimeFrac(double sec) {
-  if (sec < 0) return '-${_fmtTimeFrac(-sec)}';
-  if (sec >= 60) {
-    final m = sec ~/ 60;
-    final s = sec - m * 60;
-    return '$m:${s.toStringAsFixed(1).padLeft(4, '0')}';
-  }
-  if (sec >= 1) return sec.toStringAsFixed(1);
-  return '${(sec * 1000).round()}ms';
+/// Format an X-axis tick time (absolute seconds since session start) with
+/// [decimals] fractional digits: "42", "0.35", "12:05", "1:00.5".
+String _fmtTick(double sec, int decimals) {
+  if (sec < 0) return '-${_fmtTick(-sec, decimals)}';
+  // Snap fp noise (ticks are k * step products) so 59.999... prints as 1:00.
+  final f = math.pow(10, decimals);
+  sec = (sec * f).round() / f;
+  final int m = sec ~/ 60;
+  final s = (sec - m * 60).toStringAsFixed(decimals);
+  if (m == 0) return s;
+  return '$m:${s.padLeft(decimals == 0 ? 2 : decimals + 3, '0')}';
 }
 
 // Label paragraph cache
@@ -1338,15 +1332,15 @@ YAxisRange _computeYRange(double dataMin, double dataMax) {
 // ---------------------------------------------------------------------------
 
 /// Append vertical X-axis grid lines (and optional time labels) for the visible
-/// window [viewStart, viewEnd) to [grid]. Handles both sub-second and >=1s
-/// scales. When [drawMinor] is true, half-delta minor lines are added too.
+/// window [viewStart, viewEnd) to [grid]. Times are absolute -- seconds since
+/// sample 0 (session start) -- at every zoom level. When [drawMinor] is true,
+/// half-step minor lines are added between the major ticks.
 void drawTimeAxis(
   Canvas canvas,
   Path grid,
   Size graphSz, {
   required int viewStart,
   required int viewEnd,
-  required int oldestSample,
   required int sampleRate,
   required bool showLabels,
   bool drawMinor = false,
@@ -1355,14 +1349,25 @@ void drawTimeAxis(
   final viewSamples = viewEnd - viewStart;
   if (viewSamples <= 0) return;
 
-  double xOf(double sec, double startSec) =>
-      (sec - startSec) * sampleRate * graphSz.width / viewSamples;
+  final startSec = viewStart / sampleRate;
+  final endSec = viewEnd / sampleRate;
+  final xSpanSec = viewSamples / sampleRate;
 
-  void vline(double xPos, String? label) {
+  // Aim for ~5 major ticks: decade 1/2/5 steps below one second, clock-nice
+  // steps (1, 2, 5, 10, 30, 60s, ...) above.
+  final double step = xSpanSec < 1.0
+      ? _niceNum(xSpanSec / 5)
+      : _findScale(xSpanSec, _xScaleConfig).delta.toDouble();
+  final int decimals = step >= 1
+      ? 0
+      : (-(math.log(step) / math.ln10).floor()).clamp(1, 3).toInt();
+
+  void vline(double sec, {required bool labeled}) {
+    final xPos = (sec - startSec) * sampleRate * graphSz.width / viewSamples;
     grid.moveTo(xPos, 0);
     grid.lineTo(xPos, graphSz.height);
-    if (label != null) {
-      final par = _prepareLabel(label, color: textColor);
+    if (labeled) {
+      final par = _prepareLabel(_fmtTick(sec, decimals), color: textColor);
       canvas.drawParagraph(
         par,
         Offset(xPos - par.longestLine / 2, graphSz.height + 2),
@@ -1370,34 +1375,19 @@ void drawTimeAxis(
     }
   }
 
-  final double xSpanSec = viewSamples / sampleRate;
-
-  if (xSpanSec < 1.0) {
-    // Sub-second: fractional labels relative to the oldest sample.
-    final niceStepMs = _niceNum(xSpanSec * 1000 / 5); // aim for ~5 labels
-    final startSec = (viewStart - oldestSample) / sampleRate;
-    final endMs = ((viewEnd - oldestSample) / sampleRate) * 1000;
-    final firstTickMs = (startSec * 1000 / niceStepMs).ceil() * niceStepMs;
-    for (double tMs = firstTickMs; tMs < endMs; tMs += niceStepMs) {
-      final tSec = tMs / 1000;
-      vline(xOf(tSec, startSec), showLabels ? _fmtTimeFrac(tSec) : null);
-    }
-  } else {
-    final xC = _findScale(xSpanSec, _xScaleConfig);
-    final startSec = viewStart / sampleRate;
-    final endSec = viewEnd / sampleRate;
-
-    final int firstTick = ((startSec / xC.delta).ceil() * xC.delta).toInt();
-    for (int sec = firstTick; sec.toDouble() < endSec; sec += xC.delta) {
-      vline(xOf(sec.toDouble(), startSec), showLabels ? _fmtTime(sec) : null);
-    }
-
-    if (drawMinor) {
-      final minorDeltaSec = xC.delta / 2;
-      final firstMinor = (startSec / minorDeltaSec).ceil() * minorDeltaSec;
-      for (double sec = firstMinor; sec < endSec; sec += minorDeltaSec) {
-        vline(xOf(sec, startSec), null);
-      }
+  // Ticks live on the absolute grid k * step, so they hold still while the
+  // window slides over them.
+  for (int k = (startSec / step).ceil(); k * step < endSec; k++) {
+    vline(k * step, labeled: showLabels);
+  }
+  if (drawMinor) {
+    // Minor lines at half-step offsets; these never coincide with a major.
+    for (
+      int k = (startSec / step - 0.5).ceil();
+      (k + 0.5) * step < endSec;
+      k++
+    ) {
+      vline((k + 0.5) * step, labeled: false);
     }
   }
 }
@@ -2422,7 +2412,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       graphSz,
       viewStart: viewStart,
       viewEnd: viewEnd,
-      oldestSample: oldestSample,
       sampleRate: _data.sampleRate,
       showLabels: showXLabels,
       drawMinor: drawMinorGrid,
