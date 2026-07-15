@@ -45,74 +45,493 @@ ui.Image bakeImage(
 }
 
 // ---------------------------------------------------------------------------
-// Shared Graph Data Source
+// Segmented graph cache
+//
+// One caching mechanism shared by every plot surface (minimap, force graph,
+// derivative graph) in both viewing modes:
+//   * slide   -- a fixed-span window slides over the data: blits are pure
+//                translations and segments are reused as-is;
+//   * squeeze -- the window spans the whole growing history: blits get a
+//                corrective affine transform (both axis mappings are affine)
+//                and segments are re-rendered on a rolling basis once they
+//                drift past [kMaxSegmentDrift].
+//
+// On web there is no engine raster cache: a cached ui.Picture is re-executed
+// by Skia every frame, so vector re-draws cost Dart AND raster time each
+// frame. Baking immutable sample ranges into GPU-resident ui.Images pays that
+// cost once; the steady-state per-frame cost is a handful of texture blits
+// plus the vector-drawn live-edge sliver.
+//
+// Quality invariant: a texture is only ever produced by a vector render --
+// never by resampling another texture -- so every on-screen pixel is at most
+// ONE bilinear resample away from a vector render, scaled by at most
+// ~kMaxSegmentDrift before a refresh re-sharpens it.
 // ---------------------------------------------------------------------------
 
-class CacheConfig {
-  final double graphW;
-  final double graphH;
-  final int viewSamples;
+/// Target on-screen width (logical px) of one baked segment texture.
+const double kSegmentTargetPx = 200;
+
+/// Max relative scale drift (horizontal or vertical) a visible segment may
+/// accumulate before its rolling re-render. Bounds the resampling quality
+/// loss between bake and refresh.
+const double kMaxSegmentDrift = 0.08;
+
+/// Min on-screen width (logical px) of an uncovered range before a bake is
+/// spent on it. Narrower gaps -- e.g. the live-edge sliver -- are drawn as
+/// vectors every frame until they outgrow this.
+const double kSegmentGapBakePx = 40;
+
+/// Segment (re)bakes allowed per frame. Each costs ~1-2ms of UI-thread
+/// toImageSync; raising this shortens the fill-in after zooms/jumps at the
+/// price of larger per-frame spikes.
+const int kSegmentBakeBudget = 1;
+
+/// Cached segments more than this many target-widths outside the view are
+/// evicted; textures on the tall graphs are ~0.5-2MB each, so the cache
+/// cannot be unbounded.
+const int kSegmentEvictionMargin = 8;
+
+/// Blit filter for segment textures. [FilterQuality.low] (bilinear) hides
+/// fractional-pixel offsets and the small drift scales; flip to
+/// [FilterQuality.none] to A/B sharpness.
+const FilterQuality kSegmentFilterQuality = FilterQuality.low;
+
+/// Base padding (logical px) baked around a segment texture so AA stroke
+/// bleed survives the image crop. Renderers that overshoot the segment
+/// bounds (the graphs' one-block polyline join) pass a larger horizontal pad.
+const double kSegmentImagePad = 4;
+
+/// Renders samples [start, end) mapped to x in [0, ~texW) at the plot's
+/// current y-mapping, and returns the exact content width (logical px) it
+/// used -- at most [texW], which is the allocated ceil. Called both to bake
+/// segment textures and to draw uncovered gaps directly to the frame canvas.
+typedef SegmentRenderer =
+    double Function(Canvas canvas, int start, int end, int texW);
+
+/// One baked segment: an immutable vector render of samples [start, end)
+/// plus the mapping it was baked under. Never mutated and never re-blitted
+/// into another texture (so resampling loss cannot compound); replaced by a
+/// fresh vector render when stale.
+class GraphSegment {
+  final ui.Image image;
+
+  /// Sample range the texture covers (absolute indices, half-open).
+  final int start;
+  final int end;
+
+  /// Logical px the content occupies in the texture (x in [0, contentW)
+  /// after the [hPad] translate); the blit's x-scale reference.
+  final double contentW;
+
+  /// Y-mapping at bake: content rows [0, gh) covered values [yMax, yMin].
   final double yMin;
   final double yMax;
-  final List<double> tares;
 
-  /// Device pixel ratio the tile images are rasterized at. A dpr change
-  /// (browser zoom, monitor move) must drop the bitmap cache.
-  final double dpr;
+  /// Padding baked around the content (AA bleed / polyline overshoot).
+  final double hPad;
+  final double vPad;
 
-  CacheConfig(
-    this.graphW,
-    this.graphH,
-    this.viewSamples,
-    this.yMin,
-    this.yMax,
-    this.tares,
-    this.dpr,
-  );
+  GraphSegment({
+    required this.image,
+    required this.start,
+    required this.end,
+    required this.contentW,
+    required this.yMin,
+    required this.yMax,
+    required this.hPad,
+    required this.vPad,
+  });
 
-  bool matches(CacheConfig other) {
-    if ((graphW - other.graphW).abs() > 0.1) return false;
-    if ((graphH - other.graphH).abs() > 0.1) return false;
-    if (viewSamples != other.viewSamples) return false;
-    if ((yMin - other.yMin).abs() > 1e-6) return false;
-    if ((yMax - other.yMax).abs() > 1e-6) return false;
-    if (dpr != other.dpr) return false;
-    if (tares.length != other.tares.length) return false;
-    for (int i = 0; i < tares.length; i++) {
-      if ((tares[i] - other.tares[i]).abs() > 1e-6) return false;
+  void dispose() => image.dispose();
+}
+
+class SegmentedGraphCache {
+  /// Baked segments ordered by [GraphSegment.start]. Overlaps are allowed
+  /// (a refresh may extend over a neighbor; clipped at blit time in the left
+  /// segment's favor, which is always the fresher one); gaps are drawn as
+  /// vectors or left blank until a bake covers them.
+  final List<GraphSegment> _segments = [];
+
+  // Config the segments were baked under (mismatch => drop them all). The
+  // plot width gw is deliberately NOT part of this: a width change is pure
+  // x-scale drift, so existing segments stay correct under the corrective
+  // blit and re-sharpen via the rolling refresh.
+  double _gh = -1;
+  double _dpr = -1;
+  List<Object?> _configKey = const [];
+
+  void clear() {
+    for (final s in _segments) {
+      s.dispose();
     }
+    _segments.clear();
+  }
+
+  void dispose() => clear();
+
+  /// Draw the data layer for the window [viewStart, viewStart + viewSpan)
+  /// mapped to x in [0, gw): blit cached segments under their corrective
+  /// affine transforms, spend up to [kSegmentBakeBudget] segment (re)bakes,
+  /// and vector-draw uncovered gaps up to [maxDirectGapPx] wide (wider gaps
+  /// stay blank until the rolling bakes cover them).
+  ///
+  /// Returns true when bake work remains; the owner should then schedule
+  /// another frame (static sources never fire repaint on their own).
+  bool paint(
+    Canvas canvas, {
+    required List<Object?> configKey,
+    required double gw,
+    required double gh,
+    required double dpr,
+    required int viewStart,
+    required int viewSpan,
+    required double yMin,
+    required double yMax,
+    required int totalSamples,
+    required double hPad,
+    required double vPad,
+    required double maxDirectGapPx,
+    required SegmentRenderer render,
+  }) {
+    if ((gh - _gh).abs() > 0.1 ||
+        dpr != _dpr ||
+        !listEquals(configKey, _configKey)) {
+      clear();
+      _gh = gh;
+      _dpr = dpr;
+      _configKey = List.of(configKey);
+    }
+
+    final double pps = gw / viewSpan; // logical px per sample
+    final int viewEnd = viewStart + viewSpan;
+    final int targetSpan = math.max(1, (kSegmentTargetPx / pps).round());
+
+    // Evict segments far outside the view.
+    final int margin = kSegmentEvictionMargin * targetSpan;
+    _segments.removeWhere((s) {
+      if (s.end >= viewStart - margin && s.start <= viewEnd + margin) {
+        return false;
+      }
+      s.dispose();
+      return true;
+    });
+
+    bool baked = false;
+    for (int i = 0; i < kSegmentBakeBudget; i++) {
+      if (!_bakeOne(
+        pps,
+        gh,
+        viewStart,
+        viewEnd,
+        yMin,
+        yMax,
+        totalSamples,
+        targetSpan,
+        hPad,
+        vPad,
+        render,
+      )) {
+        break;
+      }
+      baked = true;
+    }
+
+    _blitSegments(canvas, pps, gw, gh, viewStart, yMin, yMax);
+    _drawGaps(
+      canvas,
+      pps,
+      gh,
+      viewStart,
+      viewEnd,
+      totalSamples,
+      vPad,
+      maxDirectGapPx,
+      render,
+    );
+
+    return baked;
+  }
+
+  /// Uncovered sub-ranges of [viewStart, min(viewEnd, totalSamples)).
+  List<(int, int)> _gaps(int viewStart, int viewEnd, int totalSamples) {
+    final int domainEnd = math.min(viewEnd, totalSamples);
+    final gaps = <(int, int)>[];
+    int covered = viewStart;
+    for (final s in _segments) {
+      if (covered >= domainEnd) break;
+      if (s.start > covered) {
+        gaps.add((covered, math.min(s.start, domainEnd)));
+      }
+      covered = math.max(covered, s.end);
+    }
+    if (covered < domainEnd) gaps.add((covered, domainEnd));
+    return gaps;
+  }
+
+  /// Perform at most one segment (re)bake. Priority:
+  ///   1. the widest visible gap past [kSegmentGapBakePx] (live-edge sliver
+  ///      absorb, bootstrap fill, newly exposed pan/zoom territory);
+  ///   2. the visible segment furthest past its drift/size thresholds
+  ///      (rolling refresh, merging undersized neighbors and splitting
+  ///      oversized ranges).
+  /// Returns whether a bake happened.
+  bool _bakeOne(
+    double pps,
+    double gh,
+    int viewStart,
+    int viewEnd,
+    double yMin,
+    double yMax,
+    int totalSamples,
+    int targetSpan,
+    double hPad,
+    double vPad,
+    SegmentRenderer render,
+  ) {
+    // --- Priority 1: widest gap past the bake threshold -------------------
+    (int, int)? bakeGap;
+    double widestPx = kSegmentGapBakePx;
+    for (final g in _gaps(viewStart, viewEnd, totalSamples)) {
+      final double w = (g.$2 - g.$1) * pps;
+      if (w > widestPx) {
+        widestPx = w;
+        bakeGap = g;
+      }
+    }
+    if (bakeGap != null) {
+      int start = bakeGap.$1;
+      final int end = math.min(bakeGap.$2, start + targetSpan);
+      if (end <= start) return false;
+
+      // Insertion point: first segment starting inside/after the gap.
+      int at = 0;
+      while (at < _segments.length && _segments[at].start < start) {
+        at++;
+      }
+      // Absorb left neighbors while the merged bake stays within one target
+      // width, so the live-edge segment grows in place (one bake per sliver)
+      // instead of accumulating sliver-wide strips.
+      while (at > 0 &&
+          (end - _segments[at - 1].start) * pps <= kSegmentTargetPx) {
+        at--;
+        start = _segments[at].start;
+        _segments[at].dispose();
+        _segments.removeAt(at);
+      }
+
+      _segments.insert(
+        at,
+        _bake(start, end, pps, gh, yMin, yMax, hPad, vPad, render),
+      );
+      PerfStats.addSegmentBake(gap: true);
+      return true;
+    }
+
+    // --- Priority 2: staleness refresh -------------------------------------
+    // Score each visible segment; > 1.0 means past a threshold. Under
+    // uniform squeeze all segments drift together, so picking the worst
+    // (first on ties) degenerates into a round-robin.
+    int worst = -1;
+    double worstScore = 1.0;
+    for (int i = 0; i < _segments.length; i++) {
+      final s = _segments[i];
+      if (s.end <= viewStart || s.start >= viewEnd) continue;
+      final double w = (s.end - s.start) * pps;
+      final double xScale = w / s.contentW;
+      final double yScale = (s.yMax - s.yMin) / (yMax - yMin);
+      double score =
+          math.max((1 - xScale).abs(), (1 - yScale).abs()) / kMaxSegmentDrift;
+      // Oversized (zoom-in stretched it): refresh-with-split.
+      score = math.max(score, w / (2 * kSegmentTargetPx));
+      // Undersized (squeeze shrank it): refresh-with-merge; only useful once
+      // there is a right neighbor to merge into.
+      if (i + 1 < _segments.length) {
+        score = math.max(score, kSegmentTargetPx / 2 / math.max(w, 0.001));
+      }
+      if (score > worstScore) {
+        worstScore = score;
+        worst = i;
+      }
+    }
+    if (worst < 0) return false;
+
+    final s = _segments[worst];
+    final int newStart = s.start;
+    int newEnd = s.end;
+    int removeTo = worst;
+    // Merge right neighbors while the result stays under 1.5 targets.
+    while (removeTo + 1 < _segments.length) {
+      final n = _segments[removeTo + 1];
+      if (n.start > newEnd) break; // never merge across a gap
+      if ((n.end - newStart) * pps > 1.5 * kSegmentTargetPx) break;
+      newEnd = math.max(newEnd, n.end);
+      removeTo++;
+    }
+    if ((newEnd - newStart) * pps < kSegmentTargetPx / 2) {
+      // Still undersized (right neighbor too big to swallow whole): extend
+      // into it; the overlap is clipped at blit time in this segment's
+      // favor, and fully-covered neighbors are replaced outright.
+      newEnd = math.min(totalSamples, newStart + targetSpan);
+      while (removeTo + 1 < _segments.length &&
+          _segments[removeTo + 1].end <= newEnd) {
+        removeTo++;
+      }
+    }
+    if ((newEnd - newStart) * pps > 2 * kSegmentTargetPx) {
+      // Oversized: bake only the leading target-width range; the remainder
+      // becomes a gap that fills in over the following frames.
+      newEnd = newStart + targetSpan;
+    }
+    if (newEnd <= newStart) return false;
+
+    final seg = _bake(
+      newStart,
+      newEnd,
+      pps,
+      gh,
+      yMin,
+      yMax,
+      hPad,
+      vPad,
+      render,
+    );
+    for (int k = worst; k <= removeTo; k++) {
+      _segments[k].dispose();
+    }
+    _segments.replaceRange(worst, removeTo + 1, [seg]);
+    PerfStats.addSegmentBake(gap: false);
     return true;
   }
-}
 
-class GraphLineCache {
-  CacheConfig? config;
-  int chunkSamples = 1000;
+  /// Vector-render samples [start, end) into a fresh texture sized to the
+  /// range's current on-screen width, so its blit starts at scale ~1.
+  GraphSegment _bake(
+    int start,
+    int end,
+    double pps,
+    double gh,
+    double yMin,
+    double yMax,
+    double hPad,
+    double vPad,
+    SegmentRenderer render,
+  ) {
+    final int texW = math.max(1, ((end - start) * pps).ceil());
+    double contentW = texW.toDouble();
+    final img = bakeImage(
+      ((texW + 2 * hPad) * _dpr).ceil(),
+      ((gh + 2 * vPad) * _dpr).ceil(),
+      _dpr,
+      (c) {
+        c.translate(hPad, vPad);
+        contentW = render(c, start, end, texW);
+      },
+    );
+    return GraphSegment(
+      image: img,
+      start: start,
+      end: end,
+      contentW: math.max(contentW, 0.001),
+      yMin: yMin,
+      yMax: yMax,
+      hPad: hPad,
+      vPad: vPad,
+    );
+  }
 
-  /// Fully-populated tiles rasterized once via [ui.Picture.toImageSync].
+  /// Blit every visible segment under the current mapping.
   ///
-  /// On web there is no engine raster cache: a cached [ui.Picture] is re-
-  /// rasterized every frame (measured ~1.2ms of Skwasm raster per tile), so
-  /// pictures only save Dart-side recording time. Baking each immutable tile
-  /// into a GPU-resident [ui.Image] pays that raster cost once and makes the
-  /// per-frame cost a texture blit.
-  final Map<int, ui.Image> images = {};
+  /// Texture x-px u covers sample s = start + u * (end - start) / contentW,
+  /// which today lands at x = (s - viewStart) * pps -- affine, so one
+  /// drawImageRect repositions the content exactly. Vertically, a valueToY
+  /// of the form gh - (v - yMin) * gh / (yMax - yMin) is affine in
+  /// (yMin, yMax), so a y scale+offset corrects for range changes (per-
+  /// channel offsets like tares cancel out of the difference).
+  void _blitSegments(
+    Canvas canvas,
+    double pps,
+    double gw,
+    double gh,
+    int viewStart,
+    double yMin,
+    double yMax,
+  ) {
+    final double range = yMax - yMin;
+    final paint = Paint()..filterQuality = kSegmentFilterQuality;
+    double coveredX = 0;
+    for (final s in _segments) {
+      final double x1 = (s.start - viewStart) * pps;
+      final double x2 = (s.end - viewStart) * pps;
+      // Where ranges overlap, the LEFT segment is the fresher one (refreshes
+      // only ever extend rightward over a neighbor), so clip this blit to
+      // start where the previous coverage ends.
+      final double clipL = math.max(coveredX, 0.0);
+      final double clipR = math.min(x2, gw);
+      coveredX = math.max(coveredX, x2);
+      if (clipR <= clipL) continue;
 
-  /// Number of consecutive paints whose [config] matched. Image creation is
-  /// gated on this so squeeze mode (viewSamples grows every frame => config
-  /// mismatch => full invalidate every frame) never pays toImageSync for
-  /// tiles that are dropped on the next frame.
-  int stableFrames = 0;
+      final double xs = (x2 - x1) / s.contentW;
+      final double ys = (s.yMax - s.yMin) / range;
+      final double yTop = gh * (1 - ys) + (yMin - s.yMin) * gh / range;
 
-  void invalidate() {
-    for (final img in images.values) {
-      img.dispose();
+      canvas.save();
+      canvas.clipRect(Rect.fromLTRB(clipL, -s.vPad, clipR, gh + s.vPad));
+      canvas.drawImageRect(
+        s.image,
+        // Source is the CONTENT rect (content + pads), not the ceil'd image
+        // bounds: the dead ceil column would otherwise bake a small scale
+        // error into every blit, blurring even identity mappings.
+        Rect.fromLTWH(
+          0,
+          0,
+          (s.contentW + 2 * s.hPad) * _dpr,
+          (gh + 2 * s.vPad) * _dpr,
+        ),
+        Rect.fromLTWH(
+          x1 - s.hPad * xs,
+          yTop - s.vPad * ys,
+          (s.contentW + 2 * s.hPad) * xs,
+          (gh + 2 * s.vPad) * ys,
+        ),
+        paint,
+      );
+      canvas.restore();
+      PerfStats.addSegmentDraw(blit: true);
     }
-    images.clear();
-    config = null;
-    stableFrames = 0;
+  }
+
+  /// Vector-render the uncovered visible ranges (live-edge sliver, freshly
+  /// exposed pan/zoom territory, bake backlog). Ranges wider than
+  /// [maxDirectGapPx] are left blank -- the rolling bakes cover them within
+  /// a few frames.
+  void _drawGaps(
+    Canvas canvas,
+    double pps,
+    double gh,
+    int viewStart,
+    int viewEnd,
+    int totalSamples,
+    double vPad,
+    double maxDirectGapPx,
+    SegmentRenderer render,
+  ) {
+    for (final (gs, ge) in _gaps(viewStart, viewEnd, totalSamples)) {
+      final double w = (ge - gs) * pps;
+      if (w <= 0 || w > maxDirectGapPx) continue;
+      final double x = (gs - viewStart) * pps;
+      canvas.save();
+      canvas.clipRect(Rect.fromLTRB(x, -vPad, x + w, gh + vPad));
+      canvas.translate(x, 0);
+      render(canvas, gs, ge, math.max(1, w.ceil()));
+      canvas.restore();
+      PerfStats.addSegmentDraw(blit: false);
+    }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Shared Graph Data Source
+// ---------------------------------------------------------------------------
 
 /// Number of samples reduced into a single envelope/line "block".
 ///
@@ -124,17 +543,6 @@ int blockSizeFor(int viewSamples, double graphW) {
   // floor => >= 1 sample/block, so the polyline never has more vertices than
   // pixels. The remainder (viewSamples % blockSize) lands in the short final block.
   return math.max(1, (viewSamples / graphW).floor());
-}
-
-/// Pick a cache tile size (in samples) for the given zoom. Aims for ~200 px
-/// wide tiles and rounds down to a whole multiple of [blockSize] so block
-/// boundaries never straddle a tile boundary.
-int chunkSamplesFor(double samplesPerPixel, int blockSize) {
-  final target = math.max(blockSize, (200 * samplesPerPixel).round());
-  // Snap down to a whole multiple of blockSize: tiles must tile the block grid
-  // exactly, otherwise a block straddling a seam would be reduced twice.
-  // target >= blockSize, so the result is always >= blockSize.
-  return (target ~/ blockSize) * blockSize;
 }
 
 /// A single channel's raw circular-buffer data plus its precomputed extremes
@@ -485,24 +893,6 @@ void _handleGraphPointerScroll(
 // Minimap
 // ---------------------------------------------------------------------------
 
-/// Number of independently-baked textures the minimap strip is split into.
-/// More segments means cheaper (but more frequent) refreshes and a shorter
-/// blank roll-in after a full invalidation.
-const int kMinimapSegments = 10;
-
-/// Max relative scale drift (horizontal or vertical) a segment texture may
-/// accumulate before it is re-rendered on its round-robin turn. Because a
-/// texture is only ever produced by a vector render (never by resampling
-/// another texture), this bounds the total quality loss: every on-screen
-/// pixel is a single bilinear resample of a vector render, shrunk by at most
-/// this factor.
-const double kMaxSegmentDrift = 0.08;
-
-/// Max width (logical px) of the fresh-data sliver (samples newer than the
-/// rightmost segment texture) drawn as vectors each frame before a rebake of
-/// that segment absorbs it.
-const double kMinimapMaxSliverPx = 40;
-
 class Minimap extends StatefulWidget {
   final GraphDataSource dataSource;
   final List<int> activeChannels;
@@ -520,7 +910,7 @@ class Minimap extends StatefulWidget {
 }
 
 class _MinimapState extends State<Minimap> {
-  final _MinimapBakeCache _cache = _MinimapBakeCache();
+  final SegmentedGraphCache _cache = SegmentedGraphCache();
 
   /// Extra repaint driver for the rolling bake: baking is rationed to one
   /// segment per frame, so when work remains the painter requests another
@@ -622,98 +1012,13 @@ class _MinimapState extends State<Minimap> {
   }
 }
 
-/// One baked minimap segment: an immutable vector render of samples
-/// [start, end) into a [texW] x gh texture. Replaced by a fresh vector render
-/// when stale -- never mutated and never re-blitted into another texture, so
-/// resampling loss cannot compound.
-class _MinimapSegment {
-  final ui.Image image;
-
-  /// Sample range the texture covers (absolute indices, half-open).
-  final int start;
-  final int end;
-
-  /// Logical-pixel column count the texture was rendered at.
-  final int texW;
-
-  /// On-screen width (logical px, fractional) at bake time; the drift
-  /// reference for [_MinimapPainter._staleness]. Kept separate from [texW]
-  /// (its ceil) so the ceil rounding of narrow segments doesn't read as
-  /// drift.
-  final double bakedW;
-
-  /// Y-mapping at bake: texture rows [0, gh) cover tare-subtracted raw
-  /// values [rawMax, rawMin] (shared by all channels -- tares cancel out of
-  /// the affine, see [_MinimapPainter._blitSegments]).
-  final double rawMin;
-  final double rawMax;
-
-  _MinimapSegment({
-    required this.image,
-    required this.start,
-    required this.end,
-    required this.texW,
-    required this.bakedW,
-    required this.rawMin,
-    required this.rawMax,
-  });
-
-  void dispose() => image.dispose();
-}
-
-/// Segmented bake cache for the minimap's squeezed waveform.
-///
-/// On web every [ui.Picture] is re-executed by Skia each frame, so re-drawing
-/// the full waveform (~one AA polyline vertex + two envelope vertices per
-/// pixel column per channel) costs ~13ms of raster time per frame. Both axis
-/// mappings are affine, so a baked texture stays valid under squeeze/slide:
-/// each frame every segment is blitted with a corrective affine transform and
-/// only the fresh-data sliver is drawn as vectors.
-///
-/// The strip is split into [kMinimapSegments] textures so refreshes are cheap
-/// and quality loss never compounds: a texture is only ever produced by a
-/// vector render (never by resampling another texture), so every on-screen
-/// pixel is at most ONE bilinear resample away from a vector render, shrunk
-/// by at most ~[kMaxSegmentDrift]. At most one segment is (re)baked per
-/// frame:
-///   * bootstrap -- the list isn't full yet (first paint, config change,
-///     data jump): append the next grid slot; the uncovered area stays blank
-///     for the few frames the roll-in takes;
-///   * sliver    -- fresh data outgrew [kMinimapMaxSliverPx]: re-render the
-///     rightmost segment extended to the live edge;
-///   * staleness -- re-render the most drifted segment to the current grid
-///     (round-robin under uniform squeeze, since the least recently baked
-///     segment is the most drifted).
-class _MinimapBakeCache {
-  /// Baked segments, left to right. Invariant: starts are non-decreasing and
-  /// segment i+1 starts at or before segment i ends (overlap allowed -- it is
-  /// clipped at blit time -- but never a gap).
-  final List<_MinimapSegment> segments = [];
-
-  // Config the segments were baked under (mismatch => drop them all).
-  double gw = -1;
-  double gh = -1;
-  double dpr = -1;
-  List<int> channels = const [];
-  List<double> tares = const [];
-
-  void clear() {
-    for (final s in segments) {
-      s.dispose();
-    }
-    segments.clear();
-  }
-
-  void dispose() => clear();
-}
-
 class _MinimapPainter extends CustomPainter {
   final GraphDataSource _data;
   final List<int> _activeIndices;
   final GraphController _ctrl;
   final ColorScheme _colorScheme;
   final double _dpr;
-  final _MinimapBakeCache _cache;
+  final SegmentedGraphCache _cache;
 
   /// Asks the host widget to schedule another frame; called when bake work
   /// remains (rolling bootstrap / staleness passes) so it completes even for
@@ -770,18 +1075,41 @@ class _MinimapPainter extends CustomPainter {
 
     final tares = [for (final ch in _activeIndices) _data.channel(ch).tare];
 
-    _paintWaveform(
+    // Blit the cached segment textures under the current mapping, spend at
+    // most one bake, and vector-draw the live-edge sliver. Gaps wider than
+    // ~2 target widths (bootstrap / data jump) stay blank while the rolling
+    // bakes fill the strip in.
+    final workRemains = _cache.paint(
       canvas,
-      gw,
-      gh,
-      totalSamples,
-      mapStart,
-      mapSpan,
-      rawMin,
-      rawMax,
-      tares,
-      perf,
+      configKey: [..._activeIndices, ...tares],
+      gw: gw,
+      gh: gh,
+      dpr: _dpr,
+      viewStart: mapStart,
+      viewSpan: mapSpan,
+      yMin: rawMin,
+      yMax: rawMax,
+      totalSamples: totalSamples,
+      hPad: 0,
+      vPad: 0,
+      maxDirectGapPx: 2 * kSegmentTargetPx,
+      render: (c, start, end, texW) {
+        _drawWaveformColumns(
+          c,
+          texW,
+          gh,
+          start,
+          end - start,
+          rawMin,
+          rawMax,
+          tares,
+          perf,
+        );
+        // drawSqueezedEnvelope spreads the range over exactly texW columns.
+        return texW.toDouble();
+      },
     );
+    if (workRemains) _requestRepaint();
 
     // Viewport highlight
     final (viewStart, viewEnd) = _ctrl.effectiveRange(
@@ -811,366 +1139,10 @@ class _MinimapPainter extends CustomPainter {
     );
   }
 
-  /// Blit the baked segment textures under the current mapping and draw the
-  /// fresh-data sliver as vectors, first performing at most one segment
-  /// (re)bake for this frame (bootstrap fill, sliver absorb, or staleness
-  /// refresh).
-  void _paintWaveform(
-    Canvas canvas,
-    double gw,
-    double gh,
-    int totalSamples,
-    int mapStart,
-    int mapSpan,
-    double rawMin,
-    double rawMax,
-    List<double> tares,
-    EnvelopePerf perf,
-  ) {
-    final c = _cache;
-    final segs = c.segments;
-
-    // Segment geometry (size, dpr, channel set, tares) is baked into the
-    // textures; any change invalidates all of them. The strip then re-fills
-    // left-to-right over the next kMinimapSegments frames.
-    if ((gw - c.gw).abs() > 0.1 ||
-        (gh - c.gh).abs() > 0.1 ||
-        _dpr != c.dpr ||
-        !listEquals(_activeIndices, c.channels) ||
-        !listEquals(tares, c.tares)) {
-      c.clear();
-      c.gw = gw;
-      c.gh = gh;
-      c.dpr = _dpr;
-      c.channels = List.of(_activeIndices);
-      c.tares = tares;
-    }
-
-    // Data jump (e.g. synthetic-data injection): more fresh data arrived than
-    // the rightmost segment can reasonably absorb. Rebuild the whole strip;
-    // the rolling bootstrap repopulates it over the next few frames.
-    if (segs.length == kMinimapSegments &&
-        (totalSamples - segs.last.end) * gw / mapSpan >
-            2 * gw / kMinimapSegments) {
-      c.clear();
-    }
-
-    // --- At most one segment (re)bake per frame ---------------------------
-    bool baked = false;
-    if (segs.length < kMinimapSegments) {
-      // Rolling bootstrap: append the next slot of the current uniform grid.
-      final int i = segs.length;
-      final int start = i == 0 ? mapStart : segs.last.end;
-      final int end = i == kMinimapSegments - 1
-          ? totalSamples
-          : mapStart + (i + 1) * mapSpan ~/ kMinimapSegments;
-      if (end > start) {
-        segs.add(
-          _bakeSegment(
-            start,
-            end,
-            gw,
-            gh,
-            mapSpan,
-            rawMin,
-            rawMax,
-            tares,
-            perf,
-          ),
-        );
-        baked = true;
-        PerfStats.addMinimapBake(bootstrap: true);
-      }
-    } else if ((totalSamples - segs.last.end) * gw / mapSpan >
-        kMinimapMaxSliverPx) {
-      // Fresh data outgrew the sliver budget: re-render the rightmost
-      // segment extended to the live edge.
-      baked = _rebakeSlot(
-        kMinimapSegments - 1,
-        gw,
-        gh,
-        totalSamples,
-        mapStart,
-        mapSpan,
-        rawMin,
-        rawMax,
-        tares,
-        perf,
-      );
-    } else {
-      // Refresh the most drifted segment, if any is past its threshold.
-      // Under uniform squeeze all segments drift together, so picking the
-      // worst (first on ties) degenerates into a round-robin.
-      int worst = -1;
-      double worstStaleness = 1.0;
-      for (int i = 0; i < segs.length; i++) {
-        final st = _staleness(i, gw, mapStart, mapSpan, rawMin, rawMax);
-        if (st > worstStaleness) {
-          worstStaleness = st;
-          worst = i;
-        }
-      }
-      if (worst >= 0) {
-        baked = _rebakeSlot(
-          worst,
-          gw,
-          gh,
-          totalSamples,
-          mapStart,
-          mapSpan,
-          rawMin,
-          rawMax,
-          tares,
-          perf,
-        );
-      }
-    }
-
-    // First pixel column not covered by the segment textures (where the
-    // vector sliver starts). Blits are clipped there so texture and sliver
-    // never double-blend in the boundary column.
-    final int gwInt = gw.toInt();
-    final int bakedEnd = segs.isEmpty ? mapStart : segs.last.end;
-    final int sliverCol = ((bakedEnd - mapStart) * gwInt / mapSpan)
-        .floor()
-        .clamp(0, gwInt);
-
-    _blitSegments(
-      canvas,
-      gw,
-      gh,
-      mapStart,
-      mapSpan,
-      rawMin,
-      rawMax,
-      sliverCol.toDouble(),
-    );
-    _drawSliver(
-      canvas,
-      gwInt,
-      gh,
-      mapStart,
-      mapSpan,
-      rawMin,
-      rawMax,
-      tares,
-      sliverCol,
-      perf,
-    );
-
-    // Baking is rationed to one segment per frame; if work remains (or a bake
-    // just happened, so a stale neighbor may be next), ask for another frame.
-    if (baked || segs.length < kMinimapSegments) _requestRepaint();
-  }
-
-  /// How badly segment [i] needs a re-render, normalized so > 1.0 means
-  /// "past the threshold". Two ingredients:
-  ///   * scale drift -- squeeze mode: the blit shrinks the texture; this
-  ///     bounds the resampling quality loss at [kMaxSegmentDrift];
-  ///   * range lag   -- how far the baked range is from what a rebake would
-  ///     assign now (start = left neighbor's end, end = current grid
-  ///     boundary). Handles slide mode, where scales stay ~1 but the grid
-  ///     translates; without it the rightmost slot would grow without bound
-  ///     as its neighbors scroll away. (The rightmost segment's *end* lag is
-  ///     the live sliver, which has its own trigger.)
-  double _staleness(
-    int i,
-    double gw,
-    int mapStart,
-    int mapSpan,
-    double rawMin,
-    double rawMax,
-  ) {
-    final segs = _cache.segments;
-    final s = segs[i];
-
-    final double xScale = ((s.end - s.start) * gw / mapSpan) / s.bakedW;
-    final double yScale = (s.rawMax - s.rawMin) / (rawMax - rawMin);
-    final double scaleDrift = math.max((1 - xScale).abs(), (1 - yScale).abs());
-
-    final int newStart = i == 0 ? mapStart : segs[i - 1].end;
-    int lag = (s.start - newStart).abs();
-    if (i < kMinimapSegments - 1) {
-      final int newEnd = mapStart + (i + 1) * mapSpan ~/ kMinimapSegments;
-      lag = math.max(lag, (s.end - newEnd).abs());
-    }
-    // Lag in slot widths; half a slot forces a refresh.
-    final double lagSlots = lag * kMinimapSegments / mapSpan;
-
-    return math.max(scaleDrift / kMaxSegmentDrift, lagSlots / 0.5);
-  }
-
-  /// Re-render segment [i] to the range a fresh bake would assign it: from
-  /// the left neighbor's end (contiguity by construction) to the current
-  /// uniform grid boundary (the live edge for the rightmost slot). Grid
-  /// boundaries only ever move right, so the new end can overlap the right
-  /// neighbor's start (clipped at blit time) but never leaves a gap.
-  bool _rebakeSlot(
-    int i,
-    double gw,
-    double gh,
-    int totalSamples,
-    int mapStart,
-    int mapSpan,
-    double rawMin,
-    double rawMax,
-    List<double> tares,
-    EnvelopePerf perf,
-  ) {
-    final segs = _cache.segments;
-    final int start = i == 0 ? mapStart : segs[i - 1].end;
-    final int end = i == kMinimapSegments - 1
-        ? totalSamples
-        : mapStart + (i + 1) * mapSpan ~/ kMinimapSegments;
-    if (end <= start) return false;
-    final old = segs[i];
-    segs[i] = _bakeSegment(
-      start,
-      end,
-      gw,
-      gh,
-      mapSpan,
-      rawMin,
-      rawMax,
-      tares,
-      perf,
-    );
-    old.dispose();
-    PerfStats.addMinimapBake(bootstrap: false);
-    return true;
-  }
-
-  /// Vector-render samples [start, end) into a fresh texture sized to the
-  /// segment's current on-screen width, so its blit starts at scale ~1.
-  _MinimapSegment _bakeSegment(
-    int start,
-    int end,
-    double gw,
-    double gh,
-    int mapSpan,
-    double rawMin,
-    double rawMax,
-    List<double> tares,
-    EnvelopePerf perf,
-  ) {
-    final double bakedW = (end - start) * gw / mapSpan;
-    final int texW = math.max(1, bakedW.ceil());
-    final img = bakeImage((texW * _dpr).ceil(), (gh * _dpr).ceil(), _dpr, (
-      bake,
-    ) {
-      _drawWaveformColumns(
-        bake,
-        texW,
-        gh,
-        start,
-        end - start,
-        rawMin,
-        rawMax,
-        tares,
-        pxFrom: 0,
-        perf: perf,
-      );
-    });
-    return _MinimapSegment(
-      image: img,
-      start: start,
-      end: end,
-      texW: texW,
-      bakedW: bakedW,
-      rawMin: rawMin,
-      rawMax: rawMax,
-    );
-  }
-
-  /// Blit every segment texture under the current mapping, clipped on the
-  /// right at [maxRightX] (the sliver start column).
-  ///
-  /// Texture x-pixel u covers sample s = start + u * (end - start) / texW,
-  /// which today lands at x = (s - mapStart) * gw / mapSpan -- affine, so one
-  /// drawImageRect repositions the content exactly. Same derivation
-  /// vertically from valueToY: y = gh - (v - tare - rawMin) * gh / range is
-  /// affine in (rawMin, range) and the per-channel tare cancels out.
-  void _blitSegments(
-    Canvas canvas,
-    double gw,
-    double gh,
-    int mapStart,
-    int mapSpan,
-    double rawMin,
-    double rawMax,
-    double maxRightX,
-  ) {
-    final double range = rawMax - rawMin;
-    final paint = Paint()..filterQuality = FilterQuality.low;
-    double prevEndX = 0;
-    for (final s in _cache.segments) {
-      final double x1 = (s.start - mapStart) * gw / mapSpan;
-      final double x2 = (s.end - mapStart) * gw / mapSpan;
-      // Where ranges overlap, the LEFT segment's content is the more recently
-      // baked one (every overlap-creating rebake extends an end rightward),
-      // so clip this blit to start where the previous segment's content ends.
-      final double clipL = math.max(prevEndX, 0.0);
-      final double clipR = math.min(x2, maxRightX);
-      prevEndX = math.max(prevEndX, x2);
-      if (clipR <= clipL) continue;
-
-      final double yScale = (s.rawMax - s.rawMin) / range;
-      final double yOffset =
-          gh * (1 - yScale) + (rawMin - s.rawMin) * gh / range;
-
-      canvas.save();
-      canvas.clipRect(Rect.fromLTRB(clipL, 0, clipR, gh));
-      canvas.drawImageRect(
-        s.image,
-        // Source is the CONTENT rect (texW*dpr x gh*dpr), not the ceil'd
-        // image bounds: using image.width/height would bake a ~0.999 scale
-        // into every blit, blurring the strip even at identity mapping.
-        Rect.fromLTWH(0, 0, s.texW * _cache.dpr, gh * _cache.dpr),
-        Rect.fromLTWH(x1, yOffset, x2 - x1, gh * yScale),
-        paint,
-      );
-      canvas.restore();
-    }
-  }
-
-  /// Vector-render the fresh-data sliver: the columns from [col] (the first
-  /// one not covered by segment textures) to the right edge. Skipped when the
-  /// uncovered region is wider than ~2 slots (bootstrap / right after a data
-  /// jump) -- it stays blank for the few frames the rolling bakes take,
-  /// instead of paying a near-full vector render every frame.
-  void _drawSliver(
-    Canvas canvas,
-    int gwInt,
-    double gh,
-    int mapStart,
-    int mapSpan,
-    double rawMin,
-    double rawMax,
-    List<double> tares,
-    int col,
-    EnvelopePerf perf,
-  ) {
-    if (col >= gwInt) return;
-    if (gwInt - col > 2 * gwInt / kMinimapSegments) return;
-    _drawWaveformColumns(
-      canvas,
-      gwInt,
-      gh,
-      mapStart,
-      mapSpan,
-      rawMin,
-      rawMax,
-      tares,
-      pxFrom: col,
-      perf: perf,
-    );
-  }
-
-  /// Vector-render waveform columns [pxFrom, pixelWidth) of the mapping that
-  /// squeezes samples [rangeStart, rangeStart + rangeSpan) into [pixelWidth]
-  /// columns. Used both to bake segment textures (segment-local mapping) and
-  /// to draw the live sliver (whole-strip mapping, where [pxFrom] skips the
-  /// columns covered by textures without changing the column grid).
+  /// Vector-render samples [rangeStart, rangeStart + rangeSpan) as min/avg/
+  /// max columns squeezed into [pixelWidth] columns. The [SegmentedGraphCache]
+  /// renderer: used both to bake segment textures and to draw uncovered gaps
+  /// (the live-edge sliver) directly to the frame canvas.
   void _drawWaveformColumns(
     Canvas canvas,
     int pixelWidth,
@@ -1179,10 +1151,9 @@ class _MinimapPainter extends CustomPainter {
     int rangeSpan,
     double rawMin,
     double rawMax,
-    List<double> tares, {
-    required int pxFrom,
-    required EnvelopePerf perf,
-  }) {
+    List<double> tares,
+    EnvelopePerf perf,
+  ) {
     final dataRange = rawMax - rawMin;
     for (int i = 0; i < _activeIndices.length; i++) {
       final ch = _activeIndices[i];
@@ -1194,7 +1165,6 @@ class _MinimapPainter extends CustomPainter {
         data: _data,
         channel: ch,
         pixelWidth: pixelWidth,
-        pxFrom: pxFrom,
         rangeStart: rangeStart,
         rangeSpan: rangeSpan,
         valueToY: (raw) =>
@@ -1347,13 +1317,30 @@ class GraphWorkspace extends StatefulWidget {
 }
 
 class _GraphWorkspaceState extends State<GraphWorkspace> {
-  final GraphLineCache _forceCache = GraphLineCache();
-  final GraphLineCache _derivCache = GraphLineCache();
+  final SegmentedGraphCache _forceCache = SegmentedGraphCache();
+  final SegmentedGraphCache _derivCache = SegmentedGraphCache();
+
+  /// Extra repaint driver for the rolling bake: baking is rationed to a few
+  /// segments per frame, so when work remains a painter requests another
+  /// frame via [_schedulePump]. Needed for static sources (loaded sessions)
+  /// whose [GraphDataSource.repaint] never fires; harmless for live ones.
+  final ValueNotifier<int> _bakePump = ValueNotifier<int>(0);
+  bool _pumpScheduled = false;
+
+  void _schedulePump() {
+    if (_pumpScheduled) return;
+    _pumpScheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _pumpScheduled = false;
+      if (mounted) _bakePump.value++;
+    });
+  }
 
   @override
   void dispose() {
-    _forceCache.invalidate();
-    _derivCache.invalidate();
+    _bakePump.dispose();
+    _forceCache.dispose();
+    _derivCache.dispose();
     super.dispose();
   }
 
@@ -1383,6 +1370,8 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                         cache: _forceCache,
                         colorScheme: colorScheme,
                         dpr: dpr,
+                        bakePump: _bakePump,
+                        requestRepaint: _schedulePump,
                       ),
                       size: Size.infinite,
                     ),
@@ -1404,6 +1393,8 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                           cache: _derivCache,
                           colorScheme: colorScheme,
                           dpr: dpr,
+                          bakePump: _bakePump,
+                          requestRepaint: _schedulePump,
                         ),
                         size: Size.infinite,
                       ),
@@ -1913,9 +1904,10 @@ class EnvelopePerf {
 /// [sampleAt] (raw per-sample value), then projected with [valueToY]. The shaded
 /// envelope is filled at low alpha and the average is stroked on top.
 ///
-/// Blocks are anchored to absolute sample indices so the geometry is
-/// tile-cacheable (slide mode); [drawSqueezedEnvelope] is the squeeze-mode
-/// counterpart.
+/// Blocks are anchored to absolute sample indices so the geometry lands on
+/// the same pixels regardless of scroll, which is what makes it segment-
+/// cacheable; [drawSqueezedEnvelope] is the bucket-accelerated counterpart
+/// used by the minimap.
 ///
 /// Vertices are flushed in <=4096-float chunks to stay within the web
 /// (Skwasm/Emscripten) stack-allocation limit.
@@ -1944,7 +1936,7 @@ void drawChannelEnvelope(
 
   // Blocks are anchored to absolute sample 0 (sStart = k * blockSize), NOT to
   // viewStart. This is what lets a block fall on the same pixels regardless of
-  // scroll, so paintCachedChannels can record it once and reuse it.
+  // scroll, so the SegmentedGraphCache can bake it once and reuse it.
   final int startBlock = (math.max(viewStart, firstUsableSample) / blockSize)
       .floor();
   final int endBlock = (totalSamples / blockSize).ceil();
@@ -1990,8 +1982,9 @@ void drawChannelEnvelope(
     final minY = valueToY(minRaw);
     final maxY = valueToY(maxRaw);
 
-    // Absolute X (in this canvas's local space): a cached tile passes its own
-    // start as viewStart, so xPos is tile-local and the tile slides as a whole.
+    // Absolute X (in this canvas's local space): a baked segment passes its
+    // own start as viewStart, so xPos is segment-local and the segment slides
+    // as a whole.
     final double xPos = (sStart - viewStart) * graphW / viewSamples;
     final double nextXPos = (sEnd - viewStart) * graphW / viewSamples;
 
@@ -2017,20 +2010,13 @@ void drawChannelEnvelope(
 /// column, squeezing the sample range [rangeStart, rangeStart + rangeSpan)
 /// into [pixelWidth] columns.
 ///
-/// This is the squeeze-mode counterpart of [drawChannelEnvelope]: the whole
-/// history is in view, so the x-mapping of every sample changes as data
-/// arrives and the geometry is recomputed every frame instead of tile-cached.
-/// Columns spanning many samples aggregate from the channel's precomputed
-/// bucket arrays; columns spanning few (zoomed in past ~2 buckets/column)
-/// loop the raw ring buffer to avoid blockiness.
+/// This is the bucket-accelerated counterpart of [drawChannelEnvelope], used
+/// by the minimap. Columns spanning many samples aggregate from the channel's
+/// precomputed bucket arrays; columns spanning few (zoomed in past ~2
+/// buckets/column) loop the raw ring buffer to avoid blockiness.
 ///
 /// Reduction happens in raw counts; [valueToY] projects a reduced raw value
 /// (not tare-subtracted) to a pixel Y.
-///
-/// [pxFrom] skips columns before it without changing the column->sample grid
-/// (columns stay anchored to the full [pixelWidth] mapping), so a partial
-/// render (e.g. the minimap's fresh-data sliver) lands exactly where a full
-/// render would put it.
 void drawSqueezedEnvelope(
   Canvas canvas, {
   required GraphDataSource data,
@@ -2042,7 +2028,6 @@ void drawSqueezedEnvelope(
   required Color avgColor,
   required Color envColor,
   double avgStrokeWidth = 1.0,
-  int pxFrom = 0,
   EnvelopePerf? perf, // TEMP PERF
 }) {
   final series = data.channel(channel);
@@ -2068,7 +2053,7 @@ void drawSqueezedEnvelope(
   final bucketSums = series.bucketSums;
   final int numBuckets = bucketMins.length;
 
-  for (int px = pxFrom; px < pixelWidth; px++) {
+  for (int px = 0; px < pixelWidth; px++) {
     final int sStart = rangeStart + px * rangeSpan ~/ pixelWidth;
     final int sEnd = rangeStart + (px + 1) * rangeSpan ~/ pixelWidth;
     final int drawStart = math.max(sStart, oldestSample);
@@ -2163,192 +2148,6 @@ void drawSqueezedEnvelope(
   // Flush remaining data
   env.flush();
   avg.flush();
-}
-
-/// Blit filter for cached tile images. [FilterQuality.low] (bilinear) hides
-/// the fractional-pixel offsets tiles land on while sliding; flip to
-/// [FilterQuality.none] to A/B sharpness.
-const FilterQuality kTileImageFilterQuality = FilterQuality.low;
-
-/// Padding (logical px) baked around a tile image so AA stroke bleed and the
-/// one-block polyline overshoot past the tile edge are not clipped. The
-/// horizontal pad additionally covers one block width (see
-/// [paintCachedChannels]), which exceeds this when zoomed in past 1 sample/px.
-const double kTileImagePad = 4;
-
-/// Max tiles converted to [ui.Image] per frame. A pan/zoom into uncached
-/// territory can miss ~13 tiles at once; capping spreads the toImageSync cost
-/// (~1-2ms UI-thread each) over a few frames. Overflow tiles are drawn as
-/// plain pictures this frame and retried on the next one.
-const int kMaxTileImagesPerFrame = 3;
-
-/// Cached tiles more than this many tiles outside the view are evicted.
-/// Bitmap tiles are ~0.5-2MB each, so the cache cannot be unbounded the way
-/// the picture cache was.
-const int kTileEvictionMargin = 8;
-
-/// Draws a graph's data layer using the chunked tile cache.
-///
-/// The visible window is split into fixed sample-count tiles. Each tile is
-/// recorded once (in its own local coordinate space, as if the tile's start
-/// were the view start), rasterized once into a [ui.Image], and then blitted
-/// at the right screen offset. Panning at constant zoom reuses tile images; a
-/// changed [config] (zoom, size, Y-range, tares, dpr) drops the whole cache.
-///
-/// Only tiles that are fully populated (entirely between [oldestSample] and
-/// [totalSamples]) are cached; the live edge and the buffer's trailing edge
-/// change every frame, so they are drawn directly to the frame canvas and
-/// never stored.
-///
-/// [drawChunk] is invoked to record one tile. It receives the tile's canvas,
-/// the tile's absolute start sample (used as the local view start), and
-/// [limitSamples] (one block past the tile end, so the average polyline joins
-/// the next tile without a gap). [drawChunk] should clip its envelope fill to
-/// [chunkEndSample] to avoid double-blending across tile seams.
-///
-/// All sample arguments ([viewStart], [viewEnd], ...) are absolute sample
-/// indices (the monotonic clock), not buffer slots or pixels; the window is the
-/// half-open range [viewStart, viewEnd). Invariant within one cache generation:
-/// a sample's tile is `sample ~/ chunkSamples`, a pure function of its index, so
-/// a sample never migrates between tiles. Re-tiling only happens together with a
-/// full cache clear (config change), which is why a recorded tile is safe to keep.
-void paintCachedChannels(
-  Canvas canvas,
-  GraphLineCache cache,
-  CacheConfig config, {
-  required int viewStart,
-  required int viewEnd,
-  required int totalSamples,
-  required int oldestSample,
-  required double graphW,
-  required void Function(
-    Canvas chunkCanvas,
-    int chunkStartSample,
-    int chunkEndSample,
-    int limitSamples,
-  )
-  drawChunk,
-}) {
-  final int viewSamples = config.viewSamples;
-  final int blockSize = blockSizeFor(viewSamples, graphW);
-
-  if (cache.config == null || !cache.config!.matches(config)) {
-    cache.invalidate();
-    cache.config = config;
-    cache.chunkSamples = chunkSamplesFor(viewSamples / graphW, blockSize);
-  } else {
-    cache.stableFrames++;
-  }
-  assert(
-    cache.chunkSamples % blockSize == 0,
-  ); // tiles tile the block grid exactly
-
-  // `~/` truncates toward zero. For viewStart >= 0, startChunk's tile begins at
-  // or LEFT of viewStart. If viewStart < 0 (empty space before the first sample),
-  // it truncates *up* toward zero, so the first tile begins RIGHT of viewStart.
-  // In both cases, the loop covers all populated tiles that overlap the view.
-  final int startChunk = viewStart ~/ cache.chunkSamples;
-  final int endChunk = (viewEnd - 1) ~/ cache.chunkSamples;
-
-  // Tile width in logical pixels (fractional in general).
-  final double tileW = cache.chunkSamples * graphW / viewSamples;
-  final double dpr = config.dpr;
-
-  // The recorded polyline overshoots the tile's right edge by one block
-  // (limitSamples joins it to the next tile), and one block can be many px
-  // when zoomed in past 1 sample/px -- the horizontal pad must cover it.
-  // Derived purely from the config, so it is identical on every frame of one
-  // cache generation (creation and blit must agree).
-  final double hPad = math.max(
-    kTileImagePad,
-    blockSize * graphW / viewSamples + 2,
-  );
-  const double vPad = kTileImagePad;
-
-  int imagesCreated = 0;
-
-  for (int c = startChunk; c <= endChunk; c++) {
-    final int chunkStartSample = c * cache.chunkSamples;
-    final int chunkEndSample = chunkStartSample + cache.chunkSamples;
-
-    // Only fully-buffered tiles are cached. The live edge (chunkEndSample past
-    // totalSamples) and the trailing edge (chunkStartSample below oldestSample)
-    // change every frame, so they are redrawn directly and never stored.
-    final bool isFullyPopulated =
-        chunkEndSample <= totalSamples && chunkStartSample >= oldestSample;
-    // NB: do NOT assert chunkStartSample >= viewStart (false for startChunk) nor
-    // >= oldestSample (false for the leftmost tile) -- that's exactly the case
-    // isFullyPopulated guards against.
-
-    // The tile was recorded with chunkStartSample as its local origin, so shift
-    // it bodily into place; cached tiles only ever differ by this offset.
-    final double xOffset =
-        (chunkStartSample - viewStart) * graphW / viewSamples;
-    // chunkStart can be left OR right of viewStart: ~/ truncates toward zero, so for
-    // negative viewStart (large minLiveSpan on a nearly-empty buffer) the first tile
-    // starts right of viewStart and xOffset > 0. So no sign guarantee on xOffset.
-    assert(
-      chunkEndSample > viewStart && chunkStartSample < viewEnd,
-    ); // tile overlaps view
-
-    ui.Image? img = cache.images[c];
-    final int limitSamples = math.min(chunkEndSample + blockSize, totalSamples);
-
-    // No cached image yet: rasterize one if the tile qualifies. The tile is
-    // recorded with a padding translate so stroke AA and the one-block
-    // overshoot survive the image crop.
-    final bool tryImage =
-        img == null &&
-        isFullyPopulated &&
-        cache.stableFrames >= 2 &&
-        imagesCreated < kMaxTileImagesPerFrame;
-    if (tryImage) {
-      img = bakeImage(
-        ((tileW + 2 * hPad) * dpr).ceil(),
-        ((config.graphH + 2 * vPad) * dpr).ceil(),
-        dpr,
-        (cCanvas) {
-          cCanvas.translate(hPad, vPad);
-          drawChunk(cCanvas, chunkStartSample, chunkEndSample, limitSamples);
-        },
-      );
-      cache.images[c] = img;
-      imagesCreated++;
-      PerfStats.addTileImaged(); // TEMP PERF
-    }
-
-    canvas.save();
-    canvas.translate(xOffset, 0);
-    if (img != null) {
-      canvas.drawImageRect(
-        img,
-        Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
-        Rect.fromLTWH(-hPad, -vPad, img.width / dpr, img.height / dpr),
-        Paint()..filterQuality = kTileImageFilterQuality,
-      );
-      PerfStats.addTile(TileDraw.blit); // TEMP PERF
-    } else {
-      // No image (live/trailing tile, or image creation deferred): draw the
-      // vector paths straight onto the frame canvas. No intermediate
-      // ui.Picture, so nothing to dispose.
-      drawChunk(canvas, chunkStartSample, chunkEndSample, limitSamples);
-      PerfStats.addTile(
-        isFullyPopulated ? TileDraw.direct : TileDraw.live,
-      ); // TEMP PERF
-    }
-    canvas.restore();
-  }
-
-  // Evict cached tiles far outside the view; bitmap tiles are too big to keep
-  // unboundedly (the picture cache could get away with it).
-  cache.images.removeWhere((c, img) {
-    if (c >= startChunk - kTileEvictionMargin &&
-        c <= endChunk + kTileEvictionMargin) {
-      return false;
-    }
-    img.dispose();
-    return true;
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2453,41 +2252,31 @@ class PerfStats {
     _minimapDrawMicros += draw;
   }
 
-  // Minimap segment-bake accounting.
-  static int _minimapRefreshBakes = 0;
-  static int _minimapBootstrapBakes = 0;
+  // Segment-cache accounting (shared by minimap, force, derivative).
+  static int _segGapBakes = 0;
+  static int _segRefreshBakes = 0;
+  static int _segBlits = 0;
+  static int _segDirect = 0;
 
-  /// Record one minimap segment bake: [bootstrap] appends during a strip
-  /// rebuild vs. refreshes (sliver absorb / staleness) of existing slots.
-  static void addMinimapBake({required bool bootstrap}) {
-    if (bootstrap) {
-      _minimapBootstrapBakes++;
+  /// Record one segment bake: [gap] fills uncovered ranges (live-edge
+  /// sliver, bootstrap, pan/zoom exposure) vs. staleness refreshes.
+  static void addSegmentBake({required bool gap}) {
+    if (gap) {
+      _segGapBakes++;
     } else {
-      _minimapRefreshBakes++;
+      _segRefreshBakes++;
     }
   }
 
-  // Tile accounting for paintCachedChannels (see TileDraw).
-  static int _tilesBlit = 0;
-  static int _tilesLive = 0;
-  static int _tilesDirect = 0;
-  static int _tilesImaged = 0;
-
-  /// Record how one tile was drawn this frame. Imaged tiles count as both
-  /// created ([_tilesImaged]) and blitted.
-  static void addTile(TileDraw kind) {
-    switch (kind) {
-      case TileDraw.blit:
-        _tilesBlit++;
-      case TileDraw.live:
-        _tilesLive++;
-      case TileDraw.direct:
-        _tilesDirect++;
+  /// Record one segment draw: a texture [blit], or a gap vector-drawn
+  /// directly to the frame canvas.
+  static void addSegmentDraw({required bool blit}) {
+    if (blit) {
+      _segBlits++;
+    } else {
+      _segDirect++;
     }
   }
-
-  /// Record one ui.Image tile creation (toImageSync).
-  static void addTileImaged() => _tilesImaged++;
 
   /// Feed one frame's timing. Emits a combined report every 60 frames.
   static void addFrame(int rasterMicros, int buildMicros) {
@@ -2516,11 +2305,10 @@ class PerfStats {
     debugPrint(
       '[PERF] over $_frameCount frames | '
       'Main paint: ${dartAvg.toStringAsFixed(0)}us (${_paintCount}x) | '
-      'Minimap: ${mmAvg.toStringAsFixed(0)}us (loop: ${mmLoopAvg.toStringAsFixed(0)}us, draw: ${mmDrawAvg.toStringAsFixed(0)}us, bakes: ${_minimapRefreshBakes}r+${_minimapBootstrapBakes}b) | '
-      'tiles/frame: ${(_tilesBlit / fc).toStringAsFixed(1)} blit, '
-      '${(_tilesLive / fc).toStringAsFixed(1)} live, '
-      '${(_tilesDirect / fc).toStringAsFixed(1)} direct '
-      '($_tilesImaged imaged) | '
+      'Minimap: ${mmAvg.toStringAsFixed(0)}us (loop: ${mmLoopAvg.toStringAsFixed(0)}us, draw: ${mmDrawAvg.toStringAsFixed(0)}us) | '
+      'segs/frame: ${(_segBlits / fc).toStringAsFixed(1)} blit, '
+      '${(_segDirect / fc).toStringAsFixed(1)} direct | '
+      'bakes: ${_segGapBakes}g+${_segRefreshBakes}r | '
       'Skwasm raster: ${rasterAvg.toStringAsFixed(0)}us | '
       'build: ${buildAvg.toStringAsFixed(0)}us',
     );
@@ -2530,31 +2318,21 @@ class PerfStats {
     _minimapMicros = 0;
     _minimapLoopMicros = 0;
     _minimapDrawMicros = 0;
-    _minimapRefreshBakes = 0;
-    _minimapBootstrapBakes = 0;
-    _tilesBlit = 0;
-    _tilesLive = 0;
-    _tilesDirect = 0;
-    _tilesImaged = 0;
+    _segGapBakes = 0;
+    _segRefreshBakes = 0;
+    _segBlits = 0;
+    _segDirect = 0;
     _frameCount = 0;
     _rasterMicros = 0;
     _buildMicros = 0;
   }
 }
 
-/// TEMP PERF: how a tile got onto the screen this frame.
-///   * blit   -- cached ui.Image drawn via drawImageRect (the cheap path)
-///   * live   -- live/trailing-edge tile, vector-drawn directly to the frame
-///               canvas (expected ~1/frame)
-///   * direct -- fully-populated tile vector-drawn directly (image creation
-///               deferred by the stability gate or per-frame cap)
-enum TileDraw { blit, live, direct }
-
 /// Shared engine for the windowed time-series graphs (force, derivative).
 ///
 /// Handles the pipeline common to both: frame setup, Y-range for the visible
 /// window, axes/grid, zero baseline, missing-data hatching, and the
-/// tile-cached envelope rendering. Subclasses define the series being
+/// segment-cached envelope rendering. Subclasses define the series being
 /// plotted -- [sampleAt] (per-channel value in display units), [computeYRange],
 /// [yTickLabel] -- plus layout tweaks and cache-key extras.
 abstract class _TimeSeriesGraphPainter extends CustomPainter {
@@ -2562,11 +2340,16 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final AppSettings _settings;
   final GraphController _ctrl;
   final bool showEnvelope;
-  final GraphLineCache cache;
+  final SegmentedGraphCache cache;
   final ColorScheme colorScheme;
 
-  /// Device pixel ratio used when rasterizing tile images.
+  /// Device pixel ratio used when rasterizing segment textures.
   final double dpr;
+
+  /// Asks the host widget to schedule another frame; called when bake work
+  /// remains so the rolling bakes complete even for static sources whose
+  /// [GraphDataSource.repaint] never fires.
+  final VoidCallback _requestRepaint;
 
   _TimeSeriesGraphPainter(
     this._data,
@@ -2576,7 +2359,10 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     required this.cache,
     required this.colorScheme,
     required this.dpr,
-  }) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
+    required Listenable bakePump,
+    required VoidCallback requestRepaint,
+  }) : _requestRepaint = requestRepaint,
+       super(repaint: Listenable.merge([_data.repaint, _ctrl, bakePump]));
 
   // --- Layout hooks --------------------------------------------------------
 
@@ -2605,8 +2391,8 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// Label for a Y-axis tick.
   String yTickLabel(double tick);
 
-  /// Per-channel values mixed into the tile-cache key; return the tares when
-  /// the series depends on them.
+  /// Per-channel values mixed into the segment-cache key; return the tares
+  /// when the series depends on them.
   List<double> cacheKeyTares() => const [];
 
   /// Optional chrome drawn after the axes, before the data lines.
@@ -2702,27 +2488,40 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
     drawOverlay(canvas, graphSz);
 
-    // -- Data lines (tile-cached envelope) --
-    final currentConfig = CacheConfig(
-      graphSz.width,
-      graphSz.height,
-      viewSamples,
-      yRange.yMin,
-      yRange.yMax,
-      cacheKeyTares(),
-      dpr,
-    );
+    // -- Data lines (segment-cached envelope) --
+    final int blockSize = blockSizeFor(viewSamples, graphSz.width);
+    final double blockPx = blockSize * graphSz.width / viewSamples;
 
-    paintCachedChannels(
+    final workRemains = cache.paint(
       canvas,
-      cache,
-      currentConfig,
+      configKey: [
+        ...activeIndices,
+        ...cacheKeyTares(),
+        _settings.displayUnit,
+        _data.calibrationSlope,
+        showEnvelope,
+      ],
+      gw: graphSz.width,
+      gh: graphSz.height,
+      dpr: dpr,
       viewStart: viewStart,
-      viewEnd: viewEnd,
+      viewSpan: viewSamples,
+      yMin: yRange.yMin,
+      yMax: yRange.yMax,
       totalSamples: totalSamples,
-      oldestSample: oldestSample,
-      graphW: graphSz.width,
-      drawChunk: (cCanvas, chunkStartSample, chunkEndSample, limitSamples) {
+      // The recorded polyline overshoots a segment's edges by up to one
+      // block (the join to the neighbor), and one block can be many px when
+      // zoomed in past 1 sample/px -- the horizontal pad must cover it.
+      hPad: math.max(kSegmentImagePad, blockPx + 2),
+      vPad: kSegmentImagePad,
+      // Gaps (live edge, bake backlog after pans/zooms) are always drawn as
+      // vectors on the main plots; only the minimap blanks its big gaps.
+      maxDirectGapPx: double.infinity,
+      render: (cCanvas, start, end, texW) {
+        // One block past the segment end joins the polyline to the next
+        // segment; the envelope fill is clipped at the seam so the alpha
+        // fills of adjacent segments never double-blend.
+        final int limit = math.min(end + blockSize, totalSamples);
         for (final ch in activeIndices) {
           if (_data.channel(ch).data.isEmpty) continue;
 
@@ -2730,21 +2529,21 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
             cCanvas,
             color: getChannelColor(ch),
             graphW: graphSz.width,
-            viewStart: chunkStartSample,
+            viewStart: start,
             viewSamples: viewSamples,
-            totalSamples: limitSamples,
-            firstUsableSample: math.max(
-              oldestSample + firstSampleOffset,
-              chunkStartSample,
-            ),
+            totalSamples: limit,
+            firstUsableSample: oldestSample + firstSampleOffset,
             sampleAt: sampleAt(ch),
             valueToY: (v) => valueToY(v).clamp(0.0, graphSz.height),
             showEnvelope: showEnvelope,
-            clipEnvelopeSamples: chunkEndSample,
+            clipEnvelopeSamples: end,
           );
         }
+        // drawChannelEnvelope maps sample s to (s - start) * gw / viewSamples.
+        return (end - start) * graphSz.width / viewSamples;
       },
     );
+    if (workRemains) _requestRepaint();
   }
 
   @override
@@ -2765,6 +2564,8 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
     required super.cache,
     required super.colorScheme,
     required super.dpr,
+    required super.bakePump,
+    required super.requestRepaint,
   });
 
   @override
@@ -2856,6 +2657,8 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     required super.cache,
     required super.colorScheme,
     required super.dpr,
+    required super.bakePump,
+    required super.requestRepaint,
   });
 
   @override
