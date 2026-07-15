@@ -52,10 +52,20 @@ class _SessionDataSource implements GraphDataSource {
     min: _data.mins[channelIndex],
     max: _data.maxs[channelIndex],
     tare: _data.tares[channelIndex],
+    buckets: (
+      bucketSize: _data.bucketSize,
+      mins: _data.bucketMins[channelIndex],
+      maxs: _data.bucketMaxs[channelIndex],
+      sums: _data.bucketSums[channelIndex],
+    ),
+  );
+
+  @override
+  BucketSeries? diffBuckets(int channelIndex) => (
     bucketSize: _data.bucketSize,
-    bucketMins: _data.bucketMins[channelIndex],
-    bucketMaxs: _data.bucketMaxs[channelIndex],
-    bucketSums: _data.bucketSums[channelIndex],
+    mins: _data.diffBucketMins[channelIndex],
+    maxs: _data.diffBucketMaxs[channelIndex],
+    sums: _data.diffBucketSums[channelIndex],
   );
 
   @override

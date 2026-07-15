@@ -64,10 +64,20 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
         min: _hub.rawMin[channelIndex].toDouble(),
         max: _hub.rawMax[channelIndex].toDouble(),
         tare: _hub.tare[channelIndex],
+        buckets: (
+          bucketSize: DataHub.bucketSize,
+          mins: _hub.bucketMins[channelIndex],
+          maxs: _hub.bucketMaxs[channelIndex],
+          sums: _hub.bucketSums[channelIndex],
+        ),
+      );
+
+  @override
+  BucketSeries? diffBuckets(int channelIndex) => (
         bucketSize: DataHub.bucketSize,
-        bucketMins: _hub.bucketMins[channelIndex],
-        bucketMaxs: _hub.bucketMaxs[channelIndex],
-        bucketSums: _hub.bucketSums[channelIndex],
+        mins: _hub.diffBucketMins[channelIndex],
+        maxs: _hub.diffBucketMaxs[channelIndex],
+        sums: _hub.diffBucketSums[channelIndex],
       );
 
   @override

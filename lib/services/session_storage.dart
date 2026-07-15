@@ -218,6 +218,15 @@ class SessionData {
   late final List<Int32List> bucketMaxs;
   late final List<Int32List> bucketSums;
 
+  /// Per-channel, per-bucket aggregates of the first-difference series
+  /// (`diff[i] = raw[i] - raw[i-1]`), same bucket grid. Used by the
+  /// derivative graph's bucket fast path. The diff is 0 for the first
+  /// sample, inside gaps, and for the first sample after a gap (mirroring
+  /// DataHub's live ingest).
+  late final List<Int32List> diffBucketMins;
+  late final List<Int32List> diffBucketMaxs;
+  late final List<Int32List> diffBucketSums;
+
   SessionData({
     required this.channels,
     required this.sampleRate,
@@ -235,6 +244,18 @@ class SessionData {
     bucketMins = List.generate(channels.length, (_) => Int32List(numBuckets));
     bucketMaxs = List.generate(channels.length, (_) => Int32List(numBuckets));
     bucketSums = List.generate(channels.length, (_) => Int32List(numBuckets));
+    diffBucketMins = List.generate(
+      channels.length,
+      (_) => Int32List(numBuckets),
+    );
+    diffBucketMaxs = List.generate(
+      channels.length,
+      (_) => Int32List(numBuckets),
+    );
+    diffBucketSums = List.generate(
+      channels.length,
+      (_) => Int32List(numBuckets),
+    );
 
     for (int ch = 0; ch < channels.length; ch++) {
       if (sampleCount == 0) continue;
@@ -246,16 +267,29 @@ class SessionData {
         if (v < mn) mn = v.toDouble();
         if (v > mx) mx = v.toDouble();
 
+        // 0 for the first sample, inside gaps, and at the gap-exit sample
+        // (the jump there spans the gap's duration; a one-sample diff would
+        // fabricate a spike).
+        final int diff = (i > 0 && !this.gaps.contains(i - 1))
+            ? v - channels[ch][i - 1]
+            : 0;
+
         final int bIdx = i ~/ bucketSize;
         final int sIdx = i % bucketSize;
         if (sIdx == 0) {
           bucketMins[ch][bIdx] = v;
           bucketMaxs[ch][bIdx] = v;
           bucketSums[ch][bIdx] = v;
+          diffBucketMins[ch][bIdx] = diff;
+          diffBucketMaxs[ch][bIdx] = diff;
+          diffBucketSums[ch][bIdx] = diff;
         } else {
           if (v < bucketMins[ch][bIdx]) bucketMins[ch][bIdx] = v;
           if (v > bucketMaxs[ch][bIdx]) bucketMaxs[ch][bIdx] = v;
           bucketSums[ch][bIdx] += v;
+          if (diff < diffBucketMins[ch][bIdx]) diffBucketMins[ch][bIdx] = diff;
+          if (diff > diffBucketMaxs[ch][bIdx]) diffBucketMaxs[ch][bIdx] = diff;
+          diffBucketSums[ch][bIdx] += diff;
         }
       }
       mins[ch] = mn;

@@ -543,23 +543,28 @@ int blockSizeFor(int viewSamples, double graphW) {
   return math.max(1, (viewSamples / graphW).floor());
 }
 
-/// A single channel's raw circular-buffer data plus its precomputed extremes
-/// and tare offset. Returned by [GraphDataSource.channel].
-///
-/// The bucket arrays hold min/max/sum aggregates over fixed [bucketSize]-
-/// sample windows (absolute bucket index `b = sampleIndex ~/ bucketSize`,
-/// stored at `b % bucketMins.length`). Gap samples hold the previous real
-/// value, so buckets are always fully populated and carry no missing-data
-/// state -- see the accuracy tradeoff documented on [drawChannelEnvelope].
+/// Min/max/sum aggregates over fixed [bucketSize]-sample windows of some
+/// integer series (raw values or first differences). Addressed by absolute
+/// bucket index `b = sampleIndex ~/ bucketSize`, stored at `b % mins.length`.
+/// Gap samples hold the previous real value (diff 0), so buckets are always
+/// fully populated and carry no missing-data state -- see the accuracy
+/// tradeoff documented on [drawChannelEnvelope].
+typedef BucketSeries = ({
+  int bucketSize,
+  Int32List mins,
+  Int32List maxs,
+  Int32List sums,
+});
+
+/// A single channel's raw circular-buffer data plus its precomputed extremes,
+/// tare offset, and raw-value [BucketSeries]. Returned by
+/// [GraphDataSource.channel].
 typedef ChannelSeries = ({
   List<int> data,
   double min,
   double max,
   double tare,
-  int bucketSize,
-  Int32List bucketMins,
-  Int32List bucketMaxs,
-  Int32List bucketSums,
+  BucketSeries buckets,
 });
 
 /// Data interface required by the shared graph components (main graph, minimap, etc).
@@ -588,8 +593,14 @@ abstract interface class GraphDataSource {
   /// Notifies listeners when the underlying data changes.
   Listenable get repaint;
 
-  /// Returns the series (data + extremes + tare) for a given channel index.
+  /// Returns the series (data + extremes + tare + buckets) for a given
+  /// channel index.
   ChannelSeries channel(int channelIndex);
+
+  /// Bucket aggregates of the first-difference series for a channel,
+  /// enabling the derivative graph's bucket fast path; null when the source
+  /// does not track them (the derivative then renders on the exact path).
+  BucketSeries? diffBuckets(int channelIndex);
 
   /// Sample ranges where data was lost (dropped packets). The buffer holds
   /// held values there; renderers break the polyline and hatch these ranges.
@@ -1119,7 +1130,7 @@ class _MinimapPainter extends CustomPainter {
       yMax: yMax,
       firstUsableSample: oldestSample,
       sampleAtFor: (ch) => taredDisplaySampleAt(_data, ch, unit),
-      bucketSeriesFor: _data.channel,
+      bucketSeriesFor: (ch) => _data.channel(ch).buckets,
       rawToDisplayFor: (ch) => taredDisplayFromRaw(_data, ch, unit),
       avgStrokeWidth: 1.0,
       avgAlpha: 180,
@@ -1866,9 +1877,11 @@ class VertexBatcher {
 /// their real samples only, while the buckets contain held values, biasing
 /// the fast path's boundary blocks toward the pre-gap value.
 ///
-/// The exact per-sample path has none of these differences; the derivative
-/// graph always uses it (first differences cannot be reconstructed from
-/// raw-value buckets).
+/// The exact per-sample path has none of these differences. The buckets must
+/// aggregate the SAME series that [sampleAt] evaluates (raw values for the
+/// force graph, first differences for the derivative graph -- diff extremes
+/// cannot be reconstructed from raw-value buckets, hence the dedicated
+/// ingest-time diff buckets).
 ///
 /// Reduction on the bucket path happens in raw counts and is converted with
 /// [rawToDisplay], which MUST be affine (e.g. tare offset + unit scale) so
@@ -1892,7 +1905,7 @@ void drawChannelEnvelope(
   double avgStrokeWidth = 1.5,
   int avgAlpha = 255,
   int envAlpha = 60,
-  ChannelSeries? bucketSeries,
+  BucketSeries? bucketSeries,
   double Function(double raw)? rawToDisplay,
 }) {
   final (avg: avg, env: env) = _envelopeBatchers(
@@ -1942,9 +1955,9 @@ void drawChannelEnvelope(
       // Bucket-accelerated reduction; approximate at the boundary buckets
       // (see ACCURACY TRADEOFF in the doc comment).
       final int bs = bucketSeries.bucketSize;
-      final bucketMins = bucketSeries.bucketMins;
-      final bucketMaxs = bucketSeries.bucketMaxs;
-      final bucketSums = bucketSeries.bucketSums;
+      final bucketMins = bucketSeries.mins;
+      final bucketMaxs = bucketSeries.maxs;
+      final bucketSums = bucketSeries.sums;
       final int numBuckets = bucketMins.length;
 
       double totalRaw = 0;
@@ -2092,7 +2105,7 @@ bool paintEnvelopeDataLayer(
   required double yMax,
   required int firstUsableSample,
   required double Function(int j) Function(int channel) sampleAtFor,
-  ChannelSeries? Function(int channel)? bucketSeriesFor,
+  BucketSeries? Function(int channel)? bucketSeriesFor,
   double Function(double raw)? Function(int channel)? rawToDisplayFor,
   double avgStrokeWidth = 1.5,
   int avgAlpha = 255,
@@ -2317,7 +2330,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// Bucket aggregates enabling the fast block reduction for [channel], or
   /// null to force the exact per-sample path (see [drawChannelEnvelope]).
   /// Must be paired with [rawToDisplay].
-  ChannelSeries? bucketSeries(int channel) => null;
+  BucketSeries? bucketSeries(int channel) => null;
 
   /// Affine raw-counts -> display-units map matching [sampleAt]; required by
   /// the bucket fast path.
@@ -2477,7 +2490,7 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
       taredDisplaySampleAt(_data, channel, _settings.displayUnit);
 
   @override
-  ChannelSeries? bucketSeries(int channel) => _data.channel(channel);
+  BucketSeries? bucketSeries(int channel) => _data.channel(channel).buckets;
 
   @override
   double Function(double raw)? rawToDisplay(int channel) =>
@@ -2520,16 +2533,16 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
         }
       }
 
-      final int bs = s.bucketSize;
+      final int bs = s.buckets.bucketSize;
       if (sScanEnd - sScanStart >= 2 * bs) {
         // First/last bucket indices fully inside the scan range.
         final int bFirst = (sScanStart + bs - 1) ~/ bs;
         final int bLastEx = sScanEnd ~/ bs;
-        final int numBuckets = s.bucketMins.length;
+        final int numBuckets = s.buckets.mins.length;
         for (int b = bFirst; b < bLastEx; b++) {
           final int li = b % numBuckets;
-          fold((s.bucketMins[li] - tare).toDouble());
-          fold((s.bucketMaxs[li] - tare).toDouble());
+          fold((s.buckets.mins[li] - tare).toDouble());
+          fold((s.buckets.maxs[li] - tare).toDouble());
         }
         scanRaw(sScanStart, bFirst * bs);
         scanRaw(bLastEx * bs, sScanEnd);
@@ -2595,27 +2608,67 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   }
 
   @override
+  BucketSeries? bucketSeries(int channel) => _data.diffBuckets(channel);
+
+  @override
+  double Function(double raw)? rawToDisplay(int channel) {
+    final scale =
+        _settings.displayUnit.multiplierFromRaw(_data.calibrationSlope) *
+        _data.sampleRate;
+    return (raw) => raw * scale;
+  }
+
+  @override
   YAxisRange computeYRange(int viewStart, int viewEnd) {
-    // Compute derivative min/max (in display units) across the visible window.
+    // Derivative min/max (display units) across the visible window. Full
+    // buckets are folded from the precomputed diff aggregates (exact for
+    // min/max); only the partial head/tail buckets are scanned per sample,
+    // so the cost is O(window / bucketSize).
     double dMin = 0;
     double dMax = 0;
     bool first = true;
     final startI = math.max(viewStart, _data.oldestSample + 1);
     final endI = math.min(viewEnd, _data.totalSamples);
+    final scale =
+        _settings.displayUnit.multiplierFromRaw(_data.calibrationSlope) *
+        _data.sampleRate;
+
+    void fold(double d) {
+      if (first || d < dMin) dMin = d;
+      if (first || d > dMax) dMax = d;
+      first = false;
+    }
+
     for (final ch in _settings.activeChannelIndices) {
       if (_data.channel(ch).data.isEmpty) continue;
+      if (startI >= endI) continue;
       final valueAt = sampleAt(ch);
-      for (int i = startI; i < endI; i++) {
-        final d = valueAt(i);
-        if (d.isNaN) continue;
-        if (first) {
-          dMin = d;
-          dMax = d;
-          first = false;
-        } else {
-          if (d < dMin) dMin = d;
-          if (d > dMax) dMax = d;
+
+      void scanExact(int from, int to) {
+        for (int i = from; i < to; i++) {
+          final d = valueAt(i);
+          if (d.isNaN) continue;
+          fold(d);
         }
+      }
+
+      final buckets = _data.diffBuckets(ch);
+      if (buckets != null && endI - startI >= 2 * buckets.bucketSize) {
+        final int bs = buckets.bucketSize;
+        // First/last bucket indices fully inside the scan range. Folding
+        // both scaled bounds keeps this correct under a negative scale.
+        final int bFirst = (startI + bs - 1) ~/ bs;
+        final int bLastEx = endI ~/ bs;
+        final int numBuckets = buckets.mins.length;
+        for (int b = bFirst; b < bLastEx; b++) {
+          final int li = b % numBuckets;
+          fold(buckets.mins[li] * scale);
+          fold(buckets.maxs[li] * scale);
+        }
+        scanExact(startI, bFirst * bs);
+        scanExact(bLastEx * bs, endI);
+      } else {
+        scanExact(startI, endI);
       }
     }
     return _computeYRange(dMin, dMax);

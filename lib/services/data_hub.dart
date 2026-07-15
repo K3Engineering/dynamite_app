@@ -63,6 +63,29 @@ class DataHub extends ChangeNotifier {
     (_) => Int32List(numBuckets),
     growable: false,
   );
+
+  /// Per-channel, per-bucket aggregates of the first-difference series
+  /// (`diff[j] = raw[j] - raw[j-1]`), same bucket grid as [bucketMins]. Used
+  /// by the derivative graph's bucket fast path. The diff is recorded as 0
+  /// for the very first sample, inside gaps (held - held), and for the first
+  /// real sample after a gap (see [_addData]).
+  final List<Int32List> diffBucketMins = List.generate(
+    DataHub.numAdcChannels,
+    (_) => Int32List(numBuckets),
+    growable: false,
+  );
+
+  final List<Int32List> diffBucketMaxs = List.generate(
+    DataHub.numAdcChannels,
+    (_) => Int32List(numBuckets),
+    growable: false,
+  );
+
+  final List<Int32List> diffBucketSums = List.generate(
+    DataHub.numAdcChannels,
+    (_) => Int32List(numBuckets),
+    growable: false,
+  );
   int _tareCount = 0;
   int totalSamples = 0;
   DeviceCalibration deviceCalibration = DeviceCalibration();
@@ -251,6 +274,17 @@ class DataHub extends ChangeNotifier {
   }
 
   void _addData(int val, int idx) {
+    // First difference vs the previous sample, ingested alongside the value.
+    // Recorded as 0 for the very first sample, inside gaps (held - held = 0),
+    // and for the first real sample after a gap: that jump happened over the
+    // gap's whole duration, so plotting it as a one-sample diff would
+    // fabricate a spike -- the derivative graph's exact path suppresses it
+    // the same way (see DerivativeGraphPainter.sampleAt).
+    int diff = 0;
+    if (totalSamples > 0 && !gaps.contains(totalSamples - 1)) {
+      diff = val - rawData[idx][(totalSamples - 1) % maxDataSz];
+    }
+
     rawData[idx][totalSamples % maxDataSz] = val;
     if (val > rawMax[idx]) {
       rawMax[idx] = val;
@@ -265,10 +299,16 @@ class DataHub extends ChangeNotifier {
       bucketMins[idx][bIdx] = val;
       bucketMaxs[idx][bIdx] = val;
       bucketSums[idx][bIdx] = val;
+      diffBucketMins[idx][bIdx] = diff;
+      diffBucketMaxs[idx][bIdx] = diff;
+      diffBucketSums[idx][bIdx] = diff;
     } else {
       if (val < bucketMins[idx][bIdx]) bucketMins[idx][bIdx] = val;
       if (val > bucketMaxs[idx][bIdx]) bucketMaxs[idx][bIdx] = val;
       bucketSums[idx][bIdx] += val;
+      if (diff < diffBucketMins[idx][bIdx]) diffBucketMins[idx][bIdx] = diff;
+      if (diff > diffBucketMaxs[idx][bIdx]) diffBucketMaxs[idx][bIdx] = diff;
+      diffBucketSums[idx][bIdx] += diff;
     }
   }
 }
