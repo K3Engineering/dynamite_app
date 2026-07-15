@@ -5,6 +5,7 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../models/app_settings.dart';
 
@@ -484,19 +485,23 @@ void _handleGraphPointerScroll(
 // Minimap
 // ---------------------------------------------------------------------------
 
-/// Max relative scale drift (horizontal or vertical) tolerated when reusing
-/// the baked minimap image via an affine blit before rebaking. Bounds the
-/// transient quality loss: a 1px feature is at worst (1 - drift) of its true
-/// size between rebakes.
-const double kMinimapMaxDrift = 0.02;
+/// Number of independently-baked textures the minimap strip is split into.
+/// More segments means cheaper (but more frequent) refreshes and a shorter
+/// blank roll-in after a full invalidation.
+const int kMinimapSegments = 10;
+
+/// Max relative scale drift (horizontal or vertical) a segment texture may
+/// accumulate before it is re-rendered on its round-robin turn. Because a
+/// texture is only ever produced by a vector render (never by resampling
+/// another texture), this bounds the total quality loss: every on-screen
+/// pixel is a single bilinear resample of a vector render, shrunk by at most
+/// this factor.
+const double kMaxSegmentDrift = 0.08;
 
 /// Max width (logical px) of the fresh-data sliver (samples newer than the
-/// baked image) drawn as vectors each frame before rebaking absorbs it.
+/// rightmost segment texture) drawn as vectors each frame before a rebake of
+/// that segment absorbs it.
 const double kMinimapMaxSliverPx = 40;
-
-/// Every this many incremental rebakes, do a full vector rebake to purge the
-/// blur that repeated image->image resampling accumulates.
-const int kMinimapFullRebakeEvery = 20;
 
 class Minimap extends StatefulWidget {
   final GraphDataSource dataSource;
@@ -517,8 +522,25 @@ class Minimap extends StatefulWidget {
 class _MinimapState extends State<Minimap> {
   final _MinimapBakeCache _cache = _MinimapBakeCache();
 
+  /// Extra repaint driver for the rolling bake: baking is rationed to one
+  /// segment per frame, so when work remains the painter requests another
+  /// frame via [_schedulePump]. Needed for static sources (loaded sessions)
+  /// whose [GraphDataSource.repaint] never fires; harmless for live ones.
+  final ValueNotifier<int> _bakePump = ValueNotifier<int>(0);
+  bool _pumpScheduled = false;
+
+  void _schedulePump() {
+    if (_pumpScheduled) return;
+    _pumpScheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _pumpScheduled = false;
+      if (mounted) _bakePump.value++;
+    });
+  }
+
   @override
   void dispose() {
+    _bakePump.dispose();
     _cache.dispose();
     super.dispose();
   }
@@ -587,6 +609,8 @@ class _MinimapState extends State<Minimap> {
                   colorScheme,
                   dpr,
                   _cache,
+                  _bakePump,
+                  _schedulePump,
                 ),
                 size: Size.infinite,
               ),
@@ -598,46 +622,89 @@ class _MinimapState extends State<Minimap> {
   }
 }
 
-/// Affine-reuse cache for the minimap's squeezed waveform.
+/// One baked minimap segment: an immutable vector render of samples
+/// [start, end) into a [texW] x gh texture. Replaced by a fresh vector render
+/// when stale -- never mutated and never re-blitted into another texture, so
+/// resampling loss cannot compound.
+class _MinimapSegment {
+  final ui.Image image;
+
+  /// Sample range the texture covers (absolute indices, half-open).
+  final int start;
+  final int end;
+
+  /// Logical-pixel column count the texture was rendered at.
+  final int texW;
+
+  /// On-screen width (logical px, fractional) at bake time; the drift
+  /// reference for [_MinimapPainter._staleness]. Kept separate from [texW]
+  /// (its ceil) so the ceil rounding of narrow segments doesn't read as
+  /// drift.
+  final double bakedW;
+
+  /// Y-mapping at bake: texture rows [0, gh) cover tare-subtracted raw
+  /// values [rawMax, rawMin] (shared by all channels -- tares cancel out of
+  /// the affine, see [_MinimapPainter._blitSegments]).
+  final double rawMin;
+  final double rawMax;
+
+  _MinimapSegment({
+    required this.image,
+    required this.start,
+    required this.end,
+    required this.texW,
+    required this.bakedW,
+    required this.rawMin,
+    required this.rawMax,
+  });
+
+  void dispose() => image.dispose();
+}
+
+/// Segmented bake cache for the minimap's squeezed waveform.
 ///
 /// On web every [ui.Picture] is re-executed by Skia each frame, so re-drawing
 /// the full waveform (~one AA polyline vertex + two envelope vertices per
 /// pixel column per channel) costs ~13ms of raster time per frame. Both axis
-/// mappings are affine, so a baked bitmap stays valid under squeeze/slide up
-/// to a small scale drift: each frame it is blitted with a corrective affine
-/// transform and only the fresh-data sliver is drawn as vectors. When drift
-/// or sliver exceed their thresholds the image is rebaked -- usually
-/// incrementally (old image blit + sliver -> new image, cheap), with a full
-/// vector rebake every [kMinimapFullRebakeEvery] incrementals to purge
-/// accumulated resampling blur.
+/// mappings are affine, so a baked texture stays valid under squeeze/slide:
+/// each frame every segment is blitted with a corrective affine transform and
+/// only the fresh-data sliver is drawn as vectors.
+///
+/// The strip is split into [kMinimapSegments] textures so refreshes are cheap
+/// and quality loss never compounds: a texture is only ever produced by a
+/// vector render (never by resampling another texture), so every on-screen
+/// pixel is at most ONE bilinear resample away from a vector render, shrunk
+/// by at most ~[kMaxSegmentDrift]. At most one segment is (re)baked per
+/// frame:
+///   * bootstrap -- the list isn't full yet (first paint, config change,
+///     data jump): append the next grid slot; the uncovered area stays blank
+///     for the few frames the roll-in takes;
+///   * sliver    -- fresh data outgrew [kMinimapMaxSliverPx]: re-render the
+///     rightmost segment extended to the live edge;
+///   * staleness -- re-render the most drifted segment to the current grid
+///     (round-robin under uniform squeeze, since the least recently baked
+///     segment is the most drifted).
 class _MinimapBakeCache {
-  ui.Image? image;
+  /// Baked segments, left to right. Invariant: starts are non-decreasing and
+  /// segment i+1 starts at or before segment i ends (overlap allowed -- it is
+  /// clipped at blit time -- but never a gap).
+  final List<_MinimapSegment> segments = [];
 
-  // Mapping the image was baked under: image x in [0, gw) covers samples
-  // [start, start + span); y in [0, gh) covers tare-subtracted raw values
-  // [rawMax, rawMin] (shared by all channels -- tares cancel out of the
-  // affine, see _MinimapPainter._blitBaked).
-  int start = 0;
-  int span = 1;
-
-  /// totalSamples at bake time; content right of x(end) is not in the image.
-  int end = 0;
-  double rawMin = 0;
-  double rawMax = 1;
-
-  // Config the image was baked under (mismatch => full rebake).
+  // Config the segments were baked under (mismatch => drop them all).
   double gw = -1;
   double gh = -1;
   double dpr = -1;
   List<int> channels = const [];
   List<double> tares = const [];
 
-  int incrementalBakes = 0;
-
-  void dispose() {
-    image?.dispose();
-    image = null;
+  void clear() {
+    for (final s in segments) {
+      s.dispose();
+    }
+    segments.clear();
   }
+
+  void dispose() => clear();
 }
 
 class _MinimapPainter extends CustomPainter {
@@ -648,6 +715,11 @@ class _MinimapPainter extends CustomPainter {
   final double _dpr;
   final _MinimapBakeCache _cache;
 
+  /// Asks the host widget to schedule another frame; called when bake work
+  /// remains (rolling bootstrap / staleness passes) so it completes even for
+  /// static sources whose [GraphDataSource.repaint] never fires.
+  final VoidCallback _requestRepaint;
+
   _MinimapPainter(
     this._data,
     this._activeIndices,
@@ -655,7 +727,9 @@ class _MinimapPainter extends CustomPainter {
     this._colorScheme,
     this._dpr,
     this._cache,
-  ) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
+    Listenable bakePump,
+    this._requestRepaint,
+  ) : super(repaint: Listenable.merge([_data.repaint, _ctrl, bakePump]));
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -737,9 +811,10 @@ class _MinimapPainter extends CustomPainter {
     );
   }
 
-  /// Blit the baked waveform under the current mapping and draw the fresh
-  /// sliver as vectors, rebaking first (incrementally or fully) if drift or
-  /// sliver width exceed their thresholds.
+  /// Blit the baked segment textures under the current mapping and draw the
+  /// fresh-data sliver as vectors, first performing at most one segment
+  /// (re)bake for this frame (bootstrap fill, sliver absorb, or staleness
+  /// refresh).
   void _paintWaveform(
     Canvas canvas,
     double gw,
@@ -753,148 +828,188 @@ class _MinimapPainter extends CustomPainter {
     EnvelopePerf perf,
   ) {
     final c = _cache;
+    final segs = c.segments;
 
-    bool fullRebake =
-        c.image == null ||
-        (gw - c.gw).abs() > 0.1 ||
+    // Segment geometry (size, dpr, channel set, tares) is baked into the
+    // textures; any change invalidates all of them. The strip then re-fills
+    // left-to-right over the next kMinimapSegments frames.
+    if ((gw - c.gw).abs() > 0.1 ||
         (gh - c.gh).abs() > 0.1 ||
         _dpr != c.dpr ||
         !listEquals(_activeIndices, c.channels) ||
-        !listEquals(tares, c.tares);
-
-    bool needsBake = fullRebake;
-    if (!needsBake) {
-      final double xScale = c.span / mapSpan;
-      final double yScale = (c.rawMax - c.rawMin) / (rawMax - rawMin);
-      final double sliverPx = (totalSamples - c.end) * gw / mapSpan;
-      needsBake =
-          (1 - xScale).abs() > kMinimapMaxDrift ||
-          (1 - yScale).abs() > kMinimapMaxDrift ||
-          sliverPx > kMinimapMaxSliverPx;
-      if (needsBake) {
-        // Not worth incremental reuse if the baked content has mostly
-        // scrolled off, or if it's time to purge resampling blur.
-        final double bakedRightPx = (c.end - mapStart) * gw / mapSpan;
-        if (bakedRightPx < gw * 0.25 ||
-            c.incrementalBakes >= kMinimapFullRebakeEvery) {
-          fullRebake = true;
-        }
-      }
-    }
-
-    if (needsBake) {
-      final img = bakeImage((gw * _dpr).ceil(), (gh * _dpr).ceil(), _dpr, (
-        bake,
-      ) {
-        if (fullRebake) {
-          _drawWaveformColumns(
-            bake,
-            gw,
-            gh,
-            mapStart,
-            mapSpan,
-            rawMin,
-            rawMax,
-            tares,
-            pxFrom: 0,
-            perf: perf,
-          );
-          c.incrementalBakes = 0;
-        } else {
-          // Incremental: reproject the previous bake and vector-render only
-          // the sliver. Raster cost of this bake is one blit + a few columns.
-          _blitBaked(bake, gw, gh, mapStart, mapSpan, rawMin, rawMax);
-          _drawSliver(
-            bake,
-            gw,
-            gh,
-            mapStart,
-            mapSpan,
-            rawMin,
-            rawMax,
-            tares,
-            perf,
-          );
-          c.incrementalBakes++;
-        }
-      });
-      c.image?.dispose();
-      c.image = img;
-      c.start = mapStart;
-      c.span = mapSpan;
-      c.end = totalSamples;
-      c.rawMin = rawMin;
-      c.rawMax = rawMax;
+        !listEquals(tares, c.tares)) {
+      c.clear();
       c.gw = gw;
       c.gh = gh;
       c.dpr = _dpr;
       c.channels = List.of(_activeIndices);
       c.tares = tares;
-      PerfStats.addMinimapBake(full: fullRebake); // TEMP PERF
     }
 
-    _blitBaked(canvas, gw, gh, mapStart, mapSpan, rawMin, rawMax);
-    _drawSliver(canvas, gw, gh, mapStart, mapSpan, rawMin, rawMax, tares, perf);
-  }
+    // Data jump (e.g. synthetic-data injection): more fresh data arrived than
+    // the rightmost segment can reasonably absorb. Rebuild the whole strip;
+    // the rolling bootstrap repopulates it over the next few frames.
+    if (segs.length == kMinimapSegments &&
+        (totalSamples - segs.last.end) * gw / mapSpan >
+            2 * gw / kMinimapSegments) {
+      c.clear();
+    }
 
-  /// First pixel column not covered by the baked image (where the vector
-  /// sliver starts). The image blit is clipped here so image and sliver never
-  /// double-blend.
-  int _sliverStartCol(double gw, int mapStart, int mapSpan) {
+    // --- At most one segment (re)bake per frame ---------------------------
+    bool baked = false;
+    if (segs.length < kMinimapSegments) {
+      // Rolling bootstrap: append the next slot of the current uniform grid.
+      final int i = segs.length;
+      final int start = i == 0 ? mapStart : segs.last.end;
+      final int end = i == kMinimapSegments - 1
+          ? totalSamples
+          : mapStart + (i + 1) * mapSpan ~/ kMinimapSegments;
+      if (end > start) {
+        segs.add(
+          _bakeSegment(
+            start,
+            end,
+            gw,
+            gh,
+            mapSpan,
+            rawMin,
+            rawMax,
+            tares,
+            perf,
+          ),
+        );
+        baked = true;
+        PerfStats.addMinimapBake(bootstrap: true);
+      }
+    } else if ((totalSamples - segs.last.end) * gw / mapSpan >
+        kMinimapMaxSliverPx) {
+      // Fresh data outgrew the sliver budget: re-render the rightmost
+      // segment extended to the live edge.
+      baked = _rebakeSlot(
+        kMinimapSegments - 1,
+        gw,
+        gh,
+        totalSamples,
+        mapStart,
+        mapSpan,
+        rawMin,
+        rawMax,
+        tares,
+        perf,
+      );
+    } else {
+      // Refresh the most drifted segment, if any is past its threshold.
+      // Under uniform squeeze all segments drift together, so picking the
+      // worst (first on ties) degenerates into a round-robin.
+      int worst = -1;
+      double worstStaleness = 1.0;
+      for (int i = 0; i < segs.length; i++) {
+        final st = _staleness(i, gw, mapStart, mapSpan, rawMin, rawMax);
+        if (st > worstStaleness) {
+          worstStaleness = st;
+          worst = i;
+        }
+      }
+      if (worst >= 0) {
+        baked = _rebakeSlot(
+          worst,
+          gw,
+          gh,
+          totalSamples,
+          mapStart,
+          mapSpan,
+          rawMin,
+          rawMax,
+          tares,
+          perf,
+        );
+      }
+    }
+
+    // First pixel column not covered by the segment textures (where the
+    // vector sliver starts). Blits are clipped there so texture and sliver
+    // never double-blend in the boundary column.
     final int gwInt = gw.toInt();
-    final double x = (_cache.end - mapStart) * gwInt / mapSpan;
-    return x.floor().clamp(0, gwInt);
+    final int bakedEnd = segs.isEmpty ? mapStart : segs.last.end;
+    final int sliverCol = ((bakedEnd - mapStart) * gwInt / mapSpan)
+        .floor()
+        .clamp(0, gwInt);
+
+    _blitSegments(
+      canvas,
+      gw,
+      gh,
+      mapStart,
+      mapSpan,
+      rawMin,
+      rawMax,
+      sliverCol.toDouble(),
+    );
+    _drawSliver(
+      canvas,
+      gwInt,
+      gh,
+      mapStart,
+      mapSpan,
+      rawMin,
+      rawMax,
+      tares,
+      sliverCol,
+      perf,
+    );
+
+    // Baking is rationed to one segment per frame; if work remains (or a bake
+    // just happened, so a stale neighbor may be next), ask for another frame.
+    if (baked || segs.length < kMinimapSegments) _requestRepaint();
   }
 
-  /// Draw the baked image under the current mapping.
-  ///
-  /// Image x-pixel u covers sample s = start + u * span / gw, which today
-  /// lands at x = (s - mapStart) * gw / mapSpan = xOffset + u * xScale --
-  /// affine, so one drawImageRect repositions the content exactly. Same
-  /// derivation vertically from valueToY: y = gh - (v - tare - rawMin) * gh /
-  /// range is affine in (rawMin, range) and the per-channel tare cancels out.
-  void _blitBaked(
-    Canvas canvas,
+  /// How badly segment [i] needs a re-render, normalized so > 1.0 means
+  /// "past the threshold". Two ingredients:
+  ///   * scale drift -- squeeze mode: the blit shrinks the texture; this
+  ///     bounds the resampling quality loss at [kMaxSegmentDrift];
+  ///   * range lag   -- how far the baked range is from what a rebake would
+  ///     assign now (start = left neighbor's end, end = current grid
+  ///     boundary). Handles slide mode, where scales stay ~1 but the grid
+  ///     translates; without it the rightmost slot would grow without bound
+  ///     as its neighbors scroll away. (The rightmost segment's *end* lag is
+  ///     the live sliver, which has its own trigger.)
+  double _staleness(
+    int i,
     double gw,
-    double gh,
     int mapStart,
     int mapSpan,
     double rawMin,
     double rawMax,
   ) {
-    final c = _cache;
-    final img = c.image;
-    if (img == null) return;
+    final segs = _cache.segments;
+    final s = segs[i];
 
-    final double xScale = c.span / mapSpan;
-    final double xOffset = (c.start - mapStart) * gw / mapSpan;
-    final double yScale = (c.rawMax - c.rawMin) / (rawMax - rawMin);
-    final double yOffset =
-        gh * (1 - yScale) + (rawMin - c.rawMin) * gh / (rawMax - rawMin);
+    final double xScale = ((s.end - s.start) * gw / mapSpan) / s.bakedW;
+    final double yScale = (s.rawMax - s.rawMin) / (rawMax - rawMin);
+    final double scaleDrift = math.max((1 - xScale).abs(), (1 - yScale).abs());
 
-    final double xClip = _sliverStartCol(gw, mapStart, mapSpan).toDouble();
-    if (xClip <= 0) return;
+    final int newStart = i == 0 ? mapStart : segs[i - 1].end;
+    int lag = (s.start - newStart).abs();
+    if (i < kMinimapSegments - 1) {
+      final int newEnd = mapStart + (i + 1) * mapSpan ~/ kMinimapSegments;
+      lag = math.max(lag, (s.end - newEnd).abs());
+    }
+    // Lag in slot widths; half a slot forces a refresh.
+    final double lagSlots = lag * kMinimapSegments / mapSpan;
 
-    canvas.save();
-    canvas.clipRect(Rect.fromLTRB(0, 0, xClip, gh));
-    canvas.drawImageRect(
-      img,
-      // Source is the CONTENT rect (gw*dpr x gh*dpr), not the ceil'd image
-      // bounds: using img.width/height would bake a ~0.999 scale into every
-      // blit (and compound it through incremental rebakes), blurring the
-      // whole strip even at identity mapping.
-      Rect.fromLTWH(0, 0, c.gw * c.dpr, c.gh * c.dpr),
-      Rect.fromLTWH(xOffset, yOffset, gw * xScale, gh * yScale),
-      Paint()..filterQuality = FilterQuality.low,
-    );
-    canvas.restore();
+    return math.max(scaleDrift / kMaxSegmentDrift, lagSlots / 0.5);
   }
 
-  /// Vector-render the columns not covered by the baked image.
-  void _drawSliver(
-    Canvas canvas,
+  /// Re-render segment [i] to the range a fresh bake would assign it: from
+  /// the left neighbor's end (contiguity by construction) to the current
+  /// uniform grid boundary (the live edge for the rightmost slot). Grid
+  /// boundaries only ever move right, so the new end can overlap the right
+  /// neighbor's start (clipped at blit time) but never leaves a gap.
+  bool _rebakeSlot(
+    int i,
     double gw,
     double gh,
+    int totalSamples,
     int mapStart,
     int mapSpan,
     double rawMin,
@@ -902,11 +1017,144 @@ class _MinimapPainter extends CustomPainter {
     List<double> tares,
     EnvelopePerf perf,
   ) {
-    final int col = _sliverStartCol(gw, mapStart, mapSpan);
-    if (col >= gw.toInt()) return;
+    final segs = _cache.segments;
+    final int start = i == 0 ? mapStart : segs[i - 1].end;
+    final int end = i == kMinimapSegments - 1
+        ? totalSamples
+        : mapStart + (i + 1) * mapSpan ~/ kMinimapSegments;
+    if (end <= start) return false;
+    final old = segs[i];
+    segs[i] = _bakeSegment(
+      start,
+      end,
+      gw,
+      gh,
+      mapSpan,
+      rawMin,
+      rawMax,
+      tares,
+      perf,
+    );
+    old.dispose();
+    PerfStats.addMinimapBake(bootstrap: false);
+    return true;
+  }
+
+  /// Vector-render samples [start, end) into a fresh texture sized to the
+  /// segment's current on-screen width, so its blit starts at scale ~1.
+  _MinimapSegment _bakeSegment(
+    int start,
+    int end,
+    double gw,
+    double gh,
+    int mapSpan,
+    double rawMin,
+    double rawMax,
+    List<double> tares,
+    EnvelopePerf perf,
+  ) {
+    final double bakedW = (end - start) * gw / mapSpan;
+    final int texW = math.max(1, bakedW.ceil());
+    final img = bakeImage((texW * _dpr).ceil(), (gh * _dpr).ceil(), _dpr, (
+      bake,
+    ) {
+      _drawWaveformColumns(
+        bake,
+        texW,
+        gh,
+        start,
+        end - start,
+        rawMin,
+        rawMax,
+        tares,
+        pxFrom: 0,
+        perf: perf,
+      );
+    });
+    return _MinimapSegment(
+      image: img,
+      start: start,
+      end: end,
+      texW: texW,
+      bakedW: bakedW,
+      rawMin: rawMin,
+      rawMax: rawMax,
+    );
+  }
+
+  /// Blit every segment texture under the current mapping, clipped on the
+  /// right at [maxRightX] (the sliver start column).
+  ///
+  /// Texture x-pixel u covers sample s = start + u * (end - start) / texW,
+  /// which today lands at x = (s - mapStart) * gw / mapSpan -- affine, so one
+  /// drawImageRect repositions the content exactly. Same derivation
+  /// vertically from valueToY: y = gh - (v - tare - rawMin) * gh / range is
+  /// affine in (rawMin, range) and the per-channel tare cancels out.
+  void _blitSegments(
+    Canvas canvas,
+    double gw,
+    double gh,
+    int mapStart,
+    int mapSpan,
+    double rawMin,
+    double rawMax,
+    double maxRightX,
+  ) {
+    final double range = rawMax - rawMin;
+    final paint = Paint()..filterQuality = FilterQuality.low;
+    double prevEndX = 0;
+    for (final s in _cache.segments) {
+      final double x1 = (s.start - mapStart) * gw / mapSpan;
+      final double x2 = (s.end - mapStart) * gw / mapSpan;
+      // Where ranges overlap, the LEFT segment's content is the more recently
+      // baked one (every overlap-creating rebake extends an end rightward),
+      // so clip this blit to start where the previous segment's content ends.
+      final double clipL = math.max(prevEndX, 0.0);
+      final double clipR = math.min(x2, maxRightX);
+      prevEndX = math.max(prevEndX, x2);
+      if (clipR <= clipL) continue;
+
+      final double yScale = (s.rawMax - s.rawMin) / range;
+      final double yOffset =
+          gh * (1 - yScale) + (rawMin - s.rawMin) * gh / range;
+
+      canvas.save();
+      canvas.clipRect(Rect.fromLTRB(clipL, 0, clipR, gh));
+      canvas.drawImageRect(
+        s.image,
+        // Source is the CONTENT rect (texW*dpr x gh*dpr), not the ceil'd
+        // image bounds: using image.width/height would bake a ~0.999 scale
+        // into every blit, blurring the strip even at identity mapping.
+        Rect.fromLTWH(0, 0, s.texW * _cache.dpr, gh * _cache.dpr),
+        Rect.fromLTWH(x1, yOffset, x2 - x1, gh * yScale),
+        paint,
+      );
+      canvas.restore();
+    }
+  }
+
+  /// Vector-render the fresh-data sliver: the columns from [col] (the first
+  /// one not covered by segment textures) to the right edge. Skipped when the
+  /// uncovered region is wider than ~2 slots (bootstrap / right after a data
+  /// jump) -- it stays blank for the few frames the rolling bakes take,
+  /// instead of paying a near-full vector render every frame.
+  void _drawSliver(
+    Canvas canvas,
+    int gwInt,
+    double gh,
+    int mapStart,
+    int mapSpan,
+    double rawMin,
+    double rawMax,
+    List<double> tares,
+    int col,
+    EnvelopePerf perf,
+  ) {
+    if (col >= gwInt) return;
+    if (gwInt - col > 2 * gwInt / kMinimapSegments) return;
     _drawWaveformColumns(
       canvas,
-      gw,
+      gwInt,
       gh,
       mapStart,
       mapSpan,
@@ -918,15 +1166,17 @@ class _MinimapPainter extends CustomPainter {
     );
   }
 
-  /// Vector-render waveform columns [pxFrom, gw) of the current mapping.
-  /// Columns are anchored to the global pixel grid (pxFrom only skips work),
-  /// so sliver columns land exactly where a full render would put them.
+  /// Vector-render waveform columns [pxFrom, pixelWidth) of the mapping that
+  /// squeezes samples [rangeStart, rangeStart + rangeSpan) into [pixelWidth]
+  /// columns. Used both to bake segment textures (segment-local mapping) and
+  /// to draw the live sliver (whole-strip mapping, where [pxFrom] skips the
+  /// columns covered by textures without changing the column grid).
   void _drawWaveformColumns(
     Canvas canvas,
-    double gw,
+    int pixelWidth,
     double gh,
-    int mapStart,
-    int mapSpan,
+    int rangeStart,
+    int rangeSpan,
     double rawMin,
     double rawMax,
     List<double> tares, {
@@ -934,7 +1184,6 @@ class _MinimapPainter extends CustomPainter {
     required EnvelopePerf perf,
   }) {
     final dataRange = rawMax - rawMin;
-    final int gwInt = gw.toInt();
     for (int i = 0; i < _activeIndices.length; i++) {
       final ch = _activeIndices[i];
       final tare = tares[i];
@@ -944,10 +1193,10 @@ class _MinimapPainter extends CustomPainter {
         canvas,
         data: _data,
         channel: ch,
-        pixelWidth: gwInt,
+        pixelWidth: pixelWidth,
         pxFrom: pxFrom,
-        rangeStart: mapStart,
-        rangeSpan: mapSpan,
+        rangeStart: rangeStart,
+        rangeSpan: rangeSpan,
         valueToY: (raw) =>
             (gh - (raw - tare - rawMin) * gh / dataRange).clamp(0.0, gh),
         avgColor: chColor.withAlpha(180),
@@ -2204,16 +2453,17 @@ class PerfStats {
     _minimapDrawMicros += draw;
   }
 
-  // Minimap affine-reuse bake accounting.
-  static int _minimapIncBakes = 0;
-  static int _minimapFullBakes = 0;
+  // Minimap segment-bake accounting.
+  static int _minimapRefreshBakes = 0;
+  static int _minimapBootstrapBakes = 0;
 
-  /// Record one minimap image rebake (incremental or full vector).
-  static void addMinimapBake({required bool full}) {
-    if (full) {
-      _minimapFullBakes++;
+  /// Record one minimap segment bake: [bootstrap] appends during a strip
+  /// rebuild vs. refreshes (sliver absorb / staleness) of existing slots.
+  static void addMinimapBake({required bool bootstrap}) {
+    if (bootstrap) {
+      _minimapBootstrapBakes++;
     } else {
-      _minimapIncBakes++;
+      _minimapRefreshBakes++;
     }
   }
 
@@ -2266,7 +2516,7 @@ class PerfStats {
     debugPrint(
       '[PERF] over $_frameCount frames | '
       'Main paint: ${dartAvg.toStringAsFixed(0)}us (${_paintCount}x) | '
-      'Minimap: ${mmAvg.toStringAsFixed(0)}us (loop: ${mmLoopAvg.toStringAsFixed(0)}us, draw: ${mmDrawAvg.toStringAsFixed(0)}us, bakes: ${_minimapIncBakes}i+${_minimapFullBakes}f) | '
+      'Minimap: ${mmAvg.toStringAsFixed(0)}us (loop: ${mmLoopAvg.toStringAsFixed(0)}us, draw: ${mmDrawAvg.toStringAsFixed(0)}us, bakes: ${_minimapRefreshBakes}r+${_minimapBootstrapBakes}b) | '
       'tiles/frame: ${(_tilesBlit / fc).toStringAsFixed(1)} blit, '
       '${(_tilesLive / fc).toStringAsFixed(1)} live, '
       '${(_tilesDirect / fc).toStringAsFixed(1)} direct '
@@ -2280,8 +2530,8 @@ class PerfStats {
     _minimapMicros = 0;
     _minimapLoopMicros = 0;
     _minimapDrawMicros = 0;
-    _minimapIncBakes = 0;
-    _minimapFullBakes = 0;
+    _minimapRefreshBakes = 0;
+    _minimapBootstrapBakes = 0;
     _tilesBlit = 0;
     _tilesLive = 0;
     _tilesDirect = 0;
