@@ -1976,7 +1976,8 @@ const int kTileEvictionMargin = 8;
 ///
 /// Only tiles that are fully populated (entirely between [oldestSample] and
 /// [totalSamples]) are cached; the live edge and the buffer's trailing edge
-/// are re-recorded every frame as plain [ui.Picture]s so they never go stale.
+/// change every frame, so they are drawn directly to the frame canvas and
+/// never stored.
 ///
 /// [drawChunk] is invoked to record one tile. It receives the tile's canvas,
 /// the tile's absolute start sample (used as the local view start), and
@@ -2051,7 +2052,7 @@ void paintCachedChannels(
 
     // Only fully-buffered tiles are cached. The live edge (chunkEndSample past
     // totalSamples) and the trailing edge (chunkStartSample below oldestSample)
-    // change every frame, so they are re-recorded and never stored.
+    // change every frame, so they are redrawn directly and never stored.
     final bool isFullyPopulated =
         chunkEndSample <= totalSamples && chunkStartSample >= oldestSample;
     // NB: do NOT assert chunkStartSample >= viewStart (false for startChunk) nor
@@ -2070,42 +2071,33 @@ void paintCachedChannels(
     ); // tile overlaps view
 
     ui.Image? img = cache.images[c];
-    ui.Picture? pic;
+    final int limitSamples = math.min(chunkEndSample + blockSize, totalSamples);
 
-    if (img == null) {
-      // Record the tile. Cacheable tiles are recorded with a padding
-      // translate so stroke AA and the one-block overshoot survive the image
-      // crop; live/trailing tiles are recorded pad-free and drawn directly.
-      final bool tryImage =
-          isFullyPopulated &&
-          cache.stableFrames >= 2 &&
-          imagesCreated < kMaxTileImagesPerFrame;
-
+    // No cached image yet: rasterize one if the tile qualifies. The tile is
+    // recorded with a padding translate so stroke AA and the one-block
+    // overshoot survive the image crop.
+    final bool tryImage =
+        img == null &&
+        isFullyPopulated &&
+        cache.stableFrames >= 2 &&
+        imagesCreated < kMaxTileImagesPerFrame;
+    if (tryImage) {
       final recorder = ui.PictureRecorder();
       final cCanvas = Canvas(recorder);
-      if (tryImage) {
-        cCanvas.scale(dpr);
-        cCanvas.translate(hPad, vPad);
-      }
+      cCanvas.scale(dpr);
+      cCanvas.translate(hPad, vPad);
 
-      final int limitSamples = math.min(
-        chunkEndSample + blockSize,
-        totalSamples,
-      );
       drawChunk(cCanvas, chunkStartSample, chunkEndSample, limitSamples);
 
-      pic = recorder.endRecording();
-      if (tryImage) {
-        img = pic.toImageSync(
-          ((tileW + 2 * hPad) * dpr).ceil(),
-          ((config.graphH + 2 * vPad) * dpr).ceil(),
-        );
-        pic.dispose();
-        pic = null;
-        cache.images[c] = img;
-        imagesCreated++;
-        PerfStats.addTileImaged(); // TEMP PERF
-      }
+      final pic = recorder.endRecording();
+      img = pic.toImageSync(
+        ((tileW + 2 * hPad) * dpr).ceil(),
+        ((config.graphH + 2 * vPad) * dpr).ceil(),
+      );
+      pic.dispose();
+      cache.images[c] = img;
+      imagesCreated++;
+      PerfStats.addTileImaged(); // TEMP PERF
     }
 
     canvas.save();
@@ -2119,9 +2111,12 @@ void paintCachedChannels(
       );
       PerfStats.addTile(TileDraw.blit); // TEMP PERF
     } else {
-      canvas.drawPicture(pic!);
+      // No image (live/trailing tile, or image creation deferred): draw the
+      // vector paths straight onto the frame canvas. No intermediate
+      // ui.Picture, so nothing to dispose.
+      drawChunk(canvas, chunkStartSample, chunkEndSample, limitSamples);
       PerfStats.addTile(
-        isFullyPopulated ? TileDraw.recorded : TileDraw.live,
+        isFullyPopulated ? TileDraw.direct : TileDraw.live,
       ); // TEMP PERF
     }
     canvas.restore();
@@ -2257,7 +2252,7 @@ class PerfStats {
   // Tile accounting for paintCachedChannels (see TileDraw).
   static int _tilesBlit = 0;
   static int _tilesLive = 0;
-  static int _tilesRecorded = 0;
+  static int _tilesDirect = 0;
   static int _tilesImaged = 0;
 
   /// Record how one tile was drawn this frame. Imaged tiles count as both
@@ -2268,8 +2263,8 @@ class PerfStats {
         _tilesBlit++;
       case TileDraw.live:
         _tilesLive++;
-      case TileDraw.recorded:
-        _tilesRecorded++;
+      case TileDraw.direct:
+        _tilesDirect++;
     }
   }
 
@@ -2306,7 +2301,7 @@ class PerfStats {
       'Minimap: ${mmAvg.toStringAsFixed(0)}us (loop: ${mmLoopAvg.toStringAsFixed(0)}us, draw: ${mmDrawAvg.toStringAsFixed(0)}us, bakes: ${_minimapIncBakes}i+${_minimapFullBakes}f) | '
       'tiles/frame: ${(_tilesBlit / fc).toStringAsFixed(1)} blit, '
       '${(_tilesLive / fc).toStringAsFixed(1)} live, '
-      '${(_tilesRecorded / fc).toStringAsFixed(1)} recorded '
+      '${(_tilesDirect / fc).toStringAsFixed(1)} direct '
       '($_tilesImaged imaged) | '
       'Skwasm raster: ${rasterAvg.toStringAsFixed(0)}us | '
       'build: ${buildAvg.toStringAsFixed(0)}us',
@@ -2321,7 +2316,7 @@ class PerfStats {
     _minimapFullBakes = 0;
     _tilesBlit = 0;
     _tilesLive = 0;
-    _tilesRecorded = 0;
+    _tilesDirect = 0;
     _tilesImaged = 0;
     _frameCount = 0;
     _rasterMicros = 0;
@@ -2330,11 +2325,12 @@ class PerfStats {
 }
 
 /// TEMP PERF: how a tile got onto the screen this frame.
-///   * blit     -- cached ui.Image drawn via drawImageRect (the cheap path)
-///   * live     -- live/trailing-edge tile, re-recorded picture (expected ~1/frame)
-///   * recorded -- fully-populated tile drawn as a fresh picture (image
-///                 creation deferred by the stability gate or per-frame cap)
-enum TileDraw { blit, live, recorded }
+///   * blit   -- cached ui.Image drawn via drawImageRect (the cheap path)
+///   * live   -- live/trailing-edge tile, vector-drawn directly to the frame
+///               canvas (expected ~1/frame)
+///   * direct -- fully-populated tile vector-drawn directly (image creation
+///               deferred by the stability gate or per-frame cap)
+enum TileDraw { blit, live, direct }
 
 /// Shared engine for the windowed time-series graphs (force, derivative).
 ///
