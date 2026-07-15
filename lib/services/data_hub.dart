@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import 'adc_protocol.dart';
+import '../models/bucket_series.dart';
 import '../models/force_unit.dart';
 import '../models/gap_list.dart';
 
@@ -42,23 +43,23 @@ class DataHub extends ChangeNotifier {
     growable: false,
   );
 
-  /// Per-channel, per-bucket aggregates over [bucketSize]-sample windows.
-  /// Used by the minimap to render a downsampled overview cheaply.
-  final List<Int32List> bucketMins = List.generate(
+  /// Per-channel bucket aggregates over [bucketSize]-sample windows of the
+  /// raw values. Used by the graph envelope renderers to downsample cheaply.
+  /// Gap samples hold the previous real value, so buckets are always fully
+  /// populated and need no missing-data handling.
+  final List<BucketAccumulator> valueBuckets = List.generate(
     DataHub.numAdcChannels,
-    (_) => Int32List(numBuckets),
+    (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
     growable: false,
   );
 
-  final List<Int32List> bucketMaxs = List.generate(
+  /// Per-channel bucket aggregates of the first-difference series
+  /// (`diff[j] = raw[j] - raw[j-1]`), same bucket grid as [valueBuckets].
+  /// Used by the derivative graph's bucket fast path; the gap/first-sample
+  /// diff rule lives in [ingestDiff].
+  final List<BucketAccumulator> diffBuckets = List.generate(
     DataHub.numAdcChannels,
-    (_) => Int32List(numBuckets),
-    growable: false,
-  );
-
-  final List<Int32List> bucketSums = List.generate(
-    DataHub.numAdcChannels,
-    (_) => Int32List(numBuckets),
+    (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
     growable: false,
   );
   int _tareCount = 0;
@@ -85,6 +86,8 @@ class DataHub extends ChangeNotifier {
       tare[i] = 0;
       _runningTotal[i] = 0;
       _currentRaw[i] = 0;
+      valueBuckets[i].reset();
+      diffBuckets[i].reset();
     }
   }
 
@@ -249,6 +252,17 @@ class DataHub extends ChangeNotifier {
   }
 
   void _addData(int val, int idx) {
+    // First difference vs the previous sample, ingested alongside the value;
+    // the 0-for-first-sample/gap/gap-exit rule lives in [ingestDiff]. The
+    // ring read is safe for totalSamples == 0 (Dart % is non-negative) and
+    // ignored by rule there.
+    final int diff = ingestDiff(
+      sampleIndex: totalSamples,
+      value: val,
+      prevValue: rawData[idx][(totalSamples - 1) % maxDataSz],
+      gaps: gaps,
+    );
+
     rawData[idx][totalSamples % maxDataSz] = val;
     if (val > rawMax[idx]) {
       rawMax[idx] = val;
@@ -257,17 +271,8 @@ class DataHub extends ChangeNotifier {
       rawMin[idx] = val;
     }
 
-    final int bIdx = (totalSamples % maxDataSz) ~/ bucketSize;
-    final int sIdx = (totalSamples % maxDataSz) % bucketSize;
-    if (sIdx == 0) {
-      bucketMins[idx][bIdx] = val;
-      bucketMaxs[idx][bIdx] = val;
-      bucketSums[idx][bIdx] = val;
-    } else {
-      if (val < bucketMins[idx][bIdx]) bucketMins[idx][bIdx] = val;
-      if (val > bucketMaxs[idx][bIdx]) bucketMaxs[idx][bIdx] = val;
-      bucketSums[idx][bIdx] += val;
-    }
+    valueBuckets[idx].add(totalSamples, val);
+    diffBuckets[idx].add(totalSamples, diff);
   }
 }
 

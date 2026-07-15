@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 
 import 'database.dart';
 import 'data_hub.dart';
+import '../models/bucket_series.dart';
 import '../models/gap_list.dart';
 
 /// Chunk format: packed int32 LE values, interleaved
@@ -209,12 +210,19 @@ class SessionData {
   final List<double> mins;
   final List<double> maxs;
 
-  /// Per-channel, per-bucket aggregates over [bucketSize]-sample windows.
-  /// Mirrors DataHub's live buckets so the minimap can downsample cheaply.
+  /// Per-channel bucket aggregates over [bucketSize]-sample windows of the
+  /// raw values. Mirrors DataHub's live buckets (same [BucketAccumulator])
+  /// so the graphs can downsample cheaply. Gap samples hold the previous
+  /// real value, so buckets are always fully populated and need no
+  /// missing-data handling.
   final int bucketSize = 100;
-  late final List<Int32List> bucketMins;
-  late final List<Int32List> bucketMaxs;
-  late final List<Int32List> bucketSums;
+  late final List<BucketAccumulator> valueBuckets;
+
+  /// Per-channel bucket aggregates of the first-difference series
+  /// (`diff[i] = raw[i] - raw[i-1]`), same bucket grid. Used by the
+  /// derivative graph's bucket fast path; the gap/first-sample diff rule
+  /// lives in [ingestDiff], mirroring DataHub's live ingest.
+  late final List<BucketAccumulator> diffBuckets;
 
   SessionData({
     required this.channels,
@@ -230,9 +238,14 @@ class SessionData {
     final int numBuckets = (sampleCount == 0)
         ? 0
         : ((sampleCount - 1) ~/ bucketSize) + 1;
-    bucketMins = List.generate(channels.length, (_) => Int32List(numBuckets));
-    bucketMaxs = List.generate(channels.length, (_) => Int32List(numBuckets));
-    bucketSums = List.generate(channels.length, (_) => Int32List(numBuckets));
+    valueBuckets = List.generate(
+      channels.length,
+      (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
+    );
+    diffBuckets = List.generate(
+      channels.length,
+      (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
+    );
 
     for (int ch = 0; ch < channels.length; ch++) {
       if (sampleCount == 0) continue;
@@ -244,17 +257,15 @@ class SessionData {
         if (v < mn) mn = v.toDouble();
         if (v > mx) mx = v.toDouble();
 
-        final int bIdx = i ~/ bucketSize;
-        final int sIdx = i % bucketSize;
-        if (sIdx == 0) {
-          bucketMins[ch][bIdx] = v;
-          bucketMaxs[ch][bIdx] = v;
-          bucketSums[ch][bIdx] = v;
-        } else {
-          if (v < bucketMins[ch][bIdx]) bucketMins[ch][bIdx] = v;
-          if (v > bucketMaxs[ch][bIdx]) bucketMaxs[ch][bIdx] = v;
-          bucketSums[ch][bIdx] += v;
-        }
+        final int diff = ingestDiff(
+          sampleIndex: i,
+          value: v,
+          prevValue: i > 0 ? channels[ch][i - 1] : 0,
+          gaps: this.gaps,
+        );
+
+        valueBuckets[ch].add(i, v);
+        diffBuckets[ch].add(i, diff);
       }
       mins[ch] = mn;
       maxs[ch] = mx;

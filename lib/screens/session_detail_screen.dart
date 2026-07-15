@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../models/app_settings.dart';
+import '../models/bucket_series.dart';
 import '../models/gap_list.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
@@ -52,11 +53,12 @@ class _SessionDataSource implements GraphDataSource {
     min: _data.mins[channelIndex],
     max: _data.maxs[channelIndex],
     tare: _data.tares[channelIndex],
-    bucketSize: _data.bucketSize,
-    bucketMins: _data.bucketMins[channelIndex],
-    bucketMaxs: _data.bucketMaxs[channelIndex],
-    bucketSums: _data.bucketSums[channelIndex],
+    buckets: _data.valueBuckets[channelIndex].series,
   );
+
+  @override
+  BucketSeries? diffBuckets(int channelIndex) =>
+      _data.diffBuckets[channelIndex].series;
 
   @override
   GapList get gaps => _data.gaps;
