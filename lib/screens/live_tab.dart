@@ -77,7 +77,6 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
 class _LiveTabState extends State<LiveTab> {
   final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * DataHub.samplesPerSec);
   bool _showDerivative = false;
-  bool _showMinimap = true;
   _LiveDataSource? _dataSource;
   DataHub? _hub;
 
@@ -104,12 +103,6 @@ class _LiveTabState extends State<LiveTab> {
 
   void _onTare() {
     context.read<DataHub>().requestTare();
-  }
-
-  void _onInjectTestSineWave() {
-    // Inject 5 minutes of test data at 1000 Hz
-    const samples = DataHub.samplesPerSec * 60 * 5;
-    context.read<DataHub>().injectTestData(samples);
   }
 
   Future<void> _onToggleRecord() async {
@@ -250,16 +243,12 @@ class _LiveTabState extends State<LiveTab> {
               showDerivative: _showDerivative,
               onToggleDerivative: () =>
                   setState(() => _showDerivative = !_showDerivative),
-              showMinimap: _showMinimap,
-              onToggleMinimap: () =>
-                  setState(() => _showMinimap = !_showMinimap),
             ),
           if (isConnected)
             ActionButtons(
               isRecording: recording.sessionInProgress,
               onToggleRecord: _onToggleRecord,
               onTare: _onTare,
-              onInjectTest: _onInjectTestSineWave,
             ),
         ],
       ),
@@ -273,7 +262,6 @@ class _LiveTabState extends State<LiveTab> {
       ctrl: _graphCtrl,
       settings: settings,
       showDerivative: _showDerivative,
-      showMinimap: _showMinimap,
     );
   }
 }
@@ -447,15 +435,11 @@ class DisconnectedPrompt extends StatelessWidget {
 class ViewToggles extends StatelessWidget {
   final bool showDerivative;
   final VoidCallback onToggleDerivative;
-  final bool showMinimap;
-  final VoidCallback onToggleMinimap;
 
   const ViewToggles({
     super.key,
     this.showDerivative = false,
     required this.onToggleDerivative,
-    this.showMinimap = true,
-    required this.onToggleMinimap,
   });
 
   @override
@@ -466,17 +450,6 @@ class ViewToggles extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          FilterChip(
-            label: const Text('Minimap'),
-            selected: showMinimap,
-            onSelected: (_) => onToggleMinimap(),
-            visualDensity: VisualDensity.compact,
-            labelStyle: TextStyle(
-              fontSize: 12,
-              color: showMinimap ? cs.onSecondaryContainer : null,
-            ),
-          ),
-          const SizedBox(width: 8),
           FilterChip(
             label: const Text('dF/dt'),
             selected: showDerivative,
@@ -504,14 +477,12 @@ class ActionButtons extends StatelessWidget {
   final bool isRecording;
   final VoidCallback onToggleRecord;
   final VoidCallback onTare;
-  final VoidCallback onInjectTest;
 
   const ActionButtons({
     super.key,
     required this.isRecording,
     required this.onToggleRecord,
     required this.onTare,
-    required this.onInjectTest,
   });
 
   @override
@@ -538,12 +509,6 @@ class ActionButtons extends StatelessWidget {
             onPressed: onTare,
             icon: const Icon(Icons.exposure_zero),
             label: const Text('TARE'),
-          ),
-          // Test button to inject dummy data for profiling
-          OutlinedButton.icon(
-            onPressed: onInjectTest,
-            icon: const Icon(Icons.bug_report),
-            label: const Text('TEST SINE'),
           ),
         ],
       ),
