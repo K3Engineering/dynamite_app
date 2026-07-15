@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
@@ -52,6 +53,8 @@ class _LiveTabState extends State<LiveTab> {
       const Duration(seconds: 1),
       (_) => _checkStall(),
     );
+    // TEMP PERF: capture worker-thread raster time + build time per frame.
+    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
   }
 
   /// Recompute the stalled flag; rebuilds ONLY on an edge (per-tick setState
@@ -66,6 +69,15 @@ class _LiveTabState extends State<LiveTab> {
         DateTime.now().difference(last) > _stallThreshold;
     if (stalled != _stalled) {
       setState(() => _stalled = stalled);
+    }
+  }
+
+  void _onFrameTimings(List<FrameTiming> timings) {
+    for (final t in timings) {
+      PerfStats.addFrame(
+        t.rasterDuration.inMicroseconds,
+        t.buildDuration.inMicroseconds,
+      );
     }
   }
 
@@ -102,6 +114,7 @@ class _LiveTabState extends State<LiveTab> {
   void dispose() {
     _stallTimer?.cancel();
     _hub?.removeListener(_onHubChanged);
+    SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
     _graphCtrl.dispose();
     super.dispose();
   }

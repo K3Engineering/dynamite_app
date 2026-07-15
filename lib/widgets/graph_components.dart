@@ -327,6 +327,7 @@ class SegmentedGraphCache {
         at,
         _bake(start, end, pps, gh, yMin, yMax, hPad, vPad, render),
       );
+      PerfStats.addSegmentBake(gap: true);
       return true;
     }
 
@@ -402,6 +403,7 @@ class SegmentedGraphCache {
       _segments[k].dispose();
     }
     _segments.replaceRange(worst, removeTo + 1, [seg]);
+    PerfStats.addSegmentBake(gap: false);
     return true;
   }
 
@@ -498,6 +500,7 @@ class SegmentedGraphCache {
         paint,
       );
       canvas.restore();
+      PerfStats.addSegmentDraw(blit: true);
     }
   }
 
@@ -525,6 +528,7 @@ class SegmentedGraphCache {
       canvas.translate(x, 0);
       render(canvas, gs, ge, math.max(1, w.ceil()));
       canvas.restore();
+      PerfStats.addSegmentDraw(blit: false);
     }
   }
 }
@@ -2206,6 +2210,97 @@ _GraphLayout? _setupGraphFrame(
   );
 }
 
+// ---------------------------------------------------------------------------
+// TEMP PERF INSTRUMENTATION (remove after profiling)
+//
+// Aggregates two independent measurements and prints them together every
+// [_reportEvery] frames:
+//   * Dart paint time   -- time the UI thread spends in the time-series
+//                          painters' paint (force + derivative) building the
+//                          draw calls (recorded via [addPaint]).
+//   * Skwasm raster time -- FrameTiming.rasterDuration, the worker/GPU thread
+//                          time to execute the recorded display list.
+//   * Build time         -- FrameTiming.buildDuration, for context.
+// Frame timings are fed in via SchedulerBinding.addTimingsCallback (see
+// _LiveTabState); the report is emitted from there once 60 frames accrue.
+// ---------------------------------------------------------------------------
+class PerfStats {
+  static const int _reportEvery = 60;
+
+  // Dart paint accumulation (UI thread).
+  static int _paintCount = 0;
+  static int _paintMicros = 0;
+
+  /// Record one _TimeSeriesGraphPainter.paint() duration.
+  static void addPaint(int micros) {
+    _paintMicros += micros;
+    _paintCount++;
+  }
+
+  // Segment-cache accounting (shared by minimap, force, derivative).
+  static int _segGapBakes = 0;
+  static int _segRefreshBakes = 0;
+  static int _segBlits = 0;
+  static int _segDirect = 0;
+
+  /// Record one segment bake: [gap] fills uncovered ranges (live-edge
+  /// sliver, bootstrap, pan/zoom exposure) vs. staleness refreshes.
+  static void addSegmentBake({required bool gap}) {
+    if (gap) {
+      _segGapBakes++;
+    } else {
+      _segRefreshBakes++;
+    }
+  }
+
+  /// Record one segment draw: a texture [blit], or a gap vector-drawn
+  /// directly to the frame canvas.
+  static void addSegmentDraw({required bool blit}) {
+    if (blit) {
+      _segBlits++;
+    } else {
+      _segDirect++;
+    }
+  }
+
+  /// Feed one frame's timing. Emits a combined report every 60 frames.
+  static void addFrame(int rasterMicros, int buildMicros) {
+    _rasterMicros += rasterMicros;
+    _buildMicros += buildMicros;
+    _frameCount++;
+    if (_frameCount >= _reportEvery) _report();
+  }
+
+  static int _frameCount = 0;
+  static int _rasterMicros = 0;
+  static int _buildMicros = 0;
+
+  static void _report() {
+    final dartAvg = _paintCount > 0 ? _paintMicros / _paintCount : 0;
+    final rasterAvg = _frameCount > 0 ? _rasterMicros / _frameCount : 0;
+    final buildAvg = _frameCount > 0 ? _buildMicros / _frameCount : 0;
+    final fc = _frameCount > 0 ? _frameCount : 1;
+    debugPrint(
+      '[PERF] over $_frameCount frames | '
+      'Main paint: ${dartAvg.toStringAsFixed(0)}us (${_paintCount}x) | '
+      'segs/frame: ${(_segBlits / fc).toStringAsFixed(1)} blit, '
+      '${(_segDirect / fc).toStringAsFixed(1)} direct | '
+      'bakes: ${_segGapBakes}g+${_segRefreshBakes}r | '
+      'Skwasm raster: ${rasterAvg.toStringAsFixed(0)}us | '
+      'build: ${buildAvg.toStringAsFixed(0)}us',
+    );
+    _paintCount = 0;
+    _paintMicros = 0;
+    _segGapBakes = 0;
+    _segRefreshBakes = 0;
+    _segBlits = 0;
+    _segDirect = 0;
+    _frameCount = 0;
+    _rasterMicros = 0;
+    _buildMicros = 0;
+  }
+}
+
 /// Shared engine for the windowed time-series graphs (force, derivative).
 ///
 /// Handles the pipeline common to both: frame setup, Y-range for the visible
@@ -2287,6 +2382,17 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    // TEMP PERF: measure Dart-side draw-call construction time (UI thread).
+    final sw = Stopwatch()..start();
+    try {
+      _paint(canvas, size);
+    } finally {
+      sw.stop();
+      PerfStats.addPaint(sw.elapsedMicroseconds);
+    }
+  }
+
+  void _paint(Canvas canvas, Size size) {
     final layout = _setupGraphFrame(
       canvas,
       size,
