@@ -1,4 +1,4 @@
-import 'dart:math' as math;
+﻿import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'dart:collection';
 
@@ -802,7 +802,17 @@ class _MinimapPainter extends CustomPainter {
         // Incremental: reproject the previous bake and vector-render only the
         // sliver. Raster cost of this bake is one blit + a few columns.
         _blitBaked(bake, gw, gh, mapStart, mapSpan, rawMin, rawMax);
-        _drawSliver(bake, gw, gh, mapStart, mapSpan, rawMin, rawMax, tares, perf);
+        _drawSliver(
+          bake,
+          gw,
+          gh,
+          mapStart,
+          mapSpan,
+          rawMin,
+          rawMax,
+          tares,
+          perf,
+        );
         c.incrementalBakes++;
       }
       final pic = recorder.endRecording();
@@ -959,6 +969,8 @@ class _MinimapPainter extends CustomPainter {
         oldDelegate._ctrl.viewEnd != _ctrl.viewEnd ||
         oldDelegate._ctrl.isLive != _ctrl.isLive ||
         oldDelegate._ctrl.liveSpan != _ctrl.liveSpan ||
+        oldDelegate._dpr != _dpr ||
+        oldDelegate._colorScheme != _colorScheme ||
         !listEquals(oldDelegate._activeIndices, _activeIndices) ||
         !listEquals(oldDelegate._colors, _colors);
   }
