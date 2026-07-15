@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'adc_protocol.dart';
 import '../models/force_unit.dart';
+import '../models/gap_list.dart';
 
 /// Storage and derived statistics for the live ADC stream.
 ///
@@ -12,13 +13,11 @@ import '../models/force_unit.dart';
 /// knows nothing about BLE or the wire format: decoded samples arrive through
 /// [addSampleFrame] / [addDroppedFrames] (fed by [AdcPacketDecoder]) and each
 /// packet is closed out with [commitBatch].
+///
+/// Dropped samples are tracked out-of-band in [gaps]; the ring buffer holds
+/// the previous sample's value across a gap, so every stored value is a real
+/// ADC reading and downstream consumers need no magic-value checks.
 class DataHub extends ChangeNotifier {
-  DataHub() {
-    assert(
-      kDroppedSampleSentinel < -8388608 || kDroppedSampleSentinel > 8388607,
-      "Sentinel must be outside 24-bit ADC range",
-    );
-  }
 
   /// Number of ADC channels the device streams. This is also the number of
   /// lines stored and displayed: channel index == storage index == display index.
@@ -66,6 +65,10 @@ class DataHub extends ChangeNotifier {
   int totalSamples = 0;
   DeviceCalibration deviceCalibration = DeviceCalibration();
 
+  /// Sample ranges lost to dropped BLE packets (absolute indices). The ring
+  /// buffer holds the held previous value across these ranges.
+  final GapList gaps = GapList();
+
   /// Invoked by [commitBatch] with the exact slice of samples appended by the
   /// decoder for one packet ([startIdx] is the logical index of the first new
   /// sample). This is how [RecordingController] observes new data without the
@@ -75,6 +78,7 @@ class DataHub extends ChangeNotifier {
   void clear() {
     _tareCount = 0;
     totalSamples = 0;
+    gaps.clear();
     for (int i = 0; i < numAdcChannels; ++i) {
       rawMax[i] = 0;
       rawMin[i] = 0;
@@ -124,21 +128,21 @@ class DataHub extends ChangeNotifier {
     }
   }
 
-  /// Inject [count] dropped-sample sentinels across all channels (the decoder
-  /// detected a gap in the packet counter). Capped at [maxDataSz] to avoid a
-  /// huge injection loop if the device reboots and the counter jumps. Skipped
-  /// while taring, matching [addSampleFrame].
+  /// Record [count] dropped samples (the decoder detected a gap in the packet
+  /// counter): append the range to [gaps] and hold each channel's last value
+  /// ([_currentRaw]) in the ring buffer so the stored data stays magic-free.
+  /// Capped at [maxDataSz] to avoid a huge injection loop if the device
+  /// reboots and the counter jumps. Skipped while taring, matching
+  /// [addSampleFrame] (totalSamples does not advance during a tare).
   void addDroppedFrames(int count) {
-    int toInject = count;
-    if (toInject > maxDataSz) toInject = maxDataSz;
+    if (taring) return;
+    final int toInject = math.min(count, maxDataSz);
+    gaps.append(totalSamples, totalSamples + toInject);
     for (int d = 0; d < toInject; d++) {
-      if (!taring) {
-        for (int i = 0; i < numAdcChannels; ++i) {
-          _addData(kDroppedSampleSentinel, i);
-          _currentRaw[i] = kDroppedSampleSentinel;
-        }
-        totalSamples++;
+      for (int i = 0; i < numAdcChannels; ++i) {
+        _addData(_currentRaw[i], i);
       }
+      totalSamples++;
     }
   }
 
@@ -150,6 +154,7 @@ class DataHub extends ChangeNotifier {
     if (count > 0) {
       onSamplesAppended?.call(startIdx, count);
     }
+    gaps.pruneBefore(totalSamples - maxDataSz); // ring-wrap hygiene
     notifyListeners();
   }
 
@@ -157,10 +162,15 @@ class DataHub extends ChangeNotifier {
     deviceCalibration = calibration;
   }
 
-  /// Get current force for a given ADC channel in the specified unit.
+  /// Whether the newest sample is a dropped one — i.e. the live readings the
+  /// stats display are held values, not fresh data.
+  bool get liveEdgeIsGap => gaps.contains(totalSamples - 1);
+
+  /// Get current force for a given ADC channel in the specified unit. During
+  /// a gap this returns the held (last real) value; check [liveEdgeIsGap] to
+  /// mark it stale in the UI.
   double currentForce(int adcChannel, ForceUnit unit) {
     if (adcChannel < 0 || adcChannel >= numAdcChannels) return 0;
-    if (_currentRaw[adcChannel] == kDroppedSampleSentinel) return 0;
     final rawTared = _currentRaw[adcChannel] - tare[adcChannel];
     return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
@@ -185,11 +195,14 @@ class DataHub extends ChangeNotifier {
       return 0;
     }
 
-    final raw1 = rawData[adcChannel][(totalSamples - 1) % maxDataSz];
-    final raw2 = rawData[adcChannel][(totalSamples - 2) % maxDataSz];
-    if (raw1 == kDroppedSampleSentinel || raw2 == kDroppedSampleSentinel) {
+    // A held value on either side would fabricate a flat or spiking
+    // derivative; report 0 across gap edges instead.
+    if (gaps.contains(totalSamples - 1) || gaps.contains(totalSamples - 2)) {
       return 0;
     }
+
+    final raw1 = rawData[adcChannel][(totalSamples - 1) % maxDataSz];
+    final raw2 = rawData[adcChannel][(totalSamples - 2) % maxDataSz];
 
     final diff = raw1 - raw2;
     // Derivative is raw diff per sample * samplesPerSec to get raw per sec
@@ -212,11 +225,9 @@ class DataHub extends ChangeNotifier {
     double sum = 0;
     int validCount = 0;
     for (int i = startIdx; i < totalSamples; i++) {
-      final val = lineData[i % maxDataSz];
-      if (val != kDroppedSampleSentinel) {
-        sum += val;
-        validCount++;
-      }
+      if (gaps.contains(i)) continue; // held value, not a real reading
+      sum += lineData[i % maxDataSz];
+      validCount++;
     }
 
     if (validCount == 0) return 0;
@@ -224,11 +235,9 @@ class DataHub extends ChangeNotifier {
 
     double sumSq = 0;
     for (int i = startIdx; i < totalSamples; i++) {
-      final val = lineData[i % maxDataSz];
-      if (val != kDroppedSampleSentinel) {
-        final diff = val - mean;
-        sumSq += diff * diff;
-      }
+      if (gaps.contains(i)) continue;
+      final diff = lineData[i % maxDataSz] - mean;
+      sumSq += diff * diff;
     }
     final rmsRaw = math.sqrt(sumSq / validCount);
 
@@ -241,25 +250,23 @@ class DataHub extends ChangeNotifier {
 
   void _addData(int val, int idx) {
     rawData[idx][totalSamples % maxDataSz] = val;
-    if (val != kDroppedSampleSentinel) {
-      if (val > rawMax[idx]) {
-        rawMax[idx] = val;
-      }
-      if (val < rawMin[idx]) {
-        rawMin[idx] = val;
-      }
+    if (val > rawMax[idx]) {
+      rawMax[idx] = val;
+    }
+    if (val < rawMin[idx]) {
+      rawMin[idx] = val;
+    }
 
-      final int bIdx = (totalSamples % maxDataSz) ~/ bucketSize;
-      final int sIdx = (totalSamples % maxDataSz) % bucketSize;
-      if (sIdx == 0) {
-        bucketMins[idx][bIdx] = val;
-        bucketMaxs[idx][bIdx] = val;
-        bucketSums[idx][bIdx] = val;
-      } else {
-        if (val < bucketMins[idx][bIdx]) bucketMins[idx][bIdx] = val;
-        if (val > bucketMaxs[idx][bIdx]) bucketMaxs[idx][bIdx] = val;
-        bucketSums[idx][bIdx] += val;
-      }
+    final int bIdx = (totalSamples % maxDataSz) ~/ bucketSize;
+    final int sIdx = (totalSamples % maxDataSz) % bucketSize;
+    if (sIdx == 0) {
+      bucketMins[idx][bIdx] = val;
+      bucketMaxs[idx][bIdx] = val;
+      bucketSums[idx][bIdx] = val;
+    } else {
+      if (val < bucketMins[idx][bIdx]) bucketMins[idx][bIdx] = val;
+      if (val > bucketMaxs[idx][bIdx]) bucketMaxs[idx][bIdx] = val;
+      bucketSums[idx][bIdx] += val;
     }
   }
 }

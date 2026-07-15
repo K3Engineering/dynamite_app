@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../models/app_settings.dart';
+import '../models/gap_list.dart';
 
 // ---------------------------------------------------------------------------
 // Shared graph layout constants
@@ -583,9 +584,10 @@ abstract interface class GraphDataSource {
   /// Returns the series (data + extremes + tare) for a given channel index.
   ChannelSeries channel(int channelIndex);
 
-  /// The integer value representing a dropped/missing sample.
-  /// The graph rendering will skip over these values and draw missing data hatchings.
-  int? get missingSampleSentinel;
+  /// Sample ranges where data was lost (dropped packets). The buffer holds
+  /// held values there; renderers break the polyline and hatch these ranges.
+  /// Sources that cannot have gaps return an empty (never-mutated) [GapList].
+  GapList get gaps;
 }
 
 /// A [Listenable] that never fires; use as [GraphDataSource.repaint] for static
@@ -1679,7 +1681,8 @@ void drawZeroBaseline(
   }
 }
 
-/// Draws a diagonal warning hatch pattern in regions where data is missing (sentinel value).
+/// Draws a diagonal warning hatch pattern over the [GraphDataSource.gaps]
+/// ranges visible in the window (regions where packets were dropped).
 void drawMissingDataHatching(
   Canvas canvas,
   Size graphSz, {
@@ -1688,18 +1691,12 @@ void drawMissingDataHatching(
   required GraphDataSource data,
   required Color color,
 }) {
-  final sentinel = data.missingSampleSentinel;
-  if (sentinel == null) return; // source can't have gaps: skip the scan
+  final gaps = data.gaps;
+  if (gaps.isEmpty) return;
 
-  final totalSamples = data.totalSamples;
-  final oldestSample = data.oldestSample;
-  final sScanStart = math.max(viewStart, oldestSample);
-  final sScanEnd = math.min(viewEnd, totalSamples);
+  final sScanStart = math.max(viewStart, data.oldestSample);
+  final sScanEnd = math.min(viewEnd, data.totalSamples);
   if (sScanStart >= sScanEnd) return;
-
-  // We only need to check channel 0 since dropped packets are dropped for all channels simultaneously.
-  final line = data.channel(0).data;
-  final bufferCap = data.bufferCapacity;
 
   final viewSamples = viewEnd - viewStart;
   if (viewSamples <= 0) return;
@@ -1714,8 +1711,6 @@ void drawMissingDataHatching(
   final bgPen = Paint()
     ..color = color.withAlpha(20)
     ..style = PaintingStyle.fill;
-
-  int gapStart = -1;
 
   void drawHatchRegion(int startIdx, int endIdx) {
     final xStart = xOf(startIdx);
@@ -1749,21 +1744,8 @@ void drawMissingDataHatching(
     canvas.restore();
   }
 
-  for (int i = sScanStart; i < sScanEnd; i++) {
-    if (line[i % bufferCap] == sentinel) {
-      if (gapStart == -1) {
-        gapStart = i;
-      }
-    } else {
-      if (gapStart != -1) {
-        drawHatchRegion(gapStart, i);
-        gapStart = -1;
-      }
-    }
-  }
-
-  if (gapStart != -1) {
-    drawHatchRegion(gapStart, sScanEnd);
+  for (final (gs, ge) in gaps.rangesIn(sScanStart, sScanEnd)) {
+    drawHatchRegion(gs, ge);
   }
 }
 
@@ -1996,7 +1978,6 @@ void drawSqueezedEnvelope(
   final bufferCapacity = data.bufferCapacity;
   final totalSamples = data.totalSamples;
   final oldestSample = data.oldestSample;
-  final sentinel = data.missingSampleSentinel;
 
   final (avg: avg, env: env) = _envelopeBatchers(
     canvas,
@@ -2027,14 +2008,11 @@ void drawSqueezedEnvelope(
     final int samplesInPixel = drawEnd - drawStart;
 
     if (samplesInPixel <= bucketSize * 2) {
-      // High-res mode: loop the raw array to avoid blockiness when zoomed
-      // in. Honors the dropped-sample sentinel so gaps don't skew the plot.
+      // High-res mode: loop the raw array to avoid blockiness when zoomed in.
+      // Gap samples hold the previous real value, so no exclusion is needed;
+      // the main graph's hatching is the missing-data indicator.
       for (int j = drawStart; j < drawEnd; j++) {
-        final val = line[j % bufferCapacity];
-        if (sentinel != null && val == sentinel) {
-          continue;
-        }
-        final valDouble = val.toDouble();
+        final double valDouble = line[j % bufferCapacity].toDouble();
         total += valDouble;
         if (valDouble < minRaw) minRaw = valDouble;
         if (valDouble > maxRaw) maxRaw = valDouble;
@@ -2042,7 +2020,6 @@ void drawSqueezedEnvelope(
       }
     } else {
       // Squished mode: aggregate from the precomputed bucket arrays.
-      // Sentinels are already excluded from the buckets at ingest time.
       final int bStart = drawStart ~/ bucketSize;
       final int bEnd = drawEnd ~/ bucketSize;
 
@@ -2075,12 +2052,7 @@ void drawSqueezedEnvelope(
       }
     }
 
-    if (validSamples == 0) {
-      // Entire column is dropped samples. Break the polyline.
-      env.flush();
-      avg.flush();
-      continue;
-    }
+    if (validSamples == 0) continue; // defensive; drawStart < drawEnd above
 
     final avgY = valueToY(total / validSamples);
     final minY = valueToY(minRaw);
@@ -2406,14 +2378,13 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
     final line = s.data;
     final tare = s.tare;
     final bufferCap = _data.bufferCapacity;
-    final sentinel = _data.missingSampleSentinel;
+    final gaps = _data.gaps;
     final slopeToUnit = _settings.displayUnit.multiplierFromRaw(
       _data.calibrationSlope,
     );
     return (j) {
-      final val = line[j % bufferCap];
-      if (sentinel != null && val == sentinel) return double.nan;
-      return (val - tare) * slopeToUnit;
+      if (gaps.contains(j)) return double.nan; // break the polyline
+      return (line[j % bufferCap] - tare) * slopeToUnit;
     };
   }
 
@@ -2434,13 +2405,12 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
       if (line.isEmpty) continue;
       final tare = s.tare;
       final bufferCap = _data.bufferCapacity;
-      final sentinel = _data.missingSampleSentinel;
       final sScanStart = math.max(viewStart, oldestSample);
       final sScanEnd = math.min(viewEnd, totalSamples);
       for (int i = sScanStart; i < sScanEnd; i++) {
-        final rawVal = line[i % bufferCap];
-        if (sentinel != null && rawVal == sentinel) continue;
-        final v = rawVal - tare;
+        // Gap samples hold a previous real value, so they can never extend
+        // the range: no exclusion needed.
+        final v = line[i % bufferCap] - tare;
         if (!hasData || v > rawMax) rawMax = v.toDouble();
         if (!hasData || v < rawMin) rawMin = v.toDouble();
         hasData = true;
@@ -2491,17 +2461,15 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   double Function(int j) sampleAt(int channel) {
     final line = _data.channel(channel).data;
     final bufferCap = _data.bufferCapacity;
-    final sentinel = _data.missingSampleSentinel;
+    final gaps = _data.gaps;
     final scale =
         _settings.displayUnit.multiplierFromRaw(_data.calibrationSlope) *
         _data.sampleRate;
     return (j) {
-      final v1 = line[j % bufferCap];
-      final v2 = line[(j - 1) % bufferCap];
-      if (sentinel != null && (v1 == sentinel || v2 == sentinel)) {
-        return double.nan;
-      }
-      return (v1 - v2) * scale;
+      // A held value on either side of the difference would fabricate a flat
+      // or spiking derivative; break the polyline across gap edges instead.
+      if (gaps.contains(j) || gaps.contains(j - 1)) return double.nan;
+      return (line[j % bufferCap] - line[(j - 1) % bufferCap]) * scale;
     };
   }
 

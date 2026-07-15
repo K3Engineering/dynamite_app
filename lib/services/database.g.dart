@@ -185,6 +185,16 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     ),
     defaultValue: const Constant(true),
   );
+  static const VerificationMeta _gapsMeta = const VerificationMeta('gaps');
+  @override
+  late final GeneratedColumn<String> gaps = GeneratedColumn<String>(
+    'gaps',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[]'),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -202,6 +212,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     notes,
     sampleCount,
     isCompleted,
+    gaps,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -328,6 +339,12 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         ),
       );
     }
+    if (data.containsKey('gaps')) {
+      context.handle(
+        _gapsMeta,
+        gaps.isAcceptableOrUnknown(data['gaps']!, _gapsMeta),
+      );
+    }
     return context;
   }
 
@@ -397,6 +414,10 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.bool,
         data['${effectivePrefix}is_completed'],
       )!,
+      gaps: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}gaps'],
+      )!,
     );
   }
 
@@ -422,6 +443,10 @@ class Session extends DataClass implements Insertable<Session> {
   final String notes;
   final int sampleCount;
   final bool isCompleted;
+
+  /// Dropped-sample ranges as JSON `[[start,end],...]`, session-relative,
+  /// half-open. The chunk data holds held values across these ranges.
+  final String gaps;
   const Session({
     required this.id,
     required this.name,
@@ -438,6 +463,7 @@ class Session extends DataClass implements Insertable<Session> {
     required this.notes,
     required this.sampleCount,
     required this.isCompleted,
+    required this.gaps,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -457,6 +483,7 @@ class Session extends DataClass implements Insertable<Session> {
     map['notes'] = Variable<String>(notes);
     map['sample_count'] = Variable<int>(sampleCount);
     map['is_completed'] = Variable<bool>(isCompleted);
+    map['gaps'] = Variable<String>(gaps);
     return map;
   }
 
@@ -477,6 +504,7 @@ class Session extends DataClass implements Insertable<Session> {
       notes: Value(notes),
       sampleCount: Value(sampleCount),
       isCompleted: Value(isCompleted),
+      gaps: Value(gaps),
     );
   }
 
@@ -501,6 +529,7 @@ class Session extends DataClass implements Insertable<Session> {
       notes: serializer.fromJson<String>(json['notes']),
       sampleCount: serializer.fromJson<int>(json['sampleCount']),
       isCompleted: serializer.fromJson<bool>(json['isCompleted']),
+      gaps: serializer.fromJson<String>(json['gaps']),
     );
   }
   @override
@@ -522,6 +551,7 @@ class Session extends DataClass implements Insertable<Session> {
       'notes': serializer.toJson<String>(notes),
       'sampleCount': serializer.toJson<int>(sampleCount),
       'isCompleted': serializer.toJson<bool>(isCompleted),
+      'gaps': serializer.toJson<String>(gaps),
     };
   }
 
@@ -541,6 +571,7 @@ class Session extends DataClass implements Insertable<Session> {
     String? notes,
     int? sampleCount,
     bool? isCompleted,
+    String? gaps,
   }) => Session(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -557,6 +588,7 @@ class Session extends DataClass implements Insertable<Session> {
     notes: notes ?? this.notes,
     sampleCount: sampleCount ?? this.sampleCount,
     isCompleted: isCompleted ?? this.isCompleted,
+    gaps: gaps ?? this.gaps,
   );
   Session copyWithCompanion(SessionsCompanion data) {
     return Session(
@@ -595,6 +627,7 @@ class Session extends DataClass implements Insertable<Session> {
       isCompleted: data.isCompleted.present
           ? data.isCompleted.value
           : this.isCompleted,
+      gaps: data.gaps.present ? data.gaps.value : this.gaps,
     );
   }
 
@@ -615,7 +648,8 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('calibrationOffset: $calibrationOffset, ')
           ..write('notes: $notes, ')
           ..write('sampleCount: $sampleCount, ')
-          ..write('isCompleted: $isCompleted')
+          ..write('isCompleted: $isCompleted, ')
+          ..write('gaps: $gaps')
           ..write(')'))
         .toString();
   }
@@ -637,6 +671,7 @@ class Session extends DataClass implements Insertable<Session> {
     notes,
     sampleCount,
     isCompleted,
+    gaps,
   );
   @override
   bool operator ==(Object other) =>
@@ -656,7 +691,8 @@ class Session extends DataClass implements Insertable<Session> {
           other.calibrationOffset == this.calibrationOffset &&
           other.notes == this.notes &&
           other.sampleCount == this.sampleCount &&
-          other.isCompleted == this.isCompleted);
+          other.isCompleted == this.isCompleted &&
+          other.gaps == this.gaps);
 }
 
 class SessionsCompanion extends UpdateCompanion<Session> {
@@ -675,6 +711,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<String> notes;
   final Value<int> sampleCount;
   final Value<bool> isCompleted;
+  final Value<String> gaps;
   const SessionsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
@@ -691,6 +728,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.notes = const Value.absent(),
     this.sampleCount = const Value.absent(),
     this.isCompleted = const Value.absent(),
+    this.gaps = const Value.absent(),
   });
   SessionsCompanion.insert({
     this.id = const Value.absent(),
@@ -708,6 +746,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.notes = const Value.absent(),
     this.sampleCount = const Value.absent(),
     this.isCompleted = const Value.absent(),
+    this.gaps = const Value.absent(),
   }) : createdAt = Value(createdAt);
   static Insertable<Session> custom({
     Expression<int>? id,
@@ -725,6 +764,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<String>? notes,
     Expression<int>? sampleCount,
     Expression<bool>? isCompleted,
+    Expression<String>? gaps,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -742,6 +782,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (notes != null) 'notes': notes,
       if (sampleCount != null) 'sample_count': sampleCount,
       if (isCompleted != null) 'is_completed': isCompleted,
+      if (gaps != null) 'gaps': gaps,
     });
   }
 
@@ -761,6 +802,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<String>? notes,
     Value<int>? sampleCount,
     Value<bool>? isCompleted,
+    Value<String>? gaps,
   }) {
     return SessionsCompanion(
       id: id ?? this.id,
@@ -778,6 +820,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       notes: notes ?? this.notes,
       sampleCount: sampleCount ?? this.sampleCount,
       isCompleted: isCompleted ?? this.isCompleted,
+      gaps: gaps ?? this.gaps,
     );
   }
 
@@ -829,6 +872,9 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     if (isCompleted.present) {
       map['is_completed'] = Variable<bool>(isCompleted.value);
     }
+    if (gaps.present) {
+      map['gaps'] = Variable<String>(gaps.value);
+    }
     return map;
   }
 
@@ -849,7 +895,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('calibrationOffset: $calibrationOffset, ')
           ..write('notes: $notes, ')
           ..write('sampleCount: $sampleCount, ')
-          ..write('isCompleted: $isCompleted')
+          ..write('isCompleted: $isCompleted, ')
+          ..write('gaps: $gaps')
           ..write(')'))
         .toString();
   }
@@ -1151,6 +1198,7 @@ typedef $$SessionsTableCreateCompanionBuilder =
       Value<String> notes,
       Value<int> sampleCount,
       Value<bool> isCompleted,
+      Value<String> gaps,
     });
 typedef $$SessionsTableUpdateCompanionBuilder =
     SessionsCompanion Function({
@@ -1169,6 +1217,7 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<String> notes,
       Value<int> sampleCount,
       Value<bool> isCompleted,
+      Value<String> gaps,
     });
 
 class $$SessionsTableFilterComposer
@@ -1252,6 +1301,11 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<bool> get isCompleted => $composableBuilder(
     column: $table.isCompleted,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get gaps => $composableBuilder(
+    column: $table.gaps,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1339,6 +1393,11 @@ class $$SessionsTableOrderingComposer
     column: $table.isCompleted,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get gaps => $composableBuilder(
+    column: $table.gaps,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SessionsTableAnnotationComposer
@@ -1414,6 +1473,9 @@ class $$SessionsTableAnnotationComposer
     column: $table.isCompleted,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get gaps =>
+      $composableBuilder(column: $table.gaps, builder: (column) => column);
 }
 
 class $$SessionsTableTableManager
@@ -1459,6 +1521,7 @@ class $$SessionsTableTableManager
                 Value<String> notes = const Value.absent(),
                 Value<int> sampleCount = const Value.absent(),
                 Value<bool> isCompleted = const Value.absent(),
+                Value<String> gaps = const Value.absent(),
               }) => SessionsCompanion(
                 id: id,
                 name: name,
@@ -1475,6 +1538,7 @@ class $$SessionsTableTableManager
                 notes: notes,
                 sampleCount: sampleCount,
                 isCompleted: isCompleted,
+                gaps: gaps,
               ),
           createCompanionCallback:
               ({
@@ -1493,6 +1557,7 @@ class $$SessionsTableTableManager
                 Value<String> notes = const Value.absent(),
                 Value<int> sampleCount = const Value.absent(),
                 Value<bool> isCompleted = const Value.absent(),
+                Value<String> gaps = const Value.absent(),
               }) => SessionsCompanion.insert(
                 id: id,
                 name: name,
@@ -1509,6 +1574,7 @@ class $$SessionsTableTableManager
                 notes: notes,
                 sampleCount: sampleCount,
                 isCompleted: isCompleted,
+                gaps: gaps,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

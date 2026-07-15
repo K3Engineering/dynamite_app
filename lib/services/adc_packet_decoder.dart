@@ -6,8 +6,8 @@ import 'data_hub.dart';
 /// Protocol layer: decodes the device's ADC-feed notification packets and the
 /// calibration characteristic into [DataHub] updates.
 ///
-/// Owns the packet-continuity counter used to detect dropped packets (and
-/// inject [kDroppedSampleSentinel] frames for the gap). Knows nothing about
+/// Owns the packet-continuity counter used to detect dropped packets (reported
+/// to the hub via [DataHub.addDroppedFrames]). Knows nothing about
 /// BLE plumbing or recording: [BleLinkManager] hands it raw bytes via
 /// [onDataPacket] / [onCalibrationPacket], and it feeds decoded samples into
 /// the hub's public API.
@@ -25,8 +25,8 @@ class AdcPacketDecoder {
   final Int32List _frame = Int32List(nwNumAdcChan);
 
   /// Forget the last seen packet counter so the next packet is not diffed
-  /// against a stale value (which would inject spurious dropped-sample
-  /// sentinels). Called on link teardown and at recording start/stop.
+  /// against a stale value (which would report spurious dropped samples).
+  /// Called on link teardown and at recording start/stop.
   void resetContinuity() {
     _prevSampleCount = -1;
   }
@@ -58,7 +58,7 @@ class AdcPacketDecoder {
       final int diff = (count - _prevSampleCount) & 0xFFFF;
       if (diff != 0) {
         debugPrint('# lost $diff samples');
-        // Inject sentinels for dropped samples (capped inside the hub to avoid
+        // Report the dropped range to the hub (capped inside the hub to avoid
         // OOM if the device reboots and the counter jumps).
         hub.addDroppedFrames(diff);
         // TODO: signal lost packets to the UI?

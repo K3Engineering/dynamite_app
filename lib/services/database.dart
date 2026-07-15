@@ -22,6 +22,10 @@ class Sessions extends Table {
   TextColumn get notes => text().withDefault(const Constant(''))();
   IntColumn get sampleCount => integer().withDefault(const Constant(0))();
   BoolColumn get isCompleted => boolean().withDefault(const Constant(true))();
+
+  /// Dropped-sample ranges as JSON `[[start,end],...]`, session-relative,
+  /// half-open. The chunk data holds held values across these ranges.
+  TextColumn get gaps => text().withDefault(const Constant('[]'))();
 }
 
 class SessionChunks extends Table {
@@ -45,7 +49,7 @@ class AppDatabase extends _$AppDatabase {
       AppDatabase._(executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -103,13 +107,16 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  /// Record a session's final aggregates and mark it completed.
+  /// Record a session's final aggregates and mark it completed. [gaps] is the
+  /// JSON-encoded dropped-sample range list (session-relative); crash recovery
+  /// omits it (gap info is lost for recovered sessions).
   Future<void> completeSession(
     int id, {
     required int sampleCount,
     required int durationMs,
     required double peakForceRaw,
     required int peakForceChannel,
+    String gaps = '[]',
   }) {
     return _updateSession(
       id,
@@ -119,6 +126,7 @@ class AppDatabase extends _$AppDatabase {
         peakForceRaw: Value(peakForceRaw),
         peakForceChannel: Value(peakForceChannel),
         isCompleted: const Value(true),
+        gaps: Value(gaps),
       ),
     );
   }
