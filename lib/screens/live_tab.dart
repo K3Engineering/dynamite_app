@@ -546,8 +546,8 @@ class _TableCellValue extends StatelessWidget {
   Widget build(BuildContext context) {
     final staleColor = Theme.of(context).colorScheme.outline;
     
-    // If inactive, zero it out and dim it heavily. If active but stale, dim it lightly.
-    final displayValue = isActive ? value : 0.0;
+    // If inactive, show dashes and dim it heavily. If active but stale, dim it lightly.
+    final String displayText = isActive ? unit.formatValueOnly(value) : '--';
     final color = !isActive
         ? staleColor.withOpacity(0.4)
         : (isStale ? staleColor : null);
@@ -560,7 +560,7 @@ class _TableCellValue extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
           child: Text(
-            unit.formatValueOnly(displayValue),
+            displayText,
             textAlign: TextAlign.right,
             style: textStyle?.copyWith(color: color),
             maxLines: 1,
