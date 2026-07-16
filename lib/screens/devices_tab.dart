@@ -6,7 +6,7 @@ import '../widgets/bt_icon.dart';
 
 class DevicesTab extends StatefulWidget {
   final bool isActive;
-  
+
   const DevicesTab({super.key, this.isActive = false});
 
   @override
@@ -146,9 +146,14 @@ class _DevicesTabState extends State<DevicesTab> {
             const SizedBox(height: 24),
           ],
 
-          if (!isLinkUp && bt.devices.isEmpty && !bt.isScanning)
+          // BLE devices section — always shown so the page structure stays
+          // predictable; the empty state lives inside it.
+          _sectionHeader(context, 'BLE devices'),
+          const SizedBox(height: 8),
+
+          if (bt.devices.isEmpty && !bt.isScanning)
             Padding(
-              padding: const EdgeInsets.only(top: 64),
+              padding: const EdgeInsets.symmetric(vertical: 24),
               child: Center(
                 child: Column(
                   children: [
@@ -173,16 +178,6 @@ class _DevicesTabState extends State<DevicesTab> {
                 ),
               ),
             ),
-
-          if (bt.devices.isNotEmpty || bt.isScanning) ...[
-            Text(
-              'Available Devices',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: Theme.of(context).colorScheme.secondary,
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
 
           for (final device in bt.devices)
             Card(
@@ -222,8 +217,62 @@ class _DevicesTabState extends State<DevicesTab> {
                 ),
               ),
             ),
+          const SizedBox(height: 16),
+
+          // Demo devices section — simulated hardware, kept at the bottom so
+          // real BLE devices get top billing.
+          _sectionHeader(context, 'Demo devices'),
+          const SizedBox(height: 8),
+          Card(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: ListTile(
+              leading: const Icon(Icons.science, color: Colors.teal),
+              title: const Text('Demo Device'),
+              subtitle: const Text('Simulated data — no hardware'),
+              trailing: FilledButton(
+                onPressed: isBusy
+                    ? null
+                    : () async {
+                        try {
+                          await bt.connectToDemoDevice();
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Failed to connect to Demo Device.',
+                                ),
+                              ),
+                            );
+                          }
+                        }
+                      },
+                child: const Text('Connect'),
+              ),
+            ),
+          ),
         ],
       ),
+    );
+  }
+
+  /// Section header rendered as a label centered inside a divider line:
+  /// ──────── label ────────
+  Widget _sectionHeader(BuildContext context, String label) {
+    return Row(
+      children: [
+        const Expanded(child: Divider()),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: Theme.of(context).colorScheme.secondary,
+            ),
+          ),
+        ),
+        const Expanded(child: Divider()),
+      ],
     );
   }
 }

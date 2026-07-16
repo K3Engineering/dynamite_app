@@ -6,6 +6,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'app_events.dart';
 import 'bt_device_config.dart';
 // ignore: unused_import
+import 'demo_signal_source.dart';
 import 'mockble.dart';
 
 /// Lifecycle of a single device's BLE link.
@@ -94,6 +95,8 @@ class DeviceLink {
     rssi = null;
     services.clear();
   }
+
+  bool get isDemoDevice => deviceId == 'demo_device';
 
   /// Like [reset], but parks the link in [BtLinkState.cooldown] for the given
   /// [deviceId] (the device just torn down). Keeps [deviceId]/[name] so the UI
@@ -237,6 +240,8 @@ class BleLinkManager extends ChangeNotifier {
   /// One-shot user notices ([BleDisconnectTimeout], [BleConnectionFailed])
   /// go here; the shell shows them regardless of which tab is mounted.
   final AppEvents _events;
+
+  DemoSignalSource? _demoSource;
 
   BleLinkManager({required AppEvents events}) : _events = events {
     if (useMockBt) {
@@ -549,6 +554,26 @@ class BleLinkManager extends ChangeNotifier {
     }
   }
 
+  Future<void> connectToDemoDevice() async {
+    if (_isScanning) {
+      await _stopScan();
+    }
+    if (_link.state != BtLinkState.idle) {
+      return;
+    }
+    _setupGeneration++;
+    _link.deviceId = 'demo_device';
+    _link.name = 'Demo Device';
+    _link.state = BtLinkState.streaming;
+
+    _demoSource ??= DemoSignalSource();
+    _demoSource?.start((data) {
+      onAdcData?.call(data);
+    });
+
+    notifyListeners();
+  }
+
   Future<void> connectToDevice(String deviceId) async {
     if (_isScanning) {
       await _stopScan();
@@ -612,6 +637,14 @@ class BleLinkManager extends ChangeNotifier {
     // Supersede any in-flight post-connect setup pass immediately so it stops
     // mutating state while we tear the link down.
     _setupGeneration++;
+
+    if (_link.isDemoDevice) {
+      _demoSource?.stop();
+      _endLink(_link.deviceId, _link.name);
+      notifyListeners();
+      return;
+    }
+
     _link.state = BtLinkState.disconnecting;
     notifyListeners();
 
