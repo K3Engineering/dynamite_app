@@ -108,29 +108,34 @@ class BluetoothIndicator extends StatelessWidget {
       children: [
         Icon(icon, size: size, color: color),
         if (showSpinner)
-          const SizedBox(
-            height: size,
-            width: size,
-            child: CircularProgressIndicator(strokeWidth: 2),
+          const ExcludeSemantics(
+            child: SizedBox(
+              height: size,
+              width: size,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            ),
           ),
       ],
     );
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Flexible(
-          child: Text(
-            label,
-            textAlign: TextAlign.right,
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
+    return Semantics(
+      label: label,
+      child: Row(
+        children: [
+          iconStack,
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: Colors.grey.shade600),
+            ),
           ),
-        ),
-        const SizedBox(width: 8),
-        iconStack,
-      ],
+        ],
+      ),
     );
   }
 }
