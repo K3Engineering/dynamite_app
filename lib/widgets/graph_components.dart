@@ -1272,6 +1272,7 @@ class GraphWorkspace extends StatefulWidget {
   final bool showDerivative;
   final bool isLiveGraph;
   final bool showMinimap;
+  final bool showZoomSpan;
 
   const GraphWorkspace({
     super.key,
@@ -1281,6 +1282,7 @@ class GraphWorkspace extends StatefulWidget {
     this.showDerivative = false,
     this.isLiveGraph = true,
     this.showMinimap = true,
+    this.showZoomSpan = true,
   });
 
   @override
@@ -1409,47 +1411,100 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                 );
               },
             ),
-            // Zoom buttons
+            // Zoom controls
             Positioned(
               right: 72,
-              bottom: 40,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  FloatingActionButton.small(
-                    heroTag: 'zoomIn_${widget.data.hashCode}',
-                    onPressed: () {
-                      if (widget.data.totalSamples > 0) {
-                        final focal = widget.ctrl.isLive ? 1.0 : 0.5;
-                        widget.ctrl.zoom(
-                          1.2,
-                          focal,
-                          widget.data.totalSamples,
-                          widget.data.oldestSample,
-                          widget.data.bufferCapacity,
-                        );
-                      }
-                    },
-                    child: const Icon(Icons.zoom_in),
-                  ),
-                  const SizedBox(height: 8),
-                  FloatingActionButton.small(
-                    heroTag: 'zoomOut_${widget.data.hashCode}',
-                    onPressed: () {
-                      if (widget.data.totalSamples > 0) {
-                        final focal = widget.ctrl.isLive ? 1.0 : 0.5;
-                        widget.ctrl.zoom(
-                          1 / 1.2,
-                          focal,
-                          widget.data.totalSamples,
-                          widget.data.oldestSample,
-                          widget.data.bufferCapacity,
-                        );
-                      }
-                    },
-                    child: const Icon(Icons.zoom_out),
-                  ),
-                ],
+              bottom: 72,
+              child: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(24),
+                color: Theme.of(context).colorScheme.primary,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        Icons.zoom_out,
+                        color: Theme.of(context).colorScheme.onPrimary,
+                      ),
+                      onPressed: () {
+                        if (widget.data.totalSamples > 0) {
+                          final focal = widget.ctrl.isLive ? 1.0 : 0.5;
+                          widget.ctrl.zoom(
+                            1 / 1.2,
+                            focal,
+                            widget.data.totalSamples,
+                            widget.data.oldestSample,
+                            widget.data.bufferCapacity,
+                          );
+                        }
+                      },
+                    ),
+                    if (widget.showZoomSpan)
+                      ListenableBuilder(
+                        listenable: Listenable.merge([
+                          widget.ctrl,
+                          widget.data.repaint,
+                        ]),
+                        builder: (context, _) {
+                          final (start, end) = widget.ctrl.effectiveRange(
+                            widget.data.totalSamples,
+                            widget.data.oldestSample,
+                            bufferCapacity: widget.data.bufferCapacity,
+                          );
+                          final spanSec =
+                              (end - start) / widget.data.sampleRate;
+
+                          String text;
+                          if (spanSec < 1.0) {
+                            text = '${(spanSec * 1000).round()} ms';
+                          } else if (spanSec < 60.0) {
+                            text = '${spanSec.toStringAsFixed(1)} s';
+                          } else {
+                            final m = spanSec ~/ 60;
+                            final s = (spanSec % 60).floor().toString().padLeft(
+                              2,
+                              '0',
+                            );
+                            text = '$m:$s';
+                          }
+
+                          return Container(
+                            width: 60,
+                            alignment: Alignment.center,
+                            child: Text(
+                              text,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onPrimary,
+                                fontWeight: FontWeight.bold,
+                                fontFeatures: const [
+                                  ui.FontFeature.tabularFigures(),
+                                ],
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    IconButton(
+                      icon: Icon(
+                        Icons.zoom_in,
+                        color: Theme.of(context).colorScheme.onPrimary,
+                      ),
+                      onPressed: () {
+                        if (widget.data.totalSamples > 0) {
+                          final focal = widget.ctrl.isLive ? 1.0 : 0.5;
+                          widget.ctrl.zoom(
+                            1.2,
+                            focal,
+                            widget.data.totalSamples,
+                            widget.data.oldestSample,
+                            widget.data.bufferCapacity,
+                          );
+                        }
+                      },
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -1886,7 +1941,8 @@ void drawChannelEnvelope(
   // ACCURACY TRADEOFF on reduceBlockBuckets) once a block spans at least
   // two buckets.
   final buckets = series.buckets;
-  final bool useBuckets = buckets != null && blockSize >= 2 * buckets.bucketSize;
+  final bool useBuckets =
+      buckets != null && blockSize >= 2 * buckets.bucketSize;
 
   // Blocks are anchored to absolute sample 0 (sStart = k * blockSize), NOT to
   // viewStart. This is what lets a block fall on the same pixels regardless of
