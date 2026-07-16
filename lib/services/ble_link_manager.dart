@@ -705,4 +705,43 @@ class BleLinkManager extends ChangeNotifier {
     // never interprets feed bytes itself.
     onAdcData?.call(data);
   }
+
+  /// Tear down this (now stale) generation's BLE link after a hot restart on
+  /// web. Invoked by the NEXT generation's `main()` via the hot-restart
+  /// cleanup hook (see `hot_restart_cleanup_web.dart`) — browser-side BLE
+  /// notification listeners and timers survive a web hot restart, so without
+  /// this the old decoder/DataHub keep running and try to render into the
+  /// disposed engine view.
+  ///
+  /// Order matters: the data callbacks are nulled FIRST (synchronously) so the
+  /// notifyListeners → scheduleFrame chain stops immediately; the async GATT
+  /// teardown then releases the browser-level connection so the new generation
+  /// can find and reconnect the device. Deliberately does NOT call
+  /// [notifyListeners] — the only listeners are the disposed widget tree.
+  Future<void> shutdownForHotRestart() async {
+    onAdcData = null;
+    onCalibrationData = null;
+    _demoSource?.stop();
+    _stopRssiPolling();
+    _cooldownTimer?.cancel();
+    _cooldownTimer = null;
+    // Supersede any in-flight post-connect setup pass so it bails out.
+    _setupGeneration++;
+
+    // Best-effort from here: the app is being torn down, so failures are
+    // irrelevant — just make sure they can't propagate.
+    try {
+      if (_isScanning) {
+        await UniversalBle.stopScan();
+      }
+      if (_link.isLinkUp && !_link.isDemoDevice) {
+        await UniversalBle.disconnect(
+          _link.deviceId,
+          timeout: disconnectTimeout,
+        );
+      }
+    } catch (_) {
+      // Swallow: stale-generation teardown must never surface errors.
+    }
+  }
 }
