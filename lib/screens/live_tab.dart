@@ -357,7 +357,6 @@ class LiveStats extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final unit = settings.displayUnit;
-    final indices = settings.activeChannelIndices;
 
     return ListenableBuilder(
       listenable: hub,
@@ -365,32 +364,179 @@ class LiveStats extends StatelessWidget {
         // During a live gap (dropped packets) the hub reports held values;
         // gray them out so they read as stale rather than fresh readings.
         final stale = hub.liveEdgeIsGap;
+        
+        final monoStyle = GoogleFonts.robotoMono(
+          textStyle: Theme.of(context).textTheme.bodySmall,
+        );
+        final staleColor = Theme.of(context).colorScheme.outline;
+        final headerStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+              fontWeight: FontWeight.bold,
+            );
+
         return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: Row(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Table(
+            columnWidths: const {
+              0: IntrinsicColumnWidth(), // Row labels
+              1: FlexColumnWidth(),
+              2: FlexColumnWidth(),
+              3: FlexColumnWidth(),
+              4: FlexColumnWidth(),
+            },
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
             children: [
-              for (int i = 0; i < indices.length; i++) ...[
-                if (i > 0) const SizedBox(width: 16),
-                Expanded(
-                  child: _ChannelStatChip(
-                    label: settings.channelLabels[indices[i]],
-                    color: getChannelColor(indices[i]),
-                    current: hub.currentForce(indices[i], unit),
-                    peak: hub.peakForce(indices[i], unit),
-                    acRms: hub.acRmsForce(indices[i], unit),
-                    unit: unit,
-                    stale: stale,
-                    showDerivative: showDerivative,
-                    currentDerivative: showDerivative
-                        ? hub.currentDerivative(indices[i], unit)
-                        : null,
-                  ),
+              // -----------------------------------------------------------
+              // Channel Labels
+              // -----------------------------------------------------------
+              TableRow(
+                children: [
+                  const SizedBox.shrink(), // Empty top-left corner
+                  for (int i = 0; i < 4; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4, left: 4, right: 4),
+                      child: Text(
+                        settings.channelLabels[i],
+                        textAlign: TextAlign.right,
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: settings.activeChannels[i]
+                                  ? getChannelColor(i)
+                                  : staleColor.withOpacity(0.5),
+                            ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                ],
+              ),
+              // -----------------------------------------------------------
+              // Horizontal Colored Lines
+              // -----------------------------------------------------------
+              TableRow(
+                children: [
+                  const SizedBox.shrink(),
+                  for (int i = 0; i < 4; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8, left: 2, right: 2),
+                      child: Container(
+                        height: 3,
+                        color: settings.activeChannels[i]
+                            ? getChannelColor(i)
+                            : staleColor.withOpacity(0.3),
+                      ),
+                    ),
+                ],
+              ),
+              // -----------------------------------------------------------
+              // Live Value
+              // -----------------------------------------------------------
+              TableRow(
+                children: [
+                  Text('Live\n(${unit.symbol})', style: headerStyle),
+                  for (int i = 0; i < 4; i++)
+                    _TableCellValue(
+                      value: hub.currentForce(i, unit),
+                      unit: unit,
+                      isActive: settings.activeChannels[i],
+                      isStale: stale,
+                      textStyle: GoogleFonts.robotoMono(
+                        textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                      ),
+                    ),
+                ],
+              ),
+              // -----------------------------------------------------------
+              // Peak Value
+              // -----------------------------------------------------------
+              TableRow(
+                children: [
+                  Text('Peak', style: headerStyle),
+                  for (int i = 0; i < 4; i++)
+                    _TableCellValue(
+                      value: hub.peakForce(i, unit),
+                      unit: unit,
+                      isActive: settings.activeChannels[i],
+                      isStale: false, // Peak doesn't really get stale the same way
+                      textStyle: monoStyle,
+                    ),
+                ],
+              ),
+              // -----------------------------------------------------------
+              // AC RMS
+              // -----------------------------------------------------------
+              TableRow(
+                children: [
+                  Text('AC RMS', style: headerStyle),
+                  for (int i = 0; i < 4; i++)
+                    _TableCellValue(
+                      value: hub.acRmsForce(i, unit),
+                      unit: unit,
+                      isActive: settings.activeChannels[i],
+                      isStale: false,
+                      textStyle: monoStyle,
+                    ),
+                ],
+              ),
+              // -----------------------------------------------------------
+              // dF/dt (Optional)
+              // -----------------------------------------------------------
+              if (showDerivative)
+                TableRow(
+                  children: [
+                    Text('dF/dt', style: headerStyle),
+                    for (int i = 0; i < 4; i++)
+                      _TableCellValue(
+                        value: hub.currentDerivative(i, unit),
+                        unit: unit,
+                        isActive: settings.activeChannels[i],
+                        isStale: stale,
+                        textStyle: monoStyle,
+                      ),
+                  ],
                 ),
-              ],
             ],
           ),
         );
       },
+    );
+  }
+}
+
+class _TableCellValue extends StatelessWidget {
+  const _TableCellValue({
+    required this.value,
+    required this.unit,
+    required this.isActive,
+    required this.isStale,
+    required this.textStyle,
+  });
+
+  final double value;
+  final ForceUnit unit;
+  final bool isActive;
+  final bool isStale;
+  final TextStyle? textStyle;
+
+  @override
+  Widget build(BuildContext context) {
+    final staleColor = Theme.of(context).colorScheme.outline;
+    
+    // If inactive, zero it out and dim it heavily. If active but stale, dim it lightly.
+    final displayValue = isActive ? value : 0.0;
+    final color = !isActive
+        ? staleColor.withOpacity(0.4)
+        : (isStale ? staleColor : null);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+      child: Text(
+        unit.formatValueOnly(displayValue),
+        textAlign: TextAlign.right,
+        style: textStyle?.copyWith(color: color),
+        maxLines: 1,
+        overflow: TextOverflow.visible,
+      ),
     );
   }
 }
@@ -522,74 +668,4 @@ class ActionButtons extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Channel stat chip widget
-// ---------------------------------------------------------------------------
 
-class _ChannelStatChip extends StatelessWidget {
-  const _ChannelStatChip({
-    required this.label,
-    required this.color,
-    required this.current,
-    required this.peak,
-    required this.acRms,
-    required this.unit,
-    this.stale = false,
-    this.showDerivative = false,
-    this.currentDerivative,
-  });
-
-  final String label;
-  final Color color;
-  final double current;
-  final double peak;
-  final double acRms;
-  final ForceUnit unit;
-
-  /// True while the newest sample is a dropped one: [current] (and the
-  /// derivative) are held values, rendered grayed-out.
-  final bool stale;
-  final bool showDerivative;
-  final double? currentDerivative;
-
-  @override
-  Widget build(BuildContext context) {
-    final monoStyle = GoogleFonts.robotoMono(
-      textStyle: Theme.of(context).textTheme.bodySmall,
-    );
-    final staleColor = Theme.of(context).colorScheme.outline;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      decoration: BoxDecoration(
-        border: Border(left: BorderSide(color: color, width: 3)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: Theme.of(
-              context,
-            ).textTheme.labelSmall?.copyWith(color: color),
-          ),
-          Text(
-            unit.format(current),
-            style: GoogleFonts.robotoMono(
-              textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.bold,
-                color: stale ? staleColor : null,
-              ),
-            ),
-          ),
-          Text('Peak: ${unit.format(peak)}', style: monoStyle),
-          Text('AC RMS: ${unit.format(acRms)}', style: monoStyle),
-          if (showDerivative && currentDerivative != null)
-            Text(
-              'dF/dt: ${unit.formatRate(currentDerivative!)}',
-              style: stale ? monoStyle.copyWith(color: staleColor) : monoStyle,
-            ),
-        ],
-      ),
-    );
-  }
-}

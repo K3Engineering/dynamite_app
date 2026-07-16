@@ -59,6 +59,15 @@ enum ForceUnit {
     return '$sign$numStr $suffix';
   }
 
+  /// Format a [value] (already in this unit) with an explicit sign, without
+  /// the unit suffix, and without extra padding. Ideal for constrained layouts.
+  String formatValueOnly(double value) {
+    final sign = value < 0 ? '-' : '+';
+    final decimals = this == ForceUnit.mV ? 4 : (this == ForceUnit.raw ? 0 : 3);
+    final numStr = value.abs().toStringAsFixed(decimals);
+    return '$sign$numStr';
+  }
+
   /// Format a value (already in this unit) for display.
   String format(double value) => _formatValue(value, symbol);
 
