@@ -6,7 +6,7 @@ import '../widgets/bt_icon.dart';
 
 class DevicesTab extends StatefulWidget {
   final bool isActive;
-  
+
   const DevicesTab({super.key, this.isActive = false});
 
   @override
@@ -145,6 +145,37 @@ class _DevicesTabState extends State<DevicesTab> {
             ),
             const SizedBox(height: 24),
           ],
+
+          // Always-visible Demo Device Card pinned at the bottom
+          Card(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: ListTile(
+              leading: const Icon(Icons.science, color: Colors.teal),
+              title: const Text('Demo Device'),
+              subtitle: const Text('Simulated data — no hardware'),
+              trailing: FilledButton(
+                onPressed: isBusy
+                    ? null
+                    : () async {
+                        try {
+                          await bt.connectToDemoDevice();
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Failed to connect to Demo Device.',
+                                ),
+                              ),
+                            );
+                          }
+                        }
+                      },
+                child: const Text('Connect'),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
 
           if (!isLinkUp && bt.devices.isEmpty && !bt.isScanning)
             Padding(
