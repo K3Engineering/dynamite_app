@@ -148,14 +148,7 @@ class _DevicesTabState extends State<DevicesTab> {
 
           // BLE devices section — always shown so the page structure stays
           // predictable; the empty state lives inside it.
-          const Divider(),
-          const SizedBox(height: 8),
-          Text(
-            'BLE devices',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              color: Theme.of(context).colorScheme.secondary,
-            ),
-          ),
+          _sectionHeader(context, 'BLE devices'),
           const SizedBox(height: 8),
 
           if (bt.devices.isEmpty && !bt.isScanning)
@@ -228,14 +221,7 @@ class _DevicesTabState extends State<DevicesTab> {
 
           // Demo devices section — simulated hardware, kept at the bottom so
           // real BLE devices get top billing.
-          const Divider(),
-          const SizedBox(height: 8),
-          Text(
-            'Demo devices',
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              color: Theme.of(context).colorScheme.secondary,
-            ),
-          ),
+          _sectionHeader(context, 'Demo devices'),
           const SizedBox(height: 8),
           Card(
             color: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -267,6 +253,26 @@ class _DevicesTabState extends State<DevicesTab> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Section header rendered as a label centered inside a divider line:
+  /// ──────── label ────────
+  Widget _sectionHeader(BuildContext context, String label) {
+    return Row(
+      children: [
+        const Expanded(child: Divider()),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: Theme.of(context).colorScheme.secondary,
+            ),
+          ),
+        ),
+        const Expanded(child: Divider()),
+      ],
     );
   }
 }
