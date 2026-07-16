@@ -373,6 +373,10 @@ class LiveStats extends StatelessWidget {
               fontWeight: FontWeight.bold,
             );
 
+        void toggleChannel(int index) {
+          settings.setChannelActive(index, !settings.activeChannels[index]);
+        }
+
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Table(
@@ -392,18 +396,22 @@ class LiveStats extends StatelessWidget {
                 children: [
                   const SizedBox.shrink(), // Empty top-left corner
                   for (int i = 0; i < 4; i++)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 4, left: 4, right: 4),
-                      child: Text(
-                        settings.channelLabels[i],
-                        textAlign: TextAlign.right,
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: settings.activeChannels[i]
-                                  ? getChannelColor(i)
-                                  : staleColor.withOpacity(0.5),
-                            ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => toggleChannel(i),
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 4, left: 4, right: 4),
+                        child: Text(
+                          settings.channelLabels[i],
+                          textAlign: TextAlign.right,
+                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                color: settings.activeChannels[i]
+                                    ? getChannelColor(i)
+                                    : staleColor.withOpacity(0.5),
+                              ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ),
                 ],
@@ -415,13 +423,17 @@ class LiveStats extends StatelessWidget {
                 children: [
                   const SizedBox.shrink(),
                   for (int i = 0; i < 4; i++)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8, left: 2, right: 2),
-                      child: Container(
-                        height: 3,
-                        color: settings.activeChannels[i]
-                            ? getChannelColor(i)
-                            : staleColor.withOpacity(0.3),
+                    GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: () => toggleChannel(i),
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 8, left: 2, right: 2),
+                        child: Container(
+                          height: 3,
+                          color: settings.activeChannels[i]
+                              ? getChannelColor(i)
+                              : staleColor.withOpacity(0.3),
+                        ),
                       ),
                     ),
                 ],
@@ -443,6 +455,7 @@ class LiveStats extends StatelessWidget {
                               fontWeight: FontWeight.bold,
                             ),
                       ),
+                      onTap: () => toggleChannel(i),
                     ),
                 ],
               ),
@@ -459,6 +472,7 @@ class LiveStats extends StatelessWidget {
                       isActive: settings.activeChannels[i],
                       isStale: false, // Peak doesn't really get stale the same way
                       textStyle: monoStyle,
+                      onTap: () => toggleChannel(i),
                     ),
                 ],
               ),
@@ -475,6 +489,7 @@ class LiveStats extends StatelessWidget {
                       isActive: settings.activeChannels[i],
                       isStale: false,
                       textStyle: monoStyle,
+                      onTap: () => toggleChannel(i),
                     ),
                 ],
               ),
@@ -492,6 +507,7 @@ class LiveStats extends StatelessWidget {
                         isActive: settings.activeChannels[i],
                         isStale: stale,
                         textStyle: monoStyle,
+                        onTap: () => toggleChannel(i),
                       ),
                   ],
                 ),
@@ -510,6 +526,7 @@ class _TableCellValue extends StatelessWidget {
     required this.isActive,
     required this.isStale,
     required this.textStyle,
+    this.onTap,
   });
 
   final double value;
@@ -517,6 +534,7 @@ class _TableCellValue extends StatelessWidget {
   final bool isActive;
   final bool isStale;
   final TextStyle? textStyle;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -528,14 +546,18 @@ class _TableCellValue extends StatelessWidget {
         ? staleColor.withOpacity(0.4)
         : (isStale ? staleColor : null);
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
-      child: Text(
-        unit.formatValueOnly(displayValue),
-        textAlign: TextAlign.right,
-        style: textStyle?.copyWith(color: color),
-        maxLines: 1,
-        overflow: TextOverflow.visible,
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+        child: Text(
+          unit.formatValueOnly(displayValue),
+          textAlign: TextAlign.right,
+          style: textStyle?.copyWith(color: color),
+          maxLines: 1,
+          overflow: TextOverflow.visible,
+        ),
       ),
     );
   }
