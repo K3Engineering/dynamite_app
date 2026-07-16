@@ -385,153 +385,164 @@ class LiveStats extends StatelessWidget {
 
         return Padding(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Table(
-            columnWidths: const {
-              0: IntrinsicColumnWidth(), // Row labels
-              1: FlexColumnWidth(),
-              2: FlexColumnWidth(),
-              3: FlexColumnWidth(),
-              4: FlexColumnWidth(),
-            },
-            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+          child: Stack(
             children: [
-              // -----------------------------------------------------------
-              // Channel Labels
-              // -----------------------------------------------------------
-              TableRow(
+              Table(
+                columnWidths: const {
+                  0: IntrinsicColumnWidth(), // Row labels
+                  1: FlexColumnWidth(),
+                  2: FlexColumnWidth(),
+                  3: FlexColumnWidth(),
+                  4: FlexColumnWidth(),
+                },
+                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
                 children: [
-                  const SizedBox.shrink(), // Empty top-left corner
-                  for (int i = 0; i < 4; i++)
-                    MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => toggleChannel(i),
-                        child: Padding(
-                          padding: const EdgeInsets.only(
-                            bottom: 4,
-                            left: 4,
-                            right: 4,
-                          ),
-                          child: Text(
-                            settings.channelLabels[i],
-                            textAlign: TextAlign.right,
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  color: settings.activeChannels[i]
-                                      ? getChannelColor(i)
-                                      : staleColor.withValues(alpha: 0.5),
-                                ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              // -----------------------------------------------------------
-              // Horizontal Colored Lines
-              // -----------------------------------------------------------
-              TableRow(
-                children: [
-                  const SizedBox.shrink(),
-                  for (int i = 0; i < 4; i++)
-                    MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => toggleChannel(i),
-                        child: Padding(
-                          padding: const EdgeInsets.only(
-                            bottom: 8,
-                            left: 2,
-                            right: 2,
-                          ),
-                          child: Container(
-                            height: 3,
-                            color: settings.activeChannels[i]
-                                ? getChannelColor(i)
-                                : staleColor.withValues(alpha: 0.3),
+                  // -----------------------------------------------------------
+                  // Channel Labels
+                  // -----------------------------------------------------------
+                  TableRow(
+                    children: [
+                      const SizedBox.shrink(), // Empty top-left corner
+                      for (int i = 0; i < 4; i++)
+                        MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => toggleChannel(i),
+                            child: Padding(
+                              padding: const EdgeInsets.only(
+                                bottom: 4,
+                                left: 4,
+                                right: 4,
+                              ),
+                              child: Text(
+                                settings.channelLabels[i],
+                                textAlign: TextAlign.right,
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: settings.activeChannels[i]
+                                          ? getChannelColor(i)
+                                          : staleColor.withValues(alpha: 0.5),
+                                    ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
                           ),
                         ),
-                      ),
+                    ],
+                  ),
+                  // -----------------------------------------------------------
+                  // Horizontal Colored Lines
+                  // -----------------------------------------------------------
+                  TableRow(
+                    children: [
+                      const SizedBox.shrink(),
+                      for (int i = 0; i < 4; i++)
+                        MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () => toggleChannel(i),
+                            child: Padding(
+                              padding: const EdgeInsets.only(
+                                bottom: 8,
+                                left: 2,
+                                right: 2,
+                              ),
+                              child: Container(
+                                height: 3,
+                                color: settings.activeChannels[i]
+                                    ? getChannelColor(i)
+                                    : staleColor.withValues(alpha: 0.3),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                  // -----------------------------------------------------------
+                  // Live Value
+                  // -----------------------------------------------------------
+                  TableRow(
+                    children: [
+                      Text('Live', style: headerStyle),
+                      for (int i = 0; i < 4; i++)
+                        _TableCellValue(
+                          value: hub.currentForce(i, unit),
+                          unit: unit,
+                          isActive: settings.activeChannels[i],
+                          isStale: stale,
+                          textStyle: GoogleFonts.robotoMono(
+                            textStyle: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.bold),
+                          ),
+                          onTap: () => toggleChannel(i),
+                        ),
+                    ],
+                  ),
+                  // -----------------------------------------------------------
+                  // Peak Value
+                  // -----------------------------------------------------------
+                  TableRow(
+                    children: [
+                      Text('Peak', style: headerStyle),
+                      for (int i = 0; i < 4; i++)
+                        _TableCellValue(
+                          value: hub.peakForce(i, unit),
+                          unit: unit,
+                          isActive: settings.activeChannels[i],
+                          isStale:
+                              false, // Peak doesn't really get stale the same way
+                          textStyle: monoStyle,
+                          onTap: () => toggleChannel(i),
+                        ),
+                    ],
+                  ),
+                  // -----------------------------------------------------------
+                  // AC RMS
+                  // -----------------------------------------------------------
+                  TableRow(
+                    children: [
+                      Text('AC RMS', style: headerStyle),
+                      for (int i = 0; i < 4; i++)
+                        _TableCellValue(
+                          value: hub.acRmsForce(i, unit),
+                          unit: unit,
+                          isActive: settings.activeChannels[i],
+                          isStale: false,
+                          textStyle: monoStyle,
+                          onTap: () => toggleChannel(i),
+                        ),
+                    ],
+                  ),
+                  // -----------------------------------------------------------
+                  // dF/dt (Optional)
+                  // -----------------------------------------------------------
+                  if (showDerivative)
+                    TableRow(
+                      children: [
+                        Text('dF/dt', style: headerStyle),
+                        for (int i = 0; i < 4; i++)
+                          _TableCellValue(
+                            value: hub.currentDerivative(i, unit),
+                            unit: unit,
+                            isActive: settings.activeChannels[i],
+                            isStale: stale,
+                            textStyle: monoStyle,
+                            onTap: () => toggleChannel(i),
+                          ),
+                      ],
                     ),
                 ],
               ),
-              // -----------------------------------------------------------
-              // Live Value
-              // -----------------------------------------------------------
-              TableRow(
-                children: [
-                  Text('Live\n(${unit.symbol})', style: headerStyle),
-                  for (int i = 0; i < 4; i++)
-                    _TableCellValue(
-                      value: hub.currentForce(i, unit),
-                      unit: unit,
-                      isActive: settings.activeChannels[i],
-                      isStale: stale,
-                      textStyle: GoogleFonts.robotoMono(
-                        textStyle: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(fontWeight: FontWeight.bold),
-                      ),
-                      onTap: () => toggleChannel(i),
-                    ),
-                ],
+              // Unit overlay, anchored to the top-left corner, sitting just
+              // below the channel labels and above the Live row.
+              Positioned(
+                top: 13,
+                left: 0,
+                child: Text('In ${unit.symbol}', style: headerStyle),
               ),
-              // -----------------------------------------------------------
-              // Peak Value
-              // -----------------------------------------------------------
-              TableRow(
-                children: [
-                  Text('Peak', style: headerStyle),
-                  for (int i = 0; i < 4; i++)
-                    _TableCellValue(
-                      value: hub.peakForce(i, unit),
-                      unit: unit,
-                      isActive: settings.activeChannels[i],
-                      isStale:
-                          false, // Peak doesn't really get stale the same way
-                      textStyle: monoStyle,
-                      onTap: () => toggleChannel(i),
-                    ),
-                ],
-              ),
-              // -----------------------------------------------------------
-              // AC RMS
-              // -----------------------------------------------------------
-              TableRow(
-                children: [
-                  Text('AC RMS', style: headerStyle),
-                  for (int i = 0; i < 4; i++)
-                    _TableCellValue(
-                      value: hub.acRmsForce(i, unit),
-                      unit: unit,
-                      isActive: settings.activeChannels[i],
-                      isStale: false,
-                      textStyle: monoStyle,
-                      onTap: () => toggleChannel(i),
-                    ),
-                ],
-              ),
-              // -----------------------------------------------------------
-              // dF/dt (Optional)
-              // -----------------------------------------------------------
-              if (showDerivative)
-                TableRow(
-                  children: [
-                    Text('dF/dt', style: headerStyle),
-                    for (int i = 0; i < 4; i++)
-                      _TableCellValue(
-                        value: hub.currentDerivative(i, unit),
-                        unit: unit,
-                        isActive: settings.activeChannels[i],
-                        isStale: stale,
-                        textStyle: monoStyle,
-                        onTap: () => toggleChannel(i),
-                      ),
-                  ],
-                ),
             ],
           ),
         );
@@ -573,7 +584,7 @@ class _TableCellValue extends StatelessWidget {
         behavior: HitTestBehavior.opaque,
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+          padding: const EdgeInsets.symmetric(vertical: 1, horizontal: 1),
           child: Text(
             displayText,
             textAlign: TextAlign.right,
