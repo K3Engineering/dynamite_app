@@ -396,21 +396,24 @@ class LiveStats extends StatelessWidget {
                 children: [
                   const SizedBox.shrink(), // Empty top-left corner
                   for (int i = 0; i < 4; i++)
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => toggleChannel(i),
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 4, left: 4, right: 4),
-                        child: Text(
-                          settings.channelLabels[i],
-                          textAlign: TextAlign.right,
-                          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                                color: settings.activeChannels[i]
-                                    ? getChannelColor(i)
-                                    : staleColor.withOpacity(0.5),
-                              ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                    MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => toggleChannel(i),
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 4, left: 4, right: 4),
+                          child: Text(
+                            settings.channelLabels[i],
+                            textAlign: TextAlign.right,
+                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                                  color: settings.activeChannels[i]
+                                      ? getChannelColor(i)
+                                      : staleColor.withOpacity(0.5),
+                                ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ),
                     ),
@@ -423,16 +426,19 @@ class LiveStats extends StatelessWidget {
                 children: [
                   const SizedBox.shrink(),
                   for (int i = 0; i < 4; i++)
-                    GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => toggleChannel(i),
-                      child: Padding(
-                        padding: const EdgeInsets.only(bottom: 8, left: 2, right: 2),
-                        child: Container(
-                          height: 3,
-                          color: settings.activeChannels[i]
-                              ? getChannelColor(i)
-                              : staleColor.withOpacity(0.3),
+                    MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () => toggleChannel(i),
+                        child: Padding(
+                          padding: const EdgeInsets.only(bottom: 8, left: 2, right: 2),
+                          child: Container(
+                            height: 3,
+                            color: settings.activeChannels[i]
+                                ? getChannelColor(i)
+                                : staleColor.withOpacity(0.3),
+                          ),
                         ),
                       ),
                     ),
@@ -546,17 +552,20 @@ class _TableCellValue extends StatelessWidget {
         ? staleColor.withOpacity(0.4)
         : (isStale ? staleColor : null);
 
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
-        child: Text(
-          unit.formatValueOnly(displayValue),
-          textAlign: TextAlign.right,
-          style: textStyle?.copyWith(color: color),
-          maxLines: 1,
-          overflow: TextOverflow.visible,
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 2, horizontal: 2),
+          child: Text(
+            unit.formatValueOnly(displayValue),
+            textAlign: TextAlign.right,
+            style: textStyle?.copyWith(color: color),
+            maxLines: 1,
+            overflow: TextOverflow.visible,
+          ),
         ),
       ),
     );
