@@ -63,6 +63,16 @@ class SettingsTab extends StatelessWidget {
           ),
           const SizedBox(height: 24),
 
+          // Wakelock
+          SwitchListTile(
+            title: const Text('Keep screen awake'),
+            subtitle: const Text('Prevents the screen from turning off while connected to a device.'),
+            value: settings.wakelockEnabled,
+            onChanged: settings.setWakelockEnabled,
+            contentPadding: EdgeInsets.zero,
+          ),
+          const SizedBox(height: 24),
+
           // About
           Text('About', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
