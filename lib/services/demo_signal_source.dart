@@ -15,7 +15,7 @@ class DemoSignalSource {
   /// Approximate standard normal distribution via Box-Muller.
   double _gaussian() {
     double u1 = _rand.nextDouble();
-    double u2 = _rand.nextDouble();
+    final double u2 = _rand.nextDouble();
     // To avoid log(0)
     if (u1 < 1e-10) u1 = 1e-10;
     return math.sqrt(-2.0 * math.log(u1)) * math.cos(2.0 * math.pi * u2);
@@ -69,10 +69,10 @@ class DemoSignalSource {
         }
 
         // --- Channel 3: Gentle 0.2 Hz sinusoidal load ---
-        double ch3Raw = 2000000 * math.sin(2 * math.pi * 0.2 * t);
+        final double ch3Raw = 2000000 * math.sin(2 * math.pi * 0.2 * t);
 
         // --- Channel 4: Quiet noise floor ---
-        double ch4Raw = 0.0;
+        const double ch4Raw = 0.0;
 
         // Add ±100 count gaussian noise floor to all channels
         final int c1 = (ch1Raw + _gaussian() * 100).toInt().clamp(

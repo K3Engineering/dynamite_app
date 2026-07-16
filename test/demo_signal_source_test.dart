@@ -1,10 +1,10 @@
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 
-import '../lib/services/adc_protocol.dart';
-import '../lib/services/adc_packet_decoder.dart';
-import '../lib/services/data_hub.dart';
-import '../lib/services/demo_signal_source.dart';
+import 'package:dynamite_app/services/adc_protocol.dart';
+import 'package:dynamite_app/services/adc_packet_decoder.dart';
+import 'package:dynamite_app/services/data_hub.dart';
+import 'package:dynamite_app/services/demo_signal_source.dart';
 
 void main() {
   test(
@@ -15,12 +15,10 @@ void main() {
       final demoSource = DemoSignalSource();
 
       final List<Uint8List> packets = [];
-      demoSource.start((data) {
-        packets.add(data);
-      });
+      demoSource.start(packets.add);
 
       // Wait for a few timer ticks to collect packets
-      await Future.delayed(const Duration(milliseconds: 100));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
       demoSource.stop();
 
       expect(
