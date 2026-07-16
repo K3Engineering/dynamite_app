@@ -1272,6 +1272,7 @@ class GraphWorkspace extends StatefulWidget {
   final bool showDerivative;
   final bool isLiveGraph;
   final bool showMinimap;
+  final bool showZoomSpan;
 
   const GraphWorkspace({
     super.key,
@@ -1281,6 +1282,7 @@ class GraphWorkspace extends StatefulWidget {
     this.showDerivative = false,
     this.isLiveGraph = true,
     this.showMinimap = true,
+    this.showZoomSpan = true,
   });
 
   @override
@@ -1412,7 +1414,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
             // Zoom controls
             Positioned(
               right: 72,
-              bottom: 40,
+              bottom: 72,
               child: Material(
                 elevation: 4,
                 borderRadius: BorderRadius.circular(24),
@@ -1438,41 +1440,51 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                         }
                       },
                     ),
-                    ListenableBuilder(
-                      listenable: Listenable.merge([widget.ctrl, widget.data.repaint]),
-                      builder: (context, _) {
-                        final (start, end) = widget.ctrl.effectiveRange(
-                          widget.data.totalSamples,
-                          widget.data.oldestSample,
-                          bufferCapacity: widget.data.bufferCapacity,
-                        );
-                        final spanSec = (end - start) / widget.data.sampleRate;
-                        
-                        String text;
-                        if (spanSec < 1.0) {
-                          text = '${(spanSec * 1000).round()} ms';
-                        } else if (spanSec < 60.0) {
-                          text = '${spanSec.toStringAsFixed(1)} s';
-                        } else {
-                          final m = spanSec ~/ 60;
-                          final s = (spanSec % 60).floor().toString().padLeft(2, '0');
-                          text = '$m:$s';
-                        }
+                    if (widget.showZoomSpan)
+                      ListenableBuilder(
+                        listenable: Listenable.merge([
+                          widget.ctrl,
+                          widget.data.repaint,
+                        ]),
+                        builder: (context, _) {
+                          final (start, end) = widget.ctrl.effectiveRange(
+                            widget.data.totalSamples,
+                            widget.data.oldestSample,
+                            bufferCapacity: widget.data.bufferCapacity,
+                          );
+                          final spanSec =
+                              (end - start) / widget.data.sampleRate;
 
-                        return Container(
-                          width: 60,
-                          alignment: Alignment.center,
-                          child: Text(
-                            text,
-                            style: TextStyle(
-                              color: Theme.of(context).colorScheme.onPrimary,
-                              fontWeight: FontWeight.bold,
-                              fontFeatures: const [ui.FontFeature.tabularFigures()],
+                          String text;
+                          if (spanSec < 1.0) {
+                            text = '${(spanSec * 1000).round()} ms';
+                          } else if (spanSec < 60.0) {
+                            text = '${spanSec.toStringAsFixed(1)} s';
+                          } else {
+                            final m = spanSec ~/ 60;
+                            final s = (spanSec % 60).floor().toString().padLeft(
+                              2,
+                              '0',
+                            );
+                            text = '$m:$s';
+                          }
+
+                          return Container(
+                            width: 60,
+                            alignment: Alignment.center,
+                            child: Text(
+                              text,
+                              style: TextStyle(
+                                color: Theme.of(context).colorScheme.onPrimary,
+                                fontWeight: FontWeight.bold,
+                                fontFeatures: const [
+                                  ui.FontFeature.tabularFigures(),
+                                ],
+                              ),
                             ),
-                          ),
-                        );
-                      },
-                    ),
+                          );
+                        },
+                      ),
                     IconButton(
                       icon: Icon(
                         Icons.zoom_in,
@@ -1929,7 +1941,8 @@ void drawChannelEnvelope(
   // ACCURACY TRADEOFF on reduceBlockBuckets) once a block spans at least
   // two buckets.
   final buckets = series.buckets;
-  final bool useBuckets = buckets != null && blockSize >= 2 * buckets.bucketSize;
+  final bool useBuckets =
+      buckets != null && blockSize >= 2 * buckets.bucketSize;
 
   // Blocks are anchored to absolute sample 0 (sStart = k * blockSize), NOT to
   // viewStart. This is what lets a block fall on the same pixels regardless of
