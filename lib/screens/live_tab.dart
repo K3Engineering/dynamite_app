@@ -47,8 +47,9 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
   int get bufferCapacity => DataHub.maxDataSz;
 
   @override
-  int get oldestSample =>
-      _hub.totalSamples > DataHub.maxDataSz ? _hub.totalSamples - DataHub.maxDataSz : 0;
+  int get oldestSample => _hub.totalSamples > DataHub.maxDataSz
+      ? _hub.totalSamples - DataHub.maxDataSz
+      : 0;
 
   @override
   int get sampleRate => DataHub.samplesPerSec;
@@ -61,12 +62,12 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
 
   @override
   ChannelSeries channel(int channelIndex) => (
-        data: _hub.rawData[channelIndex],
-        min: _hub.rawMin[channelIndex].toDouble(),
-        max: _hub.rawMax[channelIndex].toDouble(),
-        tare: _hub.tare[channelIndex],
-        buckets: _hub.valueBuckets[channelIndex].series,
-      );
+    data: _hub.rawData[channelIndex],
+    min: _hub.rawMin[channelIndex].toDouble(),
+    max: _hub.rawMax[channelIndex].toDouble(),
+    tare: _hub.tare[channelIndex],
+    buckets: _hub.valueBuckets[channelIndex].series,
+  );
 
   @override
   BucketSeries? diffBuckets(int channelIndex) =>
@@ -77,7 +78,9 @@ class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
 }
 
 class _LiveTabState extends State<LiveTab> {
-  final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * DataHub.samplesPerSec);
+  final GraphController _graphCtrl = GraphController(
+    minLiveSpan: 20 * DataHub.samplesPerSec,
+  );
   bool _showDerivative = false;
   _LiveDataSource? _dataSource;
   DataHub? _hub;
@@ -364,17 +367,20 @@ class LiveStats extends StatelessWidget {
         // During a live gap (dropped packets) the hub reports held values;
         // gray them out so they read as stale rather than fresh readings.
         final stale = hub.liveEdgeIsGap;
-        
+
         final monoStyle = GoogleFonts.robotoMono(
           textStyle: Theme.of(context).textTheme.bodySmall,
         );
         final staleColor = Theme.of(context).colorScheme.outline;
-        final headerStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
-              fontWeight: FontWeight.bold,
-            );
+        final headerStyle = Theme.of(
+          context,
+        ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold);
 
-        void toggleChannel(int index) {
-          settings.setChannelActive(index, !settings.activeChannels[index]);
+        Future<void> toggleChannel(int index) async {
+          await settings.setChannelActive(
+            index,
+            !settings.activeChannels[index],
+          );
         }
 
         return Padding(
@@ -402,14 +408,19 @@ class LiveStats extends StatelessWidget {
                         behavior: HitTestBehavior.opaque,
                         onTap: () => toggleChannel(i),
                         child: Padding(
-                          padding: const EdgeInsets.only(bottom: 4, left: 4, right: 4),
+                          padding: const EdgeInsets.only(
+                            bottom: 4,
+                            left: 4,
+                            right: 4,
+                          ),
                           child: Text(
                             settings.channelLabels[i],
                             textAlign: TextAlign.right,
-                            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                            style: Theme.of(context).textTheme.labelSmall
+                                ?.copyWith(
                                   color: settings.activeChannels[i]
                                       ? getChannelColor(i)
-                                      : staleColor.withOpacity(0.5),
+                                      : staleColor.withValues(alpha: 0.5),
                                 ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -432,12 +443,16 @@ class LiveStats extends StatelessWidget {
                         behavior: HitTestBehavior.opaque,
                         onTap: () => toggleChannel(i),
                         child: Padding(
-                          padding: const EdgeInsets.only(bottom: 8, left: 2, right: 2),
+                          padding: const EdgeInsets.only(
+                            bottom: 8,
+                            left: 2,
+                            right: 2,
+                          ),
                           child: Container(
                             height: 3,
                             color: settings.activeChannels[i]
                                 ? getChannelColor(i)
-                                : staleColor.withOpacity(0.3),
+                                : staleColor.withValues(alpha: 0.3),
                           ),
                         ),
                       ),
@@ -457,9 +472,8 @@ class LiveStats extends StatelessWidget {
                       isActive: settings.activeChannels[i],
                       isStale: stale,
                       textStyle: GoogleFonts.robotoMono(
-                        textStyle: Theme.of(context).textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
+                        textStyle: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.bold),
                       ),
                       onTap: () => toggleChannel(i),
                     ),
@@ -476,7 +490,8 @@ class LiveStats extends StatelessWidget {
                       value: hub.peakForce(i, unit),
                       unit: unit,
                       isActive: settings.activeChannels[i],
-                      isStale: false, // Peak doesn't really get stale the same way
+                      isStale:
+                          false, // Peak doesn't really get stale the same way
                       textStyle: monoStyle,
                       onTap: () => toggleChannel(i),
                     ),
@@ -545,11 +560,11 @@ class _TableCellValue extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final staleColor = Theme.of(context).colorScheme.outline;
-    
+
     // If inactive, show dashes and dim it heavily. If active but stale, dim it lightly.
     final String displayText = isActive ? unit.formatValueOnly(value) : '--';
     final color = !isActive
-        ? staleColor.withOpacity(0.4)
+        ? staleColor.withValues(alpha: 0.4)
         : (isStale ? staleColor : null);
 
     return MouseRegion(
@@ -698,5 +713,3 @@ class ActionButtons extends StatelessWidget {
     );
   }
 }
-
-
