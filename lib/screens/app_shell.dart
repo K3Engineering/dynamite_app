@@ -2,8 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../models/app_settings.dart';
 import '../services/app_events.dart';
+import '../services/ble_link_manager.dart';
 import 'live_tab.dart';
 import 'sessions_tab.dart';
 import 'devices_tab.dart';
@@ -42,6 +45,22 @@ class AppShellState extends State<AppShell> {
   void dispose() {
     unawaited(_eventsSub?.cancel());
     super.dispose();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    
+    final settings = context.watch<AppSettings>();
+    final bleManager = context.watch<BleLinkManager>();
+    
+    final shouldKeepAwake = settings.wakelockEnabled && bleManager.isStreaming;
+    
+    if (shouldKeepAwake) {
+      unawaited(WakelockPlus.enable());
+    } else {
+      unawaited(WakelockPlus.disable());
+    }
   }
 
   void _onAppEvent(AppEvent event) {

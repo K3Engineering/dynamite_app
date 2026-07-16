@@ -11,6 +11,7 @@ class AppSettings extends ChangeNotifier {
   static const String _keyUserName = 'user_name';
   static const String _keyChannelLabels = 'channel_labels';
   static const String _keyActiveChannels = 'active_channels';
+  static const String _keyWakelock = 'wakelock_enabled';
 
   ForceUnit _displayUnit = ForceUnit.kN;
   ForceUnit get displayUnit => _displayUnit;
@@ -34,6 +35,9 @@ class AppSettings extends ChangeNotifier {
     for (int i = 0; i < _activeChannels.length; i++)
       if (_activeChannels[i]) i,
   ];
+
+  bool _wakelockEnabled = false;
+  bool get wakelockEnabled => _wakelockEnabled;
 
   AppSettings() {
     unawaited(_load());
@@ -61,6 +65,8 @@ class AppSettings extends ChangeNotifier {
     if (active != null && active.length == 4) {
       _activeChannels = active.map((s) => s == 'true').toList();
     }
+
+    _wakelockEnabled = prefs.getBool(_keyWakelock) ?? false;
 
     notifyListeners();
   }
@@ -94,5 +100,12 @@ class AppSettings extends ChangeNotifier {
       _keyActiveChannels,
       _activeChannels.map((b) => b.toString()).toList(),
     );
+  }
+
+  Future<void> setWakelockEnabled(bool enabled) async {
+    _wakelockEnabled = enabled;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyWakelock, enabled);
   }
 }
