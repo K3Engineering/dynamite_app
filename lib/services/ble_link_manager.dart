@@ -567,6 +567,21 @@ class BleLinkManager extends ChangeNotifier {
     }
   }
 
+  /// Stop the demo device and return the link to idle, synchronously.
+  ///
+  /// No GATT link exists for the demo device, so the web post-disconnect
+  /// cooldown (which only exists to let Chrome finish GATT teardown) does not
+  /// apply — the link resets straight to idle so a reconnect (or a real BLE
+  /// connect) is immediately available and the BLE indicator never shows a
+  /// demo-caused link state. Does NOT call [notifyListeners] — callers do.
+  void _stopDemo() {
+    // Supersede any in-flight setup pass (defensive; demo setup is sync).
+    _setupGeneration++;
+    _demoSource?.stop();
+    _stopRssiPolling();
+    _link.reset();
+  }
+
   Future<void> connectToDemoDevice() async {
     if (_isScanning) {
       await _stopScan();
@@ -590,6 +605,13 @@ class BleLinkManager extends ChangeNotifier {
   Future<void> connectToDevice(String deviceId) async {
     if (_isScanning) {
       await _stopScan();
+    }
+    // The demo device yields automatically: it's simulated (no GATT link), so
+    // stopping it is synchronous and free. This lets the user tap Connect on
+    // real hardware while the demo runs instead of demanding an explicit demo
+    // disconnect first.
+    if (_link.isDemoDevice) {
+      _stopDemo();
     }
     // Block connecting while a link is busy (connecting/connected/disconnecting)
     // or cooling down. The disconnecting/cooldown cases are what stop the
@@ -651,16 +673,16 @@ class BleLinkManager extends ChangeNotifier {
     }
     final String deviceId = _link.deviceId;
     final String deviceName = _link.name.isEmpty ? deviceId : _link.name;
-    // Supersede any in-flight post-connect setup pass immediately so it stops
-    // mutating state while we tear the link down.
-    _setupGeneration++;
 
     if (_link.isDemoDevice) {
-      _demoSource?.stop();
-      _endLink(_link.deviceId, _link.name);
+      _stopDemo();
       notifyListeners();
       return;
     }
+
+    // Supersede any in-flight post-connect setup pass immediately so it stops
+    // mutating state while we tear the link down.
+    _setupGeneration++;
 
     _link.state = BtLinkState.disconnecting;
     notifyListeners();
