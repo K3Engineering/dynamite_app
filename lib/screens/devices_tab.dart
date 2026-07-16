@@ -146,40 +146,21 @@ class _DevicesTabState extends State<DevicesTab> {
             const SizedBox(height: 24),
           ],
 
-          // Always-visible Demo Device Card pinned at the bottom
-          Card(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: ListTile(
-              leading: const Icon(Icons.science, color: Colors.teal),
-              title: const Text('Demo Device'),
-              subtitle: const Text('Simulated data — no hardware'),
-              trailing: FilledButton(
-                onPressed: isBusy
-                    ? null
-                    : () async {
-                        try {
-                          await bt.connectToDemoDevice();
-                        } catch (e) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Failed to connect to Demo Device.',
-                                ),
-                              ),
-                            );
-                          }
-                        }
-                      },
-                child: const Text('Connect'),
-              ),
+          // BLE devices section — always shown so the page structure stays
+          // predictable; the empty state lives inside it.
+          const Divider(),
+          const SizedBox(height: 8),
+          Text(
+            'BLE devices',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: Theme.of(context).colorScheme.secondary,
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 8),
 
-          if (!isLinkUp && bt.devices.isEmpty && !bt.isScanning)
+          if (bt.devices.isEmpty && !bt.isScanning)
             Padding(
-              padding: const EdgeInsets.only(top: 64),
+              padding: const EdgeInsets.symmetric(vertical: 24),
               child: Center(
                 child: Column(
                   children: [
@@ -204,16 +185,6 @@ class _DevicesTabState extends State<DevicesTab> {
                 ),
               ),
             ),
-
-          if (bt.devices.isNotEmpty || bt.isScanning) ...[
-            Text(
-              'Available Devices',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: Theme.of(context).colorScheme.secondary,
-              ),
-            ),
-            const SizedBox(height: 8),
-          ],
 
           for (final device in bt.devices)
             Card(
@@ -253,6 +224,47 @@ class _DevicesTabState extends State<DevicesTab> {
                 ),
               ),
             ),
+          const SizedBox(height: 16),
+
+          // Demo devices section — simulated hardware, kept at the bottom so
+          // real BLE devices get top billing.
+          const Divider(),
+          const SizedBox(height: 8),
+          Text(
+            'Demo devices',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              color: Theme.of(context).colorScheme.secondary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            color: Theme.of(context).colorScheme.surfaceContainerHighest,
+            child: ListTile(
+              leading: const Icon(Icons.science, color: Colors.teal),
+              title: const Text('Demo Device'),
+              subtitle: const Text('Simulated data — no hardware'),
+              trailing: FilledButton(
+                onPressed: isBusy
+                    ? null
+                    : () async {
+                        try {
+                          await bt.connectToDemoDevice();
+                        } catch (e) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Failed to connect to Demo Device.',
+                                ),
+                              ),
+                            );
+                          }
+                        }
+                      },
+                child: const Text('Connect'),
+              ),
+            ),
+          ),
         ],
       ),
     );
