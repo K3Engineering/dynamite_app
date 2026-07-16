@@ -81,40 +81,7 @@ class _DevicesTabState extends State<DevicesTab> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Row(
-            children: [
-              Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(width: 12),
-              // Right cluster: status text + icon + Scan button, flush right.
-              // Expanded gives the cluster the remaining width; the cluster's
-              // own Row right-aligns its content within it.
-              Expanded(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Flexible(
-                      child: BluetoothIndicator(
-                        linkState: bt.link.state,
-                        state: bt.bluetoothState,
-                        isScanning: bt.isScanning,
-                        hasDevices: bt.devices.isNotEmpty,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    // TODO(ux): see BleLinkManager._startScan — starting a
-                    // scan while streaming kills the active link (and any
-                    // in-progress recording). Decide disable-vs-confirm.
-                    FilledButton.tonal(
-                      onPressed: () async {
-                        await bt.toggleScan();
-                      },
-                      child: Text(bt.isScanning ? 'Stop' : 'Scan'),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 16),
 
           // Connected section — shown while the link is up (setting up OR
@@ -168,6 +135,31 @@ class _DevicesTabState extends State<DevicesTab> {
           const SectionHeader('BLE devices'),
           const SizedBox(height: 8),
 
+          // Centered scan controls: status text + icon + Scan button. Flexible
+          // lets long status text ellipsize on narrow screens instead of
+          // overflowing.
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Flexible(
+                child: BluetoothIndicator(
+                  linkState: bt.link.state,
+                  state: bt.bluetoothState,
+                  isScanning: bt.isScanning,
+                  hasDevices: bt.devices.isNotEmpty,
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.tonal(
+                onPressed: () async {
+                  await bt.toggleScan();
+                },
+                child: Text(bt.isScanning ? 'Stop' : 'Scan'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+
           if (bt.devices.isEmpty && !bt.isScanning)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 24),
@@ -188,7 +180,7 @@ class _DevicesTabState extends State<DevicesTab> {
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      'Tap Scan at the top to search for nearby devices',
+                      'Tap Scan to search for nearby devices',
                       style: TextStyle(color: Colors.grey.shade500),
                     ),
                   ],
