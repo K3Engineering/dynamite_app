@@ -49,11 +49,16 @@ class GapList {
   /// appends after it.
   void append(int start, int end) {
     if (end <= start) return;
-    assert(_bounds.isEmpty || start >= _bounds.last, 'append must be at the live edge');
+    assert(
+      _bounds.isEmpty || start >= _bounds.last,
+      'append must be at the live edge',
+    );
     if (_bounds.isNotEmpty && _bounds.last == start) {
       _bounds[_bounds.length - 1] = end; // extend the trailing range
     } else {
-      _bounds..add(start)..add(end);
+      _bounds
+        ..add(start)
+        ..add(end);
     }
   }
 
@@ -74,8 +79,8 @@ class GapList {
 
   /// JSON-encode as `[[start,end],...]`.
   String toJson() => jsonEncode([
-        for (int k = 0; k < _bounds.length; k += 2) [_bounds[k], _bounds[k + 1]],
-      ]);
+    for (int k = 0; k < _bounds.length; k += 2) [_bounds[k], _bounds[k + 1]],
+  ]);
 
   /// Parse the [toJson] format. Malformed input yields an empty list.
   factory GapList.fromJson(String json) {

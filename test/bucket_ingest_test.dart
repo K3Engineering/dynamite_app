@@ -153,9 +153,21 @@ void main() {
           expect(hubVal.mins[b], sessVal.mins[b], reason: 'ch $ch val min $b');
           expect(hubVal.maxs[b], sessVal.maxs[b], reason: 'ch $ch val max $b');
           expect(hubVal.sums[b], sessVal.sums[b], reason: 'ch $ch val sum $b');
-          expect(hubDiff.mins[b], sessDiff.mins[b], reason: 'ch $ch dif min $b');
-          expect(hubDiff.maxs[b], sessDiff.maxs[b], reason: 'ch $ch dif max $b');
-          expect(hubDiff.sums[b], sessDiff.sums[b], reason: 'ch $ch dif sum $b');
+          expect(
+            hubDiff.mins[b],
+            sessDiff.mins[b],
+            reason: 'ch $ch dif min $b',
+          );
+          expect(
+            hubDiff.maxs[b],
+            sessDiff.maxs[b],
+            reason: 'ch $ch dif max $b',
+          );
+          expect(
+            hubDiff.sums[b],
+            sessDiff.sums[b],
+            reason: 'ch $ch dif sum $b',
+          );
         }
       }
     });

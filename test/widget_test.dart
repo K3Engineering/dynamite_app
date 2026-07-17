@@ -80,15 +80,17 @@ void main() {
     expect(find.byType(NavigationDestination), findsNWidgets(4));
   });
 
-  testWidgets('Live tab shows the connect prompt with no device linked',
-      (tester) async {
+  testWidgets('Live tab shows the connect prompt with no device linked', (
+    tester,
+  ) async {
     await pumpApp(tester);
 
     expect(find.text('Connect a device'), findsOneWidget);
   });
 
-  testWidgets('switching to the Devices tab shows the scan affordance',
-      (tester) async {
+  testWidgets('switching to the Devices tab shows the scan affordance', (
+    tester,
+  ) async {
     await pumpApp(tester);
 
     // Devices is the 3rd destination (Live, Sessions, Devices, Settings).
@@ -106,10 +108,7 @@ void main() {
     // findsWidgets), and the Scan toggle button is shown.
     expect(find.text('Devices'), findsWidgets);
     expect(
-      find.ancestor(
-        of: find.text('Scan'),
-        matching: find.byType(FilledButton),
-      ),
+      find.ancestor(of: find.text('Scan'), matching: find.byType(FilledButton)),
       findsOneWidget,
     );
   });

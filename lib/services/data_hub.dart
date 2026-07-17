@@ -19,7 +19,6 @@ import '../models/gap_list.dart';
 /// the previous sample's value across a gap, so every stored value is a real
 /// ADC reading and downstream consumers need no magic-value checks.
 class DataHub extends ChangeNotifier {
-
   /// Number of ADC channels the device streams. This is also the number of
   /// lines stored and displayed: channel index == storage index == display index.
   static const int numAdcChannels = nwNumAdcChan;

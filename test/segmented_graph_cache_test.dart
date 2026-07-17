@@ -61,10 +61,8 @@ class _Harness {
     return result;
   }
 
-  List<RenderCall> get bakes =>
-      calls.where((c) => !c.onFrameCanvas).toList();
-  List<RenderCall> get gapDraws =>
-      calls.where((c) => c.onFrameCanvas).toList();
+  List<RenderCall> get bakes => calls.where((c) => !c.onFrameCanvas).toList();
+  List<RenderCall> get gapDraws => calls.where((c) => c.onFrameCanvas).toList();
 
   void dispose() => cache.dispose();
 }
@@ -79,9 +77,7 @@ void main() {
     test('spends one bake per frame until the view is covered', () {
       // 400 uncovered samples at 1 px/sample => two 200-sample target bakes.
       expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isTrue);
-      expect(h.bakes, [
-        (start: 0, end: 200, texW: 200, onFrameCanvas: false),
-      ]);
+      expect(h.bakes, [(start: 0, end: 200, texW: 200, onFrameCanvas: false)]);
       // The still-uncovered remainder is vector-drawn on the frame canvas.
       expect(h.gapDraws, [
         (start: 200, end: 400, texW: 200, onFrameCanvas: true),
@@ -97,8 +93,7 @@ void main() {
       expect(h.calls, isEmpty);
     });
 
-    test('gaps wider than maxDirectGapPx are left blank, not vector-drawn',
-        () {
+    test('gaps wider than maxDirectGapPx are left blank, not vector-drawn', () {
       h.paint(
         viewStart: 0,
         viewSpan: 400,
@@ -247,8 +242,7 @@ void main() {
   });
 
   group('SegmentedGraphCache eviction', () {
-    test('segments far outside the view are evicted and re-bake on return',
-        () {
+    test('segments far outside the view are evicted and re-bake on return', () {
       h.paint(viewStart: 0, viewSpan: 400, totalSamples: 4400);
       h.paint(viewStart: 0, viewSpan: 400, totalSamples: 4400);
       // Steady at the origin.

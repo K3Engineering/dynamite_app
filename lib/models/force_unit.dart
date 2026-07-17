@@ -16,13 +16,13 @@ enum ForceUnit {
   static const double rawToMvMultiplier = (1.2 / 8388608.0 / 101.0) * 1000.0;
 
   double get _kgfMultiplier => switch (this) {
-        ForceUnit.kgf => 1.0,
-        ForceUnit.n => 9.80665,
-        ForceUnit.kN => 9.80665 / 1000.0,
-        ForceUnit.lbf => 2.20462,
-        ForceUnit.mV => 1.0, // Fallback, not typically used
-        ForceUnit.raw => 1.0, // Fallback, not typically used
-      };
+    ForceUnit.kgf => 1.0,
+    ForceUnit.n => 9.80665,
+    ForceUnit.kN => 9.80665 / 1000.0,
+    ForceUnit.lbf => 2.20462,
+    ForceUnit.mV => 1.0, // Fallback, not typically used
+    ForceUnit.raw => 1.0, // Fallback, not typically used
+  };
 
   /// Convert a value in kgf (the device's native calibrated unit) to this unit.
   double fromKgf(double kgf) => kgf * _kgfMultiplier;

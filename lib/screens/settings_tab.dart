@@ -66,7 +66,9 @@ class SettingsTab extends StatelessWidget {
           // Wakelock
           SwitchListTile(
             title: const Text('Keep screen awake'),
-            subtitle: const Text('Prevents the screen from turning off while connected to a device.'),
+            subtitle: const Text(
+              'Prevents the screen from turning off while connected to a device.',
+            ),
             value: settings.wakelockEnabled,
             onChanged: settings.setWakelockEnabled,
             contentPadding: EdgeInsets.zero,

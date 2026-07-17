@@ -52,8 +52,7 @@ void main() {
       ]);
     });
 
-    test('a second flush with no new vertices is a no-op (no double draw)',
-        () {
+    test('a second flush with no new vertices is a no-op (no double draw)', () {
       // preserveFloats == drawThreshold, as in _envelopeBatchers.
       final (batcher, flushes) = makeBatcher(
         preserveFloats: 2,
@@ -99,24 +98,26 @@ void main() {
       expect(flushes[1], [2, 12, 3, 13]);
     });
 
-    test('triangle strip (preserveFloats: 4) carries the last two vertices',
-        () {
-      final (batcher, flushes) = makeBatcher(
-        preserveFloats: 4,
-        drawThreshold: 4,
-      );
-      for (int i = 0; i < 4; i++) {
-        batcher.add(i.toDouble(), 100.0 + i);
-      }
-      batcher.flush();
-      expect(flushes.single, [0, 100, 1, 101, 2, 102, 3, 103]);
+    test(
+      'triangle strip (preserveFloats: 4) carries the last two vertices',
+      () {
+        final (batcher, flushes) = makeBatcher(
+          preserveFloats: 4,
+          drawThreshold: 4,
+        );
+        for (int i = 0; i < 4; i++) {
+          batcher.add(i.toDouble(), 100.0 + i);
+        }
+        batcher.flush();
+        expect(flushes.single, [0, 100, 1, 101, 2, 102, 3, 103]);
 
-      batcher.add(4, 104);
-      batcher.flush();
-      // Last two vertices of the previous chunk + the new one: the strip's
-      // shared edge is preserved across the flush boundary.
-      expect(flushes[1], [2, 102, 3, 103, 4, 104]);
-    });
+        batcher.add(4, 104);
+        batcher.flush();
+        // Last two vertices of the previous chunk + the new one: the strip's
+        // shared edge is preserved across the flush boundary.
+        expect(flushes[1], [2, 102, 3, 103, 4, 104]);
+      },
+    );
   });
 
   group('VertexBatcher.wouldOverflow', () {

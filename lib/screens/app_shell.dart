@@ -50,12 +50,12 @@ class AppShellState extends State<AppShell> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    
+
     final settings = context.watch<AppSettings>();
     final bleManager = context.watch<BleLinkManager>();
-    
+
     final shouldKeepAwake = settings.wakelockEnabled && bleManager.isStreaming;
-    
+
     if (shouldKeepAwake) {
       unawaited(WakelockPlus.enable());
     } else {

@@ -75,8 +75,7 @@ void main() {
   });
 
   group('MockBlePlatform feed round-trip', () {
-    test('connect -> decode -> DataHub with no gaps (dropEveryNPackets = 0)',
-        () {
+    test('connect -> decode -> DataHub with no gaps (dropEveryNPackets = 0)', () {
       fakeAsync((async) {
         MockBlePlatform.instance.dropEveryNPackets = 0;
         final (hub, link, teardown) = wire(async: async);

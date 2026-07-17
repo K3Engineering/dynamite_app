@@ -172,7 +172,8 @@ class MockBlePlatform extends UniversalBlePlatform {
         // we deliver this packet, so a dropped packet produces a real gap.
         _packetCount = (_packetCount + nwAdcNumSamples) & 0xFFFF;
 
-        final bool drop = dropEveryNPackets > 0 &&
+        final bool drop =
+            dropEveryNPackets > 0 &&
             _generatedPacketCount > 0 &&
             (_generatedPacketCount % dropEveryNPackets) == 0;
         _generatedPacketCount++;

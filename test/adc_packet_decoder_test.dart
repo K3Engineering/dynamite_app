@@ -68,17 +68,19 @@ void main() {
       expect(hub.rawData[0][nwAdcNumSamples - 1], 10);
     });
 
-    test('consecutive packets with counter += nwAdcNumSamples report no gap',
-        () {
-      decoder.onDataPacket(makePacket(0, (s, c) => 1));
-      decoder.onDataPacket(makePacket(nwAdcNumSamples, (s, c) => 2));
-      decoder.onDataPacket(makePacket(2 * nwAdcNumSamples, (s, c) => 3));
+    test(
+      'consecutive packets with counter += nwAdcNumSamples report no gap',
+      () {
+        decoder.onDataPacket(makePacket(0, (s, c) => 1));
+        decoder.onDataPacket(makePacket(nwAdcNumSamples, (s, c) => 2));
+        decoder.onDataPacket(makePacket(2 * nwAdcNumSamples, (s, c) => 3));
 
-      expect(hub.totalSamples, 3 * nwAdcNumSamples);
-      expect(hub.gaps.contains(0), isFalse);
-      expect(hub.gaps.contains(nwAdcNumSamples), isFalse);
-      expect(hub.gaps.contains(2 * nwAdcNumSamples), isFalse);
-    });
+        expect(hub.totalSamples, 3 * nwAdcNumSamples);
+        expect(hub.gaps.contains(0), isFalse);
+        expect(hub.gaps.contains(nwAdcNumSamples), isFalse);
+        expect(hub.gaps.contains(2 * nwAdcNumSamples), isFalse);
+      },
+    );
 
     test('a counter jump injects the dropped range into DataHub.gaps', () {
       // Packet 0 covers samples [0, 20) (counter = 0). The next packet's

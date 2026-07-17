@@ -23,10 +23,10 @@ class RecordingController extends ChangeNotifier {
     required BleLinkManager linkManager,
     required AdcPacketDecoder decoder,
     required AppEvents events,
-  })  : _dataHub = dataHub,
-        _linkManager = linkManager,
-        _decoder = decoder,
-        _events = events {
+  }) : _dataHub = dataHub,
+       _linkManager = linkManager,
+       _decoder = decoder,
+       _events = events {
     _dataHub.onSamplesAppended = _onSamplesAppended;
     _linkManager.addListener(_onLinkChanged);
   }

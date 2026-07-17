@@ -103,21 +103,24 @@ void main() {
       }
     });
 
-    test('aliased head bucket is reduced exactly, never from the stale slot', () {
-      // Deterministic poison: old data is a constant 10; the wrapped live
-      // edge writes huge values into the slot the oldest visible bucket
-      // would hash to. Reading the stale slot would drag max to ~10133.
-      const int n = 134;
-      final all = List<int>.generate(n, (i) => i < 80 ? 10 : 10000 + i);
-      final series = buildSeries(all);
-      // bNow = 13, firstValidBucket = 6; oldest retained sample = 54.
-      // Block [55, 70): samples 55..69 are all 10; bucket 5's slot (5 % 8)
-      // now holds bucket 13's data (10130..10133).
-      final b = reduceBlockBuckets(series, 55, 70);
-      final e = reduceBlockExact(series.sampleAt, 55, 70);
-      expectSameReduction(b, e);
-      expect(b.max, 10); // would be 10133 if the stale slot were read
-    });
+    test(
+      'aliased head bucket is reduced exactly, never from the stale slot',
+      () {
+        // Deterministic poison: old data is a constant 10; the wrapped live
+        // edge writes huge values into the slot the oldest visible bucket
+        // would hash to. Reading the stale slot would drag max to ~10133.
+        const int n = 134;
+        final all = List<int>.generate(n, (i) => i < 80 ? 10 : 10000 + i);
+        final series = buildSeries(all);
+        // bNow = 13, firstValidBucket = 6; oldest retained sample = 54.
+        // Block [55, 70): samples 55..69 are all 10; bucket 5's slot (5 % 8)
+        // now holds bucket 13's data (10130..10133).
+        final b = reduceBlockBuckets(series, 55, 70);
+        final e = reduceBlockExact(series.sampleAt, 55, 70);
+        expectSameReduction(b, e);
+        expect(b.max, 10); // would be 10133 if the stale slot were read
+      },
+    );
   });
 
   group('foldBucketRange', () {
