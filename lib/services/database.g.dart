@@ -195,6 +195,18 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     requiredDuringInsert: false,
     defaultValue: const Constant('[]'),
   );
+  static const VerificationMeta _visibleChannelsMeta = const VerificationMeta(
+    'visibleChannels',
+  );
+  @override
+  late final GeneratedColumn<String> visibleChannels = GeneratedColumn<String>(
+    'visible_channels',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('[true,true,true,true]'),
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -213,6 +225,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     sampleCount,
     isCompleted,
     gaps,
+    visibleChannels,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -345,6 +358,15 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         gaps.isAcceptableOrUnknown(data['gaps']!, _gapsMeta),
       );
     }
+    if (data.containsKey('visible_channels')) {
+      context.handle(
+        _visibleChannelsMeta,
+        visibleChannels.isAcceptableOrUnknown(
+          data['visible_channels']!,
+          _visibleChannelsMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -418,6 +440,10 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.string,
         data['${effectivePrefix}gaps'],
       )!,
+      visibleChannels: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}visible_channels'],
+      )!,
     );
   }
 
@@ -447,6 +473,11 @@ class Session extends DataClass implements Insertable<Session> {
   /// Dropped-sample ranges as JSON `[[start,end],...]`, session-relative,
   /// half-open. The chunk data holds held values across these ranges.
   final String gaps;
+
+  /// Which channels are shown in the session detail view, as a JSON bool
+  /// list. Initialized from the live view's channel selection at recording
+  /// time; afterwards it is per-session and independent of the live view.
+  final String visibleChannels;
   const Session({
     required this.id,
     required this.name,
@@ -464,6 +495,7 @@ class Session extends DataClass implements Insertable<Session> {
     required this.sampleCount,
     required this.isCompleted,
     required this.gaps,
+    required this.visibleChannels,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -484,6 +516,7 @@ class Session extends DataClass implements Insertable<Session> {
     map['sample_count'] = Variable<int>(sampleCount);
     map['is_completed'] = Variable<bool>(isCompleted);
     map['gaps'] = Variable<String>(gaps);
+    map['visible_channels'] = Variable<String>(visibleChannels);
     return map;
   }
 
@@ -505,6 +538,7 @@ class Session extends DataClass implements Insertable<Session> {
       sampleCount: Value(sampleCount),
       isCompleted: Value(isCompleted),
       gaps: Value(gaps),
+      visibleChannels: Value(visibleChannels),
     );
   }
 
@@ -530,6 +564,7 @@ class Session extends DataClass implements Insertable<Session> {
       sampleCount: serializer.fromJson<int>(json['sampleCount']),
       isCompleted: serializer.fromJson<bool>(json['isCompleted']),
       gaps: serializer.fromJson<String>(json['gaps']),
+      visibleChannels: serializer.fromJson<String>(json['visibleChannels']),
     );
   }
   @override
@@ -552,6 +587,7 @@ class Session extends DataClass implements Insertable<Session> {
       'sampleCount': serializer.toJson<int>(sampleCount),
       'isCompleted': serializer.toJson<bool>(isCompleted),
       'gaps': serializer.toJson<String>(gaps),
+      'visibleChannels': serializer.toJson<String>(visibleChannels),
     };
   }
 
@@ -572,6 +608,7 @@ class Session extends DataClass implements Insertable<Session> {
     int? sampleCount,
     bool? isCompleted,
     String? gaps,
+    String? visibleChannels,
   }) => Session(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -589,6 +626,7 @@ class Session extends DataClass implements Insertable<Session> {
     sampleCount: sampleCount ?? this.sampleCount,
     isCompleted: isCompleted ?? this.isCompleted,
     gaps: gaps ?? this.gaps,
+    visibleChannels: visibleChannels ?? this.visibleChannels,
   );
   Session copyWithCompanion(SessionsCompanion data) {
     return Session(
@@ -628,6 +666,9 @@ class Session extends DataClass implements Insertable<Session> {
           ? data.isCompleted.value
           : this.isCompleted,
       gaps: data.gaps.present ? data.gaps.value : this.gaps,
+      visibleChannels: data.visibleChannels.present
+          ? data.visibleChannels.value
+          : this.visibleChannels,
     );
   }
 
@@ -649,7 +690,8 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('notes: $notes, ')
           ..write('sampleCount: $sampleCount, ')
           ..write('isCompleted: $isCompleted, ')
-          ..write('gaps: $gaps')
+          ..write('gaps: $gaps, ')
+          ..write('visibleChannels: $visibleChannels')
           ..write(')'))
         .toString();
   }
@@ -672,6 +714,7 @@ class Session extends DataClass implements Insertable<Session> {
     sampleCount,
     isCompleted,
     gaps,
+    visibleChannels,
   );
   @override
   bool operator ==(Object other) =>
@@ -692,7 +735,8 @@ class Session extends DataClass implements Insertable<Session> {
           other.notes == this.notes &&
           other.sampleCount == this.sampleCount &&
           other.isCompleted == this.isCompleted &&
-          other.gaps == this.gaps);
+          other.gaps == this.gaps &&
+          other.visibleChannels == this.visibleChannels);
 }
 
 class SessionsCompanion extends UpdateCompanion<Session> {
@@ -712,6 +756,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<int> sampleCount;
   final Value<bool> isCompleted;
   final Value<String> gaps;
+  final Value<String> visibleChannels;
   const SessionsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
@@ -729,6 +774,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.sampleCount = const Value.absent(),
     this.isCompleted = const Value.absent(),
     this.gaps = const Value.absent(),
+    this.visibleChannels = const Value.absent(),
   });
   SessionsCompanion.insert({
     this.id = const Value.absent(),
@@ -747,6 +793,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.sampleCount = const Value.absent(),
     this.isCompleted = const Value.absent(),
     this.gaps = const Value.absent(),
+    this.visibleChannels = const Value.absent(),
   }) : createdAt = Value(createdAt);
   static Insertable<Session> custom({
     Expression<int>? id,
@@ -765,6 +812,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<int>? sampleCount,
     Expression<bool>? isCompleted,
     Expression<String>? gaps,
+    Expression<String>? visibleChannels,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -783,6 +831,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (sampleCount != null) 'sample_count': sampleCount,
       if (isCompleted != null) 'is_completed': isCompleted,
       if (gaps != null) 'gaps': gaps,
+      if (visibleChannels != null) 'visible_channels': visibleChannels,
     });
   }
 
@@ -803,6 +852,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<int>? sampleCount,
     Value<bool>? isCompleted,
     Value<String>? gaps,
+    Value<String>? visibleChannels,
   }) {
     return SessionsCompanion(
       id: id ?? this.id,
@@ -821,6 +871,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       sampleCount: sampleCount ?? this.sampleCount,
       isCompleted: isCompleted ?? this.isCompleted,
       gaps: gaps ?? this.gaps,
+      visibleChannels: visibleChannels ?? this.visibleChannels,
     );
   }
 
@@ -875,6 +926,9 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     if (gaps.present) {
       map['gaps'] = Variable<String>(gaps.value);
     }
+    if (visibleChannels.present) {
+      map['visible_channels'] = Variable<String>(visibleChannels.value);
+    }
     return map;
   }
 
@@ -896,7 +950,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('notes: $notes, ')
           ..write('sampleCount: $sampleCount, ')
           ..write('isCompleted: $isCompleted, ')
-          ..write('gaps: $gaps')
+          ..write('gaps: $gaps, ')
+          ..write('visibleChannels: $visibleChannels')
           ..write(')'))
         .toString();
   }
@@ -1199,6 +1254,7 @@ typedef $$SessionsTableCreateCompanionBuilder =
       Value<int> sampleCount,
       Value<bool> isCompleted,
       Value<String> gaps,
+      Value<String> visibleChannels,
     });
 typedef $$SessionsTableUpdateCompanionBuilder =
     SessionsCompanion Function({
@@ -1218,6 +1274,7 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<int> sampleCount,
       Value<bool> isCompleted,
       Value<String> gaps,
+      Value<String> visibleChannels,
     });
 
 class $$SessionsTableFilterComposer
@@ -1306,6 +1363,11 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<String> get gaps => $composableBuilder(
     column: $table.gaps,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get visibleChannels => $composableBuilder(
+    column: $table.visibleChannels,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1398,6 +1460,11 @@ class $$SessionsTableOrderingComposer
     column: $table.gaps,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get visibleChannels => $composableBuilder(
+    column: $table.visibleChannels,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SessionsTableAnnotationComposer
@@ -1476,6 +1543,11 @@ class $$SessionsTableAnnotationComposer
 
   GeneratedColumn<String> get gaps =>
       $composableBuilder(column: $table.gaps, builder: (column) => column);
+
+  GeneratedColumn<String> get visibleChannels => $composableBuilder(
+    column: $table.visibleChannels,
+    builder: (column) => column,
+  );
 }
 
 class $$SessionsTableTableManager
@@ -1522,6 +1594,7 @@ class $$SessionsTableTableManager
                 Value<int> sampleCount = const Value.absent(),
                 Value<bool> isCompleted = const Value.absent(),
                 Value<String> gaps = const Value.absent(),
+                Value<String> visibleChannels = const Value.absent(),
               }) => SessionsCompanion(
                 id: id,
                 name: name,
@@ -1539,6 +1612,7 @@ class $$SessionsTableTableManager
                 sampleCount: sampleCount,
                 isCompleted: isCompleted,
                 gaps: gaps,
+                visibleChannels: visibleChannels,
               ),
           createCompanionCallback:
               ({
@@ -1558,6 +1632,7 @@ class $$SessionsTableTableManager
                 Value<int> sampleCount = const Value.absent(),
                 Value<bool> isCompleted = const Value.absent(),
                 Value<String> gaps = const Value.absent(),
+                Value<String> visibleChannels = const Value.absent(),
               }) => SessionsCompanion.insert(
                 id: id,
                 name: name,
@@ -1575,6 +1650,7 @@ class $$SessionsTableTableManager
                 sampleCount: sampleCount,
                 isCompleted: isCompleted,
                 gaps: gaps,
+                visibleChannels: visibleChannels,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

@@ -23,12 +23,10 @@ class AppSettings extends ChangeNotifier {
   List<String> _channelLabels = ['Load Cell 1', 'Load Cell 2', 'Ch 3', 'Ch 4'];
   List<String> get channelLabels => List.unmodifiable(_channelLabels);
 
-  /// Which channels are active (shown in live view and recorded).
+  /// Which channels are shown in the live view. Local to the live tab —
+  /// each recorded session carries its own visibility set.
   List<bool> _activeChannels = [true, true, false, false];
   List<bool> get activeChannels => List.unmodifiable(_activeChannels);
-
-  /// Number of currently active channels.
-  int get activeChannelCount => _activeChannels.where((c) => c).length;
 
   /// Indices of active channels.
   List<int> get activeChannelIndices => [

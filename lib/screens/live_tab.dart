@@ -3,9 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
 import '../models/bucket_series.dart';
-import '../models/force_unit.dart';
 import '../models/gap_list.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
@@ -13,6 +11,7 @@ import '../services/database.dart';
 import '../services/recording_controller.dart';
 import '../services/session_storage.dart';
 import '../screens/app_shell.dart';
+import '../widgets/channel_stats_table.dart';
 import '../widgets/graph_components.dart';
 
 // ---------------------------------------------------------------------------
@@ -164,7 +163,7 @@ class _LiveTabState extends State<LiveTab> {
           dataHub: hub,
           name: autoName,
           channelLabels: settings.channelLabels,
-          channelCount: settings.activeChannelCount,
+          visibleChannels: settings.activeChannels,
         );
         await recording.startSession(writer);
       } catch (e) {
@@ -266,6 +265,7 @@ class _LiveTabState extends State<LiveTab> {
       data: _dataSource!,
       ctrl: _graphCtrl,
       settings: settings,
+      activeChannels: settings.activeChannelIndices,
       showDerivative: _showDerivative,
     );
   }
@@ -368,232 +368,36 @@ class LiveStats extends StatelessWidget {
         // gray them out so they read as stale rather than fresh readings.
         final stale = hub.liveEdgeIsGap;
 
-        final monoStyle = GoogleFonts.robotoMono(
-          textStyle: Theme.of(context).textTheme.bodySmall,
-        );
-        final staleColor = Theme.of(context).colorScheme.outline;
-        final headerStyle = Theme.of(
-          context,
-        ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold);
-
-        Future<void> toggleChannel(int index) async {
-          await settings.setChannelActive(
-            index,
-            !settings.activeChannels[index],
-          );
-        }
-
-        return Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          child: Stack(
-            children: [
-              Table(
-                columnWidths: const {
-                  0: IntrinsicColumnWidth(), // Row labels
-                  1: FlexColumnWidth(),
-                  2: FlexColumnWidth(),
-                  3: FlexColumnWidth(),
-                  4: FlexColumnWidth(),
-                },
-                defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-                children: [
-                  // -----------------------------------------------------------
-                  // Channel Labels
-                  // -----------------------------------------------------------
-                  TableRow(
-                    children: [
-                      const SizedBox.shrink(), // Empty top-left corner
-                      for (int i = 0; i < 4; i++)
-                        MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () => toggleChannel(i),
-                            child: Padding(
-                              padding: const EdgeInsets.only(
-                                bottom: 4,
-                                left: 4,
-                                right: 4,
-                              ),
-                              child: Text(
-                                settings.channelLabels[i],
-                                textAlign: TextAlign.right,
-                                style: Theme.of(context).textTheme.labelSmall
-                                    ?.copyWith(
-                                      color: settings.activeChannels[i]
-                                          ? getChannelColor(i)
-                                          : staleColor.withValues(alpha: 0.5),
-                                    ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  // -----------------------------------------------------------
-                  // Horizontal Colored Lines
-                  // -----------------------------------------------------------
-                  TableRow(
-                    children: [
-                      const SizedBox.shrink(),
-                      for (int i = 0; i < 4; i++)
-                        MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: () => toggleChannel(i),
-                            child: Padding(
-                              padding: const EdgeInsets.only(
-                                bottom: 8,
-                                left: 2,
-                                right: 2,
-                              ),
-                              child: Container(
-                                height: 3,
-                                color: settings.activeChannels[i]
-                                    ? getChannelColor(i)
-                                    : staleColor.withValues(alpha: 0.3),
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                  // -----------------------------------------------------------
-                  // Live Value
-                  // -----------------------------------------------------------
-                  TableRow(
-                    children: [
-                      Text('Live', style: headerStyle),
-                      for (int i = 0; i < 4; i++)
-                        _TableCellValue(
-                          value: hub.currentForce(i, unit),
-                          unit: unit,
-                          isActive: settings.activeChannels[i],
-                          isStale: stale,
-                          textStyle: GoogleFonts.robotoMono(
-                            textStyle: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.bold),
-                          ),
-                          onTap: () => toggleChannel(i),
-                        ),
-                    ],
-                  ),
-                  // -----------------------------------------------------------
-                  // Peak Value
-                  // -----------------------------------------------------------
-                  TableRow(
-                    children: [
-                      Text('Peak', style: headerStyle),
-                      for (int i = 0; i < 4; i++)
-                        _TableCellValue(
-                          value: hub.peakForce(i, unit),
-                          unit: unit,
-                          isActive: settings.activeChannels[i],
-                          isStale:
-                              false, // Peak doesn't really get stale the same way
-                          textStyle: monoStyle,
-                          onTap: () => toggleChannel(i),
-                        ),
-                    ],
-                  ),
-                  // -----------------------------------------------------------
-                  // AC RMS
-                  // -----------------------------------------------------------
-                  TableRow(
-                    children: [
-                      Text('AC RMS', style: headerStyle),
-                      for (int i = 0; i < 4; i++)
-                        _TableCellValue(
-                          value: hub.acRmsForce(i, unit),
-                          unit: unit,
-                          isActive: settings.activeChannels[i],
-                          isStale: false,
-                          textStyle: monoStyle,
-                          onTap: () => toggleChannel(i),
-                        ),
-                    ],
-                  ),
-                  // -----------------------------------------------------------
-                  // dF/dt (Optional)
-                  // -----------------------------------------------------------
-                  if (showDerivative)
-                    TableRow(
-                      children: [
-                        Text('dF/dt', style: headerStyle),
-                        for (int i = 0; i < 4; i++)
-                          _TableCellValue(
-                            value: hub.currentDerivative(i, unit),
-                            unit: unit,
-                            isActive: settings.activeChannels[i],
-                            isStale: stale,
-                            textStyle: monoStyle,
-                            onTap: () => toggleChannel(i),
-                          ),
-                      ],
-                    ),
+        return ChannelStatsTable(
+          labels: settings.channelLabels,
+          activeChannels: settings.activeChannels,
+          onToggleChannel: (i) =>
+              settings.setChannelActive(i, !settings.activeChannels[i]),
+          unit: unit,
+          rows: [
+            ChannelStatsRow(
+              label: 'Live',
+              values: [
+                for (int i = 0; i < 4; i++) hub.currentForce(i, unit),
+              ],
+              emphasized: true,
+              stale: stale,
+            ),
+            ChannelStatsRow(
+              label: 'Peak',
+              values: [for (int i = 0; i < 4; i++) hub.peakForce(i, unit)],
+            ),
+            if (showDerivative)
+              ChannelStatsRow(
+                label: 'dF/dt',
+                values: [
+                  for (int i = 0; i < 4; i++) hub.currentDerivative(i, unit),
                 ],
+                stale: stale,
               ),
-              // Unit overlay, anchored to the top-left corner, sitting just
-              // below the channel labels and above the Live row.
-              Positioned(
-                top: 13,
-                left: 0,
-                child: Text('In ${unit.symbol}', style: headerStyle),
-              ),
-            ],
-          ),
+          ],
         );
       },
-    );
-  }
-}
-
-class _TableCellValue extends StatelessWidget {
-  const _TableCellValue({
-    required this.value,
-    required this.unit,
-    required this.isActive,
-    required this.isStale,
-    required this.textStyle,
-    this.onTap,
-  });
-
-  final double value;
-  final ForceUnit unit;
-  final bool isActive;
-  final bool isStale;
-  final TextStyle? textStyle;
-  final VoidCallback? onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final staleColor = Theme.of(context).colorScheme.outline;
-
-    // If inactive, show dashes and dim it heavily. If active but stale, dim it lightly.
-    final String displayText = isActive ? unit.formatValueOnly(value) : '--';
-    final color = !isActive
-        ? staleColor.withValues(alpha: 0.4)
-        : (isStale ? staleColor : null);
-
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 1, horizontal: 1),
-          child: Text(
-            displayText,
-            textAlign: TextAlign.right,
-            style: textStyle?.copyWith(color: color),
-            maxLines: 1,
-            overflow: TextOverflow.visible,
-          ),
-        ),
-      ),
     );
   }
 }

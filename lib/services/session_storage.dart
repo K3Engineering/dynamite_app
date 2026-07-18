@@ -18,13 +18,15 @@ class SessionStorage {
   /// sample slices via [LiveSessionWriter.appendData] as data arrives and is
   /// passed to [finalizeSession] when recording stops.
   ///
-  /// Note: every session stores all [DataHub.numAdcChannels]; [channelCount]
-  /// and [channelLabels] are retained for display only.
+  /// Note: every session stores all [DataHub.numAdcChannels]; [channelLabels]
+  /// and [visibleChannels] are retained for display only. [visibleChannels]
+  /// seeds the session detail view's channel selection (usually the live
+  /// view's current set); it can be changed per session afterwards.
   static Future<LiveSessionWriter> startSession({
     required DataHub dataHub,
     required String name,
     required List<String> channelLabels,
-    required int channelCount,
+    required List<bool> visibleChannels,
     String notes = '',
   }) async {
     // Snapshot the tare once; the same values are persisted below and used by
@@ -43,6 +45,7 @@ class SessionStorage {
       calibrationSlope: dataHub.deviceCalibration.slope,
       calibrationOffset: dataHub.deviceCalibration.offset,
       notes: notes,
+      visibleChannels: jsonEncode(visibleChannels),
     );
 
     return LiveSessionWriter(sessionId, tare);

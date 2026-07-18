@@ -214,38 +214,6 @@ class DataHub extends ChangeNotifier {
     );
   }
 
-  /// Get the AC RMS for a given ADC channel in the specified unit over the last 1 second window.
-  double acRmsForce(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels || totalSamples == 0) {
-      return 0;
-    }
-
-    final int count = math.min(samplesPerSec, totalSamples);
-    final lineData = rawData[adcChannel];
-    final startIdx = totalSamples - count;
-
-    double sum = 0;
-    int validCount = 0;
-    for (int i = startIdx; i < totalSamples; i++) {
-      if (gaps.contains(i)) continue; // held value, not a real reading
-      sum += lineData[i % maxDataSz];
-      validCount++;
-    }
-
-    if (validCount == 0) return 0;
-    final mean = sum / validCount;
-
-    double sumSq = 0;
-    for (int i = startIdx; i < totalSamples; i++) {
-      if (gaps.contains(i)) continue;
-      final diff = lineData[i % maxDataSz] - mean;
-      sumSq += diff * diff;
-    }
-    final rmsRaw = math.sqrt(sumSq / validCount);
-
-    return unit.fromRaw(rmsRaw, deviceCalibration.slope);
-  }
-
   void _addTare(int val, int idx) {
     _runningTotal[idx] += val;
   }

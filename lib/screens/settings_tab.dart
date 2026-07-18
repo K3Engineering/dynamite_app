@@ -35,16 +35,13 @@ class SettingsTab extends StatelessWidget {
           ),
           const SizedBox(height: 24),
 
-          // Active channels
+          // Channel labels
           Text('Channels', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
           for (int i = 0; i < 4; i++)
             _ChannelConfigTile(
               index: i,
               label: settings.channelLabels[i],
-              active: settings.activeChannels[i],
-              onActiveChanged: (val) =>
-                  settings.setChannelActive(i, val ?? false),
               onLabelChanged: (val) => settings.setChannelLabel(i, val),
             ),
           const SizedBox(height: 24),
@@ -122,15 +119,11 @@ class _ChannelConfigTile extends StatelessWidget {
   const _ChannelConfigTile({
     required this.index,
     required this.label,
-    required this.active,
-    required this.onActiveChanged,
     required this.onLabelChanged,
   });
 
   final int index;
   final String label;
-  final bool active;
-  final ValueChanged<bool?> onActiveChanged;
   final ValueChanged<String> onLabelChanged;
 
   @override
@@ -140,7 +133,7 @@ class _ChannelConfigTile extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         child: Row(
           children: [
-            Checkbox(value: active, onChanged: onActiveChanged),
+            const SizedBox(width: 8),
             Text(
               'Ch ${index + 1}',
               style: const TextStyle(fontWeight: FontWeight.w500),

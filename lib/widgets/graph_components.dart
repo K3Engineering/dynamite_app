@@ -902,11 +902,15 @@ class Minimap extends StatefulWidget {
   final AppSettings settings;
   final GraphController graphCtrl;
 
+  /// Indices of the channels to plot (per-view; see [GraphWorkspace]).
+  final List<int> activeChannels;
+
   const Minimap({
     super.key,
     required this.dataSource,
     required this.settings,
     required this.graphCtrl,
+    required this.activeChannels,
   });
 
   @override
@@ -1000,6 +1004,7 @@ class _MinimapState extends State<Minimap> {
                   widget.dataSource,
                   widget.settings,
                   widget.graphCtrl,
+                  widget.activeChannels,
                   colorScheme,
                   dpr,
                   _cache,
@@ -1020,6 +1025,7 @@ class _MinimapPainter extends CustomPainter {
   final GraphDataSource _data;
   final AppSettings _settings;
   final GraphController _ctrl;
+  final List<int> _activeChannels;
   final ColorScheme _colorScheme;
   final double _dpr;
   final SegmentedGraphCache _cache;
@@ -1033,6 +1039,7 @@ class _MinimapPainter extends CustomPainter {
     this._data,
     this._settings,
     this._ctrl,
+    this._activeChannels,
     this._colorScheme,
     this._dpr,
     this._cache,
@@ -1061,7 +1068,7 @@ class _MinimapPainter extends CustomPainter {
     final mapSpan = math.max(totalSamples - oldestSample, _ctrl.minLiveSpan);
     final mapStart = totalSamples - mapSpan;
 
-    final activeIndices = _settings.activeChannelIndices;
+    final activeIndices = _activeChannels;
     final unit = _settings.displayUnit;
 
     // Y-range from the precomputed per-channel extremes (O(channels); the
@@ -1269,6 +1276,10 @@ class GraphWorkspace extends StatefulWidget {
   final GraphDataSource data;
   final GraphController ctrl;
   final AppSettings settings;
+
+  /// Indices of the channels to plot. Kept per view (live tab, each session)
+  /// rather than in [settings], so each surface chooses its own set.
+  final List<int> activeChannels;
   final bool showDerivative;
   final bool isLiveGraph;
   final bool showMinimap;
@@ -1279,6 +1290,7 @@ class GraphWorkspace extends StatefulWidget {
     required this.data,
     required this.ctrl,
     required this.settings,
+    required this.activeChannels,
     this.showDerivative = false,
     this.isLiveGraph = true,
     this.showMinimap = true,
@@ -1338,6 +1350,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                         widget.data,
                         widget.settings,
                         widget.ctrl,
+                        activeChannels: widget.activeChannels,
                         showXLabels: !widget.showDerivative,
                         cache: _forceCache,
                         colorScheme: colorScheme,
@@ -1361,6 +1374,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                           widget.data,
                           widget.settings,
                           widget.ctrl,
+                          activeChannels: widget.activeChannels,
                           cache: _derivCache,
                           colorScheme: colorScheme,
                           dpr: dpr,
@@ -1377,6 +1391,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                     dataSource: widget.data,
                     settings: widget.settings,
                     graphCtrl: widget.ctrl,
+                    activeChannels: widget.activeChannels,
                   ),
               ],
             ),
@@ -2239,6 +2254,9 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final GraphDataSource _data;
   final AppSettings _settings;
   final GraphController _ctrl;
+
+  /// Indices of the channels to plot (per-view; see [GraphWorkspace]).
+  final List<int> _activeChannels;
   final SegmentedGraphCache cache;
   final ColorScheme colorScheme;
 
@@ -2254,12 +2272,14 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     this._data,
     this._settings,
     this._ctrl, {
+    required List<int> activeChannels,
     required this.cache,
     required this.colorScheme,
     required this.dpr,
     required Listenable bakePump,
     required VoidCallback requestRepaint,
-  }) : _requestRepaint = requestRepaint,
+  }) : _activeChannels = activeChannels,
+       _requestRepaint = requestRepaint,
        super(repaint: Listenable.merge([_data.repaint, _ctrl, bakePump]));
 
   // --- Layout hooks --------------------------------------------------------
@@ -2317,7 +2337,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     final viewEnd = layout.viewEnd;
     final viewSamples = layout.viewSamples;
 
-    final activeIndices = _settings.activeChannelIndices;
+    final activeIndices = _activeChannels;
     final oldestSample = _data.oldestSample;
 
     final yRange = computeYRange(viewStart, viewEnd);
@@ -2414,6 +2434,7 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
     super.settings,
     super.ctrl, {
     this.showXLabels = true,
+    required super.activeChannels,
     required super.cache,
     required super.colorScheme,
     required super.dpr,
@@ -2428,9 +2449,8 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
   bool get drawMinorGrid => true;
 
   @override
-  List<double> cacheKeyTares() => _settings.activeChannelIndices
-      .map((ch) => _data.channel(ch).tare)
-      .toList();
+  List<double> cacheKeyTares() =>
+      _activeChannels.map((ch) => _data.channel(ch).tare).toList();
 
   @override
   EnvelopeSeries series(int channel) => EnvelopeSeries.bucketed(
@@ -2452,7 +2472,7 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
     double rawMin = 0;
     bool hasData = false;
 
-    for (final ch in _settings.activeChannelIndices) {
+    for (final ch in _activeChannels) {
       final s = _data.channel(ch);
       final line = s.data;
       if (line.isEmpty) continue;
@@ -2513,6 +2533,7 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     super.data,
     super.settings,
     super.ctrl, {
+    required super.activeChannels,
     required super.cache,
     required super.colorScheme,
     required super.dpr,
@@ -2577,7 +2598,7 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
       first = false;
     }
 
-    for (final ch in _settings.activeChannelIndices) {
+    for (final ch in _activeChannels) {
       if (_data.channel(ch).data.isEmpty) continue;
       if (startI >= endI) continue;
       final valueAt = _sampleAt(ch);
