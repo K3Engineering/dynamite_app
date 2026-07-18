@@ -30,11 +30,17 @@ class AppSettings extends ChangeNotifier {
       _activeChannels = active.map((s) => s == 'true').toList();
     }
 
+    final derivative = _prefs.getStringList(_keyDerivativeChannels);
+    if (derivative != null && derivative.length == nwNumAdcChan) {
+      _derivativeChannels = derivative.map((s) => s == 'true').toList();
+    }
+
     _wakelockEnabled = _prefs.getBool(_keyWakelock) ?? false;
   }
 
   static const String _keyUnit = 'display_unit';
   static const String _keyActiveChannels = 'active_channels';
+  static const String _keyDerivativeChannels = 'derivative_channels';
   static const String _keyWakelock = 'wakelock_enabled';
 
   /// Keys of the pre-slot model (channel labels, load cell bank, per-channel
@@ -64,6 +70,17 @@ class AppSettings extends ChangeNotifier {
       if (_activeChannels[i]) i,
   ];
 
+  /// Which channels have their derivative (dF/dt) shown in the live view.
+  /// Disabled by default; enabling any one of them reveals the dF/dt chart.
+  List<bool> _derivativeChannels = [false, false, false, false];
+  List<bool> get derivativeChannels => List.unmodifiable(_derivativeChannels);
+
+  /// Indices of derivative-enabled channels.
+  List<int> get derivativeChannelIndices => [
+    for (int i = 0; i < _derivativeChannels.length; i++)
+      if (_derivativeChannels[i]) i,
+  ];
+
   bool _wakelockEnabled = false;
   bool get wakelockEnabled => _wakelockEnabled;
 
@@ -79,6 +96,15 @@ class AppSettings extends ChangeNotifier {
     await _prefs.setStringList(
       _keyActiveChannels,
       _activeChannels.map((b) => b.toString()).toList(),
+    );
+  }
+
+  Future<void> setDerivativeChannelActive(int index, bool active) async {
+    _derivativeChannels[index] = active;
+    notifyListeners();
+    await _prefs.setStringList(
+      _keyDerivativeChannels,
+      _derivativeChannels.map((b) => b.toString()).toList(),
     );
   }
 

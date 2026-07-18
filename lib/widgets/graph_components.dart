@@ -1531,6 +1531,10 @@ class GraphWorkspace extends StatefulWidget {
   /// rather than in [settings], so each surface chooses its own set.
   final List<int> activeChannels;
   final bool showDerivative;
+
+  /// Channels plotted by the derivative chart. Defaults to [activeChannels];
+  /// the live tab passes its derivative-enabled set instead.
+  final List<int>? derivativeChannels;
   final bool isLiveGraph;
 
   const GraphWorkspace({
@@ -1540,6 +1544,7 @@ class GraphWorkspace extends StatefulWidget {
     required this.settings,
     required this.activeChannels,
     this.showDerivative = false,
+    this.derivativeChannels,
     this.isLiveGraph = true,
   });
 
@@ -1633,10 +1638,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     final dpr = MediaQuery.devicePixelRatioOf(context);
     // Channels the display unit can't convert (a force unit with no load
     // cell assigned) are excluded from plotting; the stats tables show '—'
-    // for them, and re-assigning a cell rebuilds this list (and the
+    // for them, and re-assigning a cell rebuilds these lists (and the
     // painters' cache keys, which contain the channel set).
-    final drawableChannels = [
-      for (final ch in widget.activeChannels)
+    List<int> drawable(List<int> channels) => [
+      for (final ch in channels)
         if (widget.settings.displayUnit.converterFor(
               widget.data.calibrationFor(ch),
               widget.data.channel(ch).tare,
@@ -1644,6 +1649,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             null)
           ch,
     ];
+    final drawableChannels = drawable(widget.activeChannels);
+    final drawableDerivativeChannels = drawable(
+      widget.derivativeChannels ?? widget.activeChannels,
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
         return Stack(
@@ -1682,7 +1691,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                         widget.data,
                         widget.settings,
                         widget.ctrl,
-                        activeChannels: drawableChannels,
+                        activeChannels: drawableDerivativeChannels,
                         vsync: _vsync,
                         cache: _derivCache ??= SegmentedGraphCache(),
                         colorScheme: colorScheme,
