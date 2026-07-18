@@ -1239,6 +1239,10 @@ class GraphWorkspace extends StatefulWidget {
   /// rather than in [settings], so each surface chooses its own set.
   final List<int> activeChannels;
   final bool showDerivative;
+
+  /// Channels plotted by the derivative chart. Defaults to [activeChannels];
+  /// the live tab passes its derivative-enabled set instead.
+  final List<int>? derivativeChannels;
   final bool isLiveGraph;
   final bool showZoomSpan;
 
@@ -1249,6 +1253,7 @@ class GraphWorkspace extends StatefulWidget {
     required this.settings,
     required this.activeChannels,
     this.showDerivative = false,
+    this.derivativeChannels,
     this.isLiveGraph = true,
     this.showZoomSpan = true,
   });
@@ -1331,7 +1336,8 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                           widget.data,
                           widget.settings,
                           widget.ctrl,
-                          activeChannels: widget.activeChannels,
+                          activeChannels:
+                              widget.derivativeChannels ?? widget.activeChannels,
                           cache: _derivCache,
                           colorScheme: colorScheme,
                           dpr: dpr,

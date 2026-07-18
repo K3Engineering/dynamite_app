@@ -11,6 +11,7 @@ class AppSettings extends ChangeNotifier {
   static const String _keyUnit = 'display_unit';
   static const String _keyChannelLabels = 'channel_labels';
   static const String _keyActiveChannels = 'active_channels';
+  static const String _keyDerivativeChannels = 'derivative_channels';
   static const String _keyWakelock = 'wakelock_enabled';
 
   ForceUnit _displayUnit = ForceUnit.kN;
@@ -31,6 +32,17 @@ class AppSettings extends ChangeNotifier {
   List<int> get activeChannelIndices => [
     for (int i = 0; i < _activeChannels.length; i++)
       if (_activeChannels[i]) i,
+  ];
+
+  /// Which channels have their derivative (dF/dt) shown in the live view.
+  /// Disabled by default; enabling any one of them reveals the dF/dt chart.
+  List<bool> _derivativeChannels = [false, false, false, false];
+  List<bool> get derivativeChannels => List.unmodifiable(_derivativeChannels);
+
+  /// Indices of derivative-enabled channels.
+  List<int> get derivativeChannelIndices => [
+    for (int i = 0; i < _derivativeChannels.length; i++)
+      if (_derivativeChannels[i]) i,
   ];
 
   bool _wakelockEnabled = false;
@@ -61,6 +73,11 @@ class AppSettings extends ChangeNotifier {
       _activeChannels = active.map((s) => s == 'true').toList();
     }
 
+    final derivative = prefs.getStringList(_keyDerivativeChannels);
+    if (derivative != null && derivative.length == 4) {
+      _derivativeChannels = derivative.map((s) => s == 'true').toList();
+    }
+
     _wakelockEnabled = prefs.getBool(_keyWakelock) ?? false;
 
     notifyListeners();
@@ -87,6 +104,16 @@ class AppSettings extends ChangeNotifier {
     await prefs.setStringList(
       _keyActiveChannels,
       _activeChannels.map((b) => b.toString()).toList(),
+    );
+  }
+
+  Future<void> setDerivativeChannelActive(int index, bool active) async {
+    _derivativeChannels[index] = active;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _keyDerivativeChannels,
+      _derivativeChannels.map((b) => b.toString()).toList(),
     );
   }
 

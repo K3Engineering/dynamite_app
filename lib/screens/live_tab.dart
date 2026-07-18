@@ -29,7 +29,6 @@ class _LiveTabState extends State<LiveTab> {
   final GraphController _graphCtrl = GraphController(
     minLiveSpan: 20 * DataHub.samplesPerSec,
   );
-  bool _showDerivative = false;
   DataHub? _hub;
 
   /// Last seen hub generation; a change means the hub was cleared for a new
@@ -208,22 +207,11 @@ class _LiveTabState extends State<LiveTab> {
             ),
           ),
           if (isConnected)
-            LiveStats(
-              settings: settings,
-              hub: hub,
-              showDerivative: _showDerivative,
-              stalled: _stalled,
-            ),
+            LiveStats(settings: settings, hub: hub, stalled: _stalled),
           if (isConnected)
             Expanded(child: _buildGraphArea(settings, hub))
           else
             const Expanded(child: DisconnectedPrompt()),
-          if (isConnected)
-            ViewToggles(
-              showDerivative: _showDerivative,
-              onToggleDerivative: () =>
-                  setState(() => _showDerivative = !_showDerivative),
-            ),
           if (isConnected)
             ActionButtons(
               isRecording: recording.sessionInProgress,
@@ -241,7 +229,10 @@ class _LiveTabState extends State<LiveTab> {
       ctrl: _graphCtrl,
       settings: settings,
       activeChannels: settings.activeChannelIndices,
-      showDerivative: _showDerivative,
+      // The dF/dt chart appears as soon as at least one derivative channel
+      // is enabled on the stats section's second page.
+      showDerivative: settings.derivativeChannels.any((enabled) => enabled),
+      derivativeChannels: settings.derivativeChannelIndices,
     );
   }
 }
@@ -340,10 +331,14 @@ class LiveStatusBar extends StatelessWidget {
 // LiveStats
 // ---------------------------------------------------------------------------
 
-class LiveStats extends StatelessWidget {
+/// Two-page stats section at the top of the live tab. Page 1 shows the
+/// live/peak force readings; page 2 holds the per-channel dF/dt toggles
+/// (enabling any of them reveals the derivative chart). Swipe horizontally
+/// or use the side chevrons to switch pages; the dots below the tables show
+/// which page is active.
+class LiveStats extends StatefulWidget {
   final AppSettings settings;
   final DataHub hub;
-  final bool showDerivative;
 
   /// The stream has gone silent while the link reports streaming (no packets
   /// for [_LiveTabState._stallThreshold]). Values are grayed out like a gap.
@@ -353,57 +348,164 @@ class LiveStats extends StatelessWidget {
     super.key,
     required this.settings,
     required this.hub,
-    this.showDerivative = false,
     this.stalled = false,
   });
 
   @override
+  State<LiveStats> createState() => _LiveStatsState();
+}
+
+class _LiveStatsState extends State<LiveStats> {
+  /// Bounded height for the [PageView], sized to page 1 (the taller page:
+  /// header + color lines + emphasized Live row + Peak row). Page 2 has one
+  /// row fewer and leaves the slack below its table.
+  static const double _pageHeight = 112;
+  static const int _pageCount = 2;
+
+  final PageController _pageCtrl = PageController();
+  int _page = 0;
+
+  @override
+  void dispose() {
+    _pageCtrl.dispose();
+    super.dispose();
+  }
+
+  void _goToPage(int page) {
+    unawaited(
+      _pageCtrl.animateToPage(
+        page,
+        duration: const Duration(milliseconds: 250),
+        curve: Curves.easeOut,
+      ),
+    );
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final settings = widget.settings;
+    final hub = widget.hub;
     final unit = settings.displayUnit;
+    final cs = Theme.of(context).colorScheme;
 
-    return ListenableBuilder(
-      listenable: hub,
-      builder: (context, _) {
-        // During a live gap (dropped packets) the hub reports held values;
-        // gray them out so they read as stale rather than fresh readings.
-        // Same for a stall: the newest "reading" is just the last one.
-        final stale = hub.liveEdgeIsGap || stalled;
-
-        return ChannelStatsTable(
-          labels: settings.channelLabels,
-          activeChannels: settings.activeChannels,
-          onToggleChannel: (i) =>
-              settings.setChannelActive(i, !settings.activeChannels[i]),
-          unit: unit,
-          rows: [
-            ChannelStatsRow(
-              label: 'Live',
-              values: [
-                for (int i = 0; i < DataHub.numAdcChannels; i++)
-                  hub.currentForce(i, unit),
-              ],
-              emphasized: true,
-              stale: stale,
-            ),
-            ChannelStatsRow(
-              label: 'Peak',
-              values: [
-                for (int i = 0; i < DataHub.numAdcChannels; i++)
-                  hub.peakForce(i, unit),
-              ],
-            ),
-            if (showDerivative)
-              ChannelStatsRow(
-                label: 'dF/dt',
-                values: [
-                  for (int i = 0; i < DataHub.numAdcChannels; i++)
-                    hub.currentDerivative(i, unit),
-                ],
-                stale: stale,
+    return Column(
+      children: [
+        SizedBox(
+          height: _pageHeight,
+          child: Row(
+            children: [
+              IconButton(
+                icon: const Icon(Icons.chevron_left),
+                visualDensity: VisualDensity.compact,
+                onPressed: _page > 0 ? () => _goToPage(_page - 1) : null,
               ),
-          ],
-        );
-      },
+              Expanded(
+                // Values refresh per packet; the tables subscribe to the hub
+                // rather than rebuilding the whole tab.
+                child: ListenableBuilder(
+                  listenable: hub,
+                  builder: (context, _) {
+                    // During a live gap (dropped packets) the hub reports
+                    // held values; gray them out so they read as stale
+                    // rather than fresh readings. Same for a stall: the
+                    // newest "reading" is just the last one.
+                    final stale = hub.liveEdgeIsGap || widget.stalled;
+
+                    return PageView(
+                      controller: _pageCtrl,
+                      onPageChanged: (p) => setState(() => _page = p),
+                      children: [
+                        // Page 1: live + peak force readings.
+                        ChannelStatsTable(
+                          labels: settings.channelLabels,
+                          activeChannels: settings.activeChannels,
+                          onToggleChannel: (i) => settings.setChannelActive(
+                            i,
+                            !settings.activeChannels[i],
+                          ),
+                          unit: unit,
+                          rows: [
+                            ChannelStatsRow(
+                              label: 'Live',
+                              values: [
+                                for (int i = 0; i < DataHub.numAdcChannels; i++)
+                                  hub.currentForce(i, unit),
+                              ],
+                              emphasized: true,
+                              stale: stale,
+                            ),
+                            ChannelStatsRow(
+                              label: 'Peak',
+                              values: [
+                                for (int i = 0; i < DataHub.numAdcChannels; i++)
+                                  hub.peakForce(i, unit),
+                              ],
+                            ),
+                          ],
+                        ),
+                        // Page 2: per-channel derivative toggles. Enabling a
+                        // channel here is what reveals the dF/dt chart.
+                        ChannelStatsTable(
+                          labels: settings.channelLabels,
+                          activeChannels: settings.derivativeChannels,
+                          onToggleChannel: (i) =>
+                              settings.setDerivativeChannelActive(
+                                i,
+                                !settings.derivativeChannels[i],
+                              ),
+                          unit: unit,
+                          unitOverlay: 'In ${unit.symbol}/s',
+                          rows: [
+                            ChannelStatsRow(
+                              label: 'dF/dt',
+                              values: [
+                                for (int i = 0; i < DataHub.numAdcChannels; i++)
+                                  hub.currentDerivative(i, unit),
+                              ],
+                              stale: stale,
+                            ),
+                          ],
+                        ),
+                      ],
+                    );
+                  },
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.chevron_right),
+                visualDensity: VisualDensity.compact,
+                onPressed: _page < _pageCount - 1
+                    ? () => _goToPage(_page + 1)
+                    : null,
+              ),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              for (int i = 0; i < _pageCount; i++)
+                GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => _goToPage(i),
+                  child: Container(
+                    width: 8,
+                    height: 8,
+                    margin: const EdgeInsets.symmetric(horizontal: 4),
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: _page == i
+                          ? cs.primary
+                          : cs.outline.withValues(alpha: 0.4),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -441,47 +543,6 @@ class DisconnectedPrompt extends StatelessWidget {
             },
             child: const Text('Connect a device'),
           ),
-        ],
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// ViewToggles
-// ---------------------------------------------------------------------------
-
-class ViewToggles extends StatelessWidget {
-  final bool showDerivative;
-  final VoidCallback onToggleDerivative;
-
-  const ViewToggles({
-    super.key,
-    this.showDerivative = false,
-    required this.onToggleDerivative,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          FilterChip(
-            label: const Text('dF/dt'),
-            selected: showDerivative,
-            onSelected: (_) => onToggleDerivative(),
-            visualDensity: VisualDensity.compact,
-            labelStyle: TextStyle(
-              fontSize: 12,
-              color: showDerivative ? cs.onSecondaryContainer : null,
-            ),
-          ),
-          // Placeholders for future modes can be added here easily
-          // const SizedBox(width: 8),
-          // FilterChip(label: const Text('FFT'), onSelected: (_) {}),
         ],
       ),
     );
