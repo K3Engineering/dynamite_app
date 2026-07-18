@@ -26,6 +26,12 @@ class Sessions extends Table {
   /// Dropped-sample ranges as JSON `[[start,end],...]`, session-relative,
   /// half-open. The chunk data holds held values across these ranges.
   TextColumn get gaps => text().withDefault(const Constant('[]'))();
+
+  /// Which channels are shown in the session detail view, as a JSON bool
+  /// list. Initialized from the live view's channel selection at recording
+  /// time; afterwards it is per-session and independent of the live view.
+  TextColumn get visibleChannels =>
+      text().withDefault(const Constant('[true,true,true,true]'))();
 }
 
 class SessionChunks extends Table {
@@ -49,7 +55,7 @@ class AppDatabase extends _$AppDatabase {
       AppDatabase._(executor);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -90,6 +96,7 @@ class AppDatabase extends _$AppDatabase {
     required double calibrationSlope,
     required int calibrationOffset,
     required String notes,
+    String visibleChannels = '[true,true,true,true]',
   }) {
     return into(sessions).insert(
       SessionsCompanion.insert(
@@ -103,6 +110,7 @@ class AppDatabase extends _$AppDatabase {
         calibrationOffset: Value(calibrationOffset),
         notes: Value(notes),
         isCompleted: const Value(false),
+        visibleChannels: Value(visibleChannels),
       ),
     );
   }
@@ -139,6 +147,14 @@ class AppDatabase extends _$AppDatabase {
   /// Replace a session's notes.
   Future<void> setSessionNotes(int id, String notes) {
     return _updateSession(id, SessionsCompanion(notes: Value(notes)));
+  }
+
+  /// Replace a session's visible-channel set ([json] is a JSON bool list).
+  Future<void> setSessionVisibleChannels(int id, String json) {
+    return _updateSession(
+      id,
+      SessionsCompanion(visibleChannels: Value(json)),
+    );
   }
 
   /// Stream all completed sessions, newest first (reactive).

@@ -12,6 +12,7 @@ import '../models/bucket_series.dart';
 import '../models/gap_list.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
+import '../widgets/channel_stats_table.dart';
 import '../widgets/graph_components.dart';
 
 class SessionDetailScreen extends StatefulWidget {
@@ -72,11 +73,43 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   late Session _session;
   final GraphController _graphCtrl = GraphController();
 
+  /// Per-session channel visibility (persisted on the session row).
+  late List<bool> _visibleChannels;
+
   @override
   void initState() {
     super.initState();
     _session = widget.session;
+    _visibleChannels = _parseVisibleChannels(
+      _session.visibleChannels,
+      _session.channelCount,
+    );
     unawaited(_loadData());
+  }
+
+  /// Parse the JSON-encoded per-channel visibility stored on a [Session]
+  /// row. Missing or malformed entries fall back to visible.
+  static List<bool> _parseVisibleChannels(String json, int channelCount) {
+    final result = List<bool>.filled(channelCount, true);
+    try {
+      final List<dynamic> decoded = jsonDecode(json);
+      for (int i = 0; i < channelCount && i < decoded.length; i++) {
+        result[i] = decoded[i] == true;
+      }
+    } catch (e) {
+      debugPrint('Failed to parse session visible channels "$json": $e');
+    }
+    return result;
+  }
+
+  void _onToggleChannel(int index) {
+    setState(() => _visibleChannels[index] = !_visibleChannels[index]);
+    unawaited(
+      AppDatabase.instance.setSessionVisibleChannels(
+        _session.id,
+        jsonEncode(_visibleChannels),
+      ),
+    );
   }
 
   @override
@@ -155,11 +188,40 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Widget _buildContent(AppSettings settings) {
     final data = _data!;
+    final unit = settings.displayUnit;
+
+    final storedLabels = _parseChannelLabels(_session.channelLabels);
+    final channelLabels = [
+      for (int ch = 0; ch < data.channels.length; ch++)
+        storedLabels.length > ch ? storedLabels[ch] : 'Ch ${ch + 1}',
+    ];
 
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Channel header (same tappable table as the live view; toggles
+          // this session's per-session channel visibility).
+          ChannelStatsTable(
+            labels: channelLabels,
+            activeChannels: _visibleChannels,
+            onToggleChannel: _onToggleChannel,
+            unit: unit,
+            rows: [
+              ChannelStatsRow(
+                label: 'Peak',
+                emphasized: true,
+                values: [
+                  for (int ch = 0; ch < data.channels.length; ch++)
+                    unit.fromRaw(
+                      data.peakRaw(ch).toDouble() - data.tares[ch],
+                      data.calibrationSlope,
+                    ),
+                ],
+              ),
+            ],
+          ),
+
           // Graph
           SizedBox(
             height: 332,
@@ -169,41 +231,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 data: _SessionDataSource(data),
                 ctrl: _graphCtrl,
                 settings: settings,
+                activeChannels: [
+                  for (int i = 0; i < _visibleChannels.length; i++)
+                    if (_visibleChannels[i]) i,
+                ],
                 showDerivative: false,
                 isLiveGraph: false,
               ),
-            ),
-          ),
-
-          // Channel legend
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                for (int i = 0; i < data.channels.length; i++)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Container(
-                          width: 12,
-                          height: 12,
-                          decoration: BoxDecoration(
-                            color: getChannelColor(i),
-                            borderRadius: BorderRadius.circular(2),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Ch ${i + 1}',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
             ),
           ),
 
