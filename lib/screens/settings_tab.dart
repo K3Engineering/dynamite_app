@@ -7,6 +7,7 @@ import '../models/app_settings.dart';
 import '../models/force_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../widgets/section_header.dart';
+import 'app_shell.dart';
 
 class SettingsTab extends StatelessWidget {
   const SettingsTab({super.key});
@@ -73,17 +74,40 @@ class SettingsTab extends StatelessWidget {
           const SizedBox(height: 16),
 
           // Device name — not editable yet. Keyed by the name so the field
-          // rebuilds with the new value on connect/disconnect.
-          TextFormField(
-            key: ValueKey(bt.connectedDeviceName),
-            initialValue: bt.connectedDeviceName,
-            enabled: false,
-            decoration: const InputDecoration(
-              labelText: 'Device name',
-              hintText: 'No device connected',
-              border: OutlineInputBorder(),
+          // rebuilds with the new value on connect/disconnect. While no link
+          // is up, a blurb with a jump to the Devices tab takes its place.
+          if (bt.selectedDeviceId.isEmpty)
+            Card(
+              child: ListTile(
+                leading: const Icon(
+                  Icons.bluetooth_disabled,
+                  color: Colors.grey,
+                ),
+                title: const Text('No device connected'),
+                subtitle: const Text(
+                  'Connect to a device to manage its settings',
+                ),
+                trailing: FilledButton.tonal(
+                  onPressed: () {
+                    // Navigate to the Devices tab (same pattern as Live tab).
+                    final shell = context
+                        .findAncestorStateOfType<AppShellState>();
+                    shell?.switchToTab(2);
+                  },
+                  child: const Text('Connect'),
+                ),
+              ),
+            )
+          else
+            TextFormField(
+              key: ValueKey(bt.connectedDeviceName),
+              initialValue: bt.connectedDeviceName,
+              enabled: false,
+              decoration: const InputDecoration(
+                labelText: 'Device name',
+                border: OutlineInputBorder(),
+              ),
             ),
-          ),
           const SizedBox(height: 24),
 
           // About
