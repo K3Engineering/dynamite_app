@@ -8,16 +8,12 @@ import 'force_unit.dart';
 /// Application-wide settings, persisted via SharedPreferences.
 class AppSettings extends ChangeNotifier {
   static const String _keyUnit = 'display_unit';
-  static const String _keyUserName = 'user_name';
   static const String _keyChannelLabels = 'channel_labels';
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
 
   ForceUnit _displayUnit = ForceUnit.kN;
   ForceUnit get displayUnit => _displayUnit;
-
-  String _userName = '';
-  String get userName => _userName;
 
   /// Labels for each of the 4 ADC channels.
   List<String> _channelLabels = ['Load Cell 1', 'Load Cell 2', 'Ch 3', 'Ch 4'];
@@ -52,8 +48,6 @@ class AppSettings extends ChangeNotifier {
       );
     }
 
-    _userName = prefs.getString(_keyUserName) ?? '';
-
     final labels = prefs.getStringList(_keyChannelLabels);
     if (labels != null && labels.length == 4) {
       _channelLabels = labels;
@@ -74,13 +68,6 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyUnit, unit.name);
-  }
-
-  Future<void> setUserName(String name) async {
-    _userName = name;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyUserName, name);
   }
 
   Future<void> setChannelLabel(int index, String label) async {

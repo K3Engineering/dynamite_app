@@ -5,6 +5,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../models/app_settings.dart';
 import '../models/force_unit.dart';
+import '../services/ble_link_manager.dart';
+import '../widgets/section_header.dart';
 
 class SettingsTab extends StatelessWidget {
   const SettingsTab({super.key});
@@ -12,6 +14,7 @@ class SettingsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
+    final bt = context.watch<BleLinkManager>();
     const bool normalDoubleCmp = identical(double.nan, double.nan);
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
 
@@ -20,7 +23,11 @@ class SettingsTab extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         children: [
           Text('Settings', style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
+
+          // App settings
+          const SectionHeader('App settings'),
+          const SizedBox(height: 16),
 
           // Display units
           Text('Display Units', style: Theme.of(context).textTheme.titleSmall),
@@ -31,6 +38,9 @@ class SettingsTab extends StatelessWidget {
                 ButtonSegment(value: u, label: Text(u.symbol)),
             ],
             selected: {settings.displayUnit},
+            // The default selected checkmark steals width from the labels and
+            // makes the segments wrap on narrow (mobile) screens.
+            showSelectedIcon: false,
             onSelectionChanged: (set) => settings.setDisplayUnit(set.first),
           ),
           const SizedBox(height: 24),
@@ -46,20 +56,6 @@ class SettingsTab extends StatelessWidget {
             ),
           const SizedBox(height: 24),
 
-          // User name
-          Text('User', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          TextFormField(
-            initialValue: settings.userName,
-            decoration: const InputDecoration(
-              labelText: 'Name',
-              border: OutlineInputBorder(),
-            ),
-            onFieldSubmitted: settings.setUserName,
-            onTapOutside: (_) => FocusScope.of(context).unfocus(),
-          ),
-          const SizedBox(height: 24),
-
           // Wakelock
           SwitchListTile(
             title: const Text('Keep screen awake'),
@@ -72,9 +68,27 @@ class SettingsTab extends StatelessWidget {
           ),
           const SizedBox(height: 24),
 
+          // Device settings
+          const SectionHeader('Device settings'),
+          const SizedBox(height: 16),
+
+          // Device name — not editable yet. Keyed by the name so the field
+          // rebuilds with the new value on connect/disconnect.
+          TextFormField(
+            key: ValueKey(bt.connectedDeviceName),
+            initialValue: bt.connectedDeviceName,
+            enabled: false,
+            decoration: const InputDecoration(
+              labelText: 'Device name',
+              hintText: 'No device connected',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 24),
+
           // About
-          Text('About', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
+          const SectionHeader('About'),
+          const SizedBox(height: 16),
           FutureBuilder<PackageInfo>(
             future: PackageInfo.fromPlatform(),
             builder: (context, snapshot) {
