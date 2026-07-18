@@ -54,6 +54,18 @@ class AppDatabase extends _$AppDatabase {
   factory AppDatabase.forTesting(QueryExecutor executor) =>
       AppDatabase._(executor);
 
+  /// Close the shared instance (if open) and reset the singleton, so the
+  /// next [instance] access opens a fresh connection — which is when drift
+  /// runs schema migrations. The web hot-restart cleanup uses this: hot
+  /// reload/restart keeps the old generation's open connection (and its old
+  /// schema) alive otherwise, so a bumped [schemaVersion] would never take
+  /// effect until a cold start.
+  static Future<void> closeInstance() async {
+    final db = _instance;
+    _instance = null;
+    await db?.close();
+  }
+
   @override
   int get schemaVersion => 4;
 

@@ -8,6 +8,7 @@ import 'services/adc_packet_decoder.dart';
 import 'services/app_events.dart';
 import 'services/ble_link_manager.dart';
 import 'services/data_hub.dart';
+import 'services/database.dart';
 // Debug-only hot-restart hook: on web, BLE notification listeners and timers
 // survive a hot restart, so each generation registers a cleanup that the next
 // generation runs first thing in main(). No-op stub on native platforms.
@@ -52,6 +53,10 @@ void main() async {
   // inside shutdownForHotRestart; the GATT disconnect completes async.
   registerHotRestartCleanup(() {
     unawaited(linkManager.shutdownForHotRestart());
+    // Close the DB too, so the next generation re-opens it and migrations
+    // run against the current schemaVersion — otherwise the old open
+    // connection survives the restart and a bumped schema never applies.
+    unawaited(AppDatabase.closeInstance());
   });
   // Layer 2 (web debug only): the engine view is disposed by
   // `ext.flutter.disassemble` BEFORE the new generation boots, so packets
