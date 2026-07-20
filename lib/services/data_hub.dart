@@ -28,6 +28,13 @@ class DataHub extends ChangeNotifier {
   static const int bucketSize = 100;
   static const int numBuckets = maxDataSz ~/ bucketSize;
 
+  /// "No sample seen yet" sentinels for [rawMax]/[rawMin]: int32 min/max, so
+  /// the first real sample always replaces them. Initializing to 0 instead
+  /// would bias the extremes toward zero (a never-positive channel would
+  /// report a peak of `0 - tare`). ADC values are 24-bit, well inside int32.
+  static const int _noMaxYet = -0x80000000;
+  static const int _noMinYet = 0x7FFFFFFF;
+
   final Float64List tare = Float64List(numAdcChannels);
   final Float64List _runningTotal = Float64List(numAdcChannels);
   final Int32List rawMax = Int32List(numAdcChannels);
@@ -75,19 +82,33 @@ class DataHub extends ChangeNotifier {
   /// hub knowing anything about recording.
   void Function(int startIdx, int count)? onSamplesAppended;
 
+  DataHub() {
+    clear();
+  }
+
+  /// Reset every per-stream accumulation: ring position, peaks, tare, gaps
+  /// and buckets. Invoked from the constructor and by [RecordingController]
+  /// each time a new device stream starts, so two connections (or two
+  /// devices) never splice into one trace and "Peak" never survives a
+  /// disconnect.
+  ///
+  /// Deliberately does NOT touch [deviceCalibration]: a connecting device's
+  /// calibration is read during post-connect setup, BEFORE the streaming
+  /// transition that triggers this reset.
   void clear() {
     _tareCount = 0;
     totalSamples = 0;
     gaps.clear();
     for (int i = 0; i < numAdcChannels; ++i) {
-      rawMax[i] = 0;
-      rawMin[i] = 0;
+      rawMax[i] = _noMaxYet;
+      rawMin[i] = _noMinYet;
       tare[i] = 0;
       _runningTotal[i] = 0;
       _currentRaw[i] = 0;
       valueBuckets[i].reset();
       diffBuckets[i].reset();
     }
+    notifyListeners();
   }
 
   bool get taring => (_tareCount > 0);
@@ -101,21 +122,24 @@ class DataHub extends ChangeNotifier {
     }
   }
 
-  /// Append one decoded sample (one value per channel). While a tare is in
-  /// progress the values are accumulated into the tare average instead of the
-  /// ring buffer (and [totalSamples] does not advance).
+  /// Append one decoded sample (one value per channel). Samples are always
+  /// buffered and [totalSamples] always advances — including while a tare is
+  /// in progress, so taring never warps the stream's timeline or punches an
+  /// unmarked hole in an ongoing recording. A tare only re-zeros the display
+  /// offset: while taring, each real frame is ADDITIONALLY accumulated into
+  /// the tare average.
   void addSampleFrame(Int32List values) {
     assert(values.length >= numAdcChannels);
     for (int i = 0; i < numAdcChannels; ++i) {
       final int val = values[i];
       _currentRaw[i] = val;
+      // Always buffer data for live display.
+      _addData(val, i);
       if (taring) {
         _addTare(val, i);
-      } else {
-        // Always buffer data for live display.
-        _addData(val, i);
       }
     }
+    totalSamples++;
 
     if (taring) {
       _tareCount--;
@@ -125,8 +149,6 @@ class DataHub extends ChangeNotifier {
           _runningTotal[i] = 0;
         }
       }
-    } else {
-      totalSamples++;
     }
   }
 
@@ -134,10 +156,10 @@ class DataHub extends ChangeNotifier {
   /// counter): append the range to [gaps] and hold each channel's last value
   /// ([_currentRaw]) in the ring buffer so the stored data stays magic-free.
   /// Capped at [maxDataSz] to avoid a huge injection loop if the device
-  /// reboots and the counter jumps. Skipped while taring, matching
-  /// [addSampleFrame] (totalSamples does not advance during a tare).
+  /// reboots and the counter jumps. Held samples are real ring-buffer time
+  /// (they advance [totalSamples]) but are NOT real readings, so they are
+  /// never accumulated into an in-progress tare average.
   void addDroppedFrames(int count) {
-    if (taring) return;
     final int toInject = math.min(count, maxDataSz);
     gaps.append(totalSamples, totalSamples + toInject);
     for (int d = 0; d < toInject; d++) {
@@ -177,16 +199,22 @@ class DataHub extends ChangeNotifier {
     return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
-  /// Get peak force for a given ADC channel in the specified unit.
+  /// Get peak force for a given ADC channel in the specified unit. Returns 0
+  /// before the first sample arrives ([rawMax] still holds its sentinel).
   double peakForce(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels) return 0;
+    if (adcChannel < 0 || adcChannel >= numAdcChannels || totalSamples == 0) {
+      return 0;
+    }
     final rawTared = rawMax[adcChannel] - tare[adcChannel];
     return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
-  /// Get minimum (most negative) force for a given ADC channel in the specified unit.
+  /// Get minimum (most negative) force for a given ADC channel in the
+  /// specified unit. Returns 0 before the first sample arrives.
   double minForce(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels) return 0;
+    if (adcChannel < 0 || adcChannel >= numAdcChannels || totalSamples == 0) {
+      return 0;
+    }
     final rawTared = rawMin[adcChannel] - tare[adcChannel];
     return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }

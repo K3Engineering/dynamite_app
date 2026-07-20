@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
 /// Unit tests for the [GraphController] viewport state machine. It is pure
@@ -170,6 +171,36 @@ void main() {
       expect(count, 2);
       ctrl.goLive(totalSamples: 1000, oldestSample: 0);
       expect(count, 3);
+    });
+  });
+
+  /// The viewport-side half of the per-stream reset: when a new device stream
+  /// clears the hub, the live tab snaps the controller back to live follow
+  /// via [GraphController.goLive]. These tests document why that call must
+  /// happen.
+  group('GraphController across a stream reset', () {
+    test('a stale panned window throws against an empty buffer', () {
+      // The crash the reset prevents: a non-live window from the previous
+      // stream clamped against a cleared hub has inverted clamp limits.
+      final ctrl = GraphController(minLiveSpan: 20000);
+      ctrl.setWindow(100000, 200000); // user panned deep into history
+      expect(() => ctrl.effectiveRange(0, 0), throwsArgumentError);
+    });
+
+    test('goLive restores a safe live-follow range', () {
+      final ctrl = GraphController(minLiveSpan: 20000);
+      ctrl.setWindow(100000, 200000);
+
+      ctrl.goLive(totalSamples: 0, oldestSample: 0);
+
+      final (start, end) = ctrl.effectiveRange(
+        0,
+        0,
+        bufferCapacity: DataHub.maxDataSz,
+      );
+      expect(ctrl.isLive, isTrue);
+      expect(end, 0);
+      expect(start, -20000);
     });
   });
 }

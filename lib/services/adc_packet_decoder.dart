@@ -26,7 +26,8 @@ class AdcPacketDecoder {
 
   /// Forget the last seen packet counter so the next packet is not diffed
   /// against a stale value (which would report spurious dropped samples).
-  /// Called on link teardown and at recording start/stop.
+  /// Called when a new device stream starts (see [RecordingController]) and
+  /// at recording start/stop.
   void resetContinuity() {
     _prevSampleCount = -1;
   }

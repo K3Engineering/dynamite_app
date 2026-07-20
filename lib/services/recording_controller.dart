@@ -12,8 +12,15 @@ import 'session_storage.dart';
 /// in-progress flag the UI keys off.
 ///
 /// It observes the [DataHub] via [DataHub.onSamplesAppended] to stream exact
-/// sample slices to storage, and listens to the [BleLinkManager] so a session
-/// is properly finalized (not orphaned) if the link drops mid-recording.
+/// sample slices to storage, and listens to the [BleLinkManager] for the two
+/// link transitions that affect data integrity:
+///  * streaming ends — a session in progress is properly finalized (not
+///    orphaned) if the link drops mid-recording;
+///  * streaming starts — the hub is reset ([DataHub.clear]) and packet
+///    continuity is restarted, so the ring buffer, peaks, tare and gaps of a
+///    previous connection never splice into the new device's trace (and the
+///    new stream's first packet counter is never diffed against the previous
+///    device's, which would inject a spurious gap).
 ///
 /// Storage failures are surfaced as a [RecordingStorageError] on [AppEvents]
 /// (emitted from [stopSession], the single finalization path).
@@ -35,12 +42,16 @@ class RecordingController extends ChangeNotifier {
   final BleLinkManager _linkManager;
   final AppEvents _events;
 
-  /// Needed only to reset packet-continuity tracking at session boundaries so
-  /// the first packet of a session isn't diffed against a stale counter.
+  /// Needed to reset packet-continuity tracking at stream/session boundaries
+  /// so the first packet after a boundary isn't diffed against a stale counter.
   final AdcPacketDecoder _decoder;
 
   bool _sessionInProgress = false;
   bool get sessionInProgress => _sessionInProgress;
+
+  /// Link state at the previous [_onLinkChanged] notification; used to detect
+  /// the not-streaming -> streaming edge (a new device stream starting).
+  bool _wasStreaming = false;
 
   LiveSessionWriter? _sessionWriter;
 
@@ -98,14 +109,25 @@ class RecordingController extends ChangeNotifier {
     }
   }
 
-  /// If the link stops streaming while a session is in progress (unexpected
-  /// disconnect, failed teardown, …), run the normal stop path so the writer
-  /// is flushed and the session finalized instead of being orphaned until the
-  /// next app launch's crash recovery.
+  /// React to the two link transitions that affect data integrity (see the
+  /// class doc): a dropped link finalizes any in-progress session; a freshly
+  /// started stream resets the hub and packet continuity.
   void _onLinkChanged() {
-    if (_sessionInProgress && !_linkManager.isStreaming) {
+    final bool streaming = _linkManager.isStreaming;
+    if (_sessionInProgress && !streaming) {
       unawaited(stopSession());
     }
+    if (streaming && !_wasStreaming) {
+      // New device stream. Clear the previous stream's ring buffer, peaks,
+      // tare and gaps so two connections never splice into one trace, and
+      // restart continuity so the new stream's first packet isn't diffed
+      // against the old stream's counter. Runs on stream entry (not on
+      // disconnect) so a recording being finalized after an unexpected drop
+      // can still read the old ring data while it flushes.
+      _dataHub.clear();
+      _decoder.resetContinuity();
+    }
+    _wasStreaming = streaming;
   }
 
   @override

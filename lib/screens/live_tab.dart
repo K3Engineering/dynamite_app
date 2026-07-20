@@ -83,6 +83,8 @@ class _LiveTabState extends State<LiveTab> {
   bool _showDerivative = false;
   _LiveDataSource? _dataSource;
   DataHub? _hub;
+  BleLinkManager? _link;
+  bool _wasStreaming = false;
 
   @override
   void didChangeDependencies() {
@@ -96,10 +98,39 @@ class _LiveTabState extends State<LiveTab> {
       _dataSource?.dispose();
       _dataSource = _LiveDataSource(hub);
     }
+    // Same for the link manager (also an app-lifetime singleton): listen for
+    // new device streams so the viewport can follow the fresh trace.
+    final link = context.read<BleLinkManager>();
+    if (_link != link) {
+      _link?.removeListener(_onLinkEdge);
+      _link = link;
+      _wasStreaming = link.isStreaming;
+      _link!.addListener(_onLinkEdge);
+    }
+  }
+
+  /// A new device stream means the hub was just cleared (see
+  /// [RecordingController]): drop any stale pan/zoom window and follow the
+  /// live edge. Without this, a user-panned (non-live) window survives the
+  /// disconnect and [GraphController.effectiveRange] would clamp the stale
+  /// window against a now-empty buffer (inverted clamp limits -> throw).
+  void _onLinkEdge() {
+    final link = _link!;
+    final hub = _hub!;
+    if (link.isStreaming && !_wasStreaming) {
+      _graphCtrl.goLive(
+        totalSamples: hub.totalSamples,
+        oldestSample: hub.totalSamples > DataHub.maxDataSz
+            ? hub.totalSamples - DataHub.maxDataSz
+            : 0,
+      );
+    }
+    _wasStreaming = link.isStreaming;
   }
 
   @override
   void dispose() {
+    _link?.removeListener(_onLinkEdge);
     _dataSource?.dispose();
     _graphCtrl.dispose();
     super.dispose();
