@@ -700,7 +700,27 @@ class BleLinkManager extends ChangeNotifier {
     }
   }
 
-  void _onValueChange(String _, String _, Uint8List data, int? _) {
+  void _onValueChange(
+    String deviceId,
+    String characteristicId,
+    Uint8List data,
+    int? timestamp,
+  ) {
+    // The ADC feed of the active link is the only subscription; drop anything
+    // else (a stale notification from a torn-down link, or a second notifying
+    // characteristic subscribed in the future) so foreign bytes are never
+    // parsed as ADC packets. universal_ble normalizes characteristicId to
+    // lowercase before invoking this callback, and btChrAdcFeedId is already
+    // lowercase, so an exact match is safe.
+    // MULTI-DEVICE (Path A): route by deviceId instead of dropping.
+    if (deviceId != _link.deviceId || characteristicId != btChrAdcFeedId) {
+      debugPrint(
+        'Dropping notification from unexpected source: device $deviceId, '
+        'characteristic $characteristicId (${data.length} B); '
+        'active link is ${_link.deviceId.isEmpty ? '(none)' : _link.deviceId}',
+      );
+      return;
+    }
     // Hand the raw packet straight to the protocol layer; the link manager
     // never interprets feed bytes itself.
     onAdcData?.call(data);
