@@ -8,8 +8,37 @@ import 'ble_link_manager.dart';
 import 'data_hub.dart';
 import 'session_storage.dart';
 
-/// Owns the recording session lifecycle: the [LiveSessionWriter] and the
-/// in-progress flag the UI keys off.
+/// Outcome of [RecordingController.startSession]. The outcomes are mutually
+/// exclusive, so they form a sealed type the caller switches exhaustively —
+/// unlike [RecordingController.stopSession]'s result, whose fields are
+/// independent of each other (a record).
+sealed class StartSessionResult {
+  const StartSessionResult();
+}
+
+/// The session is recording.
+final class StartSessionOk extends StartSessionResult {
+  const StartSessionOk();
+}
+
+/// Refused: a tare is still averaging, and recording now would persist a zero
+/// tare. Transient — retry once the tare completes.
+final class StartSessionTareInProgress extends StartSessionResult {
+  const StartSessionTareInProgress();
+}
+
+/// Session creation (the DB row / writer) threw; nothing was latched, so the
+/// controller is still idle.
+final class StartSessionFailed extends StartSessionResult {
+  const StartSessionFailed(this.error);
+
+  final Object error;
+}
+
+/// Owns the recording session lifecycle start to finish: creating the session
+/// row and [LiveSessionWriter] in [startSession], streaming samples to the
+/// writer, and finalizing in [stopSession] — plus the in-progress flag the UI
+/// keys off. The UI only toggles and reports outcomes.
 ///
 /// It observes the [DataHub] via [DataHub.onSamplesAppended] to stream exact
 /// sample slices to storage, and listens to the [BleLinkManager] for the two
@@ -22,8 +51,12 @@ import 'session_storage.dart';
 ///    new stream's first packet counter is never diffed against the previous
 ///    device's, which would inject a spurious gap).
 ///
-/// Storage failures are surfaced as a [RecordingStorageError] on [AppEvents]
-/// (emitted from [stopSession], the single finalization path).
+/// Failures are reported two ways, by audience: [startSession] refuses or
+/// fails in response to the user who just tapped record, so its outcomes are
+/// returned for a local snackbar; a storage failure latching mid-recording is
+/// surfaced as a [RecordingStorageError] on [AppEvents] (emitted from
+/// [stopSession], the single finalization path), since the tab that started
+/// the session may no longer be mounted.
 class RecordingController extends ChangeNotifier {
   RecordingController({
     required DataHub dataHub,
@@ -55,28 +88,69 @@ class RecordingController extends ChangeNotifier {
 
   LiveSessionWriter? _sessionWriter;
 
-  Future<void> startSession(LiveSessionWriter writer) async {
+  /// Display name of the in-progress session, latched by [startSession] so
+  /// [stopSession] can hand it back to the UI without a DB lookup.
+  String? _sessionName;
+
+  /// Start a new recording session: create the session row and its writer
+  /// (via [SessionStorage.startSession]) and latch them here.
+  ///
+  /// [name] is the session's display name; null auto-names it from the wall
+  /// clock (e.g. `7/20 14:05`). [channelLabels] and [visibleChannels] are
+  /// persisted for display only (see [SessionStorage.startSession]).
+  ///
+  /// Outcomes are returned, not thrown, so the caller (the live tab's record
+  /// button) can snackbar them locally; null means a session was already in
+  /// progress (a no-op the UI prevents by toggling on [sessionInProgress]).
+  Future<StartSessionResult?> startSession({
+    String? name,
+    required List<String> channelLabels,
+    required List<bool> visibleChannels,
+  }) async {
     assert(_linkManager.isStreaming);
-    if (_sessionInProgress) return;
+    if (_sessionInProgress) return null;
+    // A tare is still averaging; recording now would persist a zero tare.
+    if (_dataHub.taring) return const StartSessionTareInProgress();
+
+    final sessionName = name ?? _autoSessionName(DateTime.now());
+    final LiveSessionWriter writer;
+    try {
+      writer = await SessionStorage.startSession(
+        dataHub: _dataHub,
+        name: sessionName,
+        channelLabels: channelLabels,
+        visibleChannels: visibleChannels,
+      );
+    } catch (e) {
+      return StartSessionFailed(e);
+    }
 
     _sessionWriter = writer;
+    _sessionName = sessionName;
     _sessionInProgress = true;
     _decoder.resetContinuity();
     notifyListeners();
+    return const StartSessionOk();
   }
 
+  /// Default session name from the wall clock, e.g. `7/20 14:05`.
+  static String _autoSessionName(DateTime now) =>
+      '${now.month}/${now.day} ${now.hour}:${now.minute.toString().padLeft(2, '0')}';
+
   /// Stop the current recording and finalize it. Returns the saved session id
-  /// (or null if nothing was recording) and any write error the storage writer
-  /// latched (non-null means the session may be truncated).
+  /// and name (or nulls if nothing was recording) and any write error the
+  /// storage writer latched (non-null means the session may be truncated).
   ///
   /// This is the single place a storage failure is surfaced to the user (as a
   /// [RecordingStorageError] on [AppEvents]); callers only use the returned
   /// error to branch (e.g. suppress the "Session saved" notice).
-  Future<({int? sessionId, Object? error})> stopSession() async {
+  Future<({int? sessionId, String? name, Object? error})> stopSession() async {
     if (_sessionInProgress) {
       _sessionInProgress = false;
       final writer = _sessionWriter;
+      final name = _sessionName;
       _sessionWriter = null;
+      _sessionName = null;
       _decoder.resetContinuity();
       notifyListeners();
 
@@ -87,10 +161,10 @@ class RecordingController extends ChangeNotifier {
         if (error != null) {
           _events.emit(RecordingStorageError(error));
         }
-        return (sessionId: writer.sessionId, error: error);
+        return (sessionId: writer.sessionId, name: name, error: error);
       }
     }
-    return (sessionId: null, error: null);
+    return (sessionId: null, name: null, error: null);
   }
 
   /// Slice of freshly decoded samples, straight from the decoder (via the

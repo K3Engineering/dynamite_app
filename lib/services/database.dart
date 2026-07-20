@@ -1,5 +1,6 @@
 import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
+import 'package:flutter/foundation.dart';
 
 part 'database.g.dart';
 
@@ -49,6 +50,13 @@ class AppDatabase extends _$AppDatabase {
 
   static AppDatabase? _instance;
   static AppDatabase get instance => _instance ??= AppDatabase._();
+
+  /// For testing: swap the shared instance (e.g. an in-memory DB built with
+  /// [AppDatabase.forTesting]) so static storage APIs like `SessionStorage`
+  /// hit the test database. Pair with [closeInstance] in tearDown so the next
+  /// [instance] access re-opens the default connection.
+  @visibleForTesting
+  static set instance(AppDatabase? db) => _instance = db;
 
   /// For testing: create with a custom executor.
   factory AppDatabase.forTesting(QueryExecutor executor) =>
