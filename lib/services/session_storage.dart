@@ -282,18 +282,6 @@ class SessionData {
     }
   }
 
-  /// Get peak raw value for a given channel. Seeded from the first sample so
-  /// a never-positive channel reports its true (negative) max, not 0.
-  int peakRaw(int ch) {
-    final data = channels[ch];
-    if (sampleCount == 0) return 0;
-    int peak = data[0];
-    for (int i = 1; i < sampleCount; i++) {
-      if (data[i] > peak) peak = data[i];
-    }
-    return peak;
-  }
-
   /// Get average raw value for a given channel.
   double averageRaw(int ch) {
     double sum = 0;

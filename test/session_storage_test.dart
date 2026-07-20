@@ -13,7 +13,7 @@ import 'package:dynamite_app/services/session_storage.dart';
 void main() {
   const int channels = DataHub.numAdcChannels;
 
-  group('SessionData.peakRaw', () {
+  group('SessionData.maxs', () {
     SessionData makeSession(List<int> values) => SessionData(
       channels: [
         for (int ch = 0; ch < channels; ch++) Int32List.fromList(values),
@@ -27,12 +27,12 @@ void main() {
 
     test('a never-positive channel reports its true (negative) peak', () {
       final sess = makeSession([-100, -300, -50, -200]);
-      expect(sess.peakRaw(0), -50);
+      expect(sess.maxs[0], -50);
     });
 
     test('an empty session reports 0', () {
       final sess = makeSession(const []);
-      expect(sess.peakRaw(0), 0);
+      expect(sess.maxs[0], 0);
     });
   });
 
