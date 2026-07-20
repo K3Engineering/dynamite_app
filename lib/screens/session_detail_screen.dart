@@ -214,7 +214,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 values: [
                   for (int ch = 0; ch < data.channels.length; ch++)
                     unit.fromRaw(
-                      data.peakRaw(ch).toDouble() - data.tares[ch],
+                      data.maxs[ch] - data.tares[ch],
                       data.calibrationSlope,
                     ),
                 ],
@@ -268,8 +268,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 for (int ch = 0; ch < data.channels.length; ch++) ...[
                   const Divider(height: 16),
                   Text(
-                    _parseChannelLabels(_session.channelLabels).length > ch
-                        ? _parseChannelLabels(_session.channelLabels)[ch]
+                    storedLabels.length > ch
+                        ? storedLabels[ch]
                         : 'Channel ${ch + 1}',
                     style: TextStyle(
                       fontWeight: FontWeight.w500,
@@ -280,16 +280,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                     label: 'Peak',
                     value: settings.displayUnit.format(
                       settings.displayUnit.fromRaw(
-                        data.peakRaw(ch).toDouble() - data.tares[ch],
-                        data.calibrationSlope,
-                      ),
-                    ),
-                  ),
-                  _StatRow(
-                    label: 'Average',
-                    value: settings.displayUnit.format(
-                      settings.displayUnit.fromRaw(
-                        data.averageRaw(ch) - data.tares[ch],
+                        data.maxs[ch] - data.tares[ch],
                         data.calibrationSlope,
                       ),
                     ),
