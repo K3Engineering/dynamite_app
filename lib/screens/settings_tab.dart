@@ -49,7 +49,7 @@ class SettingsTab extends StatelessWidget {
           // Channel labels
           Text('Channels', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
-          for (int i = 0; i < 4; i++)
+          for (int i = 0; i < settings.channelLabels.length; i++)
             _ChannelConfigTile(
               index: i,
               label: settings.channelLabels[i],

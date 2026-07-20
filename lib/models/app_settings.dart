@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/adc_protocol.dart';
 import 'force_unit.dart';
 
 /// Application-wide settings, persisted via SharedPreferences.
@@ -15,13 +16,15 @@ class AppSettings extends ChangeNotifier {
   ForceUnit _displayUnit = ForceUnit.kN;
   ForceUnit get displayUnit => _displayUnit;
 
-  /// Labels for each of the 4 ADC channels.
-  List<String> _channelLabels = ['Load Cell 1', 'Load Cell 2', 'Ch 3', 'Ch 4'];
+  /// Labels for each of the [nwNumAdcChan] ADC channels.
+  List<String> _channelLabels = [
+    for (int i = 0; i < nwNumAdcChan; i++) 'Load Cell ${i + 1}',
+  ];
   List<String> get channelLabels => List.unmodifiable(_channelLabels);
 
   /// Which channels are shown in the live view. Local to the live tab —
   /// each recorded session carries its own visibility set.
-  List<bool> _activeChannels = [true, true, false, false];
+  List<bool> _activeChannels = List.filled(nwNumAdcChan, true);
   List<bool> get activeChannels => List.unmodifiable(_activeChannels);
 
   /// Indices of active channels.
@@ -49,12 +52,12 @@ class AppSettings extends ChangeNotifier {
     }
 
     final labels = prefs.getStringList(_keyChannelLabels);
-    if (labels != null && labels.length == 4) {
+    if (labels != null && labels.length == nwNumAdcChan) {
       _channelLabels = labels;
     }
 
     final active = prefs.getStringList(_keyActiveChannels);
-    if (active != null && active.length == 4) {
+    if (active != null && active.length == nwNumAdcChan) {
       _activeChannels = active.map((s) => s == 'true').toList();
     }
 
