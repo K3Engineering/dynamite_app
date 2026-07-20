@@ -1560,11 +1560,21 @@ String _fmtTick(double sec, int decimals) {
   return '$m:${s.padLeft(decimals == 0 ? 2 : decimals + 3, '0')}';
 }
 
-// Label paragraph cache
+// Label paragraph cache (bounded; fully cleared on overflow -- the per-frame
+// working set is only a few dozen labels, so a clear just rebuilds the
+// visible ones on the next paint).
+const int _labelCacheLimit = 512;
 final Map<String, ui.Paragraph> _labelCache = HashMap();
 
 ui.Paragraph _prepareLabel(String text, {Color color = Colors.black}) {
   final key = '$text|${color.toARGB32()}';
+  if (!_labelCache.containsKey(key) &&
+      _labelCache.length >= _labelCacheLimit) {
+    for (final paragraph in _labelCache.values) {
+      paragraph.dispose();
+    }
+    _labelCache.clear();
+  }
   return _labelCache.putIfAbsent(key, () {
     final style = ui.TextStyle(color: color, fontSize: 11);
     final builder =
