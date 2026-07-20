@@ -9,7 +9,6 @@ import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/database.dart';
 import '../services/recording_controller.dart';
-import '../services/session_storage.dart';
 import '../screens/app_shell.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/graph_components.dart';
@@ -142,8 +141,6 @@ class _LiveTabState extends State<LiveTab> {
 
   Future<void> _onToggleRecord() async {
     final recording = context.read<RecordingController>();
-    final hub = context.read<DataHub>();
-    final settings = context.read<AppSettings>();
 
     if (recording.sessionInProgress) {
       final result = await recording.stopSession();
@@ -154,11 +151,7 @@ class _LiveTabState extends State<LiveTab> {
       // On a storage error stopSession already emitted a RecordingStorageError
       // (surfaced by the shell), so only announce a cleanly saved session.
       if (result.error == null && sessionId != null) {
-        // Need to get the name we used when starting
-        final session = await AppDatabase.instance.sessionById(sessionId);
-        if (!mounted) return;
-        final sessionName = session?.name ?? 'Session';
-
+        final sessionName = result.name ?? 'Session';
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: const Text('Session saved'),
@@ -174,40 +167,35 @@ class _LiveTabState extends State<LiveTab> {
         );
       }
     } else {
-      if (hub.taring) {
-        // A tare is still averaging; recording now would persist a zero tare.
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Taring in progress — try again in a moment'),
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
-        return;
-      }
+      final settings = context.read<AppSettings>();
+      final result = await recording.startSession(
+        channelLabels: settings.channelLabels,
+        visibleChannels: settings.activeChannels,
+      );
 
-      final now = DateTime.now();
-      final autoName =
-          '${now.month}/${now.day} ${now.hour}:${now.minute.toString().padLeft(2, '0')}';
+      if (!mounted) return;
 
-      try {
-        final writer = await SessionStorage.startSession(
-          dataHub: hub,
-          name: autoName,
-          channelLabels: settings.channelLabels,
-          visibleChannels: settings.activeChannels,
-        );
-        await recording.startSession(writer);
-      } catch (e) {
-        if (mounted) {
+      switch (result) {
+        case StartSessionOk() || null:
+          // Recording (or already was, which the button state prevents). No
+          // announcement on start.
+          break;
+        case StartSessionTareInProgress():
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Taring in progress — try again in a moment'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        case StartSessionFailed(:final error):
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('Failed to start recording: $e'),
+              content: Text('Failed to start recording: $error'),
               behavior: SnackBarBehavior.floating,
               persist: true,
               showCloseIcon: true,
             ),
           );
-        }
       }
     }
   }
