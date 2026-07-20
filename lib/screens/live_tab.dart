@@ -397,20 +397,25 @@ class LiveStats extends StatelessWidget {
             ChannelStatsRow(
               label: 'Live',
               values: [
-                for (int i = 0; i < 4; i++) hub.currentForce(i, unit),
+                for (int i = 0; i < DataHub.numAdcChannels; i++)
+                  hub.currentForce(i, unit),
               ],
               emphasized: true,
               stale: stale,
             ),
             ChannelStatsRow(
               label: 'Peak',
-              values: [for (int i = 0; i < 4; i++) hub.peakForce(i, unit)],
+              values: [
+                for (int i = 0; i < DataHub.numAdcChannels; i++)
+                  hub.peakForce(i, unit),
+              ],
             ),
             if (showDerivative)
               ChannelStatsRow(
                 label: 'dF/dt',
                 values: [
-                  for (int i = 0; i < 4; i++) hub.currentDerivative(i, unit),
+                  for (int i = 0; i < DataHub.numAdcChannels; i++)
+                    hub.currentDerivative(i, unit),
                 ],
                 stale: stale,
               ),
