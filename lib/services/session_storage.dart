@@ -220,6 +220,13 @@ class SessionData {
   final List<double> mins;
   final List<double> maxs;
 
+  /// Per-channel raw-value sums, computed once on construction; the source
+  /// for [averageRaw]. Accumulated in double: integer-exact while
+  /// |sum| < 2^53 (~2^30 samples of 24-bit data -- ~4.6 h at 64 ksps full
+  /// scale, ~12 days at 1 ksps); beyond that it rounds gradually, staying
+  /// orders of magnitude below ADC noise for any achievable session.
+  final List<double> sums;
+
   /// Per-channel bucket aggregates over [bucketSize]-sample windows of the
   /// raw values. Mirrors DataHub's live buckets (same [BucketAccumulator])
   /// so the graphs can downsample cheaply. Gap samples hold the previous
@@ -244,7 +251,8 @@ class SessionData {
     GapList? gaps,
   }) : gaps = gaps ?? GapList(),
        mins = List.filled(channels.length, 0.0),
-       maxs = List.filled(channels.length, 0.0) {
+       maxs = List.filled(channels.length, 0.0),
+       sums = List.filled(channels.length, 0.0) {
     final int numBuckets = (sampleCount == 0)
         ? 0
         : ((sampleCount - 1) ~/ bucketSize) + 1;
@@ -261,11 +269,13 @@ class SessionData {
       if (sampleCount == 0) continue;
       double mn = double.infinity;
       double mx = double.negativeInfinity;
+      double sum = 0;
 
       for (int i = 0; i < sampleCount; i++) {
         final v = channels[ch][i];
         if (v < mn) mn = v.toDouble();
         if (v > mx) mx = v.toDouble();
+        sum += v;
 
         final int diff = ingestDiff(
           sampleIndex: i,
@@ -279,18 +289,13 @@ class SessionData {
       }
       mins[ch] = mn;
       maxs[ch] = mx;
+      sums[ch] = sum;
     }
   }
 
-  /// Get average raw value for a given channel.
-  double averageRaw(int ch) {
-    double sum = 0;
-    final data = channels[ch];
-    for (int i = 0; i < sampleCount; i++) {
-      sum += data[i];
-    }
-    return sum / sampleCount;
-  }
+  /// Get average raw value for a given channel, from the sum accumulated
+  /// at construction. NaN for an empty session, matching a literal scan.
+  double averageRaw(int ch) => sums[ch] / sampleCount;
 
   /// Duration in seconds.
   double get durationSeconds => sampleCount / sampleRate;
