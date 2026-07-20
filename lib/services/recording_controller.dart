@@ -40,7 +40,8 @@ final class StartSessionFailed extends StartSessionResult {
 /// writer, and finalizing in [stopSession] — plus the in-progress flag the UI
 /// keys off. The UI only toggles and reports outcomes.
 ///
-/// It observes the [DataHub] via [DataHub.onSamplesAppended] to stream exact
+/// It observes the [DataHub] via [DataHub.addSamplesAppendedListener] to
+/// stream exact
 /// sample slices to storage, and listens to the [BleLinkManager] for the two
 /// link transitions that affect data integrity:
 ///  * streaming ends — a session in progress is properly finalized (not
@@ -67,7 +68,7 @@ class RecordingController extends ChangeNotifier {
        _linkManager = linkManager,
        _decoder = decoder,
        _events = events {
-    _dataHub.onSamplesAppended = _onSamplesAppended;
+    _dataHub.addSamplesAppendedListener(_onSamplesAppended);
     _linkManager.addListener(_onLinkChanged);
   }
 
@@ -207,9 +208,7 @@ class RecordingController extends ChangeNotifier {
   @override
   void dispose() {
     _linkManager.removeListener(_onLinkChanged);
-    if (_dataHub.onSamplesAppended == _onSamplesAppended) {
-      _dataHub.onSamplesAppended = null;
-    }
+    _dataHub.removeSamplesAppendedListener(_onSamplesAppended);
     super.dispose();
   }
 }

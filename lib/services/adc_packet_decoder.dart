@@ -45,7 +45,8 @@ class AdcPacketDecoder {
   /// Parse one BLE ADC-feed notification packet into the hub.
   ///
   /// Data is always buffered for live display; recording observes the hub via
-  /// [DataHub.onSamplesAppended] (fired from [DataHub.commitBatch]).
+  /// [DataHub.addSamplesAppendedListener] (notified from
+  /// [DataHub.commitBatch]).
   void onDataPacket(Uint8List data) {
     if (data.isEmpty) {
       debugPrint("data isEmpty");
