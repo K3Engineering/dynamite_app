@@ -65,7 +65,9 @@ class SessionStorage {
       writer.sessionId,
       sampleCount: writer.totalSamplesRecorded,
       durationMs: (writer.totalSamplesRecorded * 1000) ~/ DataHub.samplesPerSec,
-      peakForceRaw: writer.peakRaw,
+      // A session that captured no samples leaves peakRaw at -infinity; that
+      // must not reach the DB (or the session list's peak display).
+      peakForceRaw: writer.peakRaw.isFinite ? writer.peakRaw : 0.0,
       peakForceChannel: writer.peakChannel,
       gaps: writer.gaps.toJson(),
     );
@@ -171,7 +173,12 @@ class _ChunkAggregate {
 
   final int channelCount;
   int samples = 0;
-  double peakRaw = 0.0;
+
+  /// Starts at -infinity so the first real sample always replaces it; a
+  /// never-positive stream must report its (negative) true max, not 0.
+  /// Callers persisting this must guard the no-samples case (see
+  /// [SessionStorage.finalizeSession]).
+  double peakRaw = double.negativeInfinity;
   int peakChannel = 0;
 
   void scan(Uint8List bytes, Float64List tare) {
@@ -275,11 +282,13 @@ class SessionData {
     }
   }
 
-  /// Get peak raw value for a given channel.
+  /// Get peak raw value for a given channel. Seeded from the first sample so
+  /// a never-positive channel reports its true (negative) max, not 0.
   int peakRaw(int ch) {
-    int peak = 0;
     final data = channels[ch];
-    for (int i = 0; i < sampleCount; i++) {
+    if (sampleCount == 0) return 0;
+    int peak = data[0];
+    for (int i = 1; i < sampleCount; i++) {
       if (data[i] > peak) peak = data[i];
     }
     return peak;
