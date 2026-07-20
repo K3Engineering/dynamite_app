@@ -73,8 +73,8 @@ void main() {
       expect(recording.sessionInProgress, isTrue);
 
       // Record a few frames so the finalized session has data. The controller
-      // streams hub slices to the writer via onSamplesAppended, fired by
-      // commitBatch once per (simulated) packet.
+      // streams hub slices to the writer via the samples-appended listener,
+      // notified by commitBatch once per (simulated) packet.
       const n = 10;
       final frame = Int32List(DataHub.numAdcChannels);
       for (var i = 0; i < n; i++) {

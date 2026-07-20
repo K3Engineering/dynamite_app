@@ -7,6 +7,11 @@ import '../models/bucket_series.dart';
 import '../models/force_unit.dart';
 import '../models/gap_list.dart';
 
+/// Invoked by [DataHub.commitBatch] with the exact slice of samples appended
+/// by the decoder for one packet ([startIdx] is the logical index of the
+/// first new sample).
+typedef SamplesAppendedListener = void Function(int startIdx, int count);
+
 /// Storage and derived statistics for the live ADC stream.
 ///
 /// This class owns the ring buffer, minimap buckets, tare state and the
@@ -76,11 +81,19 @@ class DataHub extends ChangeNotifier {
   /// buffer holds the held previous value across these ranges.
   final GapList gaps = GapList();
 
-  /// Invoked by [commitBatch] with the exact slice of samples appended by the
-  /// decoder for one packet ([startIdx] is the logical index of the first new
-  /// sample). This is how [RecordingController] observes new data without the
-  /// hub knowing anything about recording.
-  void Function(int startIdx, int count)? onSamplesAppended;
+  /// Observers notified by [commitBatch] with the exact slice of samples
+  /// appended by the decoder for one packet. This is how
+  /// [RecordingController] observes new data without the hub knowing anything
+  /// about recording. [ObserverList] (the same mechanism [ChangeNotifier]
+  /// uses) keeps removal-during-dispatch safe.
+  final ObserverList<SamplesAppendedListener> _samplesAppendedListeners =
+      ObserverList<SamplesAppendedListener>();
+
+  void addSamplesAppendedListener(SamplesAppendedListener listener) =>
+      _samplesAppendedListeners.add(listener);
+
+  void removeSamplesAppendedListener(SamplesAppendedListener listener) =>
+      _samplesAppendedListeners.remove(listener);
 
   DataHub() {
     clear();
@@ -170,13 +183,15 @@ class DataHub extends ChangeNotifier {
     }
   }
 
-  /// Close out one decoded packet: fire [onSamplesAppended] for the slice
-  /// appended since [startIdx] (the caller snapshots [totalSamples] before
-  /// decoding) and notify listeners once per packet.
+  /// Close out one decoded packet: notify [SamplesAppendedListener]s of the
+  /// slice appended since [startIdx] (the caller snapshots [totalSamples]
+  /// before decoding) and notify listeners once per packet.
   void commitBatch(int startIdx) {
     final int count = totalSamples - startIdx;
     if (count > 0) {
-      onSamplesAppended?.call(startIdx, count);
+      for (final listener in _samplesAppendedListeners) {
+        listener(startIdx, count);
+      }
     }
     gaps.pruneBefore(totalSamples - maxDataSz); // ring-wrap hygiene
     notifyListeners();

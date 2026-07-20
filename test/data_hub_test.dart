@@ -124,7 +124,7 @@ void main() {
     test('recordings observe the samples appended during a tare', () {
       final hub = DataHub();
       final appended = <int>[];
-      hub.onSamplesAppended = (start, count) => appended.add(count);
+      hub.addSamplesAppendedListener((start, count) => appended.add(count));
 
       // Mimic the decoder's per-packet pattern.
       void packet(int value, int frames) {
