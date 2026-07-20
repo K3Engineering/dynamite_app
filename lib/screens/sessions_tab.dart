@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import '../models/app_settings.dart';
 import '../models/force_unit.dart';
 import '../services/database.dart';
+import '../utils/format.dart';
+import '../widgets/dialogs.dart';
 import 'session_detail_screen.dart';
 
 class SessionsTab extends StatefulWidget {
@@ -119,29 +121,7 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   Future<void> _deleteSession(Session session) async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete session?'),
-        content: Text('Delete "${session.name}"? This cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(ctx).colorScheme.error,
-              foregroundColor: Theme.of(ctx).colorScheme.onError,
-            ),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
+    if (await showDeleteConfirm(context, what: session.name)) {
       await AppDatabase.instance.deleteSession(session.id);
     }
   }
@@ -165,7 +145,7 @@ class _SessionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final duration = Duration(milliseconds: session.durationMs);
-    final durationStr = _formatDuration(duration);
+    final durationStr = formatDuration(duration);
     final peakDisplay = unit.format(
       unit.fromRaw(session.peakForceRaw.toDouble(), calibrationSlope),
     );
@@ -192,7 +172,7 @@ class _SessionCard extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w500),
           ),
           subtitle: Text(
-            '${_formatDate(session.createdAt)} · $durationStr\n'
+            '${formatDate(session.createdAt)} · $durationStr\n'
             'Peak: $peakDisplay · ${session.channelCount} ch',
           ),
           isThreeLine: true,
@@ -200,31 +180,5 @@ class _SessionCard extends StatelessWidget {
         ),
       ),
     );
-  }
-
-  static String _formatDuration(Duration d) {
-    if (d.inMinutes >= 1) {
-      final sec = d.inSeconds % 60;
-      return '${d.inMinutes}m ${sec}s';
-    }
-    return '${d.inSeconds}s';
-  }
-
-  static String _formatDate(DateTime dt) {
-    const months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
-    ];
-    return '${months[dt.month - 1]} ${dt.day}, ${dt.year}';
   }
 }

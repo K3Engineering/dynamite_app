@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
-import 'dart:convert';
 
-import 'package:cross_file/cross_file.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'adc_protocol.dart';
@@ -19,7 +17,6 @@ class MockBlePlatform extends UniversalBlePlatform {
     _setupListeners();
     // Always have a synthetic feed available synchronously so [connect] never
     // blocks on file I/O (which would stall under a fake-async test clock).
-    // [loadMockDataFile] can later override this with real captured samples.
     _mockData
       ..clear()
       ..addAll(_generateSyntheticFrames(2000));
@@ -255,50 +252,6 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   void _setupListeners() {
     //onValueChange = (String deviceId, String characteristicId, Uint8List value) {};
-  }
-
-  /// Optionally override the synthetic feed with real captured samples from a
-  /// text file (one JSON object per line, `{"channels": [c0,c1,c2,c3]}`).
-  ///
-  /// This is an explicit opt-in for replaying recorded data: [connect] never
-  /// awaits this, so the feed always has the synthetic frames ready even if the
-  /// file is missing or unreadable. On success the data cursor is reset so the
-  /// next subscription starts from the first captured sample.
-  Future<void> loadMockDataFile(String path) async {
-    final loaded = <Uint8List>[];
-    try {
-      final String mem = await XFile(path).readAsString(encoding: ascii);
-      for (final String s in mem.split('\n')) {
-        if (s.isEmpty) continue;
-        final Map<String, dynamic> parsedLine = json.decode(
-          s.replaceAll("'", '"'),
-        );
-        final adcSamples = List<int>.from(parsedLine['channels']);
-        assert(adcSamples.length == nwNumAdcChan);
-        loaded.add(_packSampleList(adcSamples));
-      }
-    } catch (_) {
-      // Could not read/parse the file: keep the existing synthetic feed.
-      return;
-    }
-    if (loaded.isNotEmpty) {
-      _mockData
-        ..clear()
-        ..addAll(loaded);
-      _mockDataCount = 0;
-    }
-  }
-
-  /// Pack a list of channel values (24-bit signed) into the 12-byte wire sample.
-  static Uint8List _packSampleList(List<int> ch) {
-    final out = Uint8List(nwAdcSampleLength);
-    for (int i = 0; i < nwNumAdcChan && i < ch.length; ++i) {
-      final v = ch[i] & 0xFFFFFF;
-      out[i * 3] = v & 0xFF;
-      out[i * 3 + 1] = (v >> 8) & 0xFF;
-      out[i * 3 + 2] = (v >> 16) & 0xFF;
-    }
-    return out;
   }
 
   /// Pack 4 channel values (24-bit signed) into the 12-byte wire sample.

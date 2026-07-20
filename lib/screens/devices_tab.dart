@@ -48,18 +48,9 @@ class _DevicesTabState extends State<DevicesTab> {
     // Usable connection (services discovered + ADC feed streaming). "Connected"
     // in the UI means this — not merely that a GATT link exists.
     final isStreaming = bt.isStreaming;
-    // GATT link is up but post-connect setup is still running ("Setting up…").
-    final isSettingUp = bt.isSettingUp;
     // The link is up (setting up OR streaming) — the connected card is shown for
     // both so the user can see progress and cancel a stuck setup.
     final isLinkUp = bt.selectedDeviceId.isNotEmpty;
-    // A link is "busy" whenever it is mid-transition, active, or cooling down
-    // after a disconnect; device-row Connect buttons stay disabled until the
-    // link returns to idle. This is what prevents the disconnect→reconnect
-    // double-click race — including the web post-disconnect settle window where
-    // the stack isn't yet ready to accept a fresh connection.
-    final isBusy =
-        isLinkUp || bt.isConnecting || bt.isDisconnecting || bt.isCoolingDown;
     // The specific device currently in its post-disconnect cooldown window (web
     // only); its row shows "Please wait…" instead of "Connect".
     final coolingDownDeviceId = bt.isCoolingDown ? bt.link.deviceId : '';
@@ -81,14 +72,10 @@ class _DevicesTabState extends State<DevicesTab> {
                   children: [
                     Flexible(
                       child: BluetoothIndicator(
-                        isScanning: bt.isScanning,
-                        isConnecting: bt.isConnecting,
-                        isSettingUp: isSettingUp,
-                        isConnected: isStreaming,
-                        isDisconnecting: bt.isDisconnecting,
-                        isCoolingDown: bt.isCoolingDown,
-                        hasDevices: bt.devices.isNotEmpty,
+                        linkState: bt.link.state,
                         state: bt.bluetoothState,
+                        isScanning: bt.isScanning,
+                        hasDevices: bt.devices.isNotEmpty,
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -193,7 +180,7 @@ class _DevicesTabState extends State<DevicesTab> {
                   // disconnecting) so we never issue a connect against a link
                   // that is still tearing down — this is the fix for needing a
                   // second Connect click right after Disconnect.
-                  onPressed: isBusy
+                  onPressed: bt.linkBusy
                       ? null
                       : () async {
                           try {
@@ -231,7 +218,7 @@ class _DevicesTabState extends State<DevicesTab> {
               title: const Text('Demo Device'),
               subtitle: const Text('Simulated data — no hardware'),
               trailing: FilledButton(
-                onPressed: isBusy
+                onPressed: bt.linkBusy
                     ? null
                     : () async {
                         try {

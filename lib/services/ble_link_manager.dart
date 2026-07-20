@@ -205,6 +205,13 @@ class BleLinkManager extends ChangeNotifier {
   /// device. Connect stays blocked while this is true.
   bool get isCoolingDown => _link.isCoolingDown;
 
+  /// A link is "busy" whenever it is mid-transition, active, or cooling down
+  /// after a disconnect; device-row Connect buttons stay disabled until the
+  /// link returns to idle. This is what prevents the disconnect→reconnect
+  /// double-click race — including the web post-disconnect settle window where
+  /// the stack isn't yet ready to accept a fresh connection.
+  bool get linkBusy => _link.state != BtLinkState.idle;
+
   /// Device id of the active link whenever the GATT link is up (during setup or
   /// while streaming); empty otherwise.
   String get selectedDeviceId => _link.isLinkUp ? _link.deviceId : '';
@@ -686,21 +693,22 @@ class BleLinkManager extends ChangeNotifier {
       return;
     }
     for (final characteristic in service.characteristics) {
-      if ((characteristic.uuid == btChrAdcFeedId) &&
-          characteristic.properties.contains(CharacteristicProperty.notify)) {
-        onCalibrationData?.call(
-          await UniversalBle.read(deviceId, service.uuid, btChrCalibration),
-        );
-        await UniversalBle.subscribeNotifications(
-          deviceId,
-          service.uuid,
-          characteristic.uuid,
-        );
-        // The link's transition to the usable [BtLinkState.streaming] state is
-        // driven by the caller ([_onConnectionChange]) once this returns and the
-        // generation guard confirms the pass wasn't superseded.
-        return;
+      if (characteristic.uuid != btChrAdcFeedId ||
+          !characteristic.properties.contains(CharacteristicProperty.notify)) {
+        continue;
       }
+      onCalibrationData?.call(
+        await UniversalBle.read(deviceId, service.uuid, btChrCalibration),
+      );
+      await UniversalBle.subscribeNotifications(
+        deviceId,
+        service.uuid,
+        characteristic.uuid,
+      );
+      // The link's transition to the usable [BtLinkState.streaming] state is
+      // driven by the caller ([_onConnectionChange]) once this returns and the
+      // generation guard confirms the pass wasn't superseded.
+      return;
     }
   }
 

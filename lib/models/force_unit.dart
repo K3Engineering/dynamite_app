@@ -28,15 +28,8 @@ enum ForceUnit {
   double fromKgf(double kgf) => kgf * _kgfMultiplier;
 
   /// Convert a raw ADC value to this unit, given the kgf/raw slope
-  double fromRaw(double rawTared, double calibrationSlope) {
-    if (this == ForceUnit.mV) {
-      return rawTared * rawToMvMultiplier;
-    }
-    if (this == ForceUnit.raw) {
-      return rawTared;
-    }
-    return rawTared * calibrationSlope * _kgfMultiplier;
-  }
+  double fromRaw(double rawTared, double calibrationSlope) =>
+      rawTared * multiplierFromRaw(calibrationSlope);
 
   /// Get the multiplier from raw ADC counts to this unit
   double multiplierFromRaw(double calibrationSlope) {

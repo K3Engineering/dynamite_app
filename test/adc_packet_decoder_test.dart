@@ -126,5 +126,17 @@ void main() {
       decoder.onDataPacket(Uint8List(0));
       expect(hub.totalSamples, 0);
     });
+
+    test('a truncated packet is ignored instead of throwing', () {
+      // One byte short of a full packet: a firmware bug must not crash the
+      // app (the in-loop asserts are stripped in release builds).
+      final short = makePacket(0, (s, c) => 1);
+      decoder.onDataPacket(Uint8List.sublistView(short, 0, short.length - 1));
+      expect(hub.totalSamples, 0);
+      // A packet with trailing extra bytes still decodes its 20 samples.
+      final long = Uint8List(short.length + 3)..setAll(0, short);
+      decoder.onDataPacket(long);
+      expect(hub.totalSamples, nwAdcNumSamples);
+    });
   });
 }
