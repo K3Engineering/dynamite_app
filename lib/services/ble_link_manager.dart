@@ -282,7 +282,14 @@ class BleLinkManager extends ChangeNotifier {
   }
 
   void _onScanResult(BleDevice newDevice) {
-    // Keep all discovered devices (replace if same ID seen again with better RSSI).
+    // Keep all discovered devices; a repeat advertisement from a known device
+    // always replaces the stored entry so the row shows the FRESHEST RSSI —
+    // signal may weaken as well as strengthen (a null RSSI is kept as-is and
+    // the UI shows an honest "RSSI: --"). The one exception is the name:
+    // plain ADV packets often omit it (it may only ride in the SCAN_RSP) and
+    // some stacks deliver each PDU as a separate callback, so a nameless
+    // re-advertisement must not blank the row title — keep the last known
+    // name in that case.
     //
     // TODO(firmware): once the device advertises manufacturer data, parse
     // `newDevice.manufacturerDataList` (companyId + payload) into a device model
@@ -293,11 +300,8 @@ class BleLinkManager extends ChangeNotifier {
       (d) => d.deviceId == newDevice.deviceId,
     );
     if (existingIdx >= 0) {
-      if (newDevice.rssi != null &&
-          (_devices[existingIdx].rssi == null ||
-              newDevice.rssi! > _devices[existingIdx].rssi!)) {
-        _devices[existingIdx] = newDevice;
-      }
+      newDevice.name ??= _devices[existingIdx].name;
+      _devices[existingIdx] = newDevice;
     } else {
       _devices.add(newDevice);
     }
