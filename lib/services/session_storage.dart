@@ -313,10 +313,23 @@ class SessionData {
 ///
 /// All DB writes are serialized through [_writeQueue] so concurrent (unawaited)
 /// [appendData] calls and the finalizing [flush] cannot interleave or reorder
-/// chunks. The first write error is latched in [writeError] rather than thrown
+/// chunks. The queue serializes ONLY the writes: [appendData] snapshots its
+/// sample slice synchronously at call time, so a stalled queue can never
+/// observe ring-buffer slots the producer has since overwritten. If storage
+/// nonetheless falls a full ring behind, an error is latched (see
+/// [appendData]) so the backlog — and its memory — stops growing and the
+/// failure is surfaced instead of recording into the void.
+///
+/// The first write error is latched in [writeError] rather than thrown
 /// into the void, so the caller can surface it.
 class LiveSessionWriter {
-  LiveSessionWriter(this.sessionId, this.tare);
+  LiveSessionWriter(
+    this.sessionId,
+    this.tare, {
+    @visibleForTesting
+    Future<void> Function(int sessionId, int chunkIndex, Uint8List data)?
+    chunkSink,
+  }) : _chunkSink = chunkSink;
 
   final int sessionId;
 
@@ -350,37 +363,70 @@ class LiveSessionWriter {
   /// Serializes all DB writes. Each enqueued op awaits the previous one.
   Future<void> _writeQueue = Future.value();
 
+  /// Test seam: when set, chunk payloads go here instead of
+  /// [AppDatabase.insertChunk], so tests can stall and observe writes without
+  /// opening a real database. Resolved lazily so constructing a writer never
+  /// touches the database singleton.
+  final Future<void> Function(int sessionId, int chunkIndex, Uint8List data)?
+  _chunkSink;
+
   /// Flush whenever the staging buffer reaches ~this many bytes
-  /// (~2 s at 1 kHz, 2 ch, 4 B/value).
+  /// (~1 s at 1 kHz, 4 ch, 4 B/value).
   static const int _flushThreshold = 16384;
 
   /// Append [count] samples starting at ring-buffer logical index [startIdx].
   /// Returns when this slice has been buffered (and flushed, if the threshold
   /// was crossed). Safe to call without awaiting; calls are serialized.
+  ///
+  /// The slice is copied out of the ring buffer SYNCHRONOUSLY: hub state is
+  /// only guaranteed fresh at call time, and the enqueued op runs only after
+  /// prior DB writes drain — by which point the producer may have advanced
+  /// far enough to overwrite these slots. Snapshotting here makes the copy
+  /// correct no matter how long the queue stalls; the queue then only
+  /// serializes staging and the DB write.
   Future<void> appendData(DataHub dataHub, int startIdx, int count) {
-    // Capture this slice's gap ranges synchronously (hub state is only
-    // guaranteed fresh at call time), rebased to session-relative indices.
+    // Capture this slice's gap ranges synchronously, rebased to
+    // session-relative indices.
     final int origin = _originIdx ??= startIdx;
     for (final (s, e) in dataHub.gaps.rangesIn(startIdx, startIdx + count)) {
       gaps.append(s - origin, e - origin);
     }
+
+    // Snapshot the sample slice before enqueueing.
+    const numLines = DataHub.numAdcChannels;
+    final buffer = ByteData(count * numLines * 4);
+    int offset = 0;
+    for (int s = startIdx; s < startIdx + count; s++) {
+      for (int ch = 0; ch < numLines; ch++) {
+        buffer.setInt32(
+          offset,
+          dataHub.rawData[ch][s % DataHub.maxDataSz],
+          Endian.little,
+        );
+        offset += 4;
+      }
+    }
+    final bytes = buffer.buffer.asUint8List();
+
     return _enqueue(() async {
       if (writeError != null) return;
-      const numLines = DataHub.numAdcChannels;
-      final buffer = ByteData(count * numLines * 4);
-      int offset = 0;
-      for (int s = startIdx; s < startIdx + count; s++) {
-        for (int ch = 0; ch < numLines; ch++) {
-          buffer.setInt32(
-            offset,
-            dataHub.rawData[ch][s % DataHub.maxDataSz],
-            Endian.little,
-          );
-          offset += 4;
-        }
+      // Backpressure latch: if storage has fallen a full ring behind, the
+      // producer has overwritten this slice's slots (the snapshot above is
+      // still correct, but the backlog of snapshots grows ~16 KB/s while the
+      // stall lasts). Latch an error so the session auto-stops loudly via the
+      // existing hasError path instead of leaking memory into a wedged sink.
+      if (startIdx < dataHub.totalSamples - DataHub.maxDataSz) {
+        writeError ??= StateError(
+          'Storage fell more than the ring capacity (${DataHub.maxDataSz} '
+          'samples) behind the live stream; aborting recording',
+        );
+        debugPrint(
+          'Session storage backpressure tripped (session $sessionId): '
+          '$writeError',
+        );
+        return;
       }
 
-      final bytes = buffer.buffer.asUint8List();
       // Update peak/sample-count via the same scan logic recovery uses.
       _agg.scan(bytes, tare);
       totalSamplesRecorded = _agg.samples;
@@ -405,7 +451,11 @@ class LiveSessionWriter {
     final dataToSave = _staging.takeBytes();
     final chunkIdx = _chunkIndex++;
     try {
-      await AppDatabase.instance.insertChunk(sessionId, chunkIdx, dataToSave);
+      await (_chunkSink ?? AppDatabase.instance.insertChunk)(
+        sessionId,
+        chunkIdx,
+        dataToSave,
+      );
     } catch (e) {
       // Latch the first failure; stop accumulating so we don't grow unbounded
       // after the sink has gone away (e.g. disk full / web quota exceeded).
