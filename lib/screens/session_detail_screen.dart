@@ -285,15 +285,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                       ),
                     ),
                   ),
-                  _StatRow(
-                    label: 'Average',
-                    value: settings.displayUnit.format(
-                      settings.displayUnit.fromRaw(
-                        data.averageRaw(ch) - data.tares[ch],
-                        data.calibrationSlope,
-                      ),
-                    ),
-                  ),
                 ],
               ],
             ),

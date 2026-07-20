@@ -282,16 +282,6 @@ class SessionData {
     }
   }
 
-  /// Get average raw value for a given channel.
-  double averageRaw(int ch) {
-    double sum = 0;
-    final data = channels[ch];
-    for (int i = 0; i < sampleCount; i++) {
-      sum += data[i];
-    }
-    return sum / sampleCount;
-  }
-
   /// Duration in seconds.
   double get durationSeconds => sampleCount / sampleRate;
 }
