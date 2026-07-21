@@ -11,6 +11,7 @@ import '../services/database.dart';
 import '../services/recording_controller.dart';
 import '../screens/app_shell.dart';
 import '../widgets/channel_stats_table.dart';
+import '../widgets/dialogs.dart';
 import '../widgets/graph_components.dart';
 
 // ---------------------------------------------------------------------------
@@ -82,8 +83,10 @@ class _LiveTabState extends State<LiveTab> {
   bool _showDerivative = false;
   _LiveDataSource? _dataSource;
   DataHub? _hub;
-  BleLinkManager? _link;
-  bool _wasStreaming = false;
+
+  /// Last seen hub sample count; a decrease means the hub was cleared for a
+  /// new device stream (see [RecordingController]).
+  int _lastTotalSamples = 0;
 
   @override
   void didChangeDependencies() {
@@ -93,43 +96,33 @@ class _LiveTabState extends State<LiveTab> {
     // singleton, so the identity check below only fires once.
     final hub = context.read<DataHub>();
     if (_hub != hub) {
+      _hub?.removeListener(_onHubChanged);
       _hub = hub;
+      _lastTotalSamples = hub.totalSamples;
+      hub.addListener(_onHubChanged);
       _dataSource?.dispose();
       _dataSource = _LiveDataSource(hub);
     }
-    // Same for the link manager (also an app-lifetime singleton): listen for
-    // new device streams so the viewport can follow the fresh trace.
-    final link = context.read<BleLinkManager>();
-    if (_link != link) {
-      _link?.removeListener(_onLinkEdge);
-      _link = link;
-      _wasStreaming = link.isStreaming;
-      _link!.addListener(_onLinkEdge);
-    }
   }
 
-  /// A new device stream means the hub was just cleared (see
-  /// [RecordingController]): drop any stale pan/zoom window and follow the
-  /// live edge. Without this, a user-panned (non-live) window survives the
-  /// disconnect and [GraphController.effectiveRange] would clamp the stale
-  /// window against a now-empty buffer (inverted clamp limits -> throw).
-  void _onLinkEdge() {
-    final link = _link!;
+  /// A hub reset (its sample count only ever increases otherwise) means a new
+  /// device stream just cleared the previous trace: drop any stale pan/zoom
+  /// window and follow the fresh live edge. Without this, a user-panned
+  /// (non-live) window survives the disconnect and
+  /// [GraphController.effectiveRange] would clamp the stale window against a
+  /// now-empty buffer (inverted clamp limits -> throw).
+  void _onHubChanged() {
     final hub = _hub!;
-    if (link.isStreaming && !_wasStreaming) {
-      _graphCtrl.goLive(
-        totalSamples: hub.totalSamples,
-        oldestSample: hub.totalSamples > DataHub.maxDataSz
-            ? hub.totalSamples - DataHub.maxDataSz
-            : 0,
-      );
+    final total = hub.totalSamples;
+    if (total < _lastTotalSamples) {
+      _graphCtrl.goLive(totalSamples: total, oldestSample: 0);
     }
-    _wasStreaming = link.isStreaming;
+    _lastTotalSamples = total;
   }
 
   @override
   void dispose() {
-    _link?.removeListener(_onLinkEdge);
+    _hub?.removeListener(_onHubChanged);
     _dataSource?.dispose();
     _graphCtrl.dispose();
     super.dispose();
@@ -201,37 +194,15 @@ class _LiveTabState extends State<LiveTab> {
   }
 
   Future<void> _showRenameDialog(int sessionId, String currentName) async {
-    final controller = TextEditingController(text: currentName);
-    final newName = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Name this session'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Session name',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (val) => Navigator.of(ctx).pop(val),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+    final newName = await showTextPrompt(
+      context,
+      title: 'Name this session',
+      label: 'Session name',
+      initial: currentName,
     );
-
     if (newName != null && newName.isNotEmpty) {
       await AppDatabase.instance.renameSession(sessionId, newName);
     }
-    controller.dispose();
   }
 
   @override

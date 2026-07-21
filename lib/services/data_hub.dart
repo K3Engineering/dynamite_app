@@ -15,7 +15,7 @@ typedef SamplesAppendedListener = void Function(int startIdx, int count);
 /// Storage and derived statistics for the live ADC stream.
 ///
 /// This class owns the ring buffer, minimap buckets, tare state and the
-/// analytics the UI reads (current/peak/min force, derivative, AC RMS). It
+/// analytics the UI reads (current/peak/min force and the derivative). It
 /// knows nothing about BLE or the wire format: decoded samples arrive through
 /// [addSampleFrame] / [addDroppedFrames] (fed by [AdcPacketDecoder]) and each
 /// packet is closed out with [commitBatch].

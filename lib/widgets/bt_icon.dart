@@ -3,70 +3,74 @@ import 'package:flutter/material.dart';
 
 import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
+import '../services/ble_link_manager.dart' show BtLinkState;
+
+/// Compact Bluetooth status readout (icon + hint text, with a spinner while
+/// anything is in flight). Driven directly by the per-device link state plus
+/// the global adapter availability and scan flag — no derived flags to keep
+/// in sync at the call site.
 class BluetoothIndicator extends StatelessWidget {
-  final bool isScanning;
-  final bool isConnecting;
-  final bool isSettingUp;
-  final bool isConnected;
-  final bool isDisconnecting;
-  final bool isCoolingDown;
-  final bool hasDevices;
+  /// State of the single active device link.
+  final BtLinkState linkState;
+
+  /// Radio/adapter availability.
   final AvailabilityState state;
+
+  final bool isScanning;
+
+  /// Any discovered devices in the list (for the idle hint).
+  final bool hasDevices;
 
   const BluetoothIndicator({
     super.key,
-    required this.isScanning,
+    required this.linkState,
     required this.state,
-    this.isConnecting = false,
-    this.isSettingUp = false,
-    this.isConnected = false,
-    this.isDisconnecting = false,
-    this.isCoolingDown = false,
+    this.isScanning = false,
     this.hasDevices = false,
   });
 
   @override
   Widget build(BuildContext context) {
     (IconData, Color, String) indicator() {
-      // Order matters: most definite / in-progress states first.
-      if (isDisconnecting) {
-        return const (
-          Icons.bluetooth_searching,
-          Colors.lightBlue,
-          'Disconnecting…',
-        );
-      }
-      if (isCoolingDown) {
-        // Web: the link has torn down but the stack isn't ready to reconnect
-        // yet. Connect stays disabled through this settle window.
-        return const (
-          Icons.bluetooth_searching,
-          Colors.lightBlue,
-          'Almost ready…',
-        );
-      }
-      if (isConnected) {
-        return const (
-          Icons.bluetooth_connected,
-          Colors.blueAccent,
-          'Connected',
-        );
-      }
-      if (isSettingUp) {
-        // GATT link is up but service discovery / ADC subscription is still in
-        // progress. Not usable yet.
-        return const (
-          Icons.bluetooth_searching,
-          Colors.lightBlue,
-          'Setting up…',
-        );
-      }
-      if (isConnecting) {
-        return const (
-          Icons.bluetooth_searching,
-          Colors.lightBlue,
-          'Connecting…',
-        );
+      // Link states first: any active link or transition outranks scan and
+      // adapter status.
+      switch (linkState) {
+        case BtLinkState.disconnecting:
+          return const (
+            Icons.bluetooth_searching,
+            Colors.lightBlue,
+            'Disconnecting…',
+          );
+        case BtLinkState.cooldown:
+          // Web: the link has torn down but the stack isn't ready to reconnect
+          // yet. Connect stays disabled through this settle window.
+          return const (
+            Icons.bluetooth_searching,
+            Colors.lightBlue,
+            'Almost ready…',
+          );
+        case BtLinkState.streaming:
+          return const (
+            Icons.bluetooth_connected,
+            Colors.blueAccent,
+            'Connected',
+          );
+        case BtLinkState.connected:
+          // GATT link is up but service discovery / ADC subscription is still
+          // in progress. Not usable yet.
+          return const (
+            Icons.bluetooth_searching,
+            Colors.lightBlue,
+            'Setting up…',
+          );
+        case BtLinkState.connecting:
+          return const (
+            Icons.bluetooth_searching,
+            Colors.lightBlue,
+            'Connecting…',
+          );
+        case BtLinkState.idle:
+          break; // Fall through to scan / adapter status.
       }
       if (isScanning) {
         // On web the device list lives in the browser's own picker popup, not
@@ -134,12 +138,11 @@ class BluetoothIndicator extends StatelessWidget {
 
     final (IconData icon, Color color, String label) = indicator();
     const double size = 32;
+    // Spinner while anything is in flight (scanning or a link transition);
+    // the steady "streaming" state gets the plain connected icon.
     final bool showSpinner =
         isScanning ||
-        isConnecting ||
-        isSettingUp ||
-        isDisconnecting ||
-        isCoolingDown;
+        (linkState != BtLinkState.idle && linkState != BtLinkState.streaming);
 
     final iconStack = Stack(
       clipBehavior: Clip.none,

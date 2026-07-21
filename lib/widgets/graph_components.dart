@@ -611,67 +611,103 @@ class _NeverListenable extends Listenable {
 // Graph viewport controller (shared between force graph, derivative, minimap)
 // ---------------------------------------------------------------------------
 
+/// Viewport state of a [GraphController]: either following the live (right)
+/// edge or parked on a fixed window. Kept as a union so the two states can't
+/// mix (e.g. a stale window start silently carried while live).
+sealed class GraphViewport {
+  const GraphViewport();
+}
+
+/// Following the live edge. [span] locks the visible window to a fixed sample
+/// count; null means "show everything" (auto-expanding squeeze).
+final class GraphLive extends GraphViewport {
+  const GraphLive([this.span]);
+
+  final int? span;
+}
+
+/// Parked on the fixed window [start, end) (absolute sample indices).
+final class GraphWindow extends GraphViewport {
+  const GraphWindow(this.start, this.end);
+
+  final int start;
+  final int end;
+}
+
 class GraphController extends ChangeNotifier {
   final int minLiveSpan;
 
   GraphController({this.minLiveSpan = 0})
-    : _liveSpan = minLiveSpan > 0 ? minLiveSpan : null;
+    : _viewport = minLiveSpan > 0 ? GraphLive(minLiveSpan) : const GraphLive();
 
-  /// Start of visible window in samples.
-  int _viewStart = 0;
-  int get viewStart => _viewStart;
-
-  /// End of visible window in samples. Null means "follow live edge".
-  int? _viewEnd;
-  int? get viewEnd => _viewEnd;
+  GraphViewport _viewport;
 
   /// Whether we're following the live edge (auto-scroll with new data).
-  bool _isLive = true;
-  bool get isLive => _isLive;
+  bool get isLive => _viewport is GraphLive;
 
-  /// When in live mode and zoomed in, this is the fixed span to show
-  /// from the right edge. Null means "show all data from _viewStart" (up to 10 minutes).
-  int? _liveSpan;
-  int? get liveSpan => _liveSpan;
+  /// When in live mode and zoomed in, the fixed span shown from the right
+  /// edge. Null means "show all data" (auto-expanding up to buffer capacity).
+  int? get liveSpan => switch (_viewport) {
+    GraphLive(:final span) => span,
+    GraphWindow() => null,
+  };
+
+  /// Start of the visible window in samples; 0 in live mode (the live range
+  /// is derived by [effectiveRange], never stored).
+  int get viewStart => switch (_viewport) {
+    GraphWindow(:final start) => start,
+    GraphLive() => 0,
+  };
+
+  /// End of the visible window in samples; null in live mode.
+  int? get viewEnd => switch (_viewport) {
+    GraphWindow(:final end) => end,
+    GraphLive() => null,
+  };
 
   /// Snap to live mode -- follow the right edge.
   /// If [span] is provided, locks to that scrolling window.
-  /// If not provided, it intelligently decides between full view or default scrolling window.
+  /// If not provided, derives the lock from the current window (or keeps the
+  /// existing lock when already live).
   void goLive({
     int? span,
     required int totalSamples,
     required int oldestSample,
   }) {
+    final int? lockedSpan;
     if (span != null) {
       // Explicitly lock to a span (used by zoom out when it hits max)
-      _liveSpan = span;
-    } else if (_viewEnd != null) {
-      final currentSpan = _viewEnd! - _viewStart;
-      if (currentSpan < totalSamples - oldestSample) {
-        // User is zoomed in to a specific window, lock to it
-        _liveSpan = currentSpan;
-      } else if (currentSpan > minLiveSpan) {
-        // They zoomed out to see all available data (beyond minLiveSpan);
-        // they want to see everything auto-expand.
-        _liveSpan = null;
-      } else {
-        // They zoomed out, but we don't have much data yet. Lock to minimum
-        // span so it cleanly starts scrolling once it hits 20s.
-        _liveSpan = minLiveSpan;
+      lockedSpan = span;
+    } else {
+      switch (_viewport) {
+        case GraphLive(:final span):
+          // Already live (e.g. a fresh stream resetting the view): keep the
+          // current lock.
+          lockedSpan = span;
+        case GraphWindow(:final start, :final end):
+          final currentSpan = end - start;
+          if (currentSpan < totalSamples - oldestSample) {
+            // User is zoomed in to a specific window, lock to it
+            lockedSpan = currentSpan;
+          } else if (currentSpan > minLiveSpan) {
+            // They zoomed out to see all available data (beyond minLiveSpan);
+            // they want to see everything auto-expand.
+            lockedSpan = null;
+          } else {
+            // They zoomed out, but we don't have much data yet. Lock to minimum
+            // span so it cleanly starts scrolling once it hits 20s.
+            lockedSpan = minLiveSpan;
+          }
       }
     }
 
-    _isLive = true;
-    _viewEnd = null;
+    _viewport = GraphLive(lockedSpan);
     notifyListeners();
   }
 
   /// Set a specific visible window (exits live mode).
   void setWindow(int start, int end) {
-    _viewStart = start;
-    _viewEnd = end;
-    _isLive = false;
-    _liveSpan = null;
+    _viewport = GraphWindow(start, end);
     notifyListeners();
   }
 
@@ -681,15 +717,16 @@ class GraphController extends ChangeNotifier {
     int oldestSample, {
     int? bufferCapacity,
   }) {
-    if (_isLive || _viewEnd == null) {
-      final int maxSpan = math.max(minLiveSpan, totalSamples - oldestSample);
-      int span = _liveSpan ?? maxSpan;
-      if (bufferCapacity != null && span > bufferCapacity) {
-        span = bufferCapacity;
-      }
-      return (totalSamples - span, totalSamples);
+    switch (_viewport) {
+      case GraphLive(:final span):
+        int s = span ?? math.max(minLiveSpan, totalSamples - oldestSample);
+        if (bufferCapacity != null && s > bufferCapacity) {
+          s = bufferCapacity;
+        }
+        return (totalSamples - s, totalSamples);
+      case GraphWindow(:final start, :final end):
+        return (start, end.clamp(start + 1, totalSamples));
     }
-    return (_viewStart, _viewEnd!.clamp(_viewStart + 1, totalSamples));
   }
 
   /// Whether the current window covers all available data.
@@ -716,19 +753,14 @@ class GraphController extends ChangeNotifier {
       newStart = minStart;
       newEnd = newStart + span;
     }
+
+    // Park on the window; if it reaches the right edge, snap to live instead
+    // (goLive derives the locked span from the window set here).
+    _viewport = GraphWindow(newStart, newEnd);
     if (newEnd >= totalSamples) {
-      // Snap to live if the window reaches the right edge. goLive derives the
-      // locked span from the window set here.
-      _viewStart = newStart;
-      _viewEnd = newEnd;
       goLive(totalSamples: totalSamples, oldestSample: oldestSample);
       return;
     }
-
-    _viewStart = newStart;
-    _viewEnd = newEnd;
-    _isLive = false;
-    _liveSpan = null;
     notifyListeners();
   }
 
@@ -771,9 +803,8 @@ class GraphController extends ChangeNotifier {
 
     if (newEnd >= totalSamples) {
       // At the right edge -- enter/stay live. Unlike applyWindow, a zoom that
-      // hits max span means "show everything" (liveSpan = null, auto-expand).
-      _viewStart = totalSamples - span; // Force right-align
-      _viewEnd = totalSamples;
+      // hits max span means "show everything" (no locked span, auto-expand).
+      _viewport = GraphWindow(totalSamples - span, totalSamples);
       goLive(
         span: span >= maxSpan ? null : span,
         totalSamples: totalSamples,
@@ -782,10 +813,7 @@ class GraphController extends ChangeNotifier {
       return;
     }
 
-    _viewStart = newStart;
-    _viewEnd = newEnd;
-    _isLive = false;
-    _liveSpan = null;
+    _viewport = GraphWindow(newStart, newEnd);
     notifyListeners();
   }
 
@@ -839,7 +867,7 @@ class GraphController extends ChangeNotifier {
       focalFraction,
       baseStart: s,
       baseSpan: span,
-      anchorLiveEdge: _isLive,
+      anchorLiveEdge: isLive,
       totalSamples: totalSamples,
       oldestSample: oldestSample,
     );
@@ -847,10 +875,7 @@ class GraphController extends ChangeNotifier {
 
   /// Reset to show all data in live mode (fully zoomed out).
   void reset() {
-    _viewStart = 0;
-    _viewEnd = null;
-    _liveSpan = null;
-    _isLive = true;
+    _viewport = const GraphLive();
     notifyListeners();
   }
 }
@@ -894,6 +919,44 @@ void _handleGraphPointerScroll(
 }
 
 // ---------------------------------------------------------------------------
+// Bake pump (shared repaint driver for the rolling segment bake)
+// ---------------------------------------------------------------------------
+
+/// Extra repaint driver for the rolling segment bake: baking is rationed to
+/// [kSegmentBakeBudget] segments per frame, so when work remains a painter
+/// calls [schedule], which ticks [Listenable] listeners after the frame.
+/// Needed for static sources (loaded sessions) whose [GraphDataSource.repaint]
+/// never fires; harmless for live ones. Owned and disposed by the host
+/// widget's State.
+class BakePump implements Listenable {
+  final ValueNotifier<int> _notifier = ValueNotifier<int>(0);
+  bool _scheduled = false;
+  bool _disposed = false;
+
+  /// Schedule a one-shot post-frame tick (coalesced until it fires).
+  void schedule() {
+    if (_scheduled || _disposed) return;
+    _scheduled = true;
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      _scheduled = false;
+      if (!_disposed) _notifier.value++;
+    });
+  }
+
+  @override
+  void addListener(VoidCallback listener) => _notifier.addListener(listener);
+
+  @override
+  void removeListener(VoidCallback listener) =>
+      _notifier.removeListener(listener);
+
+  void dispose() {
+    _disposed = true;
+    _notifier.dispose();
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Minimap
 // ---------------------------------------------------------------------------
 
@@ -919,22 +982,7 @@ class Minimap extends StatefulWidget {
 
 class _MinimapState extends State<Minimap> {
   final SegmentedGraphCache _cache = SegmentedGraphCache();
-
-  /// Extra repaint driver for the rolling bake: baking is rationed to one
-  /// segment per frame, so when work remains the painter requests another
-  /// frame via [_schedulePump]. Needed for static sources (loaded sessions)
-  /// whose [GraphDataSource.repaint] never fires; harmless for live ones.
-  final ValueNotifier<int> _bakePump = ValueNotifier<int>(0);
-  bool _pumpScheduled = false;
-
-  void _schedulePump() {
-    if (_pumpScheduled) return;
-    _pumpScheduled = true;
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      _pumpScheduled = false;
-      if (mounted) _bakePump.value++;
-    });
-  }
+  final BakePump _bakePump = BakePump();
 
   @override
   void dispose() {
@@ -1009,7 +1057,7 @@ class _MinimapState extends State<Minimap> {
                   dpr,
                   _cache,
                   _bakePump,
-                  _schedulePump,
+                  _bakePump.schedule,
                 ),
                 size: Size.infinite,
               ),
@@ -1304,22 +1352,7 @@ class GraphWorkspace extends StatefulWidget {
 class _GraphWorkspaceState extends State<GraphWorkspace> {
   final SegmentedGraphCache _forceCache = SegmentedGraphCache();
   final SegmentedGraphCache _derivCache = SegmentedGraphCache();
-
-  /// Extra repaint driver for the rolling bake: baking is rationed to a few
-  /// segments per frame, so when work remains a painter requests another
-  /// frame via [_schedulePump]. Needed for static sources (loaded sessions)
-  /// whose [GraphDataSource.repaint] never fires; harmless for live ones.
-  final ValueNotifier<int> _bakePump = ValueNotifier<int>(0);
-  bool _pumpScheduled = false;
-
-  void _schedulePump() {
-    if (_pumpScheduled) return;
-    _pumpScheduled = true;
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      _pumpScheduled = false;
-      if (mounted) _bakePump.value++;
-    });
-  }
+  final BakePump _bakePump = BakePump();
 
   @override
   void dispose() {
@@ -1356,7 +1389,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                         colorScheme: colorScheme,
                         dpr: dpr,
                         bakePump: _bakePump,
-                        requestRepaint: _schedulePump,
+                        requestRepaint: _bakePump.schedule,
                       ),
                       size: Size.infinite,
                     ),
@@ -1379,7 +1412,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                           colorScheme: colorScheme,
                           dpr: dpr,
                           bakePump: _bakePump,
-                          requestRepaint: _schedulePump,
+                          requestRepaint: _bakePump.schedule,
                         ),
                         size: Size.infinite,
                       ),
@@ -1560,9 +1593,9 @@ String _fmtTick(double sec, int decimals) {
   return '$m:${s.padLeft(decimals == 0 ? 2 : decimals + 3, '0')}';
 }
 
-// Label paragraph cache (bounded; fully cleared on overflow -- the per-frame
+// Label paragraph cache, bounded: fully cleared on overflow — the per-frame
 // working set is only a few dozen labels, so a clear just rebuilds the
-// visible ones on the next paint).
+// visible ones on the next paint.
 const int _labelCacheLimit = 512;
 final Map<String, ui.Paragraph> _labelCache = HashMap();
 

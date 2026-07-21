@@ -12,7 +12,9 @@ import '../models/bucket_series.dart';
 import '../models/gap_list.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
+import '../utils/format.dart';
 import '../widgets/channel_stats_table.dart';
+import '../widgets/dialogs.dart';
 import '../widgets/graph_components.dart';
 
 class SessionDetailScreen extends StatefulWidget {
@@ -66,9 +68,8 @@ class _SessionDataSource implements GraphDataSource {
 }
 
 class _SessionDetailScreenState extends State<SessionDetailScreen> {
-  SessionData? _data;
-  bool _loading = true;
-  String? _error;
+  /// Load state of the session's sample data (see [_LoadState]).
+  _LoadState _loadState = const _Loading();
 
   late Session _session;
   final GraphController _graphCtrl = GraphController();
@@ -89,18 +90,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   /// Parse the JSON-encoded per-channel visibility stored on a [Session]
   /// row. Missing or malformed entries fall back to visible.
-  static List<bool> _parseVisibleChannels(String json, int channelCount) {
-    final result = List<bool>.filled(channelCount, true);
-    try {
-      final List<dynamic> decoded = jsonDecode(json);
-      for (int i = 0; i < channelCount && i < decoded.length; i++) {
-        result[i] = decoded[i] == true;
-      }
-    } catch (e) {
-      debugPrint('Failed to parse session visible channels "$json": $e');
-    }
-    return result;
-  }
+  static List<bool> _parseVisibleChannels(String json, int channelCount) =>
+      parseJsonColumn(
+        json,
+        channelCount,
+        convert: (e) => e == true,
+        fallback: (_) => true,
+      );
 
   void _onToggleChannel(int index) {
     setState(() => _visibleChannels[index] = !_visibleChannels[index]);
@@ -122,34 +118,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     try {
       final data = await SessionStorage.loadSession(_session);
       if (!mounted) return;
-      setState(() {
-        _data = data;
-        _loading = false;
-      });
+      setState(() => _loadState = _Ready(data));
     } catch (e) {
       if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-      });
-    }
-  }
-
-  List<String> _parseChannelLabels(String jsonLabels) {
-    try {
-      final List<dynamic> decoded = jsonDecode(jsonLabels);
-      return decoded.map((e) => e.toString()).toList();
-    } catch (e) {
-      // Fallback for older sessions that saved labels via .toString() -> "[A, B]"
-      final trimmed = jsonLabels.trim();
-      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-        return trimmed
-            .substring(1, trimmed.length - 1)
-            .split(',')
-            .map((e) => e.trim())
-            .toList();
-      }
-      return [];
+      setState(() => _loadState = _Failed(e));
     }
   }
 
@@ -178,23 +150,28 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-          ? Center(child: Text('Error: $_error'))
-          : _buildContent(settings),
+      body: switch (_loadState) {
+        _Loading() => const Center(child: CircularProgressIndicator()),
+        _Failed(:final error) => Center(child: Text('Error: $error')),
+        // A session without chunks (e.g. deleted externally) has nothing to
+        // show; loadSession returns null there.
+        _Ready(data: null) => const Center(
+          child: Text('No recorded data for this session'),
+        ),
+        _Ready(:final data) => _buildContent(settings, data!),
+      },
     );
   }
 
-  Widget _buildContent(AppSettings settings) {
-    final data = _data!;
+  Widget _buildContent(AppSettings settings, SessionData data) {
     final unit = settings.displayUnit;
 
-    final storedLabels = _parseChannelLabels(_session.channelLabels);
-    final channelLabels = [
-      for (int ch = 0; ch < data.channels.length; ch++)
-        storedLabels.length > ch ? storedLabels[ch] : 'Ch ${ch + 1}',
-    ];
+    final channelLabels = parseJsonColumn(
+      _session.channelLabels,
+      data.channels.length,
+      convert: (e) => e.toString(),
+      fallback: (i) => 'Ch ${i + 1}',
+    );
 
     return SingleChildScrollView(
       child: Column(
@@ -256,7 +233,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 const SizedBox(height: 8),
                 _StatRow(
                   label: 'Duration',
-                  value: _formatDuration(
+                  value: formatDuration(
                     Duration(milliseconds: _session.durationMs),
                   ),
                 ),
@@ -268,9 +245,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 for (int ch = 0; ch < data.channels.length; ch++) ...[
                   const Divider(height: 16),
                   Text(
-                    storedLabels.length > ch
-                        ? storedLabels[ch]
-                        : 'Channel ${ch + 1}',
+                    channelLabels[ch],
                     style: TextStyle(
                       fontWeight: FontWeight.w500,
                       color: getChannelColor(ch),
@@ -337,114 +312,52 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       case 'notes':
         await _showNotesDialog();
       case 'export_csv':
-        if (_data != null) await _exportCsv(_data!);
+        final state = _loadState;
+        if (state is _Ready && state.data != null) {
+          await _exportCsv(state.data!);
+        }
       case 'delete':
         await _deleteAndPop();
     }
   }
 
-  Future<void> _showRenameDialog() async {
-    final controller = TextEditingController(text: _session.name);
-    final newName = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Rename session'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Session name',
-            border: OutlineInputBorder(),
-          ),
-          onSubmitted: (val) => Navigator.of(ctx).pop(val),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-    controller.dispose();
+  /// Re-read the session row after a metadata edit so the UI reflects it.
+  Future<void> _reloadSession() async {
+    final updated = await AppDatabase.instance.sessionById(_session.id);
+    if (updated != null && mounted) {
+      setState(() => _session = updated);
+    }
+  }
 
+  Future<void> _showRenameDialog() async {
+    final newName = await showTextPrompt(
+      context,
+      title: 'Rename session',
+      label: 'Session name',
+      initial: _session.name,
+    );
     if (newName != null && newName.isNotEmpty) {
       await AppDatabase.instance.renameSession(_session.id, newName);
-      // Reload session from DB
-      final updated = await AppDatabase.instance.sessionById(_session.id);
-      if (updated != null && mounted) {
-        setState(() => _session = updated);
-      }
+      await _reloadSession();
     }
   }
 
   Future<void> _showNotesDialog() async {
-    final controller = TextEditingController(text: _session.notes);
-    final newNotes = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Edit notes'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          maxLines: 5,
-          decoration: const InputDecoration(
-            labelText: 'Notes',
-            border: OutlineInputBorder(),
-            alignLabelWithHint: true,
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(controller.text),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+    final newNotes = await showTextPrompt(
+      context,
+      title: 'Edit notes',
+      label: 'Notes',
+      initial: _session.notes,
+      maxLines: 5,
     );
-    controller.dispose();
-
     if (newNotes != null) {
       await AppDatabase.instance.setSessionNotes(_session.id, newNotes);
-      final updated = await AppDatabase.instance.sessionById(_session.id);
-      if (updated != null && mounted) {
-        setState(() => _session = updated);
-      }
+      await _reloadSession();
     }
   }
 
   Future<void> _deleteAndPop() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete session?'),
-        content: const Text('This cannot be undone.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(ctx).colorScheme.error,
-              foregroundColor: Theme.of(ctx).colorScheme.onError,
-            ),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
+    if (await showDeleteConfirm(context, what: _session.name)) {
       await AppDatabase.instance.deleteSession(_session.id);
       if (mounted) Navigator.of(context).pop();
     }
@@ -512,14 +425,30 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       ).showSnackBar(SnackBar(content: Text('Exported to $savedTo')));
     }
   }
+}
 
-  static String _formatDuration(Duration d) {
-    if (d.inMinutes >= 1) {
-      final sec = d.inSeconds % 60;
-      return '${d.inMinutes}m ${sec}s';
-    }
-    return '${d.inSeconds}s';
-  }
+// -- Load state --
+
+/// Load state for the session's sample data: still loading, failed, or ready
+/// (data null means the session has no chunks).
+sealed class _LoadState {
+  const _LoadState();
+}
+
+final class _Loading extends _LoadState {
+  const _Loading();
+}
+
+final class _Failed extends _LoadState {
+  const _Failed(this.error);
+
+  final Object error;
+}
+
+final class _Ready extends _LoadState {
+  const _Ready(this.data);
+
+  final SessionData? data;
 }
 
 // -- Stat row widget --

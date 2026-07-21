@@ -48,8 +48,16 @@ class AdcPacketDecoder {
   /// [DataHub.addSamplesAppendedListener] (notified from
   /// [DataHub.commitBatch]).
   void onDataPacket(Uint8List data) {
-    if (data.isEmpty) {
-      debugPrint("data isEmpty");
+    // A decodable packet holds the 2-byte counter plus at least
+    // nwAdcNumSamples full frames (extra trailing bytes are ignored, matching
+    // the fixed-size loop below). Anything shorter — e.g. a truncated
+    // notification from a firmware bug — is dropped rather than parsed:
+    // indexing past the end would throw in release builds.
+    const int minLength = nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;
+    if (data.length < minLength) {
+      debugPrint(
+        'Dropping short ADC packet: ${data.length} B (need $minLength B)',
+      );
       return;
     }
 
@@ -73,7 +81,6 @@ class AdcPacketDecoder {
       packetStart < nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;
       packetStart += nwAdcSampleLength
     ) {
-      assert(packetStart + nwAdcSampleLength <= data.length);
       for (int i = 0; i < nwNumAdcChan; ++i) {
         final int baseIndex = packetStart + i * 3;
         _frame[i] =

@@ -28,6 +28,15 @@ class AppShellState extends State<AppShell> {
   int _currentIndex = 0;
   StreamSubscription<AppEvent>? _eventsSub;
 
+  /// Last wakelock state pushed to the plugin, so [_syncWakelock] only calls
+  /// the platform channel on an actual edge (the link manager notifies on
+  /// every RSSI poll; enabling repeatedly would be a pointless side effect).
+  bool? _wakelockApplied;
+
+  /// App-lifetime singletons driving the wakelock; captured in [initState].
+  late final AppSettings _settings = context.read<AppSettings>();
+  late final BleLinkManager _link = context.read<BleLinkManager>();
+
   static const _tabs = [
     _TabDef(icon: Icons.show_chart, label: 'Live'),
     _TabDef(icon: Icons.folder_open, label: 'Sessions'),
@@ -39,28 +48,27 @@ class AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     _eventsSub = context.read<AppEvents>().stream.listen(_onAppEvent);
+    // Keep the screen awake while a device stream is live and the setting is
+    // on. Both inputs are app-lifetime singletons; the listener only reacts
+    // to actual edges.
+    _settings.addListener(_syncWakelock);
+    _link.addListener(_syncWakelock);
+    _syncWakelock();
   }
 
   @override
   void dispose() {
     unawaited(_eventsSub?.cancel());
+    _settings.removeListener(_syncWakelock);
+    _link.removeListener(_syncWakelock);
     super.dispose();
   }
 
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-
-    final settings = context.watch<AppSettings>();
-    final bleManager = context.watch<BleLinkManager>();
-
-    final shouldKeepAwake = settings.wakelockEnabled && bleManager.isStreaming;
-
-    if (shouldKeepAwake) {
-      unawaited(WakelockPlus.enable());
-    } else {
-      unawaited(WakelockPlus.disable());
-    }
+  void _syncWakelock() {
+    final target = _settings.wakelockEnabled && _link.isStreaming;
+    if (target == _wakelockApplied) return;
+    _wakelockApplied = target;
+    unawaited(target ? WakelockPlus.enable() : WakelockPlus.disable());
   }
 
   void _onAppEvent(AppEvent event) {

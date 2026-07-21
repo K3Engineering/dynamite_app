@@ -151,18 +151,46 @@ class SessionStorage {
 
   /// Parse the JSON-encoded per-channel tares stored on a [Session] row.
   /// Missing or malformed entries fall back to zero.
-  static Float64List _parseTares(String json, int channelCount) {
-    final tares = Float64List(channelCount);
-    try {
-      final List<dynamic> parsed = jsonDecode(json);
-      for (int i = 0; i < channelCount && i < parsed.length; i++) {
-        tares[i] = (parsed[i] as num).toDouble();
-      }
-    } catch (e) {
-      debugPrint('Failed to parse session tares "$json": $e');
-    }
-    return tares;
+  static Float64List _parseTares(String json, int channelCount) =>
+      Float64List.fromList(
+        parseJsonColumn(
+          json,
+          channelCount,
+          convert: (e) => (e as num).toDouble(),
+          fallback: (_) => 0.0,
+        ),
+      );
+}
+
+/// Parse a JSON-encoded list column into exactly [count] entries: entry i is
+/// [convert] applied to the i-th decoded element, or [fallback] when the
+/// document is malformed, shorter than [count], or the element fails to
+/// convert. Session metadata columns (tares, channel labels, visible
+/// channels) are display-only, so a corrupt value degrades to defaults
+/// instead of throwing.
+List<T> parseJsonColumn<T>(
+  String json,
+  int count, {
+  required T Function(Object? decoded) convert,
+  required T Function(int index) fallback,
+}) {
+  List<dynamic>? parsed;
+  try {
+    final decoded = jsonDecode(json);
+    if (decoded is List) parsed = decoded;
+  } catch (e) {
+    debugPrint('Failed to parse session metadata "$json": $e');
   }
+  T entry(int i) {
+    if (parsed == null || i >= parsed.length) return fallback(i);
+    try {
+      return convert(parsed[i]);
+    } catch (_) {
+      return fallback(i);
+    }
+  }
+
+  return [for (int i = 0; i < count; i++) entry(i)];
 }
 
 /// Scans interleaved int32 chunk bytes, accumulating sample count and the
