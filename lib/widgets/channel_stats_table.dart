@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 
 import '../models/force_unit.dart';
 import 'graph_components.dart' show getChannelColor;
@@ -64,13 +63,15 @@ class ChannelStatsTable extends StatelessWidget {
     final headerStyle = Theme.of(
       context,
     ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold);
-    final monoStyle = GoogleFonts.robotoMono(
-      textStyle: Theme.of(context).textTheme.bodySmall,
-    );
-    final emphasizedStyle = GoogleFonts.robotoMono(
-      textStyle: Theme.of(
-        context,
-      ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+    // Tabular figures keep the numeric columns aligned using the platform's
+    // default font — no bundled font assets and no runtime font fetch.
+    const tabularFigures = [FontFeature.tabularFigures()];
+    final monoStyle = Theme.of(
+      context,
+    ).textTheme.bodySmall?.copyWith(fontFeatures: tabularFigures);
+    final emphasizedStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
+      fontWeight: FontWeight.bold,
+      fontFeatures: tabularFigures,
     );
 
     return Padding(

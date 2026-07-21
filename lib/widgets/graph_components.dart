@@ -688,8 +688,11 @@ class GraphController extends ChangeNotifier {
     required int oldestSample,
   }) {
     final maxSpan = math.max(totalSamples - oldestSample, minLiveSpan);
-    // Minimum ~50 samples visible (50ms at 1kHz)
-    final span = newSpan.clamp(50, maxSpan);
+    // Minimum ~50 samples visible (50ms at 1kHz) -- or the whole dataset when
+    // less than that exists (a parked session of <50 samples): clamp(50, ...)
+    // would invert the limits and throw there.
+    final minSpan = math.min(50, maxSpan);
+    final span = newSpan.clamp(minSpan, maxSpan);
 
     double effectiveFocal = focalFraction;
     if (anchorLiveEdge && focalFraction > 0.8) {
@@ -1070,7 +1073,7 @@ class _MinimapPainter extends CustomPainter {
       cache: _cache,
       data: _data,
       activeChannels: activeIndices,
-      keyExtras: [...tares, unit, _data.calibrationSlope],
+      keyExtras: [_data.dataGeneration, ...tares, unit, _data.calibrationSlope],
       gw: gw,
       gh: gh,
       dpr: _dpr,
@@ -1258,12 +1261,14 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
   final SegmentedGraphCache _forceCache = SegmentedGraphCache();
   final SegmentedGraphCache _derivCache = SegmentedGraphCache();
   final BakePump _bakePump = BakePump();
+  final LabelCache _labelCache = LabelCache();
 
   @override
   void dispose() {
     _bakePump.dispose();
     _forceCache.dispose();
     _derivCache.dispose();
+    _labelCache.dispose();
     super.dispose();
   }
 
@@ -1306,6 +1311,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                         cache: _forceCache,
                         colorScheme: colorScheme,
                         dpr: dpr,
+                        labels: _labelCache,
                         bakePump: _bakePump,
                         requestRepaint: _bakePump.schedule,
                       ),
@@ -1329,6 +1335,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                           cache: _derivCache,
                           colorScheme: colorScheme,
                           dpr: dpr,
+                          labels: _labelCache,
                           bakePump: _bakePump,
                           requestRepaint: _bakePump.schedule,
                         ),
@@ -1488,31 +1495,47 @@ String _fmtTick(double sec, int decimals) {
   return '$m:${s.padLeft(decimals == 0 ? 2 : decimals + 3, '0')}';
 }
 
-// Label paragraph cache, bounded: fully cleared on overflow — the per-frame
-// working set is only a few dozen labels, so a clear just rebuilds the
-// visible ones on the next paint.
-const int _labelCacheLimit = 512;
-final Map<String, ui.Paragraph> _labelCache = HashMap();
+// ---------------------------------------------------------------------------
+// Axis label paragraph cache
+// ---------------------------------------------------------------------------
 
-ui.Paragraph _prepareLabel(String text, {Color color = Colors.black}) {
-  final key = '$text|${color.toARGB32()}';
-  if (!_labelCache.containsKey(key) &&
-      _labelCache.length >= _labelCacheLimit) {
-    for (final paragraph in _labelCache.values) {
+/// Bounded cache of laid-out axis-label paragraphs. Owned by a graph host
+/// [State] (which disposes it), NOT by a painter: painters are recreated on
+/// every widget rebuild, so a painter-owned cache would be dropped constantly.
+/// Clear-on-overflow: the per-frame working set is only a few dozen labels,
+/// so a clear just rebuilds the visible ones on the next paint.
+class LabelCache {
+  static const int _limit = 512;
+
+  final Map<String, ui.Paragraph> _cache = HashMap();
+
+  /// The laid-out paragraph for [text] in [color], building and caching it on
+  /// first use.
+  ui.Paragraph prepare(String text, {Color color = Colors.black}) {
+    final key = '$text|${color.toARGB32()}';
+    if (!_cache.containsKey(key) && _cache.length >= _limit) {
+      _clear();
+    }
+    return _cache.putIfAbsent(key, () {
+      final style = ui.TextStyle(color: color, fontSize: 11);
+      final builder =
+          ui.ParagraphBuilder(
+              ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
+            )
+            ..pushStyle(style)
+            ..addText(text);
+      return builder.build()..layout(const ui.ParagraphConstraints(width: 80));
+    });
+  }
+
+  void _clear() {
+    for (final paragraph in _cache.values) {
       paragraph.dispose();
     }
-    _labelCache.clear();
+    _cache.clear();
   }
-  return _labelCache.putIfAbsent(key, () {
-    final style = ui.TextStyle(color: color, fontSize: 11);
-    final builder =
-        ui.ParagraphBuilder(
-            ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
-          )
-          ..pushStyle(style)
-          ..addText(text);
-    return builder.build()..layout(const ui.ParagraphConstraints(width: 80));
-  });
+
+  void dispose() => _clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -1560,6 +1583,7 @@ void drawTimeAxis(
   required int viewEnd,
   required int sampleRate,
   required bool showLabels,
+  required LabelCache labels,
   bool drawMinor = false,
   Color textColor = Colors.black,
 }) {
@@ -1584,7 +1608,7 @@ void drawTimeAxis(
     grid.moveTo(xPos, 0);
     grid.lineTo(xPos, graphSz.height);
     if (labeled) {
-      final par = _prepareLabel(_fmtTick(sec, decimals), color: textColor);
+      final par = labels.prepare(_fmtTick(sec, decimals), color: textColor);
       canvas.drawParagraph(
         par,
         Offset(xPos - par.longestLine / 2, graphSz.height + 2),
@@ -1619,6 +1643,7 @@ void drawValueAxis(
   YAxisRange yRange,
   double Function(double value) valueToY, {
   required String Function(double tick) labelFor,
+  required LabelCache labels,
   bool drawMinor = false,
   Color textColor = Colors.black,
 }) {
@@ -1632,7 +1657,7 @@ void drawValueAxis(
     if (yPos >= -1 && yPos <= graphSz.height + 1) {
       grid.moveTo(0, yPos);
       grid.lineTo(graphSz.width, yPos);
-      final par = _prepareLabel(labelFor(tick), color: textColor);
+      final par = labels.prepare(labelFor(tick), color: textColor);
       canvas.drawParagraph(
         par,
         Offset(graphSz.width + 4, yPos - par.height / 2),
@@ -2201,6 +2226,9 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// Device pixel ratio used when rasterizing segment textures.
   final double dpr;
 
+  /// Axis-label paragraph cache, owned (and disposed) by the host [State].
+  final LabelCache labels;
+
   /// Asks the host widget to schedule another frame; called when bake work
   /// remains so the rolling bakes complete even for static sources whose
   /// [GraphDataSource.repaint] never fires.
@@ -2214,6 +2242,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     required this.cache,
     required this.colorScheme,
     required this.dpr,
+    required this.labels,
     required Listenable bakePump,
     required VoidCallback requestRepaint,
   }) : _activeChannels = activeChannels,
@@ -2296,6 +2325,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       viewEnd: viewEnd,
       sampleRate: _data.sampleRate,
       showLabels: showXLabels,
+      labels: labels,
       drawMinor: drawMinorGrid,
       textColor: colorScheme.onSurface,
     );
@@ -2306,6 +2336,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       yRange,
       valueToY,
       labelFor: yTickLabel,
+      labels: labels,
       drawMinor: drawMinorGrid,
       textColor: colorScheme.onSurface,
     );
@@ -2341,6 +2372,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       data: _data,
       activeChannels: activeIndices,
       keyExtras: [
+        _data.dataGeneration,
         ...cacheKeyTares(),
         _settings.displayUnit,
         _data.calibrationSlope,
@@ -2376,6 +2408,7 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
     required super.cache,
     required super.colorScheme,
     required super.dpr,
+    required super.labels,
     required super.bakePump,
     required super.requestRepaint,
   });
@@ -2466,6 +2499,7 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     required super.cache,
     required super.colorScheme,
     required super.dpr,
+    required super.labels,
     required super.bakePump,
     required super.requestRepaint,
   });
@@ -2563,7 +2597,7 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   @override
   void drawOverlay(Canvas canvas, Size graphSz) {
     // "dF/dt" label in top-left
-    final dLabel = _prepareLabel(
+    final dLabel = labels.prepare(
       'dF/dt (${_settings.displayUnit.symbol}/s)',
       color: colorScheme.onSurface.withAlpha(150),
     );

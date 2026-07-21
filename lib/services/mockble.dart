@@ -49,6 +49,10 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// When true, reads of the calibration characteristic throw.
   bool failCalibrationRead = false;
 
+  /// When true, [connect] throws (a refused/failed attempt: no link is
+  /// established and no connection-change callback fires).
+  bool failConnect = false;
+
   /// When true, [disconnect] never fires the connection-change callback, so
   /// the client's disconnect-timeout reconciliation path is what tears the
   /// link down.
@@ -60,6 +64,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     dropEveryNPackets = 0;
     includeAdcService = true;
     failCalibrationRead = false;
+    failConnect = false;
     hangDisconnect = false;
     _connectedDeviceId = null;
     _connectionState = BleConnectionState.disconnected;
@@ -151,6 +156,13 @@ class MockBlePlatform extends UniversalBlePlatform {
     _connectedDeviceId = deviceId;
     _connectionState = BleConnectionState.connecting;
     await Future<void>.delayed(netDelay);
+    if (failConnect) {
+      // A refused/failed attempt: no link, and no connection-change callback
+      // — the client's connect() catch path is what tears its state down.
+      _connectedDeviceId = null;
+      _connectionState = BleConnectionState.disconnected;
+      throw StateError('Mock connect failure');
+    }
     _connectionState = BleConnectionState.connected;
     updateConnection(deviceId, true);
   }
@@ -174,7 +186,10 @@ class MockBlePlatform extends UniversalBlePlatform {
     final services = _generateServices(deviceId);
     if (!includeAdcService) {
       // A device whose GATT table lacks the ADC feed service.
-      return [for (final s in services) if (s.uuid != btServiceId) s];
+      return [
+        for (final s in services)
+          if (s.uuid != btServiceId) s,
+      ];
     }
     return services;
   }

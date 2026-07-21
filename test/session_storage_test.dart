@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/services/data_hub.dart';
+import 'package:dynamite_app/services/database.dart';
 import 'package:dynamite_app/services/session_storage.dart';
 
 /// Peak-bias tests for the storage side: a never-positive stream must report
@@ -70,7 +72,8 @@ void main() {
       final writer = LiveSessionWriter(
         1,
         Float64List(channels),
-        chunkSink: (sessionId, chunkIndex, data) async => saved.add(data),
+        chunkSink: (sessionId, chunkIndex, data, gapsJson) async =>
+            saved.add(data),
       );
       final hub = DataHub();
       final frame = Int32List(channels);
@@ -112,7 +115,7 @@ void main() {
       final writer = LiveSessionWriter(
         1,
         Float64List(channels),
-        chunkSink: (sessionId, chunkIndex, data) async {
+        chunkSink: (sessionId, chunkIndex, data, gapsJson) async {
           sinkCalls++;
           if (!entered.isCompleted) entered.complete();
           await gate.future; // wedge every chunk write until released
@@ -149,6 +152,59 @@ void main() {
       expect(sinkCalls, 1);
       expect(saved, hasLength(1));
       expect(saved.single.lengthInBytes, chunkSamples * channels * 4);
+    });
+  });
+
+  group('crash recovery', () {
+    test('gaps persisted on flush survive recoverIncompleteSessions', () async {
+      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(AppDatabase.closeInstance);
+
+      // A stream with a dropped range: 2100 real samples, a 20-sample gap,
+      // 100 more real samples — past the 16 KB flush threshold.
+      final hub = DataHub();
+      final frame = Int32List(channels);
+      void pump(int count, int value) {
+        frame.fillRange(0, channels, value);
+        for (int i = 0; i < count; i++) {
+          hub.addSampleFrame(frame);
+        }
+      }
+
+      pump(2100, 7);
+      hub.addDroppedFrames(20);
+      pump(100, 9);
+
+      final writer = await SessionStorage.startSession(
+        dataHub: hub,
+        name: 'crash me',
+        channelLabels: const ['a', 'b', 'c', 'd'],
+        visibleChannels: const [true, true, true, true],
+      );
+      // The single append crosses the flush threshold, so the chunk insert
+      // AND the incremental gaps update land in the DB.
+      await writer.appendData(hub, 0, hub.totalSamples);
+
+      final beforeCrash = await AppDatabase.instance.sessionById(
+        writer.sessionId,
+      );
+      expect(beforeCrash!.gaps, '[[2100,2120]]');
+
+      // Simulate the crash: recover without finalizeSession ever running.
+      await SessionStorage.recoverIncompleteSessions();
+
+      final row = await AppDatabase.instance.sessionById(writer.sessionId);
+      expect(row, isNotNull);
+      expect(row!.isCompleted, isTrue);
+      expect(row.sampleCount, hub.totalSamples);
+      // Recovery rebuilt the aggregates but preserved the persisted gaps.
+      expect(row.gaps, '[[2100,2120]]');
+
+      final loaded = await SessionStorage.loadSession(row);
+      expect(loaded, isNotNull);
+      expect(loaded!.gaps.contains(2100), isTrue);
+      expect(loaded.gaps.contains(2119), isTrue);
+      expect(loaded.gaps.contains(2120), isFalse);
     });
   });
 }

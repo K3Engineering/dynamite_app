@@ -44,7 +44,6 @@ dependencies:
   cupertino_icons: ^1.0.8
   cross_file: ^0.3.4+2
   package_info_plus: ^10.1.0
-  google_fonts: ^8.0.2
   file_selector: ^1.1.0
   wakelock_plus: ^1.6.1
 

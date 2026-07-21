@@ -102,6 +102,23 @@ void main() {
       expect(ctrl.effectiveRange(500, 0), (0, 500));
       expect(ctrl.effectiveRange(700, 0), (0, 700));
     });
+
+    test('a dataset smaller than the 50-sample minimum does not throw', () {
+      // Session detail constructs GraphController() with minLiveSpan 0, so a
+      // <50-sample parked session makes maxSpan < 50: clamp(50, maxSpan)
+      // would have inverted limits and thrown (regression test).
+      final ctrl = GraphController();
+      ctrl.zoom(1.2, 0.5, 30, 0, 30);
+      expect(ctrl.effectiveRange(30, 0), (0, 30));
+      // Zooming out is equally safe.
+      ctrl.zoom(1 / 1.2, 0.5, 30, 0, 30);
+      expect(ctrl.effectiveRange(30, 0), (0, 30));
+      // And the span never exceeds the data once it grows.
+      ctrl.zoom(1.2, 0.5, 100, 0, 100);
+      final (s, e) = ctrl.effectiveRange(100, 0);
+      expect(e - s, greaterThan(0));
+      expect(e - s, lessThanOrEqualTo(100));
+    });
   });
 
   group('GraphController.pan / centerOn', () {

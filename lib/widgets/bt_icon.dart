@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
 import '../services/ble_link_manager.dart' show BtLinkState;
+import 'status_colors.dart';
 
 /// Compact Bluetooth status readout (icon + hint text, with a spinner while
 /// anything is in flight). Driven directly by the per-device link state plus
@@ -31,44 +32,29 @@ class BluetoothIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final status = Theme.of(context).extension<StatusColors>()!;
+    final active = status.linkActive;
+    final connected = status.linkConnected;
+
     (IconData, Color, String) indicator() {
       // Link states first: any active link or transition outranks scan and
       // adapter status.
       switch (linkState) {
         case BtLinkState.disconnecting:
-          return const (
-            Icons.bluetooth_searching,
-            Colors.lightBlue,
-            'Disconnecting…',
-          );
+          return (Icons.bluetooth_searching, active, 'Disconnecting…');
         case BtLinkState.cooldown:
           // Web: the link has torn down but the stack isn't ready to reconnect
           // yet. Connect stays disabled through this settle window.
-          return const (
-            Icons.bluetooth_searching,
-            Colors.lightBlue,
-            'Almost ready…',
-          );
+          return (Icons.bluetooth_searching, active, 'Almost ready…');
         case BtLinkState.streaming:
-          return const (
-            Icons.bluetooth_connected,
-            Colors.blueAccent,
-            'Connected',
-          );
+          return (Icons.bluetooth_connected, connected, 'Connected');
         case BtLinkState.connected:
           // GATT link is up but service discovery / ADC subscription is still
           // in progress. Not usable yet.
-          return const (
-            Icons.bluetooth_searching,
-            Colors.lightBlue,
-            'Setting up…',
-          );
+          return (Icons.bluetooth_searching, active, 'Setting up…');
         case BtLinkState.connecting:
-          return const (
-            Icons.bluetooth_searching,
-            Colors.lightBlue,
-            'Connecting…',
-          );
+          return (Icons.bluetooth_searching, active, 'Connecting…');
         case BtLinkState.idle:
           break; // Fall through to scan / adapter status.
       }
@@ -77,7 +63,7 @@ class BluetoothIndicator extends StatelessWidget {
         // in our list, so we tell the user to choose there.
         return (
           Icons.bluetooth_searching,
-          Colors.lightBlue,
+          active,
           kIsWeb ? 'Choose a device…' : 'Scanning for devices…',
         );
       }
@@ -86,53 +72,25 @@ class BluetoothIndicator extends StatelessWidget {
           // A previously-discovered device can remain connectable after a scan
           // stops, so surface that rather than implying a scan is required.
           if (hasDevices) {
-            return const (
-              Icons.bluetooth,
-              Colors.blueAccent,
-              'Tap a device to connect',
-            );
+            return (Icons.bluetooth, connected, 'Tap a device to connect');
           }
           // NOTE: availability is not reliably signalled on all platforms
           // (e.g. web, or Bluetooth already off at launch), so we avoid
           // claiming "ready" and just state the action the user can take.
-          return const (
-            Icons.bluetooth,
-            Colors.blueAccent,
-            'Tap Scan to find devices',
-          );
+          return (Icons.bluetooth, connected, 'Tap Scan to find devices');
         case AvailabilityState.poweredOff:
-          return const (
-            Icons.bluetooth_disabled,
-            Colors.blueGrey,
-            'Bluetooth is off',
-          );
+          return (Icons.bluetooth_disabled, cs.outline, 'Bluetooth is off');
         case AvailabilityState.unknown:
-          return const (
-            Icons.question_mark,
-            Colors.yellow,
-            'Starting up Bluetooth…',
-          );
+          return (Icons.question_mark, cs.outline, 'Starting up Bluetooth…');
         case AvailabilityState.resetting:
-          return const (
-            Icons.question_mark,
-            Colors.green,
-            'Bluetooth resetting…',
-          );
+          return (Icons.question_mark, active, 'Bluetooth resetting…');
         case AvailabilityState.unsupported:
-          return const (Icons.stop, Colors.red, 'Bluetooth not supported');
+          return (Icons.stop, cs.error, 'Bluetooth not supported');
         case AvailabilityState.unauthorized:
-          return const (
-            Icons.stop,
-            Colors.orange,
-            'Bluetooth permission needed',
-          );
+          return (Icons.stop, cs.tertiary, 'Bluetooth permission needed');
         // ignore: unreachable_switch_default
         default:
-          return const (
-            Icons.question_mark,
-            Colors.grey,
-            'Bluetooth unavailable',
-          );
+          return (Icons.question_mark, cs.outline, 'Bluetooth unavailable');
       }
     }
 

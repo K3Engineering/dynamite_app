@@ -91,6 +91,13 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// [clear].
   bool protocolErrorSeen = false;
 
+  /// Wall-clock time of the last completed packet batch ([commitBatch]), or
+  /// null before the first packet of the stream. The live UI derives a
+  /// data-stall indication from this: while the link reports streaming, a
+  /// timestamp older than a couple of seconds means the device has gone
+  /// silent (firmware hang / marginal link). Reset by [clear].
+  DateTime? lastDataAt;
+
   /// Monotonic counter bumped by [clear]. Lets observers distinguish "same
   /// stream, more data" from "a new stream reset the hub" explicitly, instead
   /// of inferring the reset from [totalSamples] decreasing.
@@ -134,6 +141,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     totalSamples = 0;
     _generation++;
     protocolErrorSeen = false;
+    lastDataAt = null;
     gaps.clear();
     for (int i = 0; i < numAdcChannels; ++i) {
       rawMax[i] = _noMaxYet;
@@ -227,6 +235,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
         listener(startIdx, count);
       }
     }
+    lastDataAt = DateTime.now();
     gaps.pruneBefore(totalSamples - maxDataSz); // ring-wrap hygiene
     notifyListeners();
   }
@@ -252,6 +261,11 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
 
   @override
   Listenable get repaint => this;
+
+  /// Stream identity for the graph segment caches: [generation] is bumped by
+  /// [clear], i.e. exactly when a new device stream takes over the hub.
+  @override
+  int get dataGeneration => _generation;
 
   @override
   ChannelSeries channel(int channelIndex) => (

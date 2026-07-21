@@ -97,11 +97,14 @@ class SessionStorage {
         agg.scan(chunk, tare);
       }
 
+      // Preserve the gaps persisted incrementally by the live writer (chunk
+      // bytes alone can't reconstruct them).
       await AppDatabase.instance.completeSession(
         session.id,
         sampleCount: agg.samples,
         durationMs: (agg.samples * 1000) ~/ session.sampleRate,
         peakForceRaw: agg.peakRaw,
+        gaps: session.gaps,
       );
     }
   }
@@ -323,6 +326,10 @@ class SessionData implements GraphDataSource {
   @override
   Listenable get repaint => kNeverRepaints;
 
+  /// Session data is immutable after load; there is no "new stream".
+  @override
+  int get dataGeneration => 0;
+
   @override
   ChannelSeries channel(int channelIndex) => (
     data: channels[channelIndex],
@@ -356,7 +363,12 @@ class LiveSessionWriter {
     this.sessionId,
     this.tare, {
     @visibleForTesting
-    Future<void> Function(int sessionId, int chunkIndex, Uint8List data)?
+    Future<void> Function(
+      int sessionId,
+      int chunkIndex,
+      Uint8List data,
+      String gapsJson,
+    )?
     chunkSink,
   }) : _chunkSink = chunkSink;
 
@@ -372,7 +384,9 @@ class LiveSessionWriter {
   double peakRaw = 0.0;
 
   /// Dropped-sample ranges accumulated across the recording, relative to the
-  /// session's first sample. Persisted by [SessionStorage.finalizeSession].
+  /// session's first sample. Persisted to the session row on every chunk
+  /// flush (so a crash keeps the info up to the last flush) and once more in
+  /// full by [SessionStorage.finalizeSession].
   final GapList gaps = GapList();
 
   /// Hub-absolute index of the session's first sample; latched on the first
@@ -391,11 +405,16 @@ class LiveSessionWriter {
   /// Serializes all DB writes. Each enqueued op awaits the previous one.
   Future<void> _writeQueue = Future.value();
 
-  /// Test seam: when set, chunk payloads go here instead of
-  /// [AppDatabase.insertChunk], so tests can stall and observe writes without
-  /// opening a real database. Resolved lazily so constructing a writer never
-  /// touches the database singleton.
-  final Future<void> Function(int sessionId, int chunkIndex, Uint8List data)?
+  /// Test seam: when set, a flush's DB side effects (chunk insert + gap-range
+  /// update) go here instead of the real database, so tests can stall and
+  /// observe writes without opening one. Resolved lazily so constructing a
+  /// writer never touches the database singleton.
+  final Future<void> Function(
+    int sessionId,
+    int chunkIndex,
+    Uint8List data,
+    String gapsJson,
+  )?
   _chunkSink;
 
   /// Flush whenever the staging buffer reaches ~this many bytes
@@ -477,11 +496,13 @@ class LiveSessionWriter {
     // takeBytes() clears the builder, so a concurrent append can't see it.
     final dataToSave = _staging.takeBytes();
     final chunkIdx = _chunkIndex++;
+    final gapsJson = gaps.toJson();
     try {
-      await (_chunkSink ?? AppDatabase.instance.insertChunk)(
+      await (_chunkSink ?? _defaultChunkSink)(
         sessionId,
         chunkIdx,
         dataToSave,
+        gapsJson,
       );
     } catch (e) {
       // Latch the first failure; stop accumulating so we don't grow unbounded
@@ -489,6 +510,20 @@ class LiveSessionWriter {
       writeError ??= e;
       debugPrint('Session chunk write failed (session $sessionId): $e');
     }
+  }
+
+  /// The production sink: writes the chunk, then updates the session row's
+  /// gap ranges so a crash mid-recording keeps the info up to this flush
+  /// (crash recovery rebuilds aggregates from chunks but cannot reconstruct
+  /// gaps from them). The gaps update is one small row write per flush.
+  static Future<void> _defaultChunkSink(
+    int sessionId,
+    int chunkIndex,
+    Uint8List data,
+    String gapsJson,
+  ) async {
+    await AppDatabase.instance.insertChunk(sessionId, chunkIndex, data);
+    await AppDatabase.instance.setSessionGaps(sessionId, gapsJson);
   }
 
   /// Chain [op] after all previously enqueued writes and return its completion.

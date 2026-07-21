@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/ble_link_manager.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/section_header.dart';
+import '../widgets/status_colors.dart';
 
 class DevicesTab extends StatefulWidget {
   final bool isActive;
@@ -133,7 +134,11 @@ class _DevicesTabState extends State<DevicesTab> {
                   isStreaming
                       ? Icons.bluetooth_connected
                       : Icons.bluetooth_searching,
-                  color: Colors.blueAccent,
+                  color: isStreaming
+                      ? Theme.of(
+                          context,
+                        ).extension<StatusColors>()!.linkConnected
+                      : Theme.of(context).extension<StatusColors>()!.linkActive,
                 ),
                 title: Text(bt.connectedDeviceName),
                 subtitle: Text(
@@ -194,7 +199,10 @@ class _DevicesTabState extends State<DevicesTab> {
           for (final device in bt.devices)
             Card(
               child: ListTile(
-                leading: const Icon(Icons.bluetooth, color: Colors.blueGrey),
+                leading: Icon(
+                  Icons.bluetooth,
+                  color: Theme.of(context).colorScheme.outline,
+                ),
                 title: Text(device.name ?? 'Unknown device'),
                 subtitle: Text(
                   device.rssi != null ? 'RSSI: ${device.rssi} dBm' : 'RSSI: --',
