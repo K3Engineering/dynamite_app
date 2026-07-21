@@ -41,6 +41,14 @@ class BluetoothIndicator extends StatelessWidget {
             Colors.lightBlue,
             'Disconnecting…',
           );
+        case BtLinkState.cooldown:
+          // Web: the link has torn down but the stack isn't ready to reconnect
+          // yet. Connect stays disabled through this settle window.
+          return const (
+            Icons.bluetooth_searching,
+            Colors.lightBlue,
+            'Almost ready…',
+          );
         case BtLinkState.streaming:
           return const (
             Icons.bluetooth_connected,
