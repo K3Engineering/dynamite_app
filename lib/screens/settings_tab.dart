@@ -146,7 +146,7 @@ class SettingsTab extends StatelessWidget {
   }
 }
 
-class _ChannelConfigTile extends StatelessWidget {
+class _ChannelConfigTile extends StatefulWidget {
   const _ChannelConfigTile({
     required this.index,
     required this.label,
@@ -158,6 +158,38 @@ class _ChannelConfigTile extends StatelessWidget {
   final ValueChanged<String> onLabelChanged;
 
   @override
+  State<_ChannelConfigTile> createState() => _ChannelConfigTileState();
+}
+
+class _ChannelConfigTileState extends State<_ChannelConfigTile> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.label);
+  }
+
+  @override
+  void didUpdateWidget(covariant _ChannelConfigTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The label changed from OUTSIDE this field (e.g. the async SharedPrefs
+    // load completing after the first build): adopt it. A bare
+    // TextFormField(initialValue:) would keep showing the stale default.
+    // Changes caused by this field's own submit are excluded so the caret
+    // isn't disturbed.
+    if (widget.label != oldWidget.label && widget.label != _controller.text) {
+      _controller.text = widget.label;
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
@@ -166,19 +198,19 @@ class _ChannelConfigTile extends StatelessWidget {
           children: [
             const SizedBox(width: 8),
             Text(
-              'Ch ${index + 1}',
+              'Ch ${widget.index + 1}',
               style: const TextStyle(fontWeight: FontWeight.w500),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: TextFormField(
-                initialValue: label,
+              child: TextField(
+                controller: _controller,
                 decoration: const InputDecoration(
                   isDense: true,
                   border: UnderlineInputBorder(),
                   hintText: 'Label',
                 ),
-                onFieldSubmitted: onLabelChanged,
+                onSubmitted: widget.onLabelChanged,
               ),
             ),
           ],

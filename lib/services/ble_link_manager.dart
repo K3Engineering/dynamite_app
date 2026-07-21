@@ -155,7 +155,7 @@ class BleLinkManager extends ChangeNotifier {
   AvailabilityState get bluetoothState => _bluetoothState;
 
   final List<BleDevice> _devices = [];
-  List<BleDevice> get devices => _devices;
+  List<BleDevice> get devices => List.unmodifiable(_devices);
 
   bool _isScanning = false;
   bool get isScanning => _isScanning;
@@ -631,9 +631,13 @@ class BleLinkManager extends ChangeNotifier {
       await UniversalBle.connect(deviceId);
     } catch (e) {
       // Connection result (success) arrives via _onConnectionChange; on a
-      // failed connect attempt that callback may never fire, so reset the
-      // link here and let the caller surface the error.
-      _link.reset();
+      // failed connect attempt that callback may never fire, so tear the link
+      // down here and let the caller surface the error. Go through the common
+      // [_endLink] teardown (not a bare reset): it supersedes any lingering
+      // setup pass and, on web, parks the link in cooldown so an immediate
+      // retry doesn't hit the too-soon-reconnect race.
+      final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
+      _endLink(deviceId, device?.name ?? deviceId);
       notifyListeners();
       rethrow;
     }

@@ -105,6 +105,23 @@ void main() {
     });
   });
 
+  group('lastDataAt', () {
+    test('commitBatch stamps the wall clock; clear resets it', () {
+      final hub = DataHub();
+      expect(hub.lastDataAt, isNull);
+
+      feed(hub, frameOf(100), 20);
+      hub.commitBatch(0);
+      final stamped = hub.lastDataAt;
+      expect(stamped, isNotNull);
+      expect(DateTime.now().difference(stamped!).isNegative, isFalse);
+      expect(DateTime.now().difference(stamped).inSeconds, lessThan(2));
+
+      hub.clear();
+      expect(hub.lastDataAt, isNull);
+    });
+  });
+
   group('tare', () {
     test('does not freeze the stream timeline', () {
       final hub = DataHub();

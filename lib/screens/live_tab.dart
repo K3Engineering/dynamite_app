@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -34,6 +36,39 @@ class _LiveTabState extends State<LiveTab> {
   /// device stream (see [RecordingController]).
   int _lastGeneration = 0;
 
+  /// How long the stream may be silent (while the link reports streaming)
+  /// before the live stats read as stalled. Packets normally arrive at 50 Hz.
+  static const Duration _stallThreshold = Duration(seconds: 2);
+
+  /// 1 Hz ticker driving the stall check: during a stall no packets arrive,
+  /// so the hub never notifies and nothing else would flip the flag.
+  Timer? _stallTimer;
+  bool _stalled = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _stallTimer = Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _checkStall(),
+    );
+  }
+
+  /// Recompute the stalled flag; rebuilds ONLY on an edge (per-tick setState
+  /// would be a pointless 1 Hz rebuild of the whole tab).
+  void _checkStall() {
+    final hub = _hub;
+    if (hub == null) return;
+    final last = hub.lastDataAt;
+    final stalled =
+        context.read<BleLinkManager>().isStreaming &&
+        last != null &&
+        DateTime.now().difference(last) > _stallThreshold;
+    if (stalled != _stalled) {
+      setState(() => _stalled = stalled);
+    }
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -65,6 +100,7 @@ class _LiveTabState extends State<LiveTab> {
 
   @override
   void dispose() {
+    _stallTimer?.cancel();
     _hub?.removeListener(_onHubChanged);
     _graphCtrl.dispose();
     super.dispose();
@@ -176,6 +212,7 @@ class _LiveTabState extends State<LiveTab> {
               settings: settings,
               hub: hub,
               showDerivative: _showDerivative,
+              stalled: _stalled,
             ),
           if (isConnected)
             Expanded(child: _buildGraphArea(settings, hub))
@@ -272,7 +309,8 @@ class LiveStatusBar extends StatelessWidget {
             ),
             if (isConnected && protocolErrorSeen)
               Tooltip(
-                message: 'Malformed ADC packets received — '
+                message:
+                    'Malformed ADC packets received — '
                     'firmware/protocol mismatch',
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8),
@@ -307,11 +345,16 @@ class LiveStats extends StatelessWidget {
   final DataHub hub;
   final bool showDerivative;
 
+  /// The stream has gone silent while the link reports streaming (no packets
+  /// for [_LiveTabState._stallThreshold]). Values are grayed out like a gap.
+  final bool stalled;
+
   const LiveStats({
     super.key,
     required this.settings,
     required this.hub,
     this.showDerivative = false,
+    this.stalled = false,
   });
 
   @override
@@ -323,7 +366,8 @@ class LiveStats extends StatelessWidget {
       builder: (context, _) {
         // During a live gap (dropped packets) the hub reports held values;
         // gray them out so they read as stale rather than fresh readings.
-        final stale = hub.liveEdgeIsGap;
+        // Same for a stall: the newest "reading" is just the last one.
+        final stale = hub.liveEdgeIsGap || stalled;
 
         return ChannelStatsTable(
           labels: settings.channelLabels,

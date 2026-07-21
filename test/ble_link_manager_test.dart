@@ -170,6 +170,35 @@ void main() {
     });
   });
 
+  test('a failed connect attempt tears the link down and allows a retry', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+      MockBlePlatform.instance.failConnect = true;
+
+      Object? error;
+      unawaited(
+        link.connectToDevice(deviceId).catchError((Object e) => error = e),
+      );
+      async.elapse(const Duration(seconds: 2));
+
+      expect(error, isA<ConnectionException>());
+      // The catch path runs the common teardown: back to idle (VM tests are
+      // non-web, so no cooldown), no connection-lost notice for a link that
+      // never came up.
+      expect(link.link.state, BtLinkState.idle);
+      expect(seen, isEmpty);
+
+      // An immediate retry must not be blocked by leftover busy/cooldown state.
+      MockBlePlatform.instance.failConnect = false;
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+      expect(seen, isEmpty);
+
+      teardownLink(async, link);
+    });
+  });
+
   test('notifications from foreign sources are dropped', () {
     fakeAsync((async) {
       final (link, _) = wire();
@@ -310,7 +339,3 @@ void main() {
     });
   });
 }
-
-
-
-

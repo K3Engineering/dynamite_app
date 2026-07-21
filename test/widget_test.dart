@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_ble/universal_ble.dart';
@@ -26,11 +25,6 @@ import 'package:dynamite_app/services/recording_controller.dart';
 /// [WidgetTester.pump] calls rather than pumpAndSettle so that pending real
 /// async (the drift connection future) can't stall the test.
 void main() {
-  setUpAll(() {
-    // Don't let GoogleFonts attempt network font fetches during the test.
-    GoogleFonts.config.allowRuntimeFetching = false;
-  });
-
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     // Install the mock regardless of useMockBt so BleLinkManager's unawaited

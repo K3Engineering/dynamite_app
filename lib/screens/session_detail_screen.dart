@@ -331,7 +331,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     // Save via a native "Save As" dialog. On web there is no save-location
     // picker, so hand the bytes to the browser, which downloads the file.
     final bytes = Uint8List.fromList(utf8.encode(buf.toString()));
-    final csvName = '${_session.name.isEmpty ? 'session' : _session.name}.csv';
+    final csvName = _csvFileName(_session.name);
     final xFile = XFile.fromData(bytes, mimeType: 'text/csv', name: csvName);
 
     String savedTo;
@@ -366,6 +366,17 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 }
 
 // -- Load state --
+
+/// The CSV filename for a session: the session name with characters that are
+/// illegal in Windows/macOS/Android filenames replaced (auto session names
+/// contain `/` and `:` — e.g. `7/20 14:05:32`), and trailing dots/spaces
+/// (illegal on Windows) trimmed.
+String _csvFileName(String sessionName) {
+  final base = sessionName.isEmpty ? 'session' : sessionName;
+  final safe = base.replaceAll(RegExp(r'[\\/:*?"<>|]'), '-');
+  final trimmed = safe.replaceAll(RegExp(r'[. ]+$'), '');
+  return '${trimmed.isEmpty ? 'session' : trimmed}.csv';
+}
 
 /// Load state for the session's sample data: still loading, failed, or ready
 /// (data null means the session has no chunks).

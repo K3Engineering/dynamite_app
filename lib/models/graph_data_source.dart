@@ -44,6 +44,14 @@ abstract interface class GraphDataSource {
   /// Notifies listeners when the underlying data changes.
   Listenable get repaint;
 
+  /// Monotonic identity of the data stream backing this source: bumped when
+  /// the source is reset for a NEW stream (e.g. [DataHub.clear] on
+  /// reconnect), unchanged while the same stream merely grows. Renderers mix
+  /// it into their segment-cache keys, so baked content from a previous
+  /// stream is dropped instead of being blitted over the new stream's data
+  /// (both restart at absolute sample 0). Static sources return a constant.
+  int get dataGeneration;
+
   /// Returns the series (data + extremes + tare + buckets) for a given
   /// channel index.
   ChannelSeries channel(int channelIndex);

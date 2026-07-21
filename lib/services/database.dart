@@ -134,7 +134,8 @@ class AppDatabase extends _$AppDatabase {
 
   /// Record a session's final aggregates and mark it completed. [gaps] is the
   /// JSON-encoded dropped-sample range list (session-relative); crash recovery
-  /// omits it (gap info is lost for recovered sessions).
+  /// passes the row's existing value so the ranges the live writer persisted
+  /// incrementally (see [setSessionGaps]) survive the crash.
   Future<void> completeSession(
     int id, {
     required int sampleCount,
@@ -154,6 +155,15 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
+  /// Replace a session's dropped-sample ranges ([gaps] is the JSON-encoded
+  /// range list, session-relative). Called by the live writer on every chunk
+  /// flush, so a crash mid-recording keeps the gap info up to the last
+  /// flushed chunk instead of losing it all (crash recovery only rebuilds
+  /// aggregates; it cannot reconstruct gaps from chunk bytes).
+  Future<void> setSessionGaps(int id, String gaps) {
+    return _updateSession(id, SessionsCompanion(gaps: Value(gaps)));
+  }
+
   /// Rename a session.
   Future<void> renameSession(int id, String name) {
     return _updateSession(id, SessionsCompanion(name: Value(name)));
@@ -166,10 +176,7 @@ class AppDatabase extends _$AppDatabase {
 
   /// Replace a session's visible-channel set ([json] is a JSON bool list).
   Future<void> setSessionVisibleChannels(int id, String json) {
-    return _updateSession(
-      id,
-      SessionsCompanion(visibleChannels: Value(json)),
-    );
+    return _updateSession(id, SessionsCompanion(visibleChannels: Value(json)));
   }
 
   /// Stream all completed sessions, newest first (reactive).

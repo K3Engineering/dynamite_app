@@ -17,6 +17,7 @@ import 'services/hot_restart_cleanup_stub.dart'
 import 'services/recording_controller.dart';
 import 'services/session_storage.dart';
 import 'screens/app_shell.dart';
+import 'widgets/status_colors.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -95,6 +96,7 @@ class DynoApp extends StatelessWidget {
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF8F9FA),
+        extensions: const [StatusColors.light],
         colorScheme: const ColorScheme.light(
           // top "connected" bar, rec, tare buttons, button fonts
           primary: Color(0xFF455A64),
@@ -113,6 +115,7 @@ class DynoApp extends StatelessWidget {
       darkTheme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFF121212),
+        extensions: const [StatusColors.dark],
         colorScheme: const ColorScheme.dark(
           primary: Color.fromARGB(255, 103, 155, 179),
           onPrimary: Colors.white,
