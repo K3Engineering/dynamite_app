@@ -77,10 +77,11 @@ class DataHub extends ChangeNotifier {
   int totalSamples = 0;
   DeviceCalibration deviceCalibration = DeviceCalibration();
 
-  /// Malformed/undecodable ADC packets seen on this stream (e.g. truncated
-  /// notifications). The decoder increments this instead of silently
-  /// dropping; the live UI surfaces a non-zero count. Reset by [clear].
-  int protocolErrorCount = 0;
+  /// Whether a malformed/undecodable ADC packet (e.g. a truncated
+  /// notification) was seen on this stream. Latched by [reportProtocolError]
+  /// instead of silently dropping; the live UI surfaces the latch. Reset by
+  /// [clear].
+  bool protocolErrorSeen = false;
 
   /// Monotonic counter bumped by [clear]. Lets observers distinguish "same
   /// stream, more data" from "a new stream reset the hub" explicitly, instead
@@ -123,7 +124,7 @@ class DataHub extends ChangeNotifier {
     _tareCount = 0;
     totalSamples = 0;
     _generation++;
-    protocolErrorCount = 0;
+    protocolErrorSeen = false;
     gaps.clear();
     for (int i = 0; i < numAdcChannels; ++i) {
       rawMax[i] = _noMaxYet;
@@ -134,6 +135,17 @@ class DataHub extends ChangeNotifier {
       valueBuckets[i].reset();
       diffBuckets[i].reset();
     }
+    notifyListeners();
+  }
+
+  /// Latch [protocolErrorSeen] and notify observers — but only on the first
+  /// malformed packet of a stream. The malformed-packet path never reaches
+  /// [commitBatch], so without this notify a stream where EVERY packet is
+  /// undecodable (firmware/protocol mismatch) would show no warning at all;
+  /// latching keeps a flood of bad packets from becoming a notify storm.
+  void reportProtocolError() {
+    if (protocolErrorSeen) return;
+    protocolErrorSeen = true;
     notifyListeners();
   }
 

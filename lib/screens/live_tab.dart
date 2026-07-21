@@ -217,7 +217,7 @@ class _LiveTabState extends State<LiveTab> {
     return SafeArea(
       child: Column(
         children: [
-          // The bar shows the hub's protocol-error count, which changes with
+          // The bar shows the hub's protocol-error latch, which changes with
           // packet traffic — listen to the hub (per-packet notify) here
           // rather than rebuilding the whole tab.
           ListenableBuilder(
@@ -225,7 +225,7 @@ class _LiveTabState extends State<LiveTab> {
             builder: (context, _) => LiveStatusBar(
               isConnected: isConnected,
               connectedDeviceName: link.connectedDeviceName,
-              protocolErrorCount: hub.protocolErrorCount,
+              protocolErrorSeen: hub.protocolErrorSeen,
             ),
           ),
           if (isConnected)
@@ -275,16 +275,16 @@ class LiveStatusBar extends StatelessWidget {
   final bool isConnected;
   final String connectedDeviceName;
 
-  /// Malformed ADC packets seen on this stream ([DataHub.protocolErrorCount]).
-  /// Non-zero shows a persistent warning marker: bad packets are dropped but
-  /// never hidden from the user.
-  final int protocolErrorCount;
+  /// Whether a malformed ADC packet was seen on this stream
+  /// ([DataHub.protocolErrorSeen]). Shows a persistent warning marker: bad
+  /// packets are dropped but never hidden from the user.
+  final bool protocolErrorSeen;
 
   const LiveStatusBar({
     super.key,
     required this.isConnected,
     required this.connectedDeviceName,
-    this.protocolErrorCount = 0,
+    this.protocolErrorSeen = false,
   });
 
   @override
@@ -328,10 +328,9 @@ class LiveStatusBar extends StatelessWidget {
                 ),
               ),
             ),
-            if (isConnected && protocolErrorCount > 0)
+            if (isConnected && protocolErrorSeen)
               Tooltip(
-                message:
-                    '$protocolErrorCount malformed ADC packet(s) received — '
+                message: 'Malformed ADC packets received — '
                     'firmware/protocol mismatch',
                 child: Padding(
                   padding: const EdgeInsets.only(right: 8),

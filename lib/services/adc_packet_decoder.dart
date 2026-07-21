@@ -53,10 +53,10 @@ class AdcPacketDecoder {
     // the fixed-size loop below). Anything shorter — e.g. a truncated
     // notification from a firmware bug — can't be parsed (indexing past the
     // end would throw in release builds). Drop it, but NOT silently: the
-    // hub's [DataHub.protocolErrorCount] surfaces it in the live UI.
+    // hub's [DataHub.reportProtocolError] latch surfaces it in the live UI.
     const int minLength = nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;
     if (data.length < minLength) {
-      hub.protocolErrorCount++;
+      hub.reportProtocolError();
       debugPrint(
         'Dropping short ADC packet: ${data.length} B (need $minLength B)',
       );
