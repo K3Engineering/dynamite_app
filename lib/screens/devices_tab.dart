@@ -111,6 +111,7 @@ class DevicesTab extends StatelessWidget {
             scanRssi: null,
             inactiveIcon: Icons.science,
             inactiveIconColor: Colors.teal,
+            activeIcon: Icons.science,
             isActive: bt.link.isDemoDevice && bt.link.state != BtLinkState.idle,
             linkState: bt.link.state,
             connectedRssi: null,
@@ -197,6 +198,7 @@ class _DeviceRow extends StatelessWidget {
     required this.scanRssi,
     required this.inactiveIcon,
     required this.inactiveIconColor,
+    this.activeIcon,
     required this.isActive,
     required this.linkState,
     required this.connectedRssi,
@@ -216,6 +218,11 @@ class _DeviceRow extends StatelessWidget {
   /// Leading icon/color used in the inactive form.
   final IconData inactiveIcon;
   final Color inactiveIconColor;
+
+  /// Leading icon override for the active form (e.g. the demo device's
+  /// science beaker). When null, the state-driven Bluetooth icon from
+  /// [btStatusVisual] is used.
+  final IconData? activeIcon;
 
   /// Whether this row is the device's active link.
   final bool isActive;
@@ -271,22 +278,33 @@ class _DeviceRow extends StatelessWidget {
       colors: Theme.of(context).colorScheme,
     );
     final scheme = Theme.of(context).colorScheme;
+    final onContainer = scheme.onPrimaryContainer;
     final isStreaming = linkState == BtLinkState.streaming;
     final isConnecting = linkState == BtLinkState.connecting;
     final isDisconnecting = linkState == BtLinkState.disconnecting;
 
+    // Division of labor: the Card owns the surface (paints the rounded
+    // primaryContainer background — its native job), the selected ListTile
+    // owns content (transparent itself; the app's listTileTheme supplies the
+    // on-container color for the title, subtitle, and gear IconButton).
     return Card(
       color: scheme.primaryContainer,
       child: ListTile(
+        selected: true,
         leading: Stack(
           alignment: Alignment.center,
           children: [
-            Icon(visual.icon, color: visual.color),
+            Icon(activeIcon ?? visual.icon, color: visual.color),
             if (visual.showSpinner)
-              const SizedBox(
+              SizedBox(
                 width: 28,
                 height: 28,
-                child: CircularProgressIndicator(strokeWidth: 2),
+                // Spinners don't participate in tile theming; color it
+                // explicitly or it defaults to primary on the dark surface.
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  valueColor: AlwaysStoppedAnimation(onContainer),
+                ),
               ),
           ],
         ),
@@ -307,6 +325,13 @@ class _DeviceRow extends StatelessWidget {
                   ?.goToSettings(),
             ),
             TextButton(
+              // TextButtons don't participate in tile theming either; without
+              // this the label renders in primary on the primaryContainer
+              // surface — invisible.
+              style: TextButton.styleFrom(
+                foregroundColor: onContainer,
+                disabledForegroundColor: onContainer.withValues(alpha: 0.5),
+              ),
               // Disabled while the disconnect is in flight so the button
               // truthfully reflects the in-progress teardown.
               onPressed: isDisconnecting ? null : onDisconnect,
