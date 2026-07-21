@@ -18,7 +18,7 @@ import 'package:dynamite_app/services/mockble.dart';
 /// discoverServices / calibration read). A full connect therefore takes ~3 s:
 /// connect(1s) -> MTU(immediate) -> discoverServices(1s) -> calibration(1s)
 /// -> subscribe. [BleLinkManager.disconnectTimeout] is 2500 ms,
-/// [BleLinkManager.connectTimeout] is 15 s (the mock's slowConnect is 20 s).
+/// [BleLinkManager.connectTimeout] is 5 s (the mock's slowConnect is 20 s).
 ///
 /// IMPORTANT: every test tears its link down INSIDE the [fakeAsync] scope
 /// (see [teardownLink]). A disconnect left running when the scope exits keeps
@@ -271,7 +271,7 @@ void main() {
       unawaited(
         link.connectToDevice(deviceId).catchError((Object e) => error = e),
       );
-      // BleLinkManager.connectTimeout (15 s) fires before the mock's 20 s
+      // BleLinkManager.connectTimeout (5 s) fires before the mock's 20 s
       // connect completes.
       async.elapse(const Duration(seconds: 16));
 

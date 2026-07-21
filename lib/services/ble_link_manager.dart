@@ -148,7 +148,7 @@ class BleLinkManager extends ChangeNotifier {
   /// pairing prompt without feeling wedged. When it fires, the platform
   /// connect may still complete later — that late callback is released and
   /// ignored by the unwanted-link guard in [_onConnectionChange].
-  static const Duration connectTimeout = Duration(seconds: 15);
+  static const Duration connectTimeout = Duration(seconds: 5);
 
   /// How often to poll the connected device's RSSI for the live signal display.
   static const Duration rssiPollInterval = Duration(seconds: 2);
