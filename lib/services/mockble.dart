@@ -58,6 +58,21 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// link down.
   bool hangDisconnect = false;
 
+  /// When true, [connect] takes [slowConnectDelay] instead of [netDelay] —
+  /// far longer than the client's connect timeout, so the attempt is torn
+  /// down before the platform link comes up. The late success still fires
+  /// its connection-change callback afterwards (the "connect completed after
+  /// the client gave up" race).
+  bool slowConnect = false;
+  static const slowConnectDelay = Duration(seconds: 20);
+
+  /// Test spy: every deviceId passed to [disconnect], in order. Lets tests
+  /// assert that leaked/unwanted GATT links were released.
+  final List<String> disconnectCalls = [];
+
+  /// The device the mock currently considers linked (test assertions only).
+  String? get connectedDeviceId => _connectedDeviceId;
+
   /// Reset every knob to its default and silently sever any leftover link
   /// (no callbacks), so the singleton is clean for the next test.
   void resetKnobs() {
@@ -66,8 +81,12 @@ class MockBlePlatform extends UniversalBlePlatform {
     failCalibrationRead = false;
     failConnect = false;
     hangDisconnect = false;
+    slowConnect = false;
+    disconnectCalls.clear();
     _connectedDeviceId = null;
     _connectionState = BleConnectionState.disconnected;
+    _scanTimer?.cancel();
+    _scanTimer = null;
     _notificationTimer?.cancel();
     _notificationTimer = null;
   }
@@ -155,7 +174,7 @@ class MockBlePlatform extends UniversalBlePlatform {
 
     _connectedDeviceId = deviceId;
     _connectionState = BleConnectionState.connecting;
-    await Future<void>.delayed(netDelay);
+    await Future<void>.delayed(slowConnect ? slowConnectDelay : netDelay);
     if (failConnect) {
       // A refused/failed attempt: no link, and no connection-change callback
       // — the client's connect() catch path is what tears its state down.
@@ -169,6 +188,7 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<void> disconnect(String deviceId) async {
+    disconnectCalls.add(deviceId);
     if (hangDisconnect) {
       // Never fire the connection-change callback: the link stays "connected"
       // here and the client's disconnect-timeout reconciliation tears it down.

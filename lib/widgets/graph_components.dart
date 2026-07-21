@@ -1177,10 +1177,12 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
 
     if (details.scale != 1.0 && _scaleStartSpan != null) {
       // Pinch zoom, anchored to the gesture-start window so tracking stays
-      // stable while totalSamples grows.
+      // stable while totalSamples grows. The focal fraction is measured from
+      // the plot area's left edge (same convention as wheel zoom), not from
+      // the widget's left padding.
       widget.ctrl.zoomTo(
         (_scaleStartSpan! / details.scale).round(),
-        (_pinchFocalX! / graphWidth).clamp(0.0, 1.0),
+        ((_pinchFocalX! - kGraphLeftSpace) / graphWidth).clamp(0.0, 1.0),
         baseStart: origStart,
         baseSpan: origSpan,
         anchorLiveEdge: _wasLiveOnScaleStart,

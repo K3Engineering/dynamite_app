@@ -46,7 +46,7 @@ class SessionStorage {
       visibleChannels: jsonEncode(visibleChannels),
     );
 
-    return LiveSessionWriter(sessionId, tare);
+    return LiveSessionWriter(sessionId, tare, DataHub.samplesPerSec);
   }
 
   /// Finalize a streaming session: flush any buffered samples, then record the
@@ -59,17 +59,36 @@ class SessionStorage {
   }) async {
     await writer.flush();
 
-    await AppDatabase.instance.completeSession(
-      writer.sessionId,
+    await _completeSession(
+      sessionId: writer.sessionId,
       sampleCount: writer.totalSamplesRecorded,
-      durationMs: (writer.totalSamplesRecorded * 1000) ~/ DataHub.samplesPerSec,
-      // A session that captured no samples leaves peakRaw at -infinity; that
-      // must not reach the DB (or the session list's peak display).
-      peakForceRaw: writer.peakRaw.isFinite ? writer.peakRaw : 0.0,
-      gaps: writer.gaps.toJson(),
+      sampleRate: writer.sampleRate,
+      peakRaw: writer.peakRaw,
+      gapsJson: writer.gaps.toJson(),
     );
 
     return writer.writeError;
+  }
+
+  /// Write a finished (or recovered) session's aggregates to its row and mark
+  /// it completed. Shared by [finalizeSession] and [recoverIncompleteSessions]
+  /// so both paths apply identical guards and duration math.
+  static Future<void> _completeSession({
+    required int sessionId,
+    required int sampleCount,
+    required int sampleRate,
+    required double peakRaw,
+    required String gapsJson,
+  }) {
+    return AppDatabase.instance.completeSession(
+      sessionId,
+      sampleCount: sampleCount,
+      durationMs: (sampleCount * 1000) ~/ sampleRate,
+      // A session that captured no samples leaves peakRaw at -infinity; that
+      // must not reach the DB (or the session list's peak display).
+      peakForceRaw: peakRaw.isFinite ? peakRaw : 0.0,
+      gaps: gapsJson,
+    );
   }
 
   /// Recovers any sessions left incomplete (e.g. the app crashed mid-recording)
@@ -99,12 +118,15 @@ class SessionStorage {
 
       // Preserve the gaps persisted incrementally by the live writer (chunk
       // bytes alone can't reconstruct them).
-      await AppDatabase.instance.completeSession(
-        session.id,
+      await _completeSession(
+        sessionId: session.id,
         sampleCount: agg.samples,
-        durationMs: (agg.samples * 1000) ~/ session.sampleRate,
-        peakForceRaw: agg.peakRaw,
-        gaps: session.gaps,
+        // Recovery uses the rate persisted on the row (finalize uses the
+        // writer's, which is the same value from recording start) so a future
+        // configurable rate can't skew reconstructed durations.
+        sampleRate: session.sampleRate,
+        peakRaw: agg.peakRaw,
+        gapsJson: session.gaps,
       );
     }
   }
@@ -361,7 +383,8 @@ class SessionData implements GraphDataSource {
 class LiveSessionWriter {
   LiveSessionWriter(
     this.sessionId,
-    this.tare, {
+    this.tare,
+    this.sampleRate, {
     @visibleForTesting
     Future<void> Function(
       int sessionId,
@@ -378,6 +401,10 @@ class LiveSessionWriter {
   /// in the session's `tares` column, so the peak computed here always matches
   /// what playback shows, regardless of later re-tares.
   final Float64List tare;
+
+  /// The rate persisted on the session row at recording start, kept here so
+  /// finalization math uses the same value the row carries.
+  final int sampleRate;
 
   int _chunkIndex = 0;
   int totalSamplesRecorded = 0;

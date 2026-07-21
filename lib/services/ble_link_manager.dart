@@ -123,6 +123,15 @@ class BleLinkManager extends ChangeNotifier {
   /// already-disconnected case), so we no longer hand-roll a parallel Timer.
   static const Duration disconnectTimeout = Duration(milliseconds: 2500);
 
+  /// Upper bound passed to [UniversalBle.connect] so a hung connect attempt
+  /// can't strand the UI on "Connecting…". connect() bypasses the package's
+  /// command queue — so [UniversalBle.timeout] does NOT cover it — and
+  /// defaults to 60 s; 15 s is comfortably past a slow connect or a platform
+  /// pairing prompt without feeling wedged. When it fires, the platform
+  /// connect may still complete later — that late callback is released and
+  /// ignored by the unwanted-link guard in [_onConnectionChange].
+  static const Duration connectTimeout = Duration(seconds: 15);
+
   /// How often to poll the connected device's RSSI for the live signal display.
   static const Duration rssiPollInterval = Duration(seconds: 2);
 
@@ -139,7 +148,7 @@ class BleLinkManager extends ChangeNotifier {
 
   /// One-shot timer that returns the active link from [BtLinkState.cooldown]
   /// back to [BtLinkState.idle] once [reconnectSettleDelay] has elapsed since
-  /// the last teardown. Web-only (see [_endLink]). Cancelled if the
+  /// the last teardown. Web-only (see [_teardownLink]). Cancelled if the
   /// link is superseded before it fires.
   Timer? _cooldownTimer;
 
@@ -406,9 +415,17 @@ class BleLinkManager extends ChangeNotifier {
   }
 
   /// Common teardown for every path that ends a link (clean disconnect, failed
-  /// post-connect setup, disconnect timeout): stop RSSI polling and clear the
-  /// link. Recording is NOT handled here — [RecordingController] observes this
-  /// notifier and stops its session when streaming ends.
+  /// post-connect setup, disconnect timeout, abandoned connect): stop RSSI
+  /// polling, supersede in-flight setup, and clear the link. Recording is NOT
+  /// handled here — [RecordingController] observes this notifier and stops its
+  /// session when streaming ends.
+  ///
+  /// [releaseGatt] must be true when the platform-level GATT link is (or may
+  /// still be) up: a failed post-connect setup, or an abandoned/timed-out
+  /// connect. It triggers a best-effort [UniversalBle.disconnect] so the
+  /// OS/browser connection can't leak. Local state is reset FIRST, so the
+  /// resulting disconnect callback arrives to an unwanted link and is ignored
+  /// by the guard in [_onConnectionChange].
   ///
   /// On web (real BLE devices only) the link is NOT returned straight to
   /// [BtLinkState.idle]: it is parked in [BtLinkState.cooldown] for
@@ -416,7 +433,7 @@ class BleLinkManager extends ChangeNotifier {
   /// until Chrome has finished GATT teardown. Native stacks and the demo
   /// device don't exhibit the too-soon-reconnect race, so they reset directly
   /// to idle. Does NOT call [notifyListeners] — callers do.
-  void _endLink(String deviceId, String name) {
+  void _teardownLink(String deviceId, String name, {bool releaseGatt = false}) {
     // Supersede any in-flight post-connect setup pass so it bails out instead of
     // writing state for a link we're tearing down.
     _setupGeneration++;
@@ -427,20 +444,37 @@ class BleLinkManager extends ChangeNotifier {
     // Cooldown applies to real BLE links on web only — not native, not demo.
     if (!kIsWeb || _link.isDemoDevice) {
       _link.reset();
-      return;
+    } else {
+      // Web: hold the link in cooldown for the settle window, then release it.
+      _link.enterCooldown(deviceId, name);
+      _cooldownTimer = Timer(reconnectSettleDelay, () {
+        _cooldownTimer = null;
+        // Only release if we're still cooling down THIS device (a new connect
+        // attempt to a different device, or a fresh teardown, may have moved on).
+        if (_link.isCoolingDown && _link.deviceId == deviceId) {
+          _link.reset();
+          notifyListeners();
+        }
+      });
     }
 
-    // Web: hold the link in cooldown for the settle window, then release it.
-    _link.enterCooldown(deviceId, name);
-    _cooldownTimer = Timer(reconnectSettleDelay, () {
-      _cooldownTimer = null;
-      // Only release if we're still cooling down THIS device (a new connect
-      // attempt to a different device, or a fresh teardown, may have moved on).
-      if (_link.isCoolingDown && _link.deviceId == deviceId) {
-        _link.reset();
-        notifyListeners();
-      }
-    });
+    if (releaseGatt) {
+      unawaited(_releaseGatt(deviceId));
+    }
+  }
+
+  /// Best-effort release of a platform-level GATT link that has no app-side
+  /// owner (a timed-out/cancelled connect that later completes, or a link
+  /// whose post-connect setup failed). Fire-and-forget: the resulting
+  /// connection-change callback arrives to find the link unwanted and is
+  /// ignored by the guard in [_onConnectionChange]. Errors are swallowed —
+  /// this runs on teardown paths that must never throw.
+  Future<void> _releaseGatt(String deviceId) async {
+    try {
+      await UniversalBle.disconnect(deviceId, timeout: disconnectTimeout);
+    } catch (_) {
+      // Best effort only: the link is unwanted either way.
+    }
   }
 
   /// True if the post-connect setup pass that captured [gen] for [deviceId] has
@@ -459,11 +493,28 @@ class BleLinkManager extends ChangeNotifier {
       'isConnected $deviceId, $isConnected ${(err == null) ? '' : err}',
     );
 
-    // MULTI-DEVICE (Path A): look up `_links[deviceId]` instead of assuming the
-    // event is for the single active link. For now we only track one link, so a
-    // callback for a different deviceId is ignored.
-    if (_link.deviceId.isNotEmpty && _link.deviceId != deviceId) {
-      debugPrint('Ignoring connection change for non-active device $deviceId');
+    // Unwanted-link guard: ignore any connection event that has no app-side
+    // owner — events for a different device than the active link, or events
+    // for OUR device arriving when no connect result is expected (idle,
+    // cooldown, disconnecting). A platform-level connect can complete AFTER
+    // we gave up on it (connect timeout, user cancel); the GATT link is then
+    // live at the platform level with nothing tracking it. Release such links
+    // so they can't leak, then ignore the event.
+    //
+    // MULTI-DEVICE (Path A): look up `_links[deviceId]` instead of assuming
+    // the event is for the single active link.
+    final bool isActiveDevice =
+        _link.deviceId.isNotEmpty && _link.deviceId == deviceId;
+    if (!isActiveDevice ||
+        (isConnected && !_link.isConnecting && !_link.isLinkUp)) {
+      if (isConnected) {
+        debugPrint('Releasing unexpected GATT link for $deviceId');
+        unawaited(_releaseGatt(deviceId));
+      } else {
+        debugPrint(
+          'Ignoring connection change for non-active device $deviceId',
+        );
+      }
       return;
     }
 
@@ -537,7 +588,9 @@ class BleLinkManager extends ChangeNotifier {
         }
         debugPrint('Post-connect setup failed for $deviceId: $e');
         final String name = _link.name.isEmpty ? deviceId : _link.name;
-        _endLink(deviceId, name);
+        // The GATT link came up (connect succeeded) — release it so the
+        // platform can't hold a connection the app considers failed.
+        _teardownLink(deviceId, name, releaseGatt: true);
         _events.emit(BleConnectionFailed(name));
         notifyListeners();
       }
@@ -549,7 +602,8 @@ class BleLinkManager extends ChangeNotifier {
       if (_link.deviceId.isEmpty) return;
 
       // Disconnect resolved (whether user-requested or unexpected): run the
-      // common teardown, which (on web) parks the link in cooldown for the
+      // common teardown (the platform side is already down, so no GATT
+      // release), which (on web) parks the link in cooldown for the
       // reconnect settle window before returning it to the idle sentinel.
       final String name = _link.name.isEmpty ? deviceId : _link.name;
       // An unexpected drop while the link was up (setting up or streaming)
@@ -559,7 +613,7 @@ class BleLinkManager extends ChangeNotifier {
       final bool wasActive =
           _link.state == BtLinkState.connected ||
           _link.state == BtLinkState.streaming;
-      _endLink(deviceId, name);
+      _teardownLink(deviceId, name);
       if (wasActive) {
         _events.emit(BleConnectionLost(name));
       }
@@ -623,30 +677,44 @@ class BleLinkManager extends ChangeNotifier {
     notifyListeners();
 
     // The post-disconnect settle window is enforced as the visible
-    // [BtLinkState.cooldown] state (see [_endLink]) BEFORE Connect is
+    // [BtLinkState.cooldown] state (see [_teardownLink]) BEFORE Connect is
     // re-enabled, so by the time we get here the stack has already had time
     // to finish GATT teardown. No inline sleep is needed.
 
     try {
-      await UniversalBle.connect(deviceId);
+      // connect() bypasses the package command queue and defaults to a 60 s
+      // timeout — pass ours explicitly (see [connectTimeout]).
+      await UniversalBle.connect(deviceId, timeout: connectTimeout);
     } catch (e) {
+      // This attempt was abandoned while its future was outstanding (user
+      // cancel, or superseded by a newer one): the teardown already ran, so
+      // fail quietly instead of running a second teardown (which would park
+      // a phantom cooldown on web) or toasting an error the user asked for.
+      if (_link.deviceId != deviceId || !_link.isConnecting) {
+        return;
+      }
       // Connection result (success) arrives via _onConnectionChange; on a
       // failed connect attempt that callback may never fire, so tear the link
       // down here and let the caller surface the error. Go through the common
-      // [_endLink] teardown (not a bare reset): it supersedes any lingering
-      // setup pass and, on web, parks the link in cooldown so an immediate
-      // retry doesn't hit the too-soon-reconnect race.
+      // [_teardownLink] (not a bare reset): it supersedes any lingering
+      // setup pass, releases the platform GATT link (a timed-out connect can
+      // still complete later — the guard in [_onConnectionChange] handles
+      // that callback), and, on web, parks the link in cooldown so an
+      // immediate retry doesn't hit the too-soon-reconnect race.
       final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
-      _endLink(deviceId, device?.name ?? deviceId);
+      _teardownLink(deviceId, device?.name ?? deviceId, releaseGatt: true);
       notifyListeners();
       rethrow;
     }
   }
 
   Future<void> disconnectSelectedDevice() async {
-    // Allow disconnecting whenever the GATT link is up — whether still "setting
-    // up" or fully streaming — so the user can cancel a stuck setup too.
-    if (!_link.isLinkUp) {
+    // Allow disconnecting whenever a link attempt is in flight or the GATT
+    // link is up — connecting (cancel a stuck/hung attempt), connected
+    // (cancel a stuck setup), or streaming. The teardown releases the
+    // platform side; a connect that completes after we gave up on it is
+    // caught by the unwanted-link guard in [_onConnectionChange].
+    if (!_link.isConnecting && !_link.isLinkUp) {
       return;
     }
     final String deviceId = _link.deviceId;
@@ -657,7 +725,7 @@ class BleLinkManager extends ChangeNotifier {
 
     if (_link.isDemoDevice) {
       _demoSource?.stop();
-      _endLink(_link.deviceId, _link.name);
+      _teardownLink(_link.deviceId, _link.name);
       notifyListeners();
       return;
     }
@@ -687,7 +755,9 @@ class BleLinkManager extends ChangeNotifier {
     if (_link.deviceId == deviceId &&
         _link.state == BtLinkState.disconnecting) {
       debugPrint('Disconnect did not settle for $deviceId; forcing idle');
-      _endLink(deviceId, deviceName);
+      // No GATT release here: the disconnect above already went out to the
+      // platform; a late callback is handled by the unwanted-link guard.
+      _teardownLink(deviceId, deviceName);
       _events.emit(BleDisconnectTimeout(deviceName));
       notifyListeners();
     }

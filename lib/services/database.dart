@@ -192,6 +192,15 @@ class AppDatabase extends _$AppDatabase {
     return (select(sessions)..where((t) => t.id.equals(id))).getSingleOrNull();
   }
 
+  /// Watch a single session row (reactive). The detail screen's source of
+  /// truth: edits made from anywhere (rename, notes, channel visibility)
+  /// surface without manual reloads.
+  Stream<Session?> watchSessionById(int id) {
+    return (select(
+      sessions,
+    )..where((t) => t.id.equals(id))).watchSingleOrNull();
+  }
+
   /// Sessions that were never finalized (e.g. the app died mid-recording).
   Future<List<Session>> incompleteSessions() {
     return (select(sessions)..where((t) => t.isCompleted.equals(false))).get();
