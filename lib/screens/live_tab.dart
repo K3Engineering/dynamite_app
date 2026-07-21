@@ -175,6 +175,16 @@ class _LiveTabState extends State<LiveTab> {
               behavior: SnackBarBehavior.floating,
             ),
           );
+        case StartSessionLinkLost():
+          // The link drop itself is announced by the shell's
+          // BleConnectionLost notice; this just confirms the REC tap didn't
+          // start anything.
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Connection lost — recording not started'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
         case StartSessionFailed(:final error):
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

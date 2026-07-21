@@ -86,5 +86,22 @@ void main() {
       expect(GapList.fromJson('[]').isEmpty, isTrue);
       expect(GapList.fromJson('garbage').isEmpty, isTrue);
     });
+
+    test('fromJson rejects empty, inverted, and non-monotonic ranges', () {
+      // contains() binary-searches the sorted-disjoint invariant; corrupt
+      // documents must degrade to an empty list, not a corrupt one.
+      expect(GapList.fromJson('[[10,10]]').isEmpty, isTrue); // empty
+      expect(GapList.fromJson('[[10,5]]').isEmpty, isTrue); // inverted
+      expect(GapList.fromJson('[[30,40],[10,20]]').isEmpty, isTrue); // order
+      expect(GapList.fromJson('[[10,30],[20,40]]').isEmpty, isTrue); // overlap
+      expect(GapList.fromJson('[1,2]').isEmpty, isTrue); // wrong shape
+      expect(GapList.fromJson('[["a","b"]]').isEmpty, isTrue); // wrong types
+    });
+
+    test('fromJson accepts adjacent ranges (they merge on append)', () {
+      expect(GapList.fromJson('[[10,20],[20,30]]').rangesIn(0, 100).toList(), [
+        (10, 30),
+      ]);
+    });
   });
 }
