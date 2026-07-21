@@ -96,7 +96,10 @@ void main() {
       expect(saved.sampleCount, n);
       expect(saved.name, matches(RegExp(r'^\d+/\d+ \d+:\d{2}:\d{2}$')));
       expect(stop.name, saved.name);
-      expect(saved.channelLabels, '["Load Cell 1","Load Cell 2","Ch 3","Ch 4"]');
+      expect(
+        saved.channelLabels,
+        '["Load Cell 1","Load Cell 2","Ch 3","Ch 4"]',
+      );
     },
   );
 }

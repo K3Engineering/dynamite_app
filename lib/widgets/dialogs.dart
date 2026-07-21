@@ -27,9 +27,7 @@ Future<String?> showTextPrompt(
           border: const OutlineInputBorder(),
           alignLabelWithHint: maxLines > 1,
         ),
-        onSubmitted: maxLines == 1
-            ? (val) => Navigator.of(ctx).pop(val)
-            : null,
+        onSubmitted: maxLines == 1 ? (val) => Navigator.of(ctx).pop(val) : null,
       ),
       actions: [
         TextButton(
@@ -49,7 +47,10 @@ Future<String?> showTextPrompt(
 
 /// Ask the user to confirm deleting the session named [what]. Returns true
 /// only when confirmed.
-Future<bool> showDeleteConfirm(BuildContext context, {required String what}) async {
+Future<bool> showDeleteConfirm(
+  BuildContext context, {
+  required String what,
+}) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (ctx) => AlertDialog(

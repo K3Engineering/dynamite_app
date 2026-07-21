@@ -128,26 +128,23 @@ void main() {
       expect(hub.protocolErrorSeen, isTrue);
     });
 
-    test(
-      'a truncated packet is ignored, flagged, and never throws; extra '
-      'trailing bytes still decode',
-      () {
-        // One byte short of a full packet: a firmware bug must not crash the
-        // app (the in-loop asserts are stripped in release builds).
-        final short = makePacket(0, (s, c) => 1);
-        decoder.onDataPacket(Uint8List.sublistView(short, 0, short.length - 1));
-        expect(hub.totalSamples, 0);
-        expect(hub.protocolErrorSeen, isTrue);
-        // A second malformed packet keeps the latch set (the UI surfaces it).
-        decoder.onDataPacket(Uint8List(1));
-        expect(hub.protocolErrorSeen, isTrue);
-        // A packet with trailing extra bytes still decodes its 20 samples.
-        final long = Uint8List(short.length + 3)..setAll(0, short);
-        decoder.onDataPacket(long);
-        expect(hub.totalSamples, nwAdcNumSamples);
-        expect(hub.protocolErrorSeen, isTrue);
-      },
-    );
+    test('a truncated packet is ignored, flagged, and never throws; extra '
+        'trailing bytes still decode', () {
+      // One byte short of a full packet: a firmware bug must not crash the
+      // app (the in-loop asserts are stripped in release builds).
+      final short = makePacket(0, (s, c) => 1);
+      decoder.onDataPacket(Uint8List.sublistView(short, 0, short.length - 1));
+      expect(hub.totalSamples, 0);
+      expect(hub.protocolErrorSeen, isTrue);
+      // A second malformed packet keeps the latch set (the UI surfaces it).
+      decoder.onDataPacket(Uint8List(1));
+      expect(hub.protocolErrorSeen, isTrue);
+      // A packet with trailing extra bytes still decodes its 20 samples.
+      final long = Uint8List(short.length + 3)..setAll(0, short);
+      decoder.onDataPacket(long);
+      expect(hub.totalSamples, nwAdcNumSamples);
+      expect(hub.protocolErrorSeen, isTrue);
+    });
 
     test('the first malformed packet notifies once; later ones do not', () {
       // The malformed path never reaches commitBatch, so without its own

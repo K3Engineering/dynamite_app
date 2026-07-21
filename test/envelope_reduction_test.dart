@@ -226,7 +226,10 @@ void main() {
         12,
         (j) => j == 7 ? double.nan : all[j].toDouble(),
       );
-      final expected = [for (int j = 5; j < 12; j++) if (j != 7) all[j]];
+      final expected = [
+        for (int j = 5; j < 12; j++)
+          if (j != 7) all[j],
+      ];
       expect(ext, isNotNull);
       expect(ext!.$1, expected.reduce(math.min).toDouble());
       expect(ext.$2, expected.reduce(math.max).toDouble());
