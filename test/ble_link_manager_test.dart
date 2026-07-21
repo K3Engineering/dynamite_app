@@ -17,7 +17,8 @@ import 'package:dynamite_app/services/mockble.dart';
 /// Mock timing: hwDelay 200 ms (availability), netDelay 1 s (connect /
 /// discoverServices / calibration read). A full connect therefore takes ~3 s:
 /// connect(1s) -> MTU(immediate) -> discoverServices(1s) -> calibration(1s)
-/// -> subscribe. [BleLinkManager.disconnectTimeout] is 2500 ms.
+/// -> subscribe. [BleLinkManager.disconnectTimeout] is 2500 ms,
+/// [BleLinkManager.connectTimeout] is 15 s (the mock's slowConnect is 20 s).
 ///
 /// IMPORTANT: every test tears its link down INSIDE the [fakeAsync] scope
 /// (see [teardownLink]). A disconnect left running when the scope exits keeps
@@ -84,6 +85,10 @@ void main() {
       expect(link.link.state, BtLinkState.idle);
       expect(seen.whereType<BleConnectionFailed>(), hasLength(1));
       expect(seen.whereType<BleConnectionLost>(), isEmpty);
+      // The GATT link came up (connect succeeded) before setup failed — it
+      // must be released, not leaked.
+      expect(MockBlePlatform.instance.disconnectCalls, contains(deviceId));
+      expect(MockBlePlatform.instance.connectedDeviceId, isNull);
 
       teardownLink(async, link);
     });
@@ -196,6 +201,133 @@ void main() {
       expect(seen, isEmpty);
 
       teardownLink(async, link);
+    });
+  });
+
+  test('cancelling a hung connect releases the link and ignores the late '
+      'success', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      // Mid-connect (the mock's connect takes 1 s): the attempt is in flight.
+      async.elapse(const Duration(milliseconds: 500));
+      expect(link.link.state, BtLinkState.connecting);
+
+      unawaited(link.disconnectSelectedDevice());
+      // The disconnect settles immediately; the mock's outstanding connect
+      // completes (late) at 1 s and must be released by the guard.
+      async.elapse(const Duration(seconds: 4));
+
+      expect(link.link.state, BtLinkState.idle);
+      expect(link.isStreaming, isFalse);
+      expect(MockBlePlatform.instance.connectedDeviceId, isNull);
+      // A user-initiated cancel surfaces no failure/lost/timeout notices…
+      expect(seen, isEmpty);
+      // …and exactly two platform disconnects went out: the cancel itself and
+      // the guard releasing the late success. The abandoned connect future
+      // resolving silently did NOT trigger a further teardown.
+      expect(MockBlePlatform.instance.disconnectCalls, [deviceId, deviceId]);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('a connect failing after user cancel does not re-tear-down', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.failConnect = true;
+      final (link, seen) = wire();
+
+      // A cancelled attempt fails quietly: no error reaches the caller.
+      Object? error;
+      unawaited(
+        link.connectToDevice(deviceId).catchError((Object e) => error = e),
+      );
+      async.elapse(const Duration(milliseconds: 500));
+      expect(link.link.state, BtLinkState.connecting);
+
+      unawaited(link.disconnectSelectedDevice());
+      // The mock's connect future throws at 1 s — after the cancel teardown.
+      async.elapse(const Duration(seconds: 4));
+
+      expect(error, isNull);
+      expect(link.link.state, BtLinkState.idle);
+      expect(seen, isEmpty);
+      // The cancel's disconnect is the only platform teardown; the late
+      // failure hit the abandoned-attempt guard and returned silently.
+      expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('a connect that outlives its timeout is torn down and the late '
+      'success released', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.slowConnect = true;
+      final (link, seen) = wire();
+
+      Object? error;
+      unawaited(
+        link.connectToDevice(deviceId).catchError((Object e) => error = e),
+      );
+      // BleLinkManager.connectTimeout (15 s) fires before the mock's 20 s
+      // connect completes.
+      async.elapse(const Duration(seconds: 16));
+
+      expect(error, isNotNull);
+      expect(link.link.state, BtLinkState.idle);
+      expect(seen, isEmpty);
+      expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
+
+      // The platform connect completes late; the unwanted-link guard must
+      // release it without adopting it.
+      async.elapse(const Duration(seconds: 5));
+      expect(link.link.state, BtLinkState.idle);
+      expect(link.isStreaming, isFalse);
+      expect(MockBlePlatform.instance.connectedDeviceId, isNull);
+      expect(seen, isEmpty);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('a connect callback for an unknown device is released, not adopted', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      // A platform-level connect completes for a device the app never asked
+      // for. (The mock is single-link: its disconnect of 'zzz' also severs
+      // its own '2' state — only the manager's behavior is asserted here.)
+      MockBlePlatform.instance.updateConnection('zzz', true);
+      async.elapse(const Duration(seconds: 3));
+
+      // The active link is untouched and the stranger's GATT link released.
+      expect(link.isStreaming, isTrue);
+      expect(MockBlePlatform.instance.disconnectCalls, contains('zzz'));
+      expect(seen, isEmpty);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('a connect callback arriving on an idle link is released, not '
+      'adopted', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+      // Let the startup availability query resolve (hwDelay 200 ms).
+      async.elapse(const Duration(milliseconds: 300));
+
+      MockBlePlatform.instance.updateConnection(deviceId, true);
+      async.elapse(const Duration(seconds: 3));
+
+      expect(link.link.state, BtLinkState.idle);
+      expect(link.isStreaming, isFalse);
+      expect(MockBlePlatform.instance.disconnectCalls, contains(deviceId));
+      expect(seen, isEmpty);
     });
   });
 

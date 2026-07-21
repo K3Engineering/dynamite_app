@@ -15,7 +15,14 @@ class SettingsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
-    final bt = context.watch<BleLinkManager>();
+    // Narrow selects: the link manager notifies on every RSSI poll, but the
+    // device section only cares about identity changes.
+    final deviceId = context.select<BleLinkManager, String>(
+      (l) => l.selectedDeviceId,
+    );
+    final deviceName = context.select<BleLinkManager, String>(
+      (l) => l.connectedDeviceName,
+    );
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
 
     return SafeArea(
@@ -75,7 +82,7 @@ class SettingsTab extends StatelessWidget {
           // Device name — not editable yet. Keyed by the name so the field
           // rebuilds with the new value on connect/disconnect. While no link
           // is up, a blurb with a jump to the Devices tab takes its place.
-          if (bt.selectedDeviceId.isEmpty)
+          if (deviceId.isEmpty)
             Card(
               child: ListTile(
                 leading: const Icon(
@@ -91,7 +98,7 @@ class SettingsTab extends StatelessWidget {
                     // Navigate to the Devices tab (same pattern as Live tab).
                     final shell = context
                         .findAncestorStateOfType<AppShellState>();
-                    shell?.switchToTab(2);
+                    shell?.goToDevices();
                   },
                   child: const Text('Connect'),
                 ),
@@ -99,8 +106,8 @@ class SettingsTab extends StatelessWidget {
             )
           else
             TextFormField(
-              key: ValueKey(bt.connectedDeviceName),
-              initialValue: bt.connectedDeviceName,
+              key: ValueKey(deviceName),
+              initialValue: deviceName,
               enabled: false,
               decoration: const InputDecoration(
                 labelText: 'Device name',
@@ -146,7 +153,7 @@ class SettingsTab extends StatelessWidget {
   }
 }
 
-class _ChannelConfigTile extends StatefulWidget {
+class _ChannelConfigTile extends StatelessWidget {
   const _ChannelConfigTile({
     required this.index,
     required this.label,
@@ -158,38 +165,6 @@ class _ChannelConfigTile extends StatefulWidget {
   final ValueChanged<String> onLabelChanged;
 
   @override
-  State<_ChannelConfigTile> createState() => _ChannelConfigTileState();
-}
-
-class _ChannelConfigTileState extends State<_ChannelConfigTile> {
-  late final TextEditingController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = TextEditingController(text: widget.label);
-  }
-
-  @override
-  void didUpdateWidget(covariant _ChannelConfigTile oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // The label changed from OUTSIDE this field (e.g. the async SharedPrefs
-    // load completing after the first build): adopt it. A bare
-    // TextFormField(initialValue:) would keep showing the stale default.
-    // Changes caused by this field's own submit are excluded so the caret
-    // isn't disturbed.
-    if (widget.label != oldWidget.label && widget.label != _controller.text) {
-      _controller.text = widget.label;
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
@@ -198,19 +173,24 @@ class _ChannelConfigTileState extends State<_ChannelConfigTile> {
           children: [
             const SizedBox(width: 8),
             Text(
-              'Ch ${widget.index + 1}',
+              'Ch ${index + 1}',
               style: const TextStyle(fontWeight: FontWeight.w500),
             ),
             const SizedBox(width: 12),
             Expanded(
-              child: TextField(
-                controller: _controller,
+              // Keyed by the label so an externally-changed value (e.g. the
+              // async SharedPrefs load completing after the first build)
+              // rebuilds the field with the fresh label — the same pattern
+              // the device-name field above uses.
+              child: TextFormField(
+                key: ValueKey(label),
+                initialValue: label,
                 decoration: const InputDecoration(
                   isDense: true,
                   border: UnderlineInputBorder(),
                   hintText: 'Label',
                 ),
-                onSubmitted: widget.onLabelChanged,
+                onFieldSubmitted: onLabelChanged,
               ),
             ),
           ],

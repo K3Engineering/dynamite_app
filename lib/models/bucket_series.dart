@@ -11,6 +11,11 @@ import 'gap_list.dart';
 // bucket-accelerated block reductions (reduceBlockBuckets / foldBucketRange).
 // ---------------------------------------------------------------------------
 
+/// The one bucket-grid resolution shared by live (DataHub) and session
+/// (SessionData) ingest; every consumer of [BucketSeries] relies on both
+/// sides using the same grid, so it is defined exactly once here.
+const int kBucketSize = 100;
+
 /// Min/max/sum aggregates over fixed [bucketSize]-sample windows of some
 /// integer series (raw values or first differences). Addressed by absolute
 /// bucket index `b = sampleIndex ~/ bucketSize`, stored at `b % mins.length`;
@@ -93,6 +98,45 @@ int ingestDiff({
 }) {
   if (sampleIndex == 0 || gaps.contains(sampleIndex - 1)) return 0;
   return value - prevValue;
+}
+
+/// Per-sample, per-channel ingest shared by the live hub (DataHub) and
+/// session loading (SessionData) so both always bucket identically: applies
+/// the gap/first-sample diff rule ([ingestDiff]) and feeds the value and
+/// diff accumulators together. Raw storage and extremes tracking stay with
+/// the caller — those genuinely differ (ring write vs pre-loaded array,
+/// int32 vs double extremes).
+class ChannelIngest {
+  ChannelIngest({
+    required this.valueBuckets,
+    required this.diffBuckets,
+    required this.gaps,
+  });
+
+  final BucketAccumulator valueBuckets;
+  final BucketAccumulator diffBuckets;
+  final GapList gaps;
+
+  /// Ingest one sample. [prevValue] is the previous sample's raw value
+  /// (ignored whenever the diff rule zeroes it — see [ingestDiff]).
+  void add(int sampleIndex, int value, int prevValue) {
+    valueBuckets.add(sampleIndex, value);
+    diffBuckets.add(
+      sampleIndex,
+      ingestDiff(
+        sampleIndex: sampleIndex,
+        value: value,
+        prevValue: prevValue,
+        gaps: gaps,
+      ),
+    );
+  }
+
+  /// Restart both accumulators (new stream / reload).
+  void reset() {
+    valueBuckets.reset();
+    diffBuckets.reset();
+  }
 }
 
 // ---------------------------------------------------------------------------

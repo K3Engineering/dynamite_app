@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,11 +8,11 @@ import '../models/app_settings.dart';
 
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
-import '../services/database.dart';
 import '../services/recording_controller.dart';
 import '../screens/app_shell.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 
 // ---------------------------------------------------------------------------
@@ -29,79 +30,95 @@ class _LiveTabState extends State<LiveTab> {
   final GraphController _graphCtrl = GraphController(
     minLiveSpan: 20 * DataHub.samplesPerSec,
   );
-  bool _showDerivative = false;
-  DataHub? _hub;
 
-  /// Last seen hub generation; a change means the hub was cleared for a new
-  /// device stream (see [RecordingController]).
-  int _lastGeneration = 0;
+  /// dF/dt row + derivative graph visibility. A notifier (not setState) so
+  /// toggling rebuilds only the stats/graph/toggles cluster, not the tab.
+  final ValueNotifier<bool> _showDerivative = ValueNotifier(false);
+
+  /// Stream-stall flag consumed by [LiveStats]; edge-updated by [_stallTimer]
+  /// (running only while streaming) so a stall flips exactly one subtree.
+  final ValueNotifier<bool> _stalled = ValueNotifier(false);
+
+  /// App-lifetime singletons, captured (identity-guarded) in
+  /// [didChangeDependencies] for listener registration only.
+  DataHub? _hub;
+  BleLinkManager? _link;
+
+  /// 1 Hz ticker driving the stall check, started/stopped on streaming edges
+  /// (see [_onLinkChanged]): during a stall no packets arrive, so the hub
+  /// never notifies and nothing else would flip the flag. Runs only while
+  /// streaming — with no live trace there is nothing to stall.
+  Timer? _stallTimer;
 
   /// How long the stream may be silent (while the link reports streaming)
   /// before the live stats read as stalled. Packets normally arrive at 50 Hz.
   static const Duration _stallThreshold = Duration(seconds: 2);
 
-  /// 1 Hz ticker driving the stall check: during a stall no packets arrive,
-  /// so the hub never notifies and nothing else would flip the flag.
-  Timer? _stallTimer;
-  bool _stalled = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _stallTimer = Timer.periodic(
-      const Duration(seconds: 1),
-      (_) => _checkStall(),
-    );
-  }
-
-  /// Recompute the stalled flag; rebuilds ONLY on an edge (per-tick setState
-  /// would be a pointless 1 Hz rebuild of the whole tab).
-  void _checkStall() {
-    final hub = _hub;
-    if (hub == null) return;
-    final last = hub.lastDataAt;
-    final stalled =
-        context.read<BleLinkManager>().isStreaming &&
-        last != null &&
-        DateTime.now().difference(last) > _stallThreshold;
-    if (stalled != _stalled) {
-      setState(() => _stalled = stalled);
-    }
-  }
-
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     // read (not watch): the hub notifies on every decoded packet, which must
-    // NOT retrigger didChangeDependencies/build. It's an app-lifetime
-    // singleton, so the identity check below only fires once.
+    // NOT retrigger didChangeDependencies/build. Both are app-lifetime
+    // singletons, so the identity checks below only fire once.
     final hub = context.read<DataHub>();
     if (_hub != hub) {
-      _hub?.removeListener(_onHubChanged);
+      _hub?.removeClearedListener(_onHubCleared);
       _hub = hub;
-      _lastGeneration = hub.generation;
-      hub.addListener(_onHubChanged);
+      hub.addClearedListener(_onHubCleared);
+    }
+    final link = context.read<BleLinkManager>();
+    if (_link != link) {
+      _link?.removeListener(_onLinkChanged);
+      _link = link;
+      link.addListener(_onLinkChanged);
     }
   }
 
-  /// A hub reset (its generation bumped by [DataHub.clear]) means a new
-  /// device stream just cleared the previous trace: drop any stale pan/zoom
-  /// window and follow the fresh live edge. Without this, a user-panned
-  /// (non-live) window survives the disconnect and
-  /// [GraphController.effectiveRange] would clamp the stale window against a
-  /// now-empty buffer (inverted clamp limits -> throw).
-  void _onHubChanged() {
+  /// A hub reset (a new device stream, see [RecordingController]) means the
+  /// previous trace is gone: drop any stale pan/zoom window and follow the
+  /// fresh live edge. Without this, a user-panned (non-live) window survives
+  /// the disconnect and [GraphController.effectiveRange] would clamp the
+  /// stale window against a now-empty buffer (inverted clamp limits -> throw).
+  void _onHubCleared() {
     final hub = _hub!;
-    if (hub.generation != _lastGeneration) {
-      _lastGeneration = hub.generation;
-      _graphCtrl.goLive(totalSamples: hub.totalSamples, oldestSample: 0);
+    _graphCtrl.goLive(totalSamples: hub.totalSamples, oldestSample: 0);
+  }
+
+  /// Start/stop the stall ticker on streaming edges. The link manager
+  /// notifies for many reasons (RSSI polls included); the edge guard keeps
+  /// this a no-op unless streaming actually flipped.
+  void _onLinkChanged() {
+    final streaming = _link!.isStreaming;
+    if (streaming == (_stallTimer != null)) return;
+    if (streaming) {
+      _stallTimer = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _checkStall(),
+      );
+    } else {
+      _stallTimer?.cancel();
+      _stallTimer = null;
+      // No live trace — clear the flag so the next stream starts clean.
+      _stalled.value = false;
     }
+  }
+
+  /// Recompute the stalled flag. The ticker runs only while streaming, so
+  /// the link state needs no re-check here.
+  void _checkStall() {
+    final last = _hub?.lastDataAt;
+    final stalled =
+        last != null && DateTime.now().difference(last) > _stallThreshold;
+    if (stalled != _stalled.value) _stalled.value = stalled;
   }
 
   @override
   void dispose() {
     _stallTimer?.cancel();
-    _hub?.removeListener(_onHubChanged);
+    _hub?.removeClearedListener(_onHubCleared);
+    _link?.removeListener(_onLinkChanged);
+    _showDerivative.dispose();
+    _stalled.dispose();
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -171,27 +188,29 @@ class _LiveTabState extends State<LiveTab> {
     }
   }
 
-  Future<void> _showRenameDialog(int sessionId, String currentName) async {
-    final newName = await showTextPrompt(
-      context,
-      title: 'Name this session',
-      label: 'Session name',
-      initial: currentName,
-    );
-    if (newName != null && newName.isNotEmpty) {
-      await AppDatabase.instance.renameSession(sessionId, newName);
-    }
-  }
+  Future<void> _showRenameDialog(int sessionId, String currentName) =>
+      renameSessionFlow(
+        context,
+        sessionId: sessionId,
+        currentName: currentName,
+        title: 'Name this session',
+      );
 
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
-    final link = context.watch<BleLinkManager>();
+    // Narrow selects: the link manager notifies on every RSSI poll — only
+    // streaming edges and device-name changes may rebuild this tab.
+    final isConnected = context.select<BleLinkManager, bool>(
+      (l) => l.isStreaming,
+    );
+    final deviceName = context.select<BleLinkManager, String>(
+      (l) => l.connectedDeviceName,
+    );
     final recording = context.watch<RecordingController>();
     // read (not watch): rebuilding this whole tab per packet would be a
     // rebuild storm — LiveStats/graph subscribe to the hub themselves.
     final hub = context.read<DataHub>();
-    final isConnected = link.isStreaming;
 
     return SafeArea(
       child: Column(
@@ -203,27 +222,36 @@ class _LiveTabState extends State<LiveTab> {
             listenable: hub,
             builder: (context, _) => LiveStatusBar(
               isConnected: isConnected,
-              connectedDeviceName: link.connectedDeviceName,
+              connectedDeviceName: deviceName,
               protocolErrorSeen: hub.protocolErrorSeen,
             ),
           ),
           if (isConnected)
-            LiveStats(
-              settings: settings,
-              hub: hub,
-              showDerivative: _showDerivative,
-              stalled: _stalled,
-            ),
-          if (isConnected)
-            Expanded(child: _buildGraphArea(settings, hub))
+            Expanded(
+              child: ValueListenableBuilder<bool>(
+                valueListenable: _showDerivative,
+                builder: (context, showDerivative, _) => Column(
+                  children: [
+                    LiveStats(
+                      settings: settings,
+                      hub: hub,
+                      showDerivative: showDerivative,
+                      stalledListenable: _stalled,
+                    ),
+                    Expanded(
+                      child: _buildGraphArea(settings, hub, showDerivative),
+                    ),
+                    ViewToggles(
+                      showDerivative: showDerivative,
+                      onToggleDerivative: () =>
+                          _showDerivative.value = !showDerivative,
+                    ),
+                  ],
+                ),
+              ),
+            )
           else
             const Expanded(child: DisconnectedPrompt()),
-          if (isConnected)
-            ViewToggles(
-              showDerivative: _showDerivative,
-              onToggleDerivative: () =>
-                  setState(() => _showDerivative = !_showDerivative),
-            ),
           if (isConnected)
             ActionButtons(
               isRecording: recording.sessionInProgress,
@@ -235,13 +263,17 @@ class _LiveTabState extends State<LiveTab> {
     );
   }
 
-  Widget _buildGraphArea(AppSettings settings, DataHub hub) {
+  Widget _buildGraphArea(
+    AppSettings settings,
+    DataHub hub,
+    bool showDerivative,
+  ) {
     return GraphWorkspace(
       data: hub,
       ctrl: _graphCtrl,
       settings: settings,
       activeChannels: settings.activeChannelIndices,
-      showDerivative: _showDerivative,
+      showDerivative: showDerivative,
     );
   }
 }
@@ -274,7 +306,7 @@ class LiveStatusBar extends StatelessWidget {
           : () {
               // Navigate to Devices tab
               final shell = context.findAncestorStateOfType<AppShellState>();
-              shell?.switchToTab(2);
+              shell?.goToDevices();
             },
       child: Container(
         width: double.infinity,
@@ -347,63 +379,66 @@ class LiveStats extends StatelessWidget {
 
   /// The stream has gone silent while the link reports streaming (no packets
   /// for [_LiveTabState._stallThreshold]). Values are grayed out like a gap.
-  final bool stalled;
+  final ValueListenable<bool> stalledListenable;
 
   const LiveStats({
     super.key,
     required this.settings,
     required this.hub,
     this.showDerivative = false,
-    this.stalled = false,
+    required this.stalledListenable,
   });
 
   @override
   Widget build(BuildContext context) {
     final unit = settings.displayUnit;
 
-    return ListenableBuilder(
-      listenable: hub,
-      builder: (context, _) {
-        // During a live gap (dropped packets) the hub reports held values;
-        // gray them out so they read as stale rather than fresh readings.
-        // Same for a stall: the newest "reading" is just the last one.
-        final stale = hub.liveEdgeIsGap || stalled;
+    return ValueListenableBuilder<bool>(
+      valueListenable: stalledListenable,
+      builder: (context, stalled, _) => ListenableBuilder(
+        listenable: hub,
+        builder: (context, _) {
+          // During a live gap (dropped packets) the hub reports held values;
+          // gray them out so they read as stale rather than fresh readings.
+          // Same for a stall: the newest "reading" is just the last one.
+          final stale = hub.liveEdgeIsGap || stalled;
 
-        return ChannelStatsTable(
-          labels: settings.channelLabels,
-          activeChannels: settings.activeChannels,
-          onToggleChannel: (i) =>
-              settings.setChannelActive(i, !settings.activeChannels[i]),
-          unit: unit,
-          rows: [
-            ChannelStatsRow(
-              label: 'Live',
-              values: [
-                for (int i = 0; i < DataHub.numAdcChannels; i++)
-                  hub.currentForce(i, unit),
-              ],
-              emphasized: true,
-              stale: stale,
-            ),
-            ChannelStatsRow(
-              label: 'Peak',
-              values: [
-                for (int i = 0; i < DataHub.numAdcChannels; i++)
-                  hub.peakForce(i, unit),
-              ],
-            ),
-            if (showDerivative)
+          return ChannelStatsTable(
+            labels: settings.channelLabels,
+            activeChannels: settings.activeChannels,
+            onToggleChannel: (i) =>
+                settings.setChannelActive(i, !settings.activeChannels[i]),
+            unit: unit,
+            rows: [
               ChannelStatsRow(
-                label: 'dF/dt',
+                label: 'Live',
                 values: [
                   for (int i = 0; i < DataHub.numAdcChannels; i++)
-                    hub.currentDerivative(i, unit),
+                    hub.currentForce(i, unit),
                 ],
+                emphasized: true,
                 stale: stale,
               ),
-          ],
-        );
-      },
+              ChannelStatsRow(
+                label: 'Peak',
+                values: [
+                  for (int i = 0; i < DataHub.numAdcChannels; i++)
+                    hub.peakForce(i, unit),
+                ],
+              ),
+              if (showDerivative)
+                ChannelStatsRow(
+                  label: 'dF/dt',
+                  values: [
+                    for (int i = 0; i < DataHub.numAdcChannels; i++)
+                      hub.currentDerivative(i, unit),
+                  ],
+                  stale: stale,
+                ),
+            ],
+          );
+        },
+      ),
     );
   }
 }
@@ -417,31 +452,15 @@ class DisconnectedPrompt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.bluetooth_searching,
-            size: 64,
-            color: Theme.of(context).colorScheme.outline,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No device connected',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: Theme.of(context).colorScheme.outline,
-            ),
-          ),
-          const SizedBox(height: 8),
-          FilledButton.tonal(
-            onPressed: () {
-              final shell = context.findAncestorStateOfType<AppShellState>();
-              shell?.switchToTab(2);
-            },
-            child: const Text('Connect a device'),
-          ),
-        ],
+    return EmptyPlaceholder(
+      icon: Icons.bluetooth_searching,
+      title: 'No device connected',
+      action: FilledButton.tonal(
+        onPressed: () {
+          final shell = context.findAncestorStateOfType<AppShellState>();
+          shell?.goToDevices();
+        },
+        child: const Text('Connect a device'),
       ),
     );
   }

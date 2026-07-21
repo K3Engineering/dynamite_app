@@ -11,9 +11,10 @@ import '../models/graph_data_source.dart';
 
 /// Chunk format: packed int32 LE values, interleaved
 /// `[ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]`, with one value per ADC channel
-/// ([DataHub.numAdcChannels]) per sample. Each [SessionChunks] row holds a
-/// whole number of samples. The owning [Sessions] row carries all metadata
-/// (channel count, sample rate, calibration, etc.).
+/// ([DataHub.numAdcChannels]) per sample — see [SessionChunkCodec], the
+/// single implementation. Each [SessionChunks] row holds a whole number of
+/// samples. The owning [Sessions] row carries all metadata (channel count,
+/// sample rate, calibration, etc.).
 class SessionStorage {
   /// Start a new streaming session. The returned [LiveSessionWriter] is fed
   /// sample slices via [LiveSessionWriter.appendData] as data arrives and is
@@ -46,7 +47,7 @@ class SessionStorage {
       visibleChannels: jsonEncode(visibleChannels),
     );
 
-    return LiveSessionWriter(sessionId, tare);
+    return LiveSessionWriter(sessionId, tare, DataHub.samplesPerSec);
   }
 
   /// Finalize a streaming session: flush any buffered samples, then record the
@@ -59,17 +60,36 @@ class SessionStorage {
   }) async {
     await writer.flush();
 
-    await AppDatabase.instance.completeSession(
-      writer.sessionId,
+    await _completeSession(
+      sessionId: writer.sessionId,
       sampleCount: writer.totalSamplesRecorded,
-      durationMs: (writer.totalSamplesRecorded * 1000) ~/ DataHub.samplesPerSec,
-      // A session that captured no samples leaves peakRaw at -infinity; that
-      // must not reach the DB (or the session list's peak display).
-      peakForceRaw: writer.peakRaw.isFinite ? writer.peakRaw : 0.0,
-      gaps: writer.gaps.toJson(),
+      sampleRate: writer.sampleRate,
+      peakRaw: writer.peakRaw,
+      gapsJson: writer.gaps.toJson(),
     );
 
     return writer.writeError;
+  }
+
+  /// Write a finished (or recovered) session's aggregates to its row and mark
+  /// it completed. Shared by [finalizeSession] and [recoverIncompleteSessions]
+  /// so both paths apply identical guards and duration math.
+  static Future<void> _completeSession({
+    required int sessionId,
+    required int sampleCount,
+    required int sampleRate,
+    required double peakRaw,
+    required String gapsJson,
+  }) {
+    return AppDatabase.instance.completeSession(
+      sessionId,
+      sampleCount: sampleCount,
+      durationMs: (sampleCount * 1000) ~/ sampleRate,
+      // A session that captured no samples leaves peakRaw at -infinity; that
+      // must not reach the DB (or the session list's peak display).
+      peakForceRaw: peakRaw.isFinite ? peakRaw : 0.0,
+      gaps: gapsJson,
+    );
   }
 
   /// Recovers any sessions left incomplete (e.g. the app crashed mid-recording)
@@ -99,17 +119,26 @@ class SessionStorage {
 
       // Preserve the gaps persisted incrementally by the live writer (chunk
       // bytes alone can't reconstruct them).
-      await AppDatabase.instance.completeSession(
-        session.id,
+      await _completeSession(
+        sessionId: session.id,
         sampleCount: agg.samples,
-        durationMs: (agg.samples * 1000) ~/ session.sampleRate,
-        peakForceRaw: agg.peakRaw,
-        gaps: session.gaps,
+        // Recovery uses the rate persisted on the row (finalize uses the
+        // writer's, which is the same value from recording start) so a future
+        // configurable rate can't skew reconstructed durations.
+        sampleRate: session.sampleRate,
+        peakRaw: agg.peakRaw,
+        gapsJson: session.gaps,
       );
     }
   }
 
   /// Read a session's recorded data back from its chunks.
+  ///
+  /// TODO(perf): this materializes every chunk blob AND the full
+  /// deinterleaved channel arrays (~2x session size transiently — a 1-hour
+  /// session is ~58 MB of samples). If long sessions become common, stream
+  /// the deinterleave (and consider isolating the [SessionData] stats scan,
+  /// which currently runs eagerly on the UI thread below).
   static Future<SessionData?> loadSession(Session session) async {
     final chunks = await AppDatabase.instance.sessionChunkData(session.id);
 
@@ -121,20 +150,18 @@ class SessionStorage {
     final channelCount = session.channelCount;
     final sampleCount = session.sampleCount;
     final channels = List.generate(channelCount, (_) => Int32List(sampleCount));
+    final codec = SessionChunkCodec(channelCount);
 
     int globalS = 0;
     for (final chunk in chunks) {
-      final data = ByteData.sublistView(chunk);
-      final chunkSamples = data.lengthInBytes ~/ (channelCount * 4);
-      int offset = 0;
-      for (int s = 0; s < chunkSamples; s++) {
-        if (globalS >= sampleCount) break;
-        for (int ch = 0; ch < channelCount; ch++) {
-          channels[ch][globalS] = data.getInt32(offset, Endian.little);
-          offset += 4;
-        }
-        globalS++;
-      }
+      // Frames beyond the metadata's sampleCount are silently truncated
+      // (chunk/metadata disagreement is not surfaced today).
+      codec.decode(chunk, (s, ch, raw) {
+        final g = globalS + s;
+        if (g < sampleCount) channels[ch][g] = raw;
+      });
+      globalS += codec.framesOf(chunk);
+      if (globalS >= sampleCount) break;
     }
 
     return SessionData(
@@ -207,20 +234,57 @@ class _ChunkAggregate {
   double peakRaw = double.negativeInfinity;
 
   void scan(Uint8List bytes, Float64List tare) {
-    final data = ByteData.sublistView(bytes);
-    final chunkSamples = data.lengthInBytes ~/ (channelCount * 4);
+    final codec = SessionChunkCodec(channelCount);
+    samples += codec.framesOf(bytes);
+    codec.decode(bytes, (_, ch, raw) {
+      final val = raw - (ch < tare.length ? tare[ch] : 0);
+      if (val > peakRaw) {
+        peakRaw = val.toDouble();
+      }
+    });
+  }
+}
+
+/// The one home of the packed chunk format: interleaved int32 LE values
+/// `[ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]`, [channelCount] values per
+/// sample frame. Live writes ([LiveSessionWriter.appendData]), session loads
+/// ([SessionStorage.loadSession]) and aggregate scans ([_ChunkAggregate])
+/// share this so the layout, endianness and frame math can't drift apart.
+class SessionChunkCodec {
+  const SessionChunkCodec(this.channelCount);
+
+  final int channelCount;
+
+  /// Whole sample frames in [bytes] (trailing partial bytes are ignored).
+  int framesOf(Uint8List bytes) => bytes.lengthInBytes ~/ (channelCount * 4);
+
+  /// Pack [frames] samples, pulling each value from [valueAt].
+  Uint8List pack(int frames, int Function(int sample, int channel) valueAt) {
+    final out = ByteData(frames * channelCount * 4);
     int offset = 0;
-    for (int s = 0; s < chunkSamples; s++) {
+    for (int s = 0; s < frames; s++) {
       for (int ch = 0; ch < channelCount; ch++) {
-        final raw = data.getInt32(offset, Endian.little);
+        out.setInt32(offset, valueAt(s, ch), Endian.little);
         offset += 4;
-        final val = raw - (ch < tare.length ? tare[ch] : 0);
-        if (val > peakRaw) {
-          peakRaw = val.toDouble();
-        }
       }
     }
-    samples += chunkSamples;
+    return out.buffer.asUint8List();
+  }
+
+  /// Invoke [visit] once per value, in packed order (sample-major).
+  void decode(
+    Uint8List bytes,
+    void Function(int sample, int channel, int raw) visit,
+  ) {
+    final data = ByteData.sublistView(bytes);
+    final frames = framesOf(bytes);
+    int offset = 0;
+    for (int s = 0; s < frames; s++) {
+      for (int ch = 0; ch < channelCount; ch++) {
+        visit(s, ch, data.getInt32(offset, Endian.little));
+        offset += 4;
+      }
+    }
   }
 }
 
@@ -253,13 +317,14 @@ class SessionData implements GraphDataSource {
   /// so the graphs can downsample cheaply. Gap samples hold the previous
   /// real value, so buckets are always fully populated and need no
   /// missing-data handling.
-  final int bucketSize = 100;
+  final int bucketSize = kBucketSize;
   late final List<BucketAccumulator> valueBuckets;
 
   /// Per-channel bucket aggregates of the first-difference series
   /// (`diff[i] = raw[i] - raw[i-1]`), same bucket grid. Used by the
   /// derivative graph's bucket fast path; the gap/first-sample diff rule
-  /// lives in [ingestDiff], mirroring DataHub's live ingest.
+  /// lives in [ingestDiff], applied through the same [ChannelIngest] the
+  /// live hub uses.
   late final List<BucketAccumulator> diffBuckets;
 
   SessionData({
@@ -288,21 +353,17 @@ class SessionData implements GraphDataSource {
       if (sampleCount == 0) continue;
       double mn = double.infinity;
       double mx = double.negativeInfinity;
+      final ingest = ChannelIngest(
+        valueBuckets: valueBuckets[ch],
+        diffBuckets: diffBuckets[ch],
+        gaps: this.gaps,
+      );
 
       for (int i = 0; i < sampleCount; i++) {
         final v = channels[ch][i];
         if (v < mn) mn = v.toDouble();
         if (v > mx) mx = v.toDouble();
-
-        final int diff = ingestDiff(
-          sampleIndex: i,
-          value: v,
-          prevValue: i > 0 ? channels[ch][i - 1] : 0,
-          gaps: this.gaps,
-        );
-
-        valueBuckets[ch].add(i, v);
-        diffBuckets[ch].add(i, diff);
+        ingest.add(i, v, i > 0 ? channels[ch][i - 1] : 0);
       }
       mins[ch] = mn;
       maxs[ch] = mx;
@@ -361,7 +422,8 @@ class SessionData implements GraphDataSource {
 class LiveSessionWriter {
   LiveSessionWriter(
     this.sessionId,
-    this.tare, {
+    this.tare,
+    this.sampleRate, {
     @visibleForTesting
     Future<void> Function(
       int sessionId,
@@ -378,6 +440,10 @@ class LiveSessionWriter {
   /// in the session's `tares` column, so the peak computed here always matches
   /// what playback shows, regardless of later re-tares.
   final Float64List tare;
+
+  /// The rate persisted on the session row at recording start, kept here so
+  /// finalization math uses the same value the row carries.
+  final int sampleRate;
 
   int _chunkIndex = 0;
   int totalSamplesRecorded = 0;
@@ -440,20 +506,11 @@ class LiveSessionWriter {
     }
 
     // Snapshot the sample slice before enqueueing.
-    const numLines = DataHub.numAdcChannels;
-    final buffer = ByteData(count * numLines * 4);
-    int offset = 0;
-    for (int s = startIdx; s < startIdx + count; s++) {
-      for (int ch = 0; ch < numLines; ch++) {
-        buffer.setInt32(
-          offset,
-          dataHub.rawData[ch][s % DataHub.maxDataSz],
-          Endian.little,
-        );
-        offset += 4;
-      }
-    }
-    final bytes = buffer.buffer.asUint8List();
+    const codec = SessionChunkCodec(DataHub.numAdcChannels);
+    final bytes = codec.pack(
+      count,
+      (s, ch) => dataHub.rawData[ch][(startIdx + s) % DataHub.maxDataSz],
+    );
 
     return _enqueue(() async {
       if (writeError != null) return;

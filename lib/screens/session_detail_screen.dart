@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../models/app_settings.dart';
+import '../models/force_unit.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
 import '../utils/format.dart';
@@ -28,20 +29,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   /// Load state of the session's sample data (see [_LoadState]).
   _LoadState _loadState = const _Loading();
 
-  late Session _session;
   final GraphController _graphCtrl = GraphController();
 
-  /// Per-session channel visibility (persisted on the session row).
-  late List<bool> _visibleChannels;
+  /// The session row, reactively. Single source of truth for name, notes,
+  /// duration, and the per-session channel-visibility set: edits (from here
+  /// or anywhere else) are written to the DB and surface via this stream, so
+  /// no mirrored copies (and no manual reload calls) live in this widget.
+  late final Stream<Session?> _sessionStream;
 
   @override
   void initState() {
     super.initState();
-    _session = widget.session;
-    _visibleChannels = _parseVisibleChannels(
-      _session.visibleChannels,
-      _session.channelCount,
-    );
+    _sessionStream = AppDatabase.instance.watchSessionById(widget.session.id);
     unawaited(_loadData());
   }
 
@@ -55,13 +54,17 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         fallback: (_) => true,
       );
 
-  void _onToggleChannel(int index) {
-    setState(() => _visibleChannels[index] = !_visibleChannels[index]);
-    unawaited(
-      AppDatabase.instance.setSessionVisibleChannels(
-        _session.id,
-        jsonEncode(_visibleChannels),
-      ),
+  /// Persist a channel-visibility flip; the row stream drives the UI update.
+  Future<void> _toggleChannel(
+    Session session,
+    List<bool> current,
+    int index,
+  ) async {
+    final updated = [...current];
+    updated[index] = !updated[index];
+    await AppDatabase.instance.setSessionVisibleChannels(
+      session.id,
+      jsonEncode(updated),
     );
   }
 
@@ -73,7 +76,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Future<void> _loadData() async {
     try {
-      final data = await SessionStorage.loadSession(_session);
+      final data = await SessionStorage.loadSession(widget.session);
       if (!mounted) return;
       setState(() => _loadState = _Ready(data));
     } catch (e) {
@@ -86,45 +89,67 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_session.name.isEmpty ? 'Untitled Session' : _session.name),
-        actions: [
-          PopupMenuButton<String>(
-            onSelected: _onMenuAction,
-            itemBuilder: (_) => [
-              const PopupMenuItem(value: 'rename', child: Text('Rename')),
-              const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
-              const PopupMenuItem(
-                value: 'export_csv',
-                child: Text('Export CSV'),
-              ),
-              const PopupMenuItem(
-                value: 'delete',
-                child: Text('Delete', style: TextStyle(color: Colors.red)),
+    return StreamBuilder<Session?>(
+      stream: _sessionStream,
+      builder: (context, snapshot) {
+        // Until the stream's first emission — and after the row is deleted on
+        // the way out — fall back to the row this screen was pushed with.
+        final session = snapshot.data ?? widget.session;
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(
+              session.name.isEmpty ? 'Untitled Session' : session.name,
+            ),
+            actions: [
+              PopupMenuButton<String>(
+                onSelected: (action) => _onMenuAction(action, session),
+                itemBuilder: (_) => [
+                  const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                  const PopupMenuItem(
+                    value: 'notes',
+                    child: Text('Edit notes'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'export_csv',
+                    child: Text('Export CSV'),
+                  ),
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Text('Delete', style: TextStyle(color: Colors.red)),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
-      body: switch (_loadState) {
-        _Loading() => const Center(child: CircularProgressIndicator()),
-        _Failed(:final error) => Center(child: Text('Error: $error')),
-        // A session without chunks (e.g. deleted externally) has nothing to
-        // show; loadSession returns null there.
-        _Ready(data: null) => const Center(
-          child: Text('No recorded data for this session'),
-        ),
-        _Ready(:final data) => _buildContent(settings, data!),
+          body: switch (_loadState) {
+            _Loading() => const Center(child: CircularProgressIndicator()),
+            _Failed(:final error) => Center(child: Text('Error: $error')),
+            // A session without chunks (e.g. deleted externally) has nothing to
+            // show; loadSession returns null there.
+            _Ready(data: null) => const Center(
+              child: Text('No recorded data for this session'),
+            ),
+            _Ready(:final data) => _buildContent(settings, session, data!),
+          },
+        );
       },
     );
   }
 
-  Widget _buildContent(AppSettings settings, SessionData data) {
+  Widget _buildContent(
+    AppSettings settings,
+    Session session,
+    SessionData data,
+  ) {
     final unit = settings.displayUnit;
+    final visibleChannels = _parseVisibleChannels(
+      session.visibleChannels,
+      session.channelCount,
+    );
 
     final channelLabels = parseJsonColumn(
-      _session.channelLabels,
+      session.channelLabels,
       data.channels.length,
       convert: (e) => e.toString(),
       fallback: (i) => 'Ch ${i + 1}',
@@ -138,8 +163,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           // this session's per-session channel visibility).
           ChannelStatsTable(
             labels: channelLabels,
-            activeChannels: _visibleChannels,
-            onToggleChannel: _onToggleChannel,
+            activeChannels: visibleChannels,
+            onToggleChannel: (index) =>
+                unawaited(_toggleChannel(session, visibleChannels, index)),
             unit: unit,
             rows: [
               ChannelStatsRow(
@@ -166,8 +192,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 ctrl: _graphCtrl,
                 settings: settings,
                 activeChannels: [
-                  for (int i = 0; i < _visibleChannels.length; i++)
-                    if (_visibleChannels[i]) i,
+                  for (int i = 0; i < visibleChannels.length; i++)
+                    if (visibleChannels[i]) i,
                 ],
                 showDerivative: false,
                 isLiveGraph: false,
@@ -191,12 +217,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 _StatRow(
                   label: 'Duration',
                   value: formatDuration(
-                    Duration(milliseconds: _session.durationMs),
+                    Duration(milliseconds: session.durationMs),
                   ),
                 ),
                 _StatRow(
                   label: 'Sample Rate',
-                  value: '${_session.sampleRate} Hz',
+                  value: '${session.sampleRate} Hz',
                 ),
                 _StatRow(label: 'Samples', value: '${data.sampleCount}'),
               ],
@@ -204,7 +230,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           ),
 
           // Notes
-          if (_session.notes.isNotEmpty) ...[
+          if (session.notes.isNotEmpty) ...[
             const Divider(height: 24),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -213,7 +239,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 children: [
                   Text('Notes', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 8),
-                  Text(_session.notes),
+                  Text(session.notes),
                 ],
               ),
             ),
@@ -228,7 +254,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _exportCsv(data),
+                    onPressed: () => _exportCsv(session, data),
                     icon: const Icon(Icons.download),
                     label: const Text('Export CSV'),
                   ),
@@ -243,70 +269,63 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     );
   }
 
-  Future<void> _onMenuAction(String action) async {
+  Future<void> _onMenuAction(String action, Session session) async {
     switch (action) {
       case 'rename':
-        await _showRenameDialog();
+        await _showRenameDialog(session);
       case 'notes':
-        await _showNotesDialog();
+        await _showNotesDialog(session);
       case 'export_csv':
         final state = _loadState;
         if (state is _Ready && state.data != null) {
-          await _exportCsv(state.data!);
+          await _exportCsv(session, state.data!);
         }
       case 'delete':
-        await _deleteAndPop();
+        await _deleteAndPop(session);
     }
   }
 
-  /// Re-read the session row after a metadata edit so the UI reflects it.
-  Future<void> _reloadSession() async {
-    final updated = await AppDatabase.instance.sessionById(_session.id);
-    if (updated != null && mounted) {
-      setState(() => _session = updated);
-    }
-  }
+  Future<void> _showRenameDialog(Session session) => renameSessionFlow(
+    context,
+    sessionId: session.id,
+    currentName: session.name,
+  );
 
-  Future<void> _showRenameDialog() async {
-    final newName = await showTextPrompt(
-      context,
-      title: 'Rename session',
-      label: 'Session name',
-      initial: _session.name,
-    );
-    if (newName != null && newName.isNotEmpty) {
-      await AppDatabase.instance.renameSession(_session.id, newName);
-      await _reloadSession();
-    }
-  }
-
-  Future<void> _showNotesDialog() async {
+  Future<void> _showNotesDialog(Session session) async {
     final newNotes = await showTextPrompt(
       context,
       title: 'Edit notes',
       label: 'Notes',
-      initial: _session.notes,
+      initial: session.notes,
       maxLines: 5,
     );
     if (newNotes != null) {
-      await AppDatabase.instance.setSessionNotes(_session.id, newNotes);
-      await _reloadSession();
+      await AppDatabase.instance.setSessionNotes(session.id, newNotes);
     }
   }
 
-  Future<void> _deleteAndPop() async {
-    if (await showDeleteConfirm(context, what: _session.name)) {
-      await AppDatabase.instance.deleteSession(_session.id);
+  Future<void> _deleteAndPop(Session session) async {
+    if (await deleteSessionFlow(context, session)) {
       if (mounted) Navigator.of(context).pop();
     }
   }
 
-  Future<void> _exportCsv(SessionData data) async {
-    // Build CSV string
+  Future<void> _exportCsv(Session session, SessionData data) async {
+    final labels = parseJsonColumn(
+      session.channelLabels,
+      data.channels.length,
+      convert: (e) => e.toString(),
+      fallback: (i) => 'Ch ${i + 1}',
+    );
+
+    // TODO(perf): build this incrementally (chunked writes) — a long session
+    // produces a very large single string (see SessionStorage.loadSession's
+    // own note about whole-session materialization).
     final buf = StringBuffer();
     buf.write('time_s');
     for (int ch = 0; ch < data.channels.length; ch++) {
-      buf.write(',ch${ch + 1}_raw,ch${ch + 1}_kgf');
+      final label = _csvCell(labels[ch]);
+      buf.write(',${label}_raw,${label}_kgf');
     }
     buf.writeln();
 
@@ -321,7 +340,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       } else {
         for (int ch = 0; ch < data.channels.length; ch++) {
           final raw = data.channels[ch][s];
-          final kgf = (raw - data.tares[ch]) * data.calibrationSlope;
+          final kgf = ForceUnit.kgf.fromRaw(
+            raw - data.tares[ch],
+            data.calibrationSlope,
+          );
           buf.write(',$raw,${kgf.toStringAsFixed(6)}');
         }
       }
@@ -331,7 +353,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     // Save via a native "Save As" dialog. On web there is no save-location
     // picker, so hand the bytes to the browser, which downloads the file.
     final bytes = Uint8List.fromList(utf8.encode(buf.toString()));
-    final csvName = _csvFileName(_session.name);
+    final csvName = _csvFileName(session.name);
     final xFile = XFile.fromData(bytes, mimeType: 'text/csv', name: csvName);
 
     String savedTo;
@@ -366,6 +388,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 }
 
 // -- Load state --
+
+/// Escape a CSV header cell that contains separators, quotes or newlines.
+String _csvCell(String s) =>
+    s.contains(RegExp(r'[,"\n]')) ? '"${s.replaceAll('"', '""')}"' : s;
 
 /// The CSV filename for a session: the session name with characters that are
 /// illegal in Windows/macOS/Android filenames replaced (auto session names

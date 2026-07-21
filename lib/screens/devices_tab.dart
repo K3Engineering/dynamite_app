@@ -3,45 +3,12 @@ import 'package:provider/provider.dart';
 
 import '../services/ble_link_manager.dart';
 import '../widgets/bt_icon.dart';
+import '../widgets/empty_placeholder.dart';
 import '../widgets/section_header.dart';
 import '../widgets/status_colors.dart';
 
-class DevicesTab extends StatefulWidget {
-  final bool isActive;
-
-  const DevicesTab({super.key, this.isActive = false});
-
-  @override
-  State<DevicesTab> createState() => _DevicesTabState();
-}
-
-class _DevicesTabState extends State<DevicesTab> {
-  @override
-  void initState() {
-    super.initState();
-    if (widget.isActive) {
-      _requestBluetoothIfActive();
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant DevicesTab oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.isActive && !oldWidget.isActive) {
-      _requestBluetoothIfActive();
-    }
-  }
-
-  void _requestBluetoothIfActive() {
-    // Post-frame callback ensures we don't try to access providers before
-    // the widget tree is fully initialized during the first build.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        // ignore: discarded_futures
-        context.read<BleLinkManager>().requestEnableBluetooth();
-      }
-    });
-  }
+class DevicesTab extends StatelessWidget {
+  const DevicesTab({super.key});
 
   /// Run a connect attempt, surfacing a failure as a snackbar naming
   /// [deviceName] with the underlying error detail (timeout vs GATT error vs
@@ -49,6 +16,7 @@ class _DevicesTabState extends State<DevicesTab> {
   /// buttons are already disabled while a link is busy, so this only handles
   /// the rejected attempt itself.
   Future<void> _connectWithFeedback(
+    BuildContext context,
     Future<void> Function() connect,
     String deviceName,
   ) async {
@@ -56,7 +24,7 @@ class _DevicesTabState extends State<DevicesTab> {
       await connect();
     } catch (e) {
       debugPrint('Connect to $deviceName failed: $e');
-      if (mounted) {
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to connect to $deviceName: $e')),
         );
@@ -73,6 +41,10 @@ class _DevicesTabState extends State<DevicesTab> {
     // The link is up (setting up OR streaming) — the connected card is shown for
     // both so the user can see progress and cancel a stuck setup.
     final isLinkUp = bt.isLinkUp;
+    // A connect attempt is in flight; the card shows "Connecting…" with a
+    // Cancel button so a hung attempt (or a changed mind) doesn't have to
+    // wait out the connect timeout.
+    final isConnecting = bt.link.isConnecting;
     // The specific device currently in its post-disconnect cooldown window (web
     // only); its row shows "Please wait…" instead of "Connect".
     final coolingDownDeviceId = bt.isCoolingDown ? bt.link.deviceId : '';
@@ -117,12 +89,17 @@ class _DevicesTabState extends State<DevicesTab> {
           ),
           const SizedBox(height: 16),
 
-          // Connected section — shown while the link is up (setting up OR
-          // streaming) so the user can watch setup progress and cancel a stuck
-          // one. The header/icon distinguish "Setting up…" from "Connected".
-          if (isLinkUp) ...[
+          // Connected section — shown while a link attempt is in flight or the
+          // link is up (connecting / setting up / streaming) so the user can
+          // watch progress and cancel a stuck one. The header/icon distinguish
+          // the three states.
+          if (isLinkUp || isConnecting) ...[
             Text(
-              isStreaming ? 'Connected' : 'Setting up…',
+              isStreaming
+                  ? 'Connected'
+                  : isConnecting
+                  ? 'Connecting…'
+                  : 'Setting up…',
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
                 color: Theme.of(context).colorScheme.primary,
               ),
@@ -143,8 +120,8 @@ class _DevicesTabState extends State<DevicesTab> {
                 title: Text(bt.connectedDeviceName),
                 subtitle: Text(
                   bt.connectedRssi != null
-                      ? 'ID: ${bt.selectedDeviceId}  •  RSSI: ${bt.connectedRssi} dBm'
-                      : 'ID: ${bt.selectedDeviceId}',
+                      ? 'ID: ${bt.link.deviceId}  •  RSSI: ${bt.connectedRssi} dBm'
+                      : 'ID: ${bt.link.deviceId}',
                 ),
                 trailing: TextButton(
                   // Disabled while the disconnect is in flight so the button
@@ -155,7 +132,11 @@ class _DevicesTabState extends State<DevicesTab> {
                           await bt.disconnectSelectedDevice();
                         },
                   child: Text(
-                    bt.isDisconnecting ? 'Disconnecting…' : 'Disconnect',
+                    bt.isDisconnecting
+                        ? 'Disconnecting…'
+                        : isConnecting
+                        ? 'Cancel'
+                        : 'Disconnect',
                   ),
                 ),
               ),
@@ -169,30 +150,12 @@ class _DevicesTabState extends State<DevicesTab> {
           const SizedBox(height: 8),
 
           if (bt.devices.isEmpty && !bt.isScanning)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 24),
-              child: Center(
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.bluetooth_searching,
-                      size: 64,
-                      color: Colors.grey.shade400,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'No devices found',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Tap Scan at the top to search for nearby devices',
-                      style: TextStyle(color: Colors.grey.shade500),
-                    ),
-                  ],
-                ),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: EmptyPlaceholder(
+                icon: Icons.bluetooth_searching,
+                title: 'No devices found',
+                hint: 'Tap Scan at the top to search for nearby devices',
               ),
             ),
 
@@ -215,6 +178,7 @@ class _DevicesTabState extends State<DevicesTab> {
                   onPressed: bt.linkBusy
                       ? null
                       : () => _connectWithFeedback(
+                          context,
                           () => bt.connectToDevice(device.deviceId),
                           device.name ?? 'device',
                         ),
@@ -242,6 +206,7 @@ class _DevicesTabState extends State<DevicesTab> {
                 onPressed: bt.linkBusy
                     ? null
                     : () => _connectWithFeedback(
+                        context,
                         bt.connectToDemoDevice,
                         'Demo Device',
                       ),

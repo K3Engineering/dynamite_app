@@ -80,8 +80,9 @@ class RecordingController extends ChangeNotifier {
   /// so the first packet after a boundary isn't diffed against a stale counter.
   final AdcPacketDecoder _decoder;
 
-  bool _sessionInProgress = false;
-  bool get sessionInProgress => _sessionInProgress;
+  /// True while a session writer is latched. Derived (not stored) so the flag
+  /// can never disagree with the writer it describes.
+  bool get sessionInProgress => _sessionWriter != null;
 
   /// Link state at the previous [_onLinkChanged] notification; used to detect
   /// the not-streaming -> streaming edge (a new device stream starting).
@@ -109,7 +110,7 @@ class RecordingController extends ChangeNotifier {
     required List<bool> visibleChannels,
   }) async {
     assert(_linkManager.isStreaming);
-    if (_sessionInProgress) return null;
+    if (sessionInProgress) return null;
     // A tare is still averaging; recording now would persist a zero tare.
     if (_dataHub.taring) return const StartSessionTareInProgress();
 
@@ -128,7 +129,6 @@ class RecordingController extends ChangeNotifier {
 
     _sessionWriter = writer;
     _sessionName = sessionName;
-    _sessionInProgress = true;
     _decoder.resetContinuity();
     notifyListeners();
     return const StartSessionOk();
@@ -149,24 +149,21 @@ class RecordingController extends ChangeNotifier {
   /// [RecordingStorageError] on [AppEvents]); callers only use the returned
   /// error to branch (e.g. suppress the "Session saved" notice).
   Future<({int? sessionId, String? name, Object? error})> stopSession() async {
-    if (_sessionInProgress) {
-      _sessionInProgress = false;
-      final writer = _sessionWriter;
+    final writer = _sessionWriter;
+    if (writer != null) {
       final name = _sessionName;
       _sessionWriter = null;
       _sessionName = null;
       _decoder.resetContinuity();
       notifyListeners();
 
-      if (writer != null) {
-        // finalizeSession flushes through the writer's serialized queue, which
-        // drains any in-flight (unawaited) appends first.
-        final error = await SessionStorage.finalizeSession(writer: writer);
-        if (error != null) {
-          _events.emit(RecordingStorageError(error));
-        }
-        return (sessionId: writer.sessionId, name: name, error: error);
+      // finalizeSession flushes through the writer's serialized queue, which
+      // drains any in-flight (unawaited) appends first.
+      final error = await SessionStorage.finalizeSession(writer: writer);
+      if (error != null) {
+        _events.emit(RecordingStorageError(error));
       }
+      return (sessionId: writer.sessionId, name: name, error: error);
     }
     return (sessionId: null, name: null, error: null);
   }
@@ -177,7 +174,7 @@ class RecordingController extends ChangeNotifier {
   /// finalization re-detects the latched error and surfaces it).
   void _onSamplesAppended(int startIdx, int count) {
     final writer = _sessionWriter;
-    if (!_sessionInProgress || writer == null) {
+    if (writer == null) {
       return;
     }
     if (writer.hasError) {
@@ -192,7 +189,7 @@ class RecordingController extends ChangeNotifier {
   /// started stream resets the hub and packet continuity.
   void _onLinkChanged() {
     final bool streaming = _linkManager.isStreaming;
-    if (_sessionInProgress && !streaming) {
+    if (sessionInProgress && !streaming) {
       unawaited(stopSession());
     }
     if (streaming && !_wasStreaming) {

@@ -49,7 +49,11 @@ void main() {
         hub.addSampleFrame(frame);
       }
 
-      final writer = LiveSessionWriter(1, Float64List(channels));
+      final writer = LiveSessionWriter(
+        1,
+        Float64List(channels),
+        DataHub.samplesPerSec,
+      );
       await writer.appendData(hub, 0, n);
 
       expect(writer.totalSamplesRecorded, n);
@@ -72,6 +76,7 @@ void main() {
       final writer = LiveSessionWriter(
         1,
         Float64List(channels),
+        DataHub.samplesPerSec,
         chunkSink: (sessionId, chunkIndex, data, gapsJson) async =>
             saved.add(data),
       );
@@ -115,6 +120,7 @@ void main() {
       final writer = LiveSessionWriter(
         1,
         Float64List(channels),
+        DataHub.samplesPerSec,
         chunkSink: (sessionId, chunkIndex, data, gapsJson) async {
           sinkCalls++;
           if (!entered.isCompleted) entered.complete();
@@ -152,6 +158,37 @@ void main() {
       expect(sinkCalls, 1);
       expect(saved, hasLength(1));
       expect(saved.single.lengthInBytes, chunkSamples * channels * 4);
+    });
+  });
+
+  group('SessionChunkCodec', () {
+    test('pack/decode round-trips frames exactly', () {
+      const codec = SessionChunkCodec(channels);
+      final values = [
+        [1, 2, 3, 4],
+        [-5, 6, -7, 8],
+        [0x7FFFFFFF, -0x80000000, 0, 123456],
+      ];
+      final bytes = codec.pack(values.length, (s, ch) => values[s][ch]);
+      expect(codec.framesOf(bytes), values.length);
+      expect(bytes.lengthInBytes, values.length * channels * 4);
+
+      final decoded = <List<int>>[];
+      codec.decode(bytes, (s, ch, raw) {
+        while (decoded.length <= s) {
+          decoded.add(List.filled(channels, 0));
+        }
+        decoded[s][ch] = raw;
+      });
+      expect(decoded, values);
+    });
+
+    test('framesOf ignores trailing partial bytes', () {
+      const codec = SessionChunkCodec(channels);
+      expect(codec.framesOf(Uint8List(0)), 0);
+      expect(codec.framesOf(Uint8List(channels * 4 - 1)), 0);
+      expect(codec.framesOf(Uint8List(channels * 4)), 1);
+      expect(codec.framesOf(Uint8List(channels * 4 + 1)), 1);
     });
   });
 
@@ -206,5 +243,37 @@ void main() {
       expect(loaded.gaps.contains(2119), isTrue);
       expect(loaded.gaps.contains(2120), isFalse);
     });
+
+    test(
+      'a session with only empty chunks completes with a zero peak',
+      () async {
+        AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(AppDatabase.closeInstance);
+
+        // A chunk row exists, but it holds no complete frame (0 bytes), so the
+        // recovered aggregate scan finds no samples and peakRaw stays at
+        // -infinity — which must never reach the DB.
+        final sessionId = await AppDatabase.instance.createSession(
+          name: 'empty chunks',
+          sampleRate: DataHub.samplesPerSec,
+          channelCount: channels,
+          channelLabels: '["a","b","c","d"]',
+          tares: '[0,0,0,0]',
+          calibrationSlope: 1.0,
+          visibleChannels: '[true,true,true,true]',
+        );
+        await AppDatabase.instance.insertChunk(sessionId, 0, Uint8List(0));
+
+        await SessionStorage.recoverIncompleteSessions();
+
+        final row = await AppDatabase.instance.sessionById(sessionId);
+        expect(row, isNotNull);
+        expect(row!.isCompleted, isTrue);
+        expect(row.sampleCount, 0);
+        expect(row.durationMs, 0);
+        expect(row.peakForceRaw, 0.0);
+        expect(row.peakForceRaw.isFinite, isTrue);
+      },
+    );
   });
 }

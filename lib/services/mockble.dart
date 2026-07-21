@@ -58,6 +58,21 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// link down.
   bool hangDisconnect = false;
 
+  /// When true, [connect] takes [slowConnectDelay] instead of [netDelay] —
+  /// far longer than the client's connect timeout, so the attempt is torn
+  /// down before the platform link comes up. The late success still fires
+  /// its connection-change callback afterwards (the "connect completed after
+  /// the client gave up" race).
+  bool slowConnect = false;
+  static const slowConnectDelay = Duration(seconds: 20);
+
+  /// Test spy: every deviceId passed to [disconnect], in order. Lets tests
+  /// assert that leaked/unwanted GATT links were released.
+  final List<String> disconnectCalls = [];
+
+  /// The device the mock currently considers linked (test assertions only).
+  String? get connectedDeviceId => _connectedDeviceId;
+
   /// Reset every knob to its default and silently sever any leftover link
   /// (no callbacks), so the singleton is clean for the next test.
   void resetKnobs() {
@@ -66,8 +81,12 @@ class MockBlePlatform extends UniversalBlePlatform {
     failCalibrationRead = false;
     failConnect = false;
     hangDisconnect = false;
+    slowConnect = false;
+    disconnectCalls.clear();
     _connectedDeviceId = null;
     _connectionState = BleConnectionState.disconnected;
+    _scanTimer?.cancel();
+    _scanTimer = null;
     _notificationTimer?.cancel();
     _notificationTimer = null;
   }
@@ -155,7 +174,7 @@ class MockBlePlatform extends UniversalBlePlatform {
 
     _connectedDeviceId = deviceId;
     _connectionState = BleConnectionState.connecting;
-    await Future<void>.delayed(netDelay);
+    await Future<void>.delayed(slowConnect ? slowConnectDelay : netDelay);
     if (failConnect) {
       // A refused/failed attempt: no link, and no connection-change callback
       // — the client's connect() catch path is what tears its state down.
@@ -169,6 +188,7 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<void> disconnect(String deviceId) async {
+    disconnectCalls.add(deviceId);
     if (hangDisconnect) {
       // Never fire the connection-change callback: the link stays "connected"
       // here and the client's disconnect-timeout reconciliation tears it down.
@@ -227,18 +247,14 @@ class MockBlePlatform extends UniversalBlePlatform {
         _generatedPacketCount++;
         if (drop) return;
 
-        final ev = Uint8List(
-          nwHeaderSize + nwAdcSampleLength * nwAdcNumSamples,
+        final ev = encodeAdcPacket(
+          counter: thisCounter,
+          frames: [
+            for (int i = 0; i < nwAdcNumSamples; ++i)
+              _mockData[(_mockDataCount + i) % _mockData.length],
+          ],
         );
-        // 2-byte little-endian running sample counter (the *starting* sample
-        // index of this packet), per adc_protocol.dart.
-        ev[0] = thisCounter & 0xFF;
-        ev[1] = (thisCounter >> 8) & 0xFF;
-        for (int i = 0; i < nwAdcNumSamples; ++i) {
-          final frame = _mockData[_mockDataCount];
-          ev.setAll(nwHeaderSize + i * nwAdcSampleLength, frame);
-          _mockDataCount = (_mockDataCount + 1) % _mockData.length;
-        }
+        _mockDataCount = (_mockDataCount + nwAdcNumSamples) % _mockData.length;
         updateCharacteristicValue(deviceId, characteristic, ev, null);
       });
     }
@@ -304,19 +320,6 @@ class MockBlePlatform extends UniversalBlePlatform {
     return ([]);
   }
 
-  /// Pack 4 channel values (24-bit signed) into the 12-byte wire sample.
-  static Uint8List _packSample(int c0, int c1, int c2, int c3) {
-    final out = Uint8List(nwAdcSampleLength);
-    final ch = [c0, c1, c2, c3];
-    for (int i = 0; i < nwNumAdcChan; ++i) {
-      final v = ch[i] & 0xFFFFFF;
-      out[i * 3] = v & 0xFF;
-      out[i * 3 + 1] = (v >> 8) & 0xFF;
-      out[i * 3 + 2] = (v >> 16) & 0xFF;
-    }
-    return out;
-  }
-
   /// Generate [count] deterministic multi-channel frames so the mock feed
   /// looks like real data when no MockData.txt is present. Channel 0/1 are
   /// sines with a phase offset, channel 2 a cosine, channel 3 a slow sawtooth;
@@ -334,7 +337,7 @@ class MockBlePlatform extends UniversalBlePlatform {
       final c1 = (sin(2 * pi * cycles * t + pi / 4) * amp1).round();
       final c2 = (cos(2 * pi * cycles * t) * amp2).round();
       final c3 = ((s % 200) - 100) * amp3;
-      frames.add(_packSample(c0, c1, c2, c3));
+      frames.add(encodeAdcFrame([c0, c1, c2, c3]));
     }
     return frames;
   }
