@@ -645,26 +645,6 @@ class GraphController extends ChangeNotifier {
   /// Whether we're following the live edge (auto-scroll with new data).
   bool get isLive => _viewport is GraphLive;
 
-  /// When in live mode and zoomed in, the fixed span shown from the right
-  /// edge. Null means "show all data" (auto-expanding up to buffer capacity).
-  int? get liveSpan => switch (_viewport) {
-    GraphLive(:final span) => span,
-    GraphWindow() => null,
-  };
-
-  /// Start of the visible window in samples; 0 in live mode (the live range
-  /// is derived by [effectiveRange], never stored).
-  int get viewStart => switch (_viewport) {
-    GraphWindow(:final start) => start,
-    GraphLive() => 0,
-  };
-
-  /// End of the visible window in samples; null in live mode.
-  int? get viewEnd => switch (_viewport) {
-    GraphWindow(:final end) => end,
-    GraphLive() => null,
-  };
-
   /// Snap to live mode -- follow the right edge.
   /// If [span] is provided, locks to that scrolling window.
   /// If not provided, derives the lock from the current window (or keeps the
@@ -705,12 +685,6 @@ class GraphController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Set a specific visible window (exits live mode).
-  void setWindow(int start, int end) {
-    _viewport = GraphWindow(start, end);
-    notifyListeners();
-  }
-
   /// Get the effective visible range given total data size.
   (int start, int end) effectiveRange(
     int totalSamples,
@@ -727,17 +701,6 @@ class GraphController extends ChangeNotifier {
       case GraphWindow(:final start, :final end):
         return (start, end.clamp(start + 1, totalSamples));
     }
-  }
-
-  /// Whether the current window covers all available data.
-  ///
-  /// Every plot renders in one of two modes:
-  ///   * squeeze -- the window spans the whole history, so the x-mapping of
-  ///     every sample recompresses as new data arrives;
-  ///   * slide   -- a fixed-span window slides over the data.
-  bool isSqueeze(int totalSamples, int oldestSample) {
-    final (s, e) = effectiveRange(totalSamples, oldestSample);
-    return e - s >= totalSamples - oldestSample;
   }
 
   /// Apply the window [newStart, newStart + span), clamped to the available
@@ -872,12 +835,6 @@ class GraphController extends ChangeNotifier {
       oldestSample: oldestSample,
     );
   }
-
-  /// Reset to show all data in live mode (fully zoomed out).
-  void reset() {
-    _viewport = const GraphLive();
-    notifyListeners();
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -960,6 +917,11 @@ class BakePump implements Listenable {
 // Minimap
 // ---------------------------------------------------------------------------
 
+/// Span of samples the minimap squeezes into its width: all available data,
+/// clamped below by the controller's minimum live span.
+int minimapSpan(int totalSamples, int oldestSample, int minLiveSpan) =>
+    math.max(totalSamples - oldestSample, minLiveSpan);
+
 class Minimap extends StatefulWidget {
   final GraphDataSource dataSource;
   final AppSettings settings;
@@ -991,10 +953,6 @@ class _MinimapState extends State<Minimap> {
     super.dispose();
   }
 
-  /// Span of the samples the minimap squeezes into its width.
-  int _mapSpan(int totalSamples, int oldestSample) =>
-      math.max(totalSamples - oldestSample, widget.graphCtrl.minLiveSpan);
-
   void _onMinimapTap(TapDownDetails d, double graphWidth) {
     final totalSamples = widget.dataSource.totalSamples;
     if (totalSamples == 0 || graphWidth <= 0) return;
@@ -1003,7 +961,11 @@ class _MinimapState extends State<Minimap> {
       0.0,
       1.0,
     );
-    final mapSpan = _mapSpan(totalSamples, oldestSample);
+    final mapSpan = minimapSpan(
+      totalSamples,
+      oldestSample,
+      widget.graphCtrl.minLiveSpan,
+    );
     final mapStart = totalSamples - mapSpan;
     widget.graphCtrl.centerOn(
       mapStart + (frac * mapSpan).round(),
@@ -1017,7 +979,9 @@ class _MinimapState extends State<Minimap> {
     final totalSamples = widget.dataSource.totalSamples;
     if (totalSamples == 0 || graphWidth <= 0) return;
     final oldestSample = widget.dataSource.oldestSample;
-    final samplesPerPixel = _mapSpan(totalSamples, oldestSample) / graphWidth;
+    final samplesPerPixel =
+        minimapSpan(totalSamples, oldestSample, widget.graphCtrl.minLiveSpan) /
+        graphWidth;
     widget.graphCtrl.pan(
       (d.delta.dx * samplesPerPixel).round(),
       totalSamples,
@@ -1113,7 +1077,7 @@ class _MinimapPainter extends CustomPainter {
     if (totalSamples == 0) return;
 
     final oldestSample = _data.oldestSample;
-    final mapSpan = math.max(totalSamples - oldestSample, _ctrl.minLiveSpan);
+    final mapSpan = minimapSpan(totalSamples, oldestSample, _ctrl.minLiveSpan);
     final mapStart = totalSamples - mapSpan;
 
     final activeIndices = _activeChannels;
@@ -2506,11 +2470,12 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
   YAxisRange computeYRange(int viewStart, int viewEnd) {
     // Compute data min/max across active channels in visible window (raw,
     // tare-subtracted) so the noise floor stays a raw-count threshold, then
-    // convert to display units. [foldBucketRange] folds full buckets from
+    // convert to display units. [windowedExtremes] folds full buckets from
     // the precomputed aggregates (exact for min/max) and per-sample scans
     // only the partial head/tail, so the cost is O(window / bucketSize).
     final oldestSample = _data.oldestSample;
     final totalSamples = _data.totalSamples;
+    final bufferCap = _data.bufferCapacity;
     double rawMax = 0;
     double rawMin = 0;
     bool hasData = false;
@@ -2519,34 +2484,24 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
       final s = _data.channel(ch);
       final line = s.data;
       if (line.isEmpty) continue;
-      final tare = s.tare;
-      final bufferCap = _data.bufferCapacity;
       final sScanStart = math.max(viewStart, oldestSample);
       final sScanEnd = math.min(viewEnd, totalSamples);
       if (sScanStart >= sScanEnd) continue;
 
-      void fold(double v) {
-        if (!hasData || v > rawMax) rawMax = v;
-        if (!hasData || v < rawMin) rawMin = v;
-        hasData = true;
-      }
-
       // Gap samples hold a previous real value, so they can never extend
-      // the range: no exclusion needed on either path.
-      foldBucketRange(
+      // the range: no exclusion needed.
+      final ext = windowedExtremes(
         s.buckets,
         sScanStart,
         sScanEnd,
-        foldBucket: (bMin, bMax) {
-          fold((bMin - tare).toDouble());
-          fold((bMax - tare).toDouble());
-        },
-        scanExact: (from, to) {
-          for (int i = from; i < to; i++) {
-            fold((line[i % bufferCap] - tare).toDouble());
-          }
-        },
+        (i) => line[i % bufferCap].toDouble(),
       );
+      if (ext == null) continue;
+      final lo = ext.$1 - s.tare;
+      final hi = ext.$2 - s.tare;
+      if (!hasData || hi > rawMax) rawMax = hi;
+      if (!hasData || lo < rawMin) rawMin = lo;
+      hasData = true;
     }
 
     // Enforce a minimum visible range (noise floor) so the graph isn't degenerate
@@ -2590,18 +2545,24 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   @override
   int get firstSampleOffset => 1; // first difference needs sample j-1
 
-  /// Per-sample first difference in display units per second. A held value
-  /// on either side of the difference would fabricate a flat or spiking
-  /// derivative; break the polyline across gap edges instead.
-  double Function(int j) _sampleAt(int channel) {
+  /// Per-sample first difference in raw counts. A held value on either side
+  /// of the difference would fabricate a flat or spiking derivative; NaN
+  /// marks gap edges instead, breaking the polyline.
+  double Function(int j) _rawDiffAt(int channel) {
     final line = _data.channel(channel).data;
     final bufferCap = _data.bufferCapacity;
     final gaps = _data.gaps;
-    final scale = _displayScale;
     return (j) {
       if (gaps.contains(j) || gaps.contains(j - 1)) return double.nan;
-      return (line[j % bufferCap] - line[(j - 1) % bufferCap]) * scale;
+      return (line[j % bufferCap] - line[(j - 1) % bufferCap]).toDouble();
     };
+  }
+
+  /// Per-sample first difference in display units per second.
+  double Function(int j) _sampleAt(int channel) {
+    final rawDiff = _rawDiffAt(channel);
+    final scale = _displayScale;
+    return (j) => rawDiff(j) * scale; // NaN propagates
   }
 
   /// Raw-diff -> display-units-per-second multiplier.
@@ -2625,7 +2586,7 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   @override
   YAxisRange computeYRange(int viewStart, int viewEnd) {
     // Derivative min/max (display units) across the visible window.
-    // [foldBucketRange] folds full buckets from the precomputed diff
+    // [windowedExtremes] folds full buckets from the precomputed diff
     // aggregates (exact for min/max) and per-sample scans only the partial
     // head/tail, so the cost is O(window / bucketSize).
     double dMin = 0;
@@ -2644,33 +2605,23 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     for (final ch in _activeChannels) {
       if (_data.channel(ch).data.isEmpty) continue;
       if (startI >= endI) continue;
-      final valueAt = _sampleAt(ch);
-
-      void scanExact(int from, int to) {
-        for (int i = from; i < to; i++) {
-          final d = valueAt(i);
-          if (d.isNaN) continue;
-          fold(d);
-        }
-      }
 
       final buckets = _data.diffBuckets(ch);
       if (buckets == null) {
-        scanExact(startI, endI);
-      } else {
-        foldBucketRange(
-          buckets,
-          startI,
-          endI,
-          // Folding both scaled bounds keeps this correct under a negative
-          // scale.
-          foldBucket: (bMin, bMax) {
-            fold(bMin * scale);
-            fold(bMax * scale);
-          },
-          scanExact: scanExact,
-        );
+        // Exact-only fallback for sources without diff aggregates.
+        final valueAt = _sampleAt(ch);
+        for (int i = startI; i < endI; i++) {
+          final d = valueAt(i);
+          if (!d.isNaN) fold(d);
+        }
+        continue;
       }
+
+      final ext = windowedExtremes(buckets, startI, endI, _rawDiffAt(ch));
+      if (ext == null) continue;
+      // Folding both scaled bounds keeps this correct under a negative scale.
+      fold(ext.$1 * scale);
+      fold(ext.$2 * scale);
     }
     return _computeYRange(dMin, dMax);
   }

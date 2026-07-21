@@ -4,6 +4,11 @@ import 'package:flutter/foundation.dart';
 
 part 'database.g.dart';
 
+/// JSON-encoded default for the session `visibleChannels` column: every
+/// channel shown. Kept as a literal because drift column defaults must be
+/// const — it must stay in sync with `nwNumAdcChan` (currently 4).
+const String kAllChannelsVisibleJson = '[true,true,true,true]';
+
 /// Table for recorded measurement sessions.
 class Sessions extends Table {
   IntColumn get id => integer().autoIncrement()();
@@ -16,7 +21,6 @@ class Sessions extends Table {
       text().withDefault(const Constant('["Load Cell 1","Load Cell 2"]'))();
   TextColumn get tares => text().withDefault(const Constant('[]'))();
   RealColumn get peakForceRaw => real().withDefault(const Constant(0.0))();
-  IntColumn get peakForceChannel => integer().withDefault(const Constant(0))();
   RealColumn get calibrationSlope =>
       real().withDefault(const Constant(0.0001117587))();
   IntColumn get calibrationOffset => integer().withDefault(const Constant(0))();
@@ -32,7 +36,7 @@ class Sessions extends Table {
   /// list. Initialized from the live view's channel selection at recording
   /// time; afterwards it is per-session and independent of the live view.
   TextColumn get visibleChannels =>
-      text().withDefault(const Constant('[true,true,true,true]'))();
+      text().withDefault(const Constant(kAllChannelsVisibleJson))();
 }
 
 class SessionChunks extends Table {
@@ -75,7 +79,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -115,8 +119,7 @@ class AppDatabase extends _$AppDatabase {
     required String tares,
     required double calibrationSlope,
     required int calibrationOffset,
-    required String notes,
-    String visibleChannels = '[true,true,true,true]',
+    String visibleChannels = kAllChannelsVisibleJson,
   }) {
     return into(sessions).insert(
       SessionsCompanion.insert(
@@ -128,7 +131,6 @@ class AppDatabase extends _$AppDatabase {
         tares: Value(tares),
         calibrationSlope: Value(calibrationSlope),
         calibrationOffset: Value(calibrationOffset),
-        notes: Value(notes),
         isCompleted: const Value(false),
         visibleChannels: Value(visibleChannels),
       ),
@@ -143,7 +145,6 @@ class AppDatabase extends _$AppDatabase {
     required int sampleCount,
     required int durationMs,
     required double peakForceRaw,
-    required int peakForceChannel,
     String gaps = '[]',
   }) {
     return _updateSession(
@@ -152,7 +153,6 @@ class AppDatabase extends _$AppDatabase {
         sampleCount: Value(sampleCount),
         durationMs: Value(durationMs),
         peakForceRaw: Value(peakForceRaw),
-        peakForceChannel: Value(peakForceChannel),
         isCompleted: const Value(true),
         gaps: Value(gaps),
       ),

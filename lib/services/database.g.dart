@@ -112,18 +112,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     requiredDuringInsert: false,
     defaultValue: const Constant(0.0),
   );
-  static const VerificationMeta _peakForceChannelMeta = const VerificationMeta(
-    'peakForceChannel',
-  );
-  @override
-  late final GeneratedColumn<int> peakForceChannel = GeneratedColumn<int>(
-    'peak_force_channel',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(0),
-  );
   static const VerificationMeta _calibrationSlopeMeta = const VerificationMeta(
     'calibrationSlope',
   );
@@ -205,7 +193,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     false,
     type: DriftSqlType.string,
     requiredDuringInsert: false,
-    defaultValue: const Constant('[true,true,true,true]'),
+    defaultValue: const Constant(kAllChannelsVisibleJson),
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -218,7 +206,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     channelLabels,
     tares,
     peakForceRaw,
-    peakForceChannel,
     calibrationSlope,
     calibrationOffset,
     notes,
@@ -298,15 +285,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         peakForceRaw.isAcceptableOrUnknown(
           data['peak_force_raw']!,
           _peakForceRawMeta,
-        ),
-      );
-    }
-    if (data.containsKey('peak_force_channel')) {
-      context.handle(
-        _peakForceChannelMeta,
-        peakForceChannel.isAcceptableOrUnknown(
-          data['peak_force_channel']!,
-          _peakForceChannelMeta,
         ),
       );
     }
@@ -412,10 +390,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.double,
         data['${effectivePrefix}peak_force_raw'],
       )!,
-      peakForceChannel: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}peak_force_channel'],
-      )!,
       calibrationSlope: attachedDatabase.typeMapping.read(
         DriftSqlType.double,
         data['${effectivePrefix}calibration_slope'],
@@ -463,7 +437,6 @@ class Session extends DataClass implements Insertable<Session> {
   final String channelLabels;
   final String tares;
   final double peakForceRaw;
-  final int peakForceChannel;
   final double calibrationSlope;
   final int calibrationOffset;
   final String notes;
@@ -488,7 +461,6 @@ class Session extends DataClass implements Insertable<Session> {
     required this.channelLabels,
     required this.tares,
     required this.peakForceRaw,
-    required this.peakForceChannel,
     required this.calibrationSlope,
     required this.calibrationOffset,
     required this.notes,
@@ -509,7 +481,6 @@ class Session extends DataClass implements Insertable<Session> {
     map['channel_labels'] = Variable<String>(channelLabels);
     map['tares'] = Variable<String>(tares);
     map['peak_force_raw'] = Variable<double>(peakForceRaw);
-    map['peak_force_channel'] = Variable<int>(peakForceChannel);
     map['calibration_slope'] = Variable<double>(calibrationSlope);
     map['calibration_offset'] = Variable<int>(calibrationOffset);
     map['notes'] = Variable<String>(notes);
@@ -531,7 +502,6 @@ class Session extends DataClass implements Insertable<Session> {
       channelLabels: Value(channelLabels),
       tares: Value(tares),
       peakForceRaw: Value(peakForceRaw),
-      peakForceChannel: Value(peakForceChannel),
       calibrationSlope: Value(calibrationSlope),
       calibrationOffset: Value(calibrationOffset),
       notes: Value(notes),
@@ -557,7 +527,6 @@ class Session extends DataClass implements Insertable<Session> {
       channelLabels: serializer.fromJson<String>(json['channelLabels']),
       tares: serializer.fromJson<String>(json['tares']),
       peakForceRaw: serializer.fromJson<double>(json['peakForceRaw']),
-      peakForceChannel: serializer.fromJson<int>(json['peakForceChannel']),
       calibrationSlope: serializer.fromJson<double>(json['calibrationSlope']),
       calibrationOffset: serializer.fromJson<int>(json['calibrationOffset']),
       notes: serializer.fromJson<String>(json['notes']),
@@ -580,7 +549,6 @@ class Session extends DataClass implements Insertable<Session> {
       'channelLabels': serializer.toJson<String>(channelLabels),
       'tares': serializer.toJson<String>(tares),
       'peakForceRaw': serializer.toJson<double>(peakForceRaw),
-      'peakForceChannel': serializer.toJson<int>(peakForceChannel),
       'calibrationSlope': serializer.toJson<double>(calibrationSlope),
       'calibrationOffset': serializer.toJson<int>(calibrationOffset),
       'notes': serializer.toJson<String>(notes),
@@ -601,7 +569,6 @@ class Session extends DataClass implements Insertable<Session> {
     String? channelLabels,
     String? tares,
     double? peakForceRaw,
-    int? peakForceChannel,
     double? calibrationSlope,
     int? calibrationOffset,
     String? notes,
@@ -619,7 +586,6 @@ class Session extends DataClass implements Insertable<Session> {
     channelLabels: channelLabels ?? this.channelLabels,
     tares: tares ?? this.tares,
     peakForceRaw: peakForceRaw ?? this.peakForceRaw,
-    peakForceChannel: peakForceChannel ?? this.peakForceChannel,
     calibrationSlope: calibrationSlope ?? this.calibrationSlope,
     calibrationOffset: calibrationOffset ?? this.calibrationOffset,
     notes: notes ?? this.notes,
@@ -649,9 +615,6 @@ class Session extends DataClass implements Insertable<Session> {
       peakForceRaw: data.peakForceRaw.present
           ? data.peakForceRaw.value
           : this.peakForceRaw,
-      peakForceChannel: data.peakForceChannel.present
-          ? data.peakForceChannel.value
-          : this.peakForceChannel,
       calibrationSlope: data.calibrationSlope.present
           ? data.calibrationSlope.value
           : this.calibrationSlope,
@@ -684,7 +647,6 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('channelLabels: $channelLabels, ')
           ..write('tares: $tares, ')
           ..write('peakForceRaw: $peakForceRaw, ')
-          ..write('peakForceChannel: $peakForceChannel, ')
           ..write('calibrationSlope: $calibrationSlope, ')
           ..write('calibrationOffset: $calibrationOffset, ')
           ..write('notes: $notes, ')
@@ -707,7 +669,6 @@ class Session extends DataClass implements Insertable<Session> {
     channelLabels,
     tares,
     peakForceRaw,
-    peakForceChannel,
     calibrationSlope,
     calibrationOffset,
     notes,
@@ -729,7 +690,6 @@ class Session extends DataClass implements Insertable<Session> {
           other.channelLabels == this.channelLabels &&
           other.tares == this.tares &&
           other.peakForceRaw == this.peakForceRaw &&
-          other.peakForceChannel == this.peakForceChannel &&
           other.calibrationSlope == this.calibrationSlope &&
           other.calibrationOffset == this.calibrationOffset &&
           other.notes == this.notes &&
@@ -749,7 +709,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<String> channelLabels;
   final Value<String> tares;
   final Value<double> peakForceRaw;
-  final Value<int> peakForceChannel;
   final Value<double> calibrationSlope;
   final Value<int> calibrationOffset;
   final Value<String> notes;
@@ -767,7 +726,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.channelLabels = const Value.absent(),
     this.tares = const Value.absent(),
     this.peakForceRaw = const Value.absent(),
-    this.peakForceChannel = const Value.absent(),
     this.calibrationSlope = const Value.absent(),
     this.calibrationOffset = const Value.absent(),
     this.notes = const Value.absent(),
@@ -786,7 +744,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.channelLabels = const Value.absent(),
     this.tares = const Value.absent(),
     this.peakForceRaw = const Value.absent(),
-    this.peakForceChannel = const Value.absent(),
     this.calibrationSlope = const Value.absent(),
     this.calibrationOffset = const Value.absent(),
     this.notes = const Value.absent(),
@@ -805,7 +762,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<String>? channelLabels,
     Expression<String>? tares,
     Expression<double>? peakForceRaw,
-    Expression<int>? peakForceChannel,
     Expression<double>? calibrationSlope,
     Expression<int>? calibrationOffset,
     Expression<String>? notes,
@@ -824,7 +780,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (channelLabels != null) 'channel_labels': channelLabels,
       if (tares != null) 'tares': tares,
       if (peakForceRaw != null) 'peak_force_raw': peakForceRaw,
-      if (peakForceChannel != null) 'peak_force_channel': peakForceChannel,
       if (calibrationSlope != null) 'calibration_slope': calibrationSlope,
       if (calibrationOffset != null) 'calibration_offset': calibrationOffset,
       if (notes != null) 'notes': notes,
@@ -845,7 +800,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<String>? channelLabels,
     Value<String>? tares,
     Value<double>? peakForceRaw,
-    Value<int>? peakForceChannel,
     Value<double>? calibrationSlope,
     Value<int>? calibrationOffset,
     Value<String>? notes,
@@ -864,7 +818,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       channelLabels: channelLabels ?? this.channelLabels,
       tares: tares ?? this.tares,
       peakForceRaw: peakForceRaw ?? this.peakForceRaw,
-      peakForceChannel: peakForceChannel ?? this.peakForceChannel,
       calibrationSlope: calibrationSlope ?? this.calibrationSlope,
       calibrationOffset: calibrationOffset ?? this.calibrationOffset,
       notes: notes ?? this.notes,
@@ -905,9 +858,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     if (peakForceRaw.present) {
       map['peak_force_raw'] = Variable<double>(peakForceRaw.value);
     }
-    if (peakForceChannel.present) {
-      map['peak_force_channel'] = Variable<int>(peakForceChannel.value);
-    }
     if (calibrationSlope.present) {
       map['calibration_slope'] = Variable<double>(calibrationSlope.value);
     }
@@ -944,7 +894,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('channelLabels: $channelLabels, ')
           ..write('tares: $tares, ')
           ..write('peakForceRaw: $peakForceRaw, ')
-          ..write('peakForceChannel: $peakForceChannel, ')
           ..write('calibrationSlope: $calibrationSlope, ')
           ..write('calibrationOffset: $calibrationOffset, ')
           ..write('notes: $notes, ')
@@ -1247,7 +1196,6 @@ typedef $$SessionsTableCreateCompanionBuilder =
       Value<String> channelLabels,
       Value<String> tares,
       Value<double> peakForceRaw,
-      Value<int> peakForceChannel,
       Value<double> calibrationSlope,
       Value<int> calibrationOffset,
       Value<String> notes,
@@ -1267,7 +1215,6 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<String> channelLabels,
       Value<String> tares,
       Value<double> peakForceRaw,
-      Value<int> peakForceChannel,
       Value<double> calibrationSlope,
       Value<int> calibrationOffset,
       Value<String> notes,
@@ -1328,11 +1275,6 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<double> get peakForceRaw => $composableBuilder(
     column: $table.peakForceRaw,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get peakForceChannel => $composableBuilder(
-    column: $table.peakForceChannel,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1426,11 +1368,6 @@ class $$SessionsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<int> get peakForceChannel => $composableBuilder(
-    column: $table.peakForceChannel,
-    builder: (column) => ColumnOrderings(column),
-  );
-
   ColumnOrderings<double> get calibrationSlope => $composableBuilder(
     column: $table.calibrationSlope,
     builder: (column) => ColumnOrderings(column),
@@ -1513,11 +1450,6 @@ class $$SessionsTableAnnotationComposer
     builder: (column) => column,
   );
 
-  GeneratedColumn<int> get peakForceChannel => $composableBuilder(
-    column: $table.peakForceChannel,
-    builder: (column) => column,
-  );
-
   GeneratedColumn<double> get calibrationSlope => $composableBuilder(
     column: $table.calibrationSlope,
     builder: (column) => column,
@@ -1587,7 +1519,6 @@ class $$SessionsTableTableManager
                 Value<String> channelLabels = const Value.absent(),
                 Value<String> tares = const Value.absent(),
                 Value<double> peakForceRaw = const Value.absent(),
-                Value<int> peakForceChannel = const Value.absent(),
                 Value<double> calibrationSlope = const Value.absent(),
                 Value<int> calibrationOffset = const Value.absent(),
                 Value<String> notes = const Value.absent(),
@@ -1605,7 +1536,6 @@ class $$SessionsTableTableManager
                 channelLabels: channelLabels,
                 tares: tares,
                 peakForceRaw: peakForceRaw,
-                peakForceChannel: peakForceChannel,
                 calibrationSlope: calibrationSlope,
                 calibrationOffset: calibrationOffset,
                 notes: notes,
@@ -1625,7 +1555,6 @@ class $$SessionsTableTableManager
                 Value<String> channelLabels = const Value.absent(),
                 Value<String> tares = const Value.absent(),
                 Value<double> peakForceRaw = const Value.absent(),
-                Value<int> peakForceChannel = const Value.absent(),
                 Value<double> calibrationSlope = const Value.absent(),
                 Value<int> calibrationOffset = const Value.absent(),
                 Value<String> notes = const Value.absent(),
@@ -1643,7 +1572,6 @@ class $$SessionsTableTableManager
                 channelLabels: channelLabels,
                 tares: tares,
                 peakForceRaw: peakForceRaw,
-                peakForceChannel: peakForceChannel,
                 calibrationSlope: calibrationSlope,
                 calibrationOffset: calibrationOffset,
                 notes: notes,

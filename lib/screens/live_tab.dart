@@ -84,9 +84,9 @@ class _LiveTabState extends State<LiveTab> {
   _LiveDataSource? _dataSource;
   DataHub? _hub;
 
-  /// Last seen hub sample count; a decrease means the hub was cleared for a
-  /// new device stream (see [RecordingController]).
-  int _lastTotalSamples = 0;
+  /// Last seen hub generation; a change means the hub was cleared for a new
+  /// device stream (see [RecordingController]).
+  int _lastGeneration = 0;
 
   @override
   void didChangeDependencies() {
@@ -98,14 +98,14 @@ class _LiveTabState extends State<LiveTab> {
     if (_hub != hub) {
       _hub?.removeListener(_onHubChanged);
       _hub = hub;
-      _lastTotalSamples = hub.totalSamples;
+      _lastGeneration = hub.generation;
       hub.addListener(_onHubChanged);
       _dataSource?.dispose();
       _dataSource = _LiveDataSource(hub);
     }
   }
 
-  /// A hub reset (its sample count only ever increases otherwise) means a new
+  /// A hub reset (its generation bumped by [DataHub.clear]) means a new
   /// device stream just cleared the previous trace: drop any stale pan/zoom
   /// window and follow the fresh live edge. Without this, a user-panned
   /// (non-live) window survives the disconnect and
@@ -113,11 +113,10 @@ class _LiveTabState extends State<LiveTab> {
   /// now-empty buffer (inverted clamp limits -> throw).
   void _onHubChanged() {
     final hub = _hub!;
-    final total = hub.totalSamples;
-    if (total < _lastTotalSamples) {
-      _graphCtrl.goLive(totalSamples: total, oldestSample: 0);
+    if (hub.generation != _lastGeneration) {
+      _lastGeneration = hub.generation;
+      _graphCtrl.goLive(totalSamples: hub.totalSamples, oldestSample: 0);
     }
-    _lastTotalSamples = total;
   }
 
   @override

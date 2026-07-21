@@ -14,7 +14,6 @@ class MockBlePlatform extends UniversalBlePlatform {
   static const hwDelay = Duration(milliseconds: 200);
 
   MockBlePlatform._() {
-    _setupListeners();
     // Always have a synthetic feed available synchronously so [connect] never
     // blocks on file I/O (which would stall under a fake-async test clock).
     _mockData
@@ -248,10 +247,6 @@ class MockBlePlatform extends UniversalBlePlatform {
   @override
   Future<List<BleDevice>> getSystemDevices(List<String>? withServices) async {
     return ([]);
-  }
-
-  void _setupListeners() {
-    //onValueChange = (String deviceId, String characteristicId, Uint8List value) {};
   }
 
   /// Pack 4 channel values (24-bit signed) into the 12-byte wire sample.

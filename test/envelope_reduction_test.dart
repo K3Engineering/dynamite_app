@@ -178,4 +178,63 @@ void main() {
       bruteAndFold(all, 130, 134);
     });
   });
+
+  group('windowedExtremes', () {
+    BucketAccumulator ingest(List<int> all) {
+      final acc = BucketAccumulator(bucketSize: bs, numBuckets: numBuckets);
+      for (int i = 0; i < all.length; i++) {
+        acc.add(i, all[i]);
+      }
+      return acc;
+    }
+
+    test('matches brute-force min/max over random windows', () {
+      final all = randomData(134, 11);
+      final acc = ingest(all);
+      final rng = math.Random(12);
+      for (int i = 0; i < 200; i++) {
+        final start = 54 + rng.nextInt(70);
+        final end = math.min(start + 1 + rng.nextInt(134 - start), 134);
+        final ext = windowedExtremes(
+          acc.series,
+          start,
+          end,
+          (j) => all[j].toDouble(),
+        );
+        final window = all.sublist(start, end);
+        expect(ext, isNotNull);
+        expect(
+          ext!.$1,
+          window.reduce(math.min).toDouble(),
+          reason: '[$start, $end) min',
+        );
+        expect(
+          ext.$2,
+          window.reduce(math.max).toDouble(),
+          reason: '[$start, $end) max',
+        );
+      }
+    });
+
+    test('NaN samples are skipped on the scanned portions', () {
+      final all = randomData(40, 13);
+      final acc = ingest(all);
+      // Small window (exact-scan fallback) with one NaN injected.
+      final ext = windowedExtremes(
+        acc.series,
+        5,
+        12,
+        (j) => j == 7 ? double.nan : all[j].toDouble(),
+      );
+      final expected = [for (int j = 5; j < 12; j++) if (j != 7) all[j]];
+      expect(ext, isNotNull);
+      expect(ext!.$1, expected.reduce(math.min).toDouble());
+      expect(ext.$2, expected.reduce(math.max).toDouble());
+    });
+
+    test('returns null when no sample in the window yields a value', () {
+      final acc = ingest(randomData(30, 14));
+      expect(windowedExtremes(acc.series, 5, 8, (_) => double.nan), isNull);
+    });
+  });
 }

@@ -42,6 +42,24 @@ class _DevicesTabState extends State<DevicesTab> {
     });
   }
 
+  /// Run a connect attempt, surfacing a failure as a snackbar naming
+  /// [deviceName]. Connect buttons are already disabled while a link is
+  /// busy, so this only handles the rejected attempt itself.
+  Future<void> _connectWithFeedback(
+    Future<void> Function() connect,
+    String deviceName,
+  ) async {
+    try {
+      await connect();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to connect to $deviceName.')),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final bt = context.watch<BleLinkManager>();
@@ -182,21 +200,10 @@ class _DevicesTabState extends State<DevicesTab> {
                   // second Connect click right after Disconnect.
                   onPressed: bt.linkBusy
                       ? null
-                      : () async {
-                          try {
-                            await bt.connectToDevice(device.deviceId);
-                          } catch (e) {
-                            if (context.mounted) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Failed to connect to ${device.name ?? 'device'}.',
-                                  ),
-                                ),
-                              );
-                            }
-                          }
-                        },
+                      : () => _connectWithFeedback(
+                          () => bt.connectToDevice(device.deviceId),
+                          device.name ?? 'device',
+                        ),
                   child: Text(
                     device.deviceId == coolingDownDeviceId
                         ? 'Please wait…'
@@ -220,21 +227,10 @@ class _DevicesTabState extends State<DevicesTab> {
               trailing: FilledButton(
                 onPressed: bt.linkBusy
                     ? null
-                    : () async {
-                        try {
-                          await bt.connectToDemoDevice();
-                        } catch (e) {
-                          if (context.mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Failed to connect to Demo Device.',
-                                ),
-                              ),
-                            );
-                          }
-                        }
-                      },
+                    : () => _connectWithFeedback(
+                        bt.connectToDemoDevice,
+                        'Demo Device',
+                      ),
                 child: const Text('Connect'),
               ),
             ),

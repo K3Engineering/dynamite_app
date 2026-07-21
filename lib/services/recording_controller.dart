@@ -174,7 +174,7 @@ class RecordingController extends ChangeNotifier {
   /// finalization re-detects the latched error and surfaces it).
   void _onSamplesAppended(int startIdx, int count) {
     final writer = _sessionWriter;
-    if (!_sessionInProgress || writer == null || count <= 0) {
+    if (!_sessionInProgress || writer == null) {
       return;
     }
     if (writer.hasError) {

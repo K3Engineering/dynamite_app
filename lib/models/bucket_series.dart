@@ -325,3 +325,48 @@ void foldBucketRange(
   scanExact(start, bFirst * bs);
   scanExact(bLastEx * bs, end);
 }
+
+/// Exact (min, max) of a series over the sample window `[start, end)`, or
+/// null when the window yields no value: buckets fully inside the window
+/// contribute their precomputed aggregates (via [foldBucketRange]); the
+/// partial head/tail portions are scanned per-sample through [sampleAt]
+/// (NaN = skip, e.g. gap-edge samples of a first-difference series).
+///
+/// [sampleAt] must evaluate the SAME series [buckets] aggregates and in the
+/// same (raw) space, so bucket bounds and scanned samples fold together.
+/// Affine display maps (tare offset, unit scale) are applied by the caller to
+/// the two returned bounds only.
+(double, double)? windowedExtremes(
+  BucketSeries buckets,
+  int start,
+  int end,
+  double Function(int sampleIndex) sampleAt,
+) {
+  double mn = double.infinity;
+  double mx = double.negativeInfinity;
+  bool found = false;
+
+  void fold(double v) {
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+    found = true;
+  }
+
+  foldBucketRange(
+    buckets,
+    start,
+    end,
+    foldBucket: (bMin, bMax) {
+      fold(bMin.toDouble());
+      fold(bMax.toDouble());
+    },
+    scanExact: (from, to) {
+      for (int i = from; i < to; i++) {
+        final v = sampleAt(i);
+        if (v.isNaN) continue;
+        fold(v);
+      }
+    },
+  );
+  return found ? (mn, mx) : null;
+}

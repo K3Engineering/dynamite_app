@@ -16,7 +16,6 @@ class SettingsTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
     final bt = context.watch<BleLinkManager>();
-    const bool normalDoubleCmp = identical(double.nan, double.nan);
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
 
     return SafeArea(
@@ -129,16 +128,10 @@ class SettingsTab extends StatelessWidget {
                   targetInfo += ' (${dart2wasm ? "WASM" : "JS"})';
                 }
 
-                String jsCmpWarning = '';
-                if (!normalDoubleCmp && kIsWeb) {
-                  jsCmpWarning = '\nWarning: JS style cmp(double) active';
-                }
-
                 return Text(
                   'Dynamite App v$version\n'
                   'Build Mode: $buildMode\n'
-                  '$targetInfo'
-                  '$jsCmpWarning',
+                  '$targetInfo',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
