@@ -63,8 +63,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(1000),
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _channelCountMeta = const VerificationMeta(
     'channelCount',
@@ -75,8 +74,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(2),
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _channelLabelsMeta = const VerificationMeta(
     'channelLabels',
@@ -87,8 +85,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    defaultValue: const Constant('["Load Cell 1","Load Cell 2"]'),
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _taresMeta = const VerificationMeta('tares');
   @override
@@ -97,8 +94,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    defaultValue: const Constant('[]'),
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _peakForceRawMeta = const VerificationMeta(
     'peakForceRaw',
@@ -121,8 +117,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     aliasedName,
     false,
     type: DriftSqlType.double,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(0.0001117587),
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _calibrationOffsetMeta = const VerificationMeta(
     'calibrationOffset',
@@ -133,8 +128,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     aliasedName,
     false,
     type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(0),
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _notesMeta = const VerificationMeta('notes');
   @override
@@ -192,8 +186,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     aliasedName,
     false,
     type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(kAllChannelsVisibleJson),
+    requiredDuringInsert: true,
   );
   @override
   List<GeneratedColumn> get $columns => [
@@ -254,6 +247,8 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         _sampleRateMeta,
         sampleRate.isAcceptableOrUnknown(data['sample_rate']!, _sampleRateMeta),
       );
+    } else if (isInserting) {
+      context.missing(_sampleRateMeta);
     }
     if (data.containsKey('channel_count')) {
       context.handle(
@@ -263,6 +258,8 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
           _channelCountMeta,
         ),
       );
+    } else if (isInserting) {
+      context.missing(_channelCountMeta);
     }
     if (data.containsKey('channel_labels')) {
       context.handle(
@@ -272,12 +269,16 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
           _channelLabelsMeta,
         ),
       );
+    } else if (isInserting) {
+      context.missing(_channelLabelsMeta);
     }
     if (data.containsKey('tares')) {
       context.handle(
         _taresMeta,
         tares.isAcceptableOrUnknown(data['tares']!, _taresMeta),
       );
+    } else if (isInserting) {
+      context.missing(_taresMeta);
     }
     if (data.containsKey('peak_force_raw')) {
       context.handle(
@@ -296,6 +297,8 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
           _calibrationSlopeMeta,
         ),
       );
+    } else if (isInserting) {
+      context.missing(_calibrationSlopeMeta);
     }
     if (data.containsKey('calibration_offset')) {
       context.handle(
@@ -305,6 +308,8 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
           _calibrationOffsetMeta,
         ),
       );
+    } else if (isInserting) {
+      context.missing(_calibrationOffsetMeta);
     }
     if (data.containsKey('notes')) {
       context.handle(
@@ -344,6 +349,8 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
           _visibleChannelsMeta,
         ),
       );
+    } else if (isInserting) {
+      context.missing(_visibleChannelsMeta);
     }
     return context;
   }
@@ -739,19 +746,26 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.name = const Value.absent(),
     required DateTime createdAt,
     this.durationMs = const Value.absent(),
-    this.sampleRate = const Value.absent(),
-    this.channelCount = const Value.absent(),
-    this.channelLabels = const Value.absent(),
-    this.tares = const Value.absent(),
+    required int sampleRate,
+    required int channelCount,
+    required String channelLabels,
+    required String tares,
     this.peakForceRaw = const Value.absent(),
-    this.calibrationSlope = const Value.absent(),
-    this.calibrationOffset = const Value.absent(),
+    required double calibrationSlope,
+    required int calibrationOffset,
     this.notes = const Value.absent(),
     this.sampleCount = const Value.absent(),
     this.isCompleted = const Value.absent(),
     this.gaps = const Value.absent(),
-    this.visibleChannels = const Value.absent(),
-  }) : createdAt = Value(createdAt);
+    required String visibleChannels,
+  }) : createdAt = Value(createdAt),
+       sampleRate = Value(sampleRate),
+       channelCount = Value(channelCount),
+       channelLabels = Value(channelLabels),
+       tares = Value(tares),
+       calibrationSlope = Value(calibrationSlope),
+       calibrationOffset = Value(calibrationOffset),
+       visibleChannels = Value(visibleChannels);
   static Insertable<Session> custom({
     Expression<int>? id,
     Expression<String>? name,
@@ -1191,18 +1205,18 @@ typedef $$SessionsTableCreateCompanionBuilder =
       Value<String> name,
       required DateTime createdAt,
       Value<int> durationMs,
-      Value<int> sampleRate,
-      Value<int> channelCount,
-      Value<String> channelLabels,
-      Value<String> tares,
+      required int sampleRate,
+      required int channelCount,
+      required String channelLabels,
+      required String tares,
       Value<double> peakForceRaw,
-      Value<double> calibrationSlope,
-      Value<int> calibrationOffset,
+      required double calibrationSlope,
+      required int calibrationOffset,
       Value<String> notes,
       Value<int> sampleCount,
       Value<bool> isCompleted,
       Value<String> gaps,
-      Value<String> visibleChannels,
+      required String visibleChannels,
     });
 typedef $$SessionsTableUpdateCompanionBuilder =
     SessionsCompanion Function({
@@ -1550,18 +1564,18 @@ class $$SessionsTableTableManager
                 Value<String> name = const Value.absent(),
                 required DateTime createdAt,
                 Value<int> durationMs = const Value.absent(),
-                Value<int> sampleRate = const Value.absent(),
-                Value<int> channelCount = const Value.absent(),
-                Value<String> channelLabels = const Value.absent(),
-                Value<String> tares = const Value.absent(),
+                required int sampleRate,
+                required int channelCount,
+                required String channelLabels,
+                required String tares,
                 Value<double> peakForceRaw = const Value.absent(),
-                Value<double> calibrationSlope = const Value.absent(),
-                Value<int> calibrationOffset = const Value.absent(),
+                required double calibrationSlope,
+                required int calibrationOffset,
                 Value<String> notes = const Value.absent(),
                 Value<int> sampleCount = const Value.absent(),
                 Value<bool> isCompleted = const Value.absent(),
                 Value<String> gaps = const Value.absent(),
-                Value<String> visibleChannels = const Value.absent(),
+                required String visibleChannels,
               }) => SessionsCompanion.insert(
                 id: id,
                 name: name,

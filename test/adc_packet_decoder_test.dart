@@ -122,21 +122,44 @@ void main() {
       expect(hub.gaps.contains(nwAdcNumSamples), isFalse);
     });
 
-    test('an empty packet is ignored', () {
+    test('an empty packet is ignored and flags a protocol error', () {
       decoder.onDataPacket(Uint8List(0));
       expect(hub.totalSamples, 0);
+      expect(hub.protocolErrorSeen, isTrue);
     });
 
-    test('a truncated packet is ignored instead of throwing', () {
-      // One byte short of a full packet: a firmware bug must not crash the
-      // app (the in-loop asserts are stripped in release builds).
-      final short = makePacket(0, (s, c) => 1);
-      decoder.onDataPacket(Uint8List.sublistView(short, 0, short.length - 1));
-      expect(hub.totalSamples, 0);
-      // A packet with trailing extra bytes still decodes its 20 samples.
-      final long = Uint8List(short.length + 3)..setAll(0, short);
-      decoder.onDataPacket(long);
-      expect(hub.totalSamples, nwAdcNumSamples);
+    test(
+      'a truncated packet is ignored, flagged, and never throws; extra '
+      'trailing bytes still decode',
+      () {
+        // One byte short of a full packet: a firmware bug must not crash the
+        // app (the in-loop asserts are stripped in release builds).
+        final short = makePacket(0, (s, c) => 1);
+        decoder.onDataPacket(Uint8List.sublistView(short, 0, short.length - 1));
+        expect(hub.totalSamples, 0);
+        expect(hub.protocolErrorSeen, isTrue);
+        // A second malformed packet keeps the latch set (the UI surfaces it).
+        decoder.onDataPacket(Uint8List(1));
+        expect(hub.protocolErrorSeen, isTrue);
+        // A packet with trailing extra bytes still decodes its 20 samples.
+        final long = Uint8List(short.length + 3)..setAll(0, short);
+        decoder.onDataPacket(long);
+        expect(hub.totalSamples, nwAdcNumSamples);
+        expect(hub.protocolErrorSeen, isTrue);
+      },
+    );
+
+    test('the first malformed packet notifies once; later ones do not', () {
+      // The malformed path never reaches commitBatch, so without its own
+      // notify a stream where EVERY packet is bad would never surface the
+      // warning. The latch must notify exactly once per stream (no storm).
+      var notifyCount = 0;
+      hub.addListener(() => notifyCount++);
+
+      decoder.onDataPacket(Uint8List(0));
+      expect(notifyCount, 1);
+      decoder.onDataPacket(Uint8List(1));
+      expect(notifyCount, 1);
     });
   });
 }

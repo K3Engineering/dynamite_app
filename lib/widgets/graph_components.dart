@@ -699,7 +699,12 @@ class GraphController extends ChangeNotifier {
         }
         return (totalSamples - s, totalSamples);
       case GraphWindow(:final start, :final end):
-        return (start, end.clamp(start + 1, totalSamples));
+        // Defensive: a parked window can outlive the data (e.g. the hub is
+        // cleared for a new stream while parked). Clamp the start first so
+        // the end clamp can never receive inverted limits and throw.
+        final s = math.min(math.max(start, 0), math.max(0, totalSamples - 1));
+        final e = math.min(math.max(end, s + 1), math.max(totalSamples, s + 1));
+        return (s, e);
     }
   }
 

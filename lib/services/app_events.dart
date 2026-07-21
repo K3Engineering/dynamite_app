@@ -26,6 +26,17 @@ class BleConnectionFailed extends AppEvent {
   final String deviceName;
 }
 
+/// The link dropped unexpectedly while it was up (setting up or streaming) —
+/// i.e. NOT a user-requested disconnect and not a post-connect setup failure
+/// (those surface as [BleConnectionFailed]). A recording in progress is
+/// finalized by `RecordingController` when this happens.
+class BleConnectionLost extends AppEvent {
+  const BleConnectionLost(this.deviceName);
+
+  /// The affected device's display name (or id).
+  final String deviceName;
+}
+
 /// A recording's storage writer latched a failure (e.g. disk full / web
 /// quota); the saved session may be truncated. Emitted from
 /// `RecordingController.stopSession` for both user-initiated and auto stops.

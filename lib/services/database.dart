@@ -4,26 +4,25 @@ import 'package:flutter/foundation.dart';
 
 part 'database.g.dart';
 
-/// JSON-encoded default for the session `visibleChannels` column: every
-/// channel shown. Kept as a literal because drift column defaults must be
-/// const — it must stay in sync with `nwNumAdcChan` (currently 4).
-const String kAllChannelsVisibleJson = '[true,true,true,true]';
-
 /// Table for recorded measurement sessions.
+///
+/// Columns whose value must be chosen deliberately at insert time (sample
+/// rate, channel layout, tares, calibration, visibility) carry NO default, so
+/// drift makes them compile-time required on insert — a stale fallback can
+/// never silently land in a row. Harmless display/aggregate defaults (`name`,
+/// `notes`, counters, flags) are kept.
 class Sessions extends Table {
   IntColumn get id => integer().autoIncrement()();
   TextColumn get name => text().withDefault(const Constant(''))();
   DateTimeColumn get createdAt => dateTime()();
   IntColumn get durationMs => integer().withDefault(const Constant(0))();
-  IntColumn get sampleRate => integer().withDefault(const Constant(1000))();
-  IntColumn get channelCount => integer().withDefault(const Constant(2))();
-  TextColumn get channelLabels =>
-      text().withDefault(const Constant('["Load Cell 1","Load Cell 2"]'))();
-  TextColumn get tares => text().withDefault(const Constant('[]'))();
+  IntColumn get sampleRate => integer()();
+  IntColumn get channelCount => integer()();
+  TextColumn get channelLabels => text()();
+  TextColumn get tares => text()();
   RealColumn get peakForceRaw => real().withDefault(const Constant(0.0))();
-  RealColumn get calibrationSlope =>
-      real().withDefault(const Constant(0.0001117587))();
-  IntColumn get calibrationOffset => integer().withDefault(const Constant(0))();
+  RealColumn get calibrationSlope => real()();
+  IntColumn get calibrationOffset => integer()();
   TextColumn get notes => text().withDefault(const Constant(''))();
   IntColumn get sampleCount => integer().withDefault(const Constant(0))();
   BoolColumn get isCompleted => boolean().withDefault(const Constant(true))();
@@ -35,8 +34,7 @@ class Sessions extends Table {
   /// Which channels are shown in the session detail view, as a JSON bool
   /// list. Initialized from the live view's channel selection at recording
   /// time; afterwards it is per-session and independent of the live view.
-  TextColumn get visibleChannels =>
-      text().withDefault(const Constant(kAllChannelsVisibleJson))();
+  TextColumn get visibleChannels => text()();
 }
 
 class SessionChunks extends Table {
@@ -79,7 +77,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -119,20 +117,20 @@ class AppDatabase extends _$AppDatabase {
     required String tares,
     required double calibrationSlope,
     required int calibrationOffset,
-    String visibleChannels = kAllChannelsVisibleJson,
+    required String visibleChannels,
   }) {
     return into(sessions).insert(
       SessionsCompanion.insert(
         name: Value(name),
         createdAt: DateTime.now(),
-        sampleRate: Value(sampleRate),
-        channelCount: Value(channelCount),
-        channelLabels: Value(channelLabels),
-        tares: Value(tares),
-        calibrationSlope: Value(calibrationSlope),
-        calibrationOffset: Value(calibrationOffset),
+        sampleRate: sampleRate,
+        channelCount: channelCount,
+        channelLabels: channelLabels,
+        tares: tares,
+        calibrationSlope: calibrationSlope,
+        calibrationOffset: calibrationOffset,
         isCompleted: const Value(false),
-        visibleChannels: Value(visibleChannels),
+        visibleChannels: visibleChannels,
       ),
     );
   }

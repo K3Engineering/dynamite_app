@@ -43,8 +43,10 @@ class _DevicesTabState extends State<DevicesTab> {
   }
 
   /// Run a connect attempt, surfacing a failure as a snackbar naming
-  /// [deviceName]. Connect buttons are already disabled while a link is
-  /// busy, so this only handles the rejected attempt itself.
+  /// [deviceName] with the underlying error detail (timeout vs GATT error vs
+  /// user-cancelled web picker are wildly different diagnoses). Connect
+  /// buttons are already disabled while a link is busy, so this only handles
+  /// the rejected attempt itself.
   Future<void> _connectWithFeedback(
     Future<void> Function() connect,
     String deviceName,
@@ -52,9 +54,10 @@ class _DevicesTabState extends State<DevicesTab> {
     try {
       await connect();
     } catch (e) {
+      debugPrint('Connect to $deviceName failed: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to connect to $deviceName.')),
+          SnackBar(content: Text('Failed to connect to $deviceName: $e')),
         );
       }
     }
@@ -97,6 +100,9 @@ class _DevicesTabState extends State<DevicesTab> {
                       ),
                     ),
                     const SizedBox(width: 8),
+                    // TODO(ux): see BleLinkManager._startScan — starting a
+                    // scan while streaming kills the active link (and any
+                    // in-progress recording). Decide disable-vs-confirm.
                     FilledButton.tonal(
                       onPressed: () async {
                         await bt.toggleScan();

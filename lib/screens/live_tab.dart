@@ -217,9 +217,16 @@ class _LiveTabState extends State<LiveTab> {
     return SafeArea(
       child: Column(
         children: [
-          LiveStatusBar(
-            isConnected: isConnected,
-            connectedDeviceName: link.connectedDeviceName,
+          // The bar shows the hub's protocol-error latch, which changes with
+          // packet traffic — listen to the hub (per-packet notify) here
+          // rather than rebuilding the whole tab.
+          ListenableBuilder(
+            listenable: hub,
+            builder: (context, _) => LiveStatusBar(
+              isConnected: isConnected,
+              connectedDeviceName: link.connectedDeviceName,
+              protocolErrorSeen: hub.protocolErrorSeen,
+            ),
           ),
           if (isConnected)
             LiveStats(
@@ -268,10 +275,16 @@ class LiveStatusBar extends StatelessWidget {
   final bool isConnected;
   final String connectedDeviceName;
 
+  /// Whether a malformed ADC packet was seen on this stream
+  /// ([DataHub.protocolErrorSeen]). Shows a persistent warning marker: bad
+  /// packets are dropped but never hidden from the user.
+  final bool protocolErrorSeen;
+
   const LiveStatusBar({
     super.key,
     required this.isConnected,
     required this.connectedDeviceName,
+    this.protocolErrorSeen = false,
   });
 
   @override
@@ -315,6 +328,19 @@ class LiveStatusBar extends StatelessWidget {
                 ),
               ),
             ),
+            if (isConnected && protocolErrorSeen)
+              Tooltip(
+                message: 'Malformed ADC packets received — '
+                    'firmware/protocol mismatch',
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Icon(
+                    Icons.warning_amber,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ),
             if (isConnected)
               Text(
                 '${DataHub.samplesPerSec} Hz',
