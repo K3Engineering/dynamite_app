@@ -5,7 +5,6 @@ import 'package:universal_ble/universal_ble.dart';
 
 import 'app_events.dart';
 import 'bt_device_config.dart';
-// ignore: unused_import
 import 'demo_signal_source.dart';
 import 'mockble.dart';
 
@@ -67,7 +66,6 @@ class DeviceLink {
   String deviceId;
   String name = '';
   BtLinkState state = BtLinkState.idle;
-  final List<BleService> services = [];
 
   /// Most recent live RSSI (dBm) for the connected device, polled while
   /// connected. Null until the first successful read (and after reset). This is
@@ -93,7 +91,6 @@ class DeviceLink {
     name = '';
     state = BtLinkState.idle;
     rssi = null;
-    services.clear();
   }
 
   bool get isDemoDevice => deviceId == 'demo_device';
@@ -107,7 +104,6 @@ class DeviceLink {
     this.name = name;
     state = BtLinkState.cooldown;
     rssi = null;
-    services.clear();
   }
 }
 
@@ -167,9 +163,6 @@ class BleLinkManager extends ChangeNotifier {
   final List<BleDevice> _devices = [];
   List<BleDevice> get devices => _devices;
 
-  /// Discovered services for the active link.
-  List<BleService> get services => _link.services;
-
   bool _isScanning = false;
   bool get isScanning => _isScanning;
 
@@ -182,16 +175,6 @@ class BleLinkManager extends ChangeNotifier {
   /// [DeviceLink] directly instead of via these singular getters.
   final DeviceLink _link = DeviceLink();
   DeviceLink get link => _link;
-
-  /// True between a connect request and the connection result (success or
-  /// failure). Used purely for UI status; never assume the device is usable
-  /// while this is true.
-  bool get isConnecting => _link.isConnecting;
-
-  /// True while the GATT link is up but post-connect setup (service discovery +
-  /// ADC subscription) hasn't finished. The device is NOT usable yet — the UI
-  /// shows "Setting up…". Distinct from [isStreaming].
-  bool get isSettingUp => _link.state == BtLinkState.connected;
 
   /// The single "usable / connected" truth: link up AND the ADC feed is
   /// streaming. Every screen keys its connected UI off this.
@@ -348,7 +331,6 @@ class BleLinkManager extends ChangeNotifier {
     }
     await disconnectSelectedDevice();
     _devices.clear();
-    _link.services.clear();
     _isScanning = true;
     await UniversalBle.startScan(
       scanFilter: ScanFilter(withServices: [btServiceId]),
@@ -528,8 +510,7 @@ class BleLinkManager extends ChangeNotifier {
         }
         final discovered = await UniversalBle.discoverServices(deviceId);
         if (_setupSuperseded(gen, deviceId)) return;
-        _link.services.addAll(discovered);
-        for (final srv in _link.services) {
+        for (final srv in discovered) {
           if (srv.uuid == btServiceId) {
             await subscribeToAdcFeed(srv);
             if (_setupSuperseded(gen, deviceId)) return;

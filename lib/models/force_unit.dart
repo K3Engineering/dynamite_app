@@ -1,16 +1,15 @@
 /// Supported force and electrical display units.
 enum ForceUnit {
-  kN('kN', 'Kilonewtons', true),
-  lbf('lbf', 'Pounds-force', true),
-  kgf('kgf', 'Kilogram-force', true),
-  n('N', 'Newtons', true),
-  mV('mV', 'Raw Voltage', false),
-  raw('Raw', 'ADC Counts', false);
+  kN('kN', 'Kilonewtons'),
+  lbf('lbf', 'Pounds-force'),
+  kgf('kgf', 'Kilogram-force'),
+  n('N', 'Newtons'),
+  mV('mV', 'Raw Voltage'),
+  raw('Raw', 'ADC Counts');
 
-  const ForceUnit(this.symbol, this.label, this.isForce);
+  const ForceUnit(this.symbol, this.label);
   final String symbol;
   final String label;
-  final bool isForce;
 
   /// Hardware constant for raw to mV conversion (1.2V Vref, 101x Gain, 24-bit bipolar ADC)
   static const double rawToMvMultiplier = (1.2 / 8388608.0 / 101.0) * 1000.0;
@@ -23,9 +22,6 @@ enum ForceUnit {
     ForceUnit.mV => 1.0, // Fallback, not typically used
     ForceUnit.raw => 1.0, // Fallback, not typically used
   };
-
-  /// Convert a value in kgf (the device's native calibrated unit) to this unit.
-  double fromKgf(double kgf) => kgf * _kgfMultiplier;
 
   /// Convert a raw ADC value to this unit, given the kgf/raw slope
   double fromRaw(double rawTared, double calibrationSlope) =>
@@ -42,28 +38,26 @@ enum ForceUnit {
     return calibrationSlope * _kgfMultiplier;
   }
 
-  /// Format a [value] (already in this unit) with an explicit sign and a
-  /// trailing [suffix] (e.g. the unit symbol, optionally with "/s").
-  String _formatValue(double value, String suffix) {
+  /// Format a [value] (already in this unit) with an explicit sign, and a
+  /// trailing [suffix] when given (e.g. the unit symbol). When [padded], the
+  /// number is left-padded for column alignment in the stats table.
+  String _formatValue(double value, String suffix, {bool padded = true}) {
     final sign = value < 0 ? '-' : '+';
     final decimals = this == ForceUnit.mV ? 4 : (this == ForceUnit.raw ? 0 : 3);
-    final padding = this == ForceUnit.mV ? 8 : (this == ForceUnit.raw ? 6 : 7);
-    final numStr = value.abs().toStringAsFixed(decimals).padLeft(padding);
-    return '$sign$numStr $suffix';
+    var numStr = value.abs().toStringAsFixed(decimals);
+    if (padded) {
+      final padding = this == ForceUnit.mV
+          ? 8
+          : (this == ForceUnit.raw ? 6 : 7);
+      numStr = numStr.padLeft(padding);
+    }
+    return suffix.isEmpty ? '$sign$numStr' : '$sign$numStr $suffix';
   }
 
   /// Format a [value] (already in this unit) with an explicit sign, without
   /// the unit suffix, and without extra padding. Ideal for constrained layouts.
-  String formatValueOnly(double value) {
-    final sign = value < 0 ? '-' : '+';
-    final decimals = this == ForceUnit.mV ? 4 : (this == ForceUnit.raw ? 0 : 3);
-    final numStr = value.abs().toStringAsFixed(decimals);
-    return '$sign$numStr';
-  }
+  String formatValueOnly(double value) => _formatValue(value, '', padded: false);
 
   /// Format a value (already in this unit) for display.
   String format(double value) => _formatValue(value, symbol);
-
-  /// Format a rate of change (derivative) in this unit for display.
-  String formatRate(double value) => _formatValue(value, '$symbol/s');
 }

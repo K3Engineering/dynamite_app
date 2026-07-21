@@ -77,6 +77,12 @@ class DataHub extends ChangeNotifier {
   int totalSamples = 0;
   DeviceCalibration deviceCalibration = DeviceCalibration();
 
+  /// Monotonic counter bumped by [clear]. Lets observers distinguish "same
+  /// stream, more data" from "a new stream reset the hub" explicitly, instead
+  /// of inferring the reset from [totalSamples] decreasing.
+  int _generation = 0;
+  int get generation => _generation;
+
   /// Sample ranges lost to dropped BLE packets (absolute indices). The ring
   /// buffer holds the held previous value across these ranges.
   final GapList gaps = GapList();
@@ -111,6 +117,7 @@ class DataHub extends ChangeNotifier {
   void clear() {
     _tareCount = 0;
     totalSamples = 0;
+    _generation++;
     gaps.clear();
     for (int i = 0; i < numAdcChannels; ++i) {
       rawMax[i] = _noMaxYet;
@@ -209,7 +216,7 @@ class DataHub extends ChangeNotifier {
   /// a gap this returns the held (last real) value; check [liveEdgeIsGap] to
   /// mark it stale in the UI.
   double currentForce(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels) return 0;
+    assert(adcChannel >= 0 && adcChannel < numAdcChannels);
     final rawTared = _currentRaw[adcChannel] - tare[adcChannel];
     return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
@@ -217,9 +224,8 @@ class DataHub extends ChangeNotifier {
   /// Get peak force for a given ADC channel in the specified unit. Returns 0
   /// before the first sample arrives ([rawMax] still holds its sentinel).
   double peakForce(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels || totalSamples == 0) {
-      return 0;
-    }
+    assert(adcChannel >= 0 && adcChannel < numAdcChannels);
+    if (totalSamples == 0) return 0;
     final rawTared = rawMax[adcChannel] - tare[adcChannel];
     return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
@@ -227,18 +233,16 @@ class DataHub extends ChangeNotifier {
   /// Get minimum (most negative) force for a given ADC channel in the
   /// specified unit. Returns 0 before the first sample arrives.
   double minForce(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels || totalSamples == 0) {
-      return 0;
-    }
+    assert(adcChannel >= 0 && adcChannel < numAdcChannels);
+    if (totalSamples == 0) return 0;
     final rawTared = rawMin[adcChannel] - tare[adcChannel];
     return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
   }
 
   /// Get the instantaneous derivative (first-difference) for a channel in unit/s.
   double currentDerivative(int adcChannel, ForceUnit unit) {
-    if (adcChannel < 0 || adcChannel >= numAdcChannels || totalSamples < 2) {
-      return 0;
-    }
+    assert(adcChannel >= 0 && adcChannel < numAdcChannels);
+    if (totalSamples < 2) return 0;
 
     // A held value on either side would fabricate a flat or spiking
     // derivative; report 0 across gap edges instead.

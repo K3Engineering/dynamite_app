@@ -27,7 +27,6 @@ class SessionStorage {
     required String name,
     required List<String> channelLabels,
     required List<bool> visibleChannels,
-    String notes = '',
   }) async {
     // Snapshot the tare once; the same values are persisted below and used by
     // the writer's peak scan, so stored peaks, stored tares and playback can
@@ -44,7 +43,6 @@ class SessionStorage {
       tares: jsonEncode(tare.toList()),
       calibrationSlope: dataHub.deviceCalibration.slope,
       calibrationOffset: dataHub.deviceCalibration.offset,
-      notes: notes,
       visibleChannels: jsonEncode(visibleChannels),
     );
 
@@ -68,7 +66,6 @@ class SessionStorage {
       // A session that captured no samples leaves peakRaw at -infinity; that
       // must not reach the DB (or the session list's peak display).
       peakForceRaw: writer.peakRaw.isFinite ? writer.peakRaw : 0.0,
-      peakForceChannel: writer.peakChannel,
       gaps: writer.gaps.toJson(),
     );
 
@@ -105,7 +102,6 @@ class SessionStorage {
         sampleCount: agg.samples,
         durationMs: (agg.samples * 1000) ~/ session.sampleRate,
         peakForceRaw: agg.peakRaw,
-        peakForceChannel: agg.peakChannel,
       );
     }
   }
@@ -207,7 +203,6 @@ class _ChunkAggregate {
   /// Callers persisting this must guard the no-samples case (see
   /// [SessionStorage.finalizeSession]).
   double peakRaw = double.negativeInfinity;
-  int peakChannel = 0;
 
   void scan(Uint8List bytes, Float64List tare) {
     final data = ByteData.sublistView(bytes);
@@ -220,7 +215,6 @@ class _ChunkAggregate {
         final val = raw - (ch < tare.length ? tare[ch] : 0);
         if (val > peakRaw) {
           peakRaw = val.toDouble();
-          peakChannel = ch;
         }
       }
     }
@@ -347,7 +341,6 @@ class LiveSessionWriter {
   int _chunkIndex = 0;
   int totalSamplesRecorded = 0;
   double peakRaw = 0.0;
-  int peakChannel = 0;
 
   /// Dropped-sample ranges accumulated across the recording, relative to the
   /// session's first sample. Persisted by [SessionStorage.finalizeSession].
@@ -437,7 +430,6 @@ class LiveSessionWriter {
       _agg.scan(bytes, tare);
       totalSamplesRecorded = _agg.samples;
       peakRaw = _agg.peakRaw;
-      peakChannel = _agg.peakChannel;
 
       _staging.add(bytes);
 
