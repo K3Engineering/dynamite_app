@@ -38,6 +38,7 @@ class ChannelStatsTable extends StatelessWidget {
     required this.onToggleChannel,
     required this.unit,
     required this.rows,
+    this.unitOverlay,
   });
 
   /// Display label per channel.
@@ -55,6 +56,10 @@ class ChannelStatsTable extends StatelessWidget {
 
   /// Stat rows below the channel header.
   final List<ChannelStatsRow> rows;
+
+  /// Override for the top-left unit caption. Defaults to `'In <unit symbol>'`;
+  /// derivative tables pass e.g. `'In kN/s'`.
+  final String? unitOverlay;
 
   @override
   Widget build(BuildContext context) {
@@ -175,7 +180,7 @@ class ChannelStatsTable extends StatelessWidget {
           Positioned(
             top: 13,
             left: 0,
-            child: Text('In ${unit.symbol}', style: headerStyle),
+            child: Text(unitOverlay ?? 'In ${unit.symbol}', style: headerStyle),
           ),
         ],
       ),
