@@ -6,6 +6,7 @@ import 'adc_protocol.dart';
 import '../models/bucket_series.dart';
 import '../models/force_unit.dart';
 import '../models/gap_list.dart';
+import '../models/graph_data_source.dart';
 
 /// Invoked by [DataHub.commitBatch] with the exact slice of samples appended
 /// by the decoder for one packet ([startIdx] is the logical index of the
@@ -23,7 +24,13 @@ typedef SamplesAppendedListener = void Function(int startIdx, int count);
 /// Dropped samples are tracked out-of-band in [gaps]; the ring buffer holds
 /// the previous sample's value across a gap, so every stored value is a real
 /// ADC reading and downstream consumers need no magic-value checks.
-class DataHub extends ChangeNotifier {
+///
+/// Implements [GraphDataSource] directly (no adapter): the graph components
+/// read the ring buffer, buckets and gaps through the interface, and repaint
+/// off this notifier. The [totalSamples] and [gaps] fields already satisfy
+/// their interface counterparts; the rest are thin getters over existing
+/// state.
+class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Number of ADC channels the device streams. This is also the number of
   /// lines stored and displayed: channel index == storage index == display index.
   static const int numAdcChannels = nwNumAdcChan;
@@ -74,6 +81,7 @@ class DataHub extends ChangeNotifier {
     growable: false,
   );
   int _tareCount = 0;
+  @override
   int totalSamples = 0;
   DeviceCalibration deviceCalibration = DeviceCalibration();
 
@@ -91,6 +99,7 @@ class DataHub extends ChangeNotifier {
 
   /// Sample ranges lost to dropped BLE packets (absolute indices). The ring
   /// buffer holds the held previous value across these ranges.
+  @override
   final GapList gaps = GapList();
 
   /// Observers notified by [commitBatch] with the exact slice of samples
@@ -226,6 +235,37 @@ class DataHub extends ChangeNotifier {
     deviceCalibration = calibration;
   }
 
+  // -- GraphDataSource --------------------------------------------------------
+
+  @override
+  int get bufferCapacity => maxDataSz;
+
+  @override
+  int get oldestSample =>
+      totalSamples > maxDataSz ? totalSamples - maxDataSz : 0;
+
+  @override
+  int get sampleRate => samplesPerSec;
+
+  @override
+  double get calibrationSlope => deviceCalibration.slope;
+
+  @override
+  Listenable get repaint => this;
+
+  @override
+  ChannelSeries channel(int channelIndex) => (
+    data: rawData[channelIndex],
+    min: rawMin[channelIndex].toDouble(),
+    max: rawMax[channelIndex].toDouble(),
+    tare: tare[channelIndex],
+    buckets: valueBuckets[channelIndex].series,
+  );
+
+  @override
+  BucketSeries? diffBucketsFor(int channelIndex) =>
+      diffBuckets[channelIndex].series;
+
   /// Whether the newest sample is a dropped one — i.e. the live readings the
   /// stats display are held values, not fresh data.
   bool get liveEdgeIsGap => gaps.contains(totalSamples - 1);
@@ -308,22 +348,35 @@ class DataHub extends ChangeNotifier {
   }
 }
 
+/// Calibration parameters of a load cell channel and the resulting
+/// raw-count -> kgf slope.
+///
+/// Signal chain (per-channel device parameters — becoming configurable via
+/// the device's calibration characteristic):
+///   [excitationV] excitation
+///   -> load cell ([sensitivityMvV] mV/V at [capacityKg] full scale, i.e.
+///      sensitivity x excitation mV output at full-scale load)
+///   -> 101x front-end gain
+///   -> 1.2V FSR 24-bit bipolar ADC (constants in force_unit.dart)
+///
+/// Today every field is a compile-time default; the decoder reads the
+/// calibration characteristic but parsing is a TODO.
 class DeviceCalibration {
   DeviceCalibration({
-    this.offset = 0,
     this.capacityKg = 200.0,
     this.sensitivityMvV = 2.0,
     this.excitationV = 4.53,
   });
 
-  final int offset;
   final double capacityKg;
   final double sensitivityMvV;
   final double excitationV;
 
-  /// Calculates kgf per raw count dynamically based on the parameters
+  /// kgf per raw count: the full-scale output ([sensitivityMvV] x
+  /// [excitationV] mV at [capacityKg]) mapped through the front-end's
+  /// mV-per-count.
   double get slope {
     final maxMv = sensitivityMvV * excitationV;
-    return (capacityKg * ForceUnit.rawToMvMultiplier) / maxMv;
+    return capacityKg * rawToMvMultiplier / maxMv;
   }
 }

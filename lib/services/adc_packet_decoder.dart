@@ -36,9 +36,7 @@ class AdcPacketDecoder {
   void onCalibrationPacket(Uint8List data) {
     // TODO: implement calibration parsing
     final calibration = DeviceCalibration();
-    debugPrint(
-      'Calibration ${calibration.slope}, offset ${calibration.offset}',
-    );
+    debugPrint('Calibration ${calibration.slope}');
     hub.updateCalibration(calibration);
   }
 

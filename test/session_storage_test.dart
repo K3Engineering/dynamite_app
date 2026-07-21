@@ -21,7 +21,6 @@ void main() {
       sampleRate: DataHub.samplesPerSec,
       sampleCount: values.length,
       calibrationSlope: 1.0,
-      calibrationOffset: 0,
       tares: List.filled(channels, 0.0),
     );
 

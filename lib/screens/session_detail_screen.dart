@@ -8,8 +8,6 @@ import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../models/app_settings.dart';
-import '../models/bucket_series.dart';
-import '../models/gap_list.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
 import '../utils/format.dart';
@@ -24,47 +22,6 @@ class SessionDetailScreen extends StatefulWidget {
 
   @override
   State<SessionDetailScreen> createState() => _SessionDetailScreenState();
-}
-
-/// Adapts static [SessionData] to the [GraphDataSource] interface. Session data
-/// never changes, so [repaint] is a never-firing listenable.
-class _SessionDataSource implements GraphDataSource {
-  final SessionData _data;
-  const _SessionDataSource(this._data);
-
-  @override
-  int get totalSamples => _data.sampleCount;
-
-  @override
-  int get bufferCapacity => _data.sampleCount;
-
-  @override
-  int get oldestSample => 0;
-
-  @override
-  int get sampleRate => _data.sampleRate;
-
-  @override
-  double get calibrationSlope => _data.calibrationSlope;
-
-  @override
-  Listenable get repaint => kNeverRepaints;
-
-  @override
-  ChannelSeries channel(int channelIndex) => (
-    data: _data.channels[channelIndex],
-    min: _data.mins[channelIndex],
-    max: _data.maxs[channelIndex],
-    tare: _data.tares[channelIndex],
-    buckets: _data.valueBuckets[channelIndex].series,
-  );
-
-  @override
-  BucketSeries? diffBuckets(int channelIndex) =>
-      _data.diffBuckets[channelIndex].series;
-
-  @override
-  GapList get gaps => _data.gaps;
 }
 
 class _SessionDetailScreenState extends State<SessionDetailScreen> {
@@ -205,7 +162,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             child: Padding(
               padding: const EdgeInsets.all(8.0),
               child: GraphWorkspace(
-                data: _SessionDataSource(data),
+                data: data,
                 ctrl: _graphCtrl,
                 settings: settings,
                 activeChannels: [
@@ -242,25 +199,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   value: '${_session.sampleRate} Hz',
                 ),
                 _StatRow(label: 'Samples', value: '${data.sampleCount}'),
-                for (int ch = 0; ch < data.channels.length; ch++) ...[
-                  const Divider(height: 16),
-                  Text(
-                    channelLabels[ch],
-                    style: TextStyle(
-                      fontWeight: FontWeight.w500,
-                      color: getChannelColor(ch),
-                    ),
-                  ),
-                  _StatRow(
-                    label: 'Peak',
-                    value: settings.displayUnit.format(
-                      settings.displayUnit.fromRaw(
-                        data.maxs[ch] - data.tares[ch],
-                        data.calibrationSlope,
-                      ),
-                    ),
-                  ),
-                ],
               ],
             ),
           ),

@@ -132,7 +132,6 @@ void main() {
         sampleRate: DataHub.samplesPerSec,
         sampleCount: n,
         calibrationSlope: 1.0,
-        calibrationOffset: 0,
         tares: List.filled(channels, 0.0),
         gaps: GapList.fromJson(hub.gaps.toJson()),
       );
@@ -200,7 +199,6 @@ void main() {
         sampleRate: DataHub.samplesPerSec,
         sampleCount: n,
         calibrationSlope: 1.0,
-        calibrationOffset: 0,
         tares: List.filled(channels, 0.0),
         gaps: GapList.fromJson(hub.gaps.toJson()),
       );
