@@ -109,6 +109,10 @@ class AppShellState extends State<AppShell> {
     _onTabActivated(index);
   }
 
+  /// Jump to the Devices tab — the single home of the Devices tab index for
+  /// every "connect a device" prompt across the app.
+  void goToDevices() => switchToTab(2);
+
   /// Tab-activation side effects, driven from here (the owner of the tab
   /// index) so the tabs themselves stay stateless:
   ///  * Devices tab visible: prompt to enable Bluetooth, and start RSSI

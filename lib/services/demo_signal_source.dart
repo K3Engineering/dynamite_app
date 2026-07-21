@@ -28,15 +28,7 @@ class DemoSignalSource {
 
     // 20 ms timer emitting 1 packet (20 samples @ 1 kHz).
     _timer = Timer.periodic(const Duration(milliseconds: 20), (_) {
-      final packet = Uint8List(
-        nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength,
-      );
-
-      // 16-bit header counter
-      packet[0] = _counter & 0xFF;
-      packet[1] = (_counter >> 8) & 0xFF;
-
-      int offset = nwHeaderSize;
+      final frames = <Uint8List>[];
 
       for (int i = 0; i < nwAdcNumSamples; i++) {
         // Time in seconds since start
@@ -92,19 +84,12 @@ class DemoSignalSource {
           8388607,
         );
 
-        final samples = [c1, c2, c3, c4];
-
-        for (int ch = 0; ch < nwNumAdcChan; ch++) {
-          final int val = samples[ch];
-          packet[offset++] = (val >> 0) & 0xFF;
-          packet[offset++] = (val >> 8) & 0xFF;
-          packet[offset++] = (val >> 16) & 0xFF;
-        }
+        frames.add(encodeAdcFrame([c1, c2, c3, c4]));
 
         _globalSampleIndex++;
       }
 
-      onData(packet);
+      onData(encodeAdcPacket(counter: _counter, frames: frames));
       // Bump counter by nwAdcNumSamples (20) to maintain continuity
       _counter = (_counter + nwAdcNumSamples) & 0xFFFF;
     });

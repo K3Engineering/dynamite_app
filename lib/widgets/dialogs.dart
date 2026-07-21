@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/database.dart';
+
 /// Shared dialog helpers: one text prompt and one delete confirmation, used by
 /// the live tab, the session list and the session detail screen.
 
@@ -73,4 +75,32 @@ Future<bool> showDeleteConfirm(
     ),
   );
   return confirmed ?? false;
+}
+
+/// The full rename-a-session flow: prompt pre-filled with the current name,
+/// then persist a non-empty result. No-op on cancel/empty input. Callers
+/// relying on reactive session streams need no further refresh.
+Future<void> renameSessionFlow(
+  BuildContext context, {
+  required int sessionId,
+  required String currentName,
+  String title = 'Rename session',
+}) async {
+  final newName = await showTextPrompt(
+    context,
+    title: title,
+    label: 'Session name',
+    initial: currentName,
+  );
+  if (newName != null && newName.isNotEmpty) {
+    await AppDatabase.instance.renameSession(sessionId, newName);
+  }
+}
+
+/// The full delete-a-session flow: confirm, then delete. Returns true when
+/// the session was deleted (so callers can e.g. pop a detail screen).
+Future<bool> deleteSessionFlow(BuildContext context, Session session) async {
+  if (!await showDeleteConfirm(context, what: session.name)) return false;
+  await AppDatabase.instance.deleteSession(session.id);
+  return true;
 }

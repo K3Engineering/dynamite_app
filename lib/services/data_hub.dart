@@ -37,7 +37,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   static const int _tareWindow = 1024;
   static const int samplesPerSec = 1000;
   static const int maxDataSz = samplesPerSec * 60 * 10;
-  static const int bucketSize = 100;
+  static const int bucketSize = kBucketSize;
   static const int numBuckets = maxDataSz ~/ bucketSize;
 
   /// "No sample seen yet" sentinels for [rawMax]/[rawMin]: int32 min/max, so
@@ -78,6 +78,18 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   final List<BucketAccumulator> diffBuckets = List.generate(
     DataHub.numAdcChannels,
     (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
+    growable: false,
+  );
+
+  /// The shared per-sample ingester feeding [valueBuckets]/[diffBuckets]
+  /// (see [ChannelIngest]).
+  late final List<ChannelIngest> _ingest = List.generate(
+    DataHub.numAdcChannels,
+    (i) => ChannelIngest(
+      valueBuckets: valueBuckets[i],
+      diffBuckets: diffBuckets[i],
+      gaps: gaps,
+    ),
     growable: false,
   );
   int _tareCount = 0;
@@ -162,8 +174,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
       tare[i] = 0;
       _runningTotal[i] = 0;
       _currentRaw[i] = 0;
-      valueBuckets[i].reset();
-      diffBuckets[i].reset();
+      _ingest[i].reset();
     }
     for (final listener in _clearedListeners) {
       listener();
@@ -354,17 +365,9 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   }
 
   void _addData(int val, int idx) {
-    // First difference vs the previous sample, ingested alongside the value;
-    // the 0-for-first-sample/gap/gap-exit rule lives in [ingestDiff]. The
-    // ring read is safe for totalSamples == 0 (Dart % is non-negative) and
-    // ignored by rule there.
-    final int diff = ingestDiff(
-      sampleIndex: totalSamples,
-      value: val,
-      prevValue: rawData[idx][(totalSamples - 1) % maxDataSz],
-      gaps: gaps,
-    );
-
+    // The previous-value read is safe for totalSamples == 0 (Dart % is
+    // non-negative) and ignored by the ingest diff rule there.
+    final int prev = rawData[idx][(totalSamples - 1) % maxDataSz];
     rawData[idx][totalSamples % maxDataSz] = val;
     if (val > rawMax[idx]) {
       rawMax[idx] = val;
@@ -372,9 +375,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     if (val < rawMin[idx]) {
       rawMin[idx] = val;
     }
-
-    valueBuckets[idx].add(totalSamples, val);
-    diffBuckets[idx].add(totalSamples, diff);
+    _ingest[idx].add(totalSamples, val, prev);
   }
 }
 

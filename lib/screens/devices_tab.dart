@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../services/ble_link_manager.dart';
 import '../widgets/bt_icon.dart';
+import '../widgets/empty_placeholder.dart';
 import '../widgets/section_header.dart';
 import '../widgets/status_colors.dart';
 
@@ -149,30 +150,12 @@ class DevicesTab extends StatelessWidget {
           const SizedBox(height: 8),
 
           if (bt.devices.isEmpty && !bt.isScanning)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 24),
-              child: Center(
-                child: Column(
-                  children: [
-                    Icon(
-                      Icons.bluetooth_searching,
-                      size: 64,
-                      color: Colors.grey.shade400,
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'No devices found',
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Tap Scan at the top to search for nearby devices',
-                      style: TextStyle(color: Colors.grey.shade500),
-                    ),
-                  ],
-                ),
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: EmptyPlaceholder(
+                icon: Icons.bluetooth_searching,
+                title: 'No devices found',
+                hint: 'Tap Scan at the top to search for nearby devices',
               ),
             ),
 

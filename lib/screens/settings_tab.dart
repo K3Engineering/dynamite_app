@@ -98,7 +98,7 @@ class SettingsTab extends StatelessWidget {
                     // Navigate to the Devices tab (same pattern as Live tab).
                     final shell = context
                         .findAncestorStateOfType<AppShellState>();
-                    shell?.switchToTab(2);
+                    shell?.goToDevices();
                   },
                   child: const Text('Connect'),
                 ),

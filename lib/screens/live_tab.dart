@@ -8,11 +8,11 @@ import '../models/app_settings.dart';
 
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
-import '../services/database.dart';
 import '../services/recording_controller.dart';
 import '../screens/app_shell.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 
 // ---------------------------------------------------------------------------
@@ -188,17 +188,13 @@ class _LiveTabState extends State<LiveTab> {
     }
   }
 
-  Future<void> _showRenameDialog(int sessionId, String currentName) async {
-    final newName = await showTextPrompt(
-      context,
-      title: 'Name this session',
-      label: 'Session name',
-      initial: currentName,
-    );
-    if (newName != null && newName.isNotEmpty) {
-      await AppDatabase.instance.renameSession(sessionId, newName);
-    }
-  }
+  Future<void> _showRenameDialog(int sessionId, String currentName) =>
+      renameSessionFlow(
+        context,
+        sessionId: sessionId,
+        currentName: currentName,
+        title: 'Name this session',
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -310,7 +306,7 @@ class LiveStatusBar extends StatelessWidget {
           : () {
               // Navigate to Devices tab
               final shell = context.findAncestorStateOfType<AppShellState>();
-              shell?.switchToTab(2);
+              shell?.goToDevices();
             },
       child: Container(
         width: double.infinity,
@@ -456,31 +452,15 @@ class DisconnectedPrompt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(
-            Icons.bluetooth_searching,
-            size: 64,
-            color: Theme.of(context).colorScheme.outline,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No device connected',
-            style: Theme.of(context).textTheme.titleMedium?.copyWith(
-              color: Theme.of(context).colorScheme.outline,
-            ),
-          ),
-          const SizedBox(height: 8),
-          FilledButton.tonal(
-            onPressed: () {
-              final shell = context.findAncestorStateOfType<AppShellState>();
-              shell?.switchToTab(2);
-            },
-            child: const Text('Connect a device'),
-          ),
-        ],
+    return EmptyPlaceholder(
+      icon: Icons.bluetooth_searching,
+      title: 'No device connected',
+      action: FilledButton.tonal(
+        onPressed: () {
+          final shell = context.findAncestorStateOfType<AppShellState>();
+          shell?.goToDevices();
+        },
+        child: const Text('Connect a device'),
       ),
     );
   }

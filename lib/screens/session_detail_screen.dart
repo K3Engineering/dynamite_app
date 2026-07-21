@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../models/app_settings.dart';
+import '../models/force_unit.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
 import '../utils/format.dart';
@@ -284,18 +285,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     }
   }
 
-  Future<void> _showRenameDialog(Session session) async {
-    final newName = await showTextPrompt(
-      context,
-      title: 'Rename session',
-      label: 'Session name',
-      initial: session.name,
-    );
-    if (newName != null && newName.isNotEmpty) {
-      // The row stream refreshes the UI.
-      await AppDatabase.instance.renameSession(session.id, newName);
-    }
-  }
+  Future<void> _showRenameDialog(Session session) => renameSessionFlow(
+    context,
+    sessionId: session.id,
+    currentName: session.name,
+  );
 
   Future<void> _showNotesDialog(Session session) async {
     final newNotes = await showTextPrompt(
@@ -311,18 +305,27 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   Future<void> _deleteAndPop(Session session) async {
-    if (await showDeleteConfirm(context, what: session.name)) {
-      await AppDatabase.instance.deleteSession(session.id);
+    if (await deleteSessionFlow(context, session)) {
       if (mounted) Navigator.of(context).pop();
     }
   }
 
   Future<void> _exportCsv(Session session, SessionData data) async {
-    // Build CSV string
+    final labels = parseJsonColumn(
+      session.channelLabels,
+      data.channels.length,
+      convert: (e) => e.toString(),
+      fallback: (i) => 'Ch ${i + 1}',
+    );
+
+    // TODO(perf): build this incrementally (chunked writes) — a long session
+    // produces a very large single string (see SessionStorage.loadSession's
+    // own note about whole-session materialization).
     final buf = StringBuffer();
     buf.write('time_s');
     for (int ch = 0; ch < data.channels.length; ch++) {
-      buf.write(',ch${ch + 1}_raw,ch${ch + 1}_kgf');
+      final label = _csvCell(labels[ch]);
+      buf.write(',${label}_raw,${label}_kgf');
     }
     buf.writeln();
 
@@ -337,7 +340,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       } else {
         for (int ch = 0; ch < data.channels.length; ch++) {
           final raw = data.channels[ch][s];
-          final kgf = (raw - data.tares[ch]) * data.calibrationSlope;
+          final kgf = ForceUnit.kgf.fromRaw(
+            raw - data.tares[ch],
+            data.calibrationSlope,
+          );
           buf.write(',$raw,${kgf.toStringAsFixed(6)}');
         }
       }
@@ -382,6 +388,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 }
 
 // -- Load state --
+
+/// Escape a CSV header cell that contains separators, quotes or newlines.
+String _csvCell(String s) =>
+    s.contains(RegExp(r'[,"\n]')) ? '"${s.replaceAll('"', '""')}"' : s;
 
 /// The CSV filename for a session: the session name with characters that are
 /// illegal in Windows/macOS/Android filenames replaced (auto session names

@@ -247,18 +247,14 @@ class MockBlePlatform extends UniversalBlePlatform {
         _generatedPacketCount++;
         if (drop) return;
 
-        final ev = Uint8List(
-          nwHeaderSize + nwAdcSampleLength * nwAdcNumSamples,
+        final ev = encodeAdcPacket(
+          counter: thisCounter,
+          frames: [
+            for (int i = 0; i < nwAdcNumSamples; ++i)
+              _mockData[(_mockDataCount + i) % _mockData.length],
+          ],
         );
-        // 2-byte little-endian running sample counter (the *starting* sample
-        // index of this packet), per adc_protocol.dart.
-        ev[0] = thisCounter & 0xFF;
-        ev[1] = (thisCounter >> 8) & 0xFF;
-        for (int i = 0; i < nwAdcNumSamples; ++i) {
-          final frame = _mockData[_mockDataCount];
-          ev.setAll(nwHeaderSize + i * nwAdcSampleLength, frame);
-          _mockDataCount = (_mockDataCount + 1) % _mockData.length;
-        }
+        _mockDataCount = (_mockDataCount + nwAdcNumSamples) % _mockData.length;
         updateCharacteristicValue(deviceId, characteristic, ev, null);
       });
     }
@@ -324,19 +320,6 @@ class MockBlePlatform extends UniversalBlePlatform {
     return ([]);
   }
 
-  /// Pack 4 channel values (24-bit signed) into the 12-byte wire sample.
-  static Uint8List _packSample(int c0, int c1, int c2, int c3) {
-    final out = Uint8List(nwAdcSampleLength);
-    final ch = [c0, c1, c2, c3];
-    for (int i = 0; i < nwNumAdcChan; ++i) {
-      final v = ch[i] & 0xFFFFFF;
-      out[i * 3] = v & 0xFF;
-      out[i * 3 + 1] = (v >> 8) & 0xFF;
-      out[i * 3 + 2] = (v >> 16) & 0xFF;
-    }
-    return out;
-  }
-
   /// Generate [count] deterministic multi-channel frames so the mock feed
   /// looks like real data when no MockData.txt is present. Channel 0/1 are
   /// sines with a phase offset, channel 2 a cosine, channel 3 a slow sawtooth;
@@ -354,7 +337,7 @@ class MockBlePlatform extends UniversalBlePlatform {
       final c1 = (sin(2 * pi * cycles * t + pi / 4) * amp1).round();
       final c2 = (cos(2 * pi * cycles * t) * amp2).round();
       final c3 = ((s % 200) - 100) * amp3;
-      frames.add(_packSample(c0, c1, c2, c3));
+      frames.add(encodeAdcFrame([c0, c1, c2, c3]));
     }
     return frames;
   }

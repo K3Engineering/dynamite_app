@@ -161,6 +161,37 @@ void main() {
     });
   });
 
+  group('SessionChunkCodec', () {
+    test('pack/decode round-trips frames exactly', () {
+      const codec = SessionChunkCodec(channels);
+      final values = [
+        [1, 2, 3, 4],
+        [-5, 6, -7, 8],
+        [0x7FFFFFFF, -0x80000000, 0, 123456],
+      ];
+      final bytes = codec.pack(values.length, (s, ch) => values[s][ch]);
+      expect(codec.framesOf(bytes), values.length);
+      expect(bytes.lengthInBytes, values.length * channels * 4);
+
+      final decoded = <List<int>>[];
+      codec.decode(bytes, (s, ch, raw) {
+        while (decoded.length <= s) {
+          decoded.add(List.filled(channels, 0));
+        }
+        decoded[s][ch] = raw;
+      });
+      expect(decoded, values);
+    });
+
+    test('framesOf ignores trailing partial bytes', () {
+      const codec = SessionChunkCodec(channels);
+      expect(codec.framesOf(Uint8List(0)), 0);
+      expect(codec.framesOf(Uint8List(channels * 4 - 1)), 0);
+      expect(codec.framesOf(Uint8List(channels * 4)), 1);
+      expect(codec.framesOf(Uint8List(channels * 4 + 1)), 1);
+    });
+  });
+
   group('crash recovery', () {
     test('gaps persisted on flush survive recoverIncompleteSessions', () async {
       AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());

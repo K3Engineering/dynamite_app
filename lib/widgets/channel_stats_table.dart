@@ -31,14 +31,25 @@ class ChannelStatsRow {
 /// channel via [onToggleChannel]; the owner decides what the toggle means
 /// (live-tab setting, per-session visibility, ...).
 class ChannelStatsTable extends StatelessWidget {
-  const ChannelStatsTable({
+  ChannelStatsTable({
     super.key,
     required this.labels,
     required this.activeChannels,
     required this.onToggleChannel,
     required this.unit,
     required this.rows,
-  });
+  }) : assert(
+         _oneValuePerChannel(labels, activeChannels, rows),
+         'labels, activeChannels and every row must have the same length',
+       );
+
+  static bool _oneValuePerChannel(
+    List<String> labels,
+    List<bool> activeChannels,
+    List<ChannelStatsRow> rows,
+  ) =>
+      activeChannels.length == labels.length &&
+      rows.every((r) => r.values.length == labels.length);
 
   /// Display label per channel.
   final List<String> labels;
@@ -93,29 +104,25 @@ class ChannelStatsTable extends StatelessWidget {
                 children: [
                   const SizedBox.shrink(), // Empty top-left corner
                   for (int i = 0; i < channelCount; i++)
-                    MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => onToggleChannel(i),
-                        child: Padding(
-                          padding: const EdgeInsets.only(
-                            bottom: 4,
-                            left: 4,
-                            right: 4,
-                          ),
-                          child: Text(
-                            labels[i],
-                            textAlign: TextAlign.right,
-                            style: Theme.of(context).textTheme.labelSmall
-                                ?.copyWith(
-                                  color: activeChannels[i]
-                                      ? getChannelColor(i)
-                                      : staleColor.withValues(alpha: 0.5),
-                                ),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                    _TappableChannelCell(
+                      onTap: () => onToggleChannel(i),
+                      child: Padding(
+                        padding: const EdgeInsets.only(
+                          bottom: 4,
+                          left: 4,
+                          right: 4,
+                        ),
+                        child: Text(
+                          labels[i],
+                          textAlign: TextAlign.right,
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: activeChannels[i]
+                                    ? getChannelColor(i)
+                                    : staleColor.withValues(alpha: 0.5),
+                              ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ),
@@ -128,23 +135,19 @@ class ChannelStatsTable extends StatelessWidget {
                 children: [
                   const SizedBox.shrink(),
                   for (int i = 0; i < channelCount; i++)
-                    MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () => onToggleChannel(i),
-                        child: Padding(
-                          padding: const EdgeInsets.only(
-                            bottom: 8,
-                            left: 2,
-                            right: 2,
-                          ),
-                          child: Container(
-                            height: 3,
-                            color: activeChannels[i]
-                                ? getChannelColor(i)
-                                : staleColor.withValues(alpha: 0.3),
-                          ),
+                    _TappableChannelCell(
+                      onTap: () => onToggleChannel(i),
+                      child: Padding(
+                        padding: const EdgeInsets.only(
+                          bottom: 8,
+                          left: 2,
+                          right: 2,
+                        ),
+                        child: Container(
+                          height: 3,
+                          color: activeChannels[i]
+                              ? getChannelColor(i)
+                              : staleColor.withValues(alpha: 0.3),
                         ),
                       ),
                     ),
@@ -183,6 +186,28 @@ class ChannelStatsTable extends StatelessWidget {
   }
 }
 
+/// Shared tap-target wrapper for every channel cell (label, color bar, stat
+/// value): pointer cursor + opaque hit testing + the toggle callback, so the
+/// hit behavior can't drift between cell kinds.
+class _TappableChannelCell extends StatelessWidget {
+  const _TappableChannelCell({required this.onTap, required this.child});
+
+  final VoidCallback onTap;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: child,
+      ),
+    );
+  }
+}
+
 class _TableCellValue extends StatelessWidget {
   const _TableCellValue({
     required this.value,
@@ -211,20 +236,16 @@ class _TableCellValue extends StatelessWidget {
         ? staleColor.withValues(alpha: 0.4)
         : (isStale ? staleColor : null);
 
-    return MouseRegion(
-      cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 1, horizontal: 1),
-          child: Text(
-            displayText,
-            textAlign: TextAlign.right,
-            style: textStyle?.copyWith(color: color),
-            maxLines: 1,
-            overflow: TextOverflow.visible,
-          ),
+    return _TappableChannelCell(
+      onTap: onTap ?? () {},
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 1, horizontal: 1),
+        child: Text(
+          displayText,
+          textAlign: TextAlign.right,
+          style: textStyle?.copyWith(color: color),
+          maxLines: 1,
+          overflow: TextOverflow.visible,
         ),
       ),
     );

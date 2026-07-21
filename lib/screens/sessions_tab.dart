@@ -6,6 +6,7 @@ import '../models/force_unit.dart';
 import '../services/database.dart';
 import '../utils/format.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/empty_placeholder.dart';
 import 'session_detail_screen.dart';
 
 class SessionsTab extends StatefulWidget {
@@ -79,23 +80,10 @@ class _SessionsTabState extends State<SessionsTab> {
                 final sessions = snapshot.data ?? [];
 
                 if (sessions.isEmpty) {
-                  return const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.folder_open, size: 64, color: Colors.grey),
-                        SizedBox(height: 16),
-                        Text(
-                          'No recorded sessions yet',
-                          style: TextStyle(color: Colors.grey, fontSize: 16),
-                        ),
-                        SizedBox(height: 8),
-                        Text(
-                          'Start a recording from the Live tab',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      ],
-                    ),
+                  return const EmptyPlaceholder(
+                    icon: Icons.folder_open,
+                    title: 'No recorded sessions yet',
+                    hint: 'Start a recording from the Live tab',
                   );
                 }
 
@@ -105,7 +93,6 @@ class _SessionsTabState extends State<SessionsTab> {
                   itemBuilder: (context, index) => _SessionCard(
                     session: sessions[index],
                     unit: settings.displayUnit,
-                    calibrationSlope: sessions[index].calibrationSlope,
                     onTap: () => _openDetail(sessions[index]),
                     onDelete: () => _deleteSession(sessions[index]),
                   ),
@@ -126,25 +113,20 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  Future<void> _deleteSession(Session session) async {
-    if (await showDeleteConfirm(context, what: session.name)) {
-      await AppDatabase.instance.deleteSession(session.id);
-    }
-  }
+  Future<void> _deleteSession(Session session) =>
+      deleteSessionFlow(context, session);
 }
 
 class _SessionCard extends StatelessWidget {
   const _SessionCard({
     required this.session,
     required this.unit,
-    required this.calibrationSlope,
     required this.onTap,
     required this.onDelete,
   });
 
   final Session session;
   final ForceUnit unit;
-  final double calibrationSlope;
   final VoidCallback onTap;
   final VoidCallback onDelete;
 
@@ -153,7 +135,7 @@ class _SessionCard extends StatelessWidget {
     final duration = Duration(milliseconds: session.durationMs);
     final durationStr = formatDuration(duration);
     final peakDisplay = unit.format(
-      unit.fromRaw(session.peakForceRaw.toDouble(), calibrationSlope),
+      unit.fromRaw(session.peakForceRaw.toDouble(), session.calibrationSlope),
     );
 
     return Dismissible(

@@ -1073,7 +1073,7 @@ class _MinimapPainter extends CustomPainter {
       cache: _cache,
       data: _data,
       activeChannels: activeIndices,
-      keyExtras: [_data.dataGeneration, ...tares, unit, _data.calibrationSlope],
+      keyExtras: envelopeCacheKeyExtras(_data, tares, unit),
       gw: gw,
       gh: gh,
       dpr: _dpr,
@@ -1082,11 +1082,7 @@ class _MinimapPainter extends CustomPainter {
       yMin: yMin,
       yMax: yMax,
       firstUsableSample: oldestSample,
-      seriesFor: (ch) => EnvelopeSeries.bucketed(
-        sampleAt: taredDisplaySampleAt(_data, ch, unit),
-        buckets: _data.channel(ch).buckets,
-        rawToDisplay: taredDisplayFromRaw(_data, ch, unit),
-      ),
+      seriesFor: (ch) => taredEnvelopeSeries(_data, ch, unit),
       avgStrokeWidth: 1.0,
       avgAlpha: 180,
     );
@@ -2016,6 +2012,59 @@ double Function(double raw) taredDisplayFromRaw(
   return (raw) => (raw - tare) * slopeToUnit;
 }
 
+/// The tared-force rendering recipe for one channel (exact per-sample
+/// evaluator + bucket acceleration). Shared by the force graph and the
+/// minimap so both plot the identical series.
+EnvelopeSeries taredEnvelopeSeries(
+  GraphDataSource data,
+  int channel,
+  ForceUnit unit,
+) => EnvelopeSeries.bucketed(
+  sampleAt: taredDisplaySampleAt(data, channel, unit),
+  buckets: data.channel(channel).buckets,
+  rawToDisplay: taredDisplayFromRaw(data, channel, unit),
+);
+
+/// The envelope-layer cache-key extras identifying one data/configuration
+/// combination: stream identity, per-channel tares, display unit, and
+/// calibration. Shared by every surface rendering the envelope data layer.
+List<Object?> envelopeCacheKeyExtras(
+  GraphDataSource data,
+  List<double> tares,
+  ForceUnit unit,
+) => [data.dataGeneration, ...tares, unit, data.calibrationSlope];
+
+/// Fold the raw extremes of [channels] over `[start, end)` (already clamped
+/// to the source's usable range). [seriesFor] yields a channel's bucket
+/// aggregates and exact evaluator, or null when the channel has no data;
+/// [adjust] maps each folded bound per channel (tare offset, display scale).
+/// BOTH adjusted bounds feed each end of the range, so a negative display
+/// multiplier can't invert it. Returns null when no channel covers a sample.
+(double, double)? foldChannelExtremes(
+  Iterable<int> channels,
+  int start,
+  int end,
+  (BucketSeries buckets, double Function(int i) rawAt)? Function(int ch)
+  seriesFor,
+  double Function(double raw, int ch) adjust,
+) {
+  double? lo, hi;
+  for (final ch in channels) {
+    final series = seriesFor(ch);
+    if (series == null) continue;
+    // Gap samples hold a previous real value, so they can never extend
+    // the range: no exclusion needed.
+    final ext = windowedExtremes(series.$1, start, end, series.$2);
+    if (ext == null) continue;
+    for (final v in [adjust(ext.$1, ch), adjust(ext.$2, ch)]) {
+      if (lo == null || v < lo) lo = v;
+      if (hi == null || v > hi) hi = v;
+    }
+  }
+  // lo and hi are always assigned together; null means no channel folded.
+  return (lo == null) ? null : (lo, hi!);
+}
+
 /// Paint the segment-cached envelope data layer for the window
 /// [viewStart, viewStart + viewSpan) mapped to x in [0, gw): the pipeline
 /// shared by the force graph, derivative graph, and minimap. Handles the
@@ -2372,12 +2421,11 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       cache: cache,
       data: _data,
       activeChannels: activeIndices,
-      keyExtras: [
-        _data.dataGeneration,
-        ...cacheKeyTares(),
+      keyExtras: envelopeCacheKeyExtras(
+        _data,
+        cacheKeyTares(),
         _settings.displayUnit,
-        _data.calibrationSlope,
-      ],
+      ),
       gw: graphSz.width,
       gh: graphSz.height,
       dpr: dpr,
@@ -2425,11 +2473,8 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
       _activeChannels.map((ch) => _data.channel(ch).tare).toList();
 
   @override
-  EnvelopeSeries series(int channel) => EnvelopeSeries.bucketed(
-    sampleAt: taredDisplaySampleAt(_data, channel, _settings.displayUnit),
-    buckets: _data.channel(channel).buckets,
-    rawToDisplay: taredDisplayFromRaw(_data, channel, _settings.displayUnit),
-  );
+  EnvelopeSeries series(int channel) =>
+      taredEnvelopeSeries(_data, channel, _settings.displayUnit);
 
   @override
   YAxisRange computeYRange(int viewStart, int viewEnd) {
@@ -2438,36 +2483,20 @@ class ForceGraphPainter extends _TimeSeriesGraphPainter {
     // convert to display units. [windowedExtremes] folds full buckets from
     // the precomputed aggregates (exact for min/max) and per-sample scans
     // only the partial head/tail, so the cost is O(window / bucketSize).
-    final oldestSample = _data.oldestSample;
-    final totalSamples = _data.totalSamples;
     final bufferCap = _data.bufferCapacity;
-    double rawMax = 0;
-    double rawMin = 0;
-    bool hasData = false;
-
-    for (final ch in _activeChannels) {
-      final s = _data.channel(ch);
-      final line = s.data;
-      if (line.isEmpty) continue;
-      final sScanStart = math.max(viewStart, oldestSample);
-      final sScanEnd = math.min(viewEnd, totalSamples);
-      if (sScanStart >= sScanEnd) continue;
-
-      // Gap samples hold a previous real value, so they can never extend
-      // the range: no exclusion needed.
-      final ext = windowedExtremes(
-        s.buckets,
-        sScanStart,
-        sScanEnd,
-        (i) => line[i % bufferCap].toDouble(),
-      );
-      if (ext == null) continue;
-      final lo = ext.$1 - s.tare;
-      final hi = ext.$2 - s.tare;
-      if (!hasData || hi > rawMax) rawMax = hi;
-      if (!hasData || lo < rawMin) rawMin = lo;
-      hasData = true;
-    }
+    final ext = foldChannelExtremes(
+      _activeChannels,
+      math.max(viewStart, _data.oldestSample),
+      math.min(viewEnd, _data.totalSamples),
+      (ch) {
+        final s = _data.channel(ch);
+        if (s.data.isEmpty) return null;
+        return (s.buckets, (int i) => s.data[i % bufferCap].toDouble());
+      },
+      (raw, ch) => raw - _data.channel(ch).tare,
+    );
+    double rawMin = ext?.$1 ?? 0;
+    double rawMax = ext?.$2 ?? 0;
 
     // Enforce a minimum visible range (noise floor) so the graph isn't degenerate
     const double noiseFloor = 10000; // raw counts
@@ -2568,26 +2597,28 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
       first = false;
     }
 
-    for (final ch in _activeChannels) {
-      if (_data.channel(ch).data.isEmpty) continue;
-      if (startI >= endI) continue;
-
+    // Channels with diff aggregates fold via the bucket fast path; folding
+    // both scaled bounds keeps the range correct under a negative scale.
+    final ext = foldChannelExtremes(_activeChannels, startI, endI, (ch) {
+      if (_data.channel(ch).data.isEmpty) return null;
       final buckets = _data.diffBucketsFor(ch);
-      if (buckets == null) {
-        // Exact-only fallback for sources without diff aggregates.
-        final valueAt = _sampleAt(ch);
-        for (int i = startI; i < endI; i++) {
-          final d = valueAt(i);
-          if (!d.isNaN) fold(d);
-        }
+      return buckets == null ? null : (buckets, _rawDiffAt(ch));
+    }, (raw, _) => raw * scale);
+    if (ext != null) {
+      fold(ext.$1);
+      fold(ext.$2);
+    }
+
+    // Exact-only fallback for channels without diff aggregates.
+    for (final ch in _activeChannels) {
+      if (_data.channel(ch).data.isEmpty || _data.diffBucketsFor(ch) != null) {
         continue;
       }
-
-      final ext = windowedExtremes(buckets, startI, endI, _rawDiffAt(ch));
-      if (ext == null) continue;
-      // Folding both scaled bounds keeps this correct under a negative scale.
-      fold(ext.$1 * scale);
-      fold(ext.$2 * scale);
+      final valueAt = _sampleAt(ch);
+      for (int i = startI; i < endI; i++) {
+        final d = valueAt(i);
+        if (!d.isNaN) fold(d);
+      }
     }
     return _computeYRange(dMin, dMax);
   }
