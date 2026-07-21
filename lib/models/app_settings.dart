@@ -36,6 +36,12 @@ class AppSettings extends ChangeNotifier {
   bool _wakelockEnabled = false;
   bool get wakelockEnabled => _wakelockEnabled;
 
+  /// Preference keys the user has explicitly set through a setter. [_load]'s
+  /// async read resolves AFTER the constructor returns, so a setter that ran
+  /// in the meantime owns the in-memory value — [_load] must not overwrite it
+  /// with the (older) persisted one.
+  final Set<String> _modifiedKeys = {};
+
   AppSettings() {
     unawaited(_load());
   }
@@ -44,7 +50,7 @@ class AppSettings extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
 
     final unitName = prefs.getString(_keyUnit);
-    if (unitName != null) {
+    if (unitName != null && !_modifiedKeys.contains(_keyUnit)) {
       _displayUnit = ForceUnit.values.firstWhere(
         (u) => u.name == unitName,
         orElse: () => ForceUnit.kN,
@@ -52,21 +58,28 @@ class AppSettings extends ChangeNotifier {
     }
 
     final labels = prefs.getStringList(_keyChannelLabels);
-    if (labels != null && labels.length == nwNumAdcChan) {
+    if (labels != null &&
+        labels.length == nwNumAdcChan &&
+        !_modifiedKeys.contains(_keyChannelLabels)) {
       _channelLabels = labels;
     }
 
     final active = prefs.getStringList(_keyActiveChannels);
-    if (active != null && active.length == nwNumAdcChan) {
+    if (active != null &&
+        active.length == nwNumAdcChan &&
+        !_modifiedKeys.contains(_keyActiveChannels)) {
       _activeChannels = active.map((s) => s == 'true').toList();
     }
 
-    _wakelockEnabled = prefs.getBool(_keyWakelock) ?? false;
+    if (!_modifiedKeys.contains(_keyWakelock)) {
+      _wakelockEnabled = prefs.getBool(_keyWakelock) ?? false;
+    }
 
     notifyListeners();
   }
 
   Future<void> setDisplayUnit(ForceUnit unit) async {
+    _modifiedKeys.add(_keyUnit);
     _displayUnit = unit;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -74,6 +87,7 @@ class AppSettings extends ChangeNotifier {
   }
 
   Future<void> setChannelLabel(int index, String label) async {
+    _modifiedKeys.add(_keyChannelLabels);
     _channelLabels[index] = label;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -81,6 +95,7 @@ class AppSettings extends ChangeNotifier {
   }
 
   Future<void> setChannelActive(int index, bool active) async {
+    _modifiedKeys.add(_keyActiveChannels);
     _activeChannels[index] = active;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -91,6 +106,7 @@ class AppSettings extends ChangeNotifier {
   }
 
   Future<void> setWakelockEnabled(bool enabled) async {
+    _modifiedKeys.add(_keyWakelock);
     _wakelockEnabled = enabled;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();

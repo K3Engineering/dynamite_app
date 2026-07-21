@@ -50,6 +50,13 @@ class SessionStorage {
     return LiveSessionWriter(sessionId, tare, DataHub.samplesPerSec);
   }
 
+  /// Discard a session that was created but never latched by its caller
+  /// (e.g. the link dropped while its row was being inserted — see
+  /// `RecordingController.startSession`). The writer has written no chunks,
+  /// so this is a plain row delete, not a recovery case.
+  static Future<void> discardSession(LiveSessionWriter writer) =>
+      AppDatabase.instance.deleteSession(writer.sessionId);
+
   /// Finalize a streaming session: flush any buffered samples, then record the
   /// aggregates the writer accumulated and mark the session completed.
   ///

@@ -1,8 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
-import '../models/app_settings.dart';
-import '../models/force_unit.dart';
 import '../services/database.dart';
 import '../utils/format.dart';
 import '../widgets/dialogs.dart';
@@ -25,8 +22,6 @@ class _SessionsTabState extends State<SessionsTab> {
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.watch<AppSettings>();
-
     return SafeArea(
       child: Column(
         children: [
@@ -92,7 +87,6 @@ class _SessionsTabState extends State<SessionsTab> {
                   itemCount: sessions.length,
                   itemBuilder: (context, index) => _SessionCard(
                     session: sessions[index],
-                    unit: settings.displayUnit,
                     onTap: () => _openDetail(sessions[index]),
                     onDelete: () => _deleteSession(sessions[index]),
                   ),
@@ -129,13 +123,11 @@ class _SessionsTabState extends State<SessionsTab> {
 class _SessionCard extends StatelessWidget {
   const _SessionCard({
     required this.session,
-    required this.unit,
     required this.onTap,
     required this.onDelete,
   });
 
   final Session session;
-  final ForceUnit unit;
   final VoidCallback onTap;
   final Future<void> Function() onDelete;
 
@@ -143,9 +135,6 @@ class _SessionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final duration = Duration(milliseconds: session.durationMs);
     final durationStr = formatDuration(duration);
-    final peakDisplay = unit.format(
-      unit.fromRaw(session.peakForceRaw.toDouble(), session.calibrationSlope),
-    );
 
     return Dismissible(
       key: ValueKey(session.id),
@@ -168,11 +157,13 @@ class _SessionCard extends StatelessWidget {
             session.name.isEmpty ? 'Untitled' : session.name,
             style: const TextStyle(fontWeight: FontWeight.w500),
           ),
+          // No peak value here: peaks are per-channel (see the detail view);
+          // the stored row-wide peak is a max over all channels and reads
+          // inconsistent next to them.
           subtitle: Text(
-            '${formatDate(session.createdAt)} · $durationStr\n'
-            'Peak: $peakDisplay · ${session.channelCount} ch',
+            '${formatDate(session.createdAt)} · $durationStr · '
+            '${session.channelCount} ch',
           ),
-          isThreeLine: true,
           trailing: const Icon(Icons.chevron_right),
         ),
       ),

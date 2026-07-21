@@ -28,22 +28,23 @@ void main() {
     MockBlePlatform.instance.dropEveryNPackets = 0;
   });
 
-  (RecordingController, DataHub) wire() {
+  (RecordingController, DataHub, _StreamingLink) wire() {
     final events = AppEvents();
     final hub = DataHub();
     final decoder = AdcPacketDecoder(hub);
+    final link = _StreamingLink(events: events);
     final recording = RecordingController(
       dataHub: hub,
-      linkManager: _StreamingLink(events: events),
+      linkManager: link,
       decoder: decoder,
       events: events,
     );
     addTearDown(recording.dispose);
-    return (recording, hub);
+    return (recording, hub, link);
   }
 
   test('startSession refuses while a tare is averaging', () async {
-    final (recording, hub) = wire();
+    final (recording, hub, _) = wire();
 
     hub.requestTare();
     expect(hub.taring, isTrue);
@@ -63,7 +64,7 @@ void main() {
       AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
       addTearDown(AppDatabase.closeInstance);
 
-      final (recording, hub) = wire();
+      final (recording, hub, _) = wire();
 
       final start = await recording.startSession(
         channelLabels: const ['Load Cell 1', 'Load Cell 2', 'Ch 3', 'Ch 4'],
@@ -102,14 +103,75 @@ void main() {
       );
     },
   );
+
+  test(
+    'a link drop during session creation refuses and discards the row',
+    () async {
+      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(AppDatabase.closeInstance);
+
+      final (recording, _, link) = wire();
+
+      // Flip the flag synchronously, before the event loop can resume the
+      // creation future: this is the drop landing mid-insert. Without the
+      // post-await link re-check, the writer would latch onto the dead link —
+      // and a later reconnect would splice the new device's stream into it.
+      final future = recording.startSession(
+        channelLabels: const ['a', 'b', 'c', 'd'],
+        visibleChannels: const [true, true, true, true],
+      );
+      link.streaming = false;
+      final result = await future;
+
+      expect(result, isA<StartSessionLinkLost>());
+      expect(recording.sessionInProgress, isFalse);
+      // The orphan row was discarded, not left behind for crash recovery.
+      expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
+    },
+  );
+
+  test(
+    'stopSession folds a finalization failure into the returned error',
+    () async {
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      AppDatabase.instance = db;
+      // Don't closeInstance() in teardown: this test closes the db itself.
+      addTearDown(() => AppDatabase.instance = null);
+
+      final (recording, hub, _) = wire();
+
+      final start = await recording.startSession(
+        channelLabels: const ['a', 'b', 'c', 'd'],
+        visibleChannels: const [true, true, true, true],
+      );
+      expect(start, isA<StartSessionOk>());
+
+      final frame = Int32List(DataHub.numAdcChannels);
+      hub.addSampleFrame(frame);
+      hub.commitBatch(0);
+
+      // Close the DB out from under the session: the finalizing completion
+      // write then throws. The failure must surface as the returned error —
+      // stopSession also runs on unawaited auto-stop paths, so it must never
+      // throw itself.
+      await db.close();
+
+      final stop = await recording.stopSession();
+      expect(recording.sessionInProgress, isFalse);
+      expect(stop.sessionId, isNotNull);
+      expect(stop.error, isNotNull);
+    },
+  );
 }
 
-/// A [BleLinkManager] that reports a streaming link, so
+/// A [BleLinkManager] whose streaming state is a plain settable flag, so
 /// [RecordingController.startSession]'s streaming precondition holds without
-/// driving a mock connection.
+/// driving a mock connection (and can be flipped mid-test to simulate a drop).
 class _StreamingLink extends BleLinkManager {
   _StreamingLink({required super.events});
 
+  bool streaming = true;
+
   @override
-  bool get isStreaming => true;
+  bool get isStreaming => streaming;
 }

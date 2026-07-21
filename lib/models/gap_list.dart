@@ -82,13 +82,24 @@ class GapList {
     for (int k = 0; k < _bounds.length; k += 2) [_bounds[k], _bounds[k + 1]],
   ]);
 
-  /// Parse the [toJson] format. Malformed input yields an empty list.
+  /// Parse the [toJson] format. Malformed input yields an empty list —
+  /// including ranges that are empty, inverted, overlapping or out of order:
+  /// those violate the sorted-disjoint invariant [contains] binary-searches
+  /// on, so a corrupt document degrades to "no gaps" rather than a corrupt
+  /// list. (Adjacent ranges are valid and merge on [append].)
   factory GapList.fromJson(String json) {
     final gaps = GapList();
     try {
       final List<dynamic> parsed = jsonDecode(json);
+      var lastEnd = -1;
       for (final pair in parsed) {
-        gaps.append((pair[0] as num).toInt(), (pair[1] as num).toInt());
+        final start = (pair[0] as num).toInt();
+        final end = (pair[1] as num).toInt();
+        if (end <= start || start < lastEnd) {
+          throw const FormatException('gap ranges must be increasing');
+        }
+        gaps.append(start, end);
+        lastEnd = end;
       }
     } catch (_) {
       gaps.clear();

@@ -27,6 +27,14 @@ final class StartSessionTareInProgress extends StartSessionResult {
   const StartSessionTareInProgress();
 }
 
+/// Refused: the link dropped while the session row was being created. The
+/// orphan row was discarded; nothing is recording (and a later reconnect can
+/// never splice a different device's stream into this session — see
+/// [RecordingController.startSession]). Transient — retry once reconnected.
+final class StartSessionLinkLost extends StartSessionResult {
+  const StartSessionLinkLost();
+}
+
 /// Session creation (the DB row / writer) threw; nothing was latched, so the
 /// controller is still idle.
 final class StartSessionFailed extends StartSessionResult {
@@ -127,6 +135,16 @@ class RecordingController extends ChangeNotifier {
       return StartSessionFailed(e);
     }
 
+    // Re-check the link after the await: if it dropped while the row was
+    // being created, [_onLinkChanged] saw no writer latched and did nothing.
+    // Latching now would leave a live session on a dead link — and a later
+    // reconnect would splice the NEW device's stream (post-clear, indices
+    // restarted) into it. Discard the empty row and refuse instead.
+    if (!_linkManager.isStreaming) {
+      await SessionStorage.discardSession(writer);
+      return const StartSessionLinkLost();
+    }
+
     _sessionWriter = writer;
     _sessionName = sessionName;
     _decoder.resetContinuity();
@@ -158,8 +176,16 @@ class RecordingController extends ChangeNotifier {
       notifyListeners();
 
       // finalizeSession flushes through the writer's serialized queue, which
-      // drains any in-flight (unawaited) appends first.
-      final error = await SessionStorage.finalizeSession(writer: writer);
+      // drains any in-flight (unawaited) appends first. A failure there (e.g.
+      // the DB itself is gone) is folded into the returned error rather than
+      // thrown: stopSession also runs on unawaited auto-stop paths (link
+      // drop, writer error), where a throw would be an unhandled async error.
+      Object? error;
+      try {
+        error = await SessionStorage.finalizeSession(writer: writer);
+      } catch (e) {
+        error = e;
+      }
       if (error != null) {
         _events.emit(RecordingStorageError(error));
       }

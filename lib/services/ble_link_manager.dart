@@ -13,13 +13,6 @@ import '../utils/log.dart';
 ///
 /// This is intentionally a *per-device* concept even though, today, the app
 /// only tracks one link at a time (see [DeviceLink] / [BleLinkManager]).
-///
-/// MULTI-DEVICE (Path A): when we support N simultaneous devices, this enum
-/// stays exactly as-is. The only change is that [BleLinkManager] will hold a
-/// `Map<String /*deviceId*/, DeviceLink>` instead of the single [_link] below,
-/// and the UI will read each row's state from its own [DeviceLink]. The
-/// adapter-availability and scanning state remain *global* (one radio), so they
-/// do NOT move into [DeviceLink].
 enum BtLinkState {
   /// No connection to this device; it may or may not be in the discovered list.
   idle,
@@ -53,13 +46,9 @@ enum BtLinkState {
   cooldown,
 }
 
-/// All per-device link state for a single BLE device.
-///
-/// MULTI-DEVICE (Path A): promote the single [BleLinkManager._link] to a
-/// `Map<String, DeviceLink>` keyed by [deviceId]. Each map entry owns its own
-/// state/name/services/subscription. The migration is mechanical because
-/// every field that is logically per-device already lives here rather than as a
-/// loose field on [BleLinkManager].
+/// All per-device link state for a single BLE device. Everything logically
+/// per-device lives here rather than as loose fields on [BleLinkManager] —
+/// see the multi-device roadmap on [BleLinkManager].
 class DeviceLink {
   DeviceLink({this.deviceId = ''});
 
@@ -134,6 +123,16 @@ class _SetupToken {
 /// via [onAdcData] / [onCalibrationData] (wired to [AdcPacketDecoder] at app
 /// startup), and recording observes this notifier's state changes (see
 /// [RecordingController]).
+///
+/// MULTI-DEVICE ROADMAP: today exactly one link is tracked ([_link]), and
+/// [QueueType.perDevice] already isolates per-device command queues. To
+/// support N simultaneous devices, promote [_link] to a
+/// `Map<String /*deviceId*/, DeviceLink>`: [DeviceLink] holds every logically
+/// per-device field (state, name, rssi), so the migration is mechanical —
+/// per-device lookup in [_onConnectionChange] and [_onValueChange] (route by
+/// deviceId instead of dropping), per-device busy guards in [_beginConnect]
+/// and [disconnectSelectedDevice]. Adapter availability and scanning stay
+/// *global* (one radio) and do NOT move into [DeviceLink].
 class BleLinkManager extends ChangeNotifier {
   /// Upper bound we pass to [UniversalBle.disconnect] so a silent stack can't
   /// strand the UI on "Disconnecting…". The package's own `disconnect()` sets
@@ -196,13 +195,9 @@ class BleLinkManager extends ChangeNotifier {
   bool _isScanning = false;
   bool get isScanning => _isScanning;
 
-  /// The single active device link.
-  ///
-  /// MULTI-DEVICE (Path A): replace with
-  /// `final Map<String, DeviceLink> _links = {};` and add per-device accessors.
-  /// The getters below currently project this single link into the flat API the
-  /// UI consumes today; in the multi-device world the UI will read each
-  /// [DeviceLink] directly instead of via these singular getters.
+  /// The single active device link (see the multi-device roadmap on the
+  /// class). The getters below project it into the flat API the UI consumes
+  /// today.
   final DeviceLink _link = DeviceLink();
   DeviceLink get link => _link;
 
@@ -292,7 +287,7 @@ class BleLinkManager extends ChangeNotifier {
     // web when the user rapidly connects/disconnects) blocks and serially times
     // out every later command — producing a storm of 10s "Future not completed"
     // failures. `perDevice` isolates a dead device's stuck commands from a fresh
-    // attempt, and aligns with the multi-device roadmap (Path A).
+    // attempt (and is the shape the multi-device roadmap needs).
     UniversalBle.queueType = QueueType.perDevice;
     // Fail stuck commands faster than the 10s default so a hung web GATT promise
     // surfaces (and our generation guard / teardown proceeds) without a long
@@ -370,9 +365,6 @@ class BleLinkManager extends ChangeNotifier {
     // Guard before any destructive clears: if we can't/shouldn't start a scan,
     // don't wipe the existing device list (which would leave the UI showing an
     // empty list with no picker having opened).
-    //
-    // MULTI-DEVICE (Path A): this becomes "if any link is mid-transition"
-    // (connecting/disconnecting) rather than a single flag.
     if (_link.state != BtLinkState.idle && !_link.isStreaming) {
       return;
     }
@@ -538,9 +530,6 @@ class BleLinkManager extends ChangeNotifier {
     // we gave up on it (connect timeout, user cancel); the GATT link is then
     // live at the platform level with nothing tracking it. Release such links
     // so they can't leak, then ignore the event.
-    //
-    // MULTI-DEVICE (Path A): look up `_links[deviceId]` instead of assuming
-    // the event is for the single active link.
     final bool isActiveDevice =
         _link.deviceId.isNotEmpty && _link.deviceId == deviceId;
     if (!isActiveDevice ||
@@ -675,9 +664,6 @@ class BleLinkManager extends ChangeNotifier {
   /// The latter is a one-shot async *query*, not an event source — it can't
   /// push updates, so it can't replace callback-driven state without polling
   /// (just a different timer).
-  ///
-  /// MULTI-DEVICE (Path A): the idle guard becomes per-device — a different,
-  /// idle device can connect while another is mid-transition.
   bool _beginConnect() {
     if (_link.state != BtLinkState.idle) {
       return false;
@@ -789,9 +775,6 @@ class BleLinkManager extends ChangeNotifier {
     // reconciliation: if the link is still stuck in `disconnecting` on this
     // device, the callback never landed within the window — force it idle and
     // surface the "didn't disconnect cleanly" notice ourselves.
-    //
-    // MULTI-DEVICE (Path A): operate on `_links[deviceId]` so each device
-    // settles independently and the notice can name that specific device.
     await UniversalBle.disconnect(deviceId, timeout: disconnectTimeout);
     await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
 
@@ -858,7 +841,7 @@ class BleLinkManager extends ChangeNotifier {
     // parsed as ADC packets. universal_ble normalizes characteristicId to
     // lowercase before invoking this callback, and btChrAdcFeedId is already
     // lowercase, so an exact match is safe.
-    // MULTI-DEVICE (Path A): route by deviceId instead of dropping.
+    // Multi-device: route by deviceId instead of dropping.
     if (deviceId != _link.deviceId || characteristicId != btChrAdcFeedId) {
       logTrace(
         () =>
