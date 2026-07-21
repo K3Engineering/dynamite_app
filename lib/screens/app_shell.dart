@@ -113,6 +113,10 @@ class AppShellState extends State<AppShell> {
   /// every "connect a device" prompt across the app.
   void goToDevices() => switchToTab(2);
 
+  /// Jump to the Settings tab — used by the Devices tab's per-device gear
+  /// affordance, which lands the user on the "Device settings" section.
+  void goToSettings() => switchToTab(3);
+
   /// Tab-activation side effects, driven from here (the owner of the tab
   /// index) so the tabs themselves stay stateless:
   ///  * Devices tab visible: prompt to enable Bluetooth, and start RSSI

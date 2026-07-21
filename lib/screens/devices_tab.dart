@@ -1,53 +1,39 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
 import '../services/ble_link_manager.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/section_header.dart';
 import '../widgets/status_colors.dart';
+import 'app_shell.dart';
 
 class DevicesTab extends StatelessWidget {
   const DevicesTab({super.key});
 
-  /// Run a connect attempt, surfacing a failure as a snackbar naming
-  /// [deviceName] with the underlying error detail (timeout vs GATT error vs
-  /// user-cancelled web picker are wildly different diagnoses). Connect
-  /// buttons are already disabled while a link is busy, so this only handles
-  /// the rejected attempt itself.
-  Future<void> _connectWithFeedback(
-    BuildContext context,
-    Future<void> Function() connect,
-    String deviceName,
-  ) async {
-    try {
-      await connect();
-    } catch (e) {
-      debugPrint('Connect to $deviceName failed: $e');
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to connect to $deviceName: $e')),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final bt = context.watch<BleLinkManager>();
-    // Usable connection (services discovered + ADC feed streaming). "Connected"
-    // in the UI means this — not merely that a GATT link exists.
-    final isStreaming = bt.isStreaming;
-    // The link is up (setting up OR streaming) — the connected card is shown for
-    // both so the user can see progress and cancel a stuck setup.
-    final isLinkUp = bt.isLinkUp;
-    // A connect attempt is in flight; the card shows "Connecting…" with a
-    // Cancel button so a hung attempt (or a changed mind) doesn't have to
-    // wait out the connect timeout.
-    final isConnecting = bt.link.isConnecting;
-    // The specific device currently in its post-disconnect cooldown window (web
-    // only); its row shows "Please wait…" instead of "Connect".
-    final coolingDownDeviceId = bt.isCoolingDown ? bt.link.deviceId : '';
+
+    final visual = btStatusVisual(
+      linkState: bt.link.state,
+      availability: bt.bluetoothState,
+      isScanning: bt.isScanning,
+      hasDevices: bt.devices.isNotEmpty,
+      status: Theme.of(context).extension<StatusColors>()!,
+      colors: Theme.of(context).colorScheme,
+    );
+
+    final isEmpty = bt.devices.isEmpty;
+    // The compact Bluetooth status row shows once there's content (devices
+    // listed, or a link in flight/connected). While empty it shows only
+    // during a scan — where the placeholder (which can't spin) yields to the
+    // spinning status row.
+    final showStatusRow = !isEmpty || bt.isScanning;
+    // The big empty block is the empty-state voice for genuinely idle states
+    // (radio off / permission / no devices found) — not during a scan.
+    final showEmptyBlock = isEmpty && !bt.isScanning;
 
     return SafeArea(
       child: ListView(
@@ -56,165 +42,284 @@ class DevicesTab extends StatelessWidget {
           Row(
             children: [
               Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
-              const SizedBox(width: 12),
-              // Right cluster: status text + icon + Scan button, flush right.
-              // Expanded gives the cluster the remaining width; the cluster's
-              // own Row right-aligns its content within it.
-              Expanded(
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Flexible(
-                      child: BluetoothIndicator(
-                        linkState: bt.link.state,
-                        state: bt.bluetoothState,
-                        isScanning: bt.isScanning,
-                        hasDevices: bt.devices.isNotEmpty,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    // TODO(ux): see BleLinkManager._startScan — starting a
-                    // scan while streaming kills the active link (and any
-                    // in-progress recording). Decide disable-vs-confirm.
-                    FilledButton.tonal(
-                      onPressed: () async {
-                        await bt.toggleScan();
-                      },
-                      child: Text(bt.isScanning ? 'Stop' : 'Scan'),
-                    ),
-                  ],
-                ),
-              ),
+              // Reserved trailing slot: nothing renders here for now. This is
+              // where a future top-of-page status item (in the spirit of the
+              // Live tab's status banner) would go.
+              const Spacer(),
             ],
           ),
           const SizedBox(height: 16),
 
-          // Connected section — shown while a link attempt is in flight or the
-          // link is up (connecting / setting up / streaming) so the user can
-          // watch progress and cancel a stuck one. The header/icon distinguish
-          // the three states.
-          if (isLinkUp || isConnecting) ...[
-            Text(
-              isStreaming
-                  ? 'Connected'
-                  : isConnecting
-                  ? 'Connecting…'
-                  : 'Setting up…',
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: Theme.of(context).colorScheme.primary,
-              ),
+          // BLE devices section. The Scan button lives on the section header;
+          // the Bluetooth status readout sits on its own row beneath it so the
+          // variable-width status text has room and never fights the button.
+          SectionHeader(
+            'BLE devices',
+            trailing: FilledButton.tonal(
+              // TODO(ux): see BleLinkManager._startScan — starting a scan
+              // while streaming kills the active link (and any in-progress
+              // recording). Decide disable-vs-confirm.
+              onPressed: () async {
+                await bt.toggleScan();
+              },
+              child: Text(bt.isScanning ? 'Stop' : 'Scan'),
             ),
-            const SizedBox(height: 8),
-            Card(
-              child: ListTile(
-                leading: Icon(
-                  isStreaming
-                      ? Icons.bluetooth_connected
-                      : Icons.bluetooth_searching,
-                  color: isStreaming
-                      ? Theme.of(
-                          context,
-                        ).extension<StatusColors>()!.linkConnected
-                      : Theme.of(context).extension<StatusColors>()!.linkActive,
-                ),
-                title: Text(bt.connectedDeviceName),
-                subtitle: Text(
-                  bt.connectedRssi != null
-                      ? 'ID: ${bt.link.deviceId}  •  RSSI: ${bt.connectedRssi} dBm'
-                      : 'ID: ${bt.link.deviceId}',
-                ),
-                trailing: TextButton(
-                  // Disabled while the disconnect is in flight so the button
-                  // truthfully reflects the in-progress teardown.
-                  onPressed: bt.isDisconnecting
-                      ? null
-                      : () async {
-                          await bt.disconnectSelectedDevice();
-                        },
-                  child: Text(
-                    bt.isDisconnecting
-                        ? 'Disconnecting…'
-                        : isConnecting
-                        ? 'Cancel'
-                        : 'Disconnect',
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-          ],
-
-          // BLE devices section — always shown so the page structure stays
-          // predictable; the empty state lives inside it.
-          const SectionHeader('BLE devices'),
+          ),
           const SizedBox(height: 8),
 
-          if (bt.devices.isEmpty && !bt.isScanning)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: EmptyPlaceholder(
-                icon: Icons.bluetooth_searching,
-                title: 'No devices found',
-                hint: 'Tap Scan at the top to search for nearby devices',
+          if (showStatusRow)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: BluetoothIndicator(
+                linkState: bt.link.state,
+                state: bt.bluetoothState,
+                isScanning: bt.isScanning,
+                hasDevices: bt.devices.isNotEmpty,
               ),
             ),
 
+          if (showEmptyBlock) _buildEmptyBlock(visual),
+
           for (final device in bt.devices)
-            Card(
-              child: ListTile(
-                leading: Icon(
-                  Icons.bluetooth,
-                  color: Theme.of(context).colorScheme.outline,
-                ),
-                title: Text(device.name ?? 'Unknown device'),
-                subtitle: Text(
-                  device.rssi != null ? 'RSSI: ${device.rssi} dBm' : 'RSSI: --',
-                ),
-                trailing: FilledButton(
-                  // Disabled whenever a link is busy (connecting/connected/
-                  // disconnecting) so we never issue a connect against a link
-                  // that is still tearing down — this is the fix for needing a
-                  // second Connect click right after Disconnect.
-                  onPressed: bt.linkBusy
-                      ? null
-                      : () => _connectWithFeedback(
-                          context,
-                          () => bt.connectToDevice(device.deviceId),
-                          device.name ?? 'device',
-                        ),
-                  child: Text(
-                    device.deviceId == coolingDownDeviceId
-                        ? 'Please wait…'
-                        : 'Connect',
-                  ),
-                ),
+            _DeviceRow(
+              name: device.name ?? 'Unknown device',
+              scanRssi: device.rssi,
+              inactiveIcon: Icons.bluetooth,
+              inactiveIconColor: Theme.of(context).colorScheme.outline,
+              isActive: device.deviceId == bt.link.deviceId,
+              linkState: bt.link.state,
+              connectedRssi: bt.connectedRssi,
+              linkBusy: bt.linkBusy,
+              isCoolingDown:
+                  bt.isCoolingDown && device.deviceId == bt.link.deviceId,
+              onConnect: () => _connectWithFeedback(
+                context,
+                () => bt.connectToDevice(device.deviceId),
+                device.name ?? 'device',
               ),
+              onDisconnect: bt.disconnectSelectedDevice,
             ),
           const SizedBox(height: 16),
 
           // Demo devices section — simulated hardware, kept at the bottom so
-          // real BLE devices get top billing.
+          // real BLE devices get top billing. Rendered through the same
+          // _DeviceRow so it reflects connected state inline like a BLE row.
           const SectionHeader('Demo devices'),
           const SizedBox(height: 8),
-          Card(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: ListTile(
-              leading: const Icon(Icons.science, color: Colors.teal),
-              title: const Text('Demo Device'),
-              subtitle: const Text('Simulated data — no hardware'),
-              trailing: FilledButton(
-                onPressed: bt.linkBusy
-                    ? null
-                    : () => _connectWithFeedback(
-                        context,
-                        bt.connectToDemoDevice,
-                        'Demo Device',
-                      ),
-                child: const Text('Connect'),
-              ),
+          _DeviceRow(
+            name: 'Demo Device',
+            scanRssi: null,
+            inactiveIcon: Icons.science,
+            inactiveIconColor: Colors.teal,
+            isActive: bt.link.isDemoDevice && bt.link.state != BtLinkState.idle,
+            linkState: bt.link.state,
+            connectedRssi: null,
+            linkBusy: bt.linkBusy,
+            isCoolingDown: false,
+            inactiveSubtitle: 'Simulated data — no hardware',
+            onConnect: () => _connectWithFeedback(
+              context,
+              bt.connectToDemoDevice,
+              'Demo Device',
             ),
+            onDisconnect: bt.disconnectSelectedDevice,
           ),
         ],
+      ),
+    );
+  }
+
+  /// The big state-aware empty block: the single empty-state voice, with
+  /// icon/title/hint derived from BLE state (radio off / permission / no
+  /// devices found) so it never claims "tap Scan" when scanning can't work.
+  Widget _buildEmptyBlock(BtStatusVisual visual) {
+    final (icon, title, hint) = switch (visual.label) {
+      'Bluetooth is off' => (
+        Icons.bluetooth_disabled,
+        'Bluetooth is off',
+        'Turn on Bluetooth to find devices',
+      ),
+      'Bluetooth permission needed' => (
+        Icons.bluetooth_disabled,
+        'Bluetooth permission needed',
+        'Grant Bluetooth permission to find devices',
+      ),
+      'Bluetooth not supported' => (
+        Icons.bluetooth_disabled,
+        'Bluetooth not supported',
+        'This device cannot use Bluetooth',
+      ),
+      _ => (
+        Icons.bluetooth_searching,
+        'No devices found',
+        'Tap Scan to search for nearby devices',
+      ),
+    };
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: EmptyPlaceholder(icon: icon, title: title, hint: hint),
+    );
+  }
+}
+
+/// Run a connect attempt, surfacing a failure as a snackbar naming
+/// [deviceName] with the underlying error detail (timeout vs GATT error vs
+/// user-cancelled web picker are wildly different diagnoses). Connect buttons
+/// are already disabled while a link is busy, so this only handles the
+/// rejected attempt itself.
+Future<void> _connectWithFeedback(
+  BuildContext context,
+  Future<void> Function() connect,
+  String deviceName,
+) async {
+  try {
+    await connect();
+  } catch (e) {
+    debugPrint('Connect to $deviceName failed: $e');
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to connect to $deviceName: $e')),
+      );
+    }
+  }
+}
+
+/// A single device row, shared by the BLE and Demo sections. Renders one of
+/// two forms:
+///  * Inactive ([isActive] false): a plain row with a Connect button.
+///  * Active ([isActive] true): a tinted row carrying the live link state
+///    (spinner while connecting/setting up, connected icon when streaming),
+///    the state + RSSI in the subtitle, a gear shortcut to Device settings,
+///    and a state-aware Cancel/Disconnect button.
+class _DeviceRow extends StatelessWidget {
+  const _DeviceRow({
+    required this.name,
+    required this.scanRssi,
+    required this.inactiveIcon,
+    required this.inactiveIconColor,
+    required this.isActive,
+    required this.linkState,
+    required this.connectedRssi,
+    required this.linkBusy,
+    required this.isCoolingDown,
+    this.inactiveSubtitle,
+    required this.onConnect,
+    required this.onDisconnect,
+  });
+
+  final String name;
+
+  /// Scan-time RSSI for discovered BLE devices; null when unavailable (or for
+  /// the demo device).
+  final int? scanRssi;
+
+  /// Leading icon/color used in the inactive form.
+  final IconData inactiveIcon;
+  final Color inactiveIconColor;
+
+  /// Whether this row is the device's active link.
+  final bool isActive;
+
+  /// The active link's state (only meaningful when [isActive]).
+  final BtLinkState linkState;
+
+  /// Live polled RSSI for the connected device; null until first read.
+  final int? connectedRssi;
+
+  /// Whether any link transition is in flight (disables the Connect button).
+  final bool linkBusy;
+
+  /// Whether this row is in its post-disconnect reconnect-settle window
+  /// (shows "Please wait…" instead of "Connect").
+  final bool isCoolingDown;
+
+  /// Fixed subtitle for the inactive form (e.g. the demo device's blurb).
+  /// When null, the inactive form shows the scan RSSI.
+  final String? inactiveSubtitle;
+
+  final VoidCallback onConnect;
+  final VoidCallback onDisconnect;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!isActive) {
+      return Card(
+        child: ListTile(
+          leading: Icon(inactiveIcon, color: inactiveIconColor),
+          title: Text(name),
+          subtitle: Text(
+            inactiveSubtitle ??
+                (scanRssi != null ? 'RSSI: $scanRssi dBm' : 'RSSI: --'),
+          ),
+          trailing: FilledButton(
+            // Disabled whenever a link is busy so we never issue a connect
+            // against a link that is still tearing down.
+            onPressed: linkBusy ? null : onConnect,
+            child: Text(isCoolingDown ? 'Please wait…' : 'Connect'),
+          ),
+        ),
+      );
+    }
+
+    // Active row: reuse the shared, unit-tested state → visual mapping.
+    final visual = btStatusVisual(
+      linkState: linkState,
+      availability: AvailabilityState.poweredOn, // a link is up → radio is on
+      isScanning: false,
+      hasDevices: true,
+      status: Theme.of(context).extension<StatusColors>()!,
+      colors: Theme.of(context).colorScheme,
+    );
+    final scheme = Theme.of(context).colorScheme;
+    final isStreaming = linkState == BtLinkState.streaming;
+    final isConnecting = linkState == BtLinkState.connecting;
+    final isDisconnecting = linkState == BtLinkState.disconnecting;
+
+    return Card(
+      color: scheme.primaryContainer,
+      child: ListTile(
+        leading: Stack(
+          alignment: Alignment.center,
+          children: [
+            Icon(visual.icon, color: visual.color),
+            if (visual.showSpinner)
+              const SizedBox(
+                width: 28,
+                height: 28,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+          ],
+        ),
+        title: Text(name),
+        subtitle: Text(
+          isStreaming && connectedRssi != null
+              ? '${visual.label} • RSSI: $connectedRssi dBm'
+              : visual.label,
+        ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.settings_outlined),
+              tooltip: 'Device settings',
+              onPressed: () => context
+                  .findAncestorStateOfType<AppShellState>()
+                  ?.goToSettings(),
+            ),
+            TextButton(
+              // Disabled while the disconnect is in flight so the button
+              // truthfully reflects the in-progress teardown.
+              onPressed: isDisconnecting ? null : onDisconnect,
+              child: Text(
+                isDisconnecting
+                    ? 'Disconnecting…'
+                    : isConnecting
+                    ? 'Cancel'
+                    : 'Disconnect',
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
