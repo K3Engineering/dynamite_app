@@ -28,6 +28,23 @@ void main() {
       }
     });
 
+    test('cleared listeners fire on clear() only, not on sample appends', () {
+      final hub = DataHub();
+      var cleared = 0;
+      void listener() => cleared++;
+      hub.addClearedListener(listener);
+
+      feed(hub, frameOf(7), 10);
+      expect(cleared, 0);
+
+      hub.clear();
+      expect(cleared, 1);
+
+      hub.removeClearedListener(listener);
+      hub.clear();
+      expect(cleared, 1);
+    });
+
     test('a never-positive channel reports its true (negative) peak', () {
       final hub = DataHub();
       final frame = Int32List(channels);

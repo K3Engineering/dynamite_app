@@ -54,6 +54,7 @@ class AppShellState extends State<AppShell> {
     _settings.addListener(_syncWakelock);
     _link.addListener(_syncWakelock);
     _syncWakelock();
+    _onTabActivated(_currentIndex);
   }
 
   @override
@@ -103,8 +104,20 @@ class AppShellState extends State<AppShell> {
 
   /// Navigate to a specific tab programmatically (e.g. from status bar tap).
   void switchToTab(int index) {
-    if (index >= 0 && index < _tabs.length) {
-      setState(() => _currentIndex = index);
+    if (index < 0 || index >= _tabs.length || index == _currentIndex) return;
+    setState(() => _currentIndex = index);
+    _onTabActivated(index);
+  }
+
+  /// Tab-activation side effects, driven from here (the owner of the tab
+  /// index) so the tabs themselves stay stateless:
+  ///  * Devices tab visible: prompt to enable Bluetooth, and start RSSI
+  ///    polling (RSSI is only displayed there — don't poll off-screen).
+  void _onTabActivated(int index) {
+    final devicesVisible = index == 2;
+    _link.setRssiUiActive(devicesVisible);
+    if (devicesVisible) {
+      unawaited(_link.requestEnableBluetooth());
     }
   }
 
@@ -113,16 +126,11 @@ class AppShellState extends State<AppShell> {
     return Scaffold(
       body: IndexedStack(
         index: _currentIndex,
-        children: [
-          const LiveTab(),
-          const SessionsTab(),
-          DevicesTab(isActive: _currentIndex == 2),
-          const SettingsTab(),
-        ],
+        children: const [LiveTab(), SessionsTab(), DevicesTab(), SettingsTab()],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
-        onDestinationSelected: (i) => setState(() => _currentIndex = i),
+        onDestinationSelected: switchToTab,
         destinations: [
           for (final tab in _tabs)
             NavigationDestination(icon: Icon(tab.icon), label: tab.label),

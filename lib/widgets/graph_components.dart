@@ -1142,13 +1142,13 @@ class InteractiveGraphArea extends StatefulWidget {
 }
 
 class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
-  // Gesture tracking
-  double? _panStartX;
-  int? _panStartSample;
-  int? _panEndSample;
-  double? _scaleStartSpan;
-  double? _pinchFocalX;
-  bool _wasLiveOnScaleStart = false;
+  /// One in-flight scale (pan/pinch) gesture. Everything is captured together
+  /// at gesture start, so a single nullable session — instead of one nullable
+  /// per field — makes partial gesture states unrepresentable. [focalX] is
+  /// the gesture-start focal point (both pan origin and pinch anchor);
+  /// [startSample]/[span] are the gesture-start window; [wasLive] is whether
+  /// the viewport followed the live edge at gesture start.
+  ({double focalX, int startSample, int span, bool wasLive})? _session;
 
   void _onScaleStart(ScaleStartDetails details) {
     final total = widget.data.totalSamples;
@@ -1159,44 +1159,43 @@ class _InteractiveGraphAreaState extends State<InteractiveGraphArea> {
       widget.data.oldestSample,
       bufferCapacity: widget.data.bufferCapacity,
     );
-    _panStartSample = s;
-    _panEndSample = e;
-    _panStartX = details.localFocalPoint.dx;
-    _scaleStartSpan = (e - s).toDouble();
-    _pinchFocalX = details.localFocalPoint.dx;
-    _wasLiveOnScaleStart = widget.ctrl.isLive;
+    _session = (
+      focalX: details.localFocalPoint.dx,
+      startSample: s,
+      span: e - s,
+      wasLive: widget.ctrl.isLive,
+    );
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details, double graphWidth) {
     final total = widget.data.totalSamples;
-    if (total == 0 || _panStartSample == null || graphWidth <= 0) return;
+    final session = _session;
+    if (total == 0 || session == null || graphWidth <= 0) return;
 
-    final origStart = _panStartSample!;
-    final origSpan = _panEndSample! - origStart;
     final oldestSample = widget.data.oldestSample;
 
-    if (details.scale != 1.0 && _scaleStartSpan != null) {
+    if (details.scale != 1.0) {
       // Pinch zoom, anchored to the gesture-start window so tracking stays
       // stable while totalSamples grows. The focal fraction is measured from
       // the plot area's left edge (same convention as wheel zoom), not from
       // the widget's left padding.
       widget.ctrl.zoomTo(
-        (_scaleStartSpan! / details.scale).round(),
-        ((_pinchFocalX! - kGraphLeftSpace) / graphWidth).clamp(0.0, 1.0),
-        baseStart: origStart,
-        baseSpan: origSpan,
-        anchorLiveEdge: _wasLiveOnScaleStart,
+        (session.span / details.scale).round(),
+        ((session.focalX - kGraphLeftSpace) / graphWidth).clamp(0.0, 1.0),
+        baseStart: session.startSample,
+        baseSpan: session.span,
+        anchorLiveEdge: session.wasLive,
         totalSamples: total,
         oldestSample: oldestSample,
       );
     } else {
       // Pan by the horizontal drag distance, relative to the gesture-start
       // window.
-      final dx = details.localFocalPoint.dx - _panStartX!;
-      final deltaSamples = -(dx * origSpan / graphWidth).round();
+      final dx = details.localFocalPoint.dx - session.focalX;
+      final deltaSamples = -(dx * session.span / graphWidth).round();
       widget.ctrl.applyWindow(
-        origStart + deltaSamples,
-        origSpan,
+        session.startSample + deltaSamples,
+        session.span,
         total,
         oldestSample,
       );

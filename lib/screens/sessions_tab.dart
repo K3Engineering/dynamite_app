@@ -16,6 +16,12 @@ class SessionsTab extends StatefulWidget {
 }
 
 class _SessionsTabState extends State<SessionsTab> {
+  /// Created once: a fresh `watchAllSessions()` per build would make the
+  /// [StreamBuilder] unsubscribe and re-run the query on every rebuild
+  /// (this tab rebuilds on each shell tab switch).
+  late final Stream<List<Session>> _sessions = AppDatabase.instance
+      .watchAllSessions();
+
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
@@ -37,7 +43,7 @@ class _SessionsTabState extends State<SessionsTab> {
           ),
           Expanded(
             child: StreamBuilder<List<Session>>(
-              stream: AppDatabase.instance.watchAllSessions(),
+              stream: _sessions,
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
                   return Center(

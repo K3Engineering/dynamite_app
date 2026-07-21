@@ -6,42 +6,8 @@ import '../widgets/bt_icon.dart';
 import '../widgets/section_header.dart';
 import '../widgets/status_colors.dart';
 
-class DevicesTab extends StatefulWidget {
-  final bool isActive;
-
-  const DevicesTab({super.key, this.isActive = false});
-
-  @override
-  State<DevicesTab> createState() => _DevicesTabState();
-}
-
-class _DevicesTabState extends State<DevicesTab> {
-  @override
-  void initState() {
-    super.initState();
-    if (widget.isActive) {
-      _requestBluetoothIfActive();
-    }
-  }
-
-  @override
-  void didUpdateWidget(covariant DevicesTab oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.isActive && !oldWidget.isActive) {
-      _requestBluetoothIfActive();
-    }
-  }
-
-  void _requestBluetoothIfActive() {
-    // Post-frame callback ensures we don't try to access providers before
-    // the widget tree is fully initialized during the first build.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        // ignore: discarded_futures
-        context.read<BleLinkManager>().requestEnableBluetooth();
-      }
-    });
-  }
+class DevicesTab extends StatelessWidget {
+  const DevicesTab({super.key});
 
   /// Run a connect attempt, surfacing a failure as a snackbar naming
   /// [deviceName] with the underlying error detail (timeout vs GATT error vs
@@ -49,6 +15,7 @@ class _DevicesTabState extends State<DevicesTab> {
   /// buttons are already disabled while a link is busy, so this only handles
   /// the rejected attempt itself.
   Future<void> _connectWithFeedback(
+    BuildContext context,
     Future<void> Function() connect,
     String deviceName,
   ) async {
@@ -56,7 +23,7 @@ class _DevicesTabState extends State<DevicesTab> {
       await connect();
     } catch (e) {
       debugPrint('Connect to $deviceName failed: $e');
-      if (mounted) {
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to connect to $deviceName: $e')),
         );
@@ -228,6 +195,7 @@ class _DevicesTabState extends State<DevicesTab> {
                   onPressed: bt.linkBusy
                       ? null
                       : () => _connectWithFeedback(
+                          context,
                           () => bt.connectToDevice(device.deviceId),
                           device.name ?? 'device',
                         ),
@@ -255,6 +223,7 @@ class _DevicesTabState extends State<DevicesTab> {
                 onPressed: bt.linkBusy
                     ? null
                     : () => _connectWithFeedback(
+                        context,
                         bt.connectToDemoDevice,
                         'Demo Device',
                       ),

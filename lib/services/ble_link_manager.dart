@@ -220,9 +220,26 @@ class BleLinkManager extends ChangeNotifier {
   /// gate on `!kIsWeb`.
   bool get _supportsRssi => !kIsWeb;
 
-  /// Periodic poller for [connectedRssi]; runs only while a link is connected
-  /// and the platform supports RSSI reads.
+  /// Periodic poller for [connectedRssi]; runs only while a link is streaming
+  /// AND the surface displaying RSSI (the Devices tab) is visible.
   Timer? _rssiPollTimer;
+
+  /// Whether the surface displaying live RSSI (the Devices tab's connected
+  /// card) is currently visible. Polling runs only while this is true and a
+  /// link is streaming: off-screen RSSI reads would wake the radio every
+  /// [rssiPollInterval] for nothing.
+  bool _rssiUiActive = false;
+
+  /// Called by the shell when the RSSI-displaying tab becomes visible/hidden.
+  void setRssiUiActive(bool active) {
+    if (_rssiUiActive == active) return;
+    _rssiUiActive = active;
+    if (!active) {
+      _stopRssiPolling();
+    } else if (_link.isStreaming) {
+      _startRssiPolling(_link.deviceId);
+    }
+  }
 
   /// Raw ADC-feed notification bytes, exactly as received. Wired to the
   /// protocol layer ([AdcPacketDecoder.onDataPacket]) at app startup; the link
@@ -380,14 +397,15 @@ class BleLinkManager extends ChangeNotifier {
     );
   }
 
-  /// Begin polling the connected device's RSSI for the live signal display.
-  /// No-op on platforms that don't implement readRssi (e.g. web). Cancels any
-  /// previous poller first. Reads are best-effort: a failed read is swallowed
-  /// silently and retried on the next tick (no per-tick logging — it would spam
-  /// the console).
+  /// Begin polling the connected device's RSSI for the signal display.
+  /// No-op on platforms that don't implement readRssi (e.g. web) and while
+  /// the RSSI-displaying surface is off-screen (see [setRssiUiActive]).
+  /// Cancels any previous poller first. Reads are best-effort: a failed read
+  /// is swallowed silently and retried on the next tick (no per-tick logging
+  /// — it would spam the console).
   void _startRssiPolling(String deviceId) {
     _stopRssiPolling();
-    if (!_supportsRssi) {
+    if (!_supportsRssi || !_rssiUiActive) {
       return;
     }
     _rssiPollTimer = Timer.periodic(rssiPollInterval, (_) async {

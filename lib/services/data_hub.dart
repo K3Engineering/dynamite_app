@@ -123,6 +123,19 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   void removeSamplesAppendedListener(SamplesAppendedListener listener) =>
       _samplesAppendedListeners.remove(listener);
 
+  /// Observers notified once per [clear] — a new device stream just reset the
+  /// hub, so views must drop stale pan/zoom windows instead of clamping them
+  /// against an empty buffer. Lets observers react to resets explicitly
+  /// instead of mirroring [generation] and comparing on every notify.
+  final ObserverList<void Function()> _clearedListeners =
+      ObserverList<void Function()>();
+
+  void addClearedListener(void Function() listener) =>
+      _clearedListeners.add(listener);
+
+  void removeClearedListener(void Function() listener) =>
+      _clearedListeners.remove(listener);
+
   DataHub() {
     clear();
   }
@@ -151,6 +164,9 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
       _currentRaw[i] = 0;
       valueBuckets[i].reset();
       diffBuckets[i].reset();
+    }
+    for (final listener in _clearedListeners) {
+      listener();
     }
     notifyListeners();
   }
