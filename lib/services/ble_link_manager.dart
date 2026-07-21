@@ -135,7 +135,7 @@ class BleLinkManager extends ChangeNotifier {
   /// disabled (with a hint) until it elapses. Web Bluetooth exposes no reliable
   /// teardown signal, so the window is enforced as a timer, not a state query.
   /// Native stacks don't exhibit the race and go straight back to idle.
-  static const Duration reconnectSettleDelay = Duration(milliseconds: 1000);
+  static const Duration reconnectSettleDelay = Duration(milliseconds: 4000);
 
   /// One-shot timer that returns the active link from [BtLinkState.cooldown]
   /// back to [BtLinkState.idle] once [reconnectSettleDelay] has elapsed since
