@@ -329,6 +329,10 @@ class BleLinkManager extends ChangeNotifier {
         _link.state == BtLinkState.connected) {
       return;
     }
+    // TODO(ux): starting a scan while streaming disconnects the active link
+    // — and silently stops any in-progress recording. Decide the policy:
+    // disable Scan while streaming, or confirm first when a recording is in
+    // progress. (The Devices tab Scan button mirrors this TODO.)
     await disconnectSelectedDevice();
     _devices.clear();
     _isScanning = true;
@@ -510,12 +514,19 @@ class BleLinkManager extends ChangeNotifier {
         }
         final discovered = await UniversalBle.discoverServices(deviceId);
         if (_setupSuperseded(gen, deviceId)) return;
+        bool subscribed = false;
         for (final srv in discovered) {
           if (srv.uuid == btServiceId) {
-            await subscribeToAdcFeed(srv);
+            subscribed = await subscribeToAdcFeed(srv);
             if (_setupSuperseded(gen, deviceId)) return;
             break;
           }
+        }
+        // A link without the ADC feed is unusable: fail the connection here
+        // (the catch below tears down and toasts) rather than advancing to
+        // "streaming" with no data flowing.
+        if (!subscribed) {
+          throw StateError('ADC feed characteristic not found on $deviceId');
         }
         // Setup complete: advance to the usable "streaming" state and begin live
         // RSSI polling for the signal display.
@@ -541,7 +552,17 @@ class BleLinkManager extends ChangeNotifier {
       // common teardown, which (on web) parks the link in cooldown for the
       // reconnect settle window before returning it to the idle sentinel.
       final String name = _link.name.isEmpty ? deviceId : _link.name;
+      // An unexpected drop while the link was up (setting up or streaming)
+      // gets a user notice. User-requested disconnects arrive here in
+      // `disconnecting`, and post-connect setup failures already emitted
+      // BleConnectionFailed before tearing down — so neither double-reports.
+      final bool wasActive =
+          _link.state == BtLinkState.connected ||
+          _link.state == BtLinkState.streaming;
       _endLink(deviceId, name);
+      if (wasActive) {
+        _events.emit(BleConnectionLost(name));
+      }
       notifyListeners();
     }
   }
@@ -668,19 +689,33 @@ class BleLinkManager extends ChangeNotifier {
     }
   }
 
-  Future<void> subscribeToAdcFeed(BleService service) async {
+  /// Subscribe to the ADC feed characteristic of [service] (reading the
+  /// calibration characteristic first). Returns true when the subscription
+  /// was made; false when no usable ADC feed characteristic exists — the
+  /// caller fails the connection in that case, since a link without the
+  /// feed is unusable.
+  Future<bool> subscribeToAdcFeed(BleService service) async {
     final String deviceId = _link.deviceId;
     if (deviceId.isEmpty) {
-      return;
+      return false;
     }
     for (final characteristic in service.characteristics) {
       if (characteristic.uuid != btChrAdcFeedId ||
           !characteristic.properties.contains(CharacteristicProperty.notify)) {
         continue;
       }
-      onCalibrationData?.call(
-        await UniversalBle.read(deviceId, service.uuid, btChrCalibration),
-      );
+      // Calibration is best-effort: parsing is a TODO and defaults are in
+      // use, so a failed read must not fail the whole connection.
+      // TODO(cal): once real calibration parsing lands, surface a
+      // "calibration unreadable — using defaults" warning event instead of
+      // only logging.
+      try {
+        onCalibrationData?.call(
+          await UniversalBle.read(deviceId, service.uuid, btChrCalibration),
+        );
+      } catch (e) {
+        debugPrint('Calibration read failed for $deviceId: $e');
+      }
       await UniversalBle.subscribeNotifications(
         deviceId,
         service.uuid,
@@ -689,8 +724,9 @@ class BleLinkManager extends ChangeNotifier {
       // The link's transition to the usable [BtLinkState.streaming] state is
       // driven by the caller ([_onConnectionChange]) once this returns and the
       // generation guard confirms the pass wasn't superseded.
-      return;
+      return true;
     }
+    return false;
   }
 
   void _onValueChange(

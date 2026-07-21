@@ -85,6 +85,10 @@ class AppShellState extends State<AppShell> {
             content: Text('Lost connection to $deviceName during setup.'),
           ),
         );
+      case BleConnectionLost(:final deviceName):
+        messenger.showSnackBar(
+          SnackBar(content: Text('Connection to $deviceName lost.')),
+        );
       case RecordingStorageError(:final error):
         messenger.showSnackBar(
           SnackBar(

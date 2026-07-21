@@ -40,6 +40,33 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// packet is always delivered so the decoder can establish continuity.
   int dropEveryNPackets = 0;
 
+  /// Test knobs ---------------------------------------------------------------
+
+  /// When false, [discoverServices] reports a GATT table WITHOUT the ADC feed
+  /// service, so post-connect setup cannot subscribe to the feed.
+  bool includeAdcService = true;
+
+  /// When true, reads of the calibration characteristic throw.
+  bool failCalibrationRead = false;
+
+  /// When true, [disconnect] never fires the connection-change callback, so
+  /// the client's disconnect-timeout reconciliation path is what tears the
+  /// link down.
+  bool hangDisconnect = false;
+
+  /// Reset every knob to its default and silently sever any leftover link
+  /// (no callbacks), so the singleton is clean for the next test.
+  void resetKnobs() {
+    dropEveryNPackets = 0;
+    includeAdcService = true;
+    failCalibrationRead = false;
+    hangDisconnect = false;
+    _connectedDeviceId = null;
+    _connectionState = BleConnectionState.disconnected;
+    _notificationTimer?.cancel();
+    _notificationTimer = null;
+  }
+
   @override
   Future<AvailabilityState> getBluetoothAvailabilityState() async {
     await Future<void>.delayed(hwDelay);
@@ -130,6 +157,11 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<void> disconnect(String deviceId) async {
+    if (hangDisconnect) {
+      // Never fire the connection-change callback: the link stays "connected"
+      // here and the client's disconnect-timeout reconciliation tears it down.
+      return;
+    }
     _connectionState = BleConnectionState.disconnected;
     await setNotifiable(deviceId, '', '', BleInputProperty.disabled);
     _connectedDeviceId = null;
@@ -139,7 +171,12 @@ class MockBlePlatform extends UniversalBlePlatform {
   @override
   Future<List<BleService>> discoverServices(String deviceId, bool _) async {
     await Future<void>.delayed(netDelay);
-    return _generateServices(deviceId);
+    final services = _generateServices(deviceId);
+    if (!includeAdcService) {
+      // A device whose GATT table lacks the ADC feed service.
+      return [for (final s in services) if (s.uuid != btServiceId) s];
+    }
+    return services;
   }
 
   @override
@@ -200,6 +237,9 @@ class MockBlePlatform extends UniversalBlePlatform {
     final Duration? timeout,
   }) async {
     await Future<void>.delayed(netDelay);
+    if (failCalibrationRead && characteristic == btChrCalibration) {
+      throw StateError('Mock calibration read failure');
+    }
     return Uint8List(255);
   }
 

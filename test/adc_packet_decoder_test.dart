@@ -122,21 +122,31 @@ void main() {
       expect(hub.gaps.contains(nwAdcNumSamples), isFalse);
     });
 
-    test('an empty packet is ignored', () {
+    test('an empty packet is ignored and counted as a protocol error', () {
       decoder.onDataPacket(Uint8List(0));
       expect(hub.totalSamples, 0);
+      expect(hub.protocolErrorCount, 1);
     });
 
-    test('a truncated packet is ignored instead of throwing', () {
-      // One byte short of a full packet: a firmware bug must not crash the
-      // app (the in-loop asserts are stripped in release builds).
-      final short = makePacket(0, (s, c) => 1);
-      decoder.onDataPacket(Uint8List.sublistView(short, 0, short.length - 1));
-      expect(hub.totalSamples, 0);
-      // A packet with trailing extra bytes still decodes its 20 samples.
-      final long = Uint8List(short.length + 3)..setAll(0, short);
-      decoder.onDataPacket(long);
-      expect(hub.totalSamples, nwAdcNumSamples);
-    });
+    test(
+      'a truncated packet is ignored, counted, and never throws; extra '
+      'trailing bytes still decode',
+      () {
+        // One byte short of a full packet: a firmware bug must not crash the
+        // app (the in-loop asserts are stripped in release builds).
+        final short = makePacket(0, (s, c) => 1);
+        decoder.onDataPacket(Uint8List.sublistView(short, 0, short.length - 1));
+        expect(hub.totalSamples, 0);
+        expect(hub.protocolErrorCount, 1);
+        // A second malformed packet keeps counting (the UI surfaces this).
+        decoder.onDataPacket(Uint8List(1));
+        expect(hub.protocolErrorCount, 2);
+        // A packet with trailing extra bytes still decodes its 20 samples.
+        final long = Uint8List(short.length + 3)..setAll(0, short);
+        decoder.onDataPacket(long);
+        expect(hub.totalSamples, nwAdcNumSamples);
+        expect(hub.protocolErrorCount, 2);
+      },
+    );
   });
 }

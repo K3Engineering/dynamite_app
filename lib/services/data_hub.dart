@@ -77,6 +77,11 @@ class DataHub extends ChangeNotifier {
   int totalSamples = 0;
   DeviceCalibration deviceCalibration = DeviceCalibration();
 
+  /// Malformed/undecodable ADC packets seen on this stream (e.g. truncated
+  /// notifications). The decoder increments this instead of silently
+  /// dropping; the live UI surfaces a non-zero count. Reset by [clear].
+  int protocolErrorCount = 0;
+
   /// Monotonic counter bumped by [clear]. Lets observers distinguish "same
   /// stream, more data" from "a new stream reset the hub" explicitly, instead
   /// of inferring the reset from [totalSamples] decreasing.
@@ -118,6 +123,7 @@ class DataHub extends ChangeNotifier {
     _tareCount = 0;
     totalSamples = 0;
     _generation++;
+    protocolErrorCount = 0;
     gaps.clear();
     for (int i = 0; i < numAdcChannels; ++i) {
       rawMax[i] = _noMaxYet;
@@ -295,7 +301,7 @@ class DeviceCalibration {
     this.offset = 0,
     this.capacityKg = 200.0,
     this.sensitivityMvV = 2.0,
-    this.excitationV = 4.5,
+    this.excitationV = 4.53,
   });
 
   final int offset;

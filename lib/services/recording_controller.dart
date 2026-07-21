@@ -134,9 +134,12 @@ class RecordingController extends ChangeNotifier {
     return const StartSessionOk();
   }
 
-  /// Default session name from the wall clock, e.g. `7/20 14:05`.
+  /// Default session name from the wall clock, e.g. `7/20 14:05:32`. Seconds
+  /// included so two sessions started within the same minute don't collide.
   static String _autoSessionName(DateTime now) =>
-      '${now.month}/${now.day} ${now.hour}:${now.minute.toString().padLeft(2, '0')}';
+      '${now.month}/${now.day} '
+      '${now.hour}:${now.minute.toString().padLeft(2, '0')}:'
+      '${now.second.toString().padLeft(2, '0')}';
 
   /// Stop the current recording and finalize it. Returns the saved session id
   /// and name (or nulls if nothing was recording) and any write error the
