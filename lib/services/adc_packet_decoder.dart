@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'adc_protocol.dart';
 import 'data_hub.dart';
+import '../utils/log.dart';
 
 /// Protocol layer: decodes the device's ADC-feed notification packets and the
 /// calibration characteristic into [DataHub] updates.
@@ -67,7 +68,7 @@ class AdcPacketDecoder {
     if (_prevSampleCount != -1) {
       final int diff = (count - _prevSampleCount) & 0xFFFF;
       if (diff != 0) {
-        debugPrint('# lost $diff samples');
+        logTrace(() => '# lost $diff samples');
         // Report the dropped range to the hub (capped inside the hub to avoid
         // OOM if the device reboots and the counter jumps).
         hub.addDroppedFrames(diff);

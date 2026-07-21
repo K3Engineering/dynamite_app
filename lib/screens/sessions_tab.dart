@@ -113,8 +113,17 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  Future<void> _deleteSession(Session session) =>
-      deleteSessionFlow(context, session);
+  Future<void> _deleteSession(Session session) async {
+    try {
+      await deleteSessionFlow(context, session);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to delete session: $e')));
+      }
+    }
+  }
 }
 
 class _SessionCard extends StatelessWidget {
@@ -128,7 +137,7 @@ class _SessionCard extends StatelessWidget {
   final Session session;
   final ForceUnit unit;
   final VoidCallback onTap;
-  final VoidCallback onDelete;
+  final Future<void> Function() onDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -148,7 +157,7 @@ class _SessionCard extends StatelessWidget {
         child: Icon(Icons.delete, color: Theme.of(context).colorScheme.onError),
       ),
       confirmDismiss: (_) async {
-        onDelete();
+        await onDelete();
         return false; // We handle deletion ourselves
       },
       child: Card(
