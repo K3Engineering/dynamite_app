@@ -241,6 +241,11 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// reboots and the counter jumps. Held samples are real ring-buffer time
   /// (they advance [totalSamples]) but are NOT real readings, so they are
   /// never accumulated into an in-progress tare average.
+  ///
+  /// TODO(perf): a reboot jump can inject up to ~262k held samples (65,535 x
+  /// 4 channels) synchronously inside one BLE callback, stalling the UI
+  /// isolate for a beat. If that becomes visible, chunk the injection across
+  /// frames (or fast-forward the ring/bucket state without per-sample work).
   void addDroppedFrames(int count) {
     final int toInject = math.min(count, maxDataSz);
     gaps.append(totalSamples, totalSamples + toInject);

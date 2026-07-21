@@ -133,6 +133,12 @@ class SessionStorage {
   }
 
   /// Read a session's recorded data back from its chunks.
+  ///
+  /// TODO(perf): this materializes every chunk blob AND the full
+  /// deinterleaved channel arrays (~2x session size transiently — a 1-hour
+  /// session is ~58 MB of samples). If long sessions become common, stream
+  /// the deinterleave (and consider isolating the [SessionData] stats scan,
+  /// which currently runs eagerly on the UI thread below).
   static Future<SessionData?> loadSession(Session session) async {
     final chunks = await AppDatabase.instance.sessionChunkData(session.id);
 
