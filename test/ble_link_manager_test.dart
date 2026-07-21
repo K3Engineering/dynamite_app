@@ -259,6 +259,56 @@ void main() {
       expect(seen, isEmpty);
     });
   });
+
+  test('reconnecting after a clean disconnect reaches streaming again', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(seconds: 4));
+      expect(link.link.state, BtLinkState.idle);
+
+      // The web reconnect-settle wait does not apply on native: an immediate
+      // reconnect proceeds without delay.
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+
+      expect(link.isStreaming, isTrue);
+      expect(seen, isEmpty);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('a stale disconnect callback on an idle link is a no-op', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(seconds: 4));
+      expect(link.link.state, BtLinkState.idle);
+      expect(seen, isEmpty);
+
+      // A late duplicate disconnect event arrives after the link is idle.
+      // It must not touch state, notify, or re-stamp the settle window.
+      var notifies = 0;
+      link.addListener(() => notifies++);
+      MockBlePlatform.instance.updateConnection(deviceId, false);
+      async.flushMicrotasks();
+
+      expect(link.link.state, BtLinkState.idle);
+      expect(notifies, 0);
+      expect(seen, isEmpty);
+    });
+  });
 }
 
 

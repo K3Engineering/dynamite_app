@@ -7,6 +7,7 @@ import 'database.dart';
 import 'data_hub.dart';
 import '../models/bucket_series.dart';
 import '../models/gap_list.dart';
+import '../models/graph_data_source.dart';
 
 /// Chunk format: packed int32 LE values, interleaved
 /// `[ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]`, with one value per ADC channel
@@ -42,7 +43,6 @@ class SessionStorage {
       channelLabels: jsonEncode(channelLabels),
       tares: jsonEncode(tare.toList()),
       calibrationSlope: dataHub.deviceCalibration.slope,
-      calibrationOffset: dataHub.deviceCalibration.offset,
       visibleChannels: jsonEncode(visibleChannels),
     );
 
@@ -139,7 +139,6 @@ class SessionStorage {
       sampleRate: session.sampleRate,
       sampleCount: globalS,
       calibrationSlope: session.calibrationSlope,
-      calibrationOffset: session.calibrationOffset,
       tares: _parseTares(session.tares, channelCount),
       gaps: GapList.fromJson(session.gaps),
     );
@@ -222,20 +221,24 @@ class _ChunkAggregate {
   }
 }
 
-/// Loaded session data for playback/review. A plain immutable data holder;
-/// the UI wraps it in a GraphDataSource adapter for rendering.
-class SessionData {
+/// Loaded session data for playback/review. An immutable data holder that
+/// implements [GraphDataSource] directly, so the graph components render it
+/// without an adapter; [sampleRate], [calibrationSlope] and [gaps] already
+/// satisfy their interface counterparts.
+class SessionData implements GraphDataSource {
   final List<Int32List> channels;
+  @override
   final int sampleRate;
   final int sampleCount;
+  @override
   final double calibrationSlope;
-  final int calibrationOffset;
   final List<double> tares;
 
   /// Dropped-sample ranges (session-relative). The channel data holds held
   /// values across these ranges, so stats/buckets need no exclusion logic;
   /// renderers use this to hatch and break the polyline, and CSV export
   /// blanks these rows. Empty for crash-recovered sessions (gap info lost).
+  @override
   final GapList gaps;
 
   /// Per-channel extremes, computed once on construction.
@@ -261,7 +264,6 @@ class SessionData {
     required this.sampleRate,
     required this.sampleCount,
     required this.calibrationSlope,
-    required this.calibrationOffset,
     required this.tares,
     GapList? gaps,
   }) : gaps = gaps ?? GapList(),
@@ -306,6 +308,33 @@ class SessionData {
 
   /// Duration in seconds.
   double get durationSeconds => sampleCount / sampleRate;
+
+  // -- GraphDataSource --------------------------------------------------------
+
+  @override
+  int get totalSamples => sampleCount;
+
+  @override
+  int get bufferCapacity => sampleCount;
+
+  @override
+  int get oldestSample => 0;
+
+  @override
+  Listenable get repaint => kNeverRepaints;
+
+  @override
+  ChannelSeries channel(int channelIndex) => (
+    data: channels[channelIndex],
+    min: mins[channelIndex],
+    max: maxs[channelIndex],
+    tare: tares[channelIndex],
+    buckets: valueBuckets[channelIndex].series,
+  );
+
+  @override
+  BucketSeries? diffBucketsFor(int channelIndex) =>
+      diffBuckets[channelIndex].series;
 }
 
 /// Streams recorded samples to the DB as they arrive, flushing in chunks so a

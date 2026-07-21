@@ -22,7 +22,6 @@ class Sessions extends Table {
   TextColumn get tares => text()();
   RealColumn get peakForceRaw => real().withDefault(const Constant(0.0))();
   RealColumn get calibrationSlope => real()();
-  IntColumn get calibrationOffset => integer()();
   TextColumn get notes => text().withDefault(const Constant(''))();
   IntColumn get sampleCount => integer().withDefault(const Constant(0))();
   BoolColumn get isCompleted => boolean().withDefault(const Constant(true))();
@@ -77,7 +76,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -116,7 +115,6 @@ class AppDatabase extends _$AppDatabase {
     required String channelLabels,
     required String tares,
     required double calibrationSlope,
-    required int calibrationOffset,
     required String visibleChannels,
   }) {
     return into(sessions).insert(
@@ -128,7 +126,6 @@ class AppDatabase extends _$AppDatabase {
         channelLabels: channelLabels,
         tares: tares,
         calibrationSlope: calibrationSlope,
-        calibrationOffset: calibrationOffset,
         isCompleted: const Value(false),
         visibleChannels: visibleChannels,
       ),

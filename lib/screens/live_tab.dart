@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
-import '../models/bucket_series.dart';
-import '../models/gap_list.dart';
 
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
@@ -25,63 +23,11 @@ class LiveTab extends StatefulWidget {
   State<LiveTab> createState() => _LiveTabState();
 }
 
-/// Adapts a live [DataHub] to the [GraphDataSource] interface consumed by the
-/// shared graph widgets. Forwards the hub's change notifications.
-class _LiveDataSource extends ChangeNotifier implements GraphDataSource {
-  final DataHub _hub;
-  _LiveDataSource(this._hub) {
-    _hub.addListener(notifyListeners);
-  }
-
-  @override
-  void dispose() {
-    _hub.removeListener(notifyListeners);
-    super.dispose();
-  }
-
-  @override
-  int get totalSamples => _hub.totalSamples;
-
-  @override
-  int get bufferCapacity => DataHub.maxDataSz;
-
-  @override
-  int get oldestSample => _hub.totalSamples > DataHub.maxDataSz
-      ? _hub.totalSamples - DataHub.maxDataSz
-      : 0;
-
-  @override
-  int get sampleRate => DataHub.samplesPerSec;
-
-  @override
-  double get calibrationSlope => _hub.deviceCalibration.slope;
-
-  @override
-  Listenable get repaint => this;
-
-  @override
-  ChannelSeries channel(int channelIndex) => (
-    data: _hub.rawData[channelIndex],
-    min: _hub.rawMin[channelIndex].toDouble(),
-    max: _hub.rawMax[channelIndex].toDouble(),
-    tare: _hub.tare[channelIndex],
-    buckets: _hub.valueBuckets[channelIndex].series,
-  );
-
-  @override
-  BucketSeries? diffBuckets(int channelIndex) =>
-      _hub.diffBuckets[channelIndex].series;
-
-  @override
-  GapList get gaps => _hub.gaps;
-}
-
 class _LiveTabState extends State<LiveTab> {
   final GraphController _graphCtrl = GraphController(
     minLiveSpan: 20 * DataHub.samplesPerSec,
   );
   bool _showDerivative = false;
-  _LiveDataSource? _dataSource;
   DataHub? _hub;
 
   /// Last seen hub generation; a change means the hub was cleared for a new
@@ -100,8 +46,6 @@ class _LiveTabState extends State<LiveTab> {
       _hub = hub;
       _lastGeneration = hub.generation;
       hub.addListener(_onHubChanged);
-      _dataSource?.dispose();
-      _dataSource = _LiveDataSource(hub);
     }
   }
 
@@ -122,7 +66,6 @@ class _LiveTabState extends State<LiveTab> {
   @override
   void dispose() {
     _hub?.removeListener(_onHubChanged);
-    _dataSource?.dispose();
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -235,7 +178,7 @@ class _LiveTabState extends State<LiveTab> {
               showDerivative: _showDerivative,
             ),
           if (isConnected)
-            Expanded(child: _buildGraphArea(settings))
+            Expanded(child: _buildGraphArea(settings, hub))
           else
             const Expanded(child: DisconnectedPrompt()),
           if (isConnected)
@@ -255,10 +198,9 @@ class _LiveTabState extends State<LiveTab> {
     );
   }
 
-  Widget _buildGraphArea(AppSettings settings) {
-    if (_dataSource == null) return const SizedBox.shrink();
+  Widget _buildGraphArea(AppSettings settings, DataHub hub) {
     return GraphWorkspace(
-      data: _dataSource!,
+      data: hub,
       ctrl: _graphCtrl,
       settings: settings,
       activeChannels: settings.activeChannelIndices,

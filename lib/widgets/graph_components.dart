@@ -11,6 +11,7 @@ import '../models/app_settings.dart';
 import '../models/bucket_series.dart';
 import '../models/force_unit.dart';
 import '../models/gap_list.dart';
+import '../models/graph_data_source.dart';
 
 // ---------------------------------------------------------------------------
 // Shared graph layout constants
@@ -542,69 +543,6 @@ int blockSizeFor(int viewSamples, double graphW) {
   // floor => >= 1 sample/block, so the polyline never has more vertices than
   // pixels. The remainder (viewSamples % blockSize) lands in the short final block.
   return math.max(1, (viewSamples / graphW).floor());
-}
-
-/// A single channel's raw circular-buffer data plus its precomputed extremes,
-/// tare offset, and raw-value [BucketSeries]. Returned by
-/// [GraphDataSource.channel].
-typedef ChannelSeries = ({
-  List<int> data,
-  double min,
-  double max,
-  double tare,
-  BucketSeries buckets,
-});
-
-/// Data interface required by the shared graph components (main graph, minimap, etc).
-/// This allows the components to render either live DataHub data or static SessionData.
-///
-/// Sources are not required to be [ChangeNotifier]s; instead they expose a
-/// [repaint] [Listenable] that fires when their data changes (a never-firing
-/// listenable is fine for static data). This keeps the interface usable by both
-/// live and static sources, and leaves room for composed/derived sources later.
-abstract interface class GraphDataSource {
-  /// Total number of logical samples generated so far (can exceed bufferCapacity).
-  int get totalSamples;
-
-  /// The size of the circular buffer. Used to modulus array indices.
-  int get bufferCapacity;
-
-  /// The oldest available sample index (absolute time).
-  int get oldestSample;
-
-  /// The sample rate of the data (Hz).
-  int get sampleRate;
-
-  /// The calibration slope used to convert raw counts to kgf.
-  double get calibrationSlope;
-
-  /// Notifies listeners when the underlying data changes.
-  Listenable get repaint;
-
-  /// Returns the series (data + extremes + tare + buckets) for a given
-  /// channel index.
-  ChannelSeries channel(int channelIndex);
-
-  /// Bucket aggregates of the first-difference series for a channel,
-  /// enabling the derivative graph's bucket fast path; null when the source
-  /// does not track them (the derivative then renders on the exact path).
-  BucketSeries? diffBuckets(int channelIndex);
-
-  /// Sample ranges where data was lost (dropped packets). The buffer holds
-  /// held values there; renderers break the polyline and hatch these ranges.
-  /// Sources that cannot have gaps return an empty (never-mutated) [GapList].
-  GapList get gaps;
-}
-
-/// A [Listenable] that never fires; use as [GraphDataSource.repaint] for static
-/// data sources (e.g. a loaded session).
-final Listenable kNeverRepaints = _NeverListenable();
-
-class _NeverListenable extends Listenable {
-  @override
-  void addListener(VoidCallback listener) {}
-  @override
-  void removeListener(VoidCallback listener) {}
 }
 
 // ---------------------------------------------------------------------------
@@ -1299,7 +1237,6 @@ class GraphWorkspace extends StatefulWidget {
   final List<int> activeChannels;
   final bool showDerivative;
   final bool isLiveGraph;
-  final bool showMinimap;
   final bool showZoomSpan;
 
   const GraphWorkspace({
@@ -1310,7 +1247,6 @@ class GraphWorkspace extends StatefulWidget {
     required this.activeChannels,
     this.showDerivative = false,
     this.isLiveGraph = true,
-    this.showMinimap = true,
     this.showZoomSpan = true,
   });
 
@@ -1329,6 +1265,19 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
     _forceCache.dispose();
     _derivCache.dispose();
     super.dispose();
+  }
+
+  /// Zoom by [factor] (>1 in, <1 out), anchored at the live edge when
+  /// following it and at the window center otherwise.
+  void _zoomBy(double factor) {
+    if (widget.data.totalSamples <= 0) return;
+    widget.ctrl.zoom(
+      factor,
+      widget.ctrl.isLive ? 1.0 : 0.5,
+      widget.data.totalSamples,
+      widget.data.oldestSample,
+      widget.data.bufferCapacity,
+    );
   }
 
   @override
@@ -1388,13 +1337,12 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                     ),
                   ),
                 // Minimap
-                if (widget.showMinimap)
-                  Minimap(
-                    dataSource: widget.data,
-                    settings: widget.settings,
-                    graphCtrl: widget.ctrl,
-                    activeChannels: widget.activeChannels,
-                  ),
+                Minimap(
+                  dataSource: widget.data,
+                  settings: widget.settings,
+                  graphCtrl: widget.ctrl,
+                  activeChannels: widget.activeChannels,
+                ),
               ],
             ),
             // LIVE button (appears when not following live edge)
@@ -1444,18 +1392,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                         Icons.zoom_out,
                         color: Theme.of(context).colorScheme.onPrimary,
                       ),
-                      onPressed: () {
-                        if (widget.data.totalSamples > 0) {
-                          final focal = widget.ctrl.isLive ? 1.0 : 0.5;
-                          widget.ctrl.zoom(
-                            1 / 1.2,
-                            focal,
-                            widget.data.totalSamples,
-                            widget.data.oldestSample,
-                            widget.data.bufferCapacity,
-                          );
-                        }
-                      },
+                      onPressed: () => _zoomBy(1 / 1.2),
                     ),
                     if (widget.showZoomSpan)
                       ListenableBuilder(
@@ -1507,18 +1444,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                         Icons.zoom_in,
                         color: Theme.of(context).colorScheme.onPrimary,
                       ),
-                      onPressed: () {
-                        if (widget.data.totalSamples > 0) {
-                          final focal = widget.ctrl.isLive ? 1.0 : 0.5;
-                          widget.ctrl.zoom(
-                            1.2,
-                            focal,
-                            widget.data.totalSamples,
-                            widget.data.oldestSample,
-                            widget.data.bufferCapacity,
-                          );
-                        }
-                      },
+                      onPressed: () => _zoomBy(1.2),
                     ),
                   ],
                 ),
@@ -2578,7 +2504,7 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   @override
   EnvelopeSeries series(int channel) {
     final sampleAt = _sampleAt(channel);
-    final buckets = _data.diffBuckets(channel);
+    final buckets = _data.diffBucketsFor(channel);
     if (buckets == null) return EnvelopeSeries.exact(sampleAt);
     final scale = _displayScale;
     return EnvelopeSeries.bucketed(
@@ -2611,7 +2537,7 @@ class DerivativeGraphPainter extends _TimeSeriesGraphPainter {
       if (_data.channel(ch).data.isEmpty) continue;
       if (startI >= endI) continue;
 
-      final buckets = _data.diffBuckets(ch);
+      final buckets = _data.diffBucketsFor(ch);
       if (buckets == null) {
         // Exact-only fallback for sources without diff aggregates.
         final valueAt = _sampleAt(ch);

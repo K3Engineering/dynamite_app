@@ -71,10 +71,7 @@ class _DevicesTabState extends State<DevicesTab> {
     final isStreaming = bt.isStreaming;
     // The link is up (setting up OR streaming) — the connected card is shown for
     // both so the user can see progress and cancel a stuck setup.
-    final isLinkUp = bt.selectedDeviceId.isNotEmpty;
-    // The specific device currently in its post-disconnect cooldown window (web
-    // only); its row shows "Please wait…" instead of "Connect".
-    final coolingDownDeviceId = bt.isCoolingDown ? bt.link.deviceId : '';
+    final isLinkUp = bt.isLinkUp;
 
     return SafeArea(
       child: ListView(
@@ -210,11 +207,7 @@ class _DevicesTabState extends State<DevicesTab> {
                           () => bt.connectToDevice(device.deviceId),
                           device.name ?? 'device',
                         ),
-                  child: Text(
-                    device.deviceId == coolingDownDeviceId
-                        ? 'Please wait…'
-                        : 'Connect',
-                  ),
+                  child: const Text('Connect'),
                 ),
               ),
             ),

@@ -119,17 +119,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     type: DriftSqlType.double,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _calibrationOffsetMeta = const VerificationMeta(
-    'calibrationOffset',
-  );
-  @override
-  late final GeneratedColumn<int> calibrationOffset = GeneratedColumn<int>(
-    'calibration_offset',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
   static const VerificationMeta _notesMeta = const VerificationMeta('notes');
   @override
   late final GeneratedColumn<String> notes = GeneratedColumn<String>(
@@ -200,7 +189,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     tares,
     peakForceRaw,
     calibrationSlope,
-    calibrationOffset,
     notes,
     sampleCount,
     isCompleted,
@@ -300,17 +288,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     } else if (isInserting) {
       context.missing(_calibrationSlopeMeta);
     }
-    if (data.containsKey('calibration_offset')) {
-      context.handle(
-        _calibrationOffsetMeta,
-        calibrationOffset.isAcceptableOrUnknown(
-          data['calibration_offset']!,
-          _calibrationOffsetMeta,
-        ),
-      );
-    } else if (isInserting) {
-      context.missing(_calibrationOffsetMeta);
-    }
     if (data.containsKey('notes')) {
       context.handle(
         _notesMeta,
@@ -401,10 +378,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.double,
         data['${effectivePrefix}calibration_slope'],
       )!,
-      calibrationOffset: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}calibration_offset'],
-      )!,
       notes: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}notes'],
@@ -445,7 +418,6 @@ class Session extends DataClass implements Insertable<Session> {
   final String tares;
   final double peakForceRaw;
   final double calibrationSlope;
-  final int calibrationOffset;
   final String notes;
   final int sampleCount;
   final bool isCompleted;
@@ -469,7 +441,6 @@ class Session extends DataClass implements Insertable<Session> {
     required this.tares,
     required this.peakForceRaw,
     required this.calibrationSlope,
-    required this.calibrationOffset,
     required this.notes,
     required this.sampleCount,
     required this.isCompleted,
@@ -489,7 +460,6 @@ class Session extends DataClass implements Insertable<Session> {
     map['tares'] = Variable<String>(tares);
     map['peak_force_raw'] = Variable<double>(peakForceRaw);
     map['calibration_slope'] = Variable<double>(calibrationSlope);
-    map['calibration_offset'] = Variable<int>(calibrationOffset);
     map['notes'] = Variable<String>(notes);
     map['sample_count'] = Variable<int>(sampleCount);
     map['is_completed'] = Variable<bool>(isCompleted);
@@ -510,7 +480,6 @@ class Session extends DataClass implements Insertable<Session> {
       tares: Value(tares),
       peakForceRaw: Value(peakForceRaw),
       calibrationSlope: Value(calibrationSlope),
-      calibrationOffset: Value(calibrationOffset),
       notes: Value(notes),
       sampleCount: Value(sampleCount),
       isCompleted: Value(isCompleted),
@@ -535,7 +504,6 @@ class Session extends DataClass implements Insertable<Session> {
       tares: serializer.fromJson<String>(json['tares']),
       peakForceRaw: serializer.fromJson<double>(json['peakForceRaw']),
       calibrationSlope: serializer.fromJson<double>(json['calibrationSlope']),
-      calibrationOffset: serializer.fromJson<int>(json['calibrationOffset']),
       notes: serializer.fromJson<String>(json['notes']),
       sampleCount: serializer.fromJson<int>(json['sampleCount']),
       isCompleted: serializer.fromJson<bool>(json['isCompleted']),
@@ -557,7 +525,6 @@ class Session extends DataClass implements Insertable<Session> {
       'tares': serializer.toJson<String>(tares),
       'peakForceRaw': serializer.toJson<double>(peakForceRaw),
       'calibrationSlope': serializer.toJson<double>(calibrationSlope),
-      'calibrationOffset': serializer.toJson<int>(calibrationOffset),
       'notes': serializer.toJson<String>(notes),
       'sampleCount': serializer.toJson<int>(sampleCount),
       'isCompleted': serializer.toJson<bool>(isCompleted),
@@ -577,7 +544,6 @@ class Session extends DataClass implements Insertable<Session> {
     String? tares,
     double? peakForceRaw,
     double? calibrationSlope,
-    int? calibrationOffset,
     String? notes,
     int? sampleCount,
     bool? isCompleted,
@@ -594,7 +560,6 @@ class Session extends DataClass implements Insertable<Session> {
     tares: tares ?? this.tares,
     peakForceRaw: peakForceRaw ?? this.peakForceRaw,
     calibrationSlope: calibrationSlope ?? this.calibrationSlope,
-    calibrationOffset: calibrationOffset ?? this.calibrationOffset,
     notes: notes ?? this.notes,
     sampleCount: sampleCount ?? this.sampleCount,
     isCompleted: isCompleted ?? this.isCompleted,
@@ -625,9 +590,6 @@ class Session extends DataClass implements Insertable<Session> {
       calibrationSlope: data.calibrationSlope.present
           ? data.calibrationSlope.value
           : this.calibrationSlope,
-      calibrationOffset: data.calibrationOffset.present
-          ? data.calibrationOffset.value
-          : this.calibrationOffset,
       notes: data.notes.present ? data.notes.value : this.notes,
       sampleCount: data.sampleCount.present
           ? data.sampleCount.value
@@ -655,7 +617,6 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('tares: $tares, ')
           ..write('peakForceRaw: $peakForceRaw, ')
           ..write('calibrationSlope: $calibrationSlope, ')
-          ..write('calibrationOffset: $calibrationOffset, ')
           ..write('notes: $notes, ')
           ..write('sampleCount: $sampleCount, ')
           ..write('isCompleted: $isCompleted, ')
@@ -677,7 +638,6 @@ class Session extends DataClass implements Insertable<Session> {
     tares,
     peakForceRaw,
     calibrationSlope,
-    calibrationOffset,
     notes,
     sampleCount,
     isCompleted,
@@ -698,7 +658,6 @@ class Session extends DataClass implements Insertable<Session> {
           other.tares == this.tares &&
           other.peakForceRaw == this.peakForceRaw &&
           other.calibrationSlope == this.calibrationSlope &&
-          other.calibrationOffset == this.calibrationOffset &&
           other.notes == this.notes &&
           other.sampleCount == this.sampleCount &&
           other.isCompleted == this.isCompleted &&
@@ -717,7 +676,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<String> tares;
   final Value<double> peakForceRaw;
   final Value<double> calibrationSlope;
-  final Value<int> calibrationOffset;
   final Value<String> notes;
   final Value<int> sampleCount;
   final Value<bool> isCompleted;
@@ -734,7 +692,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.tares = const Value.absent(),
     this.peakForceRaw = const Value.absent(),
     this.calibrationSlope = const Value.absent(),
-    this.calibrationOffset = const Value.absent(),
     this.notes = const Value.absent(),
     this.sampleCount = const Value.absent(),
     this.isCompleted = const Value.absent(),
@@ -752,7 +709,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     required String tares,
     this.peakForceRaw = const Value.absent(),
     required double calibrationSlope,
-    required int calibrationOffset,
     this.notes = const Value.absent(),
     this.sampleCount = const Value.absent(),
     this.isCompleted = const Value.absent(),
@@ -764,7 +720,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
        channelLabels = Value(channelLabels),
        tares = Value(tares),
        calibrationSlope = Value(calibrationSlope),
-       calibrationOffset = Value(calibrationOffset),
        visibleChannels = Value(visibleChannels);
   static Insertable<Session> custom({
     Expression<int>? id,
@@ -777,7 +732,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<String>? tares,
     Expression<double>? peakForceRaw,
     Expression<double>? calibrationSlope,
-    Expression<int>? calibrationOffset,
     Expression<String>? notes,
     Expression<int>? sampleCount,
     Expression<bool>? isCompleted,
@@ -795,7 +749,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (tares != null) 'tares': tares,
       if (peakForceRaw != null) 'peak_force_raw': peakForceRaw,
       if (calibrationSlope != null) 'calibration_slope': calibrationSlope,
-      if (calibrationOffset != null) 'calibration_offset': calibrationOffset,
       if (notes != null) 'notes': notes,
       if (sampleCount != null) 'sample_count': sampleCount,
       if (isCompleted != null) 'is_completed': isCompleted,
@@ -815,7 +768,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<String>? tares,
     Value<double>? peakForceRaw,
     Value<double>? calibrationSlope,
-    Value<int>? calibrationOffset,
     Value<String>? notes,
     Value<int>? sampleCount,
     Value<bool>? isCompleted,
@@ -833,7 +785,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       tares: tares ?? this.tares,
       peakForceRaw: peakForceRaw ?? this.peakForceRaw,
       calibrationSlope: calibrationSlope ?? this.calibrationSlope,
-      calibrationOffset: calibrationOffset ?? this.calibrationOffset,
       notes: notes ?? this.notes,
       sampleCount: sampleCount ?? this.sampleCount,
       isCompleted: isCompleted ?? this.isCompleted,
@@ -875,9 +826,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     if (calibrationSlope.present) {
       map['calibration_slope'] = Variable<double>(calibrationSlope.value);
     }
-    if (calibrationOffset.present) {
-      map['calibration_offset'] = Variable<int>(calibrationOffset.value);
-    }
     if (notes.present) {
       map['notes'] = Variable<String>(notes.value);
     }
@@ -909,7 +857,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('tares: $tares, ')
           ..write('peakForceRaw: $peakForceRaw, ')
           ..write('calibrationSlope: $calibrationSlope, ')
-          ..write('calibrationOffset: $calibrationOffset, ')
           ..write('notes: $notes, ')
           ..write('sampleCount: $sampleCount, ')
           ..write('isCompleted: $isCompleted, ')
@@ -1211,7 +1158,6 @@ typedef $$SessionsTableCreateCompanionBuilder =
       required String tares,
       Value<double> peakForceRaw,
       required double calibrationSlope,
-      required int calibrationOffset,
       Value<String> notes,
       Value<int> sampleCount,
       Value<bool> isCompleted,
@@ -1230,7 +1176,6 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<String> tares,
       Value<double> peakForceRaw,
       Value<double> calibrationSlope,
-      Value<int> calibrationOffset,
       Value<String> notes,
       Value<int> sampleCount,
       Value<bool> isCompleted,
@@ -1294,11 +1239,6 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<double> get calibrationSlope => $composableBuilder(
     column: $table.calibrationSlope,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get calibrationOffset => $composableBuilder(
-    column: $table.calibrationOffset,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1387,11 +1327,6 @@ class $$SessionsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<int> get calibrationOffset => $composableBuilder(
-    column: $table.calibrationOffset,
-    builder: (column) => ColumnOrderings(column),
-  );
-
   ColumnOrderings<String> get notes => $composableBuilder(
     column: $table.notes,
     builder: (column) => ColumnOrderings(column),
@@ -1469,11 +1404,6 @@ class $$SessionsTableAnnotationComposer
     builder: (column) => column,
   );
 
-  GeneratedColumn<int> get calibrationOffset => $composableBuilder(
-    column: $table.calibrationOffset,
-    builder: (column) => column,
-  );
-
   GeneratedColumn<String> get notes =>
       $composableBuilder(column: $table.notes, builder: (column) => column);
 
@@ -1534,7 +1464,6 @@ class $$SessionsTableTableManager
                 Value<String> tares = const Value.absent(),
                 Value<double> peakForceRaw = const Value.absent(),
                 Value<double> calibrationSlope = const Value.absent(),
-                Value<int> calibrationOffset = const Value.absent(),
                 Value<String> notes = const Value.absent(),
                 Value<int> sampleCount = const Value.absent(),
                 Value<bool> isCompleted = const Value.absent(),
@@ -1551,7 +1480,6 @@ class $$SessionsTableTableManager
                 tares: tares,
                 peakForceRaw: peakForceRaw,
                 calibrationSlope: calibrationSlope,
-                calibrationOffset: calibrationOffset,
                 notes: notes,
                 sampleCount: sampleCount,
                 isCompleted: isCompleted,
@@ -1570,7 +1498,6 @@ class $$SessionsTableTableManager
                 required String tares,
                 Value<double> peakForceRaw = const Value.absent(),
                 required double calibrationSlope,
-                required int calibrationOffset,
                 Value<String> notes = const Value.absent(),
                 Value<int> sampleCount = const Value.absent(),
                 Value<bool> isCompleted = const Value.absent(),
@@ -1587,7 +1514,6 @@ class $$SessionsTableTableManager
                 tares: tares,
                 peakForceRaw: peakForceRaw,
                 calibrationSlope: calibrationSlope,
-                calibrationOffset: calibrationOffset,
                 notes: notes,
                 sampleCount: sampleCount,
                 isCompleted: isCompleted,
