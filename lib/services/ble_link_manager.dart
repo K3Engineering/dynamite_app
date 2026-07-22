@@ -40,9 +40,8 @@ enum BtLinkState {
   /// The link has fully disconnected, but the platform stack (Web Bluetooth on
   /// Chrome in particular) may not yet be ready to accept a fresh connection to
   /// the SAME device. We hold the link here for [BleLinkManager.reconnectSettleDelay]
-  /// after teardown so the UI keeps Connect disabled (with a "reconnect
-  /// available shortly" hint) instead of silently sleeping inside the connect
-  /// call. Web-only; native stacks go straight back to [idle] on disconnect. A
+  /// after teardown so the UI keeps Connect disabled (with a "waiting after
+  /// disconnect" hint) instead of silently sleeping inside the connect call. Web-only; native stacks go straight back to [idle] on disconnect. A
   /// scan kick-off finishes the window early (see [BleLinkManager._finishCooldown]).
   /// Only live-link teardowns park here: a FAILED connect attempt (rejected or
   /// timed out) never had a live link to settle and goes straight back to
@@ -579,7 +578,7 @@ class BleLinkManager extends ChangeNotifier {
   /// [cooldown] must be false when no live link was ever up — i.e. a failed
   /// connect attempt. The settle window exists to let the stack finish
   /// tearing down a LIVE GATT link; parking a rejected or timed-out attempt
-  /// there would show a "reconnect available shortly" state for a device that
+  /// there would show a "waiting after disconnect" state for a device that
   /// was never connected (a lie, and it delays an immediate retry for
   /// nothing). Does NOT call [notifyListeners] — callers do.
   void _teardownLink(
@@ -876,7 +875,7 @@ class BleLinkManager extends ChangeNotifier {
       // can still complete later — the guard in [_onConnectionChange] handles
       // that callback). NO cooldown: the attempt never had a live link, so
       // there is no teardown to settle — parking in cooldown would flash a
-      // fake "reconnect available shortly" state (a lie for e.g. Chrome's
+      // fake "waiting after disconnect" state (a lie for e.g. Chrome's
       // overnight-stale device handle, which rejects gatt.connect() outright).
       //
       // Record the failure kind for the Devices tab's per-row marker — the

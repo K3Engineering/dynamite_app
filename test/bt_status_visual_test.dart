@@ -55,7 +55,7 @@ void main() {
     );
     expect(
       visual(linkState: BtLinkState.cooldown).label,
-      'Reconnect available shortly…',
+      'Waiting after disconnect…',
     );
   });
 
