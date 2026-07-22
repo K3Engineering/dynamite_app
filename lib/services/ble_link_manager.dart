@@ -302,6 +302,14 @@ class BleLinkManager extends ChangeNotifier {
   /// gate on `!kIsWeb`.
   bool get _supportsRssi => !kIsWeb;
 
+  /// Whether scan results on this platform can carry an advertisement RSSI.
+  /// On web they never do: the "scan" is Chrome's requestDevice() picker, which
+  /// has no RSSI, and the only other path (watchAdvertisements) is flag-gated
+  /// and abandoned by Chrome. Distinct from [_supportsRssi], which gates
+  /// connected-mode readRssi polling; the Devices tab uses this to drop the
+  /// RSSI slot entirely where no reading can ever exist.
+  bool get supportsScanRssi => !kIsWeb;
+
   /// Periodic poller for [connectedRssi]; runs only while a link is streaming
   /// AND the surface displaying RSSI (the Devices tab) is visible.
   Timer? _rssiPollTimer;
@@ -379,8 +387,10 @@ class BleLinkManager extends ChangeNotifier {
   void _onScanResult(BleDevice newDevice) {
     // Keep all discovered devices; a repeat advertisement from a known device
     // always replaces the stored entry so the row shows the FRESHEST RSSI —
-    // signal may weaken as well as strengthen (a null RSSI is kept as-is and
-    // the UI shows an honest "RSSI: --"). The one exception is the name:
+    // signal may weaken as well as strengthen. A null RSSI is kept as-is: on
+    // native the row shows a transient "RSSI: --" until a reading lands, and
+    // on web (where scan results never carry RSSI — see [supportsScanRssi])
+    // the row omits the RSSI slot entirely. The one exception is the name:
     // plain ADV packets often omit it (it may only ride in the SCAN_RSP) and
     // some stacks deliver each PDU as a separate callback, so a nameless
     // re-advertisement must not blank the row title — keep the last known

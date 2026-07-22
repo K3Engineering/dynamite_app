@@ -80,6 +80,7 @@ class DevicesTab extends StatelessWidget {
             _DeviceRow(
               name: device.name ?? 'Unknown device',
               scanRssi: device.rssi,
+              supportsScanRssi: bt.supportsScanRssi,
               inactiveIcon: Icons.bluetooth,
               inactiveIconColor: Theme.of(context).colorScheme.outline,
               isActive: device.deviceId == bt.link.deviceId,
@@ -108,6 +109,7 @@ class DevicesTab extends StatelessWidget {
           _DeviceRow(
             name: 'Demo Device',
             scanRssi: null,
+            supportsScanRssi: bt.supportsScanRssi,
             inactiveIcon: Icons.science,
             inactiveIconColor: Colors.teal,
             activeIcon: Icons.science,
@@ -193,6 +195,17 @@ String connectFailureHint(ConnectFailureKind kind) => switch (kind) {
     'Timed out — make sure the device is on and nearby',
 };
 
+/// The inactive device row's scan-RSSI text: the dBm reading when one exists;
+/// a transient "RSSI: --" on platforms that deliver scan RSSI but haven't for
+/// this device yet; null (no subtitle) where no reading can ever exist (web —
+/// see [BleLinkManager.supportsScanRssi]). Matches the connected row's
+/// [RssiIndicator] rule: no surface shows a permanent placeholder where no
+/// reading can exist.
+String? scanRssiSubtitle(int? scanRssi, {required bool supportsScanRssi}) =>
+    scanRssi != null
+        ? 'RSSI: $scanRssi dBm'
+        : (supportsScanRssi ? 'RSSI: --' : null);
+
 /// Run a connect attempt. A failure is surfaced by the manager as a per-row
 /// marker (see [BleLinkManager.connectFailureFor]) — deliberately NOT a
 /// snackbar, so rapid retries can't queue a stack of toasts — so this only
@@ -241,6 +254,7 @@ class _DeviceRow extends StatelessWidget {
   const _DeviceRow({
     required this.name,
     required this.scanRssi,
+    required this.supportsScanRssi,
     required this.inactiveIcon,
     required this.inactiveIconColor,
     this.activeIcon,
@@ -258,8 +272,14 @@ class _DeviceRow extends StatelessWidget {
   final String name;
 
   /// Scan-time RSSI for discovered BLE devices; null when unavailable (or for
-  /// the demo device).
+  /// the demo device). Always null on web — see [supportsScanRssi].
   final int? scanRssi;
+
+  /// Whether this platform's scan results can carry an RSSI at all (see
+  /// [BleLinkManager.supportsScanRssi]). When false, a null [scanRssi] drops
+  /// the RSSI slot from the inactive subtitle entirely instead of showing a
+  /// permanent "RSSI: --" placeholder.
+  final bool supportsScanRssi;
 
   /// Leading icon/color used in the inactive form.
   final IconData inactiveIcon;
@@ -287,7 +307,8 @@ class _DeviceRow extends StatelessWidget {
   final bool isCoolingDown;
 
   /// Fixed subtitle for the inactive form (e.g. the demo device's blurb).
-  /// When null, the inactive form shows the scan RSSI.
+  /// When null, the inactive form falls back to the scan-RSSI text (see
+  /// [scanRssiSubtitle]), which may itself be null — leaving no subtitle.
   final String? inactiveSubtitle;
 
   /// User-facing hint for a failed connect attempt on this device (see
@@ -304,6 +325,10 @@ class _DeviceRow extends StatelessWidget {
     if (!isActive) {
       final scheme = Theme.of(context).colorScheme;
       final hasFailure = failureHint != null;
+      final subtitle =
+          failureHint ??
+          inactiveSubtitle ??
+          scanRssiSubtitle(scanRssi, supportsScanRssi: supportsScanRssi);
       return Card(
         child: ListTile(
           leading: Icon(
@@ -311,13 +336,15 @@ class _DeviceRow extends StatelessWidget {
             color: hasFailure ? scheme.error : inactiveIconColor,
           ),
           title: Text(name),
-          subtitle: Text(
-            failureHint ??
-                inactiveSubtitle ??
-                (scanRssi != null ? 'RSSI: $scanRssi dBm' : 'RSSI: --'),
-            // Merges over the tile's subtitle style, overriding only color.
-            style: hasFailure ? TextStyle(color: scheme.error) : null,
-          ),
+          // Null subtitle (web, where no RSSI reading can exist): the row
+          // renders title-only rather than a permanent placeholder.
+          subtitle: subtitle == null
+              ? null
+              : Text(
+                  subtitle,
+                  // Merges over the tile's subtitle style, overriding only color.
+                  style: hasFailure ? TextStyle(color: scheme.error) : null,
+                ),
           trailing: FilledButton(
             // Disabled whenever a link is busy so we never issue a connect
             // against a link that is still tearing down.
