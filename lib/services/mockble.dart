@@ -141,15 +141,24 @@ class MockBlePlatform extends UniversalBlePlatform {
         }
       }
     }
+    // Real platforms stamp every scan result with its receipt time, and the
+    // manager's "last seen" freshness (BleLinkManager.lastAliveMs) relies on
+    // it — re-stamp on each emission so mock devices age/refresh like real
+    // advertisements instead of carrying a stale (or null) timestamp.
+    void emit(BleDevice d) {
+      d.timestamp = DateTime.now().millisecondsSinceEpoch;
+      updateScanResult(d);
+    }
+
     _scanTimer = Timer.periodic(netDelay, (Timer t) {
       if (0 == rng.nextInt(2)) {
-        updateScanResult(filtered[rng.nextInt(filtered.length)]);
+        emit(filtered[rng.nextInt(filtered.length)]);
       }
       if (0 == rng.nextInt(3)) {
-        updateScanResult(filtered[rng.nextInt(filtered.length)]);
+        emit(filtered[rng.nextInt(filtered.length)]);
       }
       if (0 == rng.nextInt(4)) {
-        updateScanResult(filtered[rng.nextInt(filtered.length)]);
+        emit(filtered[rng.nextInt(filtered.length)]);
       }
     });
   }

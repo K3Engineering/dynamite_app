@@ -56,6 +56,20 @@ void main() {
     async.elapse(const Duration(seconds: 4));
   }
 
+  /// Let the constructor's startup work drain through the shared static
+  /// command queue: setting [UniversalBle.onAvailabilityChange] makes
+  /// universal_ble issue its own availability query AND the manager issues
+  /// another ([BleLinkManager._updateBluetoothState]) — two 200 ms mock
+  /// round-trips, serialised, so the second lands at ~400 ms. A test that
+  /// exits its [fakeAsync] scope with that command still pending wedges the
+  /// queue for every later test (the pending timer belongs to the dead fake
+  /// zone and never fires). Tests that don't otherwise elapse past ~400 ms
+  /// must run this before exiting. (The manager's own [AvailabilityState]
+  /// still resolves at ~200 ms — the setter's callback sets it — which is
+  /// why this wedge is invisible in the wedging test itself.)
+  void settleStartup(FakeAsync async) =>
+      async.elapse(const Duration(milliseconds: 500));
+
   test('connect reaches streaming and notifications flow to onAdcData', () {
     fakeAsync((async) {
       final (link, seen) = wire();
@@ -528,6 +542,12 @@ void main() {
   test('demo device streams and disconnects cleanly', () {
     fakeAsync((async) {
       final (link, seen) = wire();
+      // Drain the constructor's two availability queries (see [settleStartup])
+      // — this test's own work is only ~200 ms of fake time, well under the
+      // ~400 ms they need, and their pending timers would otherwise wedge the
+      // shared 'global' queue bucket (availability + scan commands) for every
+      // later test in the file.
+      settleStartup(async);
       var received = 0;
       link.onAdcData = (_) => received++;
 
@@ -594,6 +614,77 @@ void main() {
       expect(link.link.state, BtLinkState.idle);
       expect(notifies, 0);
       expect(seen, isEmpty);
+    });
+  });
+
+  group('lastAliveMs', () {
+    // NOTE on time: fakeAsync fakes timers and package:clock, NOT
+    // DateTime.now() — stamps therefore carry real wall-clock times taken
+    // milliseconds apart, so ordering assertions use >= (the exact-age and
+    // fold ordering logic lives in ble_row_subtitle_test.dart).
+    test('is null for a device never scanned or connected', () {
+      fakeAsync((async) {
+        final (link, _) = wire();
+        settleStartup(async);
+        expect(link.lastAliveMs(deviceId), isNull);
+      });
+    });
+
+    test('scan results feed it via the advert-timestamp fold (native)', () {
+      fakeAsync((async) {
+        final (link, _) = wire();
+        settleStartup(async);
+
+        unawaited(link.toggleScan());
+        async.elapse(const Duration(seconds: 3));
+        expect(link.devices, isNotEmpty);
+        expect(link.lastAliveMs(deviceId), isNotNull);
+
+        unawaited(link.toggleScan());
+        async.elapse(const Duration(milliseconds: 100));
+      });
+    });
+
+    test('a live link stamps it; a failed connect stamps nothing', () {
+      fakeAsync((async) {
+        final (link, _) = wire();
+        async.elapse(const Duration(milliseconds: 300));
+
+        // A refused connect proves nothing about the device being alive.
+        MockBlePlatform.instance.failConnect = true;
+        unawaited(link.connectToDevice(deviceId).catchError((_) {}));
+        async.elapse(const Duration(seconds: 2));
+        expect(link.lastAliveMs(deviceId), isNull);
+
+        // Reaching streaming is a proof of life.
+        MockBlePlatform.instance.failConnect = false;
+        unawaited(link.connectToDevice(deviceId));
+        async.elapse(const Duration(seconds: 4));
+        expect(link.isStreaming, isTrue);
+        final connectedAt = link.lastAliveMs(deviceId);
+        expect(connectedAt, isNotNull);
+
+        // Teardown re-stamps: proof of life ends at disconnect, not at
+        // connect (>=, not > — see the fakeAsync time note above).
+        unawaited(link.disconnectSelectedDevice());
+        async.elapse(const Duration(seconds: 4));
+        expect(link.lastAliveMs(deviceId), greaterThanOrEqualTo(connectedAt!));
+      });
+    });
+
+    test('the demo device is never stamped', () {
+      fakeAsync((async) {
+        final (link, _) = wire();
+        settleStartup(async);
+
+        unawaited(link.connectToDemoDevice());
+        async.elapse(const Duration(milliseconds: 100));
+        unawaited(link.disconnectSelectedDevice());
+        async.elapse(const Duration(milliseconds: 100));
+
+        expect(link.link.state, BtLinkState.idle);
+        expect(link.lastAliveMs('demo_device'), isNull);
+      });
     });
   });
 }

@@ -119,11 +119,12 @@ class AppShellState extends State<AppShell> {
 
   /// Tab-activation side effects, driven from here (the owner of the tab
   /// index) so the tabs themselves stay stateless:
-  ///  * Devices tab visible: prompt to enable Bluetooth, and start RSSI
-  ///    polling (RSSI is only displayed there — don't poll off-screen).
+  ///  * Devices tab visible: prompt to enable Bluetooth, and start the
+  ///    on-screen-only periodic work (RSSI polling and the device-row
+  ///    freshness poke — see [BleLinkManager.setDevicesTabVisible]).
   void _onTabActivated(int index) {
     final devicesVisible = index == 2;
-    _link.setRssiUiActive(devicesVisible);
+    _link.setDevicesTabVisible(devicesVisible);
     if (devicesVisible) {
       unawaited(_link.requestEnableBluetooth());
     }

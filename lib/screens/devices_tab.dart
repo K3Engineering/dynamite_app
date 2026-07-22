@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
 import '../services/ble_link_manager.dart';
+import '../utils/format.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/rssi_indicator.dart';
@@ -80,6 +81,7 @@ class DevicesTab extends StatelessWidget {
             _DeviceRow(
               name: device.name ?? 'Unknown device',
               scanRssi: device.rssi,
+              lastAliveMs: bt.lastAliveMs(device.deviceId),
               supportsScanRssi: bt.supportsScanRssi,
               inactiveIcon: Icons.bluetooth,
               inactiveIconColor: Theme.of(context).colorScheme.outline,
@@ -109,6 +111,7 @@ class DevicesTab extends StatelessWidget {
           _DeviceRow(
             name: 'Demo Device',
             scanRssi: null,
+            lastAliveMs: null,
             supportsScanRssi: bt.supportsScanRssi,
             inactiveIcon: Icons.science,
             inactiveIconColor: Colors.teal,
@@ -195,16 +198,47 @@ String connectFailureHint(ConnectFailureKind kind) => switch (kind) {
     'Timed out — make sure the device is on and nearby',
 };
 
-/// The inactive device row's scan-RSSI text: the dBm reading when one exists;
-/// a transient "RSSI: --" on platforms that deliver scan RSSI but haven't for
-/// this device yet; null (no subtitle) where no reading can ever exist (web —
-/// see [BleLinkManager.supportsScanRssi]). Matches the connected row's
-/// [RssiIndicator] rule: no surface shows a permanent placeholder where no
-/// reading can exist.
-String? scanRssiSubtitle(int? scanRssi, {required bool supportsScanRssi}) =>
-    scanRssi != null
+/// The inactive BLE device row's "liveness" subtitle, resolved from the
+/// platform and what we know of the device:
+///
+///  * No liveness data at all ([lastAliveMs] null): the legacy fallbacks —
+///    the RSSI line (or its transient "RSSI: --") where scan RSSI can exist,
+///    no subtitle where it can't (web). See the retired [scanRssiSubtitle]'s
+///    rule: no permanent placeholder where no reading can exist.
+///  * Fresh (age ≤ [BleLinkManager.deviceStaleAfter]): native shows the scan
+///    RSSI — meaningful exactly while adverts/connection are recent. Web has
+///    no scan RSSI, so it shows a "Last connected …" age instead.
+///  * Stale: "Last seen …" (native) / "Last connected …" (web) with
+///    `stale` set so the row de-emphasizes itself; the aged RSSI is
+///    suppressed — a minutes-old reading is stale data, not information.
+///
+/// Ages render via [formatRelativeAge]'s coarse ladder, so the text changes
+/// rarely (no distracting per-second count-up). Returns null when the
+/// subtitle slot should stay empty.
+({String text, bool stale})? bleRowSubtitle({
+  required int? scanRssi,
+  required int? lastAliveMs,
+  required int nowMs,
+  required bool supportsScanRssi,
+}) {
+  final stamp = lastAliveMs;
+  if (stamp == null) {
+    final text = scanRssi != null
         ? 'RSSI: $scanRssi dBm'
         : (supportsScanRssi ? 'RSSI: --' : null);
+    return text == null ? null : (text: text, stale: false);
+  }
+  final age = Duration(milliseconds: nowMs - stamp);
+  final stale = age > BleLinkManager.deviceStaleAfter;
+  if (!stale && supportsScanRssi) {
+    return (
+      text: scanRssi != null ? 'RSSI: $scanRssi dBm' : 'RSSI: --',
+      stale: false,
+    );
+  }
+  final label = supportsScanRssi ? 'Last seen' : 'Last connected';
+  return (text: '$label ${formatRelativeAge(age)}', stale: stale);
+}
 
 /// Run a connect attempt. A failure is surfaced by the manager as a per-row
 /// marker (see [BleLinkManager.connectFailureFor]) — deliberately NOT a
@@ -254,6 +288,7 @@ class _DeviceRow extends StatelessWidget {
   const _DeviceRow({
     required this.name,
     required this.scanRssi,
+    required this.lastAliveMs,
     required this.supportsScanRssi,
     required this.inactiveIcon,
     required this.inactiveIconColor,
@@ -274,6 +309,11 @@ class _DeviceRow extends StatelessWidget {
   /// Scan-time RSSI for discovered BLE devices; null when unavailable (or for
   /// the demo device). Always null on web — see [supportsScanRssi].
   final int? scanRssi;
+
+  /// Most recent proof of life for this device (ms since epoch), or null if
+  /// never seen/connected (see [BleLinkManager.lastAliveMs]). Drives the
+  /// inactive form's freshness subtitle and stale treatment.
+  final int? lastAliveMs;
 
   /// Whether this platform's scan results can carry an RSSI at all (see
   /// [BleLinkManager.supportsScanRssi]). When false, a null [scanRssi] drops
@@ -307,8 +347,8 @@ class _DeviceRow extends StatelessWidget {
   final bool isCoolingDown;
 
   /// Fixed subtitle for the inactive form (e.g. the demo device's blurb).
-  /// When null, the inactive form falls back to the scan-RSSI text (see
-  /// [scanRssiSubtitle]), which may itself be null — leaving no subtitle.
+  /// When null, the inactive form falls back to the freshness subtitle (see
+  /// [bleRowSubtitle]), which may itself be null — leaving no subtitle.
   final String? inactiveSubtitle;
 
   /// User-facing hint for a failed connect attempt on this device (see
@@ -325,17 +365,36 @@ class _DeviceRow extends StatelessWidget {
     if (!isActive) {
       final scheme = Theme.of(context).colorScheme;
       final hasFailure = failureHint != null;
-      final subtitle =
-          failureHint ??
-          inactiveSubtitle ??
-          scanRssiSubtitle(scanRssi, supportsScanRssi: supportsScanRssi);
+      final freshness = bleRowSubtitle(
+        scanRssi: scanRssi,
+        lastAliveMs: lastAliveMs,
+        nowMs: DateTime.now().millisecondsSinceEpoch,
+        supportsScanRssi: supportsScanRssi,
+      );
+      final subtitle = failureHint ?? inactiveSubtitle ?? freshness?.text;
+      // A stale row (no proof of life within the freshness window) is
+      // de-emphasized: grey-nudged card, outline foreground. The failure
+      // hint keeps its error treatment — actionable beats stale. The Connect
+      // button stays enabled AND undimmed: stale means "maybe gone", not
+      // "don't try". (Tweak points: card color + foreground here, the window
+      // at BleLinkManager.deviceStaleAfter.)
+      final isStale = !hasFailure && (freshness?.stale ?? false);
       return Card(
+        color: isStale ? scheme.surfaceContainerHighest : null,
         child: ListTile(
           leading: Icon(
             hasFailure ? Icons.error_outline : inactiveIcon,
-            color: hasFailure ? scheme.error : inactiveIconColor,
+            color: hasFailure
+                ? scheme.error
+                : isStale
+                ? scheme.outline
+                : inactiveIconColor,
           ),
-          title: Text(name),
+          title: Text(
+            name,
+            // Merges over the tile's title style, overriding only color.
+            style: isStale ? TextStyle(color: scheme.outline) : null,
+          ),
           // Null subtitle (web, where no RSSI reading can exist): the row
           // renders title-only rather than a permanent placeholder.
           subtitle: subtitle == null
@@ -343,7 +402,11 @@ class _DeviceRow extends StatelessWidget {
               : Text(
                   subtitle,
                   // Merges over the tile's subtitle style, overriding only color.
-                  style: hasFailure ? TextStyle(color: scheme.error) : null,
+                  style: hasFailure
+                      ? TextStyle(color: scheme.error)
+                      : isStale
+                      ? TextStyle(color: scheme.outline)
+                      : null,
                 ),
           trailing: FilledButton(
             // Disabled whenever a link is busy so we never issue a connect

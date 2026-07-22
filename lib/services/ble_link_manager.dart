@@ -187,6 +187,11 @@ class BleLinkManager extends ChangeNotifier {
   /// How often to poll the connected device's RSSI for the live signal display.
   static const Duration rssiPollInterval = Duration(seconds: 2);
 
+  /// How long a device row's "last proof of life" (see [lastAliveMs]) may
+  /// age before the Devices tab de-emphasizes the row as stale. Single knob
+  /// for the freshness window.
+  static const Duration deviceStaleAfter = Duration(seconds: 10);
+
   /// After a device disconnects, some BLE stacks (notably Web Bluetooth on
   /// Chrome) need a moment to finish tearing down GATT before they will accept
   /// a fresh connection to the SAME device. Reconnecting sooner makes Chrome
@@ -254,6 +259,42 @@ class BleLinkManager extends ChangeNotifier {
   ConnectFailureKind? connectFailureFor(String deviceId) =>
       _connectFailures[deviceId];
 
+  /// Last "proof of life" per device id (ms since epoch): the most recent
+  /// moment a GATT link to this device was provably up (see [_stampAlive]).
+  /// Never stamped for failed/cancelled connects (a refused attempt proves
+  /// nothing about the device being alive) or for the demo device.
+  final Map<String, int> _lastAliveMs = {};
+
+  /// The most recent moment (ms since epoch) this device was provably alive,
+  /// or null if never. Native folds in the latest advertisement receipt
+  /// ([BleDevice.timestamp], refreshed per advert while scanning) so the
+  /// value covers both "seen" and "connected" evidence; web uses connection
+  /// stamps only — the picker pick-time is not a connection and must not
+  /// count as "last connected". The Devices tab renders this as "Last seen"
+  /// (native) / "Last connected" (web) and stales it out after
+  /// [deviceStaleAfter].
+  int? lastAliveMs(String deviceId) {
+    final stamp = _lastAliveMs[deviceId];
+    if (kIsWeb) return stamp;
+    final scanTs = _devices
+        .where((d) => d.deviceId == deviceId)
+        .firstOrNull
+        ?.timestamp;
+    if (stamp == null) return scanTs;
+    if (scanTs == null) return stamp;
+    return stamp > scanTs ? stamp : scanTs;
+  }
+
+  /// Record a proof of life for [deviceId]: a GATT link was provably up.
+  /// Callers: the link reaching streaming, the disconnect callback for a
+  /// link that was up, and the post-connect setup-failure path (GATT came up
+  /// but discovery/subscription failed). All three are moments where the
+  /// device demonstrably answered.
+  void _stampAlive(String deviceId) {
+    if (deviceId.isEmpty || deviceId == 'demo_device') return;
+    _lastAliveMs[deviceId] = DateTime.now().millisecondsSinceEpoch;
+  }
+
   /// The single "usable / connected" truth: link up AND the ADC feed is
   /// streaming. Every screen keys its connected UI off this.
   bool get isStreaming => _link.isStreaming;
@@ -314,20 +355,45 @@ class BleLinkManager extends ChangeNotifier {
   /// AND the surface displaying RSSI (the Devices tab) is visible.
   Timer? _rssiPollTimer;
 
-  /// Whether the surface displaying live RSSI (the Devices tab's connected
-  /// card) is currently visible. Polling runs only while this is true and a
-  /// link is streaming: off-screen RSSI reads would wake the radio every
-  /// [rssiPollInterval] for nothing.
-  bool _rssiUiActive = false;
+  /// Whether the Devices tab is currently visible. Gates the two pieces of
+  /// periodic UI bookkeeping that are pointless off-screen: RSSI polling
+  /// (off-screen reads would wake the radio every [rssiPollInterval] for
+  /// nothing) and the freshness poke (see [_syncFreshnessPoke]).
+  bool _devicesTabVisible = false;
 
-  /// Called by the shell when the RSSI-displaying tab becomes visible/hidden.
-  void setRssiUiActive(bool active) {
-    if (_rssiUiActive == active) return;
-    _rssiUiActive = active;
-    if (!active) {
+  /// Called by the shell when the Devices tab becomes visible/hidden.
+  void setDevicesTabVisible(bool visible) {
+    if (_devicesTabVisible == visible) return;
+    _devicesTabVisible = visible;
+    if (!visible) {
       _stopRssiPolling();
     } else if (_link.isStreaming) {
       _startRssiPolling(_link.deviceId);
+    }
+    _syncFreshnessPoke();
+  }
+
+  /// 1 Hz "time passed" poke while the Devices tab is visible and rows exist,
+  /// so the rows' relative ages ("Last seen >15 seconds ago") and the
+  /// [deviceStaleAfter] stale flip re-render on time. Changes no state itself
+  /// — like the RSSI poller it only notifies; other tabs guard their rebuilds
+  /// with narrow selects.
+  Timer? _freshnessPoke;
+
+  /// Start/stop the freshness poke to match [_devicesTabVisible] and whether
+  /// there are any device rows to age. Called from [setDevicesTabVisible],
+  /// [_onScanResult] (rows appear), and [_onBluetoothAvailabilityChanged]
+  /// (rows cleared).
+  void _syncFreshnessPoke() {
+    final shouldRun = _devicesTabVisible && _devices.isNotEmpty;
+    if (shouldRun && _freshnessPoke == null) {
+      _freshnessPoke = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => notifyListeners(),
+      );
+    } else if (!shouldRun) {
+      _freshnessPoke?.cancel();
+      _freshnessPoke = null;
     }
   }
 
@@ -415,6 +481,7 @@ class BleLinkManager extends ChangeNotifier {
     // picker round-trip the row's failure hint tells the user to do).
     _connectFailures.remove(newDevice.deviceId);
     notifyListeners();
+    _syncFreshnessPoke(); // rows exist now — start ageing them if visible
     // Web: a scan result is not a passive advertisement — it is the device
     // the user just picked in Chrome's requestDevice() chooser (the popup IS
     // the scan). Treat it as an explicit connect request and end the scan.
@@ -430,6 +497,7 @@ class BleLinkManager extends ChangeNotifier {
       _devices.clear();
     }
     notifyListeners();
+    _syncFreshnessPoke(); // the list may have been cleared — stop the poke
   }
 
   Future<void> _stopScan() async {
@@ -532,13 +600,13 @@ class BleLinkManager extends ChangeNotifier {
 
   /// Begin polling the connected device's RSSI for the signal display.
   /// No-op on platforms that don't implement readRssi (e.g. web) and while
-  /// the RSSI-displaying surface is off-screen (see [setRssiUiActive]).
+  /// the RSSI-displaying surface is off-screen (see [setDevicesTabVisible]).
   /// Cancels any previous poller first. Reads are best-effort: a failed read
   /// is swallowed silently and retried on the next tick (no per-tick logging
   /// — it would spam the console).
   void _startRssiPolling(String deviceId) {
     _stopRssiPolling();
-    if (!_supportsRssi || !_rssiUiActive) {
+    if (!_supportsRssi || !_devicesTabVisible) {
       return;
     }
     _rssiPollTimer = Timer.periodic(rssiPollInterval, (_) async {
@@ -755,6 +823,7 @@ class BleLinkManager extends ChangeNotifier {
         // Setup complete: advance to the usable "streaming" state and begin live
         // RSSI polling for the signal display.
         _link.state = BtLinkState.streaming;
+        _stampAlive(deviceId);
         notifyListeners();
         _startRssiPolling(deviceId);
       } catch (e) {
@@ -767,6 +836,9 @@ class BleLinkManager extends ChangeNotifier {
         }
         debugPrint('Post-connect setup failed for $deviceId: $e');
         final String name = _link.name.isEmpty ? deviceId : _link.name;
+        // The GATT link came up (connect succeeded) before setup failed —
+        // that is a proof of life; stamp it before tearing down.
+        _stampAlive(deviceId);
         // The GATT link came up (connect succeeded) — release it so the
         // platform can't hold a connection the app considers failed.
         _teardownLink(deviceId, name, releaseGatt: true);
@@ -792,6 +864,12 @@ class BleLinkManager extends ChangeNotifier {
       final bool wasActive =
           _link.state == BtLinkState.connected ||
           _link.state == BtLinkState.streaming;
+      // Proof of life ends at teardown: stamp it so the row's "last
+      // seen/connected" age starts counting from now, not from the (possibly
+      // much older) connect time.
+      if (wasActive) {
+        _stampAlive(deviceId);
+      }
       _teardownLink(deviceId, name);
       if (wasActive) {
         _events.emit(BleConnectionLost(name));
@@ -1066,6 +1144,8 @@ class BleLinkManager extends ChangeNotifier {
     onCalibrationData = null;
     _demoSource?.stop();
     _stopRssiPolling();
+    _freshnessPoke?.cancel();
+    _freshnessPoke = null;
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
     // Supersede any in-flight post-connect setup pass so it bails out.
