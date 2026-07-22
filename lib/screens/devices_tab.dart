@@ -26,11 +26,6 @@ class DevicesTab extends StatelessWidget {
     );
 
     final isEmpty = bt.devices.isEmpty;
-    // The compact Bluetooth status row shows once there's content (devices
-    // listed, or a link in flight/connected). While empty it shows only
-    // during a scan — where the placeholder (which can't spin) yields to the
-    // spinning status row.
-    final showStatusRow = !isEmpty || bt.isScanning;
     // The big empty block is the empty-state voice for genuinely idle states
     // (radio off / permission / no devices found) — not during a scan.
     final showEmptyBlock = isEmpty && !bt.isScanning;
@@ -50,33 +45,35 @@ class DevicesTab extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // BLE devices section. The Scan button lives on the section header;
-          // the Bluetooth status readout sits on its own row beneath it so the
-          // variable-width status text has room and never fights the button.
-          SectionHeader(
-            'BLE devices',
-            trailing: FilledButton.tonal(
-              // TODO(ux): see BleLinkManager._startScan — starting a scan
-              // while streaming kills the active link (and any in-progress
-              // recording). Decide disable-vs-confirm.
-              onPressed: () async {
-                await bt.toggleScan();
-              },
-              child: Text(bt.isScanning ? 'Stop' : 'Scan'),
-            ),
-          ),
+          // BLE devices section. The status row leads with the Scan/Stop
+          // button and carries the Bluetooth status readout (icon + label)
+          // beside it, so the action and its effect ("Scanning for devices…")
+          // sit together. Always visible — Scan is reachable in every state.
+          const SectionHeader('BLE devices'),
           const SizedBox(height: 8),
 
-          if (showStatusRow)
-            Align(
-              alignment: Alignment.centerLeft,
-              child: BluetoothIndicator(
-                linkState: bt.bleLinkState,
-                state: bt.bluetoothState,
-                isScanning: bt.isScanning,
-                hasDevices: bt.devices.isNotEmpty,
+          Row(
+            children: [
+              FilledButton.tonal(
+                // TODO(ux): see BleLinkManager._startScan — starting a scan
+                // while streaming kills the active link (and any in-progress
+                // recording). Decide disable-vs-confirm.
+                onPressed: () async {
+                  await bt.toggleScan();
+                },
+                child: Text(bt.isScanning ? 'Stop' : 'Scan'),
               ),
-            ),
+              const SizedBox(width: 12),
+              Flexible(
+                child: BluetoothIndicator(
+                  linkState: bt.bleLinkState,
+                  state: bt.bluetoothState,
+                  isScanning: bt.isScanning,
+                  hasDevices: bt.devices.isNotEmpty,
+                ),
+              ),
+            ],
+          ),
 
           if (showEmptyBlock) _buildEmptyBlock(visual, bt.bluetoothState),
 
