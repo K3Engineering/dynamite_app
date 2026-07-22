@@ -58,9 +58,7 @@ class DevicesTab extends StatelessWidget {
                 // TODO(ux): see BleLinkManager._startScan — starting a scan
                 // while streaming kills the active link (and any in-progress
                 // recording). Decide disable-vs-confirm.
-                onPressed: () async {
-                  await bt.toggleScan();
-                },
+                onPressed: () => _scanWithFeedback(context, bt),
                 child: Text(bt.isScanning ? 'Stop' : 'Scan'),
               ),
               const SizedBox(width: 12),
@@ -134,7 +132,10 @@ class DevicesTab extends StatelessWidget {
   /// shows the exact adapter status and reason the compact indicator would.
   /// Only the powered-on case gets its own treatment: the indicator's action
   /// prompt ("Tap Scan to find devices") becomes a title + hint.
-  Widget _buildEmptyBlock(BtStatusVisual visual, AvailabilityState availability) {
+  Widget _buildEmptyBlock(
+    BtStatusVisual visual,
+    AvailabilityState availability,
+  ) {
     final (icon, color, title, hint) = switch (availability) {
       AvailabilityState.poweredOn => (
         Icons.bluetooth_searching,
@@ -197,6 +198,24 @@ Future<void> _connectWithFeedback(
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Failed to connect to $deviceName: $e')),
       );
+    }
+  }
+}
+
+/// Run a scan toggle, surfacing a genuine start failure (a native radio
+/// error, or a non-dismissal web error) as a snackbar — the scan analogue of
+/// [_connectWithFeedback]. Web picker dismissals are swallowed by the manager
+/// (see [BleLinkManager._startScan]), so a cancelled chooser has nothing to
+/// report here.
+Future<void> _scanWithFeedback(BuildContext context, BleLinkManager bt) async {
+  try {
+    await bt.toggleScan();
+  } catch (e) {
+    debugPrint('Scan toggle failed: $e');
+    if (context.mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to start scan: $e')));
     }
   }
 }

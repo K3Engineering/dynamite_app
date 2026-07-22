@@ -42,7 +42,8 @@ enum BtLinkState {
   /// the SAME device. We hold the link here for [BleLinkManager.reconnectSettleDelay]
   /// after teardown so the UI keeps Connect disabled (with a "please wait" hint)
   /// instead of silently sleeping inside the connect call. Web-only; native
-  /// stacks go straight back to [idle] on disconnect.
+  /// stacks go straight back to [idle] on disconnect. A scan kick-off finishes
+  /// the window early (see [BleLinkManager._finishCooldown]).
   cooldown,
 }
 
@@ -115,6 +116,21 @@ class _SetupToken {
       _manager._setupEpoch == _epoch && _manager._link.deviceId == deviceId;
 }
 
+/// True for the web picker outcomes that are user choices, not failures: the
+/// user dismissed Chrome's requestDevice() chooser, or it reported no
+/// matching devices. flutter_web_bluetooth signals these with
+/// UserCancelledDialogError / DeviceNotFoundError — Error subclasses that
+/// universal_ble rethrows verbatim but does NOT re-export, so they can't be
+/// caught by type here without a direct dependency on the web-only package.
+/// Match the class's own toString prefix ("$errorName: …") instead; if the
+/// package ever renames them, a cancel falls into the genuine-failure path —
+/// a spurious snackbar, not broken state.
+bool isWebPickerDismissal(Object e) {
+  final s = e.toString();
+  return s.startsWith('UserCancelledDialogError') ||
+      s.startsWith('DeviceNotFoundError');
+}
+
 /// The BLE link state machine: adapter availability, scanning, connect /
 /// post-connect setup / disconnect / cooldown, and live RSSI polling.
 ///
@@ -161,7 +177,11 @@ class BleLinkManager extends ChangeNotifier {
   /// [BtLinkState.cooldown] for this window after teardown — Connect stays
   /// disabled (with a hint) until it elapses. Web Bluetooth exposes no reliable
   /// teardown signal, so the window is enforced as a timer, not a state query.
-  /// Native stacks don't exhibit the race and go straight back to idle.
+  /// Native stacks don't exhibit the race and go straight back to idle. The
+  /// scan flow finishes the window early (see [_finishCooldown]): tested on
+  /// Chrome, the requestDevice() picker only surfaces a device once teardown
+  /// has settled, so the picker round-trip is the real settle signal on that
+  /// path — this timer remains the only signal for the manual Connect path.
   static const Duration reconnectSettleDelay = Duration(milliseconds: 4000);
 
   /// One-shot timer that returns the active link from [BtLinkState.cooldown]
@@ -348,6 +368,12 @@ class BleLinkManager extends ChangeNotifier {
       _devices.add(newDevice);
     }
     notifyListeners();
+    // Web: a scan result is not a passive advertisement — it is the device
+    // the user just picked in Chrome's requestDevice() chooser (the popup IS
+    // the scan). Treat it as an explicit connect request and end the scan.
+    if (kIsWeb) {
+      unawaited(_connectPickedWebDevice(newDevice));
+    }
   }
 
   void _onBluetoothAvailabilityChanged(AvailabilityState state) {
@@ -369,6 +395,12 @@ class BleLinkManager extends ChangeNotifier {
     if (_bluetoothState != AvailabilityState.poweredOn) {
       return;
     }
+    // A scan kick-off during the post-disconnect settle window finishes the
+    // window immediately (see [_finishCooldown]) so Scan works instead of
+    // being a silent no-op for the remainder of the delay.
+    if (_link.isCoolingDown) {
+      _finishCooldown();
+    }
     // Guard before any destructive clears: if we can't/shouldn't start a scan,
     // don't wipe the existing device list (which would leave the UI showing an
     // empty list with no picker having opened).
@@ -380,14 +412,42 @@ class BleLinkManager extends ChangeNotifier {
     // disable Scan while streaming, or confirm first when a recording is in
     // progress. (The Devices tab Scan button mirrors this TODO.)
     await disconnectSelectedDevice();
+    // Snapshot so a failed scan start (web picker cancel, native radio error)
+    // doesn't destroy the previously-discovered list: those devices remain
+    // connectable, and a cancel should change nothing.
+    //
+    // NOTE: restoring the list makes a just-torn-down device tappable inside
+    // the reconnect-settle window (Scan pressed right after a disconnect
+    // finishes the window early — see [_finishCooldown]). Tested on Chrome:
+    // that connect succeeds at human pace, so it is deliberately unguarded
+    // (the machine-speed reconnect guard is the cooldown itself).
+    final previousDevices = List<BleDevice>.of(_devices);
     _devices.clear();
     _isScanning = true;
-    await UniversalBle.startScan(
-      scanFilter: ScanFilter(withServices: [btServiceId]),
-      platformConfig: PlatformConfig(
-        web: WebOptions(optionalServices: [btServiceId]),
-      ),
-    );
+    try {
+      await UniversalBle.startScan(
+        scanFilter: ScanFilter(withServices: [btServiceId]),
+        platformConfig: PlatformConfig(
+          web: WebOptions(optionalServices: [btServiceId]),
+        ),
+      );
+    } catch (e) {
+      // Plain catch: the web picker errors are Errors, not Exceptions.
+      _isScanning = false;
+      _devices
+        ..clear()
+        ..addAll(previousDevices);
+      notifyListeners();
+      if (kIsWeb && isWebPickerDismissal(e)) {
+        // A picker dismissal is a user choice, not a failure — the browser
+        // already surfaced it. Swallow (state is rolled back above).
+        debugPrint('Web scan picker closed without a selection: $e');
+        return;
+      }
+      // A genuine failure (native radio error, or a non-dismissal web error):
+      // the UI surfaces it (see _scanWithFeedback on the Devices tab).
+      rethrow;
+    }
     notifyListeners();
   }
 
@@ -505,6 +565,32 @@ class BleLinkManager extends ChangeNotifier {
     if (releaseGatt) {
       unawaited(_releaseGatt(deviceId));
     }
+  }
+
+  /// Finish a pending reconnect-settle window immediately: cancel the timer
+  /// and return the link to [BtLinkState.idle] now, rather than when
+  /// [reconnectSettleDelay] elapses. Called on a scan kick-off ([_startScan])
+  /// and on a web auto-connect ([_connectPickedWebDevice]).
+  ///
+  /// Tested on Chrome: a device mid-GATT-teardown does not appear in the
+  /// requestDevice() picker at all (it resurfaces only once it resumes
+  /// advertising, i.e. after teardown settles), so the picker round-trip IS
+  /// the teardown-settle signal Web Bluetooth otherwise lacks — the early
+  /// finish cannot fire inside a live accept-then-drop window, and a connect
+  /// issued right after the pick succeeds.
+  ///
+  /// KNOWN UNGUARDED EDGE: disconnect → Scan → cancel → Connect on the
+  /// restored device issues a manual connect that bypasses both the picker
+  /// signal and the remaining window. Tested: connects cleanly at human
+  /// pace. Deliberately left unguarded — the manual-path cooldown stays as
+  /// the guard against machine-speed reconnects, which testing did not
+  /// stress.
+  ///
+  /// Does NOT call [notifyListeners] — callers do.
+  void _finishCooldown() {
+    _cooldownTimer?.cancel();
+    _cooldownTimer = null;
+    _link.reset();
   }
 
   /// Best-effort release of a platform-level GATT link that has no app-side
@@ -741,6 +827,31 @@ class BleLinkManager extends ChangeNotifier {
       _teardownLink(deviceId, device?.name ?? deviceId, releaseGatt: true);
       notifyListeners();
       rethrow;
+    }
+  }
+
+  /// Web only: connect to a device the user just picked in Chrome's
+  /// requestDevice() chooser (see [_onScanResult]). [connectToDevice] stops
+  /// the scan itself before connecting.
+  Future<void> _connectPickedWebDevice(BleDevice device) async {
+    // If the scan just tore a link down (it was streaming when Scan was
+    // pressed), the link is parked in the reconnect-settle window. Finish it
+    // immediately: the picker round-trip already gave Chrome human-scale
+    // time, and we're testing whether its own teardown serialization covers
+    // the rest (see [_finishCooldown]).
+    if (_link.isCoolingDown) {
+      _finishCooldown();
+    }
+    try {
+      // Refuses silently if the link has meanwhile become busy (e.g. the user
+      // tapped Connect on another row or started the demo device) — the
+      // user's later action wins.
+      await connectToDevice(device.deviceId);
+    } catch (e) {
+      // connectToDevice already tore the failed attempt down; surface it the
+      // same way a manual Connect tap does.
+      debugPrint('Auto-connect to ${device.deviceId} failed: $e');
+      _events.emit(BleConnectionFailed(device.name ?? device.deviceId));
     }
   }
 

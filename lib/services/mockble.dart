@@ -53,6 +53,10 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// established and no connection-change callback fires).
   bool failConnect = false;
 
+  /// When true, [startScan] throws instead of starting the result feed (a
+  /// refused scan start, e.g. a radio error).
+  bool failScan = false;
+
   /// When true, [disconnect] never fires the connection-change callback, so
   /// the client's disconnect-timeout reconciliation path is what tears the
   /// link down.
@@ -80,6 +84,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     includeAdcService = true;
     failCalibrationRead = false;
     failConnect = false;
+    failScan = false;
     hangDisconnect = false;
     slowConnect = false;
     disconnectCalls.clear();
@@ -117,6 +122,9 @@ class MockBlePlatform extends UniversalBlePlatform {
     ScanFilter? scanFilter,
     PlatformConfig? platformConfig,
   }) async {
+    if (failScan) {
+      throw StateError('Mock scan failure');
+    }
     if (_scanTimer != null) return;
 
     final rng = Random(555);

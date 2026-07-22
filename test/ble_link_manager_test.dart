@@ -388,6 +388,66 @@ void main() {
     });
   });
 
+  test(
+    'a failing scan start rolls back state and restores the device list',
+    () {
+      fakeAsync((async) {
+        final (link, _) = wire();
+        // Let the startup availability query resolve (hwDelay 200 ms).
+        async.elapse(const Duration(milliseconds: 300));
+
+        // Discover a device with a first scan, then stop.
+        unawaited(link.toggleScan());
+        async.elapse(const Duration(seconds: 3));
+        expect(link.devices, isNotEmpty);
+        unawaited(link.toggleScan());
+        async.elapse(const Duration(milliseconds: 100));
+        final discovered = link.devices.map((d) => d.deviceId).toList();
+
+        // A refused scan start surfaces the error to the caller, leaves
+        // scanning off, and restores the previously-discovered list (a
+        // failed/cancelled scan changes nothing).
+        MockBlePlatform.instance.failScan = true;
+        Object? caught;
+        unawaited(
+          link.toggleScan().catchError((Object e) {
+            caught = e;
+          }),
+        );
+        async.elapse(const Duration(milliseconds: 100));
+        expect(caught, isA<StateError>());
+        expect(link.isScanning, isFalse);
+        expect(link.devices.map((d) => d.deviceId).toList(), discovered);
+      });
+    },
+  );
+
+  group('isWebPickerDismissal', () {
+    test('matches the flutter_web_bluetooth picker-dismissal error names', () {
+      expect(
+        isWebPickerDismissal(
+          'UserCancelledDialogError: User cancelled the requestDevice() chooser.',
+        ),
+        isTrue,
+      );
+      expect(
+        isWebPickerDismissal('DeviceNotFoundError: No devices found.'),
+        isTrue,
+      );
+    });
+
+    test('rejects genuine failures', () {
+      expect(isWebPickerDismissal(StateError('Mock scan failure')), isFalse);
+      expect(
+        isWebPickerDismissal(
+          'WebBluetoothGloballyDisabled: api globally disabled',
+        ),
+        isFalse,
+      );
+      expect(isWebPickerDismissal('BrowserError: SecurityError: x'), isFalse);
+    });
+  });
+
   test('a failing calibration read does not prevent streaming', () {
     fakeAsync((async) {
       MockBlePlatform.instance.failCalibrationRead = true;
