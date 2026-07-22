@@ -5,6 +5,7 @@ import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 import '../services/ble_link_manager.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/empty_placeholder.dart';
+import '../widgets/rssi_indicator.dart';
 import '../widgets/section_header.dart';
 import '../widgets/status_colors.dart';
 import 'app_shell.dart';
@@ -314,7 +315,6 @@ class _DeviceRow extends StatelessWidget {
     );
     final scheme = Theme.of(context).colorScheme;
     final onContainer = scheme.onPrimaryContainer;
-    final isStreaming = linkState == BtLinkState.streaming;
     final isConnecting = linkState == BtLinkState.connecting;
     final isDisconnecting = linkState == BtLinkState.disconnecting;
 
@@ -344,10 +344,17 @@ class _DeviceRow extends StatelessWidget {
           ],
         ),
         title: Text(name),
-        subtitle: Text(
-          isStreaming && connectedRssi != null
-              ? '${visual.label} • RSSI: $connectedRssi dBm'
-              : visual.label,
+        subtitle: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Flexible(child: Text(visual.label)),
+            // Live RSSI (native only): null until the first poll lands —
+            // and forever on web — in which case nothing renders.
+            if (connectedRssi != null) ...[
+              const Text(' • '),
+              RssiIndicator(rssi: connectedRssi, color: onContainer),
+            ],
+          ],
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
