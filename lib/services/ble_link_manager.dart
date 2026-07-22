@@ -40,11 +40,30 @@ enum BtLinkState {
   /// The link has fully disconnected, but the platform stack (Web Bluetooth on
   /// Chrome in particular) may not yet be ready to accept a fresh connection to
   /// the SAME device. We hold the link here for [BleLinkManager.reconnectSettleDelay]
-  /// after teardown so the UI keeps Connect disabled (with a "please wait" hint)
-  /// instead of silently sleeping inside the connect call. Web-only; native
-  /// stacks go straight back to [idle] on disconnect. A scan kick-off finishes
-  /// the window early (see [BleLinkManager._finishCooldown]).
+  /// after teardown so the UI keeps Connect disabled (with a "reconnect
+  /// available shortly" hint) instead of silently sleeping inside the connect
+  /// call. Web-only; native stacks go straight back to [idle] on disconnect. A
+  /// scan kick-off finishes the window early (see [BleLinkManager._finishCooldown]).
+  /// Only live-link teardowns park here: a FAILED connect attempt (rejected or
+  /// timed out) never had a live link to settle and goes straight back to
+  /// [idle] — see [BleLinkManager.connectToDevice].
   cooldown,
+}
+
+/// Why a connect attempt failed, for the Devices tab's per-row failure marker
+/// (see [BleLinkManager.connectFailureFor]). The manager records only the
+/// kind; the row maps it to user-facing copy (copy stays in the UI layer).
+enum ConnectFailureKind {
+  /// The platform refused/failed the connection outright. On web this is
+  /// typically Chrome rejecting gatt.connect() on a stale device handle (a
+  /// row left over from an earlier session — universal_ble wraps the
+  /// NetworkError as UniversalBleErrorCode.unknownError); the actual fix is
+  /// a fresh Scan + pick, which mints a new handle.
+  failed,
+
+  /// The attempt exceeded [BleLinkManager.connectTimeout]. The platform
+  /// attempt may still complete late; the unwanted-link guard releases it.
+  timeout,
 }
 
 /// All per-device link state for a single BLE device. Everything logically
@@ -221,6 +240,21 @@ class BleLinkManager extends ChangeNotifier {
   final DeviceLink _link = DeviceLink();
   DeviceLink get link => _link;
 
+  /// Per-device record of the most recent failed connect attempt, keyed by
+  /// device id. Set in [connectToDevice]'s catch (only for the attempt that
+  /// actually surfaces the failure — an abandoned/cancelled attempt records
+  /// nothing), cleared when any new connect attempt begins (see
+  /// [_beginConnect]) or when a fresh scan result arrives for that device (a
+  /// re-discovered device is a fresh platform handle — see [_onScanResult]).
+  /// The Devices tab shows a per-row failure hint from this instead of a
+  /// toast, so rapid retries can't queue a stack of snackbars.
+  final Map<String, ConnectFailureKind> _connectFailures = {};
+
+  /// The kind of the last failed connect attempt for [deviceId], or null if
+  /// none (or it was superseded/cleared).
+  ConnectFailureKind? connectFailureFor(String deviceId) =>
+      _connectFailures[deviceId];
+
   /// The single "usable / connected" truth: link up AND the ADC feed is
   /// streaming. Every screen keys its connected UI off this.
   bool get isStreaming => _link.isStreaming;
@@ -367,6 +401,10 @@ class BleLinkManager extends ChangeNotifier {
     } else {
       _devices.add(newDevice);
     }
+    // A fresh advertisement is a fresh platform handle, so any recorded
+    // connect failure for this device is moot (on web a scan result IS the
+    // picker round-trip the row's failure hint tells the user to do).
+    _connectFailures.remove(newDevice.deviceId);
     notifyListeners();
     // Web: a scan result is not a passive advertisement — it is the device
     // the user just picked in Chrome's requestDevice() chooser (the popup IS
@@ -531,13 +569,25 @@ class BleLinkManager extends ChangeNotifier {
   /// resulting disconnect callback arrives to an unwanted link and is ignored
   /// by the guard in [_onConnectionChange].
   ///
-  /// On web (real BLE devices only) the link is NOT returned straight to
-  /// [BtLinkState.idle]: it is parked in [BtLinkState.cooldown] for
-  /// [reconnectSettleDelay] so the UI keeps Connect disabled (with a hint)
-  /// until Chrome has finished GATT teardown. Native stacks and the demo
-  /// device don't exhibit the too-soon-reconnect race, so they reset directly
-  /// to idle. Does NOT call [notifyListeners] — callers do.
-  void _teardownLink(String deviceId, String name, {bool releaseGatt = false}) {
+  /// On web (real BLE devices only, and only when [cooldown] is true) the link
+  /// is NOT returned straight to [BtLinkState.idle]: it is parked in
+  /// [BtLinkState.cooldown] for [reconnectSettleDelay] so the UI keeps Connect
+  /// disabled (with a hint) until Chrome has finished GATT teardown. Native
+  /// stacks and the demo device don't exhibit the too-soon-reconnect race, so
+  /// they reset directly to idle.
+  ///
+  /// [cooldown] must be false when no live link was ever up — i.e. a failed
+  /// connect attempt. The settle window exists to let the stack finish
+  /// tearing down a LIVE GATT link; parking a rejected or timed-out attempt
+  /// there would show a "reconnect available shortly" state for a device that
+  /// was never connected (a lie, and it delays an immediate retry for
+  /// nothing). Does NOT call [notifyListeners] — callers do.
+  void _teardownLink(
+    String deviceId,
+    String name, {
+    bool releaseGatt = false,
+    bool cooldown = true,
+  }) {
     // Supersede any in-flight post-connect setup pass so it bails out instead of
     // writing state for a link we're tearing down.
     _supersedeSetupPasses();
@@ -545,8 +595,9 @@ class BleLinkManager extends ChangeNotifier {
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
 
-    // Cooldown applies to real BLE links on web only — not native, not demo.
-    if (!kIsWeb || _link.isDemoDevice) {
+    // Cooldown applies to real BLE links on web only — not native, not demo,
+    // and not failed connect attempts.
+    if (!kIsWeb || _link.isDemoDevice || !cooldown) {
       _link.reset();
     } else {
       // Web: hold the link in cooldown for the settle window, then release it.
@@ -766,6 +817,8 @@ class BleLinkManager extends ChangeNotifier {
     // can't fire against this new attempt.
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
+    // A new attempt supersedes every recorded failure marker.
+    _connectFailures.clear();
     _supersedeSetupPasses();
     return true;
   }
@@ -810,8 +863,8 @@ class BleLinkManager extends ChangeNotifier {
     } catch (e) {
       // This attempt was abandoned while its future was outstanding (user
       // cancel, or superseded by a newer one): the teardown already ran, so
-      // fail quietly instead of running a second teardown (which would park
-      // a phantom cooldown on web) or toasting an error the user asked for.
+      // fail quietly instead of running a second teardown, recording a
+      // failure marker, or surfacing an error the user asked for.
       if (_link.deviceId != deviceId || !_link.isConnecting) {
         return;
       }
@@ -819,12 +872,25 @@ class BleLinkManager extends ChangeNotifier {
       // failed connect attempt that callback may never fire, so tear the link
       // down here and let the caller surface the error. Go through the common
       // [_teardownLink] (not a bare reset): it supersedes any lingering
-      // setup pass, releases the platform GATT link (a timed-out connect can
-      // still complete later — the guard in [_onConnectionChange] handles
-      // that callback), and, on web, parks the link in cooldown so an
-      // immediate retry doesn't hit the too-soon-reconnect race.
+      // setup pass and releases the platform GATT link (a timed-out connect
+      // can still complete later — the guard in [_onConnectionChange] handles
+      // that callback). NO cooldown: the attempt never had a live link, so
+      // there is no teardown to settle — parking in cooldown would flash a
+      // fake "reconnect available shortly" state (a lie for e.g. Chrome's
+      // overnight-stale device handle, which rejects gatt.connect() outright).
+      //
+      // Record the failure kind for the Devices tab's per-row marker — the
+      // user-facing channel for this failure (no toast).
+      _connectFailures[deviceId] = e is TimeoutException
+          ? ConnectFailureKind.timeout
+          : ConnectFailureKind.failed;
       final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
-      _teardownLink(deviceId, device?.name ?? deviceId, releaseGatt: true);
+      _teardownLink(
+        deviceId,
+        device?.name ?? deviceId,
+        releaseGatt: true,
+        cooldown: false,
+      );
       notifyListeners();
       rethrow;
     }

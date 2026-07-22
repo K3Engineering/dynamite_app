@@ -35,9 +35,14 @@ BtStatusVisual btStatusVisual({
       case BtLinkState.disconnecting:
         return (Icons.bluetooth_searching, active, 'Disconnecting…');
       case BtLinkState.cooldown:
-        // Web: the link has torn down but the stack isn't ready to reconnect
-        // yet. Connect stays disabled through this settle window.
-        return (Icons.bluetooth_searching, active, 'Almost ready…');
+        // Web: a live link just tore down and the stack isn't ready to
+        // accept a fresh connection yet. Connect stays disabled through this
+        // settle window.
+        return (
+          Icons.bluetooth_searching,
+          active,
+          'Reconnect available shortly…',
+        );
       case BtLinkState.streaming:
         return (Icons.bluetooth_connected, connected, 'Connected');
       case BtLinkState.connected:

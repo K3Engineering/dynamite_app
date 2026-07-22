@@ -204,6 +204,66 @@ void main() {
     });
   });
 
+  test('a failed connect records a per-row failure marker that a retry '
+      'clears', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+      MockBlePlatform.instance.failConnect = true;
+
+      Object? error;
+      unawaited(
+        link.connectToDevice(deviceId).catchError((Object e) => error = e),
+      );
+      async.elapse(const Duration(seconds: 2));
+
+      expect(error, isA<ConnectionException>());
+      // The row marker is the user-facing channel for the failure (no toast).
+      expect(link.connectFailureFor(deviceId), ConnectFailureKind.failed);
+      expect(link.link.state, BtLinkState.idle);
+      expect(seen, isEmpty);
+
+      // A new attempt supersedes the marker immediately (before it succeeds).
+      MockBlePlatform.instance.failConnect = false;
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(milliseconds: 100));
+      expect(link.connectFailureFor(deviceId), isNull);
+
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+      expect(seen, isEmpty);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('a timed-out connect records a timeout failure marker', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.slowConnect = true;
+      final (link, seen) = wire();
+
+      Object? error;
+      unawaited(
+        link.connectToDevice(deviceId).catchError((Object e) => error = e),
+      );
+      // BleLinkManager.connectTimeout (5 s) fires before the mock's 20 s
+      // connect completes.
+      async.elapse(const Duration(seconds: 16));
+
+      expect(error, isA<TimeoutException>());
+      expect(link.connectFailureFor(deviceId), ConnectFailureKind.timeout);
+      expect(link.link.state, BtLinkState.idle);
+      expect(seen, isEmpty);
+
+      // The platform connect completes late; the unwanted-link guard must
+      // release it without adopting it.
+      async.elapse(const Duration(seconds: 5));
+      expect(link.isStreaming, isFalse);
+      expect(MockBlePlatform.instance.connectedDeviceId, isNull);
+
+      teardownLink(async, link);
+    });
+  });
+
   test('cancelling a hung connect releases the link and ignores the late '
       'success', () {
     fakeAsync((async) {
@@ -253,6 +313,8 @@ void main() {
       expect(error, isNull);
       expect(link.link.state, BtLinkState.idle);
       expect(seen, isEmpty);
+      // A cancelled attempt records no per-row failure marker either.
+      expect(link.connectFailureFor(deviceId), isNull);
       // The cancel's disconnect is the only platform teardown; the late
       // failure hit the abandoned-attempt guard and returned silently.
       expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);

@@ -88,8 +88,11 @@ class DevicesTab extends StatelessWidget {
               linkBusy: bt.linkBusy,
               isCoolingDown:
                   bt.isCoolingDown && device.deviceId == bt.link.deviceId,
+              failureHint: switch (bt.connectFailureFor(device.deviceId)) {
+                final kind? => connectFailureHint(kind),
+                null => null,
+              },
               onConnect: () => _connectWithFeedback(
-                context,
                 () => bt.connectToDevice(device.deviceId),
                 device.name ?? 'device',
               ),
@@ -114,11 +117,8 @@ class DevicesTab extends StatelessWidget {
             linkBusy: bt.linkBusy,
             isCoolingDown: false,
             inactiveSubtitle: 'Simulated data — no hardware',
-            onConnect: () => _connectWithFeedback(
-              context,
-              bt.connectToDemoDevice,
-              'Demo Device',
-            ),
+            onConnect: () =>
+                _connectWithFeedback(bt.connectToDemoDevice, 'Demo Device'),
             onDisconnect: bt.disconnectSelectedDevice,
           ),
         ],
@@ -181,13 +181,25 @@ class DevicesTab extends StatelessWidget {
   }
 }
 
-/// Run a connect attempt, surfacing a failure as a snackbar naming
-/// [deviceName] with the underlying error detail (timeout vs GATT error vs
-/// user-cancelled web picker are wildly different diagnoses). Connect buttons
-/// are already disabled while a link is busy, so this only handles the
-/// rejected attempt itself.
+/// Map a recorded connect-failure [kind] to the per-row hint shown on the
+/// Devices tab. [ConnectFailureKind.failed] covers Chrome's stale device
+/// handle (a row left over from an earlier session rejects gatt.connect();
+/// a fresh Scan + pick mints a new handle and is the actual fix) as well as
+/// ordinary native refusals. Copy lives here in the UI layer; the manager
+/// only records the kind (see [BleLinkManager.connectFailureFor]).
+String connectFailureHint(ConnectFailureKind kind) => switch (kind) {
+  ConnectFailureKind.failed => "Couldn't connect — tap Scan and pick it again",
+  ConnectFailureKind.timeout =>
+    'Timed out — make sure the device is on and nearby',
+};
+
+/// Run a connect attempt. A failure is surfaced by the manager as a per-row
+/// marker (see [BleLinkManager.connectFailureFor]) — deliberately NOT a
+/// snackbar, so rapid retries can't queue a stack of toasts — so this only
+/// logs the underlying detail (timeout vs GATT error vs stale web handle are
+/// wildly different diagnoses). Connect buttons are already disabled while a
+/// link is busy, so this only handles the rejected attempt itself.
 Future<void> _connectWithFeedback(
-  BuildContext context,
   Future<void> Function() connect,
   String deviceName,
 ) async {
@@ -195,11 +207,6 @@ Future<void> _connectWithFeedback(
     await connect();
   } catch (e) {
     debugPrint('Connect to $deviceName failed: $e');
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to connect to $deviceName: $e')),
-      );
-    }
   }
 }
 
@@ -223,7 +230,9 @@ Future<void> _scanWithFeedback(BuildContext context, BleLinkManager bt) async {
 
 /// A single device row, shared by the BLE and Demo sections. Renders one of
 /// two forms:
-///  * Inactive ([isActive] false): a plain row with a Connect button.
+///  * Inactive ([isActive] false): a plain row with a Connect button. When
+///    [failureHint] is set (the last connect attempt for this device failed),
+///    the icon and subtitle switch to an error treatment showing the hint.
 ///  * Active ([isActive] true): a tinted row carrying the live link state
 ///    (spinner while connecting/setting up, connected icon when streaming),
 ///    the state + RSSI in the subtitle, a gear shortcut to Device settings,
@@ -241,6 +250,7 @@ class _DeviceRow extends StatelessWidget {
     required this.linkBusy,
     required this.isCoolingDown,
     this.inactiveSubtitle,
+    this.failureHint,
     required this.onConnect,
     required this.onDisconnect,
   });
@@ -280,19 +290,33 @@ class _DeviceRow extends StatelessWidget {
   /// When null, the inactive form shows the scan RSSI.
   final String? inactiveSubtitle;
 
+  /// User-facing hint for a failed connect attempt on this device (see
+  /// [connectFailureHint]). When set, the inactive form shows it in the error
+  /// color instead of the RSSI/subtitle, with an error leading icon; the
+  /// Connect button stays enabled so the user can retry.
+  final String? failureHint;
+
   final VoidCallback onConnect;
   final VoidCallback onDisconnect;
 
   @override
   Widget build(BuildContext context) {
     if (!isActive) {
+      final scheme = Theme.of(context).colorScheme;
+      final hasFailure = failureHint != null;
       return Card(
         child: ListTile(
-          leading: Icon(inactiveIcon, color: inactiveIconColor),
+          leading: Icon(
+            hasFailure ? Icons.error_outline : inactiveIcon,
+            color: hasFailure ? scheme.error : inactiveIconColor,
+          ),
           title: Text(name),
           subtitle: Text(
-            inactiveSubtitle ??
+            failureHint ??
+                inactiveSubtitle ??
                 (scanRssi != null ? 'RSSI: $scanRssi dBm' : 'RSSI: --'),
+            // Merges over the tile's subtitle style, overriding only color.
+            style: hasFailure ? TextStyle(color: scheme.error) : null,
           ),
           trailing: FilledButton(
             // Disabled whenever a link is busy so we never issue a connect
@@ -375,8 +399,12 @@ class _DeviceRow extends StatelessWidget {
                 disabledForegroundColor: onContainer.withValues(alpha: 0.5),
               ),
               // Disabled while the disconnect is in flight so the button
-              // truthfully reflects the in-progress teardown.
-              onPressed: isDisconnecting ? null : onDisconnect,
+              // truthfully reflects the in-progress teardown — and during the
+              // post-disconnect cooldown, where the link is already down and
+              // disconnectSelectedDevice would be an enabled no-op.
+              onPressed: (isDisconnecting || isCoolingDown)
+                  ? null
+                  : onDisconnect,
               child: Text(
                 isDisconnecting
                     ? 'Disconnecting…'
