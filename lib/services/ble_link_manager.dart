@@ -205,6 +205,13 @@ class BleLinkManager extends ChangeNotifier {
   /// streaming. Every screen keys its connected UI off this.
   bool get isStreaming => _link.isStreaming;
 
+  /// The link state as the BLE status readout should see it. The demo device
+  /// is not BLE: while it occupies the link slot the BLE link reports
+  /// [BtLinkState.idle], so the status falls through to scan/adapter state
+  /// instead of claiming "Connected".
+  BtLinkState get bleLinkState =>
+      _link.isDemoDevice ? BtLinkState.idle : _link.state;
+
   /// True while a disconnect has been requested but not yet confirmed.
   bool get isDisconnecting => _link.isDisconnecting;
 

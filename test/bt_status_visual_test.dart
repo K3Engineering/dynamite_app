@@ -91,5 +91,13 @@ void main() {
       visual(availability: AvailabilityState.unknown).label,
       contains('Starting up'),
     );
+    expect(
+      visual(availability: AvailabilityState.resetting).label,
+      'Bluetooth resetting…',
+    );
+    expect(
+      visual(availability: AvailabilityState.resetting).color,
+      status.linkActive,
+    );
   });
 }

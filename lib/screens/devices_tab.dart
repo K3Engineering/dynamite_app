@@ -17,7 +17,7 @@ class DevicesTab extends StatelessWidget {
     final bt = context.watch<BleLinkManager>();
 
     final visual = btStatusVisual(
-      linkState: bt.link.state,
+      linkState: bt.bleLinkState,
       availability: bt.bluetoothState,
       isScanning: bt.isScanning,
       hasDevices: bt.devices.isNotEmpty,
@@ -71,14 +71,14 @@ class DevicesTab extends StatelessWidget {
             Align(
               alignment: Alignment.centerLeft,
               child: BluetoothIndicator(
-                linkState: bt.link.state,
+                linkState: bt.bleLinkState,
                 state: bt.bluetoothState,
                 isScanning: bt.isScanning,
                 hasDevices: bt.devices.isNotEmpty,
               ),
             ),
 
-          if (showEmptyBlock) _buildEmptyBlock(visual),
+          if (showEmptyBlock) _buildEmptyBlock(visual, bt.bluetoothState),
 
           for (final device in bt.devices)
             _DeviceRow(
@@ -130,35 +130,54 @@ class DevicesTab extends StatelessWidget {
     );
   }
 
-  /// The big state-aware empty block: the single empty-state voice, with
-  /// icon/title/hint derived from BLE state (radio off / permission / no
-  /// devices found) so it never claims "tap Scan" when scanning can't work.
-  Widget _buildEmptyBlock(BtStatusVisual visual) {
-    final (icon, title, hint) = switch (visual.label) {
-      'Bluetooth is off' => (
-        Icons.bluetooth_disabled,
-        'Bluetooth is off',
-        'Turn on Bluetooth to find devices',
-      ),
-      'Bluetooth permission needed' => (
-        Icons.bluetooth_disabled,
-        'Bluetooth permission needed',
-        'Grant Bluetooth permission to find devices',
-      ),
-      'Bluetooth not supported' => (
-        Icons.bluetooth_disabled,
-        'Bluetooth not supported',
-        'This device cannot use Bluetooth',
-      ),
-      _ => (
+  /// The big state-aware empty block: the single empty-state voice. Icon,
+  /// color, and label come straight from the shared [btStatusVisual] mapping
+  /// (this is where the failure modes live — the red "not supported" square,
+  /// the permission-needed marker, "Starting up Bluetooth…"), so the page
+  /// shows the exact adapter status and reason the compact indicator would.
+  /// Only the powered-on case gets its own treatment: the indicator's action
+  /// prompt ("Tap Scan to find devices") becomes a title + hint.
+  Widget _buildEmptyBlock(BtStatusVisual visual, AvailabilityState availability) {
+    final (icon, color, title, hint) = switch (availability) {
+      AvailabilityState.poweredOn => (
         Icons.bluetooth_searching,
+        null, // neutral — not a failure
         'No devices found',
         'Tap Scan to search for nearby devices',
+      ),
+      AvailabilityState.poweredOff => (
+        visual.icon,
+        visual.color,
+        visual.label,
+        'Turn on Bluetooth to find devices',
+      ),
+      AvailabilityState.unauthorized => (
+        visual.icon,
+        visual.color,
+        visual.label,
+        'Grant Bluetooth permission to find devices',
+      ),
+      AvailabilityState.unsupported => (
+        visual.icon,
+        visual.color,
+        visual.label,
+        'This device cannot use Bluetooth',
+      ),
+      AvailabilityState.unknown || AvailabilityState.resetting => (
+        visual.icon,
+        visual.color,
+        visual.label,
+        'This should only take a moment',
       ),
     };
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 24),
-      child: EmptyPlaceholder(icon: icon, title: title, hint: hint),
+      child: EmptyPlaceholder(
+        icon: icon,
+        color: color,
+        title: title,
+        hint: hint,
+      ),
     );
   }
 }

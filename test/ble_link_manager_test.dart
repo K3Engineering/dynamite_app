@@ -411,12 +411,16 @@ void main() {
 
       unawaited(link.connectToDemoDevice());
       expect(link.isStreaming, isTrue);
+      // The demo device is not BLE: while it occupies the link slot, the BLE
+      // status projection stays idle so it never claims "Connected".
+      expect(link.bleLinkState, BtLinkState.idle);
       async.elapse(const Duration(milliseconds: 100));
       expect(received, greaterThan(0));
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(milliseconds: 100));
       expect(link.link.state, BtLinkState.idle);
+      expect(link.bleLinkState, BtLinkState.idle);
       expect(seen, isEmpty);
     });
   });
