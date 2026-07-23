@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/screens/devices_tab.dart'
-    show InactiveRowMood, InactiveRowVisual, inactiveRowVisual;
+    show
+        InactiveRowMood,
+        InactiveRowVisual,
+        inactiveRowVisual,
+        staleCardTintAlpha;
 import 'package:dynamite_app/services/ble_link_manager.dart'
     show BleLinkManager;
 
@@ -47,7 +51,18 @@ void main() {
       final v = row(scanRssi: -58, lastAliveMs: now - staleMs - 1);
       expect(v.mood, InactiveRowMood.stale);
       expect(v.icon, Icons.bluetooth);
-      expect(v.cardColor, colors.surfaceContainerHighest);
+      // The card tint is an explicit onSurface-over-surface blend — and
+      // crucially NOT the default card color (this app's M2-era schemes fall
+      // the M3 container roles back to `surface`, an invisible no-op; the
+      // blend is what makes the stale card visibly distinct).
+      expect(
+        v.cardColor,
+        Color.alphaBlend(
+          colors.onSurface.withValues(alpha: staleCardTintAlpha),
+          colors.surface,
+        ),
+      );
+      expect(v.cardColor, isNot(colors.surface));
       expect(v.titleColor, isNotNull);
       expect(v.subtitleColor, isNotNull);
       // The aged RSSI stays suppressed; the age text carries through.

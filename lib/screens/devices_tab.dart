@@ -278,15 +278,26 @@ typedef InactiveRowVisual = ({
   Color? titleColor,
 });
 
+/// Card tint for a stale device row: an onSurface-over-surface blend at this
+/// alpha. The M3 container roles (e.g. surfaceContainerHighest) can't be
+/// used for this — this app's M2-era ColorScheme constructors fall them back
+/// to `surface`, a no-op. A small grey nudge in both modes: darkens the card
+/// in light mode, lightens it in dark mode. Playground: 0.04–0.10.
+const double staleCardTintAlpha = 0.06;
+
 /// Map platform/liveness/failure state to the inactive row's full visual.
 /// Subtitle text and the staleness verdict come from [bleRowSubtitle]; this
 /// layers the failure hint's priority and the per-mood colors on top.
 ///
-/// A stale row ("hasn't been active for a while") is de-emphasized with the
-/// M3 disabled emphasis (onSurface at 38%) on the highest container — strong
-/// enough to read on any theme — but its Connect button stays enabled AND
-/// undimmed: stale means "maybe gone", not "don't try". (Tweak points:
-/// colors here, the window at [BleLinkManager.deviceStaleAfter].)
+/// A stale row ("hasn't been active for a while") is de-emphasized: the
+/// foreground dims to the M3 disabled emphasis (onSurface at 38%) and the
+/// card gets an explicit onSurface-over-surface blend at
+/// [staleCardTintAlpha]. The blend is computed because the M3 container roles
+/// (e.g. surfaceContainerHighest) can't be relied on here — this app's
+/// M2-era ColorScheme constructors fall them back to `surface`, an invisible
+/// no-op. The Connect button stays enabled AND undimmed: stale means "maybe
+/// gone", not "don't try". (Tweak points: the two alphas here, the window at
+/// [BleLinkManager.deviceStaleAfter].)
 InactiveRowVisual inactiveRowVisual({
   required int? scanRssi,
   required int? lastAliveMs,
@@ -320,7 +331,12 @@ InactiveRowVisual inactiveRowVisual({
       iconColor: dim,
       subtitle: freshness.text,
       subtitleColor: dim,
-      cardColor: colors.surfaceContainerHighest,
+      // A real grey nudge in both modes (darkens the card in light mode,
+      // lightens it in dark mode) — see [staleCardTintAlpha].
+      cardColor: Color.alphaBlend(
+        colors.onSurface.withValues(alpha: staleCardTintAlpha),
+        colors.surface,
+      ),
       titleColor: dim,
     );
   }
