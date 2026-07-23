@@ -10,6 +10,7 @@ class EmptyPlaceholder extends StatelessWidget {
     required this.title,
     this.hint,
     this.action,
+    this.color,
   });
 
   final IconData icon;
@@ -17,9 +18,13 @@ class EmptyPlaceholder extends StatelessWidget {
   final String? hint;
   final Widget? action;
 
+  /// Color override for the icon/title/hint (e.g. an error color when the
+  /// empty state reports a failure). Defaults to the dim outline color.
+  final Color? color;
+
   @override
   Widget build(BuildContext context) {
-    final dim = Theme.of(context).colorScheme.outline;
+    final dim = color ?? Theme.of(context).colorScheme.outline;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,

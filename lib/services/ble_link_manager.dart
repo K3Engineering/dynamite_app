@@ -40,10 +40,29 @@ enum BtLinkState {
   /// The link has fully disconnected, but the platform stack (Web Bluetooth on
   /// Chrome in particular) may not yet be ready to accept a fresh connection to
   /// the SAME device. We hold the link here for [BleLinkManager.reconnectSettleDelay]
-  /// after teardown so the UI keeps Connect disabled (with a "please wait" hint)
-  /// instead of silently sleeping inside the connect call. Web-only; native
-  /// stacks go straight back to [idle] on disconnect.
+  /// after teardown so the UI keeps Connect disabled (with a "waiting after
+  /// disconnect" hint) instead of silently sleeping inside the connect call. Web-only; native stacks go straight back to [idle] on disconnect. A
+  /// scan kick-off finishes the window early (see [BleLinkManager._finishCooldown]).
+  /// Only live-link teardowns park here: a FAILED connect attempt (rejected or
+  /// timed out) never had a live link to settle and goes straight back to
+  /// [idle] — see [BleLinkManager.connectToDevice].
   cooldown,
+}
+
+/// Why a connect attempt failed, for the Devices tab's per-row failure marker
+/// (see [BleLinkManager.connectFailureFor]). The manager records only the
+/// kind; the row maps it to user-facing copy (copy stays in the UI layer).
+enum ConnectFailureKind {
+  /// The platform refused/failed the connection outright. On web this is
+  /// typically Chrome rejecting gatt.connect() on a stale device handle (a
+  /// row left over from an earlier session — universal_ble wraps the
+  /// NetworkError as UniversalBleErrorCode.unknownError); the actual fix is
+  /// a fresh Scan + pick, which mints a new handle.
+  failed,
+
+  /// The attempt exceeded [BleLinkManager.connectTimeout]. The platform
+  /// attempt may still complete late; the unwanted-link guard releases it.
+  timeout,
 }
 
 /// All per-device link state for a single BLE device. Everything logically
@@ -51,6 +70,9 @@ enum BtLinkState {
 /// see the multi-device roadmap on [BleLinkManager].
 class DeviceLink {
   DeviceLink({this.deviceId = ''});
+
+  /// The [deviceId] of the simulated demo device (never a real BLE link).
+  static const String demoDeviceId = 'demo_device';
 
   /// Empty string means "no device" (the [BtLinkState.idle] sentinel).
   String deviceId;
@@ -76,20 +98,20 @@ class DeviceLink {
   bool get isCoolingDown => state == BtLinkState.cooldown;
 
   /// Reset back to the idle sentinel (used on disconnect).
-  void reset() {
+  void _reset() {
     deviceId = '';
     name = '';
     state = BtLinkState.idle;
     rssi = null;
   }
 
-  bool get isDemoDevice => deviceId == 'demo_device';
+  bool get isDemoDevice => deviceId == demoDeviceId;
 
-  /// Like [reset], but parks the link in [BtLinkState.cooldown] for the given
+  /// Like [_reset], but parks the link in [BtLinkState.cooldown] for the given
   /// [deviceId] (the device just torn down). Keeps [deviceId]/[name] so the UI
   /// can label that specific device's row while the reconnect settle window
-  /// elapses; everything else is cleared as in [reset].
-  void enterCooldown(String deviceId, String name) {
+  /// elapses; everything else is cleared as in [_reset].
+  void _enterCooldown(String deviceId, String name) {
     this.deviceId = deviceId;
     this.name = name;
     state = BtLinkState.cooldown;
@@ -113,6 +135,21 @@ class _SetupToken {
 
   bool get isCurrent =>
       _manager._setupEpoch == _epoch && _manager._link.deviceId == deviceId;
+}
+
+/// True for the web picker outcomes that are user choices, not failures: the
+/// user dismissed Chrome's requestDevice() chooser, or it reported no
+/// matching devices. flutter_web_bluetooth signals these with
+/// UserCancelledDialogError / DeviceNotFoundError — Error subclasses that
+/// universal_ble rethrows verbatim but does NOT re-export, so they can't be
+/// caught by type here without a direct dependency on the web-only package.
+/// Match the class's own toString prefix ("$errorName: …") instead; if the
+/// package ever renames them, a cancel falls into the genuine-failure path —
+/// a spurious snackbar, not broken state.
+bool isWebPickerDismissal(Object e) {
+  final s = e.toString();
+  return s.startsWith('UserCancelledDialogError') ||
+      s.startsWith('DeviceNotFoundError');
 }
 
 /// The BLE link state machine: adapter availability, scanning, connect /
@@ -153,6 +190,11 @@ class BleLinkManager extends ChangeNotifier {
   /// How often to poll the connected device's RSSI for the live signal display.
   static const Duration rssiPollInterval = Duration(seconds: 2);
 
+  /// How long a device row's "last proof of life" (see [lastAliveMs]) may
+  /// age before the Devices tab de-emphasizes the row as stale. Single knob
+  /// for the freshness window.
+  static const Duration deviceStaleAfter = Duration(seconds: 10);
+
   /// After a device disconnects, some BLE stacks (notably Web Bluetooth on
   /// Chrome) need a moment to finish tearing down GATT before they will accept
   /// a fresh connection to the SAME device. Reconnecting sooner makes Chrome
@@ -161,7 +203,11 @@ class BleLinkManager extends ChangeNotifier {
   /// [BtLinkState.cooldown] for this window after teardown — Connect stays
   /// disabled (with a hint) until it elapses. Web Bluetooth exposes no reliable
   /// teardown signal, so the window is enforced as a timer, not a state query.
-  /// Native stacks don't exhibit the race and go straight back to idle.
+  /// Native stacks don't exhibit the race and go straight back to idle. The
+  /// scan flow finishes the window early (see [_finishCooldown]): tested on
+  /// Chrome, the requestDevice() picker only surfaces a device once teardown
+  /// has settled, so the picker round-trip is the real settle signal on that
+  /// path — this timer remains the only signal for the manual Connect path.
   static const Duration reconnectSettleDelay = Duration(milliseconds: 4000);
 
   /// One-shot timer that returns the active link from [BtLinkState.cooldown]
@@ -201,15 +247,69 @@ class BleLinkManager extends ChangeNotifier {
   final DeviceLink _link = DeviceLink();
   DeviceLink get link => _link;
 
+  /// Per-device record of the most recent failed connect attempt, keyed by
+  /// device id. Set in [connectToDevice]'s catch (only for the attempt that
+  /// actually surfaces the failure — an abandoned/cancelled attempt records
+  /// nothing), cleared when any new connect attempt begins (see
+  /// [_beginConnect]) or when a fresh scan result arrives for that device (a
+  /// re-discovered device is a fresh platform handle — see [_onScanResult]).
+  /// The Devices tab shows a per-row failure hint from this instead of a
+  /// toast, so rapid retries can't queue a stack of snackbars.
+  final Map<String, ConnectFailureKind> _connectFailures = {};
+
+  /// The kind of the last failed connect attempt for [deviceId], or null if
+  /// none (or it was superseded/cleared).
+  ConnectFailureKind? connectFailureFor(String deviceId) =>
+      _connectFailures[deviceId];
+
+  /// Last "proof of life" per device id (ms since epoch): the most recent
+  /// moment a GATT link to this device was provably up (see [_stampAlive]).
+  /// Never stamped for failed/cancelled connects (a refused attempt proves
+  /// nothing about the device being alive) or for the demo device.
+  final Map<String, int> _lastAliveMs = {};
+
+  /// The most recent moment (ms since epoch) this device was provably alive,
+  /// or null if never. Native folds in the latest advertisement receipt
+  /// ([BleDevice.timestamp], refreshed per advert while scanning) so the
+  /// value covers both "seen" and "connected" evidence; web uses connection
+  /// stamps only — the picker pick-time is not a connection and must not
+  /// count as a sighting on its own. The Devices tab renders this as "Last
+  /// seen" on both platforms (web: connection stamps only — no adverts
+  /// exist) and stales it out after [deviceStaleAfter].
+  int? lastAliveMs(String deviceId) {
+    final stamp = _lastAliveMs[deviceId];
+    if (kIsWeb) return stamp;
+    final scanTs = _devices
+        .where((d) => d.deviceId == deviceId)
+        .firstOrNull
+        ?.timestamp;
+    if (stamp == null) return scanTs;
+    if (scanTs == null) return stamp;
+    return stamp > scanTs ? stamp : scanTs;
+  }
+
+  /// Record a proof of life for [deviceId]: a GATT link was provably up.
+  /// Callers: the link reaching streaming, a user-requested disconnect of a
+  /// live link (see [disconnectSelectedDevice] — the callback can't, see
+  /// there), the disconnect callback for an unexpectedly dropped link, and
+  /// the post-connect setup-failure path (GATT came up but
+  /// discovery/subscription failed). All four are moments where the device
+  /// demonstrably answered.
+  void _stampAlive(String deviceId) {
+    if (deviceId.isEmpty || deviceId == DeviceLink.demoDeviceId) return;
+    _lastAliveMs[deviceId] = DateTime.now().millisecondsSinceEpoch;
+  }
+
   /// The single "usable / connected" truth: link up AND the ADC feed is
   /// streaming. Every screen keys its connected UI off this.
   bool get isStreaming => _link.isStreaming;
 
-  /// True while a disconnect has been requested but not yet confirmed.
-  bool get isDisconnecting => _link.isDisconnecting;
-
-  /// True while the GATT link is up (during post-connect setup or streaming).
-  bool get isLinkUp => _link.isLinkUp;
+  /// The link state as the BLE status readout should see it. The demo device
+  /// is not BLE: while it occupies the link slot the BLE link reports
+  /// [BtLinkState.idle], so the status falls through to scan/adapter state
+  /// instead of claiming "Connected".
+  BtLinkState get bleLinkState =>
+      _link.isDemoDevice ? BtLinkState.idle : _link.state;
 
   /// True during the post-disconnect settle window (web only) — the link has
   /// fully torn down but the stack isn't yet ready to reconnect to the same
@@ -242,24 +342,57 @@ class BleLinkManager extends ChangeNotifier {
   /// gate on `!kIsWeb`.
   bool get _supportsRssi => !kIsWeb;
 
+  /// Whether scan results on this platform can carry an advertisement RSSI.
+  /// On web they never do: the "scan" is Chrome's requestDevice() picker, which
+  /// has no RSSI, and the only other path (watchAdvertisements) is flag-gated
+  /// and abandoned by Chrome. Distinct from [_supportsRssi], which gates
+  /// connected-mode readRssi polling; the Devices tab uses this to drop the
+  /// RSSI slot entirely where no reading can ever exist.
+  bool get supportsScanRssi => !kIsWeb;
+
   /// Periodic poller for [connectedRssi]; runs only while a link is streaming
   /// AND the surface displaying RSSI (the Devices tab) is visible.
   Timer? _rssiPollTimer;
 
-  /// Whether the surface displaying live RSSI (the Devices tab's connected
-  /// card) is currently visible. Polling runs only while this is true and a
-  /// link is streaming: off-screen RSSI reads would wake the radio every
-  /// [rssiPollInterval] for nothing.
-  bool _rssiUiActive = false;
+  /// Whether the Devices tab is currently visible. Gates the two pieces of
+  /// periodic UI bookkeeping that are pointless off-screen: RSSI polling
+  /// (off-screen reads would wake the radio every [rssiPollInterval] for
+  /// nothing) and the freshness poke (see [_syncFreshnessPoke]).
+  bool _devicesTabVisible = false;
 
-  /// Called by the shell when the RSSI-displaying tab becomes visible/hidden.
-  void setRssiUiActive(bool active) {
-    if (_rssiUiActive == active) return;
-    _rssiUiActive = active;
-    if (!active) {
+  /// Called by the shell when the Devices tab becomes visible/hidden.
+  void setDevicesTabVisible(bool visible) {
+    if (_devicesTabVisible == visible) return;
+    _devicesTabVisible = visible;
+    if (!visible) {
       _stopRssiPolling();
     } else if (_link.isStreaming) {
       _startRssiPolling(_link.deviceId);
+    }
+    _syncFreshnessPoke();
+  }
+
+  /// 1 Hz "time passed" poke while the Devices tab is visible and rows exist,
+  /// so the rows' relative ages ("Last seen >15 seconds ago") and the
+  /// [deviceStaleAfter] stale flip re-render on time. Changes no state itself
+  /// — like the RSSI poller it only notifies; other tabs guard their rebuilds
+  /// with narrow selects.
+  Timer? _freshnessPoke;
+
+  /// Start/stop the freshness poke to match [_devicesTabVisible] and whether
+  /// there are any device rows to age. Called from [setDevicesTabVisible],
+  /// [_onScanResult] (rows appear), and [_onBluetoothAvailabilityChanged]
+  /// (rows cleared).
+  void _syncFreshnessPoke() {
+    final shouldRun = _devicesTabVisible && _devices.isNotEmpty;
+    if (shouldRun && _freshnessPoke == null) {
+      _freshnessPoke = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => notifyListeners(),
+      );
+    } else if (!shouldRun) {
+      _freshnessPoke?.cancel();
+      _freshnessPoke = null;
     }
   }
 
@@ -319,8 +452,10 @@ class BleLinkManager extends ChangeNotifier {
   void _onScanResult(BleDevice newDevice) {
     // Keep all discovered devices; a repeat advertisement from a known device
     // always replaces the stored entry so the row shows the FRESHEST RSSI —
-    // signal may weaken as well as strengthen (a null RSSI is kept as-is and
-    // the UI shows an honest "RSSI: --"). The one exception is the name:
+    // signal may weaken as well as strengthen. A null RSSI is kept as-is: on
+    // native the row shows a transient "RSSI: --" until a reading lands, and
+    // on web (where scan results never carry RSSI — see [supportsScanRssi])
+    // the row omits the RSSI slot entirely. The one exception is the name:
     // plain ADV packets often omit it (it may only ride in the SCAN_RSP) and
     // some stacks deliver each PDU as a separate callback, so a nameless
     // re-advertisement must not blank the row title — keep the last known
@@ -340,7 +475,18 @@ class BleLinkManager extends ChangeNotifier {
     } else {
       _devices.add(newDevice);
     }
+    // A fresh advertisement is a fresh platform handle, so any recorded
+    // connect failure for this device is moot (on web a scan result IS the
+    // picker round-trip the row's failure hint tells the user to do).
+    _connectFailures.remove(newDevice.deviceId);
     notifyListeners();
+    _syncFreshnessPoke(); // rows exist now — start ageing them if visible
+    // Web: a scan result is not a passive advertisement — it is the device
+    // the user just picked in Chrome's requestDevice() chooser (the popup IS
+    // the scan). Treat it as an explicit connect request and end the scan.
+    if (kIsWeb) {
+      unawaited(_connectPickedWebDevice(newDevice));
+    }
   }
 
   void _onBluetoothAvailabilityChanged(AvailabilityState state) {
@@ -350,6 +496,7 @@ class BleLinkManager extends ChangeNotifier {
       _devices.clear();
     }
     notifyListeners();
+    _syncFreshnessPoke(); // the list may have been cleared — stop the poke
   }
 
   Future<void> _stopScan() async {
@@ -362,6 +509,12 @@ class BleLinkManager extends ChangeNotifier {
     if (_bluetoothState != AvailabilityState.poweredOn) {
       return;
     }
+    // A scan kick-off during the post-disconnect settle window finishes the
+    // window immediately (see [_finishCooldown]) so Scan works instead of
+    // being a silent no-op for the remainder of the delay.
+    if (_link.isCoolingDown) {
+      _finishCooldown();
+    }
     // Guard before any destructive clears: if we can't/shouldn't start a scan,
     // don't wipe the existing device list (which would leave the UI showing an
     // empty list with no picker having opened).
@@ -373,14 +526,42 @@ class BleLinkManager extends ChangeNotifier {
     // disable Scan while streaming, or confirm first when a recording is in
     // progress. (The Devices tab Scan button mirrors this TODO.)
     await disconnectSelectedDevice();
+    // Snapshot so a failed scan start (web picker cancel, native radio error)
+    // doesn't destroy the previously-discovered list: those devices remain
+    // connectable, and a cancel should change nothing.
+    //
+    // NOTE: restoring the list makes a just-torn-down device tappable inside
+    // the reconnect-settle window (Scan pressed right after a disconnect
+    // finishes the window early — see [_finishCooldown]). Tested on Chrome:
+    // that connect succeeds at human pace, so it is deliberately unguarded
+    // (the machine-speed reconnect guard is the cooldown itself).
+    final previousDevices = List<BleDevice>.of(_devices);
     _devices.clear();
     _isScanning = true;
-    await UniversalBle.startScan(
-      scanFilter: ScanFilter(withServices: [btServiceId]),
-      platformConfig: PlatformConfig(
-        web: WebOptions(optionalServices: [btServiceId]),
-      ),
-    );
+    try {
+      await UniversalBle.startScan(
+        scanFilter: ScanFilter(withServices: [btServiceId]),
+        platformConfig: PlatformConfig(
+          web: WebOptions(optionalServices: [btServiceId]),
+        ),
+      );
+    } catch (e) {
+      // Plain catch: the web picker errors are Errors, not Exceptions.
+      _isScanning = false;
+      _devices
+        ..clear()
+        ..addAll(previousDevices);
+      notifyListeners();
+      if (kIsWeb && isWebPickerDismissal(e)) {
+        // A picker dismissal is a user choice, not a failure — the browser
+        // already surfaced it. Swallow (state is rolled back above).
+        debugPrint('Web scan picker closed without a selection: $e');
+        return;
+      }
+      // A genuine failure (native radio error, or a non-dismissal web error):
+      // the UI surfaces it (see _scanWithFeedback on the Devices tab).
+      rethrow;
+    }
     notifyListeners();
   }
 
@@ -417,14 +598,15 @@ class BleLinkManager extends ChangeNotifier {
   }
 
   /// Begin polling the connected device's RSSI for the signal display.
-  /// No-op on platforms that don't implement readRssi (e.g. web) and while
-  /// the RSSI-displaying surface is off-screen (see [setRssiUiActive]).
+  /// No-op on platforms that don't implement readRssi (e.g. web), for the
+  /// demo device (no real radio to poll), and while the RSSI-displaying
+  /// surface is off-screen (see [setDevicesTabVisible]).
   /// Cancels any previous poller first. Reads are best-effort: a failed read
   /// is swallowed silently and retried on the next tick (no per-tick logging
   /// — it would spam the console).
   void _startRssiPolling(String deviceId) {
     _stopRssiPolling();
-    if (!_supportsRssi || !_rssiUiActive) {
+    if (!_supportsRssi || !_devicesTabVisible || _link.isDemoDevice) {
       return;
     }
     _rssiPollTimer = Timer.periodic(rssiPollInterval, (_) async {
@@ -464,13 +646,24 @@ class BleLinkManager extends ChangeNotifier {
   /// resulting disconnect callback arrives to an unwanted link and is ignored
   /// by the guard in [_onConnectionChange].
   ///
-  /// On web (real BLE devices only) the link is NOT returned straight to
-  /// [BtLinkState.idle]: it is parked in [BtLinkState.cooldown] for
-  /// [reconnectSettleDelay] so the UI keeps Connect disabled (with a hint)
-  /// until Chrome has finished GATT teardown. Native stacks and the demo
-  /// device don't exhibit the too-soon-reconnect race, so they reset directly
-  /// to idle. Does NOT call [notifyListeners] — callers do.
-  void _teardownLink(String deviceId, String name, {bool releaseGatt = false}) {
+  /// On web (real BLE devices only, and only when [cooldown] is true) the link
+  /// is NOT returned straight to [BtLinkState.idle]: it is parked in
+  /// [BtLinkState.cooldown] for [reconnectSettleDelay] so the UI keeps Connect
+  /// disabled (with a hint) until Chrome has finished GATT teardown. Native
+  /// stacks and the demo device don't exhibit the too-soon-reconnect race, so
+  /// they reset directly to idle.
+  ///
+  /// [cooldown] must be false when no live link was ever up — i.e. a failed
+  /// connect attempt. The settle window exists to let the stack finish
+  /// tearing down a LIVE GATT link; parking a rejected or timed-out attempt
+  /// there would show a "waiting after disconnect" state for a device that
+  /// was never connected (a lie, and it delays an immediate retry for
+  /// nothing). Does NOT call [notifyListeners] — callers do.
+  void _teardownLink(
+    String deviceId, {
+    bool releaseGatt = false,
+    bool cooldown = true,
+  }) {
     // Supersede any in-flight post-connect setup pass so it bails out instead of
     // writing state for a link we're tearing down.
     _supersedeSetupPasses();
@@ -478,18 +671,25 @@ class BleLinkManager extends ChangeNotifier {
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
 
-    // Cooldown applies to real BLE links on web only — not native, not demo.
-    if (!kIsWeb || _link.isDemoDevice) {
-      _link.reset();
+    // Cooldown applies to real BLE links on web only — not native, not demo,
+    // and not failed connect attempts.
+    if (!kIsWeb || _link.isDemoDevice || !cooldown) {
+      _link._reset();
     } else {
       // Web: hold the link in cooldown for the settle window, then release it.
-      _link.enterCooldown(deviceId, name);
+      // The name is whatever the link currently carries (empty when a connect
+      // was cancelled before the name lookup ran) so the row can label the
+      // cooling-down device.
+      _link._enterCooldown(
+        deviceId,
+        _link.name.isEmpty ? deviceId : _link.name,
+      );
       _cooldownTimer = Timer(reconnectSettleDelay, () {
         _cooldownTimer = null;
         // Only release if we're still cooling down THIS device (a new connect
         // attempt to a different device, or a fresh teardown, may have moved on).
         if (_link.isCoolingDown && _link.deviceId == deviceId) {
-          _link.reset();
+          _link._reset();
           notifyListeners();
         }
       });
@@ -498,6 +698,32 @@ class BleLinkManager extends ChangeNotifier {
     if (releaseGatt) {
       unawaited(_releaseGatt(deviceId));
     }
+  }
+
+  /// Finish a pending reconnect-settle window immediately: cancel the timer
+  /// and return the link to [BtLinkState.idle] now, rather than when
+  /// [reconnectSettleDelay] elapses. Called on a scan kick-off ([_startScan])
+  /// and on a web auto-connect ([_connectPickedWebDevice]).
+  ///
+  /// Tested on Chrome: a device mid-GATT-teardown does not appear in the
+  /// requestDevice() picker at all (it resurfaces only once it resumes
+  /// advertising, i.e. after teardown settles), so the picker round-trip IS
+  /// the teardown-settle signal Web Bluetooth otherwise lacks — the early
+  /// finish cannot fire inside a live accept-then-drop window, and a connect
+  /// issued right after the pick succeeds.
+  ///
+  /// KNOWN UNGUARDED EDGE: disconnect → Scan → cancel → Connect on the
+  /// restored device issues a manual connect that bypasses both the picker
+  /// signal and the remaining window. Tested: connects cleanly at human
+  /// pace. Deliberately left unguarded — the manual-path cooldown stays as
+  /// the guard against machine-speed reconnects, which testing did not
+  /// stress.
+  ///
+  /// Does NOT call [notifyListeners] — callers do.
+  void _finishCooldown() {
+    _cooldownTimer?.cancel();
+    _cooldownTimer = null;
+    _link._reset();
   }
 
   /// Best-effort release of a platform-level GATT link that has no app-side
@@ -514,11 +740,7 @@ class BleLinkManager extends ChangeNotifier {
     }
   }
 
-  void _onConnectionChange(
-    String deviceId,
-    bool isConnected,
-    String? err,
-  ) async {
+  void _onConnectionChange(String deviceId, bool isConnected, String? err) {
     debugPrint(
       'isConnected $deviceId, $isConnected ${(err == null) ? '' : err}',
     );
@@ -546,103 +768,138 @@ class BleLinkManager extends ChangeNotifier {
     }
 
     if (isConnected) {
-      // Capture a cancellation token for this setup pass. Every connect/
-      // disconnect/teardown supersedes outstanding tokens (see
-      // [_supersedeSetupPasses]); after every await below we re-check it and
-      // abandon the pass silently — no state writes, no failure toast — when
-      // a newer attempt (or a teardown) moved on.
-      final token = _setupTokenFor(deviceId);
+      // A duplicate/spurious connect event for a link that is already up
+      // (setting up or streaming): the first event owns the setup pass —
+      // ignore this one rather than regressing the state and re-running
+      // discovery / re-subscribing the ADC feed.
+      if (_link.isLinkUp) return;
+      unawaited(_runPostConnectSetup(_setupTokenFor(deviceId), deviceId));
+      return;
+    }
 
-      _link.deviceId = deviceId;
-      _link.state = BtLinkState.connected; // "Setting up…" until streaming.
-
-      // Store the device name
-      final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
-      _link.name = device?.name ?? deviceId;
-
-      // Reflect "Setting up…" in the UI immediately, BEFORE the awaited setup
-      // work below. Otherwise the label stays on "Connecting…" until discovery
-      // finishes (and never updates at all if discovery throws).
+    // A disconnect event while a connect attempt is in flight is how NATIVE
+    // stacks report a REFUSED connect: universal_ble delivers the refusal to
+    // this handler synchronously, THEN completes the connect() future with an
+    // error from that same event (see _connectionEventCompleter in
+    // universal_ble — its only error source besides the timeout is this event
+    // stream). Record the per-row failure marker here and tear down WITHOUT
+    // cooldown (no live link ever came up); the future's error then lands in
+    // connectToDevice's catch, which finds the link already idle and returns
+    // silently — exactly one marker for either failure flavor. A
+    // user-requested cancel transitions through `disconnecting` first, so it
+    // never records a marker here.
+    if (_link.isConnecting) {
+      _connectFailures[deviceId] = ConnectFailureKind.failed;
+      _teardownLink(deviceId, cooldown: false);
       notifyListeners();
+      return;
+    }
 
-      // Post-connect setup. If the device drops mid-setup (common when Chrome
-      // accepts a too-soon reconnect then tears it down), these calls throw
-      // ("Cannot discover services…") or time out via the command queue.
-      try {
-        if (!kIsWeb) {
-          debugPrint('Requested MTU change');
-          final int mtu = await UniversalBle.requestMtu(deviceId, 247);
-          debugPrint('MTU set to: $mtu');
-          if (!token.isCurrent) return;
-          // TODO(perf): investigate requesting high-performance connection
-          // priority here for the 1 kHz ADC stream:
-          //   await UniversalBle.requestConnectionPriority(
-          //     deviceId, BleConnectionPriority.highPerformance);
-          // Android-only (BleCapabilities.supportsConnectionPriorityApi); throws
-          // notSupported elsewhere. Should run after MTU negotiation. Measure
-          // whether the tighter connection interval actually reduces dropped
-          // samples before enabling.
-        }
-        final discovered = await UniversalBle.discoverServices(deviceId);
+    // Disconnect resolved (whether user-requested or unexpected): run the
+    // common teardown (the platform side is already down, so no GATT
+    // release), which (on web) parks the link in cooldown for the
+    // reconnect settle window before returning it to the idle sentinel.
+    final String name = _link.name.isEmpty ? deviceId : _link.name;
+    // An unexpected drop while the link was up (setting up or streaming)
+    // gets a user notice. User-requested disconnects arrive here in
+    // `disconnecting`, and post-connect setup failures already emitted
+    // BleConnectionFailed before tearing down — so neither double-reports.
+    final bool wasActive =
+        _link.state == BtLinkState.connected ||
+        _link.state == BtLinkState.streaming;
+    // Proof of life ends at teardown: stamp it so the row's "last
+    // seen/connected" age starts counting from now, not from the (possibly
+    // much older) connect time. Only the UNEXPECTED drop is stamped here —
+    // a user-requested disconnect arrives in `disconnecting` (wasActive
+    // false) and was already stamped in [disconnectSelectedDevice].
+    if (wasActive) {
+      _stampAlive(deviceId);
+    }
+    _teardownLink(deviceId);
+    if (wasActive) {
+      _events.emit(BleConnectionLost(name));
+    }
+    notifyListeners();
+  }
+
+  /// Post-connect setup for a freshly-up GATT link: reflect "Setting up…",
+  /// then MTU (native), service discovery, and the ADC feed subscription that
+  /// advances the link to the usable [BtLinkState.streaming] state.
+  ///
+  /// Runs as a cancellable pass over [token]. Every connect/disconnect/
+  /// teardown supersedes outstanding tokens (see [_supersedeSetupPasses]);
+  /// after every await the pass re-checks it and abandons silently — no state
+  /// writes, no failure notice — when a newer attempt (or a teardown) moved
+  /// on. If the device drops mid-setup (common when Chrome accepts a too-soon
+  /// reconnect then tears it down), the platform calls throw ("Cannot
+  /// discover services…") or time out via the command queue.
+  Future<void> _runPostConnectSetup(_SetupToken token, String deviceId) async {
+    _link.deviceId = deviceId;
+    _link.state = BtLinkState.connected; // "Setting up…" until streaming.
+
+    // Store the device name
+    final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
+    _link.name = device?.name ?? deviceId;
+
+    // Reflect "Setting up…" in the UI immediately, BEFORE the awaited setup
+    // work below. Otherwise the label stays on "Connecting…" until discovery
+    // finishes (and never updates at all if discovery throws).
+    notifyListeners();
+
+    try {
+      if (!kIsWeb) {
+        debugPrint('Requested MTU change');
+        final int mtu = await UniversalBle.requestMtu(deviceId, 247);
+        debugPrint('MTU set to: $mtu');
         if (!token.isCurrent) return;
-        bool subscribed = false;
-        for (final srv in discovered) {
-          if (srv.uuid == btServiceId) {
-            subscribed = await subscribeToAdcFeed(srv);
-            if (!token.isCurrent) return;
-            break;
-          }
-        }
-        // A link without the ADC feed is unusable: fail the connection here
-        // (the catch below tears down and toasts) rather than advancing to
-        // "streaming" with no data flowing.
-        if (!subscribed) {
-          throw StateError('ADC feed characteristic not found on $deviceId');
-        }
-        // Setup complete: advance to the usable "streaming" state and begin live
-        // RSSI polling for the signal display.
-        _link.state = BtLinkState.streaming;
-        notifyListeners();
-        _startRssiPolling(deviceId);
-      } catch (e) {
-        // A superseded pass failing is expected (the device was torn down or a
-        // queued command was cancelled/timed out) — swallow it silently. Only a
-        // genuine failure of the *current* attempt resets the link and toasts.
-        if (!token.isCurrent) {
-          debugPrint('Ignoring stale post-connect failure for $deviceId: $e');
-          return;
-        }
-        debugPrint('Post-connect setup failed for $deviceId: $e');
-        final String name = _link.name.isEmpty ? deviceId : _link.name;
-        // The GATT link came up (connect succeeded) — release it so the
-        // platform can't hold a connection the app considers failed.
-        _teardownLink(deviceId, name, releaseGatt: true);
-        _events.emit(BleConnectionFailed(name));
-        notifyListeners();
+        // TODO(perf): investigate requesting high-performance connection
+        // priority here for the 1 kHz ADC stream:
+        //   await UniversalBle.requestConnectionPriority(
+        //     deviceId, BleConnectionPriority.highPerformance);
+        // Android-only (BleCapabilities.supportsConnectionPriorityApi); throws
+        // notSupported elsewhere. Should run after MTU negotiation. Measure
+        // whether the tighter connection interval actually reduces dropped
+        // samples before enabling.
       }
-    } else {
-      // A disconnect callback for an already-idle link (e.g. a late event
-      // from a previously torn-down connection): nothing to tear down, and
-      // running teardown would park a phantom cooldown for a device nobody
-      // is connected to.
-      if (_link.deviceId.isEmpty) return;
-
-      // Disconnect resolved (whether user-requested or unexpected): run the
-      // common teardown (the platform side is already down, so no GATT
-      // release), which (on web) parks the link in cooldown for the
-      // reconnect settle window before returning it to the idle sentinel.
+      final discovered = await UniversalBle.discoverServices(deviceId);
+      if (!token.isCurrent) return;
+      bool subscribed = false;
+      for (final srv in discovered) {
+        if (srv.uuid == btServiceId) {
+          subscribed = await _subscribeToAdcFeed(srv);
+          if (!token.isCurrent) return;
+          break;
+        }
+      }
+      // A link without the ADC feed is unusable: fail the connection here
+      // (the catch below tears down and toasts) rather than advancing to
+      // "streaming" with no data flowing.
+      if (!subscribed) {
+        throw StateError('ADC feed characteristic not found on $deviceId');
+      }
+      // Setup complete: advance to the usable "streaming" state and begin live
+      // RSSI polling for the signal display.
+      _link.state = BtLinkState.streaming;
+      _stampAlive(deviceId);
+      notifyListeners();
+      _startRssiPolling(deviceId);
+    } catch (e) {
+      // A superseded pass failing is expected (the device was torn down or a
+      // queued command was cancelled/timed out) — swallow it silently. Only a
+      // genuine failure of the *current* attempt resets the link and toasts.
+      if (!token.isCurrent) {
+        debugPrint('Ignoring stale post-connect failure for $deviceId: $e');
+        return;
+      }
+      debugPrint('Post-connect setup failed for $deviceId: $e');
       final String name = _link.name.isEmpty ? deviceId : _link.name;
-      // An unexpected drop while the link was up (setting up or streaming)
-      // gets a user notice. User-requested disconnects arrive here in
-      // `disconnecting`, and post-connect setup failures already emitted
-      // BleConnectionFailed before tearing down — so neither double-reports.
-      final bool wasActive =
-          _link.state == BtLinkState.connected ||
-          _link.state == BtLinkState.streaming;
-      _teardownLink(deviceId, name);
-      if (wasActive) {
-        _events.emit(BleConnectionLost(name));
-      }
+      // The GATT link came up (connect succeeded) before setup failed —
+      // that is a proof of life; stamp it before tearing down.
+      _stampAlive(deviceId);
+      // The GATT link came up (connect succeeded) — release it so the
+      // platform can't hold a connection the app considers failed.
+      _teardownLink(deviceId, releaseGatt: true);
+      _events.emit(BleConnectionFailed(name));
       notifyListeners();
     }
   }
@@ -673,13 +930,15 @@ class BleLinkManager extends ChangeNotifier {
     // can't fire against this new attempt.
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
+    // A new attempt supersedes every recorded failure marker.
+    _connectFailures.clear();
     _supersedeSetupPasses();
     return true;
   }
 
   Future<void> connectToDemoDevice() async {
     if (!_beginConnect()) return;
-    _link.deviceId = 'demo_device';
+    _link.deviceId = DeviceLink.demoDeviceId;
     _link.name = 'Demo Device';
     _link.state = BtLinkState.streaming;
 
@@ -698,27 +957,31 @@ class BleLinkManager extends ChangeNotifier {
     _link.state = BtLinkState.connecting;
     notifyListeners();
 
-    // Stop scanning before connecting (the package advises it). The busy
-    // state is already written above, so this await can't reopen the
-    // Scan-tap race.
-    if (_isScanning) {
-      await _stopScan();
-    }
-
     // The post-disconnect settle window is enforced as the visible
     // [BtLinkState.cooldown] state (see [_teardownLink]) BEFORE Connect is
     // re-enabled, so by the time we get here the stack has already had time
     // to finish GATT teardown. No inline sleep is needed.
 
     try {
+      // Stop scanning before connecting (the package advises it). The busy
+      // state is already written above, so this await can't reopen the
+      // Scan-tap race. Inside the try: a stopScan failure must not wedge the
+      // link in `connecting` — it fails the attempt like any other connect
+      // failure (teardown + per-row marker via the catch below).
+      if (_isScanning) {
+        await _stopScan();
+      }
       // connect() bypasses the package command queue and defaults to a 60 s
       // timeout — pass ours explicitly (see [connectTimeout]).
       await UniversalBle.connect(deviceId, timeout: connectTimeout);
     } catch (e) {
       // This attempt was abandoned while its future was outstanding (user
-      // cancel, or superseded by a newer one): the teardown already ran, so
-      // fail quietly instead of running a second teardown (which would park
-      // a phantom cooldown on web) or toasting an error the user asked for.
+      // cancel, superseded by a newer one, or a refusal that already arrived
+      // via the connection-change callback — see the `connecting` case in
+      // [_onConnectionChange], which recorded the marker and tore down):
+      // the teardown already ran, so fail quietly instead of running a second
+      // teardown, recording a duplicate marker, or surfacing an error the
+      // user asked for.
       if (_link.deviceId != deviceId || !_link.isConnecting) {
         return;
       }
@@ -726,14 +989,46 @@ class BleLinkManager extends ChangeNotifier {
       // failed connect attempt that callback may never fire, so tear the link
       // down here and let the caller surface the error. Go through the common
       // [_teardownLink] (not a bare reset): it supersedes any lingering
-      // setup pass, releases the platform GATT link (a timed-out connect can
-      // still complete later — the guard in [_onConnectionChange] handles
-      // that callback), and, on web, parks the link in cooldown so an
-      // immediate retry doesn't hit the too-soon-reconnect race.
-      final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
-      _teardownLink(deviceId, device?.name ?? deviceId, releaseGatt: true);
+      // setup pass and releases the platform GATT link (a timed-out connect
+      // can still complete later — the guard in [_onConnectionChange] handles
+      // that callback). NO cooldown: the attempt never had a live link, so
+      // there is no teardown to settle — parking in cooldown would flash a
+      // fake "waiting after disconnect" state (a lie for e.g. Chrome's
+      // overnight-stale device handle, which rejects gatt.connect() outright).
+      //
+      // Record the failure kind for the Devices tab's per-row marker — the
+      // user-facing channel for this failure (no toast).
+      _connectFailures[deviceId] = e is TimeoutException
+          ? ConnectFailureKind.timeout
+          : ConnectFailureKind.failed;
+      _teardownLink(deviceId, releaseGatt: true, cooldown: false);
       notifyListeners();
       rethrow;
+    }
+  }
+
+  /// Web only: connect to a device the user just picked in Chrome's
+  /// requestDevice() chooser (see [_onScanResult]). [connectToDevice] stops
+  /// the scan itself before connecting.
+  Future<void> _connectPickedWebDevice(BleDevice device) async {
+    // If the scan just tore a link down (it was streaming when Scan was
+    // pressed), the link is parked in the reconnect-settle window. Finish it
+    // immediately: the picker round-trip already gave Chrome human-scale
+    // time, and we're testing whether its own teardown serialization covers
+    // the rest (see [_finishCooldown]).
+    if (_link.isCoolingDown) {
+      _finishCooldown();
+    }
+    try {
+      // Refuses silently if the link has meanwhile become busy (e.g. the user
+      // tapped Connect on another row or started the demo device) — the
+      // user's later action wins.
+      await connectToDevice(device.deviceId);
+    } catch (e) {
+      // connectToDevice already tore the failed attempt down and recorded
+      // the per-row failure marker — the single user-facing channel for
+      // connect failures (deliberately NO toast here; see connectToDevice).
+      debugPrint('Auto-connect to ${device.deviceId} failed: $e');
     }
   }
 
@@ -754,11 +1049,23 @@ class BleLinkManager extends ChangeNotifier {
 
     if (_link.isDemoDevice) {
       _demoSource?.stop();
-      _teardownLink(_link.deviceId, _link.name);
+      _teardownLink(_link.deviceId);
       notifyListeners();
       return;
     }
 
+    // A live link being torn down on request is proof of life up to this
+    // moment — stamp it so the row's "last seen/connected" age counts from
+    // the disconnect, not from the last advertisement (native: minutes old
+    // if the scan stopped at connect) or the connect time (web: no adverts
+    // exist, so the stamp is all there is). The connection-change callback
+    // can't do this: by the time it runs, the state is already
+    // `disconnecting`, so its `wasActive` check is false. A cancelled
+    // connect attempt (connecting, never up) stamps nothing: a refused
+    // attempt proves nothing about the device being alive.
+    if (_link.isLinkUp) {
+      _stampAlive(deviceId);
+    }
     _link.state = BtLinkState.disconnecting;
     notifyListeners();
 
@@ -783,7 +1090,7 @@ class BleLinkManager extends ChangeNotifier {
       debugPrint('Disconnect did not settle for $deviceId; forcing idle');
       // No GATT release here: the disconnect above already went out to the
       // platform; a late callback is handled by the unwanted-link guard.
-      _teardownLink(deviceId, deviceName);
+      _teardownLink(deviceId);
       _events.emit(BleDisconnectTimeout(deviceName));
       notifyListeners();
     }
@@ -794,7 +1101,7 @@ class BleLinkManager extends ChangeNotifier {
   /// was made; false when no usable ADC feed characteristic exists — the
   /// caller fails the connection in that case, since a link without the
   /// feed is unusable.
-  Future<bool> subscribeToAdcFeed(BleService service) async {
+  Future<bool> _subscribeToAdcFeed(BleService service) async {
     final String deviceId = _link.deviceId;
     if (deviceId.isEmpty) {
       return false;
@@ -873,6 +1180,8 @@ class BleLinkManager extends ChangeNotifier {
     onCalibrationData = null;
     _demoSource?.stop();
     _stopRssiPolling();
+    _freshnessPoke?.cancel();
+    _freshnessPoke = null;
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
     // Supersede any in-flight post-connect setup pass so it bails out.

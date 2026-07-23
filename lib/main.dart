@@ -90,6 +90,54 @@ class DynoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // NOTE on color roles: these schemes use the M2-era ColorScheme.light() /
+    // .dark() constructors, whose M3 roles silently fall back to the base
+    // roles when unspecified (e.g. primaryContainer -> primary; see the SDK
+    // getters in color_scheme.dart). The container pairs below are declared
+    // explicitly so the surface/content contract the app already relies on —
+    // dark-blue "connected" surfaces with white content — lives here instead
+    // of hiding in fallback behavior.
+    const lightScheme = ColorScheme.light(
+      // top "connected" bar, rec, tare buttons, button fonts
+      primary: Color(0xFF455A64),
+      onPrimary: Colors.white,
+      // Connected/highlighted surfaces (Live banner, active device row).
+      primaryContainer: Color(0xFF455A64),
+      onPrimaryContainer: Colors.white,
+      // active tab on the bottom
+      secondary: Color(0xFF455A64),
+      // icon color of selected tab
+      onSecondary: Colors.white,
+      tertiary: Color.fromARGB(255, 211, 47, 47),
+      onTertiary: Colors.white,
+      surface: Colors.white,
+      // text
+      onSurface: Color.fromARGB(255, 58, 34, 34),
+    );
+    const darkScheme = ColorScheme.dark(
+      primary: Color.fromARGB(255, 103, 155, 179),
+      onPrimary: Colors.white,
+      // Same explicit pair as light. Note: white on this light-blue container
+      // is mediocre contrast — kept to preserve the existing dark look.
+      primaryContainer: Color.fromARGB(255, 103, 155, 179),
+      onPrimaryContainer: Colors.white,
+      secondary: Color.fromARGB(255, 137, 178, 197),
+      onSecondary: Colors.black,
+      tertiary: Color(0xFFEF5350),
+      onTertiary: Color.fromARGB(255, 255, 55, 55),
+      surface: Color(0xFF1E1E1E),
+      onSurface: Colors.white,
+    );
+
+    // A selected ListTile is the app's highlighted/active row (the connected
+    // device on the Devices tab), sitting on a primaryContainer surface. The
+    // theme supplies the matching content color — title, subtitle, icons, and
+    // IconButtons are all themed by the selected tile — while the surface
+    // owner (the Card) supplies the background. selectedTileColor is
+    // deliberately NOT set here: painting surfaces is the Card's job.
+    ListTileThemeData selectedTileTheme(ColorScheme scheme) =>
+        ListTileThemeData(selectedColor: scheme.onPrimaryContainer);
+
     return MaterialApp(
       title: 'Dynamite',
       themeMode: ThemeMode.system,
@@ -97,35 +145,15 @@ class DynoApp extends StatelessWidget {
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF8F9FA),
         extensions: const [StatusColors.light],
-        colorScheme: const ColorScheme.light(
-          // top "connected" bar, rec, tare buttons, button fonts
-          primary: Color(0xFF455A64),
-          onPrimary: Colors.white,
-          // active tab on the bottom
-          secondary: Color(0xFF455A64),
-          // icon color of selected tab
-          onSecondary: Colors.white,
-          tertiary: Color.fromARGB(255, 211, 47, 47),
-          onTertiary: Colors.white,
-          surface: Colors.white,
-          // text
-          onSurface: Color.fromARGB(255, 58, 34, 34),
-        ),
+        colorScheme: lightScheme,
+        listTileTheme: selectedTileTheme(lightScheme),
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFF121212),
         extensions: const [StatusColors.dark],
-        colorScheme: const ColorScheme.dark(
-          primary: Color.fromARGB(255, 103, 155, 179),
-          onPrimary: Colors.white,
-          secondary: Color.fromARGB(255, 137, 178, 197),
-          onSecondary: Colors.black,
-          tertiary: Color(0xFFEF5350),
-          onTertiary: Color.fromARGB(255, 255, 55, 55),
-          surface: Color(0xFF1E1E1E),
-          onSurface: Colors.white,
-        ),
+        colorScheme: darkScheme,
+        listTileTheme: selectedTileTheme(darkScheme),
       ),
       home: const AppShell(),
     );

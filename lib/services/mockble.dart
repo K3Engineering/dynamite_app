@@ -50,8 +50,21 @@ class MockBlePlatform extends UniversalBlePlatform {
   bool failCalibrationRead = false;
 
   /// When true, [connect] throws (a refused/failed attempt: no link is
-  /// established and no connection-change callback fires).
+  /// established and no connection-change callback fires — the WEB flavor,
+  /// where gatt.connect() itself rejects).
   bool failConnect = false;
+
+  /// When true, [connect] fails the way NATIVE stacks report a refused GATT
+  /// connect: the platform call itself succeeds, then the refusal arrives via
+  /// the connection-change callback (deviceId, false, error) — which is also
+  /// what errors the client's connect() future (universal_ble completes its
+  /// completer from that same event stream, AFTER the client's
+  /// onConnectionChange handler has run).
+  bool failConnectViaCallback = false;
+
+  /// When true, [startScan] throws instead of starting the result feed (a
+  /// refused scan start, e.g. a radio error).
+  bool failScan = false;
 
   /// When true, [disconnect] never fires the connection-change callback, so
   /// the client's disconnect-timeout reconciliation path is what tears the
@@ -70,6 +83,10 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// assert that leaked/unwanted GATT links were released.
   final List<String> disconnectCalls = [];
 
+  /// Test spy: how many [readRssi] calls arrived (e.g. to assert no RSSI
+  /// polling runs against the demo device).
+  int readRssiCalls = 0;
+
   /// The device the mock currently considers linked (test assertions only).
   String? get connectedDeviceId => _connectedDeviceId;
 
@@ -80,9 +97,12 @@ class MockBlePlatform extends UniversalBlePlatform {
     includeAdcService = true;
     failCalibrationRead = false;
     failConnect = false;
+    failConnectViaCallback = false;
+    failScan = false;
     hangDisconnect = false;
     slowConnect = false;
     disconnectCalls.clear();
+    readRssiCalls = 0;
     _connectedDeviceId = null;
     _connectionState = BleConnectionState.disconnected;
     _scanTimer?.cancel();
@@ -117,6 +137,9 @@ class MockBlePlatform extends UniversalBlePlatform {
     ScanFilter? scanFilter,
     PlatformConfig? platformConfig,
   }) async {
+    if (failScan) {
+      throw StateError('Mock scan failure');
+    }
     if (_scanTimer != null) return;
 
     final rng = Random(555);
@@ -133,15 +156,24 @@ class MockBlePlatform extends UniversalBlePlatform {
         }
       }
     }
+    // Real platforms stamp every scan result with its receipt time, and the
+    // manager's "last seen" freshness (BleLinkManager.lastAliveMs) relies on
+    // it — re-stamp on each emission so mock devices age/refresh like real
+    // advertisements instead of carrying a stale (or null) timestamp.
+    void emit(BleDevice d) {
+      d.timestamp = DateTime.now().millisecondsSinceEpoch;
+      updateScanResult(d);
+    }
+
     _scanTimer = Timer.periodic(netDelay, (Timer t) {
       if (0 == rng.nextInt(2)) {
-        updateScanResult(filtered[rng.nextInt(filtered.length)]);
+        emit(filtered[rng.nextInt(filtered.length)]);
       }
       if (0 == rng.nextInt(3)) {
-        updateScanResult(filtered[rng.nextInt(filtered.length)]);
+        emit(filtered[rng.nextInt(filtered.length)]);
       }
       if (0 == rng.nextInt(4)) {
-        updateScanResult(filtered[rng.nextInt(filtered.length)]);
+        emit(filtered[rng.nextInt(filtered.length)]);
       }
     });
   }
@@ -181,6 +213,17 @@ class MockBlePlatform extends UniversalBlePlatform {
       _connectedDeviceId = null;
       _connectionState = BleConnectionState.disconnected;
       throw StateError('Mock connect failure');
+    }
+    if (failConnectViaCallback) {
+      // The native refusal flavor: the platform call itself succeeds; the
+      // refusal arrives via the connection-change callback — which is ALSO
+      // what errors the client's connect() future (universal_ble completes
+      // its completer from this same event stream, after the client's
+      // onConnectionChange handler has run synchronously).
+      _connectedDeviceId = null;
+      _connectionState = BleConnectionState.disconnected;
+      updateConnection(deviceId, false, 'Mock connect refusal');
+      return;
     }
     _connectionState = BleConnectionState.connected;
     updateConnection(deviceId, true);
@@ -290,6 +333,7 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<int> readRssi(String deviceId) async {
+    readRssiCalls++;
     return 1;
   }
 
