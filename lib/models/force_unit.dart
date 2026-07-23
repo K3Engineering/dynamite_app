@@ -1,14 +1,10 @@
-/// Analog front-end constants (fixed by hardware): the load cell signal
-/// passes a 101x gain stage into a 24-bit bipolar ADC with a 1.2V full-scale
-/// reference. The load-cell side of the chain (excitation, sensitivity,
-/// capacity) lives in DeviceCalibration (services/data_hub.dart).
-const double adcFullScaleV = 1.2;
-const double frontEndGain = 101.0;
-const int adcCountsPerPolarity = 1 << 23; // 24-bit bipolar: 2^23 per side
+import 'calibration.dart';
 
-/// mV at the load cell output per ADC count.
-const double rawToMvMultiplier =
-    adcFullScaleV / adcCountsPerPolarity / frontEndGain * 1000.0;
+/// Hardware AFE constants ([adcFullScaleV], [frontEndGain],
+/// [adcCountsPerPolarity], [rawToMvMultiplier]) live in
+/// models/calibration.dart — re-exported so existing importers keep working.
+export 'calibration.dart'
+    show adcFullScaleV, frontEndGain, adcCountsPerPolarity, rawToMvMultiplier;
 
 /// Supported force and electrical display units.
 ///
