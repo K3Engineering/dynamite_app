@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -5,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/data_hub.dart';
+import 'package:dynamite_app/services/demo_calibration.dart';
 
 /// Builds a 242-byte ADC-feed notification packet (the exact wire format the
 /// device emits and [AdcPacketDecoder] consumes):
@@ -157,6 +159,31 @@ void main() {
       expect(notifyCount, 1);
       decoder.onDataPacket(Uint8List(1));
       expect(notifyCount, 1);
+    });
+  });
+
+  group('AdcPacketDecoder calibration', () {
+    test('a calibration document populates the hub board calibration', () {
+      decoder.onCalibrationPacket(
+        Uint8List.fromList(utf8.encode(demoBoardCalibrationDoc)),
+      );
+      final board = hub.boardCalibration;
+      expect(board.channels.every((c) => c.isFactoryCalibrated), isTrue);
+      expect(board.channels[0].offsetCounts, closeTo(845.2, 1e-9));
+      expect(board.channels[2].offsetCounts, closeTo(1502.8, 1e-9));
+      expect(board.factoryDate, '2026-07-20');
+      expect(board.excitationMv, closeTo(4530.24, 1e-9));
+    });
+
+    test('a garbage read degrades to nominal without throwing', () {
+      // Not valid UTF-8, let alone a calibration document.
+      decoder.onCalibrationPacket(
+        Uint8List.fromList(const [0x00, 0x9F, 0x92, 0x96, 0xFF]),
+      );
+      expect(
+        hub.boardCalibration.channels.every((c) => !c.isFactoryCalibrated),
+        isTrue,
+      );
     });
   });
 }

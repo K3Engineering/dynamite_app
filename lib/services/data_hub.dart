@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'adc_protocol.dart';
 import '../models/bucket_series.dart';
+import '../models/calibration.dart';
 import '../models/force_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
@@ -96,6 +97,11 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   @override
   int totalSamples = 0;
   DeviceCalibration deviceCalibration = DeviceCalibration();
+
+  /// Factory board calibration read from the device at connect time (parsed
+  /// by [AdcPacketDecoder.onCalibrationPacket]). Nominal per-channel fallback
+  /// until/unless a calibrated device supplies real data.
+  BoardCalibration boardCalibration = BoardCalibration.nominal();
 
   /// Whether a malformed/undecodable ADC packet (e.g. a truncated
   /// notification) was seen on this stream. Latched by [reportProtocolError]
@@ -274,6 +280,10 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
 
   void updateCalibration(DeviceCalibration calibration) {
     deviceCalibration = calibration;
+  }
+
+  void updateBoardCalibration(BoardCalibration calibration) {
+    boardCalibration = calibration;
   }
 
   // -- GraphDataSource --------------------------------------------------------
