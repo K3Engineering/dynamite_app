@@ -48,6 +48,14 @@ void main() async {
     decoder: decoder,
     events: appEvents,
   );
+  final appSettings = AppSettings();
+  // Push per-channel load-cell assignments into the data layer now and on
+  // every settings change (the async prefs load notifies when it resolves).
+  // Content-equal pushes are a no-op inside the hub.
+  dataHub.updateLoadCells(appSettings.channelLoadCells);
+  appSettings.addListener(
+    () => dataHub.updateLoadCells(appSettings.channelLoadCells),
+  );
 
   // Hand the NEXT hot-restart generation a way to tear this one down (web
   // debug only). Fire-and-forget: the callbacks are silenced synchronously
@@ -71,7 +79,7 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AppSettings()),
+        ChangeNotifierProvider.value(value: appSettings),
         // App-lifetime singletons created above (never disposed — the app
         // root never unmounts), provided individually so each screen depends
         // only on the layer it actually uses.

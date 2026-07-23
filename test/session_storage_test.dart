@@ -324,8 +324,8 @@ void main() {
 
         final frame = Int32List(channels)..fillRange(0, channels, 1000);
         for (int i = 0; i < 10; i++) {
-        hub.addSampleFrame(frame);
-      }
+          hub.addSampleFrame(frame);
+        }
 
         final writer = await SessionStorage.startSession(
           dataHub: hub,

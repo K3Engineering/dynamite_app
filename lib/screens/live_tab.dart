@@ -402,6 +402,17 @@ class LiveStats extends StatelessWidget {
   Widget build(BuildContext context) {
     final unit = settings.displayUnit;
 
+    // Force units need a load cell per channel; when any visible channel is
+    // unassigned its cells show '—'. Point at the fix once, under the table.
+    final anyUnassigned =
+        unit.isForce &&
+        [
+          for (int i = 0; i < settings.activeChannels.length; i++)
+            if (settings.activeChannels[i] &&
+                settings.loadCellForChannel(i) == null)
+              i,
+        ].isNotEmpty;
+
     return ValueListenableBuilder<bool>(
       valueListenable: stalledListenable,
       builder: (context, stalled, _) => ListenableBuilder(
@@ -412,37 +423,51 @@ class LiveStats extends StatelessWidget {
           // Same for a stall: the newest "reading" is just the last one.
           final stale = hub.liveEdgeIsGap || stalled;
 
-          return ChannelStatsTable(
-            labels: settings.channelLabels,
-            activeChannels: settings.activeChannels,
-            onToggleChannel: (i) =>
-                settings.setChannelActive(i, !settings.activeChannels[i]),
-            unit: unit,
-            rows: [
-              ChannelStatsRow(
-                label: 'Live',
-                values: [
-                  for (int i = 0; i < DataHub.numAdcChannels; i++)
-                    hub.currentValue(i, unit),
+          return Column(
+            children: [
+              ChannelStatsTable(
+                labels: settings.channelLabels,
+                activeChannels: settings.activeChannels,
+                onToggleChannel: (i) =>
+                    settings.setChannelActive(i, !settings.activeChannels[i]),
+                unit: unit,
+                rows: [
+                  ChannelStatsRow(
+                    label: 'Live',
+                    values: [
+                      for (int i = 0; i < DataHub.numAdcChannels; i++)
+                        hub.currentValue(i, unit),
+                    ],
+                    emphasized: true,
+                    stale: stale,
+                  ),
+                  ChannelStatsRow(
+                    label: 'Peak',
+                    values: [
+                      for (int i = 0; i < DataHub.numAdcChannels; i++)
+                        hub.peakValue(i, unit),
+                    ],
+                  ),
+                  if (showDerivative)
+                    ChannelStatsRow(
+                      label: 'dF/dt',
+                      values: [
+                        for (int i = 0; i < DataHub.numAdcChannels; i++)
+                          hub.currentDerivative(i, unit),
+                      ],
+                      stale: stale,
+                    ),
                 ],
-                emphasized: true,
-                stale: stale,
               ),
-              ChannelStatsRow(
-                label: 'Peak',
-                values: [
-                  for (int i = 0; i < DataHub.numAdcChannels; i++)
-                    hub.peakValue(i, unit),
-                ],
-              ),
-              if (showDerivative)
-                ChannelStatsRow(
-                  label: 'dF/dt',
-                  values: [
-                    for (int i = 0; i < DataHub.numAdcChannels; i++)
-                      hub.currentDerivative(i, unit),
-                  ],
-                  stale: stale,
+              if (anyUnassigned)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '— no load cell assigned (Settings → Load cells)',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                  ),
                 ),
             ],
           );

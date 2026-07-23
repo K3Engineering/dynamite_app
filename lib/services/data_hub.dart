@@ -293,12 +293,28 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   }
 
   /// Replace the per-channel load-cell assignments (the user assigned or
-  /// edited a profile in settings).
+  /// edited a profile in settings). Content-equal updates are a no-op so an
+  /// unrelated settings change can't invalidate the graph caches.
   void updateLoadCells(List<LoadCellProfile?> cells) {
     assert(cells.length == numAdcChannels);
+    var same = _loadCells.length == cells.length;
+    for (int i = 0; same && i < cells.length; i++) {
+      same = _sameCell(_loadCells[i], cells[i]);
+    }
+    if (same) return;
     _loadCells = List.of(cells);
     _calibrationVersion++;
     notifyListeners();
+  }
+
+  static bool _sameCell(LoadCellProfile? a, LoadCellProfile? b) {
+    if (a == null || b == null) return a == b;
+    return a.id == b.id &&
+        a.name == b.name &&
+        a.capacityKg == b.capacityKg &&
+        a.sensitivityMvV == b.sensitivityMvV &&
+        a.serial == b.serial &&
+        a.span == b.span;
   }
 
   // -- GraphDataSource --------------------------------------------------------

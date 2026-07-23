@@ -274,5 +274,31 @@ void main() {
         1000.0 * DataHub.samplesPerSec,
       );
     });
+
+    test('content-equal load cell updates do not bump the version', () {
+      final hub = DataHub();
+      final cell = LoadCellProfile(id: 'x', capacityKg: 200, sensitivityMvV: 2);
+      hub.updateLoadCells([cell, null, null, null]);
+      final v1 = hub.calibrationVersion;
+
+      // Same content, new identities: an unrelated settings notify must not
+      // invalidate the graph caches.
+      hub.updateLoadCells([
+        LoadCellProfile(id: 'x', capacityKg: 200, sensitivityMvV: 2),
+        null,
+        null,
+        null,
+      ]);
+      expect(hub.calibrationVersion, v1);
+
+      // A changed profile (new instance) bumps the version.
+      hub.updateLoadCells([
+        LoadCellProfile(id: 'x', capacityKg: 200, sensitivityMvV: 2, span: 1.01),
+        null,
+        null,
+        null,
+      ]);
+      expect(hub.calibrationVersion, greaterThan(v1));
+    });
   });
 }

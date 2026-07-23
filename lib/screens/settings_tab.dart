@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +8,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../models/app_settings.dart';
 import '../models/force_unit.dart';
 import '../services/ble_link_manager.dart';
+import '../widgets/load_cell_picker.dart';
 import '../widgets/section_header.dart';
 import 'app_shell.dart';
 
@@ -39,18 +42,31 @@ class SettingsTab extends StatelessWidget {
           // Display units
           Text('Display Units', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
-          SegmentedButton<ForceUnit>(
-            segments: [
-              for (final u in ForceUnit.values)
-                ButtonSegment(value: u, label: Text(u.symbol)),
-            ],
-            selected: {settings.displayUnit},
-            // The default selected checkmark steals width from the labels and
-            // makes the segments wrap on narrow (mobile) screens.
-            showSelectedIcon: false,
-            onSelectionChanged: (set) => settings.setDisplayUnit(set.first),
-          ),
-          const SizedBox(height: 24),
+          for (final (label, units) in [
+            ('Force', ForceUnit.values.where((u) => u.isForce)),
+            ('Electrical', ForceUnit.values.where((u) => !u.isForce)),
+          ]) ...[
+            Text(label, style: Theme.of(context).textTheme.labelMedium),
+            const SizedBox(height: 4),
+            SegmentedButton<ForceUnit>(
+              segments: [
+                for (final u in units)
+                  ButtonSegment(value: u, label: Text(u.symbol)),
+              ],
+              selected: {settings.displayUnit},
+              // The default selected checkmark steals width from the labels
+              // and makes the segments wrap on narrow (mobile) screens.
+              showSelectedIcon: false,
+              emptySelectionAllowed: true,
+              onSelectionChanged: (set) {
+                if (set.isNotEmpty) {
+                  unawaited(settings.setDisplayUnit(set.first));
+                }
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+          const SizedBox(height: 16),
 
           // Channel labels
           Text('Channels', style: Theme.of(context).textTheme.titleSmall),
@@ -61,6 +77,12 @@ class SettingsTab extends StatelessWidget {
               label: settings.channelLabels[i],
               onLabelChanged: (val) => settings.setChannelLabel(i, val),
             ),
+          const SizedBox(height: 24),
+
+          // Load cell bank
+          Text('Load cell bank', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          const LoadCellBankSection(),
           const SizedBox(height: 24),
 
           // Wakelock
@@ -114,6 +136,13 @@ class SettingsTab extends StatelessWidget {
                 border: OutlineInputBorder(),
               ),
             ),
+          const SizedBox(height: 16),
+
+          // Per-channel load cell assignment. Valid without a live link: the
+          // assignments are app-side and take effect whenever data flows.
+          Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 8),
+          const ChannelLoadCellAssignments(),
           const SizedBox(height: 24),
 
           // About
