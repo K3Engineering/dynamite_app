@@ -28,14 +28,14 @@ void main() {
 
   group('no liveness data (legacy fallbacks)', () {
     test('a reading renders as dBm on any platform', () {
-      expect(
-        row(scanRssi: -58, supportsScanRssi: true),
-        (text: 'RSSI: -58 dBm', stale: false),
-      );
-      expect(
-        row(scanRssi: -58, supportsScanRssi: false),
-        (text: 'RSSI: -58 dBm', stale: false),
-      );
+      expect(row(scanRssi: -58, supportsScanRssi: true), (
+        text: 'RSSI: -58 dBm',
+        stale: false,
+      ));
+      expect(row(scanRssi: -58, supportsScanRssi: false), (
+        text: 'RSSI: -58 dBm',
+        stale: false,
+      ));
     });
 
     test('no reading yet on an RSSI-capable platform is a transient '
@@ -56,19 +56,21 @@ void main() {
       );
     });
 
-    test('native with no reading keeps the transient placeholder while fresh',
-        () {
-      expect(
-        row(lastAliveMs: now - 3000, supportsScanRssi: true),
-        (text: 'RSSI: --', stale: false),
-      );
-    });
+    test(
+      'native with no reading keeps the transient placeholder while fresh',
+      () {
+        expect(row(lastAliveMs: now - 3000, supportsScanRssi: true), (
+          text: 'RSSI: --',
+          stale: false,
+        ));
+      },
+    );
 
     test('web shows "Last connected" while fresh', () {
-      expect(
-        row(lastAliveMs: now - 3000, supportsScanRssi: false),
-        (text: 'Last connected just now', stale: false),
-      );
+      expect(row(lastAliveMs: now - 3000, supportsScanRssi: false), (
+        text: 'Last connected just now',
+        stale: false,
+      ));
     });
 
     test('exactly at the stale boundary is still fresh', () {
@@ -81,10 +83,7 @@ void main() {
 
   group('stale proof of life', () {
     test('one millisecond past the boundary is stale', () {
-      final r = row(
-        lastAliveMs: now - staleMs - 1,
-        supportsScanRssi: false,
-      );
+      final r = row(lastAliveMs: now - staleMs - 1, supportsScanRssi: false);
       expect(r, (text: 'Last connected >5 seconds ago', stale: true));
     });
 
@@ -96,14 +95,14 @@ void main() {
     });
 
     test('long-stale ages render in the coarse ladder', () {
-      expect(
-        row(lastAliveMs: now - 90000, supportsScanRssi: true),
-        (text: 'Last seen >1 minute ago', stale: true),
-      );
-      expect(
-        row(lastAliveMs: now - 7200000, supportsScanRssi: false),
-        (text: 'Last connected >1 hour ago', stale: true),
-      );
+      expect(row(lastAliveMs: now - 90000, supportsScanRssi: true), (
+        text: 'Last seen >1 minute ago',
+        stale: true,
+      ));
+      expect(row(lastAliveMs: now - 7200000, supportsScanRssi: false), (
+        text: 'Last connected >1 hour ago',
+        stale: true,
+      ));
     });
   });
 }

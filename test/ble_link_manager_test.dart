@@ -278,6 +278,80 @@ void main() {
     });
   });
 
+  test('a connect refused via the callback (native flavor) records a failure '
+      'marker and skips the cooldown', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+      MockBlePlatform.instance.failConnectViaCallback = true;
+
+      // Native stacks report a refused connect through the connection-change
+      // callback, which universal_ble delivers to the manager BEFORE it
+      // errors the connect() future (from the same event). The marker is
+      // recorded on the callback path, so the caller's future completes
+      // silently — the per-row marker is the single user-facing channel.
+      Object? error;
+      unawaited(
+        link.connectToDevice(deviceId).catchError((Object e) => error = e),
+      );
+      async.elapse(const Duration(seconds: 2));
+
+      expect(error, isNull);
+      expect(link.connectFailureFor(deviceId), ConnectFailureKind.failed);
+      // Back to idle (VM tests are non-web, so no cooldown either way) with
+      // no notices and no GATT release: the platform reported the link down.
+      expect(link.link.state, BtLinkState.idle);
+      expect(seen, isEmpty);
+      expect(MockBlePlatform.instance.disconnectCalls, isEmpty);
+
+      // An immediate retry must not be blocked by leftover state.
+      MockBlePlatform.instance.failConnectViaCallback = false;
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+      expect(seen, isEmpty);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('a duplicate connect event while streaming is ignored', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      // A spurious duplicate "connected" event for the active device must
+      // not regress the state or re-run post-connect setup.
+      MockBlePlatform.instance.updateConnection(deviceId, true);
+      async.flushMicrotasks();
+
+      expect(link.link.state, BtLinkState.streaming);
+      expect(seen, isEmpty);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('no RSSI polling runs against the demo device', () {
+    fakeAsync((async) {
+      final (link, _) = wire();
+      settleStartup(async);
+
+      unawaited(link.connectToDemoDevice());
+      async.elapse(const Duration(milliseconds: 100));
+      // The Devices tab becoming visible is what (re)starts RSSI polling for
+      // a streaming link; the demo device has no real radio to poll.
+      link.setDevicesTabVisible(true);
+      async.elapse(const Duration(seconds: 5));
+
+      expect(MockBlePlatform.instance.readRssiCalls, 0);
+
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(milliseconds: 100));
+    });
+  });
+
   test('cancelling a hung connect releases the link and ignores the late '
       'success', () {
     fakeAsync((async) {

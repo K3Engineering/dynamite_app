@@ -80,9 +80,6 @@ BtStatusVisual btStatusVisual({
         return (Icons.stop, colors.error, 'Bluetooth not supported');
       case AvailabilityState.unauthorized:
         return (Icons.stop, colors.tertiary, 'Bluetooth permission needed');
-      // ignore: unreachable_switch_default
-      default:
-        return (Icons.question_mark, colors.outline, 'Bluetooth unavailable');
     }
   }
 
@@ -100,40 +97,17 @@ BtStatusVisual btStatusVisual({
 }
 
 /// Compact Bluetooth status readout (icon + hint text, with a spinner while
-/// anything is in flight). Driven directly by the per-device link state plus
-/// the global adapter availability and scan flag — no derived flags to keep
-/// in sync at the call site.
+/// anything is in flight). Renders a [BtStatusVisual] precomputed by the
+/// caller via [btStatusVisual] — the same visual can feed several surfaces
+/// (this indicator, the Devices tab's empty block) without recomputing.
 class BluetoothIndicator extends StatelessWidget {
-  /// State of the single active device link.
-  final BtLinkState linkState;
+  /// The resolved status visual to display.
+  final BtStatusVisual visual;
 
-  /// Radio/adapter availability.
-  final AvailabilityState state;
-
-  final bool isScanning;
-
-  /// Any discovered devices in the list (for the idle hint).
-  final bool hasDevices;
-
-  const BluetoothIndicator({
-    super.key,
-    required this.linkState,
-    required this.state,
-    this.isScanning = false,
-    this.hasDevices = false,
-  });
+  const BluetoothIndicator({super.key, required this.visual});
 
   @override
   Widget build(BuildContext context) {
-    final visual = btStatusVisual(
-      linkState: linkState,
-      availability: state,
-      isScanning: isScanning,
-      hasDevices: hasDevices,
-      status: Theme.of(context).extension<StatusColors>()!,
-      colors: Theme.of(context).colorScheme,
-    );
-
     const double size = 32;
     final iconStack = Stack(
       clipBehavior: Clip.none,
