@@ -96,12 +96,19 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   int _tareCount = 0;
   @override
   int totalSamples = 0;
-  DeviceCalibration deviceCalibration = DeviceCalibration();
 
   /// Factory board calibration read from the device at connect time (parsed
   /// by [AdcPacketDecoder.onCalibrationPacket]). Nominal per-channel fallback
   /// until/unless a calibrated device supplies real data.
   BoardCalibration boardCalibration = BoardCalibration.nominal();
+
+  /// Load cell assigned to each channel (null = unassigned, electrical units
+  /// only). Owned by [AppSettings]; pushed here via [updateLoadCells].
+  List<LoadCellProfile?> _loadCells = List.filled(numAdcChannels, null);
+
+  /// Bumped whenever the calibration set changes (board data or load-cell
+  /// assignments); renderers mix it into their segment-cache keys.
+  int _calibrationVersion = 0;
 
   /// Whether a malformed/undecodable ADC packet (e.g. a truncated
   /// notification) was seen on this stream. Latched by [reportProtocolError]
@@ -278,12 +285,20 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     notifyListeners();
   }
 
-  void updateCalibration(DeviceCalibration calibration) {
-    deviceCalibration = calibration;
-  }
-
+  /// Replace the board calibration (a freshly-parsed factory read arrived).
   void updateBoardCalibration(BoardCalibration calibration) {
     boardCalibration = calibration;
+    _calibrationVersion++;
+    notifyListeners();
+  }
+
+  /// Replace the per-channel load-cell assignments (the user assigned or
+  /// edited a profile in settings).
+  void updateLoadCells(List<LoadCellProfile?> cells) {
+    assert(cells.length == numAdcChannels);
+    _loadCells = List.of(cells);
+    _calibrationVersion++;
+    notifyListeners();
   }
 
   // -- GraphDataSource --------------------------------------------------------
@@ -299,7 +314,13 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   int get sampleRate => samplesPerSec;
 
   @override
-  double get calibrationSlope => deviceCalibration.slope;
+  ChannelCalibration calibrationFor(int channelIndex) => ChannelCalibration(
+    board: boardCalibration.channels[channelIndex],
+    loadCell: _loadCells[channelIndex],
+  );
+
+  @override
+  int get calibrationVersion => _calibrationVersion;
 
   @override
   Listenable get repaint => this;
@@ -326,35 +347,48 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// stats display are held values, not fresh data.
   bool get liveEdgeIsGap => gaps.contains(totalSamples - 1);
 
-  /// Get current force for a given ADC channel in the specified unit. During
+  /// Get current value for a given ADC channel in the specified unit. During
   /// a gap this returns the held (last real) value; check [liveEdgeIsGap] to
-  /// mark it stale in the UI.
-  double currentForce(int adcChannel, ForceUnit unit) {
+  /// mark it stale in the UI. Null when the unit is unavailable for the
+  /// channel (a force unit without an assigned load cell).
+  double? currentValue(int adcChannel, ForceUnit unit) {
     assert(adcChannel >= 0 && adcChannel < numAdcChannels);
-    final rawTared = _currentRaw[adcChannel] - tare[adcChannel];
-    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
+    final conv = unit.converterFor(
+      calibrationFor(adcChannel),
+      tare[adcChannel],
+    );
+    return conv?.call(_currentRaw[adcChannel].toDouble());
   }
 
-  /// Get peak force for a given ADC channel in the specified unit. Returns 0
-  /// before the first sample arrives ([rawMax] still holds its sentinel).
-  double peakForce(int adcChannel, ForceUnit unit) {
-    assert(adcChannel >= 0 && adcChannel < numAdcChannels);
-    if (totalSamples == 0) return 0;
-    final rawTared = rawMax[adcChannel] - tare[adcChannel];
-    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
-  }
-
-  /// Get minimum (most negative) force for a given ADC channel in the
-  /// specified unit. Returns 0 before the first sample arrives.
-  double minForce(int adcChannel, ForceUnit unit) {
+  /// Get peak value for a given ADC channel in the specified unit. Returns 0
+  /// before the first sample arrives ([rawMax] still holds its sentinel);
+  /// null when the unit is unavailable for the channel.
+  double? peakValue(int adcChannel, ForceUnit unit) {
     assert(adcChannel >= 0 && adcChannel < numAdcChannels);
     if (totalSamples == 0) return 0;
-    final rawTared = rawMin[adcChannel] - tare[adcChannel];
-    return unit.fromRaw(rawTared.toDouble(), deviceCalibration.slope);
+    final conv = unit.converterFor(
+      calibrationFor(adcChannel),
+      tare[adcChannel],
+    );
+    return conv?.call(rawMax[adcChannel].toDouble());
   }
 
-  /// Get the instantaneous derivative (first-difference) for a channel in unit/s.
-  double currentDerivative(int adcChannel, ForceUnit unit) {
+  /// Get minimum (most negative) value for a given ADC channel in the
+  /// specified unit. Returns 0 before the first sample arrives; null when
+  /// the unit is unavailable for the channel.
+  double? minValue(int adcChannel, ForceUnit unit) {
+    assert(adcChannel >= 0 && adcChannel < numAdcChannels);
+    if (totalSamples == 0) return 0;
+    final conv = unit.converterFor(
+      calibrationFor(adcChannel),
+      tare[adcChannel],
+    );
+    return conv?.call(rawMin[adcChannel].toDouble());
+  }
+
+  /// Get the instantaneous derivative (first-difference) for a channel in
+  /// unit/s; null when the unit is unavailable for the channel.
+  double? currentDerivative(int adcChannel, ForceUnit unit) {
     assert(adcChannel >= 0 && adcChannel < numAdcChannels);
     if (totalSamples < 2) return 0;
 
@@ -364,15 +398,18 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
       return 0;
     }
 
+    final conv = unit.converterFor(
+      calibrationFor(adcChannel),
+      tare[adcChannel],
+    );
+    if (conv == null) return null;
+
     final raw1 = rawData[adcChannel][(totalSamples - 1) % maxDataSz];
     final raw2 = rawData[adcChannel][(totalSamples - 2) % maxDataSz];
 
-    final diff = raw1 - raw2;
-    // Derivative is raw diff per sample * samplesPerSec to get raw per sec
-    return unit.fromRaw(
-      diff.toDouble() * samplesPerSec,
-      deviceCalibration.slope,
-    );
+    // Difference the converter output (not the raw diff): exact under the
+    // piecewise map, and tare cancels. Scaled to units per second.
+    return (conv(raw1.toDouble()) - conv(raw2.toDouble())) * samplesPerSec;
   }
 
   void _addTare(int val, int idx) {
@@ -391,38 +428,5 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
       rawMin[idx] = val;
     }
     _ingest[idx].add(totalSamples, val, prev);
-  }
-}
-
-/// Calibration parameters of a load cell channel and the resulting
-/// raw-count -> kgf slope.
-///
-/// Signal chain (per-channel device parameters — becoming configurable via
-/// the device's calibration characteristic):
-///   [excitationV] excitation
-///   -> load cell ([sensitivityMvV] mV/V at [capacityKg] full scale, i.e.
-///      sensitivity x excitation mV output at full-scale load)
-///   -> 101x front-end gain
-///   -> 1.2V FSR 24-bit bipolar ADC (constants in force_unit.dart)
-///
-/// Today every field is a compile-time default; the decoder reads the
-/// calibration characteristic but parsing is a TODO.
-class DeviceCalibration {
-  DeviceCalibration({
-    this.capacityKg = 200.0,
-    this.sensitivityMvV = 2.0,
-    this.excitationV = 4.53,
-  });
-
-  final double capacityKg;
-  final double sensitivityMvV;
-  final double excitationV;
-
-  /// kgf per raw count: the full-scale output ([sensitivityMvV] x
-  /// [excitationV] mV at [capacityKg]) mapped through the front-end's
-  /// mV-per-count.
-  double get slope {
-    final maxMv = sensitivityMvV * excitationV;
-    return capacityKg * rawToMvMultiplier / maxMv;
   }
 }

@@ -423,7 +423,7 @@ class LiveStats extends StatelessWidget {
                 label: 'Live',
                 values: [
                   for (int i = 0; i < DataHub.numAdcChannels; i++)
-                    hub.currentForce(i, unit),
+                    hub.currentValue(i, unit),
                 ],
                 emphasized: true,
                 stale: stale,
@@ -432,7 +432,7 @@ class LiveStats extends StatelessWidget {
                 label: 'Peak',
                 values: [
                   for (int i = 0; i < DataHub.numAdcChannels; i++)
-                    hub.peakForce(i, unit),
+                    hub.peakValue(i, unit),
                 ],
               ),
               if (showDerivative)

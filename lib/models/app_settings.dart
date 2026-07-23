@@ -13,7 +13,10 @@ class AppSettings extends ChangeNotifier {
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
 
-  ForceUnit _displayUnit = ForceUnit.kN;
+  // mV/V is the default: it converts with board calibration alone, so a
+  // fresh install shows meaningful numbers before any load cell is assigned
+  // (force units need per-channel load-cell profiles).
+  ForceUnit _displayUnit = ForceUnit.mVv;
   ForceUnit get displayUnit => _displayUnit;
 
   /// Labels for each of the [nwNumAdcChan] ADC channels.
@@ -53,7 +56,7 @@ class AppSettings extends ChangeNotifier {
     if (unitName != null && !_modifiedKeys.contains(_keyUnit)) {
       _displayUnit = ForceUnit.values.firstWhere(
         (u) => u.name == unitName,
-        orElse: () => ForceUnit.kN,
+        orElse: () => ForceUnit.mVv,
       );
     }
 

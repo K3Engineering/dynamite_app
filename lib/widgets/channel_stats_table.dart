@@ -15,8 +15,10 @@ class ChannelStatsRow {
   /// Row label shown in the leading column ('Live', 'Peak', ...).
   final String label;
 
-  /// One value per channel, in [ChannelStatsTable.unit] units.
-  final List<double> values;
+  /// One value per channel, in [ChannelStatsTable.unit] units. A null value
+  /// means the unit is unavailable for that channel (a force unit with no
+  /// load cell assigned) and renders as '—'.
+  final List<double?> values;
 
   /// Primary-reading styling (larger, bold) — e.g. the live value row.
   final bool emphasized;
@@ -218,7 +220,9 @@ class _TableCellValue extends StatelessWidget {
     this.onTap,
   });
 
-  final double value;
+  /// The value in [unit] units, or null when the unit is unavailable for
+  /// this channel (rendered '—').
+  final double? value;
   final ForceUnit unit;
   final bool isActive;
   final bool isStale;
@@ -228,13 +232,16 @@ class _TableCellValue extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final staleColor = Theme.of(context).colorScheme.outline;
+    final value = this.value;
 
     // If inactive, show dashes and dim it heavily. If active but stale, dim
-    // it lightly.
-    final String displayText = isActive ? unit.formatValueOnly(value) : '--';
+    // it lightly. A null value (unit unavailable for the channel) shows '—'.
+    final String displayText = !isActive
+        ? '--'
+        : (value == null ? '—' : unit.formatValueOnly(value));
     final color = !isActive
         ? staleColor.withValues(alpha: 0.4)
-        : (isStale ? staleColor : null);
+        : ((isStale || value == null) ? staleColor : null);
 
     return _TappableChannelCell(
       onTap: onTap ?? () {},

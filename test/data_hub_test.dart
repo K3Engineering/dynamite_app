@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/models/force_unit.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 
@@ -23,8 +24,8 @@ void main() {
     test('an untouched hub reports zero peak/min, not sentinel garbage', () {
       final hub = DataHub();
       for (int ch = 0; ch < channels; ch++) {
-        expect(hub.peakForce(ch, ForceUnit.raw), 0);
-        expect(hub.minForce(ch, ForceUnit.raw), 0);
+        expect(hub.peakValue(ch, ForceUnit.raw), 0);
+        expect(hub.minValue(ch, ForceUnit.raw), 0);
       }
     });
 
@@ -53,8 +54,8 @@ void main() {
         frame[0] = v;
         hub.addSampleFrame(frame);
       }
-      expect(hub.peakForce(0, ForceUnit.raw), -50);
-      expect(hub.minForce(0, ForceUnit.raw), -300);
+      expect(hub.peakValue(0, ForceUnit.raw), -50);
+      expect(hub.minValue(0, ForceUnit.raw), -300);
     });
 
     test('a never-negative channel reports its true (positive) min', () {
@@ -64,8 +65,8 @@ void main() {
         frame[0] = v;
         hub.addSampleFrame(frame);
       }
-      expect(hub.peakForce(0, ForceUnit.raw), 300);
-      expect(hub.minForce(0, ForceUnit.raw), 50);
+      expect(hub.peakValue(0, ForceUnit.raw), 300);
+      expect(hub.minValue(0, ForceUnit.raw), 50);
     });
 
     test('peaks are tare-adjusted at read time', () {
@@ -73,8 +74,8 @@ void main() {
       feed(hub, frameOf(1000), 10);
       hub.requestTare();
       feed(hub, frameOf(1000), 1024); // completes the tare at 1000
-      expect(hub.peakForce(0, ForceUnit.raw), 0);
-      expect(hub.minForce(0, ForceUnit.raw), 0);
+      expect(hub.peakValue(0, ForceUnit.raw), 0);
+      expect(hub.minValue(0, ForceUnit.raw), 0);
     });
   });
 
@@ -97,8 +98,8 @@ void main() {
       expect(hub.gaps.isEmpty, isTrue);
       expect(hub.taring, isFalse);
       expect(hub.tare[0], 0);
-      expect(hub.peakForce(0, ForceUnit.raw), 0);
-      expect(hub.minForce(0, ForceUnit.raw), 0);
+      expect(hub.peakValue(0, ForceUnit.raw), 0);
+      expect(hub.minValue(0, ForceUnit.raw), 0);
       expect(hub.valueBuckets[0].series.samples, 0);
       expect(hub.diffBuckets[0].series.samples, 0);
 
@@ -106,7 +107,7 @@ void main() {
       feed(hub, frameOf(-500), 10);
       expect(hub.totalSamples, 10);
       expect(hub.rawData[0][0], -500);
-      expect(hub.peakForce(0, ForceUnit.raw), -500);
+      expect(hub.peakValue(0, ForceUnit.raw), -500);
     });
 
     test('aborts an in-progress tare', () {
@@ -152,7 +153,7 @@ void main() {
       expect(hub.rawData[0][100 + 1023], 500);
       expect(hub.taring, isFalse);
       expect(hub.tare[0], 500);
-      expect(hub.currentForce(0, ForceUnit.raw), 0); // 500 - 500
+      expect(hub.currentValue(0, ForceUnit.raw), 0); // 500 - 500
     });
 
     test('recordings observe the samples appended during a tare', () {
@@ -196,5 +197,82 @@ void main() {
         expect(hub.rawData[0][110], 1000); // held value inside the gap
       },
     );
+  });
+
+  group('calibration', () {
+    test('force units are unavailable until a load cell is assigned', () {
+      final hub = DataHub();
+      feed(hub, frameOf(1000), 5);
+
+      expect(hub.currentValue(0, ForceUnit.kgf), isNull);
+      expect(hub.peakValue(0, ForceUnit.kgf), isNull);
+      expect(hub.minValue(0, ForceUnit.kgf), isNull);
+      expect(hub.currentDerivative(0, ForceUnit.kgf), isNull);
+      // Electrical units convert with board calibration alone.
+      expect(hub.currentValue(0, ForceUnit.mVv), isNotNull);
+      expect(hub.currentDerivative(0, ForceUnit.mVv), isNotNull);
+    });
+
+    test('assigning a load cell enables force units and bumps the version', () {
+      final hub = DataHub();
+      final v0 = hub.calibrationVersion;
+      feed(hub, frameOf(1000), 5);
+
+      hub.updateLoadCells([
+        LoadCellProfile(id: 'x', capacityKg: 200, sensitivityMvV: 2),
+        null,
+        null,
+        null,
+      ]);
+
+      expect(hub.calibrationVersion, greaterThan(v0));
+      // Nominal board: kgf = (raw - tare) / nominalCountsPerMvV * (200/2).
+      expect(
+        hub.currentValue(0, ForceUnit.kgf),
+        closeTo(1000 / nominalCountsPerMvV * 100, 1e-12),
+      );
+      expect(hub.currentValue(1, ForceUnit.kgf), isNull); // unassigned
+    });
+
+    test('board calibration replaces the nominal chain and bumps version', () {
+      final hub = DataHub();
+      final v0 = hub.calibrationVersion;
+      // ch0 measures at twice the nominal span; other channels stay nominal.
+      final sp = ladderSetpointsMvV(nominalLadderResistors);
+      final board = BoardCalibration(
+        channels: [
+          ChannelBoardCalibration(
+            readings: [for (final d in sp) 500 + 2 * nominalCountsPerMvV * d],
+          ),
+          ChannelBoardCalibration(),
+          ChannelBoardCalibration(),
+          ChannelBoardCalibration(),
+        ],
+      );
+
+      hub.updateBoardCalibration(board);
+      expect(hub.calibrationVersion, greaterThan(v0));
+
+      feed(hub, frameOf(1000), 5);
+      expect(
+        hub.currentValue(0, ForceUnit.mVv),
+        closeTo(1000 / (2 * nominalCountsPerMvV), 1e-12),
+      );
+      expect(
+        hub.currentValue(1, ForceUnit.mVv),
+        closeTo(1000 / nominalCountsPerMvV, 1e-12),
+      );
+    });
+
+    test('derivative scales the converted difference per second', () {
+      final hub = DataHub();
+      expect(hub.currentDerivative(0, ForceUnit.raw), 0); // < 2 samples
+      feed(hub, frameOf(0), 1);
+      hub.addSampleFrame(frameOf(1000));
+      expect(
+        hub.currentDerivative(0, ForceUnit.raw),
+        1000.0 * DataHub.samplesPerSec,
+      );
+    });
   });
 }

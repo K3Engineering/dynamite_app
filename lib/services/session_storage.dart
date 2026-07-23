@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'database.dart';
 import 'data_hub.dart';
 import '../models/bucket_series.dart';
+import '../models/calibration.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 
@@ -43,7 +44,12 @@ class SessionStorage {
       channelCount: DataHub.numAdcChannels,
       channelLabels: jsonEncode(channelLabels),
       tares: jsonEncode(tare.toList()),
-      calibrationSlope: dataHub.deviceCalibration.slope,
+      // Snapshot the per-channel calibration in effect now; playback
+      // converts through it even if calibration changes later.
+      calibrationJson: jsonEncode([
+        for (int ch = 0; ch < DataHub.numAdcChannels; ch++)
+          dataHub.calibrationFor(ch).toJson(),
+      ]),
       visibleChannels: jsonEncode(visibleChannels),
     );
 
@@ -71,7 +77,7 @@ class SessionStorage {
       sessionId: writer.sessionId,
       sampleCount: writer.totalSamplesRecorded,
       sampleRate: writer.sampleRate,
-      peakRaw: writer.peakRaw,
+      peaksRaw: writer.peaksRaw,
       gapsJson: writer.gaps.toJson(),
     );
 
@@ -85,16 +91,16 @@ class SessionStorage {
     required int sessionId,
     required int sampleCount,
     required int sampleRate,
-    required double peakRaw,
+    required List<double> peaksRaw,
     required String gapsJson,
   }) {
     return AppDatabase.instance.completeSession(
       sessionId,
       sampleCount: sampleCount,
       durationMs: (sampleCount * 1000) ~/ sampleRate,
-      // A session that captured no samples leaves peakRaw at -infinity; that
-      // must not reach the DB (or the session list's peak display).
-      peakForceRaw: peakRaw.isFinite ? peakRaw : 0.0,
+      // A channel that captured no samples leaves its peak at -infinity;
+      // that must not reach the DB.
+      peaksRaw: jsonEncode([for (final p in peaksRaw) p.isFinite ? p : 0.0]),
       gaps: gapsJson,
     );
   }
@@ -133,7 +139,7 @@ class SessionStorage {
         // writer's, which is the same value from recording start) so a future
         // configurable rate can't skew reconstructed durations.
         sampleRate: session.sampleRate,
-        peakRaw: agg.peakRaw,
+        peaksRaw: agg.peaksRaw,
         gapsJson: session.gaps,
       );
     }
@@ -175,7 +181,7 @@ class SessionStorage {
       channels: channels,
       sampleRate: session.sampleRate,
       sampleCount: globalS,
-      calibrationSlope: session.calibrationSlope,
+      calibrations: _parseCalibrations(session.calibrationJson, channelCount),
       tares: _parseTares(session.tares, channelCount),
       gaps: GapList.fromJson(session.gaps),
     );
@@ -192,6 +198,20 @@ class SessionStorage {
           fallback: (_) => 0.0,
         ),
       );
+
+  /// Parse the JSON-encoded per-channel calibration snapshots stored on a
+  /// [Session] row. Missing or malformed entries fall back to a nominal
+  /// board with no load cell (electrical units only).
+  static List<ChannelCalibration> _parseCalibrations(
+    String json,
+    int channelCount,
+  ) => parseJsonColumn(
+    json,
+    channelCount,
+    convert: (e) =>
+        ChannelCalibration.fromJson(Map<String, dynamic>.from(e as Map)),
+    fallback: (_) => ChannelCalibration(board: ChannelBoardCalibration()),
+  );
 }
 
 /// Parse a JSON-encoded list column into exactly [count] entries: entry i is
@@ -226,27 +246,30 @@ List<T> parseJsonColumn<T>(
 }
 
 /// Scans interleaved int32 chunk bytes, accumulating sample count and the
-/// tare-adjusted peak. Shared by the live writer and the recovery path so the
-/// two can never compute peaks differently.
+/// per-channel tare-adjusted peaks. Shared by the live writer and the
+/// recovery path so the two can never compute peaks differently.
 class _ChunkAggregate {
   _ChunkAggregate(this.channelCount);
 
   final int channelCount;
   int samples = 0;
 
-  /// Starts at -infinity so the first real sample always replaces it; a
-  /// never-positive stream must report its (negative) true max, not 0.
-  /// Callers persisting this must guard the no-samples case (see
-  /// [SessionStorage.finalizeSession]).
-  double peakRaw = double.negativeInfinity;
+  /// Per-channel maxima of (raw - tare). Starts at -infinity so the first
+  /// real sample always replaces it; a never-positive channel must report
+  /// its (negative) true max, not 0. Callers persisting this must guard the
+  /// no-samples case (see [SessionStorage._completeSession]).
+  late final List<double> peaksRaw = List.filled(
+    channelCount,
+    double.negativeInfinity,
+  );
 
   void scan(Uint8List bytes, Float64List tare) {
     final codec = SessionChunkCodec(channelCount);
     samples += codec.framesOf(bytes);
     codec.decode(bytes, (_, ch, raw) {
       final val = raw - (ch < tare.length ? tare[ch] : 0);
-      if (val > peakRaw) {
-        peakRaw = val.toDouble();
+      if (ch < peaksRaw.length && val > peaksRaw[ch]) {
+        peaksRaw[ch] = val.toDouble();
       }
     });
   }
@@ -297,15 +320,16 @@ class SessionChunkCodec {
 
 /// Loaded session data for playback/review. An immutable data holder that
 /// implements [GraphDataSource] directly, so the graph components render it
-/// without an adapter; [sampleRate], [calibrationSlope] and [gaps] already
+/// without an adapter; [sampleRate], [calibrationFor] and [gaps] already
 /// satisfy their interface counterparts.
 class SessionData implements GraphDataSource {
   final List<Int32List> channels;
   @override
   final int sampleRate;
   final int sampleCount;
-  @override
-  final double calibrationSlope;
+
+  /// Per-channel calibration snapshots recorded with the session.
+  final List<ChannelCalibration> calibrations;
   final List<double> tares;
 
   /// Dropped-sample ranges (session-relative). The channel data holds held
@@ -338,7 +362,7 @@ class SessionData implements GraphDataSource {
     required this.channels,
     required this.sampleRate,
     required this.sampleCount,
-    required this.calibrationSlope,
+    required this.calibrations,
     required this.tares,
     GapList? gaps,
   }) : gaps = gaps ?? GapList(),
@@ -399,6 +423,14 @@ class SessionData implements GraphDataSource {
   int get dataGeneration => 0;
 
   @override
+  ChannelCalibration calibrationFor(int channelIndex) =>
+      calibrations[channelIndex];
+
+  /// Session calibration is frozen at recording time; it never changes.
+  @override
+  int get calibrationVersion => 0;
+
+  @override
   ChannelSeries channel(int channelIndex) => (
     data: channels[channelIndex],
     min: mins[channelIndex],
@@ -454,7 +486,10 @@ class LiveSessionWriter {
 
   int _chunkIndex = 0;
   int totalSamplesRecorded = 0;
-  double peakRaw = 0.0;
+
+  /// Per-channel tare-adjusted peaks accumulated so far (see
+  /// [_ChunkAggregate.peaksRaw]); read by [SessionStorage.finalizeSession].
+  List<double> get peaksRaw => _agg.peaksRaw;
 
   /// Dropped-sample ranges accumulated across the recording, relative to the
   /// session's first sample. Persisted to the session row on every chunk
@@ -538,10 +573,9 @@ class LiveSessionWriter {
         return;
       }
 
-      // Update peak/sample-count via the same scan logic recovery uses.
+      // Update peaks/sample-count via the same scan logic recovery uses.
       _agg.scan(bytes, tare);
       totalSamplesRecorded = _agg.samples;
-      peakRaw = _agg.peakRaw;
 
       _staging.add(bytes);
 

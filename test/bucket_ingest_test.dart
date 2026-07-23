@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/bucket_series.dart';
+import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/models/gap_list.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/session_storage.dart';
@@ -131,7 +132,10 @@ void main() {
         channels: recorded,
         sampleRate: DataHub.samplesPerSec,
         sampleCount: n,
-        calibrationSlope: 1.0,
+        calibrations: [
+          for (int ch = 0; ch < channels; ch++)
+            ChannelCalibration(board: ChannelBoardCalibration()),
+        ],
         tares: List.filled(channels, 0.0),
         gaps: GapList.fromJson(hub.gaps.toJson()),
       );
@@ -198,7 +202,10 @@ void main() {
         channels: recorded,
         sampleRate: DataHub.samplesPerSec,
         sampleCount: n,
-        calibrationSlope: 1.0,
+        calibrations: [
+          for (int ch = 0; ch < channels; ch++)
+            ChannelCalibration(board: ChannelBoardCalibration()),
+        ],
         tares: List.filled(channels, 0.0),
         gaps: GapList.fromJson(hub.gaps.toJson()),
       );

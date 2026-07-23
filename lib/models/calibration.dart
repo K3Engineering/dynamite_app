@@ -85,11 +85,11 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 /// ([nominalCountsPerMvV], zero offset), which is exactly the pre-calibration
 /// behavior.
 class ChannelBoardCalibration {
-  ChannelBoardCalibration({List<double>? resistors, this.readings})
-    : resistors = List.unmodifiable(resistors ?? nominalLadderResistors) {
+  ChannelBoardCalibration({List<double>? resistors, List<double>? readings})
+    : resistors = List.unmodifiable(resistors ?? nominalLadderResistors),
+      readings = _validatedReadings(readings) {
     assert(this.resistors.length == kLadderResistorCount);
-    assert(readings == null || readings!.length == kCalPointCount);
-    final r = readings;
+    final r = this.readings;
     if (r != null) {
       // Sort the five points ascending by raw reading for interpolation.
       final order = [for (int k = 0; k < kCalPointCount; ++k) k]
@@ -98,6 +98,15 @@ class ChannelBoardCalibration {
       _sortedRaw = [for (final k in order) r[k]];
       _sortedSetpoints = [for (final k in order) sp[k]];
     }
+  }
+
+  /// Reject degenerate readings (duplicate points would divide by zero
+  /// during interpolation) by treating the channel as uncalibrated.
+  static List<double>? _validatedReadings(List<double>? r) {
+    if (r == null) return null;
+    assert(r.length == kCalPointCount);
+    if (r.toSet().length != r.length) return null;
+    return List.unmodifiable(r);
   }
 
   /// Characterized ladder resistors (6), or nominal values.
@@ -173,6 +182,29 @@ class ChannelBoardCalibration {
         r[2] + (r[iFs] - r[2]) * (sp[iMid] - sp[2]) / (sp[iFs] - sp[2]);
     return (r[iMid] - lineAtMid) / (r[iFs] - r[2]).abs() * 1e6;
   }
+
+  /// Session-snapshot serialization (recorded sessions carry the calibration
+  /// they were taken with, so playback converts identically later).
+  Map<String, dynamic> toJson() => {'r': resistors, 'raw': ?readings};
+
+  /// Tolerant inverse of [toJson]: missing/malformed entries degrade to
+  /// nominal resistors / no readings rather than throwing.
+  factory ChannelBoardCalibration.fromJson(Map<String, dynamic> json) {
+    List<double>? numList(Object? v, int count) {
+      if (v is! List || v.length != count) return null;
+      final out = <double>[];
+      for (final e in v) {
+        if (e is! num) return null;
+        out.add(e.toDouble());
+      }
+      return out;
+    }
+
+    return ChannelBoardCalibration(
+      resistors: numList(json['r'], kLadderResistorCount),
+      readings: numList(json['raw'], kCalPointCount),
+    );
+  }
 }
 
 /// Board calibration of the whole device: one [ChannelBoardCalibration] per
@@ -220,23 +252,12 @@ class BoardCalibration {
       return [for (final v in parts) v!];
     }
 
-    final readings = [
-      for (int i = 0; i < nwNumAdcChan; ++i)
-        parseList(kv['ch$i.raw'], kCalPointCount),
-    ];
-    // Degenerate readings (duplicate points) would divide by zero during
-    // interpolation — treat the channel as uncalibrated instead.
-    for (int i = 0; i < readings.length; ++i) {
-      final r = readings[i];
-      if (r != null && r.toSet().length != r.length) readings[i] = null;
-    }
-
     return BoardCalibration(
       channels: [
         for (int i = 0; i < nwNumAdcChan; ++i)
           ChannelBoardCalibration(
             resistors: parseList(kv['ch$i.r'], kLadderResistorCount),
-            readings: readings[i],
+            readings: parseList(kv['ch$i.raw'], kCalPointCount),
           ),
       ],
       factoryDate: kv['cal.date'],
@@ -361,5 +382,32 @@ class ChannelCalibration {
   double mvVPerCountAt(double raw) {
     const h = 0.5;
     return (board.mvVFromRaw(raw + h) - board.mvVFromRaw(raw - h)) / (2 * h);
+  }
+
+  /// Session-snapshot serialization.
+  Map<String, dynamic> toJson() => {
+    'board': board.toJson(),
+    'cell': ?loadCell?.toJson(),
+  };
+
+  /// Tolerant inverse of [toJson]; a malformed cell entry drops just the
+  /// load cell (electrical units still convert).
+  factory ChannelCalibration.fromJson(Map<String, dynamic> json) {
+    LoadCellProfile? cell;
+    if (json['cell'] case final c?) {
+      try {
+        cell = LoadCellProfile.fromJson(Map<String, dynamic>.from(c as Map));
+      } catch (_) {
+        cell = null;
+      }
+    }
+    final boardJson = switch (json['board']) {
+      final b? => Map<String, dynamic>.from(b as Map),
+      _ => const <String, dynamic>{},
+    };
+    return ChannelCalibration(
+      board: ChannelBoardCalibration.fromJson(boardJson),
+      loadCell: cell,
+    );
   }
 }

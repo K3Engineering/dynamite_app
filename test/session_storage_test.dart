@@ -4,6 +4,8 @@ import 'dart:typed_data';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/models/calibration.dart';
+import 'package:dynamite_app/models/force_unit.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/database.dart';
 import 'package:dynamite_app/services/session_storage.dart';
@@ -15,6 +17,11 @@ import 'package:dynamite_app/services/session_storage.dart';
 void main() {
   const int channels = DataHub.numAdcChannels;
 
+  List<ChannelCalibration> nominalCals() => [
+    for (int ch = 0; ch < channels; ch++)
+      ChannelCalibration(board: ChannelBoardCalibration()),
+  ];
+
   group('SessionData.maxs', () {
     SessionData makeSession(List<int> values) => SessionData(
       channels: [
@@ -22,7 +29,7 @@ void main() {
       ],
       sampleRate: DataHub.samplesPerSec,
       sampleCount: values.length,
-      calibrationSlope: 1.0,
+      calibrations: nominalCals(),
       tares: List.filled(channels, 0.0),
     );
 
@@ -57,7 +64,7 @@ void main() {
       await writer.appendData(hub, 0, n);
 
       expect(writer.totalSamplesRecorded, n);
-      expect(writer.peakRaw, -1000 + n - 1);
+      expect(writer.peaksRaw, List.filled(channels, -1000.0 + n - 1));
     });
   });
 
@@ -98,7 +105,8 @@ void main() {
       await writer.flush();
       expect(writer.hasError, isFalse);
       expect(writer.totalSamplesRecorded, n);
-      expect(writer.peakRaw, n - 1); // not 100000: the slice was snapshotted
+      // not 100000: the slice was snapshotted
+      expect(writer.peaksRaw, List.filled(channels, n - 1.0));
 
       // The persisted chunk holds the call-time values, byte for byte.
       expect(saved, hasLength(1));
@@ -154,7 +162,8 @@ void main() {
       expect(writer.hasError, isTrue);
       expect(writer.writeError, isA<StateError>());
       expect(writer.totalSamplesRecorded, chunkSamples);
-      expect(writer.peakRaw, 7); // wrapped (66666) data never scanned
+      // wrapped (66666) data never scanned
+      expect(writer.peaksRaw, List.filled(channels, 7.0));
       expect(sinkCalls, 1);
       expect(saved, hasLength(1));
       expect(saved.single.lengthInBytes, chunkSamples * channels * 4);
@@ -245,21 +254,21 @@ void main() {
     });
 
     test(
-      'a session with only empty chunks completes with a zero peak',
+      'a session with only empty chunks completes with zero peaks',
       () async {
         AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
         addTearDown(AppDatabase.closeInstance);
 
-        // A chunk row exists, but it holds no complete frame (0 bytes), so the
-        // recovered aggregate scan finds no samples and peakRaw stays at
-        // -infinity — which must never reach the DB.
+        // A chunk row exists, but it holds no complete frame (0 bytes), so
+        // the recovered aggregate scan finds no samples and every channel's
+        // peak stays at -infinity — which must never reach the DB.
         final sessionId = await AppDatabase.instance.createSession(
           name: 'empty chunks',
           sampleRate: DataHub.samplesPerSec,
           channelCount: channels,
           channelLabels: '["a","b","c","d"]',
           tares: '[0,0,0,0]',
-          calibrationSlope: 1.0,
+          calibrationJson: '[]',
           visibleChannels: '[true,true,true,true]',
         );
         await AppDatabase.instance.insertChunk(sessionId, 0, Uint8List(0));
@@ -271,8 +280,83 @@ void main() {
         expect(row!.isCompleted, isTrue);
         expect(row.sampleCount, 0);
         expect(row.durationMs, 0);
-        expect(row.peakForceRaw, 0.0);
-        expect(row.peakForceRaw.isFinite, isTrue);
+        expect(row.peaksRaw, '[0.0,0.0,0.0,0.0]');
+      },
+    );
+  });
+
+  group('session calibration snapshot', () {
+    test(
+      'playback converts through the calibration recorded with the session',
+      () async {
+        AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+        addTearDown(AppDatabase.closeInstance);
+
+        final hub = DataHub();
+        final sp = ladderSetpointsMvV(nominalLadderResistors);
+        // ch0 measures at twice the nominal span; other channels nominal.
+        hub.updateBoardCalibration(
+          BoardCalibration(
+            channels: [
+              ChannelBoardCalibration(
+                readings: [
+                  for (final d in sp) 500 + 2 * nominalCountsPerMvV * d,
+                ],
+              ),
+              ChannelBoardCalibration(),
+              ChannelBoardCalibration(),
+              ChannelBoardCalibration(),
+            ],
+          ),
+        );
+        hub.updateLoadCells([
+          LoadCellProfile(
+            id: 'lc',
+            name: 'Ref',
+            capacityKg: 100,
+            sensitivityMvV: 2,
+            span: 1.01,
+          ),
+          null,
+          null,
+          null,
+        ]);
+
+        final frame = Int32List(channels)..fillRange(0, channels, 1000);
+        for (int i = 0; i < 10; i++) {
+        hub.addSampleFrame(frame);
+      }
+
+        final writer = await SessionStorage.startSession(
+          dataHub: hub,
+          name: 'cal',
+          channelLabels: const ['a', 'b', 'c', 'd'],
+          visibleChannels: const [true, true, true, true],
+        );
+        await writer.appendData(hub, 0, hub.totalSamples);
+        await SessionStorage.finalizeSession(writer: writer);
+
+        final row = await AppDatabase.instance.sessionById(writer.sessionId);
+        final loaded = (await SessionStorage.loadSession(row!))!;
+
+        // Board snapshot: ch0 at 2x nominal span.
+        expect(
+          loaded.calibrationFor(0).board.spanCountsPerMvV,
+          closeTo(2 * nominalCountsPerMvV, 1e-3),
+        );
+        expect(loaded.calibrationFor(0).board.isFactoryCalibrated, isTrue);
+        // Load cell snapshot round-trips with its span factor.
+        final cell = loaded.calibrationFor(0).loadCell!;
+        expect(cell.name, 'Ref');
+        expect(cell.span, closeTo(1.01, 1e-12));
+        // End-to-end: kgf converts through the stored board AND stored cell.
+        final kgf = ForceUnit.kgf.converterFor(loaded.calibrationFor(0), 0)!;
+        expect(
+          kgf(1000),
+          closeTo(1000 / (2 * nominalCountsPerMvV) * (100 * 1.01 / 2), 1e-9),
+        );
+        // ch1 had no load cell assigned at recording time.
+        expect(ForceUnit.kgf.converterFor(loaded.calibrationFor(1), 0), isNull);
       },
     );
   });
