@@ -21,16 +21,9 @@ class DevicesTab extends StatelessWidget {
     final bt = context.watch<BleLinkManager>();
     final scheme = Theme.of(context).colorScheme;
 
-    // Ownership split: the top indicator speaks only for the adapter and the
-    // scan (link state is forced to idle here). Per-device link state lives
-    // on the device rows — the only place that scales past one device — so
-    // the two never say the same thing. The one link-aware input the
-    // indicator needs is whether a working Connect action exists: the "Tap a
-    // device to connect" hint is withheld while any link is busy, since
-    // every Connect button (inactive rows and the demo row) is disabled
-    // then. This must be raw linkBusy, NOT bleLinkState: bleLinkState
-    // reports idle while the demo device holds the link slot, but BLE
-    // connects are refused then too.
+    // Top indicator reflects only adapter/scan state; per-device link state
+    // lives on the rows. We use raw linkBusy to withhold hints when ANY
+    // link is busy, ensuring Connect buttons are disabled.
     final visual = btStatusVisual(
       linkState: BtLinkState.idle,
       availability: bt.bluetoothState,
@@ -45,23 +38,16 @@ class DevicesTab extends StatelessWidget {
     // (radio off / permission / no devices found) — not during a scan.
     final showEmptyBlock = isEmpty && !bt.isScanning;
 
-    // "Quiet when nominal" for the top indicator: an icon only for scan
-    // progress or adapter failures, text-only for powered-on hints, and
-    // fully silent while the empty block is on screen (the block is the
-    // single voice, icon included). See [topIndicatorMode].
+    // Top indicator modes: icon only for scan/failures, text-only for powered-on
+    // hints, and fully silent while the big empty block is visible.
     final indicatorMode = topIndicatorMode(
       availability: bt.bluetoothState,
       isScanning: bt.isScanning,
       emptyBlockVisible: showEmptyBlock,
     );
 
-    // Resolve every BLE row's inactive presentation up front — one clock
-    // reading and one staleness predicate for the whole list — then partition
-    // STABLY: fresh rows keep scan order, stale ("hasn't been active for a
-    // while") rows sink to the bottom, keeping scan order within each group.
-    // The active row is never classed stale: its proof-of-life stamp isn't
-    // refreshed while streaming, so a long-connected row would otherwise sink
-    // mid-session. (Dart's List.sort isn't stable; two lists preserve order.)
+    // Partition rows stably: fresh rows keep scan order, stale rows sink.
+    // Active rows are never marked stale since they don't refresh while streaming.
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final activeId = bt.link.deviceId;
     final visuals = <String, InactiveRowVisual>{
@@ -99,21 +85,13 @@ class DevicesTab extends StatelessWidget {
           const SizedBox(height: 16),
 
           // BLE devices section. The status row leads with the Bluetooth
-          // status readout (adapter + scan state — never link state, which
-          // belongs to the device rows) and anchors the Scan/Stop button on
-          // the right, in line with the rows' trailing Connect/Disconnect
-          // buttons. Always visible — Scan is reachable in every state.
+          // status readout (adapter + scan state) and anchors the Scan/Stop
+          // button on the right, inline with row action buttons.
           const SectionHeader('BLE devices'),
           const SizedBox(height: 8),
 
-          // The 4px left padding mirrors the M3 Card default margin so the
-          // status readout lines up with the cards below. The 28px right padding
-          // is Card margin (4) + the M3 ListTile trailing content padding
-          // (24 — asymmetric; the leading side is 16), so the Scan button's
-          // right edge lands on the same column as the rows' trailing
-          // Connect/Disconnect buttons (all share [deviceActionButtonWidth]).
-          // The button is anchored right, so status text length changes never
-          // move it.
+          // Padding aligns the status readout and Scan button with the M3 Card
+          // and ListTile contents below.
           Padding(
             padding: const EdgeInsets.only(left: 4, right: 28),
             child: Row(
@@ -142,11 +120,9 @@ class DevicesTab extends StatelessWidget {
 
           if (showEmptyBlock) _buildEmptyBlock(visual, bt.bluetoothState),
 
-          // NOTE: the active link's row is found in the scan list (the row
-          // whose id matches the link). No current path clears the list while
-          // a link is up without also tearing the link down, so the active
-          // row always exists — if that ever changes, the disconnect
-          // affordance needs a fallback card or it disappears.
+          // The active link's row is found in the scan list. No current path
+          // clears the list while a link is up without tearing the link down,
+          // so the active row always exists.
           for (final device in [...freshRows, ...staleRows])
             device.deviceId == activeId
                 ? _ActiveDeviceRow(
@@ -250,17 +226,7 @@ class DevicesTab extends StatelessWidget {
 }
 
 /// Map a recorded connect-failure [kind] to the per-row hint shown on the
-/// Devices tab. [ConnectFailureKind.failed] covers Chrome's stale device
-/// handle (a row left over from an earlier session rejects gatt.connect();
-/// a fresh Scan + pick mints a new handle and is the actual fix — hence the
-/// web-specific "pick it again" copy gated on [isWeb]) as well as ordinary
-/// native refusals. Either kind can also mean the device was just grabbed
-/// by another central (a busy BLE peripheral typically stops advertising
-/// and lets connect attempts hang or refuse), so the native/timeout copy
-/// tells the user to check that case in the same imperative voice as the
-/// web hint — "on and nearby" alone was misleading there. Copy lives here
-/// in the UI layer; the manager only records the kind (see
-/// [BleLinkManager.connectFailureFor]).
+/// Devices tab, including platform-specific web guidance (e.g., stale handles).
 String connectFailureHint(
   ConnectFailureKind kind, {
   required bool isWeb,
@@ -283,30 +249,10 @@ String unsupportedHint({required bool isWeb}) => isWeb
     ? "This browser can't use Bluetooth. Try Chrome or Edge on a computer, Chrome on Android, or the native Android/iOS app."
     : 'This device reports no Bluetooth support. The app is available for Android and iOS, as a web app in Chrome on Android, and in Chrome or Edge on a computer.';
 
-/// The inactive BLE device row's "liveness" subtitle, resolved from the
-/// platform and what we know of the device:
-///
-///  * No liveness data at all ([lastAliveMs] null): the legacy fallbacks —
-///    the RSSI line (or its transient "RSSI: --") where scan RSSI can exist,
-///    no subtitle where it can't (web). The rule: no permanent placeholder
-///    where no reading can exist.
-///  * Fresh (age ≤ [BleLinkManager.deviceStaleAfter]): native shows the scan
-///    RSSI — but only while the READING itself is fresh (the advert that
-///    carried it arrived within the window, see [scanTs]). [lastAliveMs]
-///    also folds in connection stamps, which are minutes newer than the
-///    last advert whenever a link just tore down (the scan stops at
-///    connect) — showing that old advert's RSSI next to a fresh
-///    "just-disconnected" stamp would present stale data as live. Without a
-///    fresh advert the row shows the age line instead ("Last seen just
-///    now" right after a disconnect). Web has no scan RSSI, so it always
-///    shows the "Last seen …" age here.
-///  * Stale: "Last seen …" with `stale` set so the row de-emphasizes
-///    itself; the aged RSSI is suppressed — a minutes-old reading is stale
-///    data, not information.
-///
-/// Ages render via [formatRelativeAge]'s coarse ladder, so the text changes
-/// rarely (no distracting per-second count-up). Returns null when the
-/// subtitle slot should stay empty.
+/// Resolves the "liveness" subtitle for inactive BLE rows:
+/// * No data: RSSI fallback if supported.
+/// * Fresh: RSSI if advert is recent, otherwise "Last seen" age.
+/// * Stale: "Last seen" age (hides stale RSSI).
 ({String text, bool stale})? bleRowSubtitle({
   required int? scanRssi,
   required int? scanTs,
@@ -365,28 +311,15 @@ typedef InactiveRowVisual = ({
 /// in light mode, lightens it in dark mode. Playground: 0.04–0.10.
 const double staleCardTintAlpha = 0.06;
 
-/// Shared width of the Devices tab's action buttons (Scan/Stop in the status
-/// row, Connect on inactive rows, Cancel/Disconnect on the active row) so
-/// they form one aligned column of identical shape. Sized for the longest
-/// label, "Disconnecting…": ~103px at the M3 label style (14px w500, worst
-/// measured across Roboto/Segoe) + the outlined button's 12px horizontal
-/// padding = ~127px, with slack for font fallback differences. Tweak point:
-/// 132–148.
+/// Shared width for action buttons to maintain vertical alignment.
+/// Sized to fit "Disconnecting…".
 const double deviceActionButtonWidth = 136;
 
 /// Map platform/liveness/failure state to the inactive row's full visual.
-/// Subtitle text and the staleness verdict come from [bleRowSubtitle]; this
-/// layers the failure hint's priority and the per-mood colors on top.
 ///
 /// A stale row ("hasn't been active for a while") is de-emphasized: the
-/// foreground dims to the M3 disabled emphasis (onSurface at 38%) and the
-/// card gets an explicit onSurface-over-surface blend at
-/// [staleCardTintAlpha]. The blend is computed because the M3 container roles
-/// (e.g. surfaceContainerHighest) can't be relied on here — this app's
-/// M2-era ColorScheme constructors fall them back to `surface`, an invisible
-/// no-op. The Connect button stays enabled AND undimmed: stale means "maybe
-/// gone", not "don't try". (Tweak points: the two alphas here, the window at
-/// [BleLinkManager.deviceStaleAfter].)
+/// foreground dims to disabled emphasis and the card gets a subtle blend.
+/// The Connect button stays enabled.
 InactiveRowVisual inactiveRowVisual({
   required int? scanRssi,
   required int? scanTs,
@@ -610,19 +543,8 @@ class _ActiveDeviceRow extends StatelessWidget {
     final isDisconnecting = linkState == BtLinkState.disconnecting;
     final isCoolingDown = linkState == BtLinkState.cooldown;
 
-    // Division of labor: the Card owns the surface (paints the rounded
-    // primaryContainer background — its native job), the selected ListTile
-    // owns content (transparent itself; the app's listTileTheme supplies the
-    // on-container color for the title, subtitle, and gear IconButton).
-    //
-    // Compact horizontal metrics: the trailing (gear + the fixed-width
-    // action button) is ~185px, so on a phone the title/subtitle lane is
-    // under 100px. minLeadingWidth (40→28), the title gap (16→8), and a
-    // compact gear (48→40) reclaim ~28px — enough for "Connecting…" and
-    // "Disconnecting…" to stay on one line. The RIGHT side is untouched:
-    // contentPadding and [deviceActionButtonWidth] keep the button column
-    // aligned with the Scan/Connect buttons (see the status row's padding
-    // math above).
+    // Compresses horizontal metrics (leading width, title gap, icon size)
+    // to ensure text fits on small screens, while maintaining button alignment.
     return Card(
       color: scheme.primaryContainer,
       child: ListTile(
