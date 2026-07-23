@@ -44,6 +44,16 @@ class DevicesTab extends StatelessWidget {
     // (radio off / permission / no devices found) — not during a scan.
     final showEmptyBlock = isEmpty && !bt.isScanning;
 
+    // "Quiet when nominal" for the top indicator: an icon only for scan
+    // progress or adapter failures, text-only for powered-on hints, and
+    // fully silent while the empty block is on screen (the block is the
+    // single voice, icon included). See [topIndicatorMode].
+    final indicatorMode = topIndicatorMode(
+      availability: bt.bluetoothState,
+      isScanning: bt.isScanning,
+      emptyBlockVisible: showEmptyBlock,
+    );
+
     // Resolve every BLE row's inactive presentation up front — one clock
     // reading and one staleness predicate for the whole list — then partition
     // STABLY: fresh rows keep scan order, stale ("hasn't been active for a
@@ -93,7 +103,7 @@ class DevicesTab extends StatelessWidget {
           const SizedBox(height: 8),
 
           // The 4px left padding mirrors the M3 Card default margin so the
-          // status icon lines up with the cards below. The 28px right padding
+          // status readout lines up with the cards below. The 28px right padding
           // is Card margin (4) + the M3 ListTile trailing content padding
           // (24 — asymmetric; the leading side is 16), so the Scan button's
           // right edge lands on the same column as the rows' trailing
@@ -104,7 +114,9 @@ class DevicesTab extends StatelessWidget {
             padding: const EdgeInsets.only(left: 4, right: 28),
             child: Row(
               children: [
-                Expanded(child: BluetoothIndicator(visual: visual)),
+                Expanded(
+                  child: BluetoothIndicator(visual: visual, mode: indicatorMode),
+                ),
                 const SizedBox(width: 12),
                 SizedBox(
                   width: deviceActionButtonWidth,

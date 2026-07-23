@@ -112,50 +112,110 @@ BtStatusVisual btStatusVisual({
   );
 }
 
-/// Compact Bluetooth status readout (icon + hint text, with a spinner while
-/// anything is in flight). Renders a [BtStatusVisual] precomputed by the
-/// caller via [btStatusVisual] — the same visual can feed several surfaces
-/// (this indicator, the Devices tab's empty block) without recomputing.
-/// An empty label renders icon-only (the quiet "powered on, nothing to
-/// report" state) rather than reserving a blank text slot.
+/// The Devices tab top indicator's presentation mode, resolved by
+/// [topIndicatorMode]. "Quiet when nominal": the indicator draws an icon
+/// only when the glyph carries real information — scan progress or an
+/// adapter failure (those glyphs are distinct from the device rows' BLE
+/// icons, so nothing reads as a duplicate) — and stays text-only or fully
+/// silent in powered-on nominal states, where a static Bluetooth glyph
+/// would read as a stale link-state icon next to the rows' stateful ones.
+enum TopIndicatorMode {
+  /// Nothing renders: the tab's empty block is on screen and is the single
+  /// voice for the state (icon included).
+  quiet,
+
+  /// Label only, no icon: powered-on nominal states ("Tap a device to
+  /// connect"). An empty label renders nothing at all (e.g. a link is
+  /// busy — the active device row is the voice then).
+  textOnly,
+
+  /// Icon (with spinner while in flight) plus label: scanning, or an
+  /// adapter failure the empty block isn't covering.
+  iconAndLabel,
+}
+
+/// Resolve the top indicator's presentation mode from adapter/scan state
+/// and whether the tab's empty block is on screen. The empty block is the
+/// single voice for empty states, so whenever it shows the indicator goes
+/// fully quiet — its icon and label would duplicate the block's a hundred
+/// pixels above it. Adapter failures normally imply an empty device list
+/// (no scan is possible, and poweredOff clears the list), so their
+/// icon + label only survive the dedupe in the rare case of a stale
+/// populated list (e.g. permission revoked mid-session).
+TopIndicatorMode topIndicatorMode({
+  required AvailabilityState availability,
+  required bool isScanning,
+  required bool emptyBlockVisible,
+}) {
+  // The empty block speaks (icon included); it can only show while not
+  // scanning, so this can't suppress the scan progress below.
+  if (emptyBlockVisible) return TopIndicatorMode.quiet;
+  // Scanning: progress is real information — spinner + label.
+  if (isScanning) return TopIndicatorMode.iconAndLabel;
+  // Adapter failures: distinct glyphs (off / permission / unsupported /
+  // startup) carry real information.
+  if (availability != AvailabilityState.poweredOn) {
+    return TopIndicatorMode.iconAndLabel;
+  }
+  // Powered-on nominal: no icon.
+  return TopIndicatorMode.textOnly;
+}
+
+/// Compact Bluetooth status readout for the Devices tab's status row.
+/// Renders a [BtStatusVisual] precomputed by the caller via
+/// [btStatusVisual] — the same visual can feed several surfaces (this
+/// indicator, the Devices tab's empty block) without recomputing — gated
+/// by a [TopIndicatorMode] from [topIndicatorMode]: "quiet when nominal",
+/// so an icon appears only for scan progress or an adapter failure, and
+/// nothing at all while the empty block is the voice on screen.
 class BluetoothIndicator extends StatelessWidget {
   /// The resolved status visual to display.
   final BtStatusVisual visual;
 
-  const BluetoothIndicator({super.key, required this.visual});
+  /// How much of [visual] to draw (see [topIndicatorMode]).
+  final TopIndicatorMode mode;
+
+  const BluetoothIndicator({
+    super.key,
+    required this.visual,
+    required this.mode,
+  });
 
   @override
   Widget build(BuildContext context) {
+    if (mode == TopIndicatorMode.quiet) {
+      return const SizedBox.shrink();
+    }
     const double size = 32;
-    final iconStack = Stack(
-      clipBehavior: Clip.none,
-      alignment: Alignment.center,
-      children: [
-        Icon(visual.icon, size: size, color: visual.color),
-        if (visual.showSpinner)
-          const SizedBox(
-            height: size,
-            width: size,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-      ],
-    );
-
+    final label = visual.label;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        iconStack,
-        if (visual.label.isNotEmpty) ...[
-          const SizedBox(width: 8),
+        if (mode == TopIndicatorMode.iconAndLabel) ...[
+          Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              Icon(visual.icon, size: size, color: visual.color),
+              if (visual.showSpinner)
+                const SizedBox(
+                  height: size,
+                  width: size,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+            ],
+          ),
+          if (label.isNotEmpty) const SizedBox(width: 8),
+        ],
+        if (label.isNotEmpty)
           Flexible(
             child: Text(
-              visual.label,
+              label,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: Theme.of(context).colorScheme.outline,
               ),
             ),
           ),
-        ],
       ],
     );
   }
