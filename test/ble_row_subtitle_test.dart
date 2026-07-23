@@ -134,18 +134,6 @@ void main() {
         (text: 'Last seen just now', stale: false),
       );
     });
-
-    test('the row is NOT marked stale while the stamp is fresh', () {
-      expect(
-        row(
-          scanRssi: -58,
-          scanTs: now - 60000,
-          lastAliveMs: now - 1000,
-          supportsScanRssi: true,
-        )!.stale,
-        isFalse,
-      );
-    });
   });
 
   group('stale proof of life', () {

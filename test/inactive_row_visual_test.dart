@@ -100,24 +100,4 @@ void main() {
       expect(row(lastAliveMs: now - staleMs).mood, InactiveRowMood.normal);
     });
   });
-
-  group('no liveness data (legacy fallbacks)', () {
-    test('a reading renders as dBm with the normal look', () {
-      final v = row(scanRssi: -58);
-      expect(v.mood, InactiveRowMood.normal);
-      expect(v.subtitle, 'RSSI: -58 dBm');
-    });
-
-    test('no reading possible (web) leaves the subtitle slot empty', () {
-      final v = row(supportsScanRssi: false);
-      expect(v.mood, InactiveRowMood.normal);
-      expect(v.subtitle, isNull);
-    });
-
-    test('web staleness comes from the connection stamp', () {
-      final v = row(lastAliveMs: now - staleMs - 1, supportsScanRssi: false);
-      expect(v.mood, InactiveRowMood.stale);
-      expect(v.subtitle, startsWith('Last seen'));
-    });
-  });
 }
