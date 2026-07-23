@@ -7,9 +7,9 @@ import 'package:dynamite_app/services/ble_link_manager.dart'
 /// Tests for [bleRowSubtitle], the inactive BLE row's liveness subtitle.
 /// The web cases are the point of the mapping: Web Bluetooth can never
 /// deliver a scan RSSI (requestDevice() has none, watchAdvertisements is
-/// abandoned), so the row shows a connection-based "Last connected" age
-/// instead of a permanent "RSSI: --" placeholder — and any proof of life
-/// older than [BleLinkManager.deviceStaleAfter] flips the row stale.
+/// abandoned), so the row shows a connection-stamp "Last seen" age instead
+/// of a permanent "RSSI: --" placeholder — and any proof of life older
+/// than [BleLinkManager.deviceStaleAfter] flips the row stale.
 ///
 /// On native the RSSI has its own freshness gate: [lastAliveMs] folds in
 /// connection stamps, which are minutes newer than the last advert whenever
@@ -96,9 +96,9 @@ void main() {
       );
     });
 
-    test('web shows "Last connected" while fresh', () {
+    test('web shows "Last seen" while fresh', () {
       expect(row(lastAliveMs: now - 3000, supportsScanRssi: false), (
-        text: 'Last connected just now',
+        text: 'Last seen just now',
         stale: false,
       ));
     });
@@ -151,7 +151,7 @@ void main() {
   group('stale proof of life', () {
     test('one millisecond past the boundary is stale', () {
       final r = row(lastAliveMs: now - staleMs - 1, supportsScanRssi: false);
-      expect(r, (text: 'Last connected >5 seconds ago', stale: true));
+      expect(r, (text: 'Last seen >5 seconds ago', stale: true));
     });
 
     test('native switches to "Last seen" and suppresses the aged RSSI', () {
@@ -172,7 +172,7 @@ void main() {
         stale: true,
       ));
       expect(row(lastAliveMs: now - 7200000, supportsScanRssi: false), (
-        text: 'Last connected >1 hour ago',
+        text: 'Last seen >1 hour ago',
         stale: true,
       ));
     });

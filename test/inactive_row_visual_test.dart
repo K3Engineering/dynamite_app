@@ -114,10 +114,10 @@ void main() {
       expect(v.subtitle, isNull);
     });
 
-    test('web staleness comes from the last-connected stamp', () {
+    test('web staleness comes from the connection stamp', () {
       final v = row(lastAliveMs: now - staleMs - 1, supportsScanRssi: false);
       expect(v.mood, InactiveRowMood.stale);
-      expect(v.subtitle, startsWith('Last connected'));
+      expect(v.subtitle, startsWith('Last seen'));
     });
   });
 }

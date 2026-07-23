@@ -273,9 +273,9 @@ class BleLinkManager extends ChangeNotifier {
   /// ([BleDevice.timestamp], refreshed per advert while scanning) so the
   /// value covers both "seen" and "connected" evidence; web uses connection
   /// stamps only — the picker pick-time is not a connection and must not
-  /// count as "last connected". The Devices tab renders this as "Last seen"
-  /// (native) / "Last connected" (web) and stales it out after
-  /// [deviceStaleAfter].
+  /// count as a sighting on its own. The Devices tab renders this as "Last
+  /// seen" on both platforms (web: connection stamps only — no adverts
+  /// exist) and stales it out after [deviceStaleAfter].
   int? lastAliveMs(String deviceId) {
     final stamp = _lastAliveMs[deviceId];
     if (kIsWeb) return stamp;

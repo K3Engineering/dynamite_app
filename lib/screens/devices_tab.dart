@@ -257,8 +257,9 @@ class DevicesTab extends StatelessWidget {
 /// native refusals. Either kind can also mean the device was just grabbed
 /// by another central (a busy BLE peripheral typically stops advertising
 /// and lets connect attempts hang or refuse), so the native/timeout copy
-/// names that case — "on and nearby" alone was misleading there. Copy lives
-/// here in the UI layer; the manager only records the kind (see
+/// tells the user to check that case in the same imperative voice as the
+/// web hint — "on and nearby" alone was misleading there. Copy lives here
+/// in the UI layer; the manager only records the kind (see
 /// [BleLinkManager.connectFailureFor]).
 String connectFailureHint(
   ConnectFailureKind kind, {
@@ -267,9 +268,9 @@ String connectFailureHint(
   ConnectFailureKind.failed =>
     isWeb
         ? "Couldn't connect — tap Scan and pick it again"
-        : "Couldn't connect — it may be off, out of range, or connected to another device",
+        : "Couldn't connect — check that it's on, nearby, and not connected to another device",
   ConnectFailureKind.timeout =>
-    'Timed out — it may be off, out of range, or connected to another device',
+    'Timed out — check that the device is on, nearby, and not connected to another device',
 };
 
 /// The inactive BLE device row's "liveness" subtitle, resolved from the
@@ -288,10 +289,10 @@ String connectFailureHint(
 ///    "just-disconnected" stamp would present stale data as live. Without a
 ///    fresh advert the row shows the age line instead ("Last seen just
 ///    now" right after a disconnect). Web has no scan RSSI, so it always
-///    shows a "Last connected …" age here.
-///  * Stale: "Last seen …" (native) / "Last connected …" (web) with
-///    `stale` set so the row de-emphasizes itself; the aged RSSI is
-///    suppressed — a minutes-old reading is stale data, not information.
+///    shows the "Last seen …" age here.
+///  * Stale: "Last seen …" with `stale` set so the row de-emphasizes
+///    itself; the aged RSSI is suppressed — a minutes-old reading is stale
+///    data, not information.
 ///
 /// Ages render via [formatRelativeAge]'s coarse ladder, so the text changes
 /// rarely (no distracting per-second count-up). Returns null when the
@@ -321,8 +322,10 @@ String connectFailureHint(
       stale: false,
     );
   }
-  final label = supportsScanRssi ? 'Last seen' : 'Last connected';
-  return (text: '$label ${formatRelativeAge(age)}', stale: stale);
+  // One label on both platforms: on web "seen" can only mean a connection
+  // stamp (no adverts exist there), and "Last connected" read wrong for a
+  // stamp taken at disconnect time.
+  return (text: 'Last seen ${formatRelativeAge(age)}', stale: stale);
 }
 
 /// The inactive device row's presentation state, resolved by

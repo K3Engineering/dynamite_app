@@ -10,7 +10,8 @@ import 'package:dynamite_app/services/ble_link_manager.dart'
 /// typically Chrome's stale device handle (the fix is a picker round-trip,
 /// hence "tap Scan and pick it again"), while on native a refusal or timeout
 /// can equally mean the device was grabbed by another central — the copy
-/// names that case instead of implying the device is off or far away.
+/// tells the user to check that case in the same imperative voice instead
+/// of implying the device is simply off or far away.
 void main() {
   test('failed on web points at Scan — the actual fix for a stale handle', () {
     expect(
@@ -19,18 +20,19 @@ void main() {
     );
   });
 
-  test('failed on native names the busy-elsewhere case', () {
+  test('failed on native asks the user to check the busy-elsewhere case', () {
     expect(
       connectFailureHint(ConnectFailureKind.failed, isWeb: false),
-      "Couldn't connect — it may be off, out of range, or connected to another device",
+      "Couldn't connect — check that it's on, nearby, and not connected to another device",
     );
   });
 
-  test('timeout names the busy-elsewhere case on either platform', () {
+  test('timeout asks the user to check the busy-elsewhere case on either '
+      'platform', () {
     for (final isWeb in [true, false]) {
       expect(
         connectFailureHint(ConnectFailureKind.timeout, isWeb: isWeb),
-        'Timed out — it may be off, out of range, or connected to another device',
+        'Timed out — check that the device is on, nearby, and not connected to another device',
       );
     }
   });
