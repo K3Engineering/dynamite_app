@@ -86,22 +86,29 @@ class DevicesTab extends StatelessWidget {
           const SectionHeader('BLE devices'),
           const SizedBox(height: 8),
 
-          // The 4px horizontal padding mirrors the M3 Card default margin so
-          // the status icon and the button line up with the cards below.
-          // The button is anchored right, so status text length changes
-          // never move it.
+          // The 4px left padding mirrors the M3 Card default margin so the
+          // status icon lines up with the cards below. The 28px right padding
+          // is Card margin (4) + the M3 ListTile trailing content padding
+          // (24 — asymmetric; the leading side is 16), so the Scan button's
+          // right edge lands on the same column as the rows' trailing
+          // Connect/Disconnect buttons (all share [deviceActionButtonWidth]).
+          // The button is anchored right, so status text length changes never
+          // move it.
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.only(left: 4, right: 28),
             child: Row(
               children: [
                 Expanded(child: BluetoothIndicator(visual: visual)),
                 const SizedBox(width: 12),
-                FilledButton.tonal(
-                  // TODO(ux): see BleLinkManager._startScan — starting a scan
-                  // while streaming kills the active link (and any in-progress
-                  // recording). Decide disable-vs-confirm.
-                  onPressed: () => _scanWithFeedback(context, bt),
-                  child: Text(bt.isScanning ? 'Stop' : 'Scan'),
+                SizedBox(
+                  width: deviceActionButtonWidth,
+                  child: FilledButton.tonal(
+                    // TODO(ux): see BleLinkManager._startScan — starting a scan
+                    // while streaming kills the active link (and any in-progress
+                    // recording). Decide disable-vs-confirm.
+                    onPressed: () => _scanWithFeedback(context, bt),
+                    child: Text(bt.isScanning ? 'Stop' : 'Scan'),
+                  ),
                 ),
               ],
             ),
@@ -298,6 +305,15 @@ typedef InactiveRowVisual = ({
 /// in light mode, lightens it in dark mode. Playground: 0.04–0.10.
 const double staleCardTintAlpha = 0.06;
 
+/// Shared width of the Devices tab's action buttons (Scan/Stop in the status
+/// row, Connect on inactive rows, Cancel/Disconnect on the active row) so
+/// they form one aligned column of identical shape. Sized for the longest
+/// label, "Disconnecting…": ~103px at the M3 label style (14px w500, worst
+/// measured across Roboto/Segoe) + the outlined button's 12px horizontal
+/// padding = ~127px, with slack for font fallback differences. Tweak point:
+/// 132–148.
+const double deviceActionButtonWidth = 136;
+
 /// Map platform/liveness/failure state to the inactive row's full visual.
 /// Subtitle text and the staleness verdict come from [bleRowSubtitle]; this
 /// layers the failure hint's priority and the per-mood colors on top.
@@ -448,16 +464,44 @@ class _InactiveDeviceRow extends StatelessWidget {
                     ? null
                     : TextStyle(color: visual.subtitleColor),
               ),
-        trailing: FilledButton(
-          // Disabled whenever a link is busy so we never issue a connect
-          // against a link that is still tearing down.
-          onPressed: linkBusy ? null : onConnect,
-          child: const Text('Connect'),
+        // Fixed width: same column/shape as the Scan and Disconnect buttons
+        // (see [deviceActionButtonWidth]).
+        trailing: SizedBox(
+          width: deviceActionButtonWidth,
+          child: FilledButton(
+            // Disabled whenever a link is busy so we never issue a connect
+            // against a link that is still tearing down.
+            onPressed: linkBusy ? null : onConnect,
+            child: const Text('Connect'),
+          ),
         ),
       ),
     );
   }
 }
+
+/// The active row's Cancel/Disconnect button style. OutlinedButtons don't
+/// participate in tile theming; without the explicit foreground the label
+/// renders in primary on the primaryContainer surface — invisible. The
+/// outline takes the row's content color (the gear/title's onPrimaryContainer)
+/// so the button keeps a visible boundary on the tinted card and lines up
+/// with the filled buttons' shapes; outline and label both dim while teardown
+/// is in flight. The reduced horizontal padding (M3 default is 24) lets
+/// "Disconnecting…" fit [deviceActionButtonWidth].
+ButtonStyle activeRowActionButtonStyle({required Color onContainer}) =>
+    OutlinedButton.styleFrom(
+      foregroundColor: onContainer,
+      disabledForegroundColor: onContainer.withValues(alpha: 0.5),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+    ).copyWith(
+      side: WidgetStateProperty.resolveWith(
+        (states) => BorderSide(
+          color: states.contains(WidgetState.disabled)
+              ? onContainer.withValues(alpha: 0.5)
+              : onContainer,
+        ),
+      ),
+    );
 
 /// The active device row (shared by the BLE and Demo sections): a tinted
 /// card carrying the live link state (spinner while connecting/setting up,
@@ -551,27 +595,26 @@ class _ActiveDeviceRow extends StatelessWidget {
                   .findAncestorStateOfType<AppShellState>()
                   ?.goToSettings(),
             ),
-            TextButton(
-              // TextButtons don't participate in tile theming either; without
-              // this the label renders in primary on the primaryContainer
-              // surface — invisible.
-              style: TextButton.styleFrom(
-                foregroundColor: onContainer,
-                disabledForegroundColor: onContainer.withValues(alpha: 0.5),
-              ),
-              // Disabled while the disconnect is in flight so the button
-              // truthfully reflects the in-progress teardown — and during the
-              // post-disconnect cooldown, where the link is already down and
-              // disconnectSelectedDevice would be an enabled no-op.
-              onPressed: (isDisconnecting || isCoolingDown)
-                  ? null
-                  : onDisconnect,
-              child: Text(
-                isDisconnecting
-                    ? 'Disconnecting…'
-                    : isConnecting
-                    ? 'Cancel'
-                    : 'Disconnect',
+            // Fixed width: same column/shape as the Scan and Connect buttons
+            // (see [deviceActionButtonWidth]).
+            SizedBox(
+              width: deviceActionButtonWidth,
+              child: OutlinedButton(
+                style: activeRowActionButtonStyle(onContainer: onContainer),
+                // Disabled while the disconnect is in flight so the button
+                // truthfully reflects the in-progress teardown — and during the
+                // post-disconnect cooldown, where the link is already down and
+                // disconnectSelectedDevice would be an enabled no-op.
+                onPressed: (isDisconnecting || isCoolingDown)
+                    ? null
+                    : onDisconnect,
+                child: Text(
+                  isDisconnecting
+                      ? 'Disconnecting…'
+                      : isConnecting
+                      ? 'Cancel'
+                      : 'Disconnect',
+                ),
               ),
             ),
           ],
