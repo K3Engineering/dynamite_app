@@ -746,6 +746,36 @@ void main() {
       });
     });
 
+    test('a user-requested disconnect re-stamps proof of life', () {
+      fakeAsync((async) {
+        final (link, _) = wire();
+        settleStartup(async);
+
+        unawaited(link.connectToDevice(deviceId));
+        async.elapse(const Duration(seconds: 4));
+        expect(link.isStreaming, isTrue);
+        final connectedAt = link.lastAliveMs(deviceId);
+
+        // Burn real wall-clock time so the two stamps can differ: fakeAsync
+        // fakes timers, NOT DateTime.now() (see the group note), and real
+        // execution between them takes microseconds — below Windows' ~15.6 ms
+        // clock granularity. A synchronous spin keeps the fake zone intact
+        // (no timers or microtasks involved).
+        final sw = Stopwatch()..start();
+        while (sw.elapsedMilliseconds < 50) {}
+
+        unawaited(link.disconnectSelectedDevice());
+        async.elapse(const Duration(seconds: 4));
+
+        expect(link.link.state, BtLinkState.idle);
+        // Strictly greater: the stamp moved from connect time to disconnect
+        // time. Before the fix, a user-requested disconnect stamped nothing
+        // (the callback sees `disconnecting`, not an active state), so a row
+        // connected minutes ago instantly showed "Last seen >1 minute ago".
+        expect(link.lastAliveMs(deviceId), greaterThan(connectedAt!));
+      });
+    });
+
     test('the demo device is never stamped', () {
       fakeAsync((async) {
         final (link, _) = wire();

@@ -289,10 +289,12 @@ class BleLinkManager extends ChangeNotifier {
   }
 
   /// Record a proof of life for [deviceId]: a GATT link was provably up.
-  /// Callers: the link reaching streaming, the disconnect callback for a
-  /// link that was up, and the post-connect setup-failure path (GATT came up
-  /// but discovery/subscription failed). All three are moments where the
-  /// device demonstrably answered.
+  /// Callers: the link reaching streaming, a user-requested disconnect of a
+  /// live link (see [disconnectSelectedDevice] — the callback can't, see
+  /// there), the disconnect callback for an unexpectedly dropped link, and
+  /// the post-connect setup-failure path (GATT came up but
+  /// discovery/subscription failed). All four are moments where the device
+  /// demonstrably answered.
   void _stampAlive(String deviceId) {
     if (deviceId.isEmpty || deviceId == DeviceLink.demoDeviceId) return;
     _lastAliveMs[deviceId] = DateTime.now().millisecondsSinceEpoch;
@@ -807,7 +809,9 @@ class BleLinkManager extends ChangeNotifier {
         _link.state == BtLinkState.streaming;
     // Proof of life ends at teardown: stamp it so the row's "last
     // seen/connected" age starts counting from now, not from the (possibly
-    // much older) connect time.
+    // much older) connect time. Only the UNEXPECTED drop is stamped here —
+    // a user-requested disconnect arrives in `disconnecting` (wasActive
+    // false) and was already stamped in [disconnectSelectedDevice].
     if (wasActive) {
       _stampAlive(deviceId);
     }
@@ -1050,6 +1054,18 @@ class BleLinkManager extends ChangeNotifier {
       return;
     }
 
+    // A live link being torn down on request is proof of life up to this
+    // moment — stamp it so the row's "last seen/connected" age counts from
+    // the disconnect, not from the last advertisement (native: minutes old
+    // if the scan stopped at connect) or the connect time (web: no adverts
+    // exist, so the stamp is all there is). The connection-change callback
+    // can't do this: by the time it runs, the state is already
+    // `disconnecting`, so its `wasActive` check is false. A cancelled
+    // connect attempt (connecting, never up) stamps nothing: a refused
+    // attempt proves nothing about the device being alive.
+    if (_link.isLinkUp) {
+      _stampAlive(deviceId);
+    }
     _link.state = BtLinkState.disconnecting;
     notifyListeners();
 

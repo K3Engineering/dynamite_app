@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:universal_ble/universal_ble.dart'
@@ -67,11 +68,14 @@ class DevicesTab extends StatelessWidget {
       for (final d in bt.devices)
         d.deviceId: inactiveRowVisual(
           scanRssi: d.rssi,
+          // The advert receipt time — the freshness of the RSSI reading
+          // itself (null on web, where no advertisement data exists).
+          scanTs: d.timestamp,
           lastAliveMs: bt.lastAliveMs(d.deviceId),
           nowMs: nowMs,
           supportsScanRssi: bt.supportsScanRssi,
           failureHint: switch (bt.connectFailureFor(d.deviceId)) {
-            final kind? => connectFailureHint(kind),
+            final kind? => connectFailureHint(kind, isWeb: kIsWeb),
             null => null,
           },
           colors: scheme,
@@ -115,7 +119,10 @@ class DevicesTab extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: BluetoothIndicator(visual: visual, mode: indicatorMode),
+                  child: BluetoothIndicator(
+                    visual: visual,
+                    mode: indicatorMode,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 SizedBox(
@@ -245,13 +252,24 @@ class DevicesTab extends StatelessWidget {
 /// Map a recorded connect-failure [kind] to the per-row hint shown on the
 /// Devices tab. [ConnectFailureKind.failed] covers Chrome's stale device
 /// handle (a row left over from an earlier session rejects gatt.connect();
-/// a fresh Scan + pick mints a new handle and is the actual fix) as well as
-/// ordinary native refusals. Copy lives here in the UI layer; the manager
-/// only records the kind (see [BleLinkManager.connectFailureFor]).
-String connectFailureHint(ConnectFailureKind kind) => switch (kind) {
-  ConnectFailureKind.failed => "Couldn't connect — tap Scan and pick it again",
+/// a fresh Scan + pick mints a new handle and is the actual fix — hence the
+/// web-specific "pick it again" copy gated on [isWeb]) as well as ordinary
+/// native refusals. Either kind can also mean the device was just grabbed
+/// by another central (a busy BLE peripheral typically stops advertising
+/// and lets connect attempts hang or refuse), so the native/timeout copy
+/// names that case — "on and nearby" alone was misleading there. Copy lives
+/// here in the UI layer; the manager only records the kind (see
+/// [BleLinkManager.connectFailureFor]).
+String connectFailureHint(
+  ConnectFailureKind kind, {
+  required bool isWeb,
+}) => switch (kind) {
+  ConnectFailureKind.failed =>
+    isWeb
+        ? "Couldn't connect — tap Scan and pick it again"
+        : "Couldn't connect — it may be off, out of range, or connected to another device",
   ConnectFailureKind.timeout =>
-    'Timed out — make sure the device is on and nearby',
+    'Timed out — it may be off, out of range, or connected to another device',
 };
 
 /// The inactive BLE device row's "liveness" subtitle, resolved from the
@@ -262,8 +280,15 @@ String connectFailureHint(ConnectFailureKind kind) => switch (kind) {
 ///    no subtitle where it can't (web). The rule: no permanent placeholder
 ///    where no reading can exist.
 ///  * Fresh (age ≤ [BleLinkManager.deviceStaleAfter]): native shows the scan
-///    RSSI — meaningful exactly while adverts/connection are recent. Web has
-///    no scan RSSI, so it shows a "Last connected …" age instead.
+///    RSSI — but only while the READING itself is fresh (the advert that
+///    carried it arrived within the window, see [scanTs]). [lastAliveMs]
+///    also folds in connection stamps, which are minutes newer than the
+///    last advert whenever a link just tore down (the scan stops at
+///    connect) — showing that old advert's RSSI next to a fresh
+///    "just-disconnected" stamp would present stale data as live. Without a
+///    fresh advert the row shows the age line instead ("Last seen just
+///    now" right after a disconnect). Web has no scan RSSI, so it always
+///    shows a "Last connected …" age here.
 ///  * Stale: "Last seen …" (native) / "Last connected …" (web) with
 ///    `stale` set so the row de-emphasizes itself; the aged RSSI is
 ///    suppressed — a minutes-old reading is stale data, not information.
@@ -273,6 +298,7 @@ String connectFailureHint(ConnectFailureKind kind) => switch (kind) {
 /// subtitle slot should stay empty.
 ({String text, bool stale})? bleRowSubtitle({
   required int? scanRssi,
+  required int? scanTs,
   required int? lastAliveMs,
   required int nowMs,
   required bool supportsScanRssi,
@@ -286,7 +312,10 @@ String connectFailureHint(ConnectFailureKind kind) => switch (kind) {
   }
   final age = Duration(milliseconds: nowMs - stamp);
   final stale = age > BleLinkManager.deviceStaleAfter;
-  if (!stale && supportsScanRssi) {
+  final advertFresh =
+      scanTs != null &&
+      Duration(milliseconds: nowMs - scanTs) <= BleLinkManager.deviceStaleAfter;
+  if (!stale && supportsScanRssi && advertFresh) {
     return (
       text: scanRssi != null ? 'RSSI: $scanRssi dBm' : 'RSSI: --',
       stale: false,
@@ -347,6 +376,7 @@ const double deviceActionButtonWidth = 136;
 /// [BleLinkManager.deviceStaleAfter].)
 InactiveRowVisual inactiveRowVisual({
   required int? scanRssi,
+  required int? scanTs,
   required int? lastAliveMs,
   required int nowMs,
   required bool supportsScanRssi,
@@ -366,6 +396,7 @@ InactiveRowVisual inactiveRowVisual({
   }
   final freshness = bleRowSubtitle(
     scanRssi: scanRssi,
+    scanTs: scanTs,
     lastAliveMs: lastAliveMs,
     nowMs: nowMs,
     supportsScanRssi: supportsScanRssi,
@@ -570,10 +601,21 @@ class _ActiveDeviceRow extends StatelessWidget {
     // primaryContainer background — its native job), the selected ListTile
     // owns content (transparent itself; the app's listTileTheme supplies the
     // on-container color for the title, subtitle, and gear IconButton).
+    //
+    // Compact horizontal metrics: the trailing (gear + the fixed-width
+    // action button) is ~185px, so on a phone the title/subtitle lane is
+    // under 100px. minLeadingWidth (40→28), the title gap (16→8), and a
+    // compact gear (48→40) reclaim ~28px — enough for "Connecting…" and
+    // "Disconnecting…" to stay on one line. The RIGHT side is untouched:
+    // contentPadding and [deviceActionButtonWidth] keep the button column
+    // aligned with the Scan/Connect buttons (see the status row's padding
+    // math above).
     return Card(
       color: scheme.primaryContainer,
       child: ListTile(
         selected: true,
+        minLeadingWidth: 28,
+        horizontalTitleGap: 8,
         leading: Stack(
           alignment: Alignment.center,
           children: [
@@ -592,17 +634,26 @@ class _ActiveDeviceRow extends StatelessWidget {
           ],
         ),
         title: Text(name),
-        subtitle: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Flexible(child: Text(visual.label)),
-            // Live RSSI (native only): null until the first poll lands —
-            // and forever on web — in which case nothing renders.
-            if (connectedRssi != null) ...[
-              const Text(' • '),
-              RssiIndicator(rssi: connectedRssi, color: onContainer),
+        // One flowing text, NOT a Row[Flexible(...), ...]: a Row squeezes
+        // the label into whatever width the RSSI leaves (near zero on a
+        // phone → one letter per line). A single Text.rich wraps at word
+        // boundaries — worst case "Connected •" / "▂ -58 dBm" on two tidy
+        // lines — and the WidgetSpan moves the RSSI block as a unit.
+        subtitle: Text.rich(
+          TextSpan(
+            children: [
+              TextSpan(text: visual.label),
+              // Live RSSI (native only): null until the first poll lands —
+              // and forever on web — in which case nothing renders.
+              if (connectedRssi != null) ...[
+                const TextSpan(text: ' • '),
+                WidgetSpan(
+                  alignment: PlaceholderAlignment.middle,
+                  child: RssiIndicator(rssi: connectedRssi, color: onContainer),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -610,6 +661,9 @@ class _ActiveDeviceRow extends StatelessWidget {
             IconButton(
               icon: const Icon(Icons.settings_outlined),
               tooltip: 'Device settings',
+              // Compact (48→40): part of the subtitle-lane width reclamation
+              // above.
+              visualDensity: VisualDensity.compact,
               onPressed: () => context
                   .findAncestorStateOfType<AppShellState>()
                   ?.goToSettings(),

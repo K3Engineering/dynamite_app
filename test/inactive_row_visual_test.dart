@@ -22,11 +22,13 @@ void main() {
 
   InactiveRowVisual row({
     int? scanRssi,
+    int? scanTs,
     int? lastAliveMs,
     bool supportsScanRssi = true,
     String? failureHint,
   }) => inactiveRowVisual(
     scanRssi: scanRssi,
+    scanTs: scanTs,
     lastAliveMs: lastAliveMs,
     nowMs: now,
     supportsScanRssi: supportsScanRssi,
@@ -70,10 +72,25 @@ void main() {
     });
 
     test('a fresh row gets the normal look', () {
-      final v = row(scanRssi: -58, lastAliveMs: now - 3000);
+      final v = row(scanRssi: -58, scanTs: now - 3000, lastAliveMs: now - 3000);
       expect(v.mood, InactiveRowMood.normal);
       expect(v.iconColor, colors.outline);
       expect(v.subtitle, 'RSSI: -58 dBm');
+      expect(v.cardColor, isNull);
+      expect(v.titleColor, isNull);
+      expect(v.subtitleColor, isNull);
+    });
+
+    test('a just-disconnected row (fresh stamp, old advert) keeps the '
+        'normal look and shows the age, not the aged RSSI', () {
+      final v = row(
+        scanRssi: -58,
+        scanTs: now - 60000,
+        lastAliveMs: now - 1000,
+      );
+      expect(v.mood, InactiveRowMood.normal);
+      expect(v.subtitle, 'Last seen just now');
+      // No de-emphasis: the device was provably alive a second ago.
       expect(v.cardColor, isNull);
       expect(v.titleColor, isNull);
       expect(v.subtitleColor, isNull);

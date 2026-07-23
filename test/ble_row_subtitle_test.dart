@@ -10,6 +10,13 @@ import 'package:dynamite_app/services/ble_link_manager.dart'
 /// abandoned), so the row shows a connection-based "Last connected" age
 /// instead of a permanent "RSSI: --" placeholder — and any proof of life
 /// older than [BleLinkManager.deviceStaleAfter] flips the row stale.
+///
+/// On native the RSSI has its own freshness gate: [lastAliveMs] folds in
+/// connection stamps, which are minutes newer than the last advert whenever
+/// a link just tore down (the scan stops at connect). Showing that old
+/// advert's RSSI next to a fresh "just-disconnected" stamp would present
+/// stale data as live — so RSSI only renders while the advert that carried
+/// it ([scanTs]) is itself within the freshness window.
 void main() {
   // Fixed reference clock; ages are computed backwards from it.
   final now = DateTime(2026, 7, 22, 12).millisecondsSinceEpoch;
@@ -17,10 +24,12 @@ void main() {
 
   ({String text, bool stale})? row({
     int? scanRssi,
+    int? scanTs,
     int? lastAliveMs,
     required bool supportsScanRssi,
   }) => bleRowSubtitle(
     scanRssi: scanRssi,
+    scanTs: scanTs,
     lastAliveMs: lastAliveMs,
     nowMs: now,
     supportsScanRssi: supportsScanRssi,
@@ -49,9 +58,14 @@ void main() {
   });
 
   group('fresh proof of life', () {
-    test('native prefers the live RSSI while fresh', () {
+    test('native prefers the live RSSI while the advert is fresh', () {
       expect(
-        row(scanRssi: -58, lastAliveMs: now - 3000, supportsScanRssi: true),
+        row(
+          scanRssi: -58,
+          scanTs: now - 3000,
+          lastAliveMs: now - 3000,
+          supportsScanRssi: true,
+        ),
         (text: 'RSSI: -58 dBm', stale: false),
       );
     });
@@ -59,12 +73,28 @@ void main() {
     test(
       'native with no reading keeps the transient placeholder while fresh',
       () {
-        expect(row(lastAliveMs: now - 3000, supportsScanRssi: true), (
-          text: 'RSSI: --',
-          stale: false,
-        ));
+        expect(
+          row(
+            scanTs: now - 3000,
+            lastAliveMs: now - 3000,
+            supportsScanRssi: true,
+          ),
+          (text: 'RSSI: --', stale: false),
+        );
       },
     );
+
+    test('an advert exactly at the stale boundary still shows RSSI', () {
+      expect(
+        row(
+          scanRssi: -58,
+          scanTs: now - staleMs,
+          lastAliveMs: now - staleMs,
+          supportsScanRssi: true,
+        ),
+        (text: 'RSSI: -58 dBm', stale: false),
+      );
+    });
 
     test('web shows "Last connected" while fresh', () {
       expect(row(lastAliveMs: now - 3000, supportsScanRssi: false), (
@@ -81,6 +111,43 @@ void main() {
     });
   });
 
+  group('advert freshness gates the RSSI (the just-disconnected case)', () {
+    // The scenario: scan, connect (scan stops), stream for minutes,
+    // disconnect. lastAliveMs is fresh (stamped at teardown) but the last
+    // advert — and its RSSI — is minutes old.
+    test('a fresh connection stamp with an old advert shows the age, not '
+        'the aged RSSI', () {
+      expect(
+        row(
+          scanRssi: -58,
+          scanTs: now - 60000,
+          lastAliveMs: now - 1000,
+          supportsScanRssi: true,
+        ),
+        (text: 'Last seen just now', stale: false),
+      );
+    });
+
+    test('a fresh stamp with no advert timestamp at all shows the age', () {
+      expect(
+        row(scanRssi: -58, lastAliveMs: now - 1000, supportsScanRssi: true),
+        (text: 'Last seen just now', stale: false),
+      );
+    });
+
+    test('the row is NOT marked stale while the stamp is fresh', () {
+      expect(
+        row(
+          scanRssi: -58,
+          scanTs: now - 60000,
+          lastAliveMs: now - 1000,
+          supportsScanRssi: true,
+        )!.stale,
+        isFalse,
+      );
+    });
+  });
+
   group('stale proof of life', () {
     test('one millisecond past the boundary is stale', () {
       final r = row(lastAliveMs: now - staleMs - 1, supportsScanRssi: false);
@@ -89,7 +156,12 @@ void main() {
 
     test('native switches to "Last seen" and suppresses the aged RSSI', () {
       expect(
-        row(scanRssi: -58, lastAliveMs: now - 20000, supportsScanRssi: true),
+        row(
+          scanRssi: -58,
+          scanTs: now - 20000,
+          lastAliveMs: now - 20000,
+          supportsScanRssi: true,
+        ),
         (text: 'Last seen >15 seconds ago', stale: true),
       );
     });
