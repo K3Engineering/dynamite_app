@@ -20,8 +20,12 @@ class DevicesTab extends StatelessWidget {
     final bt = context.watch<BleLinkManager>();
     final scheme = Theme.of(context).colorScheme;
 
+    // Ownership split: the top indicator speaks only for the adapter and the
+    // scan (link state is forced to idle here). Per-device link state lives
+    // on the device rows — the only place that scales past one device — so
+    // the two never say the same thing.
     final visual = btStatusVisual(
-      linkState: bt.bleLinkState,
+      linkState: BtLinkState.idle,
       availability: bt.bluetoothState,
       isScanning: bt.isScanning,
       hasDevices: bt.devices.isNotEmpty,
@@ -74,26 +78,35 @@ class DevicesTab extends StatelessWidget {
           Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 16),
 
-          // BLE devices section. The status row leads with the Scan/Stop
-          // button and carries the Bluetooth status readout (icon + label)
-          // beside it, so the action and its effect ("Scanning for devices…")
-          // sit together. Always visible — Scan is reachable in every state.
+          // BLE devices section. The status row leads with the Bluetooth
+          // status readout (adapter + scan state — never link state, which
+          // belongs to the device rows) and anchors the Scan/Stop button on
+          // the right, in line with the rows' trailing Connect/Disconnect
+          // buttons. Always visible — Scan is reachable in every state.
           const SectionHeader('BLE devices'),
           const SizedBox(height: 8),
 
-          Row(
-            children: [
-              FilledButton.tonal(
-                // TODO(ux): see BleLinkManager._startScan — starting a scan
-                // while streaming kills the active link (and any in-progress
-                // recording). Decide disable-vs-confirm.
-                onPressed: () => _scanWithFeedback(context, bt),
-                child: Text(bt.isScanning ? 'Stop' : 'Scan'),
-              ),
-              const SizedBox(width: 12),
-              Flexible(child: BluetoothIndicator(visual: visual)),
-            ],
+          // The 4px horizontal padding mirrors the M3 Card default margin so
+          // the status icon and the button line up with the cards below.
+          // The button is anchored right, so status text length changes
+          // never move it.
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Row(
+              children: [
+                Expanded(child: BluetoothIndicator(visual: visual)),
+                const SizedBox(width: 12),
+                FilledButton.tonal(
+                  // TODO(ux): see BleLinkManager._startScan — starting a scan
+                  // while streaming kills the active link (and any in-progress
+                  // recording). Decide disable-vs-confirm.
+                  onPressed: () => _scanWithFeedback(context, bt),
+                  child: Text(bt.isScanning ? 'Stop' : 'Scan'),
+                ),
+              ],
+            ),
           ),
+          const SizedBox(height: 8),
 
           if (showEmptyBlock) _buildEmptyBlock(visual, bt.bluetoothState),
 

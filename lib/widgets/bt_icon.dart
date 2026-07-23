@@ -19,6 +19,11 @@ typedef BtStatusVisual = ({
 /// Map the link/adapter/scan state to the indicator visual. Link states
 /// outrank scan status, which outranks adapter status. [status]/[colors]
 /// carry the theme's semantic + scheme colors.
+///
+/// Two callers, two scopes: the Devices tab's top indicator passes
+/// [BtLinkState.idle] so it speaks only for the adapter and the scan (link
+/// state belongs to the per-device rows); the active device row passes the
+/// real link state and uses the link branches.
 BtStatusVisual btStatusVisual({
   required BtLinkState linkState,
   required AvailabilityState availability,
@@ -66,10 +71,11 @@ BtStatusVisual btStatusVisual({
         if (hasDevices) {
           return (Icons.bluetooth, connected, 'Tap a device to connect');
         }
-        // NOTE: availability is not reliably signalled on all platforms
-        // (e.g. web, or Bluetooth already off at launch), so we avoid
-        // claiming "ready" and just state the action the user can take.
-        return (Icons.bluetooth, connected, 'Tap Scan to find devices');
+        // Idle with nothing found: an empty label — the Devices tab's empty
+        // block is the single voice for "no devices, tap Scan" guidance, so
+        // repeating it here would put the same instruction twice on screen.
+        // The indicator renders icon-only for an empty label.
+        return (Icons.bluetooth, connected, '');
       case AvailabilityState.poweredOff:
         return (Icons.bluetooth_disabled, colors.outline, 'Bluetooth is off');
       case AvailabilityState.unknown:
@@ -100,6 +106,8 @@ BtStatusVisual btStatusVisual({
 /// anything is in flight). Renders a [BtStatusVisual] precomputed by the
 /// caller via [btStatusVisual] — the same visual can feed several surfaces
 /// (this indicator, the Devices tab's empty block) without recomputing.
+/// An empty label renders icon-only (the quiet "powered on, nothing to
+/// report" state) rather than reserving a blank text slot.
 class BluetoothIndicator extends StatelessWidget {
   /// The resolved status visual to display.
   final BtStatusVisual visual;
@@ -127,15 +135,17 @@ class BluetoothIndicator extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         iconStack,
-        const SizedBox(width: 8),
-        Flexible(
-          child: Text(
-            visual.label,
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.outline,
+        if (visual.label.isNotEmpty) ...[
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(
+              visual.label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.outline,
+              ),
             ),
           ),
-        ),
+        ],
       ],
     );
   }

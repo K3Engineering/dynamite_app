@@ -70,7 +70,9 @@ void main() {
 
   test('idle powered-on hints reflect discovered devices', () {
     expect(visual(hasDevices: true).label, 'Tap a device to connect');
-    expect(visual(hasDevices: false).label, 'Tap Scan to find devices');
+    // No devices: an empty label — the Devices tab's empty block is the
+    // single voice for "no devices, tap Scan" guidance.
+    expect(visual(hasDevices: false).label, isEmpty);
   });
 
   test('adapter problems surface in the idle state', () {
