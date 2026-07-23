@@ -23,12 +23,18 @@ class DevicesTab extends StatelessWidget {
     // Ownership split: the top indicator speaks only for the adapter and the
     // scan (link state is forced to idle here). Per-device link state lives
     // on the device rows — the only place that scales past one device — so
-    // the two never say the same thing.
+    // the two never say the same thing. The one link-aware input the
+    // indicator needs is whether a working Connect action exists: the "Tap a
+    // device to connect" hint is withheld while any link is busy, since
+    // every Connect button (inactive rows and the demo row) is disabled
+    // then. This must be raw linkBusy, NOT bleLinkState: bleLinkState
+    // reports idle while the demo device holds the link slot, but BLE
+    // connects are refused then too.
     final visual = btStatusVisual(
       linkState: BtLinkState.idle,
       availability: bt.bluetoothState,
       isScanning: bt.isScanning,
-      hasDevices: bt.devices.isNotEmpty,
+      hasConnectableDevices: bt.devices.isNotEmpty && !bt.linkBusy,
       status: Theme.of(context).extension<StatusColors>()!,
       colors: scheme,
     );
@@ -537,7 +543,8 @@ class _ActiveDeviceRow extends StatelessWidget {
       linkState: linkState,
       availability: AvailabilityState.poweredOn, // a link is up → radio is on
       isScanning: false,
-      hasDevices: true,
+      // Never consulted: link branches return before the connectability gate.
+      hasConnectableDevices: true,
       status: Theme.of(context).extension<StatusColors>()!,
       colors: Theme.of(context).colorScheme,
     );

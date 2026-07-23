@@ -20,6 +20,12 @@ typedef BtStatusVisual = ({
 /// outrank scan status, which outranks adapter status. [status]/[colors]
 /// carry the theme's semantic + scheme colors.
 ///
+/// [hasConnectableDevices] is the caller-resolved truth condition for the
+/// "Tap a device to connect" hint: devices are discovered AND no link is
+/// busy. A busy link — including the demo device, which occupies the single
+/// link slot and so gets BLE connects refused — disables every Connect
+/// button on screen, so the hint must not be emitted then.
+///
 /// Two callers, two scopes: the Devices tab's top indicator passes
 /// [BtLinkState.idle] so it speaks only for the adapter and the scan (link
 /// state belongs to the per-device rows); the active device row passes the
@@ -28,7 +34,7 @@ BtStatusVisual btStatusVisual({
   required BtLinkState linkState,
   required AvailabilityState availability,
   required bool isScanning,
-  required bool hasDevices,
+  required bool hasConnectableDevices,
   required StatusColors status,
   required ColorScheme colors,
 }) {
@@ -67,13 +73,17 @@ BtStatusVisual btStatusVisual({
     switch (availability) {
       case AvailabilityState.poweredOn:
         // A previously-discovered device can remain connectable after a scan
-        // stops, so surface that rather than implying a scan is required.
-        if (hasDevices) {
+        // stops, so surface that rather than implying a scan is required —
+        // but only while a Connect action actually exists (see
+        // [hasConnectableDevices]): while a link is busy every Connect
+        // button is disabled and the active device row is the voice.
+        if (hasConnectableDevices) {
           return (Icons.bluetooth, connected, 'Tap a device to connect');
         }
-        // Idle with nothing found: an empty label — the Devices tab's empty
-        // block is the single voice for "no devices, tap Scan" guidance, so
-        // repeating it here would put the same instruction twice on screen.
+        // Otherwise an empty label: with nothing found, the Devices tab's
+        // empty block is the single voice for "no devices, tap Scan"
+        // guidance; with a link busy, the active row speaks. Repeating
+        // either here would put the same instruction twice on screen.
         // The indicator renders icon-only for an empty label.
         return (Icons.bluetooth, connected, '');
       case AvailabilityState.poweredOff:
