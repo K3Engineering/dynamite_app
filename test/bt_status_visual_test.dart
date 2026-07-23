@@ -50,6 +50,10 @@ void main() {
     expect(visual(linkState: BtLinkState.streaming).label, 'Connected');
     expect(visual(linkState: BtLinkState.connected).label, 'Setting up…');
     expect(
+      visual(linkState: BtLinkState.subscribing).label,
+      'Starting data stream…',
+    );
+    expect(
       visual(linkState: BtLinkState.disconnecting).label,
       'Disconnecting…',
     );

@@ -499,9 +499,10 @@ ButtonStyle activeRowActionButtonStyle({required Color onContainer}) =>
     );
 
 /// The active device row (shared by the BLE and Demo sections): a tinted
-/// card carrying the live link state (spinner while connecting/setting up,
-/// connected icon when streaming), the state + RSSI in the subtitle, a gear
-/// shortcut to Device settings, and a state-aware Cancel/Disconnect button.
+/// card carrying the live link state (spinner while connecting/setting up/
+/// starting the stream, connected icon when streaming), the state + RSSI in
+/// the subtitle, a gear shortcut to Device settings, and a state-aware
+/// Cancel/Disconnect button.
 class _ActiveDeviceRow extends StatelessWidget {
   const _ActiveDeviceRow({
     required this.name,

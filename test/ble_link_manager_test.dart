@@ -17,8 +17,11 @@ import 'package:dynamite_app/services/mockble.dart';
 /// Mock timing: hwDelay 200 ms (availability), netDelay 1 s (connect /
 /// discoverServices / calibration read). A full connect therefore takes ~3 s:
 /// connect(1s) -> MTU(immediate) -> discoverServices(1s) -> calibration(1s)
-/// -> subscribe. [BleLinkManager.disconnectTimeout] is 2500 ms,
-/// [BleLinkManager.connectTimeout] is 5 s (the mock's slowConnect is 20 s).
+/// -> subscribe. The link shows [BtLinkState.connected] ("Setting up…")
+/// through discovery and [BtLinkState.subscribing] ("Starting data stream…")
+/// from discovery's end until streaming. [BleLinkManager.disconnectTimeout]
+/// is 2500 ms, [BleLinkManager.connectTimeout] is 5 s (the mock's
+/// slowConnect is 20 s).
 ///
 /// IMPORTANT: every test tears its link down INSIDE the [fakeAsync] scope
 /// (see [teardownLink]). A disconnect left running when the scope exits keeps
@@ -161,6 +164,29 @@ void main() {
       // still running: the "Setting up…" window.
       async.elapse(const Duration(seconds: 1));
       expect(link.link.state, BtLinkState.connected);
+
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(seconds: 4));
+
+      expect(link.link.state, BtLinkState.idle);
+      expect(link.isStreaming, isFalse);
+      // The superseded setup pass bails silently: no failure or drop notices.
+      expect(seen, isEmpty);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('disconnecting mid stream-start tears down silently', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      // After 2.5 s the GATT link is up, discovery is done, and the ADC feed
+      // subscription (calibration read) is still running: the "Starting data
+      // stream…" window.
+      async.elapse(const Duration(milliseconds: 2500));
+      expect(link.link.state, BtLinkState.subscribing);
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(seconds: 4));

@@ -20,11 +20,17 @@ enum BtLinkState {
   /// A `connect()` call is outstanding; not yet usable.
   connecting,
 
-  /// The GATT link is up but post-connect setup (service discovery + ADC feed
-  /// subscription) is still running. NOT yet usable — no data is flowing. The
-  /// UI shows "Setting up…" here. The link advances to [streaming] only once the
-  /// ADC feed subscription succeeds, or is torn down on failure.
+  /// The GATT link is up but post-connect setup is still running the first of
+  /// its two stages: MTU negotiation (native only) and service discovery. NOT
+  /// yet usable — no data is flowing. The UI shows "Setting up…" here.
   connected,
+
+  /// Post-connect setup's second stage: services are discovered and the ADC
+  /// feed subscription (calibration read + enabling notifications) is in
+  /// progress. Still NOT usable. The UI shows "Starting data stream…" here.
+  /// The link advances to [streaming] only once the subscription succeeds, or
+  /// is torn down on failure.
+  subscribing,
 
   /// Fully set up: services discovered and the ADC feed subscription is active,
   /// so data is flowing. This is the single "usable / connected" state every
@@ -87,10 +93,13 @@ class DeviceLink {
 
   bool get isConnecting => state == BtLinkState.connecting;
 
-  /// The GATT link is up. True for both the "setting up" ([BtLinkState.connected])
-  /// window and the usable ([streaming]) state — use [isStreaming] for "usable".
+  /// The GATT link is up. True for the whole post-connect setup window
+  /// ([BtLinkState.connected], [BtLinkState.subscribing]) and the usable
+  /// ([streaming]) state — use [isStreaming] for "usable".
   bool get isLinkUp =>
-      state == BtLinkState.connected || state == BtLinkState.streaming;
+      state == BtLinkState.connected ||
+      state == BtLinkState.subscribing ||
+      state == BtLinkState.streaming;
 
   /// The single "usable / connected" truth: link up AND the ADC feed is flowing.
   bool get isStreaming => state == BtLinkState.streaming;
@@ -769,9 +778,9 @@ class BleLinkManager extends ChangeNotifier {
 
     if (isConnected) {
       // A duplicate/spurious connect event for a link that is already up
-      // (setting up or streaming): the first event owns the setup pass —
-      // ignore this one rather than regressing the state and re-running
-      // discovery / re-subscribing the ADC feed.
+      // (setting up, starting the stream, or streaming): the first event
+      // owns the setup pass — ignore this one rather than regressing the
+      // state and re-running discovery / re-subscribing the ADC feed.
       if (_link.isLinkUp) return;
       unawaited(_runPostConnectSetup(_setupTokenFor(deviceId), deviceId));
       return;
@@ -800,13 +809,12 @@ class BleLinkManager extends ChangeNotifier {
     // release), which (on web) parks the link in cooldown for the
     // reconnect settle window before returning it to the idle sentinel.
     final String name = _link.name.isEmpty ? deviceId : _link.name;
-    // An unexpected drop while the link was up (setting up or streaming)
-    // gets a user notice. User-requested disconnects arrive here in
-    // `disconnecting`, and post-connect setup failures already emitted
-    // BleConnectionFailed before tearing down — so neither double-reports.
-    final bool wasActive =
-        _link.state == BtLinkState.connected ||
-        _link.state == BtLinkState.streaming;
+    // An unexpected drop while the link was up (setting up, starting the
+    // stream, or streaming) gets a user notice. User-requested disconnects
+    // arrive here in `disconnecting`, and post-connect setup failures already
+    // emitted BleConnectionFailed before tearing down — so neither
+    // double-reports.
+    final bool wasActive = _link.isLinkUp;
     // Proof of life ends at teardown: stamp it so the row's "last
     // seen/connected" age starts counting from now, not from the (possibly
     // much older) connect time. Only the UNEXPECTED drop is stamped here —
@@ -823,8 +831,9 @@ class BleLinkManager extends ChangeNotifier {
   }
 
   /// Post-connect setup for a freshly-up GATT link: reflect "Setting up…",
-  /// then MTU (native), service discovery, and the ADC feed subscription that
-  /// advances the link to the usable [BtLinkState.streaming] state.
+  /// then MTU (native) and service discovery, then "Starting data stream…"
+  /// for the ADC feed subscription that advances the link to the usable
+  /// [BtLinkState.streaming] state.
   ///
   /// Runs as a cancellable pass over [token]. Every connect/disconnect/
   /// teardown supersedes outstanding tokens (see [_supersedeSetupPasses]);
@@ -835,7 +844,7 @@ class BleLinkManager extends ChangeNotifier {
   /// discover services…") or time out via the command queue.
   Future<void> _runPostConnectSetup(_SetupToken token, String deviceId) async {
     _link.deviceId = deviceId;
-    _link.state = BtLinkState.connected; // "Setting up…" until streaming.
+    _link.state = BtLinkState.connected; // "Setting up…" until subscribing.
 
     // Store the device name
     final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
@@ -866,6 +875,10 @@ class BleLinkManager extends ChangeNotifier {
       bool subscribed = false;
       for (final srv in discovered) {
         if (srv.uuid == btServiceId) {
+          // Discovery done; the ADC feed subscription (calibration read +
+          // enabling notifications) is the "Starting data stream…" stage.
+          _link.state = BtLinkState.subscribing;
+          notifyListeners();
           subscribed = await _subscribeToAdcFeed(srv);
           if (!token.isCurrent) return;
           break;

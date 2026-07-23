@@ -53,9 +53,14 @@ BtStatusVisual btStatusVisual({
       case BtLinkState.streaming:
         return (Icons.bluetooth_connected, connected, 'Connected');
       case BtLinkState.connected:
-        // GATT link is up but service discovery / ADC subscription is still
+        // GATT link is up but MTU negotiation / service discovery is still
         // in progress. Not usable yet.
         return (Icons.bluetooth_searching, active, 'Setting up…');
+      case BtLinkState.subscribing:
+        // Services are discovered; the ADC feed subscription (calibration
+        // read + enabling notifications) is still in progress. Not usable
+        // yet, but data starts flowing at the end of this stage.
+        return (Icons.bluetooth_searching, active, 'Starting data stream…');
       case BtLinkState.connecting:
         return (Icons.bluetooth_searching, active, 'Connecting…');
       case BtLinkState.idle:

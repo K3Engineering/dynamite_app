@@ -26,10 +26,11 @@ class BleConnectionFailed extends AppEvent {
   final String deviceName;
 }
 
-/// The link dropped unexpectedly while it was up (setting up or streaming) —
-/// i.e. NOT a user-requested disconnect and not a post-connect setup failure
-/// (those surface as [BleConnectionFailed]). A recording in progress is
-/// finalized by `RecordingController` when this happens.
+/// The link dropped unexpectedly while it was up (setting up, starting the
+/// data stream, or streaming) — i.e. NOT a user-requested disconnect and not
+/// a post-connect setup failure (those surface as [BleConnectionFailed]). A
+/// recording in progress is finalized by `RecordingController` when this
+/// happens.
 class BleConnectionLost extends AppEvent {
   const BleConnectionLost(this.deviceName);
 
