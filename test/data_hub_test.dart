@@ -293,7 +293,12 @@ void main() {
 
       // A changed profile (new instance) bumps the version.
       hub.updateLoadCells([
-        LoadCellProfile(id: 'x', capacityKg: 200, sensitivityMvV: 2, span: 1.01),
+        LoadCellProfile(
+          id: 'x',
+          capacityKg: 200,
+          sensitivityMvV: 2,
+          span: 1.01,
+        ),
         null,
         null,
         null,

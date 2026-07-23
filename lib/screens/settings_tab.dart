@@ -8,6 +8,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../models/app_settings.dart';
 import '../models/force_unit.dart';
 import '../services/ble_link_manager.dart';
+import '../widgets/board_calibration_section.dart';
 import '../widgets/load_cell_picker.dart';
 import '../widgets/section_header.dart';
 import 'app_shell.dart';
@@ -143,6 +144,15 @@ class SettingsTab extends StatelessWidget {
           Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
           const ChannelLoadCellAssignments(),
+          const SizedBox(height: 16),
+
+          // The connected device's factory calibration (read-only view).
+          Text(
+            'Board calibration',
+            style: Theme.of(context).textTheme.titleSmall,
+          ),
+          const SizedBox(height: 8),
+          const BoardCalibrationSection(),
           const SizedBox(height: 24),
 
           // About

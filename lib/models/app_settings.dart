@@ -16,6 +16,7 @@ class AppSettings extends ChangeNotifier {
   static const String _keyWakelock = 'wakelock_enabled';
   static const String _keyLoadCellBank = 'load_cell_bank';
   static const String _keyChannelLoadCells = 'channel_load_cells';
+  static const String _keyExcitationMv = 'measured_excitation_mv';
 
   // mV/V is the default: it converts with board calibration alone, so a
   // fresh install shows meaningful numbers before any load cell is assigned
@@ -69,6 +70,12 @@ class AppSettings extends ChangeNotifier {
   List<LoadCellProfile?> get channelLoadCells => [
     for (int i = 0; i < nwNumAdcChan; i++) loadCellForChannel(i),
   ];
+
+  /// The user's own DMM reading of the device's excitation (mV), used only
+  /// as a cross-check against the ratiometric factory calibration (which
+  /// stays authoritative regardless — see the device settings section).
+  double? _measuredExcitationMv;
+  double? get measuredExcitationMv => _measuredExcitationMv;
 
   /// Preference keys the user has explicitly set through a setter. [_load]'s
   /// async read resolves AFTER the constructor returns, so a setter that ran
@@ -141,6 +148,10 @@ class AppSettings extends ChangeNotifier {
           debugPrint('Failed to parse channel load cell assignments: $e');
         }
       }
+    }
+
+    if (!_modifiedKeys.contains(_keyExcitationMv)) {
+      _measuredExcitationMv = prefs.getDouble(_keyExcitationMv);
     }
 
     notifyListeners();
@@ -272,5 +283,18 @@ class AppSettings extends ChangeNotifier {
       _keyChannelLoadCells,
       jsonEncode(_channelLoadCellIds),
     );
+  }
+
+  /// Set (or clear, with null) the user's DMM excitation reading.
+  Future<void> setMeasuredExcitationMv(double? mv) async {
+    _modifiedKeys.add(_keyExcitationMv);
+    _measuredExcitationMv = mv;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    if (mv == null) {
+      await prefs.remove(_keyExcitationMv);
+    } else {
+      await prefs.setDouble(_keyExcitationMv, mv);
+    }
   }
 }
