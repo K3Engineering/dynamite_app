@@ -227,7 +227,7 @@ class DevicesTab extends StatelessWidget {
       ),
       AvailabilityState.unsupported => (
         visual.label,
-        'This device cannot use Bluetooth',
+        unsupportedHint(isWeb: kIsWeb),
       ),
       AvailabilityState.unknown || AvailabilityState.resetting => (
         visual.label,
@@ -272,6 +272,16 @@ String connectFailureHint(
   ConnectFailureKind.timeout =>
     'Timed out — check that the device is on, nearby, and not connected to another device',
 };
+
+/// The empty block's hint for [AvailabilityState.unsupported], per platform.
+/// Web means the browser lacks Web Bluetooth (Firefox, Safari, every iOS
+/// browser). Native means the device itself reports no Bluetooth
+/// support — a baffling case with no clear recommendation, so the
+/// copy avoids "try" and neutrally names every supported
+/// surface. Copy lives here in the UI layer, like [connectFailureHint].
+String unsupportedHint({required bool isWeb}) => isWeb
+    ? "This browser can't use Bluetooth. Try Chrome or Edge on a computer, Chrome on Android, or the native Android/iOS app."
+    : 'This device reports no Bluetooth support. The app is available for Android and iOS, as a web app in Chrome on Android, and in Chrome or Edge on a computer.';
 
 /// The inactive BLE device row's "liveness" subtitle, resolved from the
 /// platform and what we know of the device:
