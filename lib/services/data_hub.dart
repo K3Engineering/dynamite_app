@@ -92,7 +92,12 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     ),
     growable: false,
   );
-  int _tareCount = 0;
+
+  /// Per-channel tare countdowns: samples remaining in each channel's tare
+  /// window (0 = not taring). Independent per channel so a tare requested
+  /// mid-window for another channel neither aborts nor pollutes the
+  /// in-progress one.
+  final Int32List _tareCounts = Int32List(numAdcChannels);
   @override
   int totalSamples = 0;
   DeviceCalibration deviceCalibration = DeviceCalibration();
@@ -162,7 +167,6 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// calibration is read during post-connect setup, BEFORE the streaming
   /// transition that triggers this reset.
   void clear() {
-    _tareCount = 0;
     totalSamples = 0;
     _generation++;
     protocolErrorSeen = false;
@@ -172,6 +176,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
       rawMax[i] = _noMaxYet;
       rawMin[i] = _noMinYet;
       tare[i] = 0;
+      _tareCounts[i] = 0;
       _runningTotal[i] = 0;
       _currentRaw[i] = 0;
       _ingest[i].reset();
@@ -193,14 +198,24 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     notifyListeners();
   }
 
-  bool get taring => (_tareCount > 0);
+  /// Whether any channel has a tare window still averaging. A recording must
+  /// not start while this holds — it would persist a zero tare for the
+  /// channels still being averaged.
+  bool get taring => _tareCounts.any((count) => count > 0);
 
-  /// Request a new tare operation (zeros readings using next N samples).
-  void requestTare() {
-    _tareCount = _tareWindow;
+  /// Request a new tare operation (zeros readings using the next
+  /// [_tareWindow] samples). With [channel], only that channel is re-zeroed;
+  /// the others keep their existing tares. Each requested channel averages
+  /// its own independent window, so overlapping requests never abort or
+  /// pollute each other.
+  void requestTare({int? channel}) {
+    assert(channel == null || (channel >= 0 && channel < numAdcChannels));
     for (int i = 0; i < numAdcChannels; ++i) {
-      tare[i] = 0;
-      _runningTotal[i] = 0;
+      if (channel == null || channel == i) {
+        _tareCounts[i] = _tareWindow;
+        tare[i] = 0;
+        _runningTotal[i] = 0;
+      }
     }
   }
 
@@ -208,8 +223,8 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// buffered and [totalSamples] always advances — including while a tare is
   /// in progress, so taring never warps the stream's timeline or punches an
   /// unmarked hole in an ongoing recording. A tare only re-zeros the display
-  /// offset: while taring, each real frame is ADDITIONALLY accumulated into
-  /// the tare average.
+  /// offset: while a channel's tare window runs, each real frame is
+  /// ADDITIONALLY accumulated into that channel's tare average.
   void addSampleFrame(Int32List values) {
     assert(values.length >= numAdcChannels);
     for (int i = 0; i < numAdcChannels; ++i) {
@@ -217,21 +232,15 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
       _currentRaw[i] = val;
       // Always buffer data for live display.
       _addData(val, i);
-      if (taring) {
-        _addTare(val, i);
-      }
-    }
-    totalSamples++;
-
-    if (taring) {
-      _tareCount--;
-      if (!taring) {
-        for (int i = 0; i < _runningTotal.length; ++i) {
+      if (_tareCounts[i] > 0) {
+        _runningTotal[i] += val;
+        if (--_tareCounts[i] == 0) {
           tare[i] = _runningTotal[i] / _tareWindow;
           _runningTotal[i] = 0;
         }
       }
     }
+    totalSamples++;
   }
 
   /// Record [count] dropped samples (the decoder detected a gap in the packet
@@ -363,10 +372,6 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
       diff.toDouble() * samplesPerSec,
       deviceCalibration.slope,
     );
-  }
-
-  void _addTare(int val, int idx) {
-    _runningTotal[idx] += val;
   }
 
   void _addData(int val, int idx) {

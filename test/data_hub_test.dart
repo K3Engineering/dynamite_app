@@ -196,5 +196,56 @@ void main() {
         expect(hub.rawData[0][110], 1000); // held value inside the gap
       },
     );
+
+    test('taring a single channel leaves the other channels untouched', () {
+      final hub = DataHub();
+      hub.requestTare();
+      feed(hub, frameOf(1000), 1024); // all channels tared at 1000
+
+      hub.requestTare(channel: 2);
+      expect(hub.taring, isTrue);
+      expect(hub.tare[2], 0); // zeroed while its average runs
+      feed(hub, frameOf(500), 1024);
+
+      expect(hub.taring, isFalse);
+      expect(hub.tare[2], 500);
+      expect(hub.currentForce(2, ForceUnit.raw), 0); // 500 - 500
+      // Untouched channels keep their previous tare.
+      expect(hub.tare[0], 1000);
+      expect(hub.tare[1], 1000);
+      expect(hub.tare[3], 1000);
+      expect(hub.currentForce(0, ForceUnit.raw), -500); // 500 - 1000
+    });
+
+    test('overlapping tare windows complete independently', () {
+      final hub = DataHub();
+      hub.requestTare(); // all channels start a window
+      feed(hub, frameOf(300), 512); // half a window
+      hub.requestTare(channel: 1); // ch1 restarts its own window here
+      feed(hub, frameOf(300), 512);
+
+      // ch0/2/3 finished their original window; ch1 is only halfway.
+      expect(hub.tare[0], 300);
+      expect(hub.tare[2], 300);
+      expect(hub.tare[3], 300);
+      expect(hub.taring, isTrue);
+
+      feed(hub, frameOf(700), 512); // ch1's second half
+
+      expect(hub.taring, isFalse);
+      // ch1's window: (512 x 300 + 512 x 700) / 1024.
+      expect(hub.tare[1], 500);
+    });
+
+    test('clear aborts a partial single-channel tare', () {
+      final hub = DataHub();
+      hub.requestTare(channel: 1);
+      feed(hub, frameOf(100), 10);
+      expect(hub.taring, isTrue);
+
+      hub.clear();
+      expect(hub.taring, isFalse);
+      expect(hub.tare[1], 0);
+    });
   });
 }

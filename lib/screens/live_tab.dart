@@ -127,6 +127,10 @@ class _LiveTabState extends State<LiveTab> {
     context.read<DataHub>().requestTare();
   }
 
+  void _onTareChannel(int channel) {
+    context.read<DataHub>().requestTare(channel: channel);
+  }
+
   Future<void> _onToggleRecord() async {
     final recording = context.read<RecordingController>();
 
@@ -267,6 +271,8 @@ class _LiveTabState extends State<LiveTab> {
               isRecording: recording.sessionInProgress,
               onToggleRecord: _onToggleRecord,
               onTare: _onTare,
+              onTareChannel: _onTareChannel,
+              channelLabels: settings.channelLabels,
             ),
         ],
       ),
@@ -524,11 +530,20 @@ class ActionButtons extends StatelessWidget {
   final VoidCallback onToggleRecord;
   final VoidCallback onTare;
 
+  /// Invoked with a channel index when the user picks a single channel from
+  /// the tare split-button's dropdown.
+  final ValueChanged<int> onTareChannel;
+
+  /// Per-channel display labels, listed in the tare dropdown.
+  final List<String> channelLabels;
+
   const ActionButtons({
     super.key,
     required this.isRecording,
     required this.onToggleRecord,
     required this.onTare,
+    required this.onTareChannel,
+    required this.channelLabels,
   });
 
   @override
@@ -551,12 +566,84 @@ class ActionButtons extends StatelessWidget {
                   : Theme.of(context).colorScheme.onPrimary,
             ),
           ),
-          OutlinedButton.icon(
-            onPressed: onTare,
-            icon: const Icon(Icons.exposure_zero),
-            label: const Text('TARE'),
+          _TareSplitButton(
+            onTare: onTare,
+            onTareChannel: onTareChannel,
+            channelLabels: channelLabels,
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// An [OutlinedButton]-styled split button: the main segment tares all
+/// channels; the triangle segment opens a menu to tare a single channel.
+/// Built custom (Material + InkWells) rather than from two OutlinedButtons
+/// so the pill outline and the divider render as one continuous border.
+class _TareSplitButton extends StatelessWidget {
+  final VoidCallback onTare;
+  final ValueChanged<int> onTareChannel;
+  final List<String> channelLabels;
+
+  const _TareSplitButton({
+    required this.onTare,
+    required this.onTareChannel,
+    required this.channelLabels,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final labelStyle = Theme.of(
+      context,
+    ).textTheme.labelLarge?.copyWith(color: cs.primary);
+
+    return Material(
+      type: MaterialType.transparency,
+      // OutlinedButton's default border; Clip.antiAlias + the shape keep the
+      // segments' ink splashes inside the pill.
+      shape: StadiumBorder(side: BorderSide(color: cs.outline)),
+      clipBehavior: Clip.antiAlias,
+      child: SizedBox(
+        // Matches the adjacent REC button's minimum tap target height.
+        height: 48,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            InkWell(
+              onTap: onTare,
+              child: Padding(
+                padding: const EdgeInsets.only(left: 16, right: 8),
+                child: Row(
+                  children: [
+                    Icon(Icons.exposure_zero, size: 18, color: cs.primary),
+                    const SizedBox(width: 8),
+                    Text('TARE', style: labelStyle),
+                  ],
+                ),
+              ),
+            ),
+            // The vertical split line between the two segments.
+            Container(width: 1, height: double.infinity, color: cs.outline),
+            PopupMenuButton<int>(
+              padding: EdgeInsets.zero,
+              tooltip: 'Tare a single channel',
+              onSelected: onTareChannel,
+              itemBuilder: (context) => [
+                for (int i = 0; i < channelLabels.length; i++)
+                  PopupMenuItem(
+                    value: i,
+                    child: Text('Tare ${channelLabels[i]}'),
+                  ),
+              ],
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Icon(Icons.arrow_drop_down, size: 18, color: cs.primary),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

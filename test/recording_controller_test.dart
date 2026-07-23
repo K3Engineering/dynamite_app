@@ -59,6 +59,24 @@ void main() {
   });
 
   test(
+    'startSession refuses while a single-channel tare is averaging',
+    () async {
+      final (recording, hub, _) = wire();
+
+      hub.requestTare(channel: 1);
+      expect(hub.taring, isTrue);
+
+      final result = await recording.startSession(
+        channelLabels: const ['a', 'b', 'c', 'd'],
+        visibleChannels: const [true, true, false, false],
+      );
+
+      expect(result, isA<StartSessionTareInProgress>());
+      expect(recording.sessionInProgress, isFalse);
+    },
+  );
+
+  test(
     'start creates the session row; stop finalizes it and returns its name',
     () async {
       AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
