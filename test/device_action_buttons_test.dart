@@ -13,6 +13,7 @@ import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
+import 'package:dynamite_app/services/rig_state.dart';
 
 /// Layout contract for the Devices tab's action buttons: Scan/Stop (status
 /// row), Connect (inactive rows) and Cancel/Disconnect (active row) all share
@@ -39,6 +40,12 @@ void main() {
     final linkManager = BleLinkManager(events: appEvents)
       ..onAdcData = decoder.onDataPacket
       ..onCalibrationData = decoder.onCalibrationPacket;
+    final rigState = RigState(transport: linkManager, events: appEvents);
+    decoder.onDeviceFlash = (flash) => rigState.onFlashRead(
+      linkManager.selectedDeviceId,
+      linkManager.connectedDeviceName,
+      flash,
+    );
     final recording = RecordingController(
       dataHub: dataHub,
       linkManager: linkManager,
@@ -53,6 +60,7 @@ void main() {
           Provider.value(value: appEvents),
           ChangeNotifierProvider.value(value: dataHub),
           ChangeNotifierProvider.value(value: linkManager),
+          ChangeNotifierProvider.value(value: rigState),
           ChangeNotifierProvider.value(value: recording),
         ],
         child: const DynoApp(),
@@ -77,7 +85,10 @@ void main() {
   );
 
   Finder connectButton() => devicesTabDescendant(
-    find.ancestor(of: find.text('Connect'), matching: find.byType(FilledButton)),
+    find.ancestor(
+      of: find.text('Connect'),
+      matching: find.byType(FilledButton),
+    ),
   );
 
   Finder disconnectButton() => devicesTabDescendant(
@@ -128,10 +139,7 @@ void main() {
     final disabled = style.side!.resolve(<WidgetState>{WidgetState.disabled})!;
     expect(enabled.color, Colors.white);
     expect(disabled.color, Colors.white.withValues(alpha: 0.5));
-    expect(
-      style.foregroundColor!.resolve(<WidgetState>{}),
-      Colors.white,
-    );
+    expect(style.foregroundColor!.resolve(<WidgetState>{}), Colors.white);
 
     // Teardown: bring the demo link down so its feed timer stops, then drain
     // the command-queue timeout (see widget_test.dart).

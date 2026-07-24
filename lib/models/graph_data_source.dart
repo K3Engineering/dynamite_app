@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'bucket_series.dart';
+import 'calibration.dart';
 import 'gap_list.dart';
 
 /// A single channel's raw circular-buffer data plus its precomputed extremes,
@@ -38,8 +39,15 @@ abstract interface class GraphDataSource {
   /// The sample rate of the data (Hz).
   int get sampleRate;
 
-  /// The calibration slope used to convert raw counts to kgf.
-  double get calibrationSlope;
+  /// The per-channel calibration used to convert raw counts to display
+  /// units (board piecewise map + assigned load cell).
+  ChannelCalibration calibrationFor(int channelIndex);
+
+  /// Monotonic identity of the calibration set: bumped when calibration
+  /// changes (factory data arrives, a load-cell assignment changes), so
+  /// renderers can mix it into their segment-cache keys alongside
+  /// [dataGeneration]. Static sources return a constant.
+  int get calibrationVersion;
 
   /// Notifies listeners when the underlying data changes.
   Listenable get repaint;

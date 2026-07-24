@@ -47,6 +47,25 @@ class RecordingStorageError extends AppEvent {
   final Object error;
 }
 
+/// The connected device's load cell slots differ from what this app last saw
+/// on it (another host wrote, or cells were swapped). Informational only —
+/// the device is the rig's truth, so there is nothing to resolve. [changes]
+/// holds one human-readable line per changed slot.
+class RigChangedSinceLastVisit extends AppEvent {
+  const RigChangedSinceLastVisit(this.deviceName, this.changes);
+
+  final String deviceName;
+  final List<String> changes;
+}
+
+/// The device's calibration characteristic could not be read; the app runs
+/// on nominal values (no factory calibration) until a read succeeds.
+class CalibrationUnreadable extends AppEvent {
+  const CalibrationUnreadable(this.deviceName);
+
+  final String deviceName;
+}
+
 /// Fire-and-forget event bus for [AppEvent]s.
 ///
 /// App-lifetime singleton created in `main()` (never disposed) and handed to

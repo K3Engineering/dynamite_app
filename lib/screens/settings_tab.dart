@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +8,8 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../models/app_settings.dart';
 import '../models/force_unit.dart';
 import '../services/ble_link_manager.dart';
+import '../widgets/board_calibration_section.dart';
+import '../widgets/rig_slots_section.dart';
 import '../widgets/section_header.dart';
 import 'app_shell.dart';
 
@@ -39,29 +43,31 @@ class SettingsTab extends StatelessWidget {
           // Display units
           Text('Display Units', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
-          SegmentedButton<ForceUnit>(
-            segments: [
-              for (final u in ForceUnit.values)
-                ButtonSegment(value: u, label: Text(u.symbol)),
-            ],
-            selected: {settings.displayUnit},
-            // The default selected checkmark steals width from the labels and
-            // makes the segments wrap on narrow (mobile) screens.
-            showSelectedIcon: false,
-            onSelectionChanged: (set) => settings.setDisplayUnit(set.first),
-          ),
-          const SizedBox(height: 24),
-
-          // Channel labels
-          Text('Channels', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          for (int i = 0; i < settings.channelLabels.length; i++)
-            _ChannelConfigTile(
-              index: i,
-              label: settings.channelLabels[i],
-              onLabelChanged: (val) => settings.setChannelLabel(i, val),
+          for (final (label, units) in [
+            ('Force', ForceUnit.values.where((u) => u.isForce)),
+            ('Electrical', ForceUnit.values.where((u) => !u.isForce)),
+          ]) ...[
+            Text(label, style: Theme.of(context).textTheme.labelMedium),
+            const SizedBox(height: 4),
+            SegmentedButton<ForceUnit>(
+              segments: [
+                for (final u in units)
+                  ButtonSegment(value: u, label: Text(u.symbol)),
+              ],
+              selected: {settings.displayUnit},
+              // The default selected checkmark steals width from the labels
+              // and makes the segments wrap on narrow (mobile) screens.
+              showSelectedIcon: false,
+              emptySelectionAllowed: true,
+              onSelectionChanged: (set) {
+                if (set.isNotEmpty) {
+                  unawaited(settings.setDisplayUnit(set.first));
+                }
+              },
             ),
-          const SizedBox(height: 24),
+            const SizedBox(height: 8),
+          ],
+          const SizedBox(height: 16),
 
           // Wakelock
           SwitchListTile(
@@ -114,7 +120,31 @@ class SettingsTab extends StatelessWidget {
                 border: OutlineInputBorder(),
               ),
             ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
+
+          // Everything below belongs to the connected device: the load cell
+          // slots and the factory board calibration are read from ITS flash
+          // (and the DMM cross-check is per-device memory). With no link up,
+          // none of it exists — only the connect prompt shows.
+          if (deviceId.isNotEmpty) ...[
+            // The connected device's load cell slots (the rig). Read from
+            // the device at connect time; edits go back via "Save to
+            // device".
+            Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            const RigSlotsSection(),
+            const SizedBox(height: 16),
+
+            // The connected device's factory calibration (read-only view).
+            Text(
+              'Board calibration',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            BoardCalibrationSection(deviceId: deviceId),
+            const SizedBox(height: 16),
+          ],
+          const SizedBox(height: 8),
 
           // About
           const SectionHeader('About'),
@@ -148,53 +178,6 @@ class SettingsTab extends StatelessWidget {
             },
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ChannelConfigTile extends StatelessWidget {
-  const _ChannelConfigTile({
-    required this.index,
-    required this.label,
-    required this.onLabelChanged,
-  });
-
-  final int index;
-  final String label;
-  final ValueChanged<String> onLabelChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(
-          children: [
-            const SizedBox(width: 8),
-            Text(
-              'Ch ${index + 1}',
-              style: const TextStyle(fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              // Keyed by the label so an externally-changed value (e.g. the
-              // async SharedPrefs load completing after the first build)
-              // rebuilds the field with the fresh label — the same pattern
-              // the device-name field above uses.
-              child: TextFormField(
-                key: ValueKey(label),
-                initialValue: label,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  border: UnderlineInputBorder(),
-                  hintText: 'Label',
-                ),
-                onFieldSubmitted: onLabelChanged,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

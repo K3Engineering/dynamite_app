@@ -7,20 +7,32 @@ import '../services/adc_protocol.dart';
 import 'force_unit.dart';
 
 /// Application-wide settings, persisted via SharedPreferences.
+///
+/// Deliberately NOT here: channel labels (gone — row titles come from the
+/// rig's load cell slots), everything load cell (device slots, history —
+/// owned by `RigState`), and the DMM excitation cross-check (a measurement
+/// OF one board — per-device memory in `RigState`, never app-global).
+/// Legacy keys from the pre-slot model are erased on load; there are no
+/// field devices, so no migration is performed.
 class AppSettings extends ChangeNotifier {
   static const String _keyUnit = 'display_unit';
-  static const String _keyChannelLabels = 'channel_labels';
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
 
-  ForceUnit _displayUnit = ForceUnit.kN;
-  ForceUnit get displayUnit => _displayUnit;
-
-  /// Labels for each of the [nwNumAdcChan] ADC channels.
-  List<String> _channelLabels = [
-    for (int i = 0; i < nwNumAdcChan; i++) 'Load Cell ${i + 1}',
+  /// Keys of the pre-slot model (channel labels, load cell bank, per-channel
+  /// assignments, the app-global DMM reading), erased on load.
+  static const List<String> _legacyKeys = [
+    'channel_labels',
+    'load_cell_bank',
+    'channel_load_cells',
+    'measured_excitation_mv',
   ];
-  List<String> get channelLabels => List.unmodifiable(_channelLabels);
+
+  // mV/V is the default: it converts with board calibration alone, so a
+  // fresh install shows meaningful numbers before any load cell is assigned
+  // (force units need per-channel load-cell profiles).
+  ForceUnit _displayUnit = ForceUnit.mVv;
+  ForceUnit get displayUnit => _displayUnit;
 
   /// Which channels are shown in the live view. Local to the live tab —
   /// each recorded session carries its own visibility set.
@@ -49,19 +61,16 @@ class AppSettings extends ChangeNotifier {
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
 
+    for (final key in _legacyKeys) {
+      await prefs.remove(key);
+    }
+
     final unitName = prefs.getString(_keyUnit);
     if (unitName != null && !_modifiedKeys.contains(_keyUnit)) {
       _displayUnit = ForceUnit.values.firstWhere(
         (u) => u.name == unitName,
-        orElse: () => ForceUnit.kN,
+        orElse: () => ForceUnit.mVv,
       );
-    }
-
-    final labels = prefs.getStringList(_keyChannelLabels);
-    if (labels != null &&
-        labels.length == nwNumAdcChan &&
-        !_modifiedKeys.contains(_keyChannelLabels)) {
-      _channelLabels = labels;
     }
 
     final active = prefs.getStringList(_keyActiveChannels);
@@ -84,14 +93,6 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_keyUnit, unit.name);
-  }
-
-  Future<void> setChannelLabel(int index, String label) async {
-    _modifiedKeys.add(_keyChannelLabels);
-    _channelLabels[index] = label;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_keyChannelLabels, _channelLabels);
   }
 
   Future<void> setChannelActive(int index, bool active) async {

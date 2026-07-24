@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -6,6 +7,7 @@ import 'package:universal_ble/universal_ble.dart';
 
 import 'adc_protocol.dart';
 import 'bt_device_config.dart';
+import 'demo_calibration.dart';
 
 class MockBlePlatform extends UniversalBlePlatform {
   static MockBlePlatform? _instance;
@@ -48,6 +50,10 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   /// When true, reads of the calibration characteristic throw.
   bool failCalibrationRead = false;
+
+  /// The mock device's flash document, mutable so writes round-trip: a read
+  /// after a write serves whatever was last written (like real flash).
+  String mockFlashDoc = demoBoardCalibrationDoc;
 
   /// When true, [connect] throws (a refused/failed attempt: no link is
   /// established and no connection-change callback fires — the WEB flavor,
@@ -311,8 +317,12 @@ class MockBlePlatform extends UniversalBlePlatform {
     final Duration? timeout,
   }) async {
     await Future<void>.delayed(netDelay);
-    if (failCalibrationRead && characteristic == btChrCalibration) {
-      throw StateError('Mock calibration read failure');
+    if (characteristic == btChrCalibration) {
+      if (failCalibrationRead) {
+        throw StateError('Mock calibration read failure');
+      }
+      // The mock device is factory-calibrated: serve its flash doc.
+      return Uint8List.fromList(utf8.encode(mockFlashDoc));
     }
     return Uint8List(255);
   }
@@ -324,7 +334,11 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic,
     Uint8List value,
     BleOutputProperty bleOutputProperty,
-  ) async {}
+  ) async {
+    if (characteristic == btChrCalibration) {
+      mockFlashDoc = utf8.decode(value);
+    }
+  }
 
   @override
   Future<int> requestMtu(String deviceId, int expectedMtu) async {

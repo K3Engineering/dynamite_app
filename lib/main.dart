@@ -15,6 +15,7 @@ import 'services/database.dart';
 import 'services/hot_restart_cleanup_stub.dart'
     if (dart.library.js_interop) 'services/hot_restart_cleanup_web.dart';
 import 'services/recording_controller.dart';
+import 'services/rig_state.dart';
 import 'services/session_storage.dart';
 import 'screens/app_shell.dart';
 import 'widgets/status_colors.dart';
@@ -35,6 +36,8 @@ void main() async {
   //   BleLinkManager (link state machine) --raw bytes--> AdcPacketDecoder
   //   (wire protocol) --decoded samples--> DataHub (storage + stats)
   //   <--observed by-- RecordingController (session lifecycle + persistence).
+  //   RigState owns the rig (device slots + unsaved edits + cell history) and
+  //   pushes the effective per-channel cells into the hub.
   // AppEvents is the one-shot notice bus: producers emit, AppShell consumes.
   final appEvents = AppEvents();
   final dataHub = DataHub();
@@ -42,12 +45,28 @@ void main() async {
   final linkManager = BleLinkManager(events: appEvents)
     ..onAdcData = decoder.onDataPacket
     ..onCalibrationData = decoder.onCalibrationPacket;
+  final rigState = RigState(transport: linkManager, events: appEvents);
+  // Flash documents (board + slots) arrive via the decoder: the hub takes
+  // the board, RigState takes the whole document. The device id/name are
+  // read off the link at delivery time (the read only ever runs against the
+  // active link).
+  decoder.onDeviceFlash = (flash) => rigState.onFlashRead(
+    linkManager.selectedDeviceId,
+    linkManager.connectedDeviceName,
+    flash,
+  );
   final recording = RecordingController(
     dataHub: dataHub,
     linkManager: linkManager,
     decoder: decoder,
     events: appEvents,
   );
+  final appSettings = AppSettings();
+  // Push the effective per-channel load cells (device slots, including
+  // unsaved edits) into the data layer now and on every rig change.
+  // Content-equal pushes are a no-op inside the hub.
+  dataHub.updateLoadCells(rigState.channelCells);
+  rigState.addListener(() => dataHub.updateLoadCells(rigState.channelCells));
 
   // Hand the NEXT hot-restart generation a way to tear this one down (web
   // debug only). Fire-and-forget: the callbacks are silenced synchronously
@@ -71,13 +90,14 @@ void main() async {
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => AppSettings()),
+        ChangeNotifierProvider.value(value: appSettings),
         // App-lifetime singletons created above (never disposed — the app
         // root never unmounts), provided individually so each screen depends
         // only on the layer it actually uses.
         Provider.value(value: appEvents),
         ChangeNotifierProvider.value(value: dataHub),
         ChangeNotifierProvider.value(value: linkManager),
+        ChangeNotifierProvider.value(value: rigState),
         ChangeNotifierProvider.value(value: recording),
       ],
       child: const DynoApp(),
