@@ -13,25 +13,27 @@ import '../services/rig_state.dart';
 /// measurement chain.
 ///
 /// Everything here is per-board data, so it comes from the flash-document
-/// owner ([RigState]) — never from the data hub's conversion-side snapshot —
-/// and renders only while the document belongs to [deviceId], the connected
-/// device. No device / no document / another device's document: a
-/// placeholder card, never nominal or stale values presented as real ones.
+/// owner ([RigState.boardCalibrationFor]) — never from the data hub's
+/// conversion-side snapshot — and renders only while the document belongs
+/// to [deviceId], the connected device. No device / no document / another
+/// device's document: a placeholder card, never nominal or stale values
+/// presented as real ones.
 class BoardCalibrationSection extends StatelessWidget {
   const BoardCalibrationSection({super.key, required this.deviceId});
 
   /// The connected device this section renders for. Passed in by the
   /// settings tab (which only includes the section while a link is up), so
   /// the section needs no link-manager dependency — and a flash document
-  /// belonging to any OTHER device is refused.
+  /// belonging to any OTHER device is refused by the ownership query.
   final String deviceId;
 
   @override
   Widget build(BuildContext context) {
     final rig = context.watch<RigState>();
-    final board = rig.deviceBoardCalibration;
-    final owned = rig.hasDeviceDoc && rig.flashDeviceId == deviceId;
-    if (!owned || board == null) {
+    // One ownership query, decided by the document owner: null means no
+    // document this run, or a document belonging to another device.
+    final board = rig.boardCalibrationFor(deviceId);
+    if (board == null) {
       return const Card(
         child: ListTile(
           leading: Icon(Icons.phonelink_erase, color: Colors.grey),
@@ -80,8 +82,12 @@ class BoardCalibrationSection extends StatelessWidget {
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 8),
+        // Deliberately keyless: every device transition unmounts this field
+        // (the settings gate or the placeholder card takes its place), so
+        // the initial value always matches the device on screen. Keying it
+        // by the value would instead rebuild it per keystroke — a new field
+        // each time, focus lost mid-typing.
         TextFormField(
-          key: ValueKey('dmm$dmmMv'),
           initialValue: dmmMv?.toString() ?? '',
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: const InputDecoration(
@@ -103,12 +109,16 @@ class BoardCalibrationSection extends StatelessWidget {
         ),
         if (dmmMv != null) ...[
           const SizedBox(height: 8),
+          // Only factory-calibrated channels have a measured span to compare
+          // against the DMM. A nominal channel would just echo the nominal
+          // 4.53 V assumption back as a fake "gain error".
           for (int i = 0; i < board.channels.length; i++)
-            Text(
-              'Ch ${i + 1}: implied chain gain error '
-              '${_gainErrorPercent(board.channels[i], dmmMv)}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            if (board.channels[i].isFactoryCalibrated)
+              Text(
+                'Ch ${i + 1}: implied chain gain error '
+                '${_gainErrorPercent(board.channels[i], dmmMv)}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
         ],
       ],
     );
@@ -131,14 +141,6 @@ class _ChannelCalTile extends StatelessWidget {
 
   final int index;
   final ChannelBoardCalibration channel;
-
-  static const _configLabels = [
-    '(t1, t5)',
-    '(t2, t4)',
-    '(t3, t3)',
-    '(t4, t2)',
-    '(t5, t1)',
-  ];
 
   @override
   Widget build(BuildContext context) {
@@ -192,7 +194,7 @@ class _ChannelCalTile extends StatelessWidget {
                       for (int k = 0; k < kCalPointCount; k++)
                         TableRow(
                           children: [
-                            _td(_configLabels[k]),
+                            _td(calConfigLabels[k]),
                             _td(channel.setpoints[k].toStringAsFixed(4)),
                             _td(channel.readings![k].toStringAsFixed(1)),
                           ],

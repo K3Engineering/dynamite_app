@@ -30,6 +30,7 @@ void main() {
     WidgetTester tester, {
     bool withFlash = true,
     String deviceId = 'dev1',
+    String? flashDoc,
   }) async {
     SharedPreferences.setMockInitialValues({});
     final rig = RigState(transport: _FakeTransport());
@@ -37,7 +38,7 @@ void main() {
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        DeviceFlash.parse(demoBoardCalibrationDoc),
+        DeviceFlash.parse(flashDoc ?? demoBoardCalibrationDoc),
       );
     }
     await tester.pumpWidget(
@@ -149,17 +150,50 @@ void main() {
     tester,
   ) async {
     final rig = await pump(tester);
-    await rig.setMeasuredExcitationMv(4530.24);
-    await tester.pump();
 
     final field = find.widgetWithText(
       TextFormField,
       'Your DMM excitation reading (mV)',
     );
+    await tester.enterText(field, '4530.24');
+    await tester.pumpAndSettle();
+    expect(rig.measuredExcitationMv, closeTo(4530.24, 1e-9));
+    expect(find.textContaining('implied chain gain error'), findsNWidgets(4));
+
     await tester.enterText(field, '');
     await tester.pumpAndSettle();
 
     expect(rig.measuredExcitationMv, isNull);
     expect(find.textContaining('implied chain gain error'), findsNothing);
+  });
+
+  testWidgets('DMM gain error rows cover factory-calibrated channels only', (
+    tester,
+  ) async {
+    // Only CH1 of this document has factory data: the cross-check has a
+    // measured span to compare only there — a nominal channel would just
+    // echo the nominal 4.53 V assumption back as a fake "gain error".
+    const partialCalDoc = '''
+K3CAL1
+ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4
+ch0.raw=6386310.2,3193480.0,845.2,-3191769.6,-6384619.8
+END
+''';
+    await pump(tester, flashDoc: partialCalDoc);
+
+    // The header reflects the single calibrated channel.
+    expect(find.textContaining('1 of 4 channels'), findsOneWidget);
+
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Your DMM excitation reading (mV)'),
+      '4530.24',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('implied chain gain error'), findsOneWidget);
+    expect(
+      find.textContaining('Ch 1: implied chain gain error'),
+      findsOneWidget,
+    );
   });
 }

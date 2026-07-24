@@ -76,6 +76,20 @@ void main() {
       expect(seen, isEmpty);
     });
 
+    test('boardCalibrationFor gates on document ownership', () async {
+      final rig = await settledRig();
+
+      // No flash document read yet.
+      expect(rig.boardCalibrationFor('dev1'), isNull);
+
+      rig.onFlashRead('dev1', 'Bench unit', fixture());
+      // The connected device gets its own document…
+      expect(rig.boardCalibrationFor('dev1'), isNotNull);
+      // …any other device is refused — a stale or foreign document never
+      // renders as the connected device's calibration.
+      expect(rig.boardCalibrationFor('dev2'), isNull);
+    });
+
     test('an identical re-read is quiet', () async {
       final rig = await settledRig();
       rig.onFlashRead('dev1', 'Bench unit', fixture());
