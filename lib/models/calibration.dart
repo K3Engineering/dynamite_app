@@ -94,7 +94,7 @@ class ChannelBoardCalibration {
       // Sort the five points ascending by raw reading for interpolation.
       final order = [for (int k = 0; k < kCalPointCount; ++k) k]
         ..sort((a, b) => r[a].compareTo(r[b]));
-      final sp = ladderSetpointsMvV(this.resistors);
+      final sp = setpoints;
       _sortedRaw = [for (final k in order) r[k]];
       _sortedSetpoints = [for (final k in order) sp[k]];
     }
@@ -118,8 +118,10 @@ class ChannelBoardCalibration {
 
   bool get isFactoryCalibrated => readings != null;
 
-  /// Setpoints (mV/V) per config, derived from [resistors].
-  List<double> get setpoints => ladderSetpointsMvV(resistors);
+  /// Setpoints (mV/V) per config, derived from [resistors]. Cached: pure
+  /// function of the immutable [resistors], and per-sample conversion paths
+  /// reach it via [spanCountsPerMvV]/[effectiveExcitationV].
+  late final List<double> setpoints = ladderSetpointsMvV(resistors);
 
   late final List<double> _sortedRaw;
   late final List<double> _sortedSetpoints;
@@ -154,18 +156,21 @@ class ChannelBoardCalibration {
 
   /// Terminal slope in counts per mV/V: the end-to-end slope between the two
   /// outermost cal points (which bracket a load cell's full-scale range).
-  double get spanCountsPerMvV {
-    final r = readings;
-    if (r == null) return nominalCountsPerMvV;
-    final sp = setpoints;
-    return (r[0] - r[kCalPointCount - 1]) / (sp[0] - sp[kCalPointCount - 1]);
-  }
+  /// Cached (see [setpoints]).
+  late final double spanCountsPerMvV = switch (readings) {
+    final r? =>
+      (r[0] - r[kCalPointCount - 1]) /
+          (setpoints[0] - setpoints[kCalPointCount - 1]),
+    null => nominalCountsPerMvV,
+  };
 
   /// Excitation voltage implied by [spanCountsPerMvV] and the nominal AFE/ADC
   /// chain. Not a measurement of the excitation pin — it folds in AFE gain
   /// and ADC reference errors, which is exactly why the ratiometric
-  /// calibration needs no separate excitation knowledge.
-  double get effectiveExcitationV => spanCountsPerMvV / countsPerMvAtCellOutput;
+  /// calibration needs no separate excitation knowledge. Cached (see
+  /// [setpoints]).
+  late final double effectiveExcitationV =
+      spanCountsPerMvV / countsPerMvAtCellOutput;
 
   /// Terminal nonlinearity (ppm of half-span output, signed): deviation of
   /// the inner cal point from the straight line between the zero and the

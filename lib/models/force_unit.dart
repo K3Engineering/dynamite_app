@@ -40,21 +40,28 @@ enum ForceUnit {
   /// piecewise nonlinearity applies on both sides). Monotone nondecreasing.
   /// Returns null when unavailable: a force unit on a channel with no
   /// assigned load cell.
+  ///
+  /// The returned closure is invoked per sample by the hot paths (graph
+  /// reduction, stats), so the tare-side map value — loop-invariant — is
+  /// evaluated once here instead of inside the closure.
   double Function(double raw)? converterFor(
     ChannelCalibration channel,
     double tare,
   ) {
+    final board = channel.board;
+    final tareMvV = board.mvVFromRaw(tare);
     final f = kgfFactor;
     if (f != null) {
       final cell = channel.loadCell;
       if (cell == null) return null;
       final scale = f * cell.kgfPerMvV;
-      return (raw) => channel.netMvV(raw, tare) * scale;
+      return (raw) => (board.mvVFromRaw(raw) - tareMvV) * scale;
     }
     return switch (this) {
-      ForceUnit.mVv => (raw) => channel.netMvV(raw, tare),
-      ForceUnit.mV => (raw) => channel.netMv(raw, tare),
-      ForceUnit.raw => (raw) => channel.netRaw(raw, tare),
+      ForceUnit.mVv => (raw) => board.mvVFromRaw(raw) - tareMvV,
+      ForceUnit.mV =>
+        (raw) => (board.mvVFromRaw(raw) - tareMvV) * board.effectiveExcitationV,
+      ForceUnit.raw => (raw) => raw - tare,
       _ => throw StateError('$this is a force unit'),
     };
   }
