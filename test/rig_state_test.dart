@@ -163,6 +163,17 @@ void main() {
     );
 
     test(
+      'swapping two empty slots is a no-op — no pending edit',
+      () async {
+        final rig = await settledRig();
+        rig.onFlashRead('dev1', 'Bench unit', fixture());
+
+        rig.swapSlots(5, 6);
+        expect(rig.hasPending, isFalse);
+      },
+    );
+
+    test(
       'pending survives a disconnect+reconnect to the same device',
       () async {
         final rig = await settledRig();

@@ -325,6 +325,9 @@ class RigState extends ChangeNotifier {
   /// the list never shifts under the user's finger.
   void swapSlots(int a, int b) {
     if (a == b) return;
+    // Identical contents (e.g. two empty slots): nothing would change, so
+    // don't raise the dirty state.
+    if (effectiveSlots.slots[a] == effectiveSlots.slots[b]) return;
     final p = _ensurePending();
     p.edited = p.edited.withSwap(a, b);
     notifyListeners();

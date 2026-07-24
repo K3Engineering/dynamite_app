@@ -190,6 +190,30 @@ void main() {
     expect(find.textContaining('Empty slot'), findsNWidgets(7));
   });
 
+  testWidgets('empty rows have the drag handle; dragging one moves a cell', (
+    tester,
+  ) async {
+    final rig = await pump(tester);
+
+    // The drag handle inside the first empty row (slot 3, CH4).
+    final handle = find.descendant(
+      of: find.ancestor(
+        of: find.textContaining('Empty slot').first,
+        matching: find.byType(ListTile),
+      ),
+      matching: find.byIcon(Icons.drag_indicator),
+    );
+    expect(handle, findsOneWidget);
+
+    // Drag it three rows up onto 'Thrust cell' (slot 0): the two swap.
+    await tester.drag(handle, const Offset(0, -3 * 72));
+    await tester.pump();
+
+    expect(rig.effectiveSlots[0], isNull);
+    expect(rig.effectiveSlots.cellAt(3)?.name, 'Thrust cell');
+    expect(rig.hasPending, isTrue);
+  });
+
   testWidgets('the add dialog merges the custom entry and the last seen', (
     tester,
   ) async {

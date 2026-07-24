@@ -143,8 +143,11 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   }
 
   /// One slot row: a drop target for swaps, fixed height so the channel
-  /// gutter aligns. Populated rows offer the drag handle; every row
-  /// (including empty ones) accepts a drop.
+  /// gutter aligns. Every row — populated or empty — carries the same drag
+  /// handle on its right edge, and every row accepts a drop. Dragging an
+  /// empty slot onto a populated one swaps them (a move from the other
+  /// side); dragging it onto another empty changes nothing (see
+  /// [RigState.swapSlots]).
   Widget _slotTile(
     BuildContext context,
     RigState rig,
@@ -158,16 +161,36 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     final Widget tile;
     if (slot == null) {
       tile = ListTile(
-        title: Text(
-          'Empty slot',
-          style: theme.textTheme.bodyLarge?.copyWith(
-            color: theme.colorScheme.outline,
+        title: Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.add, size: 18, color: theme.colorScheme.outline),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  'Empty slot · tap to add a load cell',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodyLarge?.copyWith(
+                    color: theme.colorScheme.outline,
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
-        subtitle: const Text('Tap to add a load cell'),
-        trailing: Icon(
-          Icons.add_circle_outline,
-          color: theme.colorScheme.outline,
+        trailing: _dragHandle(
+          i,
+          rowWidth,
+          ListTile(
+            title: Text(
+              'Empty slot',
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+          ),
         ),
         onTap: () => showAddToSlot(context, rig, i),
       );
@@ -180,26 +203,10 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
       tile = ListTile(
         title: Text(cell.title),
         subtitle: Text(subtitle),
-        trailing: Draggable<int>(
-          data: i,
-          onDragStarted: () => setState(() => _dragIndex = i),
-          onDragEnd: (_) => setState(() => _dragIndex = null),
-          feedback: Material(
-            elevation: 4,
-            borderRadius: BorderRadius.circular(8),
-            clipBehavior: Clip.antiAlias,
-            child: SizedBox(
-              width: rowWidth,
-              child: ListTile(
-                title: Text(cell.title),
-                subtitle: Text(subtitle),
-              ),
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: Icon(Icons.drag_indicator, color: theme.colorScheme.outline),
-          ),
+        trailing: _dragHandle(
+          i,
+          rowWidth,
+          ListTile(title: Text(cell.title), subtitle: Text(subtitle)),
         ),
         onTap: () => showSlotEditor(context, rig, i),
       );
@@ -225,6 +232,28 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
           child: Opacity(opacity: _dragIndex == i ? 0.35 : 1.0, child: tile),
         );
       },
+    );
+  }
+
+  /// The 6-dot drag handle on the right edge of every row. Dragging it onto
+  /// another row swaps the two slots' contents; [feedback] is the floating
+  /// row shown under the finger while dragging.
+  Widget _dragHandle(int i, double rowWidth, Widget feedback) {
+    final theme = Theme.of(context);
+    return Draggable<int>(
+      data: i,
+      onDragStarted: () => setState(() => _dragIndex = i),
+      onDragEnd: (_) => setState(() => _dragIndex = null),
+      feedback: Material(
+        elevation: 4,
+        borderRadius: BorderRadius.circular(8),
+        clipBehavior: Clip.antiAlias,
+        child: SizedBox(width: rowWidth, child: feedback),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Icon(Icons.drag_indicator, color: theme.colorScheme.outline),
+      ),
     );
   }
 }
