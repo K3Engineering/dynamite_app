@@ -606,10 +606,18 @@ class _TareSplitButton extends StatelessWidget {
       shape: StadiumBorder(side: BorderSide(color: cs.outline)),
       clipBehavior: Clip.antiAlias,
       child: SizedBox(
-        // Matches the adjacent REC button's minimum tap target height.
-        height: 48,
+        // Match the adjacent FilledButton's height: M3 buttons use a 40dp
+        // minimum height run through the theme's visual density —
+        // VisualDensity.compact (the default on desktop, including desktop
+        // web) subtracts 8dp, so a hardcoded 40 renders taller than the
+        // REC pill there.
+        height: 40.0 + Theme.of(context).visualDensity.baseSizeAdjustment.dy,
         child: Row(
           mainAxisSize: MainAxisSize.min,
+          // Stretch so the segments' InkWells fill the button height —
+          // otherwise their hover highlights and hit areas shrink to the
+          // content height and float centered inside the pill.
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             InkWell(
               onTap: onTare,
