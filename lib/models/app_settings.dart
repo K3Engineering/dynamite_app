@@ -9,21 +9,23 @@ import 'force_unit.dart';
 /// Application-wide settings, persisted via SharedPreferences.
 ///
 /// Deliberately NOT here: channel labels (gone — row titles come from the
-/// rig's load cell slots) and everything load cell (device slots, history —
-/// owned by `RigState`). Legacy keys from the pre-slot model are erased on
-/// load; there are no field devices, so no migration is performed.
+/// rig's load cell slots), everything load cell (device slots, history —
+/// owned by `RigState`), and the DMM excitation cross-check (a measurement
+/// OF one board — per-device memory in `RigState`, never app-global).
+/// Legacy keys from the pre-slot model are erased on load; there are no
+/// field devices, so no migration is performed.
 class AppSettings extends ChangeNotifier {
   static const String _keyUnit = 'display_unit';
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
-  static const String _keyExcitationMv = 'measured_excitation_mv';
 
   /// Keys of the pre-slot model (channel labels, load cell bank, per-channel
-  /// assignments), erased on load.
+  /// assignments, the app-global DMM reading), erased on load.
   static const List<String> _legacyKeys = [
     'channel_labels',
     'load_cell_bank',
     'channel_load_cells',
+    'measured_excitation_mv',
   ];
 
   // mV/V is the default: it converts with board calibration alone, so a
@@ -45,12 +47,6 @@ class AppSettings extends ChangeNotifier {
 
   bool _wakelockEnabled = false;
   bool get wakelockEnabled => _wakelockEnabled;
-
-  /// The user's own DMM reading of the device's excitation (mV), used only
-  /// as a cross-check against the ratiometric factory calibration (which
-  /// stays authoritative regardless — see the device settings section).
-  double? _measuredExcitationMv;
-  double? get measuredExcitationMv => _measuredExcitationMv;
 
   /// Preference keys the user has explicitly set through a setter. [_load]'s
   /// async read resolves AFTER the constructor returns, so a setter that ran
@@ -88,10 +84,6 @@ class AppSettings extends ChangeNotifier {
       _wakelockEnabled = prefs.getBool(_keyWakelock) ?? false;
     }
 
-    if (!_modifiedKeys.contains(_keyExcitationMv)) {
-      _measuredExcitationMv = prefs.getDouble(_keyExcitationMv);
-    }
-
     notifyListeners();
   }
 
@@ -120,18 +112,5 @@ class AppSettings extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyWakelock, enabled);
-  }
-
-  /// Set (or clear, with null) the user's DMM excitation reading.
-  Future<void> setMeasuredExcitationMv(double? mv) async {
-    _modifiedKeys.add(_keyExcitationMv);
-    _measuredExcitationMv = mv;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    if (mv == null) {
-      await prefs.remove(_keyExcitationMv);
-    } else {
-      await prefs.setDouble(_keyExcitationMv, mv);
-    }
   }
 }

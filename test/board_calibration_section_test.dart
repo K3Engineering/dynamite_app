@@ -3,44 +3,61 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:dynamite_app/models/app_settings.dart';
 import 'package:dynamite_app/models/calibration.dart';
-import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
+import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/board_calibration_section.dart';
 
 /// Widget tests for the board calibration view in the device settings
-/// section, fed by the fixture document the demo and mock devices serve.
+/// section. The section renders the flash document owned by [RigState] —
+/// and only while that document belongs to the device it was handed — so
+/// the harness is a [RigState] fed the fixture document.
+class _FakeTransport implements RigFlashTransport {
+  @override
+  String get connectedDeviceId => 'dev1';
+
+  @override
+  String get connectedDeviceName => 'Bench unit';
+
+  @override
+  Future<void> writeFlashDoc(String doc) async {}
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  Future<(DataHub, AppSettings)> pump(
+  Future<RigState> pump(
     WidgetTester tester, {
-    BoardCalibration? board,
+    bool withFlash = true,
+    String deviceId = 'dev1',
   }) async {
     SharedPreferences.setMockInitialValues({});
-    final hub = DataHub();
-    if (board != null) hub.updateBoardCalibration(board);
-    final settings = AppSettings();
+    final rig = RigState(transport: _FakeTransport());
+    if (withFlash) {
+      rig.onFlashRead(
+        'dev1',
+        'Bench unit',
+        DeviceFlash.parse(demoBoardCalibrationDoc),
+      );
+    }
     await tester.pumpWidget(
       MultiProvider(
-        providers: [
-          ChangeNotifierProvider<DataHub>.value(value: hub),
-          ChangeNotifierProvider<AppSettings>.value(value: settings),
-        ],
-        child: const MaterialApp(
+        providers: [ChangeNotifierProvider<RigState>.value(value: rig)],
+        child: MaterialApp(
           home: Scaffold(
-            body: SingleChildScrollView(child: BoardCalibrationSection()),
+            body: SingleChildScrollView(
+              child: BoardCalibrationSection(deviceId: deviceId),
+            ),
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    return (hub, settings);
+    return rig;
   }
 
   testWidgets('shows factory status and per-channel summaries', (tester) async {
-    await pump(tester, board: BoardCalibration.parse(demoBoardCalibrationDoc));
+    await pump(tester);
 
     expect(find.textContaining('Factory calibration'), findsOneWidget);
     expect(find.textContaining('2026-07-20'), findsWidgets);
@@ -58,7 +75,7 @@ void main() {
 
   testWidgets('expanding a channel reveals the 5-point table', (tester) async {
     final board = BoardCalibration.parse(demoBoardCalibrationDoc);
-    await pump(tester, board: board);
+    await pump(tester);
 
     await tester.tap(find.text('Ch 1'));
     await tester.pumpAndSettle();
@@ -81,18 +98,26 @@ void main() {
     }
   });
 
-  testWidgets('uncalibrated board shows the nominal fallback', (tester) async {
-    await pump(tester); // fresh hub: BoardCalibration.nominal()
+  testWidgets('no flash doc: placeholder card, no values', (tester) async {
+    await pump(tester, withFlash: false);
 
-    expect(find.textContaining('nominal values in use'), findsOneWidget);
-    expect(find.text('Nominal values (no factory data)'), findsNWidgets(4));
+    expect(find.text('No calibration data from the device'), findsOneWidget);
+    expect(find.textContaining('nominal values in use'), findsNothing);
+    expect(find.text('Ch 1'), findsNothing);
+  });
+
+  testWidgets('another device\'s flash doc is refused', (tester) async {
+    // The doc on file belongs to dev1, but the section was handed dev2.
+    await pump(tester, deviceId: 'dev2');
+
+    expect(find.text('No calibration data from the device'), findsOneWidget);
+    expect(find.textContaining('Factory calibration'), findsNothing);
   });
 
   testWidgets('a DMM reading shows per-channel implied gain error', (
     tester,
   ) async {
-    final board = BoardCalibration.parse(demoBoardCalibrationDoc);
-    final (hub, settings) = await pump(tester, board: board);
+    final rig = await pump(tester);
 
     expect(find.textContaining('implied chain gain error'), findsNothing);
 
@@ -102,9 +127,10 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(settings.measuredExcitationMv, closeTo(4530.24, 1e-9));
+    expect(rig.measuredExcitationMv, closeTo(4530.24, 1e-9));
     expect(find.textContaining('implied chain gain error'), findsNWidgets(4));
     // ch0 span vs the DMM: span/(countsPerMv * 4.53024) - 1.
+    final board = BoardCalibration.parse(demoBoardCalibrationDoc);
     final err =
         (board.channels[0].spanCountsPerMvV /
                 (countsPerMvAtCellOutput * 4.53024) -
@@ -122,11 +148,8 @@ void main() {
   testWidgets('clearing the DMM field removes the gain error rows', (
     tester,
   ) async {
-    final (hub, settings) = await pump(
-      tester,
-      board: BoardCalibration.parse(demoBoardCalibrationDoc),
-    );
-    await settings.setMeasuredExcitationMv(4530.24);
+    final rig = await pump(tester);
+    await rig.setMeasuredExcitationMv(4530.24);
     await tester.pump();
 
     final field = find.widgetWithText(
@@ -136,7 +159,7 @@ void main() {
     await tester.enterText(field, '');
     await tester.pumpAndSettle();
 
-    expect(settings.measuredExcitationMv, isNull);
+    expect(rig.measuredExcitationMv, isNull);
     expect(find.textContaining('implied chain gain error'), findsNothing);
   });
 }

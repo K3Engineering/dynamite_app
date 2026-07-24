@@ -113,7 +113,7 @@ void main() {
       expect(slots.cellAt(2)?.span, 1.0);
     });
 
-    test('withMove is remove-then-insert', () {
+    test('withSwap exchanges two slots and nothing else', () {
       RigSlots fill() => RigSlots([
         for (int i = 0; i < kRigSlotCount; ++i)
           RigSlot(
@@ -124,13 +124,25 @@ void main() {
             ),
           ),
       ]);
-      final moved = fill().withMove(0, 2);
+      final swapped = fill().withSwap(0, 2);
       expect(
-        [for (int i = 0; i < 4; ++i) moved.cellAt(i)?.name],
-        ['c1', 'c2', 'c0', 'c3'],
+        [for (int i = 0; i < 4; ++i) swapped.cellAt(i)?.name],
+        ['c2', 'c1', 'c0', 'c3'],
       );
-      final back = moved.withMove(2, 0);
+      final back = swapped.withSwap(2, 0);
       expect(back, fill());
+    });
+
+    test('withSwap onto an empty slot is a move', () {
+      final cell = LoadCellProfile(
+        name: 'A',
+        capacityKg: 100,
+        sensitivityMvV: 2,
+      );
+      final slots = RigSlots.empty().withSlot(0, RigSlot(cell: cell));
+      final moved = slots.withSwap(0, 5);
+      expect(moved.cellAt(0), isNull);
+      expect(moved.cellAt(5)?.name, 'A');
     });
 
     test('signatures track content and ignore mtime', () {

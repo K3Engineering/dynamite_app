@@ -122,21 +122,29 @@ class SettingsTab extends StatelessWidget {
             ),
           const SizedBox(height: 16),
 
-          // The connected device's load cell slots (the rig). Read from the
-          // device at connect time; edits go back via "Save to device".
-          Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          const RigSlotsSection(),
-          const SizedBox(height: 16),
+          // Everything below belongs to the connected device: the load cell
+          // slots and the factory board calibration are read from ITS flash
+          // (and the DMM cross-check is per-device memory). With no link up,
+          // none of it exists — only the connect prompt shows.
+          if (deviceId.isNotEmpty) ...[
+            // The connected device's load cell slots (the rig). Read from
+            // the device at connect time; edits go back via "Save to
+            // device".
+            Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            const RigSlotsSection(),
+            const SizedBox(height: 16),
 
-          // The connected device's factory calibration (read-only view).
-          Text(
-            'Board calibration',
-            style: Theme.of(context).textTheme.titleSmall,
-          ),
+            // The connected device's factory calibration (read-only view).
+            Text(
+              'Board calibration',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            BoardCalibrationSection(deviceId: deviceId),
+            const SizedBox(height: 16),
+          ],
           const SizedBox(height: 8),
-          const BoardCalibrationSection(),
-          const SizedBox(height: 24),
 
           // About
           const SectionHeader('About'),

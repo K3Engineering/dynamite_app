@@ -123,15 +123,30 @@ void main() {
       },
     );
 
-    test('move reorders (assign/unassign across the boundary)', () async {
-      final rig = await settledRig();
-      rig.onFlashRead('dev1', 'Bench unit', fixture());
+    test(
+      'swap exchanges slots (assign/unassign across the boundary)',
+      () async {
+        final rig = await settledRig();
+        rig.onFlashRead('dev1', 'Bench unit', fixture());
 
-      // Drag the spare (slot 4) up to CH4 (slot 3).
-      rig.moveSlot(4, 3);
-      expect(rig.channelTitles[3], 'Spare 50');
-      expect(rig.effectiveSlots[4], isNull);
-    });
+        // Drag the spare (slot 4) onto CH2 (slot 1): the two exchange.
+        rig.swapSlots(4, 1);
+        expect(rig.channelTitles[1], 'Spare 50');
+        expect(rig.effectiveSlots.cellAt(4)?.name, 'Break jig');
+
+        // Drag 'Spare 50' (now on CH2) onto the empty CH4: a move — the
+        // channel it left goes empty, the evicted 'Break jig' stays put.
+        rig.swapSlots(1, 3);
+        expect(rig.channelTitles[1], 'CH 2');
+        expect(rig.effectiveSlots[1], isNull);
+        expect(rig.channelTitles[3], 'Spare 50');
+        expect(rig.effectiveSlots.cellAt(4)?.name, 'Break jig');
+
+        // Self-swap is a no-op.
+        rig.swapSlots(3, 3);
+        expect(rig.channelTitles[3], 'Spare 50');
+      },
+    );
 
     test(
       'pending survives a disconnect+reconnect to the same device',
@@ -273,5 +288,46 @@ void main() {
       await pumpEventQueue();
       expect(seen.whereType<RigChangedSinceLastVisit>(), hasLength(1));
     });
+  });
+
+  group('DMM excitation cross-check (per-device)', () {
+    test('no flash doc: nowhere to hang the value, set is a no-op', () async {
+      final rig = await settledRig();
+      await rig.setMeasuredExcitationMv(4530.2);
+      expect(rig.measuredExcitationMv, isNull);
+    });
+
+    test('the value attaches to the flash doc\'s device only', () async {
+      final rig = await settledRig();
+      rig.onFlashRead('dev1', 'Bench unit', fixture());
+      await rig.setMeasuredExcitationMv(4530.2);
+      expect(rig.measuredExcitationMv, 4530.2);
+
+      // Another device has no reading of its own…
+      rig.onFlashRead('dev2', 'Other unit', fixture());
+      expect(rig.measuredExcitationMv, isNull);
+
+      // …and dev1's reading is still there when dev1 comes back.
+      rig.onFlashRead('dev1', 'Bench unit', fixture());
+      expect(rig.measuredExcitationMv, 4530.2);
+
+      // Clearing works.
+      await rig.setMeasuredExcitationMv(null);
+      expect(rig.measuredExcitationMv, isNull);
+    });
+
+    test(
+      'the value survives a restart (new RigState on the same prefs)',
+      () async {
+        final rig = await settledRig();
+        rig.onFlashRead('dev1', 'Bench unit', fixture());
+        await rig.setMeasuredExcitationMv(4530.2);
+
+        final rig2 = await settledRig();
+        expect(rig2.measuredExcitationMv, isNull); // no doc read yet
+        rig2.onFlashRead('dev1', 'Bench unit', fixture());
+        expect(rig2.measuredExcitationMv, 4530.2);
+      },
+    );
   });
 }

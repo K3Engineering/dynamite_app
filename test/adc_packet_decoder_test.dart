@@ -168,7 +168,8 @@ void main() {
         Uint8List.fromList(utf8.encode(demoBoardCalibrationDoc)),
       );
       final board = hub.boardCalibration;
-      expect(board.channels.every((c) => c.isFactoryCalibrated), isTrue);
+      expect(board, isNotNull);
+      expect(board!.channels.every((c) => c.isFactoryCalibrated), isTrue);
       expect(board.channels[0].offsetCounts, closeTo(845.2, 1e-9));
       expect(board.channels[2].offsetCounts, closeTo(1502.8, 1e-9));
       expect(board.factoryDate, '2026-07-20');
@@ -181,7 +182,7 @@ void main() {
         Uint8List.fromList(const [0x00, 0x9F, 0x92, 0x96, 0xFF]),
       );
       expect(
-        hub.boardCalibration.channels.every((c) => !c.isFactoryCalibrated),
+        hub.boardCalibration!.channels.every((c) => !c.isFactoryCalibrated),
         isTrue,
       );
     });

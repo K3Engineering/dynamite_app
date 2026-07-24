@@ -86,12 +86,13 @@ class PendingRigEdits {
 }
 
 /// Owns the rig: the slot list read from the connected device, unsaved
-/// edits, the cross-device cell history, and per-device change detection.
+/// edits, the cross-device cell history, per-device change detection, and
+/// per-device user memory (the DMM excitation cross-check).
 ///
 /// The model is deliberately low-state: the device flash is the ONLY rig
 /// truth; this class adds (a) pending edits the user hasn't saved yet and
-/// (b) advisory memory (history, last-seen signatures) that can inform and
-/// warn but never competes with the device.
+/// (b) advisory memory (history, last-seen signatures, DMM readings) that
+/// can inform and warn but never competes with the device.
 class RigState extends ChangeNotifier {
   RigState({required RigFlashTransport transport, AppEvents? events})
     : _transport = transport,
@@ -101,6 +102,7 @@ class RigState extends ChangeNotifier {
 
   static const String _keyHistory = 'rig_history';
   static const String _keyLastSeen = 'rig_lastseen';
+  static const String _keyDmm = 'rig_dmm_excitation_mv';
 
   /// History is a suggestion list, not an archive — cap it so it stays
   /// scannable (least-recently-seen evicted).
@@ -125,6 +127,12 @@ class RigState extends ChangeNotifier {
 
   List<RigHistoryEntry> _history = [];
   Map<String, List<String?>> _lastSeenByDevice = {};
+
+  /// The user's own DMM excitation readings (mV), keyed by device id. A DMM
+  /// reading measures ONE board's hardware, so it is per-device memory —
+  /// never an app-global value (that would compare one device against
+  /// another's calibration).
+  Map<String, double> _dmmByDevice = {};
 
   /// Preference keys written since construction (the async [_load] must not
   /// clobber them — same race as in AppSettings).
@@ -153,7 +161,34 @@ class RigState extends ChangeNotifier {
   /// The device the current flash document belongs to.
   String get flashDeviceId => _flashDeviceId;
 
+  /// The board half of the flash document, or null before the first read.
+  /// The settings UI reads factory calibration from HERE — the document
+  /// owner — never from the hub's conversion-side snapshot, so what renders
+  /// always belongs to an identified device.
+  BoardCalibration? get deviceBoardCalibration => _lastFlash?.board;
+
   List<RigHistoryEntry> get history => List.unmodifiable(_history);
+
+  /// The user's DMM excitation reading (mV) for the device the flash doc
+  /// belongs to, or null. Cross-check diagnostics only — the ratiometric
+  /// factory calibration stays authoritative regardless.
+  double? get measuredExcitationMv => _dmmByDevice[_flashDeviceId];
+
+  /// Set (or clear, with null) the DMM reading for the flash doc's device.
+  /// No-op without a flash doc: there is no identified device to hang the
+  /// value on.
+  Future<void> setMeasuredExcitationMv(double? mv) async {
+    final id = _flashDeviceId;
+    if (id.isEmpty) return;
+    _modifiedKeys.add(_keyDmm);
+    if (mv == null) {
+      _dmmByDevice.remove(id);
+    } else {
+      _dmmByDevice[id] = mv;
+    }
+    notifyListeners();
+    await _persistDmm();
+  }
 
   // -- Flash reads (connect time) ---------------------------------------------
 
@@ -281,11 +316,13 @@ class RigState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Insert-style reorder (the drag gesture): moving a cell across the
-  /// CH/spare boundary is how assignment happens.
-  void moveSlot(int from, int to) {
+  /// Insert-style reorder is deliberately NOT offered: the drag gesture is a
+  /// swap — dragging a cell onto another slot exchanges their contents, so
+  /// the list never shifts under the user's finger.
+  void swapSlots(int a, int b) {
+    if (a == b) return;
     final p = _ensurePending();
-    p.edited = p.edited.withMove(from, to);
+    p.edited = p.edited.withSwap(a, b);
     notifyListeners();
   }
 
@@ -373,6 +410,12 @@ class RigState extends ChangeNotifier {
     await prefs.setString(_keyLastSeen, jsonEncode(_lastSeenByDevice));
   }
 
+  Future<void> _persistDmm() async {
+    _modifiedKeys.add(_keyDmm);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyDmm, jsonEncode(_dmmByDevice));
+  }
+
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
 
@@ -406,6 +449,22 @@ class RigState extends ChangeNotifier {
         }
       } catch (e) {
         debugPrint('Failed to parse rig last-seen: $e');
+      }
+    }
+
+    if (!_modifiedKeys.contains(_keyDmm)) {
+      try {
+        final raw = prefs.getString(_keyDmm);
+        final decoded = raw == null || raw.isEmpty ? null : jsonDecode(raw);
+        if (decoded is Map) {
+          _dmmByDevice = {
+            for (final entry in decoded.entries)
+              if (entry.value is num)
+                entry.key as String: (entry.value as num).toDouble(),
+          };
+        }
+      } catch (e) {
+        debugPrint('Failed to parse rig DMM readings: $e');
       }
     }
 

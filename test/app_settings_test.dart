@@ -22,7 +22,6 @@ void main() {
     final s = await settledSettings();
     expect(s.displayUnit, ForceUnit.mVv);
     expect(s.activeChannels, everyElement(isTrue));
-    expect(s.measuredExcitationMv, isNull);
   });
 
   test('display unit persists across instances', () async {

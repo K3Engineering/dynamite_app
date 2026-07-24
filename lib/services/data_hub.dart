@@ -98,9 +98,18 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   int totalSamples = 0;
 
   /// Factory board calibration read from the device at connect time (parsed
-  /// by [AdcPacketDecoder.onCalibrationPacket]). Nominal per-channel fallback
-  /// until/unless a calibrated device supplies real data.
-  BoardCalibration boardCalibration = BoardCalibration.nominal();
+  /// by [AdcPacketDecoder.onCalibrationPacket]). Null until the first
+  /// successful read of this run: "no device data" must be representable —
+  /// defaulting to nominal values would let the UI present numbers no
+  /// hardware ever produced. Conversion math ([calibrationFor]) falls back
+  /// to the per-channel nominal chain on its own, so raw samples always
+  /// convert through SOMETHING (the documented pre-calibration behavior).
+  ///
+  /// The UI never reads this: the settings page shows the flash-document
+  /// owner's copy (`RigState.deviceBoardCalibration`), which carries the
+  /// device identity. This field describes the samples the hub holds.
+  BoardCalibration? get boardCalibration => _boardCalibration;
+  BoardCalibration? _boardCalibration;
 
   /// Load cell converting each channel (null = unassigned, electrical units
   /// only). Owned by `RigState` (device slots, including unsaved edits);
@@ -172,7 +181,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// devices) never splice into one trace and "Peak" never survives a
   /// disconnect.
   ///
-  /// Deliberately does NOT touch [deviceCalibration]: a connecting device's
+  /// Deliberately does NOT touch [boardCalibration]: a connecting device's
   /// calibration is read during post-connect setup, BEFORE the streaming
   /// transition that triggers this reset.
   void clear() {
@@ -288,7 +297,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
 
   /// Replace the board calibration (a freshly-parsed factory read arrived).
   void updateBoardCalibration(BoardCalibration calibration) {
-    boardCalibration = calibration;
+    _boardCalibration = calibration;
     _calibrationVersion++;
     notifyListeners();
   }
@@ -322,7 +331,11 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
 
   @override
   ChannelCalibration calibrationFor(int channelIndex) => ChannelCalibration(
-    board: boardCalibration.channels[channelIndex],
+    // Per-channel nominal fallback: an uncalibrated (or not-yet-read) board
+    // converts through the nominal chain, exactly the pre-calibration
+    // behavior — see [boardCalibration].
+    board:
+        _boardCalibration?.channels[channelIndex] ?? ChannelBoardCalibration(),
     loadCell: _loadCells[channelIndex],
   );
 

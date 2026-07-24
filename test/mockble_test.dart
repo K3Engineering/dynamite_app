@@ -88,11 +88,11 @@ void main() {
 
         expect(link.isStreaming, isTrue);
         expect(
-          hub.boardCalibration.channels.every((c) => c.isFactoryCalibrated),
+          hub.boardCalibration!.channels.every((c) => c.isFactoryCalibrated),
           isTrue,
         );
         expect(
-          hub.boardCalibration.channels[0].offsetCounts,
+          hub.boardCalibration!.channels[0].offsetCounts,
           closeTo(845.2, 1e-9),
         );
 
@@ -100,30 +100,26 @@ void main() {
       });
     });
 
-    test(
-      'a failed calibration read leaves nominal values and still streams',
-      () {
-        fakeAsync((async) {
-          MockBlePlatform.instance.failCalibrationRead = true;
-          addTearDown(
-            () => MockBlePlatform.instance.failCalibrationRead = false,
-          );
-          final (hub, link, teardown) = wire(async: async);
+    test('a failed calibration read leaves the hub without board data '
+        '(nominal conversion fallback) and still streams', () {
+      fakeAsync((async) {
+        MockBlePlatform.instance.failCalibrationRead = true;
+        addTearDown(() => MockBlePlatform.instance.failCalibrationRead = false);
+        final (hub, link, teardown) = wire(async: async);
 
-          unawaited(link.connectToDevice(deviceId));
-          async.elapse(const Duration(seconds: 4));
+        unawaited(link.connectToDevice(deviceId));
+        async.elapse(const Duration(seconds: 4));
 
-          // Best-effort by design: the stream must come up regardless.
-          expect(link.isStreaming, isTrue);
-          expect(hub.totalSamples, greaterThan(0));
-          expect(
-            hub.boardCalibration.channels.every((c) => !c.isFactoryCalibrated),
-            isTrue,
-          );
+        // Best-effort by design: the stream must come up regardless.
+        expect(link.isStreaming, isTrue);
+        expect(hub.totalSamples, greaterThan(0));
+        // No board data at all — the model no longer fabricates nominal
+        // values; conversion falls back to the nominal chain per channel.
+        expect(hub.boardCalibration, isNull);
+        expect(hub.calibrationFor(0).board.isFactoryCalibrated, isFalse);
 
-          teardown();
-        });
-      },
-    );
+        teardown();
+      });
+    });
   });
 }

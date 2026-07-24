@@ -11,14 +11,20 @@ const quickCapacitiesKg = <double>[50, 100, 200, 500];
 const quickSensitivitiesMvV = <double>[1, 2, 3];
 
 /// Settings → Device settings → Load cells: the device's ten load cell
-/// slots. The first four ARE the channels (marked with the rotated CH tags
-/// and the rail on the left edge); the rest are spares carried on the
-/// device. Reordering is the assignment gesture: drag a cell into the top
-/// four to put it on a channel.
+/// slots. The first four ARE the channels — the rail and the rotated CH
+/// tags live in the static gutter left of the list, so they never travel
+/// with a dragged row; the rest are spares carried on the device.
+/// Assignment is a swap: drag a cell onto another slot and the two
+/// exchange contents (a spare dragged into the top four goes on a channel,
+/// the evicted cell takes the spare's place). Nothing else in the list
+/// moves.
 ///
-/// Edits and moves take effect in this app immediately and raise the dirty
-/// banner; nothing reaches the device until "Save to device" (the flash doc
-/// is the rig's single truth — reads are automatic, writes are explicit).
+/// Edits and swaps take effect in this app immediately and raise the dirty
+/// state of the status bar; nothing reaches the device until "Save to
+/// device" (the flash doc is the rig's single truth — reads are automatic,
+/// writes are explicit). The bar is ALWAYS present — clean state reads
+/// "All settings saved to device." — so the list below never jumps when
+/// the dirty state flips.
 class RigSlotsSection extends StatefulWidget {
   const RigSlotsSection({super.key});
 
@@ -26,8 +32,24 @@ class RigSlotsSection extends StatefulWidget {
   State<RigSlotsSection> createState() => _RigSlotsSectionState();
 }
 
+/// Uniform row height: the channel gutter's labels align with the first
+/// four rows by construction, so every row must be exactly this tall
+/// (72 = a two-line ListTile's natural height).
+const double _kRowHeight = 72;
+
+/// Width of the static gutter holding the channel rail + CH tags.
+const double _kGutterWidth = 28;
+
+/// Height of the always-present status bar (fits the two buttons of the
+/// dirty state with room to spare, so clean and dirty states are the same
+/// height and the list never shifts).
+const double _kBarHeight = 56;
+
 class _RigSlotsSectionState extends State<RigSlotsSection> {
   bool _saving = false;
+
+  /// Slot index currently being dragged (dims its source row), or null.
+  int? _dragIndex;
 
   Future<void> _save(RigState rig) async {
     setState(() => _saving = true);
@@ -77,54 +99,41 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (pending != null) ...[
-          Card(
-            color: Theme.of(context).colorScheme.tertiaryContainer,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Changes not saved to device — readings in this app '
-                      'already use them.',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: _saving ? null : rig.revert,
-                    child: const Text('Revert'),
-                  ),
-                  const SizedBox(width: 4),
-                  FilledButton(
-                    onPressed: canSave ? () => _save(rig) : null,
-                    child: Text(_saving ? 'Saving…' : 'Save to device'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(height: 8),
-        ],
+        _StatusBar(
+          dirty: pending != null,
+          saving: _saving,
+          canSave: canSave,
+          onRevert: rig.revert,
+          onSave: () => _save(rig),
+        ),
+        const SizedBox(height: 8),
         Card(
           clipBehavior: Clip.antiAlias,
-          child: ReorderableListView(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            buildDefaultDragHandles: false,
-            // onReorderItem reports remove-then-insert indices already
-            // (no manual newIndex adjustment).
-            onReorderItem: rig.moveSlot,
-            children: [
-              for (int i = 0; i < kRigSlotCount; ++i)
-                _slotRow(context, rig, slots, i, key: ValueKey('slot-$i')),
-            ],
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final rowWidth = constraints.maxWidth - _kGutterWidth;
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const _ChannelGutter(),
+                  Expanded(
+                    child: Column(
+                      children: [
+                        for (int i = 0; i < kRigSlotCount; ++i)
+                          _slotTile(context, rig, slots, i, rowWidth),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
         const SizedBox(height: 4),
         Text(
-          'The top four slots are the channels — drag a cell up to put it on '
-          'a channel, drag it out to unassign.',
+          'The top four slots are the channels — drag a cell onto another '
+          'slot to swap them; swap a spare into the top four to put it on '
+          'a channel.',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
             color: Theme.of(context).colorScheme.outline,
           ),
@@ -133,32 +142,22 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     );
   }
 
-  Widget _slotRow(
+  /// One slot row: a drop target for swaps, fixed height so the channel
+  /// gutter aligns. Populated rows offer the drag handle; every row
+  /// (including empty ones) accepts a drop.
+  Widget _slotTile(
     BuildContext context,
     RigState rig,
     RigSlots slots,
-    int i, {
-    required Key key,
-  }) {
+    int i,
+    double rowWidth,
+  ) {
     final theme = Theme.of(context);
-    final isChannel = i < 4;
     final slot = slots[i];
 
-    // The rail: a continuous left border on the four channel rows (they are
-    // direct siblings, no card gaps) — the 80's-stereo bracket grouping them
-    // as "the rig", with the rotated CH tag inside each row.
-    final railDecoration = isChannel
-        ? BoxDecoration(
-            border: Border(
-              left: BorderSide(color: theme.colorScheme.primary, width: 3),
-            ),
-          )
-        : null;
-
-    final Widget content;
+    final Widget tile;
     if (slot == null) {
-      content = ListTile(
-        leading: isChannel ? _channelTag(theme, i) : null,
+      tile = ListTile(
         title: Text(
           'Empty slot',
           style: theme.textTheme.bodyLarge?.copyWith(
@@ -175,15 +174,28 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     } else {
       final cell = slot.cell;
       final mtime = slot.mtime?.toLocal();
-      content = ListTile(
-        leading: isChannel ? _channelTag(theme, i) : null,
-        title: Text(cell.title),
-        subtitle: Text(
+      final subtitle =
           cell.valuesLine +
-              (mtime != null ? ' · saved ${mtime.month}/${mtime.day}' : ''),
-        ),
-        trailing: ReorderableDragStartListener(
-          index: i,
+          (mtime != null ? ' · saved ${mtime.month}/${mtime.day}' : '');
+      tile = ListTile(
+        title: Text(cell.title),
+        subtitle: Text(subtitle),
+        trailing: Draggable<int>(
+          data: i,
+          onDragStarted: () => setState(() => _dragIndex = i),
+          onDragEnd: (_) => setState(() => _dragIndex = null),
+          feedback: Material(
+            elevation: 4,
+            borderRadius: BorderRadius.circular(8),
+            clipBehavior: Clip.antiAlias,
+            child: SizedBox(
+              width: rowWidth,
+              child: ListTile(
+                title: Text(cell.title),
+                subtitle: Text(subtitle),
+              ),
+            ),
+          ),
           child: Padding(
             padding: const EdgeInsets.all(8),
             child: Icon(Icons.drag_indicator, color: theme.colorScheme.outline),
@@ -193,20 +205,166 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
       );
     }
 
-    return Container(key: key, decoration: railDecoration, child: content);
+    return DragTarget<int>(
+      // Dropping a row onto itself is not offered (and not highlighted).
+      onWillAcceptWithDetails: (details) => details.data != i,
+      onAcceptWithDetails: (details) => rig.swapSlots(details.data, i),
+      builder: (context, candidateData, rejectedData) {
+        final highlighted = candidateData.isNotEmpty;
+        return AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          height: _kRowHeight,
+          decoration: BoxDecoration(
+            color: highlighted
+                ? theme.colorScheme.primary.withValues(alpha: 0.08)
+                : null,
+            border: highlighted
+                ? Border.all(color: theme.colorScheme.primary, width: 1.5)
+                : null,
+          ),
+          child: Opacity(opacity: _dragIndex == i ? 0.35 : 1.0, child: tile),
+        );
+      },
+    );
   }
+}
 
-  /// The rotated channel tag inside the rail (CH1..CH4).
-  static Widget _channelTag(ThemeData theme, int i) => RotatedBox(
-    quarterTurns: 3,
-    child: Text(
-      'CH ${i + 1}',
-      style: theme.textTheme.labelSmall?.copyWith(
-        color: theme.colorScheme.primary,
-        fontWeight: FontWeight.bold,
+/// The static channel gutter: the teal rail spanning exactly the four
+/// channel rows, with the rotated CH1–CH4 tags centered on each. A sibling
+/// of the row list — not part of any row — so dragging a slot can never
+/// move the channel markings.
+class _ChannelGutter extends StatelessWidget {
+  const _ChannelGutter();
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: _kGutterWidth,
+      height: _kRowHeight * 4,
+      decoration: BoxDecoration(
+        border: Border(
+          left: BorderSide(color: theme.colorScheme.primary, width: 3),
+        ),
       ),
-    ),
-  );
+      child: Column(
+        children: [
+          for (int i = 0; i < 4; ++i)
+            SizedBox(
+              height: _kRowHeight,
+              child: Center(
+                child: RotatedBox(
+                  quarterTurns: 3,
+                  child: Text(
+                    'CH ${i + 1}',
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// The always-present save-state bar. Dirty: the red of the Live tab's
+/// "Not connected" header (errorContainer), with content in the matching
+/// on-color so it stays readable. Clean: a quiet confirmation. Both states
+/// are exactly [_kBarHeight] tall, so toggling never moves the slot list.
+class _StatusBar extends StatelessWidget {
+  const _StatusBar({
+    required this.dirty,
+    required this.saving,
+    required this.canSave,
+    required this.onRevert,
+    required this.onSave,
+  });
+
+  final bool dirty;
+  final bool saving;
+  final bool canSave;
+  final VoidCallback onRevert;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+
+    if (!dirty) {
+      return Card(
+        child: SizedBox(
+          height: _kBarHeight,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.check_circle_outline,
+                  size: 18,
+                  color: colors.outline,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'All settings saved to device.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: colors.outline,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Card(
+      color: colors.errorContainer,
+      child: SizedBox(
+        height: _kBarHeight,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
+          child: Row(
+            children: [
+              Icon(
+                Icons.warning_amber,
+                size: 18,
+                color: colors.onErrorContainer,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Changes not saved to device — readings in this app '
+                  'already use them.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: colors.onErrorContainer,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: saving ? null : onRevert,
+                style: TextButton.styleFrom(
+                  foregroundColor: colors.onErrorContainer,
+                ),
+                child: const Text('Revert'),
+              ),
+              const SizedBox(width: 4),
+              FilledButton(
+                onPressed: canSave ? onSave : null,
+                child: Text(saving ? 'Saving…' : 'Save to device'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -360,14 +360,16 @@ class RigSlots {
     for (int k = 0; k < kRigSlotCount; ++k) k == i ? slot : slots[k],
   ]);
 
-  /// Insert-style reorder (the drag gesture): the item at [from] is removed
-  /// and reinserted at [to], shifting the others.
-  RigSlots withMove(int from, int to) {
-    final next = [...slots];
-    final item = next.removeAt(from);
-    next.insert(to, item);
-    return RigSlots(next);
-  }
+  /// Swap the contents of slots [a] and [b] (the drag gesture): dragging a
+  /// cell onto another slot exchanges them — nothing else moves.
+  RigSlots withSwap(int a, int b) => RigSlots([
+    for (int k = 0; k < kRigSlotCount; ++k)
+      k == a
+          ? slots[b]
+          : k == b
+          ? slots[a]
+          : slots[k],
+  ]);
 
   @override
   bool operator ==(Object other) {

@@ -87,11 +87,12 @@ void main() {
     expect(find.text('100 kg · 2 mV/V'), findsNWidgets(2));
     expect(find.text('Spare 50'), findsOneWidget); // the spare
     expect(find.text('Empty slot'), findsNWidgets(6));
-    // The rotated tags on the four channel rows.
+    // The rotated tags on the four channel rows (in the static gutter).
     for (int i = 1; i <= 4; ++i) {
       expect(find.text('CH $i'), findsOneWidget);
     }
-    // Nothing dirty yet: no banner.
+    // Nothing dirty yet: the status bar shows its clean state.
+    expect(find.text('All settings saved to device.'), findsOneWidget);
     expect(find.textContaining('Changes not saved to device'), findsNothing);
   });
 
@@ -117,12 +118,37 @@ void main() {
     );
     expect(saveButton.onPressed, isNull);
 
-    // Revert restores the flash state and drops the banner.
+    // Revert restores the flash state and returns the bar to clean.
     await tester.tap(find.text('Revert'));
     await tester.pumpAndSettle();
     expect(rig.hasPending, isFalse);
     expect(rig.channelCells[3], isNull);
     expect(find.textContaining('Changes not saved to device'), findsNothing);
+    expect(find.text('All settings saved to device.'), findsOneWidget);
+  });
+
+  testWidgets('dragging a slot onto another swaps them', (tester) async {
+    final rig = await pump(tester);
+
+    // The drag handle inside the 'Break jig' row (slot 1, CH2).
+    final handle = find.descendant(
+      of: find.ancestor(
+        of: find.text('Break jig'),
+        matching: find.byType(ListTile),
+      ),
+      matching: find.byIcon(Icons.drag_indicator),
+    );
+    expect(handle, findsOneWidget);
+
+    // Drag it three rows down onto 'Spare 50' (slot 4).
+    await tester.drag(handle, const Offset(0, 3 * 72));
+    await tester.pump();
+
+    expect(rig.effectiveSlots.cellAt(1)?.name, 'Spare 50');
+    expect(rig.effectiveSlots.cellAt(4)?.name, 'Break jig');
+    // A swap is a pending edit: the dirty state of the bar is up.
+    expect(rig.hasPending, isTrue);
+    expect(find.textContaining('Changes not saved to device'), findsOneWidget);
   });
 
   testWidgets('edit a populated slot via the editor', (tester) async {

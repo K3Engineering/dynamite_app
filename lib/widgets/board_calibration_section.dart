@@ -3,29 +3,49 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-import '../models/app_settings.dart';
 import '../models/calibration.dart';
-import '../services/data_hub.dart';
+import '../services/rig_state.dart';
 
 /// Settings → Device settings → Board calibration: a read-only view of the
-/// device's factory calibration (the 5-point ladder fit per channel), plus
-/// the DMM excitation cross-check. The ratiometric calibration is always
-/// authoritative — the DMM reading only verifies the measurement chain.
+/// CONNECTED device's factory calibration (the 5-point ladder fit per
+/// channel), plus the DMM excitation cross-check. The ratiometric
+/// calibration is always authoritative — the DMM reading only verifies the
+/// measurement chain.
+///
+/// Everything here is per-board data, so it comes from the flash-document
+/// owner ([RigState]) — never from the data hub's conversion-side snapshot —
+/// and renders only while the document belongs to [deviceId], the connected
+/// device. No device / no document / another device's document: a
+/// placeholder card, never nominal or stale values presented as real ones.
 class BoardCalibrationSection extends StatelessWidget {
-  const BoardCalibrationSection({super.key});
+  const BoardCalibrationSection({super.key, required this.deviceId});
+
+  /// The connected device this section renders for. Passed in by the
+  /// settings tab (which only includes the section while a link is up), so
+  /// the section needs no link-manager dependency — and a flash document
+  /// belonging to any OTHER device is refused.
+  final String deviceId;
 
   @override
   Widget build(BuildContext context) {
-    // Select (not watch): the hub notifies per packet, but the board
-    // calibration identity only changes when new factory data arrives.
-    final board = context.select<DataHub, BoardCalibration>(
-      (h) => h.boardCalibration,
-    );
-    final settings = context.watch<AppSettings>();
+    final rig = context.watch<RigState>();
+    final board = rig.deviceBoardCalibration;
+    final owned = rig.hasDeviceDoc && rig.flashDeviceId == deviceId;
+    if (!owned || board == null) {
+      return const Card(
+        child: ListTile(
+          leading: Icon(Icons.phonelink_erase, color: Colors.grey),
+          title: Text('No calibration data from the device'),
+          subtitle: Text(
+            'The factory calibration is read from the device at connect time.',
+          ),
+        ),
+      );
+    }
     final calibrated = board.channels
         .where((c) => c.isFactoryCalibrated)
         .length;
-    final dmmMv = settings.measuredExcitationMv;
+    final dmmMv = rig.measuredExcitationMv;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -72,11 +92,11 @@ class BoardCalibrationSection extends StatelessWidget {
           onChanged: (s) {
             final trimmed = s.trim();
             if (trimmed.isEmpty) {
-              unawaited(settings.setMeasuredExcitationMv(null));
+              unawaited(rig.setMeasuredExcitationMv(null));
             } else {
               final v = double.tryParse(trimmed);
               if (v != null && v > 0) {
-                unawaited(settings.setMeasuredExcitationMv(v));
+                unawaited(rig.setMeasuredExcitationMv(v));
               }
             }
           },
