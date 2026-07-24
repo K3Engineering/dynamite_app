@@ -366,9 +366,8 @@ class LiveStatusBar extends StatelessWidget {
             if (isConnected)
               Text(
                 '${DataHub.samplesPerSec} Hz',
-                style: TextStyle(
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
                   color: Theme.of(context).colorScheme.onPrimaryContainer,
-                  fontSize: 12,
                 ),
               ),
           ],
@@ -503,8 +502,7 @@ class ViewToggles extends StatelessWidget {
             selected: showDerivative,
             onSelected: (_) => onToggleDerivative(),
             visualDensity: VisualDensity.compact,
-            labelStyle: TextStyle(
-              fontSize: 12,
+            labelStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: showDerivative ? cs.onSecondaryContainer : null,
             ),
           ),
