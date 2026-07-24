@@ -22,20 +22,16 @@ ch3.r=10000.4,10.0009,9.9996,10.0005,10.0002,10000.2
 ch3.raw=6384540.7,3192235.0,64.9,-3192093.2,-6384410.9
 lc0.name=Thrust cell
 lc0.cap=200
-lc0.sens=2
-lc0.span=1.00037
+lc0.sens=1.9993
 lc0.mtime=2026-07-20T10:15:00.000Z
 lc1.name=Break jig
 lc1.cap=500
-lc1.sens=2
-lc1.span=0.99981
+lc1.sens=2.0004
 lc1.mtime=2026-07-20T10:15:00.000Z
 lc2.cap=100
 lc2.sens=2
-lc2.span=1.0
 lc4.name=Spare 50
 lc4.cap=50
 lc4.sens=2
-lc4.span=1.0
 END
 ''';

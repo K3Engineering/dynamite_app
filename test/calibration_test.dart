@@ -214,34 +214,24 @@ ch2.raw=6401205.6,3201448.2,1502.8,-3196441.9
   });
 
   group('LoadCellProfile', () {
-    test('kgf per mV/V folds in the span factor', () {
-      final base = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
-      expect(base.kgfPerMvV, closeTo(100, 1e-12));
-      final corrected = base.copyWith(span: 1.01);
-      expect(corrected.kgfPerMvV, closeTo(101, 1e-12));
+    test('kgf per mV/V is capacity over the exact sensitivity', () {
+      final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
+      expect(cell.kgfPerMvV, closeTo(100, 1e-12));
+      final cert = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2.02);
+      expect(cert.kgfPerMvV, closeTo(200 / 2.02, 1e-12));
     });
 
-    test('json round-trip (and legacy keys tolerated)', () {
+    test('json round-trips; unknown keys are ignored', () {
       final cell = LoadCellProfile(
         name: 'Golden cell',
         capacityKg: 100,
         sensitivityMvV: 2.0123,
-        span: 0.9985,
       );
-      final back = LoadCellProfile.fromJson(cell.toJson());
-      expect(back, cell);
+      expect(LoadCellProfile.fromJson(cell.toJson()), cell);
 
-      // A legacy document (with id/serial) still parses; the dropped keys
-      // are ignored.
-      final legacy = LoadCellProfile.fromJson({
-        'id': 'lc1',
-        'name': 'Golden cell',
-        'capacityKg': 100,
-        'sensitivityMvV': 2.0123,
-        'serial': 'SN 1234',
-        'span': 0.9985,
-      });
-      expect(legacy, cell);
+      final withExtras = Map<String, dynamic>.from(cell.toJson())
+        ..['serial'] = 'SN 1234';
+      expect(LoadCellProfile.fromJson(withExtras), cell);
     });
 
     test('generic title renders from values, named title wins', () {
@@ -251,11 +241,11 @@ ch2.raw=6401205.6,3201448.2,1502.8,-3196441.9
       expect(named.title, 'Reference cell');
     });
 
-    test('values line shows the span only when corrected', () {
+    test('values line lists the exact mV/V', () {
       final plain = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
       expect(plain.valuesLine, '200 kg · 2 mV/V');
-      final corrected = plain.copyWith(span: 1.00037);
-      expect(corrected.valuesLine, '200 kg · 2 mV/V · ×1.00037');
+      final cert = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2.007);
+      expect(cert.valuesLine, '200 kg · 2.007 mV/V');
     });
   });
 
@@ -292,7 +282,8 @@ ch2.raw=6401205.6,3201448.2,1502.8,-3196441.9
       );
       final corrected = ChannelCalibration(
         board: board,
-        loadCell: cell.copyWith(span: 1.02),
+        // The cal-cert sensitivity below the nominal 2 mV/V reads higher.
+        loadCell: cell.copyWith(sensitivityMvV: 2 / 1.02),
       );
       expect(corrected.netKgf(rawFs, alpha), closeTo(sp[0] * 102, 1e-9));
     });

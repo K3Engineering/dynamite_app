@@ -474,7 +474,6 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
   late final TextEditingController nameCtrl;
   late final TextEditingController capCtrl;
   late final TextEditingController sensCtrl;
-  late final TextEditingController spanCtrl;
 
   RigState get rig => widget.rig;
   int get slot => widget.slot;
@@ -494,7 +493,6 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
     sensCtrl = TextEditingController(
       text: cell != null ? _num(cell.sensitivityMvV) : '',
     );
-    spanCtrl = TextEditingController(text: _num(cell?.span ?? 1.0));
   }
 
   @override
@@ -502,14 +500,12 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
     nameCtrl.dispose();
     capCtrl.dispose();
     sensCtrl.dispose();
-    spanCtrl.dispose();
     super.dispose();
   }
 
   bool _valid() =>
       (double.tryParse(capCtrl.text.trim()) ?? 0) > 0 &&
-      (double.tryParse(sensCtrl.text.trim()) ?? 0) > 0 &&
-      (double.tryParse(spanCtrl.text.trim()) ?? 0) > 0;
+      (double.tryParse(sensCtrl.text.trim()) ?? 0) > 0;
 
   void _save() {
     rig.setSlot(
@@ -518,7 +514,6 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
         name: nameCtrl.text.trim(),
         capacityKg: double.parse(capCtrl.text.trim()),
         sensitivityMvV: double.parse(sensCtrl.text.trim()),
-        span: double.parse(spanCtrl.text.trim()),
       ),
     );
     Navigator.of(context).pop();
@@ -578,6 +573,7 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
                 ),
                 decoration: const InputDecoration(
                   labelText: 'Sensitivity (mV/V at full scale)',
+                  hintText: 'Exact value from the cal cert, e.g. 2.007',
                 ),
                 onChanged: (_) => setState(() {}),
               ),
@@ -591,18 +587,6 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
                       onPressed: () => setState(() => sensCtrl.text = _num(v)),
                     ),
                 ],
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: spanCtrl,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'Span factor',
-                  hintText: '1.0',
-                ),
-                onChanged: (_) => setState(() {}),
               ),
             ],
           ),

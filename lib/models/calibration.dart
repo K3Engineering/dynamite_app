@@ -385,8 +385,7 @@ class RigSlots {
 
   /// Parse the `lcN.*` keys of a flash document. A slot is populated iff its
   /// `cap` and `sens` keys parse to positive numbers; anything else degrades
-  /// that one slot to empty. An invalid `span` falls back to 1.0 rather than
-  /// nuking the cell.
+  /// that one slot to empty.
   factory RigSlots.fromKv(Map<String, String> kv) {
     double? num(String? v) => v == null ? null : double.tryParse(v);
     return RigSlots([
@@ -397,10 +396,6 @@ class RigSlots {
               name: kv['lc$i.name'] ?? '',
               capacityKg: cap,
               sensitivityMvV: sens,
-              span: switch (num(kv['lc$i.span'])) {
-                final s? when s > 0 => s,
-                _ => 1.0,
-              },
             ),
             mtime: DateTime.tryParse(kv['lc$i.mtime'] ?? ''),
           ),
@@ -422,7 +417,6 @@ class RigSlots {
       }
       b.writeln('lc$i.cap=${c.capacityKg}');
       b.writeln('lc$i.sens=${c.sensitivityMvV}');
-      b.writeln('lc$i.span=${c.span}');
       final m = s.mtime;
       if (m != null) b.writeln('lc$i.mtime=${m.toUtc().toIso8601String()}');
     }
@@ -473,40 +467,37 @@ class DeviceFlash {
 // Load cell profiles
 // ---------------------------------------------------------------------------
 
-/// A load cell as the app knows it: nameplate values plus a [span] correction
-/// factor (set by user calibration flows — known weight or comparison against
-/// a reference cell). Profiles are pure values: identity comes from WHERE a
-/// profile sits (a device slot, a history entry), not from an id.
+/// A load cell as the app knows it: capacity plus the exact sensitivity
+/// from its calibration certificate — e.g. 2.007 mV/V at full scale, not
+/// the nominal "2 mV/V class" number. Profiles are pure values: identity
+/// comes from WHERE a profile sits (a device slot, a history entry), not
+/// from an id.
 class LoadCellProfile {
   LoadCellProfile({
     this.name = '',
     required this.capacityKg,
     required this.sensitivityMvV,
-    this.span = 1.0,
   });
 
   /// Display name. Empty means a generic profile — rendered from the values.
   final String name;
   final double capacityKg;
+
+  /// Exact mV/V at full capacity (the calibration-certificate value).
   final double sensitivityMvV;
 
-  /// User calibration factor (multiplies the nameplate sensitivity).
-  final double span;
-
   /// kgf per mV/V of measured signal.
-  double get kgfPerMvV => capacityKg * span / sensitivityMvV;
+  double get kgfPerMvV => capacityKg / sensitivityMvV;
 
   /// Human label: the name, or the values for generic profiles.
   String get title => name.isNotEmpty
       ? name
       : '${_trim(capacityKg)} kg · ${_trim(sensitivityMvV)} mV/V';
 
-  /// The values line, e.g. `100 kg · 2 mV/V · ×1.00037` (span only when
-  /// corrected). Shown wherever the cell's numbers matter next to its name.
-  String get valuesLine {
-    final base = '${_trim(capacityKg)} kg · ${_trim(sensitivityMvV)} mV/V';
-    return span == 1.0 ? base : '$base · ×$span';
-  }
+  /// The values line, e.g. `100 kg · 2.007 mV/V`. Shown wherever the cell's
+  /// numbers matter next to its name.
+  String get valuesLine =>
+      '${_trim(capacityKg)} kg · ${_trim(sensitivityMvV)} mV/V';
 
   static String _trim(double v) =>
       v == v.roundToDouble() ? v.toInt().toString() : v.toString();
@@ -515,12 +506,10 @@ class LoadCellProfile {
     String? name,
     double? capacityKg,
     double? sensitivityMvV,
-    double? span,
   }) => LoadCellProfile(
     name: name ?? this.name,
     capacityKg: capacityKg ?? this.capacityKg,
     sensitivityMvV: sensitivityMvV ?? this.sensitivityMvV,
-    span: span ?? this.span,
   );
 
   @override
@@ -528,27 +517,23 @@ class LoadCellProfile {
       other is LoadCellProfile &&
       other.name == name &&
       other.capacityKg == capacityKg &&
-      other.sensitivityMvV == sensitivityMvV &&
-      other.span == span;
+      other.sensitivityMvV == sensitivityMvV;
 
   @override
-  int get hashCode => Object.hash(name, capacityKg, sensitivityMvV, span);
+  int get hashCode => Object.hash(name, capacityKg, sensitivityMvV);
 
   Map<String, dynamic> toJson() => {
     'name': name,
     'capacityKg': capacityKg,
     'sensitivityMvV': sensitivityMvV,
-    'span': span,
   };
 
-  /// Tolerant parse: legacy documents (with `id`/`serial` keys) and missing
-  /// keys degrade gracefully rather than throwing.
+  /// Tolerant parse: unknown keys are ignored, so the format can grow.
   factory LoadCellProfile.fromJson(Map<String, dynamic> json) =>
       LoadCellProfile(
         name: json['name'] as String? ?? '',
         capacityKg: (json['capacityKg'] as num).toDouble(),
         sensitivityMvV: (json['sensitivityMvV'] as num).toDouble(),
-        span: (json['span'] as num?)?.toDouble() ?? 1.0,
       );
 }
 

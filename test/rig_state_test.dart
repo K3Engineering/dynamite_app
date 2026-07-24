@@ -43,10 +43,10 @@ void main() {
 
   DeviceFlash fixture() => DeviceFlash.parse(demoBoardCalibrationDoc);
 
-  /// The fixture doc with a recalibrated CH1 cell (span bumped).
+  /// The fixture doc with a recalibrated CH1 cell (sensitivity re-entered).
   String recalibratedDoc() => demoBoardCalibrationDoc.replaceFirst(
-    'lc0.span=1.00037',
-    'lc0.span=1.00099',
+    'lc0.sens=1.9993',
+    'lc0.sens=1.9985',
   );
 
   setUp(() {
@@ -98,7 +98,7 @@ void main() {
       expect(notices.single.changes.single, contains('CH1'));
       expect(notices.single.changes.single, contains('Thrust cell'));
       // The device is the truth: readings use the new values immediately.
-      expect(rig.channelCells[0]?.span, closeTo(1.00099, 1e-12));
+      expect(rig.channelCells[0]?.sensitivityMvV, closeTo(1.9985, 1e-12));
     });
   });
 
