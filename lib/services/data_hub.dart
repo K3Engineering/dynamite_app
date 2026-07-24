@@ -106,7 +106,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// convert through SOMETHING (the documented pre-calibration behavior).
   ///
   /// The UI never reads this: the settings page shows the flash-document
-  /// owner's copy (`RigState.deviceBoardCalibration`), which carries the
+  /// owner's copy (`RigState.boardCalibrationFor`), which carries the
   /// device identity. This field describes the samples the hub holds.
   BoardCalibration? get boardCalibration => _boardCalibration;
   BoardCalibration? _boardCalibration;

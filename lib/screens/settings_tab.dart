@@ -85,9 +85,11 @@ class SettingsTab extends StatelessWidget {
           const SectionHeader('Device settings'),
           const SizedBox(height: 16),
 
-          // Device name — not editable yet. Keyed by the name so the field
-          // rebuilds with the new value on connect/disconnect. While no link
-          // is up, a blurb with a jump to the Devices tab takes its place.
+          // Everything from here down belongs to the connected device: its
+          // name, the load cell slots and the factory board calibration are
+          // read from ITS flash (and the DMM cross-check is per-device
+          // memory). With no link up, none of it exists — only a connect
+          // prompt with a jump to the Devices tab shows.
           if (deviceId.isEmpty)
             Card(
               child: ListTile(
@@ -110,7 +112,9 @@ class SettingsTab extends StatelessWidget {
                 ),
               ),
             )
-          else
+          else ...[
+            // Device name — not editable yet. Keyed by the name so the
+            // field rebuilds with the new value on connect/disconnect.
             TextFormField(
               key: ValueKey(deviceName),
               initialValue: deviceName,
@@ -120,13 +124,8 @@ class SettingsTab extends StatelessWidget {
                 border: OutlineInputBorder(),
               ),
             ),
-          const SizedBox(height: 16),
+            const SizedBox(height: 16),
 
-          // Everything below belongs to the connected device: the load cell
-          // slots and the factory board calibration are read from ITS flash
-          // (and the DMM cross-check is per-device memory). With no link up,
-          // none of it exists — only the connect prompt shows.
-          if (deviceId.isNotEmpty) ...[
             // The connected device's load cell slots (the rig). Read from
             // the device at connect time; edits go back via "Save to
             // device".

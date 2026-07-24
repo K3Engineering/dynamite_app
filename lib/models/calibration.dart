@@ -39,6 +39,25 @@ const int kLadderResistorCount = 6;
 /// dead short — a true zero independent of resistor values.
 const int kCalPointCount = 5;
 
+/// Storage-order indices of the cal points by signal role: the outermost
+/// points bracket a load cell's full-scale range, the middle one is the
+/// dead-short zero.
+const int kCalIdxPosFs = 0;
+const int kCalIdxPosMid = 1;
+const int kCalIdxZero = 2;
+const int kCalIdxNegMid = 3;
+const int kCalIdxNegFs = 4;
+
+/// Display labels for the [kCalPointCount] configs — the tap pairs wired at
+/// factory calibration, in storage order.
+const List<String> calConfigLabels = [
+  '(t1, t5)',
+  '(t2, t4)',
+  '(t3, t3)',
+  '(t4, t2)',
+  '(t5, t1)',
+];
+
 /// Nominal resistor values used when a channel's characterized values are
 /// absent from flash.
 const List<double> nominalLadderResistors = <double>[
@@ -154,15 +173,15 @@ class ChannelBoardCalibration {
 
   /// ADC offset in counts: the dead-short (t3,t3) reading measures it
   /// directly. 0 for an uncalibrated channel.
-  double get offsetCounts => readings?[2] ?? 0;
+  double get offsetCounts => readings?[kCalIdxZero] ?? 0;
 
   /// Terminal slope in counts per mV/V: the end-to-end slope between the two
   /// outermost cal points (which bracket a load cell's full-scale range).
   /// Cached (see [setpoints]).
   late final double spanCountsPerMvV = switch (readings) {
     final r? =>
-      (r[0] - r[kCalPointCount - 1]) /
-          (setpoints[0] - setpoints[kCalPointCount - 1]),
+      (r[kCalIdxPosFs] - r[kCalIdxNegFs]) /
+          (setpoints[kCalIdxPosFs] - setpoints[kCalIdxNegFs]),
     null => nominalCountsPerMvV,
   };
 
@@ -182,12 +201,14 @@ class ChannelBoardCalibration {
     final r = readings;
     if (r == null) return 0;
     final sp = setpoints;
-    // Storage order: 0 = +FS, 1 = +mid, 2 = zero, 3 = -mid, 4 = -FS.
-    final iFs = positiveSide ? 0 : 4;
-    final iMid = positiveSide ? 1 : 3;
+    final iFs = positiveSide ? kCalIdxPosFs : kCalIdxNegFs;
+    final iMid = positiveSide ? kCalIdxPosMid : kCalIdxNegMid;
     final lineAtMid =
-        r[2] + (r[iFs] - r[2]) * (sp[iMid] - sp[2]) / (sp[iFs] - sp[2]);
-    return (r[iMid] - lineAtMid) / (r[iFs] - r[2]).abs() * 1e6;
+        r[kCalIdxZero] +
+        (r[iFs] - r[kCalIdxZero]) *
+            (sp[iMid] - sp[kCalIdxZero]) /
+            (sp[iFs] - sp[kCalIdxZero]);
+    return (r[iMid] - lineAtMid) / (r[iFs] - r[kCalIdxZero]).abs() * 1e6;
   }
 
   /// Session-snapshot serialization (recorded sessions carry the calibration

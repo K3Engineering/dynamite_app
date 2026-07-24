@@ -158,14 +158,18 @@ class RigState extends ChangeNotifier {
   /// are gated on this (see [_lastFlash]).
   bool get hasDeviceDoc => _lastFlash != null;
 
-  /// The device the current flash document belongs to.
-  String get flashDeviceId => _flashDeviceId;
-
-  /// The board half of the flash document, or null before the first read.
-  /// The settings UI reads factory calibration from HERE — the document
-  /// owner — never from the hub's conversion-side snapshot, so what renders
+  /// The board half of the flash document, but only while the document
+  /// belongs to [deviceId]: null before the first read of this run, and
+  /// null while the document on file came from ANOTHER device (it is kept
+  /// across disconnects — see [_flashDeviceId]). The settings UI's single
+  /// ownership query, decided HERE by the document owner: the hub's
+  /// conversion-side snapshot is never the UI's source, so what renders
   /// always belongs to an identified device.
-  BoardCalibration? get deviceBoardCalibration => _lastFlash?.board;
+  BoardCalibration? boardCalibrationFor(String deviceId) {
+    final flash = _lastFlash;
+    if (flash == null || _flashDeviceId != deviceId) return null;
+    return flash.board;
+  }
 
   List<RigHistoryEntry> get history => List.unmodifiable(_history);
 
