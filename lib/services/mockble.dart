@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -6,6 +7,7 @@ import 'package:universal_ble/universal_ble.dart';
 
 import 'adc_protocol.dart';
 import 'bt_device_config.dart';
+import 'demo_calibration.dart';
 
 class MockBlePlatform extends UniversalBlePlatform {
   static MockBlePlatform? _instance;
@@ -311,8 +313,12 @@ class MockBlePlatform extends UniversalBlePlatform {
     final Duration? timeout,
   }) async {
     await Future<void>.delayed(netDelay);
-    if (failCalibrationRead && characteristic == btChrCalibration) {
-      throw StateError('Mock calibration read failure');
+    if (characteristic == btChrCalibration) {
+      if (failCalibrationRead) {
+        throw StateError('Mock calibration read failure');
+      }
+      // The mock device is factory-calibrated: serve the shared fixture doc.
+      return Uint8List.fromList(utf8.encode(demoBoardCalibrationDoc));
     }
     return Uint8List(255);
   }

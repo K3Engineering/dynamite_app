@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import 'adc_protocol.dart';
 import 'data_hub.dart';
+import '../models/calibration.dart';
 import '../utils/log.dart';
 
 /// Protocol layer: decodes the device's ADC-feed notification packets and the
@@ -33,12 +36,16 @@ class AdcPacketDecoder {
     _prevSampleCount = -1;
   }
 
-  /// Parse one calibration characteristic read.
+  /// Parse one calibration characteristic read: the `key=value` flash
+  /// document ([BoardCalibration.parse], tolerant of missing keys) into the
+  /// hub. Malformed reads degrade to per-channel nominal values.
+  ///
+  /// TODO(firmware): transport is a single whole-document read for now; the
+  /// real per-key read protocol plugs in here once defined.
   void onCalibrationPacket(Uint8List data) {
-    // TODO: implement calibration parsing
-    final calibration = DeviceCalibration();
-    debugPrint('Calibration ${calibration.slope}');
-    hub.updateCalibration(calibration);
+    hub.updateBoardCalibration(
+      BoardCalibration.parse(utf8.decode(data, allowMalformed: true)),
+    );
   }
 
   /// Parse one BLE ADC-feed notification packet into the hub.

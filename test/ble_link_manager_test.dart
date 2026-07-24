@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
@@ -8,6 +9,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
+import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/mockble.dart';
 
 /// Tests for the [BleLinkManager] state machine against [MockBlePlatform],
@@ -636,6 +638,22 @@ void main() {
       expect(seen, isEmpty);
 
       teardownLink(async, link);
+    });
+  });
+
+  test('demo device serves the fixture calibration document', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+      settleStartup(async);
+      String? doc;
+      link.onCalibrationData = (data) => doc = utf8.decode(data);
+
+      unawaited(link.connectToDemoDevice());
+      expect(doc, demoBoardCalibrationDoc);
+
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(milliseconds: 100));
+      expect(seen, isEmpty);
     });
   });
 

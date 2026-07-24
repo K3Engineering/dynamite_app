@@ -77,7 +77,10 @@ void main() {
   );
 
   Finder connectButton() => devicesTabDescendant(
-    find.ancestor(of: find.text('Connect'), matching: find.byType(FilledButton)),
+    find.ancestor(
+      of: find.text('Connect'),
+      matching: find.byType(FilledButton),
+    ),
   );
 
   Finder disconnectButton() => devicesTabDescendant(
@@ -128,10 +131,7 @@ void main() {
     final disabled = style.side!.resolve(<WidgetState>{WidgetState.disabled})!;
     expect(enabled.color, Colors.white);
     expect(disabled.color, Colors.white.withValues(alpha: 0.5));
-    expect(
-      style.foregroundColor!.resolve(<WidgetState>{}),
-      Colors.white,
-    );
+    expect(style.foregroundColor!.resolve(<WidgetState>{}), Colors.white);
 
     // Teardown: bring the demo link down so its feed timer stops, then drain
     // the command-queue timeout (see widget_test.dart).

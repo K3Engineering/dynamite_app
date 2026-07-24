@@ -20,8 +20,17 @@ class Sessions extends Table {
   IntColumn get channelCount => integer()();
   TextColumn get channelLabels => text()();
   TextColumn get tares => text()();
-  RealColumn get peakForceRaw => real().withDefault(const Constant(0.0))();
-  RealColumn get calibrationSlope => real()();
+
+  /// Per-channel peaks (max tare-subtracted raw per channel) as a JSON list.
+  /// Informational only — the detail view computes its own per-channel
+  /// peaks from the chunk data.
+  TextColumn get peaksRaw => text().withDefault(const Constant('[]'))();
+
+  /// Per-channel calibration in effect at recording time, as a JSON list of
+  /// [ChannelCalibration] snapshots (board piecewise map + assigned load
+  /// cell per channel). Playback converts through this, never through the
+  /// live calibration, so later recalibration can't rewrite history.
+  TextColumn get calibrationJson => text()();
   TextColumn get notes => text().withDefault(const Constant(''))();
   IntColumn get sampleCount => integer().withDefault(const Constant(0))();
   BoolColumn get isCompleted => boolean().withDefault(const Constant(true))();
@@ -76,7 +85,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 7;
+  int get schemaVersion => 8;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -114,7 +123,7 @@ class AppDatabase extends _$AppDatabase {
     required int channelCount,
     required String channelLabels,
     required String tares,
-    required double calibrationSlope,
+    required String calibrationJson,
     required String visibleChannels,
   }) {
     return into(sessions).insert(
@@ -125,7 +134,7 @@ class AppDatabase extends _$AppDatabase {
         channelCount: channelCount,
         channelLabels: channelLabels,
         tares: tares,
-        calibrationSlope: calibrationSlope,
+        calibrationJson: calibrationJson,
         isCompleted: const Value(false),
         visibleChannels: visibleChannels,
       ),
@@ -140,7 +149,7 @@ class AppDatabase extends _$AppDatabase {
     int id, {
     required int sampleCount,
     required int durationMs,
-    required double peakForceRaw,
+    required String peaksRaw,
     String gaps = '[]',
   }) {
     return _updateSession(
@@ -148,7 +157,7 @@ class AppDatabase extends _$AppDatabase {
       SessionsCompanion(
         sampleCount: Value(sampleCount),
         durationMs: Value(durationMs),
-        peakForceRaw: Value(peakForceRaw),
+        peaksRaw: Value(peaksRaw),
         isCompleted: const Value(true),
         gaps: Value(gaps),
       ),

@@ -78,5 +78,52 @@ void main() {
         expect(link.isStreaming, isFalse);
       });
     });
+
+    test('connect reads the factory calibration into the hub', () {
+      fakeAsync((async) {
+        final (hub, link, teardown) = wire(async: async);
+
+        unawaited(link.connectToDevice(deviceId));
+        async.elapse(const Duration(seconds: 4));
+
+        expect(link.isStreaming, isTrue);
+        expect(
+          hub.boardCalibration.channels.every((c) => c.isFactoryCalibrated),
+          isTrue,
+        );
+        expect(
+          hub.boardCalibration.channels[0].offsetCounts,
+          closeTo(845.2, 1e-9),
+        );
+
+        teardown();
+      });
+    });
+
+    test(
+      'a failed calibration read leaves nominal values and still streams',
+      () {
+        fakeAsync((async) {
+          MockBlePlatform.instance.failCalibrationRead = true;
+          addTearDown(
+            () => MockBlePlatform.instance.failCalibrationRead = false,
+          );
+          final (hub, link, teardown) = wire(async: async);
+
+          unawaited(link.connectToDevice(deviceId));
+          async.elapse(const Duration(seconds: 4));
+
+          // Best-effort by design: the stream must come up regardless.
+          expect(link.isStreaming, isTrue);
+          expect(hub.totalSamples, greaterThan(0));
+          expect(
+            hub.boardCalibration.channels.every((c) => !c.isFactoryCalibrated),
+            isTrue,
+          );
+
+          teardown();
+        });
+      },
+    );
   });
 }

@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'app_events.dart';
 import 'bt_device_config.dart';
+import 'demo_calibration.dart';
 import 'demo_signal_source.dart';
 import 'mockble.dart';
 import '../utils/log.dart';
@@ -954,6 +956,12 @@ class BleLinkManager extends ChangeNotifier {
     _link.deviceId = DeviceLink.demoDeviceId;
     _link.name = 'Demo Device';
     _link.state = BtLinkState.streaming;
+
+    // The demo device is factory-calibrated: serve the fixture doc through
+    // the same path a real device's calibration read would take.
+    onCalibrationData?.call(
+      Uint8List.fromList(utf8.encode(demoBoardCalibrationDoc)),
+    );
 
     _demoSource ??= DemoSignalSource();
     _demoSource?.start((data) {

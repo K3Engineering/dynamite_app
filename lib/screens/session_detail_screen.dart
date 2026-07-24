@@ -173,10 +173,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 emphasized: true,
                 values: [
                   for (int ch = 0; ch < data.channels.length; ch++)
-                    unit.fromRaw(
-                      data.maxs[ch] - data.tares[ch],
-                      data.calibrationSlope,
-                    ),
+                    unit
+                        .converterFor(data.calibrationFor(ch), data.tares[ch])
+                        ?.call(data.maxs[ch]),
                 ],
               ),
             ],
@@ -340,11 +339,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       } else {
         for (int ch = 0; ch < data.channels.length; ch++) {
           final raw = data.channels[ch][s];
-          final kgf = ForceUnit.kgf.fromRaw(
-            raw - data.tares[ch],
-            data.calibrationSlope,
-          );
-          buf.write(',$raw,${kgf.toStringAsFixed(6)}');
+          // kgf via the calibration recorded with the session; blank when
+          // the channel had no load cell assigned.
+          final kgf = ForceUnit.kgf
+              .converterFor(data.calibrationFor(ch), data.tares[ch])
+              ?.call(raw.toDouble());
+          buf.write(kgf == null ? ',$raw,' : ',$raw,${kgf.toStringAsFixed(6)}');
         }
       }
       buf.writeln();
