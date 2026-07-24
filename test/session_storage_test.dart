@@ -310,12 +310,7 @@ void main() {
           ),
         );
         hub.updateLoadCells([
-          LoadCellProfile(
-            name: 'Ref',
-            capacityKg: 100,
-            sensitivityMvV: 2,
-            span: 1.01,
-          ),
+          LoadCellProfile(name: 'Ref', capacityKg: 100, sensitivityMvV: 2.02),
           null,
           null,
           null,
@@ -344,15 +339,15 @@ void main() {
           closeTo(2 * nominalCountsPerMvV, 1e-3),
         );
         expect(loaded.calibrationFor(0).board.isFactoryCalibrated, isTrue);
-        // Load cell snapshot round-trips with its span factor.
+        // Load cell snapshot round-trips with its exact sensitivity.
         final cell = loaded.calibrationFor(0).loadCell!;
         expect(cell.name, 'Ref');
-        expect(cell.span, closeTo(1.01, 1e-12));
+        expect(cell.sensitivityMvV, closeTo(2.02, 1e-12));
         // End-to-end: kgf converts through the stored board AND stored cell.
         final kgf = ForceUnit.kgf.converterFor(loaded.calibrationFor(0), 0)!;
         expect(
           kgf(1000),
-          closeTo(1000 / (2 * nominalCountsPerMvV) * (100 * 1.01 / 2), 1e-9),
+          closeTo(1000 / (2 * nominalCountsPerMvV) * (100 / 2.02), 1e-9),
         );
         // ch1 had no load cell assigned at recording time.
         expect(ForceUnit.kgf.converterFor(loaded.calibrationFor(1), 0), isNull);

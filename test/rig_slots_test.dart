@@ -18,11 +18,11 @@ void main() {
       expect(flash.board.factoryDate, '2026-07-20');
     });
 
-    test('slots parse with names, values, spans and mtimes', () {
+    test('slots parse with names, exact sensitivities and mtimes', () {
       final slots = flash.slots;
       expect(slots.cellAt(0)?.name, 'Thrust cell');
       expect(slots.cellAt(0)?.capacityKg, 200);
-      expect(slots.cellAt(0)?.span, closeTo(1.00037, 1e-12));
+      expect(slots.cellAt(0)?.sensitivityMvV, closeTo(1.9993, 1e-12));
       expect(slots[0]?.mtime, isNotNull);
 
       expect(slots.cellAt(1)?.name, 'Break jig');
@@ -98,7 +98,7 @@ void main() {
   });
 
   group('RigSlots', () {
-    test('degenerate slots degrade to empty; invalid span falls back', () {
+    test('degenerate slots degrade to empty', () {
       final slots = RigSlots.fromKv(const {
         'lc0.cap': '-5', // non-positive: empty
         'lc0.sens': '2',
@@ -106,11 +106,10 @@ void main() {
         // sens missing: empty
         'lc2.cap': '100',
         'lc2.sens': '2',
-        'lc2.span': 'banana', // invalid: falls back to 1.0
       });
       expect(slots[0], isNull);
       expect(slots[1], isNull);
-      expect(slots.cellAt(2)?.span, 1.0);
+      expect(slots.cellAt(2)?.sensitivityMvV, 2);
     });
 
     test('withSwap exchanges two slots and nothing else', () {
@@ -158,7 +157,7 @@ void main() {
       );
       expect(a.signatures, b.signatures);
 
-      final c = b.withSlot(0, RigSlot(cell: cell.copyWith(span: 1.01)));
+      final c = b.withSlot(0, RigSlot(cell: cell.copyWith(sensitivityMvV: 2.02)));
       expect(c.signatures, isNot(b.signatures));
     });
   });

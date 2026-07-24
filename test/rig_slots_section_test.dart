@@ -169,7 +169,7 @@ void main() {
     expect(rig.hasPending, isTrue);
     expect(rig.channelCells[1]?.capacityKg, 250);
     expect(rig.channelCells[1]?.name, 'Break jig'); // name untouched
-    expect(find.textContaining('250 kg · 2 mV/V'), findsOneWidget);
+    expect(find.textContaining('250 kg · 2.0004 mV/V'), findsOneWidget);
   });
 
   testWidgets('clear slot empties it', (tester) async {
