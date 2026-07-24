@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import '../services/adc_protocol.dart';
 
 /// Analog front-end constants (fixed by hardware): the load cell signal
@@ -236,20 +238,15 @@ class BoardCalibration {
     ],
   );
 
-  /// Parse the `key=value` calibration document. Never throws: structural
-  /// problems degrade only the affected channel (or the whole board, if no
-  /// usable keys exist) to nominal. Lines without `key=value` shape (version
-  /// token, END marker, comments) are ignored, so the format can grow.
-  factory BoardCalibration.parse(String text) {
-    final kv = <String, String>{};
-    for (final rawLine in text.split(RegExp(r'\r?\n'))) {
-      final line = rawLine.trim();
-      if (line.isEmpty || line.startsWith('#')) continue;
-      final eq = line.indexOf('=');
-      if (eq <= 0) continue;
-      kv[line.substring(0, eq).trim()] = line.substring(eq + 1).trim();
-    }
+  /// Parse the board-calibration keys of a `key=value` flash document.
+  /// Slot (`lcN.*`) and other unknown keys are ignored. Never throws — see
+  /// [DeviceFlash.parse].
+  factory BoardCalibration.parse(String text) =>
+      BoardCalibration.fromKv(parseFlashKv(text));
 
+  /// Build from an already-split key=value map (see [parseFlashKv]).
+  /// Structural problems degrade only the affected channel to nominal.
+  factory BoardCalibration.fromKv(Map<String, String> kv) {
     List<double>? parseList(String? value, int count) {
       if (value == null) return null;
       final parts = value.split(',').map((s) => double.tryParse(s.trim()));
@@ -270,18 +267,201 @@ class BoardCalibration {
     );
   }
 
-  /// Serialize to the `key=value` document (the future write-to-device flow
-  /// and tests). Channels without factory data emit resistors only.
+  /// Serialize the board-calibration keys as a full flash document (no
+  /// slots). Convenience wrapper over [DeviceFlash.serialize].
+  String serialize() =>
+      DeviceFlash(board: this, slots: RigSlots.empty()).serialize();
+}
+
+/// Split a `key=value` flash document into a map. Lines without `key=value`
+/// shape (version token, END marker, comments) are ignored, so the format
+/// can grow; values may contain `=` (split happens at the first one).
+Map<String, String> parseFlashKv(String text) {
+  final kv = <String, String>{};
+  for (final rawLine in text.split(RegExp(r'\r?\n'))) {
+    final line = rawLine.trim();
+    if (line.isEmpty || line.startsWith('#')) continue;
+    final eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    kv[line.substring(0, eq).trim()] = line.substring(eq + 1).trim();
+  }
+  return kv;
+}
+
+// ---------------------------------------------------------------------------
+// Rig slots (load cells, app-writable flash namespace)
+// ---------------------------------------------------------------------------
+
+/// Number of load cell slots on a device. The first [nwNumAdcChan] slots are
+/// the channels (the plugged-in rig); the rest are spares carried on the
+/// device. Constant for the first prototype.
+const int kRigSlotCount = 10;
+
+/// One populated device slot: the cell plus the write timestamp from flash
+/// (display metadata only — never a sync arbiter).
+class RigSlot {
+  const RigSlot({required this.cell, this.mtime});
+
+  final LoadCellProfile cell;
+
+  /// When this slot was written to the device, if known.
+  final DateTime? mtime;
+
+  RigSlot copyWith({LoadCellProfile? cell, DateTime? mtime}) =>
+      RigSlot(cell: cell ?? this.cell, mtime: mtime ?? this.mtime);
+
+  @override
+  bool operator ==(Object other) =>
+      other is RigSlot && other.cell == cell && other.mtime == mtime;
+
+  @override
+  int get hashCode => Object.hash(cell, mtime);
+}
+
+/// The device's ten load cell slots: identity is positional (slots 0–3 are
+/// CH1–CH4). Immutable; edits produce new instances. The slot list is the
+/// device's self-contained description of the rig — any host reading flash
+/// can convert force from it alone.
+class RigSlots {
+  RigSlots(List<RigSlot?> slots)
+    : slots = List.unmodifiable(
+        slots.length == kRigSlotCount
+            ? slots
+            : throw ArgumentError('need $kRigSlotCount slots'),
+      );
+
+  final List<RigSlot?> slots;
+
+  factory RigSlots.empty() => RigSlots(List.filled(kRigSlotCount, null));
+
+  RigSlot? operator [](int i) => slots[i];
+
+  /// The cell in slot [i], or null.
+  LoadCellProfile? cellAt(int i) => slots[i]?.cell;
+
+  /// Cells converting the four ADC channels (slots 0–3), nulls included.
+  List<LoadCellProfile?> get channelCells => [
+    for (int i = 0; i < nwNumAdcChan; ++i) cellAt(i),
+  ];
+
+  /// Channel row titles: the cell's title, or the bare channel name.
+  List<String> get channelTitles => [
+    for (int i = 0; i < nwNumAdcChan; ++i) cellAt(i)?.title ?? 'CH ${i + 1}',
+  ];
+
+  /// Per-slot content signatures (cell JSON, null for empty). Compared
+  /// against a stored copy to detect "changed since your last visit"; mtime
+  /// is deliberately excluded (a pure rewrite is not a change).
+  List<String?> get signatures => [
+    for (final s in slots) s == null ? null : jsonEncode(s.cell.toJson()),
+  ];
+
+  RigSlots withSlot(int i, RigSlot? slot) => RigSlots([
+    for (int k = 0; k < kRigSlotCount; ++k) k == i ? slot : slots[k],
+  ]);
+
+  /// Insert-style reorder (the drag gesture): the item at [from] is removed
+  /// and reinserted at [to], shifting the others.
+  RigSlots withMove(int from, int to) {
+    final next = [...slots];
+    final item = next.removeAt(from);
+    next.insert(to, item);
+    return RigSlots(next);
+  }
+
+  @override
+  bool operator ==(Object other) {
+    if (other is! RigSlots) return false;
+    for (int i = 0; i < kRigSlotCount; ++i) {
+      if (other.slots[i] != slots[i]) return false;
+    }
+    return true;
+  }
+
+  @override
+  int get hashCode => Object.hashAll(slots);
+
+  /// Parse the `lcN.*` keys of a flash document. A slot is populated iff its
+  /// `cap` and `sens` keys parse to positive numbers; anything else degrades
+  /// that one slot to empty. An invalid `span` falls back to 1.0 rather than
+  /// nuking the cell.
+  factory RigSlots.fromKv(Map<String, String> kv) {
+    double? num(String? v) => v == null ? null : double.tryParse(v);
+    return RigSlots([
+      for (int i = 0; i < kRigSlotCount; ++i)
+        switch ((num(kv['lc$i.cap']), num(kv['lc$i.sens']))) {
+          (final cap?, final sens?) when cap > 0 && sens > 0 => RigSlot(
+            cell: LoadCellProfile(
+              name: kv['lc$i.name'] ?? '',
+              capacityKg: cap,
+              sensitivityMvV: sens,
+              span: switch (num(kv['lc$i.span'])) {
+                final s? when s > 0 => s,
+                _ => 1.0,
+              },
+            ),
+            mtime: DateTime.tryParse(kv['lc$i.mtime'] ?? ''),
+          ),
+          _ => null,
+        },
+    ]);
+  }
+
+  /// Emit the populated slots' `lcN.*` lines (no trailing newline).
+  /// Newlines in names are flattened (the doc is line-based); `=` in values
+  /// is safe (parse splits at the first one).
+  void serializeInto(StringBuffer b) {
+    for (int i = 0; i < kRigSlotCount; ++i) {
+      final s = slots[i];
+      if (s == null) continue;
+      final c = s.cell;
+      if (c.name.isNotEmpty) {
+        b.writeln('lc$i.name=${c.name.replaceAll(RegExp(r'\s+'), ' ')}');
+      }
+      b.writeln('lc$i.cap=${c.capacityKg}');
+      b.writeln('lc$i.sens=${c.sensitivityMvV}');
+      b.writeln('lc$i.span=${c.span}');
+      final m = s.mtime;
+      if (m != null) b.writeln('lc$i.mtime=${m.toUtc().toIso8601String()}');
+    }
+  }
+}
+
+/// The full device flash document: the factory board calibration (read-only
+/// to the app) plus the app-writable load cell slots. This is the unit the
+/// calibration characteristic reads and writes.
+class DeviceFlash {
+  const DeviceFlash({required this.board, required this.slots});
+
+  final BoardCalibration board;
+  final RigSlots slots;
+
+  /// Parse a whole flash document. Never throws: structural problems degrade
+  /// only the affected piece (channel → nominal, slot → empty).
+  factory DeviceFlash.parse(String text) {
+    final kv = parseFlashKv(text);
+    return DeviceFlash(
+      board: BoardCalibration.fromKv(kv),
+      slots: RigSlots.fromKv(kv),
+    );
+  }
+
+  /// Serialize the whole document. The app only ever writes with [slots] it
+  /// intends to persist and [board] exactly as read — board keys round-trip
+  /// verbatim (the app is not their owner, just their courier).
   String serialize() {
     final b = StringBuffer('K3CAL1\n');
-    if (factoryDate != null) b.writeln('cal.date=$factoryDate');
-    if (excitationMv != null) b.writeln('cal.exc.mv=$excitationMv');
-    for (int i = 0; i < channels.length; ++i) {
-      final ch = channels[i];
+    if (board.factoryDate != null) b.writeln('cal.date=${board.factoryDate}');
+    if (board.excitationMv != null) {
+      b.writeln('cal.exc.mv=${board.excitationMv}');
+    }
+    for (int i = 0; i < board.channels.length; ++i) {
+      final ch = board.channels[i];
       b.writeln('ch$i.r=${ch.resistors.join(',')}');
       final r = ch.readings;
       if (r != null) b.writeln('ch$i.raw=${r.join(',')}');
     }
+    slots.serializeInto(b);
     b.write('END');
     return b.toString();
   }
@@ -291,32 +471,25 @@ class BoardCalibration {
 // Load cell profiles
 // ---------------------------------------------------------------------------
 
-/// A load cell the user can assign to a channel: nameplate values plus an
-/// optional serial and a [span] correction factor (set by user calibration
-/// flows — known weight or comparison against a reference cell). The bank of
-/// profiles lives app-side (AppSettings); a channel's assignment is just a
-/// profile id.
+/// A load cell as the app knows it: nameplate values plus a [span] correction
+/// factor (set by user calibration flows — known weight or comparison against
+/// a reference cell). Profiles are pure values: identity comes from WHERE a
+/// profile sits (a device slot, a history entry), not from an id.
 class LoadCellProfile {
   LoadCellProfile({
-    required this.id,
     this.name = '',
     required this.capacityKg,
     required this.sensitivityMvV,
-    this.serial = '',
     this.span = 1.0,
   });
 
-  /// Unique within the bank; minted at creation time.
-  final String id;
-
   /// Display name. Empty means a generic profile — rendered from the values.
-  String name;
-  double capacityKg;
-  double sensitivityMvV;
-  String serial;
+  final String name;
+  final double capacityKg;
+  final double sensitivityMvV;
 
   /// User calibration factor (multiplies the nameplate sensitivity).
-  double span;
+  final double span;
 
   /// kgf per mV/V of measured signal.
   double get kgfPerMvV => capacityKg * span / sensitivityMvV;
@@ -326,25 +499,53 @@ class LoadCellProfile {
       ? name
       : '${_trim(capacityKg)} kg · ${_trim(sensitivityMvV)} mV/V';
 
+  /// The values line, e.g. `100 kg · 2 mV/V · ×1.00037` (span only when
+  /// corrected). Shown wherever the cell's numbers matter next to its name.
+  String get valuesLine {
+    final base = '${_trim(capacityKg)} kg · ${_trim(sensitivityMvV)} mV/V';
+    return span == 1.0 ? base : '$base · ×$span';
+  }
+
   static String _trim(double v) =>
       v == v.roundToDouble() ? v.toInt().toString() : v.toString();
 
+  LoadCellProfile copyWith({
+    String? name,
+    double? capacityKg,
+    double? sensitivityMvV,
+    double? span,
+  }) => LoadCellProfile(
+    name: name ?? this.name,
+    capacityKg: capacityKg ?? this.capacityKg,
+    sensitivityMvV: sensitivityMvV ?? this.sensitivityMvV,
+    span: span ?? this.span,
+  );
+
+  @override
+  bool operator ==(Object other) =>
+      other is LoadCellProfile &&
+      other.name == name &&
+      other.capacityKg == capacityKg &&
+      other.sensitivityMvV == sensitivityMvV &&
+      other.span == span;
+
+  @override
+  int get hashCode => Object.hash(name, capacityKg, sensitivityMvV, span);
+
   Map<String, dynamic> toJson() => {
-    'id': id,
     'name': name,
     'capacityKg': capacityKg,
     'sensitivityMvV': sensitivityMvV,
-    'serial': serial,
     'span': span,
   };
 
+  /// Tolerant parse: legacy documents (with `id`/`serial` keys) and missing
+  /// keys degrade gracefully rather than throwing.
   factory LoadCellProfile.fromJson(Map<String, dynamic> json) =>
       LoadCellProfile(
-        id: json['id'] as String,
         name: json['name'] as String? ?? '',
         capacityKg: (json['capacityKg'] as num).toDouble(),
         sensitivityMvV: (json['sensitivityMvV'] as num).toDouble(),
-        serial: json['serial'] as String? ?? '',
         span: (json['span'] as num?)?.toDouble() ?? 1.0,
       );
 }

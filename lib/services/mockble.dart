@@ -51,6 +51,10 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// When true, reads of the calibration characteristic throw.
   bool failCalibrationRead = false;
 
+  /// The mock device's flash document, mutable so writes round-trip: a read
+  /// after a write serves whatever was last written (like real flash).
+  String mockFlashDoc = demoBoardCalibrationDoc;
+
   /// When true, [connect] throws (a refused/failed attempt: no link is
   /// established and no connection-change callback fires — the WEB flavor,
   /// where gatt.connect() itself rejects).
@@ -317,8 +321,8 @@ class MockBlePlatform extends UniversalBlePlatform {
       if (failCalibrationRead) {
         throw StateError('Mock calibration read failure');
       }
-      // The mock device is factory-calibrated: serve the shared fixture doc.
-      return Uint8List.fromList(utf8.encode(demoBoardCalibrationDoc));
+      // The mock device is factory-calibrated: serve its flash doc.
+      return Uint8List.fromList(utf8.encode(mockFlashDoc));
     }
     return Uint8List(255);
   }
@@ -330,7 +334,11 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic,
     Uint8List value,
     BleOutputProperty bleOutputProperty,
-  ) async {}
+  ) async {
+    if (characteristic == btChrCalibration) {
+      mockFlashDoc = utf8.decode(value);
+    }
+  }
 
   @override
   Future<int> requestMtu(String deviceId, int expectedMtu) async {

@@ -15,7 +15,7 @@ void main() {
     readings: [for (final d in sp) alpha + beta * d],
   );
   final nominalBoard = ChannelBoardCalibration();
-  final cell = LoadCellProfile(id: 'c', capacityKg: 200, sensitivityMvV: 2);
+  final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
   final assigned = ChannelCalibration(board: board, loadCell: cell);
   final bare = ChannelCalibration(board: board);
 

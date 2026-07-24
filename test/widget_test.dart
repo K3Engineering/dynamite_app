@@ -12,6 +12,7 @@ import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
+import 'package:dynamite_app/services/rig_state.dart';
 
 /// Smoke test: pump the real app shell with the production object graph, but
 /// with the mock BLE platform installed (so [BleLinkManager]'s startup
@@ -40,6 +41,12 @@ void main() {
     final linkManager = BleLinkManager(events: appEvents)
       ..onAdcData = decoder.onDataPacket
       ..onCalibrationData = decoder.onCalibrationPacket;
+    final rigState = RigState(transport: linkManager, events: appEvents);
+    decoder.onDeviceFlash = (flash) => rigState.onFlashRead(
+      linkManager.selectedDeviceId,
+      linkManager.connectedDeviceName,
+      flash,
+    );
     final recording = RecordingController(
       dataHub: dataHub,
       linkManager: linkManager,
@@ -54,6 +61,7 @@ void main() {
           Provider.value(value: appEvents),
           ChangeNotifierProvider.value(value: dataHub),
           ChangeNotifierProvider.value(value: linkManager),
+          ChangeNotifierProvider.value(value: rigState),
           ChangeNotifierProvider.value(value: recording),
         ],
         child: const DynoApp(),

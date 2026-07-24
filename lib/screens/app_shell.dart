@@ -99,6 +99,26 @@ class AppShellState extends State<AppShell> {
             showCloseIcon: true,
           ),
         );
+      case RigChangedSinceLastVisit(:final deviceName, :final changes):
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              'Load cells on $deviceName changed since your last visit:\n'
+              '${changes.join('\n')}',
+            ),
+            duration: const Duration(seconds: 8),
+            showCloseIcon: true,
+          ),
+        );
+      case CalibrationUnreadable(:final deviceName):
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              'Could not read calibration from $deviceName — '
+              'nominal values in use.',
+            ),
+          ),
+        );
     }
   }
 

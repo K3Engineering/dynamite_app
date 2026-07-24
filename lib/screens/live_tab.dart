@@ -9,6 +9,7 @@ import '../models/app_settings.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/recording_controller.dart';
+import '../services/rig_state.dart';
 import '../screens/app_shell.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
@@ -157,7 +158,9 @@ class _LiveTabState extends State<LiveTab> {
     } else {
       final settings = context.read<AppSettings>();
       final result = await recording.startSession(
-        channelLabels: settings.channelLabels,
+        // Row titles are the rig's cell names (or 'CH n'), snapshotted into
+        // the session at record time.
+        channelLabels: context.read<RigState>().channelTitles,
         visibleChannels: settings.activeChannels,
       );
 
@@ -218,6 +221,9 @@ class _LiveTabState extends State<LiveTab> {
       (l) => l.connectedDeviceName,
     );
     final recording = context.watch<RecordingController>();
+    // RigState notifies only on flash reads and slot edits (never per
+    // packet), so watching it here is cheap.
+    final rig = context.watch<RigState>();
     // read (not watch): rebuilding this whole tab per packet would be a
     // rebuild storm — LiveStats/graph subscribe to the hub themselves.
     final hub = context.read<DataHub>();
@@ -244,6 +250,7 @@ class _LiveTabState extends State<LiveTab> {
                   children: [
                     LiveStats(
                       settings: settings,
+                      rig: rig,
                       hub: hub,
                       showDerivative: showDerivative,
                       stalledListenable: _stalled,
@@ -383,6 +390,7 @@ class LiveStatusBar extends StatelessWidget {
 
 class LiveStats extends StatelessWidget {
   final AppSettings settings;
+  final RigState rig;
   final DataHub hub;
   final bool showDerivative;
 
@@ -393,6 +401,7 @@ class LiveStats extends StatelessWidget {
   const LiveStats({
     super.key,
     required this.settings,
+    required this.rig,
     required this.hub,
     this.showDerivative = false,
     required this.stalledListenable,
@@ -402,15 +411,13 @@ class LiveStats extends StatelessWidget {
   Widget build(BuildContext context) {
     final unit = settings.displayUnit;
 
-    // Force units need a load cell per channel; when any visible channel is
-    // unassigned its cells show '—'. Point at the fix once, under the table.
+    // Force units need a load cell per channel; when any visible channel's
+    // slot is empty its cells show '—'. Point at the fix once, under the table.
     final anyUnassigned =
         unit.isForce &&
         [
           for (int i = 0; i < settings.activeChannels.length; i++)
-            if (settings.activeChannels[i] &&
-                settings.loadCellForChannel(i) == null)
-              i,
+            if (settings.activeChannels[i] && rig.channelCells[i] == null) i,
         ].isNotEmpty;
 
     return ValueListenableBuilder<bool>(
@@ -426,7 +433,7 @@ class LiveStats extends StatelessWidget {
           return Column(
             children: [
               ChannelStatsTable(
-                labels: settings.channelLabels,
+                labels: rig.channelTitles,
                 activeChannels: settings.activeChannels,
                 onToggleChannel: (i) =>
                     settings.setChannelActive(i, !settings.activeChannels[i]),

@@ -36,16 +36,23 @@ class AdcPacketDecoder {
     _prevSampleCount = -1;
   }
 
+  /// Invoked with every successfully parsed flash document (board + load
+  /// cell slots). Wired to `RigState.onFlashRead` at app startup; the hub
+  /// only takes the board half.
+  void Function(DeviceFlash flash)? onDeviceFlash;
+
   /// Parse one calibration characteristic read: the `key=value` flash
-  /// document ([BoardCalibration.parse], tolerant of missing keys) into the
-  /// hub. Malformed reads degrade to per-channel nominal values.
+  /// document ([DeviceFlash.parse], tolerant of missing keys). The board
+  /// calibration feeds the hub; the full document (slots included) goes to
+  /// [onDeviceFlash]. Malformed reads degrade to per-channel nominal values
+  /// and empty slots.
   ///
   /// TODO(firmware): transport is a single whole-document read for now; the
   /// real per-key read protocol plugs in here once defined.
   void onCalibrationPacket(Uint8List data) {
-    hub.updateBoardCalibration(
-      BoardCalibration.parse(utf8.decode(data, allowMalformed: true)),
-    );
+    final flash = DeviceFlash.parse(utf8.decode(data, allowMalformed: true));
+    hub.updateBoardCalibration(flash.board);
+    onDeviceFlash?.call(flash);
   }
 
   /// Parse one BLE ADC-feed notification packet into the hub.

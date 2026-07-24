@@ -9,6 +9,7 @@ import 'bt_device_config.dart';
 import 'demo_calibration.dart';
 import 'demo_signal_source.dart';
 import 'mockble.dart';
+import 'rig_state.dart';
 import '../utils/log.dart';
 
 /// Lifecycle of a single device's BLE link.
@@ -181,7 +182,7 @@ bool isWebPickerDismissal(Object e) {
 /// deviceId instead of dropping), per-device busy guards in [_beginConnect]
 /// and [disconnectSelectedDevice]. Adapter availability and scanning stay
 /// *global* (one radio) and do NOT move into [DeviceLink].
-class BleLinkManager extends ChangeNotifier {
+class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// Upper bound we pass to [UniversalBle.disconnect] so a silent stack can't
   /// strand the UI on "Disconnecting…". The package's own `disconnect()` sets
   /// up a completer over its connection-event stream and applies this timeout
@@ -339,6 +340,7 @@ class BleLinkManager extends ChangeNotifier {
   String get selectedDeviceId => _link.isLinkUp ? _link.deviceId : '';
 
   /// Name of the currently connected device.
+  @override
   String get connectedDeviceName =>
       _link.name.isEmpty ? _link.deviceId : _link.name;
 
@@ -421,6 +423,41 @@ class BleLinkManager extends ChangeNotifier {
   final AppEvents _events;
 
   DemoSignalSource? _demoSource;
+
+  /// The demo device's flash document, mutable so the "Save to device" flow
+  /// round-trips on the demo exactly like on real hardware (a reconnect
+  /// serves whatever was last written).
+  String _demoFlashDoc = demoBoardCalibrationDoc;
+
+  // -- RigFlashTransport ------------------------------------------------------
+
+  @override
+  String get connectedDeviceId => selectedDeviceId;
+
+  /// Write a serialized `DeviceFlash` document to the connected device.
+  /// Called only by `RigState.saveToDevice`, which has already composed the
+  /// full document (board keys round-tripping verbatim + edited slots).
+  @override
+  Future<void> writeFlashDoc(String doc) async {
+    final deviceId = _link.deviceId;
+    if (deviceId.isEmpty) {
+      throw StateError('writeFlashDoc with no device connected');
+    }
+    if (deviceId == DeviceLink.demoDeviceId) {
+      _demoFlashDoc = doc;
+      return;
+    }
+    // TODO(firmware): whole-document write for now, mirroring the read path
+    // (see AdcPacketDecoder.onCalibrationPacket); the per-key write protocol
+    // plugs in here once defined. Untested against real firmware — the
+    // characteristic may not even be writable yet.
+    await UniversalBle.write(
+      deviceId,
+      btServiceId,
+      btChrCalibration,
+      Uint8List.fromList(utf8.encode(doc)),
+    );
+  }
 
   BleLinkManager({required AppEvents events}) : _events = events {
     if (useMockBt) {
@@ -957,11 +994,10 @@ class BleLinkManager extends ChangeNotifier {
     _link.name = 'Demo Device';
     _link.state = BtLinkState.streaming;
 
-    // The demo device is factory-calibrated: serve the fixture doc through
-    // the same path a real device's calibration read would take.
-    onCalibrationData?.call(
-      Uint8List.fromList(utf8.encode(demoBoardCalibrationDoc)),
-    );
+    // The demo device is factory-calibrated: serve its flash doc through the
+    // same path a real device's calibration read would take. The doc is
+    // mutable (see [_demoFlashDoc]) so "Save to device" round-trips.
+    onCalibrationData?.call(Uint8List.fromList(utf8.encode(_demoFlashDoc)));
 
     _demoSource ??= DemoSignalSource();
     _demoSource?.start((data) {
@@ -1132,17 +1168,16 @@ class BleLinkManager extends ChangeNotifier {
           !characteristic.properties.contains(CharacteristicProperty.notify)) {
         continue;
       }
-      // Calibration is best-effort: parsing is a TODO and defaults are in
-      // use, so a failed read must not fail the whole connection.
-      // TODO(cal): once real calibration parsing lands, surface a
-      // "calibration unreadable — using defaults" warning event instead of
-      // only logging.
+      // Calibration is best-effort: a failed read must not fail the whole
+      // connection. The app runs on nominal values until a read succeeds, so
+      // surface that to the user rather than only logging it.
       try {
         onCalibrationData?.call(
           await UniversalBle.read(deviceId, service.uuid, btChrCalibration),
         );
       } catch (e) {
         debugPrint('Calibration read failed for $deviceId: $e');
+        _events.emit(CalibrationUnreadable(_link.name));
       }
       await UniversalBle.subscribeNotifications(
         deviceId,

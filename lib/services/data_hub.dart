@@ -102,8 +102,9 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// until/unless a calibrated device supplies real data.
   BoardCalibration boardCalibration = BoardCalibration.nominal();
 
-  /// Load cell assigned to each channel (null = unassigned, electrical units
-  /// only). Owned by [AppSettings]; pushed here via [updateLoadCells].
+  /// Load cell converting each channel (null = unassigned, electrical units
+  /// only). Owned by `RigState` (device slots, including unsaved edits);
+  /// pushed here via [updateLoadCells].
   List<LoadCellProfile?> _loadCells = List.filled(numAdcChannels, null);
 
   /// Bumped whenever the calibration set changes (board data or load-cell
@@ -292,29 +293,19 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     notifyListeners();
   }
 
-  /// Replace the per-channel load-cell assignments (the user assigned or
-  /// edited a profile in settings). Content-equal updates are a no-op so an
-  /// unrelated settings change can't invalidate the graph caches.
+  /// Replace the per-channel load-cell assignments (the rig's slots changed:
+  /// flash read, edit, save, revert). Content-equal updates are a no-op so an
+  /// unrelated change can't invalidate the graph caches.
   void updateLoadCells(List<LoadCellProfile?> cells) {
     assert(cells.length == numAdcChannels);
     var same = _loadCells.length == cells.length;
     for (int i = 0; same && i < cells.length; i++) {
-      same = _sameCell(_loadCells[i], cells[i]);
+      same = _loadCells[i] == cells[i];
     }
     if (same) return;
     _loadCells = List.of(cells);
     _calibrationVersion++;
     notifyListeners();
-  }
-
-  static bool _sameCell(LoadCellProfile? a, LoadCellProfile? b) {
-    if (a == null || b == null) return a == b;
-    return a.id == b.id &&
-        a.name == b.name &&
-        a.capacityKg == b.capacityKg &&
-        a.sensitivityMvV == b.sensitivityMvV &&
-        a.serial == b.serial &&
-        a.span == b.span;
   }
 
   // -- GraphDataSource --------------------------------------------------------

@@ -90,31 +90,6 @@ class BoardCalibrationSection extends StatelessWidget {
               style: Theme.of(context).textTheme.bodySmall,
             ),
         ],
-        const SizedBox(height: 16),
-        Text('Calibrate', style: Theme.of(context).textTheme.titleSmall),
-        const SizedBox(height: 8),
-        const Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            OutlinedButton(
-              onPressed: null,
-              child: Text('Span with known weight'),
-            ),
-            OutlinedButton(
-              onPressed: null,
-              child: Text('Compare to reference'),
-            ),
-            OutlinedButton(onPressed: null, child: Text('Write to device')),
-          ],
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Calibration wizards are coming soon.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.outline,
-          ),
-        ),
       ],
     );
   }

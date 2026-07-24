@@ -9,7 +9,7 @@ import '../models/app_settings.dart';
 import '../models/force_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../widgets/board_calibration_section.dart';
-import '../widgets/load_cell_picker.dart';
+import '../widgets/rig_slots_section.dart';
 import '../widgets/section_header.dart';
 import 'app_shell.dart';
 
@@ -69,23 +69,6 @@ class SettingsTab extends StatelessWidget {
           ],
           const SizedBox(height: 16),
 
-          // Channel labels
-          Text('Channels', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          for (int i = 0; i < settings.channelLabels.length; i++)
-            _ChannelConfigTile(
-              index: i,
-              label: settings.channelLabels[i],
-              onLabelChanged: (val) => settings.setChannelLabel(i, val),
-            ),
-          const SizedBox(height: 24),
-
-          // Load cell bank
-          Text('Load cell bank', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 8),
-          const LoadCellBankSection(),
-          const SizedBox(height: 24),
-
           // Wakelock
           SwitchListTile(
             title: const Text('Keep screen awake'),
@@ -139,11 +122,11 @@ class SettingsTab extends StatelessWidget {
             ),
           const SizedBox(height: 16),
 
-          // Per-channel load cell assignment. Valid without a live link: the
-          // assignments are app-side and take effect whenever data flows.
+          // The connected device's load cell slots (the rig). Read from the
+          // device at connect time; edits go back via "Save to device".
           Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
-          const ChannelLoadCellAssignments(),
+          const RigSlotsSection(),
           const SizedBox(height: 16),
 
           // The connected device's factory calibration (read-only view).
@@ -187,53 +170,6 @@ class SettingsTab extends StatelessWidget {
             },
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _ChannelConfigTile extends StatelessWidget {
-  const _ChannelConfigTile({
-    required this.index,
-    required this.label,
-    required this.onLabelChanged,
-  });
-
-  final int index;
-  final String label;
-  final ValueChanged<String> onLabelChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        child: Row(
-          children: [
-            const SizedBox(width: 8),
-            Text(
-              'Ch ${index + 1}',
-              style: const TextStyle(fontWeight: FontWeight.w500),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              // Keyed by the label so an externally-changed value (e.g. the
-              // async SharedPrefs load completing after the first build)
-              // rebuilds the field with the fresh label — the same pattern
-              // the device-name field above uses.
-              child: TextFormField(
-                key: ValueKey(label),
-                initialValue: label,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  border: UnderlineInputBorder(),
-                  hintText: 'Label',
-                ),
-                onFieldSubmitted: onLabelChanged,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

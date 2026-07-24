@@ -219,7 +219,7 @@ void main() {
       feed(hub, frameOf(1000), 5);
 
       hub.updateLoadCells([
-        LoadCellProfile(id: 'x', capacityKg: 200, sensitivityMvV: 2),
+        LoadCellProfile(capacityKg: 200, sensitivityMvV: 2),
         null,
         null,
         null,
@@ -277,14 +277,14 @@ void main() {
 
     test('content-equal load cell updates do not bump the version', () {
       final hub = DataHub();
-      final cell = LoadCellProfile(id: 'x', capacityKg: 200, sensitivityMvV: 2);
+      final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
       hub.updateLoadCells([cell, null, null, null]);
       final v1 = hub.calibrationVersion;
 
-      // Same content, new identities: an unrelated settings notify must not
-      // invalidate the graph caches.
+      // Same content, new instances: an unrelated notify must not invalidate
+      // the graph caches.
       hub.updateLoadCells([
-        LoadCellProfile(id: 'x', capacityKg: 200, sensitivityMvV: 2),
+        LoadCellProfile(capacityKg: 200, sensitivityMvV: 2),
         null,
         null,
         null,
@@ -293,12 +293,7 @@ void main() {
 
       // A changed profile (new instance) bumps the version.
       hub.updateLoadCells([
-        LoadCellProfile(
-          id: 'x',
-          capacityKg: 200,
-          sensitivityMvV: 2,
-          span: 1.01,
-        ),
+        LoadCellProfile(capacityKg: 200, sensitivityMvV: 2, span: 1.01),
         null,
         null,
         null,

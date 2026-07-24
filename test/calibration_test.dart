@@ -215,39 +215,47 @@ ch2.raw=6401205.6,3201448.2,1502.8,-3196441.9
 
   group('LoadCellProfile', () {
     test('kgf per mV/V folds in the span factor', () {
-      final cell = LoadCellProfile(id: 'x', capacityKg: 200, sensitivityMvV: 2);
-      expect(cell.kgfPerMvV, closeTo(100, 1e-12));
-      cell.span = 1.01;
-      expect(cell.kgfPerMvV, closeTo(101, 1e-12));
+      final base = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
+      expect(base.kgfPerMvV, closeTo(100, 1e-12));
+      final corrected = base.copyWith(span: 1.01);
+      expect(corrected.kgfPerMvV, closeTo(101, 1e-12));
     });
 
-    test('json round-trip', () {
+    test('json round-trip (and legacy keys tolerated)', () {
       final cell = LoadCellProfile(
-        id: 'lc1',
         name: 'Golden cell',
         capacityKg: 100,
         sensitivityMvV: 2.0123,
-        serial: 'SN 1234',
         span: 0.9985,
       );
       final back = LoadCellProfile.fromJson(cell.toJson());
-      expect(back.id, cell.id);
-      expect(back.name, cell.name);
-      expect(back.capacityKg, cell.capacityKg);
-      expect(back.sensitivityMvV, cell.sensitivityMvV);
-      expect(back.serial, cell.serial);
-      expect(back.span, cell.span);
+      expect(back, cell);
+
+      // A legacy document (with id/serial) still parses; the dropped keys
+      // are ignored.
+      final legacy = LoadCellProfile.fromJson({
+        'id': 'lc1',
+        'name': 'Golden cell',
+        'capacityKg': 100,
+        'sensitivityMvV': 2.0123,
+        'serial': 'SN 1234',
+        'span': 0.9985,
+      });
+      expect(legacy, cell);
     });
 
     test('generic title renders from values, named title wins', () {
-      final generic = LoadCellProfile(
-        id: 'g',
-        capacityKg: 200,
-        sensitivityMvV: 2,
-      );
+      final generic = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
       expect(generic.title, '200 kg · 2 mV/V');
-      generic.name = 'Reference cell';
-      expect(generic.title, 'Reference cell');
+      final named = generic.copyWith(name: 'Reference cell');
+      expect(named.title, 'Reference cell');
+    });
+
+    test('values line shows the span only when corrected', () {
+      final plain = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
+      expect(plain.valuesLine, '200 kg · 2 mV/V');
+      final corrected = plain.copyWith(span: 1.00037);
+      expect(corrected.valuesLine, '200 kg · 2 mV/V · ×1.00037');
     });
   });
 
@@ -275,15 +283,18 @@ ch2.raw=6401205.6,3201448.2,1502.8,-3196441.9
       final bare = ChannelCalibration(board: board);
       expect(bare.netKgf(board.readings![0], alpha), isNull);
 
-      final cell = LoadCellProfile(id: 'c', capacityKg: 200, sensitivityMvV: 2);
+      final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
       final assigned = ChannelCalibration(board: board, loadCell: cell);
       final rawFs = board.readings![0];
       expect(
         assigned.netKgf(rawFs, alpha),
         closeTo(sp[0] * 100, 1e-9), // 200 kg / 2 mV/V = 100 kgf per mV/V
       );
-      cell.span = 1.02;
-      expect(assigned.netKgf(rawFs, alpha), closeTo(sp[0] * 102, 1e-9));
+      final corrected = ChannelCalibration(
+        board: board,
+        loadCell: cell.copyWith(span: 1.02),
+      );
+      expect(corrected.netKgf(rawFs, alpha), closeTo(sp[0] * 102, 1e-9));
     });
 
     test('local slope tracks the piecewise segment', () {

@@ -635,7 +635,9 @@ void main() {
       async.elapse(const Duration(seconds: 4));
 
       expect(link.isStreaming, isTrue);
-      expect(seen, isEmpty);
+      // The failed read surfaces as a "nominal values in use" notice (the
+      // app runs uncalibrated, but never silently).
+      expect(seen, [isA<CalibrationUnreadable>()]);
 
       teardownLink(async, link);
     });

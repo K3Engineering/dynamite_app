@@ -311,7 +311,6 @@ void main() {
         );
         hub.updateLoadCells([
           LoadCellProfile(
-            id: 'lc',
             name: 'Ref',
             capacityKg: 100,
             sensitivityMvV: 2,
