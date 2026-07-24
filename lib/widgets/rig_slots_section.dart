@@ -12,8 +12,9 @@ const quickSensitivitiesMvV = <double>[1, 2, 3];
 
 /// Settings → Device settings → Load cells: the device's ten load cell
 /// slots. The first four ARE the channels — the rail and the rotated CH
-/// tags live in the static gutter left of the list, so they never travel
-/// with a dragged row; the rest are spares carried on the device.
+/// tags live in a static gutter outside the card, hugging its left edge,
+/// so they read as an annotation of the list and never travel with a
+/// dragged row; the rest are spares carried on the device.
 /// Assignment is a swap: drag a cell onto another slot and the two
 /// exchange contents (a spare dragged into the top four goes on a channel,
 /// the evicted cell takes the spare's place). Nothing else in the list
@@ -107,27 +108,32 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
           onSave: () => _save(rig),
         ),
         const SizedBox(height: 8),
-        Card(
-          clipBehavior: Clip.antiAlias,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final rowWidth = constraints.maxWidth - _kGutterWidth;
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const _ChannelGutter(),
-                  Expanded(
-                    child: Column(
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // The gutter's top padding matches the card's default margin,
+            // so the tags stay centered on the four channel rows.
+            const Padding(
+              padding: EdgeInsets.only(top: 4),
+              child: _ChannelGutter(),
+            ),
+            Expanded(
+              child: Card(
+                clipBehavior: Clip.antiAlias,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final rowWidth = constraints.maxWidth;
+                    return Column(
                       children: [
                         for (int i = 0; i < kRigSlotCount; ++i)
                           _slotTile(context, rig, slots, i, rowWidth),
                       ],
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
         ),
         const SizedBox(height: 4),
         Text(
@@ -143,8 +149,15 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   }
 
   /// One slot row: a drop target for swaps, fixed height so the channel
-  /// gutter aligns. Populated rows offer the drag handle; every row
-  /// (including empty ones) accepts a drop.
+  /// gutter aligns. Populated rows offer a drag handle; every row
+  /// (including empty ones) accepts a drop. The drag is vertical-only:
+  /// [Draggable.axis] pins the feedback — a full-width replica of the row
+  /// — to the row's X for the whole drag, so it slides straight up and
+  /// down the list instead of following the pointer sideways.
+  ///
+  /// TODO: also start the drag on a long-press anywhere on the row — the
+  /// touch-platform pattern in ReorderableListView — while keeping the
+  /// handle for immediate dragging on desktop.
   Widget _slotTile(
     BuildContext context,
     RigState rig,
@@ -155,62 +168,77 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     final theme = Theme.of(context);
     final slot = slots[i];
 
-    final Widget tile;
-    if (slot == null) {
-      tile = ListTile(
-        title: Text(
-          'Empty slot',
-          style: theme.textTheme.bodyLarge?.copyWith(
-            color: theme.colorScheme.outline,
-          ),
-        ),
-        subtitle: const Text('Tap to add a load cell'),
-        trailing: Icon(
-          Icons.add_circle_outline,
-          color: theme.colorScheme.outline,
-        ),
-        onTap: () => showAddToSlot(context, rig, i),
-      );
-    } else {
-      final cell = slot.cell;
-      final mtime = slot.mtime?.toLocal();
-      final subtitle =
-          cell.valuesLine +
-          (mtime != null ? ' · saved ${mtime.month}/${mtime.day}' : '');
-      tile = ListTile(
-        title: Text(cell.title),
-        subtitle: Text(subtitle),
-        trailing: Draggable<int>(
-          data: i,
-          onDragStarted: () => setState(() => _dragIndex = i),
-          onDragEnd: (_) => setState(() => _dragIndex = null),
-          feedback: Material(
-            elevation: 4,
-            borderRadius: BorderRadius.circular(8),
-            clipBehavior: Clip.antiAlias,
-            child: SizedBox(
-              width: rowWidth,
-              child: ListTile(
-                title: Text(cell.title),
-                subtitle: Text(subtitle),
-              ),
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(8),
-            child: Icon(Icons.drag_indicator, color: theme.colorScheme.outline),
-          ),
-        ),
-        onTap: () => showSlotEditor(context, rig, i),
-      );
-    }
-
     return DragTarget<int>(
       // Dropping a row onto itself is not offered (and not highlighted).
       onWillAcceptWithDetails: (details) => details.data != i,
       onAcceptWithDetails: (details) => rig.swapSlots(details.data, i),
-      builder: (context, candidateData, rejectedData) {
+      // The tile is built inside the builder so the drag feedback can be
+      // anchored to this row's render box (rowContext).
+      builder: (rowContext, candidateData, rejectedData) {
         final highlighted = candidateData.isNotEmpty;
+
+        final Widget tile;
+        if (slot == null) {
+          tile = ListTile(
+            title: Text(
+              'Empty slot',
+              style: theme.textTheme.bodyLarge?.copyWith(
+                color: theme.colorScheme.outline,
+              ),
+            ),
+            subtitle: const Text('Tap to add a load cell'),
+            trailing: Icon(
+              Icons.add_circle_outline,
+              color: theme.colorScheme.outline,
+            ),
+            onTap: () => showAddToSlot(context, rig, i),
+          );
+        } else {
+          final cell = slot.cell;
+          final mtime = slot.mtime?.toLocal();
+          final subtitle =
+              cell.valuesLine +
+              (mtime != null ? ' · saved ${mtime.month}/${mtime.day}' : '');
+          tile = ListTile(
+            title: Text(cell.title),
+            subtitle: Text(subtitle),
+            trailing: Draggable<int>(
+              data: i,
+              axis: Axis.vertical,
+              // Anchor the feedback to the row, not the handle: the
+              // default childDragAnchorStrategy would pin the feedback's
+              // X to the handle's left edge, hanging the full-width row
+              // replica off the side of the list.
+              dragAnchorStrategy: (draggable, handleContext, position) {
+                final rowBox = rowContext.findRenderObject()! as RenderBox;
+                return position - rowBox.localToGlobal(Offset.zero);
+              },
+              onDragStarted: () => setState(() => _dragIndex = i),
+              onDragEnd: (_) => setState(() => _dragIndex = null),
+              feedback: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(8),
+                clipBehavior: Clip.antiAlias,
+                child: SizedBox(
+                  width: rowWidth,
+                  child: ListTile(
+                    title: Text(cell.title),
+                    subtitle: Text(subtitle),
+                  ),
+                ),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: Icon(
+                  Icons.drag_indicator,
+                  color: theme.colorScheme.outline,
+                ),
+              ),
+            ),
+            onTap: () => showSlotEditor(context, rig, i),
+          );
+        }
+
         return AnimatedContainer(
           duration: const Duration(milliseconds: 120),
           height: _kRowHeight,
@@ -230,9 +258,10 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
 }
 
 /// The static channel gutter: the teal rail spanning exactly the four
-/// channel rows, with the rotated CH1–CH4 tags centered on each. A sibling
-/// of the row list — not part of any row — so dragging a slot can never
-/// move the channel markings.
+/// channel rows, with the rotated CH1–CH4 tags centered on each. Sits
+/// outside the card — rail on the card side — so the channel markings
+/// annotate the list without being part of any row, and dragging a slot
+/// can never move them.
 class _ChannelGutter extends StatelessWidget {
   const _ChannelGutter();
 
@@ -244,7 +273,7 @@ class _ChannelGutter extends StatelessWidget {
       height: _kRowHeight * 4,
       decoration: BoxDecoration(
         border: Border(
-          left: BorderSide(color: theme.colorScheme.primary, width: 3),
+          right: BorderSide(color: theme.colorScheme.primary, width: 3),
         ),
       ),
       child: Column(
