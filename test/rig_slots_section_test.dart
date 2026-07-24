@@ -86,7 +86,7 @@ void main() {
     // Unnamed CH3 cell: its title AND subtitle both render the values line.
     expect(find.text('100 kg · 2 mV/V'), findsNWidgets(2));
     expect(find.text('Spare 50'), findsOneWidget); // the spare
-    expect(find.text('Empty slot'), findsNWidgets(6));
+    expect(find.textContaining('Empty slot'), findsNWidgets(6));
     // The rotated tags on the four channel rows (in the static gutter).
     for (int i = 1; i <= 4; ++i) {
       expect(find.text('CH $i'), findsOneWidget);
@@ -101,11 +101,17 @@ void main() {
   ) async {
     final rig = await pump(tester);
 
-    await tester.tap(find.text('Empty slot').first);
+    await tester.tap(find.textContaining('Empty slot').first);
     await tester.pumpAndSettle();
     expect(inDialog(find.text('Add load cell — CH 4')), findsOneWidget);
     expect(inDialog(find.text('Last seen in this app')), findsOneWidget);
 
+    // The entry sits under the form: scroll the dialog content to it.
+    await tester.dragUntilVisible(
+      inDialog(find.text('Thrust cell')),
+      inDialog(find.byType(SingleChildScrollView)),
+      const Offset(0, -100),
+    );
     await tester.tap(inDialog(find.text('Thrust cell')));
     await tester.pumpAndSettle();
 
@@ -181,19 +187,45 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(rig.channelCells[1], isNull);
-    expect(find.text('Empty slot'), findsNWidgets(7));
+    expect(find.textContaining('Empty slot'), findsNWidgets(7));
   });
 
-  testWidgets('custom entry from the add dialog opens the editor', (
+  testWidgets('the add dialog merges the custom entry and the last seen', (
     tester,
   ) async {
-    await pump(tester);
+    final rig = await pump(tester);
 
-    await tester.tap(find.text('Empty slot').first);
-    await tester.pumpAndSettle();
-    await tester.tap(inDialog(find.text('Custom entry…')));
+    await tester.tap(find.textContaining('Empty slot').first);
     await tester.pumpAndSettle();
 
-    expect(inDialog(find.text('New load cell — CH 4')), findsOneWidget);
+    // One dialog: the custom-entry form on top, the last seen below.
+    expect(inDialog(find.text('Add load cell — CH 4')), findsOneWidget);
+    expect(
+      inDialog(find.widgetWithText(TextField, 'Capacity (kg)')),
+      findsOneWidget,
+    );
+    expect(inDialog(find.text('Last seen in this app')), findsOneWidget);
+    expect(inDialog(find.text('Thrust cell')), findsOneWidget);
+
+    // Type a custom entry and save it into the slot.
+    await tester.enterText(
+      inDialog(find.widgetWithText(TextField, 'Capacity (kg)')),
+      '75',
+    );
+    await tester.enterText(
+      inDialog(
+        find.widgetWithText(TextField, 'Sensitivity (mV/V at full scale)'),
+      ),
+      '2.007',
+    );
+    await tester.pump();
+    await tester.tap(inDialog(find.widgetWithText(FilledButton, 'Save')));
+    await tester.pumpAndSettle();
+
+    expect(rig.hasPending, isTrue);
+    expect(rig.channelCells[3]?.capacityKg, 75);
+    expect(rig.channelCells[3]?.sensitivityMvV, 2.007);
+    // Unnamed cell: title AND subtitle both render the values line.
+    expect(find.textContaining('75 kg · 2.007 mV/V'), findsNWidgets(2));
   });
 }

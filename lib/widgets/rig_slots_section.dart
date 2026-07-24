@@ -368,84 +368,25 @@ class _StatusBar extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Add-to-empty-slot dialog: last-seen values, or a custom entry
+// Add-to-empty-slot dialog: the custom-entry form with last-seen cells below
 // ---------------------------------------------------------------------------
 
-/// The "+" sheet for an empty slot: cells this app has met before (on any
-/// device, or typed in), newest first; a custom entry goes through the same
-/// editor as an edit. Picking either fills the slot as a pending edit.
+/// The "+" sheet for an empty slot: the same editor as an edit, with the
+/// cells this app has met before (on any device, or typed in) listed under
+/// the form as one-tap alternatives, newest first. Either path fills the
+/// slot as a pending edit.
 Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
   return showDialog<void>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text('Add load cell — ${_slotTitle(slot)}'),
-      content: SizedBox(
-        width: 380,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (rig.history.isNotEmpty) ...[
-                Text(
-                  'Last seen in this app',
-                  style: Theme.of(ctx).textTheme.labelMedium,
-                ),
-                const SizedBox(height: 4),
-                for (final entry in rig.history)
-                  ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    title: Text(entry.cell.title),
-                    subtitle: Text(
-                      '${entry.cell.valuesLine} · '
-                      '${entry.lastSeen.month}/${entry.lastSeen.day}'
-                      '${entry.deviceName.isNotEmpty ? ' on ${entry.deviceName}' : ''}',
-                    ),
-                    onTap: () {
-                      rig.setSlot(slot, entry.cell);
-                      Navigator.of(ctx).pop();
-                    },
-                  ),
-                const Divider(),
-              ] else
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    'Cells you connect or type in will show up here for '
-                    'quick reuse.',
-                  ),
-                ),
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.tune),
-                title: const Text('Custom entry…'),
-                onTap: () async {
-                  // Replace this dialog with the editor; a save there fills
-                  // the same slot.
-                  Navigator.of(ctx).pop();
-                  await showSlotEditor(context, rig, slot);
-                },
-              ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(ctx).pop(),
-          child: const Text('Cancel'),
-        ),
-      ],
-    ),
+    builder: (_) =>
+        _SlotEditorDialog(rig: rig, slot: slot, includeHistory: true),
   );
 }
 
 String _slotTitle(int i) => i < 4 ? 'CH ${i + 1}' : 'Slot ${i + 1}';
 
 // ---------------------------------------------------------------------------
-// Slot editor dialog (edit a populated slot, or custom entry for an empty one)
+// Slot editor dialog (edit a populated slot, or add to an empty one)
 // ---------------------------------------------------------------------------
 
 /// Edit slot [slot]'s cell (or create it, when the slot is empty). Saving
@@ -461,16 +402,28 @@ Future<void> showSlotEditor(BuildContext context, RigState rig, int slot) {
 /// [State], so they're disposed only when the route's pop animation finally
 /// unmounts the dialog.
 class _SlotEditorDialog extends StatefulWidget {
-  const _SlotEditorDialog({required this.rig, required this.slot});
+  const _SlotEditorDialog({
+    required this.rig,
+    required this.slot,
+    this.includeHistory = false,
+  });
 
   final RigState rig;
   final int slot;
+
+  /// Add-to-empty-slot mode: the last-seen cells appear under the form as
+  /// one-tap alternatives to typing values in (see [showAddToSlot]).
+  final bool includeHistory;
 
   @override
   State<_SlotEditorDialog> createState() => _SlotEditorDialogState();
 }
 
 class _SlotEditorDialogState extends State<_SlotEditorDialog> {
+  /// Last-seen cells offered in add mode: enough for quick reuse without
+  /// burying the form.
+  static const int _historyShown = 5;
+
   late final TextEditingController nameCtrl;
   late final TextEditingController capCtrl;
   late final TextEditingController sensCtrl;
@@ -478,7 +431,7 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
   RigState get rig => widget.rig;
   int get slot => widget.slot;
 
-  /// The cell being edited, or null when this is a custom entry for an
+  /// The cell being edited, or null when this is a new entry for an
   /// empty slot.
   LoadCellProfile? get initial => rig.effectiveSlots.cellAt(slot);
 
@@ -529,7 +482,7 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
     final editing = initial != null;
     return AlertDialog(
       title: Text(
-        '${editing ? 'Edit' : 'New'} load cell — ${_slotTitle(slot)}',
+        '${editing ? 'Edit' : 'Add'} load cell — ${_slotTitle(slot)}',
       ),
       content: SizedBox(
         width: 380,
@@ -588,6 +541,31 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
                     ),
                 ],
               ),
+              if (widget.includeHistory && rig.history.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Divider(),
+                const SizedBox(height: 8),
+                Text(
+                  'Last seen in this app',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+                const SizedBox(height: 4),
+                for (final entry in rig.history.take(_historyShown))
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(entry.cell.title),
+                    subtitle: Text(
+                      '${entry.cell.valuesLine} · '
+                      '${entry.lastSeen.month}/${entry.lastSeen.day}'
+                      '${entry.deviceName.isNotEmpty ? ' on ${entry.deviceName}' : ''}',
+                    ),
+                    onTap: () {
+                      rig.setSlot(slot, entry.cell);
+                      Navigator.of(context).pop();
+                    },
+                  ),
+              ],
             ],
           ),
         ),
