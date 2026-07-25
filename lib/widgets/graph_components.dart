@@ -9,7 +9,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../models/app_settings.dart';
 import '../models/bucket_series.dart';
-import '../models/force_unit.dart';
+import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 
@@ -2058,7 +2058,7 @@ void _drawChannelEnvelope(
 double Function(int j) _taredDisplaySampleAt(
   GraphDataSource data,
   int channel,
-  ForceUnit unit,
+  DisplayUnit unit,
 ) {
   final s = data.channel(channel);
   final line = s.data;
@@ -2081,7 +2081,7 @@ double Function(int j) _taredDisplaySampleAt(
 double Function(double raw) _taredDisplayFromRaw(
   GraphDataSource data,
   int channel,
-  ForceUnit unit,
+  DisplayUnit unit,
 ) {
   final tare = data.channel(channel).tare;
   return unit.converterFor(data.calibrationFor(channel), tare)!;
@@ -2093,7 +2093,7 @@ double Function(double raw) _taredDisplayFromRaw(
 EnvelopeSeries _taredEnvelopeSeries(
   GraphDataSource data,
   int channel,
-  ForceUnit unit,
+  DisplayUnit unit,
 ) => EnvelopeSeries.bucketed(
   sampleAt: _taredDisplaySampleAt(data, channel, unit),
   buckets: data.channel(channel).buckets,
@@ -2107,7 +2107,7 @@ EnvelopeSeries _taredEnvelopeSeries(
 List<Object?> _envelopeCacheKeyExtras(
   GraphDataSource data,
   List<double> tares,
-  ForceUnit unit,
+  DisplayUnit unit,
 ) => [data.dataGeneration, ...tares, unit, data.calibrationVersion];
 
 /// Fold the raw extremes of [channels] over `[start, end)` (already clamped
@@ -2677,7 +2677,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   }
 
   /// Raw-diff -> display-units-per-second map for the bucket fast path of
-  /// [channel] (terminal-slope based, see [ForceUnit.diffConverterFor]).
+  /// [channel] (terminal-slope based, see [DisplayUnit.diffConverterFor]).
   double Function(double rawDiff) _diffDisplayFor(int channel) {
     final diffConv = _settings.displayUnit.diffConverterFor(
       _data.calibrationFor(channel),

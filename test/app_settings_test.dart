@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/app_settings.dart';
-import 'package:dynamite_app/models/force_unit.dart';
+import 'package:dynamite_app/models/display_unit.dart';
 
 /// Tests for [AppSettings] persistence (SharedPreferences backed by the
 /// in-memory mock). The constructor loads synchronously from the injected
@@ -17,16 +17,16 @@ void main() {
 
   test('defaults: mV/V unit, all channels active', () async {
     final s = await newSettings();
-    expect(s.displayUnit, ForceUnit.mVv);
+    expect(s.displayUnit, DisplayUnit.mVv);
     expect(s.activeChannels, everyElement(isTrue));
   });
 
   test('display unit persists across instances', () async {
     final s = await newSettings();
-    await s.setDisplayUnit(ForceUnit.kgf);
+    await s.setDisplayUnit(DisplayUnit.kgf);
 
     final s2 = await newSettings();
-    expect(s2.displayUnit, ForceUnit.kgf);
+    expect(s2.displayUnit, DisplayUnit.kgf);
   });
 
   test('legacy pre-slot keys are erased on load', () async {

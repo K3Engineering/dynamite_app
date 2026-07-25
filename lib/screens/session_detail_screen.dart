@@ -8,7 +8,7 @@ import 'package:provider/provider.dart';
 import 'package:file_selector/file_selector.dart';
 
 import '../models/app_settings.dart';
-import '../models/force_unit.dart';
+import '../models/display_unit.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
 import '../utils/format.dart';
@@ -341,7 +341,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           final raw = data.channels[ch][s];
           // kgf via the calibration recorded with the session; blank when
           // the channel had no load cell assigned.
-          final kgf = ForceUnit.kgf
+          final kgf = DisplayUnit.kgf
               .converterFor(data.calibrationFor(ch), data.tares[ch])
               ?.call(raw.toDouble());
           buf.write(kgf == null ? ',$raw,' : ',$raw,${kgf.toStringAsFixed(6)}');

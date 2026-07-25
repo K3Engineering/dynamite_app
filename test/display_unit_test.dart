@@ -1,9 +1,9 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/calibration.dart';
-import 'package:dynamite_app/models/force_unit.dart';
+import 'package:dynamite_app/models/display_unit.dart';
 
-/// Tests for [ForceUnit]'s per-channel converters: availability (force units
+/// Tests for [DisplayUnit]'s per-channel converters: availability (force units
 /// need an assigned load cell), tare-netting through the board map, and the
 /// terminal-slope diff converters used by the derivative graph.
 void main() {
@@ -23,15 +23,15 @@ void main() {
     test(
       'electrical units convert without a load cell; force units do not',
       () {
-        for (final u in [ForceUnit.mVv, ForceUnit.mV, ForceUnit.raw]) {
+        for (final u in [DisplayUnit.mVv, DisplayUnit.mV, DisplayUnit.raw]) {
           expect(u.converterFor(bare, alpha), isNotNull, reason: u.symbol);
           expect(u.diffConverterFor(bare), isNotNull, reason: u.symbol);
         }
         for (final u in [
-          ForceUnit.kN,
-          ForceUnit.lbf,
-          ForceUnit.kgf,
-          ForceUnit.n,
+          DisplayUnit.kN,
+          DisplayUnit.lbf,
+          DisplayUnit.kgf,
+          DisplayUnit.n,
         ]) {
           expect(u.converterFor(bare, alpha), isNull, reason: u.symbol);
           expect(u.diffConverterFor(bare), isNull, reason: u.symbol);
@@ -43,13 +43,13 @@ void main() {
 
   group('converters net the tare through the board map', () {
     test('mV/V at a cal point is its setpoint minus the zero point', () {
-      final conv = ForceUnit.mVv.converterFor(assigned, alpha)!;
+      final conv = DisplayUnit.mVv.converterFor(assigned, alpha)!;
       expect(conv(board.readings![0]), closeTo(sp[0], 1e-9));
       expect(conv(alpha), 0.0); // tare point maps to zero
     });
 
     test('raw is tare-subtracted counts', () {
-      final conv = ForceUnit.raw.converterFor(assigned, alpha)!;
+      final conv = DisplayUnit.raw.converterFor(assigned, alpha)!;
       expect(
         conv(board.readings![0]),
         closeTo(board.readings![0] - alpha, 1e-9),
@@ -57,14 +57,14 @@ void main() {
     });
 
     test('mV follows mV/V via the effective excitation', () {
-      final mvV = ForceUnit.mVv.converterFor(assigned, alpha)!;
-      final mv = ForceUnit.mV.converterFor(assigned, alpha)!;
+      final mvV = DisplayUnit.mVv.converterFor(assigned, alpha)!;
+      final mv = DisplayUnit.mV.converterFor(assigned, alpha)!;
       final raw = board.readings![1];
       expect(mv(raw), closeTo(mvV(raw) * board.effectiveExcitationV, 1e-9));
     });
 
     test('nominal mV matches the legacy fixed multiplier', () {
-      final conv = ForceUnit.mV.converterFor(
+      final conv = DisplayUnit.mV.converterFor(
         ChannelCalibration(board: nominalBoard),
         0,
       )!;
@@ -72,8 +72,8 @@ void main() {
     });
 
     test('kgf scales mV/V by capacity/sensitivity; kN by 9.80665e-3', () {
-      final kgf = ForceUnit.kgf.converterFor(assigned, alpha)!;
-      final kN = ForceUnit.kN.converterFor(assigned, alpha)!;
+      final kgf = DisplayUnit.kgf.converterFor(assigned, alpha)!;
+      final kN = DisplayUnit.kN.converterFor(assigned, alpha)!;
       final raw = board.readings![0];
       expect(kgf(raw), closeTo(sp[0] * 100, 1e-9)); // 200 kg / 2 mV/V
       expect(kN(raw), closeTo(kgf(raw) * 9.80665 / 1000, 1e-12));
@@ -82,22 +82,22 @@ void main() {
 
   group('diff converters', () {
     test('mV/V diff is counts over the terminal span', () {
-      final diff = ForceUnit.mVv.diffConverterFor(assigned)!;
+      final diff = DisplayUnit.mVv.diffConverterFor(assigned)!;
       expect(diff(1000), closeTo(1000 / board.spanCountsPerMvV, 1e-15));
     });
 
     test('kgf diff folds in the load cell', () {
-      final diff = ForceUnit.kgf.diffConverterFor(assigned)!;
+      final diff = DisplayUnit.kgf.diffConverterFor(assigned)!;
       expect(diff(1000), closeTo(1000 / board.spanCountsPerMvV * 100, 1e-12));
     });
   });
 
   group('formatting', () {
     test('mV/V shows four decimals with an explicit sign', () {
-      expect(ForceUnit.mVv.format(1.996), '+1.9960 mV/V');
-      expect(ForceUnit.mVv.formatValueOnly(-0.5), '-0.5000');
-      expect(ForceUnit.raw.format(12345), '+12345 Raw');
-      expect(ForceUnit.kgf.format(1.5), '+1.500 kgf');
+      expect(DisplayUnit.mVv.format(1.996), '+1.9960 mV/V');
+      expect(DisplayUnit.mVv.formatValueOnly(-0.5), '-0.5000');
+      expect(DisplayUnit.raw.format(12345), '+12345 Raw');
+      expect(DisplayUnit.kgf.format(1.5), '+1.500 kgf');
     });
   });
 }

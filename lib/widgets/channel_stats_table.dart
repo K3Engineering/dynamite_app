@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../models/force_unit.dart';
+import '../models/display_unit.dart';
 import 'graph_components.dart' show getChannelColor;
 
 /// One row of per-channel values in a [ChannelStatsTable].
@@ -64,7 +64,7 @@ class ChannelStatsTable extends StatelessWidget {
   final ValueChanged<int> onToggleChannel;
 
   /// Unit the row [ChannelStatsRow.values] are expressed in.
-  final ForceUnit unit;
+  final DisplayUnit unit;
 
   /// Stat rows below the channel header.
   final List<ChannelStatsRow> rows;
@@ -223,7 +223,7 @@ class _TableCellValue extends StatelessWidget {
   /// The value in [unit] units, or null when the unit is unavailable for
   /// this channel (rendered '—').
   final double? value;
-  final ForceUnit unit;
+  final DisplayUnit unit;
   final bool isActive;
   final bool isStale;
   final TextStyle? textStyle;

@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'adc_protocol.dart';
 import '../models/bucket_series.dart';
 import '../models/calibration.dart';
-import '../models/force_unit.dart';
+import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 
@@ -418,7 +418,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// a gap this returns the held (last real) value; check [liveEdgeIsGap] to
   /// mark it stale in the UI. Null when the unit is unavailable for the
   /// channel (a force unit without an assigned load cell).
-  double? currentValue(int adcChannel, ForceUnit unit) {
+  double? currentValue(int adcChannel, DisplayUnit unit) {
     assert(adcChannel >= 0 && adcChannel < numAdcChannels);
     final conv = unit.converterFor(
       calibrationFor(adcChannel),
@@ -430,7 +430,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Get peak value for a given ADC channel in the specified unit. Returns 0
   /// before the first sample arrives ([rawMax] still holds its sentinel);
   /// null when the unit is unavailable for the channel.
-  double? peakValue(int adcChannel, ForceUnit unit) {
+  double? peakValue(int adcChannel, DisplayUnit unit) {
     assert(adcChannel >= 0 && adcChannel < numAdcChannels);
     if (totalSamples == 0) return 0;
     final conv = unit.converterFor(
@@ -443,7 +443,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Get minimum (most negative) value for a given ADC channel in the
   /// specified unit. Returns 0 before the first sample arrives; null when
   /// the unit is unavailable for the channel.
-  double? minValue(int adcChannel, ForceUnit unit) {
+  double? minValue(int adcChannel, DisplayUnit unit) {
     assert(adcChannel >= 0 && adcChannel < numAdcChannels);
     if (totalSamples == 0) return 0;
     final conv = unit.converterFor(
@@ -455,7 +455,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
 
   /// Get the instantaneous derivative (first-difference) for a channel in
   /// unit/s; null when the unit is unavailable for the channel.
-  double? currentDerivative(int adcChannel, ForceUnit unit) {
+  double? currentDerivative(int adcChannel, DisplayUnit unit) {
     assert(adcChannel >= 0 && adcChannel < numAdcChannels);
     if (totalSamples < 2) return 0;
 
