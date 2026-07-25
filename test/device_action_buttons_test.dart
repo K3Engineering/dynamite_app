@@ -28,6 +28,8 @@ import 'package:dynamite_app/services/rig_state.dart';
 /// once (IndexedStack) and the Settings tab has its own 'Connect' button.
 void main() {
   setUp(() {
+    // Keep the debug-only perf dashboard out of the tree (see widget_test.dart).
+    perfOptimizerEnabled = false;
     SharedPreferences.setMockInitialValues({});
     UniversalBle.setInstance(MockBlePlatform.instance);
     MockBlePlatform.instance.dropEveryNPackets = 0;
