@@ -144,7 +144,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   /// spacer (spares), then the tile itself. IntrinsicHeight lets the tag
   /// cell match its OWN row's height — the framework keeps tag and row
   /// aligned at any text scale, so no fixed row height is needed anywhere.
-  /// (Two layout passes are nothing for a static ten-row list.)
+  /// (Two layout passes should be cheap for a static ten-row list.)
   Widget _slotRow(
     BuildContext context,
     RigState rig,
@@ -270,11 +270,28 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
             color: highlighted
                 ? theme.colorScheme.primary.withValues(alpha: 0.08)
                 : null,
+          ),
+          // The highlight border must live in the FOREGROUND decoration:
+          // Container folds decoration.padding (= border.dimensions) into
+          // real layout padding (its _paddingIncludingDecoration), so a
+          // border there would grow the highlighted row 72 -> 75 and jitter
+          // the whole list as the hover moves; the foreground paint does
+          // not affect layout. (Always a BoxDecoration — never null — so
+          // the border keeps its 120ms fade in both directions.)
+          foregroundDecoration: BoxDecoration(
             border: highlighted
                 ? Border.all(color: theme.colorScheme.primary, width: 1.5)
                 : null,
           ),
-          child: Opacity(opacity: _dragIndex == i ? 0.35 : 1.0, child: tile),
+          // A transparent Material between the tinted DecoratedBox and the
+          // tile: the ListTile paints its ink splash on its nearest
+          // Material ancestor, so without this the splash lands on the
+          // Card BELOW the highlight tint (and trips ListTile's debug
+          // check for exactly that). Transparency keeps the tint visible.
+          child: Material(
+            type: MaterialType.transparency,
+            child: Opacity(opacity: _dragIndex == i ? 0.35 : 1.0, child: tile),
+          ),
         );
       },
     );
