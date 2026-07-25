@@ -237,12 +237,12 @@ void main() {
     test('board calibration replaces the nominal chain and bumps version', () {
       final hub = DataHub();
       final v0 = hub.calibrationVersion;
-      // ch0 measures at twice the nominal span; other channels stay nominal.
+      // ch0 measures at half the nominal span; other channels stay nominal.
       final sp = ladderSetpointsMvV(nominalLadderResistors);
       final board = BoardCalibration(
         channels: [
           ChannelBoardCalibration(
-            readings: [for (final d in sp) 500 + 2 * nominalCountsPerMvV * d],
+            readings: [for (final d in sp) 500 + 0.5 * nominalCountsPerMvV * d],
           ),
           ChannelBoardCalibration(),
           ChannelBoardCalibration(),
@@ -256,7 +256,7 @@ void main() {
       feed(hub, frameOf(1000), 5);
       expect(
         hub.currentValue(0, ForceUnit.mVv),
-        closeTo(1000 / (2 * nominalCountsPerMvV), 1e-12),
+        closeTo(1000 / (0.5 * nominalCountsPerMvV), 1e-12),
       );
       expect(
         hub.currentValue(1, ForceUnit.mVv),

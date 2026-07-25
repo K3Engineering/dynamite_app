@@ -337,7 +337,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
   /// Device id of the active link whenever the GATT link is up (during setup or
   /// while streaming); empty otherwise.
-  String get selectedDeviceId => _link.isLinkUp ? _link.deviceId : '';
+  @override
+  String get connectedDeviceId => _link.isLinkUp ? _link.deviceId : '';
 
   /// Name of the currently connected device.
   @override
@@ -430,9 +431,6 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   String _demoFlashDoc = demoBoardCalibrationDoc;
 
   // -- RigFlashTransport ------------------------------------------------------
-
-  @override
-  String get connectedDeviceId => selectedDeviceId;
 
   /// Write a serialized `DeviceFlash` document to the connected device.
   /// Called only by `RigState.saveToDevice`, which has already composed the

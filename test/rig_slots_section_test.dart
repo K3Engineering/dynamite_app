@@ -39,11 +39,12 @@ void main() {
     UniversalBle.setInstance(MockBlePlatform.instance);
     final events = AppEvents();
     final link = BleLinkManager(events: events);
-    // NOTE: no async settle delay here — inside testWidgets the clock is
-    // FakeAsync and a Future.delayed would never fire. The rig's async
-    // prefs load is harmless (empty prefs) and race-free (modified-keys
-    // guard), so reading the flash right after construction is fine.
-    final rig = RigState(transport: _FakeTransport(), events: events);
+    final rig = RigState(
+      transport: _FakeTransport(),
+      // The rig's prefs load is synchronous in the constructor, so reading
+      // the flash right after construction is fine.
+      prefs: await SharedPreferences.getInstance(),
+    );
     if (withFlash) {
       rig.onFlashRead(
         'dev1',

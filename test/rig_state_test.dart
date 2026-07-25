@@ -2,13 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/calibration.dart';
-import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 
 /// Tests for [RigState]: flash reads, pending edits (restore/discard across
-/// reconnects), save/revert, history, and change detection. Transport is a
-/// fake capturing the written document; SharedPreferences is mocked.
+/// reconnects), save/revert, and history. Transport is a fake capturing the
+/// written document; SharedPreferences is mocked.
 class _FakeTransport implements RigFlashTransport {
   String deviceId = 'dev1';
   String deviceName = 'Bench unit';
@@ -32,14 +31,11 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late _FakeTransport transport;
-  late AppEvents events;
-  late List<AppEvent> seen;
 
-  Future<RigState> settledRig() async {
-    final rig = RigState(transport: transport, events: events);
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    return rig;
-  }
+  Future<RigState> newRig() async => RigState(
+    transport: transport,
+    prefs: await SharedPreferences.getInstance(),
+  );
 
   DeviceFlash fixture() => DeviceFlash.parse(demoBoardCalibrationDoc);
 
@@ -52,14 +48,11 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     transport = _FakeTransport();
-    events = AppEvents();
-    seen = [];
-    events.stream.listen(seen.add);
   });
 
   group('flash reads', () {
-    test('first read populates slots, titles and history; no event', () async {
-      final rig = await settledRig();
+    test('first read populates slots, titles and history', () async {
+      final rig = await newRig();
       rig.onFlashRead('dev1', 'Bench unit', fixture());
 
       expect(rig.hasDeviceDoc, isTrue);
@@ -73,11 +66,19 @@ void main() {
       expect(rig.hasPending, isFalse);
       // 3 channel cells + 1 spare were seen.
       expect(rig.history, hasLength(4));
-      expect(seen, isEmpty);
+    });
+
+    test('a flash read with an empty device id is ignored', () async {
+      final rig = await newRig();
+      // A link that dropped mid-read delivers with no identity; the
+      // document can't be attributed to anything.
+      rig.onFlashRead('', '', fixture());
+      expect(rig.hasDeviceDoc, isFalse);
+      expect(rig.history, isEmpty);
     });
 
     test('boardCalibrationFor gates on document ownership', () async {
-      final rig = await settledRig();
+      final rig = await newRig();
 
       // No flash document read yet.
       expect(rig.boardCalibrationFor('dev1'), isNull);
@@ -90,27 +91,15 @@ void main() {
       expect(rig.boardCalibrationFor('dev2'), isNull);
     });
 
-    test('an identical re-read is quiet', () async {
-      final rig = await settledRig();
-      rig.onFlashRead('dev1', 'Bench unit', fixture());
-      rig.onFlashRead('dev1', 'Bench unit', fixture());
-      expect(seen, isEmpty);
-    });
-
-    test('a changed device wins and raises the FYI event', () async {
-      final rig = await settledRig();
+    test('a changed device wins: readings use the new values', () async {
+      final rig = await newRig();
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.onFlashRead(
         'dev1',
         'Bench unit',
         DeviceFlash.parse(recalibratedDoc()),
       );
-      await pumpEventQueue(); // AppEvents delivers asynchronously
 
-      final notices = seen.whereType<RigChangedSinceLastVisit>();
-      expect(notices, hasLength(1));
-      expect(notices.single.changes.single, contains('CH1'));
-      expect(notices.single.changes.single, contains('Thrust cell'));
       // The device is the truth: readings use the new values immediately.
       expect(rig.channelCells[0]?.sensitivityMvV, closeTo(1.9985, 1e-12));
     });
@@ -120,7 +109,7 @@ void main() {
     test(
       'edits take effect immediately; revert restores the flash state',
       () async {
-        final rig = await settledRig();
+        final rig = await newRig();
         rig.onFlashRead('dev1', 'Bench unit', fixture());
 
         rig.setSlot(
@@ -140,7 +129,7 @@ void main() {
     test(
       'swap exchanges slots (assign/unassign across the boundary)',
       () async {
-        final rig = await settledRig();
+        final rig = await newRig();
         rig.onFlashRead('dev1', 'Bench unit', fixture());
 
         // Drag the spare (slot 4) onto CH2 (slot 1): the two exchange.
@@ -165,23 +154,32 @@ void main() {
     test(
       'pending survives a disconnect+reconnect to the same device',
       () async {
-        final rig = await settledRig();
+        final rig = await newRig();
         rig.onFlashRead('dev1', 'Bench unit', fixture());
         rig.setSlot(
           3,
           LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
         );
 
-        // Reconnect: the device re-reads with unchanged content.
-        rig.onFlashRead('dev1', 'Bench unit', fixture());
+        // Reconnect: the device re-reads with unchanged content — fresh
+        // mtimes (a pure rewrite elsewhere) do NOT count as a change.
+        rig.onFlashRead(
+          'dev1',
+          'Bench unit',
+          DeviceFlash.parse(
+            demoBoardCalibrationDoc.replaceFirst(
+              '2026-07-20T10:15:00.000Z',
+              '2026-07-21T08:00:00.000Z',
+            ),
+          ),
+        );
         expect(rig.hasPending, isTrue);
         expect(rig.channelTitles[3], 'New');
-        expect(seen, isEmpty); // no FYI: nothing changed on the device
       },
     );
 
     test('pending is discarded when the device changed while away', () async {
-      final rig = await settledRig();
+      final rig = await newRig();
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
         3,
@@ -193,20 +191,12 @@ void main() {
         'Bench unit',
         DeviceFlash.parse(recalibratedDoc()),
       );
-      await pumpEventQueue();
       expect(rig.hasPending, isFalse);
       expect(rig.channelTitles[3], 'CH 4'); // edited slot is gone
-      final notices = seen.whereType<RigChangedSinceLastVisit>();
-      expect(
-        notices.single.changes.where(
-          (c) => c.contains('unsaved changes were discarded'),
-        ),
-        hasLength(1),
-      );
     });
 
     test('pending for another device is discarded on connect', () async {
-      final rig = await settledRig();
+      final rig = await newRig();
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
         3,
@@ -222,7 +212,7 @@ void main() {
     test(
       'writes edited slots with fresh mtimes and verbatim board keys',
       () async {
-        final rig = await settledRig();
+        final rig = await newRig();
         rig.onFlashRead('dev1', 'Bench unit', fixture());
         rig.setSlot(
           3,
@@ -245,16 +235,11 @@ void main() {
           fixture().board.channels[0].readings,
         );
         expect(written.board.factoryDate, '2026-07-20');
-
-        // Our own write must not come back as a "changed elsewhere" notice on
-        // the next connect (change detection was re-anchored).
-        rig.onFlashRead('dev1', 'Bench unit', written);
-        expect(seen.whereType<RigChangedSinceLastVisit>(), isEmpty);
       },
     );
 
     test('a failed write keeps the pending edits', () async {
-      final rig = await settledRig();
+      final rig = await newRig();
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
         3,
@@ -272,76 +257,26 @@ void main() {
     test(
       'history survives a restart (new RigState on the same prefs)',
       () async {
-        final rig = await settledRig();
+        final rig = await newRig();
         rig.onFlashRead('dev1', 'Bench unit', fixture());
         expect(rig.history, hasLength(4));
 
-        final rig2 = await settledRig();
+        final rig2 = await newRig();
         expect(rig2.history, hasLength(4));
         expect(rig2.history.map((e) => e.cell.name), contains('Thrust cell'));
       },
     );
 
-    test('a change on a KNOWN device fires once, then re-anchors', () async {
-      final rig = await settledRig();
-      rig.onFlashRead('dev1', 'Bench unit', fixture());
-      rig.onFlashRead(
-        'dev1',
-        'Bench unit',
-        DeviceFlash.parse(recalibratedDoc()),
-      );
-      await pumpEventQueue();
-      expect(seen.whereType<RigChangedSinceLastVisit>(), hasLength(1));
-
-      // A third read of the same (new) content is quiet again.
-      rig.onFlashRead(
-        'dev1',
-        'Bench unit',
-        DeviceFlash.parse(recalibratedDoc()),
-      );
-      await pumpEventQueue();
-      expect(seen.whereType<RigChangedSinceLastVisit>(), hasLength(1));
+    test('a malformed history entry is dropped, the rest survives', () async {
+      SharedPreferences.setMockInitialValues({
+        'rig_history':
+            '[{"cell":{"name":"Good","capacityKg":100,"sensitivityMvV":2},'
+            '"lastSeen":1753000000000,"deviceName":"d","origin":"device"},'
+            '{"bogus":true}]',
+      });
+      final rig = await newRig();
+      expect(rig.history, hasLength(1));
+      expect(rig.history.single.cell.name, 'Good');
     });
-  });
-
-  group('DMM excitation cross-check (per-device)', () {
-    test('no flash doc: nowhere to hang the value, set is a no-op', () async {
-      final rig = await settledRig();
-      await rig.setMeasuredExcitationMv(4530.2);
-      expect(rig.measuredExcitationMv, isNull);
-    });
-
-    test('the value attaches to the flash doc\'s device only', () async {
-      final rig = await settledRig();
-      rig.onFlashRead('dev1', 'Bench unit', fixture());
-      await rig.setMeasuredExcitationMv(4530.2);
-      expect(rig.measuredExcitationMv, 4530.2);
-
-      // Another device has no reading of its own…
-      rig.onFlashRead('dev2', 'Other unit', fixture());
-      expect(rig.measuredExcitationMv, isNull);
-
-      // …and dev1's reading is still there when dev1 comes back.
-      rig.onFlashRead('dev1', 'Bench unit', fixture());
-      expect(rig.measuredExcitationMv, 4530.2);
-
-      // Clearing works.
-      await rig.setMeasuredExcitationMv(null);
-      expect(rig.measuredExcitationMv, isNull);
-    });
-
-    test(
-      'the value survives a restart (new RigState on the same prefs)',
-      () async {
-        final rig = await settledRig();
-        rig.onFlashRead('dev1', 'Bench unit', fixture());
-        await rig.setMeasuredExcitationMv(4530.2);
-
-        final rig2 = await settledRig();
-        expect(rig2.measuredExcitationMv, isNull); // no doc read yet
-        rig2.onFlashRead('dev1', 'Bench unit', fixture());
-        expect(rig2.measuredExcitationMv, 4530.2);
-      },
-    );
   });
 }

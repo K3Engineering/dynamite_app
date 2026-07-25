@@ -294,13 +294,13 @@ void main() {
 
         final hub = DataHub();
         final sp = ladderSetpointsMvV(nominalLadderResistors);
-        // ch0 measures at twice the nominal span; other channels nominal.
+        // ch0 measures at half the nominal span; other channels nominal.
         hub.updateBoardCalibration(
           BoardCalibration(
             channels: [
               ChannelBoardCalibration(
                 readings: [
-                  for (final d in sp) 500 + 2 * nominalCountsPerMvV * d,
+                  for (final d in sp) 500 + 0.5 * nominalCountsPerMvV * d,
                 ],
               ),
               ChannelBoardCalibration(),
@@ -333,10 +333,10 @@ void main() {
         final row = await AppDatabase.instance.sessionById(writer.sessionId);
         final loaded = (await SessionStorage.loadSession(row!))!;
 
-        // Board snapshot: ch0 at 2x nominal span.
+        // Board snapshot: ch0 at 0.5x nominal span.
         expect(
           loaded.calibrationFor(0).board.spanCountsPerMvV,
-          closeTo(2 * nominalCountsPerMvV, 1e-3),
+          closeTo(0.5 * nominalCountsPerMvV, 1e-3),
         );
         expect(loaded.calibrationFor(0).board.isFactoryCalibrated, isTrue);
         // Load cell snapshot round-trips with its exact sensitivity.
@@ -347,7 +347,7 @@ void main() {
         final kgf = ForceUnit.kgf.converterFor(loaded.calibrationFor(0), 0)!;
         expect(
           kgf(1000),
-          closeTo(1000 / (2 * nominalCountsPerMvV) * (100 / 2.02), 1e-9),
+          closeTo(1000 / (0.5 * nominalCountsPerMvV) * (100 / 2.02), 1e-9),
         );
         // ch1 had no load cell assigned at recording time.
         expect(ForceUnit.kgf.converterFor(loaded.calibrationFor(1), 0), isNull);

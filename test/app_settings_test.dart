@@ -5,30 +5,27 @@ import 'package:dynamite_app/models/app_settings.dart';
 import 'package:dynamite_app/models/force_unit.dart';
 
 /// Tests for [AppSettings] persistence (SharedPreferences backed by the
-/// in-memory mock).
+/// in-memory mock). The constructor loads synchronously from the injected
+/// prefs instance, so no settle is needed.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  Future<AppSettings> settledSettings() async {
-    final settings = AppSettings();
-    // Let the constructor's async prefs load resolve (a few microtask turns).
-    await Future<void>.delayed(const Duration(milliseconds: 10));
-    return settings;
-  }
+  Future<AppSettings> newSettings() async =>
+      AppSettings(prefs: await SharedPreferences.getInstance());
 
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
   test('defaults: mV/V unit, all channels active', () async {
-    final s = await settledSettings();
+    final s = await newSettings();
     expect(s.displayUnit, ForceUnit.mVv);
     expect(s.activeChannels, everyElement(isTrue));
   });
 
   test('display unit persists across instances', () async {
-    final s = await settledSettings();
+    final s = await newSettings();
     await s.setDisplayUnit(ForceUnit.kgf);
 
-    final s2 = await settledSettings();
+    final s2 = await newSettings();
     expect(s2.displayUnit, ForceUnit.kgf);
   });
 
@@ -38,7 +35,8 @@ void main() {
       'load_cell_bank': '[{"id":"x"}]',
       'channel_load_cells': '["x",null,null,null]',
     });
-    await settledSettings();
+    await newSettings();
+    await pumpEventQueue(); // the constructor's erases are fire-and-forget
 
     final prefs = await SharedPreferences.getInstance();
     expect(prefs.getString('channel_labels'), isNull);

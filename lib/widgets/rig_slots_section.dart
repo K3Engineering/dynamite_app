@@ -41,11 +41,6 @@ const double _kRowHeight = 72;
 /// Width of the static gutter holding the channel rail + CH tags.
 const double _kGutterWidth = 28;
 
-/// Height of the always-present status bar (fits the two buttons of the
-/// dirty state with room to spare, so clean and dirty states are the same
-/// height and the list never shifts).
-const double _kBarHeight = 56;
-
 class _RigSlotsSectionState extends State<RigSlotsSection> {
   bool _saving = false;
 
@@ -70,14 +65,10 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
 
   @override
   Widget build(BuildContext context) {
-    final rig = context.watch<RigState>();
-    // The section reads the link only to gate the Save button: saving needs
-    // the very device the flash doc came from to be connected.
-    final connectedId = context.select<BleLinkManager, String>(
-      (l) => l.connectedDeviceId,
-    );
-
-    if (!rig.hasDeviceDoc) {
+    // Narrow selects: the section renders three slices of the rig (doc
+    // presence, the slots, the dirty state), not every RigState notify.
+    final hasDoc = context.select<RigState, bool>((r) => r.hasDeviceDoc);
+    if (!hasDoc) {
       return const Card(
         child: ListTile(
           leading: Icon(Icons.phonelink_erase, color: Colors.grey),
@@ -88,9 +79,17 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
         ),
       );
     }
+    final slots = context.select<RigState, RigSlots>((r) => r.effectiveSlots);
+    final pending = context.select<RigState, PendingRigEdits?>(
+      (r) => r.pending,
+    );
+    final rig = context.read<RigState>();
+    // The section reads the link only to gate the Save button: saving needs
+    // the very device the flash doc came from to be connected.
+    final connectedId = context.select<BleLinkManager, String>(
+      (l) => l.connectedDeviceId,
+    );
 
-    final slots = rig.effectiveSlots;
-    final pending = rig.pending;
     final canSave =
         pending != null &&
         connectedId.isNotEmpty &&
@@ -302,8 +301,9 @@ class _ChannelGutter extends StatelessWidget {
 
 /// The always-present save-state bar. Dirty: the red of the Live tab's
 /// "Not connected" header (errorContainer), with content in the matching
-/// on-color so it stays readable. Clean: a quiet confirmation. Both states
-/// are exactly [_kBarHeight] tall, so toggling never moves the slot list.
+/// on-color so it stays readable. Clean: a quiet confirmation. One layout
+/// for both states — the buttons keep their space while hidden, so the bar
+/// (and the slot list below) never moves when the dirty state flips.
 class _StatusBar extends StatelessWidget {
   const _StatusBar({
     required this.dirty,
@@ -323,73 +323,52 @@ class _StatusBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-
-    if (!dirty) {
-      return Card(
-        child: SizedBox(
-          height: _kBarHeight,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Icon(
-                  Icons.check_circle_outline,
-                  size: 18,
-                  color: colors.outline,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'All settings saved to device.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: colors.outline,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
+    final fg = dirty ? colors.onErrorContainer : colors.outline;
 
     return Card(
-      color: colors.errorContainer,
-      child: SizedBox(
-        height: _kBarHeight,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 8, 0),
-          child: Row(
-            children: [
-              Icon(
-                Icons.warning_amber,
-                size: 18,
-                color: colors.onErrorContainer,
+      color: dirty ? colors.errorContainer : null,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 6, 8, 6),
+        child: Row(
+          children: [
+            Icon(
+              dirty ? Icons.warning_amber : Icons.check_circle_outline,
+              size: 18,
+              color: fg,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                dirty
+                    ? 'Changes not saved to device — readings in this app '
+                          'already use them.'
+                    : 'All settings saved to device.',
+                style: theme.textTheme.bodySmall?.copyWith(color: fg),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Changes not saved to device — readings in this app '
-                  'already use them.',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.onErrorContainer,
+            ),
+            Visibility(
+              visible: dirty,
+              maintainSize: true,
+              maintainAnimation: true,
+              maintainState: true,
+              child: Row(
+                children: [
+                  TextButton(
+                    onPressed: saving ? null : onRevert,
+                    style: TextButton.styleFrom(
+                      foregroundColor: colors.onErrorContainer,
+                    ),
+                    child: const Text('Revert'),
                   ),
-                ),
+                  const SizedBox(width: 4),
+                  FilledButton(
+                    onPressed: canSave ? onSave : null,
+                    child: Text(saving ? 'Saving…' : 'Save to device'),
+                  ),
+                ],
               ),
-              TextButton(
-                onPressed: saving ? null : onRevert,
-                style: TextButton.styleFrom(
-                  foregroundColor: colors.onErrorContainer,
-                ),
-                child: const Text('Revert'),
-              ),
-              const SizedBox(width: 4),
-              FilledButton(
-                onPressed: canSave ? onSave : null,
-                child: Text(saving ? 'Saving…' : 'Save to device'),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -407,7 +386,7 @@ Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
   return showDialog<void>(
     context: context,
     builder: (ctx) => AlertDialog(
-      title: Text('Add load cell — ${_slotTitle(slot)}'),
+      title: Text('Add load cell — ${rigSlotTitle(slot)}'),
       content: SizedBox(
         width: 380,
         child: SingleChildScrollView(
@@ -471,8 +450,6 @@ Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
   );
 }
 
-String _slotTitle(int i) => i < 4 ? 'CH ${i + 1}' : 'Slot ${i + 1}';
-
 // ---------------------------------------------------------------------------
 // Slot editor dialog (edit a populated slot, or custom entry for an empty one)
 // ---------------------------------------------------------------------------
@@ -533,16 +510,20 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
   }
 
   bool _valid() =>
-      (double.tryParse(capCtrl.text.trim()) ?? 0) > 0 &&
-      (double.tryParse(sensCtrl.text.trim()) ?? 0) > 0;
+      (_typedNumber(capCtrl.text) ?? 0) > 0 &&
+      (_typedNumber(sensCtrl.text) ?? 0) > 0;
 
   void _save() {
+    final cap = _typedNumber(capCtrl.text);
+    final sens = _typedNumber(sensCtrl.text);
+    // The Save button is gated on [_valid], so both parse positive here.
+    if (cap == null || sens == null || cap <= 0 || sens <= 0) return;
     rig.setSlot(
       slot,
       LoadCellProfile(
         name: nameCtrl.text.trim(),
-        capacityKg: double.parse(capCtrl.text.trim()),
-        sensitivityMvV: double.parse(sensCtrl.text.trim()),
+        capacityKg: cap,
+        sensitivityMvV: sens,
       ),
     );
     Navigator.of(context).pop();
@@ -558,7 +539,7 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
     final editing = initial != null;
     return AlertDialog(
       title: Text(
-        '${editing ? 'Edit' : 'New'} load cell — ${_slotTitle(slot)}',
+        '${editing ? 'Edit' : 'New'} load cell — ${rigSlotTitle(slot)}',
       ),
       content: SizedBox(
         width: 380,
@@ -646,3 +627,15 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
 /// Render a double without a trailing '.0' for whole numbers.
 String _num(double v) =>
     v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+
+/// Parse a typed-in number, tolerating a comma decimal separator (some
+/// locales' decimal key inserts one). Input that already has a '.', or has
+/// several commas, is parsed as-is — thousands-grouped text fails to parse
+/// rather than silently misparsing.
+double? _typedNumber(String s) {
+  final t = s.trim();
+  if (!t.contains('.') && t.indexOf(',') == t.lastIndexOf(',')) {
+    return double.tryParse(t.replaceFirst(',', '.'));
+  }
+  return double.tryParse(t);
+}

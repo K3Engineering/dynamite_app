@@ -9,12 +9,34 @@ import 'force_unit.dart';
 /// Application-wide settings, persisted via SharedPreferences.
 ///
 /// Deliberately NOT here: channel labels (gone — row titles come from the
-/// rig's load cell slots), everything load cell (device slots, history —
-/// owned by `RigState`), and the DMM excitation cross-check (a measurement
-/// OF one board — per-device memory in `RigState`, never app-global).
-/// Legacy keys from the pre-slot model are erased on load; there are no
-/// field devices, so no migration is performed.
+/// rig's load cell slots) and everything load cell (device slots, history —
+/// owned by `RigState`). Legacy keys from the pre-slot model are erased on
+/// load; there are no field devices, so no migration is performed.
 class AppSettings extends ChangeNotifier {
+  /// [prefs] is injected (see `main`): the instance is available
+  /// synchronously, so the load happens right here in the constructor and
+  /// can never race a later setter.
+  AppSettings({required SharedPreferences prefs}) : _prefs = prefs {
+    for (final key in _legacyKeys) {
+      unawaited(_prefs.remove(key));
+    }
+
+    final unitName = _prefs.getString(_keyUnit);
+    if (unitName != null) {
+      _displayUnit = ForceUnit.values.firstWhere(
+        (u) => u.name == unitName,
+        orElse: () => ForceUnit.mVv,
+      );
+    }
+
+    final active = _prefs.getStringList(_keyActiveChannels);
+    if (active != null && active.length == nwNumAdcChan) {
+      _activeChannels = active.map((s) => s == 'true').toList();
+    }
+
+    _wakelockEnabled = _prefs.getBool(_keyWakelock) ?? false;
+  }
+
   static const String _keyUnit = 'display_unit';
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
@@ -27,6 +49,8 @@ class AppSettings extends ChangeNotifier {
     'channel_load_cells',
     'measured_excitation_mv',
   ];
+
+  final SharedPreferences _prefs;
 
   // mV/V is the default: it converts with board calibration alone, so a
   // fresh install shows meaningful numbers before any load cell is assigned
@@ -48,69 +72,24 @@ class AppSettings extends ChangeNotifier {
   bool _wakelockEnabled = false;
   bool get wakelockEnabled => _wakelockEnabled;
 
-  /// Preference keys the user has explicitly set through a setter. [_load]'s
-  /// async read resolves AFTER the constructor returns, so a setter that ran
-  /// in the meantime owns the in-memory value — [_load] must not overwrite it
-  /// with the (older) persisted one.
-  final Set<String> _modifiedKeys = {};
-
-  AppSettings() {
-    unawaited(_load());
-  }
-
-  Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    for (final key in _legacyKeys) {
-      await prefs.remove(key);
-    }
-
-    final unitName = prefs.getString(_keyUnit);
-    if (unitName != null && !_modifiedKeys.contains(_keyUnit)) {
-      _displayUnit = ForceUnit.values.firstWhere(
-        (u) => u.name == unitName,
-        orElse: () => ForceUnit.mVv,
-      );
-    }
-
-    final active = prefs.getStringList(_keyActiveChannels);
-    if (active != null &&
-        active.length == nwNumAdcChan &&
-        !_modifiedKeys.contains(_keyActiveChannels)) {
-      _activeChannels = active.map((s) => s == 'true').toList();
-    }
-
-    if (!_modifiedKeys.contains(_keyWakelock)) {
-      _wakelockEnabled = prefs.getBool(_keyWakelock) ?? false;
-    }
-
-    notifyListeners();
-  }
-
   Future<void> setDisplayUnit(ForceUnit unit) async {
-    _modifiedKeys.add(_keyUnit);
     _displayUnit = unit;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyUnit, unit.name);
+    await _prefs.setString(_keyUnit, unit.name);
   }
 
   Future<void> setChannelActive(int index, bool active) async {
-    _modifiedKeys.add(_keyActiveChannels);
     _activeChannels[index] = active;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(
+    await _prefs.setStringList(
       _keyActiveChannels,
       _activeChannels.map((b) => b.toString()).toList(),
     );
   }
 
   Future<void> setWakelockEnabled(bool enabled) async {
-    _modifiedKeys.add(_keyWakelock);
     _wakelockEnabled = enabled;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_keyWakelock, enabled);
+    await _prefs.setBool(_keyWakelock, enabled);
   }
 }
