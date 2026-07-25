@@ -27,6 +27,9 @@ import 'package:dynamite_app/services/rig_state.dart';
 /// async (the drift connection future) can't stall the test.
 void main() {
   setUp(() {
+    // Keep the debug-only perf dashboard out of the tree: its periodic
+    // trackers would leave timers pending at the end-of-test check.
+    perfOptimizerEnabled = false;
     SharedPreferences.setMockInitialValues({});
     // Install the mock regardless of useMockBt so BleLinkManager's unawaited
     // availability query resolves without platform channels.

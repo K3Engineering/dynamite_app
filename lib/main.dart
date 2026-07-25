@@ -1,7 +1,8 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_performance_optimizer/flutter_performance_optimizer.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -21,6 +22,14 @@ import 'services/rig_state.dart';
 import 'services/session_storage.dart';
 import 'screens/app_shell.dart';
 import 'widgets/status_colors.dart';
+
+/// Debug-only master switch for the PerformanceOptimizer dashboard wired into
+/// [DynoApp]'s MaterialApp.builder. The package is inert in release builds on
+/// its own (`enableInReleaseMode` stays false); this flag exists so widget
+/// tests — which run in debug mode — can keep the optimizer's periodic
+/// trackers out of the tree (pending timers would fail the tests).
+@visibleForTesting
+bool perfOptimizerEnabled = kDebugMode;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -176,6 +185,15 @@ class DynoApp extends StatelessWidget {
         extensions: const [StatusColors.dark],
         colorScheme: darkScheme,
         listTileTheme: selectedTileTheme(darkScheme),
+      ),
+      // Debug-only perf dashboard (rebuilds, FPS, memory, jank). Must live in
+      // MaterialApp.builder — wrapping runApp directly would put it above the
+      // localizations context its Material components need. Inert in release
+      // builds and in tests (see [perfOptimizerEnabled]).
+      builder: (context, child) => PerformanceOptimizer(
+        enabled: perfOptimizerEnabled,
+        showDashboard: perfOptimizerEnabled,
+        child: child ?? const SizedBox.shrink(),
       ),
       home: const AppShell(),
     );

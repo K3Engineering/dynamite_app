@@ -44,6 +44,9 @@ dependencies:
   cross_file: ^0.3.4+2
   package_info_plus: ^10.1.0
   wakelock_plus: ^1.6.1
+  # Debug-only performance dashboard (gated by kDebugMode in main.dart). Pulls
+  # google_generative_ai transitively; AI insights stay disabled (no API key).
+  flutter_performance_optimizer: 1.0.3
 
   # CSV export: file_picker gives the save-as dialog / browser download on
   # all six platforms; share_plus provides the share sheet (unsupported on
