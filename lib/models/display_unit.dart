@@ -13,7 +13,7 @@ export 'calibration.dart'
 /// board's piecewise map plus the assigned load cell). Force units are
 /// unavailable — a null converter — for channels without an assigned load
 /// cell; the UI shows '—' there. Electrical units are always available.
-enum ForceUnit {
+enum DisplayUnit {
   kN('kN', 'Kilonewtons', kgfFactor: 9.80665 / 1000),
   lbf('lbf', 'Pounds-force', kgfFactor: 2.20462),
   kgf('kgf', 'Kilogram-force', kgfFactor: 1.0),
@@ -22,7 +22,7 @@ enum ForceUnit {
   mV('mV', 'Cell output voltage'),
   raw('Raw', 'ADC Counts');
 
-  const ForceUnit(this.symbol, this.label, {this.kgfFactor});
+  const DisplayUnit(this.symbol, this.label, {this.kgfFactor});
 
   final String symbol;
   final String label;
@@ -46,7 +46,7 @@ enum ForceUnit {
       final cell = channel.loadCell;
       return cell == null ? null : f * cell.kgfPerMvV;
     }
-    return this == ForceUnit.mV ? channel.board.effectiveExcitationV : 1.0;
+    return this == DisplayUnit.mV ? channel.board.effectiveExcitationV : 1.0;
   }
 
   /// Build the absolute-raw -> display-unit converter for one channel, net of
@@ -62,7 +62,7 @@ enum ForceUnit {
     ChannelCalibration channel,
     double tare,
   ) {
-    if (this == ForceUnit.raw) return (raw) => raw - tare;
+    if (this == DisplayUnit.raw) return (raw) => raw - tare;
     final scale = _scalePerMvV(channel);
     if (scale == null) return null;
     final board = channel.board;
@@ -78,7 +78,7 @@ enum ForceUnit {
   double Function(double rawDiff)? diffConverterFor(
     ChannelCalibration channel,
   ) {
-    if (this == ForceUnit.raw) return (diff) => diff;
+    if (this == DisplayUnit.raw) return (diff) => diff;
     final scale = _scalePerMvV(channel);
     if (scale == null) return null;
     final perCount = scale / channel.board.spanCountsPerMvV;
@@ -90,8 +90,8 @@ enum ForceUnit {
   String _formatValue(double value, String suffix) {
     final sign = value < 0 ? '-' : '+';
     final decimals = switch (this) {
-      ForceUnit.raw => 0,
-      ForceUnit.mV || ForceUnit.mVv => 4,
+      DisplayUnit.raw => 0,
+      DisplayUnit.mV || DisplayUnit.mVv => 4,
       _ => 3,
     };
     final numStr = value.abs().toStringAsFixed(decimals);

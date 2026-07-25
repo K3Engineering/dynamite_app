@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../services/adc_protocol.dart';
-import 'force_unit.dart';
+import 'display_unit.dart';
 
 /// Application-wide settings, persisted via SharedPreferences.
 ///
@@ -23,9 +23,9 @@ class AppSettings extends ChangeNotifier {
 
     final unitName = _prefs.getString(_keyUnit);
     if (unitName != null) {
-      _displayUnit = ForceUnit.values.firstWhere(
+      _displayUnit = DisplayUnit.values.firstWhere(
         (u) => u.name == unitName,
-        orElse: () => ForceUnit.mVv,
+        orElse: () => DisplayUnit.mVv,
       );
     }
 
@@ -55,8 +55,8 @@ class AppSettings extends ChangeNotifier {
   // mV/V is the default: it converts with board calibration alone, so a
   // fresh install shows meaningful numbers before any load cell is assigned
   // (force units need per-channel load-cell profiles).
-  ForceUnit _displayUnit = ForceUnit.mVv;
-  ForceUnit get displayUnit => _displayUnit;
+  DisplayUnit _displayUnit = DisplayUnit.mVv;
+  DisplayUnit get displayUnit => _displayUnit;
 
   /// Which channels are shown in the live view. Local to the live tab —
   /// each recorded session carries its own visibility set.
@@ -72,7 +72,7 @@ class AppSettings extends ChangeNotifier {
   bool _wakelockEnabled = false;
   bool get wakelockEnabled => _wakelockEnabled;
 
-  Future<void> setDisplayUnit(ForceUnit unit) async {
+  Future<void> setDisplayUnit(DisplayUnit unit) async {
     _displayUnit = unit;
     notifyListeners();
     await _prefs.setString(_keyUnit, unit.name);

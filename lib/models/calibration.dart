@@ -174,7 +174,7 @@ class ChannelBoardCalibration {
   /// Map an absolute raw ADC reading to mV/V of excitation via the piecewise
   /// map. Out-of-range readings extend the outermost segment. Readings are
   /// absolute (offset included): net values come from subtracting the map at
-  /// the tare point — see `ForceUnit.converterFor`.
+  /// the tare point — see `DisplayUnit.converterFor`.
   double mvVFromRaw(double raw) {
     final r = readings;
     if (r == null) return raw / nominalCountsPerMvV;

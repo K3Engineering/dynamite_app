@@ -6,7 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../models/app_settings.dart';
-import '../models/force_unit.dart';
+import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../widgets/board_calibration_section.dart';
 import '../widgets/rig_slots_section.dart';
@@ -49,14 +49,14 @@ class SettingsTab extends StatelessWidget {
           _UnitGroup(
             label: 'Force',
             units: [
-              for (final u in ForceUnit.values)
+              for (final u in DisplayUnit.values)
                 if (u.isForce) u,
             ],
           ),
           _UnitGroup(
             label: 'Electrical',
             units: [
-              for (final u in ForceUnit.values)
+              for (final u in DisplayUnit.values)
                 if (!u.isForce) u,
             ],
           ),
@@ -180,7 +180,7 @@ class _UnitGroup extends StatelessWidget {
   const _UnitGroup({required this.label, required this.units});
 
   final String label;
-  final List<ForceUnit> units;
+  final List<DisplayUnit> units;
 
   @override
   Widget build(BuildContext context) {
@@ -190,7 +190,7 @@ class _UnitGroup extends StatelessWidget {
       children: [
         Text(label, style: Theme.of(context).textTheme.labelMedium),
         const SizedBox(height: 4),
-        SegmentedButton<ForceUnit>(
+        SegmentedButton<DisplayUnit>(
           segments: [
             for (final u in units)
               ButtonSegment(value: u, label: Text(u.symbol)),

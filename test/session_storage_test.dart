@@ -5,7 +5,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/calibration.dart';
-import 'package:dynamite_app/models/force_unit.dart';
+import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/database.dart';
 import 'package:dynamite_app/services/session_storage.dart';
@@ -344,13 +344,13 @@ void main() {
         expect(cell.name, 'Ref');
         expect(cell.sensitivityMvV, closeTo(2.02, 1e-12));
         // End-to-end: kgf converts through the stored board AND stored cell.
-        final kgf = ForceUnit.kgf.converterFor(loaded.calibrationFor(0), 0)!;
+        final kgf = DisplayUnit.kgf.converterFor(loaded.calibrationFor(0), 0)!;
         expect(
           kgf(1000),
           closeTo(1000 / (0.5 * nominalCountsPerMvV) * (100 / 2.02), 1e-9),
         );
         // ch1 had no load cell assigned at recording time.
-        expect(ForceUnit.kgf.converterFor(loaded.calibrationFor(1), 0), isNull);
+        expect(DisplayUnit.kgf.converterFor(loaded.calibrationFor(1), 0), isNull);
       },
     );
   });
