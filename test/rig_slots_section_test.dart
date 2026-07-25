@@ -29,6 +29,9 @@ class _FakeTransport implements RigFlashTransport {
   Future<void> writeFlashDoc(String doc) async {
     lastWrittenDoc = doc;
   }
+
+  @override
+  Future<String?> readFlashDoc() async => lastWrittenDoc;
 }
 
 void main() {
@@ -93,7 +96,10 @@ void main() {
       expect(find.text('CH $i'), findsOneWidget);
     }
     // Nothing dirty yet: the status bar shows its clean state.
-    expect(find.text('All settings saved to device.'), findsOneWidget);
+    expect(
+      find.text('Settings shown are read from the device.'),
+      findsOneWidget,
+    );
     expect(find.textContaining('Changes not saved to device'), findsNothing);
   });
 
@@ -125,7 +131,10 @@ void main() {
     expect(rig.hasPending, isFalse);
     expect(rig.channelCells[3], isNull);
     expect(find.textContaining('Changes not saved to device'), findsNothing);
-    expect(find.text('All settings saved to device.'), findsOneWidget);
+    expect(
+      find.text('Settings shown are read from the device.'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('dragging a slot onto another swaps them', (tester) async {

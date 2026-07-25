@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -14,6 +16,14 @@ class _FakeTransport implements RigFlashTransport {
   String? lastWrittenDoc;
   bool failWrite = false;
 
+  /// Served on read-back instead of the last written doc, to simulate a
+  /// device that ignores or rewrites what it received.
+  String? readBackDoc;
+
+  /// When set, the write completes only once this gate does — lets a test
+  /// land an edit while a save is in flight.
+  Completer<void>? writeGate;
+
   @override
   String get connectedDeviceId => deviceId;
 
@@ -23,8 +33,14 @@ class _FakeTransport implements RigFlashTransport {
   @override
   Future<void> writeFlashDoc(String doc) async {
     if (failWrite) throw StateError('write failed');
+    final gate = writeGate;
+    if (gate != null) await gate.future;
     lastWrittenDoc = doc;
   }
+
+  /// A faithful device serves back exactly what was last written.
+  @override
+  Future<String?> readFlashDoc() async => readBackDoc ?? lastWrittenDoc;
 }
 
 void main() {
@@ -250,6 +266,86 @@ void main() {
       expect(await rig.saveToDevice(), isFalse);
       expect(rig.hasPending, isTrue);
       expect(rig.channelTitles[3], 'New');
+    });
+
+    test('refuses to write while a different device is connected', () async {
+      final rig = await newRig();
+      rig.onFlashRead('dev1', 'Bench unit', fixture());
+      rig.setSlot(
+        3,
+        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+      );
+      // The pending edits belong to dev1, but dev2 is on the link now:
+      // writing would stamp dev1's factory board keys onto dev2's flash.
+      transport.deviceId = 'dev2';
+
+      expect(await rig.saveToDevice(), isFalse);
+      expect(transport.lastWrittenDoc, isNull); // nothing was sent
+      expect(rig.hasPending, isTrue);
+      expect(rig.channelTitles[3], 'New');
+    });
+
+    test('a read-back mismatch fails the save and keeps the edits', () async {
+      final rig = await newRig();
+      rig.onFlashRead('dev1', 'Bench unit', fixture());
+      rig.setSlot(
+        3,
+        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+      );
+      // The device silently ignored the write: it serves the OLD document.
+      transport.readBackDoc = demoBoardCalibrationDoc;
+
+      expect(await rig.saveToDevice(), isFalse);
+      expect(rig.hasPending, isTrue);
+      expect(rig.channelTitles[3], 'New');
+      // The flash truth was NOT advanced to the unverified write.
+      expect(rig.pending?.edited.cellAt(3)?.name, 'New');
+    });
+
+    test('an edit landing mid-write is kept, not silently discarded', () async {
+      final rig = await newRig();
+      rig.onFlashRead('dev1', 'Bench unit', fixture());
+      rig.setSlot(
+        3,
+        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+      );
+
+      transport.writeGate = Completer<void>();
+      final saveFuture = rig.saveToDevice();
+      // The save has snapshotted its document; this edit lands in the same
+      // pending session while the write is in flight.
+      rig.setSlot(
+        4,
+        LoadCellProfile(name: 'Other', capacityKg: 10, sensitivityMvV: 2),
+      );
+      transport.writeGate!.complete();
+
+      // The save refuses to commit: the pending session moved under it.
+      expect(await saveFuture, isFalse);
+      expect(rig.hasPending, isTrue);
+      expect(rig.channelTitles[3], 'New');
+      expect(rig.effectiveSlots.cellAt(4)?.name, 'Other');
+      // The flash truth was not advanced past the real read.
+      expect(rig.pending?.edited.cellAt(4)?.name, 'Other');
+    });
+
+    test('unknown flash keys ride through the save verbatim', () async {
+      final rig = await newRig();
+      const withExtras =
+          'K3CAL1\n'
+          'cal.date=2026-07-20\n'
+          'hw.rev=3\n'
+          'future.tooling=keep me\n'
+          'END\n';
+      rig.onFlashRead('dev1', 'Bench unit', DeviceFlash.parse(withExtras));
+      rig.setSlot(
+        3,
+        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+      );
+
+      expect(await rig.saveToDevice(), isTrue);
+      expect(transport.lastWrittenDoc, contains('hw.rev=3'));
+      expect(transport.lastWrittenDoc, contains('future.tooling=keep me'));
     });
   });
 

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/models/force_unit.dart';
 import 'package:dynamite_app/services/data_hub.dart';
+import 'package:dynamite_app/services/demo_calibration.dart';
 
 /// Unit tests for the hub's per-stream lifecycle (peaks, tare, reset). Uses
 /// [ForceUnit.raw] throughout so forces equal tare-adjusted raw counts.
@@ -197,6 +198,28 @@ void main() {
         expect(hub.rawData[0][110], 1000); // held value inside the gap
       },
     );
+
+    test('a re-tare holds the old offsets until the new average lands', () {
+      final hub = DataHub();
+      feed(hub, frameOf(1000), 1024);
+      hub.requestTare();
+      feed(hub, frameOf(1000), 1024);
+      expect(hub.tare[0], 1000); // established
+
+      // Re-tare at a new level: during the window the display must NOT
+      // jump to absolute (offset-inclusive) readings — the old offsets
+      // stay in effect until the new average lands.
+      hub.requestTare();
+      feed(hub, frameOf(1500), 100);
+      expect(hub.taring, isTrue);
+      expect(hub.tare[0], 1000);
+      expect(hub.currentValue(0, ForceUnit.raw), 500); // 1500 - 1000
+
+      feed(hub, frameOf(1500), 1024 - 100);
+      expect(hub.taring, isFalse);
+      expect(hub.tare[0], 1500);
+      expect(hub.currentValue(0, ForceUnit.raw), 0);
+    });
   });
 
   group('calibration', () {
@@ -273,6 +296,32 @@ void main() {
         hub.currentDerivative(0, ForceUnit.raw),
         1000.0 * DataHub.samplesPerSec,
       );
+    });
+
+    test('content-equal board calibration does not bump the version', () {
+      final hub = DataHub();
+      hub.updateBoardCalibration(
+        BoardCalibration.parse(demoBoardCalibrationDoc),
+      );
+      final v1 = hub.calibrationVersion;
+
+      // A reconnect re-reading the identical document (new instances, same
+      // content) must not invalidate the graph caches.
+      hub.updateBoardCalibration(
+        BoardCalibration.parse(demoBoardCalibrationDoc),
+      );
+      expect(hub.calibrationVersion, v1);
+
+      // A genuinely changed document bumps the version again.
+      hub.updateBoardCalibration(
+        BoardCalibration.parse(
+          demoBoardCalibrationDoc.replaceFirst(
+            'ch0.raw=6386310.2',
+            'ch0.raw=6386310.3',
+          ),
+        ),
+      );
+      expect(hub.calibrationVersion, greaterThan(v1));
     });
 
     test('content-equal load cell updates do not bump the version', () {

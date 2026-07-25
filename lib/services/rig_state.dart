@@ -20,6 +20,10 @@ abstract interface class RigFlashTransport {
   /// Write a serialized [DeviceFlash] document to the connected device.
   /// Throws on failure — the caller keeps its pending edits.
   Future<void> writeFlashDoc(String doc);
+
+  /// Read the flash document back from the connected device (save
+  /// verification). Null on failure or when no device is connected.
+  Future<String?> readFlashDoc();
 }
 
 /// A "last seen values" entry: a cell this app has met (on a device flash
@@ -30,7 +34,6 @@ class RigHistoryEntry {
     required this.cell,
     required this.lastSeen,
     required this.deviceName,
-    required this.origin,
   });
 
   final LoadCellProfile cell;
@@ -39,16 +42,13 @@ class RigHistoryEntry {
   /// Device the entry was last seen on (or added on), for display.
   String deviceName;
 
-  /// 'device' (read from flash) or 'manual' (typed by the user).
-  String origin;
-
   Map<String, dynamic> toJson() => {
     'cell': cell.toJson(),
     'lastSeen': lastSeen.millisecondsSinceEpoch,
     'deviceName': deviceName,
-    'origin': origin,
   };
 
+  /// Tolerant of extra keys (older versions persisted an 'origin' field).
   factory RigHistoryEntry.fromJson(Map<String, dynamic> json) =>
       RigHistoryEntry(
         cell: LoadCellProfile.fromJson(
@@ -56,7 +56,6 @@ class RigHistoryEntry {
         ),
         lastSeen: DateTime.fromMillisecondsSinceEpoch(json['lastSeen'] as int),
         deviceName: json['deviceName'] as String? ?? '',
-        origin: json['origin'] as String? ?? 'device',
       );
 }
 
@@ -193,14 +192,18 @@ class RigState extends ChangeNotifier {
     _lastFlash = flash;
     _flashDeviceId = deviceId;
 
-    // History: every populated slot on the device was "seen" now.
+    // History: every populated slot on the device was "seen" now. One
+    // persist for the batch, not one per cell.
     final now = DateTime.now();
+    var seenAny = false;
     for (int i = 0; i < kRigSlotCount; ++i) {
       final cell = flash.slots.cellAt(i);
       if (cell != null) {
-        _upsertHistory(cell, deviceName, 'device', now);
+        _upsertHistory(cell, deviceName, now, persist: false);
+        seenAny = true;
       }
     }
+    if (seenAny) unawaited(_persistHistory());
 
     notifyListeners();
   }
@@ -234,12 +237,7 @@ class RigState extends ChangeNotifier {
   void setSlot(int i, LoadCellProfile cell) {
     final p = _ensurePending();
     p.edited = p.edited.withSlot(i, RigSlot(cell: cell));
-    _upsertHistory(
-      cell,
-      _transport.connectedDeviceName,
-      'manual',
-      DateTime.now(),
-    );
+    _upsertHistory(cell, _transport.connectedDeviceName, DateTime.now());
     notifyListeners();
   }
 
@@ -268,26 +266,60 @@ class RigState extends ChangeNotifier {
   }
 
   /// Write the edited slots (with fresh mtimes) to the device, alongside the
-  /// board keys exactly as read. Returns false when the transport fails —
-  /// pending edits are kept so the user can retry or revert.
+  /// board keys exactly as read, then verify with a read-back. Returns false
+  /// when the write or the verification fails — pending edits are kept so
+  /// the user can retry or revert.
   Future<bool> saveToDevice() async {
     final pending = _pending;
     final flash = _lastFlash;
     if (pending == null || flash == null) return true;
+    // The write must go to the device the edits belong to — anything else
+    // would stamp this document's factory board keys onto another device's
+    // flash. The UI gates the Save button on this; the check belongs here
+    // too, next to the write.
+    if (pending.deviceId != _transport.connectedDeviceId) return false;
+    final edited = pending.edited;
     final now = DateTime.now().toUtc();
     final stamped = RigSlots([
       for (int i = 0; i < kRigSlotCount; ++i)
-        pending.edited.slots[i]?.copyWith(mtime: now),
+        edited.slots[i]?.copyWith(mtime: now),
     ]);
-    final doc = DeviceFlash(board: flash.board, slots: stamped).serialize();
+    final doc = DeviceFlash(
+      board: flash.board,
+      slots: stamped,
+      extraLines: flash.extraLines,
+    ).serialize();
     try {
       await _transport.writeFlashDoc(doc);
     } catch (_) {
       return false;
     }
-    // The device now holds exactly what we wrote: adopt it as the new flash
-    // truth and clear the pending session.
-    _lastFlash = DeviceFlash(board: flash.board, slots: stamped);
+    // Verify: "the device holds exactly what we wrote" is an assumption,
+    // not a fact (firmware may reject, truncate or normalize the write).
+    // Adopting the composed document as truth without checking would let
+    // app state diverge from the device silently — and there is no later
+    // change detection to catch it.
+    final String? readBack;
+    try {
+      readBack = await _transport.readFlashDoc();
+    } catch (_) {
+      return false;
+    }
+    if (readBack == null) return false;
+    final verified = DeviceFlash.parse(readBack);
+    if (!_sameCells(verified.slots, stamped)) return false;
+    // Commit only if nothing moved under the in-flight write: a revert, a
+    // fresh edit, or a reconnect's flash read means the newer state wins.
+    // (The UI also blocks edits while saving; this is the model-side guard.)
+    if (!identical(_pending, pending) ||
+        !identical(pending.edited, edited) ||
+        !identical(_lastFlash, flash)) {
+      return false;
+    }
+    // The device provably holds this document — adopt the READ-BACK version
+    // as the new flash truth (not the composed one), so any normalization
+    // the device applied is reflected in app state too.
+    _lastFlash = verified;
     _pending = null;
     notifyListeners();
     return true;
@@ -298,32 +330,26 @@ class RigState extends ChangeNotifier {
   void _upsertHistory(
     LoadCellProfile cell,
     String deviceName,
-    String origin,
-    DateTime now,
-  ) {
+    DateTime now, {
+    bool persist = true,
+  }) {
     for (final e in _history) {
       if (e.cell == cell) {
         e.lastSeen = now;
         e.deviceName = deviceName;
-        e.origin = origin;
         _history.sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
-        unawaited(_persistHistory());
+        if (persist) unawaited(_persistHistory());
         return;
       }
     }
     _history.add(
-      RigHistoryEntry(
-        cell: cell,
-        lastSeen: now,
-        deviceName: deviceName,
-        origin: origin,
-      ),
+      RigHistoryEntry(cell: cell, lastSeen: now, deviceName: deviceName),
     );
     _history.sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
     if (_history.length > historyCap) {
       _history = _history.sublist(0, historyCap);
     }
-    unawaited(_persistHistory());
+    if (persist) unawaited(_persistHistory());
   }
 
   Future<void> _persistHistory() => _prefs.setString(
