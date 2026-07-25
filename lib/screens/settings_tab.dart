@@ -16,13 +16,16 @@ import 'app_shell.dart';
 class SettingsTab extends StatelessWidget {
   const SettingsTab({super.key});
 
+  /// Fetched once per process, not per rebuild of the tab.
+  static final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
+
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
     // Narrow selects: the link manager notifies on every RSSI poll, but the
     // device section only cares about identity changes.
     final deviceId = context.select<BleLinkManager, String>(
-      (l) => l.selectedDeviceId,
+      (l) => l.connectedDeviceId,
     );
     final deviceName = context.select<BleLinkManager, String>(
       (l) => l.connectedDeviceName,
@@ -43,30 +46,20 @@ class SettingsTab extends StatelessWidget {
           // Display units
           Text('Display Units', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
-          for (final (label, units) in [
-            ('Force', ForceUnit.values.where((u) => u.isForce)),
-            ('Electrical', ForceUnit.values.where((u) => !u.isForce)),
-          ]) ...[
-            Text(label, style: Theme.of(context).textTheme.labelMedium),
-            const SizedBox(height: 4),
-            SegmentedButton<ForceUnit>(
-              segments: [
-                for (final u in units)
-                  ButtonSegment(value: u, label: Text(u.symbol)),
-              ],
-              selected: {settings.displayUnit},
-              // The default selected checkmark steals width from the labels
-              // and makes the segments wrap on narrow (mobile) screens.
-              showSelectedIcon: false,
-              emptySelectionAllowed: true,
-              onSelectionChanged: (set) {
-                if (set.isNotEmpty) {
-                  unawaited(settings.setDisplayUnit(set.first));
-                }
-              },
-            ),
-            const SizedBox(height: 8),
-          ],
+          _UnitGroup(
+            label: 'Force',
+            units: [
+              for (final u in ForceUnit.values)
+                if (u.isForce) u,
+            ],
+          ),
+          _UnitGroup(
+            label: 'Electrical',
+            units: [
+              for (final u in ForceUnit.values)
+                if (!u.isForce) u,
+            ],
+          ),
           const SizedBox(height: 16),
 
           // Wakelock
@@ -87,9 +80,8 @@ class SettingsTab extends StatelessWidget {
 
           // Everything from here down belongs to the connected device: its
           // name, the load cell slots and the factory board calibration are
-          // read from ITS flash (and the DMM cross-check is per-device
-          // memory). With no link up, none of it exists — only a connect
-          // prompt with a jump to the Devices tab shows.
+          // read from ITS flash. With no link up, none of it exists — only
+          // a connect prompt with a jump to the Devices tab shows.
           if (deviceId.isEmpty)
             Card(
               child: ListTile(
@@ -149,7 +141,7 @@ class SettingsTab extends StatelessWidget {
           const SectionHeader('About'),
           const SizedBox(height: 16),
           FutureBuilder<PackageInfo>(
-            future: PackageInfo.fromPlatform(),
+            future: _packageInfo,
             builder: (context, snapshot) {
               if (snapshot.hasData) {
                 final packageInfo = snapshot.data!;
@@ -178,6 +170,40 @@ class SettingsTab extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// One row of the display-units picker: a label above a segmented button
+/// covering one unit family (force or electrical).
+class _UnitGroup extends StatelessWidget {
+  const _UnitGroup({required this.label, required this.units});
+
+  final String label;
+  final List<ForceUnit> units;
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = context.watch<AppSettings>();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(label, style: Theme.of(context).textTheme.labelMedium),
+        const SizedBox(height: 4),
+        SegmentedButton<ForceUnit>(
+          segments: [
+            for (final u in units)
+              ButtonSegment(value: u, label: Text(u.symbol)),
+          ],
+          selected: {settings.displayUnit},
+          // The default selected checkmark steals width from the labels
+          // and makes the segments wrap on narrow (mobile) screens.
+          showSelectedIcon: false,
+          onSelectionChanged: (set) =>
+              unawaited(settings.setDisplayUnit(set.first)),
+        ),
+        const SizedBox(height: 8),
+      ],
     );
   }
 }

@@ -35,6 +35,20 @@ enum ForceUnit {
   /// board calibration. Drives the Settings picker's grouping.
   bool get isForce => kgfFactor != null;
 
+  /// The multiplier applied to net mV/V for this unit on [channel]: force
+  /// units fold in the cell's kgf-per-mV/V, mV folds in the board's
+  /// effective excitation, mV/V is unity. Null when the unit is unavailable
+  /// on the channel (a force unit with no load cell assigned). Raw counts
+  /// bypass the board map entirely and never consult this.
+  double? _scalePerMvV(ChannelCalibration channel) {
+    final f = kgfFactor;
+    if (f != null) {
+      final cell = channel.loadCell;
+      return cell == null ? null : f * cell.kgfPerMvV;
+    }
+    return this == ForceUnit.mV ? channel.board.effectiveExcitationV : 1.0;
+  }
+
   /// Build the absolute-raw -> display-unit converter for one channel, net of
   /// [tare] (the board map is evaluated at both points and differenced, so
   /// piecewise nonlinearity applies on both sides). Monotone nondecreasing.
@@ -48,22 +62,12 @@ enum ForceUnit {
     ChannelCalibration channel,
     double tare,
   ) {
+    if (this == ForceUnit.raw) return (raw) => raw - tare;
+    final scale = _scalePerMvV(channel);
+    if (scale == null) return null;
     final board = channel.board;
     final tareMvV = board.mvVFromRaw(tare);
-    final f = kgfFactor;
-    if (f != null) {
-      final cell = channel.loadCell;
-      if (cell == null) return null;
-      final scale = f * cell.kgfPerMvV;
-      return (raw) => (board.mvVFromRaw(raw) - tareMvV) * scale;
-    }
-    return switch (this) {
-      ForceUnit.mVv => (raw) => board.mvVFromRaw(raw) - tareMvV,
-      ForceUnit.mV =>
-        (raw) => (board.mvVFromRaw(raw) - tareMvV) * board.effectiveExcitationV,
-      ForceUnit.raw => (raw) => raw - tare,
-      _ => throw StateError('$this is a force unit'),
-    };
+    return (raw) => (board.mvVFromRaw(raw) - tareMvV) * scale;
   }
 
   /// Build the raw-diff -> display-unit converter for one channel (no tare:
@@ -74,21 +78,11 @@ enum ForceUnit {
   double Function(double rawDiff)? diffConverterFor(
     ChannelCalibration channel,
   ) {
-    final span = channel.board.spanCountsPerMvV;
-    final f = kgfFactor;
-    if (f != null) {
-      final cell = channel.loadCell;
-      if (cell == null) return null;
-      final scale = f * cell.kgfPerMvV / span;
-      return (diff) => diff * scale;
-    }
-    return switch (this) {
-      ForceUnit.mVv => (diff) => diff / span,
-      ForceUnit.mV =>
-        (diff) => diff / span * channel.board.effectiveExcitationV,
-      ForceUnit.raw => (diff) => diff,
-      _ => throw StateError('$this is a force unit'),
-    };
+    if (this == ForceUnit.raw) return (diff) => diff;
+    final scale = _scalePerMvV(channel);
+    if (scale == null) return null;
+    final perCount = scale / channel.board.spanCountsPerMvV;
+    return (diff) => diff * perCount;
   }
 
   /// Format a [value] (already in this unit) with an explicit sign, and a

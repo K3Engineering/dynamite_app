@@ -195,21 +195,28 @@ ch2.raw=6401205.6,3201448.2,1502.8,-3196441.9
       expect(board.channels[1].isFactoryCalibrated, isTrue);
     });
 
-    test('serialize round-trips through parse', () {
-      final original = BoardCalibration.parse(doc);
-      final reparsed = BoardCalibration.parse(original.serialize());
-      expect(reparsed.factoryDate, original.factoryDate);
-      expect(reparsed.excitationMv, original.excitationMv);
-      for (int i = 0; i < original.channels.length; ++i) {
-        final a = original.channels[i];
-        final b = reparsed.channels[i];
-        for (int k = 0; k < kLadderResistorCount; ++k) {
-          expect(b.resistors[k], closeTo(a.resistors[k], 1e-9));
-        }
-        for (int k = 0; k < kCalPointCount; ++k) {
-          expect(b.readings![k], closeTo(a.readings![k], 1e-6));
-        }
-      }
+    test('out-of-range or near-duplicate readings are rejected', () {
+      final board = BoardCalibration.parse(
+        // Beyond the ADC's 24-bit bipolar range: can't be hardware.
+        'ch0.raw=9000000,3200621.9,845.2,-3199374.1,-6397331.0\n'
+        // A sub-thousand-count gap between points: interpolation would
+        // divide by ~zero (a real ladder spread is millions of counts).
+        'ch1.raw=6399057.3,6399057.4,845.2,-3199374.1,-6397331.0\n'
+        'ch2.raw=6399057.3,3200621.9,845.2,-3199374.1,-6397331.0\n',
+      );
+      expect(board.channels[0].isFactoryCalibrated, isFalse);
+      expect(board.channels[1].isFactoryCalibrated, isFalse);
+      expect(board.channels[2].isFactoryCalibrated, isTrue);
+    });
+
+    test('non-positive resistors degrade to the nominal ladder', () {
+      final board = BoardCalibration.parse(
+        'ch0.r=10000,10,10,0,10,10000\n'
+        'ch0.raw=6399057.3,3200621.9,845.2,-3199374.1,-6397331.0\n',
+      );
+      expect(board.channels[0].resistors, nominalLadderResistors);
+      // The readings were fine, so the channel stays factory-calibrated.
+      expect(board.channels[0].isFactoryCalibrated, isTrue);
     });
   });
 
@@ -246,52 +253,6 @@ ch2.raw=6401205.6,3201448.2,1502.8,-3196441.9
       expect(plain.valuesLine, '200 kg · 2 mV/V');
       final cert = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2.007);
       expect(cert.valuesLine, '200 kg · 2.007 mV/V');
-    });
-  });
-
-  group('ChannelCalibration', () {
-    const alpha = 412.7;
-    const beta = 3198500.0;
-    final sp = ladderSetpointsMvV(nominalLadderResistors);
-    final board = ChannelBoardCalibration(
-      readings: [for (final d in sp) alpha + beta * d],
-    );
-
-    test('net values are map differences between raw and tare', () {
-      final cal = ChannelCalibration(board: board);
-      final rawFs = board.readings![0];
-      expect(cal.netMvV(rawFs, alpha), closeTo(sp[0], 1e-9));
-      expect(cal.netMvV(rawFs, rawFs), 0.0);
-      expect(cal.netRaw(rawFs, alpha), closeTo(rawFs - alpha, 1e-9));
-      expect(
-        cal.netMv(rawFs, alpha),
-        closeTo(sp[0] * board.effectiveExcitationV, 1e-9),
-      );
-    });
-
-    test('force conversion needs an assigned load cell', () {
-      final bare = ChannelCalibration(board: board);
-      expect(bare.netKgf(board.readings![0], alpha), isNull);
-
-      final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
-      final assigned = ChannelCalibration(board: board, loadCell: cell);
-      final rawFs = board.readings![0];
-      expect(
-        assigned.netKgf(rawFs, alpha),
-        closeTo(sp[0] * 100, 1e-9), // 200 kg / 2 mV/V = 100 kgf per mV/V
-      );
-      final corrected = ChannelCalibration(
-        board: board,
-        // The cal-cert sensitivity below the nominal 2 mV/V reads higher.
-        loadCell: cell.copyWith(sensitivityMvV: 2 / 1.02),
-      );
-      expect(corrected.netKgf(rawFs, alpha), closeTo(sp[0] * 102, 1e-9));
-    });
-
-    test('local slope tracks the piecewise segment', () {
-      final cal = ChannelCalibration(board: board);
-      // Affine device: the local slope is beta everywhere.
-      expect(cal.mvVPerCountAt(board.readings![1]), closeTo(1 / beta, 1e-15));
     });
   });
 }

@@ -33,7 +33,10 @@ void main() {
     String? flashDoc,
   }) async {
     SharedPreferences.setMockInitialValues({});
-    final rig = RigState(transport: _FakeTransport());
+    final rig = RigState(
+      transport: _FakeTransport(),
+      prefs: await SharedPreferences.getInstance(),
+    );
     if (withFlash) {
       rig.onFlashRead(
         'dev1',
@@ -115,64 +118,10 @@ void main() {
     expect(find.textContaining('Factory calibration'), findsNothing);
   });
 
-  testWidgets('a DMM reading shows per-channel implied gain error', (
+  testWidgets('the header counts the factory-calibrated channels', (
     tester,
   ) async {
-    final rig = await pump(tester);
-
-    expect(find.textContaining('implied chain gain error'), findsNothing);
-
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Your DMM excitation reading (mV)'),
-      '4530.24',
-    );
-    await tester.pumpAndSettle();
-
-    expect(rig.measuredExcitationMv, closeTo(4530.24, 1e-9));
-    expect(find.textContaining('implied chain gain error'), findsNWidgets(4));
-    // ch0 span vs the DMM: span/(countsPerMv * 4.53024) - 1.
-    final board = BoardCalibration.parse(demoBoardCalibrationDoc);
-    final err =
-        (board.channels[0].spanCountsPerMvV /
-                (countsPerMvAtCellOutput * 4.53024) -
-            1) *
-        100;
-    final sign = err >= 0 ? '+' : '';
-    expect(
-      find.textContaining(
-        'Ch 1: implied chain gain error $sign${err.toStringAsFixed(3)} %',
-      ),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets('clearing the DMM field removes the gain error rows', (
-    tester,
-  ) async {
-    final rig = await pump(tester);
-
-    final field = find.widgetWithText(
-      TextFormField,
-      'Your DMM excitation reading (mV)',
-    );
-    await tester.enterText(field, '4530.24');
-    await tester.pumpAndSettle();
-    expect(rig.measuredExcitationMv, closeTo(4530.24, 1e-9));
-    expect(find.textContaining('implied chain gain error'), findsNWidgets(4));
-
-    await tester.enterText(field, '');
-    await tester.pumpAndSettle();
-
-    expect(rig.measuredExcitationMv, isNull);
-    expect(find.textContaining('implied chain gain error'), findsNothing);
-  });
-
-  testWidgets('DMM gain error rows cover factory-calibrated channels only', (
-    tester,
-  ) async {
-    // Only CH1 of this document has factory data: the cross-check has a
-    // measured span to compare only there — a nominal channel would just
-    // echo the nominal 4.53 V assumption back as a fake "gain error".
+    // Only CH1 of this document has factory data.
     const partialCalDoc = '''
 K3CAL1
 ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4
@@ -181,19 +130,6 @@ END
 ''';
     await pump(tester, flashDoc: partialCalDoc);
 
-    // The header reflects the single calibrated channel.
     expect(find.textContaining('1 of 4 channels'), findsOneWidget);
-
-    await tester.enterText(
-      find.widgetWithText(TextFormField, 'Your DMM excitation reading (mV)'),
-      '4530.24',
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('implied chain gain error'), findsOneWidget);
-    expect(
-      find.textContaining('Ch 1: implied chain gain error'),
-      findsOneWidget,
-    );
   });
 }

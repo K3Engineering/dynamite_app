@@ -41,9 +41,10 @@ void main() {
     final linkManager = BleLinkManager(events: appEvents)
       ..onAdcData = decoder.onDataPacket
       ..onCalibrationData = decoder.onCalibrationPacket;
-    final rigState = RigState(transport: linkManager, events: appEvents);
+    final prefs = await SharedPreferences.getInstance();
+    final rigState = RigState(transport: linkManager, prefs: prefs);
     decoder.onDeviceFlash = (flash) => rigState.onFlashRead(
-      linkManager.selectedDeviceId,
+      linkManager.connectedDeviceId,
       linkManager.connectedDeviceName,
       flash,
     );
@@ -57,7 +58,7 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider(create: (_) => AppSettings()),
+          ChangeNotifierProvider.value(value: AppSettings(prefs: prefs)),
           Provider.value(value: appEvents),
           ChangeNotifierProvider.value(value: dataHub),
           ChangeNotifierProvider.value(value: linkManager),

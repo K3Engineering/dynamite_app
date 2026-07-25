@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/app_settings.dart';
 import 'services/adc_packet_decoder.dart';
@@ -31,6 +32,9 @@ void main() async {
   // Repair any sessions left incomplete by a crash before the UI reads the
   // session list, so partial sessions are finalized (or pruned) first.
   await SessionStorage.recoverIncompleteSessions();
+  // Prefs are resolved here and injected into their owners, so their loads
+  // are synchronous constructor work and can never race a user edit.
+  final prefs = await SharedPreferences.getInstance();
 
   // Object graph, one layer per concern:
   //   BleLinkManager (link state machine) --raw bytes--> AdcPacketDecoder
@@ -45,13 +49,13 @@ void main() async {
   final linkManager = BleLinkManager(events: appEvents)
     ..onAdcData = decoder.onDataPacket
     ..onCalibrationData = decoder.onCalibrationPacket;
-  final rigState = RigState(transport: linkManager, events: appEvents);
+  final rigState = RigState(transport: linkManager, prefs: prefs);
   // Flash documents (board + slots) arrive via the decoder: the hub takes
   // the board, RigState takes the whole document. The device id/name are
   // read off the link at delivery time (the read only ever runs against the
   // active link).
   decoder.onDeviceFlash = (flash) => rigState.onFlashRead(
-    linkManager.selectedDeviceId,
+    linkManager.connectedDeviceId,
     linkManager.connectedDeviceName,
     flash,
   );
@@ -61,7 +65,7 @@ void main() async {
     decoder: decoder,
     events: appEvents,
   );
-  final appSettings = AppSettings();
+  final appSettings = AppSettings(prefs: prefs);
   // Push the effective per-channel load cells (device slots, including
   // unsaved edits) into the data layer now and on every rig change.
   // Content-equal pushes are a no-op inside the hub.

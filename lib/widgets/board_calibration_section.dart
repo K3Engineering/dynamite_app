@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -8,9 +6,7 @@ import '../services/rig_state.dart';
 
 /// Settings → Device settings → Board calibration: a read-only view of the
 /// CONNECTED device's factory calibration (the 5-point ladder fit per
-/// channel), plus the DMM excitation cross-check. The ratiometric
-/// calibration is always authoritative — the DMM reading only verifies the
-/// measurement chain.
+/// channel).
 ///
 /// Everything here is per-board data, so it comes from the flash-document
 /// owner ([RigState.boardCalibrationFor]) — never from the data hub's
@@ -29,10 +25,13 @@ class BoardCalibrationSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final rig = context.watch<RigState>();
     // One ownership query, decided by the document owner: null means no
-    // document this run, or a document belonging to another device.
-    final board = rig.boardCalibrationFor(deviceId);
+    // document this run, or a document belonging to another device. Narrow
+    // select: slot edits notify RigState too, but the board instance only
+    // changes with a fresh flash read.
+    final board = context.select<RigState, BoardCalibration?>(
+      (r) => r.boardCalibrationFor(deviceId),
+    );
     if (board == null) {
       return const Card(
         child: ListTile(
@@ -47,7 +46,6 @@ class BoardCalibrationSection extends StatelessWidget {
     final calibrated = board.channels
         .where((c) => c.isFactoryCalibrated)
         .length;
-    final dmmMv = rig.measuredExcitationMv;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -68,69 +66,8 @@ class BoardCalibrationSection extends StatelessWidget {
         const SizedBox(height: 8),
         for (int i = 0; i < board.channels.length; i++)
           _ChannelCalTile(index: i, channel: board.channels[i]),
-        const SizedBox(height: 16),
-        Text(
-          'Excitation cross-check',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'The ratiometric calibration is authoritative: a load cell and the '
-          'calibration ladder share the same excitation, so it cancels. '
-          'Measuring the excitation with a DMM can only verify the chain, '
-          'not improve the calibration.',
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        const SizedBox(height: 8),
-        // Deliberately keyless: every device transition unmounts this field
-        // (the settings gate or the placeholder card takes its place), so
-        // the initial value always matches the device on screen. Keying it
-        // by the value would instead rebuild it per keystroke — a new field
-        // each time, focus lost mid-typing.
-        TextFormField(
-          initialValue: dmmMv?.toString() ?? '',
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          decoration: const InputDecoration(
-            labelText: 'Your DMM excitation reading (mV)',
-            border: OutlineInputBorder(),
-            isDense: true,
-          ),
-          onChanged: (s) {
-            final trimmed = s.trim();
-            if (trimmed.isEmpty) {
-              unawaited(rig.setMeasuredExcitationMv(null));
-            } else {
-              final v = double.tryParse(trimmed);
-              if (v != null && v > 0) {
-                unawaited(rig.setMeasuredExcitationMv(v));
-              }
-            }
-          },
-        ),
-        if (dmmMv != null) ...[
-          const SizedBox(height: 8),
-          // Only factory-calibrated channels have a measured span to compare
-          // against the DMM. A nominal channel would just echo the nominal
-          // 4.53 V assumption back as a fake "gain error".
-          for (int i = 0; i < board.channels.length; i++)
-            if (board.channels[i].isFactoryCalibrated)
-              Text(
-                'Ch ${i + 1}: implied chain gain error '
-                '${_gainErrorPercent(board.channels[i], dmmMv)}',
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-        ],
       ],
     );
-  }
-
-  /// (measured span) vs (DMM excitation × nominal chain): the combined AFE
-  /// gain + ADC reference error the factory calibration absorbed.
-  static String _gainErrorPercent(ChannelBoardCalibration ch, double dmmMv) {
-    final expected = countsPerMvAtCellOutput * dmmMv / 1000.0;
-    final err = ch.spanCountsPerMvV / expected - 1;
-    final pct = err * 100;
-    return '${pct >= 0 ? '+' : ''}${pct.toStringAsFixed(3)} %';
   }
 }
 

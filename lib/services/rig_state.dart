@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/calibration.dart';
-import 'app_events.dart';
 
 /// The piece of the BLE stack [RigState] needs: which device is connected,
 /// and a way to write the whole flash document back to it. Implemented by
@@ -70,7 +69,6 @@ class PendingRigEdits {
     required this.deviceId,
     required this.base,
     required this.edited,
-    required this.startedAt,
   });
 
   final String deviceId;
@@ -81,35 +79,44 @@ class PendingRigEdits {
 
   /// The edited slot list (what the app's readings already use).
   RigSlots edited;
-
-  final DateTime startedAt;
 }
 
 /// Owns the rig: the slot list read from the connected device, unsaved
-/// edits, the cross-device cell history, per-device change detection, and
-/// per-device user memory (the DMM excitation cross-check).
+/// edits, and the cross-device cell history.
 ///
 /// The model is deliberately low-state: the device flash is the ONLY rig
 /// truth; this class adds (a) pending edits the user hasn't saved yet and
-/// (b) advisory memory (history, last-seen signatures, DMM readings) that
-/// can inform and warn but never competes with the device.
+/// (b) advisory history that can inform but never competes with the device.
 class RigState extends ChangeNotifier {
-  RigState({required RigFlashTransport transport, AppEvents? events})
-    : _transport = transport,
-      _events = events {
-    unawaited(_load());
+  /// [prefs] is injected (see `main`): the instance is available
+  /// synchronously, so the history load happens right here in the
+  /// constructor and can never race a later setter.
+  RigState({
+    required RigFlashTransport transport,
+    required SharedPreferences prefs,
+  }) : _transport = transport,
+       _prefs = prefs {
+    // Keys of removed subsystems (per-device change detection, the DMM
+    // cross-check), erased on load; there are no field devices, so no
+    // migration is performed.
+    for (final key in _legacyKeys) {
+      unawaited(_prefs.remove(key));
+    }
+    _loadHistory();
   }
 
   static const String _keyHistory = 'rig_history';
-  static const String _keyLastSeen = 'rig_lastseen';
-  static const String _keyDmm = 'rig_dmm_excitation_mv';
+  static const List<String> _legacyKeys = [
+    'rig_lastseen',
+    'rig_dmm_excitation_mv',
+  ];
 
   /// History is a suggestion list, not an archive — cap it so it stays
   /// scannable (least-recently-seen evicted).
   static const int historyCap = 50;
 
   final RigFlashTransport _transport;
-  final AppEvents? _events;
+  final SharedPreferences _prefs;
 
   /// The flash document as last read from the connected device (board +
   /// slots). Null before the first successful read of this run — and save is
@@ -126,17 +133,6 @@ class RigState extends ChangeNotifier {
   PendingRigEdits? _pending;
 
   List<RigHistoryEntry> _history = [];
-  Map<String, List<String?>> _lastSeenByDevice = {};
-
-  /// The user's own DMM excitation readings (mV), keyed by device id. A DMM
-  /// reading measures ONE board's hardware, so it is per-device memory —
-  /// never an app-global value (that would compare one device against
-  /// another's calibration).
-  Map<String, double> _dmmByDevice = {};
-
-  /// Preference keys written since construction (the async [_load] must not
-  /// clobber them — same race as in AppSettings).
-  final Set<String> _modifiedKeys = {};
 
   // -- Reads -----------------------------------------------------------------
 
@@ -173,79 +169,32 @@ class RigState extends ChangeNotifier {
 
   List<RigHistoryEntry> get history => List.unmodifiable(_history);
 
-  /// The user's DMM excitation reading (mV) for the device the flash doc
-  /// belongs to, or null. Cross-check diagnostics only — the ratiometric
-  /// factory calibration stays authoritative regardless.
-  double? get measuredExcitationMv => _dmmByDevice[_flashDeviceId];
-
-  /// Set (or clear, with null) the DMM reading for the flash doc's device.
-  /// No-op without a flash doc: there is no identified device to hang the
-  /// value on.
-  Future<void> setMeasuredExcitationMv(double? mv) async {
-    final id = _flashDeviceId;
-    if (id.isEmpty) return;
-    _modifiedKeys.add(_keyDmm);
-    if (mv == null) {
-      _dmmByDevice.remove(id);
-    } else {
-      _dmmByDevice[id] = mv;
-    }
-    notifyListeners();
-    await _persistDmm();
-  }
-
   // -- Flash reads (connect time) ---------------------------------------------
 
   /// A flash document just arrived from device [deviceId] (named
   /// [deviceName]): adopt it as the rig truth, restore or discard matching
-  /// pending edits, update history and change-detection, and emit a "changed
-  /// since your last visit" notice when the rig differs from what this app
-  /// last saw on this device.
+  /// pending edits, and record every populated slot in the cell history.
   void onFlashRead(String deviceId, String deviceName, DeviceFlash flash) {
-    final now = DateTime.now();
-    final notices = <String>[];
-
-    // Change detection against the stored signatures (positional: a swap of
-    // two cells correctly reports both channel slots as changed).
-    final previous = _lastSeenByDevice[deviceId];
-    if (previous != null) {
-      final current = flash.slots.signatures;
-      for (int i = 0; i < kRigSlotCount; ++i) {
-        if (previous[i] == current[i]) continue;
-        notices.add(_describeChange(i, previous[i], current[i]));
-      }
-    }
-    _lastSeenByDevice[deviceId] = flash.slots.signatures;
-    unawaited(_persistLastSeen());
+    // A link that dropped mid-read delivers with no identity — without an
+    // owning device id the document can't be attributed to anything.
+    if (deviceId.isEmpty) return;
 
     // Pending edits: restore only when they belong to this device AND the
     // device still matches their base. A changed device makes them stale —
-    // discard (the notice below says so) rather than resurrect a edit based
-    // on a rig that no longer exists.
+    // discard rather than resurrect an edit based on a rig that no longer
+    // exists.
     final pending = _pending;
-    if (pending != null) {
-      final sameDevice = pending.deviceId == deviceId;
-      final baseMatches = _signaturesEqual(
-        pending.base.signatures,
-        flash.slots.signatures,
-      );
-      if (sameDevice && baseMatches) {
-        // Restored: readings keep using the edited slots; the dirty banner
-        // comes back on its own via notifyListeners.
-      } else {
-        _pending = null;
-        if (sameDevice) {
-          notices.add(
-            'Your unsaved changes were discarded — the device changed.',
-          );
-        }
-      }
+    if (pending != null &&
+        !(pending.deviceId == deviceId &&
+            _sameCells(pending.base, flash.slots))) {
+      _pending = null;
     }
 
     _lastFlash = flash;
     _flashDeviceId = deviceId;
 
     // History: every populated slot on the device was "seen" now.
+    final now = DateTime.now();
     for (int i = 0; i < kRigSlotCount; ++i) {
       final cell = flash.slots.cellAt(i);
       if (cell != null) {
@@ -253,32 +202,14 @@ class RigState extends ChangeNotifier {
       }
     }
 
-    if (notices.isNotEmpty) {
-      _events?.emit(RigChangedSinceLastVisit(deviceName, notices));
-    }
     notifyListeners();
   }
 
-  static String _slotLabel(int i) => i < 4 ? 'CH${i + 1}' : 'Slot ${i + 1}';
-
-  static String _describeChange(int i, String? oldSig, String? newSig) {
-    final label = _slotLabel(i);
-    LoadCellProfile? parse(String? s) => s == null
-        ? null
-        : LoadCellProfile.fromJson(Map<String, dynamic>.from(jsonDecode(s)));
-    final oldCell = parse(oldSig);
-    final newCell = parse(newSig);
-    return switch ((oldCell, newCell)) {
-      (null, final n?) => '$label: added ${n.title}',
-      (final o?, null) => '$label: removed ${o.title}',
-      (final o?, final n?) => '$label: ${o.title} → ${n.title}',
-      _ => '',
-    };
-  }
-
-  static bool _signaturesEqual(List<String?> a, List<String?> b) {
-    for (int i = 0; i < a.length; ++i) {
-      if (a[i] != b[i]) return false;
+  /// Content comparison for the pending-restore check: a pure rewrite with
+  /// fresh mtimes is NOT a change, so compare the cells, not the slots.
+  static bool _sameCells(RigSlots a, RigSlots b) {
+    for (int i = 0; i < kRigSlotCount; ++i) {
+      if (a.cellAt(i) != b.cellAt(i)) return false;
     }
     return true;
   }
@@ -295,7 +226,6 @@ class RigState extends ChangeNotifier {
       deviceId: _flashDeviceId,
       base: flash!.slots,
       edited: flash.slots,
-      startedAt: DateTime.now(),
     );
   }
 
@@ -356,17 +286,14 @@ class RigState extends ChangeNotifier {
       return false;
     }
     // The device now holds exactly what we wrote: adopt it as the new flash
-    // truth, clear the pending session, and re-anchor change detection so
-    // our own write doesn't come back as a "changed elsewhere" notice.
+    // truth and clear the pending session.
     _lastFlash = DeviceFlash(board: flash.board, slots: stamped);
     _pending = null;
-    _lastSeenByDevice[pending.deviceId] = stamped.signatures;
-    unawaited(_persistLastSeen());
     notifyListeners();
     return true;
   }
 
-  // -- History + change-detection persistence -----------------------------------
+  // -- History persistence ------------------------------------------------------
 
   void _upsertHistory(
     LoadCellProfile cell,
@@ -399,79 +326,29 @@ class RigState extends ChangeNotifier {
     unawaited(_persistHistory());
   }
 
-  Future<void> _persistHistory() async {
-    _modifiedKeys.add(_keyHistory);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _keyHistory,
-      jsonEncode([for (final e in _history) e.toJson()]),
-    );
+  Future<void> _persistHistory() => _prefs.setString(
+    _keyHistory,
+    jsonEncode([for (final e in _history) e.toJson()]),
+  );
+
+  void _loadHistory() {
+    final raw = _prefs.getString(_keyHistory);
+    if (raw == null || raw.isEmpty) return;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return;
+      _history = [for (final e in decoded) ?_tryParseHistoryEntry(e)];
+    } catch (e) {
+      debugPrint('Failed to parse rig history: $e');
+    }
   }
 
-  Future<void> _persistLastSeen() async {
-    _modifiedKeys.add(_keyLastSeen);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyLastSeen, jsonEncode(_lastSeenByDevice));
-  }
-
-  Future<void> _persistDmm() async {
-    _modifiedKeys.add(_keyDmm);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyDmm, jsonEncode(_dmmByDevice));
-  }
-
-  Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-
-    if (!_modifiedKeys.contains(_keyHistory)) {
-      try {
-        final raw = prefs.getString(_keyHistory);
-        final decoded = raw == null || raw.isEmpty ? null : jsonDecode(raw);
-        if (decoded is List) {
-          _history = [
-            for (final e in decoded)
-              if (e is Map)
-                RigHistoryEntry.fromJson(Map<String, dynamic>.from(e)),
-          ];
-        }
-      } catch (e) {
-        debugPrint('Failed to parse rig history: $e');
-      }
+  /// One malformed entry drops just that entry, not the whole history.
+  static RigHistoryEntry? _tryParseHistoryEntry(Object? e) {
+    try {
+      return RigHistoryEntry.fromJson(Map<String, dynamic>.from(e as Map));
+    } catch (_) {
+      return null;
     }
-
-    if (!_modifiedKeys.contains(_keyLastSeen)) {
-      try {
-        final raw = prefs.getString(_keyLastSeen);
-        final decoded = raw == null || raw.isEmpty ? null : jsonDecode(raw);
-        if (decoded is Map) {
-          _lastSeenByDevice = {
-            for (final entry in decoded.entries)
-              entry.key as String: [
-                for (final s in entry.value as List) s is String ? s : null,
-              ],
-          };
-        }
-      } catch (e) {
-        debugPrint('Failed to parse rig last-seen: $e');
-      }
-    }
-
-    if (!_modifiedKeys.contains(_keyDmm)) {
-      try {
-        final raw = prefs.getString(_keyDmm);
-        final decoded = raw == null || raw.isEmpty ? null : jsonDecode(raw);
-        if (decoded is Map) {
-          _dmmByDevice = {
-            for (final entry in decoded.entries)
-              if (entry.value is num)
-                entry.key as String: (entry.value as num).toDouble(),
-          };
-        }
-      } catch (e) {
-        debugPrint('Failed to parse rig DMM readings: $e');
-      }
-    }
-
-    notifyListeners();
   }
 }

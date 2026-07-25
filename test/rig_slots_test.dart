@@ -72,7 +72,9 @@ void main() {
         slots: RigSlots.empty(),
       );
       final reparsed = DeviceFlash.parse(boardOnly.serialize());
-      expect(reparsed.slots.signatures, everyElement(isNull));
+      for (int i = 0; i < kRigSlotCount; ++i) {
+        expect(reparsed.slots[i], isNull, reason: 'slot $i');
+      }
       // And the board keys survive untouched.
       expect(reparsed.board.channels[0].isFactoryCalibrated, isTrue);
     });
@@ -89,7 +91,7 @@ void main() {
         ),
       );
       final doc = DeviceFlash(
-        board: BoardCalibration.nominal(),
+        board: DeviceFlash.parse(demoBoardCalibrationDoc).board,
         slots: slots,
       ).serialize();
       expect(doc.contains('lc0.name=a=b c'), isTrue);
@@ -142,23 +144,6 @@ void main() {
       final moved = slots.withSwap(0, 5);
       expect(moved.cellAt(0), isNull);
       expect(moved.cellAt(5)?.name, 'A');
-    });
-
-    test('signatures track content and ignore mtime', () {
-      final cell = LoadCellProfile(
-        name: 'A',
-        capacityKg: 100,
-        sensitivityMvV: 2,
-      );
-      final a = RigSlots.empty().withSlot(0, RigSlot(cell: cell));
-      final b = RigSlots.empty().withSlot(
-        0,
-        RigSlot(cell: cell, mtime: DateTime.utc(2026, 1, 1)),
-      );
-      expect(a.signatures, b.signatures);
-
-      final c = b.withSlot(0, RigSlot(cell: cell.copyWith(sensitivityMvV: 2.02)));
-      expect(c.signatures, isNot(b.signatures));
     });
   });
 }

@@ -23,10 +23,13 @@ void main() {
     UniversalBle.setInstance(MockBlePlatform.instance);
     final events = AppEvents();
     final link = BleLinkManager(events: events);
+    final prefs = await SharedPreferences.getInstance();
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider<AppSettings>(create: (_) => AppSettings()),
+          ChangeNotifierProvider<AppSettings>.value(
+            value: AppSettings(prefs: prefs),
+          ),
           ChangeNotifierProvider<BleLinkManager>.value(value: link),
         ],
         child: const MaterialApp(home: Scaffold(body: SettingsTab())),

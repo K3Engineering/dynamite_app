@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import '../services/adc_protocol.dart';
 
 /// Analog front-end constants (fixed by hardware): the load cell signal
@@ -107,9 +105,8 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 /// behavior.
 class ChannelBoardCalibration {
   ChannelBoardCalibration({List<double>? resistors, List<double>? readings})
-    : resistors = List.unmodifiable(resistors ?? nominalLadderResistors),
+    : resistors = _validatedResistors(resistors),
       readings = _validatedReadings(readings) {
-    assert(this.resistors.length == kLadderResistorCount);
     final r = this.readings;
     if (r != null) {
       // Sort the five points ascending by raw reading for interpolation.
@@ -121,12 +118,39 @@ class ChannelBoardCalibration {
     }
   }
 
-  /// Reject degenerate readings (duplicate points would divide by zero
-  /// during interpolation) by treating the channel as uncalibrated.
+  /// Corrupt resistor values degrade to the nominal ladder: a real ladder
+  /// resistor is ~10k/~10 ohms, and a zero or negative value would produce
+  /// nonsense setpoints (or a zero ladder total → NaN).
+  static List<double> _validatedResistors(List<double>? r) {
+    if (r == null) return nominalLadderResistors;
+    assert(r.length == kLadderResistorCount);
+    for (final v in r) {
+      if (v <= 0) return nominalLadderResistors;
+    }
+    return List.unmodifiable(r);
+  }
+
+  /// Reject unusable readings by treating the channel as uncalibrated:
+  /// values beyond the ADC's bipolar range can't have come from hardware,
+  /// and duplicates (exact or near) would divide by ~zero during
+  /// interpolation — a real ladder spread is millions of counts, so a
+  /// sub-thousand-count gap can only be corrupt flash.
   static List<double>? _validatedReadings(List<double>? r) {
     if (r == null) return null;
     assert(r.length == kCalPointCount);
-    if (r.toSet().length != r.length) return null;
+    final sorted = [...r]..sort();
+    for (final v in sorted) {
+      // 'NaN'/'Infinity' parse fine with double.tryParse — reject them and
+      // anything beyond the ADC's bipolar range: neither came from hardware.
+      if (!v.isFinite ||
+          v >= adcCountsPerPolarity ||
+          v < -adcCountsPerPolarity) {
+        return null;
+      }
+    }
+    for (int i = 1; i < sorted.length; ++i) {
+      if (sorted[i] - sorted[i - 1] < 1000) return null;
+    }
     return List.unmodifiable(r);
   }
 
@@ -150,23 +174,20 @@ class ChannelBoardCalibration {
   /// Map an absolute raw ADC reading to mV/V of excitation via the piecewise
   /// map. Out-of-range readings extend the outermost segment. Readings are
   /// absolute (offset included): net values come from subtracting the map at
-  /// the tare point — see [ChannelCalibration.netMvV].
+  /// the tare point — see `ForceUnit.converterFor`.
   double mvVFromRaw(double raw) {
     final r = readings;
     if (r == null) return raw / nominalCountsPerMvV;
     final xs = _sortedRaw;
     final ys = _sortedSetpoints;
-    if (raw <= xs[0]) {
-      return ys[0] + (raw - xs[0]) * (ys[1] - ys[0]) / (xs[1] - xs[0]);
+    // Right endpoint of the segment containing raw, clamped to the outer
+    // segments: below/above the cal range extrapolates along them.
+    var i = 1;
+    while (i < xs.length - 1 && raw > xs[i]) {
+      ++i;
     }
-    for (int i = 1; i < xs.length; ++i) {
-      if (raw <= xs[i]) {
-        return ys[i - 1] +
-            (raw - xs[i - 1]) * (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
-      }
-    }
-    final n = xs.length - 1;
-    return ys[n] + (raw - xs[n]) * (ys[n] - ys[n - 1]) / (xs[n] - xs[n - 1]);
+    return ys[i - 1] +
+        (raw - xs[i - 1]) * (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
   }
 
   // -- Diagnostics ----------------------------------------------------------
@@ -252,13 +273,6 @@ class BoardCalibration {
   /// Factory DMM reading of the excitation (`cal.exc.mv`), if any.
   final double? excitationMv;
 
-  /// Every channel on the nominal chain (no factory data anywhere).
-  factory BoardCalibration.nominal() => BoardCalibration(
-    channels: [
-      for (int i = 0; i < nwNumAdcChan; ++i) ChannelBoardCalibration(),
-    ],
-  );
-
   /// Parse the board-calibration keys of a `key=value` flash document.
   /// Slot (`lcN.*`) and other unknown keys are ignored. Never throws — see
   /// [DeviceFlash.parse].
@@ -287,11 +301,6 @@ class BoardCalibration {
       excitationMv: double.tryParse(kv['cal.exc.mv'] ?? ''),
     );
   }
-
-  /// Serialize the board-calibration keys as a full flash document (no
-  /// slots). Convenience wrapper over [DeviceFlash.serialize].
-  String serialize() =>
-      DeviceFlash(board: this, slots: RigSlots.empty()).serialize();
 }
 
 /// Split a `key=value` flash document into a map. Lines without `key=value`
@@ -317,6 +326,11 @@ Map<String, String> parseFlashKv(String text) {
 /// the channels (the plugged-in rig); the rest are spares carried on the
 /// device. Constant for the first prototype.
 const int kRigSlotCount = 10;
+
+/// Display label for slot [i]: the first [nwNumAdcChan] slots are the
+/// channels ('CH 1'…), the rest numbered spares ('Slot 5'…).
+String rigSlotTitle(int i) =>
+    i < nwNumAdcChan ? 'CH ${i + 1}' : 'Slot ${i + 1}';
 
 /// One populated device slot: the cell plus the write timestamp from flash
 /// (display metadata only — never a sync arbiter).
@@ -367,14 +381,7 @@ class RigSlots {
 
   /// Channel row titles: the cell's title, or the bare channel name.
   List<String> get channelTitles => [
-    for (int i = 0; i < nwNumAdcChan; ++i) cellAt(i)?.title ?? 'CH ${i + 1}',
-  ];
-
-  /// Per-slot content signatures (cell JSON, null for empty). Compared
-  /// against a stored copy to detect "changed since your last visit"; mtime
-  /// is deliberately excluded (a pure rewrite is not a change).
-  List<String?> get signatures => [
-    for (final s in slots) s == null ? null : jsonEncode(s.cell.toJson()),
+    for (int i = 0; i < nwNumAdcChan; ++i) cellAt(i)?.title ?? rigSlotTitle(i),
   ];
 
   RigSlots withSlot(int i, RigSlot? slot) => RigSlots([
@@ -563,9 +570,9 @@ class LoadCellProfile {
 // ---------------------------------------------------------------------------
 
 /// Everything needed to convert one channel's raw ADC counts into display
-/// units: the board piecewise map plus the assigned load cell (if any).
-/// Net values are differences of the board map between a reading and the
-/// tare point, so piecewise nonlinearity is applied on both sides.
+/// units: the board piecewise map plus the assigned load cell (if any). Net
+/// values are differences of the board map between a reading and the tare
+/// point, so piecewise nonlinearity is applied on both sides.
 class ChannelCalibration {
   const ChannelCalibration({required this.board, this.loadCell});
 
@@ -574,29 +581,6 @@ class ChannelCalibration {
   /// Assigned load cell; null means "electrical units only" — force
   /// conversions report unavailable and the UI shows '—'.
   final LoadCellProfile? loadCell;
-
-  double netMvV(double raw, double tare) =>
-      board.mvVFromRaw(raw) - board.mvVFromRaw(tare);
-
-  /// Net mV at the load cell output, via the board's effective excitation.
-  double netMv(double raw, double tare) =>
-      netMvV(raw, tare) * board.effectiveExcitationV;
-
-  double netRaw(double raw, double tare) => raw - tare;
-
-  /// Net force in kgf, or null when no load cell is assigned.
-  double? netKgf(double raw, double tare) {
-    final lc = loadCell;
-    if (lc == null) return null;
-    return netMvV(raw, tare) * lc.kgfPerMvV;
-  }
-
-  /// Local piecewise slope (mV/V per count) at [raw] — for derivative
-  /// display, where differencing the map would need two evaluations anyway.
-  double mvVPerCountAt(double raw) {
-    const h = 0.5;
-    return (board.mvVFromRaw(raw + h) - board.mvVFromRaw(raw - h)) / (2 * h);
-  }
 
   /// Session-snapshot serialization.
   Map<String, dynamic> toJson() => {
