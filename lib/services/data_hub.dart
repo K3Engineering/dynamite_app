@@ -218,11 +218,22 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
 
   bool get taring => (_tareCount > 0);
 
-  /// Request a new tare operation (zeros readings using next N samples).
+  /// Wall-clock deadline for an in-progress tare: a window that stops
+  /// filling (device gone silent) would otherwise leave the hub "taring"
+  /// forever — recording stays refused and the user gets no completion.
+  /// Generous (several window lengths) so a lossy link pausing the average
+  /// doesn't abort a legitimate tare. Checked in [commitBatch].
+  static const Duration _tareTimeout = Duration(milliseconds: _tareWindow * 5);
+  DateTime _tareDeadline = DateTime.fromMillisecondsSinceEpoch(0);
+
+  /// Request a new tare operation (zeros readings using the next N real
+  /// samples). The previous offsets stay in effect while the window fills —
+  /// zeroing them up front would make live values jump to absolute
+  /// (offset-inclusive) readings for a second, then snap back.
   void requestTare() {
     _tareCount = _tareWindow;
+    _tareDeadline = DateTime.now().add(_tareTimeout);
     for (int i = 0; i < numAdcChannels; ++i) {
-      tare[i] = 0;
       _runningTotal[i] = 0;
     }
   }
@@ -290,16 +301,52 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
         listener(startIdx, count);
       }
     }
+    // Abandon a tare whose window stopped filling (device gone silent
+    // mid-tare): the pre-tare offsets are still in effect — nothing was
+    // zeroed up front — and the user can simply tare again.
+    if (taring && DateTime.now().isAfter(_tareDeadline)) {
+      _tareCount = 0;
+      for (int i = 0; i < numAdcChannels; ++i) {
+        _runningTotal[i] = 0;
+      }
+    }
     lastDataAt = DateTime.now();
     gaps.pruneBefore(totalSamples - maxDataSz); // ring-wrap hygiene
     notifyListeners();
   }
 
   /// Replace the board calibration (a freshly-parsed factory read arrived).
+  /// Content-equal updates are a no-op (same rule as [updateLoadCells]): a
+  /// reconnect re-reading an identical document must not invalidate the
+  /// graph segment caches.
   void updateBoardCalibration(BoardCalibration calibration) {
+    final prev = _boardCalibration;
+    if (prev != null && _sameBoardCalibration(prev, calibration)) return;
     _boardCalibration = calibration;
     _calibrationVersion++;
     notifyListeners();
+  }
+
+  /// Content equality for cache invalidation: the channels' resistors and
+  /// readings (the conversion inputs). factoryDate/excitationMv are display
+  /// metadata — they change nothing the graphs render.
+  static bool _sameBoardCalibration(BoardCalibration a, BoardCalibration b) {
+    for (int i = 0; i < a.channels.length; ++i) {
+      final x = a.channels[i];
+      final y = b.channels[i];
+      for (int k = 0; k < x.resistors.length; ++k) {
+        if (x.resistors[k] != y.resistors[k]) return false;
+      }
+      final xr = x.readings;
+      final yr = y.readings;
+      if ((xr == null) != (yr == null)) return false;
+      if (xr != null && yr != null) {
+        for (int k = 0; k < xr.length; ++k) {
+          if (xr[k] != yr[k]) return false;
+        }
+      }
+    }
+    return true;
   }
 
   /// Replace the per-channel load-cell assignments (the rig's slots changed:

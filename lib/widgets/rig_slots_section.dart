@@ -23,9 +23,9 @@ const quickSensitivitiesMvV = <double>[1, 2, 3];
 /// Edits and swaps take effect in this app immediately and raise the dirty
 /// state of the status bar; nothing reaches the device until "Save to
 /// device" (the flash doc is the rig's single truth — reads are automatic,
-/// writes are explicit). The bar is ALWAYS present — clean state reads
-/// "All settings saved to device." — so the list below never jumps when
-/// the dirty state flips.
+/// writes are explicit). The bar is ALWAYS present — the clean state reads
+/// "Settings shown are read from the device." — so the list below never
+/// jumps when the dirty state flips.
 class RigSlotsSection extends StatefulWidget {
   const RigSlotsSection({super.key});
 
@@ -154,6 +154,10 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   /// — to the row's X for the whole drag, so it slides straight up and
   /// down the list instead of following the pointer sideways.
   ///
+  /// All edit affordances (tap, drag start, drop) close while a save is in
+  /// flight: an edit landing mid-write would mutate the pending session the
+  /// save already snapshotted (see RigState.saveToDevice's state guard).
+  ///
   /// TODO: also start the drag on a long-press anywhere on the row — the
   /// touch-platform pattern in ReorderableListView — while keeping the
   /// handle for immediate dragging on desktop.
@@ -169,7 +173,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
 
     return DragTarget<int>(
       // Dropping a row onto itself is not offered (and not highlighted).
-      onWillAcceptWithDetails: (details) => details.data != i,
+      onWillAcceptWithDetails: (details) => !_saving && details.data != i,
       onAcceptWithDetails: (details) => rig.swapSlots(details.data, i),
       // The tile is built inside the builder so the drag feedback can be
       // anchored to this row's render box (rowContext).
@@ -190,7 +194,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
               Icons.add_circle_outline,
               color: theme.colorScheme.outline,
             ),
-            onTap: () => showAddToSlot(context, rig, i),
+            onTap: _saving ? null : () => showAddToSlot(context, rig, i),
           );
         } else {
           final cell = slot.cell;
@@ -204,6 +208,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
             trailing: Draggable<int>(
               data: i,
               axis: Axis.vertical,
+              maxSimultaneousDrags: _saving ? 0 : 1,
               // Anchor the feedback to the row, not the handle: the
               // default childDragAnchorStrategy would pin the feedback's
               // X to the handle's left edge, hanging the full-width row
@@ -234,7 +239,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
                 ),
               ),
             ),
-            onTap: () => showSlotEditor(context, rig, i),
+            onTap: _saving ? null : () => showSlotEditor(context, rig, i),
           );
         }
 
@@ -342,7 +347,10 @@ class _StatusBar extends StatelessWidget {
                 dirty
                     ? 'Changes not saved to device — readings in this app '
                           'already use them.'
-                    : 'All settings saved to device.',
+                    // Provenance, not a success claim: the clean state also
+                    // covers a revert and a stale-edit discard, where "saved"
+                    // would be a lie.
+                    : 'Settings shown are read from the device.',
                 style: theme.textTheme.bodySmall?.copyWith(color: fg),
               ),
             ),
@@ -629,9 +637,11 @@ String _num(double v) =>
     v == v.roundToDouble() ? v.toInt().toString() : v.toString();
 
 /// Parse a typed-in number, tolerating a comma decimal separator (some
-/// locales' decimal key inserts one). Input that already has a '.', or has
-/// several commas, is parsed as-is — thousands-grouped text fails to parse
-/// rather than silently misparsing.
+/// locales' decimal key inserts one). A single comma with no '.' is treated
+/// as a decimal separator — that reads the cal-cert example "2,007"
+/// correctly as 2.007, at the cost of reading thousands-grouped "1,000" as
+/// 1.0 (an accepted ambiguity in the decimal-comma direction; inputs with
+/// several commas, or both separators, fail to parse rather than misparse).
 double? _typedNumber(String s) {
   final t = s.trim();
   if (!t.contains('.') && t.indexOf(',') == t.lastIndexOf(',')) {

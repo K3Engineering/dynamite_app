@@ -97,6 +97,42 @@ void main() {
       expect(doc.contains('lc0.name=a=b c'), isTrue);
       expect(DeviceFlash.parse(doc).slots.cellAt(0)?.name, 'a=b c');
     });
+
+    test('unknown keys are preserved verbatim through parse + serialize', () {
+      const withExtras =
+          'K3CAL1\n'
+          'cal.date=2026-07-20\n'
+          'hw.rev=3\n'
+          'future.tooling=keep me\n'
+          'ch4.raw=1,2,3,4,5\n' // a future 8-channel device's key
+          'lc0.cap=100\n'
+          'lc0.sens=2\n'
+          'END\n';
+      final flash = DeviceFlash.parse(withExtras);
+      expect(flash.extraLines, [
+        'hw.rev=3',
+        'future.tooling=keep me',
+        'ch4.raw=1,2,3,4,5',
+      ]);
+
+      final roundTripped = DeviceFlash.parse(flash.serialize());
+      expect(roundTripped.extraLines, flash.extraLines);
+      expect(roundTripped.slots.cellAt(0)?.capacityKg, 100);
+      expect(roundTripped.board.factoryDate, '2026-07-20');
+    });
+
+    test('a blank-flash board does not get nominal resistors stamped', () {
+      // No ch* keys in the source: serializing must not invent them —
+      // nominal values written as 'chN.r' would pose as characterization.
+      final flash = DeviceFlash.parse('K3CAL1\nlc0.cap=100\nlc0.sens=2\nEND\n');
+      final doc = flash.serialize();
+      expect(doc.contains('ch'), isFalse, reason: doc);
+
+      // Characterized values DO round-trip (the fixture's real board).
+      final realDoc = DeviceFlash.parse(demoBoardCalibrationDoc).serialize();
+      expect(realDoc.contains('ch0.r='), isTrue);
+      expect(realDoc.contains('ch3.raw='), isTrue);
+    });
   });
 
   group('RigSlots', () {

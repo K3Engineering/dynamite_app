@@ -457,6 +457,27 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     );
   }
 
+  /// Read the flash document back from the connected device (save
+  /// verification in `RigState.saveToDevice`). Null when nothing is
+  /// connected or the read fails — a failed verification must fail the save,
+  /// never crash it.
+  @override
+  Future<String?> readFlashDoc() async {
+    final deviceId = _link.deviceId;
+    if (deviceId.isEmpty) return null;
+    if (deviceId == DeviceLink.demoDeviceId) return _demoFlashDoc;
+    try {
+      final bytes = await UniversalBle.read(
+        deviceId,
+        btServiceId,
+        btChrCalibration,
+      );
+      return utf8.decode(bytes, allowMalformed: true);
+    } catch (_) {
+      return null;
+    }
+  }
+
   BleLinkManager({required AppEvents events}) : _events = events {
     if (useMockBt) {
       UniversalBle.setInstance(MockBlePlatform.instance);
