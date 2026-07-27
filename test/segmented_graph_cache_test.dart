@@ -17,7 +17,10 @@ class _Harness {
 
   /// Run one [SegmentedGraphCache.paint] frame with test-friendly defaults:
   /// gw 400 x gh 100 at dpr 1 => 1 px/sample for a 400-sample window, so the
-  /// bake target span equals kSegmentTargetPx samples (200).
+  /// bake target span equals kSegmentTargetPx samples (200). [tailSpan] is
+  /// small enough (10) to leave existing coverage scenarios unaffected; the
+  /// fake renderer reports tail provisionality the same way the envelope
+  /// renderer does (bake end within one tail span of the data edge).
   bool paint({
     required int viewStart,
     required int viewSpan,
@@ -29,6 +32,7 @@ class _Harness {
     double yMax = 100,
     List<Object?> configKey = const ['k'],
     double maxDirectGapPx = double.infinity,
+    int tailSpan = 10,
   }) {
     calls.clear();
     final recorder = ui.PictureRecorder();
@@ -44,6 +48,7 @@ class _Harness {
       yMin: yMin,
       yMax: yMax,
       totalSamples: totalSamples,
+      tailSpan: tailSpan,
       hPad: kSegmentImagePad,
       vPad: kSegmentImagePad,
       maxDirectGapPx: maxDirectGapPx,
@@ -54,7 +59,10 @@ class _Harness {
           texW: texW,
           onFrameCanvas: identical(canvas, frameCanvas),
         ));
-        return texW.toDouble();
+        return (
+          contentW: texW.toDouble(),
+          tailProvisional: end + tailSpan > totalSamples,
+        );
       },
     );
     recorder.endRecording().dispose();
@@ -256,6 +264,57 @@ void main() {
       // Back at the origin: the old coverage is gone and must re-bake.
       expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 4400), isTrue);
       expect(h.bakes.single.start, 0);
+    });
+  });
+
+  group('SegmentedGraphCache provisional tail repair', () {
+    test('a segment baked at the data edge is re-baked once its tail '
+        'completes', () {
+      // Bake [0, 200) with the data edge inside its tail span (205 <
+      // 200 + tailSpan=10): the bake is provisional. The 5-sample sliver
+      // stays a direct draw.
+      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 205), isTrue);
+      expect(h.bakes.single, (
+        start: 0,
+        end: 200,
+        texW: 200,
+        onFrameCanvas: false,
+      ));
+
+      // Tail not complete yet (209 < 200 + 10): no repair, no other work.
+      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 209), isFalse);
+
+      // Tail complete (210 >= 200 + 10): re-baked in place (this is what
+      // erases the stale live-edge seam before it can scroll far).
+      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 210), isTrue);
+      expect(h.bakes.single, (
+        start: 0,
+        end: 200,
+        texW: 200,
+        onFrameCanvas: false,
+      ));
+
+      // Repaired: the fresh bake's tail is complete, so no further work.
+      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 210), isFalse);
+    });
+
+    test('repair is skipped while the segment is outside the view', () {
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 205);
+
+      // Pan right (within the eviction margin, past the data edge): the
+      // tail has completed, but the segment is not visible, so no repair
+      // bake is spent on it.
+      expect(h.paint(viewStart: 800, viewSpan: 400, totalSamples: 210), isFalse);
+      expect(h.calls, isEmpty);
+
+      // Pan back: the stale seam is visible again and repaired.
+      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 210), isTrue);
+      expect(h.bakes.single, (
+        start: 0,
+        end: 200,
+        texW: 200,
+        onFrameCanvas: false,
+      ));
     });
   });
 }
