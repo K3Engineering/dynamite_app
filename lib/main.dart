@@ -191,8 +191,9 @@ class DynoApp extends StatelessWidget {
       // localizations context its Material components need. Inert in release
       // builds and in tests (see [perfOptimizerEnabled]).
       builder: (context, child) => PerformanceOptimizer(
-        enabled: perfOptimizerEnabled,
-        showDashboard: perfOptimizerEnabled,
+        enabled: true,
+        showDashboard: true,
+        enableInReleaseMode: true,
         child: child ?? const SizedBox.shrink(),
       ),
       home: const AppShell(),
