@@ -1,14 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:file_selector/file_selector.dart';
 
 import '../models/app_settings.dart';
-import '../models/display_unit.dart';
+import '../services/csv_export.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
 import '../utils/format.dart';
@@ -111,8 +108,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                     child: Text('Edit notes'),
                   ),
                   const PopupMenuItem(
-                    value: 'export_csv',
-                    child: Text('Export CSV'),
+                    value: 'download_csv',
+                    child: Text('Download CSV'),
+                  ),
+                  PopupMenuItem(
+                    value: 'share_csv',
+                    enabled: csvShareSupportedHere,
+                    child: Text(
+                      'Share CSV'
+                      '${csvShareSupportedHere ? '' : ' (not supported here)'}',
+                    ),
                   ),
                   const PopupMenuItem(
                     value: 'delete',
@@ -246,16 +251,27 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
           const SizedBox(height: 24),
 
-          // Export buttons
+          // Export buttons: download (save-as dialog / browser download) on
+          // every platform, share sheet wherever the OS has one.
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: () => _exportCsv(session, data),
+                    onPressed: () => _downloadCsv(session, data),
                     icon: const Icon(Icons.download),
-                    label: const Text('Export CSV'),
+                    label: const Text('Download CSV'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: csvShareSupportedHere
+                        ? () => _shareCsv(session, data)
+                        : null,
+                    icon: const Icon(Icons.share),
+                    label: const Text('Share CSV'),
                   ),
                 ),
               ],
@@ -274,10 +290,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         await _showRenameDialog(session);
       case 'notes':
         await _showNotesDialog(session);
-      case 'export_csv':
+      case 'download_csv':
         final state = _loadState;
         if (state is _Ready && state.data != null) {
-          await _exportCsv(session, state.data!);
+          await _downloadCsv(session, state.data!);
+        }
+      case 'share_csv':
+        final state = _loadState;
+        if (state is _Ready && state.data != null) {
+          await _shareCsv(session, state.data!);
         }
       case 'delete':
         await _deleteAndPop(session);
@@ -309,100 +330,49 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     }
   }
 
-  Future<void> _exportCsv(Session session, SessionData data) async {
-    final labels = parseJsonColumn(
-      session.channelLabels,
-      data.channels.length,
-      convert: (e) => e.toString(),
-      fallback: (i) => 'Ch ${i + 1}',
-    );
+  Future<void> _downloadCsv(Session session, SessionData data) =>
+      _runCsvAction(() => downloadSessionCsv(session: session, data: data));
 
-    // TODO(perf): build this incrementally (chunked writes) — a long session
-    // produces a very large single string (see SessionStorage.loadSession's
-    // own note about whole-session materialization).
-    final buf = StringBuffer();
-    buf.write('time_s');
-    for (int ch = 0; ch < data.channels.length; ch++) {
-      final label = _csvCell(labels[ch]);
-      buf.write(',${label}_raw,${label}_kgf');
+  Future<void> _shareCsv(Session session, SessionData data) => _runCsvAction(
+    () => shareSessionCsv(
+      session: session,
+      data: data,
+      sharePositionOrigin: _shareAnchor(),
+    ),
+  );
+
+  /// Run a CSV download/share action and surface its outcome as a snackbar:
+  /// the returned result message, the failure, or nothing when the user
+  /// cancelled (a null message).
+  Future<void> _runCsvAction(Future<String?> Function() action) async {
+    String? message;
+    Object? error;
+    try {
+      message = await action();
+    } catch (e) {
+      error = e;
     }
-    buf.writeln();
-
-    for (int s = 0; s < data.sampleCount; s++) {
-      buf.write((s / data.sampleRate).toStringAsFixed(4));
-      if (data.gaps.contains(s)) {
-        // Dropped sample: the buffer holds a fabricated (held) value, so emit
-        // blank cells rather than fake data.
-        for (int ch = 0; ch < data.channels.length; ch++) {
-          buf.write(',,');
-        }
-      } else {
-        for (int ch = 0; ch < data.channels.length; ch++) {
-          final raw = data.channels[ch][s];
-          // kgf via the calibration recorded with the session; blank when
-          // the channel had no load cell assigned.
-          final kgf = DisplayUnit.kgf
-              .converterFor(data.calibrationFor(ch), data.tares[ch])
-              ?.call(raw.toDouble());
-          buf.write(kgf == null ? ',$raw,' : ',$raw,${kgf.toStringAsFixed(6)}');
-        }
-      }
-      buf.writeln();
-    }
-
-    // Save via a native "Save As" dialog. On web there is no save-location
-    // picker, so hand the bytes to the browser, which downloads the file.
-    final bytes = Uint8List.fromList(utf8.encode(buf.toString()));
-    final csvName = _csvFileName(session.name);
-    final xFile = XFile.fromData(bytes, mimeType: 'text/csv', name: csvName);
-
-    String savedTo;
-    if (kIsWeb) {
-      // Triggers a browser download to the user's Downloads folder.
-      await xFile.saveTo(csvName);
-      savedTo = csvName;
-    } else {
-      const typeGroup = XTypeGroup(
-        label: 'CSV',
-        extensions: ['csv'],
-        mimeTypes: ['text/csv'],
-      );
-      final location = await getSaveLocation(
-        suggestedName: csvName,
-        acceptedTypeGroups: const [typeGroup],
-      );
-      if (location == null) {
-        // User cancelled the dialog.
-        return;
-      }
-      await xFile.saveTo(location.path);
-      savedTo = location.path;
-    }
-
-    if (mounted) {
+    if (!mounted) return;
+    if (error != null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('Exported to $savedTo')));
+      ).showSnackBar(SnackBar(content: Text('CSV export failed: $error')));
+    } else if (message != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
+  }
+
+  /// Anchor rect for the iPad share popover (the whole screen when invoked
+  /// from the app-bar menu or the button row).
+  Rect? _shareAnchor() {
+    final box = context.findRenderObject();
+    return box is RenderBox ? box.localToGlobal(Offset.zero) & box.size : null;
   }
 }
 
 // -- Load state --
-
-/// Escape a CSV header cell that contains separators, quotes or newlines.
-String _csvCell(String s) =>
-    s.contains(RegExp(r'[,"\n]')) ? '"${s.replaceAll('"', '""')}"' : s;
-
-/// The CSV filename for a session: the session name with characters that are
-/// illegal in Windows/macOS/Android filenames replaced (auto session names
-/// contain `/` and `:` — e.g. `7/20 14:05:32`), and trailing dots/spaces
-/// (illegal on Windows) trimmed.
-String _csvFileName(String sessionName) {
-  final base = sessionName.isEmpty ? 'session' : sessionName;
-  final safe = base.replaceAll(RegExp(r'[\\/:*?"<>|]'), '-');
-  final trimmed = safe.replaceAll(RegExp(r'[. ]+$'), '');
-  return '${trimmed.isEmpty ? 'session' : trimmed}.csv';
-}
 
 /// Load state for the session's sample data: still loading, failed, or ready
 /// (data null means the session has no chunks).
