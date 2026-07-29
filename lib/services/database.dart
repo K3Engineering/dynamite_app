@@ -117,6 +117,7 @@ class AppDatabase extends _$AppDatabase {
 
   /// Create a new recording session row, marked incomplete until
   /// [completeSession] finalizes it. Returns the generated id.
+  /// [createdAt] defaults to now; tests inject it to control ordering ties.
   Future<int> createSession({
     required String name,
     required int sampleRate,
@@ -125,11 +126,12 @@ class AppDatabase extends _$AppDatabase {
     required String tares,
     required String calibrationJson,
     required String visibleChannels,
+    DateTime? createdAt,
   }) {
     return into(sessions).insert(
       SessionsCompanion.insert(
         name: Value(name),
-        createdAt: DateTime.now(),
+        createdAt: createdAt ?? DateTime.now(),
         sampleRate: sampleRate,
         channelCount: channelCount,
         channelLabels: channelLabels,
@@ -188,11 +190,17 @@ class AppDatabase extends _$AppDatabase {
     return _updateSession(id, SessionsCompanion(visibleChannels: Value(json)));
   }
 
-  /// Stream all completed sessions, newest first (reactive).
+  /// Stream all completed sessions, newest first (reactive). createdAt is
+  /// stored at one-second resolution, so sessions created within the same
+  /// second tie — break ties by id (monotonic with insertion) to keep the
+  /// order total and rows from swapping between stream emissions.
   Stream<List<Session>> watchAllSessions() {
     return (select(sessions)
           ..where((t) => t.isCompleted.equals(true))
-          ..orderBy([(t) => OrderingTerm.desc(t.createdAt)]))
+          ..orderBy([
+            (t) => OrderingTerm.desc(t.createdAt),
+            (t) => OrderingTerm.desc(t.id),
+          ]))
         .watch();
   }
 
