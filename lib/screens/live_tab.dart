@@ -565,6 +565,9 @@ class ActionButtons extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Narrow select: rebuilds this row only on taring edges — the hub's
+    // per-packet notifies re-run the selector without dirtying the widget.
+    final taring = context.select<DataHub, bool>((h) => h.taring);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
@@ -586,7 +589,7 @@ class ActionButtons extends StatelessWidget {
           OutlinedButton.icon(
             onPressed: onTare,
             icon: const Icon(Icons.exposure_zero),
-            label: const Text('TARE'),
+            label: Text(taring ? 'TARING' : 'TARE'),
           ),
         ],
       ),

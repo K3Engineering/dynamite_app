@@ -236,6 +236,9 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     for (int i = 0; i < numAdcChannels; ++i) {
       _runningTotal[i] = 0;
     }
+    // Notify so observers of [taring] (the TARE button's "TARING" label)
+    // flip on the tap rather than on the next packet's [commitBatch].
+    notifyListeners();
   }
 
   /// Append one decoded sample (one value per channel). Samples are always
