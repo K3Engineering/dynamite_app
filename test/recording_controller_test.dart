@@ -95,7 +95,7 @@ void main() {
       expect(saved, isNotNull);
       expect(saved!.isCompleted, isTrue);
       expect(saved.sampleCount, n);
-      expect(saved.name, matches(RegExp(r'^\d+/\d+ \d+:\d{2}:\d{2}$')));
+      expect(saved.name, matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$')));
       expect(stop.name, saved.name);
       expect(
         saved.channelLabels,
@@ -162,6 +162,22 @@ void main() {
       expect(stop.error, isNotNull);
     },
   );
+
+  group('autoSessionName', () {
+    test('ISO Y-M-D with 24h zero-padded H:MM:SS', () {
+      expect(
+        RecordingController.autoSessionName(DateTime(2026, 7, 29, 14, 5, 32)),
+        '2026-07-29 14:05:32',
+      );
+    });
+
+    test('zero-pads every field (CSV filenames sort chronologically)', () {
+      expect(
+        RecordingController.autoSessionName(DateTime(2026, 1, 5, 9, 5, 3)),
+        '2026-01-05 09:05:03',
+      );
+    });
+  });
 }
 
 /// A [BleLinkManager] whose streaming state is a plain settable flag, so

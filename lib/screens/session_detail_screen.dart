@@ -97,7 +97,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         return Scaffold(
           appBar: AppBar(
             title: Text(
-              session.name.isEmpty ? 'Untitled Session' : session.name,
+              session.name.isEmpty ? untitledSessionName : session.name,
             ),
             actions: [
               PopupMenuButton<String>(

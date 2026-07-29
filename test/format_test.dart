@@ -2,10 +2,52 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/utils/format.dart';
 
-/// Tests for [formatRelativeAge]'s coarse bucket ladder — the Devices tab's
+/// Tests for the shared formatters: [formatDuration]'s unit ladder,
+/// [formatDate]/[formatTimestamp]'s ISO zero-padding, and
+/// [formatRelativeAge]'s coarse bucket ladder — the Devices tab's
 /// "Last seen/connected" ages deliberately change rarely instead of ticking
 /// every second.
 void main() {
+  group('formatDuration', () {
+    test('below a minute is seconds only', () {
+      expect(formatDuration(Duration.zero), '0s');
+      expect(formatDuration(const Duration(seconds: 59)), '59s');
+    });
+
+    test('below an hour is minutes and seconds', () {
+      expect(formatDuration(const Duration(seconds: 60)), '1m 0s');
+      expect(formatDuration(const Duration(minutes: 3, seconds: 12)), '3m 12s');
+      expect(formatDuration(const Duration(minutes: 59, seconds: 59)), '59m 59s');
+    });
+
+    test('an hour and beyond drops the seconds', () {
+      expect(formatDuration(const Duration(hours: 1)), '1h 0m');
+      expect(formatDuration(const Duration(hours: 1, minutes: 15)), '1h 15m');
+      expect(formatDuration(const Duration(hours: 26, minutes: 30)), '26h 30m');
+    });
+  });
+
+  group('formatDate', () {
+    test('ISO Y-M-D, zero-padded', () {
+      expect(formatDate(DateTime(2026, 7, 20)), '2026-07-20');
+      expect(formatDate(DateTime(2026, 1, 5)), '2026-01-05');
+      expect(formatDate(DateTime(2025, 12, 31)), '2025-12-31');
+    });
+  });
+
+  group('formatTimestamp', () {
+    test('ISO date plus 24h zero-padded time, minutes precision', () {
+      expect(formatTimestamp(DateTime(2026, 7, 29, 14, 5)), '2026-07-29 14:05');
+      expect(formatTimestamp(DateTime(2026, 7, 29, 9, 5)), '2026-07-29 09:05');
+      expect(formatTimestamp(DateTime(2026, 7, 29, 23, 59)), '2026-07-29 23:59');
+      // Seconds never render.
+      expect(
+        formatTimestamp(DateTime(2026, 7, 29, 14, 5, 59)),
+        '2026-07-29 14:05',
+      );
+    });
+  });
+
   test('under five seconds is "just now"', () {
     expect(formatRelativeAge(Duration.zero), 'just now');
     expect(formatRelativeAge(const Duration(seconds: 4)), 'just now');

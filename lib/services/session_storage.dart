@@ -335,7 +335,10 @@ class SessionData implements GraphDataSource {
   /// Dropped-sample ranges (session-relative). The channel data holds held
   /// values across these ranges, so stats/buckets need no exclusion logic;
   /// renderers use this to hatch and break the polyline, and CSV export
-  /// blanks these rows. Empty for crash-recovered sessions (gap info lost).
+  /// blanks these rows. Crash-recovered sessions keep the ranges the live
+  /// writer persisted incrementally up to its last chunk flush (see
+  /// [AppDatabase.setSessionGaps]); a crash before the first flush leaves
+  /// this empty.
   @override
   final GapList gaps;
 

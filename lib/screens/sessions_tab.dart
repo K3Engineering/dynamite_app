@@ -137,14 +137,14 @@ class _SessionCard extends StatelessWidget {
         child: ListTile(
           onTap: onTap,
           title: Text(
-            session.name.isEmpty ? 'Untitled' : session.name,
+            session.name.isEmpty ? untitledSessionName : session.name,
             style: const TextStyle(fontWeight: FontWeight.w500),
           ),
           // No peak value here: peaks are per-channel (see the detail view);
           // the stored row-wide peak is a max over all channels and reads
           // inconsistent next to them.
           subtitle: Text(
-            '${formatDate(session.createdAt)} · $durationStr · '
+            '${formatTimestamp(session.createdAt)} · $durationStr · '
             '${session.channelCount} ch',
           ),
           trailing: const Icon(Icons.chevron_right),

@@ -106,8 +106,9 @@ class RecordingController extends ChangeNotifier {
   /// (via [SessionStorage.startSession]) and latch them here.
   ///
   /// [name] is the session's display name; null auto-names it from the wall
-  /// clock (e.g. `7/20 14:05`). [channelLabels] and [visibleChannels] are
-  /// persisted for display only (see [SessionStorage.startSession]).
+  /// clock (e.g. `2026-07-29 14:05:32` — see [autoSessionName]).
+  /// [channelLabels] and [visibleChannels] are persisted for display only
+  /// (see [SessionStorage.startSession]).
   ///
   /// Outcomes are returned, not thrown, so the caller (the live tab's record
   /// button) can snackbar them locally; null means a session was already in
@@ -122,7 +123,7 @@ class RecordingController extends ChangeNotifier {
     // A tare is still averaging; recording now would persist a zero tare.
     if (_dataHub.taring) return const StartSessionTareInProgress();
 
-    final sessionName = name ?? _autoSessionName(DateTime.now());
+    final sessionName = name ?? autoSessionName(DateTime.now());
     final LiveSessionWriter writer;
     try {
       writer = await SessionStorage.startSession(
@@ -152,12 +153,21 @@ class RecordingController extends ChangeNotifier {
     return const StartSessionOk();
   }
 
-  /// Default session name from the wall clock, e.g. `7/20 14:05:32`. Seconds
-  /// included so two sessions started within the same minute don't collide.
-  static String _autoSessionName(DateTime now) =>
-      '${now.month}/${now.day} '
-      '${now.hour}:${now.minute.toString().padLeft(2, '0')}:'
-      '${now.second.toString().padLeft(2, '0')}';
+  /// Default session name from the wall clock, e.g. `2026-07-29 14:05:32` —
+  /// the same ISO Y-M-D voice as [formatDate] (utils/format.dart), 24h and
+  /// zero-padded. Seconds included so two sessions started within the same
+  /// minute don't collide, and the zero-padding keeps the derived CSV
+  /// filename (`2026-07-29 14-05-32.csv`) sorting chronologically in a file
+  /// browser.
+  @visibleForTesting
+  static String autoSessionName(DateTime now) {
+    final m = now.month.toString().padLeft(2, '0');
+    final d = now.day.toString().padLeft(2, '0');
+    final h = now.hour.toString().padLeft(2, '0');
+    final min = now.minute.toString().padLeft(2, '0');
+    final s = now.second.toString().padLeft(2, '0');
+    return '${now.year}-$m-$d $h:$min:$s';
+  }
 
   /// Stop the current recording and finalize it. Returns the saved session id
   /// and name (or nulls if nothing was recording) and any write error the

@@ -168,13 +168,30 @@ String buildSessionCsv(SessionData data, List<String> labels) {
 
 /// The CSV filename for a session: the session name with characters that are
 /// illegal in Windows/macOS/Android filenames replaced (auto session names
-/// contain `/` and `:` — e.g. `7/20 14:05:32`), and trailing dots/spaces
-/// (illegal on Windows) trimmed.
+/// contain `:` — e.g. `2026-07-29 14:05:32`), leading dots stripped (they
+/// would hide the file on macOS/Linux), trailing dots/spaces trimmed
+/// (illegal on Windows), and a Windows reserved device name disambiguated
+/// with an underscore — Windows refuses CON, NUL, COM1–COM9, LPT1–LPT9 and
+/// friends regardless of extension, so the save dialog would reject the
+/// suggested name outright.
 String csvFileNameForSession(String sessionName) {
   final base = sessionName.isEmpty ? 'session' : sessionName;
-  final safe = base.replaceAll(RegExp(r'[\\/:*?"<>|]'), '-');
-  final trimmed = safe.replaceAll(RegExp(r'[. ]+$'), '');
-  return '${trimmed.isEmpty ? 'session' : trimmed}.csv';
+  var name = base
+      .replaceAll(RegExp(r'[\\/:*?"<>|]'), '-')
+      .replaceAll(RegExp(r'^\.+'), '')
+      .replaceAll(RegExp(r'[. ]+$'), '');
+  if (name.isEmpty) name = 'session';
+  // Reserved when followed by the end of the name or an extension dot
+  // ("con.txt" is as refused as "con"); keep the name recognizable by
+  // marking it right after the reserved word ("con_.txt").
+  final reserved = RegExp(
+    r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?=\.|$)',
+    caseSensitive: false,
+  ).firstMatch(name);
+  if (reserved != null) {
+    name = '${reserved[0]}_${name.substring(reserved.end)}';
+  }
+  return '$name.csv';
 }
 
 /// Escape a CSV header cell that contains separators, quotes or newlines.

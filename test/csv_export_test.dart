@@ -105,6 +105,10 @@ void main() {
   group('csvFileNameForSession', () {
     test('replaces filename-hostile characters', () {
       expect(csvFileNameForSession('7/20 14:05:32'), '7-20 14-05-32.csv');
+      expect(
+        csvFileNameForSession('2026-07-29 14:05:32'),
+        '2026-07-29 14-05-32.csv',
+      );
       expect(csvFileNameForSession('a\\b:c*d?e"f<g>h|i'), 'a-b-c-d-e-f-g-h-i.csv');
     });
 
@@ -113,9 +117,26 @@ void main() {
       expect(csvFileNameForSession('name. '), 'name.csv');
     });
 
+    test('strips leading dots (hidden files on macOS/Linux)', () {
+      expect(csvFileNameForSession('.notes'), 'notes.csv');
+      expect(csvFileNameForSession('..pull test'), 'pull test.csv');
+    });
+
     test('falls back to session.csv for empty or fully-trimmed names', () {
       expect(csvFileNameForSession(''), 'session.csv');
       expect(csvFileNameForSession('...'), 'session.csv');
+    });
+
+    test('disambiguates Windows reserved device names', () {
+      expect(csvFileNameForSession('con'), 'con_.csv');
+      expect(csvFileNameForSession('NUL'), 'NUL_.csv');
+      expect(csvFileNameForSession('com3'), 'com3_.csv');
+      expect(csvFileNameForSession('lpt9'), 'lpt9_.csv');
+      // Reserved with an extension too: "con.txt.csv" is as refused as "con".
+      expect(csvFileNameForSession('con.txt'), 'con_.txt.csv');
+      // …but longer names merely starting with a reserved word are fine.
+      expect(csvFileNameForSession('com10'), 'com10.csv');
+      expect(csvFileNameForSession('auxiliary'), 'auxiliary.csv');
     });
   });
 }

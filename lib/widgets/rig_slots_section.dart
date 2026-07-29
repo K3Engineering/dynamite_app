@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/calibration.dart';
 import '../services/ble_link_manager.dart';
 import '../services/rig_state.dart';
+import '../utils/format.dart';
 
 /// Quick-pick values for the slot editor: the common nameplate numbers,
 /// one tap away; anything else goes in the text field.
@@ -204,9 +205,11 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
         } else {
           final cell = slot.cell;
           final mtime = slot.mtime?.toLocal();
+          // Date only: the mtime answers "how old is this calibration" — a
+          // months/years question, so the time of day would be noise.
           final subtitle =
               cell.valuesLine +
-              (mtime != null ? ' · saved ${mtime.month}/${mtime.day}' : '');
+              (mtime != null ? ' · saved ${formatDate(mtime)}' : '');
           tile = ListTile(
             title: Text(cell.title),
             subtitle: Text(subtitle),
@@ -418,9 +421,12 @@ Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
                     dense: true,
                     contentPadding: EdgeInsets.zero,
                     title: Text(entry.cell.title),
+                    // Date + time: bench work swaps several cells within one
+                    // day, and a date alone can't tell morning from
+                    // afternoon.
                     subtitle: Text(
                       '${entry.cell.valuesLine} · '
-                      '${entry.lastSeen.month}/${entry.lastSeen.day}'
+                      '${formatTimestamp(entry.lastSeen)}'
                       '${entry.deviceName.isNotEmpty ? ' on ${entry.deviceName}' : ''}',
                     ),
                     onTap: () {
