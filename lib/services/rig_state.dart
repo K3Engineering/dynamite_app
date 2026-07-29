@@ -327,6 +327,22 @@ class RigState extends ChangeNotifier {
 
   // -- History persistence ------------------------------------------------------
 
+  /// Newest-first ordering for [_history], made STABLE: Dart's List.sort is
+  /// not, and ties on lastSeen are the common case — a flash read stamps
+  /// every populated slot with the same `now` (see [onFlashRead]) — so an
+  /// unstable sort could permute equally-recent entries on every upsert,
+  /// churning the "Last seen in this app" picker's order. Decorate with the
+  /// current index and tie-break on it, preserving first-seen order among
+  /// ties.
+  void _sortHistory() {
+    final decorated = [for (var i = 0; i < _history.length; ++i) (i, _history[i])];
+    decorated.sort((a, b) {
+      final byRecency = b.$2.lastSeen.compareTo(a.$2.lastSeen);
+      return byRecency != 0 ? byRecency : a.$1.compareTo(b.$1);
+    });
+    _history = [for (final d in decorated) d.$2];
+  }
+
   void _upsertHistory(
     LoadCellProfile cell,
     String deviceName,
@@ -337,7 +353,7 @@ class RigState extends ChangeNotifier {
       if (e.cell == cell) {
         e.lastSeen = now;
         e.deviceName = deviceName;
-        _history.sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
+        _sortHistory();
         if (persist) unawaited(_persistHistory());
         return;
       }
@@ -345,7 +361,7 @@ class RigState extends ChangeNotifier {
     _history.add(
       RigHistoryEntry(cell: cell, lastSeen: now, deviceName: deviceName),
     );
-    _history.sort((a, b) => b.lastSeen.compareTo(a.lastSeen));
+    _sortHistory();
     if (_history.length > historyCap) {
       _history = _history.sublist(0, historyCap);
     }

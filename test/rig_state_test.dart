@@ -349,6 +349,48 @@ void main() {
     });
   });
 
+  group('history ordering', () {
+    test(
+      'batch-seen cells keep first-seen (slot) order across re-reads',
+      () async {
+        final rig = await newRig();
+        rig.onFlashRead('dev1', 'Bench unit', fixture());
+        final firstOrder = rig.history.map((e) => e.cell).toList();
+        expect(firstOrder.map((c) => c.name), [
+          'Thrust cell',
+          'Break jig',
+          '',
+          'Spare 50',
+        ]);
+
+        // Add a typed-in cell so the list has a non-tie member too.
+        final typed = LoadCellProfile(
+          name: 'New',
+          capacityKg: 50,
+          sensitivityMvV: 1,
+        );
+        rig.setSlot(3, typed);
+        expect(rig.history, hasLength(5));
+
+        // Re-reads re-stamp every fixture cell with one shared `now`. The
+        // tie group must keep its original slot order, deterministically,
+        // and repeated re-reads must not churn it (Dart's List.sort is
+        // unstable — see RigState._sortHistory). The typed cell's absolute
+        // position depends on the wall clock's resolution (adjacent nows may
+        // tie), so assert the fixture cells' RELATIVE order.
+        for (var i = 0; i < 3; ++i) {
+          rig.onFlashRead('dev1', 'Bench unit', fixture());
+          expect(
+            rig.history.map((e) => e.cell).where((c) => c != typed),
+            firstOrder,
+          );
+        }
+        // Value-equal cells upsert in place — re-reads never duplicate.
+        expect(rig.history, hasLength(5));
+      },
+    );
+  });
+
   group('history persistence', () {
     test(
       'history survives a restart (new RigState on the same prefs)',
