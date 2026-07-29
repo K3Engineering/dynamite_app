@@ -593,17 +593,31 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // disable Scan while streaming, or confirm first when a recording is in
     // progress. (The Devices tab Scan button mirrors this TODO.)
     await disconnectSelectedDevice();
-    // Snapshot so a failed scan start (web picker cancel, native radio error)
-    // doesn't destroy the previously-discovered list: those devices remain
-    // connectable, and a cancel should change nothing.
+    // On web there is no passive scan — startScan is Chrome's requestDevice()
+    // picker and yields exactly one result (the picked device) — so clearing
+    // here would only ever delete previously-picked, still-connectable
+    // devices (their handles live in universal_ble's device map for the page
+    // session). Keep them: picks accumulate into a multi-device list and
+    // [_onScanResult] dedupes a re-picked device by deviceId. Native keeps
+    // fresh-scan semantics: clear on start so the list reflects what is
+    // actually nearby now.
     //
-    // NOTE: restoring the list makes a just-torn-down device tappable inside
-    // the reconnect-settle window (Scan pressed right after a disconnect
-    // finishes the window early — see [_finishCooldown]). Tested on Chrome:
-    // that connect succeeds at human pace, so it is deliberately unguarded
-    // (the machine-speed reconnect guard is the cooldown itself).
+    // The snapshot/restore covers a failed scan start (native radio error,
+    // or a web picker cancel): the previously-discovered devices remain
+    // connectable and a cancel should change nothing. On web the restore is
+    // a no-op — nothing was cleared, and no result can precede a picker
+    // throw.
+    //
+    // NOTE: on web a just-torn-down device now stays listed and tappable
+    // inside the reconnect-settle window (Scan pressed right after a
+    // disconnect finishes the window early — see [_finishCooldown]). Tested
+    // on Chrome: that connect succeeds at human pace, so it is deliberately
+    // unguarded (the machine-speed guard is the cooldown itself, during
+    // which linkBusy disables every row's Connect button).
     final previousDevices = List<BleDevice>.of(_devices);
-    _devices.clear();
+    if (!kIsWeb) {
+      _devices.clear();
+    }
     _isScanning = true;
     try {
       await UniversalBle.startScan(
@@ -780,11 +794,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// issued right after the pick succeeds.
   ///
   /// KNOWN UNGUARDED EDGE: disconnect → Scan → cancel → Connect on the
-  /// restored device issues a manual connect that bypasses both the picker
-  /// signal and the remaining window. Tested: connects cleanly at human
-  /// pace. Deliberately left unguarded — the manual-path cooldown stays as
-  /// the guard against machine-speed reconnects, which testing did not
-  /// stress.
+  /// still-listed device issues a manual connect that bypasses both the
+  /// picker signal and the remaining window. Tested: connects cleanly at
+  /// human pace. Deliberately left unguarded — the manual-path cooldown
+  /// stays as the guard against machine-speed reconnects, which testing did
+  /// not stress.
   ///
   /// Does NOT call [notifyListeners] — callers do.
   void _finishCooldown() {
