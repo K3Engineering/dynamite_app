@@ -85,9 +85,11 @@ class SettingsTab extends StatelessWidget {
           if (deviceId.isEmpty)
             Card(
               child: ListTile(
-                leading: const Icon(
+                // The dim "nothing here" affordance: the theme's outline
+                // role, as in EmptyPlaceholder — not a raw Material grey.
+                leading: Icon(
                   Icons.bluetooth_disabled,
-                  color: Colors.grey,
+                  color: Theme.of(context).colorScheme.outline,
                 ),
                 title: const Text('No device connected'),
                 subtitle: const Text(

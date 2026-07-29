@@ -33,11 +33,16 @@ class BoardCalibrationSection extends StatelessWidget {
       (r) => r.boardCalibrationFor(deviceId),
     );
     if (board == null) {
-      return const Card(
+      // The dim "nothing here" affordance: the theme's outline role, as in
+      // EmptyPlaceholder — not a raw Material grey.
+      return Card(
         child: ListTile(
-          leading: Icon(Icons.phonelink_erase, color: Colors.grey),
-          title: Text('No calibration data from the device'),
-          subtitle: Text(
+          leading: Icon(
+            Icons.phonelink_erase,
+            color: Theme.of(context).colorScheme.outline,
+          ),
+          title: const Text('No calibration data from the device'),
+          subtitle: const Text(
             'The factory calibration is read from the device at connect time.',
           ),
         ),

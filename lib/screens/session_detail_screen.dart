@@ -102,7 +102,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             actions: [
               PopupMenuButton<String>(
                 onSelected: (action) => _onMenuAction(action, session),
-                itemBuilder: (_) => [
+                itemBuilder: (menuContext) => [
                   const PopupMenuItem(value: 'rename', child: Text('Rename')),
                   const PopupMenuItem(
                     value: 'notes',
@@ -120,9 +120,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                       '${csvShareSupportedHere ? '' : ' (not supported here)'}',
                     ),
                   ),
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'delete',
-                    child: Text('Delete', style: TextStyle(color: Colors.red)),
+                    // Destructive action: the theme's error role, as in the
+                    // confirm dialog's Delete button — not a raw red.
+                    child: Text(
+                      'Delete',
+                      style: TextStyle(
+                        color: Theme.of(menuContext).colorScheme.error,
+                      ),
+                    ),
                   ),
                 ],
               ),

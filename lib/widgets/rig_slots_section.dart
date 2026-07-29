@@ -69,11 +69,16 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     // presence, the slots, the dirty state), not every RigState notify.
     final hasDoc = context.select<RigState, bool>((r) => r.hasDeviceDoc);
     if (!hasDoc) {
-      return const Card(
+      // The dim "nothing here" affordance: the theme's outline role, as in
+      // EmptyPlaceholder — not a raw Material grey.
+      return Card(
         child: ListTile(
-          leading: Icon(Icons.phonelink_erase, color: Colors.grey),
-          title: Text('No slot data from the device'),
-          subtitle: Text(
+          leading: Icon(
+            Icons.phonelink_erase,
+            color: Theme.of(context).colorScheme.outline,
+          ),
+          title: const Text('No slot data from the device'),
+          subtitle: const Text(
             'Load cell slots are read from the device at connect time.',
           ),
         ),
