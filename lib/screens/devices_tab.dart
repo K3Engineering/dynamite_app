@@ -47,7 +47,9 @@ class DevicesTab extends StatelessWidget {
     );
 
     // Partition rows stably: fresh rows keep scan order, stale rows sink.
-    // Active rows are never marked stale since they don't refresh while streaming.
+    // Active rows are never marked stale since they don't refresh while
+    // streaming. The stale group is then ordered by recency (see
+    // [compareStaleRowsByRecency]).
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final activeId = bt.link.deviceId;
     final visuals = <String, InactiveRowVisual>{
@@ -76,6 +78,15 @@ class DevicesTab extends StatelessWidget {
               : freshRows)
           .add(d);
     }
+    // Within the greyed group, most recently seen first — the "Last seen"
+    // ages then increase monotonically down the list, and a just-staled
+    // device (likely still of interest) leads it.
+    staleRows.sort(
+      (a, b) => compareStaleRowsByRecency(
+        bt.lastAliveMs(a.deviceId),
+        bt.lastAliveMs(b.deviceId),
+      ),
+    );
 
     return SafeArea(
       child: ListView(
@@ -284,10 +295,20 @@ String unsupportedHint({required bool isWeb}) => isWeb
   return (text: 'Last seen ${formatRelativeAge(age)}', stale: stale);
 }
 
+/// Comparator for the stale (greyed) row group: most recently seen first, so
+/// a just-staled device leads the group and long-gone ones sink — the rows'
+/// "Last seen" ages then increase monotonically down the list. [aAliveMs] and
+/// [bAliveMs] are the rows' [BleLinkManager.lastAliveMs] values; a null stamp
+/// (defensive — a stale row always has one, see [bleRowSubtitle]) sorts
+/// oldest, i.e. sinks to the end of the group.
+int compareStaleRowsByRecency(int? aAliveMs, int? bAliveMs) =>
+    (bAliveMs ?? 0).compareTo(aAliveMs ?? 0);
+
 /// The inactive device row's presentation state, resolved by
 /// [inactiveRowVisual]. Priority: a recorded connect failure outranks
 /// staleness (actionable beats maybe-gone), which outranks the normal look.
-/// The mood also drives the Devices tab's row ordering (stale sinks last).
+/// The mood also drives the Devices tab's row ordering (stale sinks last,
+/// then ordered by recency — see [compareStaleRowsByRecency]).
 enum InactiveRowMood { normal, stale, failed }
 
 /// Everything an inactive device row displays, resolved from platform,
