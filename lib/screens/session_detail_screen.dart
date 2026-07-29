@@ -11,6 +11,7 @@ import '../services/session_storage.dart';
 import '../utils/format.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 
 class SessionDetailScreen extends StatefulWidget {
@@ -129,11 +130,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           ),
           body: switch (_loadState) {
             _Loading() => const Center(child: CircularProgressIndicator()),
-            _Failed(:final error) => Center(child: Text('Error: $error')),
-            // A session without chunks (e.g. deleted externally) has nothing to
-            // show; loadSession returns null there.
-            _Ready(data: null) => const Center(
-              child: Text('No recorded data for this session'),
+            // The same single-voice empty-state treatment as the Sessions
+            // tab: a failure gets the error color, a genuinely empty session
+            // stays neutral.
+            _Failed(:final error) => EmptyPlaceholder(
+              icon: Icons.error_outline,
+              title: 'Error loading session',
+              hint: '$error',
+              color: Theme.of(context).colorScheme.error,
+            ),
+            // A session without chunks (e.g. deleted externally) has nothing
+            // to show; loadSession returns null there.
+            _Ready(data: null) => const EmptyPlaceholder(
+              icon: Icons.insert_chart_outlined,
+              title: 'No recorded data for this session',
             ),
             _Ready(:final data) => _buildContent(settings, session, data!),
           },
