@@ -91,6 +91,11 @@ class AdcPacketDecoder {
     }
     _prevSampleCount = (count + nwAdcNumSamples) & 0xFFFF;
 
+    // Anchor the packet's counter to the hub timeline (after gap injection,
+    // so totalSamples is this packet's first-sample index). The recording
+    // writer derives the session's ssn_origin from this pairing.
+    hub.notePacketCounter(count);
+
     for (
       int packetStart = nwHeaderSize;
       packetStart < nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;

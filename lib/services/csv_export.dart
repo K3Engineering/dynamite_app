@@ -19,8 +19,10 @@ import 'dart:ui' show Rect;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../models/calibration.dart';
 import '../models/display_unit.dart';
 import 'csv_export_temp_stub.dart'
     if (dart.library.io) 'csv_export_temp_io.dart';
@@ -37,7 +39,8 @@ bool get csvShareSupportedHere {
 }
 
 /// Download [session]'s recorded [data] as CSV: a save-as dialog on native
-/// platforms, a browser download on web.
+/// platforms, a browser download on web. [unit] is the file's converted unit
+/// (the user's pick in the export flow — see docs/csv-format-v1.md).
 ///
 /// Returns a user-facing result message, or null when the user cancelled —
 /// callers should stay silent then. Errors are thrown for the caller to
@@ -47,8 +50,9 @@ bool get csvShareSupportedHere {
 Future<String?> downloadSessionCsv({
   required Session session,
   required SessionData data,
+  required DisplayUnit unit,
 }) async {
-  final (bytes, fileName) = _prepareCsv(session, data);
+  final (bytes, fileName) = await _prepareCsv(session, data, unit);
   final savedTo = await FilePicker.saveFile(
     dialogTitle: 'Download session CSV',
     fileName: fileName,
@@ -65,6 +69,7 @@ Future<String?> downloadSessionCsv({
 }
 
 /// Share [session]'s recorded [data] as CSV via the platform share sheet.
+/// [unit] is the file's converted unit (see docs/csv-format-v1.md).
 ///
 /// [sharePositionOrigin] anchors the iPad share popover; ignored elsewhere.
 ///
@@ -75,9 +80,10 @@ Future<String?> downloadSessionCsv({
 Future<String?> shareSessionCsv({
   required Session session,
   required SessionData data,
+  required DisplayUnit unit,
   Rect? sharePositionOrigin,
 }) async {
-  final (bytes, fileName) = _prepareCsv(session, data);
+  final (bytes, fileName) = await _prepareCsv(session, data, unit);
   final XFile file;
   if (kIsWeb) {
     // XFile.name is ignored by most platforms; share_plus's fileNameOverrides
@@ -108,62 +114,172 @@ Future<String?> shareSessionCsv({
   };
 }
 
-/// Build the CSV bytes and filename for [session]'s [data]. Shared by both
-/// delivery paths.
-(Uint8List, String) _prepareCsv(Session session, SessionData data) {
-  final labels = parseJsonColumn(
-    session.channelLabels,
-    data.channels.length,
-    convert: (e) => e.toString(),
-    fallback: (i) => 'Ch ${i + 1}',
+/// App version for the metadata's `generator` field, fetched once (the
+/// platform answer can't change during a run).
+final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
+
+/// Build the CSV bytes and filename for [session]'s [data] in [unit].
+/// Shared by both delivery paths.
+Future<(Uint8List, String)> _prepareCsv(
+  Session session,
+  SessionData data,
+  DisplayUnit unit,
+) async {
+  final csv = buildSessionCsv(
+    data,
+    unit,
+    recordedAt: session.createdAt,
+    generator: 'dynamite-flutter ${(await _packageInfo).version}',
   );
-  final csv = buildSessionCsv(data, labels);
   return (
     Uint8List.fromList(utf8.encode(csv)),
     csvFileNameForSession(session.name),
   );
 }
 
-/// Build the session's CSV: a `time_s` column plus `<label>_raw` /
-/// `<label>_kgf` column pairs per channel. Raw values are absolute ADC
-/// counts; kgf is net of the session tare via the calibration recorded with
-/// the session, blank when the channel had no load cell assigned. Dropped
-/// (gap) samples get blank cells rather than the buffer's held values.
+/// Build the session's CSV in the dynamite-csv v1 format
+/// (docs/csv-format-v1.md): a `# dynamite-csv 1` magic line, a one-line
+/// metadata JSON carrying everything needed to reproduce the converted
+/// columns (frozen recording-time calibration, tares, sample rate, ssn
+/// origin), then the `ssn, ch0..chN-1, ch0_<unit>..chN-1_<unit>` grid.
+///
+/// [unit] is the file's single converted unit (quartet 2), chosen by the
+/// user in the export flow; a channel that can't reach it (a force unit
+/// with no load cell assigned) gets an all-blank column. Dropped (gap)
+/// samples keep their `ssn` row with every sample cell blank. Values are
+/// fixed-point with per-column precision ([DisplayUnit.exportDecimalsFor]);
+/// conventions are `\n` endings, no BOM, dot decimals — see the spec.
 ///
 /// TODO(perf): the whole CSV is built in memory as one string — the format
 /// milestone will replace this with a chunked writer (see
 /// SessionStorage.loadSession's own materialization note).
-String buildSessionCsv(SessionData data, List<String> labels) {
-  final buf = StringBuffer();
-  buf.write('time_s');
-  for (int ch = 0; ch < data.channels.length; ch++) {
-    final label = _csvCell(labels[ch]);
-    buf.write(',${label}_raw,${label}_kgf');
+String buildSessionCsv(
+  SessionData data,
+  DisplayUnit unit, {
+  required DateTime recordedAt,
+  required String generator,
+}) {
+  final int n = data.channels.length;
+  // The writer persists the true device counter at row 0; null survives
+  // only on sessions with no recorded packets (no data rows anyway).
+  final int ssnOrigin = data.ssnOrigin ?? 0;
+
+  // Per-channel converters and column precision, computed once from the
+  // session's frozen calibration: a null converter is a force unit on a
+  // cell-less channel — an all-blank quartet-2 column (the file's '—').
+  final converters = [
+    for (int ch = 0; ch < n; ch++)
+      unit.converterFor(data.calibrationFor(ch), data.tares[ch]),
+  ];
+  final decimals = [
+    for (int ch = 0; ch < n; ch++)
+      unit.exportDecimalsFor(data.calibrationFor(ch)),
+  ];
+
+  final buf = StringBuffer()
+    ..writeln('# dynamite-csv 1')
+    ..writeln(
+      '# ${jsonEncode(_metadata(data, unit, ssnOrigin, recordedAt, generator))}',
+    );
+
+  // Header: ssn, then the raw quartet, then the converted quartet. Header
+  // cells only ever contain [A-Za-z0-9_/], so no quoting is ever needed.
+  buf.write('ssn');
+  for (int ch = 0; ch < n; ch++) {
+    buf.write(',ch$ch');
+  }
+  for (int ch = 0; ch < n; ch++) {
+    buf.write(',ch${ch}_${unit.csvSymbol}');
   }
   buf.writeln();
 
   for (int s = 0; s < data.sampleCount; s++) {
-    buf.write((s / data.sampleRate).toStringAsFixed(4));
+    // ssn is unwrapped and gap-inclusive by construction (dropped samples
+    // are kept as blank rows), so it is a plain arithmetic progression.
+    buf.write('${ssnOrigin + s}');
     if (data.gaps.contains(s)) {
       // Dropped sample: the buffer holds a fabricated (held) value, so emit
-      // blank cells rather than fake data.
-      for (int ch = 0; ch < data.channels.length; ch++) {
-        buf.write(',,');
+      // blank cells rather than fake data — both quartets, every channel.
+      for (int i = 0; i < 2 * n; i++) {
+        buf.write(',');
       }
     } else {
-      for (int ch = 0; ch < data.channels.length; ch++) {
-        final raw = data.channels[ch][s];
-        // kgf via the calibration recorded with the session; blank when
-        // the channel had no load cell assigned.
-        final kgf = DisplayUnit.kgf
-            .converterFor(data.calibrationFor(ch), data.tares[ch])
-            ?.call(raw.toDouble());
-        buf.write(kgf == null ? ',$raw,' : ',$raw,${kgf.toStringAsFixed(6)}');
+      for (int ch = 0; ch < n; ch++) {
+        buf.write(',${data.channels[ch][s]}');
+      }
+      for (int ch = 0; ch < n; ch++) {
+        final convert = converters[ch];
+        buf.write(
+          convert == null
+              ? ','
+              : ',${convert(data.channels[ch][s].toDouble()).toStringAsFixed(decimals[ch]!)}',
+        );
       }
     }
     buf.writeln();
   }
   return buf.toString();
+}
+
+/// The metadata line's JSON object (docs/csv-format-v1.md): one compact
+/// object, all top-level fields required in v1, nullable subfields emitted
+/// as null. Map order here is the emission order (and matches the spec).
+Map<String, Object?> _metadata(
+  SessionData data,
+  DisplayUnit unit,
+  int ssnOrigin,
+  DateTime recordedAt,
+  String generator,
+) {
+  final int n = data.channels.length;
+  return {
+    'format': 'dynamite-csv',
+    'version': 1,
+    'generator': generator,
+    'recorded_at': recordedAt.toUtc().toIso8601String(),
+    'sample_rate_hz': data.sampleRate,
+    'ssn_origin': ssnOrigin,
+    'converted_unit': unit.csvSymbol,
+    // v1 emits all-null device placeholders; identity plumbing is pending.
+    'device': {
+      'name': null,
+      'id': null,
+      'model': null,
+      'firmware': null,
+      'manufacturer': null,
+    },
+    // Descriptive traceability (the hardware configuration in effect); the
+    // operative transfer function is each channel's board_cal.
+    'afe': {
+      'adc_ref_v': adcFullScaleV,
+      'front_end_gain': frontEndGain,
+      'adc_gain': [for (int ch = 0; ch < n; ch++) 1],
+    },
+    'channels': [
+      for (int ch = 0; ch < n; ch++)
+        _channelMetadata(data.calibrationFor(ch), data.tares[ch]),
+    ],
+  };
+}
+
+/// One `channels[]` entry: the assigned load cell (null = none), the
+/// recording-time tare in raw counts, and the factory board cal — null when
+/// the channel is uncalibrated (the honesty marker: converted values are
+/// nominal-referred; the piecewise map ignores the ladder resistors anyway).
+Map<String, Object?> _channelMetadata(ChannelCalibration cal, double tareRaw) {
+  final cell = cal.loadCell;
+  final board = cal.board;
+  return {
+    'load_cell': cell == null
+        ? null
+        : {
+            'name': cell.name,
+            'capacity_kg': cell.capacityKg,
+            'sensitivity_mv_v': cell.sensitivityMvV,
+          },
+    'tare_raw': tareRaw,
+    'board_cal': board.isFactoryCalibrated ? board.toJson() : null,
+  };
 }
 
 /// The CSV filename for a session: the session name with characters that are
@@ -193,7 +309,3 @@ String csvFileNameForSession(String sessionName) {
   }
   return '$name.csv';
 }
-
-/// Escape a CSV header cell that contains separators, quotes or newlines.
-String _csvCell(String s) =>
-    s.contains(RegExp(r'[,"\n]')) ? '"${s.replaceAll('"', '""')}"' : s;

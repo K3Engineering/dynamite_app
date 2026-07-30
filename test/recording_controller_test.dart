@@ -4,6 +4,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_ble/universal_ble.dart';
 
+import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
@@ -52,6 +53,7 @@ void main() {
     final result = await recording.startSession(
       channelLabels: const ['a', 'b', 'c', 'd'],
       visibleChannels: const [true, true, false, false],
+      displayUnit: DisplayUnit.kgf,
     );
 
     expect(result, isA<StartSessionTareInProgress>());
@@ -69,6 +71,7 @@ void main() {
       final start = await recording.startSession(
         channelLabels: const ['Load Cell 1', 'Load Cell 2', 'Ch 3', 'Ch 4'],
         visibleChannels: const [true, true, false, false],
+        displayUnit: DisplayUnit.kN,
       );
       expect(start, isA<StartSessionOk>());
       expect(recording.sessionInProgress, isTrue);
@@ -101,6 +104,9 @@ void main() {
         saved.channelLabels,
         '["Load Cell 1","Load Cell 2","Ch 3","Ch 4"]',
       );
+      // The display unit is frozen at recording start (the CSV export's
+      // default converted unit).
+      expect(saved.displayUnit, 'kN');
     },
   );
 
@@ -119,6 +125,7 @@ void main() {
       final future = recording.startSession(
         channelLabels: const ['a', 'b', 'c', 'd'],
         visibleChannels: const [true, true, true, true],
+        displayUnit: DisplayUnit.kgf,
       );
       link.streaming = false;
       final result = await future;
@@ -143,6 +150,7 @@ void main() {
       final start = await recording.startSession(
         channelLabels: const ['a', 'b', 'c', 'd'],
         visibleChannels: const [true, true, true, true],
+        displayUnit: DisplayUnit.kgf,
       );
       expect(start, isA<StartSessionOk>());
 

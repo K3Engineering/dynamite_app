@@ -7,6 +7,7 @@ import 'app_events.dart';
 import 'ble_link_manager.dart';
 import 'data_hub.dart';
 import 'session_storage.dart';
+import '../models/display_unit.dart';
 
 /// Outcome of [RecordingController.startSession]. The outcomes are mutually
 /// exclusive, so they form a sealed type the caller switches exhaustively —
@@ -108,7 +109,8 @@ class RecordingController extends ChangeNotifier {
   /// [name] is the session's display name; null auto-names it from the wall
   /// clock (e.g. `2026-07-29 14:05:32` — see [autoSessionName]).
   /// [channelLabels] and [visibleChannels] are persisted for display only
-  /// (see [SessionStorage.startSession]).
+  /// (see [SessionStorage.startSession]). [displayUnit] is frozen onto the
+  /// session row as the CSV export's default converted unit.
   ///
   /// Outcomes are returned, not thrown, so the caller (the live tab's record
   /// button) can snackbar them locally; null means a session was already in
@@ -117,6 +119,7 @@ class RecordingController extends ChangeNotifier {
     String? name,
     required List<String> channelLabels,
     required List<bool> visibleChannels,
+    required DisplayUnit displayUnit,
   }) async {
     assert(_linkManager.isStreaming);
     if (sessionInProgress) return null;
@@ -131,6 +134,7 @@ class RecordingController extends ChangeNotifier {
         name: sessionName,
         channelLabels: channelLabels,
         visibleChannels: visibleChannels,
+        displayUnit: displayUnit,
       );
     } catch (e) {
       return StartSessionFailed(e);

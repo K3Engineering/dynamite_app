@@ -35,6 +35,7 @@ void main() {
       tares: '[]',
       calibrationJson: '[]',
       visibleChannels: '[]',
+      displayUnit: 'kgf',
     );
     await AppDatabase.instance.completeSession(
       sessionId,

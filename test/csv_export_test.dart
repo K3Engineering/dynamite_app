@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -9,10 +10,16 @@ import 'package:dynamite_app/services/csv_export.dart';
 import 'package:dynamite_app/services/session_storage.dart';
 
 /// Tests for the pure CSV-building half of the export path (the plugin
-/// dispatch half is platform code and stays untested).
+/// dispatch half is platform code and stays untested). The format reference
+/// is docs/csv-format-v1.md.
 void main() {
   const int channels = 2;
   const int sampleRate = 1000;
+
+  /// Fixed provenance for the metadata line: the app version string is
+  /// injected by the plugin half, the wall clock by the session row.
+  const generator = 'dynamite-flutter 1.0.0';
+  final recordedAt = DateTime.utc(2026, 7, 29, 14, 5, 32);
 
   List<ChannelCalibration> nominalCals() => [
     for (int ch = 0; ch < channels; ch++)
@@ -24,6 +31,7 @@ void main() {
     List<ChannelCalibration>? calibrations,
     List<double>? tares,
     GapList? gaps,
+    int? ssnOrigin,
   }) => SessionData(
     channels: [for (final values in perChannel) Int32List.fromList(values)],
     sampleRate: sampleRate,
@@ -31,25 +39,113 @@ void main() {
     calibrations: calibrations ?? nominalCals(),
     tares: tares ?? List.filled(channels, 0.0),
     gaps: gaps,
+    ssnOrigin: ssnOrigin,
   );
 
+  String buildCsv(SessionData data, DisplayUnit unit) => buildSessionCsv(
+    data,
+    unit,
+    recordedAt: recordedAt,
+    generator: generator,
+  );
+
+  /// The metadata line parsed as JSON (line index 1, `# ` prefix stripped).
+  Map<String, dynamic> metadataOf(String csv) {
+    final line = csv.split('\n')[1];
+    expect(line, startsWith('# '));
+    return jsonDecode(line.substring(2)) as Map<String, dynamic>;
+  }
+
   group('buildSessionCsv', () {
-    test('emits header, time column, and raw values', () {
+    test('emits magic, quartet header, and ssn-keyed data rows', () {
       final data = makeSession([
         [10, 20, 30],
         [-1, -2, -3],
-      ]);
+      ], ssnOrigin: 41230);
 
-      final csv = buildSessionCsv(data, ['A', 'B']);
-      final lines = csv.trim().split('\n');
+      final lines = buildCsv(data, DisplayUnit.kgf).trim().split('\n');
 
-      expect(lines[0], 'time_s,A_raw,A_kgf,B_raw,B_kgf');
-      expect(lines[1], '0.0000,10,,-1,');
-      expect(lines[2], '0.0010,20,,-2,');
-      expect(lines[3], '0.0020,30,,-3,');
+      expect(lines[0], '# dynamite-csv 1');
+      expect(lines[1], startsWith('# {'));
+      expect(lines[2], 'ssn,ch0,ch1,ch0_kgf,ch1_kgf');
+      // ssn is an arithmetic progression from ssn_origin; with no load cell
+      // assigned, both converted columns are all-blank (the file's '—').
+      expect(lines[3], '41230,10,-1,,');
+      expect(lines[4], '41231,20,-2,,');
+      expect(lines[5], '41232,30,-3,,');
     });
 
-    test('kgf column matches the session calibration converter', () {
+    test('a missing ssnOrigin exports as origin 0', () {
+      final data = makeSession([
+        [7],
+        [8],
+      ]);
+
+      final lines = buildCsv(data, DisplayUnit.mVv).trim().split('\n');
+
+      expect(lines[3], startsWith('0,'));
+      expect(metadataOf(buildCsv(data, DisplayUnit.mVv))['ssn_origin'], 0);
+    });
+
+    test('metadata line carries the spec schema from the frozen session', () {
+      final boardCal = ChannelBoardCalibration(
+        resistors: const [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
+        readings: const [6383553.0, 3192096.0, 120.0, -3191776.0, -6383313.0],
+      );
+      final cals = [
+        ChannelCalibration(
+          board: boardCal,
+          loadCell: LoadCellProfile(
+            name: 'Larry 100 kg',
+            capacityKg: 100,
+            sensitivityMvV: 2.007,
+          ),
+        ),
+        ChannelCalibration(board: ChannelBoardCalibration()),
+      ];
+      final data = makeSession([
+        [1],
+        [2],
+      ], calibrations: cals, tares: [-12340.5, 55.0], ssnOrigin: 41230);
+
+      final meta = metadataOf(buildCsv(data, DisplayUnit.kgf));
+
+      expect(meta, {
+        'format': 'dynamite-csv',
+        'version': 1,
+        'generator': 'dynamite-flutter 1.0.0',
+        'recorded_at': '2026-07-29T14:05:32.000Z',
+        'sample_rate_hz': 1000,
+        'ssn_origin': 41230,
+        'converted_unit': 'kgf',
+        'device': {
+          'name': null,
+          'id': null,
+          'model': null,
+          'firmware': null,
+          'manufacturer': null,
+        },
+        'afe': {'adc_ref_v': 1.2, 'front_end_gain': 101.0, 'adc_gain': [1, 1]},
+        'channels': [
+          {
+            'load_cell': {
+              'name': 'Larry 100 kg',
+              'capacity_kg': 100.0,
+              'sensitivity_mv_v': 2.007,
+            },
+            'tare_raw': -12340.5,
+            'board_cal': {
+              'r': [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
+              'raw': [6383553.0, 3192096.0, 120.0, -3191776.0, -6383313.0],
+            },
+          },
+          // Uncalibrated, cell-less channel: the honesty markers are null.
+          {'load_cell': null, 'tare_raw': 55.0, 'board_cal': null},
+        ],
+      });
+    });
+
+    test('converted columns match the frozen converter at column precision', () {
       final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
       final cals = [
         ChannelCalibration(board: ChannelBoardCalibration(), loadCell: cell),
@@ -60,44 +156,92 @@ void main() {
         [5, 6],
       ], calibrations: cals, tares: [100.0, 0.0]);
 
-      final lines = buildSessionCsv(data, ['A', 'B']).trim().split('\n');
+      final lines = buildCsv(data, DisplayUnit.kgf).trim().split('\n');
 
+      final decimals = DisplayUnit.kgf.exportDecimalsFor(cals[0])!;
       String expectedKgf(int raw) => DisplayUnit.kgf
           .converterFor(cals[0], 100.0)!
           .call(raw.toDouble())
-          .toStringAsFixed(6);
+          .toStringAsFixed(decimals);
 
-      expect(lines[1], '0.0000,1000,${expectedKgf(1000)},5,');
-      expect(lines[2], '0.0010,2000,${expectedKgf(2000)},6,');
+      expect(lines[3], '0,1000,5,${expectedKgf(1000)},');
+      expect(lines[4], '1,2000,6,${expectedKgf(2000)},');
     });
 
-    test('gap samples emit blank cells, not held values', () {
+    test('gap rows keep their ssn with every sample cell blank', () {
       final gaps = GapList()..append(1, 2); // half-open: only sample 1
       final data = makeSession([
         [10, 20, 30],
         [40, 50, 60],
-      ], gaps: gaps);
+      ], gaps: gaps, ssnOrigin: 41230);
 
-      final lines = buildSessionCsv(data, ['A', 'B']).trim().split('\n');
+      final lines = buildCsv(data, DisplayUnit.mVv).trim().split('\n');
 
-      expect(lines[1], '0.0000,10,,40,');
-      expect(lines[2], '0.0010,,,,');
-      expect(lines[3], '0.0020,30,,60,');
+      String ssnOf(int row) => lines[3 + row].split(',').first;
+      expect(ssnOf(0), '41230');
+      expect(lines[4], '41231,,,,');
+      expect(ssnOf(2), '41232');
+      // The gap did not consume extra rows: dropped SSNs are the blank rows.
+      expect(lines, hasLength(3 + 3));
     });
 
-    test('labels needing quoting are escaped in the header', () {
+    test('mV/V header suffixes keep the slash verbatim', () {
       final data = makeSession([
         [1],
         [2],
       ]);
 
-      final csv = buildSessionCsv(data, ['Load, top', 'Say "hi"']);
-      final header = csv.split('\n').first;
+      final lines = buildCsv(data, DisplayUnit.mVv).trim().split('\n');
 
+      expect(lines[2], 'ssn,ch0,ch1,ch0_mV/V,ch1_mV/V');
+      expect(metadataOf(buildCsv(data, DisplayUnit.mVv))['converted_unit'],
+          'mV/V');
+    });
+
+    test('raw quartet 2 is net counts (raw − tare), fractional, 1 decimal', () {
+      final data = makeSession([
+        [1000],
+        [5],
+      ], tares: [100.3, 0.0]);
+
+      final lines = buildCsv(data, DisplayUnit.raw).trim().split('\n');
+
+      expect(lines[2], 'ssn,ch0,ch1,ch0_raw,ch1_raw');
+      expect(lines[3], '0,1000,5,899.7,5.0');
+    });
+  });
+
+  group('column precision (spec worked example: 100 kg / 2 mV/V cell, '
+      'nominal chain)', () {
+    final cal = ChannelCalibration(
+      board: ChannelBoardCalibration(),
+      loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0),
+    );
+
+    // docs/csv-format-v1.md's table: decimals per unit for this setup.
+    final expected = {
+      DisplayUnit.kgf: 6,
+      DisplayUnit.n: 5,
+      DisplayUnit.lbf: 6,
+      DisplayUnit.kN: 8,
+      DisplayUnit.mVv: 8,
+      DisplayUnit.mV: 7,
+      DisplayUnit.raw: 1,
+    };
+
+    for (final entry in expected.entries) {
+      test('${entry.key.symbol} → ${entry.value} decimals', () {
+        expect(entry.key.exportDecimalsFor(cal), entry.value);
+      });
+    }
+
+    test('a force unit on a cell-less channel has no precision (all-blank '
+        'column)', () {
       expect(
-        header,
-        'time_s,"Load, top"_raw,"Load, top"_kgf,'
-        '"Say ""hi"""_raw,"Say ""hi"""_kgf',
+        DisplayUnit.kgf.exportDecimalsFor(
+          ChannelCalibration(board: ChannelBoardCalibration()),
+        ),
+        isNull,
       );
     });
   });

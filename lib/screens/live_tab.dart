@@ -162,6 +162,8 @@ class _LiveTabState extends State<LiveTab> {
         // the session at record time.
         channelLabels: context.read<RigState>().channelTitles,
         visibleChannels: settings.activeChannels,
+        // Frozen as the CSV export's default converted unit.
+        displayUnit: settings.displayUnit,
       );
 
       if (!mounted) return;

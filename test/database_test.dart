@@ -19,6 +19,7 @@ void main() {
         tares: '[]',
         calibrationJson: '[]',
         visibleChannels: '[]',
+        displayUnit: 'kgf',
         createdAt: createdAt,
       )
       .then(

@@ -7,6 +7,7 @@ import 'database.dart';
 import 'data_hub.dart';
 import '../models/bucket_series.dart';
 import '../models/calibration.dart';
+import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 
@@ -30,6 +31,7 @@ class SessionStorage {
     required String name,
     required List<String> channelLabels,
     required List<bool> visibleChannels,
+    required DisplayUnit displayUnit,
   }) async {
     // Snapshot the tare once; the same values are persisted below and used by
     // the writer's peak scan, so stored peaks, stored tares and playback can
@@ -51,6 +53,9 @@ class SessionStorage {
           dataHub.calibrationFor(ch).toJson(),
       ]),
       visibleChannels: jsonEncode(visibleChannels),
+      // Frozen as the CSV export's default converted unit
+      // (docs/csv-format-v1.md's recording-time snapshot requirement).
+      displayUnit: displayUnit.name,
     );
 
     return LiveSessionWriter(sessionId, tare, DataHub.samplesPerSec);
@@ -184,6 +189,7 @@ class SessionStorage {
       calibrations: _parseCalibrations(session.calibrationJson, channelCount),
       tares: _parseTares(session.tares, channelCount),
       gaps: GapList.fromJson(session.gaps),
+      ssnOrigin: session.ssnOrigin,
     );
   }
 
@@ -332,6 +338,13 @@ class SessionData implements GraphDataSource {
   final List<ChannelCalibration> calibrations;
   final List<double> tares;
 
+  /// Device sample-counter value at the session's first sample (the
+  /// dynamite-csv `ssn_origin`), latched by the live writer from the first
+  /// recorded packet and persisted on the session row. Null only for
+  /// sessions finalized before any packet arrived (which have no data to
+  /// export) or pre-column rows; exporters fall back to 0.
+  final int? ssnOrigin;
+
   /// Dropped-sample ranges (session-relative). The channel data holds held
   /// values across these ranges, so stats/buckets need no exclusion logic;
   /// renderers use this to hatch and break the polyline, and CSV export
@@ -368,6 +381,7 @@ class SessionData implements GraphDataSource {
     required this.calibrations,
     required this.tares,
     GapList? gaps,
+    this.ssnOrigin,
   }) : gaps = gaps ?? GapList(),
        mins = List.filled(channels.length, 0.0),
        maxs = List.filled(channels.length, 0.0) {
@@ -472,6 +486,7 @@ class LiveSessionWriter {
       int chunkIndex,
       Uint8List data,
       String gapsJson,
+      int? ssnOrigin,
     )?
     chunkSink,
   }) : _chunkSink = chunkSink;
@@ -504,6 +519,20 @@ class LiveSessionWriter {
   /// [appendData] call and used to make [gaps] session-relative.
   int? _originIdx;
 
+  /// Device sample-counter value at the session's first sample (the
+  /// dynamite-csv `ssn_origin`), latched alongside [_originIdx] from the
+  /// hub's packet-counter anchor ([DataHub.notePacketCounter]). Sessions
+  /// start on a packet boundary (the decoder's continuity reset at recording
+  /// start suppresses gap injection for the first recorded packet), so the
+  /// index difference below is zero in practice; the formula keeps the latch
+  /// correct even if that ever changes. Null until the first append.
+  int? get ssnOrigin => _ssnOrigin;
+  int? _ssnOrigin;
+
+  /// Whether [ssnOrigin] has already been handed to the chunk sink for
+  /// persistence (it is a constant — the sink is told once, not per flush).
+  bool _ssnOriginPersisted = false;
+
   /// Accumulates sample count and peak; shared scan logic with recovery.
   final _ChunkAggregate _agg = _ChunkAggregate(DataHub.numAdcChannels);
 
@@ -517,14 +546,16 @@ class LiveSessionWriter {
   Future<void> _writeQueue = Future.value();
 
   /// Test seam: when set, a flush's DB side effects (chunk insert + gap-range
-  /// update) go here instead of the real database, so tests can stall and
-  /// observe writes without opening one. Resolved lazily so constructing a
-  /// writer never touches the database singleton.
+  /// update + first [ssnOrigin] persist) go here instead of the real
+  /// database, so tests can stall and observe writes without opening one.
+  /// Resolved lazily so constructing a writer never touches the database
+  /// singleton.
   final Future<void> Function(
     int sessionId,
     int chunkIndex,
     Uint8List data,
     String gapsJson,
+    int? ssnOrigin,
   )?
   _chunkSink;
 
@@ -546,6 +577,9 @@ class LiveSessionWriter {
     // Capture this slice's gap ranges synchronously, rebased to
     // session-relative indices.
     final int origin = _originIdx ??= startIdx;
+    _ssnOrigin ??=
+        (dataHub.latestPacketCounter ?? 0) +
+        (origin - dataHub.latestPacketHubIndex);
     for (final (s, e) in dataHub.gaps.rangesIn(startIdx, startIdx + count)) {
       gaps.append(s - origin, e - origin);
     }
@@ -598,12 +632,18 @@ class LiveSessionWriter {
     final dataToSave = _staging.takeBytes();
     final chunkIdx = _chunkIndex++;
     final gapsJson = gaps.toJson();
+    // Hand the ssn origin to the sink exactly once (it's a constant); if the
+    // write fails the error latches and recording stops, so no retry path
+    // is needed.
+    final int? originToPersist = _ssnOriginPersisted ? null : _ssnOrigin;
+    _ssnOriginPersisted = true;
     try {
       await (_chunkSink ?? _defaultChunkSink)(
         sessionId,
         chunkIdx,
         dataToSave,
         gapsJson,
+        originToPersist,
       );
     } catch (e) {
       // Latch the first failure; stop accumulating so we don't grow unbounded
@@ -617,14 +657,20 @@ class LiveSessionWriter {
   /// gap ranges so a crash mid-recording keeps the info up to this flush
   /// (crash recovery rebuilds aggregates from chunks but cannot reconstruct
   /// gaps from them). The gaps update is one small row write per flush.
+  /// [ssnOrigin] is non-null only on the first flush after it was latched;
+  /// it too survives a crash only via this row write.
   static Future<void> _defaultChunkSink(
     int sessionId,
     int chunkIndex,
     Uint8List data,
     String gapsJson,
+    int? ssnOrigin,
   ) async {
     await AppDatabase.instance.insertChunk(sessionId, chunkIndex, data);
     await AppDatabase.instance.setSessionGaps(sessionId, gapsJson);
+    if (ssnOrigin != null) {
+      await AppDatabase.instance.setSessionSsnOrigin(sessionId, ssnOrigin);
+    }
   }
 
   /// Chain [op] after all previously enqueued writes and return its completion.

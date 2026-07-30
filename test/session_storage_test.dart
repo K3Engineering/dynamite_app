@@ -84,7 +84,7 @@ void main() {
         1,
         Float64List(channels),
         DataHub.samplesPerSec,
-        chunkSink: (sessionId, chunkIndex, data, gapsJson) async =>
+        chunkSink: (sessionId, chunkIndex, data, gapsJson, ssnOrigin) async =>
             saved.add(data),
       );
       final hub = DataHub();
@@ -129,7 +129,7 @@ void main() {
         1,
         Float64List(channels),
         DataHub.samplesPerSec,
-        chunkSink: (sessionId, chunkIndex, data, gapsJson) async {
+        chunkSink: (sessionId, chunkIndex, data, gapsJson, ssnOrigin) async {
           sinkCalls++;
           if (!entered.isCompleted) entered.complete();
           await gate.future; // wedge every chunk write until released
@@ -167,6 +167,101 @@ void main() {
       expect(sinkCalls, 1);
       expect(saved, hasLength(1));
       expect(saved.single.lengthInBytes, chunkSamples * channels * 4);
+    });
+  });
+
+  group('LiveSessionWriter ssn origin', () {
+    test('latches from the hub packet-counter anchor on first append, '
+        'and hands it to the sink exactly once', () async {
+      final hub = DataHub();
+      final frame = Int32List(channels);
+      // The first recorded packet's counter anchors at hub index 0 (the
+      // decoder's continuity reset at recording start means no gap
+      // injection precedes it).
+      hub.notePacketCounter(41230);
+      for (int i = 0; i < 50; i++) {
+        hub.addSampleFrame(frame);
+      }
+
+      final origins = <int?>[];
+      final writer = LiveSessionWriter(
+        1,
+        Float64List(channels),
+        DataHub.samplesPerSec,
+        chunkSink: (sessionId, chunkIndex, data, gapsJson, ssnOrigin) async {
+          origins.add(ssnOrigin);
+        },
+      );
+      await writer.appendData(hub, 0, 50);
+      expect(writer.ssnOrigin, 41230);
+
+      await writer.flush();
+      for (int i = 0; i < 30; i++) {
+        hub.addSampleFrame(frame);
+      }
+      await writer.appendData(hub, 50, 30);
+      await writer.flush();
+
+      // The constant origin rides the first flush only, not every flush.
+      expect(origins, [41230, null]);
+    });
+
+    test('wraps past 0xFFFF (unwrapped) and respects the anchor offset', () async {
+      final hub = DataHub();
+      final frame = Int32List(channels);
+      for (int i = 0; i < 100; i++) {
+        hub.addSampleFrame(frame);
+      }
+      // Counter anchored mid-stream: hub index 100 carries 65530.
+      hub.notePacketCounter(65530);
+      for (int i = 0; i < 50; i++) {
+        hub.addSampleFrame(frame);
+      }
+
+      final writer = LiveSessionWriter(
+        1,
+        Float64List(channels),
+        DataHub.samplesPerSec,
+        chunkSink: (sessionId, chunkIndex, data, gapsJson, ssnOrigin) async {},
+      );
+      // The session starts at hub index 120: ssn_origin = 65530 + 20 — above
+      // the 16-bit wrap, as the format requires.
+      await writer.appendData(hub, 120, 30);
+      expect(writer.ssnOrigin, 65550);
+    });
+
+    test('persists on first flush and loads back with the session', () async {
+      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(AppDatabase.closeInstance);
+
+      final hub = DataHub();
+      final frame = Int32List(channels);
+      hub.notePacketCounter(41230);
+      // Past the 16 KB flush threshold in one append (2100 * 4 ch * 4 B).
+      for (int i = 0; i < 2100; i++) {
+        hub.addSampleFrame(frame);
+      }
+
+      final writer = await SessionStorage.startSession(
+        dataHub: hub,
+        name: 'ssn',
+        channelLabels: const ['a', 'b', 'c', 'd'],
+        visibleChannels: const [true, true, true, true],
+        displayUnit: DisplayUnit.kgf,
+      );
+      await writer.appendData(hub, 0, hub.totalSamples);
+
+      // The threshold flush already persisted the origin — this is what a
+      // crash mid-recording would recover from.
+      var row = (await AppDatabase.instance.sessionById(writer.sessionId))!;
+      expect(row.ssnOrigin, 41230);
+
+      await SessionStorage.finalizeSession(writer: writer);
+      row = (await AppDatabase.instance.sessionById(writer.sessionId))!;
+      expect(row.ssnOrigin, 41230);
+
+      final loaded = (await SessionStorage.loadSession(row))!;
+      expect(loaded.ssnOrigin, 41230);
     });
   });
 
@@ -217,6 +312,7 @@ void main() {
         }
       }
 
+      hub.notePacketCounter(41230);
       pump(2100, 7);
       hub.addDroppedFrames(20);
       pump(100, 9);
@@ -226,6 +322,7 @@ void main() {
         name: 'crash me',
         channelLabels: const ['a', 'b', 'c', 'd'],
         visibleChannels: const [true, true, true, true],
+        displayUnit: DisplayUnit.kgf,
       );
       // The single append crosses the flush threshold, so the chunk insert
       // AND the incremental gaps update land in the DB.
@@ -235,6 +332,7 @@ void main() {
         writer.sessionId,
       );
       expect(beforeCrash!.gaps, '[[2100,2120]]');
+      expect(beforeCrash.ssnOrigin, 41230);
 
       // Simulate the crash: recover without finalizeSession ever running.
       await SessionStorage.recoverIncompleteSessions();
@@ -243,14 +341,17 @@ void main() {
       expect(row, isNotNull);
       expect(row!.isCompleted, isTrue);
       expect(row.sampleCount, hub.totalSamples);
-      // Recovery rebuilt the aggregates but preserved the persisted gaps.
+      // Recovery rebuilt the aggregates but preserved the persisted gaps
+      // and the persisted ssn origin.
       expect(row.gaps, '[[2100,2120]]');
+      expect(row.ssnOrigin, 41230);
 
       final loaded = await SessionStorage.loadSession(row);
       expect(loaded, isNotNull);
       expect(loaded!.gaps.contains(2100), isTrue);
       expect(loaded.gaps.contains(2119), isTrue);
       expect(loaded.gaps.contains(2120), isFalse);
+      expect(loaded.ssnOrigin, 41230);
     });
 
     test(
@@ -270,6 +371,7 @@ void main() {
           tares: '[0,0,0,0]',
           calibrationJson: '[]',
           visibleChannels: '[true,true,true,true]',
+          displayUnit: 'kgf',
         );
         await AppDatabase.instance.insertChunk(sessionId, 0, Uint8List(0));
 
@@ -326,6 +428,7 @@ void main() {
           name: 'cal',
           channelLabels: const ['a', 'b', 'c', 'd'],
           visibleChannels: const [true, true, true, true],
+          displayUnit: DisplayUnit.kgf,
         );
         await writer.appendData(hub, 0, hub.totalSamples);
         await SessionStorage.finalizeSession(writer: writer);

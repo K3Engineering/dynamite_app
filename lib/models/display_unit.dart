@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'calibration.dart';
 
 /// Hardware AFE constants ([adcFullScaleV], [frontEndGain],
@@ -30,6 +32,40 @@ enum DisplayUnit {
   /// 1 kgf expressed in this unit (force units only); null for electrical
   /// units, which convert through the board calibration alone.
   final double? kgfFactor;
+
+  /// The unit's verbatim symbol in a dynamite-csv file (docs/csv-format-v1.md):
+  /// exactly as the firmware certificates write it — lowercase `raw`, `mV/V`
+  /// with the slash — used in header suffixes and the metadata's
+  /// `converted_unit`. Differs from [symbol] only for [DisplayUnit.raw]
+  /// (whose display label is capitalized).
+  String get csvSymbol => switch (this) {
+    DisplayUnit.kN => 'kN',
+    DisplayUnit.lbf => 'lbf',
+    DisplayUnit.kgf => 'kgf',
+    DisplayUnit.n => 'N',
+    DisplayUnit.mVv => 'mV/V',
+    DisplayUnit.mV => 'mV',
+    DisplayUnit.raw => 'raw',
+  };
+
+  /// Fixed-point decimals for this unit on [channel] in a dynamite-csv file
+  /// (docs/csv-format-v1.md): one guard digit beyond the value of 1 ADC
+  /// count in this unit (`ceil(1 − log10(scale / spanCountsPerMvV))`,
+  /// clamped to 0..10), computed from the recorded board cal's span. Null
+  /// exactly when [converterFor] is (a force unit with no load cell — the
+  /// file column is all-blank, so no precision is needed).
+  int? exportDecimalsFor(ChannelCalibration channel) {
+    if (this == DisplayUnit.raw) return 1; // quantum = 1 count
+    final scale = _scalePerMvV(channel);
+    if (scale == null) return null;
+    final quantum = (scale / channel.board.spanCountsPerMvV).abs();
+    // The nudge keeps an exact power-of-ten quantum from gaining a spurious
+    // extra decimal to floating-point error in the log.
+    return (1 - math.log(quantum) / math.ln10 - 1e-9)
+        .ceil()
+        .clamp(0, 10)
+        .toInt();
+  }
 
   /// Force units need an assigned load cell; electrical units only need the
   /// board calibration. Drives the Settings picker's grouping.

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
+import '../models/display_unit.dart';
 import '../services/csv_export.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
@@ -348,15 +349,78 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   Future<void> _downloadCsv(Session session, SessionData data) =>
-      _runCsvAction(() => downloadSessionCsv(session: session, data: data));
+      _runCsvAction(() async {
+        final unit = await _pickExportUnit(_recordedUnit(session));
+        if (unit == null) return null;
+        return downloadSessionCsv(session: session, data: data, unit: unit);
+      });
 
-  Future<void> _shareCsv(Session session, SessionData data) => _runCsvAction(
-    () => shareSessionCsv(
-      session: session,
-      data: data,
-      sharePositionOrigin: _shareAnchor(),
-    ),
-  );
+  Future<void> _shareCsv(Session session, SessionData data) =>
+      _runCsvAction(() async {
+        final unit = await _pickExportUnit(_recordedUnit(session));
+        if (unit == null) return null;
+        return shareSessionCsv(
+          session: session,
+          data: data,
+          unit: unit,
+          sharePositionOrigin: _shareAnchor(),
+        );
+      });
+
+  /// The session's recorded display unit (frozen at recording start): the
+  /// export picker's preselection. An unrecognizable stored value falls
+  /// back to the platform default unit.
+  static DisplayUnit _recordedUnit(Session session) =>
+      DisplayUnit.values.firstWhere(
+        (u) => u.name == session.displayUnit,
+        orElse: () => DisplayUnit.mVv,
+      );
+
+  /// Ask the user for the export's converted unit (docs/csv-format-v1.md:
+  /// one file, one unit, chosen by the user), preselected to [initial].
+  /// Returns null when cancelled — the caller stays silent then.
+  Future<DisplayUnit?> _pickExportUnit(DisplayUnit initial) {
+    return showDialog<DisplayUnit>(
+      context: context,
+      builder: (ctx) {
+        var selected = initial;
+        return StatefulBuilder(
+          builder: (ctx, setState) => AlertDialog(
+            title: const Text('Export CSV'),
+            content: SingleChildScrollView(
+              child: RadioGroup<DisplayUnit>(
+                groupValue: selected,
+                onChanged: (unit) {
+                  if (unit != null) setState(() => selected = unit);
+                },
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final u in DisplayUnit.values)
+                      RadioListTile<DisplayUnit>(
+                        value: u,
+                        title: Text(u.symbol),
+                        subtitle: Text(u.label),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(ctx).pop(selected),
+                child: const Text('Export'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
 
   /// Run a CSV download/share action and surface its outcome as a snackbar:
   /// the returned result message, the failure, or nothing when the user

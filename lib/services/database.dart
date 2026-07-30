@@ -43,6 +43,17 @@ class Sessions extends Table {
   /// list. Initialized from the live view's channel selection at recording
   /// time; afterwards it is per-session and independent of the live view.
   TextColumn get visibleChannels => text()();
+
+  /// Device sample-counter value at the session's first sample (the
+  /// dynamite-csv `ssn_origin` — docs/csv-format-v1.md). Nullable because the
+  /// counter value only becomes knowable when the first packet of the
+  /// recording arrives; the live writer records it on its first chunk flush.
+  IntColumn get ssnOrigin => integer().nullable()();
+
+  /// The app's display unit at recording start (a `DisplayUnit.name`),
+  /// frozen as the CSV export's default converted unit — the
+  /// recording-time snapshot requirement of docs/csv-format-v1.md.
+  TextColumn get displayUnit => text()();
 }
 
 class SessionChunks extends Table {
@@ -85,7 +96,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -126,6 +137,7 @@ class AppDatabase extends _$AppDatabase {
     required String tares,
     required String calibrationJson,
     required String visibleChannels,
+    required String displayUnit,
     DateTime? createdAt,
   }) {
     return into(sessions).insert(
@@ -139,6 +151,7 @@ class AppDatabase extends _$AppDatabase {
         calibrationJson: calibrationJson,
         isCompleted: const Value(false),
         visibleChannels: visibleChannels,
+        displayUnit: displayUnit,
       ),
     );
   }
@@ -173,6 +186,15 @@ class AppDatabase extends _$AppDatabase {
   /// aggregates; it cannot reconstruct gaps from chunk bytes).
   Future<void> setSessionGaps(int id, String gaps) {
     return _updateSession(id, SessionsCompanion(gaps: Value(gaps)));
+  }
+
+  /// Record a session's device sample-counter origin ([ssnOrigin]). Called
+  /// by the live writer once it has been latched — on the first chunk
+  /// flush — so a crash-recovered session exports the same `ssn` column the
+  /// uninterrupted recording would have (chunk bytes alone can't
+  /// reconstruct it).
+  Future<void> setSessionSsnOrigin(int id, int ssnOrigin) {
+    return _updateSession(id, SessionsCompanion(ssnOrigin: Value(ssnOrigin)));
   }
 
   /// Rename a session.

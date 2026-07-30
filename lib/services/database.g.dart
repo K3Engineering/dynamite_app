@@ -177,6 +177,28 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _ssnOriginMeta = const VerificationMeta(
+    'ssnOrigin',
+  );
+  @override
+  late final GeneratedColumn<int> ssnOrigin = GeneratedColumn<int>(
+    'ssn_origin',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _displayUnitMeta = const VerificationMeta(
+    'displayUnit',
+  );
+  @override
+  late final GeneratedColumn<String> displayUnit = GeneratedColumn<String>(
+    'display_unit',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -194,6 +216,8 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     isCompleted,
     gaps,
     visibleChannels,
+    ssnOrigin,
+    displayUnit,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -326,6 +350,23 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     } else if (isInserting) {
       context.missing(_visibleChannelsMeta);
     }
+    if (data.containsKey('ssn_origin')) {
+      context.handle(
+        _ssnOriginMeta,
+        ssnOrigin.isAcceptableOrUnknown(data['ssn_origin']!, _ssnOriginMeta),
+      );
+    }
+    if (data.containsKey('display_unit')) {
+      context.handle(
+        _displayUnitMeta,
+        displayUnit.isAcceptableOrUnknown(
+          data['display_unit']!,
+          _displayUnitMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_displayUnitMeta);
+    }
     return context;
   }
 
@@ -395,6 +436,14 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.string,
         data['${effectivePrefix}visible_channels'],
       )!,
+      ssnOrigin: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}ssn_origin'],
+      ),
+      displayUnit: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}display_unit'],
+      )!,
     );
   }
 
@@ -436,6 +485,17 @@ class Session extends DataClass implements Insertable<Session> {
   /// list. Initialized from the live view's channel selection at recording
   /// time; afterwards it is per-session and independent of the live view.
   final String visibleChannels;
+
+  /// Device sample-counter value at the session's first sample (the
+  /// dynamite-csv `ssn_origin` — docs/csv-format-v1.md). Nullable because the
+  /// counter value only becomes knowable when the first packet of the
+  /// recording arrives; the live writer records it on its first chunk flush.
+  final int? ssnOrigin;
+
+  /// The app's display unit at recording start (a `DisplayUnit.name`),
+  /// frozen as the CSV export's default converted unit — the
+  /// recording-time snapshot requirement of docs/csv-format-v1.md.
+  final String displayUnit;
   const Session({
     required this.id,
     required this.name,
@@ -452,6 +512,8 @@ class Session extends DataClass implements Insertable<Session> {
     required this.isCompleted,
     required this.gaps,
     required this.visibleChannels,
+    this.ssnOrigin,
+    required this.displayUnit,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -471,6 +533,10 @@ class Session extends DataClass implements Insertable<Session> {
     map['is_completed'] = Variable<bool>(isCompleted);
     map['gaps'] = Variable<String>(gaps);
     map['visible_channels'] = Variable<String>(visibleChannels);
+    if (!nullToAbsent || ssnOrigin != null) {
+      map['ssn_origin'] = Variable<int>(ssnOrigin);
+    }
+    map['display_unit'] = Variable<String>(displayUnit);
     return map;
   }
 
@@ -491,6 +557,10 @@ class Session extends DataClass implements Insertable<Session> {
       isCompleted: Value(isCompleted),
       gaps: Value(gaps),
       visibleChannels: Value(visibleChannels),
+      ssnOrigin: ssnOrigin == null && nullToAbsent
+          ? const Value.absent()
+          : Value(ssnOrigin),
+      displayUnit: Value(displayUnit),
     );
   }
 
@@ -515,6 +585,8 @@ class Session extends DataClass implements Insertable<Session> {
       isCompleted: serializer.fromJson<bool>(json['isCompleted']),
       gaps: serializer.fromJson<String>(json['gaps']),
       visibleChannels: serializer.fromJson<String>(json['visibleChannels']),
+      ssnOrigin: serializer.fromJson<int?>(json['ssnOrigin']),
+      displayUnit: serializer.fromJson<String>(json['displayUnit']),
     );
   }
   @override
@@ -536,6 +608,8 @@ class Session extends DataClass implements Insertable<Session> {
       'isCompleted': serializer.toJson<bool>(isCompleted),
       'gaps': serializer.toJson<String>(gaps),
       'visibleChannels': serializer.toJson<String>(visibleChannels),
+      'ssnOrigin': serializer.toJson<int?>(ssnOrigin),
+      'displayUnit': serializer.toJson<String>(displayUnit),
     };
   }
 
@@ -555,6 +629,8 @@ class Session extends DataClass implements Insertable<Session> {
     bool? isCompleted,
     String? gaps,
     String? visibleChannels,
+    Value<int?> ssnOrigin = const Value.absent(),
+    String? displayUnit,
   }) => Session(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -571,6 +647,8 @@ class Session extends DataClass implements Insertable<Session> {
     isCompleted: isCompleted ?? this.isCompleted,
     gaps: gaps ?? this.gaps,
     visibleChannels: visibleChannels ?? this.visibleChannels,
+    ssnOrigin: ssnOrigin.present ? ssnOrigin.value : this.ssnOrigin,
+    displayUnit: displayUnit ?? this.displayUnit,
   );
   Session copyWithCompanion(SessionsCompanion data) {
     return Session(
@@ -605,6 +683,10 @@ class Session extends DataClass implements Insertable<Session> {
       visibleChannels: data.visibleChannels.present
           ? data.visibleChannels.value
           : this.visibleChannels,
+      ssnOrigin: data.ssnOrigin.present ? data.ssnOrigin.value : this.ssnOrigin,
+      displayUnit: data.displayUnit.present
+          ? data.displayUnit.value
+          : this.displayUnit,
     );
   }
 
@@ -625,7 +707,9 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('sampleCount: $sampleCount, ')
           ..write('isCompleted: $isCompleted, ')
           ..write('gaps: $gaps, ')
-          ..write('visibleChannels: $visibleChannels')
+          ..write('visibleChannels: $visibleChannels, ')
+          ..write('ssnOrigin: $ssnOrigin, ')
+          ..write('displayUnit: $displayUnit')
           ..write(')'))
         .toString();
   }
@@ -647,6 +731,8 @@ class Session extends DataClass implements Insertable<Session> {
     isCompleted,
     gaps,
     visibleChannels,
+    ssnOrigin,
+    displayUnit,
   );
   @override
   bool operator ==(Object other) =>
@@ -666,7 +752,9 @@ class Session extends DataClass implements Insertable<Session> {
           other.sampleCount == this.sampleCount &&
           other.isCompleted == this.isCompleted &&
           other.gaps == this.gaps &&
-          other.visibleChannels == this.visibleChannels);
+          other.visibleChannels == this.visibleChannels &&
+          other.ssnOrigin == this.ssnOrigin &&
+          other.displayUnit == this.displayUnit);
 }
 
 class SessionsCompanion extends UpdateCompanion<Session> {
@@ -685,6 +773,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<bool> isCompleted;
   final Value<String> gaps;
   final Value<String> visibleChannels;
+  final Value<int?> ssnOrigin;
+  final Value<String> displayUnit;
   const SessionsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
@@ -701,6 +791,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.isCompleted = const Value.absent(),
     this.gaps = const Value.absent(),
     this.visibleChannels = const Value.absent(),
+    this.ssnOrigin = const Value.absent(),
+    this.displayUnit = const Value.absent(),
   });
   SessionsCompanion.insert({
     this.id = const Value.absent(),
@@ -718,13 +810,16 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.isCompleted = const Value.absent(),
     this.gaps = const Value.absent(),
     required String visibleChannels,
+    this.ssnOrigin = const Value.absent(),
+    required String displayUnit,
   }) : createdAt = Value(createdAt),
        sampleRate = Value(sampleRate),
        channelCount = Value(channelCount),
        channelLabels = Value(channelLabels),
        tares = Value(tares),
        calibrationJson = Value(calibrationJson),
-       visibleChannels = Value(visibleChannels);
+       visibleChannels = Value(visibleChannels),
+       displayUnit = Value(displayUnit);
   static Insertable<Session> custom({
     Expression<int>? id,
     Expression<String>? name,
@@ -741,6 +836,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<bool>? isCompleted,
     Expression<String>? gaps,
     Expression<String>? visibleChannels,
+    Expression<int>? ssnOrigin,
+    Expression<String>? displayUnit,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -758,6 +855,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (isCompleted != null) 'is_completed': isCompleted,
       if (gaps != null) 'gaps': gaps,
       if (visibleChannels != null) 'visible_channels': visibleChannels,
+      if (ssnOrigin != null) 'ssn_origin': ssnOrigin,
+      if (displayUnit != null) 'display_unit': displayUnit,
     });
   }
 
@@ -777,6 +876,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<bool>? isCompleted,
     Value<String>? gaps,
     Value<String>? visibleChannels,
+    Value<int?>? ssnOrigin,
+    Value<String>? displayUnit,
   }) {
     return SessionsCompanion(
       id: id ?? this.id,
@@ -794,6 +895,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       isCompleted: isCompleted ?? this.isCompleted,
       gaps: gaps ?? this.gaps,
       visibleChannels: visibleChannels ?? this.visibleChannels,
+      ssnOrigin: ssnOrigin ?? this.ssnOrigin,
+      displayUnit: displayUnit ?? this.displayUnit,
     );
   }
 
@@ -845,6 +948,12 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     if (visibleChannels.present) {
       map['visible_channels'] = Variable<String>(visibleChannels.value);
     }
+    if (ssnOrigin.present) {
+      map['ssn_origin'] = Variable<int>(ssnOrigin.value);
+    }
+    if (displayUnit.present) {
+      map['display_unit'] = Variable<String>(displayUnit.value);
+    }
     return map;
   }
 
@@ -865,7 +974,9 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('sampleCount: $sampleCount, ')
           ..write('isCompleted: $isCompleted, ')
           ..write('gaps: $gaps, ')
-          ..write('visibleChannels: $visibleChannels')
+          ..write('visibleChannels: $visibleChannels, ')
+          ..write('ssnOrigin: $ssnOrigin, ')
+          ..write('displayUnit: $displayUnit')
           ..write(')'))
         .toString();
   }
@@ -1167,6 +1278,8 @@ typedef $$SessionsTableCreateCompanionBuilder =
       Value<bool> isCompleted,
       Value<String> gaps,
       required String visibleChannels,
+      Value<int?> ssnOrigin,
+      required String displayUnit,
     });
 typedef $$SessionsTableUpdateCompanionBuilder =
     SessionsCompanion Function({
@@ -1185,6 +1298,8 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<bool> isCompleted,
       Value<String> gaps,
       Value<String> visibleChannels,
+      Value<int?> ssnOrigin,
+      Value<String> displayUnit,
     });
 
 class $$SessionsTableFilterComposer
@@ -1268,6 +1383,16 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<String> get visibleChannels => $composableBuilder(
     column: $table.visibleChannels,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get ssnOrigin => $composableBuilder(
+    column: $table.ssnOrigin,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get displayUnit => $composableBuilder(
+    column: $table.displayUnit,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1355,6 +1480,16 @@ class $$SessionsTableOrderingComposer
     column: $table.visibleChannels,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<int> get ssnOrigin => $composableBuilder(
+    column: $table.ssnOrigin,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get displayUnit => $composableBuilder(
+    column: $table.displayUnit,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SessionsTableAnnotationComposer
@@ -1426,6 +1561,14 @@ class $$SessionsTableAnnotationComposer
     column: $table.visibleChannels,
     builder: (column) => column,
   );
+
+  GeneratedColumn<int> get ssnOrigin =>
+      $composableBuilder(column: $table.ssnOrigin, builder: (column) => column);
+
+  GeneratedColumn<String> get displayUnit => $composableBuilder(
+    column: $table.displayUnit,
+    builder: (column) => column,
+  );
 }
 
 class $$SessionsTableTableManager
@@ -1471,6 +1614,8 @@ class $$SessionsTableTableManager
                 Value<bool> isCompleted = const Value.absent(),
                 Value<String> gaps = const Value.absent(),
                 Value<String> visibleChannels = const Value.absent(),
+                Value<int?> ssnOrigin = const Value.absent(),
+                Value<String> displayUnit = const Value.absent(),
               }) => SessionsCompanion(
                 id: id,
                 name: name,
@@ -1487,6 +1632,8 @@ class $$SessionsTableTableManager
                 isCompleted: isCompleted,
                 gaps: gaps,
                 visibleChannels: visibleChannels,
+                ssnOrigin: ssnOrigin,
+                displayUnit: displayUnit,
               ),
           createCompanionCallback:
               ({
@@ -1505,6 +1652,8 @@ class $$SessionsTableTableManager
                 Value<bool> isCompleted = const Value.absent(),
                 Value<String> gaps = const Value.absent(),
                 required String visibleChannels,
+                Value<int?> ssnOrigin = const Value.absent(),
+                required String displayUnit,
               }) => SessionsCompanion.insert(
                 id: id,
                 name: name,
@@ -1521,6 +1670,8 @@ class $$SessionsTableTableManager
                 isCompleted: isCompleted,
                 gaps: gaps,
                 visibleChannels: visibleChannels,
+                ssnOrigin: ssnOrigin,
+                displayUnit: displayUnit,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
