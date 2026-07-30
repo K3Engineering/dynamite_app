@@ -12,10 +12,18 @@ import 'package:dynamite_app/services/session_storage.dart';
 
 /// Peak-bias tests for the storage side: a never-positive stream must report
 /// its true (negative) max, both for loaded sessions and for the live
-/// writer's streaming aggregate. No DB is touched: the writer's append stays
-/// under its flush threshold, so nothing is ever persisted.
+/// writer's streaming aggregate.
+///
+/// An in-memory database is installed for every test in this file: the
+/// writer persists its ssn origin at latch time (a harmless no-op when its
+/// session row doesn't exist), and several tests exercise the real DB path.
 void main() {
   const int channels = DataHub.numAdcChannels;
+
+  setUp(() {
+    AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+  });
+  tearDown(AppDatabase.closeInstance);
 
   List<ChannelCalibration> nominalCals() => [
     for (int ch = 0; ch < channels; ch++)
@@ -84,7 +92,7 @@ void main() {
         1,
         Float64List(channels),
         DataHub.samplesPerSec,
-        chunkSink: (sessionId, chunkIndex, data, gapsJson, ssnOrigin) async =>
+        chunkSink: (sessionId, chunkIndex, data, gapsJson) async =>
             saved.add(data),
       );
       final hub = DataHub();
@@ -129,7 +137,7 @@ void main() {
         1,
         Float64List(channels),
         DataHub.samplesPerSec,
-        chunkSink: (sessionId, chunkIndex, data, gapsJson, ssnOrigin) async {
+        chunkSink: (sessionId, chunkIndex, data, gapsJson) async {
           sinkCalls++;
           if (!entered.isCompleted) entered.complete();
           await gate.future; // wedge every chunk write until released
@@ -171,69 +179,62 @@ void main() {
   });
 
   group('LiveSessionWriter ssn origin', () {
-    test('latches from the hub packet-counter anchor on first append, '
-        'and hands it to the sink exactly once', () async {
-      final hub = DataHub();
-      final frame = Int32List(channels);
-      // The first recorded packet's counter anchors at hub index 0 (the
-      // decoder's continuity reset at recording start means no gap
-      // injection precedes it).
-      hub.notePacketCounter(41230);
-      for (int i = 0; i < 50; i++) {
-        hub.addSampleFrame(frame);
-      }
+    test(
+      'latches from the hub packet-counter anchor on first append',
+      () async {
+        final hub = DataHub();
+        final frame = Int32List(channels);
+        // The first recorded packet's counter anchors at hub index 0 (the
+        // decoder's continuity reset at recording start means no gap
+        // injection precedes it).
+        hub.notePacketCounter(41230);
+        for (int i = 0; i < 50; i++) {
+          hub.addSampleFrame(frame);
+        }
 
-      final origins = <int?>[];
-      final writer = LiveSessionWriter(
-        1,
-        Float64List(channels),
-        DataHub.samplesPerSec,
-        chunkSink: (sessionId, chunkIndex, data, gapsJson, ssnOrigin) async {
-          origins.add(ssnOrigin);
-        },
-      );
-      await writer.appendData(hub, 0, 50);
-      expect(writer.ssnOrigin, 41230);
+        final writer = LiveSessionWriter(
+          1,
+          Float64List(channels),
+          DataHub.samplesPerSec,
+          chunkSink: (sessionId, chunkIndex, data, gapsJson) async {},
+        );
+        await writer.appendData(hub, 0, 50);
 
-      await writer.flush();
-      for (int i = 0; i < 30; i++) {
-        hub.addSampleFrame(frame);
-      }
-      await writer.appendData(hub, 50, 30);
-      await writer.flush();
+        // The latch persists the origin in the same breath (a write-once
+        // constant — here a no-op since session row 1 doesn't exist); the
+        // startSession-based test below covers the persisted value.
+        expect(writer.ssnOrigin, 41230);
+      },
+    );
 
-      // The constant origin rides the first flush only, not every flush.
-      expect(origins, [41230, null]);
-    });
+    test(
+      'wraps past 0xFFFF (unwrapped) and respects the anchor offset',
+      () async {
+        final hub = DataHub();
+        final frame = Int32List(channels);
+        for (int i = 0; i < 100; i++) {
+          hub.addSampleFrame(frame);
+        }
+        // Counter anchored mid-stream: hub index 100 carries 65530.
+        hub.notePacketCounter(65530);
+        for (int i = 0; i < 50; i++) {
+          hub.addSampleFrame(frame);
+        }
 
-    test('wraps past 0xFFFF (unwrapped) and respects the anchor offset', () async {
-      final hub = DataHub();
-      final frame = Int32List(channels);
-      for (int i = 0; i < 100; i++) {
-        hub.addSampleFrame(frame);
-      }
-      // Counter anchored mid-stream: hub index 100 carries 65530.
-      hub.notePacketCounter(65530);
-      for (int i = 0; i < 50; i++) {
-        hub.addSampleFrame(frame);
-      }
+        final writer = LiveSessionWriter(
+          1,
+          Float64List(channels),
+          DataHub.samplesPerSec,
+          chunkSink: (sessionId, chunkIndex, data, gapsJson) async {},
+        );
+        // The session starts at hub index 120: ssn_origin = 65530 + 20 — above
+        // the 16-bit wrap, as the format requires.
+        await writer.appendData(hub, 120, 30);
+        expect(writer.ssnOrigin, 65550);
+      },
+    );
 
-      final writer = LiveSessionWriter(
-        1,
-        Float64List(channels),
-        DataHub.samplesPerSec,
-        chunkSink: (sessionId, chunkIndex, data, gapsJson, ssnOrigin) async {},
-      );
-      // The session starts at hub index 120: ssn_origin = 65530 + 20 — above
-      // the 16-bit wrap, as the format requires.
-      await writer.appendData(hub, 120, 30);
-      expect(writer.ssnOrigin, 65550);
-    });
-
-    test('persists on first flush and loads back with the session', () async {
-      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
-      addTearDown(AppDatabase.closeInstance);
-
+    test('persists at first append and loads back with the session', () async {
       final hub = DataHub();
       final frame = Int32List(channels);
       hub.notePacketCounter(41230);
@@ -251,8 +252,8 @@ void main() {
       );
       await writer.appendData(hub, 0, hub.totalSamples);
 
-      // The threshold flush already persisted the origin — this is what a
-      // crash mid-recording would recover from.
+      // The origin was persisted at latch time, ahead of the first chunk
+      // flush — this is what a crash mid-recording would recover from.
       var row = (await AppDatabase.instance.sessionById(writer.sessionId))!;
       expect(row.ssnOrigin, 41230);
 
@@ -298,9 +299,6 @@ void main() {
 
   group('crash recovery', () {
     test('gaps persisted on flush survive recoverIncompleteSessions', () async {
-      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
-      addTearDown(AppDatabase.closeInstance);
-
       // A stream with a dropped range: 2100 real samples, a 20-sample gap,
       // 100 more real samples — past the 16 KB flush threshold.
       final hub = DataHub();
@@ -357,9 +355,6 @@ void main() {
     test(
       'a session with only empty chunks completes with zero peaks',
       () async {
-        AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
-        addTearDown(AppDatabase.closeInstance);
-
         // A chunk row exists, but it holds no complete frame (0 bytes), so
         // the recovered aggregate scan finds no samples and every channel's
         // peak stays at -infinity — which must never reach the DB.
@@ -391,9 +386,6 @@ void main() {
     test(
       'playback converts through the calibration recorded with the session',
       () async {
-        AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
-        addTearDown(AppDatabase.closeInstance);
-
         final hub = DataHub();
         final sp = ladderSetpointsMvV(nominalLadderResistors);
         // ch0 measures at half the nominal span; other channels nominal.
@@ -453,7 +445,10 @@ void main() {
           closeTo(1000 / (0.5 * nominalCountsPerMvV) * (100 / 2.02), 1e-9),
         );
         // ch1 had no load cell assigned at recording time.
-        expect(DisplayUnit.kgf.converterFor(loaded.calibrationFor(1), 0), isNull);
+        expect(
+          DisplayUnit.kgf.converterFor(loaded.calibrationFor(1), 0),
+          isNull,
+        );
       },
     );
   });

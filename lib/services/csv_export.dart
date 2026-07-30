@@ -164,16 +164,13 @@ String buildSessionCsv(
   // only on sessions with no recorded packets (no data rows anyway).
   final int ssnOrigin = data.ssnOrigin ?? 0;
 
-  // Per-channel converters and column precision, computed once from the
-  // session's frozen calibration: a null converter is a force unit on a
-  // cell-less channel — an all-blank quartet-2 column (the file's '—').
-  final converters = [
+  // Per-channel quartet-2 cell formatters, computed once from the session's
+  // frozen calibration; each closure folds in the column's fixed-point
+  // precision. Null is a force unit on a cell-less channel — an all-blank
+  // column (the file's '—').
+  final formatters = [
     for (int ch = 0; ch < n; ch++)
-      unit.converterFor(data.calibrationFor(ch), data.tares[ch]),
-  ];
-  final decimals = [
-    for (int ch = 0; ch < n; ch++)
-      unit.exportDecimalsFor(data.calibrationFor(ch)),
+      _columnFormatter(unit, data.calibrationFor(ch), data.tares[ch]),
   ];
 
   final buf = StringBuffer()
@@ -200,25 +197,34 @@ String buildSessionCsv(
     if (data.gaps.contains(s)) {
       // Dropped sample: the buffer holds a fabricated (held) value, so emit
       // blank cells rather than fake data — both quartets, every channel.
-      for (int i = 0; i < 2 * n; i++) {
-        buf.write(',');
-      }
+      buf.write(',' * (2 * n));
     } else {
       for (int ch = 0; ch < n; ch++) {
         buf.write(',${data.channels[ch][s]}');
       }
       for (int ch = 0; ch < n; ch++) {
-        final convert = converters[ch];
-        buf.write(
-          convert == null
-              ? ','
-              : ',${convert(data.channels[ch][s].toDouble()).toStringAsFixed(decimals[ch]!)}',
-        );
+        final format = formatters[ch];
+        buf.write(format == null ? ',' : ',${format(data.channels[ch][s])}');
       }
     }
     buf.writeln();
   }
   return buf.toString();
+}
+
+/// The quartet-2 cell formatter for one channel: [unit]'s converter folded
+/// with the column's fixed-point decimals ([DisplayUnit.exportDecimalsFor]).
+/// Null exactly when the unit is unavailable on the channel (a force unit
+/// with no load cell — the file's all-blank column).
+String Function(int raw)? _columnFormatter(
+  DisplayUnit unit,
+  ChannelCalibration cal,
+  double tare,
+) {
+  final convert = unit.converterFor(cal, tare);
+  final decimals = unit.exportDecimalsFor(cal);
+  if (convert == null || decimals == null) return null;
+  return (raw) => convert(raw.toDouble()).toStringAsFixed(decimals);
 }
 
 /// The metadata line's JSON object (docs/csv-format-v1.md): one compact

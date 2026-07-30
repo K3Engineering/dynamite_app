@@ -33,32 +33,44 @@ enum DisplayUnit {
   /// units, which convert through the board calibration alone.
   final double? kgfFactor;
 
+  /// Parse a stored [DisplayUnit.name] (a preference, a session row) back to
+  /// its value; an unrecognizable or missing value falls back to [fallback]
+  /// (the platform default unit).
+  static DisplayUnit fromName(
+    String? name, [
+    DisplayUnit fallback = DisplayUnit.mVv,
+  ]) => DisplayUnit.values.firstWhere(
+    (u) => u.name == name,
+    orElse: () => fallback,
+  );
+
   /// The unit's verbatim symbol in a dynamite-csv file (docs/csv-format-v1.md):
   /// exactly as the firmware certificates write it — lowercase `raw`, `mV/V`
   /// with the slash — used in header suffixes and the metadata's
   /// `converted_unit`. Differs from [symbol] only for [DisplayUnit.raw]
   /// (whose display label is capitalized).
-  String get csvSymbol => switch (this) {
-    DisplayUnit.kN => 'kN',
-    DisplayUnit.lbf => 'lbf',
-    DisplayUnit.kgf => 'kgf',
-    DisplayUnit.n => 'N',
-    DisplayUnit.mVv => 'mV/V',
-    DisplayUnit.mV => 'mV',
-    DisplayUnit.raw => 'raw',
-  };
+  String get csvSymbol => this == DisplayUnit.raw ? 'raw' : symbol;
+
+  /// The value of 1 ADC count in this unit on [channel]: the export's
+  /// fixed-point quantum (see [exportDecimalsFor]) and the derivative path's
+  /// per-count scale (see [diffConverterFor]). Raw bypasses the board map,
+  /// so its quantum is exactly 1 count. Null exactly when [converterFor] is
+  /// (a force unit with no load cell assigned).
+  double? countQuantumFor(ChannelCalibration channel) {
+    if (this == DisplayUnit.raw) return 1.0;
+    final scale = _scalePerMvV(channel);
+    return scale == null ? null : scale / channel.board.spanCountsPerMvV;
+  }
 
   /// Fixed-point decimals for this unit on [channel] in a dynamite-csv file
   /// (docs/csv-format-v1.md): one guard digit beyond the value of 1 ADC
-  /// count in this unit (`ceil(1 − log10(scale / spanCountsPerMvV))`,
-  /// clamped to 0..10), computed from the recorded board cal's span. Null
-  /// exactly when [converterFor] is (a force unit with no load cell — the
-  /// file column is all-blank, so no precision is needed).
+  /// count in this unit (`ceil(1 − log10(quantum))`, clamped to 0..10),
+  /// computed from the recorded board cal's span. Null exactly when
+  /// [converterFor] is (a force unit with no load cell — the file column is
+  /// all-blank, so no precision is needed).
   int? exportDecimalsFor(ChannelCalibration channel) {
-    if (this == DisplayUnit.raw) return 1; // quantum = 1 count
-    final scale = _scalePerMvV(channel);
-    if (scale == null) return null;
-    final quantum = (scale / channel.board.spanCountsPerMvV).abs();
+    final quantum = countQuantumFor(channel)?.abs();
+    if (quantum == null) return null;
     // The nudge keeps an exact power-of-ten quantum from gaining a spurious
     // extra decimal to floating-point error in the log.
     return (1 - math.log(quantum) / math.ln10 - 1e-9)
@@ -114,10 +126,8 @@ enum DisplayUnit {
   double Function(double rawDiff)? diffConverterFor(
     ChannelCalibration channel,
   ) {
-    if (this == DisplayUnit.raw) return (diff) => diff;
-    final scale = _scalePerMvV(channel);
-    if (scale == null) return null;
-    final perCount = scale / channel.board.spanCountsPerMvV;
+    final perCount = countQuantumFor(channel);
+    if (perCount == null) return null;
     return (diff) => diff * perCount;
   }
 

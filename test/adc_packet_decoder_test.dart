@@ -127,24 +127,24 @@ void main() {
     test('the packet counter anchors to the hub index after gap injection', () {
       // First packet: counter 0 lands at hub index 0.
       decoder.onDataPacket(makePacket(0, (s, c) => 1));
-      expect(hub.latestPacketCounter, 0);
-      expect(hub.latestPacketHubIndex, 0);
+      expect(hub.packetAnchor, (counter: 0, hubIndex: 0));
 
       // A one-stride jump: 20 held samples are injected first, so the next
       // packet's first sample (counter 40) lands at hub index 40 — keeping
       // counter and hub timeline in lockstep (ssn = origin + row_index).
       decoder.onDataPacket(makePacket(2 * nwAdcNumSamples, (s, c) => 5));
-      expect(hub.latestPacketCounter, 2 * nwAdcNumSamples);
-      expect(hub.latestPacketHubIndex, 2 * nwAdcNumSamples);
+      expect(hub.packetAnchor, (
+        counter: 2 * nwAdcNumSamples,
+        hubIndex: 2 * nwAdcNumSamples,
+      ));
     });
 
     test('a hub clear forgets the packet-counter anchor', () {
       decoder.onDataPacket(makePacket(100, (s, c) => 1));
-      expect(hub.latestPacketCounter, isNotNull);
+      expect(hub.packetAnchor, isNotNull);
 
       hub.clear();
-      expect(hub.latestPacketCounter, isNull);
-      expect(hub.latestPacketHubIndex, 0);
+      expect(hub.packetAnchor, isNull);
     });
 
     test('an empty packet is ignored and flags a protocol error', () {

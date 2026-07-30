@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -486,7 +487,6 @@ class LiveSessionWriter {
       int chunkIndex,
       Uint8List data,
       String gapsJson,
-      int? ssnOrigin,
     )?
     chunkSink,
   }) : _chunkSink = chunkSink;
@@ -521,17 +521,15 @@ class LiveSessionWriter {
 
   /// Device sample-counter value at the session's first sample (the
   /// dynamite-csv `ssn_origin`), latched alongside [_originIdx] from the
-  /// hub's packet-counter anchor ([DataHub.notePacketCounter]). Sessions
-  /// start on a packet boundary (the decoder's continuity reset at recording
-  /// start suppresses gap injection for the first recorded packet), so the
-  /// index difference below is zero in practice; the formula keeps the latch
-  /// correct even if that ever changes. Null until the first append.
+  /// hub's packet-counter anchor ([DataHub.notePacketCounter]) and persisted
+  /// to the session row in the same breath (see [_persistSsnOrigin]).
+  /// Sessions start on a packet boundary (the decoder's continuity reset at
+  /// recording start suppresses gap injection for the first recorded
+  /// packet), so the index difference below is zero in practice; the formula
+  /// keeps the latch correct even if that ever changes. Null until the first
+  /// append.
   int? get ssnOrigin => _ssnOrigin;
   int? _ssnOrigin;
-
-  /// Whether [ssnOrigin] has already been handed to the chunk sink for
-  /// persistence (it is a constant — the sink is told once, not per flush).
-  bool _ssnOriginPersisted = false;
 
   /// Accumulates sample count and peak; shared scan logic with recovery.
   final _ChunkAggregate _agg = _ChunkAggregate(DataHub.numAdcChannels);
@@ -546,16 +544,16 @@ class LiveSessionWriter {
   Future<void> _writeQueue = Future.value();
 
   /// Test seam: when set, a flush's DB side effects (chunk insert + gap-range
-  /// update + first [ssnOrigin] persist) go here instead of the real
-  /// database, so tests can stall and observe writes without opening one.
-  /// Resolved lazily so constructing a writer never touches the database
-  /// singleton.
+  /// update) go here instead of the real database, so tests can stall and
+  /// observe writes without opening one. Resolved lazily so constructing a
+  /// writer never touches the database singleton. (The ssn-origin persist
+  /// does NOT route through here — it fires once at latch time, so tests
+  /// install an in-memory database for it.)
   final Future<void> Function(
     int sessionId,
     int chunkIndex,
     Uint8List data,
     String gapsJson,
-    int? ssnOrigin,
   )?
   _chunkSink;
 
@@ -577,9 +575,15 @@ class LiveSessionWriter {
     // Capture this slice's gap ranges synchronously, rebased to
     // session-relative indices.
     final int origin = _originIdx ??= startIdx;
-    _ssnOrigin ??=
-        (dataHub.latestPacketCounter ?? 0) +
-        (origin - dataHub.latestPacketHubIndex);
+    if (_ssnOrigin == null) {
+      final anchor = dataHub.packetAnchor;
+      _ssnOrigin = (anchor?.counter ?? 0) + (origin - (anchor?.hubIndex ?? 0));
+      // The origin is a write-once constant, so persist it the moment it is
+      // known: enqueued here, the write lands ahead of every chunk flush, so
+      // even a crash before the first flush recovers it (chunk bytes can't
+      // reconstruct it).
+      unawaited(_enqueue(_persistSsnOrigin));
+    }
     for (final (s, e) in dataHub.gaps.rangesIn(startIdx, startIdx + count)) {
       gaps.append(s - origin, e - origin);
     }
@@ -632,18 +636,12 @@ class LiveSessionWriter {
     final dataToSave = _staging.takeBytes();
     final chunkIdx = _chunkIndex++;
     final gapsJson = gaps.toJson();
-    // Hand the ssn origin to the sink exactly once (it's a constant); if the
-    // write fails the error latches and recording stops, so no retry path
-    // is needed.
-    final int? originToPersist = _ssnOriginPersisted ? null : _ssnOrigin;
-    _ssnOriginPersisted = true;
     try {
       await (_chunkSink ?? _defaultChunkSink)(
         sessionId,
         chunkIdx,
         dataToSave,
         gapsJson,
-        originToPersist,
       );
     } catch (e) {
       // Latch the first failure; stop accumulating so we don't grow unbounded
@@ -653,24 +651,32 @@ class LiveSessionWriter {
     }
   }
 
+  /// Persist the latched [ssnOrigin] to the session row. Runs exactly once,
+  /// enqueued at latch time, so it lands ahead of every chunk flush — a
+  /// crash before the first flush still recovers the origin (chunk bytes
+  /// can't reconstruct it). A failure latches [writeError], same as a failed
+  /// flush.
+  Future<void> _persistSsnOrigin() async {
+    try {
+      await AppDatabase.instance.setSessionSsnOrigin(sessionId, _ssnOrigin!);
+    } catch (e) {
+      writeError ??= e;
+      debugPrint('Session ssn-origin persist failed (session $sessionId): $e');
+    }
+  }
+
   /// The production sink: writes the chunk, then updates the session row's
   /// gap ranges so a crash mid-recording keeps the info up to this flush
   /// (crash recovery rebuilds aggregates from chunks but cannot reconstruct
   /// gaps from them). The gaps update is one small row write per flush.
-  /// [ssnOrigin] is non-null only on the first flush after it was latched;
-  /// it too survives a crash only via this row write.
   static Future<void> _defaultChunkSink(
     int sessionId,
     int chunkIndex,
     Uint8List data,
     String gapsJson,
-    int? ssnOrigin,
   ) async {
     await AppDatabase.instance.insertChunk(sessionId, chunkIndex, data);
     await AppDatabase.instance.setSessionGaps(sessionId, gapsJson);
-    if (ssnOrigin != null) {
-      await AppDatabase.instance.setSessionSsnOrigin(sessionId, ssnOrigin);
-    }
   }
 
   /// Chain [op] after all previously enqueued writes and return its completion.

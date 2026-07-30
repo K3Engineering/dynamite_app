@@ -371,10 +371,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   /// export picker's preselection. An unrecognizable stored value falls
   /// back to the platform default unit.
   static DisplayUnit _recordedUnit(Session session) =>
-      DisplayUnit.values.firstWhere(
-        (u) => u.name == session.displayUnit,
-        orElse: () => DisplayUnit.mVv,
-      );
+      DisplayUnit.fromName(session.displayUnit);
 
   /// Ask the user for the export's converted unit (docs/csv-format-v1.md:
   /// one file, one unit, chosen by the user), preselected to [initial].

@@ -21,13 +21,9 @@ class AppSettings extends ChangeNotifier {
       unawaited(_prefs.remove(key));
     }
 
-    final unitName = _prefs.getString(_keyUnit);
-    if (unitName != null) {
-      _displayUnit = DisplayUnit.values.firstWhere(
-        (u) => u.name == unitName,
-        orElse: () => DisplayUnit.mVv,
-      );
-    }
+    // A missing or unrecognizable stored value falls back to the platform
+    // default unit (mV/V — see [_displayUnit]).
+    _displayUnit = DisplayUnit.fromName(_prefs.getString(_keyUnit));
 
     final active = _prefs.getStringList(_keyActiveChannels);
     if (active != null && active.length == nwNumAdcChan) {

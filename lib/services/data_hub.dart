@@ -134,23 +134,22 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   DateTime? lastDataAt;
 
   /// The 16-bit running sample counter of the most recently decoded packet
-  /// (its FIRST sample), noted by [AdcPacketDecoder] via [notePacketCounter]
-  /// after any gap injection — so [latestPacketHubIndex] is the hub index of
-  /// that same sample. Together they anchor the device sample counter to the
-  /// hub timeline: sample i carries counter
-  /// `latestPacketCounter + (i - latestPacketHubIndex)` (past 0xFFFF, i.e.
-  /// unwrapped). The recording writer reads this once to latch a session's
-  /// `ssn_origin` (docs/csv-format-v1.md); nothing else consumes it.
-  int? latestPacketCounter;
-  int latestPacketHubIndex = 0;
+  /// (its FIRST sample), paired with the hub index of that same sample —
+  /// noted by [AdcPacketDecoder] via [notePacketCounter] after any gap
+  /// injection. Together they anchor the device sample counter to the hub
+  /// timeline: sample i carries counter
+  /// `anchor.counter + (i - anchor.hubIndex)` (past 0xFFFF, i.e. unwrapped).
+  /// The recording writer reads this once to latch a session's `ssn_origin`
+  /// (docs/csv-format-v1.md); nothing else consumes it. One nullable record
+  /// so the pair can never be half-set or half-reset.
+  ({int counter, int hubIndex})? packetAnchor;
 
   /// Note the wire packet counter of the packet whose first sample sits at
   /// the current [totalSamples]. Called by the decoder after gap injection
   /// and before the packet's frames are added. Raw 16-bit value; wrap
-  /// adjustment falls out of the pairing with [latestPacketHubIndex].
+  /// adjustment falls out of the pairing with the hub index.
   void notePacketCounter(int counter) {
-    latestPacketCounter = counter;
-    latestPacketHubIndex = totalSamples;
+    packetAnchor = (counter: counter, hubIndex: totalSamples);
   }
 
   /// Monotonic counter bumped by [clear]. Lets observers distinguish "same
@@ -210,8 +209,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     _generation++;
     protocolErrorSeen = false;
     lastDataAt = null;
-    latestPacketCounter = null;
-    latestPacketHubIndex = 0;
+    packetAnchor = null;
     gaps.clear();
     for (int i = 0; i < numAdcChannels; ++i) {
       rawMax[i] = _noMaxYet;
