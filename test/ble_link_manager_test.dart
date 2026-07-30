@@ -401,16 +401,38 @@ void main() {
       settleStartup(async);
 
       unawaited(link.connectToDemoDevice());
-      async.elapse(const Duration(milliseconds: 100));
-      // The Devices tab becoming visible is what (re)starts RSSI polling for
-      // a streaming link; the demo device has no real radio to poll.
-      link.setDevicesTabVisible(true);
+      // Polling follows the streaming lifetime directly (no tab-visibility
+      // gate); the demo device has no real radio, so it must stay exempt.
       async.elapse(const Duration(seconds: 5));
 
       expect(MockBlePlatform.instance.readRssiCalls, 0);
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(milliseconds: 100));
+    });
+  });
+
+  test('RSSI polling runs for the streaming lifetime, not gated on tab '
+      'visibility', () {
+    fakeAsync((async) {
+      final (link, _) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      // No setDevicesTabVisible call: polling is tied to the streaming
+      // lifetime, not to whether an RSSI-showing tab is on screen.
+      async.elapse(BleLinkManager.rssiPollInterval * 3);
+
+      expect(MockBlePlatform.instance.readRssiCalls, greaterThanOrEqualTo(3));
+      expect(link.connectedRssi, 1); // the mock's fixed reading
+
+      // The poller dies with the link.
+      teardownLink(async, link);
+      final callsAtTeardown = MockBlePlatform.instance.readRssiCalls;
+      async.elapse(BleLinkManager.rssiPollInterval * 3);
+      expect(MockBlePlatform.instance.readRssiCalls, callsAtTeardown);
     });
   });
 

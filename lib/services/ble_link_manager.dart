@@ -392,25 +392,20 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// RSSI slot entirely where no reading can ever exist.
   bool get supportsScanRssi => !kIsWeb;
 
-  /// Periodic poller for [connectedRssi]; runs only while a link is streaming
-  /// AND the surface displaying RSSI (the Devices tab) is visible.
+  /// Periodic poller for [connectedRssi]; runs for the link's whole
+  /// streaming lifetime (see [_startRssiPolling]).
   Timer? _rssiPollTimer;
 
-  /// Whether the Devices tab is currently visible. Gates the two pieces of
-  /// periodic UI bookkeeping that are pointless off-screen: RSSI polling
-  /// (off-screen reads would wake the radio every [rssiPollInterval] for
-  /// nothing) and the freshness poke (see [_syncFreshnessPoke]).
+  /// Whether the Devices tab is currently visible. Gates the on-screen-only
+  /// device-row freshness poke (see [_syncFreshnessPoke]). RSSI polling
+  /// deliberately does NOT key off it — while streaming the radio is fully
+  /// active anyway, so reads are near-free and every surface stays fresh.
   bool _devicesTabVisible = false;
 
   /// Called by the shell when the Devices tab becomes visible/hidden.
   void setDevicesTabVisible(bool visible) {
     if (_devicesTabVisible == visible) return;
     _devicesTabVisible = visible;
-    if (!visible) {
-      _stopRssiPolling();
-    } else if (_link.isStreaming) {
-      _startRssiPolling(_link.deviceId);
-    }
     _syncFreshnessPoke();
   }
 
@@ -738,15 +733,18 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   }
 
   /// Begin polling the connected device's RSSI for the signal display.
-  /// No-op on platforms that don't implement readRssi (e.g. web), for the
-  /// demo device (no real radio to poll), and while the RSSI-displaying
-  /// surface is off-screen (see [setDevicesTabVisible]).
+  /// Runs for the link's whole streaming lifetime rather than only while an
+  /// RSSI-showing tab is on screen: while the 1 kHz stream is up the radio
+  /// is fully active anyway, so a read every [rssiPollInterval] is
+  /// near-free, and every surface (Devices row, Live status bar) then always
+  /// shows a fresh value. No-op on platforms that don't implement readRssi
+  /// (e.g. web) and for the demo device (no real radio to poll).
   /// Cancels any previous poller first. Reads are best-effort: a failed read
   /// is swallowed silently and retried on the next tick (no per-tick logging
   /// — it would spam the console).
   void _startRssiPolling(String deviceId) {
     _stopRssiPolling();
-    if (!_supportsRssi || !_devicesTabVisible || _link.isDemoDevice) {
+    if (!_supportsRssi || _link.isDemoDevice) {
       return;
     }
     _rssiPollTimer = Timer.periodic(rssiPollInterval, (_) async {

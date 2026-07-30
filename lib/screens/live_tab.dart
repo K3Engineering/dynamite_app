@@ -16,6 +16,7 @@ import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
+import '../widgets/rssi_indicator.dart';
 
 // ---------------------------------------------------------------------------
 // LiveTab
@@ -372,6 +373,7 @@ class LiveStatusBar extends StatelessWidget {
                   ),
                 ),
               ),
+            if (isConnected) const _ConnectedRssiIndicator(),
             if (isConnected)
               Text(
                 '${DataHub.samplesPerSec} Hz',
@@ -381,6 +383,39 @@ class LiveStatusBar extends StatelessWidget {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// _ConnectedRssiIndicator
+// ---------------------------------------------------------------------------
+
+/// The connected device's live signal strength in the status bar, sitting
+/// left of the sample-rate label. A narrow select on
+/// [BleLinkManager.connectedRssi] so the poll's notify rebuilds only this
+/// indicator — never the tab (whose build deliberately selects only
+/// streaming edges and the device name). Renders nothing — and leaves no
+/// gap — while no reading exists: before the first poll lands, on web (no
+/// readRssi), and for the demo device.
+class _ConnectedRssiIndicator extends StatelessWidget {
+  const _ConnectedRssiIndicator();
+
+  @override
+  Widget build(BuildContext context) {
+    final rssi = context.select<BleLinkManager, int?>((l) => l.connectedRssi);
+    if (rssi == null) return const SizedBox.shrink();
+    final color = Theme.of(context).colorScheme.onPrimaryContainer;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: DefaultTextStyle(
+        // Match the sample-rate label; the ambient default style's color is
+        // wrong on this tinted primaryContainer surface.
+        style:
+            Theme.of(context).textTheme.labelSmall?.copyWith(color: color) ??
+            TextStyle(color: color),
+        child: RssiIndicator(rssi: rssi, color: color, size: 14),
       ),
     );
   }
