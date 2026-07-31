@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
 import '../models/calibration.dart';
+import '../models/channel_limits.dart';
 
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
@@ -432,6 +433,40 @@ class LiveStats extends StatelessWidget {
           // Same for a stall: the newest "reading" is just the last one.
           final stale = hub.liveEdgeIsGap || stalled;
 
+          // Per-channel limit levels, evaluated in the raw domain (absolute
+          // mV/V vs the cell's rating; +/-2^23 vs the ADC rail — see
+          // [ChannelLimits]). One instance per channel serves both rows; null
+          // before the first sample (the extremes still hold sentinels).
+          final fraction = settings.lcWarnFraction;
+          final hasData = hub.totalSamples > 0;
+          final limits = [
+            for (int i = 0; i < DataHub.numAdcChannels; i++) hub.limitsFor(i),
+          ];
+          final liveLevels = <LimitLevel?>[
+            for (int i = 0; i < DataHub.numAdcChannels; i++)
+              hasData
+                  ? limits[i].levelForRaw(hub.currentRawFor(i), fraction)
+                  : null,
+          ];
+          final peakLevels = <LimitLevel?>[
+            for (int i = 0; i < DataHub.numAdcChannels; i++)
+              hasData
+                  ? _worstLevel(
+                      limits[i].levelForRaw(hub.rawMax[i], fraction),
+                      limits[i].levelForRaw(hub.rawMin[i], fraction),
+                    )
+                  : null,
+          ];
+          // Clip latch: any rail hit in this stream's extremes stays visible
+          // until the stream resets — railed data is invalid even after the
+          // signal settles back in range.
+          final clippedTitles = [
+            for (int i = 0; i < DataHub.numAdcChannels; i++)
+              if (hasData &&
+                  ChannelLimits.extremesClipped(hub.rawMax[i], hub.rawMin[i]))
+                rig.channelTitles[i],
+          ];
+
           return Column(
             children: [
               ChannelStatsTable(
@@ -449,6 +484,7 @@ class LiveStats extends StatelessWidget {
                     ],
                     emphasized: true,
                     stale: stale,
+                    levels: liveLevels,
                   ),
                   ChannelStatsRow(
                     label: 'Peak',
@@ -456,6 +492,7 @@ class LiveStats extends StatelessWidget {
                       for (int i = 0; i < DataHub.numAdcChannels; i++)
                         hub.peakValue(i, unit),
                     ],
+                    levels: peakLevels,
                   ),
                   if (showDerivative)
                     ChannelStatsRow(
@@ -468,6 +505,17 @@ class LiveStats extends StatelessWidget {
                     ),
                 ],
               ),
+              if (clippedTitles.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    'ADC clipped on ${clippedTitles.join(', ')} — '
+                    'railed data is invalid',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
               if (anyUnassigned)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
@@ -498,6 +546,10 @@ class LiveStats extends StatelessWidget {
     );
   }
 }
+
+/// The more severe of two limit levels (enum order IS severity order).
+LimitLevel _worstLevel(LimitLevel a, LimitLevel b) =>
+    a.index >= b.index ? a : b;
 
 // ---------------------------------------------------------------------------
 // DisconnectedPrompt

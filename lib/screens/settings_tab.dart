@@ -66,6 +66,28 @@ class SettingsTab extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
+          // Limit warning threshold
+          Text('Limit warnings', style: Theme.of(context).textTheme.titleSmall),
+          const SizedBox(height: 4),
+          Text(
+            'Mild warning at '
+            '${(settings.lcWarnFraction * 100).round()}% of full scale; '
+            'full warning at 100%. Applies to the load cell rating, or the '
+            'ADC range when no cell is assigned.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+          Slider(
+            value: settings.lcWarnFraction,
+            min: AppSettings.minLcWarnFraction,
+            max: AppSettings.maxLcWarnFraction,
+            divisions: 9,
+            label: '${(settings.lcWarnFraction * 100).round()}%',
+            onChanged: (v) => unawaited(settings.setLcWarnFraction(v)),
+          ),
+          const SizedBox(height: 8),
+
           // Wakelock
           SwitchListTile(
             title: const Text('Keep screen awake'),

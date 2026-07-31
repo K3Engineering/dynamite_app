@@ -9,6 +9,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../models/app_settings.dart';
 import '../models/bucket_series.dart';
+import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
@@ -1990,6 +1991,55 @@ void _drawZeroBaseline(
   }
 }
 
+/// Draw a measurement-limit reference (load cell full scale, ADC clip) as an
+/// OPEN row of short 45° ticks at display value [value] — the schematic-GND
+/// idiom, matching the missing-data hatching's visual language without
+/// colliding with the grid or the solid zero baseline. Ticks point TOWARD
+/// the valid region ([teethDown] for a +side ceiling, up for a -side floor),
+/// so the level reads as a boundary. Nothing is drawn when the level falls
+/// outside the visible plot.
+void _drawLimitLine(
+  Canvas canvas,
+  Size graphSz,
+  double Function(double value) valueToY,
+  double value,
+  Color color, {
+  required bool teethDown,
+  double strokeWidth = 1.2,
+  String? tag,
+  _LabelCache? labels,
+}) {
+  final yPos = valueToY(value);
+  if (yPos < 0 || yPos > graphSz.height) return;
+
+  // One 45° tick per [spacing]: (x, y) -> (x + tick, y +/- tick).
+  const double spacing = 10;
+  const double tick = 5;
+  final double dy = teethDown ? tick : -tick;
+  final path = Path();
+  for (double x = 2; x + tick <= graphSz.width; x += spacing) {
+    path.moveTo(x, yPos);
+    path.lineTo(x + tick, yPos + dy);
+  }
+  canvas.drawPath(
+    path,
+    Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = strokeWidth
+      ..strokeCap = StrokeCap.butt,
+  );
+
+  if (tag != null && labels != null) {
+    final par = labels.prepare(tag, color: color);
+    final ty = (yPos - par.height / 2).clamp(0.0, graphSz.height - par.height);
+    canvas.drawParagraph(
+      par,
+      Offset(graphSz.width - par.longestLine - 2, ty),
+    );
+  }
+}
+
 /// Draws a diagonal warning hatch pattern over the [GraphDataSource.gaps]
 /// ranges visible in the window (regions where packets were dropped).
 void _drawMissingDataHatching(
@@ -2648,8 +2698,14 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// its tares because the difference cancels them.)
   List<double> cacheKeyTares() => const [];
 
-  /// Optional chrome drawn after the axes, before the data lines.
-  void drawOverlay(Canvas canvas, Size graphSz, YAxisRange yRange) {}
+  /// Optional chrome drawn after the axes, before the data lines. [yRange]
+  /// and [valueToY] are this paint pass's axis mapping, for reference lines.
+  void drawOverlay(
+    Canvas canvas,
+    Size graphSz,
+    YAxisRange yRange,
+    double Function(double value) valueToY,
+  ) {}
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2729,7 +2785,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       color: colorScheme.error,
     );
 
-    drawOverlay(canvas, graphSz, yRange);
+    drawOverlay(canvas, graphSz, yRange, valueToY);
 
     // -- Data lines (segment-cached envelope) --
     final workRemains = _paintEnvelopeDataLayer(
@@ -2787,6 +2843,101 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   @override
   EnvelopeSeries series(int channel) =>
       _taredEnvelopeSeries(_data, channel, _settings.displayUnit);
+
+  /// Measurement-limit references per channel: the binding (tightest)
+  /// full-scale line per polarity — the load cell rating when it binds,
+  /// otherwise the ADC rail — drawn strong with a tag; its caution-fraction
+  /// line medium; the looser limit faint. Anchors are absolute raw counts
+  /// (see [ChannelLimits]), converted here through the channel's tared
+  /// display converter, so the lines track unit switching and tare. Drawn as
+  /// per-frame chrome (not baked into the segment cache), so settings/tare
+  /// changes need no cache invalidation. Lines outside the auto-ranged view
+  /// are skipped — they scroll in as the signal approaches them.
+  @override
+  void drawOverlay(
+    Canvas canvas,
+    Size graphSz,
+    YAxisRange yRange,
+    double Function(double value) valueToY,
+  ) {
+    final fraction = _settings.lcWarnFraction;
+    final unit = _settings.displayUnit;
+    for (final ch in _activeChannels) {
+      final limits = _data.limitsFor(ch);
+      final conv = unit.converterFor(
+        _data.calibrationFor(ch),
+        _data.channel(ch).tare,
+      );
+      if (conv == null) continue;
+      final color = getChannelColor(ch);
+
+      for (final positive in [true, false]) {
+        final clipRaw = positive
+            ? ChannelLimits.clipRawPos.toDouble()
+            : ChannelLimits.clipRawNeg.toDouble();
+        final lcRaw = positive ? limits.lcFsRawPos : limits.lcFsRawNeg;
+
+        // The binding limit is the tightest on this polarity (closest to
+        // zero); the other is drawn faint as secondary information.
+        final bool lcBinds =
+            lcRaw != null && (positive ? lcRaw < clipRaw : lcRaw > clipRaw);
+        final double bindingRaw = lcBinds ? lcRaw : clipRaw;
+        final String bindingTag = lcBinds ? 'FS' : 'CLIP';
+        final double? looserRaw = lcRaw == null
+            ? null
+            : (lcBinds ? clipRaw : lcRaw);
+
+        // The caution line belongs to the binding source: a fraction of the
+        // cell's mV/V rating (through the board map), or of the ADC
+        // half-scale.
+        final double cautionRaw;
+        if (lcBinds) {
+          final fs = limits.loadCellFsMvV!;
+          cautionRaw = limits.board.rawFromMvV(
+            positive ? fraction * fs : -fraction * fs,
+          );
+        } else {
+          cautionRaw = positive
+              ? fraction * ChannelLimits.clipRawPos
+              : fraction * ChannelLimits.clipRawNeg;
+        }
+
+        _drawLimitLine(
+          canvas,
+          graphSz,
+          valueToY,
+          conv(bindingRaw),
+          color.withAlpha(170),
+          teethDown: positive,
+          strokeWidth: 1.4,
+          tag: bindingTag,
+          labels: labels,
+        );
+        _drawLimitLine(
+          canvas,
+          graphSz,
+          valueToY,
+          conv(cautionRaw),
+          color.withAlpha(110),
+          teethDown: positive,
+          strokeWidth: 1.1,
+          tag: '${(fraction * 100).round()}%',
+          labels: labels,
+        );
+        if (looserRaw != null) {
+          _drawLimitLine(
+            canvas,
+            graphSz,
+            valueToY,
+            conv(looserRaw),
+            color.withAlpha(50),
+            teethDown: positive,
+            strokeWidth: 1.0,
+          );
+        }
+      }
+    }
+  }
 
   @override
   YAxisRange computeYRange(int viewStart, int viewEnd) {
@@ -2989,7 +3140,12 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
       '${_formatTickValue(tick / yRange.rung.factor, yRange.decimals)}/s';
 
   @override
-  void drawOverlay(Canvas canvas, Size graphSz, YAxisRange yRange) {
+  void drawOverlay(
+    Canvas canvas,
+    Size graphSz,
+    YAxisRange yRange,
+    double Function(double value) valueToY,
+  ) {
     // "dF/dt" label in top-left
     final dLabel = labels.prepare(
       'dF/dt (${yRange.rung.symbol}/s)',

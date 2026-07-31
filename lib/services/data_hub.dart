@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'adc_protocol.dart';
 import '../models/bucket_series.dart';
 import '../models/calibration.dart';
+import '../models/channel_limits.dart';
+import '../models/device_capabilities.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
@@ -125,6 +127,15 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// only). Owned by `RigState` (device slots, including unsaved edits);
   /// pushed here via [updateLoadCells].
   List<LoadCellProfile?> _loadCells = List.filled(numAdcChannels, null);
+
+  /// Capabilities of the device feeding this hub (front-end variant and
+  /// gain). NOT piped through from hardware yet — always
+  /// [DeviceCapabilities.pro]; [updateDeviceCapabilities] is the future
+  /// entry point (flash `hw.*` keys or advertisement manufacturer data).
+  /// Survives [clear], like [boardCalibration]: it describes the device,
+  /// not the stream.
+  DeviceCapabilities get deviceCapabilities => _deviceCapabilities;
+  DeviceCapabilities _deviceCapabilities = DeviceCapabilities.pro;
 
   /// Bumped whenever the calibration set changes (board data or load-cell
   /// assignments); renderers mix it into their segment-cache keys.
@@ -397,6 +408,16 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     notifyListeners();
   }
 
+  /// Replace the device capabilities (a device report arrived). Unused
+  /// today — nothing reports capabilities, so the hub stays on the faked
+  /// [DeviceCapabilities.pro]. Content-equal updates are a no-op (same rule
+  /// as [updateBoardCalibration]).
+  void updateDeviceCapabilities(DeviceCapabilities capabilities) {
+    if (_deviceCapabilities == capabilities) return;
+    _deviceCapabilities = capabilities;
+    notifyListeners();
+  }
+
   // -- GraphDataSource --------------------------------------------------------
 
   @override
@@ -423,6 +444,12 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   int get calibrationVersion => _calibrationVersion;
 
   @override
+  ChannelLimits limitsFor(int channelIndex) => ChannelLimits(
+    board: calibrationFor(channelIndex).board,
+    loadCellFsMvV: _loadCells[channelIndex]?.sensitivityMvV,
+  );
+
+  @override
   Listenable get repaint => this;
 
   /// Stream identity for the graph segment caches: [generation] is bumped by
@@ -446,6 +473,13 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Whether the newest sample is a dropped one — i.e. the live readings the
   /// stats display are held values, not fresh data.
   bool get liveEdgeIsGap => gaps.contains(totalSamples - 1);
+
+  /// Latest raw value of a channel (ADC counts), for the live stats' limit
+  /// levels — the warning thresholds are evaluated in the raw domain.
+  int currentRawFor(int adcChannel) {
+    assert(adcChannel >= 0 && adcChannel < numAdcChannels);
+    return _currentRaw[adcChannel];
+  }
 
   /// Get current value for a given ADC channel in the specified unit. During
   /// a gap this returns the held (last real) value; check [liveEdgeIsGap] to

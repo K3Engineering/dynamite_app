@@ -376,6 +376,25 @@ class ChannelBoardCalibration {
         (raw - xs[i - 1]) * (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
   }
 
+  /// Inverse of [mvVFromRaw]: the raw reading that produces [mvV] of
+  /// absolute cell output, via the same piecewise map (monotone, so
+  /// invertible — sorting by raw reading also sorts the setpoints). Used to
+  /// place absolute-mV/V reference points (e.g. a load cell's rated full
+  /// scale) in the raw domain. Out-of-range values extend the outermost
+  /// segment, matching [mvVFromRaw].
+  double rawFromMvV(double mvV) {
+    final r = readings;
+    if (r == null) return mvV * nominalCountsPerMvV;
+    final xs = _sortedSetpoints;
+    final ys = _sortedRaw;
+    var i = 1;
+    while (i < xs.length - 1 && mvV > xs[i]) {
+      ++i;
+    }
+    return ys[i - 1] +
+        (mvV - xs[i - 1]) * (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
+  }
+
   // -- Diagnostics ----------------------------------------------------------
 
   /// ADC offset in counts: the dead-short (t3,t3) reading measures it

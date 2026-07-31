@@ -8,6 +8,7 @@ import 'database.dart';
 import 'data_hub.dart';
 import '../models/bucket_series.dart';
 import '../models/calibration.dart';
+import '../models/channel_limits.dart';
 import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
@@ -448,6 +449,14 @@ class SessionData implements GraphDataSource {
   @override
   ChannelCalibration calibrationFor(int channelIndex) =>
       calibrations[channelIndex];
+
+  /// Limits from the session's recorded calibration snapshot: the clip point
+  /// is universal, and the load cell is whatever was assigned at record time.
+  @override
+  ChannelLimits limitsFor(int channelIndex) => ChannelLimits(
+    board: calibrations[channelIndex].board,
+    loadCellFsMvV: calibrations[channelIndex].loadCell?.sensitivityMvV,
+  );
 
   /// Session calibration is frozen at recording time; it never changes.
   @override

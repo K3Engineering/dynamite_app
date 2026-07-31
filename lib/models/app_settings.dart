@@ -31,11 +31,23 @@ class AppSettings extends ChangeNotifier {
     }
 
     _wakelockEnabled = _prefs.getBool(_keyWakelock) ?? false;
+
+    _lcWarnFraction = (_prefs.getDouble(_keyLcWarnFraction) ??
+            defaultLcWarnFraction)
+        .clamp(minLcWarnFraction, maxLcWarnFraction);
   }
 
   static const String _keyUnit = 'display_unit';
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
+  static const String _keyLcWarnFraction = 'lc_warn_fraction';
+
+  /// Fraction of full scale where a channel's mild ("caution") limit warning
+  /// starts; the full warning is always at 100%. Applies to the load cell
+  /// rating and, with no cell assigned, to the ADC full-scale range.
+  static const double defaultLcWarnFraction = 0.8;
+  static const double minLcWarnFraction = 0.5;
+  static const double maxLcWarnFraction = 0.95;
 
   /// Keys of the pre-slot model (channel labels, load cell bank, per-channel
   /// assignments, the app-global DMM reading), erased on load.
@@ -67,6 +79,9 @@ class AppSettings extends ChangeNotifier {
   bool _wakelockEnabled = false;
   bool get wakelockEnabled => _wakelockEnabled;
 
+  double _lcWarnFraction = defaultLcWarnFraction;
+  double get lcWarnFraction => _lcWarnFraction;
+
   Future<void> setDisplayUnit(DisplayUnit unit) async {
     _displayUnit = unit;
     notifyListeners();
@@ -86,5 +101,14 @@ class AppSettings extends ChangeNotifier {
     _wakelockEnabled = enabled;
     notifyListeners();
     await _prefs.setBool(_keyWakelock, enabled);
+  }
+
+  Future<void> setLcWarnFraction(double fraction) async {
+    _lcWarnFraction = fraction.clamp(
+      minLcWarnFraction,
+      maxLcWarnFraction,
+    );
+    notifyListeners();
+    await _prefs.setDouble(_keyLcWarnFraction, _lcWarnFraction);
   }
 }

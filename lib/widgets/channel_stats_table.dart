@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
 import 'graph_components.dart' show getChannelColor;
 
@@ -9,6 +10,7 @@ class ChannelStatsRow {
     required this.values,
     this.emphasized = false,
     this.stale = false,
+    this.levels,
   });
 
   /// Row label shown in the leading column ('Live', 'Peak', ...).
@@ -24,6 +26,12 @@ class ChannelStatsRow {
 
   /// Dim the values: the reading is stale (e.g. a live data gap).
   final bool stale;
+
+  /// Optional per-channel proximity to a measurement limit (same length as
+  /// [values]): colors the value amber at [LimitLevel.caution] and in the
+  /// theme's error color at [LimitLevel.exceeded]. Null = no limit display
+  /// for this row.
+  final List<LimitLevel?>? levels;
 }
 
 /// Tappable per-channel header shared by the live view and the session
@@ -50,7 +58,11 @@ class ChannelStatsTable extends StatelessWidget {
     List<ChannelStatsRow> rows,
   ) =>
       activeChannels.length == labels.length &&
-      rows.every((r) => r.values.length == labels.length);
+      rows.every(
+        (r) =>
+            r.values.length == labels.length &&
+            (r.levels == null || r.levels!.length == labels.length),
+      );
 
   final List<String> labels;
 
@@ -156,21 +168,22 @@ class ChannelStatsTable extends StatelessWidget {
               // -----------------------------------------------------------
               // Stat rows
               // -----------------------------------------------------------
-              for (final row in rows)
-                TableRow(
-                  children: [
-                    Text(row.label, style: headerStyle),
-                    for (int i = 0; i < channelCount; i++)
-                      _TableCellValue(
-                        value: row.values[i],
-                        unit: unit,
-                        isActive: activeChannels[i],
-                        isStale: row.stale,
-                        textStyle: row.emphasized ? emphasizedStyle : monoStyle,
-                        onTap: () => onToggleChannel(i),
-                      ),
-                  ],
-                ),
+                for (final row in rows)
+                  TableRow(
+                    children: [
+                      Text(row.label, style: headerStyle),
+                      for (int i = 0; i < channelCount; i++)
+                        _TableCellValue(
+                          value: row.values[i],
+                          unit: unit,
+                          isActive: activeChannels[i],
+                          isStale: row.stale,
+                          level: row.levels?[i],
+                          textStyle: row.emphasized ? emphasizedStyle : monoStyle,
+                          onTap: () => onToggleChannel(i),
+                        ),
+                    ],
+                  ),
             ],
           ),
           // Unit overlay, anchored to the top-left corner, sitting just
@@ -214,6 +227,7 @@ class _TableCellValue extends StatelessWidget {
     required this.unit,
     required this.isActive,
     required this.isStale,
+    required this.level,
     required this.textStyle,
     this.onTap,
   });
@@ -224,8 +238,19 @@ class _TableCellValue extends StatelessWidget {
   final DisplayUnit unit;
   final bool isActive;
   final bool isStale;
+
+  /// Proximity to a measurement limit, or null when not evaluated.
+  final LimitLevel? level;
   final TextStyle? textStyle;
   final VoidCallback? onTap;
+
+  /// The "caution" amber, resolved per theme brightness (ColorScheme has no
+  /// warning role; exceeded uses its error role). Same pragmatism as
+  /// [getChannelColor]'s raw Material colors.
+  static Color cautionColor(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+      ? Colors.amber.shade300
+      : Colors.amber.shade800;
 
   @override
   Widget build(BuildContext context) {
@@ -237,9 +262,18 @@ class _TableCellValue extends StatelessWidget {
     final String displayText = !isActive
         ? '--'
         : (value == null ? '—' : unit.formatValueOnly(value));
-    final color = !isActive
-        ? staleColor.withValues(alpha: 0.4)
-        : ((isStale || value == null) ? staleColor : null);
+    final Color? color;
+    if (!isActive) {
+      color = staleColor.withValues(alpha: 0.4);
+    } else if (isStale || value == null) {
+      color = staleColor;
+    } else {
+      color = switch (level) {
+        LimitLevel.caution => cautionColor(context),
+        LimitLevel.exceeded => Theme.of(context).colorScheme.error,
+        _ => null,
+      };
+    }
 
     return _TappableChannelCell(
       onTap: onTap ?? () {},
