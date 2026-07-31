@@ -67,7 +67,9 @@ class SettingsTab extends StatelessWidget {
           const SizedBox(height: 16),
 
           // Limit warnings: master switch + the caution threshold. Disabling
-          // removes every limit-related marker from the chart and numbers.
+          // removes the limit markers from the chart and numbers — but not
+          // the at-the-rail clip icon (a railed converter is data validity,
+          // not a warning preference).
           SwitchListTile(
             title: const Text('Limit warnings'),
             subtitle: const Text(
@@ -91,16 +93,6 @@ class SettingsTab extends StatelessWidget {
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ),
-                Slider(
-                  value: settings.lcWarnFraction,
-                  min: AppSettings.minLcWarnFraction,
-                  max: AppSettings.maxLcWarnFraction,
-                  divisions: 9,
-                  label: '${(settings.lcWarnFraction * 100).round()}%',
-                  onChanged: settings.limitWarningsEnabled
-                      ? (v) => unawaited(settings.setLcWarnFraction(v))
-                      : null,
-                ),
                 // A label per notch (50–95% in 5% steps). The padding aligns
                 // the labels with the slider's notch positions (the track is
                 // inset by the thumb radius on both sides).
@@ -121,6 +113,16 @@ class SettingsTab extends StatelessWidget {
                         ),
                     ],
                   ),
+                ),
+                Slider(
+                  value: settings.lcWarnFraction,
+                  min: AppSettings.minLcWarnFraction,
+                  max: AppSettings.maxLcWarnFraction,
+                  divisions: 9,
+                  label: '${(settings.lcWarnFraction * 100).round()}%',
+                  onChanged: settings.limitWarningsEnabled
+                      ? (v) => unawaited(settings.setLcWarnFraction(v))
+                      : null,
                 ),
               ],
             ),

@@ -5,6 +5,15 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const fraction = 0.8;
 
+  // Nominal chain for boards without factory data: the app's former compiled
+  // constants (1.2 V reference, x101 AFE, unity PGA, 4.53 V excitation).
+  const testNominals = ChannelNominals(
+    adcFsrV: 1.2,
+    afeGain: 101,
+    pgaGain: 1,
+    excitationV: 4.53,
+  );
+
   group('ChannelBoardCalibration.rawFromMvV', () {
     // A perfect affine device (same fixture shape as calibration_test):
     // raw = alpha + beta * setpoint.
@@ -33,9 +42,9 @@ void main() {
     });
 
     test('nominal board uses the nominal chain', () {
-      final cal = ChannelBoardCalibration();
-      expect(cal.rawFromMvV(1.0), closeTo(nominalCountsPerMvV, 1e-6));
-      expect(cal.rawFromMvV(-2.0), closeTo(-2 * nominalCountsPerMvV, 1e-6));
+      final cal = ChannelBoardCalibration(nominals: testNominals);
+      expect(cal.rawFromMvV(1.0), closeTo(testNominals.countsPerMvV, 1e-6));
+      expect(cal.rawFromMvV(-2.0), closeTo(-2 * testNominals.countsPerMvV, 1e-6));
     });
   });
 
@@ -71,16 +80,12 @@ void main() {
       );
     });
 
-    test('extremesClipped latches a rail hit on either side', () {
-      expect(
-        ChannelLimits.extremesClipped(ChannelLimits.clipRawPos, 0),
-        isTrue,
-      );
-      expect(
-        ChannelLimits.extremesClipped(0, ChannelLimits.clipRawNeg),
-        isTrue,
-      );
-      expect(ChannelLimits.extremesClipped(100, -100), isFalse);
+    test('clipDirFor: temporal rail state with direction', () {
+      expect(ChannelLimits.clipDirFor(ChannelLimits.clipRawPos), 1);
+      expect(ChannelLimits.clipDirFor(ChannelLimits.clipRawNeg), -1);
+      expect(ChannelLimits.clipDirFor(0), 0);
+      expect(ChannelLimits.clipDirFor(ChannelLimits.clipRawPos - 1), 0);
+      expect(ChannelLimits.clipDirFor(ChannelLimits.clipRawNeg + 1), 0);
     });
   });
 
@@ -88,13 +93,13 @@ void main() {
     // 1.0 mV/V cell: FS anchors sit well inside the ADC range (~3.2M counts
     // vs ~8.39M), so the cell rating binds first.
     final limits = ChannelLimits(
-      board: ChannelBoardCalibration(),
+      board: ChannelBoardCalibration(nominals: testNominals),
       loadCellFsMvV: 1.0,
     );
 
     test('FS anchors are the rating inverted through the board map', () {
-      expect(limits.lcFsRawPos!, closeTo(nominalCountsPerMvV, 1e-6));
-      expect(limits.lcFsRawNeg!, closeTo(-nominalCountsPerMvV, 1e-6));
+      expect(limits.lcFsRawPos!, closeTo(testNominals.countsPerMvV, 1e-6));
+      expect(limits.lcFsRawNeg!, closeTo(-testNominals.countsPerMvV, 1e-6));
     });
 
     test('levels follow the absolute raw value (no tare involved)', () {
@@ -132,7 +137,7 @@ void main() {
     // A 3 mV/V cell on the nominal chain: FS anchors (~9.6M counts) lie
     // OUTSIDE the ADC range (~8.39M), so clipping binds before the rating.
     final limits = ChannelLimits(
-      board: ChannelBoardCalibration(),
+      board: ChannelBoardCalibration(nominals: testNominals),
       loadCellFsMvV: 3.0,
     );
 

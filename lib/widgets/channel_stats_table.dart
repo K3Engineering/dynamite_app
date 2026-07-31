@@ -40,30 +40,21 @@ class ChannelStatsTable extends StatelessWidget {
     required this.onToggleChannel,
     required this.unit,
     required this.rows,
-    this.channelLevels,
-    this.channelClipLatches,
+    this.channelStates,
   }) : assert(
-         _oneValuePerChannel(
-           labels,
-           activeChannels,
-           rows,
-           channelLevels,
-           channelClipLatches,
-         ),
-         'labels, activeChannels, rows and status lists must agree in length',
+         _oneValuePerChannel(labels, activeChannels, rows, channelStates),
+         'labels, activeChannels, rows and channelStates must agree in length',
        );
 
   static bool _oneValuePerChannel(
     List<String> labels,
     List<bool> activeChannels,
     List<ChannelStatsRow> rows,
-    List<LimitLevel?>? channelLevels,
-    List<bool>? channelClipLatches,
+    List<ChannelLimitState?>? channelStates,
   ) =>
       activeChannels.length == labels.length &&
       rows.every((r) => r.values.length == labels.length) &&
-      (channelLevels == null || channelLevels.length == labels.length) &&
-      (channelClipLatches == null || channelClipLatches.length == labels.length);
+      (channelStates == null || channelStates.length == labels.length);
 
   final List<String> labels;
 
@@ -80,43 +71,33 @@ class ChannelStatsTable extends StatelessWidget {
   /// Stat rows below the channel header.
   final List<ChannelStatsRow> rows;
 
-  /// Per-channel live proximity to a measurement limit, or null when not
-  /// evaluated (or limit warnings are disabled). Shown as a status icon in
-  /// the channel's label cell.
-  final List<LimitLevel?>? channelLevels;
+  /// Per-channel limit status (see [ChannelLimitState]): shown as a status
+  /// icon in the channel's label cell. Null = no status display at all
+  /// (e.g. a session playback, where nothing is live).
+  final List<ChannelLimitState?>? channelStates;
 
-  /// Per-channel ADC clip latch: the channel railed at some point in this
-  /// stream. Shown as a persistent octagon in the label cell (it outranks
-  /// the live level's triangle: railed data matters even after the signal
-  /// settles back in range). Null when warnings are disabled.
-  final List<bool>? channelClipLatches;
-
-  /// The per-channel status icon in the label cell: a persistent octagon
-  /// for a latched ADC clip, else the live level's triangle (amber caution,
-  /// red exceeded). Null when there is nothing to say — the slot stays
-  /// reserved either way so labels never reflow.
+  /// The per-channel status icon in the label cell, a shape ladder so
+  /// severity never depends on color alone: the rail octagon outranks the
+  /// proximity glyphs (a clipped converter trumps any threshold state),
+  /// then the exceeded circle, then the caution triangle. Null when there
+  /// is nothing to say — the slot stays reserved so labels never reflow.
   static Widget? _statusIcon(
     BuildContext context, {
-    required LimitLevel? level,
-    required bool clipped,
+    required ChannelLimitState? state,
     required bool active,
   }) {
-    if (!active) return null;
+    if (!active || state == null) return null;
     final cs = Theme.of(context).colorScheme;
-    if (clipped) {
+    if (state.clipDir != 0) {
       return Icon(Icons.dangerous, size: 14, color: cs.error);
     }
-    return switch (level) {
+    return switch (state.level) {
       LimitLevel.caution => Icon(
         Icons.warning_amber_rounded,
         size: 14,
         color: cautionColor(context),
       ),
-      LimitLevel.exceeded => Icon(
-        Icons.warning_amber_rounded,
-        size: 14,
-        color: cs.error,
-      ),
+      LimitLevel.exceeded => Icon(Icons.error, size: 14, color: cs.error),
       _ => null,
     };
   }
@@ -184,8 +165,7 @@ class ChannelStatsTable extends StatelessWidget {
                               height: 16,
                               child: _statusIcon(
                                 context,
-                                level: channelLevels?[i],
-                                clipped: channelClipLatches?[i] ?? false,
+                                state: channelStates?[i],
                                 active: activeChannels[i],
                               ),
                             ),

@@ -16,6 +16,13 @@ enum LimitLevel {
   exceeded,
 }
 
+/// A channel's limit status at one instant: [level] is the proximity to the
+/// binding limit (null when limit warnings are disabled in settings);
+/// [clipDir] is the temporal rail direction (see [ChannelLimits.clipDirFor])
+/// and is evaluated regardless of that setting — a railed converter is data
+/// validity, not a warning preference.
+typedef ChannelLimitState = ({LimitLevel? level, int clipDir});
+
 /// A channel's measurement limits: the ADC clip point (always) plus the
 /// assigned load cell's rated full scale (when a cell is assigned).
 ///
@@ -56,22 +63,34 @@ class ChannelLimits {
   /// this is clipped.
   static const int clipRawNeg = -adcCountsPerPolarity;
 
+  /// True when the board can place absolute mV/V anchors in the raw domain:
+  /// factory data, or resolved nominals for the nominal chain. A channel
+  /// with neither converts nothing — the cell-FS anchors stay null then and
+  /// only the ADC clip is evaluated.
+  bool get _canAnchor => board.isFactoryCalibrated || board.nominals != null;
+
   /// Raw anchors of +/- load cell full scale (absolute mV/V inverted through
-  /// the board map); null when no cell is assigned.
+  /// the board map); null when no cell is assigned, or when the board can
+  /// place no anchors ([_canAnchor]).
   late final double? lcFsRawPos = switch (loadCellFsMvV) {
-    final fs? => board.rawFromMvV(fs),
-    null => null,
+    final fs? when _canAnchor => board.rawFromMvV(fs),
+    _ => null,
   };
   late final double? lcFsRawNeg = switch (loadCellFsMvV) {
-    final fs? => board.rawFromMvV(-fs),
-    null => null,
+    final fs? when _canAnchor => board.rawFromMvV(-fs),
+    _ => null,
   };
 
-  /// Whether recorded extremes show an ADC rail hit (clipped data) on either
-  /// polarity. [rawMax]/[rawMin] are a stream's absolute extremes, so this
-  /// latches until the stream resets.
-  static bool extremesClipped(int rawMax, int rawMin) =>
-      rawMax >= clipRawPos || rawMin <= clipRawNeg;
+  /// Temporal rail state of one raw sample: +1 at/above the positive ADC
+  /// rail, -1 at/below the negative rail, 0 otherwise. Deliberately
+  /// stateless — the clip indication exists only while the signal sits at
+  /// the rail (no latching), and its direction is the sign of this value
+  /// (which the pegged display number also carries).
+  static int clipDirFor(int raw) => raw >= clipRawPos
+      ? 1
+      : raw <= clipRawNeg
+      ? -1
+      : 0;
 
   /// The worst proximity of [raw] to any active limit. [cautionFraction] is
   /// the fraction of full scale where the mild warning starts (0..1; see

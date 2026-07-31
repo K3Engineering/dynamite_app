@@ -382,9 +382,12 @@ class ChannelBoardCalibration {
   /// place absolute-mV/V reference points (e.g. a load cell's rated full
   /// scale) in the raw domain. Out-of-range values extend the outermost
   /// segment, matching [mvVFromRaw].
+  ///
+  /// The nominal fallback requires [nominals]; callers guard it (see
+  /// `ChannelLimits`), so a null here is a usage error.
   double rawFromMvV(double mvV) {
     final r = readings;
-    if (r == null) return mvV * nominalCountsPerMvV;
+    if (r == null) return mvV * nominals!.countsPerMvV;
     final xs = _sortedSetpoints;
     final ys = _sortedRaw;
     var i = 1;

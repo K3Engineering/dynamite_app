@@ -134,6 +134,11 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// entry point (flash `hw.*` keys or advertisement manufacturer data).
   /// Survives [clear], like [boardCalibration]: it describes the device,
   /// not the stream.
+  ///
+  /// TODO(dormant): nothing reads this yet — it is plumbing for the PGA
+  /// device variant (the pro/PGA distinction the app fakes today). The
+  /// first real consumer will be the nominal conversion chain for PGA
+  /// hardware, whose gain differs from the pro's fixed x101.
   DeviceCapabilities get deviceCapabilities => _deviceCapabilities;
   DeviceCapabilities _deviceCapabilities = DeviceCapabilities.pro;
 

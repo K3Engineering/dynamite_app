@@ -1535,6 +1535,15 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                       labels: _labelCache,
                       bakePump: _bakePump,
                     ),
+                    overlayPainter: _LimitOverlayPainter(
+                      widget.data,
+                      widget.settings,
+                      widget.ctrl,
+                      activeChannels: drawableChannels,
+                      showXLabels: !widget.showDerivative,
+                      colorScheme: colorScheme,
+                      labels: _labelCache,
+                    ),
                   ),
                 ),
                 // Derivative graph (when enabled)
@@ -1593,18 +1602,33 @@ class _GraphPane extends StatelessWidget {
     required this.data,
     required this.ctrl,
     required this.painter,
+    this.overlayPainter,
   });
 
   final GraphDataSource data;
   final GraphController ctrl;
   final CustomPainter painter;
 
+  /// Optional second paint layer above the data ink (e.g. the force pane's
+  /// limit chrome). Gesture handling stays with the shared area; the overlay
+  /// only paints.
+  final CustomPainter? overlayPainter;
+
   @override
   Widget build(BuildContext context) {
+    final inner = CustomPaint(foregroundPainter: painter, size: Size.infinite);
     return _InteractiveGraphArea(
       data: data,
       ctrl: ctrl,
-      child: CustomPaint(foregroundPainter: painter, size: Size.infinite),
+      // Paint order: the inner CustomPaint's foreground (data ink), then the
+      // outer one's (the overlay sits on top).
+      child: overlayPainter == null
+          ? inner
+          : CustomPaint(
+              foregroundPainter: overlayPainter,
+              size: Size.infinite,
+              child: inner,
+            ),
     );
   }
 }
@@ -1775,14 +1799,15 @@ class _LabelCache {
   final Map<String, ui.Paragraph> _cache = HashMap();
 
   /// The laid-out paragraph for [text] in [color], building and caching it on
-  /// first use.
-  ui.Paragraph prepare(String text, {Color color = Colors.black}) {
-    final key = '$text|${color.toARGB32()}';
+  /// first use. [fontSize] is part of the cache key (axis labels use the 11px
+  /// default; the limit markers' letters use a smaller size).
+  ui.Paragraph prepare(String text, {Color color = Colors.black, double fontSize = 11}) {
+    final key = '$text|${color.toARGB32()}|$fontSize';
     if (!_cache.containsKey(key) && _cache.length >= _limit) {
       _clear();
     }
     return _cache.putIfAbsent(key, () {
-      final style = ui.TextStyle(color: color, fontSize: 11);
+      final style = ui.TextStyle(color: color, fontSize: fontSize);
       final builder =
           ui.ParagraphBuilder(
               ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
@@ -1991,16 +2016,17 @@ void _drawZeroBaseline(
   }
 }
 
-/// Edge-docked reference marker for a measurement limit (load cell full
-/// scale, ADC clip), drawn inside the plot's left edge in the oscilloscope
-/// idiom: a half-triangle pointing into the plot plus a small box carrying
-/// [letter] ('F' = cell full scale, 'C' = ADC clip).
+/// Edge reference marker for a measurement limit (load cell full scale, ADC
+/// clip), drawn in the plot's right gutter in the oscilloscope idiom: a
+/// single home-plate pentagon — the half-triangle's flat edge IS the box's
+/// left edge, so there is no seam — with its tip touching the plot frame
+/// and [letter] ('F' = cell full scale, 'C' = ADC clip) inside the box.
 ///
-/// The marker sits at the level's true height while that is visible
-/// (solid), and docks at the frame edge — hollow — when the level is
-/// off-screen, so the limit's existence and direction are always known
-/// without expanding the auto-range. Per-channel vertical slots
-/// ([channelSlot]) keep docked markers from piling into one corner.
+/// Drawn only while the limit level is inside the visible range; there is
+/// deliberately no docked/off-screen form (any docked position would lie
+/// about where the limit is). The gutter is shared with the Y-axis labels;
+/// on the rare same-height collision the marker wins, since the overlay
+/// layer paints after the axis pass.
 void _drawLimitMarker(
   Canvas canvas,
   Size graphSz,
@@ -2008,69 +2034,51 @@ void _drawLimitMarker(
   double value,
   Color color, {
   required String letter,
-  required bool upperSide,
-  required int channelSlot,
   required _LabelCache labels,
 }) {
-  const double halfH = 7;
-  const double boxW = 15;
+  final y = valueToY(value);
+  if (y < 0 || y > graphSz.height) return;
 
-  final yTrue = valueToY(value);
-  final inView = yTrue >= 0 && yTrue <= graphSz.height;
-  // Per-channel docking slots, counted in from the top (upper markers) or
-  // the bottom (lower markers): docked markers stack instead of colliding.
-  // In-view markers near an edge also clamp to their slot — a glyph half
-  // clipped by the frame helps no one.
-  final slot = 7.0 + channelSlot * 15;
-  final lo = upperSide ? slot : halfH;
-  final hi = upperSide ? graphSz.height - halfH : graphSz.height - slot;
-  final y = yTrue.clamp(lo, math.max(lo, hi)).toDouble();
+  const double halfH = 5;
+  const double tipW = 5;
+  const double boxW = 13;
+  final double x0 = graphSz.width + 1;
 
-  // Glyph at the left plot edge: tip at x=1 pointing right into the plot.
-  const double x0 = 1;
-  final tri = Path()
+  // Home-plate pentagon pointing left into the plot: one path, one fill,
+  // one stroke — triangle height == box height by construction.
+  final path = Path()
     ..moveTo(x0, y)
-    ..lineTo(x0 + 6, y - 6)
-    ..lineTo(x0 + 6, y + 6)
+    ..lineTo(x0 + tipW, y - halfH)
+    ..lineTo(x0 + tipW + boxW, y - halfH)
+    ..lineTo(x0 + tipW + boxW, y + halfH)
+    ..lineTo(x0 + tipW, y + halfH)
     ..close();
-  final box = Rect.fromLTWH(x0 + 6, y - halfH, boxW, 2 * halfH);
+  canvas.drawPath(path, Paint()..color = color);
+  canvas.drawPath(
+    path,
+    Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0,
+  );
 
-  final fill = Paint()
-    ..color = inView ? color : color.withAlpha(40)
-    ..style = PaintingStyle.fill;
-  final stroke = Paint()
-    ..color = color
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 1.0;
-  canvas.drawPath(tri, fill);
-  canvas.drawRect(box, fill);
-  canvas.drawPath(tri, stroke);
-  canvas.drawRect(box, stroke);
-
-  final letterColor = inView ? Colors.white : color;
-  final par = labels.prepare(letter, color: letterColor);
+  final par = labels.prepare(letter, color: Colors.white, fontSize: 9);
   canvas.drawParagraph(
     par,
-    Offset(
-      x0 + 6 + (boxW - par.longestLine) / 2,
-      y - par.height / 2,
-    ),
+    Offset(x0 + tipW + (boxW - par.longestLine) / 2, y - par.height / 2),
   );
 }
 
 /// The temporal (contextual) limit display: within each x-interval where the
 /// trace actually challenges the limit (see [_hotIntervals]), draw the limit
-/// as a solid hairline with 45° teeth and shade the forbidden zone beyond
-/// it. Nothing is drawn anywhere else — the ceiling appears exactly where
-/// the signal contests it instead of running as clutter across the plot.
+/// as a solid hairline with 45° teeth pointing into the forbidden zone. The
+/// zone shading is painted separately by the overlay (it needs cross-channel
+/// uniform alpha, see [_LimitOverlayPainter]). Nothing is drawn anywhere
+/// else — the ceiling appears exactly where the signal contests it — and
+/// nothing is drawn while the level is off-screen.
 ///
-/// [value] is the binding limit in display units. When it is off-screen
-/// (the common case while the data still sits below it), the hairline/teeth
-/// are clamped to the frame edge — together with the docked
-/// [_drawLimitMarker] this reads as "the ceiling is just past the frame" —
-/// and the zone shading is skipped (the whole plot is still on the valid
-/// side). Teeth point into the forbidden zone when at the true level, and
-/// into the plot interior when clamped (so they stay visible).
+/// Geometry is computed per interval (hairline x1→x2, teeth generated only
+/// inside): no canvas clips, no save/restore in this path.
 void _drawLimitZones(
   Canvas canvas,
   Size graphSz,
@@ -2078,15 +2086,12 @@ void _drawLimitZones(
   double value,
   Color color, {
   required bool upperSide,
-  required Color shadeColor,
   required List<(double, double)> intervals,
 }) {
   if (intervals.isEmpty) return;
-  final yTrue = valueToY(value);
-  final inView = yTrue >= 0 && yTrue <= graphSz.height;
-  final y = inView ? yTrue : (upperSide ? 2.0 : graphSz.height - 2.0);
+  final y = valueToY(value);
+  if (y < 0 || y > graphSz.height) return; // off-screen: draw nothing
 
-  final shade = Paint()..color = shadeColor;
   final linePen = Paint()
     ..color = color.withAlpha(190)
     ..style = PaintingStyle.stroke
@@ -2097,29 +2102,16 @@ void _drawLimitZones(
     ..strokeWidth = 1.1
     ..strokeCap = StrokeCap.butt;
 
+  final double dy = upperSide ? -5 : 5; // teeth into the forbidden zone
   for (final (x1, x2) in intervals) {
     if (x2 - x1 < 1) continue;
-    // Forbidden-zone shading, only when the level itself is on screen.
-    if (inView) {
-      canvas.drawRect(
-        Rect.fromLTRB(x1, upperSide ? 0 : y, x2, upperSide ? y : graphSz.height),
-        shade,
-      );
-    }
-
-    canvas.save();
-    canvas.clipRect(Rect.fromLTRB(x1, 0, x2, graphSz.height));
     canvas.drawLine(Offset(x1, y), Offset(x2, y), linePen);
-    // Teeth on the forbidden side at the true level, into the interior when
-    // clamped to the frame edge.
-    final double dy = (inView == upperSide) ? -5 : 5;
     final teeth = Path();
     for (double x = x1 + 2; x + 5 <= x2; x += 10) {
       teeth.moveTo(x, y);
       teeth.lineTo(x + 5, y + dy);
     }
     canvas.drawPath(teeth, tickPen);
-    canvas.restore();
   }
 }
 
@@ -2615,6 +2607,13 @@ bool _paintEnvelopeDataLayer(
 }) {
   final totalSamples = data.totalSamples;
 
+  // TODO(cleanup): the clamp below is unreachable under the current
+  // auto-range (computeYRange always covers the window's data; bucket
+  // boundary effects are conservative-wide) — a dead guard. The REAL loose
+  // end here is blit spillover: a segment blitted after the range moved can
+  // paint outside the plot rect vertically until its rolling refresh (no
+  // plot-rect clip on the data layer). Decide: delete the clamp, add a
+  // plot-rect clip around the data layer.
   double valueToY(double val) =>
       (gh - (val - yMin) * gh / (yMax - yMin)).clamp(0.0, gh);
 
@@ -2983,6 +2982,81 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
+/// The force graph's Y-axis range for the visible window, shared by the
+/// data painter and the limit-overlay painter (both must agree on the
+/// mapping exactly, or the limit chrome drifts off the data).
+///
+/// Data min/max across active channels in the visible window, converted
+/// per channel through its own calibration. [windowedExtremes] folds full
+/// buckets from the precomputed aggregates (exact for min/max of a
+/// monotone map) and per-sample scans only the partial head/tail, so the
+/// cost is O(window / bucketSize). The noise floor stays a raw-count
+/// threshold, applied to the global tare-subtracted raw extremes.
+YAxisRange _computeForceYRange(
+  GraphDataSource data,
+  AppSettings settings,
+  List<int> activeChannels,
+  int viewStart,
+  int viewEnd,
+) {
+  final bufferCap = data.bufferCapacity;
+  final unit = settings.displayUnit;
+  final start = math.max(viewStart, data.oldestSample);
+  final end = math.min(viewEnd, data.totalSamples);
+
+  double rawMin = double.infinity;
+  double rawMax = double.negativeInfinity;
+  double yMin = double.infinity;
+  double yMax = double.negativeInfinity;
+  final converters = <int, double Function(double)>{};
+  for (final ch in activeChannels) {
+    final s = data.channel(ch);
+    if (s.data.isEmpty) continue;
+    final conv = unit.converterFor(data.calibrationFor(ch), s.tare);
+    if (conv == null) continue;
+    converters[ch] = conv;
+    final ext = windowedExtremes(
+      s.buckets,
+      start,
+      end,
+      (i) => s.data[i % bufferCap].toDouble(),
+    );
+    if (ext == null) continue;
+    // Tare-subtracted raw extremes feed the noise floor below.
+    rawMin = math.min(rawMin, ext.$1 - s.tare);
+    rawMax = math.max(rawMax, ext.$2 - s.tare);
+    yMin = math.min(yMin, conv(ext.$1));
+    yMax = math.max(yMax, conv(ext.$2));
+  }
+  if (rawMin > rawMax) {
+    rawMin = 0;
+    rawMax = 0;
+  }
+
+  // Enforce a minimum visible range (noise floor) so the graph isn't
+  // degenerate: widen each channel's converted fold around the global
+  // tared-raw midpoint.
+  // TODO: size this per board model once the model specs are plumbed
+  const double noiseFloor = 10000; // raw counts
+  if (rawMax - rawMin < noiseFloor) {
+    final mid = (rawMax + rawMin) / 2;
+    final lo = mid - noiseFloor / 2;
+    final hi = mid + noiseFloor / 2;
+    for (final MapEntry(key: ch, value: conv) in converters.entries) {
+      final tare = data.channel(ch).tare;
+      yMin = math.min(yMin, conv(lo + tare));
+      yMax = math.max(yMax, conv(hi + tare));
+    }
+  }
+  if (!yMin.isFinite || !yMax.isFinite) {
+    // No convertible channel has data: arbitrary non-degenerate range.
+    yMin = -1;
+    yMax = 1;
+  }
+
+  return _computeYRange(yMin, yMax, unit);
+}
+
 /// Force graph: each channel's tared value in the selected display unit.
 class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   @override
@@ -3015,38 +3089,119 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   EnvelopeSeries series(int channel) =>
       _taredEnvelopeSeries(_data, channel, _settings.displayUnit);
 
-  /// Measurement-limit chrome per channel and polarity:
-  ///   * an edge-docked marker ([_drawLimitMarker]) at the binding limit —
-  ///     the load cell rating when it binds, otherwise the ADC rail — always
-  ///     present, solid at the true level, hollow when docked off-screen;
-  ///   * the temporal display ([_drawLimitZones]): hairline + 45° teeth +
-  ///     forbidden-zone shading, but only in the x-intervals where the trace
-  ///     is past the caution fraction of the limit — the ceiling materializes
-  ///     where the signal contests it, and history shows where it was
-  ///     contested (see [_hotIntervals]).
-  ///
-  /// Anchors are absolute raw counts (see [ChannelLimits]), converted here
-  /// through the channel's tared display converter, so they track unit
-  /// switching and tare. Drawn as per-frame chrome (not baked into the
-  /// segment cache), so settings/tare changes need no cache invalidation.
-  /// The whole overlay is gated on `AppSettings.limitWarningsEnabled`.
   @override
-  void drawOverlay(
-    Canvas canvas,
-    Size graphSz,
-    YAxisRange yRange,
-    double Function(double value) valueToY,
-    int viewStart,
-    int viewEnd,
-  ) {
+  YAxisRange computeYRange(int viewStart, int viewEnd) => _computeForceYRange(
+    _data,
+    _settings,
+    _activeChannels,
+    viewStart,
+    viewEnd,
+  );
+
+  @override
+  String yTickLabel(double tick, YAxisRange yRange) => _formatTickLabel(
+    tick / yRange.rung.factor,
+    yRange.rung.symbol,
+    yRange.decimals,
+  );
+}
+
+/// The force graph's measurement-limit chrome, drawn in its OWN paint layer
+/// above the data ink (markers sit on top; the data painter's segment
+/// machinery stays untouched). Repaints off the data and the viewport —
+/// every packet, deliberately no throttling — so the per-frame cost is
+/// engineered to ~zero in the steady state instead:
+///
+///   * off-screen limits are skipped after one [valueToY] per polarity;
+///   * a channel whose whole-history extremes never crossed the caution
+///     anchor skips the hot-interval scan with two O(1) reads;
+///   * geometry is computed per interval — no canvas clips, no save/restore.
+///
+/// The forbidden-zone shading uses [BlendMode.src], so overlapping channels
+/// replace rather than accumulate: the red stays uniform no matter how many
+/// channels are past their limits. Shading is drawn before any line or
+/// marker (a src-blend rect would erase lines drawn under it).
+///
+/// Recomputes the force y-range ([_computeForceYRange]) rather than sharing
+/// state with the data painter: same inputs give the identical mapping, and
+/// the two layers stay independent. Gated on
+/// `AppSettings.limitWarningsEnabled`.
+class _LimitOverlayPainter extends CustomPainter {
+  _LimitOverlayPainter(
+    this._data,
+    this._settings,
+    this._ctrl, {
+    required List<int> activeChannels,
+    required this.showXLabels,
+    required this.colorScheme,
+    required this.labels,
+  }) : _activeChannels = activeChannels,
+       super(repaint: Listenable.merge([_data.repaint, _ctrl]));
+
+  final GraphDataSource _data;
+  final AppSettings _settings;
+  final GraphController _ctrl;
+  final List<int> _activeChannels;
+
+  /// Must match the force pane's (its X labels shrink the plot height).
+  final bool showXLabels;
+  final ColorScheme colorScheme;
+  final _LabelCache labels;
+
+  @override
+  void paint(Canvas canvas, Size size) {
     if (!_settings.limitWarningsEnabled) return;
+
+    // Frame geometry, mirroring the force pane's (_setupGraphFrame).
+    const double topSpace = 4;
+    final double bottomSpace = showXLabels ? _kGraphBottomSpace : 4;
+    final graphSz = Size(
+      size.width - _kGraphLeftSpace - _kGraphRightSpace,
+      size.height - bottomSpace - topSpace,
+    );
+    if (graphSz.width <= 0 || graphSz.height <= 0) return;
+    if (_data.totalSamples < 1) return;
+
+    final (viewStart, viewEnd) = _ctrl.effectiveRange(
+      _data.totalSamples,
+      _data.oldestSample,
+      bufferCapacity: _data.bufferCapacity,
+    );
+    final viewSpan = viewEnd - viewStart;
+    if (viewSpan < 1) return;
+
+    canvas.translate(_kGraphLeftSpace, topSpace);
+
+    final yRange = _computeForceYRange(
+      _data,
+      _settings,
+      _activeChannels,
+      viewStart,
+      viewEnd,
+    );
+    double valueToY(double val) =>
+        graphSz.height -
+        (val - yRange.yMin) * graphSz.height / (yRange.yMax - yRange.yMin);
+
     final fraction = _settings.lcWarnFraction;
     final unit = _settings.displayUnit;
-    final viewSpan = viewEnd - viewStart;
-    final shadeColor = colorScheme.error.withAlpha(22);
     // Dilation for the hot intervals: at least this many samples of context
     // around an excursion, so the dashes get a readable run.
     final minSamples = 16 * viewSpan / graphSz.width;
+
+    // Work is collected per polarity: ALL shading (src blend) draws before
+    // any line or marker (normal blend).
+    final zones =
+        <
+          ({
+            double value,
+            double y,
+            Color color,
+            bool upperSide,
+            List<(double, double)> px,
+          })
+        >[];
+    final markers = <({double value, Color color, String letter})>[];
 
     for (final ch in _activeChannels) {
       final limits = _data.limitsFor(ch);
@@ -3056,6 +3211,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       );
       if (conv == null) continue;
       final color = getChannelColor(ch);
+      final series = _data.channel(ch);
 
       for (final positive in [true, false]) {
         final clipRaw = positive
@@ -3068,10 +3224,21 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
         final bool lcBinds =
             lcRaw != null && (positive ? lcRaw < clipRaw : lcRaw > clipRaw);
         final double bindingRaw = lcBinds ? lcRaw : clipRaw;
+        final double bindingDisplay = conv(bindingRaw);
 
-        // The hot zone starts at the caution fraction of the BINDING source:
-        // a fraction of the cell's mV/V rating (through the board map), or
-        // of the ADC half-scale.
+        // Off-screen levels draw nothing — one valueToY decides for both
+        // the marker and the temporal dashes.
+        final y = valueToY(bindingDisplay);
+        if (y < 0 || y > graphSz.height) continue;
+        markers.add((
+          value: bindingDisplay,
+          color: color,
+          letter: lcBinds ? 'F' : 'C',
+        ));
+
+        // The hot-interval scan only runs when the level is in view AND the
+        // channel ever crossed the caution anchor (whole-history extremes:
+        // an O(1) pre-filter for the common "never near the limit" case).
         final double cautionRaw;
         if (lcBinds) {
           final fs = limits.loadCellFsMvV!;
@@ -3083,18 +3250,10 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
               ? fraction * ChannelLimits.clipRawPos
               : fraction * ChannelLimits.clipRawNeg;
         }
-
-        _drawLimitMarker(
-          canvas,
-          graphSz,
-          valueToY,
-          conv(bindingRaw),
-          color,
-          letter: lcBinds ? 'F' : 'C',
-          upperSide: positive,
-          channelSlot: ch,
-          labels: labels,
-        );
+        final couldBeHot = positive
+            ? series.max >= cautionRaw
+            : series.min <= cautionRaw;
+        if (!couldBeHot) continue;
 
         final intervals = _hotIntervals(
           _data,
@@ -3106,98 +3265,69 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
           minSamples: minSamples,
         );
         if (intervals.isEmpty) continue;
-        _drawLimitZones(
-          canvas,
-          graphSz,
-          valueToY,
-          conv(bindingRaw),
-          color,
+        zones.add((
+          value: bindingDisplay,
+          y: y,
+          color: color,
           upperSide: positive,
-          shadeColor: shadeColor,
-          intervals: [
+          px: [
             for (final (s, e) in intervals)
               (
                 (s - viewStart) * graphSz.width / viewSpan,
                 (e - viewStart) * graphSz.width / viewSpan,
               ),
           ],
+        ));
+      }
+    }
+
+    // Pass 1: zone shading. BlendMode.src REPLACES, so overlapping channels
+    // keep one uniform red instead of accumulating alpha.
+    final shadePaint = Paint()
+      ..color = colorScheme.error.withAlpha(22)
+      ..blendMode = BlendMode.src;
+    for (final z in zones) {
+      for (final (x1, x2) in z.px) {
+        if (x2 - x1 < 1) continue;
+        canvas.drawRect(
+          Rect.fromLTRB(
+            x1,
+            z.upperSide ? 0 : z.y,
+            x2,
+            z.upperSide ? z.y : graphSz.height,
+          ),
+          shadePaint,
         );
       }
     }
-  }
 
-  @override
-  YAxisRange computeYRange(int viewStart, int viewEnd) {
-    // Data min/max across active channels in the visible window, converted
-    // per channel through its own calibration. [windowedExtremes] folds full
-    // buckets from the precomputed aggregates (exact for min/max of a
-    // monotone map) and per-sample scans only the partial head/tail, so the
-    // cost is O(window / bucketSize). The noise floor stays a raw-count
-    // threshold, applied to the global tare-subtracted raw extremes.
-    final bufferCap = _data.bufferCapacity;
-    final unit = _settings.displayUnit;
-    final start = math.max(viewStart, _data.oldestSample);
-    final end = math.min(viewEnd, _data.totalSamples);
-
-    double rawMin = double.infinity;
-    double rawMax = double.negativeInfinity;
-    double yMin = double.infinity;
-    double yMax = double.negativeInfinity;
-    final converters = <int, double Function(double)>{};
-    for (final ch in _activeChannels) {
-      final s = _data.channel(ch);
-      if (s.data.isEmpty) continue;
-      final conv = unit.converterFor(_data.calibrationFor(ch), s.tare);
-      if (conv == null) continue;
-      converters[ch] = conv;
-      final ext = windowedExtremes(
-        s.buckets,
-        start,
-        end,
-        (i) => s.data[i % bufferCap].toDouble(),
+    // Pass 2: dashes + markers, on top of all shading.
+    for (final z in zones) {
+      _drawLimitZones(
+        canvas,
+        graphSz,
+        valueToY,
+        z.value,
+        z.color,
+        upperSide: z.upperSide,
+        intervals: z.px,
       );
-      if (ext == null) continue;
-      // Tare-subtracted raw extremes feed the noise floor below.
-      rawMin = math.min(rawMin, ext.$1 - s.tare);
-      rawMax = math.max(rawMax, ext.$2 - s.tare);
-      yMin = math.min(yMin, conv(ext.$1));
-      yMax = math.max(yMax, conv(ext.$2));
     }
-    if (rawMin > rawMax) {
-      rawMin = 0;
-      rawMax = 0;
+    for (final m in markers) {
+      _drawLimitMarker(
+        canvas,
+        graphSz,
+        valueToY,
+        m.value,
+        m.color,
+        letter: m.letter,
+        labels: labels,
+      );
     }
-
-    // Enforce a minimum visible window (in raw counts) so a flat signal
-    // gets a non-degenerate axis: widen each channel's converted fold
-    // around the global tared-raw midpoint.
-    // TODO: size this per board model once the model specs are plumbed
-    const double minWindowCounts = 10000; // raw counts
-    if (rawMax - rawMin < minWindowCounts) {
-      final mid = (rawMax + rawMin) / 2;
-      final lo = mid - minWindowCounts / 2;
-      final hi = mid + minWindowCounts / 2;
-      for (final MapEntry(key: ch, value: conv) in converters.entries) {
-        final tare = _data.channel(ch).tare;
-        yMin = math.min(yMin, conv(lo + tare));
-        yMax = math.max(yMax, conv(hi + tare));
-      }
-    }
-    if (!yMin.isFinite || !yMax.isFinite) {
-      // No convertible channel has data: arbitrary non-degenerate range.
-      yMin = -1;
-      yMax = 1;
-    }
-
-    return _computeYRange(yMin, yMax, _settings.displayUnit);
   }
 
   @override
-  String yTickLabel(double tick, YAxisRange yRange) => _formatTickLabel(
-    tick / yRange.rung.factor,
-    yRange.rung.symbol,
-    yRange.decimals,
-  );
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
 /// Derivative graph: the first difference of each channel, scaled to display
