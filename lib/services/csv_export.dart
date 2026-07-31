@@ -139,12 +139,14 @@ Future<(Uint8List, String)> _prepareCsv(
   );
 }
 
-/// Build the session's CSV in the dynamite-csv v1 format
-/// (docs/csv-format-v1.md): a `# dynamite-csv 1` magic line, a one-line
-/// metadata JSON carrying everything needed to reproduce the converted
-/// columns (frozen recording-time calibration, tares, sample rate, ssn
-/// origin, device identity), then the grid of raw + converted columns
-/// (`ssn, ch0..chN-1, ch0_<unit>..chN-1_<unit>`).
+/// Build the session's CSV in the dynamite-csv v1 format, v1B metadata
+/// framing (docs/csv-format-v1.md + csv-format-v1B.md): a `# dynamite-csv 1`
+/// magic line, then the metadata as keyed group lines — one `# session`, one
+/// `# device`, one `# channel` per channel — each a compact, independently
+/// parseable JSON object carrying everything needed to reproduce the
+/// converted columns (frozen recording-time calibration, tares, sample
+/// rate, ssn origin, device identity), then the grid of raw + converted
+/// columns (`ssn, ch0..chN-1, ch0_<unit>..chN-1_<unit>`).
 ///
 /// [unit] is the file's single converted unit (quartet 2), chosen by the
 /// user in the export flow; a channel that can't reach it (a force unit
@@ -184,11 +186,21 @@ String buildSessionCsv(
       _columnFormatter(unit, data.calibrationFor(ch), data.tares[ch]),
   ];
 
-  final buf = StringBuffer()
-    ..writeln('# dynamite-csv 1')
+  final buf = StringBuffer()..writeln('# dynamite-csv 1');
+  // Metadata group lines (csv-format-v1B.md): one compact JSON object per
+  // line, every line independently parseable; group key, one space, payload.
+  buf
     ..writeln(
-      '# ${jsonEncode(_metadata(data, unit, ssnOrigin, recordedAt, generator, device))}',
+      '# session '
+      '${jsonEncode(_sessionMeta(data, unit, ssnOrigin, recordedAt, generator))}',
+    )
+    ..writeln('# device ${jsonEncode(_deviceMeta(device, data, n))}');
+  for (int ch = 0; ch < n; ch++) {
+    buf.writeln(
+      '# channel '
+      '${jsonEncode(_channelMeta(ch, data.calibrationFor(ch), data.tares[ch]))}',
     );
+  }
 
   // Header: ssn, then the raw quartet, then the converted quartet. Header
   // cells only ever contain [A-Za-z0-9_/], so no quoting is ever needed.
@@ -238,56 +250,65 @@ String Function(int raw)? _columnFormatter(
   return (raw) => convert(raw.toDouble()).toStringAsFixed(decimals);
 }
 
-/// The metadata line's JSON object (docs/csv-format-v1.md): one compact
-/// object, all top-level fields required in v1, nullable subfields emitted
-/// as null. Map order here is the emission order (and matches the spec).
-Map<String, Object?> _metadata(
+/// The `# session` metadata line's object (docs/csv-format-v1B.md): the
+/// run's scalars, all required in v1. Map order here is the emission order
+/// (and matches the spec).
+Map<String, Object?> _sessionMeta(
   SessionData data,
   DisplayUnit unit,
   int ssnOrigin,
   DateTime recordedAt,
   String generator,
-  Map<String, Object?> device,
-) {
-  final int n = data.channels.length;
-  return {
-    'format': 'dynamite-csv',
-    'version': 1,
-    'generator': generator,
-    'recorded_at': recordedAt.toUtc().toIso8601String(),
-    'sample_rate_hz': data.sampleRate,
-    'ssn_origin': ssnOrigin,
-    'converted_unit': unit.csvSymbol,
-    // Frozen at recording start (the session row's deviceInfoJson); a session
-    // without identity (web-recorded serial, unreadable DIS) carries the
-    // corresponding nulls.
-    'device': device,
-    // Descriptive traceability (the hardware configuration in effect); the
-    // operative transfer function is each channel's board_cal. Nulls when
-    // the board's constants never resolved (raw-only session).
-    'afe': {
-      'adc_ref_v': data.calibrationFor(0).board.nominals?.adcFsrV,
-      'front_end_gain': data.calibrationFor(0).board.nominals?.afeGain,
-      'adc_gain': [
-        for (int ch = 0; ch < n; ch++)
-          data.calibrationFor(ch).board.nominals?.pgaGain,
-      ],
-    },
-    'channels': [
-      for (int ch = 0; ch < n; ch++)
-        _channelMetadata(data.calibrationFor(ch), data.tares[ch]),
-    ],
-  };
-}
+) => {
+  'format': 'dynamite-csv',
+  'version': 1,
+  'generator': generator,
+  // Wall clock with an explicit UTC offset, and the same instant as whole
+  // epoch seconds — both derived from the same recordedAt, so they can't
+  // disagree; readers prefer recorded_at.
+  'recorded_at': _iso8601WithOffset(recordedAt),
+  'recorded_unix': recordedAt.millisecondsSinceEpoch ~/ 1000,
+  'sample_rate_hz': data.sampleRate,
+  'ssn_origin': ssnOrigin,
+  'converted_unit': unit.csvSymbol,
+};
 
-/// One `channels[]` entry: the assigned load cell (null = none), the
-/// recording-time tare in raw counts, and the factory board cal — null when
-/// the channel is uncalibrated (the honesty marker: converted values are
-/// nominal-referred; the piecewise map ignores the ladder resistors anyway).
-Map<String, Object?> _channelMetadata(ChannelCalibration cal, double tareRaw) {
+/// The `# device` line's object (docs/csv-format-v1B.md): identity + AFE —
+/// descriptive provenance only (the operative transfer function is each
+/// channel's board_cal). Identity is frozen at recording start (the session
+/// row's deviceInfoJson); a session without identity (web-recorded serial,
+/// unreadable DIS) carries the corresponding nulls. AFE entries are null
+/// when the board's constants never resolved (raw-only session).
+Map<String, Object?> _deviceMeta(
+  Map<String, Object?> device,
+  SessionData data,
+  int channels,
+) => {
+  ...device,
+  'afe': {
+    'adc_ref_v': data.calibrationFor(0).board.nominals?.adcFsrV,
+    'front_end_gain': data.calibrationFor(0).board.nominals?.afeGain,
+    'adc_gain': [
+      for (int ch = 0; ch < channels; ch++)
+        data.calibrationFor(ch).board.nominals?.pgaGain,
+    ],
+  },
+};
+
+/// One `# channel` line's object (docs/csv-format-v1B.md): the assigned
+/// load cell (null = none), the recording-time tare in raw counts, and the
+/// factory board cal — null when the channel is uncalibrated (the honesty
+/// marker: converted values are nominal-referred; the piecewise map ignores
+/// the ladder resistors anyway).
+Map<String, Object?> _channelMeta(
+  int index,
+  ChannelCalibration cal,
+  double tareRaw,
+) {
   final cell = cal.loadCell;
   final board = cal.board;
   return {
+    'index': index,
     'load_cell': cell == null
         ? null
         : {
@@ -298,6 +319,22 @@ Map<String, Object?> _channelMetadata(ChannelCalibration cal, double tareRaw) {
     'tare_raw': tareRaw,
     'board_cal': board.isFactoryCalibrated ? board.toJson() : null,
   };
+}
+
+/// ISO 8601 with an explicit UTC offset (docs/csv-format-v1B.md —
+/// `recorded_at`): the local bench clock, unambiguous. Dart's
+/// [DateTime.toIso8601String] omits the offset for local times and appends
+/// `Z` for UTC ones, so the offset is (re)built here.
+String _iso8601WithOffset(DateTime t) {
+  final bare = switch (t.toIso8601String()) {
+    final s when s.endsWith('Z') => s.substring(0, s.length - 1),
+    final s => s,
+  };
+  final minutes = t.timeZoneOffset.inMinutes;
+  final sign = minutes < 0 ? '-' : '+';
+  final hh = (minutes.abs() ~/ 60).toString().padLeft(2, '0');
+  final mm = (minutes.abs() % 60).toString().padLeft(2, '0');
+  return '$bare$sign$hh:$mm';
 }
 
 /// The CSV filename for a session: the session name sanitized per

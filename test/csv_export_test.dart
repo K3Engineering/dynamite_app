@@ -11,12 +11,12 @@ import 'package:dynamite_app/services/session_storage.dart';
 
 /// Tests for the pure CSV-building half of the export path (the plugin
 /// dispatch half is platform code and stays untested). The format reference
-/// is docs/csv-format-v1.md.
+/// is docs/csv-format-v1.md as amended by docs/csv-format-v1B.md.
 void main() {
   const int channels = 2;
   const int sampleRate = 1000;
 
-  /// Fixed provenance for the metadata line: the app version string is
+  /// Fixed provenance for the metadata lines: the app version string is
   /// injected by the plugin half, the wall clock by the session row.
   const generator = 'dynamite-flutter 1.0.0';
   final recordedAt = DateTime.utc(2026, 7, 29, 14, 5, 32);
@@ -55,15 +55,33 @@ void main() {
   String buildCsv(SessionData data, DisplayUnit unit) =>
       buildSessionCsv(data, unit, recordedAt: recordedAt, generator: generator);
 
-  /// The metadata line parsed as JSON (line index 1, `# ` prefix stripped).
+  /// The metadata comment block parsed per v1B's merge rule: group lines
+  /// keyed by group, `# channel` lines collected in order.
   Map<String, dynamic> metadataOf(String csv) {
-    final line = csv.split('\n')[1];
-    expect(line, startsWith('# '));
-    return jsonDecode(line.substring(2)) as Map<String, dynamic>;
+    final lines = csv.trim().split('\n');
+    expect(lines[0], '# dynamite-csv 1');
+    final meta = <String, dynamic>{'channels': <Map<String, dynamic>>[]};
+    var i = 1;
+    while (lines[i].startsWith('# ')) {
+      final body = lines[i].substring(2);
+      final splitAt = body.indexOf(' ');
+      final key = body.substring(0, splitAt);
+      final payload = jsonDecode(body.substring(splitAt + 1));
+      if (key == 'channel') {
+        (meta['channels'] as List).add(payload);
+      } else {
+        meta[key] = payload;
+      }
+      i++;
+    }
+    return meta;
   }
 
+  /// Line index of the header row: magic + 2 group lines + N channel lines.
+  int headerAt(int n) => 3 + n;
+
   group('buildSessionCsv', () {
-    test('emits magic, quartet header, and ssn-keyed data rows', () {
+    test('emits magic, group lines, quartet header, and ssn-keyed rows', () {
       final data = makeSession([
         [10, 20, 30],
         [-1, -2, -3],
@@ -72,13 +90,16 @@ void main() {
       final lines = buildCsv(data, DisplayUnit.kgf).trim().split('\n');
 
       expect(lines[0], '# dynamite-csv 1');
-      expect(lines[1], startsWith('# {'));
-      expect(lines[2], 'ssn,ch0,ch1,ch0_kgf,ch1_kgf');
+      expect(lines[1], startsWith('# session {'));
+      expect(lines[2], startsWith('# device {'));
+      expect(lines[3], startsWith('# channel {'));
+      expect(lines[4], startsWith('# channel {'));
+      expect(lines[headerAt(channels)], 'ssn,ch0,ch1,ch0_kgf,ch1_kgf');
       // ssn is an arithmetic progression from ssn_origin; with no load cell
       // assigned, both converted columns are all-blank (the file's '—').
-      expect(lines[3], '41230,10,-1,,');
-      expect(lines[4], '41231,20,-2,,');
-      expect(lines[5], '41232,30,-3,,');
+      expect(lines[6], '41230,10,-1,,');
+      expect(lines[7], '41231,20,-2,,');
+      expect(lines[8], '41232,30,-3,,');
     });
 
     test('a missing ssnOrigin exports as origin 0', () {
@@ -89,11 +110,14 @@ void main() {
 
       final lines = buildCsv(data, DisplayUnit.mVv).trim().split('\n');
 
-      expect(lines[3], startsWith('0,'));
-      expect(metadataOf(buildCsv(data, DisplayUnit.mVv))['ssn_origin'], 0);
+      expect(lines[6], startsWith('0,'));
+      expect(
+        metadataOf(buildCsv(data, DisplayUnit.mVv))['session']['ssn_origin'],
+        0,
+      );
     });
 
-    test('metadata line carries the spec schema from the frozen session', () {
+    test('metadata lines carry the spec schema from the frozen session', () {
       final boardCal = ChannelBoardCalibration(
         resistors: const [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
         readings: const [6383553.0, 3192096.0, 120.0, -3191776.0, -6383313.0],
@@ -125,27 +149,32 @@ void main() {
       final meta = metadataOf(buildCsv(data, DisplayUnit.kgf));
 
       expect(meta, {
-        'format': 'dynamite-csv',
-        'version': 1,
-        'generator': 'dynamite-flutter 1.0.0',
-        'recorded_at': '2026-07-29T14:05:32.000Z',
-        'sample_rate_hz': 1000,
-        'ssn_origin': 41230,
-        'converted_unit': 'kgf',
+        'session': {
+          'format': 'dynamite-csv',
+          'version': 1,
+          'generator': 'dynamite-flutter 1.0.0',
+          // The UTC fixture keeps its zero offset in explicit form.
+          'recorded_at': '2026-07-29T14:05:32.000+00:00',
+          'recorded_unix': 1785333932,
+          'sample_rate_hz': 1000,
+          'ssn_origin': 41230,
+          'converted_unit': 'kgf',
+        },
         'device': {
           'name': null,
           'id': null,
           'model': null,
           'firmware': null,
           'manufacturer': null,
-        },
-        'afe': {
-          'adc_ref_v': 1.2,
-          'front_end_gain': 101.0,
-          'adc_gain': [1, 1],
+          'afe': {
+            'adc_ref_v': 1.2,
+            'front_end_gain': 101.0,
+            'adc_gain': [1, 1],
+          },
         },
         'channels': [
           {
+            'index': 0,
             'load_cell': {
               'name': 'Load cell 100 kg',
               'capacity_kg': 100.0,
@@ -160,12 +189,12 @@ void main() {
             },
           },
           // Uncalibrated, cell-less channel: the honesty markers are null.
-          {'load_cell': null, 'tare_raw': 55.0, 'board_cal': null},
+          {'index': 1, 'load_cell': null, 'tare_raw': 55.0, 'board_cal': null},
         ],
       });
     });
 
-    test('metadata line carries the frozen device identity', () {
+    test('device line carries the frozen device identity', () {
       final data = makeSession([
         [1],
         [2],
@@ -190,6 +219,12 @@ void main() {
         'model': 'Dynamite Sampler Pro Mk1',
         'firmware': 'v700P|v1.2.3',
         'manufacturer': 'K3 Engineering',
+        // From the fixture calibrations' nominals, not the identity block.
+        'afe': {
+          'adc_ref_v': 1.2,
+          'front_end_gain': 101.0,
+          'adc_gain': [1, 1],
+        },
       });
     });
 
@@ -217,8 +252,41 @@ void main() {
           'model': null,
           'firmware': null,
           'manufacturer': null,
+          'afe': {
+            'adc_ref_v': 1.2,
+            'front_end_gain': 101.0,
+            'adc_gain': [1, 1],
+          },
         });
       }
+    });
+
+    test('recorded_at keeps the local UTC offset (never Z), recorded_unix '
+        'the same instant', () {
+      // TZ-independent: the expectation is rebuilt from the same DateTime.
+      final local = DateTime(2026, 7, 29, 14, 5, 32);
+      final off = local.timeZoneOffset.inMinutes;
+      final expected =
+          '2026-07-29T14:05:32.000'
+          '${off < 0 ? '-' : '+'}'
+          '${(off.abs() ~/ 60).toString().padLeft(2, '0')}:'
+          '${(off.abs() % 60).toString().padLeft(2, '0')}';
+
+      final session = metadataOf(
+        buildSessionCsv(
+          makeSession([
+            [1],
+            [2],
+          ]),
+          DisplayUnit.mVv,
+          recordedAt: local,
+          generator: generator,
+        ),
+      )['session'];
+
+      expect(session['recorded_at'], expected);
+      expect(session['recorded_at'], isNot(endsWith('Z')));
+      expect(session['recorded_unix'], local.millisecondsSinceEpoch ~/ 1000);
     });
 
     test(
@@ -251,8 +319,8 @@ void main() {
             .call(raw.toDouble())
             .toStringAsFixed(decimals);
 
-        expect(lines[3], '0,1000,5,${expectedKgf(1000)},');
-        expect(lines[4], '1,2000,6,${expectedKgf(2000)},');
+        expect(lines[6], '0,1000,5,${expectedKgf(1000)},');
+        expect(lines[7], '1,2000,6,${expectedKgf(2000)},');
       },
     );
 
@@ -269,12 +337,13 @@ void main() {
 
       final lines = buildCsv(data, DisplayUnit.mVv).trim().split('\n');
 
-      String ssnOf(int row) => lines[3 + row].split(',').first;
+      String ssnOf(int row) => lines[6 + row].split(',').first;
       expect(ssnOf(0), '41230');
-      expect(lines[4], '41231,,,,');
+      expect(lines[7], '41231,,,,');
       expect(ssnOf(2), '41232');
       // The gap did not consume extra rows: dropped SSNs are the blank rows.
-      expect(lines, hasLength(3 + 3));
+      // (5 comment lines on 2 channels + header + 3 data rows.)
+      expect(lines, hasLength((3 + channels) + 1 + 3));
     });
 
     test('mV/V header suffixes keep the slash verbatim', () {
@@ -285,9 +354,11 @@ void main() {
 
       final lines = buildCsv(data, DisplayUnit.mVv).trim().split('\n');
 
-      expect(lines[2], 'ssn,ch0,ch1,ch0_mV/V,ch1_mV/V');
+      expect(lines[headerAt(channels)], 'ssn,ch0,ch1,ch0_mV/V,ch1_mV/V');
       expect(
-        metadataOf(buildCsv(data, DisplayUnit.mVv))['converted_unit'],
+        metadataOf(
+          buildCsv(data, DisplayUnit.mVv),
+        )['session']['converted_unit'],
         'mV/V',
       );
     });
@@ -303,8 +374,8 @@ void main() {
 
       final lines = buildCsv(data, DisplayUnit.raw).trim().split('\n');
 
-      expect(lines[2], 'ssn,ch0,ch1,ch0_raw,ch1_raw');
-      expect(lines[3], '0,1000,5,899.7,5.0');
+      expect(lines[headerAt(channels)], 'ssn,ch0,ch1,ch0_raw,ch1_raw');
+      expect(lines[6], '0,1000,5,899.7,5.0');
     });
   });
 
