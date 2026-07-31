@@ -1991,53 +1991,220 @@ void _drawZeroBaseline(
   }
 }
 
-/// Draw a measurement-limit reference (load cell full scale, ADC clip) as an
-/// OPEN row of short 45° ticks at display value [value] — the schematic-GND
-/// idiom, matching the missing-data hatching's visual language without
-/// colliding with the grid or the solid zero baseline. Ticks point TOWARD
-/// the valid region ([teethDown] for a +side ceiling, up for a -side floor),
-/// so the level reads as a boundary. Nothing is drawn when the level falls
-/// outside the visible plot.
-void _drawLimitLine(
+/// Edge-docked reference marker for a measurement limit (load cell full
+/// scale, ADC clip), drawn inside the plot's left edge in the oscilloscope
+/// idiom: a half-triangle pointing into the plot plus a small box carrying
+/// [letter] ('F' = cell full scale, 'C' = ADC clip).
+///
+/// The marker sits at the level's true height while that is visible
+/// (solid), and docks at the frame edge — hollow — when the level is
+/// off-screen, so the limit's existence and direction are always known
+/// without expanding the auto-range. Per-channel vertical slots
+/// ([channelSlot]) keep docked markers from piling into one corner.
+void _drawLimitMarker(
   Canvas canvas,
   Size graphSz,
   double Function(double value) valueToY,
   double value,
   Color color, {
-  required bool teethDown,
-  double strokeWidth = 1.2,
-  String? tag,
-  _LabelCache? labels,
+  required String letter,
+  required bool upperSide,
+  required int channelSlot,
+  required _LabelCache labels,
 }) {
-  final yPos = valueToY(value);
-  if (yPos < 0 || yPos > graphSz.height) return;
+  const double halfH = 7;
+  const double boxW = 15;
 
-  // One 45° tick per [spacing]: (x, y) -> (x + tick, y +/- tick).
-  const double spacing = 10;
-  const double tick = 5;
-  final double dy = teethDown ? tick : -tick;
-  final path = Path();
-  for (double x = 2; x + tick <= graphSz.width; x += spacing) {
-    path.moveTo(x, yPos);
-    path.lineTo(x + tick, yPos + dy);
-  }
-  canvas.drawPath(
-    path,
-    Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.butt,
+  final yTrue = valueToY(value);
+  final inView = yTrue >= 0 && yTrue <= graphSz.height;
+  // Per-channel docking slots, counted in from the top (upper markers) or
+  // the bottom (lower markers): docked markers stack instead of colliding.
+  // In-view markers near an edge also clamp to their slot — a glyph half
+  // clipped by the frame helps no one.
+  final slot = 7.0 + channelSlot * 15;
+  final lo = upperSide ? slot : halfH;
+  final hi = upperSide ? graphSz.height - halfH : graphSz.height - slot;
+  final y = yTrue.clamp(lo, math.max(lo, hi)).toDouble();
+
+  // Glyph at the left plot edge: tip at x=1 pointing right into the plot.
+  const double x0 = 1;
+  final tri = Path()
+    ..moveTo(x0, y)
+    ..lineTo(x0 + 6, y - 6)
+    ..lineTo(x0 + 6, y + 6)
+    ..close();
+  final box = Rect.fromLTWH(x0 + 6, y - halfH, boxW, 2 * halfH);
+
+  final fill = Paint()
+    ..color = inView ? color : color.withAlpha(40)
+    ..style = PaintingStyle.fill;
+  final stroke = Paint()
+    ..color = color
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.0;
+  canvas.drawPath(tri, fill);
+  canvas.drawRect(box, fill);
+  canvas.drawPath(tri, stroke);
+  canvas.drawRect(box, stroke);
+
+  final letterColor = inView ? Colors.white : color;
+  final par = labels.prepare(letter, color: letterColor);
+  canvas.drawParagraph(
+    par,
+    Offset(
+      x0 + 6 + (boxW - par.longestLine) / 2,
+      y - par.height / 2,
+    ),
   );
+}
 
-  if (tag != null && labels != null) {
-    final par = labels.prepare(tag, color: color);
-    final ty = (yPos - par.height / 2).clamp(0.0, graphSz.height - par.height);
-    canvas.drawParagraph(
-      par,
-      Offset(graphSz.width - par.longestLine - 2, ty),
-    );
+/// The temporal (contextual) limit display: within each x-interval where the
+/// trace actually challenges the limit (see [_hotIntervals]), draw the limit
+/// as a solid hairline with 45° teeth and shade the forbidden zone beyond
+/// it. Nothing is drawn anywhere else — the ceiling appears exactly where
+/// the signal contests it instead of running as clutter across the plot.
+///
+/// [value] is the binding limit in display units. When it is off-screen
+/// (the common case while the data still sits below it), the hairline/teeth
+/// are clamped to the frame edge — together with the docked
+/// [_drawLimitMarker] this reads as "the ceiling is just past the frame" —
+/// and the zone shading is skipped (the whole plot is still on the valid
+/// side). Teeth point into the forbidden zone when at the true level, and
+/// into the plot interior when clamped (so they stay visible).
+void _drawLimitZones(
+  Canvas canvas,
+  Size graphSz,
+  double Function(double value) valueToY,
+  double value,
+  Color color, {
+  required bool upperSide,
+  required Color shadeColor,
+  required List<(double, double)> intervals,
+}) {
+  if (intervals.isEmpty) return;
+  final yTrue = valueToY(value);
+  final inView = yTrue >= 0 && yTrue <= graphSz.height;
+  final y = inView ? yTrue : (upperSide ? 2.0 : graphSz.height - 2.0);
+
+  final shade = Paint()..color = shadeColor;
+  final linePen = Paint()
+    ..color = color.withAlpha(190)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.2;
+  final tickPen = Paint()
+    ..color = color.withAlpha(150)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.1
+    ..strokeCap = StrokeCap.butt;
+
+  for (final (x1, x2) in intervals) {
+    if (x2 - x1 < 1) continue;
+    // Forbidden-zone shading, only when the level itself is on screen.
+    if (inView) {
+      canvas.drawRect(
+        Rect.fromLTRB(x1, upperSide ? 0 : y, x2, upperSide ? y : graphSz.height),
+        shade,
+      );
+    }
+
+    canvas.save();
+    canvas.clipRect(Rect.fromLTRB(x1, 0, x2, graphSz.height));
+    canvas.drawLine(Offset(x1, y), Offset(x2, y), linePen);
+    // Teeth on the forbidden side at the true level, into the interior when
+    // clamped to the frame edge.
+    final double dy = (inView == upperSide) ? -5 : 5;
+    final teeth = Path();
+    for (double x = x1 + 2; x + 5 <= x2; x += 10) {
+      teeth.moveTo(x, y);
+      teeth.lineTo(x + 5, y + dy);
+    }
+    canvas.drawPath(teeth, tickPen);
+    canvas.restore();
   }
+}
+
+/// Sample intervals of the visible window where channel [ch]'s raw values
+/// cross [cautionRaw] on the given polarity (>= for positive, <= for
+/// negative), dilated to stay visible and merged. This is the "hot zone"
+/// that drives the temporal limit display: the trace is within the caution
+/// band of its limit exactly there.
+///
+/// Bucket-accelerated: O(window / bucketSize) per call. The head region
+/// whose bucket slot may alias (see the ring-wrap safety note on
+/// [reduceBlockBuckets]) is scanned per-sample instead; the window is
+/// clamped to the retained samples, so every other bucket read is exact.
+List<(int, int)> _hotIntervals(
+  GraphDataSource data,
+  int ch,
+  int viewStart,
+  int viewEnd,
+  double cautionRaw,
+  bool positive, {
+  required double minSamples,
+}) {
+  final series = data.channel(ch);
+  final buckets = series.buckets;
+  final bs = buckets.bucketSize;
+  final numBuckets = buckets.mins.length;
+  final cap = data.bufferCapacity;
+  final start = math.max(viewStart, data.oldestSample);
+  final end = math.min(viewEnd, data.totalSamples);
+  if (start >= end) return const [];
+
+  bool hotRaw(int raw) => positive ? raw >= cautionRaw : raw <= cautionRaw;
+
+  final intervals = <(int, int)>[];
+  int? open;
+  void close(int at) {
+    final s = open;
+    if (s != null && at > s) intervals.add((s, at));
+    open = null;
+  }
+
+  // Head: per-sample scan of the possibly-aliased region (at most one
+  // bucket; the window is clamped to the retained range).
+  final bNow = (buckets.samples - 1) ~/ bs;
+  final firstValid = math.max(0, bNow - numBuckets + 1) * bs;
+  final headEnd = math.min(math.max(start, firstValid), end);
+  for (int i = start; i < headEnd; i++) {
+    if (hotRaw(series.data[i % cap])) {
+      open ??= i;
+    } else {
+      close(i);
+    }
+  }
+
+  // Body: bucket-aligned; aggregates are exact inside the retained range.
+  // A partially-covered edge bucket is conservative (it may count samples
+  // just outside the view) — harmless for a visual aid, and the dilation
+  // below adds at least that much context anyway.
+  for (int b = headEnd ~/ bs; b * bs < end; b++) {
+    final li = b % numBuckets;
+    final bHot = positive
+        ? buckets.maxs[li] >= cautionRaw
+        : buckets.mins[li] <= cautionRaw;
+    if (bHot) {
+      open ??= math.max(b * bs, start);
+    } else {
+      close(math.min(b * bs, end));
+    }
+  }
+  close(end);
+
+  // Dilate so a short excursion still gets a readable run of dashes, then
+  // merge overlaps.
+  final dilate = math.max(bs, minSamples.ceil());
+  final out = <(int, int)>[];
+  for (final (s, e) in intervals) {
+    final ds = math.max(s - dilate, start);
+    final de = math.min(e + dilate, end);
+    if (out.isNotEmpty && ds <= out.last.$2) {
+      out.last = (out.last.$1, math.max(out.last.$2, de));
+    } else {
+      out.add((ds, de));
+    }
+  }
+  return out;
 }
 
 /// Draws a diagonal warning hatch pattern over the [GraphDataSource.gaps]
@@ -2699,12 +2866,16 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   List<double> cacheKeyTares() => const [];
 
   /// Optional chrome drawn after the axes, before the data lines. [yRange]
-  /// and [valueToY] are this paint pass's axis mapping, for reference lines.
+  /// and [valueToY] are this paint pass's axis mapping, [viewStart]/
+  /// [viewEnd] the visible sample window (for limit reference lines and
+  /// their hot-interval scans).
   void drawOverlay(
     Canvas canvas,
     Size graphSz,
     YAxisRange yRange,
     double Function(double value) valueToY,
+    int viewStart,
+    int viewEnd,
   ) {}
 
   @override
@@ -2785,7 +2956,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       color: colorScheme.error,
     );
 
-    drawOverlay(canvas, graphSz, yRange, valueToY);
+    drawOverlay(canvas, graphSz, yRange, valueToY, viewStart, viewEnd);
 
     // -- Data lines (segment-cached envelope) --
     final workRemains = _paintEnvelopeDataLayer(
@@ -2844,24 +3015,39 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   EnvelopeSeries series(int channel) =>
       _taredEnvelopeSeries(_data, channel, _settings.displayUnit);
 
-  /// Measurement-limit references per channel: the binding (tightest)
-  /// full-scale line per polarity — the load cell rating when it binds,
-  /// otherwise the ADC rail — drawn strong with a tag; its caution-fraction
-  /// line medium; the looser limit faint. Anchors are absolute raw counts
-  /// (see [ChannelLimits]), converted here through the channel's tared
-  /// display converter, so the lines track unit switching and tare. Drawn as
-  /// per-frame chrome (not baked into the segment cache), so settings/tare
-  /// changes need no cache invalidation. Lines outside the auto-ranged view
-  /// are skipped — they scroll in as the signal approaches them.
+  /// Measurement-limit chrome per channel and polarity:
+  ///   * an edge-docked marker ([_drawLimitMarker]) at the binding limit —
+  ///     the load cell rating when it binds, otherwise the ADC rail — always
+  ///     present, solid at the true level, hollow when docked off-screen;
+  ///   * the temporal display ([_drawLimitZones]): hairline + 45° teeth +
+  ///     forbidden-zone shading, but only in the x-intervals where the trace
+  ///     is past the caution fraction of the limit — the ceiling materializes
+  ///     where the signal contests it, and history shows where it was
+  ///     contested (see [_hotIntervals]).
+  ///
+  /// Anchors are absolute raw counts (see [ChannelLimits]), converted here
+  /// through the channel's tared display converter, so they track unit
+  /// switching and tare. Drawn as per-frame chrome (not baked into the
+  /// segment cache), so settings/tare changes need no cache invalidation.
+  /// The whole overlay is gated on `AppSettings.limitWarningsEnabled`.
   @override
   void drawOverlay(
     Canvas canvas,
     Size graphSz,
     YAxisRange yRange,
     double Function(double value) valueToY,
+    int viewStart,
+    int viewEnd,
   ) {
+    if (!_settings.limitWarningsEnabled) return;
     final fraction = _settings.lcWarnFraction;
     final unit = _settings.displayUnit;
+    final viewSpan = viewEnd - viewStart;
+    final shadeColor = colorScheme.error.withAlpha(22);
+    // Dilation for the hot intervals: at least this many samples of context
+    // around an excursion, so the dashes get a readable run.
+    final minSamples = 16 * viewSpan / graphSz.width;
+
     for (final ch in _activeChannels) {
       final limits = _data.limitsFor(ch);
       final conv = unit.converterFor(
@@ -2878,18 +3064,14 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
         final lcRaw = positive ? limits.lcFsRawPos : limits.lcFsRawNeg;
 
         // The binding limit is the tightest on this polarity (closest to
-        // zero); the other is drawn faint as secondary information.
+        // zero): the cell's rating when it binds, else the ADC rail.
         final bool lcBinds =
             lcRaw != null && (positive ? lcRaw < clipRaw : lcRaw > clipRaw);
         final double bindingRaw = lcBinds ? lcRaw : clipRaw;
-        final String bindingTag = lcBinds ? 'FS' : 'CLIP';
-        final double? looserRaw = lcRaw == null
-            ? null
-            : (lcBinds ? clipRaw : lcRaw);
 
-        // The caution line belongs to the binding source: a fraction of the
-        // cell's mV/V rating (through the board map), or of the ADC
-        // half-scale.
+        // The hot zone starts at the caution fraction of the BINDING source:
+        // a fraction of the cell's mV/V rating (through the board map), or
+        // of the ADC half-scale.
         final double cautionRaw;
         if (lcBinds) {
           final fs = limits.loadCellFsMvV!;
@@ -2902,39 +3084,44 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
               : fraction * ChannelLimits.clipRawNeg;
         }
 
-        _drawLimitLine(
+        _drawLimitMarker(
           canvas,
           graphSz,
           valueToY,
           conv(bindingRaw),
-          color.withAlpha(170),
-          teethDown: positive,
-          strokeWidth: 1.4,
-          tag: bindingTag,
+          color,
+          letter: lcBinds ? 'F' : 'C',
+          upperSide: positive,
+          channelSlot: ch,
           labels: labels,
         );
-        _drawLimitLine(
+
+        final intervals = _hotIntervals(
+          _data,
+          ch,
+          viewStart,
+          viewEnd,
+          cautionRaw,
+          positive,
+          minSamples: minSamples,
+        );
+        if (intervals.isEmpty) continue;
+        _drawLimitZones(
           canvas,
           graphSz,
           valueToY,
-          conv(cautionRaw),
-          color.withAlpha(110),
-          teethDown: positive,
-          strokeWidth: 1.1,
-          tag: '${(fraction * 100).round()}%',
-          labels: labels,
+          conv(bindingRaw),
+          color,
+          upperSide: positive,
+          shadeColor: shadeColor,
+          intervals: [
+            for (final (s, e) in intervals)
+              (
+                (s - viewStart) * graphSz.width / viewSpan,
+                (e - viewStart) * graphSz.width / viewSpan,
+              ),
+          ],
         );
-        if (looserRaw != null) {
-          _drawLimitLine(
-            canvas,
-            graphSz,
-            valueToY,
-            conv(looserRaw),
-            color.withAlpha(50),
-            teethDown: positive,
-            strokeWidth: 1.0,
-          );
-        }
       }
     }
   }
@@ -3145,6 +3332,8 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     Size graphSz,
     YAxisRange yRange,
     double Function(double value) valueToY,
+    int viewStart,
+    int viewEnd,
   ) {
     // "dF/dt" label in top-left
     final dLabel = labels.prepare(

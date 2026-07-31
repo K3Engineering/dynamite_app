@@ -66,25 +66,64 @@ class SettingsTab extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // Limit warning threshold
-          Text('Limit warnings', style: Theme.of(context).textTheme.titleSmall),
-          const SizedBox(height: 4),
-          Text(
-            'Mild warning at '
-            '${(settings.lcWarnFraction * 100).round()}% of full scale; '
-            'full warning at 100%. Applies to the load cell rating, or the '
-            'ADC range when no cell is assigned.',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
+          // Limit warnings: master switch + the caution threshold. Disabling
+          // removes every limit-related marker from the chart and numbers.
+          SwitchListTile(
+            title: const Text('Limit warnings'),
+            subtitle: const Text(
+              'Caution and full-scale indication on the chart and live numbers',
             ),
+            value: settings.limitWarningsEnabled,
+            onChanged: settings.setLimitWarningsEnabled,
+            contentPadding: EdgeInsets.zero,
           ),
-          Slider(
-            value: settings.lcWarnFraction,
-            min: AppSettings.minLcWarnFraction,
-            max: AppSettings.maxLcWarnFraction,
-            divisions: 9,
-            label: '${(settings.lcWarnFraction * 100).round()}%',
-            onChanged: (v) => unawaited(settings.setLcWarnFraction(v)),
+          const SizedBox(height: 4),
+          Opacity(
+            opacity: settings.limitWarningsEnabled ? 1.0 : 0.5,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Caution at ${(settings.lcWarnFraction * 100).round()}% of '
+                  'full scale; warning at 100%. The limit is the load cell '
+                  'rating, or the ADC range when no cell is assigned.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                Slider(
+                  value: settings.lcWarnFraction,
+                  min: AppSettings.minLcWarnFraction,
+                  max: AppSettings.maxLcWarnFraction,
+                  divisions: 9,
+                  label: '${(settings.lcWarnFraction * 100).round()}%',
+                  onChanged: settings.limitWarningsEnabled
+                      ? (v) => unawaited(settings.setLcWarnFraction(v))
+                      : null,
+                ),
+                // A label per notch (50–95% in 5% steps). The padding aligns
+                // the labels with the slider's notch positions (the track is
+                // inset by the thumb radius on both sides).
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      for (int p = 50; p <= 95; p += 5)
+                        Text(
+                          '$p%',
+                          style: Theme.of(context).textTheme.labelSmall
+                              ?.copyWith(
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
+                              ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 8),
 

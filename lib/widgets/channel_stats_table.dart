@@ -10,7 +10,6 @@ class ChannelStatsRow {
     required this.values,
     this.emphasized = false,
     this.stale = false,
-    this.levels,
   });
 
   /// Row label shown in the leading column ('Live', 'Peak', ...).
@@ -26,12 +25,6 @@ class ChannelStatsRow {
 
   /// Dim the values: the reading is stale (e.g. a live data gap).
   final bool stale;
-
-  /// Optional per-channel proximity to a measurement limit (same length as
-  /// [values]): colors the value amber at [LimitLevel.caution] and in the
-  /// theme's error color at [LimitLevel.exceeded]. Null = no limit display
-  /// for this row.
-  final List<LimitLevel?>? levels;
 }
 
 /// Tappable per-channel header shared by the live view and the session
@@ -47,22 +40,30 @@ class ChannelStatsTable extends StatelessWidget {
     required this.onToggleChannel,
     required this.unit,
     required this.rows,
+    this.channelLevels,
+    this.channelClipLatches,
   }) : assert(
-         _oneValuePerChannel(labels, activeChannels, rows),
-         'labels, activeChannels and every row must have the same length',
+         _oneValuePerChannel(
+           labels,
+           activeChannels,
+           rows,
+           channelLevels,
+           channelClipLatches,
+         ),
+         'labels, activeChannels, rows and status lists must agree in length',
        );
 
   static bool _oneValuePerChannel(
     List<String> labels,
     List<bool> activeChannels,
     List<ChannelStatsRow> rows,
+    List<LimitLevel?>? channelLevels,
+    List<bool>? channelClipLatches,
   ) =>
       activeChannels.length == labels.length &&
-      rows.every(
-        (r) =>
-            r.values.length == labels.length &&
-            (r.levels == null || r.levels!.length == labels.length),
-      );
+      rows.every((r) => r.values.length == labels.length) &&
+      (channelLevels == null || channelLevels.length == labels.length) &&
+      (channelClipLatches == null || channelClipLatches.length == labels.length);
 
   final List<String> labels;
 
@@ -78,6 +79,55 @@ class ChannelStatsTable extends StatelessWidget {
 
   /// Stat rows below the channel header.
   final List<ChannelStatsRow> rows;
+
+  /// Per-channel live proximity to a measurement limit, or null when not
+  /// evaluated (or limit warnings are disabled). Shown as a status icon in
+  /// the channel's label cell.
+  final List<LimitLevel?>? channelLevels;
+
+  /// Per-channel ADC clip latch: the channel railed at some point in this
+  /// stream. Shown as a persistent octagon in the label cell (it outranks
+  /// the live level's triangle: railed data matters even after the signal
+  /// settles back in range). Null when warnings are disabled.
+  final List<bool>? channelClipLatches;
+
+  /// The per-channel status icon in the label cell: a persistent octagon
+  /// for a latched ADC clip, else the live level's triangle (amber caution,
+  /// red exceeded). Null when there is nothing to say — the slot stays
+  /// reserved either way so labels never reflow.
+  static Widget? _statusIcon(
+    BuildContext context, {
+    required LimitLevel? level,
+    required bool clipped,
+    required bool active,
+  }) {
+    if (!active) return null;
+    final cs = Theme.of(context).colorScheme;
+    if (clipped) {
+      return Icon(Icons.dangerous, size: 14, color: cs.error);
+    }
+    return switch (level) {
+      LimitLevel.caution => Icon(
+        Icons.warning_amber_rounded,
+        size: 14,
+        color: cautionColor(context),
+      ),
+      LimitLevel.exceeded => Icon(
+        Icons.warning_amber_rounded,
+        size: 14,
+        color: cs.error,
+      ),
+      _ => null,
+    };
+  }
+
+  /// The "caution" amber, resolved per theme brightness (ColorScheme has no
+  /// warning role; exceeded and clip use its error role). Same pragmatism as
+  /// [getChannelColor]'s raw Material colors.
+  static Color cautionColor(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+      ? Colors.amber.shade300
+      : Colors.amber.shade800;
 
   @override
   Widget build(BuildContext context) {
@@ -124,17 +174,36 @@ class ChannelStatsTable extends StatelessWidget {
                           left: 4,
                           right: 4,
                         ),
-                        child: Text(
-                          labels[i],
-                          textAlign: TextAlign.right,
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(
-                                color: activeChannels[i]
-                                    ? getChannelColor(i)
-                                    : staleColor.withValues(alpha: 0.5),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            // Fixed-width status slot: the label never
+                            // reflows when an icon appears or changes.
+                            SizedBox(
+                              width: 20,
+                              height: 16,
+                              child: _statusIcon(
+                                context,
+                                level: channelLevels?[i],
+                                clipped: channelClipLatches?[i] ?? false,
+                                active: activeChannels[i],
                               ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                            ),
+                            Flexible(
+                              child: Text(
+                                labels[i],
+                                textAlign: TextAlign.right,
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: activeChannels[i]
+                                          ? getChannelColor(i)
+                                          : staleColor.withValues(alpha: 0.5),
+                                    ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -178,7 +247,6 @@ class ChannelStatsTable extends StatelessWidget {
                           unit: unit,
                           isActive: activeChannels[i],
                           isStale: row.stale,
-                          level: row.levels?[i],
                           textStyle: row.emphasized ? emphasizedStyle : monoStyle,
                           onTap: () => onToggleChannel(i),
                         ),
@@ -227,7 +295,6 @@ class _TableCellValue extends StatelessWidget {
     required this.unit,
     required this.isActive,
     required this.isStale,
-    required this.level,
     required this.textStyle,
     this.onTap,
   });
@@ -238,19 +305,8 @@ class _TableCellValue extends StatelessWidget {
   final DisplayUnit unit;
   final bool isActive;
   final bool isStale;
-
-  /// Proximity to a measurement limit, or null when not evaluated.
-  final LimitLevel? level;
   final TextStyle? textStyle;
   final VoidCallback? onTap;
-
-  /// The "caution" amber, resolved per theme brightness (ColorScheme has no
-  /// warning role; exceeded uses its error role). Same pragmatism as
-  /// [getChannelColor]'s raw Material colors.
-  static Color cautionColor(BuildContext context) =>
-      Theme.of(context).brightness == Brightness.dark
-      ? Colors.amber.shade300
-      : Colors.amber.shade800;
 
   @override
   Widget build(BuildContext context) {
@@ -262,18 +318,9 @@ class _TableCellValue extends StatelessWidget {
     final String displayText = !isActive
         ? '--'
         : (value == null ? '—' : unit.formatValueOnly(value));
-    final Color? color;
-    if (!isActive) {
-      color = staleColor.withValues(alpha: 0.4);
-    } else if (isStale || value == null) {
-      color = staleColor;
-    } else {
-      color = switch (level) {
-        LimitLevel.caution => cautionColor(context),
-        LimitLevel.exceeded => Theme.of(context).colorScheme.error,
-        _ => null,
-      };
-    }
+    final color = !isActive
+        ? staleColor.withValues(alpha: 0.4)
+        : ((isStale || value == null) ? staleColor : null);
 
     return _TappableChannelCell(
       onTap: onTap ?? () {},

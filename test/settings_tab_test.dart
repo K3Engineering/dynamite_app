@@ -47,10 +47,19 @@ void main() {
   ) async {
     await pump(tester);
 
-    expect(find.text('No device connected'), findsOneWidget);
+    // App-owned settings still render (visible without scrolling).
+    expect(find.text('Display Units'), findsOneWidget);
     expect(find.text('Load cells'), findsNothing);
     expect(find.text('Board calibration'), findsNothing);
-    // App-owned settings still render.
-    expect(find.text('Display Units'), findsOneWidget);
+
+    // The app-settings section is taller than the test viewport, so the
+    // device section is below the fold: scroll it into view (the ListView
+    // builds off-screen children lazily).
+    await tester.dragUntilVisible(
+      find.text('No device connected'),
+      find.byType(ListView),
+      const Offset(0, -300),
+    );
+    expect(find.text('No device connected'), findsOneWidget);
   });
 }

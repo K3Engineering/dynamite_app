@@ -235,15 +235,26 @@ class _LiveTabState extends State<LiveTab> {
     return SafeArea(
       child: Column(
         children: [
-          // The bar shows the hub's protocol-error latch, which changes with
-          // packet traffic — listen to the hub (per-packet notify) here
-          // rather than rebuilding the whole tab.
+          // The bar shows the hub's protocol-error latch and the clip latch,
+          // which change with packet traffic — listen to the hub (per-packet
+          // notify) here rather than rebuilding the whole tab.
           ListenableBuilder(
             listenable: hub,
             builder: (context, _) => LiveStatusBar(
               isConnected: isConnected,
               connectedDeviceName: deviceName,
               protocolErrorSeen: hub.protocolErrorSeen,
+              clippedChannelTitles: settings.limitWarningsEnabled
+                  ? [
+                      for (int i = 0; i < DataHub.numAdcChannels; i++)
+                        if (hub.totalSamples > 0 &&
+                            ChannelLimits.extremesClipped(
+                              hub.rawMax[i],
+                              hub.rawMin[i],
+                            ))
+                          rig.channelTitles[i],
+                    ]
+                  : const [],
             ),
           ),
           if (isConnected)
@@ -312,11 +323,17 @@ class LiveStatusBar extends StatelessWidget {
   /// packets are dropped but never hidden from the user.
   final bool protocolErrorSeen;
 
+  /// Titles of channels that have hit an ADC rail this stream (the clip
+  /// latch). Shows a persistent marker when non-empty — railed data matters
+  /// even after the signal settles back in range.
+  final List<String> clippedChannelTitles;
+
   const LiveStatusBar({
     super.key,
     required this.isConnected,
     required this.connectedDeviceName,
     this.protocolErrorSeen = false,
+    this.clippedChannelTitles = const [],
   });
 
   @override
@@ -359,6 +376,20 @@ class LiveStatusBar extends StatelessWidget {
                 ),
               ),
             ),
+            if (isConnected && clippedChannelTitles.isNotEmpty)
+              Tooltip(
+                message:
+                    'ADC clipped on ${clippedChannelTitles.join(', ')} — '
+                    'the signal hit the rail this stream',
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Icon(
+                    Icons.dangerous,
+                    size: 18,
+                    color: Theme.of(context).colorScheme.error,
+                  ),
+                ),
+              ),
             if (isConnected && protocolErrorSeen)
               Tooltip(
                 message:
@@ -433,10 +464,10 @@ class LiveStats extends StatelessWidget {
           // Same for a stall: the newest "reading" is just the last one.
           final stale = hub.liveEdgeIsGap || stalled;
 
-          // Per-channel limit levels, evaluated in the raw domain (absolute
-          // mV/V vs the cell's rating; +/-2^23 vs the ADC rail — see
-          // [ChannelLimits]). One instance per channel serves both rows; null
-          // before the first sample (the extremes still hold sentinels).
+          // Per-channel live limit levels, evaluated in the raw domain
+          // (absolute mV/V vs the cell's rating; +/-2^23 vs the ADC rail —
+          // see [ChannelLimits]). One instance per channel; null before the
+          // first sample (the extremes still hold sentinels).
           final fraction = settings.lcWarnFraction;
           final hasData = hub.totalSamples > 0;
           final limits = [
@@ -448,23 +479,13 @@ class LiveStats extends StatelessWidget {
                   ? limits[i].levelForRaw(hub.currentRawFor(i), fraction)
                   : null,
           ];
-          final peakLevels = <LimitLevel?>[
-            for (int i = 0; i < DataHub.numAdcChannels; i++)
-              hasData
-                  ? _worstLevel(
-                      limits[i].levelForRaw(hub.rawMax[i], fraction),
-                      limits[i].levelForRaw(hub.rawMin[i], fraction),
-                    )
-                  : null,
-          ];
           // Clip latch: any rail hit in this stream's extremes stays visible
-          // until the stream resets — railed data is invalid even after the
+          // until the stream resets — railed data matters even after the
           // signal settles back in range.
-          final clippedTitles = [
+          final clipLatches = <bool>[
             for (int i = 0; i < DataHub.numAdcChannels; i++)
-              if (hasData &&
-                  ChannelLimits.extremesClipped(hub.rawMax[i], hub.rawMin[i]))
-                rig.channelTitles[i],
+              hasData &&
+                  ChannelLimits.extremesClipped(hub.rawMax[i], hub.rawMin[i]),
           ];
 
           return Column(
@@ -475,6 +496,12 @@ class LiveStats extends StatelessWidget {
                 onToggleChannel: (i) =>
                     settings.setChannelActive(i, !settings.activeChannels[i]),
                 unit: unit,
+                channelLevels: settings.limitWarningsEnabled
+                    ? liveLevels
+                    : null,
+                channelClipLatches: settings.limitWarningsEnabled
+                    ? clipLatches
+                    : null,
                 rows: [
                   ChannelStatsRow(
                     label: 'Live',
@@ -484,7 +511,6 @@ class LiveStats extends StatelessWidget {
                     ],
                     emphasized: true,
                     stale: stale,
-                    levels: liveLevels,
                   ),
                   ChannelStatsRow(
                     label: 'Peak',
@@ -492,7 +518,6 @@ class LiveStats extends StatelessWidget {
                       for (int i = 0; i < DataHub.numAdcChannels; i++)
                         hub.peakValue(i, unit),
                     ],
-                    levels: peakLevels,
                   ),
                   if (showDerivative)
                     ChannelStatsRow(
@@ -505,17 +530,6 @@ class LiveStats extends StatelessWidget {
                     ),
                 ],
               ),
-              if (clippedTitles.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 4),
-                  child: Text(
-                    'ADC clipped on ${clippedTitles.join(', ')} — '
-                    'railed data is invalid',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-                ),
               if (anyUnassigned)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
@@ -546,10 +560,6 @@ class LiveStats extends StatelessWidget {
     );
   }
 }
-
-/// The more severe of two limit levels (enum order IS severity order).
-LimitLevel _worstLevel(LimitLevel a, LimitLevel b) =>
-    a.index >= b.index ? a : b;
 
 // ---------------------------------------------------------------------------
 // DisconnectedPrompt

@@ -35,12 +35,15 @@ class AppSettings extends ChangeNotifier {
     _lcWarnFraction = (_prefs.getDouble(_keyLcWarnFraction) ??
             defaultLcWarnFraction)
         .clamp(minLcWarnFraction, maxLcWarnFraction);
+
+    _limitWarningsEnabled = _prefs.getBool(_keyLimitWarnings) ?? true;
   }
 
   static const String _keyUnit = 'display_unit';
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
   static const String _keyLcWarnFraction = 'lc_warn_fraction';
+  static const String _keyLimitWarnings = 'limit_warnings_enabled';
 
   /// Fraction of full scale where a channel's mild ("caution") limit warning
   /// starts; the full warning is always at 100%. Applies to the load cell
@@ -82,6 +85,12 @@ class AppSettings extends ChangeNotifier {
   double _lcWarnFraction = defaultLcWarnFraction;
   double get lcWarnFraction => _lcWarnFraction;
 
+  /// Master switch for all limit indication: the chart's limit markers,
+  /// dashes and zone shading, the live numbers' status icons, and the clip
+  /// latch. When off, the graphs and numbers show no limit-related chrome.
+  bool _limitWarningsEnabled = true;
+  bool get limitWarningsEnabled => _limitWarningsEnabled;
+
   Future<void> setDisplayUnit(DisplayUnit unit) async {
     _displayUnit = unit;
     notifyListeners();
@@ -110,5 +119,11 @@ class AppSettings extends ChangeNotifier {
     );
     notifyListeners();
     await _prefs.setDouble(_keyLcWarnFraction, _lcWarnFraction);
+  }
+
+  Future<void> setLimitWarningsEnabled(bool enabled) async {
+    _limitWarningsEnabled = enabled;
+    notifyListeners();
+    await _prefs.setBool(_keyLimitWarnings, enabled);
   }
 }
