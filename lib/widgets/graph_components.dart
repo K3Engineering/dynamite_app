@@ -66,6 +66,14 @@ ui.Image _bakeImage(
 // cost once; the steady-state per-frame cost is a handful of texture blits
 // plus the vector-drawn live-edge sliver.
 //
+// Full re-renders are avoided. All changes should prefer to smear the rebake
+// across multiple frames. Changes should also prefer to reuse old tiles
+// when applicable (e.g. taring is a shift) as opposed to a clean-slate rerender
+// The sweep re-bakes config-stale segments rightmost-first (freshest data
+// converges first, history backfills) at the usual [kSegmentBakeBudget] per
+// frame. On any config bump, segments outside the view are disposed so stale
+// content cannot resurrect on a later pan.
+//
 // Quality invariant: a texture is only ever produced by a vector render --
 // never by resampling another texture -- so every on-screen pixel is at most
 // ONE bilinear resample away from a vector render, scaled by at most
@@ -136,6 +144,7 @@ typedef SegmentRenderer =
 typedef _BakeEnv = ({
   double pps,
   double gh,
+  double dpr,
   int viewStart,
   int viewEnd,
   double yMin,
@@ -149,9 +158,9 @@ typedef _BakeEnv = ({
 });
 
 /// One baked segment: an immutable vector render of samples [start, end)
-/// plus the mapping it was baked under. Never mutated and never re-blitted
-/// into another texture (so resampling loss cannot compound); replaced by a
-/// fresh vector render when stale.
+/// plus the mapping and config it was baked under. Never mutated and never
+/// re-blitted into another texture (so resampling loss cannot compound);
+/// replaced by a fresh vector render when stale.
 class GraphSegment {
   final ui.Image image;
 
@@ -166,6 +175,20 @@ class GraphSegment {
   /// Y-mapping at bake: content rows [0, gh) covered values [yMax, yMin].
   final double yMin;
   final double yMax;
+
+  /// Plot height and pixel ratio at bake. The blit corrects for both
+  /// (affine), so a change is pure resampling drift -- remap staleness,
+  /// never invalidation.
+  final double gh;
+  final double dpr;
+
+  /// Config keys at bake, compared against the cache's current ones:
+  /// [destructiveKey] (unit, calibration) -- a mismatch means the content is
+  /// wrong in kind and must never blit; [remapKey] (channels, tares) -- a
+  /// mismatch leaves it approximately right (a ghost/shift) and blittable
+  /// until the rolling sweep replaces it.
+  final List<Object?> destructiveKey;
+  final List<Object?> remapKey;
 
   /// Padding baked around the content (AA bleed / polyline overshoot).
   final double hPad;
@@ -183,6 +206,10 @@ class GraphSegment {
     required this.contentW,
     required this.yMin,
     required this.yMax,
+    required this.gh,
+    required this.dpr,
+    required this.destructiveKey,
+    required this.remapKey,
     required this.hPad,
     required this.vPad,
     required this.tailProvisional,
@@ -198,13 +225,19 @@ class SegmentedGraphCache {
   /// vectors or left blank until a bake covers them.
   final List<GraphSegment> _segments = [];
 
-  // Config the segments were baked under (mismatch => drop them all). The
-  // plot width gw is deliberately NOT part of this: a width change is pure
-  // x-scale drift, so existing segments stay correct under the corrective
-  // blit and re-sharpen via the rolling refresh.
+  /// Current bake config. Segments carry their own stamps: a destructiveKey
+  /// mismatch suppresses the blit (the range vector-draws until re-baked);
+  /// a remapKey/gh/dpr mismatch keeps blitting (best-effort ghost/shift)
+  /// and marks the segment for the rolling config sweep. gh and dpr are
+  /// deliberately NOT destructive: both are pure drift the blit affine
+  /// corrects for. [_generation] identifies the data stream itself; a change
+  /// clears everything (different data at the same absolute indices) -- the
+  /// only mass clear, and cheap since a fresh stream has little data.
+  int _generation = -1;
   double _gh = -1;
   double _dpr = -1;
-  List<Object?> _configKey = const [];
+  List<Object?> _destructiveKey = const [];
+  List<Object?> _remapKey = const [];
 
   void clear() {
     for (final s in _segments) {
@@ -221,6 +254,14 @@ class SegmentedGraphCache {
   /// and vector-draw uncovered gaps up to [maxDirectGapPx] wide (wider gaps
   /// stay blank until the rolling bakes cover them).
   ///
+  /// Config identity is split in three (see the file header for the model):
+  /// [generation] clears the cache on change; [destructiveKey] (unit,
+  /// calibration) suppresses blitting of mismatched segments; [remapKey]
+  /// (channels, tares) keeps them blitting. Both kinds of mismatch are
+  /// re-baked by the rolling rightmost-first sweep at the bake budget, so a
+  /// config change never costs more than one bake per frame plus vector
+  /// gap draws in the meantime.
+  ///
   /// [tailSpan] is the sample span the renderer needs past a segment's end
   /// for its tail to be complete (the envelope layer's join block: up to
   /// twice the block size): a provisional segment becomes repairable once
@@ -232,7 +273,9 @@ class SegmentedGraphCache {
   /// on their own).
   bool paint(
     Canvas canvas, {
-    required List<Object?> configKey,
+    required int generation,
+    required List<Object?> destructiveKey,
+    required List<Object?> remapKey,
     required double gw,
     required double gh,
     required double dpr,
@@ -247,21 +290,42 @@ class SegmentedGraphCache {
     required double maxDirectGapPx,
     required SegmentRenderer render,
   }) {
-    if ((gh - _gh).abs() > 0.1 ||
-        dpr != _dpr ||
-        !listEquals(configKey, _configKey)) {
+    if (generation != _generation) {
       clear();
+      _generation = generation;
       _gh = gh;
       _dpr = dpr;
-      _configKey = List.of(configKey);
+      _destructiveKey = List.of(destructiveKey);
+      _remapKey = List.of(remapKey);
     }
 
     final double pps = gw / viewSpan; // logical px per sample
     final int viewEnd = viewStart + viewSpan;
     final int targetSpan = math.max(1, (kSegmentTargetPx / pps).round());
+
+    // Config bump: keep stale segments (they degrade per their key kind)
+    // but dispose any outside the view, so stale content -- e.g. a removed
+    // channel's ghost -- cannot resurrect on a later pan before the sweep
+    // reaches it. Disposed ranges simply vector-draw if panned back to.
+    if (!listEquals(destructiveKey, _destructiveKey) ||
+        !listEquals(remapKey, _remapKey) ||
+        (gh - _gh).abs() > 0.1 ||
+        dpr != _dpr) {
+      _segments.removeWhere((s) {
+        if (s.end > viewStart && s.start < viewEnd) return false;
+        s.dispose();
+        return true;
+      });
+      _gh = gh;
+      _dpr = dpr;
+      _destructiveKey = List.of(destructiveKey);
+      _remapKey = List.of(remapKey);
+    }
+
     final env = (
       pps: pps,
       gh: gh,
+      dpr: dpr,
       viewStart: viewStart,
       viewEnd: viewEnd,
       yMin: yMin,
@@ -308,12 +372,22 @@ class SegmentedGraphCache {
     return baked;
   }
 
-  /// Uncovered sub-ranges of [viewStart, min(viewEnd, totalSamples)).
-  List<(int, int)> _gaps(int viewStart, int viewEnd, int totalSamples) {
+  /// Uncovered sub-ranges of [viewStart, min(viewEnd, totalSamples)). With
+  /// [blittableOnly], segments whose destructive key no longer matches count
+  /// as uncovered (they are never blitted; the frame vector-draws them).
+  List<(int, int)> _gaps(
+    int viewStart,
+    int viewEnd,
+    int totalSamples, {
+    bool blittableOnly = false,
+  }) {
     final int domainEnd = math.min(viewEnd, totalSamples);
     final gaps = <(int, int)>[];
     int covered = viewStart;
     for (final s in _segments) {
+      if (blittableOnly && !listEquals(s.destructiveKey, _destructiveKey)) {
+        continue;
+      }
       if (covered >= domainEnd) break;
       if (s.start > covered) {
         gaps.add((covered, math.min(s.start, domainEnd)));
@@ -327,21 +401,29 @@ class SegmentedGraphCache {
   /// Perform at most one segment (re)bake. Priority:
   ///   1. the widest visible gap past [kSegmentGapBakePx] (live-edge sliver
   ///      absorb, bootstrap fill, newly exposed pan/zoom territory);
-  ///   2. a visible provisional-tail segment whose tail has since completed
+  ///   2. the rightmost visible segment baked under outdated config (the
+  ///      destructive/remap sweep: freshest data converges first, history
+  ///      backfills);
+  ///   3. a visible provisional-tail segment whose tail has since completed
   ///      (repair of the stale live-edge seam, see [_repairProvisionalTail]);
-  ///   3. the visible segment furthest past its drift/size thresholds
+  ///   4. the visible segment furthest past its drift/size thresholds
   ///      (rolling refresh, merging undersized neighbors and splitting
   ///      oversized ranges).
   /// Returns whether a bake happened.
   bool _bakeOne(_BakeEnv env) =>
       _bakeWidestGap(env) ||
+      _sweepConfigStaleSegment(env) ||
       _repairProvisionalTail(env) ||
       _refreshStalestSegment(env);
 
-  /// Priority 1: bake the widest uncovered gap past the threshold. Left
-  /// neighbors are absorbed while the merged bake stays within one target
-  /// width, so the live-edge segment grows in place (one bake per sliver)
-  /// instead of accumulating sliver-wide strips.
+  /// Priority 1: bake the widest uncovered gap past the threshold (left
+  /// aligned, so a gap touching the data edge leaves the sub-threshold
+  /// sliver AT the edge -- the live-edge sliver the absorb below grows in
+  /// place). Right-to-left convergence after config bumps is the sweep's
+  /// job (priority 2), not this pass's. Left neighbors are absorbed while
+  /// the merged bake stays within one target width, so the live-edge
+  /// segment grows in place (one bake per sliver) instead of accumulating
+  /// sliver-wide strips.
   bool _bakeWidestGap(_BakeEnv env) {
     (int, int)? bakeGap;
     double widestPx = kSegmentGapBakePx;
@@ -358,7 +440,7 @@ class SegmentedGraphCache {
     final int end = math.min(bakeGap.$2, start + env.targetSpan);
     if (end <= start) return false;
 
-    // Insertion point: first segment starting inside/after the gap.
+    // Insertion point: first segment starting inside/after the bake range.
     int at = 0;
     while (at < _segments.length && _segments[at].start < start) {
       at++;
@@ -375,7 +457,33 @@ class SegmentedGraphCache {
     return true;
   }
 
-  /// Priority 2: re-bake a visible segment whose tail was cut short by the
+  /// Priority 2: refresh the RIGHTMOST visible segment whose bake config no
+  /// longer matches -- the smeared rebake after a config bump. Destructive
+  /// mismatches (unit, calibration) are never blitted meanwhile (their
+  /// ranges vector-draw); remap mismatches (channels, tares, gh, dpr) keep
+  /// blitting as best-effort ghosts/shifts. Right-to-left so the live edge
+  /// converges first and history backfills.
+  bool _sweepConfigStaleSegment(_BakeEnv env) {
+    for (int i = _segments.length - 1; i >= 0; i--) {
+      final s = _segments[i];
+      if (s.end <= env.viewStart || s.start >= env.viewEnd) continue;
+      if (!_isConfigStale(s, env)) continue;
+      final range = _refreshRange(i, env);
+      if (range.end <= range.start) return false;
+      _splice(i, range.removeTo, _bake(range.start, range.end, env));
+      return true;
+    }
+    return false;
+  }
+
+  /// Whether [s] was baked under outdated config (any kind).
+  bool _isConfigStale(GraphSegment s, _BakeEnv env) =>
+      !listEquals(s.destructiveKey, _destructiveKey) ||
+      !listEquals(s.remapKey, _remapKey) ||
+      (s.gh - env.gh).abs() > 0.1 ||
+      s.dpr != env.dpr;
+
+  /// Priority 3: re-bake a visible segment whose tail was cut short by the
   /// live data edge at bake time ([GraphSegment.tailProvisional]) once its
   /// tail has completed -- i.e. enough samples now exist for the trailing
   /// block plus the join block past it (`end + tailSpan`). Without this
@@ -397,7 +505,7 @@ class SegmentedGraphCache {
     return false;
   }
 
-  /// Priority 3: refresh the visible segment furthest past its drift/size
+  /// Priority 4: refresh the visible segment furthest past its drift/size
   /// thresholds, merging undersized neighbors and splitting oversized ranges
   /// (see [_refreshRange]).
   bool _refreshStalestSegment(_BakeEnv env) {
@@ -483,14 +591,15 @@ class SegmentedGraphCache {
 
   /// Vector-render samples [start, end) into a fresh texture sized to the
   /// range's current on-screen width, so its blit starts at scale ~1.
+  /// Stamped with the cache's current config (see [GraphSegment]).
   GraphSegment _bake(int start, int end, _BakeEnv env) {
     final int texW = math.max(1, ((end - start) * env.pps).ceil());
     double contentW = texW.toDouble();
     bool tailProvisional = false;
     final img = _bakeImage(
-      ((texW + 2 * env.hPad) * _dpr).ceil(),
-      ((env.gh + 2 * env.vPad) * _dpr).ceil(),
-      _dpr,
+      ((texW + 2 * env.hPad) * env.dpr).ceil(),
+      ((env.gh + 2 * env.vPad) * env.dpr).ceil(),
+      env.dpr,
       (c) {
         c.translate(env.hPad, env.vPad);
         final r = env.render(c, start, end, texW);
@@ -505,6 +614,10 @@ class SegmentedGraphCache {
       contentW: math.max(contentW, 0.001),
       yMin: env.yMin,
       yMax: env.yMax,
+      gh: env.gh,
+      dpr: env.dpr,
+      destructiveKey: _destructiveKey,
+      remapKey: _remapKey,
       hPad: env.hPad,
       vPad: env.vPad,
       tailProvisional: tailProvisional,
@@ -515,10 +628,18 @@ class SegmentedGraphCache {
   ///
   /// Texture x-px u covers sample s = start + u * (end - start) / contentW,
   /// which today lands at x = (s - viewStart) * pps -- affine, so one
-  /// drawImageRect repositions the content exactly. Vertically, a valueToY
-  /// of the form gh - (v - yMin) * gh / (yMax - yMin) is affine in
-  /// (yMin, yMax), so a y scale+offset corrects for range changes (per-
-  /// channel offsets like tares cancel out of the difference).
+  /// drawImageRect repositions the content exactly. Vertically, content rows
+  /// [0, s.gh] covered values [s.yMax, s.yMin] at bake; a valueToY of the
+  /// form gh - (v - yMin) * gh / (yMax - yMin) is affine in (yMin, yMax), so
+  /// a y scale+offset corrects for range changes (per-channel offsets like
+  /// tares cancel out of the difference) AND for plot-height changes since
+  /// the bake.
+  ///
+  /// Segments whose destructive key no longer matches are never blitted:
+  /// their content is wrong in kind (a counts-shaped trace on a kg axis),
+  /// and [_drawGaps] vector-draws their ranges until the sweep re-bakes
+  /// them. Remap-stale segments (channels, tares, gh, dpr) DO blit --
+  /// outdated/shifted but approximately right -- until swept.
   void _blitSegments(
     Canvas canvas,
     double pps,
@@ -532,6 +653,7 @@ class SegmentedGraphCache {
     final paint = Paint()..filterQuality = kSegmentFilterQuality;
     double coveredX = 0;
     for (final s in _segments) {
+      if (!listEquals(s.destructiveKey, _destructiveKey)) continue;
       final double x1 = (s.start - viewStart) * pps;
       final double x2 = (s.end - viewStart) * pps;
       // Where ranges overlap, the LEFT segment is the fresher one (refreshes
@@ -543,8 +665,11 @@ class SegmentedGraphCache {
       if (clipR <= clipL) continue;
 
       final double xs = (x2 - x1) / s.contentW;
-      final double ys = (s.yMax - s.yMin) / range;
-      final double yTop = gh * (1 - ys) + (yMin - s.yMin) * gh / range;
+      // Total y scale: value-range drift (first factor) rescaled into today's
+      // pixel height (second factor). Where the tile's top content row
+      // (value s.yMax) lands today:
+      final double ys = (s.yMax - s.yMin) / range * (gh / s.gh);
+      final double yTop = gh * (1 - (s.yMax - yMin) / range);
 
       canvas.save();
       canvas.clipRect(Rect.fromLTRB(clipL, -s.vPad, clipR, gh + s.vPad));
@@ -556,14 +681,14 @@ class SegmentedGraphCache {
         Rect.fromLTWH(
           0,
           0,
-          (s.contentW + 2 * s.hPad) * _dpr,
-          (gh + 2 * s.vPad) * _dpr,
+          (s.contentW + 2 * s.hPad) * s.dpr,
+          (s.gh + 2 * s.vPad) * s.dpr,
         ),
         Rect.fromLTWH(
           x1 - s.hPad * xs,
           yTop - s.vPad * ys,
           (s.contentW + 2 * s.hPad) * xs,
-          (gh + 2 * s.vPad) * ys,
+          (s.gh + 2 * s.vPad) * ys,
         ),
         paint,
       );
@@ -572,7 +697,9 @@ class SegmentedGraphCache {
   }
 
   /// Vector-render the uncovered visible ranges (live-edge sliver, freshly
-  /// exposed pan/zoom territory, bake backlog). Ranges wider than
+  /// exposed pan/zoom territory, bake backlog). Destructive-stale segments
+  /// count as uncovered: their content is never blitted, so these ranges
+  /// are drawn exactly until the sweep re-bakes them. Ranges wider than
   /// [maxDirectGapPx] are left blank -- the rolling bakes cover them within
   /// a few frames.
   void _drawGaps(
@@ -586,7 +713,12 @@ class SegmentedGraphCache {
     double maxDirectGapPx,
     SegmentRenderer render,
   ) {
-    for (final (gs, ge) in _gaps(viewStart, viewEnd, totalSamples)) {
+    for (final (gs, ge) in _gaps(
+      viewStart,
+      viewEnd,
+      totalSamples,
+      blittableOnly: true,
+    )) {
       final double w = (ge - gs) * pps;
       if (w <= 0 || w > maxDirectGapPx) continue;
       final double x = (gs - viewStart) * pps;
@@ -1154,7 +1286,8 @@ class _MinimapPainter extends CustomPainter {
       cache: _cache,
       data: _data,
       activeChannels: activeIndices,
-      keyExtras: _envelopeCacheKeyExtras(_data, tares, unit),
+      tares: tares,
+      unit: unit,
       gw: gw,
       gh: gh,
       dpr: _dpr,
@@ -2176,16 +2309,6 @@ EnvelopeSeries _taredEnvelopeSeries(
   rawToDisplay: _taredDisplayFromRaw(data, channel, unit),
 );
 
-/// The envelope-layer cache-key extras identifying one data/configuration
-/// combination: stream identity, per-channel tares, display unit, and
-/// calibration identity. Shared by every surface rendering the envelope data
-/// layer.
-List<Object?> _envelopeCacheKeyExtras(
-  GraphDataSource data,
-  List<double> tares,
-  DisplayUnit unit,
-) => [data.dataGeneration, ...tares, unit, data.calibrationVersion];
-
 /// Fold the raw extremes of [channels] over `[start, end)` (already clamped
 /// to the source's usable range). [seriesFor] yields a channel's bucket
 /// aggregates and exact evaluator, or null when the channel has no data;
@@ -2228,6 +2351,13 @@ List<Object?> _envelopeCacheKeyExtras(
 /// block reduction (see [reduceBlockBuckets] for the accuracy tradeoff) --
 /// use [EnvelopeSeries.exact] for series that cannot use buckets.
 ///
+/// Cache keying (see the staleness model on [SegmentedGraphCache]): the
+/// display [unit] and the source's calibration version form the destructive
+/// key (a change makes baked content wrong in kind: never blitted, swept);
+/// [tares] joins the channel list in the remap key (a change leaves stale
+/// segments blittable as ghosts/shifts while swept); the source's data
+/// generation clears the cache outright.
+///
 /// Returns true when bake work remains; the owner should then schedule
 /// another frame.
 bool _paintEnvelopeDataLayer(
@@ -2235,7 +2365,8 @@ bool _paintEnvelopeDataLayer(
   required SegmentedGraphCache cache,
   required GraphDataSource data,
   required List<int> activeChannels,
-  required List<Object?> keyExtras,
+  required List<double> tares,
+  required DisplayUnit unit,
   required double gw,
   required double gh,
   required double dpr,
@@ -2259,7 +2390,9 @@ bool _paintEnvelopeDataLayer(
 
   return cache.paint(
     canvas,
-    configKey: [...activeChannels, ...keyExtras],
+    generation: data.dataGeneration,
+    destructiveKey: [unit, data.calibrationVersion],
+    remapKey: [...activeChannels, ...tares],
     gw: gw,
     gh: gh,
     dpr: dpr,
@@ -2495,8 +2628,10 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// Label for a Y-axis tick.
   String yTickLabel(double tick);
 
-  /// Per-channel values mixed into the segment-cache key; return the tares
-  /// when the series depends on them.
+  /// Per-channel values mixed into the segment-cache remap key; return the
+  /// tares when the series depends on them. (A remap change keeps stale
+  /// segments blittable while the sweep re-bakes them; the derivative omits
+  /// its tares because the difference cancels them.)
   List<double> cacheKeyTares() => const [];
 
   /// Optional chrome drawn after the axes, before the data lines.
@@ -2588,11 +2723,8 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       cache: cache,
       data: _data,
       activeChannels: activeIndices,
-      keyExtras: _envelopeCacheKeyExtras(
-        _data,
-        cacheKeyTares(),
-        _settings.displayUnit,
-      ),
+      tares: cacheKeyTares(),
+      unit: _settings.displayUnit,
       gw: graphSz.width,
       gh: graphSz.height,
       dpr: dpr,
