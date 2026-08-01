@@ -317,4 +317,33 @@ void main() {
       ));
     });
   });
+
+  group('joinBlockEnd (envelope seam-join contract)', () {
+    // The polyline overshoots a segment end into the first block past it
+    // (the join block), and that block must reduce over its FULL natural
+    // range so the join vertex equals the neighbor's vertex for the same
+    // block. The old `end + blockSize` limit truncated the join block,
+    // landing the vertex at a partial-data average -- the vertical seam
+    // steps this guards against.
+    test('is block-aligned, covers the full join block, within two blocks', () {
+      for (final bs in [1, 2, 7, 20, 100]) {
+        for (final end in [0, 1, 63, 199, 200, 201, 4000, 12345]) {
+          final j = joinBlockEnd(end, bs);
+          // Block-aligned: reduces over natural block ranges.
+          expect(j % bs, 0, reason: 'end=$end bs=$bs');
+          // Covers the block containing `end` AND the join block past it:
+          // the last covered sample index (j - 1) lies in the join block.
+          expect((j - 1) ~/ bs, (end ~/ bs) + 1, reason: 'end=$end bs=$bs');
+          // Never more than two block sizes past the end -- the envelope
+          // layer passes 2 * blockSize as the cache's tailSpan, and the
+          // provisional-repair gate (`end + tailSpan`) must stay an upper
+          // bound on the renderer's real need.
+          expect(j - end, lessThanOrEqualTo(2 * bs), reason: 'end=$end bs=$bs');
+          // ...and it must exceed one block size, or the join block is
+          // truncated (the seam-step regression).
+          expect(j - end, greaterThan(bs), reason: 'end=$end bs=$bs');
+        }
+      }
+    });
+  });
 }
