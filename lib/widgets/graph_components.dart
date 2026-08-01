@@ -72,7 +72,7 @@ ui.Image _bakeImage(
 // ~kMaxSegmentDrift before a refresh re-sharpens it.
 //
 // Live-edge invariant: a segment baked while its tail was at the data edge
-// (trailing block reduced from partial data, polyline join not yet drawn)
+// (trailing block reduced from partial data, polyline join block incomplete)
 // goes stale as more samples arrive -- the seam reads as a tear that scrolls
 // with the data. Such segments are marked provisional and re-baked once the
 // tail completes (see [SegmentedGraphCache._repairProvisionalTail]), so the
@@ -119,9 +119,9 @@ typedef SegmentRenderResult = ({
   double contentW,
 
   /// Whether the render's trailing edge was cut short by the live data edge
-  /// (trailing block partial, polyline join missing). Such a bake goes stale
-  /// at its right seam as more samples arrive; the cache re-bakes it once the
-  /// tail completes. Ignored for direct gap draws (always fresh).
+  /// (trailing block partial, polyline join block incomplete). Such a bake
+  /// goes stale at its right seam as more samples arrive; the cache re-bakes
+  /// it once the tail completes. Ignored for direct gap draws (always fresh).
   bool tailProvisional,
 });
 
@@ -222,8 +222,9 @@ class SegmentedGraphCache {
   /// stay blank until the rolling bakes cover them).
   ///
   /// [tailSpan] is the sample span the renderer needs past a segment's end
-  /// for its tail to be complete (the envelope block size): a provisional
-  /// segment becomes repairable once `end + tailSpan` samples exist.
+  /// for its tail to be complete (the envelope layer's join block: up to
+  /// twice the block size): a provisional segment becomes repairable once
+  /// `end + tailSpan` samples exist.
   ///
   /// Returns true when a bake happened this frame; the owner should then
   /// schedule another frame so rolling bakes continue (one extra frame may
@@ -377,8 +378,8 @@ class SegmentedGraphCache {
   /// Priority 2: re-bake a visible segment whose tail was cut short by the
   /// live data edge at bake time ([GraphSegment.tailProvisional]) once its
   /// tail has completed -- i.e. enough samples now exist for the trailing
-  /// block plus the one-block polyline join (`end + tailSpan`). Without this
-  /// the stale tail (a missing polyline stub, an envelope band reduced from
+  /// block plus the join block past it (`end + tailSpan`). Without this
+  /// the stale tail (a partial polyline join, an envelope band reduced from
   /// partial data) reads as a tear at the segment's right seam, and in pure
   /// slide mode -- where nothing else re-bakes the segment -- it scrolls
   /// along with the data. Ordered after the gap bake on purpose: a live-edge
@@ -613,6 +614,19 @@ int _blockSizeFor(int viewSamples, double graphW) {
   // pixels. The remainder (viewSamples % blockSize) lands in the short final block.
   return math.max(1, (viewSamples / graphW).floor());
 }
+
+/// The sample index a segment render must reduce through for its seam join
+/// to match the neighbor segment: the polyline overshoots the segment end
+/// into the first block past it (the "join block"), and that block must be
+/// reduced over its FULL natural range so the join vertex equals the
+/// neighbor's vertex for the same block. A join block truncated at the
+/// segment end lands at a different (partial-data) average, which reads as a
+/// vertical step at the seam.
+///
+/// The result is block-aligned and lies in (end + blockSize, end + 2 *
+/// blockSize]; capping at totalSamples (and the provisional tail that
+/// results) is the caller's job.
+int joinBlockEnd(int end, int blockSize) => (end ~/ blockSize + 2) * blockSize;
 
 // ---------------------------------------------------------------------------
 // Graph viewport controller (shared between force graph, derivative, minimap)
@@ -2254,9 +2268,9 @@ bool _paintEnvelopeDataLayer(
     yMin: yMin,
     yMax: yMax,
     totalSamples: totalSamples,
-    // A bake's tail is complete once the trailing block plus the one-block
-    // polyline join past the segment end fit in the available data.
-    tailSpan: blockSize,
+    // A bake's tail is complete once the join block past the segment end is
+    // fully available -- up to two block sizes (see [joinBlockEnd]).
+    tailSpan: 2 * blockSize,
     // The recorded polyline overshoots a segment's edges by up to one
     // block (the join to the neighbor), and one block can be many px when
     // zoomed in past 1 sample/px -- the horizontal pad must cover it.
@@ -2267,10 +2281,15 @@ bool _paintEnvelopeDataLayer(
     // are cheap enough to render directly.
     maxDirectGapPx: double.infinity,
     render: (cCanvas, start, end, texW) {
-      // One block past the segment end joins the polyline to the next
-      // segment; the envelope fill is clipped at the seam so the alpha
-      // fills of adjacent segments never double-blend.
-      final int limit = math.min(end + blockSize, totalSamples);
+      // The polyline overshoots the segment end into the first block past
+      // it (the join block) so the line reaches the seam with the
+      // neighbor's slope. The join block is reduced over its FULL natural
+      // range: truncating it at the segment end lands the join vertex at a
+      // different (partial-data) average than the neighbor's full reduction
+      // of the same block, which reads as a vertical step at the seam. The
+      // envelope fill is clipped at the seam so the alpha fills of adjacent
+      // segments never double-blend.
+      final int limit = math.min(joinBlockEnd(end, blockSize), totalSamples);
 
       // No data ink inside gaps: clip out their x-ranges so neither the
       // exact path's boundary blocks nor the bucket path's held-value line
@@ -2306,12 +2325,12 @@ bool _paintEnvelopeDataLayer(
       // _drawChannelEnvelope maps sample s to (s - start) * gw / viewSpan.
       return (
         contentW: (end - start) * gw / viewSpan,
-        // Baked at the live data edge: the trailing block was reduced from
-        // partial data and the polyline join past the end is missing, so
-        // this bake goes stale at the seam as more samples arrive. The cache
-        // re-bakes it once the tail completes (live streams only; for a
-        // static source the partial tail IS the final data, never stale).
-        tailProvisional: end + blockSize > totalSamples,
+        // Baked at the live data edge: the join block was reduced from
+        // partial data, so this bake goes stale at the seam as more samples
+        // arrive. The cache re-bakes it once the join block completes (live
+        // streams only; for a static source the partial tail IS the final
+        // data, never stale).
+        tailProvisional: joinBlockEnd(end, blockSize) > totalSamples,
       );
     },
   );
