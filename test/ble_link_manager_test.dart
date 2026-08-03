@@ -10,6 +10,7 @@ import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
+import 'package:dynamite_app/services/kvs_protocol.dart';
 import 'package:dynamite_app/services/mockble.dart';
 
 /// Tests for the [BleLinkManager] state machine against [MockBlePlatform],
@@ -17,9 +18,10 @@ import 'package:dynamite_app/services/mockble.dart';
 /// mockble_test.dart — no real time passes).
 ///
 /// Mock timing: hwDelay 200 ms (availability), netDelay 1 s (connect /
-/// discoverServices / calibration read). A full connect therefore takes ~3 s:
-/// connect(1s) -> MTU(immediate) -> discoverServices(1s) -> calibration(1s)
-/// -> subscribe. The link shows [BtLinkState.connected] ("Setting up…")
+/// discoverServices). KVS commands (subscription, flash read) answer
+/// synchronously, so a full connect takes ~2 s: connect(1s) -> MTU
+/// (immediate) -> discoverServices(1s) -> KVS (instant) -> feed subscribe.
+/// The link shows [BtLinkState.connected] ("Setting up…")
 /// through discovery and [BtLinkState.subscribing] ("Starting data stream…")
 /// from discovery's end until streaming. [BleLinkManager.disconnectTimeout]
 /// is 2500 ms, [BleLinkManager.connectTimeout] is 5 s (the mock's
@@ -181,12 +183,14 @@ void main() {
 
   test('disconnecting mid stream-start tears down silently', () {
     fakeAsync((async) {
+      // Hold the "Starting data stream…" window open: the connect-time KVS
+      // flash read takes ~1s per command.
+      MockBlePlatform.instance.kvsCommandDelay = const Duration(seconds: 1);
       final (link, seen) = wire();
 
       unawaited(link.connectToDevice(deviceId));
-      // After 2.5 s the GATT link is up, discovery is done, and the ADC feed
-      // subscription (calibration read) is still running: the "Starting data
-      // stream…" window.
+      // After 2.5 s the GATT link is up, discovery is done, and the KVS
+      // flash read is still running: the "Starting data stream…" window.
       async.elapse(const Duration(milliseconds: 2500));
       expect(link.link.state, BtLinkState.subscribing);
 
@@ -195,7 +199,9 @@ void main() {
 
       expect(link.link.state, BtLinkState.idle);
       expect(link.isStreaming, isFalse);
-      // The superseded setup pass bails silently: no failure or drop notices.
+      // The superseded setup pass bails silently: no failure or drop
+      // notices — in particular no spurious "calibration unreadable" from
+      // the aborted KVS read.
       expect(seen, isEmpty);
 
       teardownLink(async, link);
@@ -638,6 +644,41 @@ void main() {
       // The failed read surfaces as a "nominal values in use" notice (the
       // app runs uncalibrated, but never silently).
       expect(seen, [isA<CalibrationUnreadable>()]);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('a mid-session flash write pauses and resumes the ADC feed', () {
+    fakeAsync((async) {
+      // With the firmware lock emulated, KVS commands only get answered
+      // while the feed is NOT subscribed — so a successful write proves the
+      // link manager unsubscribed around it.
+      MockBlePlatform.instance.kvsLockWhenStreaming = true;
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      final doc = demoBoardCalibrationDoc.replaceFirst(
+        'lc0.cap=200',
+        'lc0.cap=250',
+      );
+      Object? error;
+      unawaited(
+        link.writeFlashDoc(doc).then((_) {}, onError: (Object e) => error = e),
+      );
+      async.elapse(const Duration(seconds: 1));
+
+      expect(error, isNull);
+      expect(
+        MockBlePlatform.instance.kvsStore[kvsFolderExtra]!['lc0.cap'],
+        '250',
+      );
+      // The feed resumed after the write.
+      expect(link.isStreaming, isTrue);
+      expect(seen, isEmpty);
 
       teardownLink(async, link);
     });

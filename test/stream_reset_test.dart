@@ -57,8 +57,8 @@ void main() {
       final (hub, link, teardown) = wire(async: async);
 
       unawaited(link.connectToDevice(deviceId));
-      // connect(1s) + discoverServices(1s) + read calibration(1s) = 3s before
-      // notifications begin; then ~1s of 20ms packets.
+      // connect(1s) + discoverServices(1s) + KVS flash read (instant in
+      // the mock) before notifications begin; then ~2s of 20ms packets.
       async.elapse(const Duration(seconds: 4));
       expect(link.isStreaming, isTrue);
       final firstCount = hub.totalSamples;
@@ -72,7 +72,7 @@ void main() {
       expect(hub.totalSamples, firstCount);
 
       unawaited(link.connectToDevice(deviceId));
-      // Setup again takes ~3s before notifications resume; just past it only
+      // Setup again takes ~2s before notifications resume; just past it only
       // a few packets of the NEW stream can have arrived.
       async.elapse(const Duration(milliseconds: 3200));
       expect(link.isStreaming, isTrue);
