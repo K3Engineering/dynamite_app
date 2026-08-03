@@ -42,12 +42,8 @@ void main() {
     ssnOrigin: ssnOrigin,
   );
 
-  String buildCsv(SessionData data, DisplayUnit unit) => buildSessionCsv(
-    data,
-    unit,
-    recordedAt: recordedAt,
-    generator: generator,
-  );
+  String buildCsv(SessionData data, DisplayUnit unit) =>
+      buildSessionCsv(data, unit, recordedAt: recordedAt, generator: generator);
 
   /// The metadata line parsed as JSON (line index 1, `# ` prefix stripped).
   Map<String, dynamic> metadataOf(String csv) {
@@ -96,17 +92,22 @@ void main() {
         ChannelCalibration(
           board: boardCal,
           loadCell: LoadCellProfile(
-            name: 'Larry 100 kg',
+            name: 'Load cell 100 kg',
             capacityKg: 100,
             sensitivityMvV: 2.007,
           ),
         ),
         ChannelCalibration(board: ChannelBoardCalibration()),
       ];
-      final data = makeSession([
-        [1],
-        [2],
-      ], calibrations: cals, tares: [-12340.5, 55.0], ssnOrigin: 41230);
+      final data = makeSession(
+        [
+          [1],
+          [2],
+        ],
+        calibrations: cals,
+        tares: [-12340.5, 55.0],
+        ssnOrigin: 41230,
+      );
 
       final meta = metadataOf(buildCsv(data, DisplayUnit.kgf));
 
@@ -125,11 +126,15 @@ void main() {
           'firmware': null,
           'manufacturer': null,
         },
-        'afe': {'adc_ref_v': 1.2, 'front_end_gain': 101.0, 'adc_gain': [1, 1]},
+        'afe': {
+          'adc_ref_v': 1.2,
+          'front_end_gain': 101.0,
+          'adc_gain': [1, 1],
+        },
         'channels': [
           {
             'load_cell': {
-              'name': 'Larry 100 kg',
+              'name': 'Load cell 100 kg',
               'capacity_kg': 100.0,
               'sensitivity_mv_v': 2.007,
             },
@@ -145,35 +150,46 @@ void main() {
       });
     });
 
-    test('converted columns match the frozen converter at column precision', () {
-      final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
-      final cals = [
-        ChannelCalibration(board: ChannelBoardCalibration(), loadCell: cell),
-        ChannelCalibration(board: ChannelBoardCalibration()),
-      ];
-      final data = makeSession([
-        [1000, 2000],
-        [5, 6],
-      ], calibrations: cals, tares: [100.0, 0.0]);
+    test(
+      'converted columns match the frozen converter at column precision',
+      () {
+        final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
+        final cals = [
+          ChannelCalibration(board: ChannelBoardCalibration(), loadCell: cell),
+          ChannelCalibration(board: ChannelBoardCalibration()),
+        ];
+        final data = makeSession(
+          [
+            [1000, 2000],
+            [5, 6],
+          ],
+          calibrations: cals,
+          tares: [100.0, 0.0],
+        );
 
-      final lines = buildCsv(data, DisplayUnit.kgf).trim().split('\n');
+        final lines = buildCsv(data, DisplayUnit.kgf).trim().split('\n');
 
-      final decimals = DisplayUnit.kgf.exportDecimalsFor(cals[0])!;
-      String expectedKgf(int raw) => DisplayUnit.kgf
-          .converterFor(cals[0], 100.0)!
-          .call(raw.toDouble())
-          .toStringAsFixed(decimals);
+        final decimals = DisplayUnit.kgf.exportDecimalsFor(cals[0])!;
+        String expectedKgf(int raw) => DisplayUnit.kgf
+            .converterFor(cals[0], 100.0)!
+            .call(raw.toDouble())
+            .toStringAsFixed(decimals);
 
-      expect(lines[3], '0,1000,5,${expectedKgf(1000)},');
-      expect(lines[4], '1,2000,6,${expectedKgf(2000)},');
-    });
+        expect(lines[3], '0,1000,5,${expectedKgf(1000)},');
+        expect(lines[4], '1,2000,6,${expectedKgf(2000)},');
+      },
+    );
 
     test('gap rows keep their ssn with every sample cell blank', () {
       final gaps = GapList()..append(1, 2); // half-open: only sample 1
-      final data = makeSession([
-        [10, 20, 30],
-        [40, 50, 60],
-      ], gaps: gaps, ssnOrigin: 41230);
+      final data = makeSession(
+        [
+          [10, 20, 30],
+          [40, 50, 60],
+        ],
+        gaps: gaps,
+        ssnOrigin: 41230,
+      );
 
       final lines = buildCsv(data, DisplayUnit.mVv).trim().split('\n');
 
@@ -194,15 +210,20 @@ void main() {
       final lines = buildCsv(data, DisplayUnit.mVv).trim().split('\n');
 
       expect(lines[2], 'ssn,ch0,ch1,ch0_mV/V,ch1_mV/V');
-      expect(metadataOf(buildCsv(data, DisplayUnit.mVv))['converted_unit'],
-          'mV/V');
+      expect(
+        metadataOf(buildCsv(data, DisplayUnit.mVv))['converted_unit'],
+        'mV/V',
+      );
     });
 
     test('raw quartet 2 is net counts (raw − tare), fractional, 1 decimal', () {
-      final data = makeSession([
-        [1000],
-        [5],
-      ], tares: [100.3, 0.0]);
+      final data = makeSession(
+        [
+          [1000],
+          [5],
+        ],
+        tares: [100.3, 0.0],
+      );
 
       final lines = buildCsv(data, DisplayUnit.raw).trim().split('\n');
 
@@ -253,7 +274,10 @@ void main() {
         csvFileNameForSession('2026-07-29 14:05:32'),
         '2026-07-29 14-05-32.csv',
       );
-      expect(csvFileNameForSession('a\\b:c*d?e"f<g>h|i'), 'a-b-c-d-e-f-g-h-i.csv');
+      expect(
+        csvFileNameForSession('a\\b:c*d?e"f<g>h|i'),
+        'a-b-c-d-e-f-g-h-i.csv',
+      );
     });
 
     test('trims trailing dots and spaces (illegal on Windows)', () {
