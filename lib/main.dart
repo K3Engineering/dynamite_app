@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,7 +32,15 @@ void main() async {
   runPreviousHotRestartCleanup();
   // Repair any sessions left incomplete by a crash before the UI reads the
   // session list, so partial sessions are finalized (or pruned) first.
-  await SessionStorage.recoverIncompleteSessions();
+  try {
+    await SessionStorage.recoverIncompleteSessions();
+  } catch (e) {
+    // The first DB open crashes here if web/sqlite3.wasm is stale.
+    if (kIsWeb) {
+      debugPrint('Double-check web/sqlite3.wasm against pubspec.lock.');
+    }
+    rethrow;
+  }
   // Prefs are resolved here and injected into their owners, so their loads
   // are synchronous constructor work and can never race a user edit.
   final prefs = await SharedPreferences.getInstance();
