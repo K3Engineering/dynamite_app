@@ -6,9 +6,11 @@ import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../models/app_settings.dart';
+import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../widgets/board_calibration_section.dart';
+import '../widgets/device_info_card.dart';
 import '../widgets/rig_slots_section.dart';
 import '../widgets/section_header.dart';
 import 'app_shell.dart';
@@ -29,6 +31,10 @@ class SettingsTab extends StatelessWidget {
     );
     final deviceName = context.select<BleLinkManager, String>(
       (l) => l.connectedDeviceName,
+    );
+    // The connect-time DIS identity read; null until it lands.
+    final deviceInfo = context.select<BleLinkManager, DeviceInfo?>(
+      (l) => l.connectedDeviceInfo,
     );
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
 
@@ -107,6 +113,14 @@ class SettingsTab extends StatelessWidget {
               ),
             )
           else ...[
+            // Device identity, read from the Device Information service at
+            // connect time. Read-only; unread fields (e.g. serial on web)
+            // render as dashes.
+            Text('Device info', style: Theme.of(context).textTheme.titleSmall),
+            const SizedBox(height: 8),
+            DeviceInfoCard(info: deviceInfo),
+            const SizedBox(height: 16),
+
             // Device name — not editable yet. Keyed by the name so the
             // field rebuilds with the new value on connect/disconnect.
             TextFormField(
