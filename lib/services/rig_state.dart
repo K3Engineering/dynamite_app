@@ -8,8 +8,8 @@ import '../models/calibration.dart';
 
 /// The piece of the BLE stack [RigState] needs: which device is connected,
 /// and a way to write the whole flash document back to it. Implemented by
-/// `BleLinkManager` (demo device mutates an in-memory doc; real devices write
-/// the calibration characteristic).
+/// `BleLinkManager` (demo device mutates an in-memory doc; real devices go
+/// through the device KVS — see `KvsFlashTransport`).
 abstract interface class RigFlashTransport {
   /// Empty string when no device is connected.
   String get connectedDeviceId;
@@ -335,7 +335,9 @@ class RigState extends ChangeNotifier {
   /// current index and tie-break on it, preserving first-seen order among
   /// ties.
   void _sortHistory() {
-    final decorated = [for (var i = 0; i < _history.length; ++i) (i, _history[i])];
+    final decorated = [
+      for (var i = 0; i < _history.length; ++i) (i, _history[i]),
+    ];
     decorated.sort((a, b) {
       final byRecency = b.$2.lastSeen.compareTo(a.$2.lastSeen);
       return byRecency != 0 ? byRecency : a.$1.compareTo(b.$1);

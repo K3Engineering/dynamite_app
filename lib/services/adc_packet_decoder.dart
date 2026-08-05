@@ -41,14 +41,11 @@ class AdcPacketDecoder {
   /// only takes the board half.
   void Function(DeviceFlash flash)? onDeviceFlash;
 
-  /// Parse one calibration characteristic read: the `key=value` flash
-  /// document ([DeviceFlash.parse], tolerant of missing keys). The board
-  /// calibration feeds the hub; the full document (slots included) goes to
-  /// [onDeviceFlash]. Malformed reads degrade to per-channel nominal values
-  /// and empty slots.
-  ///
-  /// TODO(firmware): transport is a single whole-document read for now; the
-  /// real per-key read protocol plugs in here once defined.
+  /// Parse one flash document read: the `key=value` document the link layer
+  /// reassembled from the device KVS ([DeviceFlash.parse], tolerant of
+  /// missing keys). The board calibration feeds the hub; the full document
+  /// (slots included) goes to [onDeviceFlash]. Malformed reads degrade to
+  /// per-channel nominal values and empty slots.
   void onCalibrationPacket(Uint8List data) {
     final flash = DeviceFlash.parse(utf8.decode(data, allowMalformed: true));
     hub.updateBoardCalibration(flash.board);

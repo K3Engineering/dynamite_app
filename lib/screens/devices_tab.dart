@@ -138,6 +138,7 @@ class DevicesTab extends StatelessWidget {
             device.deviceId == activeId
                 ? _ActiveDeviceRow(
                     name: device.name ?? 'Unknown device',
+                    model: bt.connectedDeviceInfo?.model,
                     linkState: bt.link.state,
                     connectedRssi: bt.connectedRssi,
                     onDisconnect: bt.disconnectSelectedDevice,
@@ -162,6 +163,7 @@ class DevicesTab extends StatelessWidget {
             _ActiveDeviceRow(
               name: 'Demo Device',
               icon: Icons.science,
+              model: bt.connectedDeviceInfo?.model,
               linkState: bt.link.state,
               connectedRssi: null,
               onDisconnect: bt.disconnectSelectedDevice,
@@ -521,13 +523,14 @@ ButtonStyle activeRowActionButtonStyle({required Color onContainer}) =>
 
 /// The active device row (shared by the BLE and Demo sections): a tinted
 /// card carrying the live link state (spinner while connecting/setting up/
-/// starting the stream, connected icon when streaming), the state + RSSI in
-/// the subtitle, a gear shortcut to Device settings, and a state-aware
-/// Cancel/Disconnect button.
+/// starting the stream, connected icon when streaming), the state + device
+/// model + RSSI in the subtitle, a gear shortcut to Device settings, and a
+/// state-aware Cancel/Disconnect button.
 class _ActiveDeviceRow extends StatelessWidget {
   const _ActiveDeviceRow({
     required this.name,
     this.icon,
+    this.model,
     required this.linkState,
     required this.connectedRssi,
     required this.onDisconnect,
@@ -538,6 +541,11 @@ class _ActiveDeviceRow extends StatelessWidget {
   /// Leading icon override (e.g. the demo device's science beaker). When
   /// null, the state-driven Bluetooth icon from [btStatusVisual] is used.
   final IconData? icon;
+
+  /// The device model from the connect-time Device Information read (e.g.
+  /// "Dynamite Sampler Pro Mk1"). Null until the read lands; the subtitle
+  /// then omits it rather than showing a placeholder.
+  final String? model;
 
   /// The active link's state.
   final BtLinkState linkState;
@@ -600,6 +608,9 @@ class _ActiveDeviceRow extends StatelessWidget {
           TextSpan(
             children: [
               TextSpan(text: visual.label),
+              // The device model (DIS): null until the connect-time read
+              // lands, in which case nothing renders.
+              if (model != null) TextSpan(text: ' • $model'),
               // Live RSSI (native only): null until the first poll lands —
               // and forever on web — in which case nothing renders.
               if (connectedRssi != null) ...[

@@ -23,6 +23,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/calibration.dart';
+import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import 'csv_export_temp_stub.dart'
     if (dart.library.io) 'csv_export_temp_io.dart';
@@ -130,6 +131,7 @@ Future<(Uint8List, String)> _prepareCsv(
     unit,
     recordedAt: session.createdAt,
     generator: 'dynamite-flutter ${(await _packageInfo).version}',
+    deviceInfoJson: session.deviceInfoJson,
   );
   return (
     Uint8List.fromList(utf8.encode(csv)),
@@ -141,7 +143,8 @@ Future<(Uint8List, String)> _prepareCsv(
 /// (docs/csv-format-v1.md): a `# dynamite-csv 1` magic line, a one-line
 /// metadata JSON carrying everything needed to reproduce the converted
 /// columns (frozen recording-time calibration, tares, sample rate, ssn
-/// origin), then the `ssn, ch0..chN-1, ch0_<unit>..chN-1_<unit>` grid.
+/// origin, device identity), then the grid of raw + converted columns
+/// (`ssn, ch0..chN-1, ch0_<unit>..chN-1_<unit>`).
 ///
 /// [unit] is the file's single converted unit (quartet 2), chosen by the
 /// user in the export flow; a channel that can't reach it (a force unit
@@ -149,6 +152,10 @@ Future<(Uint8List, String)> _prepareCsv(
 /// samples keep their `ssn` row with every sample cell blank. Values are
 /// fixed-point with per-column precision ([DisplayUnit.exportDecimalsFor]);
 /// conventions are `\n` endings, no BOM, dot decimals — see the spec.
+///
+/// [deviceInfoJson] is the session row's frozen `device` block (see
+/// [DeviceInfo.toCsvDeviceMetadata]); null or malformed degrades to all-null
+/// placeholders rather than failing the export.
 ///
 /// TODO(perf): the whole CSV is built in memory as one string — the format
 /// milestone will replace this with a chunked writer (see
@@ -158,11 +165,15 @@ String buildSessionCsv(
   DisplayUnit unit, {
   required DateTime recordedAt,
   required String generator,
+  String? deviceInfoJson,
 }) {
   final int n = data.channels.length;
   // The writer persists the true device counter at row 0; null survives
   // only on sessions with no recorded packets (no data rows anyway).
   final int ssnOrigin = data.ssnOrigin ?? 0;
+  final device = deviceInfoJson == null
+      ? DeviceInfo.toCsvDeviceMetadata(name: null, info: null)
+      : DeviceInfo.fromCsvDeviceMetadata(deviceInfoJson);
 
   // Per-channel quartet-2 cell formatters, computed once from the session's
   // frozen calibration; each closure folds in the column's fixed-point
@@ -176,7 +187,7 @@ String buildSessionCsv(
   final buf = StringBuffer()
     ..writeln('# dynamite-csv 1')
     ..writeln(
-      '# ${jsonEncode(_metadata(data, unit, ssnOrigin, recordedAt, generator))}',
+      '# ${jsonEncode(_metadata(data, unit, ssnOrigin, recordedAt, generator, device))}',
     );
 
   // Header: ssn, then the raw quartet, then the converted quartet. Header
@@ -236,6 +247,7 @@ Map<String, Object?> _metadata(
   int ssnOrigin,
   DateTime recordedAt,
   String generator,
+  Map<String, Object?> device,
 ) {
   final int n = data.channels.length;
   return {
@@ -246,14 +258,10 @@ Map<String, Object?> _metadata(
     'sample_rate_hz': data.sampleRate,
     'ssn_origin': ssnOrigin,
     'converted_unit': unit.csvSymbol,
-    // v1 emits all-null device placeholders; identity plumbing is pending.
-    'device': {
-      'name': null,
-      'id': null,
-      'model': null,
-      'firmware': null,
-      'manufacturer': null,
-    },
+    // Frozen at recording start (the session row's deviceInfoJson); a session
+    // without identity (web-recorded serial, unreadable DIS) carries the
+    // corresponding nulls.
+    'device': device,
     // Descriptive traceability (the hardware configuration in effect); the
     // operative transfer function is each channel's board_cal.
     'afe': {

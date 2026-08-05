@@ -107,6 +107,14 @@ void main() {
       // The display unit is frozen at recording start (the CSV export's
       // default converted unit).
       expect(saved.displayUnit, 'kN');
+      // The device identity block is frozen alongside (the CSV `device`
+      // metadata). This harness's link has no name/DIS read, so every field
+      // is the null placeholder.
+      expect(
+        saved.deviceInfoJson,
+        '{"name":null,"id":null,"model":null,"firmware":null,'
+        '"manufacturer":null}',
+      );
     },
   );
 

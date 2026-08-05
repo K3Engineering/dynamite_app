@@ -50,34 +50,37 @@ void main() {
   }
 
   group('MockBlePlatform feed round-trip', () {
-    test('connect -> decode -> DataHub with no gaps (dropEveryNPackets = 0)', () {
-      fakeAsync((async) {
-        MockBlePlatform.instance.dropEveryNPackets = 0;
-        final (hub, link, teardown) = wire(async: async);
+    test(
+      'connect -> decode -> DataHub with no gaps (dropEveryNPackets = 0)',
+      () {
+        fakeAsync((async) {
+          MockBlePlatform.instance.dropEveryNPackets = 0;
+          final (hub, link, teardown) = wire(async: async);
 
-        unawaited(link.connectToDevice(deviceId));
-        // connect(1s) + discoverServices(1s) + read calibration(1s) = 3s before
-        // notifications begin; then ~1s of 20ms packets.
-        async.elapse(const Duration(seconds: 4));
+          unawaited(link.connectToDevice(deviceId));
+          // connect(1s) + discoverServices(1s) + KVS flash read (instant in
+          // the mock) before notifications begin; then ~2s of 20ms packets.
+          async.elapse(const Duration(seconds: 4));
 
-        expect(link.isStreaming, isTrue);
-        expect(hub.totalSamples, greaterThan(0));
-        // ~50 packets * 20 samples in the final second.
-        expect(hub.totalSamples, greaterThanOrEqualTo(20 * 40));
-        // No dropped packets at all.
-        expect(hub.gaps.isEmpty, isTrue);
+          expect(link.isStreaming, isTrue);
+          expect(hub.totalSamples, greaterThan(0));
+          // ~50 packets * 20 samples in the final second.
+          expect(hub.totalSamples, greaterThanOrEqualTo(20 * 40));
+          // No dropped packets at all.
+          expect(hub.gaps.isEmpty, isTrue);
 
-        // Spot-check decoded values against the synthetic waveform's frame 0:
-        //   ch0 = sin(0)*4e6 = 0, ch2 = cos(0)*2.5e6 = 2500000,
-        //   ch3 = (0 % 200 - 100) * 20000 = -2000000.
-        expect(hub.rawData[0][0], 0);
-        expect(hub.rawData[2][0], 2500000);
-        expect(hub.rawData[3][0], -2000000);
+          // Spot-check decoded values against the synthetic waveform's frame 0:
+          //   ch0 = sin(0)*4e6 = 0, ch2 = cos(0)*2.5e6 = 2500000,
+          //   ch3 = (0 % 200 - 100) * 20000 = -2000000.
+          expect(hub.rawData[0][0], 0);
+          expect(hub.rawData[2][0], 2500000);
+          expect(hub.rawData[3][0], -2000000);
 
-        teardown();
-        expect(link.isStreaming, isFalse);
-      });
-    });
+          teardown();
+          expect(link.isStreaming, isFalse);
+        });
+      },
+    );
 
     test('connect reads the factory calibration into the hub', () {
       fakeAsync((async) {

@@ -54,6 +54,12 @@ class Sessions extends Table {
   /// frozen as the CSV export's default converted unit — the
   /// recording-time snapshot requirement of docs/csv-format-v1.md.
   TextColumn get displayUnit => text()();
+
+  /// The connected device's identity at recording start (BLE name + the DIS
+  /// strings), as the JSON-encoded dynamite-csv `device` metadata block —
+  /// see [DeviceInfo.toCsvDeviceMetadata]. Frozen so export never consults
+  /// live device state (docs/csv-format-v1.md).
+  TextColumn get deviceInfoJson => text()();
 }
 
 class SessionChunks extends Table {
@@ -96,7 +102,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 9;
+  int get schemaVersion => 10;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -138,6 +144,7 @@ class AppDatabase extends _$AppDatabase {
     required String calibrationJson,
     required String visibleChannels,
     required String displayUnit,
+    required String deviceInfoJson,
     DateTime? createdAt,
   }) {
     return into(sessions).insert(
@@ -152,6 +159,7 @@ class AppDatabase extends _$AppDatabase {
         isCompleted: const Value(false),
         visibleChannels: visibleChannels,
         displayUnit: displayUnit,
+        deviceInfoJson: deviceInfoJson,
       ),
     );
   }

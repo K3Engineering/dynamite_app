@@ -8,6 +8,7 @@ import 'database.dart';
 import 'data_hub.dart';
 import '../models/bucket_series.dart';
 import '../models/calibration.dart';
+import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
@@ -27,12 +28,15 @@ class SessionStorage {
   /// and [visibleChannels] are retained for display only. [visibleChannels]
   /// seeds the session detail view's channel selection (usually the live
   /// view's current set); it can be changed per session afterwards.
+  /// [deviceMetadata] is the connected device's identity as the dynamite-csv
+  /// `device` block (see [DeviceInfo.toCsvDeviceMetadata]), frozen for export.
   static Future<LiveSessionWriter> startSession({
     required DataHub dataHub,
     required String name,
     required List<String> channelLabels,
     required List<bool> visibleChannels,
     required DisplayUnit displayUnit,
+    required Map<String, Object?> deviceMetadata,
   }) async {
     // Snapshot the tare once; the same values are persisted below and used by
     // the writer's peak scan, so stored peaks, stored tares and playback can
@@ -57,6 +61,7 @@ class SessionStorage {
       // Frozen as the CSV export's default converted unit
       // (docs/csv-format-v1.md's recording-time snapshot requirement).
       displayUnit: displayUnit.name,
+      deviceInfoJson: jsonEncode(deviceMetadata),
     );
 
     return LiveSessionWriter(sessionId, tare, DataHub.samplesPerSec);

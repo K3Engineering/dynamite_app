@@ -8,6 +8,9 @@ import 'package:universal_ble/universal_ble.dart';
 import 'adc_protocol.dart';
 import 'bt_device_config.dart';
 import 'demo_calibration.dart';
+import 'kvs_flash_transport.dart';
+import 'kvs_protocol.dart';
+import '../models/calibration.dart';
 
 class MockBlePlatform extends UniversalBlePlatform {
   static MockBlePlatform? _instance;
@@ -21,12 +24,18 @@ class MockBlePlatform extends UniversalBlePlatform {
     _mockData
       ..clear()
       ..addAll(_generateSyntheticFrames(2000));
+    seedKvsFromDoc(demoBoardCalibrationDoc);
   }
 
   Timer? _scanTimer;
   Timer? _notificationTimer;
   String? _connectedDeviceId;
   BleConnectionState _connectionState = BleConnectionState.disconnected;
+
+  /// Whether the client currently holds the ADC feed subscription. With
+  /// [kvsLockWhenStreaming], KVS commands are dropped while this is true —
+  /// the firmware device lock.
+  bool _adcFeedSubscribed = false;
 
   final List<Uint8List> _mockData = [];
   int _mockDataCount = 0;
@@ -48,12 +57,43 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// service, so post-connect setup cannot subscribe to the feed.
   bool includeAdcService = true;
 
-  /// When true, reads of the calibration characteristic throw.
+  /// When true, KVS commands throw (a transport-level failure — the app's
+  /// connect-time flash read then surfaces as "calibration unreadable").
   bool failCalibrationRead = false;
 
-  /// The mock device's flash document, mutable so writes round-trip: a read
-  /// after a write serves whatever was last written (like real flash).
-  String mockFlashDoc = demoBoardCalibrationDoc;
+  /// When true, KVS commands are silently dropped (no response) while the
+  /// ADC feed subscription is active — the firmware device lock.
+  bool kvsLockWhenStreaming = false;
+
+  /// How long a KVS command takes to answer (default zero — instant). A
+  /// non-zero delay lets tests hold the link in the "Starting data
+  /// stream…" window (the connect-time flash read) or exercise the KVS
+  /// client's command timeout.
+  Duration kvsCommandDelay = Duration.zero;
+
+  /// The mock device's KVS, per folder. Seeded from
+  /// [demoBoardCalibrationDoc]; writes mutate it, so reads serve whatever
+  /// was last written (like real flash).
+  final Map<String, Map<String, String>> kvsStore = {
+    kvsFolderDevice: {},
+    kvsFolderExtra: {},
+    kvsFolderSettings: {},
+  };
+
+  /// Test spy: every KVS command string received, in order. Lets tests
+  /// assert write diffs are minimal and folder-routed.
+  final List<String> kvsCommandLog = [];
+
+  /// (Re)populate [kvsStore] from a `key=value` flash document, routing
+  /// keys to folders the way the app does (see [KvsFlashTransport]).
+  void seedKvsFromDoc(String doc) {
+    for (final folder in kvsStore.values) {
+      folder.clear();
+    }
+    for (final e in parseFlashKv(doc).entries) {
+      kvsStore[KvsFlashTransport.folderForKey(e.key)]![e.key] = e.value;
+    }
+  }
 
   /// When true, [connect] throws (a refused/failed attempt: no link is
   /// established and no connection-change callback fires — the WEB flavor,
@@ -102,6 +142,8 @@ class MockBlePlatform extends UniversalBlePlatform {
     dropEveryNPackets = 0;
     includeAdcService = true;
     failCalibrationRead = false;
+    kvsLockWhenStreaming = false;
+    kvsCommandDelay = Duration.zero;
     failConnect = false;
     failConnectViaCallback = false;
     failScan = false;
@@ -109,6 +151,9 @@ class MockBlePlatform extends UniversalBlePlatform {
     slowConnect = false;
     disconnectCalls.clear();
     readRssiCalls = 0;
+    kvsCommandLog.clear();
+    seedKvsFromDoc(demoBoardCalibrationDoc);
+    _adcFeedSubscribed = false;
     _connectedDeviceId = null;
     _connectionState = BleConnectionState.disconnected;
     _scanTimer?.cancel();
@@ -270,6 +315,14 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic,
     BleInputProperty bleInputProperty,
   ) async {
+    // Only the ADC feed characteristic drives the packet timer (and the
+    // device-lock state); the KVS characteristic is request/response — its
+    // notifications are answers to writes, fired from [writeValue]. An
+    // empty characteristic is the disconnect path's blanket stop.
+    if (characteristic.isNotEmpty && characteristic != btChrAdcFeedId) {
+      return;
+    }
+    _adcFeedSubscribed = bleInputProperty == BleInputProperty.notification;
     // The feed is reset on every (re)subscription: continuity counter and the
     // synthetic-data cursor both restart from zero so reconnects behave like a
     // fresh device, and an induced-drop run can be repeated deterministically.
@@ -316,14 +369,13 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic, {
     final Duration? timeout,
   }) async {
-    await Future<void>.delayed(netDelay);
-    if (characteristic == btChrCalibration) {
-      if (failCalibrationRead) {
-        throw StateError('Mock calibration read failure');
-      }
-      // The mock device is factory-calibrated: serve its flash doc.
-      return Uint8List.fromList(utf8.encode(mockFlashDoc));
+    // The Device Information strings are static — served synchronously, like
+    // KVS answers, so the fake-async connect stays at ~2 s in tests.
+    final String? disValue = _disValues[characteristic];
+    if (service == btSvcDeviceInfo && disValue != null) {
+      return Uint8List.fromList(utf8.encode(disValue));
     }
+    await Future<void>.delayed(netDelay);
     return Uint8List(255);
   }
 
@@ -335,8 +387,66 @@ class MockBlePlatform extends UniversalBlePlatform {
     Uint8List value,
     BleOutputProperty bleOutputProperty,
   ) async {
-    if (characteristic == btChrCalibration) {
-      mockFlashDoc = utf8.decode(value);
+    if (characteristic == btChrKvs) {
+      if (failCalibrationRead) {
+        throw StateError('Mock KVS command failure');
+      }
+      if (kvsCommandDelay > Duration.zero) {
+        await Future<void>.delayed(kvsCommandDelay);
+      }
+      // The firmware device lock: while the ADC feed subscription holds the
+      // device, KVS commands are dropped WITHOUT a response.
+      if (kvsLockWhenStreaming && _adcFeedSubscribed) return;
+      final request = utf8.decode(value, allowMalformed: true);
+      kvsCommandLog.add(request);
+      final response = _executeKvsCommand(request);
+      // Firmware answers within the write handling: the response
+      // notification is already there when the write completes.
+      updateCharacteristicValue(
+        deviceId,
+        btChrKvs,
+        Uint8List.fromList(utf8.encode(response)),
+        null,
+      );
+    }
+  }
+
+  /// The firmware KVS command processor (user_kvs.cpp) in miniature:
+  /// `<CMD><FOLDER><DATA>` in, a frame of status byte + request echo +
+  /// '=' + payload out (GET: the value; IDX: `key=typeHex`; SET/DEL: empty).
+  String _executeKvsCommand(String request) {
+    String reply(bool ok, [String payload = '']) =>
+        ok ? '1$request=$payload' : '0$request';
+
+    if (request.length < 4) return reply(false);
+    final cmd = request.substring(0, 3);
+    final folder = request.substring(3, 4);
+    final data = request.substring(4);
+    final store = kvsStore[folder];
+    if (store == null) return reply(false);
+    switch (cmd) {
+      case kvsCmdGet:
+        if (data.length > kvsMaxKeyLength) return reply(false);
+        final value = store[data];
+        return value == null ? reply(false) : reply(true, value);
+      case kvsCmdSet:
+        final eq = data.indexOf('=');
+        if (eq <= 0 || eq > kvsMaxKeyLength) return reply(false);
+        final value = data.substring(eq + 1);
+        if (value.isEmpty || value.length > kvsMaxValueLength) {
+          return reply(false);
+        }
+        store[data.substring(0, eq)] = value;
+        return reply(true);
+      case kvsCmdDelete:
+        if (data.length > kvsMaxKeyLength) return reply(false);
+        return store.remove(data) == null ? reply(false) : reply(true);
+      case kvsCmdIndex:
+        final n = int.tryParse(data, radix: 16);
+        if (n == null || n < 0 || n >= store.length) return reply(false);
+        return reply(true, '${store.keys.elementAt(n)}=$kvsNvsTypeStrHex');
+      default:
+        return reply(false);
     }
   }
 
@@ -444,11 +554,25 @@ class MockBlePlatform extends UniversalBlePlatform {
     ]);
   }
 
+  /// The mock sampler's Device Information service (0x180A) contents,
+  /// mirroring what firmware's setupDeviceInfo() publishes.
+  static const Map<String, String> _disValues = {
+    btChrDisManufacturer: 'K3 Engineering',
+    btChrDisModel: 'Dynamite Sampler Pro Mk1',
+    btChrDisSerial: 'A4CF1208F51E',
+    btChrDisHardwareRev: 'v700P',
+    btChrDisFirmwareRev: 'v700P|mock-1.0.0',
+  };
+
   static List<BleService> _generateServices(String deviceId) {
     if (deviceId == '2') {
       return ([
         BleService('e1234567', _generateCharacteristics(deviceId)),
         BleService(btServiceId, _generateCharacteristics(deviceId)),
+        BleService(btSvcDeviceInfo, [
+          for (final chr in _disValues.keys)
+            BleCharacteristic(chr, [CharacteristicProperty.read], []),
+        ]),
       ]);
     }
     return ([

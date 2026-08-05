@@ -8,8 +8,11 @@ import 'app_events.dart';
 import 'bt_device_config.dart';
 import 'demo_calibration.dart';
 import 'demo_signal_source.dart';
+import 'kvs_client.dart';
+import 'kvs_flash_transport.dart';
 import 'mockble.dart';
 import 'rig_state.dart';
+import '../models/device_info.dart';
 import '../utils/log.dart';
 
 /// Lifecycle of a single device's BLE link.
@@ -94,6 +97,11 @@ class DeviceLink {
   /// on each discovered [BleDevice].
   int? rssi;
 
+  /// The device's static identity, read from the Device Information service
+  /// once during post-connect setup (see [BleLinkManager._readDeviceInfo]).
+  /// Null until the read completes, and after reset.
+  DeviceInfo? info;
+
   bool get isConnecting => state == BtLinkState.connecting;
 
   /// The GATT link is up. True for the whole post-connect setup window
@@ -115,6 +123,7 @@ class DeviceLink {
     name = '';
     state = BtLinkState.idle;
     rssi = null;
+    info = null;
   }
 
   bool get isDemoDevice => deviceId == demoDeviceId;
@@ -128,6 +137,7 @@ class DeviceLink {
     this.name = name;
     state = BtLinkState.cooldown;
     rssi = null;
+    info = null;
   }
 }
 
@@ -345,6 +355,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   String get connectedDeviceName =>
       _link.name.isEmpty ? _link.deviceId : _link.name;
 
+  /// Static identity (Device Information service) of the connected device,
+  /// read once during post-connect setup; null with no link up or until the
+  /// read completes. Per-field nulls cover individual read failures (and web,
+  /// where the serial number characteristic is blocklisted).
+  DeviceInfo? get connectedDeviceInfo => _link.isLinkUp ? _link.info : null;
+
   /// Live RSSI (dBm) of the connected device, or null when not streaming, not
   /// yet read, or unsupported on this platform. Polled every [rssiPollInterval]
   /// while streaming.
@@ -415,8 +431,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// manager itself never interprets them.
   void Function(Uint8List data)? onAdcData;
 
-  /// Raw bytes of the calibration characteristic, read once during post-connect
-  /// setup. Wired to [AdcPacketDecoder.onCalibrationPacket] at app startup.
+  /// The flash document (board calibration + load cell slots), reassembled
+  /// from the device KVS once during post-connect setup. Wired to
+  /// [AdcPacketDecoder.onCalibrationPacket] at app startup.
   void Function(Uint8List data)? onCalibrationData;
 
   /// One-shot user notices ([BleDisconnectTimeout], [BleConnectionFailed])
@@ -430,11 +447,19 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// serves whatever was last written).
   String _demoFlashDoc = demoBoardCalibrationDoc;
 
+  /// The KVS channel of the active link (null for the demo device and after
+  /// teardown). Created in post-connect setup BEFORE the ADC feed
+  /// subscription, because firmware locks the KVS while the feed holds the
+  /// device lock.
+  KvsClient? _kvsClient;
+  KvsFlashTransport? _kvsTransport;
+
   // -- RigFlashTransport ------------------------------------------------------
 
   /// Write a serialized `DeviceFlash` document to the connected device.
   /// Called only by `RigState.saveToDevice`, which has already composed the
-  /// full document (board keys round-tripping verbatim + edited slots).
+  /// full document (board keys round-tripping verbatim + edited slots). The
+  /// KVS transport turns it into per-key writes (see [KvsFlashTransport]).
   @override
   Future<void> writeFlashDoc(String doc) async {
     final deviceId = _link.deviceId;
@@ -445,16 +470,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       _demoFlashDoc = doc;
       return;
     }
-    // TODO(firmware): whole-document write for now, mirroring the read path
-    // (see AdcPacketDecoder.onCalibrationPacket); the per-key write protocol
-    // plugs in here once defined. Untested against real firmware — the
-    // characteristic may not even be writable yet.
-    await UniversalBle.write(
-      deviceId,
-      btServiceId,
-      btChrCalibration,
-      Uint8List.fromList(utf8.encode(doc)),
-    );
+    final transport = _kvsTransport;
+    if (transport == null) {
+      throw StateError('writeFlashDoc with no KVS channel on $deviceId');
+    }
+    await _withFeedPaused(() => transport.writeFlashDoc(doc));
   }
 
   /// Read the flash document back from the connected device (save
@@ -466,15 +486,39 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     final deviceId = _link.deviceId;
     if (deviceId.isEmpty) return null;
     if (deviceId == DeviceLink.demoDeviceId) return _demoFlashDoc;
+    final transport = _kvsTransport;
+    if (transport == null) return null;
     try {
-      final bytes = await UniversalBle.read(
-        deviceId,
-        btServiceId,
-        btChrCalibration,
-      );
-      return utf8.decode(bytes, allowMalformed: true);
+      return await _withFeedPaused(transport.readFlashDoc);
     } catch (_) {
       return null;
+    }
+  }
+
+  /// Run [body] with the ADC feed subscription paused: firmware rejects KVS
+  /// commands while the feed's subscription holds the device lock, so doc
+  /// writes (and the verifying re-read) briefly unsubscribe, then
+  /// resubscribe. The feed's counter jump on resume surfaces as an honest
+  /// gap via the decoder's continuity check. When the feed isn't active
+  /// (mid setup, demo device) [body] just runs.
+  Future<T> _withFeedPaused<T>(Future<T> Function() body) async {
+    final deviceId = _link.deviceId;
+    final pause = _link.isStreaming && deviceId != DeviceLink.demoDeviceId;
+    if (pause) {
+      await UniversalBle.unsubscribe(deviceId, btServiceId, btChrAdcFeedId);
+    }
+    try {
+      return await body();
+    } finally {
+      // Resume only if the same link is still up (a disconnect mid-write
+      // already tore everything down).
+      if (pause && _link.isStreaming && _link.deviceId == deviceId) {
+        await UniversalBle.subscribeNotifications(
+          deviceId,
+          btServiceId,
+          btChrAdcFeedId,
+        );
+      }
     }
   }
 
@@ -623,7 +667,10 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       await UniversalBle.startScan(
         scanFilter: ScanFilter(withServices: [btServiceId]),
         platformConfig: PlatformConfig(
-          web: WebOptions(optionalServices: [btServiceId]),
+          // Web Bluetooth gates GATT access per service: the sampler service
+          // comes from the picker filter, and the Device Information service
+          // (0x180A, read during post-connect setup) must be declared here.
+          web: WebOptions(optionalServices: [btServiceId, btSvcDeviceInfo]),
         ),
       );
     } catch (e) {
@@ -748,6 +795,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // Supersede any in-flight post-connect setup pass so it bails out instead of
     // writing state for a link we're tearing down.
     _supersedeSetupPasses();
+    // The KVS channel dies with the link: fail any pending command. A fresh
+    // link builds a fresh client in post-connect setup.
+    _kvsClient?.abort();
+    _kvsClient = null;
+    _kvsTransport = null;
     _stopRssiPolling();
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
@@ -944,13 +996,23 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       }
       final discovered = await UniversalBle.discoverServices(deviceId);
       if (!token.isCurrent) return;
+      // Device identity (DIS): static strings read once per link, during the
+      // "Setting up…" stage. Independent of the sampler service below and
+      // never fatal — see [_readDeviceInfo].
+      await _readDeviceInfo(token, deviceId);
+      if (!token.isCurrent) return;
       bool subscribed = false;
       for (final srv in discovered) {
         if (srv.uuid == btServiceId) {
-          // Discovery done; the ADC feed subscription (calibration read +
-          // enabling notifications) is the "Starting data stream…" stage.
+          // Discovery done; the KVS channel and the ADC feed subscription
+          // are the "Starting data stream…" stage.
           _link.state = BtLinkState.subscribing;
           notifyListeners();
+          // The KVS channel comes up BEFORE the ADC feed subscription:
+          // firmware locks the KVS while the feed holds the device lock,
+          // so the connect-time flash read must happen first.
+          await _setupKvs(token, deviceId);
+          if (!token.isCurrent) return;
           subscribed = await _subscribeToAdcFeed(srv);
           if (!token.isCurrent) return;
           break;
@@ -1026,6 +1088,15 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _link.deviceId = DeviceLink.demoDeviceId;
     _link.name = 'Demo Device';
     _link.state = BtLinkState.streaming;
+    // Simulated hardware has a simulated identity (real links read theirs
+    // from the Device Information service in post-connect setup).
+    _link.info = const DeviceInfo(
+      manufacturer: 'K3 Engineering',
+      model: 'Dynamite Sampler Demo',
+      serial: 'DEMO00000000',
+      hardwareRev: 'demo',
+      firmwareRev: 'demo',
+    );
 
     // The demo device is factory-calibrated: serve its flash doc through the
     // same path a real device's calibration read would take. The doc is
@@ -1186,11 +1257,82 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     }
   }
 
-  /// Subscribe to the ADC feed characteristic of [service] (reading the
-  /// calibration characteristic first). Returns true when the subscription
-  /// was made; false when no usable ADC feed characteristic exists — the
-  /// caller fails the connection in that case, since a link without the
-  /// feed is unusable.
+  /// Read the Device Information service (0x180A) identity strings once per
+  /// link, storing the result on the link as [DeviceInfo]. Best-effort per
+  /// characteristic: a failed read leaves that field null and never fails
+  /// the connection — the data is informational, not required for streaming.
+  /// The serial number characteristic (0x2A25) is on the Web Bluetooth GATT
+  /// blocklist, so it is skipped (left null) on web rather than read and
+  /// failed there every time.
+  Future<void> _readDeviceInfo(_SetupToken token, String deviceId) async {
+    Future<String?> readString(String chr) async {
+      // A superseded pass stops issuing new reads (one in flight at most).
+      if (!token.isCurrent) return null;
+      try {
+        return utf8.decode(
+          await UniversalBle.read(deviceId, btSvcDeviceInfo, chr),
+        );
+      } catch (e) {
+        debugPrint('DIS read of $chr failed for $deviceId: $e');
+        return null;
+      }
+    }
+
+    final info = DeviceInfo(
+      manufacturer: await readString(btChrDisManufacturer),
+      model: await readString(btChrDisModel),
+      serial: kIsWeb ? null : await readString(btChrDisSerial),
+      hardwareRev: await readString(btChrDisHardwareRev),
+      firmwareRev: await readString(btChrDisFirmwareRev),
+    );
+    if (!token.isCurrent) return;
+    _link.info = info;
+    debugPrint(
+      'Device info for $deviceId: model=${info.model}, '
+      'serial=${info.serial}, hw=${info.hardwareRev}, fw=${info.firmwareRev}, '
+      'mfr=${info.manufacturer}',
+    );
+  }
+
+  /// Bring up the KVS channel: subscribe to its notifications, then run the
+  /// connect-time flash document read. Best-effort by design — a failed
+  /// subscription or read must not fail the whole connection: the app runs
+  /// on nominal values and the user is notified. A superseded pass (the
+  /// link was torn down mid-setup, which also aborts the client) bails
+  /// silently — the failure belongs to a link that no longer exists.
+  Future<void> _setupKvs(_SetupToken token, String deviceId) async {
+    final client = KvsClient(deviceId: deviceId);
+    try {
+      await UniversalBle.subscribeNotifications(
+        deviceId,
+        btServiceId,
+        btChrKvs,
+      );
+    } catch (e) {
+      if (!token.isCurrent) return;
+      debugPrint('KVS subscription failed for $deviceId: $e');
+      _events.emit(CalibrationUnreadable(_link.name));
+      return;
+    }
+    final transport = KvsFlashTransport(client);
+    _kvsClient = client;
+    _kvsTransport = transport;
+    try {
+      final doc = await transport.readFlashDoc();
+      if (!token.isCurrent) return;
+      if (doc == null) throw StateError('KVS flash read failed');
+      onCalibrationData?.call(Uint8List.fromList(utf8.encode(doc)));
+    } catch (e) {
+      if (!token.isCurrent) return;
+      debugPrint('KVS flash read failed for $deviceId: $e');
+      _events.emit(CalibrationUnreadable(_link.name));
+    }
+  }
+
+  /// Subscribe to the ADC feed characteristic of [service]. Returns true
+  /// when the subscription was made; false when no usable ADC feed
+  /// characteristic exists — the caller fails the connection in that case,
+  /// since a link without the feed is unusable.
   Future<bool> _subscribeToAdcFeed(BleService service) async {
     final String deviceId = _link.deviceId;
     if (deviceId.isEmpty) {
@@ -1200,17 +1342,6 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       if (characteristic.uuid != btChrAdcFeedId ||
           !characteristic.properties.contains(CharacteristicProperty.notify)) {
         continue;
-      }
-      // Calibration is best-effort: a failed read must not fail the whole
-      // connection. The app runs on nominal values until a read succeeds, so
-      // surface that to the user rather than only logging it.
-      try {
-        onCalibrationData?.call(
-          await UniversalBle.read(deviceId, service.uuid, btChrCalibration),
-        );
-      } catch (e) {
-        debugPrint('Calibration read failed for $deviceId: $e');
-        _events.emit(CalibrationUnreadable(_link.name));
       }
       await UniversalBle.subscribeNotifications(
         deviceId,
@@ -1231,25 +1362,35 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     Uint8List data,
     int? timestamp,
   ) {
-    // The ADC feed of the active link is the only subscription; drop anything
-    // else (a stale notification from a torn-down link, or a second notifying
-    // characteristic subscribed in the future) so foreign bytes are never
-    // parsed as ADC packets. universal_ble normalizes characteristicId to
-    // lowercase before invoking this callback, and btChrAdcFeedId is already
-    // lowercase, so an exact match is safe.
+    // The ADC feed and the KVS channel of the active link are the only
+    // subscriptions; drop anything else (a stale notification from a
+    // torn-down link, or a third characteristic subscribed in the future) so
+    // foreign bytes are never parsed. universal_ble normalizes
+    // characteristicId to lowercase before invoking this callback, and both
+    // ids are already lowercase, so an exact match is safe.
     // Multi-device: route by deviceId instead of dropping.
-    if (deviceId != _link.deviceId || characteristicId != btChrAdcFeedId) {
+    if (deviceId != _link.deviceId) {
       logTrace(
         () =>
-            'Dropping notification from unexpected source: device $deviceId, '
+            'Dropping notification from unexpected device $deviceId, '
             'characteristic $characteristicId (${data.length} B); '
             'active link is ${_link.deviceId.isEmpty ? '(none)' : _link.deviceId}',
       );
       return;
     }
-    // Hand the raw packet straight to the protocol layer; the link manager
-    // never interprets feed bytes itself.
-    onAdcData?.call(data);
+    // Feed packets go straight to the protocol layer, KVS frames to the KVS
+    // client; the link manager never interprets bytes itself.
+    if (characteristicId == btChrAdcFeedId) {
+      onAdcData?.call(data);
+    } else if (characteristicId == btChrKvs) {
+      _kvsClient?.handleNotification(data);
+    } else {
+      logTrace(
+        () =>
+            'Dropping notification from unexpected characteristic '
+            '$characteristicId (${data.length} B)',
+      );
+    }
   }
 
   /// Tear down this (now stale) generation's BLE link after a hot restart on
@@ -1268,6 +1409,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     onAdcData = null;
     onCalibrationData = null;
     _demoSource?.stop();
+    _kvsClient?.abort();
+    _kvsClient = null;
+    _kvsTransport = null;
     _stopRssiPolling();
     _freshnessPoke?.cancel();
     _freshnessPoke = null;
