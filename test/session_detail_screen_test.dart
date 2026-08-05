@@ -36,6 +36,7 @@ void main() {
       calibrationJson: '[]',
       visibleChannels: '[]',
       displayUnit: 'kgf',
+      deviceInfoJson: '{}',
     );
     await AppDatabase.instance.completeSession(
       sessionId,

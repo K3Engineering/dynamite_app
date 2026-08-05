@@ -150,6 +150,66 @@ void main() {
       });
     });
 
+    test('metadata line carries the frozen device identity', () {
+      final data = makeSession(
+        [
+          [1],
+          [2],
+        ],
+      );
+
+      final meta = metadataOf(
+        buildSessionCsv(
+          data,
+          DisplayUnit.kgf,
+          recordedAt: recordedAt,
+          generator: generator,
+          deviceInfoJson:
+              '{"name":"DS A4CF1208F51E","id":"A4CF1208F51E",'
+              '"model":"Dynamite Sampler Pro Mk1","firmware":"v700P|v1.2.3",'
+              '"manufacturer":"K3 Engineering"}',
+        ),
+      );
+
+      expect(meta['device'], {
+        'name': 'DS A4CF1208F51E',
+        'id': 'A4CF1208F51E',
+        'model': 'Dynamite Sampler Pro Mk1',
+        'firmware': 'v700P|v1.2.3',
+        'manufacturer': 'K3 Engineering',
+      });
+    });
+
+    test('a malformed device block degrades to null placeholders', () {
+      final data = makeSession(
+        [
+          [1],
+          [2],
+        ],
+      );
+
+      // Bad JSON and wrong-typed values both degrade to nulls rather than
+      // failing the export (display-only metadata path).
+      for (final json in ['{not json', '{"name":42}']) {
+        final meta = metadataOf(
+          buildSessionCsv(
+            data,
+            DisplayUnit.kgf,
+            recordedAt: recordedAt,
+            generator: generator,
+            deviceInfoJson: json,
+          ),
+        );
+        expect(meta['device'], {
+          'name': null,
+          'id': null,
+          'model': null,
+          'firmware': null,
+          'manufacturer': null,
+        });
+      }
+    });
+
     test(
       'converted columns match the frozen converter at column precision',
       () {

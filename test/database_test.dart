@@ -20,6 +20,7 @@ void main() {
         calibrationJson: '[]',
         visibleChannels: '[]',
         displayUnit: 'kgf',
+        deviceInfoJson: '{}',
         createdAt: createdAt,
       )
       .then(

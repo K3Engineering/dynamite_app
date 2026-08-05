@@ -199,6 +199,17 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _deviceInfoJsonMeta = const VerificationMeta(
+    'deviceInfoJson',
+  );
+  @override
+  late final GeneratedColumn<String> deviceInfoJson = GeneratedColumn<String>(
+    'device_info_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -218,6 +229,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     visibleChannels,
     ssnOrigin,
     displayUnit,
+    deviceInfoJson,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -367,6 +379,17 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     } else if (isInserting) {
       context.missing(_displayUnitMeta);
     }
+    if (data.containsKey('device_info_json')) {
+      context.handle(
+        _deviceInfoJsonMeta,
+        deviceInfoJson.isAcceptableOrUnknown(
+          data['device_info_json']!,
+          _deviceInfoJsonMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_deviceInfoJsonMeta);
+    }
     return context;
   }
 
@@ -444,6 +467,10 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.string,
         data['${effectivePrefix}display_unit'],
       )!,
+      deviceInfoJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}device_info_json'],
+      )!,
     );
   }
 
@@ -496,6 +523,12 @@ class Session extends DataClass implements Insertable<Session> {
   /// frozen as the CSV export's default converted unit — the
   /// recording-time snapshot requirement of docs/csv-format-v1.md.
   final String displayUnit;
+
+  /// The connected device's identity at recording start (BLE name + the DIS
+  /// strings), as the JSON-encoded dynamite-csv `device` metadata block —
+  /// see [DeviceInfo.toCsvDeviceMetadata]. Frozen so export never consults
+  /// live device state (docs/csv-format-v1.md).
+  final String deviceInfoJson;
   const Session({
     required this.id,
     required this.name,
@@ -514,6 +547,7 @@ class Session extends DataClass implements Insertable<Session> {
     required this.visibleChannels,
     this.ssnOrigin,
     required this.displayUnit,
+    required this.deviceInfoJson,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -537,6 +571,7 @@ class Session extends DataClass implements Insertable<Session> {
       map['ssn_origin'] = Variable<int>(ssnOrigin);
     }
     map['display_unit'] = Variable<String>(displayUnit);
+    map['device_info_json'] = Variable<String>(deviceInfoJson);
     return map;
   }
 
@@ -561,6 +596,7 @@ class Session extends DataClass implements Insertable<Session> {
           ? const Value.absent()
           : Value(ssnOrigin),
       displayUnit: Value(displayUnit),
+      deviceInfoJson: Value(deviceInfoJson),
     );
   }
 
@@ -587,6 +623,7 @@ class Session extends DataClass implements Insertable<Session> {
       visibleChannels: serializer.fromJson<String>(json['visibleChannels']),
       ssnOrigin: serializer.fromJson<int?>(json['ssnOrigin']),
       displayUnit: serializer.fromJson<String>(json['displayUnit']),
+      deviceInfoJson: serializer.fromJson<String>(json['deviceInfoJson']),
     );
   }
   @override
@@ -610,6 +647,7 @@ class Session extends DataClass implements Insertable<Session> {
       'visibleChannels': serializer.toJson<String>(visibleChannels),
       'ssnOrigin': serializer.toJson<int?>(ssnOrigin),
       'displayUnit': serializer.toJson<String>(displayUnit),
+      'deviceInfoJson': serializer.toJson<String>(deviceInfoJson),
     };
   }
 
@@ -631,6 +669,7 @@ class Session extends DataClass implements Insertable<Session> {
     String? visibleChannels,
     Value<int?> ssnOrigin = const Value.absent(),
     String? displayUnit,
+    String? deviceInfoJson,
   }) => Session(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -649,6 +688,7 @@ class Session extends DataClass implements Insertable<Session> {
     visibleChannels: visibleChannels ?? this.visibleChannels,
     ssnOrigin: ssnOrigin.present ? ssnOrigin.value : this.ssnOrigin,
     displayUnit: displayUnit ?? this.displayUnit,
+    deviceInfoJson: deviceInfoJson ?? this.deviceInfoJson,
   );
   Session copyWithCompanion(SessionsCompanion data) {
     return Session(
@@ -687,6 +727,9 @@ class Session extends DataClass implements Insertable<Session> {
       displayUnit: data.displayUnit.present
           ? data.displayUnit.value
           : this.displayUnit,
+      deviceInfoJson: data.deviceInfoJson.present
+          ? data.deviceInfoJson.value
+          : this.deviceInfoJson,
     );
   }
 
@@ -709,7 +752,8 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('gaps: $gaps, ')
           ..write('visibleChannels: $visibleChannels, ')
           ..write('ssnOrigin: $ssnOrigin, ')
-          ..write('displayUnit: $displayUnit')
+          ..write('displayUnit: $displayUnit, ')
+          ..write('deviceInfoJson: $deviceInfoJson')
           ..write(')'))
         .toString();
   }
@@ -733,6 +777,7 @@ class Session extends DataClass implements Insertable<Session> {
     visibleChannels,
     ssnOrigin,
     displayUnit,
+    deviceInfoJson,
   );
   @override
   bool operator ==(Object other) =>
@@ -754,7 +799,8 @@ class Session extends DataClass implements Insertable<Session> {
           other.gaps == this.gaps &&
           other.visibleChannels == this.visibleChannels &&
           other.ssnOrigin == this.ssnOrigin &&
-          other.displayUnit == this.displayUnit);
+          other.displayUnit == this.displayUnit &&
+          other.deviceInfoJson == this.deviceInfoJson);
 }
 
 class SessionsCompanion extends UpdateCompanion<Session> {
@@ -775,6 +821,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<String> visibleChannels;
   final Value<int?> ssnOrigin;
   final Value<String> displayUnit;
+  final Value<String> deviceInfoJson;
   const SessionsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
@@ -793,6 +840,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.visibleChannels = const Value.absent(),
     this.ssnOrigin = const Value.absent(),
     this.displayUnit = const Value.absent(),
+    this.deviceInfoJson = const Value.absent(),
   });
   SessionsCompanion.insert({
     this.id = const Value.absent(),
@@ -812,6 +860,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     required String visibleChannels,
     this.ssnOrigin = const Value.absent(),
     required String displayUnit,
+    required String deviceInfoJson,
   }) : createdAt = Value(createdAt),
        sampleRate = Value(sampleRate),
        channelCount = Value(channelCount),
@@ -819,7 +868,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
        tares = Value(tares),
        calibrationJson = Value(calibrationJson),
        visibleChannels = Value(visibleChannels),
-       displayUnit = Value(displayUnit);
+       displayUnit = Value(displayUnit),
+       deviceInfoJson = Value(deviceInfoJson);
   static Insertable<Session> custom({
     Expression<int>? id,
     Expression<String>? name,
@@ -838,6 +888,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<String>? visibleChannels,
     Expression<int>? ssnOrigin,
     Expression<String>? displayUnit,
+    Expression<String>? deviceInfoJson,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -857,6 +908,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (visibleChannels != null) 'visible_channels': visibleChannels,
       if (ssnOrigin != null) 'ssn_origin': ssnOrigin,
       if (displayUnit != null) 'display_unit': displayUnit,
+      if (deviceInfoJson != null) 'device_info_json': deviceInfoJson,
     });
   }
 
@@ -878,6 +930,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<String>? visibleChannels,
     Value<int?>? ssnOrigin,
     Value<String>? displayUnit,
+    Value<String>? deviceInfoJson,
   }) {
     return SessionsCompanion(
       id: id ?? this.id,
@@ -897,6 +950,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       visibleChannels: visibleChannels ?? this.visibleChannels,
       ssnOrigin: ssnOrigin ?? this.ssnOrigin,
       displayUnit: displayUnit ?? this.displayUnit,
+      deviceInfoJson: deviceInfoJson ?? this.deviceInfoJson,
     );
   }
 
@@ -954,6 +1008,9 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     if (displayUnit.present) {
       map['display_unit'] = Variable<String>(displayUnit.value);
     }
+    if (deviceInfoJson.present) {
+      map['device_info_json'] = Variable<String>(deviceInfoJson.value);
+    }
     return map;
   }
 
@@ -976,7 +1033,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('gaps: $gaps, ')
           ..write('visibleChannels: $visibleChannels, ')
           ..write('ssnOrigin: $ssnOrigin, ')
-          ..write('displayUnit: $displayUnit')
+          ..write('displayUnit: $displayUnit, ')
+          ..write('deviceInfoJson: $deviceInfoJson')
           ..write(')'))
         .toString();
   }
@@ -1280,6 +1338,7 @@ typedef $$SessionsTableCreateCompanionBuilder =
       required String visibleChannels,
       Value<int?> ssnOrigin,
       required String displayUnit,
+      required String deviceInfoJson,
     });
 typedef $$SessionsTableUpdateCompanionBuilder =
     SessionsCompanion Function({
@@ -1300,6 +1359,7 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<String> visibleChannels,
       Value<int?> ssnOrigin,
       Value<String> displayUnit,
+      Value<String> deviceInfoJson,
     });
 
 class $$SessionsTableFilterComposer
@@ -1393,6 +1453,11 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<String> get displayUnit => $composableBuilder(
     column: $table.displayUnit,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get deviceInfoJson => $composableBuilder(
+    column: $table.deviceInfoJson,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1490,6 +1555,11 @@ class $$SessionsTableOrderingComposer
     column: $table.displayUnit,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get deviceInfoJson => $composableBuilder(
+    column: $table.deviceInfoJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SessionsTableAnnotationComposer
@@ -1569,6 +1639,11 @@ class $$SessionsTableAnnotationComposer
     column: $table.displayUnit,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get deviceInfoJson => $composableBuilder(
+    column: $table.deviceInfoJson,
+    builder: (column) => column,
+  );
 }
 
 class $$SessionsTableTableManager
@@ -1616,6 +1691,7 @@ class $$SessionsTableTableManager
                 Value<String> visibleChannels = const Value.absent(),
                 Value<int?> ssnOrigin = const Value.absent(),
                 Value<String> displayUnit = const Value.absent(),
+                Value<String> deviceInfoJson = const Value.absent(),
               }) => SessionsCompanion(
                 id: id,
                 name: name,
@@ -1634,6 +1710,7 @@ class $$SessionsTableTableManager
                 visibleChannels: visibleChannels,
                 ssnOrigin: ssnOrigin,
                 displayUnit: displayUnit,
+                deviceInfoJson: deviceInfoJson,
               ),
           createCompanionCallback:
               ({
@@ -1654,6 +1731,7 @@ class $$SessionsTableTableManager
                 required String visibleChannels,
                 Value<int?> ssnOrigin = const Value.absent(),
                 required String displayUnit,
+                required String deviceInfoJson,
               }) => SessionsCompanion.insert(
                 id: id,
                 name: name,
@@ -1672,6 +1750,7 @@ class $$SessionsTableTableManager
                 visibleChannels: visibleChannels,
                 ssnOrigin: ssnOrigin,
                 displayUnit: displayUnit,
+                deviceInfoJson: deviceInfoJson,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

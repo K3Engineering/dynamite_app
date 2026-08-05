@@ -7,6 +7,7 @@ import 'app_events.dart';
 import 'ble_link_manager.dart';
 import 'data_hub.dart';
 import 'session_storage.dart';
+import '../models/device_info.dart';
 import '../models/display_unit.dart';
 
 /// Outcome of [RecordingController.startSession]. The outcomes are mutually
@@ -110,7 +111,9 @@ class RecordingController extends ChangeNotifier {
   /// clock (e.g. `2026-07-29 14:05:32` — see [autoSessionName]).
   /// [channelLabels] and [visibleChannels] are persisted for display only
   /// (see [SessionStorage.startSession]). [displayUnit] is frozen onto the
-  /// session row as the CSV export's default converted unit.
+  /// session row as the CSV export's default converted unit. The connected
+  /// device's identity (BLE name + DIS strings) is frozen alongside as the
+  /// CSV `device` block (docs/csv-format-v1.md).
   ///
   /// Outcomes are returned, not thrown, so the caller (the live tab's record
   /// button) can snackbar them locally; null means a session was already in
@@ -127,6 +130,13 @@ class RecordingController extends ChangeNotifier {
     if (_dataHub.taring) return const StartSessionTareInProgress();
 
     final sessionName = name ?? autoSessionName(DateTime.now());
+    // Freeze the connected device's identity onto the row (the CSV `device`
+    // block — docs/csv-format-v1.md): export must never consult live device
+    // state.
+    final deviceMetadata = DeviceInfo.toCsvDeviceMetadata(
+      name: _linkManager.connectedDeviceName,
+      info: _linkManager.connectedDeviceInfo,
+    );
     final LiveSessionWriter writer;
     try {
       writer = await SessionStorage.startSession(
@@ -135,6 +145,7 @@ class RecordingController extends ChangeNotifier {
         channelLabels: channelLabels,
         visibleChannels: visibleChannels,
         displayUnit: displayUnit,
+        deviceMetadata: deviceMetadata,
       );
     } catch (e) {
       return StartSessionFailed(e);

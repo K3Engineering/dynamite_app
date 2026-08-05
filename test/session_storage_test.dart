@@ -249,6 +249,7 @@ void main() {
         channelLabels: const ['a', 'b', 'c', 'd'],
         visibleChannels: const [true, true, true, true],
         displayUnit: DisplayUnit.kgf,
+        deviceMetadata: const {},
       );
       await writer.appendData(hub, 0, hub.totalSamples);
 
@@ -321,6 +322,7 @@ void main() {
         channelLabels: const ['a', 'b', 'c', 'd'],
         visibleChannels: const [true, true, true, true],
         displayUnit: DisplayUnit.kgf,
+        deviceMetadata: const {},
       );
       // The single append crosses the flush threshold, so the chunk insert
       // AND the incremental gaps update land in the DB.
@@ -367,6 +369,7 @@ void main() {
           calibrationJson: '[]',
           visibleChannels: '[true,true,true,true]',
           displayUnit: 'kgf',
+          deviceInfoJson: '{}',
         );
         await AppDatabase.instance.insertChunk(sessionId, 0, Uint8List(0));
 
@@ -421,6 +424,7 @@ void main() {
           channelLabels: const ['a', 'b', 'c', 'd'],
           visibleChannels: const [true, true, true, true],
           displayUnit: DisplayUnit.kgf,
+          deviceMetadata: const {},
         );
         await writer.appendData(hub, 0, hub.totalSamples);
         await SessionStorage.finalizeSession(writer: writer);
