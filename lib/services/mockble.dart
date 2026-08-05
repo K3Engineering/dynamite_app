@@ -369,6 +369,12 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic, {
     final Duration? timeout,
   }) async {
+    // The Device Information strings are static — served synchronously, like
+    // KVS answers, so the fake-async connect stays at ~2 s in tests.
+    final String? disValue = _disValues[characteristic];
+    if (service == btSvcDeviceInfo && disValue != null) {
+      return Uint8List.fromList(utf8.encode(disValue));
+    }
     await Future<void>.delayed(netDelay);
     return Uint8List(255);
   }
@@ -548,11 +554,25 @@ class MockBlePlatform extends UniversalBlePlatform {
     ]);
   }
 
+  /// The mock sampler's Device Information service (0x180A) contents,
+  /// mirroring what firmware's setupDeviceInfo() publishes.
+  static const Map<String, String> _disValues = {
+    btChrDisManufacturer: 'K3 Engineering',
+    btChrDisModel: 'Dynamite Sampler Pro Mk1',
+    btChrDisSerial: 'A4CF1208F51E',
+    btChrDisHardwareRev: 'v700P',
+    btChrDisFirmwareRev: 'v700P|mock-1.0.0',
+  };
+
   static List<BleService> _generateServices(String deviceId) {
     if (deviceId == '2') {
       return ([
         BleService('e1234567', _generateCharacteristics(deviceId)),
         BleService(btServiceId, _generateCharacteristics(deviceId)),
+        BleService(btSvcDeviceInfo, [
+          for (final chr in _disValues.keys)
+            BleCharacteristic(chr, [CharacteristicProperty.read], []),
+        ]),
       ]);
     }
     return ([

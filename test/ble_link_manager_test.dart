@@ -18,9 +18,10 @@ import 'package:dynamite_app/services/mockble.dart';
 /// mockble_test.dart — no real time passes).
 ///
 /// Mock timing: hwDelay 200 ms (availability), netDelay 1 s (connect /
-/// discoverServices). KVS commands (subscription, flash read) answer
-/// synchronously, so a full connect takes ~2 s: connect(1s) -> MTU
-/// (immediate) -> discoverServices(1s) -> KVS (instant) -> feed subscribe.
+/// discoverServices). KVS commands (subscription, flash read) and the DIS
+/// identity reads answer synchronously, so a full connect takes ~2 s:
+/// connect(1s) -> MTU (immediate) -> discoverServices(1s) -> DIS reads
+/// (instant) -> KVS (instant) -> feed subscribe.
 /// The link shows [BtLinkState.connected] ("Setting up…")
 /// through discovery and [BtLinkState.subscribing] ("Starting data stream…")
 /// from discovery's end until streaming. [BleLinkManager.disconnectTimeout]
@@ -91,6 +92,30 @@ void main() {
       expect(seen, isEmpty);
 
       teardownLink(async, link);
+    });
+  });
+
+  test('connect reads the device identity; teardown clears it', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+
+      expect(link.isStreaming, isTrue);
+      // The values come from MockBlePlatform's DIS table. The serial is
+      // non-null here because VM tests are non-web (web blocklists 0x2A25).
+      final info = link.connectedDeviceInfo;
+      expect(info, isNotNull);
+      expect(info!.manufacturer, 'K3 Engineering');
+      expect(info.model, 'Dynamite Sampler Pro Mk1');
+      expect(info.serial, 'A4CF1208F51E');
+      expect(info.hardwareRev, 'v700P');
+      expect(info.firmwareRev, 'v700P|mock-1.0.0');
+      expect(seen, isEmpty);
+
+      teardownLink(async, link);
+      expect(link.connectedDeviceInfo, isNull);
     });
   });
 

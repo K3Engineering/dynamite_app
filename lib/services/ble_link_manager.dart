@@ -12,6 +12,7 @@ import 'kvs_client.dart';
 import 'kvs_flash_transport.dart';
 import 'mockble.dart';
 import 'rig_state.dart';
+import '../models/device_info.dart';
 import '../utils/log.dart';
 
 /// Lifecycle of a single device's BLE link.
@@ -96,6 +97,11 @@ class DeviceLink {
   /// on each discovered [BleDevice].
   int? rssi;
 
+  /// The device's static identity, read from the Device Information service
+  /// once during post-connect setup (see [BleLinkManager._readDeviceInfo]).
+  /// Null until the read completes, and after reset.
+  DeviceInfo? info;
+
   bool get isConnecting => state == BtLinkState.connecting;
 
   /// The GATT link is up. True for the whole post-connect setup window
@@ -117,6 +123,7 @@ class DeviceLink {
     name = '';
     state = BtLinkState.idle;
     rssi = null;
+    info = null;
   }
 
   bool get isDemoDevice => deviceId == demoDeviceId;
@@ -130,6 +137,7 @@ class DeviceLink {
     this.name = name;
     state = BtLinkState.cooldown;
     rssi = null;
+    info = null;
   }
 }
 
@@ -346,6 +354,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   @override
   String get connectedDeviceName =>
       _link.name.isEmpty ? _link.deviceId : _link.name;
+
+  /// Static identity (Device Information service) of the connected device,
+  /// read once during post-connect setup; null with no link up or until the
+  /// read completes. Per-field nulls cover individual read failures (and web,
+  /// where the serial number characteristic is blocklisted).
+  DeviceInfo? get connectedDeviceInfo => _link.isLinkUp ? _link.info : null;
 
   /// Live RSSI (dBm) of the connected device, or null when not streaming, not
   /// yet read, or unsupported on this platform. Polled every [rssiPollInterval]
@@ -653,7 +667,10 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       await UniversalBle.startScan(
         scanFilter: ScanFilter(withServices: [btServiceId]),
         platformConfig: PlatformConfig(
-          web: WebOptions(optionalServices: [btServiceId]),
+          // Web Bluetooth gates GATT access per service: the sampler service
+          // comes from the picker filter, and the Device Information service
+          // (0x180A, read during post-connect setup) must be declared here.
+          web: WebOptions(optionalServices: [btServiceId, btSvcDeviceInfo]),
         ),
       );
     } catch (e) {
@@ -979,6 +996,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       }
       final discovered = await UniversalBle.discoverServices(deviceId);
       if (!token.isCurrent) return;
+      // Device identity (DIS): static strings read once per link, during the
+      // "Setting up…" stage. Independent of the sampler service below and
+      // never fatal — see [_readDeviceInfo].
+      await _readDeviceInfo(token, deviceId);
+      if (!token.isCurrent) return;
       bool subscribed = false;
       for (final srv in discovered) {
         if (srv.uuid == btServiceId) {
@@ -1066,6 +1088,15 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _link.deviceId = DeviceLink.demoDeviceId;
     _link.name = 'Demo Device';
     _link.state = BtLinkState.streaming;
+    // Simulated hardware has a simulated identity (real links read theirs
+    // from the Device Information service in post-connect setup).
+    _link.info = const DeviceInfo(
+      manufacturer: 'K3 Engineering',
+      model: 'Dynamite Sampler Demo',
+      serial: 'DEMO00000000',
+      hardwareRev: 'demo',
+      firmwareRev: 'demo',
+    );
 
     // The demo device is factory-calibrated: serve its flash doc through the
     // same path a real device's calibration read would take. The doc is
@@ -1224,6 +1255,43 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       _events.emit(BleDisconnectTimeout(deviceName));
       notifyListeners();
     }
+  }
+
+  /// Read the Device Information service (0x180A) identity strings once per
+  /// link, storing the result on the link as [DeviceInfo]. Best-effort per
+  /// characteristic: a failed read leaves that field null and never fails
+  /// the connection — the data is informational, not required for streaming.
+  /// The serial number characteristic (0x2A25) is on the Web Bluetooth GATT
+  /// blocklist, so it is skipped (left null) on web rather than read and
+  /// failed there every time.
+  Future<void> _readDeviceInfo(_SetupToken token, String deviceId) async {
+    Future<String?> readString(String chr) async {
+      // A superseded pass stops issuing new reads (one in flight at most).
+      if (!token.isCurrent) return null;
+      try {
+        return utf8.decode(
+          await UniversalBle.read(deviceId, btSvcDeviceInfo, chr),
+        );
+      } catch (e) {
+        debugPrint('DIS read of $chr failed for $deviceId: $e');
+        return null;
+      }
+    }
+
+    final info = DeviceInfo(
+      manufacturer: await readString(btChrDisManufacturer),
+      model: await readString(btChrDisModel),
+      serial: kIsWeb ? null : await readString(btChrDisSerial),
+      hardwareRev: await readString(btChrDisHardwareRev),
+      firmwareRev: await readString(btChrDisFirmwareRev),
+    );
+    if (!token.isCurrent) return;
+    _link.info = info;
+    debugPrint(
+      'Device info for $deviceId: model=${info.model}, '
+      'serial=${info.serial}, hw=${info.hardwareRev}, fw=${info.firmwareRev}, '
+      'mfr=${info.manufacturer}',
+    );
   }
 
   /// Bring up the KVS channel: subscribe to its notifications, then run the
