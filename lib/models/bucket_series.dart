@@ -162,7 +162,6 @@ class EnvelopeSeries {
   /// [buckets] is.
   final double Function(double raw)? rawToDisplay;
 
-  /// A series rendered exclusively on the exact per-sample path.
   EnvelopeSeries.exact(this.sampleAt) : buckets = null, rawToDisplay = null;
 
   /// A series with bucket-accelerated reduction (see [reduceBlockBuckets]

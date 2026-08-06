@@ -14,7 +14,6 @@ const int nwAdcSampleLength = 12;
 /// Samples per notification packet.
 const int nwAdcNumSamples = 20;
 
-/// ADC channels streamed by the device.
 const int nwNumAdcChan = 4;
 
 /// Packet header bytes (16-bit little-endian running sample counter).

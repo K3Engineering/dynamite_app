@@ -323,7 +323,6 @@ class LiveStatusBar extends StatelessWidget {
       onTap: isConnected
           ? null
           : () {
-              // Navigate to Devices tab
               final shell = context.findAncestorStateOfType<AppShellState>();
               shell?.goToDevices();
             },
@@ -540,9 +539,6 @@ class ViewToggles extends StatelessWidget {
               color: showDerivative ? cs.onSecondaryContainer : null,
             ),
           ),
-          // Placeholders for future modes can be added here easily
-          // const SizedBox(width: 8),
-          // FilterChip(label: const Text('FFT'), onSelected: (_) {}),
         ],
       ),
     );

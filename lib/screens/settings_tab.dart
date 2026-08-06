@@ -45,11 +45,9 @@ class SettingsTab extends StatelessWidget {
           Text('Settings', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 16),
 
-          // App settings
           const SectionHeader('App settings'),
           const SizedBox(height: 16),
 
-          // Display units
           Text('Display Units', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 8),
           _UnitGroup(
@@ -80,7 +78,6 @@ class SettingsTab extends StatelessWidget {
           ),
           const SizedBox(height: 24),
 
-          // Device settings
           const SectionHeader('Device settings'),
           const SizedBox(height: 16),
 
@@ -153,7 +150,6 @@ class SettingsTab extends StatelessWidget {
           ],
           const SizedBox(height: 8),
 
-          // About
           const SectionHeader('About'),
           const SizedBox(height: 16),
           FutureBuilder<PackageInfo>(

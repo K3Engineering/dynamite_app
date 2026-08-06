@@ -300,7 +300,8 @@ class SessionChunkCodec {
   /// Whole sample frames in [bytes] (trailing partial bytes are ignored).
   int framesOf(Uint8List bytes) => bytes.lengthInBytes ~/ (channelCount * 4);
 
-  /// Pack [frames] samples, pulling each value from [valueAt].
+  /// Pack [frames] samples as sample-major little-endian int32 bytes (the
+  /// chunk format [decode] reads back), pulling each value from [valueAt].
   Uint8List pack(int frames, int Function(int sample, int channel) valueAt) {
     final out = ByteData(frames * channelCount * 4);
     int offset = 0;
@@ -424,7 +425,6 @@ class SessionData implements GraphDataSource {
     }
   }
 
-  /// Duration in seconds.
   double get durationSeconds => sampleCount / sampleRate;
 
   // -- GraphDataSource --------------------------------------------------------

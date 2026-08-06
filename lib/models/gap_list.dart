@@ -16,7 +16,6 @@ class GapList {
 
   bool get isEmpty => _bounds.isEmpty;
 
-  /// Whether sample [i] falls inside a gap.
   bool contains(int i) {
     if (_bounds.isEmpty) return false; // common zero-gap fast path
     // Binary search for the last bound <= i; i is inside a gap iff that bound

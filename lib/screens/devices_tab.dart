@@ -547,7 +547,6 @@ class _ActiveDeviceRow extends StatelessWidget {
   /// then omits it rather than showing a placeholder.
   final String? model;
 
-  /// The active link's state.
   final BtLinkState linkState;
 
   /// Live polled RSSI for the connected device; null until first read.

@@ -23,7 +23,6 @@ const double _kGraphLeftSpace = 8;
 const double _kGraphRightSpace = 56;
 const double _kGraphBottomSpace = 24;
 
-/// Width available for plotting given a full widget [totalWidth].
 double _graphPlotWidth(double totalWidth) =>
     totalWidth - _kGraphLeftSpace - _kGraphRightSpace;
 
@@ -120,7 +119,6 @@ const FilterQuality kSegmentFilterQuality = FilterQuality.low;
 /// bounds (the graphs' one-block polyline join) pass a larger horizontal pad.
 const double kSegmentImagePad = 4;
 
-/// The result of a [SegmentRenderer] call.
 typedef SegmentRenderResult = ({
   /// Logical px the content occupies (x in [0, contentW) after the hPad
   /// translate); the blit's x-scale reference. At most the allocated texW.
@@ -838,7 +836,6 @@ class GraphController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Get the effective visible range given total data size.
   (int start, int end) effectiveRange(
     int totalSamples,
     int oldestSample, {
@@ -1948,7 +1945,6 @@ void _drawValueAxis(
   }
 }
 
-/// Draw a horizontal zero baseline if the axis range crosses zero.
 void _drawZeroBaseline(
   Canvas canvas,
   Size graphSz,
@@ -2004,7 +2000,6 @@ void _drawMissingDataHatching(
     final xStart = xOf(startIdx);
     final xEnd = xOf(endIdx);
 
-    // Hatch line spacing
     const double spacing = 8.0;
 
     // Draw diagonals from bottom-left to top-right
@@ -2065,16 +2060,13 @@ class VertexBatcher {
 
   int _len = 0;
 
-  /// Remaining capacity before a flush is forced.
   int get _capacity => _buf.length;
 
-  /// Append a single (x, y) vertex.
   void add(double x, double y) {
     _buf[_len++] = x;
     _buf[_len++] = y;
   }
 
-  /// Whether [extraFloats] more floats would overflow the buffer.
   bool wouldOverflow(int extraFloats) => _len + extraFloats > _capacity;
 
   /// Emit the accumulated vertices (if past [drawThreshold]) and reset, keeping
@@ -2187,7 +2179,6 @@ void _drawChannelEnvelope(
     envColor: color.withAlpha(envAlpha),
   );
 
-  // Calculate alignment block size
   final int blockSize = _blockSizeFor(viewSamples, graphW);
 
   // Bucket acceleration only pays off (and only stays accurate, see the
@@ -2601,7 +2592,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   // --- Layout hooks --------------------------------------------------------
 
-  /// Padding above the plot area.
   double get topSpace;
 
   /// Whether to draw time labels below the X axis.
@@ -2625,7 +2615,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// Y-axis range (display units) for the visible window.
   YAxisRange computeYRange(int viewStart, int viewEnd);
 
-  /// Label for a Y-axis tick.
   String yTickLabel(double tick);
 
   /// Per-channel values mixed into the segment-cache remap key; return the
@@ -2661,7 +2650,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
     final yRange = computeYRange(viewStart, viewEnd);
 
-    // Map a value in display units to Y pixel
+    // Canvas y grows downward, so the axis is flipped: yMax maps to 0.
     double valueToY(double val) {
       return graphSz.height -
           (val - yRange.yMin) * graphSz.height / (yRange.yMax - yRange.yMin);
@@ -2984,7 +2973,6 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Format a tick value with appropriate precision.
 String _formatTickLabel(double value, String unitSymbol) {
   final formatted = _formatTickValue(value);
   return '$formatted $unitSymbol';

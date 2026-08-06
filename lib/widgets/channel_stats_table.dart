@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import '../models/display_unit.dart';
 import 'graph_components.dart' show getChannelColor;
 
-/// One row of per-channel values in a [ChannelStatsTable].
 class ChannelStatsRow {
   const ChannelStatsRow({
     required this.label,
@@ -53,7 +52,6 @@ class ChannelStatsTable extends StatelessWidget {
       activeChannels.length == labels.length &&
       rows.every((r) => r.values.length == labels.length);
 
-  /// Display label per channel.
   final List<String> labels;
 
   /// Whether each channel is currently enabled. Inactive channels show

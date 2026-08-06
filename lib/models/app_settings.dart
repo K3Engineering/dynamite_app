@@ -59,7 +59,6 @@ class AppSettings extends ChangeNotifier {
   List<bool> _activeChannels = List.filled(nwNumAdcChan, true);
   List<bool> get activeChannels => List.unmodifiable(_activeChannels);
 
-  /// Indices of active channels.
   List<int> get activeChannelIndices => [
     for (int i = 0; i < _activeChannels.length; i++)
       if (_activeChannels[i]) i,

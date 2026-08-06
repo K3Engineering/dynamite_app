@@ -327,8 +327,6 @@ Map<String, String> parseFlashKv(String text) {
 /// device. Constant for the first prototype.
 const int kRigSlotCount = 10;
 
-/// Display label for slot [i]: the first [nwNumAdcChan] slots are the
-/// channels ('CH 1'…), the rest numbered spares ('Slot 5'…).
 String rigSlotTitle(int i) =>
     i < nwNumAdcChan ? 'CH ${i + 1}' : 'Slot ${i + 1}';
 
@@ -371,7 +369,6 @@ class RigSlots {
 
   RigSlot? operator [](int i) => slots[i];
 
-  /// The cell in slot [i], or null.
   LoadCellProfile? cellAt(int i) => slots[i]?.cell;
 
   /// Cells converting the four ADC channels (slots 0–3), nulls included.

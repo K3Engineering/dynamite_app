@@ -108,7 +108,7 @@ Future<String?> shareSessionCsv({
   }
   return switch (result.status) {
     ShareResultStatus.success => 'Shared $fileName',
-    // The user backed out of the share sheet.
+    // Backed out of the share sheet: null = the caller shows no snackbar.
     ShareResultStatus.dismissed => null,
     // The platform can't tell what happened; treat as shared.
     ShareResultStatus.unavailable => 'Shared $fileName (status unknown)',

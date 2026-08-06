@@ -31,7 +31,7 @@ class DemoSignalSource {
       final frames = <Uint8List>[];
 
       for (int i = 0; i < nwAdcNumSamples; i++) {
-        // Time in seconds since start
+        // Time in seconds since start (1 kHz sample rate)
         final double t = _globalSampleIndex / 1000.0;
 
         // --- Channel 1: ~4s Thrust Curve (repeating) ---
@@ -56,7 +56,7 @@ class DemoSignalSource {
           // quadratic ramp
           ch2Raw = 100000.0 * (tBreak * tBreak);
         } else {
-          // Snapped! Followed by ringing or just drop.
+          // Snapped: instant drop to zero (no post-break ringing modelled).
           ch2Raw = 0.0;
         }
 

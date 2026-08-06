@@ -203,10 +203,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// Upper bound passed to [UniversalBle.connect] so a hung connect attempt
   /// can't strand the UI on "Connecting…". connect() bypasses the package's
   /// command queue — so [UniversalBle.timeout] does NOT cover it — and
-  /// defaults to 60 s; 15 s is comfortably past a slow connect or a platform
-  /// pairing prompt without feeling wedged. When it fires, the platform
-  /// connect may still complete later — that late callback is released and
-  /// ignored by the unwanted-link guard in [_onConnectionChange].
+  /// defaults to 60 s. When it fires, the
+  /// platform connect may still complete later — that late callback is
+  /// released and ignored by the unwanted-link guard in [_onConnectionChange].
   static const Duration connectTimeout = Duration(seconds: 5);
 
   /// How often to poll the connected device's RSSI for the live signal display.
@@ -350,7 +349,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   @override
   String get connectedDeviceId => _link.isLinkUp ? _link.deviceId : '';
 
-  /// Name of the currently connected device.
+  /// Name of the currently connected device; falls back to the device id when
+  /// the advertised name is empty.
   @override
   String get connectedDeviceName =>
       _link.name.isEmpty ? _link.deviceId : _link.name;
@@ -732,7 +732,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       return;
     }
     _rssiPollTimer = Timer.periodic(rssiPollInterval, (_) async {
-      // Stop polling if the link is no longer streaming this device.
+      // Between ticks the link may have dropped or switched devices.
       if (!_link.isStreaming || _link.deviceId != deviceId) {
         _stopRssiPolling();
         return;
@@ -964,7 +964,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _link.deviceId = deviceId;
     _link.state = BtLinkState.connected; // "Setting up…" until subscribing.
 
-    // Store the device name
+    // Advertised names are optional; fall back to the id so the UI always
+    // has something to show.
     final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
     _link.name = device?.name ?? deviceId;
 

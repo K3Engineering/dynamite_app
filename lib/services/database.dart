@@ -85,7 +85,6 @@ class AppDatabase extends _$AppDatabase {
   @visibleForTesting
   static set instance(AppDatabase? db) => _instance = db;
 
-  /// For testing: create with a custom executor.
   factory AppDatabase.forTesting(QueryExecutor executor) =>
       AppDatabase._(executor);
 
@@ -205,12 +204,10 @@ class AppDatabase extends _$AppDatabase {
     return _updateSession(id, SessionsCompanion(ssnOrigin: Value(ssnOrigin)));
   }
 
-  /// Rename a session.
   Future<void> renameSession(int id, String name) {
     return _updateSession(id, SessionsCompanion(name: Value(name)));
   }
 
-  /// Replace a session's notes.
   Future<void> setSessionNotes(int id, String notes) {
     return _updateSession(id, SessionsCompanion(notes: Value(notes)));
   }
@@ -234,7 +231,6 @@ class AppDatabase extends _$AppDatabase {
         .watch();
   }
 
-  /// Get a single session by id.
   Future<Session?> sessionById(int id) {
     return (select(sessions)..where((t) => t.id.equals(id))).getSingleOrNull();
   }

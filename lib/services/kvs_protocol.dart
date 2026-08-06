@@ -73,7 +73,7 @@ String encodeKvsDelete(String folder, String key) {
 String encodeKvsIndex(String folder, int index) =>
     '$kvsCmdIndex$folder${index.toRadixString(16)}';
 
-/// One parsed KVS response.
+/// One parsed KVS response (see [parseKvsResponse] for the frame layout).
 class KvsResponse {
   const KvsResponse({required this.ok, required this.payload});
 

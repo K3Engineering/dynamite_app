@@ -174,7 +174,6 @@ TopIndicatorMode topIndicatorMode({
 /// so an icon appears only for scan progress or an adapter failure, and
 /// nothing at all while the empty block is the voice on screen.
 class BluetoothIndicator extends StatelessWidget {
-  /// The resolved status visual to display.
   final BtStatusVisual visual;
 
   /// How much of [visual] to draw (see [topIndicatorMode]).

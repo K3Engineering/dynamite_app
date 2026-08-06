@@ -49,7 +49,6 @@ abstract interface class GraphDataSource {
   /// [dataGeneration]. Static sources return a constant.
   int get calibrationVersion;
 
-  /// Notifies listeners when the underlying data changes.
   Listenable get repaint;
 
   /// Monotonic identity of the data stream backing this source: bumped when

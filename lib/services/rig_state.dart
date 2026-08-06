@@ -241,7 +241,8 @@ class RigState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Empty slot [i].
+  /// Empty slot [i]. Not recorded in history (contrast [setSlot]): an
+  /// emptied slot is not a reusable "last seen" value.
   void clearSlot(int i) {
     final p = _ensurePending();
     p.edited = p.edited.withSlot(i, null);
