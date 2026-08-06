@@ -56,6 +56,11 @@ BtStatusVisual btStatusVisual({
         // GATT link is up but MTU negotiation / service discovery is still
         // in progress. Not usable yet.
         return (Icons.bluetooth_searching, active, 'Setting up…');
+      case BtLinkState.readingConstants:
+        // Services are discovered; the board constants (ADC config readback
+        // + the connect-time flash read) are still coming in. Not usable
+        // yet.
+        return (Icons.bluetooth_searching, active, 'Reading board constants…');
       case BtLinkState.subscribing:
         // Services are discovered; the ADC feed subscription (calibration
         // read + enabling notifications) is still in progress. Not usable

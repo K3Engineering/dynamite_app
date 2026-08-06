@@ -389,6 +389,14 @@ void main() {
     test(
       'playback converts through the calibration recorded with the session',
       () async {
+        // Pro-like test chain, reproducing the app's former compiled
+        // constants.
+        const testNominals = ChannelNominals(
+          adcFsrV: 1.2,
+          afeGain: 101,
+          pgaGain: 1,
+          excitationV: 4.53,
+        );
         final hub = DataHub();
         final sp = ladderSetpointsMvV(nominalLadderResistors);
         // ch0 measures at half the nominal span; other channels nominal.
@@ -397,12 +405,13 @@ void main() {
             channels: [
               ChannelBoardCalibration(
                 readings: [
-                  for (final d in sp) 500 + 0.5 * nominalCountsPerMvV * d,
+                  for (final d in sp) 500 + 0.5 * testNominals.countsPerMvV * d,
                 ],
+                nominals: testNominals,
               ),
-              ChannelBoardCalibration(),
-              ChannelBoardCalibration(),
-              ChannelBoardCalibration(),
+              ChannelBoardCalibration(nominals: testNominals),
+              ChannelBoardCalibration(nominals: testNominals),
+              ChannelBoardCalibration(nominals: testNominals),
             ],
           ),
         );
@@ -435,9 +444,15 @@ void main() {
         // Board snapshot: ch0 at 0.5x nominal span.
         expect(
           loaded.calibrationFor(0).board.spanCountsPerMvV,
-          closeTo(0.5 * nominalCountsPerMvV, 1e-3),
+          closeTo(0.5 * testNominals.countsPerMvV, 1e-3),
         );
         expect(loaded.calibrationFor(0).board.isFactoryCalibrated, isTrue);
+        // The resolved nominals rode along in the snapshot.
+        expect(loaded.calibrationFor(0).board.nominals, isNotNull);
+        expect(
+          loaded.calibrationFor(0).board.nominals!.countsPerMvV,
+          closeTo(testNominals.countsPerMvV, 1e-12),
+        );
         // Load cell snapshot round-trips with its exact sensitivity.
         final cell = loaded.calibrationFor(0).loadCell!;
         expect(cell.name, 'Ref');
@@ -446,7 +461,7 @@ void main() {
         final kgf = DisplayUnit.kgf.converterFor(loaded.calibrationFor(0), 0)!;
         expect(
           kgf(1000),
-          closeTo(1000 / (0.5 * nominalCountsPerMvV) * (100 / 2.02), 1e-9),
+          closeTo(1000 / (0.5 * testNominals.countsPerMvV) * (100 / 2.02), 1e-9),
         );
         // ch1 had no load cell assigned at recording time.
         expect(

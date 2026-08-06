@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/data_hub.dart';
@@ -189,6 +190,7 @@ void main() {
     test('a calibration document populates the hub board calibration', () {
       decoder.onCalibrationPacket(
         Uint8List.fromList(utf8.encode(demoBoardCalibrationDoc)),
+        const [1, 1, 1, 1],
       );
       final board = hub.boardCalibration;
       expect(board, isNotNull);
@@ -197,17 +199,23 @@ void main() {
       expect(board.channels[2].offsetCounts, closeTo(1502.8, 1e-9));
       expect(board.factoryDate, '2026-07-20');
       expect(board.excitationMv, closeTo(4530.24, 1e-9));
+      // The demo doc carries board constants: the verdict is ok.
+      expect(board.constantsStatus, BoardDataStatus.ok);
+      expect(board.channels[0].nominals, isNotNull);
     });
 
     test('a garbage read degrades to nominal without throwing', () {
       // Not valid UTF-8, let alone a calibration document.
       decoder.onCalibrationPacket(
         Uint8List.fromList(const [0x00, 0x9F, 0x92, 0x96, 0xFF]),
+        const [1, 1, 1, 1],
       );
       expect(
         hub.boardCalibration!.channels.every((c) => !c.isFactoryCalibrated),
         isTrue,
       );
+      // No constants keys in the garbage: unprovisioned, raw-only.
+      expect(hub.boardDataStatus, BoardDataStatus.unprovisioned);
     });
   });
 }

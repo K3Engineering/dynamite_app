@@ -21,9 +21,17 @@ void main() {
   const generator = 'dynamite-flutter 1.0.0';
   final recordedAt = DateTime.utc(2026, 7, 29, 14, 5, 32);
 
+  /// Pro-like test chain, reproducing the app's former compiled constants.
+  const testNominals = ChannelNominals(
+    adcFsrV: 1.2,
+    afeGain: 101,
+    pgaGain: 1,
+    excitationV: 4.53,
+  );
+
   List<ChannelCalibration> nominalCals() => [
     for (int ch = 0; ch < channels; ch++)
-      ChannelCalibration(board: ChannelBoardCalibration()),
+      ChannelCalibration(board: ChannelBoardCalibration(nominals: testNominals)),
   ];
 
   SessionData makeSession(
@@ -87,6 +95,7 @@ void main() {
       final boardCal = ChannelBoardCalibration(
         resistors: const [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
         readings: const [6383553.0, 3192096.0, 120.0, -3191776.0, -6383313.0],
+        nominals: testNominals,
       );
       final cals = [
         ChannelCalibration(
@@ -97,7 +106,7 @@ void main() {
             sensitivityMvV: 2.007,
           ),
         ),
-        ChannelCalibration(board: ChannelBoardCalibration()),
+        ChannelCalibration(board: ChannelBoardCalibration(nominals: testNominals)),
       ];
       final data = makeSession(
         [
@@ -142,6 +151,8 @@ void main() {
             'board_cal': {
               'r': [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
               'raw': [6383553.0, 3192096.0, 120.0, -3191776.0, -6383313.0],
+              // The resolved nominals rode along in the session snapshot.
+              'n': {'fsr': 1.2, 'afe': 101.0, 'pga': 1.0, 'exc': 4.53},
             },
           },
           // Uncalibrated, cell-less channel: the honesty markers are null.
@@ -215,8 +226,11 @@ void main() {
       () {
         final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
         final cals = [
-          ChannelCalibration(board: ChannelBoardCalibration(), loadCell: cell),
-          ChannelCalibration(board: ChannelBoardCalibration()),
+          ChannelCalibration(
+            board: ChannelBoardCalibration(nominals: testNominals),
+            loadCell: cell,
+          ),
+          ChannelCalibration(board: ChannelBoardCalibration(nominals: testNominals)),
         ];
         final data = makeSession(
           [
@@ -295,7 +309,7 @@ void main() {
   group('column precision (spec worked example: 100 kg / 2 mV/V cell, '
       'nominal chain)', () {
     final cal = ChannelCalibration(
-      board: ChannelBoardCalibration(),
+      board: ChannelBoardCalibration(nominals: testNominals),
       loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0),
     );
 
@@ -320,7 +334,7 @@ void main() {
         'column)', () {
       expect(
         DisplayUnit.kgf.exportDecimalsFor(
-          ChannelCalibration(board: ChannelBoardCalibration()),
+          ChannelCalibration(board: ChannelBoardCalibration(nominals: testNominals)),
         ),
         isNull,
       );

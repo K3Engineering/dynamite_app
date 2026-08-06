@@ -51,6 +51,7 @@ class BoardCalibrationSection extends StatelessWidget {
     final calibrated = board.channels
         .where((c) => c.isFactoryCalibrated)
         .length;
+    final nominals = board.nominals;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -63,6 +64,25 @@ class BoardCalibrationSection extends StatelessWidget {
                     ' · $calibrated of ${board.channels.length} channels',
           style: Theme.of(context).textTheme.bodySmall,
         ),
+        // The resolved conversion chain and its provenance (the flash
+        // values' tags), or the verdict when it never resolved.
+        if (nominals != null)
+          Text(
+            'Chain: FSR ${nominals.adcFsrV} V'
+            ' · AFE ${nominals.afeGain}×'
+            ' · PGA ${nominals.pgaGains.map((g) => '$g×').join('/')}'
+            ' · EXC ${nominals.excitationV} V'
+            '${nominals.provenance.isEmpty ? '' : ' (${nominals.provenance.values.toSet().join(', ')})'}',
+            style: Theme.of(context).textTheme.bodySmall,
+          )
+        else
+          Text(
+            '${board.constantsStatus.notice(board.constantsDetail)}'
+            ' — raw counts only.',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.error,
+            ),
+          ),
         if (board.excitationMv != null)
           Text(
             'Factory excitation measurement: ${board.excitationMv} mV',
@@ -102,13 +122,17 @@ class _ChannelCalTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _row('Source', calibrated ? 'Factory' : 'Nominal fallback'),
+                _row(
+                  'Source',
+                  calibrated
+                      ? 'Factory'
+                      : channel.nominals != null
+                      ? 'Nominal fallback'
+                      : 'Unavailable (no board constants)',
+                ),
                 _row('Span', '${_span(channel)} Mcounts/(mV/V)'),
                 _row('Offset', '${_offset(channel)} counts'),
-                _row(
-                  'Effective excitation',
-                  '${channel.effectiveExcitationV.toStringAsFixed(4)} V',
-                ),
+                _row('Effective excitation', _exc(channel)),
                 if (calibrated) ...[
                   _row(
                     'Nonlinearity +FS',
@@ -152,8 +176,15 @@ class _ChannelCalTile extends StatelessWidget {
     );
   }
 
-  static String _span(ChannelBoardCalibration ch) =>
-      (ch.spanCountsPerMvV / 1e6).toStringAsFixed(6);
+  static String _span(ChannelBoardCalibration ch) {
+    final span = ch.spanCountsPerMvV;
+    return span == null ? '—' : (span / 1e6).toStringAsFixed(6);
+  }
+
+  static String _exc(ChannelBoardCalibration ch) {
+    final exc = ch.effectiveExcitationV;
+    return exc == null ? '—' : '${exc.toStringAsFixed(4)} V';
+  }
 
   static String _offset(ChannelBoardCalibration ch) {
     final o = ch.offsetCounts;

@@ -375,6 +375,11 @@ class MockBlePlatform extends UniversalBlePlatform {
     if (service == btSvcDeviceInfo && disValue != null) {
       return Uint8List.fromList(utf8.encode(disValue));
     }
+    if (characteristic == btChrAdcConfig) {
+      // The ADC config snapshot: struct version 1, zeroed registers, GAIN =
+      // 0x0000 (PGA 1x on all four channels — the mock is Pro-like).
+      return Uint8List(11)..[0] = 1;
+    }
     await Future<void>.delayed(netDelay);
     return Uint8List(255);
   }
@@ -544,6 +549,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     if (deviceId == '2') {
       return ([
         BleCharacteristic(btChrAdcFeedId, [CharacteristicProperty.notify], []),
+        BleCharacteristic(btChrAdcConfig, [CharacteristicProperty.read], []),
         BleCharacteristic('c1234567', [CharacteristicProperty.notify], []),
         BleCharacteristic('a7654321', [CharacteristicProperty.read], []),
       ]);

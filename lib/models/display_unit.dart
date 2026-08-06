@@ -2,11 +2,9 @@ import 'dart:math' as math;
 
 import 'calibration.dart';
 
-/// Hardware AFE constants ([adcFullScaleV], [frontEndGain],
-/// [adcCountsPerPolarity], [rawToMvMultiplier]) live in
-/// models/calibration.dart — re-exported so existing importers keep working.
-export 'calibration.dart'
-    show adcFullScaleV, frontEndGain, adcCountsPerPolarity, rawToMvMultiplier;
+/// [adcCountsPerPolarity] lives in models/calibration.dart — re-exported so
+/// existing importers keep working.
+export 'calibration.dart' show adcCountsPerPolarity;
 
 /// One rung of a unit's SI-prefix axis ladder: [factor] base units equal one
 /// rung unit (1e-3 mV per µV, 1e3 kgf per tf); [symbol] is the axis-label
@@ -143,11 +141,13 @@ enum DisplayUnit {
   /// fixed-point quantum (see [exportDecimalsFor]) and the derivative path's
   /// per-count scale (see [diffConverterFor]). Raw bypasses the board map,
   /// so its quantum is exactly 1 count. Null exactly when [converterFor] is
-  /// (a force unit with no load cell assigned).
+  /// (a force unit with no load cell assigned, or no resolved board
+  /// constants).
   double? countQuantumFor(ChannelCalibration channel) {
     if (this == DisplayUnit.raw) return 1.0;
     final scale = _scalePerMvV(channel);
-    return scale == null ? null : scale / channel.board.spanCountsPerMvV;
+    final span = channel.board.spanCountsPerMvV;
+    return scale == null || span == null ? null : scale / span;
   }
 
   /// Fixed-point decimals for this unit on [channel] in a dynamite-csv file
@@ -174,9 +174,12 @@ enum DisplayUnit {
   /// The multiplier applied to net mV/V for this unit on [channel]: force
   /// units fold in the cell's kgf-per-mV/V, mV folds in the board's
   /// effective excitation, mV/V is unity. Null when the unit is unavailable
-  /// on the channel (a force unit with no load cell assigned). Raw counts
-  /// bypass the board map entirely and never consult this.
+  /// on the channel: a force unit with no load cell assigned, or ANY unit
+  /// when the board's constants never resolved (raw counts only — see
+  /// [BoardDataStatus]). Raw counts bypass the board map entirely and never
+  /// consult this.
   double? _scalePerMvV(ChannelCalibration channel) {
+    if (channel.board.nominals == null) return null;
     final f = kgfFactor;
     if (f != null) {
       final cell = channel.loadCell;

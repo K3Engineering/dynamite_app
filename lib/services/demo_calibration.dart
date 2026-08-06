@@ -12,6 +12,9 @@ const String demoBoardCalibrationDoc = '''
 K3CAL1
 cal.date=2026-07-20
 cal.exc.mv=4530.24
+adc_fsr=1.2,nominal
+exc=4.53,nominal
+afe_gain=101,nominal
 ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4
 ch0.raw=6386310.2,3193480.0,845.2,-3191769.6,-6384619.8
 ch1.r=9999.2,9.9994,10.0006,10.0001,9.9997,10000.6

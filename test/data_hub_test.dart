@@ -12,6 +12,22 @@ import 'package:dynamite_app/services/demo_calibration.dart';
 void main() {
   const int channels = DataHub.numAdcChannels;
 
+  /// Pro-like test chain, reproducing the app's former compiled constants.
+  const testNominals = ChannelNominals(
+    adcFsrV: 1.2,
+    afeGain: 101,
+    pgaGain: 1,
+    excitationV: 4.53,
+  );
+
+  /// A board whose channels all convert through the nominal chain.
+  BoardCalibration nominalBoard() => BoardCalibration(
+    channels: [
+      for (int i = 0; i < channels; ++i)
+        ChannelBoardCalibration(nominals: testNominals),
+    ],
+  );
+
   Int32List frameOf(int value) =>
       Int32List(channels)..fillRange(0, channels, value);
 
@@ -224,7 +240,7 @@ void main() {
 
   group('calibration', () {
     test('force units are unavailable until a load cell is assigned', () {
-      final hub = DataHub();
+      final hub = DataHub()..updateBoardCalibration(nominalBoard());
       feed(hub, frameOf(1000), 5);
 
       expect(hub.currentValue(0, DisplayUnit.kgf), isNull);
@@ -236,8 +252,19 @@ void main() {
       expect(hub.currentDerivative(0, DisplayUnit.mVv), isNotNull);
     });
 
-    test('assigning a load cell enables force units and bumps the version', () {
+    test('no board constants at all: only raw converts', () {
       final hub = DataHub();
+      feed(hub, frameOf(1000), 5);
+
+      expect(hub.boardDataStatus, BoardDataStatus.unreadable);
+      expect(hub.currentValue(0, DisplayUnit.raw), isNotNull);
+      expect(hub.currentValue(0, DisplayUnit.mVv), isNull);
+      expect(hub.currentValue(0, DisplayUnit.mV), isNull);
+      expect(hub.currentValue(0, DisplayUnit.kgf), isNull);
+    });
+
+    test('assigning a load cell enables force units and bumps the version', () {
+      final hub = DataHub()..updateBoardCalibration(nominalBoard());
       final v0 = hub.calibrationVersion;
       feed(hub, frameOf(1000), 5);
 
@@ -249,10 +276,10 @@ void main() {
       ]);
 
       expect(hub.calibrationVersion, greaterThan(v0));
-      // Nominal board: kgf = (raw - tare) / nominalCountsPerMvV * (200/2).
+      // Nominal board: kgf = (raw - tare) / countsPerMvV * (200/2).
       expect(
         hub.currentValue(0, DisplayUnit.kgf),
-        closeTo(1000 / nominalCountsPerMvV * 100, 1e-12),
+        closeTo(1000 / testNominals.countsPerMvV * 100, 1e-12),
       );
       expect(hub.currentValue(1, DisplayUnit.kgf), isNull); // unassigned
     });
@@ -265,11 +292,14 @@ void main() {
       final board = BoardCalibration(
         channels: [
           ChannelBoardCalibration(
-            readings: [for (final d in sp) 500 + 0.5 * nominalCountsPerMvV * d],
+            readings: [
+              for (final d in sp) 500 + 0.5 * testNominals.countsPerMvV * d,
+            ],
+            nominals: testNominals,
           ),
-          ChannelBoardCalibration(),
-          ChannelBoardCalibration(),
-          ChannelBoardCalibration(),
+          ChannelBoardCalibration(nominals: testNominals),
+          ChannelBoardCalibration(nominals: testNominals),
+          ChannelBoardCalibration(nominals: testNominals),
         ],
       );
 
@@ -279,11 +309,11 @@ void main() {
       feed(hub, frameOf(1000), 5);
       expect(
         hub.currentValue(0, DisplayUnit.mVv),
-        closeTo(1000 / (0.5 * nominalCountsPerMvV), 1e-12),
+        closeTo(1000 / (0.5 * testNominals.countsPerMvV), 1e-12),
       );
       expect(
         hub.currentValue(1, DisplayUnit.mVv),
-        closeTo(1000 / nominalCountsPerMvV, 1e-12),
+        closeTo(1000 / testNominals.countsPerMvV, 1e-12),
       );
     });
 

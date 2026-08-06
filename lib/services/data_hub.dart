@@ -101,15 +101,25 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// by [AdcPacketDecoder.onCalibrationPacket]). Null until the first
   /// successful read of this run: "no device data" must be representable —
   /// defaulting to nominal values would let the UI present numbers no
-  /// hardware ever produced. Conversion math ([calibrationFor]) falls back
-  /// to the per-channel nominal chain on its own, so raw samples always
-  /// convert through SOMETHING (the documented pre-calibration behavior).
+  /// hardware ever produced. Conversions require the resolved board
+  /// constants ([boardDataStatus]); without them every unit but raw reports
+  /// unavailable.
   ///
   /// The UI never reads this: the settings page shows the flash-document
   /// owner's copy (`RigState.boardCalibrationFor`), which carries the
   /// device identity. This field describes the samples the hub holds.
   BoardCalibration? get boardCalibration => _boardCalibration;
   BoardCalibration? _boardCalibration;
+
+  /// The board-data verdict for the live UI's raw-only notice: the parsed
+  /// document's verdict, or [BoardDataStatus.unreadable] before any
+  /// successful read (a failed connect-time read never delivers a document,
+  /// so absence IS the unreadable verdict).
+  BoardDataStatus get boardDataStatus =>
+      _boardCalibration?.constantsStatus ?? BoardDataStatus.unreadable;
+
+  /// Human-readable reason behind [boardDataStatus] when not ok.
+  String get boardDataDetail => _boardCalibration?.constantsDetail ?? '';
 
   /// Load cell converting each channel (null = unassigned, electrical units
   /// only). Owned by `RigState` (device slots, including unsaved edits);
@@ -401,9 +411,9 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
 
   @override
   ChannelCalibration calibrationFor(int channelIndex) => ChannelCalibration(
-    // Per-channel nominal fallback: an uncalibrated (or not-yet-read) board
-    // converts through the nominal chain, exactly the pre-calibration
-    // behavior — see [boardCalibration].
+    // A missing/never-read board leaves the channel with no calibration and
+    // no nominals: electrical and force units report unavailable and only
+    // raw counts convert — see [boardDataStatus].
     board:
         _boardCalibration?.channels[channelIndex] ?? ChannelBoardCalibration(),
     loadCell: _loadCells[channelIndex],

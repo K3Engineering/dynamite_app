@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'app_events.dart';
+import 'adc_protocol.dart';
 import 'bt_device_config.dart';
 import 'demo_calibration.dart';
 import 'demo_signal_source.dart';
@@ -27,13 +28,22 @@ enum BtLinkState {
   connecting,
 
   /// The GATT link is up but post-connect setup is still running the first of
-  /// its two stages: MTU negotiation (native only) and service discovery. NOT
-  /// yet usable — no data is flowing. The UI shows "Setting up…" here.
+  /// its three stages: MTU negotiation (native only) and service discovery.
+  /// NOT yet usable — no data is flowing. The UI shows "Setting up…" here.
   connected,
 
-  /// Post-connect setup's second stage: services are discovered and the ADC
-  /// feed subscription (calibration read + enabling notifications) is in
-  /// progress. Still NOT usable. The UI shows "Starting data stream…" here.
+  /// Post-connect setup's second stage: services are discovered; the board
+  /// constants (device identity, the ADC's config/GAIN readback, and the
+  /// connect-time flash document read over KVS) are being read. Still NOT
+  /// usable. The UI shows "Reading board constants…" here. This stage gates
+  /// on the reads COMPLETING, never on their content: a board with missing
+  /// or invalid constants still advances (the live UI degrades to raw
+  /// counts there — refusing the link would hide even those).
+  readingConstants,
+
+  /// Post-connect setup's third stage: the board constants are in and the
+  /// ADC feed subscription (enabling notifications) is in progress. Still
+  /// NOT usable. The UI shows "Starting data stream…" here.
   /// The link advances to [streaming] only once the subscription succeeds, or
   /// is torn down on failure.
   subscribing,
@@ -105,10 +115,12 @@ class DeviceLink {
   bool get isConnecting => state == BtLinkState.connecting;
 
   /// The GATT link is up. True for the whole post-connect setup window
-  /// ([BtLinkState.connected], [BtLinkState.subscribing]) and the usable
-  /// ([streaming]) state — use [isStreaming] for "usable".
+  /// ([BtLinkState.connected], [BtLinkState.readingConstants],
+  /// [BtLinkState.subscribing]) and the usable ([streaming]) state — use
+  /// [isStreaming] for "usable".
   bool get isLinkUp =>
       state == BtLinkState.connected ||
+      state == BtLinkState.readingConstants ||
       state == BtLinkState.subscribing ||
       state == BtLinkState.streaming;
 
@@ -432,9 +444,10 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   void Function(Uint8List data)? onAdcData;
 
   /// The flash document (board calibration + load cell slots), reassembled
-  /// from the device KVS once during post-connect setup. Wired to
-  /// [AdcPacketDecoder.onCalibrationPacket] at app startup.
-  void Function(Uint8List data)? onCalibrationData;
+  /// from the device KVS once during post-connect setup, plus the ADC's
+  /// per-channel PGA gains read back just before (null when that read
+  /// failed). Wired to [AdcPacketDecoder.onCalibrationPacket] at app startup.
+  void Function(Uint8List data, List<double>? adcGains)? onCalibrationData;
 
   /// One-shot user notices ([BleDisconnectTimeout], [BleConnectionFailed])
   /// go here; the shell shows them regardless of which tab is mounted.
@@ -453,6 +466,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// device lock.
   KvsClient? _kvsClient;
   KvsFlashTransport? _kvsTransport;
+
+  /// The ADC's per-channel PGA gains as read back during the "Reading board
+  /// constants…" stage (null until read, or when the read failed). Handed to
+  /// the protocol layer with the flash document (see [onCalibrationData]).
+  List<double>? _adcGains;
 
   // -- RigFlashTransport ------------------------------------------------------
 
@@ -794,6 +812,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _kvsClient?.abort();
     _kvsClient = null;
     _kvsTransport = null;
+    _adcGains = null;
     _stopRssiPolling();
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
@@ -999,15 +1018,21 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       bool subscribed = false;
       for (final srv in discovered) {
         if (srv.uuid == btServiceId) {
-          // Discovery done; the KVS channel and the ADC feed subscription
-          // are the "Starting data stream…" stage.
-          _link.state = BtLinkState.subscribing;
+          // Discovery done; the board constants (ADC config readback + the
+          // connect-time flash read) are the "Reading board constants…"
+          // stage. The KVS channel comes up BEFORE the ADC feed
+          // subscription: firmware locks the KVS while the feed holds the
+          // device lock, so the flash read must happen first.
+          _link.state = BtLinkState.readingConstants;
           notifyListeners();
-          // The KVS channel comes up BEFORE the ADC feed subscription:
-          // firmware locks the KVS while the feed holds the device lock,
-          // so the connect-time flash read must happen first.
+          _adcGains = await _readAdcConfigGains(deviceId);
+          if (!token.isCurrent) return;
           await _setupKvs(token, deviceId);
           if (!token.isCurrent) return;
+          // Constants in; the ADC feed subscription is the "Starting data
+          // stream…" stage.
+          _link.state = BtLinkState.subscribing;
+          notifyListeners();
           subscribed = await _subscribeToAdcFeed(srv);
           if (!token.isCurrent) return;
           break;
@@ -1095,8 +1120,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
     // The demo device is factory-calibrated: serve its flash doc through the
     // same path a real device's calibration read would take. The doc is
-    // mutable (see [_demoFlashDoc]) so "Save to device" round-trips.
-    onCalibrationData?.call(Uint8List.fromList(utf8.encode(_demoFlashDoc)));
+    // mutable (see [_demoFlashDoc]) so "Save to device" round-trips. The demo
+    // chain is Pro-like (AFE 101x, PGA 1x on every channel).
+    onCalibrationData?.call(
+      Uint8List.fromList(utf8.encode(_demoFlashDoc)),
+      const [1, 1, 1, 1],
+    );
 
     _demoSource ??= DemoSignalSource();
     _demoSource?.start((data) {
@@ -1289,6 +1318,29 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     );
   }
 
+  /// Read the ADC config characteristic and parse the per-channel PGA gains
+  /// from its GAIN register readback. One retry on failure (a transient BLE
+  /// hiccup is not a broken board); null when both attempts fail — the flash
+  /// read then resolves the constants without them and the board degrades
+  /// to raw counts, which is exactly what an unreadable chain should do.
+  Future<List<double>?> _readAdcConfigGains(String deviceId) async {
+    for (var attempt = 0; attempt < 2; ++attempt) {
+      try {
+        final bytes = await UniversalBle.read(
+          deviceId,
+          btServiceId,
+          btChrAdcConfig,
+        );
+        final gains = parseAdcConfigPgaGains(bytes);
+        if (gains != null) return gains;
+        debugPrint('ADC config parse failed for $deviceId: ${bytes.length} B');
+      } catch (e) {
+        debugPrint('ADC config read failed for $deviceId (try $attempt): $e');
+      }
+    }
+    return null;
+  }
+
   /// Bring up the KVS channel: subscribe to its notifications, then run the
   /// connect-time flash document read. Best-effort by design — a failed
   /// subscription or read must not fail the whole connection: the app runs
@@ -1316,7 +1368,10 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       final doc = await transport.readFlashDoc();
       if (!token.isCurrent) return;
       if (doc == null) throw StateError('KVS flash read failed');
-      onCalibrationData?.call(Uint8List.fromList(utf8.encode(doc)));
+      onCalibrationData?.call(
+        Uint8List.fromList(utf8.encode(doc)),
+        _adcGains,
+      );
     } catch (e) {
       if (!token.isCurrent) return;
       debugPrint('KVS flash read failed for $deviceId: $e');
