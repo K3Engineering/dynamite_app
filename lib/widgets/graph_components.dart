@@ -1803,28 +1803,48 @@ class _LabelCache {
 }
 
 // ---------------------------------------------------------------------------
-// Compute nice Y-axis range for data that spans [dataMin, dataMax] in display units.
-// Returns (yMin, yMax, tickDelta) where yMin <= 0 <= yMax (if data crosses zero)
-// and tickDelta is the spacing between major ticks.
+// Compute nice Y-axis range for data that spans [dataMin, dataMax] in [unit]'s
+// base display units. Ticks and the snapped range stay in the base unit (so
+// the data pipeline and segment cache never see a rescale); only the LABELS
+// render through the unit's SI-prefix rung ([YAxisRange.rung], picked from the
+// snapped range's magnitude) with [YAxisRange.decimals] digits, so windows at
+// the noise floor read in nV/gf/mN instead of long decimals.
 // ---------------------------------------------------------------------------
 
-typedef YAxisRange = ({double yMin, double yMax, double tickDelta});
+typedef YAxisRange = ({
+  double yMin,
+  double yMax,
+  double tickDelta,
 
-YAxisRange _computeYRange(double dataMin, double dataMax) {
-  // Ensure some minimum range to avoid degenerate axes
-  if (dataMax - dataMin < 0.001) {
-    dataMax = dataMin + 1.0;
-  }
+  /// SI-prefix rung the tick labels are rendered in (ticks / factor + symbol).
+  AxisRung rung,
 
-  // Pick a nice 1/2/5 tick delta aiming for ~5 ticks, with a floor so labels
-  // stay within 3 decimals.
-  final tickDelta = math.max(0.001, _niceNum((dataMax - dataMin) / 5));
+  /// Label decimals: exactly enough to resolve the tick step in rung units.
+  int decimals,
+});
+
+YAxisRange _computeYRange(double dataMin, double dataMax, DisplayUnit unit) {
+  // Guard the exactly-degenerate span (a no-data derivative fold). Any
+  // nonzero span passes through without a magnitude floor: the rung, not a
+  // unit-domain minimum span, keeps tiny-window labels readable.
+  if (dataMax <= dataMin) dataMax = dataMin + 1.0;
+
+  // 1/2/5 tick delta aiming for ~5 ticks, at whatever decade the span lands.
+  final tickDelta = _niceNum((dataMax - dataMin) / 5);
 
   // Snap yMin and yMax to tick boundaries
   final yMin = (dataMin / tickDelta).floor() * tickDelta;
   final yMax = (dataMax / tickDelta).ceil() * tickDelta;
 
-  return (yMin: yMin, yMax: yMax, tickDelta: tickDelta);
+  final rung = unit.axisRung(math.max(yMin.abs(), yMax.abs()));
+  final decimals = DisplayUnit.axisDecimalsFor(tickDelta / rung.factor);
+  return (
+    yMin: yMin,
+    yMax: yMax,
+    tickDelta: tickDelta,
+    rung: rung,
+    decimals: decimals,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1921,7 +1941,12 @@ void _drawValueAxis(
     if (yPos >= -1 && yPos <= graphSz.height + 1) {
       grid.moveTo(0, yPos);
       grid.lineTo(graphSz.width, yPos);
-      final par = labels.prepare(labelFor(tick), color: textColor);
+      // Snap accumulation noise at the zero tick: a tick within a billionth
+      // of the step is the zero crossing, not a "-0.000..." label.
+      final par = labels.prepare(
+        labelFor(tick.abs() < delta * 1e-9 ? 0.0 : tick),
+        color: textColor,
+      );
       canvas.drawParagraph(
         par,
         Offset(graphSz.width + 4, yPos - par.height / 2),
@@ -2615,7 +2640,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// Y-axis range (display units) for the visible window.
   YAxisRange computeYRange(int viewStart, int viewEnd);
 
-  String yTickLabel(double tick);
+  String yTickLabel(double tick, YAxisRange yRange);
 
   /// Per-channel values mixed into the segment-cache remap key; return the
   /// tares when the series depends on them. (A remap change keeps stale
@@ -2624,7 +2649,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   List<double> cacheKeyTares() => const [];
 
   /// Optional chrome drawn after the axes, before the data lines.
-  void drawOverlay(Canvas canvas, Size graphSz) {}
+  void drawOverlay(Canvas canvas, Size graphSz, YAxisRange yRange) {}
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2676,7 +2701,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       graphSz,
       yRange,
       valueToY,
-      labelFor: yTickLabel,
+      labelFor: (tick) => yTickLabel(tick, yRange),
       labels: labels,
       drawMinor: drawMinorGrid,
       textColor: colorScheme.onSurface,
@@ -2704,7 +2729,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       color: colorScheme.error,
     );
 
-    drawOverlay(canvas, graphSz);
+    drawOverlay(canvas, graphSz, yRange);
 
     // -- Data lines (segment-cached envelope) --
     final workRemains = _paintEnvelopeDataLayer(
@@ -2805,14 +2830,15 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       rawMax = 0;
     }
 
-    // Enforce a minimum visible range (noise floor) so the graph isn't
-    // degenerate: widen each channel's converted fold around the global
-    // tared-raw midpoint.
-    const double noiseFloor = 10000; // raw counts
-    if (rawMax - rawMin < noiseFloor) {
+    // Enforce a minimum visible window (in raw counts) so a flat signal
+    // gets a non-degenerate axis: widen each channel's converted fold
+    // around the global tared-raw midpoint.
+    // TODO: size this per board model once the model specs are plumbed
+    const double minWindowCounts = 10000; // raw counts
+    if (rawMax - rawMin < minWindowCounts) {
       final mid = (rawMax + rawMin) / 2;
-      final lo = mid - noiseFloor / 2;
-      final hi = mid + noiseFloor / 2;
+      final lo = mid - minWindowCounts / 2;
+      final hi = mid + minWindowCounts / 2;
       for (final MapEntry(key: ch, value: conv) in converters.entries) {
         final tare = _data.channel(ch).tare;
         yMin = math.min(yMin, conv(lo + tare));
@@ -2825,12 +2851,15 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       yMax = 1;
     }
 
-    return _computeYRange(yMin, yMax);
+    return _computeYRange(yMin, yMax, _settings.displayUnit);
   }
 
   @override
-  String yTickLabel(double tick) =>
-      _formatTickLabel(tick, _settings.displayUnit.symbol);
+  String yTickLabel(double tick, YAxisRange yRange) => _formatTickLabel(
+    tick / yRange.rung.factor,
+    yRange.rung.symbol,
+    yRange.decimals,
+  );
 }
 
 /// Derivative graph: the first difference of each channel, scaled to display
@@ -2952,17 +2981,18 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
         if (!d.isNaN) fold(d);
       }
     }
-    return _computeYRange(dMin, dMax);
+    return _computeYRange(dMin, dMax, _settings.displayUnit);
   }
 
   @override
-  String yTickLabel(double tick) => '${_formatTickValue(tick)}/s';
+  String yTickLabel(double tick, YAxisRange yRange) =>
+      '${_formatTickValue(tick / yRange.rung.factor, yRange.decimals)}/s';
 
   @override
-  void drawOverlay(Canvas canvas, Size graphSz) {
+  void drawOverlay(Canvas canvas, Size graphSz, YAxisRange yRange) {
     // "dF/dt" label in top-left
     final dLabel = labels.prepare(
-      'dF/dt (${_settings.displayUnit.symbol}/s)',
+      'dF/dt (${yRange.rung.symbol}/s)',
       color: colorScheme.onSurface.withAlpha(150),
     );
     canvas.drawParagraph(dLabel, const Offset(4, 2));
@@ -2973,19 +3003,14 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
 // Helpers
 // ---------------------------------------------------------------------------
 
-String _formatTickLabel(double value, String unitSymbol) {
-  final formatted = _formatTickValue(value);
-  return '$formatted $unitSymbol';
-}
+String _formatTickLabel(double value, String unitSymbol, int decimals) =>
+    '${_formatTickValue(value, decimals)} $unitSymbol';
 
-String _formatTickValue(double value) {
-  if (value == 0) return '0';
-  final abs = value.abs();
-  if (abs >= 100) return value.toStringAsFixed(0);
-  if (abs >= 1) return value.toStringAsFixed(1);
-  if (abs >= 0.1) return value.toStringAsFixed(2);
-  return value.toStringAsFixed(3);
-}
+/// Tick label digits, fixed at [decimals] (derived from the tick step by
+/// [DisplayUnit.axisDecimalsFor]): every label on one axis shares a width,
+/// and ticks always resolve their step.
+String _formatTickValue(double value, int decimals) =>
+    value.toStringAsFixed(decimals);
 
 /// Return a "nice" number close to [value] for axis step sizes.
 double _niceNum(double value) {
