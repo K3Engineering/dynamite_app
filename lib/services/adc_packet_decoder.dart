@@ -83,7 +83,6 @@ class AdcPacketDecoder {
         // Report the dropped range to the hub (capped inside the hub to avoid
         // OOM if the device reboots and the counter jumps).
         hub.addDroppedFrames(diff);
-        // TODO: signal lost packets to the UI?
       }
     }
     _prevSampleCount = (count + nwAdcNumSamples) & 0xFFFF;
