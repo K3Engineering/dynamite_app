@@ -18,13 +18,15 @@ import 'package:dynamite_app/services/mockble.dart';
 /// mockble_test.dart — no real time passes).
 ///
 /// Mock timing: hwDelay 200 ms (availability), netDelay 1 s (connect /
-/// discoverServices). KVS commands (subscription, flash read) and the DIS
-/// identity reads answer synchronously, so a full connect takes ~2 s:
-/// connect(1s) -> MTU (immediate) -> discoverServices(1s) -> DIS reads
-/// (instant) -> KVS (instant) -> feed subscribe.
+/// discoverServices). KVS commands (subscription, flash read), the ADC
+/// config read and the DIS identity reads answer synchronously, so a full
+/// connect takes ~2 s: connect(1s) -> MTU (immediate) -> discoverServices(1s)
+/// -> DIS reads (instant) -> ADC config + KVS (instant) -> feed subscribe.
 /// The link shows [BtLinkState.connected] ("Setting up…")
-/// through discovery and [BtLinkState.subscribing] ("Starting data stream…")
-/// from discovery's end until streaming. [BleLinkManager.disconnectTimeout]
+/// through discovery, [BtLinkState.readingConstants] ("Reading board
+/// constants…") from discovery's end until the flash read completes, and
+/// [BtLinkState.subscribing] ("Starting data stream…") for the feed
+/// subscription. [BleLinkManager.disconnectTimeout]
 /// is 2500 ms, [BleLinkManager.connectTimeout] is 5 s (the mock's
 /// slowConnect is 20 s).
 ///
@@ -52,7 +54,8 @@ void main() {
     final seen = <AppEvent>[];
     final sub = events.stream.listen(seen.add);
     addTearDown(() => unawaited(sub.cancel()));
-    final link = BleLinkManager(events: events)..onCalibrationData = (_) {};
+    final link = BleLinkManager(events: events)
+      ..onCalibrationData = (_, _) {};
     return (link, seen);
   }
 
@@ -208,16 +211,16 @@ void main() {
 
   test('disconnecting mid stream-start tears down silently', () {
     fakeAsync((async) {
-      // Hold the "Starting data stream…" window open: the connect-time KVS
-      // flash read takes ~1s per command.
+      // Hold the "Reading board constants…" window open: the connect-time
+      // KVS flash read takes ~1s per command.
       MockBlePlatform.instance.kvsCommandDelay = const Duration(seconds: 1);
       final (link, seen) = wire();
 
       unawaited(link.connectToDevice(deviceId));
       // After 2.5 s the GATT link is up, discovery is done, and the KVS
-      // flash read is still running: the "Starting data stream…" window.
+      // flash read is still running: the "Reading board constants…" window.
       async.elapse(const Duration(milliseconds: 2500));
-      expect(link.link.state, BtLinkState.subscribing);
+      expect(link.link.state, BtLinkState.readingConstants);
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(seconds: 4));
@@ -714,7 +717,7 @@ void main() {
       final (link, seen) = wire();
       settleStartup(async);
       String? doc;
-      link.onCalibrationData = (data) => doc = utf8.decode(data);
+      link.onCalibrationData = (data, gains) => doc = utf8.decode(data);
 
       unawaited(link.connectToDemoDevice());
       expect(doc, demoBoardCalibrationDoc);

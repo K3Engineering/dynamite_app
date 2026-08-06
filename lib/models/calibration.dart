@@ -1,27 +1,203 @@
 import '../services/adc_protocol.dart';
 
-/// Analog front-end constants (fixed by hardware): the load cell signal
-/// passes a 101x gain stage into a 24-bit bipolar ADC with a 1.2V full-scale
-/// reference. The calibration layers built on top (board, load cell) live in
-/// this file.
-const double adcFullScaleV = 1.2;
-const double frontEndGain = 101.0;
-const int adcCountsPerPolarity = 1 << 23; // 24-bit bipolar: 2^23 per side
+/// ADC counts per polarity (24-bit bipolar: 2^23 per side). Protocol-level:
+/// the sample format, not a conversion nominal.
+const int adcCountsPerPolarity = 1 << 23;
 
-/// mV at the load cell output per ADC count (nominal chain).
-const double rawToMvMultiplier =
-    adcFullScaleV / adcCountsPerPolarity / frontEndGain * 1000.0;
+// ---------------------------------------------------------------------------
+// Board constants (analog chain), resolved from the device
+// ---------------------------------------------------------------------------
 
-/// ADC counts per mV at the load cell output (nominal chain).
-const double countsPerMvAtCellOutput = 1.0 / rawToMvMultiplier;
+/// The analog-chain constants converting one channel's raw counts: ADC
+/// full-scale reference, AFE gain, the ADC's PGA gain, excitation voltage.
+/// Resolved from the device at connect time (flash keys + ADC register
+/// readback) — the app carries NO compiled defaults: a board without this
+/// data shows raw counts only (see [BoardDataStatus]).
+class ChannelNominals {
+  const ChannelNominals({
+    required this.adcFsrV,
+    required this.afeGain,
+    required this.pgaGain,
+    required this.excitationV,
+  });
 
-/// Nominal excitation voltage, assumed when no better information exists
-/// (a channel without factory calibration, or a blank flash).
-const double nominalExcitationV = 4.53;
+  /// ADC full-scale reference voltage (flash `adc_fsr`).
+  final double adcFsrV;
 
-/// Nominal ADC counts per mV/V of load cell output: 1 mV/V under
-/// [nominalExcitationV] is 4.53 mV at the cell output.
-const double nominalCountsPerMvV = countsPerMvAtCellOutput * nominalExcitationV;
+  /// Analog front-end gain ahead of the ADC (flash `afe_gain`).
+  final double afeGain;
+
+  /// The ADC's PGA gain for this channel (GAIN register readback).
+  final double pgaGain;
+
+  /// Excitation voltage (flash `exc`).
+  final double excitationV;
+
+  /// ADC counts per mV at the load cell output.
+  double get countsPerMvAtCellOutput =>
+      adcCountsPerPolarity * afeGain * pgaGain / (adcFsrV * 1000.0);
+
+  /// ADC counts per mV/V of load cell output.
+  double get countsPerMvV => countsPerMvAtCellOutput * excitationV;
+
+  Map<String, dynamic> toJson() => {
+    'fsr': adcFsrV,
+    'afe': afeGain,
+    'pga': pgaGain,
+    'exc': excitationV,
+  };
+
+  /// Tolerant inverse of [toJson]: any missing/malformed/non-positive field
+  /// degrades the whole chain to null (raw-only), never a partial chain.
+  static ChannelNominals? fromJson(Map<String, dynamic> json) {
+    double? pos(Object? v) => v is num && v > 0 ? v.toDouble() : null;
+    final fsr = pos(json['fsr']);
+    final afe = pos(json['afe']);
+    final pga = pos(json['pga']);
+    final exc = pos(json['exc']);
+    if (fsr == null || afe == null || pga == null || exc == null) return null;
+    return ChannelNominals(
+      adcFsrV: fsr,
+      afeGain: afe,
+      pgaGain: pga,
+      excitationV: exc,
+    );
+  }
+}
+
+/// The board-data verdict driving the raw-only degradation and its message.
+enum BoardDataStatus {
+  /// Constants resolved; electrical (and force) units convert.
+  ok,
+
+  /// No board constants in flash: the unit was never provisioned.
+  unprovisioned,
+
+  /// Some constants present but missing/malformed: a bad provisioning.
+  invalid,
+
+  /// The constants could not be read at all (transport failure).
+  unreadable,
+}
+
+/// User-facing phrases for the raw-only notice ("… — raw counts only").
+extension BoardDataStatusText on BoardDataStatus {
+  String notice(String detail) => switch (this) {
+    BoardDataStatus.ok => '',
+    BoardDataStatus.unprovisioned => 'no board data — unit not provisioned',
+    BoardDataStatus.invalid =>
+      'board data invalid${detail.isEmpty ? '' : ' ($detail)'}',
+    BoardDataStatus.unreadable =>
+      'board data not read${detail.isEmpty ? '' : ' ($detail)'}',
+  };
+}
+
+/// Board-level analog constants: the shared chain values, the per-channel
+/// PGA gains, and the provenance tags carried by the flash values
+/// (e.g. `"4.53,nominal"`).
+class BoardNominals {
+  BoardNominals({
+    required this.adcFsrV,
+    required this.afeGain,
+    required this.excitationV,
+    required this.pgaGains,
+    this.provenance = const {},
+  }) : assert(pgaGains.length == nwNumAdcChan);
+
+  final double adcFsrV;
+  final double afeGain;
+  final double excitationV;
+
+  /// Per-channel PGA gains from the ADC's GAIN register readback.
+  final List<double> pgaGains;
+
+  /// Provenance tag per flash key (`exc` -> `nominal`, ...); absent when
+  /// the value carried no tag.
+  final Map<String, String> provenance;
+
+  ChannelNominals forChannel(int i) => ChannelNominals(
+    adcFsrV: adcFsrV,
+    afeGain: afeGain,
+    pgaGain: pgaGains[i],
+    excitationV: excitationV,
+  );
+}
+
+/// The outcome of [resolveBoardConstants]: the chain on
+/// [BoardDataStatus.ok], else a status + human-readable detail for the
+/// raw-only notice.
+class BoardConstantsResolution {
+  const BoardConstantsResolution.ok(this.nominals)
+    : status = BoardDataStatus.ok,
+      detail = '';
+  const BoardConstantsResolution.failure(this.status, this.detail)
+    : nominals = null;
+
+  final BoardNominals? nominals;
+  final BoardDataStatus status;
+  final String detail;
+}
+
+/// Flash keys carrying the board constants (Factory namespace).
+const List<String> boardConstantKeys = ['adc_fsr', 'exc', 'afe_gain'];
+
+/// Resolve the board constants from a flash document's key=value map and the
+/// ADC's PGA readback ([pgaGains], null when that read failed). All-or-
+/// nothing: every required value must be present and positive, else the
+/// whole chain degrades (the app never guesses a partial chain).
+BoardConstantsResolution resolveBoardConstants(
+  Map<String, String> kv, {
+  required List<double>? pgaGains,
+}) {
+  if (!boardConstantKeys.any(kv.containsKey)) {
+    return const BoardConstantsResolution.failure(
+      BoardDataStatus.unprovisioned,
+      'no board constants in flash',
+    );
+  }
+  final missing = [
+    for (final k in boardConstantKeys)
+      if (!kv.containsKey(k)) k,
+  ];
+  if (missing.isNotEmpty) {
+    return BoardConstantsResolution.failure(
+      BoardDataStatus.invalid,
+      'missing ${missing.join(', ')}',
+    );
+  }
+  final values = <String, double>{};
+  final provenance = <String, String>{};
+  for (final key in boardConstantKeys) {
+    // Values may carry a provenance tag: "4.53,nominal".
+    final parts = kv[key]!.split(',');
+    final value = double.tryParse(parts.first.trim());
+    if (value == null || value <= 0) {
+      return BoardConstantsResolution.failure(
+        BoardDataStatus.invalid,
+        'bad $key: "${kv[key]}"',
+      );
+    }
+    values[key] = value;
+    if (parts.length > 1) {
+      provenance[key] = parts.sublist(1).join(',').trim();
+    }
+  }
+  if (pgaGains == null) {
+    return const BoardConstantsResolution.failure(
+      BoardDataStatus.unreadable,
+      'ADC gain register unreadable',
+    );
+  }
+  return BoardConstantsResolution.ok(
+    BoardNominals(
+      adcFsrV: values['adc_fsr']!,
+      excitationV: values['exc']!,
+      afeGain: values['afe_gain']!,
+      pgaGains: pgaGains,
+      provenance: provenance,
+    ),
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Calibration ladder
@@ -100,11 +276,13 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 /// Conversion is a piecewise-linear map through the five (raw, setpoint)
 /// points — it absorbs ADC offset, the combined AFE/ADC/excitation gain, and
 /// ADC nonlinearity between the cal points. A channel without factory data
-/// ([readings] == null) falls back to the nominal chain
-/// ([nominalCountsPerMvV], zero offset), which is exactly the pre-calibration
-/// behavior.
+/// ([readings] == null) falls back to the nominal chain ([nominals]) — and
+/// with no resolved nominals it converts nothing at all: the board-data
+/// verdict ([BoardDataStatus]) has already decided such a board shows raw
+/// counts only, so [nominals] == null means "unavailable", and the unit
+/// layer ([DisplayUnit.converterFor]) guards every call path accordingly.
 class ChannelBoardCalibration {
-  ChannelBoardCalibration({List<double>? resistors, List<double>? readings})
+  ChannelBoardCalibration({List<double>? resistors, List<double>? readings, this.nominals})
     : resistors = _validatedResistors(resistors),
       readings = _validatedReadings(readings) {
     final r = this.readings;
@@ -161,6 +339,11 @@ class ChannelBoardCalibration {
   /// order; null when the channel has no factory calibration.
   final List<double>? readings;
 
+  /// The channel's resolved analog chain, or null when the device supplied
+  /// no usable board constants — every conversion then reports unavailable
+  /// (raw counts only), guarded at the unit layer.
+  final ChannelNominals? nominals;
+
   bool get isFactoryCalibrated => readings != null;
 
   /// Setpoints (mV/V) per config, derived from [resistors]. Cached: pure
@@ -175,9 +358,12 @@ class ChannelBoardCalibration {
   /// map. Out-of-range readings extend the outermost segment. Readings are
   /// absolute (offset included): net values come from subtracting the map at
   /// the tare point — see `DisplayUnit.converterFor`.
+  ///
+  /// The nominal fallback requires [nominals]; callers guard it (the unit
+  /// layer reports unavailable instead), so a null here is a usage error.
   double mvVFromRaw(double raw) {
     final r = readings;
-    if (r == null) return raw / nominalCountsPerMvV;
+    if (r == null) return raw / nominals!.countsPerMvV;
     final xs = _sortedRaw;
     final ys = _sortedSetpoints;
     // Right endpoint of the segment containing raw, clamped to the outer
@@ -198,21 +384,27 @@ class ChannelBoardCalibration {
 
   /// Terminal slope in counts per mV/V: the end-to-end slope between the two
   /// outermost cal points (which bracket a load cell's full-scale range).
+  /// Null with neither factory data nor nominals — nothing converts then.
   /// Cached (see [setpoints]).
-  late final double spanCountsPerMvV = switch (readings) {
+  late final double? spanCountsPerMvV = switch (readings) {
     final r? =>
       (r[kCalIdxPosFs] - r[kCalIdxNegFs]) /
           (setpoints[kCalIdxPosFs] - setpoints[kCalIdxNegFs]),
-    null => nominalCountsPerMvV,
+    null => nominals?.countsPerMvV,
   };
 
   /// Excitation voltage implied by [spanCountsPerMvV] and the nominal AFE/ADC
   /// chain. Not a measurement of the excitation pin — it folds in AFE gain
   /// and ADC reference errors, which is exactly why the ratiometric
-  /// calibration needs no separate excitation knowledge. Cached (see
-  /// [setpoints]).
-  late final double effectiveExcitationV =
-      spanCountsPerMvV / countsPerMvAtCellOutput;
+  /// calibration needs no separate excitation knowledge. Null without
+  /// [nominals]. Cached (see [setpoints]).
+  late final double? effectiveExcitationV = switch ((
+    spanCountsPerMvV,
+    nominals,
+  )) {
+    (final span?, final n?) => span / n.countsPerMvAtCellOutput,
+    _ => null,
+  };
 
   /// Terminal nonlinearity (ppm of half-span output, signed): deviation of
   /// the inner cal point from the straight line between the zero and the
@@ -233,11 +425,16 @@ class ChannelBoardCalibration {
   }
 
   /// Session-snapshot serialization (recorded sessions carry the calibration
-  /// they were taken with, so playback converts identically later).
-  Map<String, dynamic> toJson() => {'r': resistors, 'raw': ?readings};
+  /// they were taken with, so playback converts identically later). The
+  /// resolved [nominals] ride along: replay must never re-resolve anything.
+  Map<String, dynamic> toJson() => {
+    'r': resistors,
+    'raw': ?readings,
+    'n': ?nominals?.toJson(),
+  };
 
   /// Tolerant inverse of [toJson]: missing/malformed entries degrade to
-  /// nominal resistors / no readings rather than throwing.
+  /// nominal resistors / no readings / no nominals rather than throwing.
   factory ChannelBoardCalibration.fromJson(Map<String, dynamic> json) {
     List<double>? numList(Object? v, int count) {
       if (v is! List || v.length != count) return null;
@@ -249,21 +446,38 @@ class ChannelBoardCalibration {
       return out;
     }
 
+    ChannelNominals? nominals;
+    if (json['n'] case final n?) {
+      try {
+        nominals = ChannelNominals.fromJson(Map<String, dynamic>.from(n as Map));
+      } catch (_) {
+        nominals = null;
+      }
+    }
+
     return ChannelBoardCalibration(
       resistors: numList(json['r'], kLadderResistorCount),
       readings: numList(json['raw'], kCalPointCount),
+      nominals: nominals,
     );
   }
 }
 
 /// Board calibration of the whole device: one [ChannelBoardCalibration] per
-/// ADC channel, plus optional factory metadata.
+/// ADC channel, the resolved board constants ([nominals] + the verdict that
+/// produced them), plus optional factory metadata.
 class BoardCalibration {
   BoardCalibration({
     required this.channels,
     this.factoryDate,
     this.excitationMv,
-  }) : assert(channels.length == nwNumAdcChan);
+    this.nominals,
+    BoardDataStatus? constantsStatus,
+    this.constantsDetail = '',
+  }) : assert(channels.length == nwNumAdcChan),
+       constantsStatus =
+           constantsStatus ??
+           (nominals != null ? BoardDataStatus.ok : BoardDataStatus.unreadable);
 
   final List<ChannelBoardCalibration> channels;
 
@@ -273,15 +487,33 @@ class BoardCalibration {
   /// Factory DMM reading of the excitation (`cal.exc.mv`), if any.
   final double? excitationMv;
 
+  /// The resolved board constants; null exactly when [constantsStatus] is
+  /// not [BoardDataStatus.ok].
+  final BoardNominals? nominals;
+
+  /// The board-data verdict: whether [nominals] resolved, and why not.
+  /// Drives the raw-only notice in the live UI.
+  final BoardDataStatus constantsStatus;
+
+  /// Human-readable reason when [constantsStatus] is not ok
+  /// (e.g. "missing afe_gain").
+  final String constantsDetail;
+
   /// Parse the board-calibration keys of a `key=value` flash document.
   /// Slot (`lcN.*`) and other unknown keys are ignored. Never throws — see
   /// [DeviceFlash.parse].
-  factory BoardCalibration.parse(String text) =>
-      BoardCalibration.fromKv(parseFlashKv(text));
+  factory BoardCalibration.parse(String text, {List<double>? pgaGains}) =>
+      BoardCalibration.fromKv(parseFlashKv(text), pgaGains: pgaGains);
 
   /// Build from an already-split key=value map (see [parseFlashKv]).
   /// Structural problems degrade only the affected channel to nominal.
-  factory BoardCalibration.fromKv(Map<String, String> kv) {
+  /// [pgaGains] is the ADC's GAIN-register readback (null when that read
+  /// failed) — it resolves the board constants ([resolveBoardConstants])
+  /// whose verdict the result carries.
+  factory BoardCalibration.fromKv(
+    Map<String, String> kv, {
+    List<double>? pgaGains,
+  }) {
     List<double>? parseList(String? value, int count) {
       if (value == null) return null;
       final parts = value.split(',').map((s) => double.tryParse(s.trim()));
@@ -289,16 +521,23 @@ class BoardCalibration {
       return [for (final v in parts) v!];
     }
 
+    final constants = resolveBoardConstants(kv, pgaGains: pgaGains);
+    final nominals = constants.nominals;
+
     return BoardCalibration(
       channels: [
         for (int i = 0; i < nwNumAdcChan; ++i)
           ChannelBoardCalibration(
             resistors: parseList(kv['ch$i.r'], kLadderResistorCount),
             readings: parseList(kv['ch$i.raw'], kCalPointCount),
+            nominals: nominals?.forChannel(i),
           ),
       ],
       factoryDate: kv['cal.date'],
       excitationMv: double.tryParse(kv['cal.exc.mv'] ?? ''),
+      nominals: nominals,
+      constantsStatus: constants.status,
+      constantsDetail: constants.detail,
     );
   }
 }
@@ -487,11 +726,14 @@ class DeviceFlash {
 
   /// Parse a whole flash document. Never throws: structural problems degrade
   /// only the affected piece (channel → nominal, slot → empty). Unknown
-  /// `key=value` lines are preserved in [extraLines].
-  factory DeviceFlash.parse(String text) {
+  /// `key=value` lines are preserved in [extraLines]. [pgaGains] is the ADC's
+  /// GAIN-register readback for board-constant resolution (null when that
+  /// read failed, or when the caller doesn't care about conversions — e.g.
+  /// the save-verification re-read).
+  factory DeviceFlash.parse(String text, {List<double>? pgaGains}) {
     final kv = parseFlashKv(text);
     return DeviceFlash(
-      board: BoardCalibration.fromKv(kv),
+      board: BoardCalibration.fromKv(kv, pgaGains: pgaGains),
       slots: RigSlots.fromKv(kv),
       extraLines: [
         for (final rawLine in text.split(RegExp(r'\r?\n')))

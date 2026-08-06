@@ -1,6 +1,15 @@
 import 'package:dynamite_app/models/calibration.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+/// Pro-like test chain, reproducing the app's former compiled constants
+/// (101x AFE, PGA 1x, 4.53 V excitation, 1.2 V reference).
+const testNominals = ChannelNominals(
+  adcFsrV: 1.2,
+  afeGain: 101,
+  pgaGain: 1,
+  excitationV: 4.53,
+);
+
 void main() {
   group('ladderSetpointsMvV', () {
     test('nominal ladder produces symmetric datasheet setpoints', () {
@@ -69,12 +78,15 @@ void main() {
     });
 
     test('offset is the dead-short reading, span is the terminal slope', () {
-      final cal = ChannelBoardCalibration(readings: affineReadings);
+      final cal = ChannelBoardCalibration(
+        readings: affineReadings,
+        nominals: testNominals,
+      );
       expect(cal.offsetCounts, closeTo(alpha, 1e-9));
       expect(cal.spanCountsPerMvV, closeTo(beta, 1e-6));
       expect(
         cal.effectiveExcitationV,
-        closeTo(beta / countsPerMvAtCellOutput, 1e-12),
+        closeTo(beta / testNominals.countsPerMvAtCellOutput, 1e-12),
       );
       expect(cal.terminalNonlinearityPpm(positiveSide: true), closeTo(0, 1e-9));
       expect(
@@ -106,14 +118,96 @@ void main() {
 
   group('ChannelBoardCalibration (nominal fallback)', () {
     test('follows the nominal chain with zero offset', () {
-      final cal = ChannelBoardCalibration();
+      final cal = ChannelBoardCalibration(nominals: testNominals);
       expect(cal.isFactoryCalibrated, isFalse);
-      expect(cal.mvVFromRaw(1000), closeTo(1000 / nominalCountsPerMvV, 1e-18));
+      expect(
+        cal.mvVFromRaw(1000),
+        closeTo(1000 / testNominals.countsPerMvV, 1e-18),
+      );
       expect(cal.mvVFromRaw(0), 0.0);
       expect(cal.offsetCounts, 0.0);
-      expect(cal.spanCountsPerMvV, nominalCountsPerMvV);
-      expect(cal.effectiveExcitationV, closeTo(nominalExcitationV, 1e-12));
+      expect(cal.spanCountsPerMvV, testNominals.countsPerMvV);
+      expect(
+        cal.effectiveExcitationV,
+        closeTo(testNominals.excitationV, 1e-12),
+      );
       expect(cal.terminalNonlinearityPpm(positiveSide: true), 0.0);
+    });
+  });
+
+  group('ChannelBoardCalibration (no nominals)', () {
+    test('converts nothing: span and effective excitation are null', () {
+      final cal = ChannelBoardCalibration();
+      expect(cal.nominals, isNull);
+      expect(cal.spanCountsPerMvV, isNull);
+      expect(cal.effectiveExcitationV, isNull);
+    });
+
+    test('nominals survive the session-snapshot round trip', () {
+      final cal = ChannelBoardCalibration(nominals: testNominals);
+      final loaded = ChannelBoardCalibration.fromJson(cal.toJson());
+      expect(loaded.nominals, isNotNull);
+      expect(
+        loaded.nominals!.countsPerMvV,
+        closeTo(testNominals.countsPerMvV, 1e-12),
+      );
+      // A snapshot without nominals (an unprovisioned board) replays as
+      // raw-only, never with guessed values.
+      final bare = ChannelBoardCalibration.fromJson(
+        ChannelBoardCalibration().toJson(),
+      );
+      expect(bare.nominals, isNull);
+    });
+  });
+
+  group('resolveBoardConstants', () {
+    const kv = {'adc_fsr': '1.2', 'exc': '4.53', 'afe_gain': '101'};
+    const gains = [1.0, 1.0, 1.0, 1.0];
+
+    test('all keys plus gains resolve ok, with per-channel chains', () {
+      final r = resolveBoardConstants(kv, pgaGains: gains);
+      expect(r.status, BoardDataStatus.ok);
+      expect(r.nominals, isNotNull);
+      expect(r.nominals!.forChannel(2).countsPerMvV, testNominals.countsPerMvV);
+    });
+
+    test('provenance tags are stripped from values and kept', () {
+      final r = resolveBoardConstants(
+        {'adc_fsr': '1.2,nominal', 'exc': '4.53,dummycal', 'afe_gain': '101'},
+        pgaGains: gains,
+      );
+      expect(r.status, BoardDataStatus.ok);
+      expect(r.nominals!.excitationV, 4.53);
+      expect(r.nominals!.provenance['exc'], 'dummycal');
+      expect(r.nominals!.provenance.containsKey('afe_gain'), isFalse);
+    });
+
+    test('no keys at all is unprovisioned', () {
+      final r = resolveBoardConstants(const {}, pgaGains: gains);
+      expect(r.status, BoardDataStatus.unprovisioned);
+      expect(r.nominals, isNull);
+    });
+
+    test('a missing or bad key is invalid, naming the culprit', () {
+      final missing = resolveBoardConstants(
+        {'adc_fsr': '1.2', 'exc': '4.53'},
+        pgaGains: gains,
+      );
+      expect(missing.status, BoardDataStatus.invalid);
+      expect(missing.detail, contains('afe_gain'));
+
+      final bad = resolveBoardConstants(
+        {'adc_fsr': '1.2', 'exc': 'soon', 'afe_gain': '101'},
+        pgaGains: gains,
+      );
+      expect(bad.status, BoardDataStatus.invalid);
+      expect(bad.detail, contains('exc'));
+    });
+
+    test('a failed gain read is unreadable', () {
+      final r = resolveBoardConstants(kv, pgaGains: null);
+      expect(r.status, BoardDataStatus.unreadable);
+      expect(r.nominals, isNull);
     });
   });
 
@@ -152,6 +246,20 @@ END
           (r0[1] + r0[2] + r0[3] + r0[4]) /
           r0.fold<double>(0, (a, b) => a + b);
       expect(sp0, closeTo(expected, 1e-12));
+    });
+
+    test('board constants resolve into per-channel nominals', () {
+      final board = BoardCalibration.parse(
+        'adc_fsr=1.2,nominal\nexc=2.8,nominal\nafe_gain=1,nominal\n',
+        pgaGains: const [32, 32, 32, 32],
+      );
+      expect(board.constantsStatus, BoardDataStatus.ok);
+      final n = board.channels[0].nominals!;
+      expect(n.adcFsrV, 1.2);
+      expect(n.afeGain, 1);
+      expect(n.pgaGain, 32);
+      expect(n.excitationV, 2.8);
+      expect(board.nominals!.provenance['exc'], 'nominal');
     });
 
     test('missing or malformed keys degrade only the affected channel', () {

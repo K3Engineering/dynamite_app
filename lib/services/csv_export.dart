@@ -263,11 +263,15 @@ Map<String, Object?> _metadata(
     // corresponding nulls.
     'device': device,
     // Descriptive traceability (the hardware configuration in effect); the
-    // operative transfer function is each channel's board_cal.
+    // operative transfer function is each channel's board_cal. Nulls when
+    // the board's constants never resolved (raw-only session).
     'afe': {
-      'adc_ref_v': adcFullScaleV,
-      'front_end_gain': frontEndGain,
-      'adc_gain': [for (int ch = 0; ch < n; ch++) 1],
+      'adc_ref_v': data.calibrationFor(0).board.nominals?.adcFsrV,
+      'front_end_gain': data.calibrationFor(0).board.nominals?.afeGain,
+      'adc_gain': [
+        for (int ch = 0; ch < n; ch++)
+          data.calibrationFor(ch).board.nominals?.pgaGain,
+      ],
     },
     'channels': [
       for (int ch = 0; ch < n; ch++)

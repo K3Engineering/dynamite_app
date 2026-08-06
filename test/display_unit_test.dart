@@ -10,11 +10,19 @@ void main() {
   // An affine "device": raw = 412.7 + 3198500 * setpoint.
   const alpha = 412.7;
   const beta = 3198500.0;
+  // Pro-like test chain, reproducing the app's former compiled constants.
+  const testNominals = ChannelNominals(
+    adcFsrV: 1.2,
+    afeGain: 101,
+    pgaGain: 1,
+    excitationV: 4.53,
+  );
   final sp = ladderSetpointsMvV(nominalLadderResistors);
   final board = ChannelBoardCalibration(
     readings: [for (final d in sp) alpha + beta * d],
+    nominals: testNominals,
   );
-  final nominalBoard = ChannelBoardCalibration();
+  final nominalBoard = ChannelBoardCalibration(nominals: testNominals);
   final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
   final assigned = ChannelCalibration(board: board, loadCell: cell);
   final bare = ChannelCalibration(board: board);
@@ -60,15 +68,30 @@ void main() {
       final mvV = DisplayUnit.mVv.converterFor(assigned, alpha)!;
       final mv = DisplayUnit.mV.converterFor(assigned, alpha)!;
       final raw = board.readings![1];
-      expect(mv(raw), closeTo(mvV(raw) * board.effectiveExcitationV, 1e-9));
+      expect(mv(raw), closeTo(mvV(raw) * board.effectiveExcitationV!, 1e-9));
     });
 
-    test('nominal mV matches the legacy fixed multiplier', () {
+    test('nominal mV matches the nominal chain multiplier', () {
       final conv = DisplayUnit.mV.converterFor(
         ChannelCalibration(board: nominalBoard),
         0,
       )!;
-      expect(conv(1000), closeTo(1000 * rawToMvMultiplier, 1e-15));
+      expect(
+        conv(1000),
+        closeTo(1000 / testNominals.countsPerMvAtCellOutput, 1e-15),
+      );
+    });
+
+    test('no nominals: every unit but raw is unavailable', () {
+      final noData = ChannelCalibration(board: ChannelBoardCalibration());
+      for (final u in DisplayUnit.values) {
+        if (u == DisplayUnit.raw) {
+          expect(u.converterFor(noData, 0), isNotNull, reason: u.symbol);
+        } else {
+          expect(u.converterFor(noData, 0), isNull, reason: u.symbol);
+          expect(u.diffConverterFor(noData), isNull, reason: u.symbol);
+        }
+      }
     });
 
     test('kgf scales mV/V by capacity/sensitivity; kN by 9.80665e-3', () {
@@ -83,12 +106,15 @@ void main() {
   group('diff converters', () {
     test('mV/V diff is counts over the terminal span', () {
       final diff = DisplayUnit.mVv.diffConverterFor(assigned)!;
-      expect(diff(1000), closeTo(1000 / board.spanCountsPerMvV, 1e-15));
+      expect(diff(1000), closeTo(1000 / board.spanCountsPerMvV!, 1e-15));
     });
 
     test('kgf diff folds in the load cell', () {
       final diff = DisplayUnit.kgf.diffConverterFor(assigned)!;
-      expect(diff(1000), closeTo(1000 / board.spanCountsPerMvV * 100, 1e-12));
+      expect(
+        diff(1000),
+        closeTo(1000 / board.spanCountsPerMvV! * 100, 1e-12),
+      );
     });
   });
 

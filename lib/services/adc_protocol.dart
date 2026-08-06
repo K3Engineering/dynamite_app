@@ -57,3 +57,18 @@ Uint8List encodeAdcPacket({
   }
   return out;
 }
+
+/// Parse the per-channel PGA gains from the ADC config characteristic's
+/// value (`AdcConfigNetworkData`, packed little-endian: version u8, id u16,
+/// status u16, mode u16, clock u16, pga u16 — the GAIN register readback,
+/// four 4-bit fields, gain = 2^field). Null on a short buffer or an unknown
+/// struct version — a failed parse is a failed read, never a guessed gain.
+List<double>? parseAdcConfigPgaGains(Uint8List b) {
+  const structBytes = 11;
+  if (b.length < structBytes || b[0] != 1) return null;
+  final pga = b[9] | (b[10] << 8);
+  return [
+    for (int i = 0; i < nwNumAdcChan; ++i)
+      (1 << ((pga >> (4 * i)) & 0x7)).toDouble(),
+  ];
+}

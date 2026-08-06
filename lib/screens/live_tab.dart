@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
+import '../models/calibration.dart';
 
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
@@ -474,6 +475,19 @@ class LiveStats extends StatelessWidget {
                     '— no load cell assigned (Settings → Load cells)',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: Theme.of(context).colorScheme.outline,
+                    ),
+                  ),
+                ),
+              // The raw-only verdict: converted units show '—' above; say
+              // why, once, in the same style as the load-cell hint.
+              if (hub.boardDataStatus != BoardDataStatus.ok)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '— ${hub.boardDataStatus.notice(hub.boardDataDetail)}'
+                    ' — raw counts only',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
                     ),
                   ),
                 ),
