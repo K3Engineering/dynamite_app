@@ -571,12 +571,6 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // some stacks deliver each PDU as a separate callback, so a nameless
     // re-advertisement must not blank the row title — keep the last known
     // name in that case.
-    //
-    // TODO(firmware): once the device advertises manufacturer data, parse
-    // `newDevice.manufacturerDataList` (companyId + payload) into a device model
-    // (e.g. "K3 Sampler Pro") and hardware variant (V1/V2) and surface them on
-    // the device row / connected card. `serviceData` and `services` are also
-    // available here for filtering. Not wired yet — firmware doesn't emit it.
     final existingIdx = _devices.indexWhere(
       (d) => d.deviceId == newDevice.deviceId,
     );
