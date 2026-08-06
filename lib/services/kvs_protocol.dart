@@ -2,7 +2,7 @@
 /// `dynamite_sampler_api.h` / `user_kvs.cpp` in the firmware.
 ///
 /// A command is written to the KVS characteristic as ASCII text:
-/// `<CMD><FOLDER><DATA>` — e.g. `GETDch0.raw`, `SETElc0.cap=200`, `IDXD1a`.
+/// `<CMD><FOLDER><DATA>` — e.g. `GETFch0.raw`, `SETUlc0.cap=200`, `IDXF1a`.
 /// The device answers with a notification holding a status byte ('1' ok /
 /// '0' failed), the request echoed verbatim, then '=' and the payload:
 /// the value for GET, `key=typeHex` for IDX, empty for SET/DEL.
@@ -16,11 +16,13 @@ const String kvsCmdSet = 'SET';
 const String kvsCmdDelete = 'DEL';
 const String kvsCmdIndex = 'IDX';
 
-/// Device information, not factory-resettable: the board calibration.
-const String kvsFolderDevice = 'D';
+/// Factory information, not factory-resettable: the board calibration.
+/// (`DynaPersistent` partition, `Factory` namespace.)
+const String kvsFolderFactory = 'F';
 
-/// Extra information, not factory-resettable: the load cell data.
-const String kvsFolderExtra = 'E';
+/// User information, not factory-resettable: the load cell data.
+/// (`DynaPersistent` partition, `User` namespace.)
+const String kvsFolderUser = 'U';
 
 /// Settings, factory-resettable: device name, gain.
 const String kvsFolderSettings = 'S';

@@ -698,7 +698,7 @@ void main() {
 
       expect(error, isNull);
       expect(
-        MockBlePlatform.instance.kvsStore[kvsFolderExtra]!['lc0.cap'],
+        MockBlePlatform.instance.kvsStore[kvsFolderUser]!['lc0.cap'],
         '250',
       );
       // The feed resumed after the write.

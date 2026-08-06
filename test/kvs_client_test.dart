@@ -63,11 +63,11 @@ void main() {
       final client = wire();
       String? value;
       Object? missing = 'unset';
-      unawaited(client.get(kvsFolderDevice, 'ch0.r').then((v) => value = v));
-      unawaited(client.get(kvsFolderDevice, 'nope').then((v) => missing = v));
+      unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
+      unawaited(client.get(kvsFolderFactory, 'nope').then((v) => missing = v));
       async.flushMicrotasks();
 
-      expect(value, mock.kvsStore[kvsFolderDevice]!['ch0.r']);
+      expect(value, mock.kvsStore[kvsFolderFactory]!['ch0.r']);
       expect(missing, isNull);
     });
   });
@@ -78,16 +78,16 @@ void main() {
       final values = <String?>[];
       unawaited(
         Future.wait([
-          client.get(kvsFolderDevice, 'ch0.raw'),
-          client.get(kvsFolderDevice, 'ch1.raw'),
-          client.get(kvsFolderExtra, 'lc0.name'),
+          client.get(kvsFolderFactory, 'ch0.raw'),
+          client.get(kvsFolderFactory, 'ch1.raw'),
+          client.get(kvsFolderUser, 'lc0.name'),
         ]).then(values.addAll),
       );
       async.flushMicrotasks();
 
       expect(values, [
-        mock.kvsStore[kvsFolderDevice]!['ch0.raw'],
-        mock.kvsStore[kvsFolderDevice]!['ch1.raw'],
+        mock.kvsStore[kvsFolderFactory]!['ch0.raw'],
+        mock.kvsStore[kvsFolderFactory]!['ch1.raw'],
         'Thrust cell',
       ]);
     });
@@ -98,16 +98,16 @@ void main() {
       final client = wire();
       bool? ok;
       unawaited(
-        client.set(kvsFolderExtra, 'lc9.cap', '50').then((v) => ok = v),
+        client.set(kvsFolderUser, 'lc9.cap', '50').then((v) => ok = v),
       );
       async.flushMicrotasks();
 
       expect(ok, isTrue);
-      expect(mock.kvsStore[kvsFolderExtra]!['lc9.cap'], '50');
+      expect(mock.kvsStore[kvsFolderUser]!['lc9.cap'], '50');
 
       final errors = <Object>[];
-      track(client.set(kvsFolderExtra, 'lc9.cap', ''), errors);
-      track(client.set(kvsFolderExtra, 'key-that-is-too-long', '1'), errors);
+      track(client.set(kvsFolderUser, 'lc9.cap', ''), errors);
+      track(client.set(kvsFolderUser, 'key-that-is-too-long', '1'), errors);
       async.flushMicrotasks();
       expect(errors, hasLength(2));
       expect(errors, everyElement(isA<ArgumentError>()));
@@ -120,15 +120,15 @@ void main() {
       bool? existed;
       bool? again = true;
       unawaited(
-        client.delete(kvsFolderExtra, 'lc4.cap').then((v) => existed = v),
+        client.delete(kvsFolderUser, 'lc4.cap').then((v) => existed = v),
       );
       async.flushMicrotasks();
 
       expect(existed, isTrue);
-      expect(mock.kvsStore[kvsFolderExtra]!.containsKey('lc4.cap'), isFalse);
+      expect(mock.kvsStore[kvsFolderUser]!.containsKey('lc4.cap'), isFalse);
 
       unawaited(
-        client.delete(kvsFolderExtra, 'lc4.cap').then((v) => again = v),
+        client.delete(kvsFolderUser, 'lc4.cap').then((v) => again = v),
       );
       async.flushMicrotasks();
       expect(again, isFalse);
@@ -139,20 +139,20 @@ void main() {
     fakeAsync((async) {
       final client = wire();
       Map<String, int>? keys;
-      unawaited(client.listKeys(kvsFolderExtra).then((v) => keys = v));
+      unawaited(client.listKeys(kvsFolderUser).then((v) => keys = v));
       async.flushMicrotasks();
 
       expect(keys, isNotNull);
-      expect(keys!.keys, unorderedEquals(mock.kvsStore[kvsFolderExtra]!.keys));
+      expect(keys!.keys, unorderedEquals(mock.kvsStore[kvsFolderUser]!.keys));
       expect(keys!.values, everyElement(0x21));
       // Iteration ends with one rejected IDX past the last entry.
       final idxCommands = mock.kvsCommandLog
           .where((c) => c.startsWith(kvsCmdIndex))
           .toList();
-      expect(idxCommands, hasLength(mock.kvsStore[kvsFolderExtra]!.length + 1));
+      expect(idxCommands, hasLength(mock.kvsStore[kvsFolderUser]!.length + 1));
       expect(
         idxCommands.last,
-        encodeKvsIndex(kvsFolderExtra, mock.kvsStore[kvsFolderExtra]!.length),
+        encodeKvsIndex(kvsFolderUser, mock.kvsStore[kvsFolderUser]!.length),
       );
     });
   });
@@ -163,7 +163,7 @@ void main() {
       lockDevice();
 
       final errors = <Object>[];
-      track(client.get(kvsFolderDevice, 'ch0.r'), errors);
+      track(client.get(kvsFolderFactory, 'ch0.r'), errors);
       async.elapse(const Duration(seconds: 4));
 
       expect(errors, hasLength(1));
@@ -173,9 +173,9 @@ void main() {
       // unlocks, a fresh command resolves normally.
       unlockDevice();
       String? value;
-      unawaited(client.get(kvsFolderDevice, 'ch0.r').then((v) => value = v));
+      unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
       async.flushMicrotasks();
-      expect(value, mock.kvsStore[kvsFolderDevice]!['ch0.r']);
+      expect(value, mock.kvsStore[kvsFolderFactory]!['ch0.r']);
     });
   });
 
@@ -186,10 +186,10 @@ void main() {
 
       final errors = <Object>[];
       track(
-        client.get(kvsFolderDevice, 'ch0.r'),
+        client.get(kvsFolderFactory, 'ch0.r'),
         errors,
       ); // stuck awaiting a response
-      track(client.set(kvsFolderExtra, 'lc9.cap', '1'), errors); // queued
+      track(client.set(kvsFolderUser, 'lc9.cap', '1'), errors); // queued
       async.flushMicrotasks();
 
       client.abort();
@@ -199,7 +199,7 @@ void main() {
       // The client is spent: later commands fail immediately instead of
       // touching the wire.
       mock.kvsCommandLog.clear();
-      track(client.get(kvsFolderDevice, 'ch0.r'), errors);
+      track(client.get(kvsFolderFactory, 'ch0.r'), errors);
       async.flushMicrotasks();
       expect(errors, hasLength(3));
       expect(mock.kvsCommandLog, isEmpty);

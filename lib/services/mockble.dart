@@ -75,8 +75,8 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// [demoBoardCalibrationDoc]; writes mutate it, so reads serve whatever
   /// was last written (like real flash).
   final Map<String, Map<String, String>> kvsStore = {
-    kvsFolderDevice: {},
-    kvsFolderExtra: {},
+    kvsFolderFactory: {},
+    kvsFolderUser: {},
     kvsFolderSettings: {},
   };
 

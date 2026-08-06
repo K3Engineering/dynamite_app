@@ -88,24 +88,24 @@ void main() {
       expect(write(transport, modified, async), isNull);
 
       // Only the changed keys were touched: two SETs for the new slot, one
-      // for the edited value, three DELs for the emptied slot — all in E,
-      // nothing in D.
+      // for the edited value, three DELs for the emptied slot — all in U,
+      // nothing in F.
       expect(mock.kvsCommandLog, [
-        'SETElc0.sens=1.9985',
-        'SETElc6.cap=50',
-        'SETElc6.sens=2',
-        'DELElc4.name',
-        'DELElc4.cap',
-        'DELElc4.sens',
+        'SETUlc0.sens=1.9985',
+        'SETUlc6.cap=50',
+        'SETUlc6.sens=2',
+        'DELUlc4.name',
+        'DELUlc4.cap',
+        'DELUlc4.sens',
       ]);
 
-      final extra = mock.kvsStore[kvsFolderExtra]!;
-      expect(extra['lc0.sens'], '1.9985');
-      expect(extra['lc6.cap'], '50');
-      expect(extra.containsKey('lc4.cap'), isFalse);
-      // The Device folder (board calibration) was not part of the diff.
+      final user = mock.kvsStore[kvsFolderUser]!;
+      expect(user['lc0.sens'], '1.9985');
+      expect(user['lc6.cap'], '50');
+      expect(user.containsKey('lc4.cap'), isFalse);
+      // The Factory folder (board calibration) was not part of the diff.
       expect(
-        mock.kvsStore[kvsFolderDevice]!['ch0.raw'],
+        mock.kvsStore[kvsFolderFactory]!['ch0.raw'],
         parseFlashKv(demoBoardCalibrationDoc)['ch0.raw'],
       );
     });
@@ -114,8 +114,8 @@ void main() {
   test('unknown keys round-trip to the folder they came from', () {
     fakeAsync((async) {
       final (transport, _) = wire();
-      // A key the model doesn't know, planted in the Device folder.
-      mock.kvsStore[kvsFolderDevice]!['vendor.x'] = '42';
+      // A key the model doesn't know, planted in the Factory folder.
+      mock.kvsStore[kvsFolderFactory]!['vendor.x'] = '42';
       final doc = read(transport, async)!;
       expect(doc, contains('vendor.x=42'));
       mock.kvsCommandLog.clear();
@@ -125,7 +125,7 @@ void main() {
       final modified = doc.replaceFirst('lc0.sens=1.9993', 'lc0.sens=1.9985');
       expect(write(transport, modified, async), isNull);
       expect(mock.kvsCommandLog.where((c) => c.contains('vendor.x')), isEmpty);
-      expect(mock.kvsStore[kvsFolderDevice]!['vendor.x'], '42');
+      expect(mock.kvsStore[kvsFolderFactory]!['vendor.x'], '42');
 
       // Dropping it from the document deletes it from ITS folder.
       mock.kvsCommandLog.clear();
@@ -134,8 +134,8 @@ void main() {
           .where((l) => !l.startsWith('vendor.x'))
           .join('\n');
       expect(write(transport, stripped, async), isNull);
-      expect(mock.kvsCommandLog, contains('DELDvendor.x'));
-      expect(mock.kvsStore[kvsFolderDevice]!.containsKey('vendor.x'), isFalse);
+      expect(mock.kvsCommandLog, contains('DELFvendor.x'));
+      expect(mock.kvsStore[kvsFolderFactory]!.containsKey('vendor.x'), isFalse);
     });
   });
 
@@ -147,8 +147,8 @@ void main() {
       expect(write(transport, demoBoardCalibrationDoc, async), isNull);
 
       // Everything landed, folder-routed.
-      expect(mock.kvsStore[kvsFolderDevice]!['ch0.raw'], isNotNull);
-      expect(mock.kvsStore[kvsFolderExtra]!['lc0.name'], 'Thrust cell');
+      expect(mock.kvsStore[kvsFolderFactory]!['ch0.raw'], isNotNull);
+      expect(mock.kvsStore[kvsFolderUser]!['lc0.name'], 'Thrust cell');
       expect(mock.kvsStore[kvsFolderSettings], isEmpty);
 
       // And a fresh read reassembles the same content.

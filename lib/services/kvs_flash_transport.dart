@@ -20,22 +20,22 @@ class KvsFlashTransport {
   final Map<String, String> _keyFolders = {};
   Map<String, String> _snapshot = const {};
 
-  /// The folder a document key lives in: load cell keys in Extra, board
-  /// calibration and metadata in Device. (Settings holds name/gain — never
+  /// The folder a document key lives in: load cell keys in User, board
+  /// calibration and metadata in Factory. (Settings holds name/gain — never
   /// document keys.)
   static String folderForKey(String key) =>
-      key.startsWith('lc') ? kvsFolderExtra : kvsFolderDevice;
+      key.startsWith('lc') ? kvsFolderUser : kvsFolderFactory;
 
-  /// Read every key from the Device and Extra folders and reassemble the
+  /// Read every key from the Factory and User folders and reassemble the
   /// document text. Null on transport/protocol failure (the caller treats
   /// the device as having no readable document — never a crash). A key
-  /// duplicated across folders collapses to the Extra copy, mirroring
+  /// duplicated across folders collapses to the User copy, mirroring
   /// [parseFlashKv]'s last-wins.
   Future<String?> readFlashDoc() async {
     final kv = <String, String>{};
     final folders = <String, String>{};
     try {
-      for (final folder in const [kvsFolderDevice, kvsFolderExtra]) {
+      for (final folder in const [kvsFolderFactory, kvsFolderUser]) {
         final keys = await _client.listKeys(folder);
         for (final key in keys.keys) {
           final value = await _client.get(folder, key);
