@@ -64,11 +64,15 @@ void main() {
       );
     });
 
-    test('mV follows mV/V via the effective excitation', () {
-      final mvV = DisplayUnit.mVv.converterFor(assigned, alpha)!;
-      final mv = DisplayUnit.mV.converterFor(assigned, alpha)!;
-      final raw = board.readings![1];
-      expect(mv(raw), closeTo(mvV(raw) * board.effectiveExcitationV!, 1e-9));
+    test('mV follows mV/V via the nominal excitation', () {
+      final conv = DisplayUnit.mV.converterFor(assigned, alpha)!;
+      // The mV rung rests on the nominal chain: a calibrated board's mV/V
+      // map is ratiometric (exact at the cal points), so mV differs from
+      // mV/V by exactly the nominal excitation.
+      expect(
+        conv(board.readings![1]),
+        closeTo(sp[1] * testNominals.excitationV, 1e-9),
+      );
     });
 
     test('nominal mV matches the nominal chain multiplier', () {
@@ -104,16 +108,16 @@ void main() {
   });
 
   group('diff converters', () {
-    test('mV/V diff is counts over the terminal span', () {
+    test('mV/V diff is counts over the end-point sensitivity', () {
       final diff = DisplayUnit.mVv.diffConverterFor(assigned)!;
-      expect(diff(1000), closeTo(1000 / board.spanCountsPerMvV!, 1e-15));
+      expect(diff(1000), closeTo(1000 / board.sensitivityCountsPerMvV!, 1e-15));
     });
 
     test('kgf diff folds in the load cell', () {
       final diff = DisplayUnit.kgf.diffConverterFor(assigned)!;
       expect(
         diff(1000),
-        closeTo(1000 / board.spanCountsPerMvV! * 100, 1e-12),
+        closeTo(1000 / board.sensitivityCountsPerMvV! * 100, 1e-12),
       );
     });
   });

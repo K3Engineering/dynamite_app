@@ -77,25 +77,46 @@ void main() {
       );
     });
 
-    test('offset is the dead-short reading, span is the terminal slope', () {
+    test('offset is the dead-short reading, sensitivity the end-point slope', () {
       final cal = ChannelBoardCalibration(
         readings: affineReadings,
         nominals: testNominals,
       );
       expect(cal.offsetCounts, closeTo(alpha, 1e-9));
-      expect(cal.spanCountsPerMvV, closeTo(beta, 1e-6));
+      expect(cal.sensitivityCountsPerMvV, closeTo(beta, 1e-6));
+      // Zero balance is measured ÷ measured: no nominal chain involved.
+      expect(cal.zeroBalanceUvV, closeTo(alpha / beta * 1000, 1e-9));
       expect(
-        cal.effectiveExcitationV,
-        closeTo(beta / testNominals.countsPerMvAtCellOutput, 1e-12),
-      );
-      expect(cal.terminalNonlinearityPpm(positiveSide: true), closeTo(0, 1e-9));
-      expect(
-        cal.terminalNonlinearityPpm(positiveSide: false),
-        closeTo(0, 1e-9),
+        cal.sensitivityVsNominal,
+        closeTo(beta / testNominals.countsPerMvV, 1e-12),
       );
     });
 
-    test('piecewise map anchors bowed points; terminal NL reports the bow', () {
+    test('end-point deviations vanish for an affine device, report a bow', () {
+      final cal = ChannelBoardCalibration(readings: affineReadings);
+      for (final d in cal.deviationsUvV!) {
+        expect(d, closeTo(0, 1e-9));
+      }
+      final bowed = List<double>.of(affineReadings);
+      bowed[1] += 100; // +mid reads 100 counts high
+      final bowedCal = ChannelBoardCalibration(readings: bowed);
+      final deviations = bowedCal.deviationsUvV!;
+      // The end-point chord is untouched by an interior bump, so only the
+      // bowed point deviates: 100 counts expressed via the measured
+      // sensitivity. The ±FS anchors are 0 by construction.
+      final s = bowedCal.sensitivityCountsPerMvV!;
+      const expectedCounts = [0.0, 100.0, 0.0, 0.0, 0.0];
+      for (int k = 0; k < kCalPointCount; ++k) {
+        expect(
+          deviations[k],
+          closeTo(expectedCounts[k] / s * 1000, 1e-9),
+          reason: 'deviation $k',
+        );
+      }
+      expect(ChannelBoardCalibration().deviationsUvV, isNull);
+    });
+
+    test('piecewise map anchors bowed points; deviations report the bow', () {
       final bowed = List<double>.of(affineReadings);
       bowed[1] += 100; // +mid reads 100 counts high
       final cal = ChannelBoardCalibration(readings: bowed);
@@ -103,16 +124,12 @@ void main() {
       for (int k = 0; k < kCalPointCount; ++k) {
         expect(cal.mvVFromRaw(bowed[k]), closeTo(sp[k], 1e-12));
       }
-      // ...and the terminal nonlinearity is the bow over the +half span.
-      final halfSpan = (bowed[0] - bowed[2]).abs();
-      expect(
-        cal.terminalNonlinearityPpm(positiveSide: true),
-        closeTo(100 / halfSpan * 1e6, 1e-6),
-      );
-      expect(
-        cal.terminalNonlinearityPpm(positiveSide: false),
-        closeTo(0, 1e-9),
-      );
+      // ...and the deviation at +mid is the bow via the measured
+      // sensitivity; the other interior points sit on the chord.
+      final s = cal.sensitivityCountsPerMvV!;
+      expect(cal.deviationsUvV![1], closeTo(100 / s * 1000, 1e-9));
+      expect(cal.deviationsUvV![2], closeTo(0, 1e-9));
+      expect(cal.deviationsUvV![3], closeTo(0, 1e-9));
     });
   });
 
@@ -126,21 +143,23 @@ void main() {
       );
       expect(cal.mvVFromRaw(0), 0.0);
       expect(cal.offsetCounts, 0.0);
-      expect(cal.spanCountsPerMvV, testNominals.countsPerMvV);
-      expect(
-        cal.effectiveExcitationV,
-        closeTo(testNominals.excitationV, 1e-12),
-      );
-      expect(cal.terminalNonlinearityPpm(positiveSide: true), 0.0);
+      expect(cal.sensitivityCountsPerMvV, testNominals.countsPerMvV);
+      // No factory data: the correction diagnostics don't exist (the nominal
+      // chain isn't a measurement, so there's nothing to report against it).
+      expect(cal.sensitivityVsNominal, isNull);
+      expect(cal.zeroBalanceUvV, isNull);
+      expect(cal.deviationsUvV, isNull);
     });
   });
 
   group('ChannelBoardCalibration (no nominals)', () {
-    test('converts nothing: span and effective excitation are null', () {
+    test('converts nothing: span and correction diagnostics are null', () {
       final cal = ChannelBoardCalibration();
       expect(cal.nominals, isNull);
-      expect(cal.spanCountsPerMvV, isNull);
-      expect(cal.effectiveExcitationV, isNull);
+      expect(cal.sensitivityCountsPerMvV, isNull);
+      expect(cal.sensitivityVsNominal, isNull);
+      expect(cal.zeroBalanceUvV, isNull);
+      expect(cal.deviationsUvV, isNull);
     });
 
     test('nominals survive the session-snapshot round trip', () {
@@ -325,6 +344,85 @@ ch2.raw=6401205.6,3201448.2,1502.8,-3196441.9
       expect(board.channels[0].resistors, nominalLadderResistors);
       // The readings were fine, so the channel stays factory-calibrated.
       expect(board.channels[0].isFactoryCalibrated, isTrue);
+    });
+  });
+
+  group('BoardCalibration cal metadata', () {
+    const doc = '''
+K3CAL1
+cal.date=2026-08-08T01:35:40+00:00
+cal.board=calboard-fw 1.2.1
+cal.tool=board_calibration 1.0
+cal.origin=factory
+cal.temp=29.1,28.4
+cal.adc=1,1,1,1
+END
+''';
+
+    test('present keys parse; absent keys are null', () {
+      final board = BoardCalibration.parse(doc);
+      expect(board.calBoardId, 'calboard-fw 1.2.1');
+      expect(board.calTool, 'board_calibration 1.0');
+      expect(board.calOrigin, 'factory');
+      expect(board.calTempsC!.dut, closeTo(29.1, 1e-12));
+      expect(board.calTempsC!.calBoard, closeTo(28.4, 1e-12));
+      expect(board.calAdcGains, [1.0, 1.0, 1.0, 1.0]);
+
+      // A document from before these keys existed parses them as absent.
+      final older = BoardCalibration.parse('cal.date=2026-07-20\n');
+      expect(older.calBoardId, isNull);
+      expect(older.calTool, isNull);
+      expect(older.calOrigin, isNull);
+      expect(older.calTempsC, isNull);
+      expect(older.calAdcGains, isNull);
+    });
+
+    test('malformed values degrade to absent', () {
+      final board = BoardCalibration.parse(
+        'cal.temp=hot\ncal.adc=1,1\n',
+      );
+      expect(board.calTempsC, isNull);
+      expect(board.calAdcGains, isNull);
+    });
+
+    test('adcConfigDrifted compares cal-time gains to the runtime readback', () {
+      const constants =
+          'adc_fsr=1.2,nominal\nexc=4.53,nominal\nafe_gain=101,nominal\n';
+      final same = BoardCalibration.parse(
+        '$constants${doc.split('K3CAL1\n').last}',
+        pgaGains: const [1, 1, 1, 1],
+      );
+      expect(same.adcConfigDrifted, isFalse);
+      final drifted = BoardCalibration.parse(
+        '$constants${doc.split('K3CAL1\n').last}',
+        pgaGains: const [32, 1, 1, 1],
+      );
+      expect(drifted.adcConfigDrifted, isTrue);
+      // No cal.adc key, or no runtime readback: unknown, never a verdict.
+      expect(BoardCalibration.parse(constants).adcConfigDrifted, isNull);
+      expect(
+        BoardCalibration.parse(
+          '$constants${doc.split('K3CAL1\n').last}',
+        ).adcConfigDrifted,
+        isNull,
+      );
+    });
+
+    test('the cal metadata keys round-trip through serialize', () {
+      final flash = DeviceFlash.parse(doc);
+      final reparsed = DeviceFlash.parse(flash.serialize());
+      expect(reparsed.board.factoryDate, flash.board.factoryDate);
+      expect(reparsed.board.calBoardId, flash.board.calBoardId);
+      expect(reparsed.board.calTool, flash.board.calTool);
+      expect(reparsed.board.calOrigin, flash.board.calOrigin);
+      expect(reparsed.board.calTempsC?.dut, flash.board.calTempsC?.dut);
+      expect(
+        reparsed.board.calTempsC?.calBoard,
+        flash.board.calTempsC?.calBoard,
+      );
+      expect(reparsed.board.calAdcGains, flash.board.calAdcGains);
+      // And none of them leak into the verbatim-courier extraLines.
+      expect(flash.extraLines, isEmpty);
     });
   });
 

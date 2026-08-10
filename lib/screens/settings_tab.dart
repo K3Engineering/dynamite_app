@@ -9,11 +9,12 @@ import '../models/app_settings.dart';
 import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
-import '../widgets/board_calibration_section.dart';
+import '../widgets/calibration_view.dart';
 import '../widgets/device_info_card.dart';
 import '../widgets/rig_slots_section.dart';
 import '../widgets/section_header.dart';
 import 'app_shell.dart';
+import 'calibration_screen.dart';
 
 class SettingsTab extends StatelessWidget {
   const SettingsTab({super.key});
@@ -145,7 +146,21 @@ class SettingsTab extends StatelessWidget {
               style: Theme.of(context).textTheme.titleSmall,
             ),
             const SizedBox(height: 8),
-            BoardCalibrationSection(deviceId: deviceId),
+            CalibrationView(deviceId: deviceId),
+            // TODO(bake-off): temporary affordance comparing the subpage
+            // host against the inline one above — delete with the loser.
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => CalibrationScreen(deviceId: deviceId),
+                  ),
+                ),
+                icon: const Icon(Icons.open_in_new, size: 18),
+                label: const Text('Open as page'),
+              ),
+            ),
             const SizedBox(height: 16),
           ],
           const SizedBox(height: 8),

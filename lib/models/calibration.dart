@@ -348,7 +348,7 @@ class ChannelBoardCalibration {
 
   /// Setpoints (mV/V) per config, derived from [resistors]. Cached: pure
   /// function of the immutable [resistors], and per-sample conversion paths
-  /// reach it via [spanCountsPerMvV]/[effectiveExcitationV].
+  /// reach it via [sensitivityCountsPerMvV].
   late final List<double> setpoints = ladderSetpointsMvV(resistors);
 
   late final List<double> _sortedRaw;
@@ -382,46 +382,61 @@ class ChannelBoardCalibration {
   /// directly. 0 for an uncalibrated channel.
   double get offsetCounts => readings?[kCalIdxZero] ?? 0;
 
-  /// Terminal slope in counts per mV/V: the end-to-end slope between the two
-  /// outermost cal points (which bracket a load cell's full-scale range).
-  /// Null with neither factory data nor nominals — nothing converts then.
-  /// Cached (see [setpoints]).
-  late final double? spanCountsPerMvV = switch (readings) {
+  /// End-point sensitivity in counts per mV/V: the slope of the chord
+  /// through the two outermost cal points (which bracket a load cell's
+  /// full-scale range). The piecewise map converts values; this single
+  /// scalar is the chain's linear summary wherever one number must stand in
+  /// for the whole map (unit quanta, export precision, gain and zero-balance
+  /// diagnostics). Null with neither factory data nor nominals — nothing
+  /// converts then. Cached (see [setpoints]).
+  late final double? sensitivityCountsPerMvV = switch (readings) {
     final r? =>
       (r[kCalIdxPosFs] - r[kCalIdxNegFs]) /
           (setpoints[kCalIdxPosFs] - setpoints[kCalIdxNegFs]),
     null => nominals?.countsPerMvV,
   };
 
-  /// Excitation voltage implied by [spanCountsPerMvV] and the nominal AFE/ADC
-  /// chain. Not a measurement of the excitation pin — it folds in AFE gain
-  /// and ADC reference errors, which is exactly why the ratiometric
-  /// calibration needs no separate excitation knowledge. Null without
-  /// [nominals]. Cached (see [setpoints]).
-  late final double? effectiveExcitationV = switch ((
-    spanCountsPerMvV,
-    nominals,
-  )) {
-    (final span?, final n?) => span / n.countsPerMvAtCellOutput,
-    _ => null,
-  };
+  /// Zero balance in µV/V: the dead-short (t3,t3) reading expressed through
+  /// the measured sensitivity — measured counts ÷ measured counts-per-mV/V,
+  /// so the nominal chain (FSR, AFE gain, excitation) never enters. This is
+  /// the load-cell certificate's "zero balance". Null without factory data.
+  double? get zeroBalanceUvV {
+    final s = sensitivityCountsPerMvV;
+    if (readings == null || s == null) return null;
+    return offsetCounts / s * 1000.0;
+  }
 
-  /// Terminal nonlinearity (ppm of half-span output, signed): deviation of
-  /// the inner cal point from the straight line between the zero and the
-  /// outer point of the same side. This is the datasheet terminal-straight-
-  /// line definition, not a regression. 0 without factory data.
-  double terminalNonlinearityPpm({required bool positiveSide}) {
+  /// Gain error vs the nominal chain (1.0 = exactly nominal): the measured
+  /// end-point sensitivity relative to the nominal counts-per-mV/V. It
+  /// folds excitation, AFE gain, ADC reference and ladder tolerances into
+  /// one factor — the split is unknowable by design. The one diagnostic
+  /// that references the nominal chain. Null without factory data or
+  /// [nominals].
+  double? get sensitivityVsNominal {
+    final n = nominals;
+    final s = sensitivityCountsPerMvV;
+    if (n == null || s == null || readings == null) return null;
+    return s / n.countsPerMvV;
+  }
+
+  /// Deviation of each cal point from the end-point line (the chord through
+  /// the ±FS points), in µV/V via the measured sensitivity, in
+  /// [kCalPointCount] storage order: what the calibration corrects beyond
+  /// gain and offset. The ±FS entries are 0 by construction; positive = the
+  /// uncorrected device read high. Null without factory data.
+  List<double>? get deviationsUvV {
     final r = readings;
-    if (r == null) return 0;
+    if (r == null) return null;
     final sp = setpoints;
-    final iFs = positiveSide ? kCalIdxPosFs : kCalIdxNegFs;
-    final iMid = positiveSide ? kCalIdxPosMid : kCalIdxNegMid;
-    final lineAtMid =
-        r[kCalIdxZero] +
-        (r[iFs] - r[kCalIdxZero]) *
-            (sp[iMid] - sp[kCalIdxZero]) /
-            (sp[iFs] - sp[kCalIdxZero]);
-    return (r[iMid] - lineAtMid) / (r[iFs] - r[kCalIdxZero]).abs() * 1e6;
+    final s = sensitivityCountsPerMvV!;
+    final rPos = r[kCalIdxPosFs], rNeg = r[kCalIdxNegFs];
+    final spPos = sp[kCalIdxPosFs], spNeg = sp[kCalIdxNegFs];
+    return [
+      for (int k = 0; k < kCalPointCount; ++k)
+        (r[k] - (rNeg + (rPos - rNeg) * (sp[k] - spNeg) / (spPos - spNeg))) /
+            s *
+            1000.0,
+    ];
   }
 
   /// Session-snapshot serialization (recorded sessions carry the calibration
@@ -471,6 +486,11 @@ class BoardCalibration {
     required this.channels,
     this.factoryDate,
     this.excitationMv,
+    this.calBoardId,
+    this.calTool,
+    this.calOrigin,
+    this.calTempsC,
+    this.calAdcGains,
     this.nominals,
     BoardDataStatus? constantsStatus,
     this.constantsDetail = '',
@@ -487,6 +507,22 @@ class BoardCalibration {
   /// Factory DMM reading of the excitation (`cal.exc.mv`), if any.
   final double? excitationMv;
 
+  /// Calibration board firmware id (`cal.board`), if any.
+  final String? calBoardId;
+
+  /// Calibration host script version (`cal.tool`), if any.
+  final String? calTool;
+
+  /// Calibration origin tag (`cal.origin`: `factory`, or a field operator's
+  /// tag), if any.
+  final String? calOrigin;
+
+  /// Temperatures at calibration in °C (`cal.temp`): DUT board, cal board.
+  final ({double dut, double calBoard})? calTempsC;
+
+  /// Per-channel ADC PGA gains at calibration time (`cal.adc`), if recorded.
+  final List<double>? calAdcGains;
+
   /// The resolved board constants; null exactly when [constantsStatus] is
   /// not [BoardDataStatus.ok].
   final BoardNominals? nominals;
@@ -498,6 +534,20 @@ class BoardCalibration {
   /// Human-readable reason when [constantsStatus] is not ok
   /// (e.g. "missing afe_gain").
   final String constantsDetail;
+
+  /// Whether the runtime PGA config differs from the one the calibration was
+  /// taken at — a stale-calibration guard (PGA gains are the only ADC config
+  /// the runtime readback exposes). Null when either side is unknown.
+  bool? get adcConfigDrifted {
+    final atCal = calAdcGains;
+    final current = nominals?.pgaGains;
+    if (atCal == null || current == null) return null;
+    if (atCal.length != current.length) return true;
+    for (int i = 0; i < atCal.length; ++i) {
+      if (atCal[i] != current[i]) return true;
+    }
+    return false;
+  }
 
   /// Parse the board-calibration keys of a `key=value` flash document.
   /// Slot (`lcN.*`) and other unknown keys are ignored. Never throws — see
@@ -521,6 +571,12 @@ class BoardCalibration {
       return [for (final v in parts) v!];
     }
 
+    /// `cal.temp` is a 2-list: (DUT board, cal board) °C.
+    ({double dut, double calBoard})? parseTemps(String? value) {
+      final pair = parseList(value, 2);
+      return pair == null ? null : (dut: pair[0], calBoard: pair[1]);
+    }
+
     final constants = resolveBoardConstants(kv, pgaGains: pgaGains);
     final nominals = constants.nominals;
 
@@ -535,6 +591,11 @@ class BoardCalibration {
       ],
       factoryDate: kv['cal.date'],
       excitationMv: double.tryParse(kv['cal.exc.mv'] ?? ''),
+      calBoardId: kv['cal.board'],
+      calTool: kv['cal.tool'],
+      calOrigin: kv['cal.origin'],
+      calTempsC: parseTemps(kv['cal.temp']),
+      calAdcGains: parseList(kv['cal.adc'], nwNumAdcChan),
       nominals: nominals,
       constantsStatus: constants.status,
       constantsDetail: constants.detail,
@@ -688,13 +749,18 @@ class RigSlots {
 }
 
 /// Every key the model parses: board keys for the [nwNumAdcChan] channels
-/// it has, slot keys for the [kRigSlotCount] slots it has, and the two
-/// `cal.*` metadata keys. Anything else in a flash document (a newer
-/// firmware's keys, another tool's metadata) is NOT ours — it is kept
-/// verbatim in [DeviceFlash.extraLines] so a save can't erase it.
+/// it has, slot keys for the [kRigSlotCount] slots it has, and the `cal.*`
+/// metadata keys. Anything else in a flash document (a newer firmware's
+/// keys, another tool's metadata) is NOT ours — it is kept verbatim in
+/// [DeviceFlash.extraLines] so a save can't erase it.
 final Set<String> _knownFlashKeys = {
   'cal.date',
   'cal.exc.mv',
+  'cal.board',
+  'cal.tool',
+  'cal.origin',
+  'cal.temp',
+  'cal.adc',
   for (int i = 0; i < nwNumAdcChan; ++i) ...['ch$i.r', 'ch$i.raw'],
   for (int i = 0; i < kRigSlotCount; ++i) ...[
     'lc$i.name',
@@ -756,6 +822,13 @@ class DeviceFlash {
     if (board.excitationMv != null) {
       b.writeln('cal.exc.mv=${board.excitationMv}');
     }
+    if (board.calBoardId != null) b.writeln('cal.board=${board.calBoardId}');
+    if (board.calTool != null) b.writeln('cal.tool=${board.calTool}');
+    if (board.calOrigin != null) b.writeln('cal.origin=${board.calOrigin}');
+    final temps = board.calTempsC;
+    if (temps != null) b.writeln('cal.temp=${temps.dut},${temps.calBoard}');
+    final adc = board.calAdcGains;
+    if (adc != null) b.writeln('cal.adc=${adc.join(',')}');
     for (int i = 0; i < board.channels.length; ++i) {
       final ch = board.channels[i];
       // Only write the resistor key when it carries real information:
