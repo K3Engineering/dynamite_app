@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/rig_state.dart';
-import 'package:dynamite_app/widgets/cal_deviation_plot.dart';
+import 'package:dynamite_app/widgets/cal_error_plot.dart';
 import 'package:dynamite_app/widgets/calibration_view.dart';
 
 /// Widget tests for the factory calibration view (inline host). The view
@@ -74,6 +74,11 @@ void main() {
 
     expect(find.textContaining('Calibrated 2026-07-20'), findsOneWidget);
     expect(find.textContaining('±0.5% of reading'), findsOneWidget);
+    // The correction statement is board-level: the summary card, once.
+    expect(
+      find.textContaining('The full 5-point correction is applied'),
+      findsOneWidget,
+    );
     // The provenance line from the new cal.* keys.
     expect(find.textContaining('calboard-fw 1.2.1'), findsOneWidget);
     expect(find.textContaining('board_calibration 1.0'), findsOneWidget);
@@ -82,7 +87,8 @@ void main() {
     // +0.264 µV/V zero balance, +0.02% gain, ±0.009 µV/V linearity).
     expect(find.text('CH 1'), findsOneWidget);
     expect(find.textContaining('zero +0.264 µV/V'), findsOneWidget);
-    expect(find.textContaining('±0.009 µV/V'), findsOneWidget);
+    expect(find.textContaining('end-point linearity ±0.009 µV/V'),
+        findsOneWidget);
   });
 
   testWidgets('expanding a channel reveals the plot and the 5-point table',
@@ -92,30 +98,41 @@ void main() {
       pgaGains: const [1, 1, 1, 1],
     );
     await pump(tester);
-    expect(find.byType(CalDeviationPlot), findsNothing);
+    expect(find.byType(CalErrorPlot), findsNothing);
 
     await tester.tap(find.text('CH 1'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(CalDeviationPlot), findsOneWidget);
-    // The framing sentence and the relabeled diagnostic rows.
-    expect(
-      find.textContaining('Full 5-point correction is applied'),
-      findsOneWidget,
-    );
+    // The titled measured-error plot.
+    expect(find.text('Measured error'), findsOneWidget);
+    expect(find.byType(CalErrorPlot), findsOneWidget);
     expect(find.text('Zero balance'), findsOneWidget);
     expect(find.textContaining('+0.264 µV/V'), findsWidgets);
     expect(find.text('Gain vs nominal'), findsOneWidget);
     expect(find.textContaining('+0.02%'), findsWidgets);
-    expect(find.text('Linearity'), findsOneWidget);
-    // The table, with its per-point deviation column.
+    expect(find.text('End-point linearity'), findsOneWidget);
+    // The table: quantity header row, subdued units row, and the
+    // convention footnote for the pinned nonlinearity column.
     expect(find.text('(t1, t5)'), findsOneWidget);
     expect(find.text('(t3, t3)'), findsOneWidget);
-    expect(find.text('Deviation (µV/V)'), findsOneWidget);
+    expect(find.text('Error'), findsOneWidget);
+    expect(find.text('Nonlinearity'), findsOneWidget);
+    expect(find.text('mV/V'), findsOneWidget);
+    expect(find.text('counts'), findsOneWidget);
+    expect(find.text('µV/V'), findsNWidgets(2));
+    expect(find.textContaining('0 by definition'), findsOneWidget);
+    // The old end-point-only presentation is gone.
+    expect(find.text('Deviation (µV/V)'), findsNothing);
+    // Error column: as-found, nothing pinned — every cell nonzero here.
+    final ch0 = board.channels[0];
+    String fmt(double v) => '${v > 0 ? '+' : ''}${v.toStringAsFixed(3)}';
+    for (final v in ch0.measuredErrorsUvV!) {
+      expect(find.text(fmt(v)), findsOneWidget, reason: 'error cell $v');
+    }
+    // Nonlinearity column: the end-point deviations.
     expect(find.text('+0.009'), findsOneWidget); // ch0 bow at +mid
     expect(find.text('-0.003'), findsOneWidget); // ...and the −mid sag
     // Setpoints formatted to 4 decimals, readings to 1.
-    final ch0 = board.channels[0];
     for (int k = 0; k < kCalPointCount; k++) {
       expect(
         find.text(ch0.setpoints[k].toStringAsFixed(4)),
@@ -128,6 +145,33 @@ void main() {
         reason: 'reading $k',
       );
     }
+  });
+
+  testWidgets('calibrated channel without board constants: no error figures',
+      (tester) async {
+    // ch0 has factory data, but the constants are unresolvable (no
+    // afe_gain) — the measured error has no reference chain.
+    const noConstantsDoc = '''
+K3CAL1
+cal.date=2026-07-20
+adc_fsr=1.2,nominal
+exc=4.53,nominal
+ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4
+ch0.raw=6386310.2,3193480.0,845.2,-3191769.6,-6384619.8
+END
+''';
+    await pump(tester, flashDoc: noConstantsDoc);
+    await tester.tap(find.text('CH 1'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CalErrorPlot), findsNothing);
+    expect(find.text('Measured error'), findsNothing);
+    expect(find.text('Error'), findsNothing);
+    // The end-point nonlinearity needs no nominal chain: its column and
+    // the footnote survive.
+    expect(find.text('Nonlinearity'), findsOneWidget);
+    expect(find.textContaining('0 by definition'), findsOneWidget);
+    expect(find.text('+0.009'), findsOneWidget);
   });
 
   testWidgets('no flash doc: placeholder card, no values', (tester) async {
@@ -228,10 +272,22 @@ END
       expect(report, contains('board_calibration 1.0'));
       expect(report, contains('±0.5% of reading'));
       expect(report, contains('1 µV/V = 500 ppm'));
+      expect(report, contains('Correction: The full 5-point correction'));
+      expect(report, contains('Definitions: Error = measured reading'));
       expect(report, contains('CH 1: zero balance +0.264 µV/V'));
       expect(report, contains('gain +0.02% vs nominal'));
+      expect(report, contains('end-point linearity ±0.009 µV/V'));
       expect(report, contains('sensitivity'));
       expect(report, contains('(t1, t5)'));
+      // Per-point lines carry both figures; the error column's zero row
+      // is the offset through the nominal chain.
+      final ch0 = board.channels[0];
+      final e0 = ch0.measuredErrorsUvV![kCalIdxZero];
+      expect(
+        report,
+        contains('error ${e0 > 0 ? '+' : ''}${e0.toStringAsFixed(3)} µV/V'),
+      );
+      expect(report, contains('nonlinearity +0.009 µV/V'));
     });
 
     test('an uncalibrated channel reports nominal, not a void', () {

@@ -400,6 +400,11 @@ class ChannelBoardCalibration {
   /// the measured sensitivity — measured counts ÷ measured counts-per-mV/V,
   /// so the nominal chain (FSR, AFE gain, excitation) never enters. This is
   /// the load-cell certificate's "zero balance". Null without factory data.
+  ///
+  /// The measured-error table's zero row ([measuredErrorsUvV]) expresses
+  /// the same offset through the nominal chain instead; the two differ by
+  /// the gain factor — far below the calibration's uncertainty. Both are
+  /// displayed, deliberately: two conventions, no reconciliation text.
   double? get zeroBalanceUvV {
     final s = sensitivityCountsPerMvV;
     if (readings == null || s == null) return null;
@@ -419,11 +424,31 @@ class ChannelBoardCalibration {
     return s / n.countsPerMvV;
   }
 
-  /// Deviation of each cal point from the end-point line (the chord through
-  /// the ±FS points), in µV/V via the measured sensitivity, in
-  /// [kCalPointCount] storage order: what the calibration corrects beyond
-  /// gain and offset. The ±FS entries are 0 by construction; positive = the
-  /// uncorrected device read high. Null without factory data.
+  /// Measured error per cal point in µV/V, in [kCalPointCount] storage
+  /// order: the reading converted through the *nominal* chain minus the
+  /// ladder setpoint — the as-found error, what an uncorrected reading
+  /// would show. Offset, gain error and curvature all appear; the ±FS
+  /// entries are NOT zero (unlike [deviationsUvV], nothing here is pinned
+  /// by construction). Null without factory data or without [nominals] —
+  /// no reference chain, no error figures.
+  List<double>? get measuredErrorsUvV {
+    final r = readings;
+    final n = nominals;
+    if (r == null || n == null) return null;
+    final sp = setpoints;
+    return [
+      for (int k = 0; k < kCalPointCount; ++k)
+        (r[k] / n.countsPerMvV - sp[k]) * 1000.0,
+    ];
+  }
+
+  /// End-point nonlinearity per cal point in µV/V, in [kCalPointCount]
+  /// storage order: deviation from the end-point line (the chord through
+  /// the ±FS points), via the measured sensitivity — what the calibration
+  /// corrects beyond gain and offset. The ±FS entries are 0 by
+  /// construction; positive = the uncorrected device read high. Feeds the
+  /// table's Nonlinearity column; the UI labels the end-point convention
+  /// wherever these numbers appear. Null without factory data.
   List<double>? get deviationsUvV {
     final r = readings;
     if (r == null) return null;

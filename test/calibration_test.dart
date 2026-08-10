@@ -116,6 +116,33 @@ void main() {
       expect(ChannelBoardCalibration().deviationsUvV, isNull);
     });
 
+    test('measured errors reference the nominal chain, nothing pinned', () {
+      final cal = ChannelBoardCalibration(
+        readings: affineReadings,
+        nominals: testNominals,
+      );
+      final errors = cal.measuredErrorsUvV!;
+      for (int k = 0; k < kCalPointCount; ++k) {
+        expect(
+          errors[k],
+          closeTo(
+            (affineReadings[k] / testNominals.countsPerMvV - sp[k]) * 1000,
+            1e-9,
+          ),
+          reason: 'error $k',
+        );
+      }
+      // Unlike the end-point nonlinearity, no point is zero by
+      // construction: the zero point carries the offset (alpha ≠ 0), the
+      // ±FS points the gain error.
+      expect(errors[kCalIdxZero], isNot(closeTo(0, 1e-9)));
+      // No nominal chain — no reference, no error figures (the end-point
+      // nonlinearity alone survives).
+      final bare = ChannelBoardCalibration(readings: affineReadings);
+      expect(bare.measuredErrorsUvV, isNull);
+      expect(bare.deviationsUvV, isNotNull);
+    });
+
     test('piecewise map anchors bowed points; deviations report the bow', () {
       final bowed = List<double>.of(affineReadings);
       bowed[1] += 100; // +mid reads 100 counts high
@@ -149,6 +176,7 @@ void main() {
       expect(cal.sensitivityVsNominal, isNull);
       expect(cal.zeroBalanceUvV, isNull);
       expect(cal.deviationsUvV, isNull);
+      expect(cal.measuredErrorsUvV, isNull);
     });
   });
 
@@ -160,6 +188,7 @@ void main() {
       expect(cal.sensitivityVsNominal, isNull);
       expect(cal.zeroBalanceUvV, isNull);
       expect(cal.deviationsUvV, isNull);
+      expect(cal.measuredErrorsUvV, isNull);
     });
 
     test('nominals survive the session-snapshot round trip', () {

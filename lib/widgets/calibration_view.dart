@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../models/calibration.dart';
 import '../services/rig_state.dart';
-import 'cal_deviation_plot.dart';
+import 'cal_error_plot.dart';
 
 /// The product's trust statement for the calibrated units — a product claim,
 /// not per-device data (see the flash schema: the device carries the
@@ -20,10 +20,10 @@ const String kCorrectionNote =
     'Calibration measures and corrects the product of excitation, gain, '
     'reference, and ladder tolerances — their split is unknowable by design.';
 
-/// Shown at the top of each calibrated channel's card: correction is not a
-/// view mode, it is the instrument.
+/// Board-wide, in the summary card: correction is not a view mode, it is
+/// the instrument.
 const String kCorrectionApplied =
-    'Full 5-point correction is applied to the live view and saved data.';
+    'The full 5-point correction is applied to the live view and saved data.';
 
 /// The µV/V ↔ ppm bridge for users comparing against load-cell datasheets
 /// (the cal span brackets a standard 2 mV/V cell's rated output).
@@ -127,6 +127,10 @@ class _SummaryCard extends StatelessWidget {
               calibrated == 0 ? kTrustLineUncalibrated : kTrustLineCalibrated,
               style: theme.textTheme.bodySmall,
             ),
+            if (calibrated > 0) ...[
+              const SizedBox(height: 4),
+              Text(kCorrectionApplied, style: theme.textTheme.bodySmall),
+            ],
             if (board.adcConfigDrifted == true) ...[
               const SizedBox(height: 4),
               Text(
@@ -154,8 +158,8 @@ class _SummaryCard extends StatelessWidget {
 }
 
 /// One channel's corrections: a summary line in µV/V, expanding to the
-/// framing sentence, the diagnostic rows, the deviation plot, and the
-/// measured 5-point table with per-point deviations.
+/// measured-error plot, the diagnostic rows, and the measured 5-point
+/// table with per-point error and end-point nonlinearity.
 class _ChannelCalCard extends StatelessWidget {
   const _ChannelCalCard({required this.index, required this.channel});
 
@@ -164,7 +168,13 @@ class _ChannelCalCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
     final calibrated = channel.isFactoryCalibrated;
+    // The measured error needs the nominal chain as its reference; without
+    // board constants the plot and the Error column drop out, and the
+    // end-point nonlinearity (measured-only) is what remains.
+    final errors = channel.measuredErrorsUvV;
+    final nonlinearities = channel.deviationsUvV;
     return Card(
       child: ExpansionTile(
         title: Text('CH ${index + 1}'),
@@ -172,23 +182,18 @@ class _ChannelCalCard extends StatelessWidget {
           calibrated
               ? 'zero ${_fmtUvV(channel.zeroBalanceUvV)} · '
                     'gain ${_fmtGain(channel.sensitivityVsNominal)} · '
-                    'linearity ±${_maxDeviation(channel)!.toStringAsFixed(3)} µV/V'
+                    'end-point linearity ±${_maxDeviation(channel)!.toStringAsFixed(3)} µV/V'
               : 'Nominal values (no factory data)',
         ),
         children: [
-          if (calibrated) ...[
+          if (errors != null) ...[
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Text(
-                kCorrectionApplied,
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: Text('Measured error', style: theme.textTheme.titleSmall),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: CalDeviationPlot(
-                deviationsUvV: channel.deviationsUvV!,
-              ),
+              child: CalErrorPlot(errorsUvV: errors),
             ),
           ],
           Padding(
@@ -212,25 +217,33 @@ class _ChannelCalCard extends StatelessWidget {
                         '(±FS cal points ÷ nominal chain)',
                   ),
                   _row(
-                    'Linearity',
+                    'End-point linearity',
                     '±${_maxDeviation(channel)!.toStringAsFixed(3)} µV/V '
                         'max deviation',
                   ),
                   const SizedBox(height: 8),
                   Table(
-                    columnWidths: const {
-                      0: FlexColumnWidth(),
-                      1: FlexColumnWidth(),
-                      2: FlexColumnWidth(),
-                      3: FlexColumnWidth(),
+                    columnWidths: {
+                      for (int c = 0; c < (errors != null ? 5 : 4); ++c)
+                        c: const FlexColumnWidth(),
                     },
                     children: [
                       TableRow(
                         children: [
                           _th(context, 'Config'),
-                          _th(context, 'Setpoint (mV/V)'),
-                          _th(context, 'Reading (counts)'),
-                          _th(context, 'Deviation (µV/V)'),
+                          _th(context, 'Setpoint'),
+                          _th(context, 'Reading'),
+                          if (errors != null) _th(context, 'Error'),
+                          _th(context, 'Nonlinearity'),
+                        ],
+                      ),
+                      TableRow(
+                        children: [
+                          _unit(context, ''),
+                          _unit(context, 'mV/V'),
+                          _unit(context, 'counts'),
+                          if (errors != null) _unit(context, 'µV/V'),
+                          _unit(context, 'µV/V'),
                         ],
                       ),
                       for (int k = 0; k < kCalPointCount; k++)
@@ -239,10 +252,19 @@ class _ChannelCalCard extends StatelessWidget {
                             _td(calConfigLabels[k]),
                             _td(channel.setpoints[k].toStringAsFixed(4)),
                             _td(channel.readings![k].toStringAsFixed(1)),
-                            _td(_fmtDeviation(channel.deviationsUvV![k])),
+                            if (errors != null) _td(_fmtSigned(errors[k])),
+                            _td(_fmtSigned(nonlinearities![k])),
                           ],
                         ),
                     ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Nonlinearity: deviation from the end-point line through '
+                    '±FS — the ±FS entries are 0 by definition.',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ],
@@ -341,7 +363,16 @@ String calibrationReport(BoardCalibration board, String deviceId) {
     );
   }
   b.writeln('Trust: $kTrustLineCalibrated');
+  if (board.channels.any((c) => c.isFactoryCalibrated)) {
+    b.writeln('Correction: $kCorrectionApplied');
+  }
   b.writeln('Note: $kUvVToPpmNote');
+  // The report travels without its author, so it carries its definitions.
+  b.writeln(
+    'Definitions: Error = measured reading via the nominal chain minus '
+    'the ladder setpoint (as-found, before correction). Nonlinearity = '
+    'deviation from the end-point line through ±FS.',
+  );
   if (board.adcConfigDrifted == true) {
     b.writeln('WARNING: ADC gain configuration changed since calibration.');
   }
@@ -355,18 +386,21 @@ String calibrationReport(BoardCalibration board, String deviceId) {
     b.writeln(
       'CH ${i + 1}: zero balance ${_fmtUvV(ch.zeroBalanceUvV)} · '
       'gain ${_fmtGain(ch.sensitivityVsNominal)} vs nominal · '
-      'linearity ±${_maxDeviation(ch)!.toStringAsFixed(3)} µV/V',
+      'end-point linearity ±${_maxDeviation(ch)!.toStringAsFixed(3)} µV/V',
     );
     b.writeln(
       '  sensitivity ${ch.sensitivityCountsPerMvV!.toStringAsFixed(0)} '
       'counts/(mV/V) · offset ${_fmtCounts(ch.offsetCounts)} counts',
     );
+    final errors = ch.measuredErrorsUvV;
+    final nonlinearities = ch.deviationsUvV!;
     for (int k = 0; k < kCalPointCount; ++k) {
       b.writeln(
         '  ${calConfigLabels[k]}  '
         '${ch.setpoints[k].toStringAsFixed(4)} mV/V  '
-        '${ch.readings![k].toStringAsFixed(1)}  '
-        '${_fmtDeviation(ch.deviationsUvV![k])} µV/V',
+        '${ch.readings![k].toStringAsFixed(1)} counts  '
+        '${errors != null ? 'error ${_fmtSigned(errors[k])} µV/V  ' : ''}'
+        'nonlinearity ${_fmtSigned(nonlinearities[k])} µV/V',
       );
     }
   }
@@ -409,8 +443,8 @@ double? _maxDeviation(ChannelBoardCalibration ch) {
 String _fmtUvV(double? uvV) =>
     uvV == null ? '—' : '${uvV > 0 ? '+' : ''}${uvV.toStringAsFixed(3)} µV/V';
 
-/// A table deviation in µV/V, without the unit (the column header has it).
-String _fmtDeviation(double uvV) =>
+/// A table cell in µV/V, signed, without the unit (the units row has it).
+String _fmtSigned(double uvV) =>
     '${uvV > 0 ? '+' : ''}${uvV.toStringAsFixed(3)}';
 
 String _fmtGain(double? fraction) => fraction == null
@@ -436,6 +470,20 @@ Widget _th(BuildContext context, String text) => Padding(
   padding: const EdgeInsets.symmetric(vertical: 2),
   child: Text(text, style: Theme.of(context).textTheme.labelSmall),
 );
+
+/// The secondary header row: units under the [_th] quantity names, subdued.
+Widget _unit(BuildContext context, String text) {
+  final theme = Theme.of(context);
+  return Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Text(
+      text,
+      style: theme.textTheme.labelSmall?.copyWith(
+        color: theme.colorScheme.onSurfaceVariant,
+      ),
+    ),
+  );
+}
 
 Widget _td(String text) =>
     Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: Text(text));
