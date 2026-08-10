@@ -2,16 +2,19 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-/// The calibration "certificate plot": per-point measured error against
-/// the ladder reference (the as-found error, before correction), in µV/V.
-/// Offset, gain error and curvature all appear — the ±FS points carry
-/// real values, nothing is pinned to zero. Pure presentation; the math
-/// lives in `ChannelBoardCalibration.measuredErrorsUvV`.
-class CalErrorPlot extends StatelessWidget {
-  const CalErrorPlot({super.key, required this.errorsUvV});
+/// The calibration "certificate plot": per-point end-point nonlinearity —
+/// deviation from the chord through the ±FS cal points, in µV/V. Gain and
+/// offset are removed by construction, so the plot shows shape only: what
+/// the correction absorbs beyond the affine part. Display order is the
+/// industry convention, −FS … +FS left-to-right; the input list is in
+/// [kCalPointCount] storage order (+FS … −FS). Pure presentation; the math
+/// lives in `ChannelBoardCalibration.deviationsUvV`.
+class CalDeviationPlot extends StatelessWidget {
+  const CalDeviationPlot({super.key, required this.deviationsUvV});
 
-  /// Measured error per cal point (storage order: +FS … −FS), in µV/V.
-  final List<double> errorsUvV;
+  /// Deviation per cal point (storage order: +FS … −FS), in µV/V. The ±FS
+  /// entries are 0 by construction.
+  final List<double> deviationsUvV;
 
   @override
   Widget build(BuildContext context) {
@@ -21,8 +24,8 @@ class CalErrorPlot extends StatelessWidget {
       height: 120,
       width: double.infinity,
       child: CustomPaint(
-        painter: _ErrorPainter(
-          errorsUvV,
+        painter: _DeviationPainter(
+          deviationsUvV,
           lineColor: scheme.primary,
           axisColor: scheme.outlineVariant,
           labelStyle:
@@ -36,21 +39,23 @@ class CalErrorPlot extends StatelessWidget {
   }
 }
 
-class _ErrorPainter extends CustomPainter {
-  _ErrorPainter(
-    this.errors, {
+class _DeviationPainter extends CustomPainter {
+  _DeviationPainter(
+    this.deviations, {
     required this.lineColor,
     required this.axisColor,
     required this.labelStyle,
   });
 
-  final List<double> errors;
+  /// Storage order (+FS … −FS); [paint] reverses for display.
+  final List<double> deviations;
   final Color lineColor;
   final Color axisColor;
   final TextStyle labelStyle;
 
-  /// X labels in storage order — short forms of the tap-pair labels.
-  static const _xLabels = ['+FS', '+mid', '0', '−mid', '−FS'];
+  /// X labels in display order (−FS … +FS) — short forms of the tap-pair
+  /// labels.
+  static const _xLabels = ['−FS', '−mid', '0', '+mid', '+FS'];
 
   // Left gutter for the µV/V bound labels, bottom strip for the x labels.
   static const _leftPad = 64.0;
@@ -77,9 +82,12 @@ class _ErrorPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final maxAbs = errors.fold<double>(0, (a, b) => math.max(a, b.abs()));
-    // 20% headroom past the worst error; an exactly-nominal device gets an
-    // arbitrary ±0.01 µV/V frame so its flat zero line still reads as a
+    // Display convention is input increasing left-to-right; storage order
+    // is +FS first.
+    final values = deviations.reversed.toList(growable: false);
+    final maxAbs = values.fold<double>(0, (a, b) => math.max(a, b.abs()));
+    // 20% headroom past the worst deviation; an exactly-affine device gets
+    // an arbitrary ±0.01 µV/V frame so its flat zero line still reads as a
     // plot.
     final bound = maxAbs == 0 ? 0.01 : _niceBound(maxAbs * 1.2);
 
@@ -89,7 +97,7 @@ class _ErrorPainter extends CustomPainter {
     final bottom = size.height - _bottomPad;
     final midY = (top + bottom) / 2;
 
-    double xOf(int k) => left + k * (right - left) / (errors.length - 1);
+    double xOf(int k) => left + k * (right - left) / (values.length - 1);
     double yOf(double uvV) => midY - (uvV / bound) * (midY - top);
 
     final axisPaint = Paint()
@@ -123,13 +131,13 @@ class _ErrorPainter extends CustomPainter {
       ..strokeWidth = 1.5
       ..style = PaintingStyle.stroke;
     final pointPaint = Paint()..color = lineColor;
-    final path = Path()..moveTo(xOf(0), yOf(errors[0]));
-    for (int k = 1; k < errors.length; ++k) {
-      path.lineTo(xOf(k), yOf(errors[k]));
+    final path = Path()..moveTo(xOf(0), yOf(values[0]));
+    for (int k = 1; k < values.length; ++k) {
+      path.lineTo(xOf(k), yOf(values[k]));
     }
     canvas.drawPath(path, linePaint);
-    for (int k = 0; k < errors.length; ++k) {
-      canvas.drawCircle(Offset(xOf(k), yOf(errors[k])), 2.5, pointPaint);
+    for (int k = 0; k < values.length; ++k) {
+      canvas.drawCircle(Offset(xOf(k), yOf(values[k])), 2.5, pointPaint);
       if (k < _xLabels.length) {
         final tp = TextPainter(
           text: TextSpan(text: _xLabels[k], style: labelStyle),
@@ -140,12 +148,12 @@ class _ErrorPainter extends CustomPainter {
     }
 
     // The one number on the plot (the rest live in the table): the extreme
-    // error's value, placed off its point toward the zero line.
+    // deviation's value, placed off its point toward the zero line.
     var iExt = 0;
-    for (int k = 1; k < errors.length; ++k) {
-      if (errors[k].abs() > errors[iExt].abs()) iExt = k;
+    for (int k = 1; k < values.length; ++k) {
+      if (values[k].abs() > values[iExt].abs()) iExt = k;
     }
-    final extreme = errors[iExt];
+    final extreme = values[iExt];
     if (extreme != 0) {
       final tp = TextPainter(
         text: TextSpan(
@@ -164,8 +172,8 @@ class _ErrorPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_ErrorPainter old) =>
-      old.errors != errors ||
+  bool shouldRepaint(_DeviationPainter old) =>
+      old.deviations != deviations ||
       old.lineColor != lineColor ||
       old.axisColor != axisColor;
 }

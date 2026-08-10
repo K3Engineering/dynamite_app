@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/rig_state.dart';
-import 'package:dynamite_app/widgets/cal_error_plot.dart';
+import 'package:dynamite_app/widgets/cal_deviation_plot.dart';
 import 'package:dynamite_app/widgets/calibration_view.dart';
 
 /// Widget tests for the factory calibration view (inline host). The view
@@ -98,31 +98,32 @@ void main() {
       pgaGains: const [1, 1, 1, 1],
     );
     await pump(tester);
-    expect(find.byType(CalErrorPlot), findsNothing);
+    expect(find.byType(CalDeviationPlot), findsNothing);
 
     await tester.tap(find.text('CH 1'));
     await tester.pumpAndSettle();
 
-    // The titled measured-error plot.
-    expect(find.text('Measured error'), findsOneWidget);
-    expect(find.byType(CalErrorPlot), findsOneWidget);
+    // The titled nonlinearity plot, with its convention caption.
+    expect(find.byType(CalDeviationPlot), findsOneWidget);
+    // 'Nonlinearity' appears twice: the plot section title and the table
+    // column header.
+    expect(find.text('Nonlinearity'), findsNWidgets(2));
+    expect(find.textContaining('gain and offset removed'), findsOneWidget);
+    expect(find.textContaining('0 by definition'), findsOneWidget);
     expect(find.text('Zero balance'), findsOneWidget);
     expect(find.textContaining('+0.264 µV/V'), findsWidgets);
     expect(find.text('Gain vs nominal'), findsOneWidget);
     expect(find.textContaining('+0.02%'), findsWidgets);
     expect(find.text('End-point linearity'), findsOneWidget);
-    // The table: quantity header row, subdued units row, and the
-    // convention footnote for the pinned nonlinearity column.
+    // The table: quantity header row and subdued units row.
     expect(find.text('(t1, t5)'), findsOneWidget);
     expect(find.text('(t3, t3)'), findsOneWidget);
     expect(find.text('Error'), findsOneWidget);
-    expect(find.text('Nonlinearity'), findsOneWidget);
     expect(find.text('mV/V'), findsOneWidget);
     expect(find.text('counts'), findsOneWidget);
     expect(find.text('µV/V'), findsNWidgets(2));
-    expect(find.textContaining('0 by definition'), findsOneWidget);
-    // The old end-point-only presentation is gone.
-    expect(find.text('Deviation (µV/V)'), findsNothing);
+    // The old measured-error presentation is gone.
+    expect(find.text('Measured error'), findsNothing);
     // Error column: as-found, nothing pinned — every cell nonzero here.
     final ch0 = board.channels[0];
     String fmt(double v) => '${v > 0 ? '+' : ''}${v.toStringAsFixed(3)}';
@@ -164,12 +165,11 @@ END
     await tester.tap(find.text('CH 1'));
     await tester.pumpAndSettle();
 
-    expect(find.byType(CalErrorPlot), findsNothing);
-    expect(find.text('Measured error'), findsNothing);
     expect(find.text('Error'), findsNothing);
-    // The end-point nonlinearity needs no nominal chain: its column and
-    // the footnote survive.
-    expect(find.text('Nonlinearity'), findsOneWidget);
+    // The end-point nonlinearity needs no nominal chain: the plot, its
+    // caption, and the column all survive.
+    expect(find.byType(CalDeviationPlot), findsOneWidget);
+    expect(find.text('Nonlinearity'), findsNWidgets(2));
     expect(find.textContaining('0 by definition'), findsOneWidget);
     expect(find.text('+0.009'), findsOneWidget);
   });
@@ -274,6 +274,8 @@ END
       expect(report, contains('1 µV/V = 500 ppm'));
       expect(report, contains('Correction: The full 5-point correction'));
       expect(report, contains('Definitions: Error = measured reading'));
+      expect(report, contains('Uncertainty: ±0.5% of reading'));
+      expect(report, contains('not a traceable calibration'));
       expect(report, contains('CH 1: zero balance +0.264 µV/V'));
       expect(report, contains('gain +0.02% vs nominal'));
       expect(report, contains('end-point linearity ±0.009 µV/V'));

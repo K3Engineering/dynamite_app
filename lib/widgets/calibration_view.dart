@@ -4,7 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../models/calibration.dart';
 import '../services/rig_state.dart';
-import 'cal_error_plot.dart';
+import 'cal_deviation_plot.dart';
 
 /// The product's trust statement for the calibrated units — a product claim,
 /// not per-device data (see the flash schema: the device carries the
@@ -158,7 +158,7 @@ class _SummaryCard extends StatelessWidget {
 }
 
 /// One channel's corrections: a summary line in µV/V, expanding to the
-/// measured-error plot, the diagnostic rows, and the measured 5-point
+/// nonlinearity plot, the diagnostic rows, and the measured 5-point
 /// table with per-point error and end-point nonlinearity.
 class _ChannelCalCard extends StatelessWidget {
   const _ChannelCalCard({required this.index, required this.channel});
@@ -170,9 +170,9 @@ class _ChannelCalCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final calibrated = channel.isFactoryCalibrated;
-    // The measured error needs the nominal chain as its reference; without
-    // board constants the plot and the Error column drop out, and the
-    // end-point nonlinearity (measured-only) is what remains.
+    // The plot and the Nonlinearity column need only the measured points;
+    // the Error column additionally needs the nominal chain as its
+    // reference, so it alone drops out without board constants.
     final errors = channel.measuredErrorsUvV;
     final nonlinearities = channel.deviationsUvV;
     return Card(
@@ -186,14 +186,24 @@ class _ChannelCalCard extends StatelessWidget {
               : 'Nominal values (no factory data)',
         ),
         children: [
-          if (errors != null) ...[
+          if (calibrated) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-              child: Text('Measured error', style: theme.textTheme.titleSmall),
+              child: Text('Nonlinearity', style: theme.textTheme.titleSmall),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+              child: CalDeviationPlot(deviationsUvV: nonlinearities!),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: CalErrorPlot(errorsUvV: errors),
+              child: Text(
+                'Deviation from the end-point line through ±FS — gain and '
+                'offset removed; the ±FS points are 0 by definition.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
             ),
           ],
           Padding(
@@ -257,14 +267,6 @@ class _ChannelCalCard extends StatelessWidget {
                           ],
                         ),
                     ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    'Nonlinearity: deviation from the end-point line through '
-                    '±FS — the ±FS entries are 0 by definition.',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.onSurfaceVariant,
-                    ),
                   ),
                 ],
               ],
@@ -372,6 +374,12 @@ String calibrationReport(BoardCalibration board, String deviceId) {
     'Definitions: Error = measured reading via the nominal chain minus '
     'the ladder setpoint (as-found, before correction). Nonlinearity = '
     'deviation from the end-point line through ±FS.',
+  );
+  b.writeln(
+    'Uncertainty: ±0.5% of reading, from component-specification analysis '
+    '— not a traceable calibration. The as-found error figures carry the '
+    'same ladder uncertainty; nonlinearity figures are relative within '
+    'the ladder and exclude the nominal-chain tolerance.',
   );
   if (board.adcConfigDrifted == true) {
     b.writeln('WARNING: ADC gain configuration changed since calibration.');

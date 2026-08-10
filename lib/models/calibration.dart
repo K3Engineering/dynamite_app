@@ -447,8 +447,9 @@ class ChannelBoardCalibration {
   /// the ±FS points), via the measured sensitivity — what the calibration
   /// corrects beyond gain and offset. The ±FS entries are 0 by
   /// construction; positive = the uncorrected device read high. Feeds the
-  /// table's Nonlinearity column; the UI labels the end-point convention
-  /// wherever these numbers appear. Null without factory data.
+  /// nonlinearity plot and the table's Nonlinearity column; the UI labels
+  /// the end-point convention wherever these numbers appear. Null without
+  /// factory data.
   List<double>? get deviationsUvV {
     final r = readings;
     if (r == null) return null;
