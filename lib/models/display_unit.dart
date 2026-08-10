@@ -1,10 +1,11 @@
 import 'dart:math' as math;
 
-import 'calibration.dart';
+import 'board_calibration.dart';
+import 'device_flash.dart';
 
-/// [adcCountsPerPolarity] lives in models/calibration.dart — re-exported so
-/// existing importers keep working.
-export 'calibration.dart' show adcCountsPerPolarity;
+/// [adcCountsPerPolarity] lives in models/board_calibration.dart —
+/// re-exported so existing importers keep working.
+export 'board_calibration.dart' show adcCountsPerPolarity;
 
 /// One rung of a unit's SI-prefix axis ladder: [factor] base units equal one
 /// rung unit (1e-3 mV per µV, 1e3 kgf per tf); [symbol] is the axis-label

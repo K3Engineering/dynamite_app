@@ -1,34 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/calibration.dart';
+import '../screens/calibration_report_screen.dart';
 import '../services/rig_state.dart';
 import 'cal_deviation_plot.dart';
-
-/// The product's trust statement for the calibrated units — a product claim,
-/// not per-device data (see the flash schema: the device carries the
-/// corrections, the app carries what they add up to).
-const String kTrustLineCalibrated =
-    'mV/V and force: ±0.5% of reading · mV: nominal chain (~1%)';
-const String kTrustLineUncalibrated =
-    'Uncalibrated — nominal chain in use; expect ~±1% on electrical units.';
-
-/// The one-sentence answer to "why does the gain correction not match my
-/// DMM": shown in the details card so the question never has to be asked.
-const String kCorrectionNote =
-    'Calibration measures and corrects the product of excitation, gain, '
-    'reference, and ladder tolerances — their split is unknowable by design.';
-
-/// Board-wide, in the summary card: correction is not a view mode, it is
-/// the instrument.
-const String kCorrectionApplied =
-    'The full 5-point correction is applied to the live view and saved data.';
-
-/// The µV/V ↔ ppm bridge for users comparing against load-cell datasheets
-/// (the cal span brackets a standard 2 mV/V cell's rated output).
-const String kUvVToPpmNote =
-    'For a 2 mV/V load cell, 1 µV/V = 500 ppm of rated output.';
+import 'calibration_report.dart';
 
 /// The factory calibration view: identity/traceability, the trust statement,
 /// and each channel's measured corrections, in physical units. Host-
@@ -182,9 +159,9 @@ class _ChannelCalCard extends StatelessWidget {
         title: Text('CH ${index + 1}'),
         subtitle: Text(
           calibrated
-              ? 'zero ${_fmtUvV(channel.zeroOffsetUvV)} · '
-                    'gain ${_fmtGain(channel.sensitivityVsNominal)} · '
-                    'end-point linearity ±${_maxDeviation(channel)!.toStringAsFixed(3)} µV/V'
+              ? 'zero offset ${fmtUvV(channel.zeroOffsetUvV)} · '
+                    'gain ${fmtGain(channel.sensitivityVsNominal)} · '
+                    'end-point linearity ±${maxCalDeviation(channel)!.toStringAsFixed(3)} µV/V'
               : 'Nominal values (no factory data)',
         ),
         children: [
@@ -222,15 +199,15 @@ class _ChannelCalCard extends StatelessWidget {
                       : 'Unavailable (no board constants)',
                 ),
                 if (calibrated) ...[
-                  _row('Zero offset', _fmtUvV(channel.zeroOffsetUvV)),
+                  _row('Zero offset', fmtUvV(channel.zeroOffsetUvV)),
                   _row(
                     'Gain vs nominal',
-                    '${_fmtGain(channel.sensitivityVsNominal)} '
+                    '${fmtGain(channel.sensitivityVsNominal)} '
                         '(±FS cal points ÷ nominal chain)',
                   ),
                   _row(
                     'End-point linearity',
-                    '±${_maxDeviation(channel)!.toStringAsFixed(3)} µV/V '
+                    '±${maxCalDeviation(channel)!.toStringAsFixed(3)} µV/V '
                         'max deviation',
                   ),
                   const SizedBox(height: 8),
@@ -264,8 +241,8 @@ class _ChannelCalCard extends StatelessWidget {
                             _td(calConfigLabels[k]),
                             _td(channel.setpoints[k].toStringAsFixed(4)),
                             _td(channel.readings![k].toStringAsFixed(1)),
-                            if (errors != null) _td(_fmtSigned(errors[k])),
-                            _td(_fmtSigned(nonlinearities![k])),
+                            if (errors != null) _td(fmtSignedUvV(errors[k])),
+                            _td(fmtSignedUvV(nonlinearities![k])),
                           ],
                         ),
                     ],
@@ -281,7 +258,7 @@ class _ChannelCalCard extends StatelessWidget {
 }
 
 /// The engineering card: the resolved conversion chain with its provenance,
-/// the correction note, and the copy-report affordance.
+/// the correction note, and the entry to the report page.
 class _DetailsCard extends StatelessWidget {
   const _DetailsCard({required this.board, required this.deviceId});
 
@@ -324,9 +301,14 @@ class _DetailsCard extends StatelessWidget {
             Align(
               alignment: Alignment.centerRight,
               child: TextButton.icon(
-                onPressed: () => _copyReport(context),
-                icon: const Icon(Icons.copy, size: 18),
-                label: const Text('Copy report'),
+                onPressed: () => Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        CalibrationReportScreen(deviceId: deviceId),
+                  ),
+                ),
+                icon: const Icon(Icons.description_outlined, size: 18),
+                label: const Text('View calibration report'),
               ),
             ),
           ],
@@ -334,89 +316,6 @@ class _DetailsCard extends StatelessWidget {
       ),
     );
   }
-
-  Future<void> _copyReport(BuildContext context) async {
-    await Clipboard.setData(
-      ClipboardData(text: calibrationReport(board, deviceId)),
-    );
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Calibration report copied to clipboard')),
-      );
-    }
-  }
-}
-
-/// The plain-text calibration report (support-email / paste-anywhere
-/// artifact): mirrors the on-screen content, plus the 5-point tables.
-String calibrationReport(BoardCalibration board, String deviceId) {
-  final b = StringBuffer('Dynamite Sampler — board calibration\n');
-  b.writeln('Device: $deviceId');
-  if (board.factoryDate != null) b.writeln('Calibrated: ${board.factoryDate}');
-  final provenance = [
-    ?board.calBoardId,
-    ?board.calTool,
-    ?board.calOrigin,
-    if (board.calTempsC case final t?)
-      '${t.dut}/${t.calBoard} °C (DUT/cal board)',
-  ];
-  if (provenance.isNotEmpty) b.writeln('Provenance: ${provenance.join(' · ')}');
-  final n = board.nominals;
-  if (n != null) {
-    b.writeln(
-      'Chain: FSR ${n.adcFsrV} V · AFE ${n.afeGain}× '
-      '· PGA ${n.pgaGains.map((g) => '$g×').join('/')} · EXC ${n.excitationV} V',
-    );
-  }
-  b.writeln('Trust: $kTrustLineCalibrated');
-  if (board.channels.any((c) => c.isFactoryCalibrated)) {
-    b.writeln('Correction: $kCorrectionApplied');
-  }
-  b.writeln('Note: $kUvVToPpmNote');
-  // The report travels without its author, so it carries its definitions.
-  b.writeln(
-    'Definitions: Error = measured reading via the nominal chain minus '
-    'the ladder setpoint (as-found, before correction). Nonlinearity = '
-    'deviation from the end-point line through ±FS.',
-  );
-  b.writeln(
-    'Uncertainty: ±0.5% of reading, from component-specification analysis '
-    '— not a traceable calibration. The as-found error figures carry the '
-    'same ladder uncertainty; nonlinearity figures are relative within '
-    'the ladder and exclude the nominal-chain tolerance.',
-  );
-  if (board.adcConfigDrifted == true) {
-    b.writeln('WARNING: ADC gain configuration changed since calibration.');
-  }
-  for (int i = 0; i < board.channels.length; ++i) {
-    final ch = board.channels[i];
-    b.writeln();
-    if (!ch.isFactoryCalibrated) {
-      b.writeln('CH ${i + 1}: nominal values (no factory data)');
-      continue;
-    }
-    b.writeln(
-      'CH ${i + 1}: zero offset ${_fmtUvV(ch.zeroOffsetUvV)} · '
-      'gain ${_fmtGain(ch.sensitivityVsNominal)} vs nominal · '
-      'end-point linearity ±${_maxDeviation(ch)!.toStringAsFixed(3)} µV/V',
-    );
-    b.writeln(
-      '  sensitivity ${ch.sensitivityCountsPerMvV!.toStringAsFixed(0)} '
-      'counts/(mV/V) · offset ${_fmtCounts(ch.offsetCounts)} counts',
-    );
-    final errors = ch.measuredErrorsUvV;
-    final nonlinearities = ch.deviationsUvV!;
-    for (int k = 0; k < kCalPointCount; ++k) {
-      b.writeln(
-        '  ${calConfigLabels[k]}  '
-        '${ch.setpoints[k].toStringAsFixed(4)} mV/V  '
-        '${ch.readings![k].toStringAsFixed(1)} counts  '
-        '${errors != null ? 'error ${_fmtSigned(errors[k])} µV/V  ' : ''}'
-        'nonlinearity ${_fmtSigned(nonlinearities[k])} µV/V',
-      );
-    }
-  }
-  return b.toString();
 }
 
 /// "3 weeks ago" from a `cal.date` string; null when the date is missing or
@@ -439,32 +338,6 @@ String? _calAge(String? isoDate) {
   final years = days ~/ 365;
   return years == 1 ? '1 year ago' : '$years years ago';
 }
-
-/// The headline linearity figure: max |deviation| over the cal points, in
-/// µV/V. Null without factory data.
-double? _maxDeviation(ChannelBoardCalibration ch) {
-  final d = ch.deviationsUvV;
-  if (d == null) return null;
-  var m = 0.0;
-  for (final v in d) {
-    if (v.abs() > m) m = v.abs();
-  }
-  return m;
-}
-
-String _fmtUvV(double? uvV) =>
-    uvV == null ? '—' : '${uvV > 0 ? '+' : ''}${uvV.toStringAsFixed(3)} µV/V';
-
-/// A table cell in µV/V, signed, without the unit (the units row has it).
-String _fmtSigned(double uvV) =>
-    '${uvV > 0 ? '+' : ''}${uvV.toStringAsFixed(3)}';
-
-String _fmtGain(double? fraction) => fraction == null
-    ? '—'
-    : '${fraction >= 1 ? '+' : ''}${((fraction - 1) * 100).toStringAsFixed(2)}%';
-
-String _fmtCounts(double counts) =>
-    '${counts >= 0 ? '+' : ''}${counts.toStringAsFixed(1)}';
 
 Widget _row(String label, String value) => Padding(
   padding: const EdgeInsets.symmetric(vertical: 1),

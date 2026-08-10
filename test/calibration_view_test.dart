@@ -5,9 +5,11 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/calibration.dart';
+import 'package:dynamite_app/screens/calibration_report_screen.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/cal_deviation_plot.dart';
+import 'package:dynamite_app/widgets/calibration_report.dart';
 import 'package:dynamite_app/widgets/calibration_view.dart';
 
 /// Widget tests for the factory calibration view (inline host). The view
@@ -87,9 +89,9 @@ void main() {
     expect(find.textContaining('board_calibration 1.0'), findsOneWidget);
     expect(find.textContaining('24.6/24.1 °C'), findsOneWidget);
     // Per-channel correction summaries in µV/V (ch0 fixture values:
-    // +0.264 µV/V zero balance, +0.02% gain, ±0.009 µV/V linearity).
+    // +0.264 µV/V zero offset, +0.02% gain, ±0.009 µV/V linearity).
     expect(find.text('CH 1'), findsOneWidget);
-    expect(find.textContaining('zero +0.264 µV/V'), findsOneWidget);
+    expect(find.textContaining('zero offset +0.264 µV/V'), findsOneWidget);
     expect(
       find.textContaining('end-point linearity ±0.009 µV/V'),
       findsOneWidget,
@@ -116,7 +118,7 @@ void main() {
     expect(find.text('Nonlinearity'), findsNWidgets(2));
     expect(find.textContaining('gain and offset removed'), findsOneWidget);
     expect(find.textContaining('0 by definition'), findsOneWidget);
-    expect(find.text('Zero balance'), findsOneWidget);
+    expect(find.text('Zero offset'), findsOneWidget);
     expect(find.textContaining('+0.264 µV/V'), findsWidgets);
     expect(find.text('Gain vs nominal'), findsOneWidget);
     expect(find.textContaining('+0.02%'), findsWidgets);
@@ -230,11 +232,11 @@ END
     );
   });
 
-  testWidgets('copy report puts the calibration on the clipboard', (
+  testWidgets('the report page shows the artifact and copies it', (
     tester,
   ) async {
     // The test binding has no clipboard; mock the platform channel and
-    // capture what the button writes.
+    // capture what the copy action writes.
     String? copied;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
@@ -249,9 +251,21 @@ END
     );
     await pump(tester);
 
-    await tester.ensureVisible(find.text('Copy report'));
+    await tester.ensureVisible(find.text('View calibration report'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('Copy report'));
+    await tester.tap(find.text('View calibration report'));
+    await tester.pumpAndSettle();
+
+    // The page is the report artifact: title, device label (the name the
+    // flash read carried, not the id), and the per-channel lines.
+    expect(find.text('Board calibration report'), findsOneWidget);
+    expect(find.textContaining('Device: Bench unit'), findsOneWidget);
+    expect(
+      find.textContaining('CH 1: zero offset +0.264 µV/V'),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byTooltip('Copy report'));
     await tester.pumpAndSettle();
 
     expect(find.text('Calibration report copied to clipboard'), findsOneWidget);
@@ -259,7 +273,31 @@ END
       demoBoardCalibrationDoc,
       pgaGains: const [1, 1, 1, 1],
     );
-    expect(copied, calibrationReport(board, 'dev1'));
+    expect(copied, calibrationReport(board, 'Bench unit'));
+  });
+
+  testWidgets('report page without a flash doc shows the placeholder', (
+    tester,
+  ) async {
+    SharedPreferences.setMockInitialValues({});
+    final rig = RigState(
+      transport: _FakeTransport(),
+      prefs: await SharedPreferences.getInstance(),
+    );
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [ChangeNotifierProvider<RigState>.value(value: rig)],
+        child: const MaterialApp(
+          home: CalibrationReportScreen(deviceId: 'dev1'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('Board calibration report'), findsOneWidget);
+    expect(find.text('No calibration data from the device'), findsOneWidget);
+    // Nothing to copy without a document.
+    expect(find.byTooltip('Copy report'), findsNothing);
   });
 
   group('calibrationReport', () {
@@ -280,7 +318,7 @@ END
       expect(report, contains('Definitions: Error = measured reading'));
       expect(report, contains('Uncertainty: ±0.5% of reading'));
       expect(report, contains('not a traceable calibration'));
-      expect(report, contains('CH 1: zero balance +0.264 µV/V'));
+      expect(report, contains('CH 1: zero offset +0.264 µV/V'));
       expect(report, contains('gain +0.02% vs nominal'));
       expect(report, contains('end-point linearity ±0.009 µV/V'));
       expect(report, contains('sensitivity'));
@@ -307,7 +345,7 @@ END
         BoardCalibration.parse(partialCalDoc),
         'dev1',
       );
-      expect(report, contains('CH 1: zero balance'));
+      expect(report, contains('CH 1: zero offset'));
       expect(report, contains('CH 4: nominal values (no factory data)'));
     });
   });

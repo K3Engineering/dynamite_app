@@ -86,7 +86,7 @@ void main() {
         );
         expect(cal.offsetCounts, closeTo(alpha, 1e-9));
         expect(cal.sensitivityCountsPerMvV, closeTo(beta, 1e-6));
-        // Zero balance is measured ÷ measured: no nominal chain involved.
+        // Zero offset is measured ÷ measured: no nominal chain involved.
         expect(cal.zeroOffsetUvV, closeTo(alpha / beta * 1000, 1e-9));
         expect(
           cal.sensitivityVsNominal,
