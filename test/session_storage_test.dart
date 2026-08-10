@@ -461,7 +461,10 @@ void main() {
         final kgf = DisplayUnit.kgf.converterFor(loaded.calibrationFor(0), 0)!;
         expect(
           kgf(1000),
-          closeTo(1000 / (0.5 * testNominals.countsPerMvV) * (100 / 2.02), 1e-9),
+          closeTo(
+            1000 / (0.5 * testNominals.countsPerMvV) * (100 / 2.02),
+            1e-9,
+          ),
         );
         // ch1 had no load cell assigned at recording time.
         expect(

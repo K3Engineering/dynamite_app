@@ -157,8 +157,7 @@ class _DeviationPainter extends CustomPainter {
     if (extreme != 0) {
       final tp = TextPainter(
         text: TextSpan(
-          text:
-              '${extreme > 0 ? '+' : ''}${extreme.toStringAsFixed(3)} µV/V',
+          text: '${extreme > 0 ? '+' : ''}${extreme.toStringAsFixed(3)} µV/V',
           style: labelStyle,
         ),
         textDirection: TextDirection.ltr,

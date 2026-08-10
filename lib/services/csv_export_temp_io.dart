@@ -10,9 +10,7 @@ import 'package:path_provider/path_provider.dart';
 /// in-flight export file lives there: previous exports' temp files can't
 /// accumulate if the app died between export and cleanup.
 Future<String> writeTempCsv(Uint8List bytes, String fileName) async {
-  final dir = Directory(
-    '${(await getTemporaryDirectory()).path}/csv_exports',
-  );
+  final dir = Directory('${(await getTemporaryDirectory()).path}/csv_exports');
   await dir.create(recursive: true);
   await for (final stale in dir.list()) {
     try {

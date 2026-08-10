@@ -44,13 +44,16 @@ void main() {
       expect(rows.map((r) => r.id), [id2, id1]);
     });
 
-    test('recency stays primary: an older row never outranks a newer one', () async {
-      final t = DateTime(2026, 7, 29, 12);
-      final newerId = await newSession(t.add(const Duration(hours: 1)));
-      final olderId = await newSession(t);
+    test(
+      'recency stays primary: an older row never outranks a newer one',
+      () async {
+        final t = DateTime(2026, 7, 29, 12);
+        final newerId = await newSession(t.add(const Duration(hours: 1)));
+        final olderId = await newSession(t);
 
-      final rows = await AppDatabase.instance.watchAllSessions().first;
-      expect(rows.map((r) => r.id), [newerId, olderId]);
-    });
+        final rows = await AppDatabase.instance.watchAllSessions().first;
+        expect(rows.map((r) => r.id), [newerId, olderId]);
+      },
+    );
   });
 }

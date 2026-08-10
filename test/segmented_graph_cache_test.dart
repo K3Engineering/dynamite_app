@@ -170,50 +170,54 @@ void main() {
       expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isFalse);
     }
 
-    test('a destructiveKey change suppresses blits and sweeps right-to-left',
-        () {
-      fill();
-      // Frame 1: the rightmost stale segment is re-baked in place; the
-      // still-stale range is vector-drawn (its segment never blits).
-      expect(
-        h.paint(
-          viewStart: 0,
-          viewSpan: 400,
-          totalSamples: 400,
-          destructiveKey: const ['other'],
-        ),
-        isTrue,
-      );
-      expect(h.bakes, [
-        (start: 200, end: 400, texW: 200, onFrameCanvas: false),
-      ]);
-      expect(h.gapDraws, [(start: 0, end: 200, texW: 200, onFrameCanvas: true)]);
+    test(
+      'a destructiveKey change suppresses blits and sweeps right-to-left',
+      () {
+        fill();
+        // Frame 1: the rightmost stale segment is re-baked in place; the
+        // still-stale range is vector-drawn (its segment never blits).
+        expect(
+          h.paint(
+            viewStart: 0,
+            viewSpan: 400,
+            totalSamples: 400,
+            destructiveKey: const ['other'],
+          ),
+          isTrue,
+        );
+        expect(h.bakes, [
+          (start: 200, end: 400, texW: 200, onFrameCanvas: false),
+        ]);
+        expect(h.gapDraws, [
+          (start: 0, end: 200, texW: 200, onFrameCanvas: true),
+        ]);
 
-      // Frame 2: the sweep reaches the left segment; nothing left to draw.
-      expect(
-        h.paint(
-          viewStart: 0,
-          viewSpan: 400,
-          totalSamples: 400,
-          destructiveKey: const ['other'],
-        ),
-        isTrue,
-      );
-      expect(h.bakes.single.start, 0);
-      expect(h.gapDraws, isEmpty);
+        // Frame 2: the sweep reaches the left segment; nothing left to draw.
+        expect(
+          h.paint(
+            viewStart: 0,
+            viewSpan: 400,
+            totalSamples: 400,
+            destructiveKey: const ['other'],
+          ),
+          isTrue,
+        );
+        expect(h.bakes.single.start, 0);
+        expect(h.gapDraws, isEmpty);
 
-      // Converged.
-      expect(
-        h.paint(
-          viewStart: 0,
-          viewSpan: 400,
-          totalSamples: 400,
-          destructiveKey: const ['other'],
-        ),
-        isFalse,
-      );
-      expect(h.calls, isEmpty);
-    });
+        // Converged.
+        expect(
+          h.paint(
+            viewStart: 0,
+            viewSpan: 400,
+            totalSamples: 400,
+            destructiveKey: const ['other'],
+          ),
+          isFalse,
+        );
+        expect(h.calls, isEmpty);
+      },
+    );
 
     test('a remapKey change keeps blitting (no gap draws) and sweeps '
         'right-to-left', () {
@@ -298,52 +302,56 @@ void main() {
       );
       // Re-baking from scratch, left aligned (bootstrap fill order).
       expect(h.bakes, [(start: 0, end: 200, texW: 200, onFrameCanvas: false)]);
-      expect(h.gapDraws, [(start: 200, end: 400, texW: 200, onFrameCanvas: true)]);
-    });
-
-    test('a config bump disposes off-view segments (no ghost resurrection)',
-        () {
-      // Cover the origin and [400, 800) of a long buffer, then park on the
-      // [400, 800) view: [0, 400) is covered but off-view.
-      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 4400);
-      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 4400);
-      h.paint(viewStart: 400, viewSpan: 400, totalSamples: 4400);
-      h.paint(viewStart: 400, viewSpan: 400, totalSamples: 4400);
-      expect(
-        h.paint(viewStart: 400, viewSpan: 400, totalSamples: 4400),
-        isFalse,
-      );
-
-      // Bump the remap key: the off-view [0, 400) segments must be disposed
-      // (the visible ones sweep right-to-left as usual).
-      expect(
-        h.paint(
-          viewStart: 400,
-          viewSpan: 400,
-          totalSamples: 4400,
-          remapKey: const ['other'],
-        ),
-        isTrue,
-      );
-      expect(h.bakes.single.start, 600); // rightmost visible stale segment
-
-      // Pan back to the origin: had the stale [0, 400) segments survived,
-      // they would blit (remap-stale) and cover the view -- no gap draws.
-      // Instead the range is uncovered: it vector-draws and re-bakes.
-      expect(
-        h.paint(
-          viewStart: 0,
-          viewSpan: 400,
-          totalSamples: 4400,
-          remapKey: const ['other'],
-        ),
-        isTrue,
-      );
-      expect(h.bakes.single.start, 0);
       expect(h.gapDraws, [
         (start: 200, end: 400, texW: 200, onFrameCanvas: true),
       ]);
     });
+
+    test(
+      'a config bump disposes off-view segments (no ghost resurrection)',
+      () {
+        // Cover the origin and [400, 800) of a long buffer, then park on the
+        // [400, 800) view: [0, 400) is covered but off-view.
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 4400);
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 4400);
+        h.paint(viewStart: 400, viewSpan: 400, totalSamples: 4400);
+        h.paint(viewStart: 400, viewSpan: 400, totalSamples: 4400);
+        expect(
+          h.paint(viewStart: 400, viewSpan: 400, totalSamples: 4400),
+          isFalse,
+        );
+
+        // Bump the remap key: the off-view [0, 400) segments must be disposed
+        // (the visible ones sweep right-to-left as usual).
+        expect(
+          h.paint(
+            viewStart: 400,
+            viewSpan: 400,
+            totalSamples: 4400,
+            remapKey: const ['other'],
+          ),
+          isTrue,
+        );
+        expect(h.bakes.single.start, 600); // rightmost visible stale segment
+
+        // Pan back to the origin: had the stale [0, 400) segments survived,
+        // they would blit (remap-stale) and cover the view -- no gap draws.
+        // Instead the range is uncovered: it vector-draws and re-bakes.
+        expect(
+          h.paint(
+            viewStart: 0,
+            viewSpan: 400,
+            totalSamples: 4400,
+            remapKey: const ['other'],
+          ),
+          isTrue,
+        );
+        expect(h.bakes.single.start, 0);
+        expect(h.gapDraws, [
+          (start: 200, end: 400, texW: 200, onFrameCanvas: true),
+        ]);
+      },
+    );
 
     test('a small gw change is pure x-drift: segments are kept, no work', () {
       fill();
@@ -451,7 +459,10 @@ void main() {
       // Pan right (within the eviction margin, past the data edge): the
       // tail has completed, but the segment is not visible, so no repair
       // bake is spent on it.
-      expect(h.paint(viewStart: 800, viewSpan: 400, totalSamples: 210), isFalse);
+      expect(
+        h.paint(viewStart: 800, viewSpan: 400, totalSamples: 210),
+        isFalse,
+      );
       expect(h.calls, isEmpty);
 
       // Pan back: the stale seam is visible again and repaired.

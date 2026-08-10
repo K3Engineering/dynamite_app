@@ -59,7 +59,9 @@ void main() {
         providers: [ChangeNotifierProvider<RigState>.value(value: rig)],
         child: MaterialApp(
           home: Scaffold(
-            body: SingleChildScrollView(child: CalibrationView(deviceId: deviceId)),
+            body: SingleChildScrollView(
+              child: CalibrationView(deviceId: deviceId),
+            ),
           ),
         ),
       ),
@@ -68,8 +70,9 @@ void main() {
     return rig;
   }
 
-  testWidgets('shows header, trust line, provenance and channel corrections',
-      (tester) async {
+  testWidgets('shows header, trust line, provenance and channel corrections', (
+    tester,
+  ) async {
     await pump(tester);
 
     expect(find.textContaining('Calibrated 2026-07-20'), findsOneWidget);
@@ -87,12 +90,15 @@ void main() {
     // +0.264 µV/V zero balance, +0.02% gain, ±0.009 µV/V linearity).
     expect(find.text('CH 1'), findsOneWidget);
     expect(find.textContaining('zero +0.264 µV/V'), findsOneWidget);
-    expect(find.textContaining('end-point linearity ±0.009 µV/V'),
-        findsOneWidget);
+    expect(
+      find.textContaining('end-point linearity ±0.009 µV/V'),
+      findsOneWidget,
+    );
   });
 
-  testWidgets('expanding a channel reveals the plot and the 5-point table',
-      (tester) async {
+  testWidgets('expanding a channel reveals the plot and the 5-point table', (
+    tester,
+  ) async {
     final board = BoardCalibration.parse(
       demoBoardCalibrationDoc,
       pgaGains: const [1, 1, 1, 1],
@@ -148,8 +154,9 @@ void main() {
     }
   });
 
-  testWidgets('calibrated channel without board constants: no error figures',
-      (tester) async {
+  testWidgets('calibrated channel without board constants: no error figures', (
+    tester,
+  ) async {
     // ch0 has factory data, but the constants are unresolvable (no
     // afe_gain) — the measured error has no reference chain.
     const noConstantsDoc = '''
@@ -247,10 +254,7 @@ END
     await tester.tap(find.text('Copy report'));
     await tester.pumpAndSettle();
 
-    expect(
-      find.text('Calibration report copied to clipboard'),
-      findsOneWidget,
-    );
+    expect(find.text('Calibration report copied to clipboard'), findsOneWidget);
     final board = BoardCalibration.parse(
       demoBoardCalibrationDoc,
       pgaGains: const [1, 1, 1, 1],

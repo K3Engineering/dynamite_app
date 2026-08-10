@@ -91,7 +91,9 @@ class _SummaryCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final calibrated = board.channels.where((c) => c.isFactoryCalibrated).length;
+    final calibrated = board.channels
+        .where((c) => c.isFactoryCalibrated)
+        .length;
     final age = _calAge(board.factoryDate);
 
     final String status;
@@ -334,7 +336,9 @@ class _DetailsCard extends StatelessWidget {
   }
 
   Future<void> _copyReport(BuildContext context) async {
-    await Clipboard.setData(ClipboardData(text: calibrationReport(board, deviceId)));
+    await Clipboard.setData(
+      ClipboardData(text: calibrationReport(board, deviceId)),
+    );
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Calibration report copied to clipboard')),
@@ -493,5 +497,7 @@ Widget _unit(BuildContext context, String text) {
   );
 }
 
-Widget _td(String text) =>
-    Padding(padding: const EdgeInsets.symmetric(vertical: 2), child: Text(text));
+Widget _td(String text) => Padding(
+  padding: const EdgeInsets.symmetric(vertical: 2),
+  child: Text(text),
+);

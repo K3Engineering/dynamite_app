@@ -186,9 +186,7 @@ enum DisplayUnit {
       final cell = channel.loadCell;
       return cell == null ? null : f * cell.kgfPerMvV;
     }
-    return this == DisplayUnit.mV
-        ? channel.board.nominals!.excitationV
-        : 1.0;
+    return this == DisplayUnit.mV ? channel.board.nominals!.excitationV : 1.0;
   }
 
   /// Build the absolute-raw -> display-unit converter for one channel, net of

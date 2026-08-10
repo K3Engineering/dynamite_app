@@ -28,9 +28,13 @@ void main() {
         () => encodeKvsSet(kvsFolderFactory, 'a=b', 'v'),
         throwsArgumentError,
       );
-      expect(() => encodeKvsSet(kvsFolderFactory, 'k', ''), throwsArgumentError);
       expect(
-        () => encodeKvsSet(kvsFolderFactory, 'k', 'v' * (kvsMaxValueLength + 1)),
+        () => encodeKvsSet(kvsFolderFactory, 'k', ''),
+        throwsArgumentError,
+      );
+      expect(
+        () =>
+            encodeKvsSet(kvsFolderFactory, 'k', 'v' * (kvsMaxValueLength + 1)),
         throwsArgumentError,
       );
       // The limits themselves are accepted.

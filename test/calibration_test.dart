@@ -77,20 +77,23 @@ void main() {
       );
     });
 
-    test('offset is the dead-short reading, sensitivity the end-point slope', () {
-      final cal = ChannelBoardCalibration(
-        readings: affineReadings,
-        nominals: testNominals,
-      );
-      expect(cal.offsetCounts, closeTo(alpha, 1e-9));
-      expect(cal.sensitivityCountsPerMvV, closeTo(beta, 1e-6));
-      // Zero balance is measured ÷ measured: no nominal chain involved.
-      expect(cal.zeroBalanceUvV, closeTo(alpha / beta * 1000, 1e-9));
-      expect(
-        cal.sensitivityVsNominal,
-        closeTo(beta / testNominals.countsPerMvV, 1e-12),
-      );
-    });
+    test(
+      'offset is the dead-short reading, sensitivity the end-point slope',
+      () {
+        final cal = ChannelBoardCalibration(
+          readings: affineReadings,
+          nominals: testNominals,
+        );
+        expect(cal.offsetCounts, closeTo(alpha, 1e-9));
+        expect(cal.sensitivityCountsPerMvV, closeTo(beta, 1e-6));
+        // Zero balance is measured ÷ measured: no nominal chain involved.
+        expect(cal.zeroBalanceUvV, closeTo(alpha / beta * 1000, 1e-9));
+        expect(
+          cal.sensitivityVsNominal,
+          closeTo(beta / testNominals.countsPerMvV, 1e-12),
+        );
+      },
+    );
 
     test('end-point deviations vanish for an affine device, report a bow', () {
       final cal = ChannelBoardCalibration(readings: affineReadings);
@@ -220,10 +223,11 @@ void main() {
     });
 
     test('provenance tags are stripped from values and kept', () {
-      final r = resolveBoardConstants(
-        {'adc_fsr': '1.2,nominal', 'exc': '4.53,dummycal', 'afe_gain': '101'},
-        pgaGains: gains,
-      );
+      final r = resolveBoardConstants({
+        'adc_fsr': '1.2,nominal',
+        'exc': '4.53,dummycal',
+        'afe_gain': '101',
+      }, pgaGains: gains);
       expect(r.status, BoardDataStatus.ok);
       expect(r.nominals!.excitationV, 4.53);
       expect(r.nominals!.provenance['exc'], 'dummycal');
@@ -237,17 +241,18 @@ void main() {
     });
 
     test('a missing or bad key is invalid, naming the culprit', () {
-      final missing = resolveBoardConstants(
-        {'adc_fsr': '1.2', 'exc': '4.53'},
-        pgaGains: gains,
-      );
+      final missing = resolveBoardConstants({
+        'adc_fsr': '1.2',
+        'exc': '4.53',
+      }, pgaGains: gains);
       expect(missing.status, BoardDataStatus.invalid);
       expect(missing.detail, contains('afe_gain'));
 
-      final bad = resolveBoardConstants(
-        {'adc_fsr': '1.2', 'exc': 'soon', 'afe_gain': '101'},
-        pgaGains: gains,
-      );
+      final bad = resolveBoardConstants({
+        'adc_fsr': '1.2',
+        'exc': 'soon',
+        'afe_gain': '101',
+      }, pgaGains: gains);
       expect(bad.status, BoardDataStatus.invalid);
       expect(bad.detail, contains('exc'));
     });
@@ -407,35 +412,36 @@ END
     });
 
     test('malformed values degrade to absent', () {
-      final board = BoardCalibration.parse(
-        'cal.temp=hot\ncal.adc=1,1\n',
-      );
+      final board = BoardCalibration.parse('cal.temp=hot\ncal.adc=1,1\n');
       expect(board.calTempsC, isNull);
       expect(board.calAdcGains, isNull);
     });
 
-    test('adcConfigDrifted compares cal-time gains to the runtime readback', () {
-      const constants =
-          'adc_fsr=1.2,nominal\nexc=4.53,nominal\nafe_gain=101,nominal\n';
-      final same = BoardCalibration.parse(
-        '$constants${doc.split('K3CAL1\n').last}',
-        pgaGains: const [1, 1, 1, 1],
-      );
-      expect(same.adcConfigDrifted, isFalse);
-      final drifted = BoardCalibration.parse(
-        '$constants${doc.split('K3CAL1\n').last}',
-        pgaGains: const [32, 1, 1, 1],
-      );
-      expect(drifted.adcConfigDrifted, isTrue);
-      // No cal.adc key, or no runtime readback: unknown, never a verdict.
-      expect(BoardCalibration.parse(constants).adcConfigDrifted, isNull);
-      expect(
-        BoardCalibration.parse(
+    test(
+      'adcConfigDrifted compares cal-time gains to the runtime readback',
+      () {
+        const constants =
+            'adc_fsr=1.2,nominal\nexc=4.53,nominal\nafe_gain=101,nominal\n';
+        final same = BoardCalibration.parse(
           '$constants${doc.split('K3CAL1\n').last}',
-        ).adcConfigDrifted,
-        isNull,
-      );
-    });
+          pgaGains: const [1, 1, 1, 1],
+        );
+        expect(same.adcConfigDrifted, isFalse);
+        final drifted = BoardCalibration.parse(
+          '$constants${doc.split('K3CAL1\n').last}',
+          pgaGains: const [32, 1, 1, 1],
+        );
+        expect(drifted.adcConfigDrifted, isTrue);
+        // No cal.adc key, or no runtime readback: unknown, never a verdict.
+        expect(BoardCalibration.parse(constants).adcConfigDrifted, isNull);
+        expect(
+          BoardCalibration.parse(
+            '$constants${doc.split('K3CAL1\n').last}',
+          ).adcConfigDrifted,
+          isNull,
+        );
+      },
+    );
 
     test('the cal metadata keys round-trip through serialize', () {
       final flash = DeviceFlash.parse(doc);

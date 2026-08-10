@@ -282,9 +282,12 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 /// counts only, so [nominals] == null means "unavailable", and the unit
 /// layer ([DisplayUnit.converterFor]) guards every call path accordingly.
 class ChannelBoardCalibration {
-  ChannelBoardCalibration({List<double>? resistors, List<double>? readings, this.nominals})
-    : resistors = _validatedResistors(resistors),
-      readings = _validatedReadings(readings) {
+  ChannelBoardCalibration({
+    List<double>? resistors,
+    List<double>? readings,
+    this.nominals,
+  }) : resistors = _validatedResistors(resistors),
+       readings = _validatedReadings(readings) {
     final r = this.readings;
     if (r != null) {
       // Sort the five points ascending by raw reading for interpolation.
@@ -490,7 +493,9 @@ class ChannelBoardCalibration {
     ChannelNominals? nominals;
     if (json['n'] case final n?) {
       try {
-        nominals = ChannelNominals.fromJson(Map<String, dynamic>.from(n as Map));
+        nominals = ChannelNominals.fromJson(
+          Map<String, dynamic>.from(n as Map),
+        );
       } catch (_) {
         nominals = null;
       }
