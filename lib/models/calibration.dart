@@ -408,7 +408,7 @@ class ChannelBoardCalibration {
   /// the same offset through the nominal chain instead; the two differ by
   /// the gain factor — far below the calibration's uncertainty. Both are
   /// displayed, deliberately: two conventions, no reconciliation text.
-  double? get zeroBalanceUvV {
+  double? get zeroOffsetUvV {
     final s = sensitivityCountsPerMvV;
     if (readings == null || s == null) return null;
     return offsetCounts / s * 1000.0;

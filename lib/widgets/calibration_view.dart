@@ -182,7 +182,7 @@ class _ChannelCalCard extends StatelessWidget {
         title: Text('CH ${index + 1}'),
         subtitle: Text(
           calibrated
-              ? 'zero ${_fmtUvV(channel.zeroBalanceUvV)} · '
+              ? 'zero ${_fmtUvV(channel.zeroOffsetUvV)} · '
                     'gain ${_fmtGain(channel.sensitivityVsNominal)} · '
                     'end-point linearity ±${_maxDeviation(channel)!.toStringAsFixed(3)} µV/V'
               : 'Nominal values (no factory data)',
@@ -222,7 +222,7 @@ class _ChannelCalCard extends StatelessWidget {
                       : 'Unavailable (no board constants)',
                 ),
                 if (calibrated) ...[
-                  _row('Zero balance', _fmtUvV(channel.zeroBalanceUvV)),
+                  _row('Zero offset', _fmtUvV(channel.zeroOffsetUvV)),
                   _row(
                     'Gain vs nominal',
                     '${_fmtGain(channel.sensitivityVsNominal)} '
@@ -396,7 +396,7 @@ String calibrationReport(BoardCalibration board, String deviceId) {
       continue;
     }
     b.writeln(
-      'CH ${i + 1}: zero balance ${_fmtUvV(ch.zeroBalanceUvV)} · '
+      'CH ${i + 1}: zero offset ${_fmtUvV(ch.zeroOffsetUvV)} · '
       'gain ${_fmtGain(ch.sensitivityVsNominal)} vs nominal · '
       'end-point linearity ±${_maxDeviation(ch)!.toStringAsFixed(3)} µV/V',
     );

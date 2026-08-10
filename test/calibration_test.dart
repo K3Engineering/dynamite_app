@@ -87,7 +87,7 @@ void main() {
         expect(cal.offsetCounts, closeTo(alpha, 1e-9));
         expect(cal.sensitivityCountsPerMvV, closeTo(beta, 1e-6));
         // Zero balance is measured ÷ measured: no nominal chain involved.
-        expect(cal.zeroBalanceUvV, closeTo(alpha / beta * 1000, 1e-9));
+        expect(cal.zeroOffsetUvV, closeTo(alpha / beta * 1000, 1e-9));
         expect(
           cal.sensitivityVsNominal,
           closeTo(beta / testNominals.countsPerMvV, 1e-12),
@@ -177,7 +177,7 @@ void main() {
       // No factory data: the correction diagnostics don't exist (the nominal
       // chain isn't a measurement, so there's nothing to report against it).
       expect(cal.sensitivityVsNominal, isNull);
-      expect(cal.zeroBalanceUvV, isNull);
+      expect(cal.zeroOffsetUvV, isNull);
       expect(cal.deviationsUvV, isNull);
       expect(cal.measuredErrorsUvV, isNull);
     });
@@ -189,7 +189,7 @@ void main() {
       expect(cal.nominals, isNull);
       expect(cal.sensitivityCountsPerMvV, isNull);
       expect(cal.sensitivityVsNominal, isNull);
-      expect(cal.zeroBalanceUvV, isNull);
+      expect(cal.zeroOffsetUvV, isNull);
       expect(cal.deviationsUvV, isNull);
       expect(cal.measuredErrorsUvV, isNull);
     });
