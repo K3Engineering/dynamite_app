@@ -1,10 +1,11 @@
 import 'dart:math' as math;
 
-import 'calibration.dart';
+import 'board_calibration.dart';
+import 'device_flash.dart';
 
-/// [adcCountsPerPolarity] lives in models/calibration.dart — re-exported so
-/// existing importers keep working.
-export 'calibration.dart' show adcCountsPerPolarity;
+/// [adcCountsPerPolarity] lives in models/board_calibration.dart —
+/// re-exported so existing importers keep working.
+export 'board_calibration.dart' show adcCountsPerPolarity;
 
 /// One rung of a unit's SI-prefix axis ladder: [factor] base units equal one
 /// rung unit (1e-3 mV per µV, 1e3 kgf per tf); [symbol] is the axis-label
@@ -146,14 +147,14 @@ enum DisplayUnit {
   double? countQuantumFor(ChannelCalibration channel) {
     if (this == DisplayUnit.raw) return 1.0;
     final scale = _scalePerMvV(channel);
-    final span = channel.board.spanCountsPerMvV;
+    final span = channel.board.sensitivityCountsPerMvV;
     return scale == null || span == null ? null : scale / span;
   }
 
   /// Fixed-point decimals for this unit on [channel] in a dynamite-csv file
   /// (docs/csv-format-v1.md): one guard digit beyond the value of 1 ADC
   /// count in this unit (`ceil(1 − log10(quantum))`, clamped to 0..10),
-  /// computed from the recorded board cal's span. Null exactly when
+  /// computed from the recorded board cal's sensitivity. Null exactly when
   /// [converterFor] is (a force unit with no load cell — the file column is
   /// all-blank, so no precision is needed).
   int? exportDecimalsFor(ChannelCalibration channel) {
@@ -172,12 +173,13 @@ enum DisplayUnit {
   bool get isForce => kgfFactor != null;
 
   /// The multiplier applied to net mV/V for this unit on [channel]: force
-  /// units fold in the cell's kgf-per-mV/V, mV folds in the board's
-  /// effective excitation, mV/V is unity. Null when the unit is unavailable
-  /// on the channel: a force unit with no load cell assigned, or ANY unit
-  /// when the board's constants never resolved (raw counts only — see
-  /// [BoardDataStatus]). Raw counts bypass the board map entirely and never
-  /// consult this.
+  /// units fold in the cell's kgf-per-mV/V, mV folds in the nominal
+  /// excitation (the board cal is ratiometric, so the mV rung rests on the
+  /// nominal chain — the least-calibrated unit), mV/V is unity. Null when
+  /// the unit is unavailable on the channel: a force unit with no load cell
+  /// assigned, or ANY unit when the board's constants never resolved (raw
+  /// counts only — see [BoardDataStatus]). Raw counts bypass the board map
+  /// entirely and never consult this.
   double? _scalePerMvV(ChannelCalibration channel) {
     if (channel.board.nominals == null) return null;
     final f = kgfFactor;
@@ -185,7 +187,7 @@ enum DisplayUnit {
       final cell = channel.loadCell;
       return cell == null ? null : f * cell.kgfPerMvV;
     }
-    return this == DisplayUnit.mV ? channel.board.effectiveExcitationV : 1.0;
+    return this == DisplayUnit.mV ? channel.board.nominals!.excitationV : 1.0;
   }
 
   /// Build the absolute-raw -> display-unit converter for one channel, net of

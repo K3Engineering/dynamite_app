@@ -54,8 +54,7 @@ void main() {
     final seen = <AppEvent>[];
     final sub = events.stream.listen(seen.add);
     addTearDown(() => unawaited(sub.cancel()));
-    final link = BleLinkManager(events: events)
-      ..onCalibrationData = (_, _) {};
+    final link = BleLinkManager(events: events)..onCalibrationData = (_, _) {};
     return (link, seen);
   }
 

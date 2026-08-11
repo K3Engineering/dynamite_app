@@ -30,7 +30,9 @@ void main() {
   group('DeviceInfoCard', () {
     Future<void> pumpCard(WidgetTester tester, DeviceInfo? info) async {
       await tester.pumpWidget(
-        MaterialApp(home: Scaffold(body: DeviceInfoCard(info: info))),
+        MaterialApp(
+          home: Scaffold(body: DeviceInfoCard(info: info)),
+        ),
       );
     }
 
@@ -159,10 +161,7 @@ void main() {
 
       expect(
         devicesTabDescendant(
-          find.text(
-            'Connected • Dynamite Sampler Demo',
-            findRichText: true,
-          ),
+          find.text('Connected • Dynamite Sampler Demo', findRichText: true),
         ),
         findsOneWidget,
       );

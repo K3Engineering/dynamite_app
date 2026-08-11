@@ -38,13 +38,15 @@ void main() {
     expect(
       imported,
       contains('dart'),
-      reason: 'web/sqlite3.wasm imports nothing from `dart` — it is not a '
+      reason:
+          'web/sqlite3.wasm imports nothing from `dart` — it is not a '
           'package:sqlite3 build. Double-check it against pubspec.lock.',
     );
     expect(
       imported.difference(provided),
       isEmpty,
-      reason: 'web/sqlite3.wasm imports namespaces the loader of sqlite3 '
+      reason:
+          'web/sqlite3.wasm imports namespaces the loader of sqlite3 '
           '$version does not provide — double-check web/sqlite3.wasm matches '
           'the locked sqlite3 version ($version).',
     );
@@ -63,7 +65,8 @@ void main() {
     expect(
       compiledAgainst,
       _lockedSqlite3Version().$1,
-      reason: 'drift_worker.js is stale — double-check it was recompiled '
+      reason:
+          'drift_worker.js is stale — double-check it was recompiled '
           'after the last sqlite3 bump.',
     );
   });

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
@@ -5,25 +7,43 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/models/app_settings.dart';
+import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/screens/settings_tab.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/mockble.dart';
+import 'package:dynamite_app/services/rig_state.dart';
 
 /// Widget tests for the Settings tab's device gating: with no link up, the
 /// device-owned sections (load cell slots, board calibration) must not
 /// render — their values are read from the connected hardware, so without
-/// hardware they don't exist. (The sections' connected-state content is
-/// covered by their own widget tests.)
+/// hardware they don't exist. The board-calibration row's connected state
+/// uses the demo link (brought up directly — [BleLinkManager.connectToDemoDevice]
+/// is synchronous); the remaining connected content is covered by its own
+/// widget tests.
 void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
-
-  Future<void> pump(WidgetTester tester) async {
+  setUp(() {
     SharedPreferences.setMockInitialValues({});
+    // Install the mock regardless of useMockBt so BleLinkManager's
+    // unawaited availability query resolves without platform channels (same
+    // pattern as widget_test.dart).
     UniversalBle.setInstance(MockBlePlatform.instance);
+    MockBlePlatform.instance.dropEveryNPackets = 0;
+  });
+
+  Future<BleLinkManager> pump(WidgetTester tester) async {
+    final prefs = await SharedPreferences.getInstance();
     final events = AppEvents();
     final link = BleLinkManager(events: events);
-    final prefs = await SharedPreferences.getInstance();
+    final rig = RigState(transport: link, prefs: prefs);
+    // Wire the link's calibration read to the rig — the app's wiring goes
+    // through the packet decoder; the test shortcuts the (separately
+    // tested) parsing.
+    link.onCalibrationData = (data, gains) => rig.onFlashRead(
+      link.connectedDeviceId,
+      link.connectedDeviceName,
+      DeviceFlash.parse(utf8.decode(data), pgaGains: gains),
+    );
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -31,6 +51,7 @@ void main() {
             value: AppSettings(prefs: prefs),
           ),
           ChangeNotifierProvider<BleLinkManager>.value(value: link),
+          ChangeNotifierProvider<RigState>.value(value: rig),
         ],
         child: const MaterialApp(home: Scaffold(body: SettingsTab())),
       ),
@@ -40,6 +61,7 @@ void main() {
     // none are left pending at the end-of-test timer check — same pattern
     // as widget_test.dart.
     await tester.pump(const Duration(seconds: 6));
+    return link;
   }
 
   testWidgets('no device connected: connect prompt, no device sections', (
@@ -52,5 +74,36 @@ void main() {
     expect(find.text('Board calibration'), findsNothing);
     // App-owned settings still render.
     expect(find.text('Display Units'), findsOneWidget);
+  });
+
+  testWidgets('connected: the board calibration row summarizes and opens', (
+    tester,
+  ) async {
+    // A tall surface: the tab's ListView is lazy, and the row sits below
+    // the fold at the default size.
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final link = await pump(tester);
+    await link.connectToDemoDevice();
+    await tester.pump();
+
+    // The row carries the demo document's calibration date.
+    expect(find.text('Board calibration'), findsOneWidget);
+    expect(find.textContaining('Calibrated 2026-07-20'), findsOneWidget);
+
+    // The row opens the calibration page (the trust line only renders
+    // there).
+    await tester.tap(find.text('Board calibration'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.textContaining('±0.5% of reading'), findsOneWidget);
+
+    // Teardown: bring the demo link down so its feed timer stops, then
+    // drain the command-queue timeout (see device_action_buttons_test).
+    await link.disconnectSelectedDevice();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
   });
 }

@@ -17,7 +17,10 @@ void main() {
     test('below an hour is minutes and seconds', () {
       expect(formatDuration(const Duration(seconds: 60)), '1m 0s');
       expect(formatDuration(const Duration(minutes: 3, seconds: 12)), '3m 12s');
-      expect(formatDuration(const Duration(minutes: 59, seconds: 59)), '59m 59s');
+      expect(
+        formatDuration(const Duration(minutes: 59, seconds: 59)),
+        '59m 59s',
+      );
     });
 
     test('an hour and beyond drops the seconds', () {
@@ -39,7 +42,10 @@ void main() {
     test('ISO date plus 24h zero-padded time, minutes precision', () {
       expect(formatTimestamp(DateTime(2026, 7, 29, 14, 5)), '2026-07-29 14:05');
       expect(formatTimestamp(DateTime(2026, 7, 29, 9, 5)), '2026-07-29 09:05');
-      expect(formatTimestamp(DateTime(2026, 7, 29, 23, 59)), '2026-07-29 23:59');
+      expect(
+        formatTimestamp(DateTime(2026, 7, 29, 23, 59)),
+        '2026-07-29 23:59',
+      );
       // Seconds never render.
       expect(
         formatTimestamp(DateTime(2026, 7, 29, 14, 5, 59)),

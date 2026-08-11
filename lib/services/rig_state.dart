@@ -129,6 +129,10 @@ class RigState extends ChangeNotifier {
   /// device and a later reconnect can restore the pending session.
   String _flashDeviceId = '';
 
+  /// Display name of [_flashDeviceId] at read time ('' when unknown) — for
+  /// surfaces that must name the document's owner (the calibration report).
+  String _flashDeviceName = '';
+
   PendingRigEdits? _pending;
 
   List<RigHistoryEntry> _history = [];
@@ -166,6 +170,12 @@ class RigState extends ChangeNotifier {
     return flash.board;
   }
 
+  /// The display name of the device the flash document belongs to — the
+  /// same ownership rule as [boardCalibrationFor]: '' for another device's
+  /// document or before the first read.
+  String deviceNameFor(String deviceId) =>
+      _flashDeviceId == deviceId ? _flashDeviceName : '';
+
   List<RigHistoryEntry> get history => List.unmodifiable(_history);
 
   // -- Flash reads (connect time) ---------------------------------------------
@@ -191,6 +201,7 @@ class RigState extends ChangeNotifier {
 
     _lastFlash = flash;
     _flashDeviceId = deviceId;
+    _flashDeviceName = deviceName;
 
     // History: every populated slot on the device was "seen" now. One
     // persist for the batch, not one per cell.

@@ -97,9 +97,7 @@ void main() {
     fakeAsync((async) {
       final client = wire();
       bool? ok;
-      unawaited(
-        client.set(kvsFolderUser, 'lc9.cap', '50').then((v) => ok = v),
-      );
+      unawaited(client.set(kvsFolderUser, 'lc9.cap', '50').then((v) => ok = v));
       async.flushMicrotasks();
 
       expect(ok, isTrue);
@@ -127,9 +125,7 @@ void main() {
       expect(existed, isTrue);
       expect(mock.kvsStore[kvsFolderUser]!.containsKey('lc4.cap'), isFalse);
 
-      unawaited(
-        client.delete(kvsFolderUser, 'lc4.cap').then((v) => again = v),
-      );
+      unawaited(client.delete(kvsFolderUser, 'lc4.cap').then((v) => again = v));
       async.flushMicrotasks();
       expect(again, isFalse);
     });

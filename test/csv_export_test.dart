@@ -31,7 +31,9 @@ void main() {
 
   List<ChannelCalibration> nominalCals() => [
     for (int ch = 0; ch < channels; ch++)
-      ChannelCalibration(board: ChannelBoardCalibration(nominals: testNominals)),
+      ChannelCalibration(
+        board: ChannelBoardCalibration(nominals: testNominals),
+      ),
   ];
 
   SessionData makeSession(
@@ -106,7 +108,9 @@ void main() {
             sensitivityMvV: 2.007,
           ),
         ),
-        ChannelCalibration(board: ChannelBoardCalibration(nominals: testNominals)),
+        ChannelCalibration(
+          board: ChannelBoardCalibration(nominals: testNominals),
+        ),
       ];
       final data = makeSession(
         [
@@ -162,12 +166,10 @@ void main() {
     });
 
     test('metadata line carries the frozen device identity', () {
-      final data = makeSession(
-        [
-          [1],
-          [2],
-        ],
-      );
+      final data = makeSession([
+        [1],
+        [2],
+      ]);
 
       final meta = metadataOf(
         buildSessionCsv(
@@ -192,12 +194,10 @@ void main() {
     });
 
     test('a malformed device block degrades to null placeholders', () {
-      final data = makeSession(
-        [
-          [1],
-          [2],
-        ],
-      );
+      final data = makeSession([
+        [1],
+        [2],
+      ]);
 
       // Bad JSON and wrong-typed values both degrade to nulls rather than
       // failing the export (display-only metadata path).
@@ -230,7 +230,9 @@ void main() {
             board: ChannelBoardCalibration(nominals: testNominals),
             loadCell: cell,
           ),
-          ChannelCalibration(board: ChannelBoardCalibration(nominals: testNominals)),
+          ChannelCalibration(
+            board: ChannelBoardCalibration(nominals: testNominals),
+          ),
         ];
         final data = makeSession(
           [
@@ -334,7 +336,9 @@ void main() {
         'column)', () {
       expect(
         DisplayUnit.kgf.exportDecimalsFor(
-          ChannelCalibration(board: ChannelBoardCalibration(nominals: testNominals)),
+          ChannelCalibration(
+            board: ChannelBoardCalibration(nominals: testNominals),
+          ),
         ),
         isNull,
       );

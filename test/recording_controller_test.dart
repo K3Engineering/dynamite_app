@@ -98,7 +98,10 @@ void main() {
       expect(saved, isNotNull);
       expect(saved!.isCompleted, isTrue);
       expect(saved.sampleCount, n);
-      expect(saved.name, matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$')));
+      expect(
+        saved.name,
+        matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$')),
+      );
       expect(stop.name, saved.name);
       expect(
         saved.channelLabels,

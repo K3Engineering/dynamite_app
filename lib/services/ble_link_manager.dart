@@ -1368,10 +1368,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       final doc = await transport.readFlashDoc();
       if (!token.isCurrent) return;
       if (doc == null) throw StateError('KVS flash read failed');
-      onCalibrationData?.call(
-        Uint8List.fromList(utf8.encode(doc)),
-        _adcGains,
-      );
+      onCalibrationData?.call(Uint8List.fromList(utf8.encode(doc)), _adcGains);
     } catch (e) {
       if (!token.isCurrent) return;
       debugPrint('KVS flash read failed for $deviceId: $e');

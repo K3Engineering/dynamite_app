@@ -42,7 +42,11 @@ class EmptyPlaceholder extends StatelessWidget {
             // Centered: a multi-line hint (e.g. the web unsupported-browser
             // guidance) must not wrap into a left-aligned block under the
             // centered icon/title.
-            Text(hint!, style: TextStyle(color: dim), textAlign: TextAlign.center),
+            Text(
+              hint!,
+              style: TextStyle(color: dim),
+              textAlign: TextAlign.center,
+            ),
           ],
           if (action != null) ...[const SizedBox(height: 8), action!],
         ],

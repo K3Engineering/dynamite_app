@@ -26,12 +26,7 @@ void main() {
     test('sorting a shuffled group yields most-recent-first', () {
       final stamps = [now - 90000, now - 12000, now - 45000, now - 11000];
       stamps.sort(compareStaleRowsByRecency);
-      expect(stamps, [
-        now - 11000,
-        now - 12000,
-        now - 45000,
-        now - 90000,
-      ]);
+      expect(stamps, [now - 11000, now - 12000, now - 45000, now - 90000]);
     });
   });
 

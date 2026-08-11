@@ -441,9 +441,9 @@ void main() {
         final row = await AppDatabase.instance.sessionById(writer.sessionId);
         final loaded = (await SessionStorage.loadSession(row!))!;
 
-        // Board snapshot: ch0 at 0.5x nominal span.
+        // Board snapshot: ch0 at 0.5x nominal sensitivity.
         expect(
-          loaded.calibrationFor(0).board.spanCountsPerMvV,
+          loaded.calibrationFor(0).board.sensitivityCountsPerMvV,
           closeTo(0.5 * testNominals.countsPerMvV, 1e-3),
         );
         expect(loaded.calibrationFor(0).board.isFactoryCalibrated, isTrue);
@@ -461,7 +461,10 @@ void main() {
         final kgf = DisplayUnit.kgf.converterFor(loaded.calibrationFor(0), 0)!;
         expect(
           kgf(1000),
-          closeTo(1000 / (0.5 * testNominals.countsPerMvV) * (100 / 2.02), 1e-9),
+          closeTo(
+            1000 / (0.5 * testNominals.countsPerMvV) * (100 / 2.02),
+            1e-9,
+          ),
         );
         // ch1 had no load cell assigned at recording time.
         expect(
