@@ -45,22 +45,23 @@ class CalibrationView extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _SummaryCard(board: board),
+        _BoardCard(board: board),
         const SizedBox(height: 8),
         for (int i = 0; i < board.channels.length; i++) ...[
           _ChannelCalCard(index: i, channel: board.channels[i]),
           const SizedBox(height: 8),
         ],
-        _DetailsCard(board: board),
       ],
     );
   }
 }
 
-/// The header card: when/what/how this unit was calibrated, the trust
-/// statement, and the stale-calibration warning when the ADC config moved.
-class _SummaryCard extends StatelessWidget {
-  const _SummaryCard({required this.board});
+/// The board card: when/what/how this unit was calibrated, the trust
+/// statement, and the stale-calibration warning when the ADC config moved —
+/// then the engineering block: the resolved conversion chain with its
+/// provenance, and the correction notes.
+class _BoardCard extends StatelessWidget {
+  const _BoardCard({required this.board});
 
   final BoardCalibration board;
 
@@ -92,6 +93,8 @@ class _SummaryCard extends StatelessWidget {
       if (board.calTempsC case final t?)
         '${t.dut}/${t.calBoard} °C (DUT/cal board)',
     ];
+
+    final nominals = board.nominals;
 
     return Card(
       child: Padding(
@@ -128,152 +131,7 @@ class _SummaryCard extends StatelessWidget {
                 ),
               ),
             ],
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// One channel's corrections: a summary line in µV/V, expanding to the
-/// nonlinearity plot, the diagnostic rows, and the measured 5-point
-/// table with per-point error and end-point nonlinearity.
-class _ChannelCalCard extends StatelessWidget {
-  const _ChannelCalCard({required this.index, required this.channel});
-
-  final int index;
-  final ChannelBoardCalibration channel;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final calibrated = channel.isFactoryCalibrated;
-    // The plot and the Nonlinearity column need only the measured points;
-    // the Error column additionally needs the nominal chain as its
-    // reference, so it alone drops out without board constants.
-    // TODO I don't think we need this conditional
-    final errors = channel.measuredErrorsUvV;
-    final nonlinearities = channel.deviationsUvV;
-    return Card(
-      child: ExpansionTile(
-        title: Text('CH ${index + 1}'),
-        subtitle: Text(
-          calibrated
-              ? 'zero offset ${fmtUvV(channel.zeroOffsetUvV)} · '
-                    'gain ${fmtGain(channel.sensitivityVsNominal)} · '
-                    'end-point linearity ±${maxCalDeviation(channel)!.toStringAsFixed(3)} µV/V'
-              : 'Nominal values (no factory data)',
-        ),
-        children: [
-          if (calibrated) ...[
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-              child: Text('Nonlinearity', style: theme.textTheme.titleSmall),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
-              child: CalDeviationPlot(deviationsUvV: nonlinearities!),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-              child: Text(
-                'Deviation from the end-point line through ±FS — gain and '
-                'offset removed; the ±FS points are 0 by definition.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-            ),
-          ],
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _row(
-                  'Source',
-                  calibrated
-                      ? 'Factory'
-                      : channel.nominals != null
-                      ? 'Nominal fallback'
-                      : 'Unavailable (no board constants)',
-                ),
-                if (calibrated) ...[
-                  _row('Zero offset', fmtUvV(channel.zeroOffsetUvV)),
-                  _row(
-                    'Gain vs nominal',
-                    '${fmtGain(channel.sensitivityVsNominal)} '
-                        '(±FS cal points ÷ nominal chain)',
-                  ),
-                  _row(
-                    'End-point linearity',
-                    '±${maxCalDeviation(channel)!.toStringAsFixed(3)} µV/V '
-                        'max deviation',
-                  ),
-                  const SizedBox(height: 8),
-                  Table(
-                    columnWidths: {
-                      for (int c = 0; c < (errors != null ? 5 : 4); ++c)
-                        c: const FlexColumnWidth(),
-                    },
-                    children: [
-                      TableRow(
-                        children: [
-                          _th(context, 'Config'),
-                          _th(context, 'Setpoint'),
-                          _th(context, 'Reading'),
-                          if (errors != null) _th(context, 'Error'),
-                          _th(context, 'Nonlinearity'),
-                        ],
-                      ),
-                      TableRow(
-                        children: [
-                          _unit(context, ''),
-                          _unit(context, 'mV/V'),
-                          _unit(context, 'counts'),
-                          if (errors != null) _unit(context, 'µV/V'),
-                          _unit(context, 'µV/V'),
-                        ],
-                      ),
-                      for (int k = 0; k < kCalPointCount; k++)
-                        TableRow(
-                          children: [
-                            _td(calConfigLabels[k]),
-                            _td(channel.setpoints[k].toStringAsFixed(4)),
-                            _td(channel.readings![k].toStringAsFixed(1)),
-                            if (errors != null) _td(fmtSignedUvV(errors[k])),
-                            _td(fmtSignedUvV(nonlinearities![k])),
-                          ],
-                        ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DetailsCard extends StatelessWidget {
-  const _DetailsCard({required this.board});
-
-  final BoardCalibration board;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final nominals = board.nominals;
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Details', style: theme.textTheme.titleSmall),
-            const SizedBox(height: 4),
+            const Divider(height: 24),
             if (nominals != null)
               Text(
                 'Chain: FSR ${nominals.adcFsrV} V'
@@ -295,6 +153,122 @@ class _DetailsCard extends StatelessWidget {
             Text(kCorrectionNote, style: theme.textTheme.bodySmall),
             const SizedBox(height: 4),
             Text(kUvVToPpmNote, style: theme.textTheme.bodySmall),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One channel's corrections: the summary line in µV/V, then the
+/// nonlinearity plot, the diagnostic rows, and the measured 5-point table
+/// with per-point error and end-point nonlinearity — all visible; the page
+/// is the certificate, nothing hides behind an expansion.
+class _ChannelCalCard extends StatelessWidget {
+  const _ChannelCalCard({required this.index, required this.channel});
+
+  final int index;
+  final ChannelBoardCalibration channel;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final calibrated = channel.isFactoryCalibrated;
+    // The plot and the Nonlinearity column need only the measured points;
+    // the Error column additionally needs the nominal chain as its
+    // reference, so it alone drops out without board constants.
+    // TODO I don't think we need this conditional
+    final errors = channel.measuredErrorsUvV;
+    final nonlinearities = channel.deviationsUvV;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('CH ${index + 1}', style: theme.textTheme.titleSmall),
+            const SizedBox(height: 4),
+            Text(
+              calibrated
+                  ? 'zero offset ${fmtUvV(channel.zeroOffsetUvV)} · '
+                        'gain ${fmtGain(channel.sensitivityVsNominal)} · '
+                        'end-point linearity ±${maxCalDeviation(channel)!.toStringAsFixed(3)} µV/V'
+                  : 'Nominal values (no factory data)',
+              style: theme.textTheme.bodySmall,
+            ),
+            if (calibrated) ...[
+              const SizedBox(height: 12),
+              Text('Nonlinearity', style: theme.textTheme.titleSmall),
+              const SizedBox(height: 4),
+              CalDeviationPlot(deviationsUvV: nonlinearities!),
+              const SizedBox(height: 4),
+              Text(
+                'Deviation from the end-point line through ±FS — gain and '
+                'offset removed; the ±FS points are 0 by definition.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            const SizedBox(height: 12),
+            _row(
+              'Source',
+              calibrated
+                  ? 'Factory'
+                  : channel.nominals != null
+                  ? 'Nominal fallback'
+                  : 'Unavailable (no board constants)',
+            ),
+            if (calibrated) ...[
+              _row('Zero offset', fmtUvV(channel.zeroOffsetUvV)),
+              _row(
+                'Gain vs nominal',
+                '${fmtGain(channel.sensitivityVsNominal)} '
+                    '(±FS cal points ÷ nominal chain)',
+              ),
+              _row(
+                'End-point linearity',
+                '±${maxCalDeviation(channel)!.toStringAsFixed(3)} µV/V '
+                    'max deviation',
+              ),
+              const SizedBox(height: 8),
+              Table(
+                columnWidths: {
+                  for (int c = 0; c < (errors != null ? 5 : 4); ++c)
+                    c: const FlexColumnWidth(),
+                },
+                children: [
+                  TableRow(
+                    children: [
+                      _th(context, 'Config'),
+                      _th(context, 'Setpoint'),
+                      _th(context, 'Reading'),
+                      if (errors != null) _th(context, 'Error'),
+                      _th(context, 'Nonlinearity'),
+                    ],
+                  ),
+                  TableRow(
+                    children: [
+                      _unit(context, ''),
+                      _unit(context, 'mV/V'),
+                      _unit(context, 'counts'),
+                      if (errors != null) _unit(context, 'µV/V'),
+                      _unit(context, 'µV/V'),
+                    ],
+                  ),
+                  for (int k = 0; k < kCalPointCount; k++)
+                    TableRow(
+                      children: [
+                        _td(calConfigLabels[k]),
+                        _td(channel.setpoints[k].toStringAsFixed(4)),
+                        _td(channel.readings![k].toStringAsFixed(1)),
+                        if (errors != null) _td(fmtSignedUvV(errors[k])),
+                        _td(fmtSignedUvV(nonlinearities![k])),
+                      ],
+                    ),
+                ],
+              ),
+            ],
           ],
         ),
       ),

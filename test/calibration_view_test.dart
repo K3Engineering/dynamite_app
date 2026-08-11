@@ -99,18 +99,26 @@ void main() {
     );
   });
 
-  testWidgets('expanding a channel reveals the plot and the 5-point table', (
+  testWidgets('a calibrated channel shows the plot and the 5-point table', (
     tester,
   ) async {
+    // Only CH1 of this document has factory data, so exactly one card has
+    // the plot and the table.
+    const singleCalDoc = '''
+K3CAL1
+cal.date=2026-07-20
+adc_fsr=1.2,nominal
+exc=4.53,nominal
+afe_gain=101,nominal
+ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4
+ch0.raw=6386310.2,3193480.0,845.2,-3191769.6,-6384619.8
+END
+''';
     final board = BoardCalibration.parse(
-      demoBoardCalibrationDoc,
+      singleCalDoc,
       pgaGains: const [1, 1, 1, 1],
     );
-    await pump(tester);
-    expect(find.byType(CalDeviationPlot), findsNothing);
-
-    await tester.tap(find.text('CH 1'));
-    await tester.pumpAndSettle();
+    await pump(tester, flashDoc: singleCalDoc);
 
     // The titled nonlinearity plot, with its convention caption.
     expect(find.byType(CalDeviationPlot), findsOneWidget);
@@ -172,8 +180,6 @@ ch0.raw=6386310.2,3193480.0,845.2,-3191769.6,-6384619.8
 END
 ''';
     await pump(tester, flashDoc: noConstantsDoc);
-    await tester.tap(find.text('CH 1'));
-    await tester.pumpAndSettle();
 
     expect(find.text('Error'), findsNothing);
     // The end-point nonlinearity needs no nominal chain: the plot, its
@@ -234,11 +240,16 @@ END
   });
 
   /// Pump the board calibration page (the view's host, carrying the export
-  /// menu) instead of the bare view.
+  /// button row) instead of the bare view. The tall surface defeats the
+  /// ListView's lazy building — the export row sits below the fold at the
+  /// default size.
   Future<RigState> pumpScreen(
     WidgetTester tester, {
     bool withFlash = true,
   }) async {
+    tester.view.physicalSize = const Size(1200, 2800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     SharedPreferences.setMockInitialValues({});
     final rig = RigState(
       transport: _FakeTransport(),
@@ -264,7 +275,7 @@ END
     return rig;
   }
 
-  testWidgets('the app-bar menu copies the report to the clipboard', (
+  testWidgets('the copy button puts the report on the clipboard', (
     tester,
   ) async {
     // The test binding has no clipboard; mock the platform channel and
@@ -283,9 +294,7 @@ END
     );
     await pumpScreen(tester);
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Copy report'));
+    await tester.tap(find.text('Copy'));
     await tester.pumpAndSettle();
 
     expect(find.text('Calibration report copied to clipboard'), findsOneWidget);
@@ -297,25 +306,22 @@ END
     expect(copied, calibrationReport(board, 'Bench unit'));
   });
 
-  testWidgets('the export menu offers download and share', (tester) async {
+  testWidgets('the export row offers copy, download and share', (tester) async {
     await pumpScreen(tester);
 
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Copy report'), findsOneWidget);
-    expect(find.text('Download report'), findsOneWidget);
-    expect(find.textContaining('Share report'), findsOneWidget);
+    expect(find.text('Copy'), findsOneWidget);
+    expect(find.text('Download'), findsOneWidget);
+    expect(find.text('Share'), findsOneWidget);
   });
 
-  testWidgets('page without a flash doc: placeholder, no export menu', (
+  testWidgets('page without a flash doc: placeholder, no export buttons', (
     tester,
   ) async {
     await pumpScreen(tester, withFlash: false);
 
     expect(find.text('Could not read calibration data'), findsOneWidget);
     // Nothing to export without a document.
-    expect(find.byType(PopupMenuButton<String>), findsNothing);
+    expect(find.byType(OutlinedButton), findsNothing);
   });
 
   group('calibrationReport', () {
