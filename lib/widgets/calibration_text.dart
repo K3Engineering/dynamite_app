@@ -3,9 +3,7 @@ import '../models/board_calibration.dart';
 // ---------------------------------------------------------------------------
 // The calibration feature's text: the shared copy (trust lines, notes), the
 // value formatters, the status one-liners, and the plain-text calibration
-// report builder. The channel cards in calibration_view.dart and the
-// Settings row reuse everything here, so the card, the row, and the exported
-// artifact can never diverge.
+// report builder.
 // ---------------------------------------------------------------------------
 
 /// The product's trust statement for the calibrated units — a product claim,

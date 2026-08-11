@@ -100,10 +100,8 @@ void main() {
       expect(rig.boardCalibrationFor('dev1'), isNull);
 
       rig.onFlashRead('dev1', 'Bench unit', fixture());
-      // The connected device gets its own document…
       expect(rig.boardCalibrationFor('dev1'), isNotNull);
-      // …any other device is refused — a stale or foreign document never
-      // renders as the connected device's calibration.
+      // Any other device is refused.
       expect(rig.boardCalibrationFor('dev2'), isNull);
     });
 
@@ -116,7 +114,6 @@ void main() {
         DeviceFlash.parse(recalibratedDoc()),
       );
 
-      // The device is the truth: readings use the new values immediately.
       expect(rig.channelCells[0]?.sensitivityMvV, closeTo(1.9985, 1e-12));
     });
   });

@@ -7,8 +7,7 @@ import '../services/ble_link_manager.dart' show BtLinkState;
 import 'status_colors.dart';
 
 /// Everything the [BluetoothIndicator] displays, resolved from link/adapter/
-/// scan state by [btStatusVisual] (a pure, context-free function — the
-/// mapping is unit-tested; colors are supplied from the theme).
+/// scan state by [btStatusVisual]; colors are supplied from the theme.
 typedef BtStatusVisual = ({
   IconData icon,
   Color color,

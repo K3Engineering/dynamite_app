@@ -287,8 +287,7 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 /// ([readings] == null) falls back to the nominal chain ([nominals]) — and
 /// with no resolved nominals it converts nothing at all: the board-data
 /// verdict ([BoardDataStatus]) has already decided such a board shows raw
-/// counts only, so [nominals] == null means "unavailable", and the unit
-/// layer ([DisplayUnit.converterFor]) guards every call path accordingly.
+/// counts only, so [nominals] == null means "unavailable".
 class ChannelBoardCalibration {
   ChannelBoardCalibration({
     List<double>? resistors,

@@ -1849,10 +1849,6 @@ YAxisRange _computeYRange(double dataMin, double dataMax, DisplayUnit unit) {
 
 // ---------------------------------------------------------------------------
 // Shared plot toolkit
-//
-// Small reusable drawing primitives used by every graph painter (force,
-// derivative, and future X-Y / FFT plots). Keeping them as free functions lets
-// new plot types reuse axis and envelope rendering instead of copy-pasting.
 // ---------------------------------------------------------------------------
 
 /// Append vertical X-axis grid lines (and optional time labels) for the visible

@@ -35,9 +35,7 @@ Uint8List encodeAdcFrame(List<int> channels) {
 
 /// Encode one ADC feed packet: the 16-bit LE running sample [counter] (the
 /// starting sample index of the packet) followed by exactly [nwAdcNumSamples]
-/// frames. The single packet encoder for the wire format — used by the demo
-/// signal source and the mock BLE platform so they can never drift off-format
-/// ([AdcPacketDecoder] decodes it).
+/// frames ([AdcPacketDecoder] decodes it).
 Uint8List encodeAdcPacket({
   required int counter,
   required Iterable<Uint8List> frames,

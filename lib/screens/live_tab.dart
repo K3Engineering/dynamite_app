@@ -307,8 +307,7 @@ class LiveStatusBar extends StatelessWidget {
   final String connectedDeviceName;
 
   /// Whether a malformed ADC packet was seen on this stream
-  /// ([DataHub.protocolErrorSeen]). Shows a persistent warning marker: bad
-  /// packets are dropped but never hidden from the user.
+  /// ([DataHub.protocolErrorSeen]).
   final bool protocolErrorSeen;
 
   const LiveStatusBar({

@@ -7,13 +7,7 @@ import 'cal_deviation_plot.dart';
 import 'calibration_text.dart';
 
 /// The factory calibration view: identity/traceability, the trust statement,
-/// and each channel's measured corrections, in physical units. The body of
-/// the board calibration page (CalibrationScreen), reached from the
-/// Settings row.
-///
-/// Everything here is per-board data from the flash-document owner
-/// ([RigState.boardCalibrationFor]); no device / no document / another
-/// device's document renders the placeholder card, never stale values.
+/// and each channel's measured corrections
 class CalibrationView extends StatelessWidget {
   const CalibrationView({super.key, required this.deviceId});
 
@@ -160,10 +154,7 @@ class _BoardCard extends StatelessWidget {
   }
 }
 
-/// One channel's corrections: the summary line in µV/V, then the
-/// nonlinearity plot, the diagnostic rows, and the measured 5-point table
-/// with per-point error and end-point nonlinearity — all visible; the page
-/// is the certificate, nothing hides behind an expansion.
+/// One channel's corrections
 class _ChannelCalCard extends StatelessWidget {
   const _ChannelCalCard({required this.index, required this.channel});
 

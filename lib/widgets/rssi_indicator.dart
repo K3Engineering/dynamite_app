@@ -14,8 +14,7 @@ int rssiLevel(int rssi) => rssi >= -55
 /// Compact live signal-strength readout for the connected device: a bars
 /// icon plus the exact dBm value, refreshed by BleLinkManager's RSSI polling.
 /// Renders nothing when [rssi] is null — before the first poll lands, or on
-/// platforms without readRssi (web) — so no surface ever shows a permanent
-/// placeholder where no reading can exist.
+/// platforms without readRssi (web).
 class RssiIndicator extends StatelessWidget {
   const RssiIndicator({
     required this.rssi,

@@ -127,9 +127,6 @@ class AppDatabase extends _$AppDatabase {
   }
 
   // -- Session access --
-  //
-  // Every access pattern the app needs is a named method here; no drift query
-  // expressions or Companions are constructed outside this file.
 
   /// Create a new recording session row, marked incomplete until
   /// [completeSession] finalizes it. Returns the generated id.

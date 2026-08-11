@@ -2,12 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../models/device_info.dart';
 
-/// Settings → Device settings → Device info: the connected sampler's static
-/// identity, read from the BLE Device Information service (0x180A) once per
-/// link at connect time. Purely read-only. A null [info] (the connect-time
-/// read hasn't landed yet) or a null field (that read failed — the serial is
-/// always null on web, where 0x2A25 is blocklisted) renders as an em dash,
-/// never as a made-up or stale value.
+/// The connected sampler's static identity, read from the BLE Device
+/// Information service (0x180A) once per link at connect time. Purely
+/// read-only. A null [info] (the connect-time read hasn't landed yet) or a
+/// null field (that read failed — the serial is always null on web, where
+/// 0x2A25 is blocklisted) renders as an em dash.
 class DeviceInfoCard extends StatelessWidget {
   const DeviceInfoCard({super.key, required this.info});
 
