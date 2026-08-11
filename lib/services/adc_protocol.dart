@@ -1,9 +1,4 @@
 /// Wire-format constants for the device's ADC feed protocol.
-///
-/// This is the single source of truth for the packet layout shared by the
-/// decoder ([AdcPacketDecoder]), the storage layer ([DataHub], which sizes its
-/// buffers off the channel count), and the mock BLE device (which *encodes*
-/// packets in this format).
 library;
 
 import 'dart:typed_data';

@@ -45,13 +45,6 @@ void main() async {
   // are synchronous constructor work and can never race a user edit.
   final prefs = await SharedPreferences.getInstance();
 
-  // Object graph, one layer per concern:
-  //   BleLinkManager (link state machine) --raw bytes--> AdcPacketDecoder
-  //   (wire protocol) --decoded samples--> DataHub (storage + stats)
-  //   <--observed by-- RecordingController (session lifecycle + persistence).
-  //   RigState owns the rig (device slots + unsaved edits + cell history) and
-  //   pushes the effective per-channel cells into the hub.
-  // AppEvents is the one-shot notice bus: producers emit, AppShell consumes.
   final appEvents = AppEvents();
   final dataHub = DataHub();
   final decoder = AdcPacketDecoder(dataHub);

@@ -1,13 +1,9 @@
 import 'dart:convert';
 
 /// Sorted, disjoint, half-open `[start, end)` ranges of missing samples, in
-/// absolute sample indices.
-///
-/// This is the single home of gap bookkeeping: the [DataHub] appends ranges as
-/// the decoder detects dropped packets, renderers query [contains]/[rangesIn],
-/// and sessions persist/reload them via [toJson]/[GapList.fromJson]. The ring
-/// buffer itself holds ordinary (held) values inside gaps, so nothing else in
-/// the pipeline needs to know about missing data.
+/// absolute sample indices. The ring buffer itself holds ordinary (held)
+/// values inside gaps, so nothing else in the pipeline needs to know about
+/// missing data.
 class GapList {
   GapList();
 

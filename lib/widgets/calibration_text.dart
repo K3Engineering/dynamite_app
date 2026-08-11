@@ -1,9 +1,7 @@
 import '../models/board_calibration.dart';
 
 // ---------------------------------------------------------------------------
-// The calibration feature's text: the shared copy (trust lines, notes), the
-// value formatters, the status one-liners, and the plain-text calibration
-// report builder.
+// The calibration feature's text.
 // ---------------------------------------------------------------------------
 
 /// The product's trust statement for the calibrated units — a product claim,

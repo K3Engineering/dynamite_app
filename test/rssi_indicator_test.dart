@@ -2,9 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/widgets/rssi_indicator.dart' show rssiLevel;
 
-/// Tests for [rssiLevel]'s 0–3 ladder — the only public pure presentation
-/// helper without coverage. The thresholds suit a nearby BLE sensor:
-/// strong ≥ −55, good ≥ −65, fair ≥ −75, weak below.
+/// Tests for [rssiLevel]'s 0–3 ladder. The thresholds suit a nearby BLE
+/// sensor: strong ≥ −55, good ≥ −65, fair ≥ −75, weak below.
 void main() {
   test('boundary values sit on their documented rungs', () {
     expect(rssiLevel(-30), 3);

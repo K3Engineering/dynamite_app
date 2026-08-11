@@ -96,8 +96,8 @@ Future<void> renameSessionFlow(
   }
 }
 
-/// The full delete-a-session flow: confirm, then delete. Returns true when
-/// the session was deleted (so callers can e.g. pop a detail screen).
+/// Delete-a-session flow. Returns true when the session was deleted (so
+/// callers can e.g. pop a detail screen).
 Future<bool> deleteSessionFlow(BuildContext context, Session session) async {
   // An empty name would render as Delete ""? — fall back to the shared
   // placeholder title.

@@ -11,10 +11,7 @@ import '../utils/log.dart';
 /// calibration characteristic into [DataHub] updates.
 ///
 /// Owns the packet-continuity counter used to detect dropped packets (reported
-/// to the hub via [DataHub.addDroppedFrames]). Knows nothing about
-/// BLE plumbing or recording: [BleLinkManager] hands it raw bytes via
-/// [onDataPacket] / [onCalibrationPacket], and it feeds decoded samples into
-/// the hub's public API.
+/// to the hub via [DataHub.addDroppedFrames]).
 class AdcPacketDecoder {
   AdcPacketDecoder(this.hub);
 
