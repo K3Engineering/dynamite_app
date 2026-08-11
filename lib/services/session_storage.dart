@@ -25,11 +25,9 @@ class SessionStorage {
   /// passed to [finalizeSession] when recording stops.
   ///
   /// Note: every session stores all [DataHub.numAdcChannels]; [channelLabels]
-  /// and [visibleChannels] are retained for display only. [visibleChannels]
-  /// seeds the session detail view's channel selection (usually the live
-  /// view's current set); it can be changed per session afterwards.
-  /// [deviceMetadata] is the connected device's identity as the dynamite-csv
-  /// `device` block (see [DeviceInfo.toCsvDeviceMetadata]), frozen for export.
+  /// and [visibleChannels] are retained for display only. [deviceMetadata] is
+  /// the connected device's identity as the dynamite-csv `device` block (see
+  /// [DeviceInfo.toCsvDeviceMetadata]), frozen for export.
   static Future<LiveSessionWriter> startSession({
     required DataHub dataHub,
     required String name,
@@ -331,10 +329,7 @@ class SessionChunkCodec {
   }
 }
 
-/// Loaded session data for playback/review. An immutable data holder that
-/// implements [GraphDataSource] directly, so the graph components render it
-/// without an adapter; [sampleRate], [calibrationFor] and [gaps] already
-/// satisfy their interface counterparts.
+/// Loaded session data for playback/review.
 class SessionData implements GraphDataSource {
   final List<Int32List> channels;
   @override
@@ -670,10 +665,6 @@ class LiveSessionWriter {
     }
   }
 
-  /// The production sink: writes the chunk, then updates the session row's
-  /// gap ranges so a crash mid-recording keeps the info up to this flush
-  /// (crash recovery rebuilds aggregates from chunks but cannot reconstruct
-  /// gaps from them). The gaps update is one small row write per flush.
   static Future<void> _defaultChunkSink(
     int sessionId,
     int chunkIndex,

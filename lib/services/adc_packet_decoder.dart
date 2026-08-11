@@ -37,8 +37,7 @@ class AdcPacketDecoder {
   }
 
   /// Invoked with every successfully parsed flash document (board + load
-  /// cell slots). Wired to `RigState.onFlashRead` at app startup; the hub
-  /// only takes the board half.
+  /// cell slots).
   void Function(DeviceFlash flash)? onDeviceFlash;
 
   /// Parse one flash document read: the `key=value` document the link layer

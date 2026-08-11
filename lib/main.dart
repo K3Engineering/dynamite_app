@@ -59,10 +59,8 @@ void main() async {
     ..onAdcData = decoder.onDataPacket
     ..onCalibrationData = decoder.onCalibrationPacket;
   final rigState = RigState(transport: linkManager, prefs: prefs);
-  // Flash documents (board + slots) arrive via the decoder: the hub takes
-  // the board, RigState takes the whole document. The device id/name are
-  // read off the link at delivery time (the read only ever runs against the
-  // active link).
+  // The device id/name are read off the link at delivery time (the read
+  // only ever runs against the active link).
   decoder.onDeviceFlash = (flash) => rigState.onFlashRead(
     linkManager.connectedDeviceId,
     linkManager.connectedDeviceName,
@@ -75,8 +73,6 @@ void main() async {
     events: appEvents,
   );
   final appSettings = AppSettings(prefs: prefs);
-  // Push the effective per-channel load cells (device slots, including
-  // unsaved edits) into the data layer now and on every rig change.
   // Content-equal pushes are a no-op inside the hub.
   dataHub.updateLoadCells(rigState.channelCells);
   rigState.addListener(() => dataHub.updateLoadCells(rigState.channelCells));

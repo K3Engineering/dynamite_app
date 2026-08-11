@@ -50,10 +50,8 @@ class CalibrationView extends StatelessWidget {
   }
 }
 
-/// The board card: when/what/how this unit was calibrated, the trust
-/// statement, and the stale-calibration warning when the ADC config moved —
-/// then the engineering block: the resolved conversion chain with its
-/// provenance, and the correction notes.
+/// The board card: this unit's calibration identity, the trust statement,
+/// and the conversion chain.
 class _BoardCard extends StatelessWidget {
   const _BoardCard({required this.board});
 

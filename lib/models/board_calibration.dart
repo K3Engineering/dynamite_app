@@ -459,9 +459,7 @@ class ChannelBoardCalibration {
   /// storage order: deviation from the end-point line (the chord through
   /// the ±FS points), via the measured sensitivity — what the calibration
   /// corrects beyond gain and offset. The ±FS entries are 0 by
-  /// construction; positive = the uncorrected device read high. Feeds the
-  /// nonlinearity plot and the table's Nonlinearity column; the UI labels
-  /// the end-point convention wherever these numbers appear. Null without
+  /// construction; positive = the uncorrected device read high. Null without
   /// factory data.
   List<double>? get deviationsUvV {
     final r = readings;

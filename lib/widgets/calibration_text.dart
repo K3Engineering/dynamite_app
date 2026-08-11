@@ -15,7 +15,7 @@ const String kTrustLineUncalibrated =
     'Uncalibrated — nominal chain in use; expect ~±1% on electrical units.';
 
 /// The one-sentence answer to "why does the gain correction not match my
-/// DMM": shown in the details card so the question never has to be asked.
+/// DMM".
 const String kCorrectionNote =
     'Calibration measures and corrects the product of excitation, gain, '
     'reference, and ladder tolerances — their split is unknowable by design.';

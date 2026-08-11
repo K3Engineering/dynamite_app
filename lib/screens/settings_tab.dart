@@ -89,10 +89,6 @@ class SettingsTab extends StatelessWidget {
           const SectionHeader('Device settings'),
           const SizedBox(height: 16),
 
-          // Everything from here down belongs to the connected device: its
-          // name, the load cell slots and the factory board calibration are
-          // read from ITS flash. With no link up, none of it exists — only
-          // a connect prompt with a jump to the Devices tab shows.
           if (deviceId.isEmpty)
             Card(
               child: ListTile(
@@ -147,9 +143,6 @@ class SettingsTab extends StatelessWidget {
             const RigSlotsSection(),
             const SizedBox(height: 16),
 
-            // The connected device's factory calibration: a status row
-            // opening the calibration page — the content lives there, not
-            // inline.
             Card(
               child: ListTile(
                 title: const Text('Board calibration'),

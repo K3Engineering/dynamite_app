@@ -11,11 +11,9 @@ import 'load_cell.dart';
 // board file, the document's original content.
 // ---------------------------------------------------------------------------
 
-/// Every key the model parses: board keys for the [nwNumAdcChan] channels
-/// it has, slot keys for the [kRigSlotCount] slots it has, and the `cal.*`
-/// metadata keys. Anything else in a flash document (a newer firmware's
-/// keys, another tool's metadata) is NOT ours — it is kept verbatim in
-/// [DeviceFlash.extraLines] so a save can't erase it.
+/// Keys outside this set (a newer firmware's keys, another tool's metadata)
+/// are NOT ours — they are kept verbatim in [DeviceFlash.extraLines] so a
+/// save can't erase them.
 final Set<String> _knownFlashKeys = {
   'cal.date',
   'cal.exc.mv',

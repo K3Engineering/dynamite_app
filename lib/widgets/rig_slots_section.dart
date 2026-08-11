@@ -11,22 +11,13 @@ import '../utils/format.dart';
 const quickCapacitiesKg = <double>[50, 100, 200, 500];
 const quickSensitivitiesMvV = <double>[1, 2, 3];
 
-/// Settings → Device settings → Load cells: the device's ten load cell
-/// slots. The first four ARE the channels — the rail and the rotated CH
-/// tags live in a static gutter outside the card, hugging its left edge,
-/// so they read as an annotation of the list and never travel with a
-/// dragged row; the rest are spares carried on the device.
-/// Assignment is a swap: drag a cell onto another slot and the two
-/// exchange contents (a spare dragged into the top four goes on a channel,
-/// the evicted cell takes the spare's place). Nothing else in the list
-/// moves.
+/// The device's ten load cell slots: the first four ARE the channels, the
+/// rest are spares carried on the device. Assignment is a swap — drag a
+/// cell onto another slot and the two exchange contents.
 ///
-/// Edits and swaps take effect in this app immediately and raise the dirty
-/// state of the status bar; nothing reaches the device until "Save to
-/// device" (the flash doc is the rig's single truth — reads are automatic,
-/// writes are explicit). The bar is ALWAYS present — the clean state reads
-/// "Settings shown are read from the device." — so the list below never
-/// jumps when the dirty state flips.
+/// Edits take effect in this app immediately; nothing reaches the device
+/// until "Save to device" (the flash doc is the rig's single truth —
+/// reads are automatic, writes are explicit).
 class RigSlotsSection extends StatefulWidget {
   const RigSlotsSection({super.key});
 
@@ -154,8 +145,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   }
 
   /// One slot row: a drop target for swaps, fixed height so the channel
-  /// gutter aligns. Populated rows offer a drag handle; every row
-  /// (including empty ones) accepts a drop. The drag is vertical-only:
+  /// gutter aligns. The drag is vertical-only:
   /// [Draggable.axis] pins the feedback — a full-width replica of the row
   /// — to the row's X for the whole drag, so it slides straight up and
   /// down the list instead of following the pointer sideways.
@@ -269,11 +259,9 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   }
 }
 
-/// The static channel gutter: the teal rail spanning exactly the four
-/// channel rows, with the rotated CH1–CH4 tags centered on each. Sits
-/// outside the card — rail on the card side — so the channel markings
-/// annotate the list without being part of any row, and dragging a slot
-/// can never move them.
+/// The static channel gutter. Sits outside the card so the channel
+/// markings annotate the list without being part of any row, and dragging
+/// a slot can never move them.
 class _ChannelGutter extends StatelessWidget {
   const _ChannelGutter();
 
@@ -449,8 +437,6 @@ Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
                 leading: const Icon(Icons.tune),
                 title: const Text('Custom entry…'),
                 onTap: () async {
-                  // Replace this dialog with the editor; a save there fills
-                  // the same slot.
                   Navigator.of(ctx).pop();
                   await showSlotEditor(context, rig, slot);
                 },

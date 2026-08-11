@@ -232,9 +232,7 @@ class AppDatabase extends _$AppDatabase {
     return (select(sessions)..where((t) => t.id.equals(id))).getSingleOrNull();
   }
 
-  /// Watch a single session row (reactive). The detail screen's source of
-  /// truth: edits made from anywhere (rename, notes, channel visibility)
-  /// surface without manual reloads.
+  /// Watch a single session row (reactive).
   Stream<Session?> watchSessionById(int id) {
     return (select(
       sessions,

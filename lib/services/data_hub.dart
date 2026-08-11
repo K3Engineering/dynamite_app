@@ -25,12 +25,6 @@ typedef SamplesAppendedListener = void Function(int startIdx, int count);
 /// Dropped samples are tracked out-of-band in [gaps]; the ring buffer holds
 /// the previous sample's value across a gap, so every stored value is a real
 /// ADC reading and downstream consumers need no magic-value checks.
-///
-/// Implements [GraphDataSource] directly (no adapter): the graph components
-/// read the ring buffer, buckets and gaps through the interface, and repaint
-/// off this notifier. The [totalSamples] and [gaps] fields already satisfy
-/// their interface counterparts; the rest are thin getters over existing
-/// state.
 class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Number of ADC channels the device streams. This is also the number of
   /// lines stored and displayed: channel index == storage index == display index.

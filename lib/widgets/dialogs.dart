@@ -3,8 +3,7 @@ import 'package:flutter/material.dart';
 import '../services/database.dart';
 import '../utils/format.dart';
 
-/// Shared dialog helpers: one text prompt and one delete confirmation, used by
-/// the live tab, the session list and the session detail screen.
+/// Shared dialog helpers: one text prompt and one delete confirmation.
 
 /// Prompt for a single text value. Returns the entered text (which may be
 /// empty), or null when cancelled. Single-line prompts submit on Enter;
@@ -78,9 +77,7 @@ Future<bool> showDeleteConfirm(
   return confirmed ?? false;
 }
 
-/// The full rename-a-session flow: prompt pre-filled with the current name,
-/// then persist the trimmed result. No-op on cancel and on empty or
-/// whitespace-only input. Callers relying on reactive session streams need
+/// Rename-a-session flow. Callers relying on reactive session streams need
 /// no further refresh.
 Future<void> renameSessionFlow(
   BuildContext context, {
