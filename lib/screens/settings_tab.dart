@@ -6,10 +6,12 @@ import 'package:provider/provider.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../models/app_settings.dart';
+import '../models/board_calibration.dart';
 import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
-import '../widgets/calibration_view.dart';
+import '../services/rig_state.dart';
+import '../widgets/calibration_text.dart';
 import '../widgets/device_info_card.dart';
 import '../widgets/rig_slots_section.dart';
 import '../widgets/section_header.dart';
@@ -36,6 +38,11 @@ class SettingsTab extends StatelessWidget {
     // The connect-time DIS identity read; null until it lands.
     final deviceInfo = context.select<BleLinkManager, DeviceInfo?>(
       (l) => l.connectedDeviceInfo,
+    );
+    // The board-calibration row's one-line state; null until the
+    // connect-time read lands for this device.
+    final boardCal = context.select<RigState, BoardCalibration?>(
+      (r) => r.boardCalibrationFor(deviceId),
     );
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
 
@@ -140,25 +147,19 @@ class SettingsTab extends StatelessWidget {
             const RigSlotsSection(),
             const SizedBox(height: 16),
 
-            // The connected device's factory calibration (read-only view).
-            Text(
-              'Board calibration',
-              style: Theme.of(context).textTheme.titleSmall,
-            ),
-            const SizedBox(height: 8),
-            CalibrationView(deviceId: deviceId),
-            // TODO(bake-off): temporary affordance comparing the subpage
-            // host against the inline one above — delete with the loser.
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: () => Navigator.of(context).push<void>(
+            // The connected device's factory calibration: a status row
+            // opening the calibration page — the content lives there, not
+            // inline.
+            Card(
+              child: ListTile(
+                title: const Text('Board calibration'),
+                subtitle: Text(boardCalibrationStatusLine(boardCal)),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push<void>(
                   MaterialPageRoute<void>(
                     builder: (_) => CalibrationScreen(deviceId: deviceId),
                   ),
                 ),
-                icon: const Icon(Icons.open_in_new, size: 18),
-                label: const Text('Open as page'),
               ),
             ),
             const SizedBox(height: 16),

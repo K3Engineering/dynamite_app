@@ -115,10 +115,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   ),
                   PopupMenuItem(
                     value: 'share_csv',
-                    enabled: csvShareSupportedHere,
+                    enabled: fileShareSupportedHere,
                     child: Text(
                       'Share CSV'
-                      '${csvShareSupportedHere ? '' : ' (not supported here)'}',
+                      '${fileShareSupportedHere ? '' : ' (not supported here)'}',
                     ),
                   ),
                   PopupMenuItem(
@@ -285,7 +285,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: csvShareSupportedHere
+                    onPressed: fileShareSupportedHere
                         ? () => _shareCsv(session, data)
                         : null,
                     icon: const Icon(Icons.share),

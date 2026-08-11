@@ -6,7 +6,7 @@
 ///   Android/iOS/macOS/Windows/Linux, a browser download on web.
 /// - [shareSessionCsv] — share_plus's share sheet ("Save to Files" on iOS,
 ///   the Web Share API with download fallback on web). File sharing is
-///   unsupported on Linux — see [csvShareSupportedHere].
+///   unsupported on Linux — see [fileShareSupportedHere].
 ///
 /// `file_selector` was dropped for this: its `getSaveLocation` is
 /// unimplemented on Android and iOS (throws `UnimplementedError`), which is
@@ -30,10 +30,10 @@ import 'csv_export_temp_stub.dart'
 import 'database.dart';
 import 'session_storage.dart';
 
-/// Whether [shareSessionCsv] can present a share UI on this platform:
-/// share_plus shares files on Android, iOS, macOS, Windows and web, but not
-/// Linux.
-bool get csvShareSupportedHere {
+/// Whether the file-share flow ([shareSessionCsv], `shareCalibrationReport`)
+/// can present a share UI on this platform: share_plus shares files on
+/// Android, iOS, macOS, Windows and web, but not Linux.
+bool get fileShareSupportedHere {
   if (kIsWeb) return true;
   return defaultTargetPlatform != TargetPlatform.linux &&
       defaultTargetPlatform != TargetPlatform.fuchsia;
@@ -300,21 +300,29 @@ Map<String, Object?> _channelMetadata(ChannelCalibration cal, double tareRaw) {
   };
 }
 
-/// The CSV filename for a session: the session name with characters that are
-/// illegal in Windows/macOS/Android filenames replaced (auto session names
-/// contain `:` — e.g. `2026-07-29 14:05:32`), leading dots stripped (they
-/// would hide the file on macOS/Linux), trailing dots/spaces trimmed
-/// (illegal on Windows), and a Windows reserved device name disambiguated
-/// with an underscore — Windows refuses CON, NUL, COM1–COM9, LPT1–LPT9 and
-/// friends regardless of extension, so the save dialog would reject the
-/// suggested name outright.
-String csvFileNameForSession(String sessionName) {
-  final base = sessionName.isEmpty ? 'session' : sessionName;
-  var name = base
+/// The CSV filename for a session: the session name sanitized per
+/// [exportFileNameFor].
+String csvFileNameForSession(String sessionName) =>
+    exportFileNameFor(sessionName, 'csv', fallback: 'session');
+
+/// An export file name: [base] with characters that are illegal in
+/// Windows/macOS/Android filenames replaced (auto session names contain `:`
+/// — e.g. `2026-07-29 14:05:32`), leading dots stripped (they would hide the
+/// file on macOS/Linux), trailing dots/spaces trimmed (illegal on Windows),
+/// and a Windows reserved device name disambiguated with an underscore —
+/// Windows refuses CON, NUL, COM1–COM9, LPT1–LPT9 and friends regardless of
+/// extension, so the save dialog would reject the suggested name outright.
+/// An empty (or scrubbed-away) base becomes [fallback].
+String exportFileNameFor(
+  String base,
+  String extension, {
+  String fallback = 'export',
+}) {
+  var name = (base.isEmpty ? fallback : base)
       .replaceAll(RegExp(r'[\\/:*?"<>|]'), '-')
       .replaceAll(RegExp(r'^\.+'), '')
       .replaceAll(RegExp(r'[. ]+$'), '');
-  if (name.isEmpty) name = 'session';
+  if (name.isEmpty) name = fallback;
   // Reserved when followed by the end of the name or an extension dot
   // ("con.txt" is as refused as "con"); keep the name recognizable by
   // marking it right after the reserved word ("con_.txt").
@@ -325,5 +333,5 @@ String csvFileNameForSession(String sessionName) {
   if (reserved != null) {
     name = '${reserved[0]}_${name.substring(reserved.end)}';
   }
-  return '$name.csv';
+  return '$name.$extension';
 }

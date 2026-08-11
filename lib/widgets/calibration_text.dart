@@ -1,10 +1,11 @@
 import '../models/board_calibration.dart';
 
 // ---------------------------------------------------------------------------
-// The calibration report as a plain-text artifact, plus the shared
-// calibration copy (trust lines, notes) and the value formatters. The
-// channel cards in calibration_view.dart reuse everything here, so the
-// card, the report page, and the clipboard can never diverge.
+// The calibration feature's text: the shared copy (trust lines, notes), the
+// value formatters, the status one-liners, and the plain-text calibration
+// report builder. The channel cards in calibration_view.dart and the
+// Settings row reuse everything here, so the card, the row, and the exported
+// artifact can never diverge.
 // ---------------------------------------------------------------------------
 
 /// The product's trust statement for the calibrated units — a product claim,
@@ -56,6 +57,44 @@ String fmtGain(double? fraction) => fraction == null
 
 String fmtCounts(double counts) =>
     '${counts >= 0 ? '+' : ''}${counts.toStringAsFixed(1)}';
+
+/// "3 weeks ago" from a `cal.date` string; null when the date is missing or
+/// unparseable.
+String? calibrationAge(String? isoDate) {
+  final d = isoDate == null ? null : DateTime.tryParse(isoDate);
+  if (d == null) return null;
+  final days = DateTime.now().difference(d).inDays;
+  if (days < 1) return 'today';
+  if (days == 1) return 'yesterday';
+  if (days < 7) return '$days days ago';
+  if (days < 60) {
+    final weeks = days ~/ 7;
+    return weeks == 1 ? '1 week ago' : '$weeks weeks ago';
+  }
+  if (days < 730) {
+    final months = days ~/ 30;
+    return months <= 1 ? '1 month ago' : '$months months ago';
+  }
+  final years = days ~/ 365;
+  return years == 1 ? '1 year ago' : '$years years ago';
+}
+
+/// The Settings row's one-line board-calibration state. Facts only: when
+/// calibrated, the flash document's own date; the other two states describe
+/// what the app holds (a failed connect-time read, a document without
+/// factory data) — never a verdict on the device.
+String boardCalibrationStatusLine(BoardCalibration? board) {
+  if (board == null) return 'Could not read calibration data';
+  if (!board.channels.any((c) => c.isFactoryCalibrated)) {
+    return 'Missing factory calibration';
+  }
+  final age = calibrationAge(board.factoryDate);
+  return [
+    'Calibrated',
+    ?board.factoryDate,
+    if (age != null) '($age)',
+  ].join(' ');
+}
 
 /// The plain-text calibration report (support-email / paste-anywhere
 /// artifact): mirrors the on-screen content, plus the 5-point tables.

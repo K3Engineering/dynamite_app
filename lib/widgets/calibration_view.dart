@@ -2,16 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/calibration.dart';
-import '../screens/calibration_report_screen.dart';
 import '../services/rig_state.dart';
 import 'cal_deviation_plot.dart';
-import 'calibration_report.dart';
+import 'calibration_text.dart';
 
 /// The factory calibration view: identity/traceability, the trust statement,
-/// and each channel's measured corrections, in physical units. Host-
-/// agnostic content — rendered inline in Settings (the inline host) or on
-/// its own page (CalibrationScreen); one of the two hosts survives the
-/// bake-off.
+/// and each channel's measured corrections, in physical units. The body of
+/// the board calibration page (CalibrationScreen), reached from the
+/// Settings row.
 ///
 /// Everything here is per-board data from the flash-document owner
 /// ([RigState.boardCalibrationFor]); no device / no document / another
@@ -36,9 +34,10 @@ class CalibrationView extends StatelessWidget {
             Icons.phonelink_erase,
             color: Theme.of(context).colorScheme.outline,
           ),
-          title: const Text('No calibration data from the device'),
+          title: const Text('Could not read calibration data'),
           subtitle: const Text(
-            'The factory calibration is read from the device at connect time.',
+            'Calibration is read from the device at connect time — '
+            'reconnect to retry.',
           ),
         ),
       );
@@ -52,7 +51,7 @@ class CalibrationView extends StatelessWidget {
           _ChannelCalCard(index: i, channel: board.channels[i]),
           const SizedBox(height: 8),
         ],
-        _DetailsCard(board: board, deviceId: deviceId),
+        _DetailsCard(board: board),
       ],
     );
   }
@@ -71,7 +70,7 @@ class _SummaryCard extends StatelessWidget {
     final calibrated = board.channels
         .where((c) => c.isFactoryCalibrated)
         .length;
-    final age = _calAge(board.factoryDate);
+    final age = calibrationAge(board.factoryDate);
 
     final String status;
     if (calibrated == 0) {
@@ -152,6 +151,7 @@ class _ChannelCalCard extends StatelessWidget {
     // The plot and the Nonlinearity column need only the measured points;
     // the Error column additionally needs the nominal chain as its
     // reference, so it alone drops out without board constants.
+    // TODO I don't think we need this conditional
     final errors = channel.measuredErrorsUvV;
     final nonlinearities = channel.deviationsUvV;
     return Card(
@@ -257,13 +257,10 @@ class _ChannelCalCard extends StatelessWidget {
   }
 }
 
-/// The engineering card: the resolved conversion chain with its provenance,
-/// the correction note, and the entry to the report page.
 class _DetailsCard extends StatelessWidget {
-  const _DetailsCard({required this.board, required this.deviceId});
+  const _DetailsCard({required this.board});
 
   final BoardCalibration board;
-  final String deviceId;
 
   @override
   Widget build(BuildContext context) {
@@ -298,45 +295,11 @@ class _DetailsCard extends StatelessWidget {
             Text(kCorrectionNote, style: theme.textTheme.bodySmall),
             const SizedBox(height: 4),
             Text(kUvVToPpmNote, style: theme.textTheme.bodySmall),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: () => Navigator.of(context).push<void>(
-                  MaterialPageRoute<void>(
-                    builder: (_) =>
-                        CalibrationReportScreen(deviceId: deviceId),
-                  ),
-                ),
-                icon: const Icon(Icons.description_outlined, size: 18),
-                label: const Text('View calibration report'),
-              ),
-            ),
           ],
         ),
       ),
     );
   }
-}
-
-/// "3 weeks ago" from a `cal.date` string; null when the date is missing or
-/// unparseable. Coarse on purpose — calibration age is a glance quantity.
-String? _calAge(String? isoDate) {
-  final d = isoDate == null ? null : DateTime.tryParse(isoDate);
-  if (d == null) return null;
-  final days = DateTime.now().difference(d).inDays;
-  if (days < 1) return 'today';
-  if (days == 1) return 'yesterday';
-  if (days < 7) return '$days days ago';
-  if (days < 60) {
-    final weeks = days ~/ 7;
-    return weeks == 1 ? '1 week ago' : '$weeks weeks ago';
-  }
-  if (days < 730) {
-    final months = days ~/ 30;
-    return months <= 1 ? '1 month ago' : '$months months ago';
-  }
-  final years = days ~/ 365;
-  return years == 1 ? '1 year ago' : '$years years ago';
 }
 
 Widget _row(String label, String value) => Padding(

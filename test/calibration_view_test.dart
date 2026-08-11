@@ -5,18 +5,19 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/calibration.dart';
-import 'package:dynamite_app/screens/calibration_report_screen.dart';
+import 'package:dynamite_app/screens/calibration_screen.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
+import 'package:dynamite_app/services/report_export.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/cal_deviation_plot.dart';
-import 'package:dynamite_app/widgets/calibration_report.dart';
+import 'package:dynamite_app/widgets/calibration_text.dart';
 import 'package:dynamite_app/widgets/calibration_view.dart';
 
-/// Widget tests for the factory calibration view (inline host). The view
-/// renders the flash document owned by [RigState] — and only while that
-/// document belongs to the device it was handed — so the harness is a
-/// [RigState] fed the fixture document, with the PGA readback the demo
-/// device reports (1x on all channels).
+/// Widget tests for the factory calibration view (the board calibration
+/// page's body). The view renders the flash document owned by [RigState] —
+/// and only while that document belongs to the device it was handed — so
+/// the harness is a [RigState] fed the fixture document, with the PGA
+/// readback the demo device reports (1x on all channels).
 class _FakeTransport implements RigFlashTransport {
   @override
   String get connectedDeviceId => 'dev1';
@@ -186,7 +187,7 @@ END
   testWidgets('no flash doc: placeholder card, no values', (tester) async {
     await pump(tester, withFlash: false);
 
-    expect(find.text('No calibration data from the device'), findsOneWidget);
+    expect(find.text('Could not read calibration data'), findsOneWidget);
     expect(find.textContaining('nominal values in use'), findsNothing);
     expect(find.text('CH 1'), findsNothing);
   });
@@ -195,7 +196,7 @@ END
     // The doc on file belongs to dev1, but the view was handed dev2.
     await pump(tester, deviceId: 'dev2');
 
-    expect(find.text('No calibration data from the device'), findsOneWidget);
+    expect(find.text('Could not read calibration data'), findsOneWidget);
     expect(find.textContaining('Calibrated'), findsNothing);
   });
 
@@ -232,7 +233,38 @@ END
     );
   });
 
-  testWidgets('the report page shows the artifact and copies it', (
+  /// Pump the board calibration page (the view's host, carrying the export
+  /// menu) instead of the bare view.
+  Future<RigState> pumpScreen(
+    WidgetTester tester, {
+    bool withFlash = true,
+  }) async {
+    SharedPreferences.setMockInitialValues({});
+    final rig = RigState(
+      transport: _FakeTransport(),
+      prefs: await SharedPreferences.getInstance(),
+    );
+    if (withFlash) {
+      rig.onFlashRead(
+        'dev1',
+        'Bench unit',
+        DeviceFlash.parse(
+          demoBoardCalibrationDoc,
+          pgaGains: const [1, 1, 1, 1],
+        ),
+      );
+    }
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [ChangeNotifierProvider<RigState>.value(value: rig)],
+        child: const MaterialApp(home: CalibrationScreen(deviceId: 'dev1')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    return rig;
+  }
+
+  testWidgets('the app-bar menu copies the report to the clipboard', (
     tester,
   ) async {
     // The test binding has no clipboard; mock the platform channel and
@@ -249,23 +281,11 @@ END
       () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(SystemChannels.platform, null),
     );
-    await pump(tester);
+    await pumpScreen(tester);
 
-    await tester.ensureVisible(find.text('View calibration report'));
+    await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('View calibration report'));
-    await tester.pumpAndSettle();
-
-    // The page is the report artifact: title, device label (the name the
-    // flash read carried, not the id), and the per-channel lines.
-    expect(find.text('Board calibration report'), findsOneWidget);
-    expect(find.textContaining('Device: Bench unit'), findsOneWidget);
-    expect(
-      find.textContaining('CH 1: zero offset +0.264 µV/V'),
-      findsOneWidget,
-    );
-
-    await tester.tap(find.byTooltip('Copy report'));
+    await tester.tap(find.text('Copy report'));
     await tester.pumpAndSettle();
 
     expect(find.text('Calibration report copied to clipboard'), findsOneWidget);
@@ -273,31 +293,29 @@ END
       demoBoardCalibrationDoc,
       pgaGains: const [1, 1, 1, 1],
     );
+    // The device label is the name the flash read carried, not the id.
     expect(copied, calibrationReport(board, 'Bench unit'));
   });
 
-  testWidgets('report page without a flash doc shows the placeholder', (
-    tester,
-  ) async {
-    SharedPreferences.setMockInitialValues({});
-    final rig = RigState(
-      transport: _FakeTransport(),
-      prefs: await SharedPreferences.getInstance(),
-    );
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [ChangeNotifierProvider<RigState>.value(value: rig)],
-        child: const MaterialApp(
-          home: CalibrationReportScreen(deviceId: 'dev1'),
-        ),
-      ),
-    );
+  testWidgets('the export menu offers download and share', (tester) async {
+    await pumpScreen(tester);
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
 
-    expect(find.text('Board calibration report'), findsOneWidget);
-    expect(find.text('No calibration data from the device'), findsOneWidget);
-    // Nothing to copy without a document.
-    expect(find.byTooltip('Copy report'), findsNothing);
+    expect(find.text('Copy report'), findsOneWidget);
+    expect(find.text('Download report'), findsOneWidget);
+    expect(find.textContaining('Share report'), findsOneWidget);
+  });
+
+  testWidgets('page without a flash doc: placeholder, no export menu', (
+    tester,
+  ) async {
+    await pumpScreen(tester, withFlash: false);
+
+    expect(find.text('Could not read calibration data'), findsOneWidget);
+    // Nothing to export without a document.
+    expect(find.byType(PopupMenuButton<String>), findsNothing);
   });
 
   group('calibrationReport', () {
@@ -347,6 +365,51 @@ END
       );
       expect(report, contains('CH 1: zero offset'));
       expect(report, contains('CH 4: nominal values (no factory data)'));
+    });
+
+    test('the export file name carries the device label', () {
+      expect(
+        calibrationReportFileName('Bench unit'),
+        'calibration_report_Bench unit.txt',
+      );
+      // Illegal filename characters are scrubbed per the shared rules.
+      expect(
+        calibrationReportFileName('rig: A/B'),
+        'calibration_report_rig- A-B.txt',
+      );
+    });
+  });
+
+  group('boardCalibrationStatusLine', () {
+    test('no document: the read failed or never landed', () {
+      expect(
+        boardCalibrationStatusLine(null),
+        'Could not read calibration data',
+      );
+    });
+
+    test('a document without factory data: missing calibration', () {
+      const noCalDoc = '''
+K3CAL1
+cal.date=2026-07-20
+END
+''';
+      expect(
+        boardCalibrationStatusLine(BoardCalibration.parse(noCalDoc)),
+        'Missing factory calibration',
+      );
+    });
+
+    test('calibrated: the document\'s date and its age', () {
+      final board = BoardCalibration.parse(
+        demoBoardCalibrationDoc,
+        pgaGains: const [1, 1, 1, 1],
+      );
+      expect(
+        boardCalibrationStatusLine(board),
+        startsWith('Calibrated 2026-07-20 ('),
+      );
+      expect(boardCalibrationStatusLine(board), endsWith('ago)'));
     });
   });
 }
