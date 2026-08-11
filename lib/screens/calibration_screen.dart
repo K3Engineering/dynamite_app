@@ -29,11 +29,11 @@ class CalibrationScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          CalibrationView(deviceId: deviceId),
           if (board != null) ...[
-            const SizedBox(height: 16),
             _exportButtons(context, board, deviceName),
+            const SizedBox(height: 16),
           ],
+          CalibrationView(deviceId: deviceId),
         ],
       ),
     );

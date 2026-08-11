@@ -240,16 +240,11 @@ END
   });
 
   /// Pump the board calibration page (the view's host, carrying the export
-  /// button row) instead of the bare view. The tall surface defeats the
-  /// ListView's lazy building — the export row sits below the fold at the
-  /// default size.
+  /// button row) instead of the bare view.
   Future<RigState> pumpScreen(
     WidgetTester tester, {
     bool withFlash = true,
   }) async {
-    tester.view.physicalSize = const Size(1200, 2800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
     SharedPreferences.setMockInitialValues({});
     final rig = RigState(
       transport: _FakeTransport(),
