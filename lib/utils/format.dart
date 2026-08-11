@@ -25,9 +25,7 @@ String formatDate(DateTime dt) {
 }
 
 /// "2026-07-20 14:05" — [formatDate] plus the 24h zero-padded wall-clock
-/// time (minutes precision; seconds are noise at these call sites). Used
-/// where the time of day distinguishes entries seen/saved within one day
-/// (session cards, the cell-history picker).
+/// time (minutes precision; seconds are noise at these call sites).
 String formatTimestamp(DateTime dt) {
   final h = dt.hour.toString().padLeft(2, '0');
   final min = dt.minute.toString().padLeft(2, '0');
@@ -40,11 +38,10 @@ String formatTimestamp(DateTime dt) {
 /// copy can't drift.
 const String untitledSessionName = 'Untitled session';
 
-/// Coarse relative age for the Devices tab's "Last seen/connected" lines:
-/// "just now" below 5 s, then a widening ">5 s / >15 s / >30 s / >1 m / …"
-/// ladder capped at ">1 hour ago". The coarse buckets keep the displayed age
-/// stable for seconds or minutes at a time — a live-ticking count-up would
-/// be distracting for no information gain.
+/// Coarse relative age for the Devices tab's "Last seen/connected" lines.
+/// The coarse buckets keep the displayed age stable for seconds or minutes
+/// at a time — a live-ticking count-up would be distracting for no
+/// information gain.
 String formatRelativeAge(Duration age) {
   final s = age.inSeconds;
   if (s < 5) return 'just now';

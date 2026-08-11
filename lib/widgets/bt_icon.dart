@@ -7,8 +7,7 @@ import '../services/ble_link_manager.dart' show BtLinkState;
 import 'status_colors.dart';
 
 /// Everything the [BluetoothIndicator] displays, resolved from link/adapter/
-/// scan state by [btStatusVisual] (a pure, context-free function — the
-/// mapping is unit-tested; colors are supplied from the theme).
+/// scan state by [btStatusVisual]; colors are supplied from the theme.
 typedef BtStatusVisual = ({
   IconData icon,
   Color color,
@@ -172,12 +171,6 @@ TopIndicatorMode topIndicatorMode({
 }
 
 /// Compact Bluetooth status readout for the Devices tab's status row.
-/// Renders a [BtStatusVisual] precomputed by the caller via
-/// [btStatusVisual] — the same visual can feed several surfaces (this
-/// indicator, the Devices tab's empty block) without recomputing — gated
-/// by a [TopIndicatorMode] from [topIndicatorMode]: "quiet when nominal",
-/// so an icon appears only for scan progress or an adapter failure, and
-/// nothing at all while the empty block is the voice on screen.
 class BluetoothIndicator extends StatelessWidget {
   final BtStatusVisual visual;
 

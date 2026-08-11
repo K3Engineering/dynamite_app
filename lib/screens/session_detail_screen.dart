@@ -30,10 +30,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   final GraphController _graphCtrl = GraphController();
 
-  /// The session row, reactively. Single source of truth for name, notes,
-  /// duration, and the per-session channel-visibility set: edits (from here
-  /// or anywhere else) are written to the DB and surface via this stream, so
-  /// no mirrored copies (and no manual reload calls) live in this widget.
+  /// The session row, reactively: name, notes, duration, and the per-session
+  /// channel-visibility set. Edits are written to the DB and surface via
+  /// this stream.
   late final Stream<Session?> _sessionStream;
 
   @override

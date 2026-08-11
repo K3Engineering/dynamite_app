@@ -103,7 +103,6 @@ class _DeviationPainter extends CustomPainter {
     final axisPaint = Paint()
       ..color = axisColor
       ..strokeWidth = 1;
-    // The ±bound frame, faint; the zero line at full axis strength.
     for (final uvV in [bound, 0.0, -bound]) {
       axisPaint.color = uvV == 0.0
           ? axisColor

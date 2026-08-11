@@ -118,19 +118,14 @@ class AppShellState extends State<AppShell> {
     _onTabActivated(index);
   }
 
-  /// Jump to the Devices tab — the single home of the Devices tab index for
-  /// every "connect a device" prompt across the app.
+  /// Jump to the Devices tab.
   void goToDevices() => switchToTab(2);
 
-  /// Jump to the Settings tab — used by the Devices tab's per-device gear
-  /// affordance, which lands the user on the "Device settings" section.
+  /// Jump to the Settings tab.
   void goToSettings() => switchToTab(3);
 
-  /// Tab-activation side effects, driven from here (the owner of the tab
-  /// index) so the tabs themselves stay stateless:
-  ///  * Devices tab visible: prompt to enable Bluetooth, and start the
-  ///    on-screen-only periodic work (RSSI polling and the device-row
-  ///    freshness poke — see [BleLinkManager.setDevicesTabVisible]).
+  /// Tab-activation side effects, driven from here so the tabs stay
+  /// stateless.
   void _onTabActivated(int index) {
     final devicesVisible = index == 2;
     _link.setDevicesTabVisible(devicesVisible);

@@ -45,22 +45,8 @@ final class StartSessionFailed extends StartSessionResult {
   final Object error;
 }
 
-/// Owns the recording session lifecycle start to finish: creating the session
-/// row and [LiveSessionWriter] in [startSession], streaming samples to the
-/// writer, and finalizing in [stopSession] — plus the in-progress flag the UI
-/// keys off. The UI only toggles and reports outcomes.
-///
-/// It observes the [DataHub] via [DataHub.addSamplesAppendedListener] to
-/// stream exact
-/// sample slices to storage, and listens to the [BleLinkManager] for the two
-/// link transitions that affect data integrity:
-///  * streaming ends — a session in progress is properly finalized (not
-///    orphaned) if the link drops mid-recording;
-///  * streaming starts — the hub is reset ([DataHub.clear]) and packet
-///    continuity is restarted, so the ring buffer, peaks, tare and gaps of a
-///    previous connection never splice into the new device's trace (and the
-///    new stream's first packet counter is never diffed against the previous
-///    device's, which would inject a spurious gap).
+/// Owns the recording session lifecycle start to finish; the UI only
+/// toggles and reports outcomes.
 ///
 /// Failures are reported two ways, by audience: [startSession] refuses or
 /// fails in response to the user who just tapped record, so its outcomes are
@@ -235,9 +221,9 @@ class RecordingController extends ChangeNotifier {
     }
   }
 
-  /// React to the two link transitions that affect data integrity (see the
-  /// class doc): a dropped link finalizes any in-progress session; a freshly
-  /// started stream resets the hub and packet continuity.
+  /// React to the two link transitions that affect data integrity: a dropped
+  /// link finalizes any in-progress session; a freshly started stream resets
+  /// the hub and packet continuity.
   void _onLinkChanged() {
     final bool streaming = _linkManager.isStreaming;
     if (sessionInProgress && !streaming) {

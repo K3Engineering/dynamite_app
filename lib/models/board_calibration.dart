@@ -287,8 +287,7 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 /// ([readings] == null) falls back to the nominal chain ([nominals]) — and
 /// with no resolved nominals it converts nothing at all: the board-data
 /// verdict ([BoardDataStatus]) has already decided such a board shows raw
-/// counts only, so [nominals] == null means "unavailable", and the unit
-/// layer ([DisplayUnit.converterFor]) guards every call path accordingly.
+/// counts only, so [nominals] == null means "unavailable".
 class ChannelBoardCalibration {
   ChannelBoardCalibration({
     List<double>? resistors,
@@ -460,9 +459,7 @@ class ChannelBoardCalibration {
   /// storage order: deviation from the end-point line (the chord through
   /// the ±FS points), via the measured sensitivity — what the calibration
   /// corrects beyond gain and offset. The ±FS entries are 0 by
-  /// construction; positive = the uncorrected device read high. Feeds the
-  /// nonlinearity plot and the table's Nonlinearity column; the UI labels
-  /// the end-point convention wherever these numbers appear. Null without
+  /// construction; positive = the uncorrected device read high. Null without
   /// factory data.
   List<double>? get deviationsUvV {
     final r = readings;

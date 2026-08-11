@@ -27,10 +27,8 @@ class ChannelStatsRow {
 }
 
 /// Tappable per-channel header shared by the live view and the session
-/// detail view: channel labels with color swatches on top, then one row of
-/// stats per [ChannelStatsRow]. Tapping any channel cell toggles that
-/// channel via [onToggleChannel]; the owner decides what the toggle means
-/// (live-tab setting, per-session visibility, ...).
+/// detail view; the owner decides what the toggle means (live-tab setting,
+/// per-session visibility, ...).
 class ChannelStatsTable extends StatelessWidget {
   ChannelStatsTable({
     super.key,
@@ -232,8 +230,6 @@ class _TableCellValue extends StatelessWidget {
     final staleColor = Theme.of(context).colorScheme.outline;
     final value = this.value;
 
-    // If inactive, show dashes and dim it heavily. If active but stale, dim
-    // it lightly. A null value (unit unavailable for the channel) shows '—'.
     final String displayText = !isActive
         ? '--'
         : (value == null ? '—' : unit.formatValueOnly(value));

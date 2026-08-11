@@ -95,9 +95,7 @@ class DevicesTab extends StatelessWidget {
           Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
           const SizedBox(height: 16),
 
-          // BLE devices section. The status row leads with the Bluetooth
-          // status readout (adapter + scan state) and anchors the Scan/Stop
-          // button on the right, inline with row action buttons.
+          // BLE devices section.
           const SectionHeader('BLE devices'),
           const SizedBox(height: 8),
 
@@ -191,12 +189,8 @@ class DevicesTab extends StatelessWidget {
     );
   }
 
-  /// The big state-aware empty block: the single empty-state voice. Title
-  /// and hint are per-availability advice; icon and color come straight from
-  /// the shared [btStatusVisual] mapping (this is where the failure modes
-  /// live — the red "not supported" square, the permission-needed marker,
-  /// "Starting up Bluetooth…"). Only the powered-on case gets its own
-  /// treatment: a neutral searching icon instead of the indicator's glyph.
+  /// The big state-aware empty block: the single empty-state voice. Icon
+  /// and color come straight from the shared [btStatusVisual] mapping.
   Widget _buildEmptyBlock(
     BtStatusVisual visual,
     AvailabilityState availability,
@@ -521,11 +515,7 @@ ButtonStyle activeRowActionButtonStyle({required Color onContainer}) =>
       ),
     );
 
-/// The active device row (shared by the BLE and Demo sections): a tinted
-/// card carrying the live link state (spinner while connecting/setting up/
-/// starting the stream, connected icon when streaming), the state + device
-/// model + RSSI in the subtitle, a gear shortcut to Device settings, and a
-/// state-aware Cancel/Disconnect button.
+/// The active device row (shared by the BLE and Demo sections).
 class _ActiveDeviceRow extends StatelessWidget {
   const _ActiveDeviceRow({
     required this.name,

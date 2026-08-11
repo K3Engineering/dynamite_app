@@ -1,11 +1,7 @@
 import '../models/board_calibration.dart';
 
 // ---------------------------------------------------------------------------
-// The calibration feature's text: the shared copy (trust lines, notes), the
-// value formatters, the status one-liners, and the plain-text calibration
-// report builder. The channel cards in calibration_view.dart and the
-// Settings row reuse everything here, so the card, the row, and the exported
-// artifact can never diverge.
+// The calibration feature's text.
 // ---------------------------------------------------------------------------
 
 /// The product's trust statement for the calibrated units — a product claim,
@@ -17,7 +13,7 @@ const String kTrustLineUncalibrated =
     'Uncalibrated — nominal chain in use; expect ~±1% on electrical units.';
 
 /// The one-sentence answer to "why does the gain correction not match my
-/// DMM": shown in the details card so the question never has to be asked.
+/// DMM".
 const String kCorrectionNote =
     'Calibration measures and corrects the product of excitation, gain, '
     'reference, and ladder tolerances — their split is unknowable by design.';

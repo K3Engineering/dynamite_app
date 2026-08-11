@@ -1,9 +1,4 @@
 /// Wire-format constants for the device's ADC feed protocol.
-///
-/// This is the single source of truth for the packet layout shared by the
-/// decoder ([AdcPacketDecoder]), the storage layer ([DataHub], which sizes its
-/// buffers off the channel count), and the mock BLE device (which *encodes*
-/// packets in this format).
 library;
 
 import 'dart:typed_data';
@@ -35,9 +30,7 @@ Uint8List encodeAdcFrame(List<int> channels) {
 
 /// Encode one ADC feed packet: the 16-bit LE running sample [counter] (the
 /// starting sample index of the packet) followed by exactly [nwAdcNumSamples]
-/// frames. The single packet encoder for the wire format — used by the demo
-/// signal source and the mock BLE platform so they can never drift off-format
-/// ([AdcPacketDecoder] decodes it).
+/// frames ([AdcPacketDecoder] decodes it).
 Uint8List encodeAdcPacket({
   required int counter,
   required Iterable<Uint8List> frames,

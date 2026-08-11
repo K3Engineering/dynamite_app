@@ -45,13 +45,6 @@ void main() async {
   // are synchronous constructor work and can never race a user edit.
   final prefs = await SharedPreferences.getInstance();
 
-  // Object graph, one layer per concern:
-  //   BleLinkManager (link state machine) --raw bytes--> AdcPacketDecoder
-  //   (wire protocol) --decoded samples--> DataHub (storage + stats)
-  //   <--observed by-- RecordingController (session lifecycle + persistence).
-  //   RigState owns the rig (device slots + unsaved edits + cell history) and
-  //   pushes the effective per-channel cells into the hub.
-  // AppEvents is the one-shot notice bus: producers emit, AppShell consumes.
   final appEvents = AppEvents();
   final dataHub = DataHub();
   final decoder = AdcPacketDecoder(dataHub);
@@ -59,10 +52,8 @@ void main() async {
     ..onAdcData = decoder.onDataPacket
     ..onCalibrationData = decoder.onCalibrationPacket;
   final rigState = RigState(transport: linkManager, prefs: prefs);
-  // Flash documents (board + slots) arrive via the decoder: the hub takes
-  // the board, RigState takes the whole document. The device id/name are
-  // read off the link at delivery time (the read only ever runs against the
-  // active link).
+  // The device id/name are read off the link at delivery time (the read
+  // only ever runs against the active link).
   decoder.onDeviceFlash = (flash) => rigState.onFlashRead(
     linkManager.connectedDeviceId,
     linkManager.connectedDeviceName,
@@ -75,8 +66,6 @@ void main() async {
     events: appEvents,
   );
   final appSettings = AppSettings(prefs: prefs);
-  // Push the effective per-channel load cells (device slots, including
-  // unsaved edits) into the data layer now and on every rig change.
   // Content-equal pushes are a no-op inside the hub.
   dataHub.updateLoadCells(rigState.channelCells);
   rigState.addListener(() => dataHub.updateLoadCells(rigState.channelCells));

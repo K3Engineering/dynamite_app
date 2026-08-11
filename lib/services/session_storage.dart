@@ -13,23 +13,19 @@ import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 
-/// Chunk format: packed int32 LE values, interleaved
-/// `[ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]`, with one value per ADC channel
-/// ([DataHub.numAdcChannels]) per sample — see [SessionChunkCodec], the
-/// single implementation. Each [SessionChunks] row holds a whole number of
-/// samples. The owning [Sessions] row carries all metadata (channel count,
-/// sample rate, calibration, etc.).
+/// Each [SessionChunks] row holds a whole number of samples in the packed
+/// chunk format (see [SessionChunkCodec], its one home). The owning
+/// [Sessions] row carries all metadata (channel count, sample rate,
+/// calibration, etc.).
 class SessionStorage {
   /// Start a new streaming session. The returned [LiveSessionWriter] is fed
   /// sample slices via [LiveSessionWriter.appendData] as data arrives and is
   /// passed to [finalizeSession] when recording stops.
   ///
   /// Note: every session stores all [DataHub.numAdcChannels]; [channelLabels]
-  /// and [visibleChannels] are retained for display only. [visibleChannels]
-  /// seeds the session detail view's channel selection (usually the live
-  /// view's current set); it can be changed per session afterwards.
-  /// [deviceMetadata] is the connected device's identity as the dynamite-csv
-  /// `device` block (see [DeviceInfo.toCsvDeviceMetadata]), frozen for export.
+  /// and [visibleChannels] are retained for display only. [deviceMetadata] is
+  /// the connected device's identity as the dynamite-csv `device` block (see
+  /// [DeviceInfo.toCsvDeviceMetadata]), frozen for export.
   static Future<LiveSessionWriter> startSession({
     required DataHub dataHub,
     required String name,
@@ -331,10 +327,7 @@ class SessionChunkCodec {
   }
 }
 
-/// Loaded session data for playback/review. An immutable data holder that
-/// implements [GraphDataSource] directly, so the graph components render it
-/// without an adapter; [sampleRate], [calibrationFor] and [gaps] already
-/// satisfy their interface counterparts.
+/// Loaded session data for playback/review.
 class SessionData implements GraphDataSource {
   final List<Int32List> channels;
   @override
@@ -478,9 +471,6 @@ class SessionData implements GraphDataSource {
 /// nonetheless falls a full ring behind, an error is latched (see
 /// [appendData]) so the backlog — and its memory — stops growing and the
 /// failure is surfaced instead of recording into the void.
-///
-/// The first write error is latched in [writeError] rather than thrown
-/// into the void, so the caller can surface it.
 class LiveSessionWriter {
   LiveSessionWriter(
     this.sessionId,
@@ -569,13 +559,6 @@ class LiveSessionWriter {
   /// Append [count] samples starting at ring-buffer logical index [startIdx].
   /// Returns when this slice has been buffered (and flushed, if the threshold
   /// was crossed). Safe to call without awaiting; calls are serialized.
-  ///
-  /// The slice is copied out of the ring buffer SYNCHRONOUSLY: hub state is
-  /// only guaranteed fresh at call time, and the enqueued op runs only after
-  /// prior DB writes drain — by which point the producer may have advanced
-  /// far enough to overwrite these slots. Snapshotting here makes the copy
-  /// correct no matter how long the queue stalls; the queue then only
-  /// serializes staging and the DB write.
   Future<void> appendData(DataHub dataHub, int startIdx, int count) {
     // Capture this slice's gap ranges synchronously, rebased to
     // session-relative indices.
@@ -583,10 +566,6 @@ class LiveSessionWriter {
     if (_ssnOrigin == null) {
       final anchor = dataHub.packetAnchor;
       _ssnOrigin = (anchor?.counter ?? 0) + (origin - (anchor?.hubIndex ?? 0));
-      // The origin is a write-once constant, so persist it the moment it is
-      // known: enqueued here, the write lands ahead of every chunk flush, so
-      // even a crash before the first flush recovers it (chunk bytes can't
-      // reconstruct it).
       unawaited(_enqueue(_persistSsnOrigin));
     }
     for (final (s, e) in dataHub.gaps.rangesIn(startIdx, startIdx + count)) {
@@ -670,10 +649,6 @@ class LiveSessionWriter {
     }
   }
 
-  /// The production sink: writes the chunk, then updates the session row's
-  /// gap ranges so a crash mid-recording keeps the info up to this flush
-  /// (crash recovery rebuilds aggregates from chunks but cannot reconstruct
-  /// gaps from them). The gaps update is one small row write per flush.
   static Future<void> _defaultChunkSink(
     int sessionId,
     int chunkIndex,

@@ -10,9 +10,8 @@ import '../widgets/calibration_text.dart';
 import '../widgets/calibration_view.dart';
 
 /// The board calibration page: the factory calibration view
-/// ([CalibrationView], reached from the Settings row) plus the export
-/// button row for the plain-text calibration report (copy / download /
-/// share) — the same on-page pattern as the session screen's CSV export.
+/// ([CalibrationView]) plus the export row for the plain-text calibration
+/// report.
 class CalibrationScreen extends StatelessWidget {
   const CalibrationScreen({super.key, required this.deviceId});
 
@@ -39,8 +38,7 @@ class CalibrationScreen extends StatelessWidget {
     );
   }
 
-  /// The export row: copy to clipboard, download (save-as dialog / browser
-  /// download), and the share sheet wherever the OS has one.
+  /// The export row.
   Widget _exportButtons(
     BuildContext context,
     BoardCalibration board,
@@ -95,9 +93,8 @@ class CalibrationScreen extends StatelessWidget {
     );
   }
 
-  /// Run one export action and surface its outcome as a snackbar: the
-  /// result message, the failure, or nothing when the user cancelled (a
-  /// null message). Same pattern as the session screen's CSV actions.
+  /// Run one export action and surface its outcome as a snackbar; a null
+  /// message means the user cancelled, so nothing shows.
   Future<void> _runExport(
     BuildContext context,
     Future<String?> Function() action,

@@ -1718,8 +1718,7 @@ class _SpanReadout extends StatelessWidget {
   }
 }
 
-/// Format a zoom-window span in seconds for the readout: sub-second as
-/// rounded ms, under a minute as seconds with one decimal, else m:ss.
+/// Format a zoom-window span in seconds for the readout.
 String _formatSpan(double spanSec) {
   if (spanSec < 1.0) return '${(spanSec * 1000).round()} ms';
   if (spanSec < 60.0) return '${spanSec.toStringAsFixed(1)} s';
@@ -1849,10 +1848,6 @@ YAxisRange _computeYRange(double dataMin, double dataMax, DisplayUnit unit) {
 
 // ---------------------------------------------------------------------------
 // Shared plot toolkit
-//
-// Small reusable drawing primitives used by every graph painter (force,
-// derivative, and future X-Y / FFT plots). Keeping them as free functions lets
-// new plot types reuse axis and envelope rendering instead of copy-pasting.
 // ---------------------------------------------------------------------------
 
 /// Append vertical X-axis grid lines (and optional time labels) for the visible
@@ -2027,7 +2022,6 @@ void _drawMissingDataHatching(
 
     const double spacing = 8.0;
 
-    // Draw diagonals from bottom-left to top-right
     final cStart = xStart - graphSz.height;
     final cEnd = xEnd;
 
@@ -2046,7 +2040,6 @@ void _drawMissingDataHatching(
       );
     }
 
-    // Also draw a light background fill to make it pop
     canvas.drawRect(Rect.fromLTRB(xStart, 0, xEnd, graphSz.height), bgPen);
 
     canvas.restore();

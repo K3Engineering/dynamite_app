@@ -49,9 +49,7 @@ enum BtLinkState {
   subscribing,
 
   /// Fully set up: services discovered and the ADC feed subscription is active,
-  /// so data is flowing. This is the single "usable / connected" state every
-  /// screen keys off — the Devices tab shows "Connected" and the Live tab shows
-  /// the graph only in this state.
+  /// so data is flowing. This is the single "usable / connected" state.
   streaming,
 
   /// A `disconnect()` was requested; awaiting the connection callback (or the
@@ -114,10 +112,8 @@ class DeviceLink {
 
   bool get isConnecting => state == BtLinkState.connecting;
 
-  /// The GATT link is up. True for the whole post-connect setup window
-  /// ([BtLinkState.connected], [BtLinkState.readingConstants],
-  /// [BtLinkState.subscribing]) and the usable ([streaming]) state — use
-  /// [isStreaming] for "usable".
+  /// The GATT link is up. True for the whole post-connect setup window and
+  /// the usable ([streaming]) state — use [isStreaming] for "usable".
   bool get isLinkUp =>
       state == BtLinkState.connected ||
       state == BtLinkState.readingConstants ||
