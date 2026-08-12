@@ -51,6 +51,10 @@ abstract interface class GraphDataSource {
 
   Listenable get repaint;
 
+  /// Wall-clock time when the newest samples arrived (the latest batch
+  /// commit for a live source); null for static sources.
+  DateTime? get lastDataAt;
+
   /// Monotonic identity of the data stream backing this source: bumped when
   /// the source is reset for a NEW stream (e.g. [DataHub.clear] on
   /// reconnect), unchanged while the same stream merely grows. Renderers mix

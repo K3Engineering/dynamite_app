@@ -129,6 +129,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// data-stall indication from this: while the link reports streaming, a
   /// timestamp older than a couple of seconds means the device has gone
   /// silent (firmware hang / marginal link). Reset by [clear].
+  @override
   DateTime? lastDataAt;
 
   /// The 16-bit running sample counter of the most recently decoded packet

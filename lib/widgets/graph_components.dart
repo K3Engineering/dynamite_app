@@ -246,31 +246,26 @@ class SegmentedGraphCache {
 
   void dispose() => clear();
 
-  /// Draw the data layer for the window [viewStart, viewStart + viewSpan)
-  /// mapped to x in [0, gw): blit cached segments under their corrective
-  /// affine transforms, spend up to [kSegmentBakeBudget] segment (re)bakes,
-  /// and vector-draw uncovered gaps up to [maxDirectGapPx] wide (wider gaps
-  /// stay blank until the rolling bakes cover them).
+  /// Advance the cache toward the window [viewStart, viewStart + viewSpan)
+  /// without drawing: apply generation/config changes, evict segments far
+  /// outside the view, and spend up to [kSegmentBakeBudget] segment
+  /// (re)bakes.
   ///
   /// Config identity is split in three (see the file header for the model):
   /// [generation] clears the cache on change; [destructiveKey] (unit,
   /// calibration) suppresses blitting of mismatched segments; [remapKey]
   /// (channels, tares) keeps them blitting. Both kinds of mismatch are
   /// re-baked by the rolling rightmost-first sweep at the bake budget, so a
-  /// config change never costs more than one bake per frame plus vector
-  /// gap draws in the meantime.
+  /// config change never costs more than one bake per call.
   ///
   /// [tailSpan] is the sample span the renderer needs past a segment's end
   /// for its tail to be complete (the envelope layer's join block: up to
   /// twice the block size): a provisional segment becomes repairable once
   /// `end + tailSpan` samples exist.
   ///
-  /// Returns true when a bake happened this frame; the owner should then
-  /// schedule another frame so rolling bakes continue (one extra frame may
-  /// be scheduled after the final bake — static sources never fire repaint
-  /// on their own).
-  bool paint(
-    Canvas canvas, {
+  /// Returns true when a bake happened — rolling work may remain, so the
+  /// owner should schedule another pass.
+  bool maintain({
     required int generation,
     required List<Object?> destructiveKey,
     required List<Object?> remapKey,
@@ -285,7 +280,6 @@ class SegmentedGraphCache {
     required int tailSpan,
     required double hPad,
     required double vPad,
-    required double maxDirectGapPx,
     required SegmentRenderer render,
   }) {
     if (generation != _generation) {
@@ -354,6 +348,28 @@ class SegmentedGraphCache {
       baked = true;
     }
 
+    return baked;
+  }
+
+  /// Draw the window [viewStart, viewStart + viewSpan) mapped to x in
+  /// [0, gw): blit cached segments under their corrective affine transforms
+  /// and vector-draw uncovered gaps up to [maxDirectGapPx] wide (wider gaps
+  /// stay blank until the rolling bakes cover them).
+  void draw(
+    Canvas canvas, {
+    required double gw,
+    required double gh,
+    required int viewStart,
+    required int viewSpan,
+    required double yMin,
+    required double yMax,
+    required int totalSamples,
+    required double vPad,
+    required double maxDirectGapPx,
+    required SegmentRenderer render,
+  }) {
+    final double pps = gw / viewSpan;
+    final int viewEnd = viewStart + viewSpan;
     _blitSegments(canvas, pps, gw, gh, viewStart, yMin, yMax);
     _drawGaps(
       canvas,
@@ -366,7 +382,64 @@ class SegmentedGraphCache {
       maxDirectGapPx,
       render,
     );
+  }
 
+  /// One [maintain] + [draw] pass for the window [viewStart, viewStart +
+  /// viewSpan) mapped to x in [0, gw).
+  ///
+  /// Returns true when a bake happened this frame; the owner should then
+  /// schedule another frame so rolling bakes continue (one extra frame may
+  /// be scheduled after the final bake — static sources never fire repaint
+  /// on their own).
+  bool paint(
+    Canvas canvas, {
+    required int generation,
+    required List<Object?> destructiveKey,
+    required List<Object?> remapKey,
+    required double gw,
+    required double gh,
+    required double dpr,
+    required int viewStart,
+    required int viewSpan,
+    required double yMin,
+    required double yMax,
+    required int totalSamples,
+    required int tailSpan,
+    required double hPad,
+    required double vPad,
+    required double maxDirectGapPx,
+    required SegmentRenderer render,
+  }) {
+    final baked = maintain(
+      generation: generation,
+      destructiveKey: destructiveKey,
+      remapKey: remapKey,
+      gw: gw,
+      gh: gh,
+      dpr: dpr,
+      viewStart: viewStart,
+      viewSpan: viewSpan,
+      yMin: yMin,
+      yMax: yMax,
+      totalSamples: totalSamples,
+      tailSpan: tailSpan,
+      hPad: hPad,
+      vPad: vPad,
+      render: render,
+    );
+    draw(
+      canvas,
+      gw: gw,
+      gh: gh,
+      viewStart: viewStart,
+      viewSpan: viewSpan,
+      yMin: yMin,
+      yMax: yMax,
+      totalSamples: totalSamples,
+      vPad: vPad,
+      maxDirectGapPx: maxDirectGapPx,
+      render: render,
+    );
     return baked;
   }
 
