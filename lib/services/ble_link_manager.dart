@@ -393,9 +393,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   Timer? _rssiPollTimer;
 
   /// Whether the Devices tab is currently visible. Gates the on-screen-only
-  /// device-row freshness poke (see [_syncFreshnessPoke]). RSSI polling
-  /// deliberately does NOT key off it — while streaming the radio is fully
-  /// active anyway, so reads are near-free and every surface stays fresh.
+  /// device-row freshness poke (see [_syncFreshnessPoke]).
   bool _devicesTabVisible = false;
 
   /// Called by the shell when the Devices tab becomes visible/hidden.
