@@ -33,7 +33,7 @@ void main() {
     tester,
   ) async {
     final link = BleLinkManager(events: AppEvents())
-      ..onCalibrationData = (_, __) {};
+      ..onCalibrationData = (_, _) {};
 
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
