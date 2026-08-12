@@ -394,10 +394,7 @@ class LiveStatusBar extends StatelessWidget {
 /// The connected device's live signal strength in the status bar, sitting
 /// left of the sample-rate label. A narrow select on
 /// [BleLinkManager.connectedRssi] so the poll's notify rebuilds only this
-/// indicator — never the tab (whose build deliberately selects only
-/// streaming edges and the device name). Renders nothing — and leaves no
-/// gap — while no reading exists: before the first poll lands, on web (no
-/// readRssi), and for the demo device.
+/// indicator
 class _ConnectedRssiIndicator extends StatelessWidget {
   const _ConnectedRssiIndicator();
 

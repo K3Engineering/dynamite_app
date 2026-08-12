@@ -730,14 +730,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
   /// Begin polling the connected device's RSSI for the signal display.
   /// Runs for the link's whole streaming lifetime rather than only while an
-  /// RSSI-showing tab is on screen: while the 1 kHz stream is up the radio
-  /// is fully active anyway, so a read every [rssiPollInterval] is
-  /// near-free, and every surface (Devices row, Live status bar) then always
-  /// shows a fresh value. No-op on platforms that don't implement readRssi
-  /// (e.g. web) and for the demo device (no real radio to poll).
+  /// RSSI-showing tab is on screen.
   /// Cancels any previous poller first. Reads are best-effort: a failed read
-  /// is swallowed silently and retried on the next tick (no per-tick logging
-  /// — it would spam the console).
+  /// is swallowed silently and retried on the next tick
   void _startRssiPolling(String deviceId) {
     _stopRssiPolling();
     if (!_supportsRssi || _link.isDemoDevice) {
