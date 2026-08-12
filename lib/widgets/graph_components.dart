@@ -1156,6 +1156,33 @@ class _BakePump implements Listenable {
   }
 }
 
+/// Min interval between hidden-warmer ticks. Caps the bake rate at extreme
+/// zoom, where the warmer deliberately falls behind: a narrow window
+/// converges cheaply on return anyway.
+const int _kHiddenBakeMinMs = 150;
+
+/// Paces the hidden-tab cache warmer (see
+/// [_GraphWorkspaceState._maintainHiddenCaches]): tick once a full tile's
+/// worth of new samples has arrived, so every bake spans a whole segment --
+/// firing early would bake an undersized segment the refresh sweep re-bakes
+/// later. [targetSpan] is zoom-adaptive, so the cadence self-paces from
+/// ~once per minutes zoomed out to the [_kHiddenBakeMinMs] clamp zoomed in.
+class _HiddenBakePacer {
+  int _lastSample = 0;
+  DateTime _lastTime = DateTime(0);
+
+  bool shouldTick(int totalSamples, int targetSpan) {
+    if (totalSamples - _lastSample < targetSpan) return false;
+    final now = DateTime.now();
+    if (now.difference(_lastTime).inMilliseconds < _kHiddenBakeMinMs) {
+      return false;
+    }
+    _lastSample = totalSamples;
+    _lastTime = now;
+    return true;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Minimap
 // ---------------------------------------------------------------------------
@@ -1191,12 +1218,53 @@ class _Minimap extends StatefulWidget {
 class _MinimapState extends State<_Minimap> {
   final SegmentedGraphCache _cache = SegmentedGraphCache();
   final _BakePump _bakePump = _BakePump();
+  final _HiddenBakePacer _hiddenPacer = _HiddenBakePacer();
+
+  /// Latest painter and plot width, stashed each build for the hidden
+  /// cache warmer.
+  _MinimapPainter? _painter;
+  double _plotWidth = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.dataSource.repaint.addListener(_maintainHiddenCache);
+  }
+
+  @override
+  void didUpdateWidget(_Minimap oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.dataSource != widget.dataSource) {
+      oldWidget.dataSource.repaint.removeListener(_maintainHiddenCache);
+      widget.dataSource.repaint.addListener(_maintainHiddenCache);
+    }
+  }
 
   @override
   void dispose() {
+    widget.dataSource.repaint.removeListener(_maintainHiddenCache);
     _bakePump.dispose();
     _cache.dispose();
     super.dispose();
+  }
+
+  /// See [_GraphWorkspaceState._maintainHiddenCaches].
+  void _maintainHiddenCache() {
+    if (widget.isActive) return;
+    final data = widget.dataSource;
+    final total = data.totalSamples;
+    if (total == 0 || _plotWidth <= 0) return;
+    final mapSpan = _minimapSpan(
+      total,
+      data.oldestSample,
+      widget.graphCtrl.minLiveSpan,
+    );
+    final targetSpan = math.max(
+      1,
+      (kSegmentTargetPx * mapSpan / _plotWidth).round(),
+    );
+    if (!_hiddenPacer.shouldTick(total, targetSpan)) return;
+    _painter?.maintainCache();
   }
 
   void _onMinimapTap(TapDownDetails d, double graphWidth) {
@@ -1243,6 +1311,19 @@ class _MinimapState extends State<_Minimap> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final graphWidth = _graphPlotWidth(constraints.maxWidth);
+        _plotWidth = graphWidth;
+        final painter = _MinimapPainter(
+          widget.dataSource,
+          widget.settings,
+          widget.graphCtrl,
+          widget.activeChannels,
+          colorScheme,
+          dpr,
+          _cache,
+          _bakePump,
+          widget.isActive,
+        );
+        _painter = painter;
         return SizedBox(
           height: 32,
           child: Listener(
@@ -1258,17 +1339,7 @@ class _MinimapState extends State<_Minimap> {
               onTapDown: (d) => _onMinimapTap(d, graphWidth),
               onHorizontalDragUpdate: (d) => _onMinimapDrag(d, graphWidth),
               child: CustomPaint(
-                foregroundPainter: _MinimapPainter(
-                  widget.dataSource,
-                  widget.settings,
-                  widget.graphCtrl,
-                  widget.activeChannels,
-                  colorScheme,
-                  dpr,
-                  _cache,
-                  _bakePump,
-                  widget.isActive,
-                ),
+                foregroundPainter: painter,
                 size: Size.infinite,
               ),
             ),
@@ -1310,8 +1381,73 @@ class _MinimapPainter extends CustomPainter {
             : null,
       );
 
+  /// Geometry of the last paint, reused by [maintainCache] while hidden.
+  Size? _lastSize;
+
+  /// Y-range from the precomputed per-channel extremes (O(channels); the
+  /// minimap always spans the whole history, so the extremes ARE the window
+  /// min/max). Each channel converts through its own calibration; a
+  /// +/-10000-count window around each tare keeps the range non-degenerate
+  /// on flat data. Channels the unit can't convert are skipped (the
+  /// workspace already filters them, so this is belt-and-braces).
+  (double, double) _yRange() {
+    final unit = _settings.displayUnit;
+    double yMin = double.infinity;
+    double yMax = double.negativeInfinity;
+    for (final ch in _activeChannels) {
+      final s = _data.channel(ch);
+      final conv = unit.converterFor(_data.calibrationFor(ch), s.tare);
+      if (conv == null) continue;
+      final lo = conv(math.min(s.min, s.tare - 10000));
+      final hi = conv(math.max(s.max, s.tare + 10000));
+      if (lo < yMin) yMin = lo;
+      if (hi > yMax) yMax = hi;
+    }
+    if (!yMin.isFinite || !yMax.isFinite) {
+      // No convertible channel has data: arbitrary non-degenerate range.
+      return (-1, 1);
+    }
+    return (yMin, yMax);
+  }
+
+  /// See [_TimeSeriesGraphPainter.maintainCache].
+  void maintainCache() {
+    final size = _lastSize;
+    if (size == null) return;
+    const double vPad = 2;
+    final gw = size.width - _kGraphLeftSpace - _kGraphRightSpace;
+    final gh = size.height - vPad * 2;
+    if (gw <= 0 || gh <= 0) return;
+    final totalSamples = _data.totalSamples;
+    if (totalSamples == 0) return;
+    final oldestSample = _data.oldestSample;
+    final mapSpan = _minimapSpan(totalSamples, oldestSample, _ctrl.minLiveSpan);
+    final mapStart = totalSamples - mapSpan;
+    final unit = _settings.displayUnit;
+    final (yMin, yMax) = _yRange();
+    _maintainEnvelopeDataLayer(
+      cache: _cache,
+      data: _data,
+      activeChannels: _activeChannels,
+      tares: [for (final ch in _activeChannels) _data.channel(ch).tare],
+      unit: unit,
+      gw: gw,
+      gh: gh,
+      dpr: _dpr,
+      viewStart: mapStart.toDouble(),
+      viewSpan: mapSpan.toDouble(),
+      yMin: yMin,
+      yMax: yMax,
+      firstUsableSample: oldestSample,
+      seriesFor: (ch) => _taredEnvelopeSeries(_data, ch, unit),
+      avgStrokeWidth: 1.0,
+      avgAlpha: 180,
+    );
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
+    _lastSize = size;
     const double vPad = 2;
 
     canvas.translate(_kGraphLeftSpace, vPad);
@@ -1334,28 +1470,7 @@ class _MinimapPainter extends CustomPainter {
     final activeIndices = _activeChannels;
     final unit = _settings.displayUnit;
 
-    // Y-range from the precomputed per-channel extremes (O(channels); the
-    // minimap always spans the whole history, so the extremes ARE the window
-    // min/max). Each channel converts through its own calibration; a
-    // +/-10000-count window around each tare keeps the range non-degenerate
-    // on flat data. Channels the unit can't convert are skipped (the
-    // workspace already filters them, so this is belt-and-braces).
-    double yMin = double.infinity;
-    double yMax = double.negativeInfinity;
-    for (final ch in activeIndices) {
-      final s = _data.channel(ch);
-      final conv = unit.converterFor(_data.calibrationFor(ch), s.tare);
-      if (conv == null) continue;
-      final lo = conv(math.min(s.min, s.tare - 10000));
-      final hi = conv(math.max(s.max, s.tare + 10000));
-      if (lo < yMin) yMin = lo;
-      if (hi > yMax) yMax = hi;
-    }
-    if (!yMin.isFinite || !yMax.isFinite) {
-      // No convertible channel has data: arbitrary non-degenerate range.
-      yMin = -1;
-      yMax = 1;
-    }
+    final (yMin, yMax) = _yRange();
 
     // Missing-data hatching, behind the data lines (same layering as the
     // main graphs).
@@ -1577,6 +1692,15 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   late final Ticker _ticker;
   final ValueNotifier<int> _vsync = ValueNotifier(0);
 
+  /// Paces the hidden-tab cache warmer (see [_maintainHiddenCaches]).
+  final _HiddenBakePacer _hiddenPacer = _HiddenBakePacer();
+
+  /// Latest painter instances and the plot width, stashed each build for
+  /// the hidden warmer.
+  _TimeSeriesGraphPainter? _forcePainter;
+  _TimeSeriesGraphPainter? _derivPainter;
+  double _plotWidth = 0;
+
   @override
   void initState() {
     super.initState();
@@ -1586,6 +1710,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     });
     widget.ctrl.addListener(_syncTicker);
     widget.data.repaint.addListener(_syncTicker);
+    widget.data.repaint.addListener(_maintainHiddenCaches);
     _syncTicker();
   }
 
@@ -1595,8 +1720,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     if (oldWidget.ctrl != widget.ctrl || oldWidget.data != widget.data) {
       oldWidget.ctrl.removeListener(_syncTicker);
       oldWidget.data.repaint.removeListener(_syncTicker);
+      oldWidget.data.repaint.removeListener(_maintainHiddenCaches);
       widget.ctrl.addListener(_syncTicker);
       widget.data.repaint.addListener(_syncTicker);
+      widget.data.repaint.addListener(_maintainHiddenCaches);
     }
     _syncTicker();
   }
@@ -1615,10 +1742,35 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     shouldTick ? _ticker.start() : _ticker.stop();
   }
 
+  /// Hidden-tab cache warmer: while off screen, bake one tile per cache
+  /// whenever a full tile of new samples has arrived, so returning to the
+  /// tab blits a warm cache instead of paying a multi-frame convergence.
+  /// Runs inside the packet commit; one bake per cache per tick bounds the
+  /// spike, and no frames are scheduled.
+  void _maintainHiddenCaches() {
+    if (widget.isActive) return;
+    final data = widget.data;
+    final total = data.totalSamples;
+    if (total == 0 || _plotWidth <= 0) return;
+    final (start, end) = widget.ctrl.effectiveRange(
+      total,
+      data.oldestSample,
+      bufferCapacity: data.bufferCapacity,
+    );
+    final targetSpan = math.max(
+      1,
+      (kSegmentTargetPx * (end - start) / _plotWidth).round(),
+    );
+    if (!_hiddenPacer.shouldTick(total, targetSpan)) return;
+    _forcePainter?.maintainCache();
+    _derivPainter?.maintainCache();
+  }
+
   @override
   void dispose() {
     widget.ctrl.removeListener(_syncTicker);
     widget.data.repaint.removeListener(_syncTicker);
+    widget.data.repaint.removeListener(_maintainHiddenCaches);
     _ticker.dispose();
     _vsync.dispose();
     _bakePump.dispose();
@@ -1660,6 +1812,38 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     ];
     return LayoutBuilder(
       builder: (context, constraints) {
+        _plotWidth = _graphPlotWidth(constraints.maxWidth);
+        final forcePainter = _ForceGraphPainter(
+          widget.data,
+          widget.settings,
+          widget.ctrl,
+          activeChannels: drawableChannels,
+          showXLabels: !widget.showDerivative,
+          vsync: _vsync,
+          isActive: widget.isActive,
+          cache: _forceCache,
+          colorScheme: colorScheme,
+          dpr: dpr,
+          labels: _labelCache,
+          bakePump: _bakePump,
+        );
+        final derivPainter = widget.showDerivative
+            ? _DerivativeGraphPainter(
+                widget.data,
+                widget.settings,
+                widget.ctrl,
+                activeChannels: drawableChannels,
+                vsync: _vsync,
+                isActive: widget.isActive,
+                cache: _derivCache ??= SegmentedGraphCache(),
+                colorScheme: colorScheme,
+                dpr: dpr,
+                labels: _labelCache,
+                bakePump: _bakePump,
+              )
+            : null;
+        _forcePainter = forcePainter;
+        _derivPainter = derivPainter;
         return Stack(
           children: [
             Column(
@@ -1670,20 +1854,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                   child: _GraphPane(
                     data: widget.data,
                     ctrl: widget.ctrl,
-                    painter: _ForceGraphPainter(
-                      widget.data,
-                      widget.settings,
-                      widget.ctrl,
-                      activeChannels: drawableChannels,
-                      showXLabels: !widget.showDerivative,
-                      vsync: _vsync,
-                      isActive: widget.isActive,
-                      cache: _forceCache,
-                      colorScheme: colorScheme,
-                      dpr: dpr,
-                      labels: _labelCache,
-                      bakePump: _bakePump,
-                    ),
+                    painter: forcePainter,
                   ),
                 ),
                 // Derivative graph (when enabled)
@@ -1693,19 +1864,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                     child: _GraphPane(
                       data: widget.data,
                       ctrl: widget.ctrl,
-                      painter: _DerivativeGraphPainter(
-                        widget.data,
-                        widget.settings,
-                        widget.ctrl,
-                        activeChannels: drawableChannels,
-                        vsync: _vsync,
-                        isActive: widget.isActive,
-                        cache: _derivCache ??= SegmentedGraphCache(),
-                        colorScheme: colorScheme,
-                        dpr: dpr,
-                        labels: _labelCache,
-                        bakePump: _bakePump,
-                      ),
+                      painter: derivPainter!,
                     ),
                   ),
                 // Minimap
@@ -2554,14 +2713,20 @@ bool _paintEnvelopeDataLayer(
   int avgAlpha = 255,
   int envAlpha = 60,
 }) {
-  final totalSamples = data.totalSamples;
-
-  double valueToY(double val) =>
-      (gh - (val - yMin) * gh / (yMax - yMin)).clamp(0.0, gh);
-
-  final int blockSize = _blockSizeFor(viewSpan, gw);
-  final double blockPx = blockSize * gw / viewSpan;
-
+  final setup = _envelopeBakeSetup(
+    data: data,
+    activeChannels: activeChannels,
+    gw: gw,
+    gh: gh,
+    viewSpan: viewSpan,
+    yMin: yMin,
+    yMax: yMax,
+    firstUsableSample: firstUsableSample,
+    seriesFor: seriesFor,
+    avgStrokeWidth: avgStrokeWidth,
+    avgAlpha: avgAlpha,
+    envAlpha: envAlpha,
+  );
   return cache.paint(
     canvas,
     generation: data.dataGeneration,
@@ -2574,7 +2739,156 @@ bool _paintEnvelopeDataLayer(
     viewSpan: viewSpan,
     yMin: yMin,
     yMax: yMax,
-    totalSamples: totalSamples,
+    totalSamples: data.totalSamples,
+    tailSpan: setup.tailSpan,
+    hPad: setup.hPad,
+    vPad: setup.vPad,
+    // Gaps (live edge, bake backlog after pans/zooms) are always drawn as
+    // vectors; with the bucket-accelerated reduction even history-wide gaps
+    // are cheap enough to render directly.
+    maxDirectGapPx: double.infinity,
+    render: setup.render,
+  );
+}
+
+/// The [_paintEnvelopeDataLayer] bake pass without the draw: the hidden-tab
+/// warmer entry point (see [_GraphWorkspaceState._maintainHiddenCaches]).
+/// Same keys and renderer, so its bakes are indistinguishable from painted
+/// ones.
+bool _maintainEnvelopeDataLayer({
+  required SegmentedGraphCache cache,
+  required GraphDataSource data,
+  required List<int> activeChannels,
+  required List<double> tares,
+  required DisplayUnit unit,
+  required double gw,
+  required double gh,
+  required double dpr,
+  required double viewStart,
+  required double viewSpan,
+  required double yMin,
+  required double yMax,
+  required int firstUsableSample,
+  required EnvelopeSeries Function(int channel) seriesFor,
+  double avgStrokeWidth = 1.5,
+  int avgAlpha = 255,
+  int envAlpha = 60,
+}) {
+  final setup = _envelopeBakeSetup(
+    data: data,
+    activeChannels: activeChannels,
+    gw: gw,
+    gh: gh,
+    viewSpan: viewSpan,
+    yMin: yMin,
+    yMax: yMax,
+    firstUsableSample: firstUsableSample,
+    seriesFor: seriesFor,
+    avgStrokeWidth: avgStrokeWidth,
+    avgAlpha: avgAlpha,
+    envAlpha: envAlpha,
+  );
+  return cache.maintain(
+    generation: data.dataGeneration,
+    destructiveKey: [unit, data.calibrationVersion],
+    remapKey: [...activeChannels, ...tares],
+    gw: gw,
+    gh: gh,
+    dpr: dpr,
+    viewStart: viewStart,
+    viewSpan: viewSpan,
+    yMin: yMin,
+    yMax: yMax,
+    totalSamples: data.totalSamples,
+    tailSpan: setup.tailSpan,
+    hPad: setup.hPad,
+    vPad: setup.vPad,
+    render: setup.render,
+  );
+}
+
+/// Everything one envelope cache pass needs beyond the caller's geometry:
+/// the segment renderer plus the bake parameters derived from the current
+/// block size. Assembled without a canvas so the hidden warmer can bake
+/// offscreen.
+({int tailSpan, double hPad, double vPad, SegmentRenderer render})
+_envelopeBakeSetup({
+  required GraphDataSource data,
+  required List<int> activeChannels,
+  required double gw,
+  required double gh,
+  required double viewSpan,
+  required double yMin,
+  required double yMax,
+  required int firstUsableSample,
+  required EnvelopeSeries Function(int channel) seriesFor,
+  required double avgStrokeWidth,
+  required int avgAlpha,
+  required int envAlpha,
+}) {
+  final totalSamples = data.totalSamples;
+
+  double valueToY(double val) =>
+      (gh - (val - yMin) * gh / (yMax - yMin)).clamp(0.0, gh);
+
+  final int blockSize = _blockSizeFor(viewSpan, gw);
+  final double blockPx = blockSize * gw / viewSpan;
+
+  SegmentRenderResult render(Canvas cCanvas, int start, int end, int texW) {
+    // The polyline overshoots the segment end into the first block past
+    // it (the join block) so the line reaches the seam with the
+    // neighbor's slope. The join block is reduced over its FULL natural
+    // range: truncating it at the segment end lands the join vertex at a
+    // different (partial-data) average than the neighbor's full reduction
+    // of the same block, which reads as a vertical step at the seam. The
+    // envelope fill is clipped at the seam so the alpha fills of adjacent
+    // segments never double-blend.
+    final int limit = math.min(joinBlockEnd(end, blockSize), totalSamples);
+
+    // No data ink inside gaps: clip out their x-ranges so neither the
+    // exact path's boundary blocks nor the bucket path's held-value line
+    // can draw where no data exists (the hatching, drawn by the graph
+    // chrome outside this layer, is the only marker there). Safe to apply
+    // at bake time: gaps are append-only at the live edge, so the gap set
+    // inside an already-baked segment can never change.
+    final clip = _gapClipPath(data.gaps, start, limit, gw / viewSpan);
+    if (clip != null) {
+      cCanvas.save();
+      cCanvas.clipPath(clip);
+    }
+    for (final ch in activeChannels) {
+      if (data.channel(ch).data.isEmpty) continue;
+
+      _drawChannelEnvelope(
+        cCanvas,
+        color: getChannelColor(ch),
+        graphW: gw,
+        viewStart: start,
+        viewSamples: viewSpan,
+        totalSamples: limit,
+        firstUsableSample: firstUsableSample,
+        series: seriesFor(ch),
+        valueToY: valueToY,
+        clipEnvelopeSamples: end,
+        avgStrokeWidth: avgStrokeWidth,
+        avgAlpha: avgAlpha,
+        envAlpha: envAlpha,
+      );
+    }
+    if (clip != null) cCanvas.restore();
+    // _drawChannelEnvelope maps sample s to (s - start) * gw / viewSpan.
+    return (
+      contentW: (end - start) * gw / viewSpan,
+      // Baked at the live data edge: the join block was reduced from
+      // partial data, so this bake goes stale at the seam as more samples
+      // arrive. The cache re-bakes it once the join block completes (live
+      // streams only; for a static source the partial tail IS the final
+      // data, never stale).
+      tailProvisional: joinBlockEnd(end, blockSize) > totalSamples,
+    );
+  }
+
+  return (
     // A bake's tail is complete once the join block past the segment end is
     // fully available -- up to two block sizes (see [joinBlockEnd]).
     tailSpan: 2 * blockSize,
@@ -2583,63 +2897,7 @@ bool _paintEnvelopeDataLayer(
     // zoomed in past 1 sample/px -- the horizontal pad must cover it.
     hPad: math.max(kSegmentImagePad, blockPx + 2),
     vPad: kSegmentImagePad,
-    // Gaps (live edge, bake backlog after pans/zooms) are always drawn as
-    // vectors; with the bucket-accelerated reduction even history-wide gaps
-    // are cheap enough to render directly.
-    maxDirectGapPx: double.infinity,
-    render: (cCanvas, start, end, texW) {
-      // The polyline overshoots the segment end into the first block past
-      // it (the join block) so the line reaches the seam with the
-      // neighbor's slope. The join block is reduced over its FULL natural
-      // range: truncating it at the segment end lands the join vertex at a
-      // different (partial-data) average than the neighbor's full reduction
-      // of the same block, which reads as a vertical step at the seam. The
-      // envelope fill is clipped at the seam so the alpha fills of adjacent
-      // segments never double-blend.
-      final int limit = math.min(joinBlockEnd(end, blockSize), totalSamples);
-
-      // No data ink inside gaps: clip out their x-ranges so neither the
-      // exact path's boundary blocks nor the bucket path's held-value line
-      // can draw where no data exists (the hatching, drawn by the graph
-      // chrome outside this layer, is the only marker there). Safe to apply
-      // at bake time: gaps are append-only at the live edge, so the gap set
-      // inside an already-baked segment can never change.
-      final clip = _gapClipPath(data.gaps, start, limit, gw / viewSpan);
-      if (clip != null) {
-        cCanvas.save();
-        cCanvas.clipPath(clip);
-      }
-      for (final ch in activeChannels) {
-        if (data.channel(ch).data.isEmpty) continue;
-
-        _drawChannelEnvelope(
-          cCanvas,
-          color: getChannelColor(ch),
-          graphW: gw,
-          viewStart: start,
-          viewSamples: viewSpan,
-          totalSamples: limit,
-          firstUsableSample: firstUsableSample,
-          series: seriesFor(ch),
-          valueToY: valueToY,
-          clipEnvelopeSamples: end,
-          avgStrokeWidth: avgStrokeWidth,
-          avgAlpha: avgAlpha,
-          envAlpha: envAlpha,
-        );
-      }
-      if (clip != null) cCanvas.restore();
-      // _drawChannelEnvelope maps sample s to (s - start) * gw / viewSpan.
-      return (
-        contentW: (end - start) * gw / viewSpan,
-        // Baked at the live data edge: the join block was reduced from
-        // partial data, so this bake goes stale at the seam as more samples
-        // arrive. The cache re-bakes it once the join block completes (live
-        // streams only; for a static source the partial tail IS the final
-        // data, never stale).
-        tailProvisional: joinBlockEnd(end, blockSize) > totalSamples,
-      );
-    },
+    render: render,
   );
 }
 
@@ -2696,13 +2954,6 @@ double _liveEdge(GraphDataSource data) {
       elapsedMs.clamp(0.0, _kLiveEdgeLeadMs) * data.sampleRate / 1000.0;
 }
 
-/// Common painter prologue shared by the force and derivative graphs: translate
-/// into the plot area, compute the plot [Size], draw the frame border, and
-/// resolve the visible window.
-///
-/// Returns null when there is nothing to draw (degenerate size, too few
-/// samples, or a degenerate window). [minSamples] is the smallest sample count
-/// the graph needs (1 for force, 2 for the derivative's first difference).
 typedef _GraphLayout = ({
   Size graphSz,
   double viewStart,
@@ -2710,6 +2961,12 @@ typedef _GraphLayout = ({
   double viewSamples,
 });
 
+/// Common painter prologue shared by the force and derivative graphs: translate
+/// into the plot area, draw the frame border, and resolve the visible window.
+///
+/// Returns null when there is nothing to draw (degenerate size, too few
+/// samples, or a degenerate window). [minSamples] is the smallest sample count
+/// the graph needs (1 for force, 2 for the derivative's first difference).
 _GraphLayout? _setupGraphFrame(
   Canvas canvas,
   Size size,
@@ -2720,23 +2977,39 @@ _GraphLayout? _setupGraphFrame(
   required int minSamples,
   required Color frameColor,
 }) {
+  final graphSz = _graphPlotSize(size, topSpace, bottomSpace);
+  if (graphSz.width <= 0 || graphSz.height <= 0) return null;
+
   final pen = Paint()
     ..color = frameColor
     ..style = PaintingStyle.stroke;
 
   canvas.translate(_kGraphLeftSpace, topSpace);
-  final graphSz = Size(
-    size.width - _kGraphLeftSpace - _kGraphRightSpace,
-    size.height - bottomSpace - topSpace,
-  );
-
-  if (graphSz.width <= 0 || graphSz.height <= 0) return null;
-
   canvas.drawRect(
     Rect.fromLTRB(0, 0, graphSz.width, graphSz.height),
     pen..strokeWidth = 0.5,
   );
 
+  return _graphWindow(graphSz, data, ctrl, minSamples: minSamples);
+}
+
+/// The plot area within a graph surface of [size] (may be degenerate;
+/// callers check).
+Size _graphPlotSize(Size size, double topSpace, double bottomSpace) => Size(
+  size.width - _kGraphLeftSpace - _kGraphRightSpace,
+  size.height - bottomSpace - topSpace,
+);
+
+/// The visible window for a plot of [graphSz], or null when there is too
+/// little data. Pure (no canvas work), so the hidden cache warmer
+/// ([_TimeSeriesGraphPainter.maintainCache]) resolves the same window the
+/// next paint would.
+_GraphLayout? _graphWindow(
+  Size graphSz,
+  GraphDataSource data,
+  GraphController ctrl, {
+  required int minSamples,
+}) {
   if (data.totalSamples < minSamples) return null;
 
   final (viewStart, viewEnd) = ctrl.effectiveRange(
@@ -2812,6 +3085,9 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
              : null,
        );
 
+  /// Geometry of the last paint, reused by [maintainCache] while hidden.
+  Size? _lastSize;
+
   // --- Layout hooks --------------------------------------------------------
 
   double get topSpace;
@@ -2850,6 +3126,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    _lastSize = size;
     final layout = _setupGraphFrame(
       canvas,
       size,
@@ -2947,6 +3224,45 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       seriesFor: series,
     );
     if (workRemains) bakePump.schedule();
+  }
+
+  /// Advance the segment cache without a canvas: the hidden-tab warmer (see
+  /// [_GraphWorkspaceState._maintainHiddenCaches]). Reuses the last paint's
+  /// geometry; a resize while hidden arrives as affine drift, which the
+  /// blit corrects. No-op until the first paint provides a size.
+  void maintainCache() {
+    final size = _lastSize;
+    if (size == null) return;
+    final graphSz = _graphPlotSize(
+      size,
+      topSpace,
+      showXLabels ? _kGraphBottomSpace : 4,
+    );
+    if (graphSz.width <= 0 || graphSz.height <= 0) return;
+    final layout = _graphWindow(
+      graphSz,
+      _data,
+      _ctrl,
+      minSamples: 1 + firstSampleOffset,
+    );
+    if (layout == null) return;
+    final yRange = computeYRange(layout.viewStart, layout.viewEnd);
+    _maintainEnvelopeDataLayer(
+      cache: cache,
+      data: _data,
+      activeChannels: _activeChannels,
+      tares: cacheKeyTares(),
+      unit: _settings.displayUnit,
+      gw: graphSz.width,
+      gh: graphSz.height,
+      dpr: dpr,
+      viewStart: layout.viewStart,
+      viewSpan: layout.viewSamples,
+      yMin: yRange.yMin,
+      yMax: yRange.yMax,
+      firstUsableSample: _data.oldestSample + firstSampleOffset,
+      seriesFor: series,
+    );
   }
 
   @override
