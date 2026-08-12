@@ -1,6 +1,6 @@
 import 'dart:math' as math;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// The calibration "certificate plot": per-point end-point nonlinearity —
 /// deviation from the chord through the ±FS cal points, in µV/V. Gain and

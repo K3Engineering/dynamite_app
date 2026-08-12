@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import '../models/display_unit.dart';
 import 'graph_components.dart' show getChannelColor;

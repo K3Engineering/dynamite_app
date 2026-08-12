@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Section header rendered as a label centered inside a divider line:
 /// ──────── label ────────
