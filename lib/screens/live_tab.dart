@@ -12,6 +12,7 @@ import '../services/data_hub.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
 import '../screens/app_shell.dart';
+import '../widgets/active_listenable_builder.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/empty_placeholder.dart';
@@ -22,7 +23,10 @@ import '../widgets/graph_components.dart';
 // ---------------------------------------------------------------------------
 
 class LiveTab extends StatefulWidget {
-  const LiveTab({super.key});
+  const LiveTab({super.key, this.isActive = true});
+
+  /// Whether the tab is the shell's visible one.
+  final bool isActive;
 
   @override
   State<LiveTab> createState() => _LiveTabState();
@@ -237,9 +241,10 @@ class _LiveTabState extends State<LiveTab> {
           // The bar shows the hub's protocol-error latch, which changes with
           // packet traffic — listen to the hub (per-packet notify) here
           // rather than rebuilding the whole tab.
-          ListenableBuilder(
+          ActiveListenableBuilder(
+            active: widget.isActive,
             listenable: hub,
-            builder: (context, _) => LiveStatusBar(
+            builder: (context) => LiveStatusBar(
               isConnected: isConnected,
               connectedDeviceName: deviceName,
               protocolErrorSeen: hub.protocolErrorSeen,
@@ -257,6 +262,7 @@ class _LiveTabState extends State<LiveTab> {
                       hub: hub,
                       showDerivative: showDerivative,
                       stalledListenable: _stalled,
+                      isActive: widget.isActive,
                     ),
                     Expanded(
                       child: _buildGraphArea(settings, hub, showDerivative),
@@ -294,6 +300,7 @@ class _LiveTabState extends State<LiveTab> {
       settings: settings,
       activeChannels: settings.activeChannelIndices,
       showDerivative: showDerivative,
+      isActive: widget.isActive,
     );
   }
 }
@@ -399,6 +406,9 @@ class LiveStats extends StatelessWidget {
   /// for [_LiveTabState._stallThreshold]). Values are grayed out like a gap.
   final ValueListenable<bool> stalledListenable;
 
+  /// See [LiveTab.isActive].
+  final bool isActive;
+
   const LiveStats({
     super.key,
     required this.settings,
@@ -406,6 +416,7 @@ class LiveStats extends StatelessWidget {
     required this.hub,
     this.showDerivative = false,
     required this.stalledListenable,
+    this.isActive = true,
   });
 
   @override
@@ -423,9 +434,10 @@ class LiveStats extends StatelessWidget {
 
     return ValueListenableBuilder<bool>(
       valueListenable: stalledListenable,
-      builder: (context, stalled, _) => ListenableBuilder(
+      builder: (context, stalled, _) => ActiveListenableBuilder(
+        active: isActive,
         listenable: hub,
-        builder: (context, _) {
+        builder: (context) {
           // During a live gap (dropped packets) the hub reports held values;
           // gray them out so they read as stale rather than fresh readings.
           // Same for a stall: the newest "reading" is just the last one.
