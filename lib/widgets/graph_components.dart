@@ -246,46 +246,40 @@ class SegmentedGraphCache {
 
   void dispose() => clear();
 
-  /// Draw the data layer for the window [viewStart, viewStart + viewSpan)
-  /// mapped to x in [0, gw): blit cached segments under their corrective
-  /// affine transforms, spend up to [kSegmentBakeBudget] segment (re)bakes,
-  /// and vector-draw uncovered gaps up to [maxDirectGapPx] wide (wider gaps
-  /// stay blank until the rolling bakes cover them).
+  /// Advance the cache toward the window [viewStart, viewStart + viewSpan)
+  /// without drawing: apply generation/config changes, evict segments far
+  /// outside the view, and spend up to [kSegmentBakeBudget] segment
+  /// (re)bakes.
   ///
   /// Config identity is split in three (see the file header for the model):
   /// [generation] clears the cache on change; [destructiveKey] (unit,
   /// calibration) suppresses blitting of mismatched segments; [remapKey]
   /// (channels, tares) keeps them blitting. Both kinds of mismatch are
   /// re-baked by the rolling rightmost-first sweep at the bake budget, so a
-  /// config change never costs more than one bake per frame plus vector
-  /// gap draws in the meantime.
+  /// config change never costs more than one bake per call.
   ///
   /// [tailSpan] is the sample span the renderer needs past a segment's end
   /// for its tail to be complete (the envelope layer's join block: up to
   /// twice the block size): a provisional segment becomes repairable once
   /// `end + tailSpan` samples exist.
   ///
-  /// Returns true when a bake happened this frame; the owner should then
-  /// schedule another frame so rolling bakes continue (one extra frame may
-  /// be scheduled after the final bake — static sources never fire repaint
-  /// on their own).
-  bool paint(
-    Canvas canvas, {
+  /// Returns true when a bake happened — rolling work may remain, so the
+  /// owner should schedule another pass.
+  bool maintain({
     required int generation,
     required List<Object?> destructiveKey,
     required List<Object?> remapKey,
     required double gw,
     required double gh,
     required double dpr,
-    required int viewStart,
-    required int viewSpan,
+    required double viewStart,
+    required double viewSpan,
     required double yMin,
     required double yMax,
     required int totalSamples,
     required int tailSpan,
     required double hPad,
     required double vPad,
-    required double maxDirectGapPx,
     required SegmentRenderer render,
   }) {
     if (generation != _generation) {
@@ -298,8 +292,13 @@ class SegmentedGraphCache {
     }
 
     final double pps = gw / viewSpan; // logical px per sample
-    final int viewEnd = viewStart + viewSpan;
+    final double viewEnd = viewStart + viewSpan;
     final int targetSpan = math.max(1, (kSegmentTargetPx / pps).round());
+    // Coverage bookkeeping is integer: bakes and gap ranges are
+    // sample-aligned (block anchoring). The fractional scroll offset only
+    // shifts blit placement, in [draw].
+    final int covStart = viewStart.floor();
+    final int covEnd = viewEnd.ceil();
 
     // Config bump: keep stale segments (they degrade per their key kind)
     // but dispose any outside the view, so stale content -- e.g. a removed
@@ -310,7 +309,7 @@ class SegmentedGraphCache {
         (gh - _gh).abs() > 0.1 ||
         dpr != _dpr) {
       _segments.removeWhere((s) {
-        if (s.end > viewStart && s.start < viewEnd) return false;
+        if (s.end > covStart && s.start < covEnd) return false;
         s.dispose();
         return true;
       });
@@ -324,8 +323,8 @@ class SegmentedGraphCache {
       pps: pps,
       gh: gh,
       dpr: dpr,
-      viewStart: viewStart,
-      viewEnd: viewEnd,
+      viewStart: covStart,
+      viewEnd: covEnd,
       yMin: yMin,
       yMax: yMax,
       totalSamples: totalSamples,
@@ -339,7 +338,7 @@ class SegmentedGraphCache {
     // Evict segments far outside the view.
     final int margin = kSegmentEvictionMargin * targetSpan;
     _segments.removeWhere((s) {
-      if (s.end >= viewStart - margin && s.start <= viewEnd + margin) {
+      if (s.end >= covStart - margin && s.start <= covEnd + margin) {
         return false;
       }
       s.dispose();
@@ -354,10 +353,33 @@ class SegmentedGraphCache {
       baked = true;
     }
 
+    return baked;
+  }
+
+  /// Draw the window [viewStart, viewStart + viewSpan) mapped to x in
+  /// [0, gw): blit cached segments under their corrective affine transforms
+  /// and vector-draw uncovered gaps up to [maxDirectGapPx] wide (wider gaps
+  /// stay blank until the rolling bakes cover them).
+  void draw(
+    Canvas canvas, {
+    required double gw,
+    required double gh,
+    required double viewStart,
+    required double viewSpan,
+    required double yMin,
+    required double yMax,
+    required int totalSamples,
+    required double vPad,
+    required double maxDirectGapPx,
+    required SegmentRenderer render,
+  }) {
+    final double pps = gw / viewSpan;
+    final double viewEnd = viewStart + viewSpan;
     _blitSegments(canvas, pps, gw, gh, viewStart, yMin, yMax);
     _drawGaps(
       canvas,
       pps,
+      gw,
       gh,
       viewStart,
       viewEnd,
@@ -366,7 +388,64 @@ class SegmentedGraphCache {
       maxDirectGapPx,
       render,
     );
+  }
 
+  /// One [maintain] + [draw] pass for the window [viewStart, viewStart +
+  /// viewSpan) mapped to x in [0, gw).
+  ///
+  /// Returns true when a bake happened this frame; the owner should then
+  /// schedule another frame so rolling bakes continue (one extra frame may
+  /// be scheduled after the final bake — static sources never fire repaint
+  /// on their own).
+  bool paint(
+    Canvas canvas, {
+    required int generation,
+    required List<Object?> destructiveKey,
+    required List<Object?> remapKey,
+    required double gw,
+    required double gh,
+    required double dpr,
+    required double viewStart,
+    required double viewSpan,
+    required double yMin,
+    required double yMax,
+    required int totalSamples,
+    required int tailSpan,
+    required double hPad,
+    required double vPad,
+    required double maxDirectGapPx,
+    required SegmentRenderer render,
+  }) {
+    final baked = maintain(
+      generation: generation,
+      destructiveKey: destructiveKey,
+      remapKey: remapKey,
+      gw: gw,
+      gh: gh,
+      dpr: dpr,
+      viewStart: viewStart,
+      viewSpan: viewSpan,
+      yMin: yMin,
+      yMax: yMax,
+      totalSamples: totalSamples,
+      tailSpan: tailSpan,
+      hPad: hPad,
+      vPad: vPad,
+      render: render,
+    );
+    draw(
+      canvas,
+      gw: gw,
+      gh: gh,
+      viewStart: viewStart,
+      viewSpan: viewSpan,
+      yMin: yMin,
+      yMax: yMax,
+      totalSamples: totalSamples,
+      vPad: vPad,
+      maxDirectGapPx: maxDirectGapPx,
+      render: render,
+    );
     return baked;
   }
 
@@ -643,7 +722,7 @@ class SegmentedGraphCache {
     double pps,
     double gw,
     double gh,
-    int viewStart,
+    double viewStart,
     double yMin,
     double yMax,
   ) {
@@ -703,17 +782,18 @@ class SegmentedGraphCache {
   void _drawGaps(
     Canvas canvas,
     double pps,
+    double gw,
     double gh,
-    int viewStart,
-    int viewEnd,
+    double viewStart,
+    double viewEnd,
     int totalSamples,
     double vPad,
     double maxDirectGapPx,
     SegmentRenderer render,
   ) {
     for (final (gs, ge) in _gaps(
-      viewStart,
-      viewEnd,
+      viewStart.floor(),
+      viewEnd.ceil(),
       totalSamples,
       blittableOnly: true,
     )) {
@@ -721,7 +801,12 @@ class SegmentedGraphCache {
       if (w <= 0 || w > maxDirectGapPx) continue;
       final double x = (gs - viewStart) * pps;
       canvas.save();
-      canvas.clipRect(Rect.fromLTRB(x, -vPad, x + w, gh + vPad));
+      // The floored coverage start can put a gap's left edge up to one
+      // sample-pixel left of the plot area; the translate keeps the content
+      // mapping exact, so the clip is what gets clamped.
+      canvas.clipRect(
+        Rect.fromLTRB(math.max(x, 0.0), -vPad, math.min(x + w, gw), gh + vPad),
+      );
       canvas.translate(x, 0);
       render(canvas, gs, ge, math.max(1, w.ceil()));
       canvas.restore();
@@ -738,7 +823,7 @@ class SegmentedGraphCache {
 /// One block becomes one min/avg/max reduction and one polyline vertex. When
 /// zoomed in past 1 sample/pixel this clamps to 1 (one block per sample). The
 /// last block in a range is allowed to be short.
-int _blockSizeFor(int viewSamples, double graphW) {
+int _blockSizeFor(double viewSamples, double graphW) {
   assert(graphW > 0); // callers only paint into non-degenerate plot areas
   // floor => >= 1 sample/block, so the polyline never has more vertices than
   // pixels. The remainder (viewSamples % blockSize) lands in the short final block.
@@ -1267,8 +1352,8 @@ class _MinimapPainter extends CustomPainter {
     _drawMissingDataHatching(
       canvas,
       Size(gw, gh),
-      viewStart: mapStart,
-      viewEnd: mapStart + mapSpan,
+      viewStart: mapStart.toDouble(),
+      viewEnd: (mapStart + mapSpan).toDouble(),
       data: _data,
       color: _colorScheme.error,
     );
@@ -1288,8 +1373,8 @@ class _MinimapPainter extends CustomPainter {
       gw: gw,
       gh: gh,
       dpr: _dpr,
-      viewStart: mapStart,
-      viewSpan: mapSpan,
+      viewStart: mapStart.toDouble(),
+      viewSpan: mapSpan.toDouble(),
       yMin: yMin,
       yMax: yMax,
       firstUsableSample: oldestSample,
@@ -1462,7 +1547,8 @@ class GraphWorkspace extends StatefulWidget {
   State<GraphWorkspace> createState() => _GraphWorkspaceState();
 }
 
-class _GraphWorkspaceState extends State<GraphWorkspace> {
+class _GraphWorkspaceState extends State<GraphWorkspace>
+    with SingleTickerProviderStateMixin {
   final SegmentedGraphCache _forceCache = SegmentedGraphCache();
 
   /// Allocated on first use: session playback (showDerivative: false
@@ -1471,8 +1557,56 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
   final _BakePump _bakePump = _BakePump();
   final _LabelCache _labelCache = _LabelCache();
 
+  /// Vsync driver for smooth live-edge scrolling: while the view follows
+  /// the live edge with a fresh stream, the ticker bumps [_vsync] every
+  /// frame; the graph painters merge it into their repaint listenable.
+  late final Ticker _ticker;
+  final ValueNotifier<int> _vsync = ValueNotifier(0);
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = createTicker((_) {
+      _vsync.value++;
+      _syncTicker(); // a stalled stream stops the ticker from within
+    });
+    widget.ctrl.addListener(_syncTicker);
+    widget.data.repaint.addListener(_syncTicker);
+    _syncTicker();
+  }
+
+  @override
+  void didUpdateWidget(GraphWorkspace oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.ctrl != widget.ctrl || oldWidget.data != widget.data) {
+      oldWidget.ctrl.removeListener(_syncTicker);
+      oldWidget.data.repaint.removeListener(_syncTicker);
+      widget.ctrl.addListener(_syncTicker);
+      widget.data.repaint.addListener(_syncTicker);
+      _syncTicker();
+    }
+  }
+
+  /// The ticker runs only while following the live edge with a fresh
+  /// stream: a parked view has no motion, and a stalled device freezes the
+  /// scroll anyway (the live edge is lead-capped). The next packet's
+  /// commitBatch (data.repaint) restarts it after a stall.
+  void _syncTicker() {
+    final DateTime? last = widget.data.lastDataAt;
+    final bool fresh =
+        last != null &&
+        DateTime.now().difference(last).inMilliseconds < _kTickerStallMs;
+    final bool shouldTick = widget.ctrl.isLive && fresh;
+    if (shouldTick == _ticker.isTicking) return;
+    shouldTick ? _ticker.start() : _ticker.stop();
+  }
+
   @override
   void dispose() {
+    widget.ctrl.removeListener(_syncTicker);
+    widget.data.repaint.removeListener(_syncTicker);
+    _ticker.dispose();
+    _vsync.dispose();
     _bakePump.dispose();
     _forceCache.dispose();
     _derivCache?.dispose();
@@ -1528,6 +1662,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                       widget.ctrl,
                       activeChannels: drawableChannels,
                       showXLabels: !widget.showDerivative,
+                      vsync: _vsync,
                       cache: _forceCache,
                       colorScheme: colorScheme,
                       dpr: dpr,
@@ -1548,6 +1683,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace> {
                         widget.settings,
                         widget.ctrl,
                         activeChannels: drawableChannels,
+                        vsync: _vsync,
                         cache: _derivCache ??= SegmentedGraphCache(),
                         colorScheme: colorScheme,
                         dpr: dpr,
@@ -1858,8 +1994,8 @@ void _drawTimeAxis(
   Canvas canvas,
   Path grid,
   Size graphSz, {
-  required int viewStart,
-  required int viewEnd,
+  required double viewStart,
+  required double viewEnd,
   required int sampleRate,
   required bool showLabels,
   required _LabelCache labels,
@@ -1990,16 +2126,16 @@ void _drawZeroBaseline(
 void _drawMissingDataHatching(
   Canvas canvas,
   Size graphSz, {
-  required int viewStart,
-  required int viewEnd,
+  required double viewStart,
+  required double viewEnd,
   required GraphDataSource data,
   required Color color,
 }) {
   final gaps = data.gaps;
   if (gaps.isEmpty) return;
 
-  final sScanStart = math.max(viewStart, data.oldestSample);
-  final sScanEnd = math.min(viewEnd, data.totalSamples);
+  final sScanStart = math.max(viewStart.floor(), data.oldestSample);
+  final sScanEnd = math.min(viewEnd.ceil(), data.totalSamples);
   if (sScanStart >= sScanEnd) return;
 
   final viewSamples = viewEnd - viewStart;
@@ -2180,7 +2316,7 @@ void _drawChannelEnvelope(
   required Color color,
   required double graphW,
   required int viewStart,
-  required int viewSamples,
+  required double viewSamples,
   required int totalSamples,
   required int firstUsableSample,
   required EnvelopeSeries series,
@@ -2379,8 +2515,8 @@ bool _paintEnvelopeDataLayer(
   required double gw,
   required double gh,
   required double dpr,
-  required int viewStart,
-  required int viewSpan,
+  required double viewStart,
+  required double viewSpan,
   required double yMin,
   required double yMax,
   required int firstUsableSample,
@@ -2507,6 +2643,30 @@ Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
 // Windowed time-series graph painters (force, derivative)
 // ---------------------------------------------------------------------------
 
+/// How far the smooth-scrolling live edge may run past the newest received
+/// sample: one packet period (20 samples at 1 kHz). Capped there so arrival
+/// jitter reads as a brief freeze instead of a backward lurch, and a silent
+/// device stops the scroll after one period.
+const double _kLiveEdgeLeadMs = 20;
+
+/// How stale the stream may get before the smooth-scroll ticker stops: well
+/// past the worst normal inter-packet gap (~20ms plus BLE jitter), so the
+/// ticker never churns mid-stream, but a silent device stops the repaints.
+const int _kTickerStallMs = 100;
+
+/// The live-follow window's right edge in fractional samples: the newest
+/// sample count plus wall-clock elapsed since it landed, capped by
+/// [_kLiveEdgeLeadMs].
+double _liveEdge(GraphDataSource data) {
+  final int total = data.totalSamples;
+  final DateTime? last = data.lastDataAt;
+  if (last == null) return total.toDouble();
+  final double elapsedMs =
+      DateTime.now().difference(last).inMicroseconds / 1000.0;
+  return total +
+      elapsedMs.clamp(0.0, _kLiveEdgeLeadMs) * data.sampleRate / 1000.0;
+}
+
 /// Common painter prologue shared by the force and derivative graphs: translate
 /// into the plot area, compute the plot [Size], draw the frame border, and
 /// resolve the visible window.
@@ -2516,9 +2676,9 @@ Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
 /// the graph needs (1 for force, 2 for the derivative's first difference).
 typedef _GraphLayout = ({
   Size graphSz,
-  int viewStart,
-  int viewEnd,
-  int viewSamples,
+  double viewStart,
+  double viewEnd,
+  double viewSamples,
 });
 
 _GraphLayout? _setupGraphFrame(
@@ -2555,13 +2715,22 @@ _GraphLayout? _setupGraphFrame(
     data.oldestSample,
     bufferCapacity: data.bufferCapacity,
   );
-  final viewSamples = viewEnd - viewStart;
+  // A live-following window anchors its right edge to the fractional live
+  // edge, so the trace scrolls continuously between packets; parked windows
+  // stay on their exact integer range.
+  double viewStartF = viewStart.toDouble();
+  double viewEndF = viewEnd.toDouble();
+  if (ctrl.isLive) {
+    viewEndF = _liveEdge(data);
+    viewStartF = viewEndF - (viewEnd - viewStart);
+  }
+  final viewSamples = viewEndF - viewStartF;
   if (viewSamples < minSamples) return null;
 
   return (
     graphSz: graphSz,
-    viewStart: viewStart,
-    viewEnd: viewEnd,
+    viewStart: viewStartF,
+    viewEnd: viewEndF,
     viewSamples: viewSamples,
   );
 }
@@ -2600,13 +2769,16 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     this._settings,
     this._ctrl, {
     required List<int> activeChannels,
+    required Listenable vsync,
     required this.cache,
     required this.colorScheme,
     required this.dpr,
     required this.labels,
     required this.bakePump,
   }) : _activeChannels = activeChannels,
-       super(repaint: Listenable.merge([_data.repaint, _ctrl, bakePump]));
+       super(
+         repaint: Listenable.merge([_data.repaint, _ctrl, bakePump, vsync]),
+       );
 
   // --- Layout hooks --------------------------------------------------------
 
@@ -2631,7 +2803,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   EnvelopeSeries series(int channel);
 
   /// Y-axis range (display units) for the visible window.
-  YAxisRange computeYRange(int viewStart, int viewEnd);
+  YAxisRange computeYRange(double viewStart, double viewEnd);
 
   String yTickLabel(double tick, YAxisRange yRange);
 
@@ -2760,6 +2932,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     super.ctrl, {
     this.showXLabels = true,
     required super.activeChannels,
+    required super.vsync,
     required super.cache,
     required super.colorScheme,
     required super.dpr,
@@ -2782,7 +2955,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       _taredEnvelopeSeries(_data, channel, _settings.displayUnit);
 
   @override
-  YAxisRange computeYRange(int viewStart, int viewEnd) {
+  YAxisRange computeYRange(double viewStart, double viewEnd) {
     // Data min/max across active channels in the visible window, converted
     // per channel through its own calibration. [windowedExtremes] folds full
     // buckets from the precomputed aggregates (exact for min/max of a
@@ -2791,8 +2964,8 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     // threshold, applied to the global tare-subtracted raw extremes.
     final bufferCap = _data.bufferCapacity;
     final unit = _settings.displayUnit;
-    final start = math.max(viewStart, _data.oldestSample);
-    final end = math.min(viewEnd, _data.totalSamples);
+    final start = math.max(viewStart.floor(), _data.oldestSample);
+    final end = math.min(viewEnd.ceil(), _data.totalSamples);
 
     double rawMin = double.infinity;
     double rawMax = double.negativeInfinity;
@@ -2863,6 +3036,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     super.settings,
     super.ctrl, {
     required super.activeChannels,
+    required super.vsync,
     required super.cache,
     required super.colorScheme,
     required super.dpr,
@@ -2934,7 +3108,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   }
 
   @override
-  YAxisRange computeYRange(int viewStart, int viewEnd) {
+  YAxisRange computeYRange(double viewStart, double viewEnd) {
     // Derivative min/max (display units) across the visible window.
     // [windowedExtremes] folds full buckets from the precomputed diff
     // aggregates (exact for min/max) and per-sample scans only the partial
@@ -2942,8 +3116,8 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     double dMin = 0;
     double dMax = 0;
     bool first = true;
-    final startI = math.max(viewStart, _data.oldestSample + 1);
-    final endI = math.min(viewEnd, _data.totalSamples);
+    final startI = math.max(viewStart.floor(), _data.oldestSample + 1);
+    final endI = math.min(viewEnd.ceil(), _data.totalSamples);
 
     void fold(double d) {
       if (first || d < dMin) dMin = d;

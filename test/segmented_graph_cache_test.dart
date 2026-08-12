@@ -22,8 +22,8 @@ class _Harness {
   /// fake renderer reports tail provisionality the same way the envelope
   /// renderer does (bake end within one tail span of the data edge).
   bool paint({
-    required int viewStart,
-    required int viewSpan,
+    required double viewStart,
+    required double viewSpan,
     required int totalSamples,
     double gw = 400,
     double gh = 100,

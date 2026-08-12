@@ -434,6 +434,10 @@ class SessionData implements GraphDataSource {
   @override
   Listenable get repaint => kNeverRepaints;
 
+  /// Static data has no arrival clock.
+  @override
+  DateTime? get lastDataAt => null;
+
   /// Session data is immutable after load; there is no "new stream".
   @override
   int get dataGeneration => 0;
