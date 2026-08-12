@@ -4,7 +4,7 @@ You can try out the `main` branch build at https://dynamite-app.k3engineering.co
 
 ## Getting Started
 
-TODO
+`flutter run -d chrome --profile`
 
 ## Note
 
