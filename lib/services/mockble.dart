@@ -252,6 +252,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     String deviceId, {
     Duration? connectionTimeout,
     bool autoConnect = false,
+    ConnectionPlatformConfig? platformConfig,
   }) async {
     if (_connectedDeviceId != null) return;
 
