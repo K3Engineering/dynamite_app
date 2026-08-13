@@ -18,6 +18,7 @@ import '../widgets/dialogs.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 import '../widgets/rssi_indicator.dart';
+import '../widgets/status_colors.dart';
 
 // ---------------------------------------------------------------------------
 // LiveTab
@@ -354,7 +355,9 @@ class LiveStatusBar extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final report = isConnected && (health?.worthReporting ?? false);
     final noData = health?.noDataFlowing ?? false;
-    final onContainer = scheme.onPrimaryContainer;
+    final warning = report
+        ? Theme.of(context).extension<StatusColors>()!.onConnectedWarning
+        : null;
     return GestureDetector(
       onTap: !isConnected
           ? () {
@@ -399,12 +402,12 @@ class LiveStatusBar extends StatelessWidget {
                   if (report)
                     Row(
                       children: [
-                        Icon(Icons.error_outline, size: 14, color: onContainer),
+                        Icon(Icons.error_outline, size: 14, color: warning!),
                         const SizedBox(width: 4),
                         Flexible(
                           child: Text(
                             health!.shortLabel!,
-                            style: TextStyle(color: onContainer, fontSize: 12),
+                            style: TextStyle(color: warning, fontSize: 12),
                           ),
                         ),
                       ],

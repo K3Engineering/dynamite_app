@@ -714,7 +714,7 @@ class _FeedHealthLineState extends State<_FeedHealthLine> {
     );
     final label = health?.shortLabel;
     if (label == null) return const SizedBox.shrink();
-    final color = Theme.of(context).colorScheme.onPrimaryContainer;
+    final color = Theme.of(context).extension<StatusColors>()!.onConnectedWarning;
     return Row(
       children: [
         Icon(Icons.error_outline, size: 14, color: color),
