@@ -1,5 +1,4 @@
 import '../utils/format.dart';
-import 'adc_protocol.dart';
 import 'data_hub.dart';
 
 /// Measured health of the ADC feed: not "subscribed" (the link state's
@@ -22,8 +21,7 @@ enum FeedHealth {
   /// Packets flowed earlier in this stream, then went silent.
   stopped,
 
-  /// No decodable packet ever, but malformed packets are arriving (e.g.
-  /// notifications truncated by a too-small link MTU).
+  /// No decodable packet ever, but malformed packets are arriving.
   blocked,
 
   /// No decodable packet ever, and nothing at all is arriving.
@@ -81,16 +79,15 @@ extension FeedHealthPresentation on FeedHealth {
   String detail({int? malformedLen, DateTime? lastDataAt}) => switch (this) {
     FeedHealth.degraded =>
       'Some packets arrived undecodable'
-          '${malformedLen != null ? ' (last: $malformedLen bytes, expected $nwAdcPacketLength)' : ''}. '
+          '${malformedLen != null ? ' (last: $malformedLen bytes)' : ''}. '
           'The stream is otherwise flowing.',
     FeedHealth.stopped =>
       'Data was flowing, then stopped.'
           '${lastDataAt != null ? ' Last data received at ${formatTimestamp(lastDataAt)}.' : ''}',
     FeedHealth.blocked =>
       'Packets are arriving, but none can be decoded'
-          '${malformedLen != null ? ' (last: $malformedLen of $nwAdcPacketLength bytes)' : ''}. '
-          "Likely cause: the link negotiated too small an MTU for this "
-          "firmware's packet size, or a firmware/protocol mismatch.",
+          '${malformedLen != null ? ' (last: $malformedLen bytes)' : ''}. '
+          'Likely cause: a firmware/protocol mismatch.',
     FeedHealth.silent =>
       'Connected and subscribed, but no packets have arrived. '
           'Try disconnecting and reconnecting.',
