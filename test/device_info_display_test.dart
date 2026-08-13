@@ -8,6 +8,7 @@ import 'package:dynamite_app/main.dart';
 import 'package:dynamite_app/models/app_settings.dart';
 import 'package:dynamite_app/models/device_info.dart';
 import 'package:dynamite_app/screens/devices_tab.dart';
+import 'package:dynamite_app/screens/settings_tab.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
@@ -176,6 +177,19 @@ void main() {
 
       await tester.tap(find.byType(NavigationDestination).at(3));
       await tester.pump();
+
+      // The device section sits below the fold; the settings ListView
+      // builds children lazily, so scroll the card into view first
+      // (IndexedStack keeps every tab's Scrollable in the tree — target
+      // the settings one explicitly).
+      await tester.scrollUntilVisible(
+        find.text('Dynamite Sampler Demo'),
+        300,
+        scrollable: find.descendant(
+          of: find.byType(SettingsTab),
+          matching: find.byType(Scrollable),
+        ),
+      );
 
       expect(find.text('Device info'), findsOneWidget);
       expect(find.text('Dynamite Sampler Demo'), findsOneWidget);

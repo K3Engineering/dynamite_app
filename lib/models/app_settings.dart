@@ -31,11 +31,14 @@ class AppSettings extends ChangeNotifier {
     }
 
     _wakelockEnabled = _prefs.getBool(_keyWakelock) ?? false;
+
+    _limitWarningsEnabled = _prefs.getBool(_keyLimitWarnings) ?? true;
   }
 
   static const String _keyUnit = 'display_unit';
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
+  static const String _keyLimitWarnings = 'limit_warnings_enabled';
 
   /// Keys of the pre-slot model (channel labels, load cell bank, per-channel
   /// assignments, the app-global DMM reading), erased on load.
@@ -67,6 +70,13 @@ class AppSettings extends ChangeNotifier {
   bool _wakelockEnabled = false;
   bool get wakelockEnabled => _wakelockEnabled;
 
+  /// Master switch for the chart's 1.2 V rail display (flood and dashes).
+  /// When off, the graphs show no limit chrome. The at-the-rail clip icon
+  /// in the live numbers is NOT gated: a railed converter is data validity,
+  /// not a warning preference.
+  bool _limitWarningsEnabled = true;
+  bool get limitWarningsEnabled => _limitWarningsEnabled;
+
   Future<void> setDisplayUnit(DisplayUnit unit) async {
     _displayUnit = unit;
     notifyListeners();
@@ -86,5 +96,11 @@ class AppSettings extends ChangeNotifier {
     _wakelockEnabled = enabled;
     notifyListeners();
     await _prefs.setBool(_keyWakelock, enabled);
+  }
+
+  Future<void> setLimitWarningsEnabled(bool enabled) async {
+    _limitWarningsEnabled = enabled;
+    notifyListeners();
+    await _prefs.setBool(_keyLimitWarnings, enabled);
   }
 }
