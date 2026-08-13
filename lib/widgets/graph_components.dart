@@ -24,8 +24,8 @@ const double _kGraphLeftSpace = 8;
 const double _kGraphRightSpace = 56;
 const double _kGraphBottomSpace = 24;
 
-double _graphPlotWidth(double totalWidth, double rightSpace) =>
-    totalWidth - _kGraphLeftSpace - rightSpace;
+double _graphPlotWidth(double totalWidth) =>
+    totalWidth - _kGraphLeftSpace - _kGraphRightSpace;
 
 /// Record [draw] and synchronously rasterize it into a [widthPx] x [heightPx]
 /// physical-pixel [ui.Image]. The canvas is pre-scaled by [dpr] so [draw]
@@ -1174,16 +1174,11 @@ class _Minimap extends StatefulWidget {
   /// Indices of the channels to plot (per-view; see [GraphWorkspace]).
   final List<int> activeChannels;
 
-  /// Right gutter width, matching the panes so the overview aligns with
-  /// them.
-  final double rightSpace;
-
   const _Minimap({
     required this.dataSource,
     required this.settings,
     required this.graphCtrl,
     required this.activeChannels,
-    required this.rightSpace,
   });
 
   @override
@@ -1244,10 +1239,7 @@ class _MinimapState extends State<_Minimap> {
     final dpr = MediaQuery.devicePixelRatioOf(context);
     return LayoutBuilder(
       builder: (context, constraints) {
-        final graphWidth = _graphPlotWidth(
-          constraints.maxWidth,
-          widget.rightSpace,
-        );
+        final graphWidth = _graphPlotWidth(constraints.maxWidth);
         return SizedBox(
           height: 32,
           child: Listener(
@@ -1272,7 +1264,6 @@ class _MinimapState extends State<_Minimap> {
                   dpr,
                   _cache,
                   _bakePump,
-                  widget.rightSpace,
                 ),
                 size: Size.infinite,
               ),
@@ -1293,10 +1284,6 @@ class _MinimapPainter extends CustomPainter {
   final double _dpr;
   final SegmentedGraphCache _cache;
 
-  /// Right gutter width, matching the panes so the overview aligns with
-  /// them.
-  final double _rightSpace;
-
   /// Drives the rolling segment bakes: a repaint listenable for this painter
   /// and the scheduler for extra frames when bake work remains (rolling
   /// bootstrap / staleness passes must complete even for static sources
@@ -1312,7 +1299,6 @@ class _MinimapPainter extends CustomPainter {
     this._dpr,
     this._cache,
     this._bakePump,
-    this._rightSpace,
   ) : super(repaint: Listenable.merge([_data.repaint, _ctrl, _bakePump]));
 
   @override
@@ -1320,7 +1306,7 @@ class _MinimapPainter extends CustomPainter {
     const double vPad = 2;
 
     canvas.translate(_kGraphLeftSpace, vPad);
-    final gw = size.width - _kGraphLeftSpace - _rightSpace;
+    final gw = size.width - _kGraphLeftSpace - _kGraphRightSpace;
     final gh = size.height - vPad * 2;
 
     if (gw <= 0 || gh <= 0) return;
@@ -1437,15 +1423,10 @@ class _InteractiveGraphArea extends StatefulWidget {
   final GraphController ctrl;
   final Widget child;
 
-  /// Right gutter width: gesture fractions are measured over the same plot
-  /// area the painters draw into.
-  final double rightSpace;
-
   const _InteractiveGraphArea({
     required this.data,
     required this.ctrl,
     required this.child,
-    required this.rightSpace,
   });
 
   @override
@@ -1517,10 +1498,7 @@ class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final graphWidth = _graphPlotWidth(
-          constraints.maxWidth,
-          widget.rightSpace,
-        );
+        final graphWidth = _graphPlotWidth(constraints.maxWidth);
         return Listener(
           behavior: HitTestBehavior.opaque,
           onPointerSignal: (e) => _handleGraphPointerScroll(
@@ -1667,9 +1645,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             null)
           ch,
     ];
-    // All panes and the minimap share the right gutter width, or the plot
-    // areas drift out of alignment.
-    const rightSpace = _kGraphRightSpace;
     return LayoutBuilder(
       builder: (context, constraints) {
         return Stack(
@@ -1682,7 +1657,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                   child: _GraphPane(
                     data: widget.data,
                     ctrl: widget.ctrl,
-                    rightSpace: rightSpace,
                     painter: _ForceGraphPainter(
                       widget.data,
                       widget.settings,
@@ -1695,7 +1669,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                       dpr: dpr,
                       labels: _labelCache,
                       bakePump: _bakePump,
-                      rightSpace: rightSpace,
                     ),
                   ),
                 ),
@@ -1706,7 +1679,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                     child: _GraphPane(
                       data: widget.data,
                       ctrl: widget.ctrl,
-                      rightSpace: rightSpace,
                       painter: _DerivativeGraphPainter(
                         widget.data,
                         widget.settings,
@@ -1718,7 +1690,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                         dpr: dpr,
                         labels: _labelCache,
                         bakePump: _bakePump,
-                        rightSpace: rightSpace,
                       ),
                     ),
                   ),
@@ -1728,7 +1699,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                   settings: widget.settings,
                   graphCtrl: widget.ctrl,
                   activeChannels: drawableChannels,
-                  rightSpace: rightSpace,
                 ),
               ],
             ),
@@ -1737,7 +1707,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
               _LiveButton(data: widget.data, ctrl: widget.ctrl),
             // Zoom controls
             Positioned(
-              right: rightSpace + 16,
+              right: _kGraphRightSpace + 16,
               bottom: 72,
               child: _ZoomControls(
                 data: widget.data,
@@ -1759,23 +1729,17 @@ class _GraphPane extends StatelessWidget {
     required this.data,
     required this.ctrl,
     required this.painter,
-    required this.rightSpace,
   });
 
   final GraphDataSource data;
   final GraphController ctrl;
   final CustomPainter painter;
 
-  /// Right gutter width: the gesture math needs the same plot area the
-  /// painters draw into.
-  final double rightSpace;
-
   @override
   Widget build(BuildContext context) {
     return _InteractiveGraphArea(
       data: data,
       ctrl: ctrl,
-      rightSpace: rightSpace,
       child: CustomPaint(foregroundPainter: painter, size: Size.infinite),
     );
   }
@@ -1946,19 +1910,14 @@ class _LabelCache {
   final Map<String, ui.Paragraph> _cache = HashMap();
 
   /// The laid-out paragraph for [text] in [color], building and caching it on
-  /// first use. [fontSize] is part of the cache key (axis labels use the 11px
-  /// default; the limit markers' letters use a smaller size).
-  ui.Paragraph prepare(
-    String text, {
-    Color color = Colors.black,
-    double fontSize = 11,
-  }) {
-    final key = '$text|${color.toARGB32()}|$fontSize';
+  /// first use.
+  ui.Paragraph prepare(String text, {Color color = Colors.black}) {
+    final key = '$text|${color.toARGB32()}';
     if (!_cache.containsKey(key) && _cache.length >= _limit) {
       _clear();
     }
     return _cache.putIfAbsent(key, () {
-      final style = ui.TextStyle(color: color, fontSize: fontSize);
+      final style = ui.TextStyle(color: color, fontSize: 11);
       final builder =
           ui.ParagraphBuilder(
               ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
@@ -2197,68 +2156,6 @@ void _drawLimitZones(
   }
   canvas.drawPath(hairline, linePen);
   canvas.drawPath(teeth, tickPen);
-}
-
-/// Sample intervals of the visible window where channel [ch]'s raw values
-/// cross [thresholdRaw] on the given polarity (>= for positive, <= for
-/// negative). This is the hot zone that drives the temporal rail flood.
-///
-/// Bucket-accelerated via [foldBucketRange]: uniform buckets (all hot / all
-/// cold) are taken from min/max; mixed buckets and the partial head/tail
-/// scan per-sample. Geometry matches the railed samples.
-List<({int start, int end})> _hotIntervals(
-  GraphDataSource data,
-  int ch,
-  int viewStart,
-  int viewEnd,
-  double thresholdRaw,
-  bool positive,
-) {
-  final series = data.channel(ch);
-  final cap = data.bufferCapacity;
-  final start = math.max(viewStart, data.oldestSample);
-  final end = math.min(viewEnd, data.totalSamples);
-  if (start >= end) return const [];
-
-  bool hotRaw(int raw) => positive ? raw >= thresholdRaw : raw <= thresholdRaw;
-
-  final intervals = <({int start, int end})>[];
-  int? open;
-  void close(int at) {
-    final s = open;
-    if (s != null && at > s) intervals.add((start: s, end: at));
-    open = null;
-  }
-
-  void scanExact(int from, int to) {
-    for (int i = from; i < to; i++) {
-      if (hotRaw(series.data[i % cap])) {
-        open ??= i;
-      } else {
-        close(i);
-      }
-    }
-  }
-
-  foldBucketRange(
-    series.buckets,
-    start,
-    end,
-    foldBucket: (bMin, bMax, from, to) {
-      final allHot = positive ? bMin >= thresholdRaw : bMax <= thresholdRaw;
-      final allCold = positive ? bMax < thresholdRaw : bMin > thresholdRaw;
-      if (allHot) {
-        open ??= from;
-      } else if (allCold) {
-        close(from);
-      } else {
-        scanExact(from, to);
-      }
-    },
-    scanExact: scanExact,
-  );
-  close(end);
-  return intervals;
 }
 
 /// Draws a diagonal warning hatch pattern over the [GraphDataSource.gaps]
@@ -2827,7 +2724,6 @@ _GraphLayout? _setupGraphFrame(
   GraphController ctrl, {
   required double topSpace,
   required double bottomSpace,
-  required double rightSpace,
   required int minSamples,
   required Color frameColor,
 }) {
@@ -2837,7 +2733,7 @@ _GraphLayout? _setupGraphFrame(
 
   canvas.translate(_kGraphLeftSpace, topSpace);
   final graphSz = Size(
-    size.width - _kGraphLeftSpace - rightSpace,
+    size.width - _kGraphLeftSpace - _kGraphRightSpace,
     size.height - bottomSpace - topSpace,
   );
 
@@ -2904,10 +2800,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// [GraphDataSource.repaint] never fires).
   final _BakePump bakePump;
 
-  /// Right gutter width (tick labels + limit chrome), shared with every
-  /// pane and the gesture areas so the plot areas stay aligned.
-  final double rightSpace;
-
   _TimeSeriesGraphPainter(
     this._data,
     this._settings,
@@ -2919,7 +2811,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     required this.dpr,
     required this.labels,
     required this.bakePump,
-    required this.rightSpace,
   }) : _activeChannels = activeChannels,
        super(
          repaint: Listenable.merge([_data.repaint, _ctrl, bakePump, vsync]),
@@ -2979,7 +2870,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       _ctrl,
       topSpace: topSpace,
       bottomSpace: showXLabels ? _kGraphBottomSpace : 4,
-      rightSpace: rightSpace,
       minSamples: 1 + firstSampleOffset,
       frameColor: colorScheme.primary.withAlpha(150),
     );
@@ -3095,7 +2985,6 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     required super.dpr,
     required super.labels,
     required super.bakePump,
-    required super.rightSpace,
   });
 
   @override
@@ -3178,13 +3067,10 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     return _computeYRange(yMin, yMax, unit);
   }
 
-  /// The limit chrome, gated on `AppSettings.limitWarningsEnabled`.
-  /// Always-on: a screen-fixed dashed hairline at each in-view rail.
-  /// Temporal: a flood from the rail to the plot edge where the converter
-  /// railed (see [_hotIntervals]). One color for every channel — the rail
-  /// is the converter ceiling, not a channel property — and rails landing
-  /// on the same line share one chrome. The flood uses [BlendMode.src], so
-  /// overlapping channels keep one uniform red; the dashes paint after it.
+  /// Rail chrome, gated on `AppSettings.limitWarningsEnabled`. Hairline at
+  /// each in-view rail; flood from the rail to the plot edge where the
+  /// converter railed. Mixed buckets are treated as hot when a bucket is
+  /// ≤1 px ([_blockSizeFor] >= [kBucketSize]).
   @override
   void drawOverlay(
     Canvas canvas,
@@ -3198,99 +3084,59 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
 
     final unit = _settings.displayUnit;
     final viewSpan = viewEnd - viewStart;
+    if (viewSpan <= 0 || graphSz.width <= 0) return;
+    final treatMixedAsHot =
+        _blockSizeFor(viewSpan, graphSz.width) >= kBucketSize;
 
-    final railMarks = <({double y, bool upperSide})>[];
-    final floodHits = <({double y, bool upperSide, double x1, double x2})>[];
+    final shadePaint = Paint()
+      ..color = colorScheme.error.withAlpha(22)
+      ..blendMode = BlendMode.src;
+    final rails = <({double y, bool upperSide})>[];
+
     for (final ch in _activeChannels) {
-      final conv = unit.converterFor(
-        _data.calibrationFor(ch),
-        _data.channel(ch).tare,
-      );
-      if (conv == null) continue;
       final series = _data.channel(ch);
+      final conv = unit.converterFor(_data.calibrationFor(ch), series.tare);
+      if (conv == null) continue;
 
       for (final positive in [true, false]) {
         final clipRaw = positive
-            ? ChannelLimits.clipRawPos.toDouble()
-            : ChannelLimits.clipRawNeg.toDouble();
-        final railY = valueToY(conv(clipRaw));
+            ? ChannelLimits.clipRawPos
+            : ChannelLimits.clipRawNeg;
+        final railY = valueToY(conv(clipRaw.toDouble()));
         if (railY < 0 || railY > graphSz.height) continue;
 
-        railMarks.add((y: railY, upperSide: positive));
+        rails.add((y: railY, upperSide: positive));
 
         final couldBeHot = positive
             ? series.max >= clipRaw
             : series.min <= clipRaw;
         if (!couldBeHot) continue;
 
-        for (final it in _hotIntervals(
-          _data,
-          ch,
-          viewStart.floor(),
-          viewEnd.ceil(),
-          clipRaw,
-          positive,
+        final start = math.max(viewStart.floor(), _data.oldestSample);
+        final end = math.min(viewEnd.ceil(), _data.totalSamples);
+        for (final it in hotIntervals(
+          data: series.data,
+          cap: _data.bufferCapacity,
+          buckets: series.buckets,
+          start: start,
+          end: end,
+          threshold: clipRaw,
+          positive: positive,
+          treatMixedAsHot: treatMixedAsHot,
         )) {
-          floodHits.add((
-            y: railY,
-            upperSide: positive,
-            x1: (it.start - viewStart) * graphSz.width / viewSpan,
-            x2: (it.end - viewStart) * graphSz.width / viewSpan,
-          ));
+          final x1 = (it.start - viewStart) * graphSz.width / viewSpan;
+          final x2 = (it.end - viewStart) * graphSz.width / viewSpan;
+          if (x2 - x1 < 1) continue;
+          canvas.drawRect(
+            Rect.fromLTRB(
+              x1,
+              positive ? 0 : railY,
+              x2,
+              positive ? railY : graphSz.height,
+            ),
+            shadePaint,
+          );
         }
-      }
-    }
-
-    railMarks.sort((a, b) => a.y.compareTo(b.y));
-    final rails = <({double y, bool upperSide})>[];
-    for (final m in railMarks) {
-      if (rails.isEmpty ||
-          rails.last.upperSide != m.upperSide ||
-          m.y - rails.last.y > 1.5) {
-        rails.add(m);
-      }
-    }
-
-    floodHits.sort((a, b) => a.y.compareTo(b.y));
-    final clusters =
-        <({double y, bool upperSide, List<(double, double)> runs})>[];
-    for (final hit in floodHits) {
-      if (clusters.isEmpty ||
-          clusters.last.upperSide != hit.upperSide ||
-          hit.y - clusters.last.y > 1.5) {
-        clusters.add((y: hit.y, upperSide: hit.upperSide, runs: []));
-      }
-      clusters.last.runs.add((hit.x1, hit.x2));
-    }
-    final floods = <({double y, bool upperSide, List<(double, double)> runs})>[];
-    for (final cluster in clusters) {
-      cluster.runs.sort((a, b) => a.$1.compareTo(b.$1));
-      final runs = <(double, double)>[];
-      for (final (x1, x2) in cluster.runs) {
-        if (runs.isNotEmpty && x1 <= runs.last.$2 + 0.5) {
-          runs[runs.length - 1] = (runs.last.$1, math.max(runs.last.$2, x2));
-        } else {
-          runs.add((x1, x2));
-        }
-      }
-      floods.add((y: cluster.y, upperSide: cluster.upperSide, runs: runs));
-    }
-
-    final shadePaint = Paint()
-      ..color = colorScheme.error.withAlpha(22)
-      ..blendMode = BlendMode.src;
-    for (final f in floods) {
-      for (final (x1, x2) in f.runs) {
-        if (x2 - x1 < 1) continue;
-        canvas.drawRect(
-          Rect.fromLTRB(
-            x1,
-            f.upperSide ? 0 : f.y,
-            x2,
-            f.upperSide ? f.y : graphSz.height,
-          ),
-          shadePaint,
-        );
       }
     }
 
@@ -3327,7 +3173,6 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     required super.dpr,
     required super.labels,
     required super.bakePump,
-    required super.rightSpace,
   });
 
   @override

@@ -508,14 +508,10 @@ class LiveStats extends StatelessWidget {
           // Same when nothing decodable is arriving at all.
           final stale = hub.liveEdgeIsGap || (health?.noDataFlowing ?? false);
 
-          // Per-channel temporal rail state: always evaluated, never gated
-          // on a settings preference — a railed converter is data validity,
-          // not a warning. Null before the first sample (the extremes still
-          // hold sentinels).
           final hasData = hub.totalSamples > 0;
-          final clipDirections = [
+          final clipped = [
             for (int i = 0; i < DataHub.numAdcChannels; i++)
-              hasData ? ChannelLimits.clipDirFor(hub.currentRawFor(i)) : null,
+              hasData && ChannelLimits.isClipped(hub.currentRawFor(i)),
           ];
 
           return Column(
@@ -526,7 +522,7 @@ class LiveStats extends StatelessWidget {
                 onToggleChannel: (i) =>
                     settings.setChannelActive(i, !settings.activeChannels[i]),
                 unit: unit,
-                clipDirections: clipDirections,
+                clipped: clipped,
                 rows: [
                   ChannelStatsRow(
                     label: 'Live',

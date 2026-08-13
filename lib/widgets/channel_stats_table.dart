@@ -37,21 +37,21 @@ class ChannelStatsTable extends StatelessWidget {
     required this.onToggleChannel,
     required this.unit,
     required this.rows,
-    this.clipDirections,
+    this.clipped,
   }) : assert(
-         _oneValuePerChannel(labels, activeChannels, rows, clipDirections),
-         'labels, activeChannels, rows and clipDirections must agree in length',
+         _oneValuePerChannel(labels, activeChannels, rows, clipped),
+         'labels, activeChannels, rows and clipped must agree in length',
        );
 
   static bool _oneValuePerChannel(
     List<String> labels,
     List<bool> activeChannels,
     List<ChannelStatsRow> rows,
-    List<int?>? clipDirections,
+    List<bool>? clipped,
   ) =>
       activeChannels.length == labels.length &&
       rows.every((r) => r.values.length == labels.length) &&
-      (clipDirections == null || clipDirections.length == labels.length);
+      (clipped == null || clipped.length == labels.length);
 
   final List<String> labels;
 
@@ -68,22 +68,16 @@ class ChannelStatsTable extends StatelessWidget {
   /// Stat rows below the channel header.
   final List<ChannelStatsRow> rows;
 
-  /// Per-channel temporal rail direction (+1/-1 at an ADC rail, 0
-  /// otherwise), shown as a rail icon in the channel's label cell. Null =
-  /// no status display at all (e.g. a session playback, where nothing is
-  /// live).
-  final List<int?>? clipDirections;
+  /// Per-channel ADC-rail flag. Null = no status display (session playback).
+  final List<bool>? clipped;
 
-  /// The per-channel status icon in the label cell: a warning mark for a
-  /// converter sitting at an ADC rail. Null when there is nothing to say —
-  /// the slot stays reserved so labels never reflow.
   static Widget? _statusIcon(
     BuildContext context, {
-    required int? clipDir,
+    required bool clipped,
     required bool active,
     required int channel,
   }) {
-    if (!active || clipDir == null || clipDir == 0) return null;
+    if (!active || !clipped) return null;
     return Tooltip(
       message: 'CH ${channel + 1} is at the ADC rail. The reading is clipping.',
       triggerMode: TooltipTriggerMode.tap,
@@ -150,7 +144,7 @@ class ChannelStatsTable extends StatelessWidget {
                             height: 16,
                             child: _statusIcon(
                               context,
-                              clipDir: clipDirections?[i],
+                              clipped: clipped?[i] ?? false,
                               active: activeChannels[i],
                               channel: i,
                             ),

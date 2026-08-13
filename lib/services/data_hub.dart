@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'adc_protocol.dart';
 import '../models/bucket_series.dart';
 import '../models/calibration.dart';
-import '../models/device_capabilities.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
@@ -114,20 +113,6 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// only). Owned by `RigState` (device slots, including unsaved edits);
   /// pushed here via [updateLoadCells].
   List<LoadCellProfile?> _loadCells = List.filled(numAdcChannels, null);
-
-  /// Capabilities of the device feeding this hub (front-end variant and
-  /// gain). NOT piped through from hardware yet — always
-  /// [DeviceCapabilities.pro]; [updateDeviceCapabilities] is the future
-  /// entry point (flash `hw.*` keys or advertisement manufacturer data).
-  /// Survives [clear], like [boardCalibration]: it describes the device,
-  /// not the stream.
-  ///
-  /// TODO(dormant): nothing reads this yet — it is plumbing for the PGA
-  /// device variant (the pro/PGA distinction the app fakes today). The
-  /// first real consumer will be the nominal conversion chain for PGA
-  /// hardware, whose gain differs from the pro's fixed x101.
-  DeviceCapabilities get deviceCapabilities => _deviceCapabilities;
-  DeviceCapabilities _deviceCapabilities = DeviceCapabilities.pro;
 
   /// Bumped whenever the calibration set changes (board data or load-cell
   /// assignments); renderers mix it into their segment-cache keys.
@@ -405,16 +390,6 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     if (same) return;
     _loadCells = List.of(cells);
     _calibrationVersion++;
-    notifyListeners();
-  }
-
-  /// Replace the device capabilities (a device report arrived). Unused
-  /// today — nothing reports capabilities, so the hub stays on the faked
-  /// [DeviceCapabilities.pro]. Content-equal updates are a no-op (same rule
-  /// as [updateBoardCalibration]).
-  void updateDeviceCapabilities(DeviceCapabilities capabilities) {
-    if (_deviceCapabilities == capabilities) return;
-    _deviceCapabilities = capabilities;
     notifyListeners();
   }
 
