@@ -354,9 +354,7 @@ class LiveStatusBar extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final report = isConnected && (health?.worthReporting ?? false);
     final noData = health?.noDataFlowing ?? false;
-    // Hard failures (no decodable data) read as errors; some-malformed while
-    // flowing reads as a warning.
-    final healthColor = noData ? scheme.error : Colors.amber;
+    final onContainer = scheme.onPrimaryContainer;
     return GestureDetector(
       onTap: !isConnected
           ? () {
@@ -399,9 +397,17 @@ class LiveStatusBar extends StatelessWidget {
                     ),
                   ),
                   if (report)
-                    Text(
-                      health!.shortLabel!,
-                      style: TextStyle(color: healthColor, fontSize: 12),
+                    Row(
+                      children: [
+                        Icon(Icons.error_outline, size: 14, color: onContainer),
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            health!.shortLabel!,
+                            style: TextStyle(color: onContainer, fontSize: 12),
+                          ),
+                        ),
+                      ],
                     ),
                 ],
               ),

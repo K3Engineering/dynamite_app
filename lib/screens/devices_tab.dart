@@ -714,13 +714,20 @@ class _FeedHealthLineState extends State<_FeedHealthLine> {
     );
     final label = health?.shortLabel;
     if (label == null) return const SizedBox.shrink();
-    return Text(
-      label,
-      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-        color: health!.noDataFlowing
-            ? Theme.of(context).colorScheme.error
-            : Colors.amber,
-      ),
+    final color = Theme.of(context).colorScheme.onPrimaryContainer;
+    return Row(
+      children: [
+        Icon(Icons.error_outline, size: 14, color: color),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            style: Theme.of(
+              context,
+            ).textTheme.labelSmall?.copyWith(color: color),
+          ),
+        ),
+      ],
     );
   }
 }
