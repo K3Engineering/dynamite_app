@@ -19,10 +19,32 @@ import '../models/graph_data_source.dart';
 // ---------------------------------------------------------------------------
 
 /// Horizontal/vertical padding shared by the graph painters and the gesture
-/// areas. [_kGraphRightSpace] reserves room for the Y-axis labels.
+/// areas. [_kGraphRightSpace] reserves room for the Y-axis labels; the
+/// limit ribbons widen the gutter beyond it (see [_rightGutterWidth]).
 const double _kGraphLeftSpace = 8;
 const double _kGraphRightSpace = 56;
 const double _kGraphBottomSpace = 24;
+
+/// Limit-ribbon slot geometry: one vertical strip per channel with a
+/// load-cell ladder, in the gutter right of the Y labels (a label wider
+/// than the base gutter loses the fight — the ribbons paint after the
+/// labels, in the force painter's drawOverlay).
+// TODO: make the gutter width static (it currently widens per ribbon
+// channel) and play around with the ribbon shape.
+const double _kRibbonWidth = 5;
+const double _kRibbonGap = 2;
+const double _kRibbonPad = 6;
+
+/// The right gutter width with [ribbonSlots] limit ribbons: the base gutter
+/// (tick labels) plus the ribbon zone. All panes and the minimap share the
+/// result, or the plot areas drift out of alignment.
+double _rightGutterWidth(int ribbonSlots) =>
+    _kGraphRightSpace +
+    (ribbonSlots == 0
+        ? 0
+        : _kRibbonPad +
+              ribbonSlots * (_kRibbonWidth + _kRibbonGap) -
+              _kRibbonGap);
 
 double _graphPlotWidth(double totalWidth, double rightSpace) =>
     totalWidth - _kGraphLeftSpace - rightSpace;
@@ -1667,9 +1689,14 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             null)
           ch,
     ];
-    // All panes and the minimap share the right gutter width, or the plot
-    // areas drift out of alignment.
-    const rightSpace = _kGraphRightSpace;
+    // Limit ribbons widen the right gutter (all panes and the minimap share
+    // the width, or the plot areas drift out of alignment). Disabled
+    // warnings mean no chrome and no extra space.
+    final rightSpace = _rightGutterWidth(
+      widget.settings.limitWarningsEnabled
+          ? _ribbonChannels(widget.data, drawableChannels).length
+          : 0,
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
         return Stack(
@@ -2197,6 +2224,64 @@ void _drawLimitZones(
   }
   canvas.drawPath(hairline, linePen);
   canvas.drawPath(teeth, tickPen);
+}
+
+/// Channels that get a limit ribbon in the gutter: drawable channels with a
+/// load-cell ladder (see [ChannelLimits.hasLoadCellLadder]). Slot order is
+/// channel order — stable, so a ribbon never moves. Shared by the workspace
+/// (which sizes the gutter by the count) and the force painter's drawOverlay
+/// (which draws the slots), so the two always agree.
+List<int> _ribbonChannels(GraphDataSource data, List<int> activeChannels) => [
+  for (final ch in activeChannels)
+    if (data.limitsFor(ch).hasLoadCellLadder) ch,
+];
+
+/// One band of one channel's limit ribbon: a vertical strip of 45° hazard
+/// stripes in the channel's color from [y1] to [y2] (either order), at x
+/// [x]..[x + _kRibbonWidth]. [exceeded] adds a wash under the stripes, so
+/// the band past the limit rung reads heavier than the warning band below
+/// it; the wash step at the rung is the band's boundary marker.
+///
+/// The stripes slope top-left to bottom-right ("\"), opposite the
+/// missing-data hatch ("/") — two diagonal idioms on one canvas must not
+/// match. Endpoints are clamped per stripe (no canvas clips, no
+/// save/restore) and all stripes go into one Path: two draw calls per
+/// band, not one per stripe.
+void _drawRibbonBand(
+  Canvas canvas, {
+  required double x,
+  required double y1,
+  required double y2,
+  required bool exceeded,
+  required Color color,
+}) {
+  final top = math.min(y1, y2);
+  final bottom = math.max(y1, y2);
+  if (bottom - top < 1) return;
+
+  if (exceeded) {
+    canvas.drawRect(
+      Rect.fromLTRB(x, top, x + _kRibbonWidth, bottom),
+      Paint()..color = color.withAlpha(60),
+    );
+  }
+  final pen = Paint()
+    ..color = color.withAlpha(150)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.2
+    ..strokeCap = StrokeCap.butt;
+  // A stripe is the 45° segment (x + t, d + t), t in [0, _kRibbonWidth],
+  // clipped to [top, bottom] by clamping t.
+  const double spacing = 4;
+  final stripes = Path();
+  for (double d = top - _kRibbonWidth; d < bottom; d += spacing) {
+    final t0 = math.max(0.0, top - d);
+    final t1 = math.min(_kRibbonWidth, bottom - d);
+    if (t1 - t0 < 0.5) continue;
+    stripes.moveTo(x + t0, d + t0);
+    stripes.lineTo(x + t1, d + t1);
+  }
+  canvas.drawPath(stripes, pen);
 }
 
 /// Draws a diagonal warning hatch pattern over the [GraphDataSource.gaps]
@@ -3015,8 +3100,9 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 }
 
 /// Force graph: each channel's tared value in the selected display unit.
-/// The limit chrome (rail display) draws in [drawOverlay]: over the axes,
-/// under the data ink, so a signal sitting on the rail stays visible.
+/// The limit chrome (gutter ribbons, rail display) draws in [drawOverlay]:
+/// over the axes, under the data ink, so a signal sitting on the rail stays
+/// visible.
 class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   @override
   final bool showXLabels;
@@ -3119,7 +3205,8 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   /// Rail chrome, gated on `AppSettings.limitWarningsEnabled`. Hairline at
   /// each in-view rail; flood from the rail to the plot edge where the
   /// converter railed. Mixed buckets are treated as hot when a bucket is
-  /// ≤1 px ([_blockSizeFor] >= [kBucketSize]).
+  /// ≤1 px ([_blockSizeFor] >= [kBucketSize]). Ribbons sit in the outer
+  /// gutter for channels with a load-cell ladder.
   @override
   void drawOverlay(
     Canvas canvas,
@@ -3132,6 +3219,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     if (!_settings.limitWarningsEnabled) return;
 
     final unit = _settings.displayUnit;
+    final fraction = _settings.lcWarnFraction;
     final viewSpan = viewEnd - viewStart;
     if (viewSpan <= 0 || graphSz.width <= 0) return;
     final treatMixedAsHot =
@@ -3141,6 +3229,46 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       ..color = colorScheme.error.withAlpha(22)
       ..blendMode = BlendMode.src;
     final rails = <({double y, bool upperSide})>[];
+
+    // -- Ribbons: per-channel strips in the outer gutter --
+    final ribbons = _ribbonChannels(_data, _activeChannels);
+    final ribbonX0 = graphSz.width + _kGraphRightSpace + _kRibbonPad;
+    for (final (i, ch) in ribbons.indexed) {
+      final limits = _data.limitsFor(ch);
+      final conv = unit.converterFor(
+        _data.calibrationFor(ch),
+        _data.channel(ch).tare,
+      );
+      if (conv == null) continue;
+      final color = getChannelColor(ch);
+      final x = ribbonX0 + i * (_kRibbonWidth + _kRibbonGap);
+
+      for (final positive in [true, false]) {
+        final anchors = limits.anchorsFor(positive, fraction);
+        final clipRaw = positive
+            ? ChannelLimits.clipRawPos.toDouble()
+            : ChannelLimits.clipRawNeg.toDouble();
+        final warnY = valueToY(conv(anchors.warn)).clamp(0.0, graphSz.height);
+        final limitY = valueToY(conv(anchors.limit)).clamp(0.0, graphSz.height);
+        final railY = valueToY(conv(clipRaw)).clamp(0.0, graphSz.height);
+        _drawRibbonBand(
+          canvas,
+          x: x,
+          y1: limitY,
+          y2: railY,
+          exceeded: true,
+          color: color,
+        );
+        _drawRibbonBand(
+          canvas,
+          x: x,
+          y1: warnY,
+          y2: limitY,
+          exceeded: false,
+          color: color,
+        );
+      }
+    }
 
     for (final ch in _activeChannels) {
       final series = _data.channel(ch);

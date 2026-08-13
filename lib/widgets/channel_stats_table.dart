@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
 import 'graph_components.dart' show getChannelColor;
 
@@ -37,21 +38,21 @@ class ChannelStatsTable extends StatelessWidget {
     required this.onToggleChannel,
     required this.unit,
     required this.rows,
-    this.clipped,
+    this.channelStates,
   }) : assert(
-         _oneValuePerChannel(labels, activeChannels, rows, clipped),
-         'labels, activeChannels, rows and clipped must agree in length',
+         _oneValuePerChannel(labels, activeChannels, rows, channelStates),
+         'labels, activeChannels, rows and channelStates must agree in length',
        );
 
   static bool _oneValuePerChannel(
     List<String> labels,
     List<bool> activeChannels,
     List<ChannelStatsRow> rows,
-    List<bool>? clipped,
+    List<ChannelLimitState?>? channelStates,
   ) =>
       activeChannels.length == labels.length &&
       rows.every((r) => r.values.length == labels.length) &&
-      (clipped == null || clipped.length == labels.length);
+      (channelStates == null || channelStates.length == labels.length);
 
   final List<String> labels;
 
@@ -68,26 +69,48 @@ class ChannelStatsTable extends StatelessWidget {
   /// Stat rows below the channel header.
   final List<ChannelStatsRow> rows;
 
-  /// Per-channel ADC-rail flag. Null = no status display (session playback).
-  final List<bool>? clipped;
+  /// Per-channel limit status (see [ChannelLimitState]): shown as a status
+  /// icon in the channel's label cell. Null = no status display at all
+  /// (e.g. a session playback, where nothing is live).
+  final List<ChannelLimitState?>? channelStates;
 
+  /// The per-channel status icon: clip outranks proximity glyphs. Null
+  /// when there is nothing to say — the slot stays reserved so labels
+  /// never reflow.
   static Widget? _statusIcon(
     BuildContext context, {
-    required bool clipped,
+    required ChannelLimitState? state,
     required bool active,
     required int channel,
   }) {
-    if (!active || !clipped) return null;
-    return Tooltip(
-      message: 'CH ${channel + 1} is at the ADC rail. The reading is clipping.',
-      triggerMode: TooltipTriggerMode.tap,
-      child: Icon(
-        Icons.warning_rounded,
+    if (!active || state == null) return null;
+    final cs = Theme.of(context).colorScheme;
+    if (state.clipDir != 0) {
+      return Tooltip(
+        message:
+            'CH ${channel + 1} is at the ADC rail. The reading is clipping.',
+        triggerMode: TooltipTriggerMode.tap,
+        child: Icon(Icons.warning_rounded, size: 14, color: cs.error),
+      );
+    }
+    return switch (state.level) {
+      LimitLevel.caution => Icon(
+        Icons.warning_amber_rounded,
         size: 14,
-        color: Theme.of(context).colorScheme.error,
+        color: cautionColor(context),
       ),
-    );
+      LimitLevel.exceeded => Icon(Icons.error, size: 14, color: cs.error),
+      _ => null,
+    };
   }
+
+  /// The "caution" amber, resolved per theme brightness (ColorScheme has no
+  /// warning role; exceeded and clip use its error role). Same pragmatism as
+  /// [getChannelColor]'s raw Material colors.
+  static Color cautionColor(BuildContext context) =>
+      Theme.of(context).brightness == Brightness.dark
+      ? Colors.amber.shade300
+      : Colors.amber.shade800;
 
   @override
   Widget build(BuildContext context) {
@@ -144,7 +167,7 @@ class ChannelStatsTable extends StatelessWidget {
                             height: 16,
                             child: _statusIcon(
                               context,
-                              clipped: clipped?[i] ?? false,
+                              state: channelStates?[i],
                               active: activeChannels[i],
                               channel: i,
                             ),
@@ -199,21 +222,21 @@ class ChannelStatsTable extends StatelessWidget {
               // -----------------------------------------------------------
               // Stat rows
               // -----------------------------------------------------------
-              for (final row in rows)
-                TableRow(
-                  children: [
-                    Text(row.label, style: headerStyle),
-                    for (int i = 0; i < channelCount; i++)
-                      _TableCellValue(
-                        value: row.values[i],
-                        unit: unit,
-                        isActive: activeChannels[i],
-                        isStale: row.stale,
-                        textStyle: row.emphasized ? emphasizedStyle : monoStyle,
-                        onTap: () => onToggleChannel(i),
-                      ),
-                  ],
-                ),
+                for (final row in rows)
+                  TableRow(
+                    children: [
+                      Text(row.label, style: headerStyle),
+                      for (int i = 0; i < channelCount; i++)
+                        _TableCellValue(
+                          value: row.values[i],
+                          unit: unit,
+                          isActive: activeChannels[i],
+                          isStale: row.stale,
+                          textStyle: row.emphasized ? emphasizedStyle : monoStyle,
+                          onTap: () => onToggleChannel(i),
+                        ),
+                    ],
+                  ),
             ],
           ),
           // Unit overlay, anchored to the top-left corner, sitting just

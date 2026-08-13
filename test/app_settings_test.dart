@@ -29,6 +29,24 @@ void main() {
     expect(s2.displayUnit, DisplayUnit.kgf);
   });
 
+  test('lcWarnFraction: default, persistence, clamping', () async {
+    final s = await newSettings();
+    expect(s.lcWarnFraction, AppSettings.defaultLcWarnFraction);
+
+    await s.setLcWarnFraction(0.9);
+    final s2 = await newSettings();
+    expect(s2.lcWarnFraction, 0.9);
+
+    // Past-100% settings (overload-limit role) persist unclamped.
+    await s2.setLcWarnFraction(2.0);
+    expect(s2.lcWarnFraction, 2.0);
+
+    await s2.setLcWarnFraction(0.1);
+    expect(s2.lcWarnFraction, AppSettings.minLcWarnFraction);
+    await s2.setLcWarnFraction(4.5);
+    expect(s2.lcWarnFraction, AppSettings.maxLcWarnFraction);
+  });
+
   test('legacy pre-slot keys are erased on load', () async {
     SharedPreferences.setMockInitialValues({
       'channel_labels': ['a', 'b', 'c', 'd'],

@@ -178,12 +178,12 @@ void main() {
       await tester.tap(find.byType(NavigationDestination).at(3));
       await tester.pump();
 
-      // The device section sits below the fold; the settings ListView
-      // builds children lazily, so scroll the card into view first
-      // (IndexedStack keeps every tab's Scrollable in the tree — target
-      // the settings one explicitly).
+      // The limit-warnings section pushed the device section below the
+      // fold; the settings ListView builds children lazily, so scroll the
+      // card into view first (IndexedStack keeps every tab's Scrollable in
+      // the tree — target the settings one explicitly).
       await tester.scrollUntilVisible(
-        find.text('Dynamite Sampler Demo'),
+        find.text('Device info'),
         300,
         scrollable: find.descendant(
           of: find.byType(SettingsTab),

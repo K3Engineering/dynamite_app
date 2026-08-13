@@ -32,13 +32,37 @@ class AppSettings extends ChangeNotifier {
 
     _wakelockEnabled = _prefs.getBool(_keyWakelock) ?? false;
 
+    _lcWarnFraction = (_prefs.getDouble(_keyLcWarnFraction) ??
+            defaultLcWarnFraction)
+        .clamp(minLcWarnFraction, maxLcWarnFraction);
+
     _limitWarningsEnabled = _prefs.getBool(_keyLimitWarnings) ?? true;
   }
 
   static const String _keyUnit = 'display_unit';
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
+  static const String _keyLcWarnFraction = 'lc_warn_fraction';
   static const String _keyLimitWarnings = 'limit_warnings_enabled';
+
+  /// The user's limit rung as a fraction of the assigned load cell's rated
+  /// full scale; FSR (100%) is always the other rung. Below 100% the
+  /// setting starts the warning band and FSR is the limit; above 100% the
+  /// roles swap — FSR warns ("out of spec") and the setting is the limit
+  /// (e.g. 200% ≈ a cell's typical mechanical overload rating). With no
+  /// cell assigned the ADC range is the limit, and a setting past 100%
+  /// leaves no warning band.
+  static const double defaultLcWarnFraction = 0.8;
+  static const double minLcWarnFraction = 0.5;
+  static const double maxLcWarnFraction = 3.0;
+
+  /// The warning slider's stops: fine 5% steps up to the FSR detent
+  /// (where the warning and the limit swap roles), coarse overload steps
+  /// above it.
+  static const List<double> lcWarnFractionStops = [
+    0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90, 0.95, 1.00,
+    1.25, 1.50, 2.00, 2.50, 3.00,
+  ];
 
   /// Keys of the pre-slot model (channel labels, load cell bank, per-channel
   /// assignments, the app-global DMM reading), erased on load.
@@ -70,10 +94,14 @@ class AppSettings extends ChangeNotifier {
   bool _wakelockEnabled = false;
   bool get wakelockEnabled => _wakelockEnabled;
 
-  /// Master switch for the chart's 1.2 V rail display (flood and dashes).
-  /// When off, the graphs show no limit chrome. The at-the-rail clip icon
-  /// in the live numbers is NOT gated: a railed converter is data validity,
-  /// not a warning preference.
+  double _lcWarnFraction = defaultLcWarnFraction;
+  double get lcWarnFraction => _lcWarnFraction;
+
+  /// Master switch for all limit indication: the chart's limit ribbons and
+  /// rail display (flood and dashes), and the live numbers' status icons.
+  /// When off, the graphs and numbers show no limit-related chrome — except
+  /// the at-the-rail clip icon (a railed converter is data validity, not a
+  /// warning preference).
   bool _limitWarningsEnabled = true;
   bool get limitWarningsEnabled => _limitWarningsEnabled;
 
@@ -96,6 +124,15 @@ class AppSettings extends ChangeNotifier {
     _wakelockEnabled = enabled;
     notifyListeners();
     await _prefs.setBool(_keyWakelock, enabled);
+  }
+
+  Future<void> setLcWarnFraction(double fraction) async {
+    _lcWarnFraction = fraction.clamp(
+      minLcWarnFraction,
+      maxLcWarnFraction,
+    );
+    notifyListeners();
+    await _prefs.setDouble(_keyLcWarnFraction, _lcWarnFraction);
   }
 
   Future<void> setLimitWarningsEnabled(bool enabled) async {

@@ -74,16 +74,58 @@ class SettingsTab extends StatelessWidget {
           ),
           const SizedBox(height: 16),
 
-          // Limit warnings: the master switch. Disabling removes the 1.2 V
-          // rail chrome (flood and dashes) from the chart — but not the
-          // at-the-rail clip icon in the numbers (a railed converter is data
-          // validity, not a warning preference).
+          // Limit warnings: master switch + the warning rung. Disabling
+          // removes the limit chrome from the chart (ribbons, rail flood
+          // and dashes) and the numbers — but not the at-the-rail clip
+          // icon (a railed converter is data validity, not a warning
+          // preference).
           SwitchListTile(
             title: const Text('Limit warnings'),
-            subtitle: const Text('Clipped-range indication on the chart'),
+            subtitle: const Text(
+              'Caution and full-scale indication on the chart and live numbers',
+            ),
             value: settings.limitWarningsEnabled,
             onChanged: settings.setLimitWarningsEnabled,
             contentPadding: EdgeInsets.zero,
+          ),
+          const SizedBox(height: 4),
+          Opacity(
+            opacity: settings.limitWarningsEnabled ? 1.0 : 0.5,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _limitRungDescription(settings.lcWarnFraction),
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                // A label per stop, positioned by stop index (the stops are
+                // non-uniform past FSR). The 100% detent — where the warning
+                // and the limit swap roles — is emphasized.
+                const _SliderStopLabels(
+                  stops: AppSettings.lcWarnFractionStops,
+                ),
+                Slider(
+                  value: _nearestStopIndex(
+                    settings.lcWarnFraction,
+                  ).toDouble(),
+                  min: 0,
+                  max: AppSettings.lcWarnFractionStops.length - 1,
+                  divisions: AppSettings.lcWarnFractionStops.length - 1,
+                  label:
+                      '${(settings.lcWarnFraction * 100).round()}%',
+                  onChanged: settings.limitWarningsEnabled
+                      ? (v) => unawaited(
+                          settings.setLcWarnFraction(
+                            AppSettings.lcWarnFractionStops[v.round()],
+                          ),
+                        )
+                      : null,
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 8),
 
@@ -238,6 +280,85 @@ class _UnitGroup extends StatelessWidget {
         ),
         const SizedBox(height: 8),
       ],
+    );
+  }
+}
+
+/// The limit-setting description. FSR is always one rung and the setting the
+/// other; the roles swap at the 100% detent.
+String _limitRungDescription(double fraction) {
+  final pct = (fraction * 100).round();
+  final rungs = fraction < 1.0
+      ? 'Warning band from $pct% to 100% of the load cell rating; past the '
+            'rating is the limit.'
+      : fraction > 1.0
+      ? 'Warning at the load cell rating; the limit is at $pct% of it.'
+      : 'Warning and limit are both at the load cell rating.';
+  return '$rungs With no cell assigned, the ADC range is the limit.';
+}
+
+/// The slider works in stop indices; map the stored fraction to the closest
+/// stop.
+int _nearestStopIndex(double fraction) {
+  const stops = AppSettings.lcWarnFractionStops;
+  var best = 0;
+  for (var i = 1; i < stops.length; i++) {
+    if ((stops[i] - fraction).abs() < (stops[best] - fraction).abs()) {
+      best = i;
+    }
+  }
+  return best;
+}
+
+/// A label per slider stop, positioned by stop index (the stops are
+/// non-uniform past FSR, so a Row won't line them up). The 100% detent —
+/// where the warning and the limit swap roles — is emphasized.
+class _SliderStopLabels extends StatelessWidget {
+  const _SliderStopLabels({required this.stops});
+
+  final List<double> stops;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final style = theme.textTheme.labelSmall?.copyWith(
+      color: theme.colorScheme.onSurfaceVariant,
+    );
+    final detentStyle = style?.copyWith(
+      fontWeight: FontWeight.bold,
+      color: theme.colorScheme.primary,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // The slider track is inset by the thumb radius on both sides; stop
+        // i sits at i/(N-1) of the track.
+        const double inset = 24;
+        const double labelW = 26;
+        final track = constraints.maxWidth - 2 * inset;
+        return SizedBox(
+          height: 14,
+          child: Stack(
+            children: [
+              for (var i = 0; i < stops.length; i++)
+                Positioned(
+                  left:
+                      (inset + track * i / (stops.length - 1) - labelW / 2)
+                          .clamp(0.0, constraints.maxWidth - labelW),
+                  child: SizedBox(
+                    width: labelW,
+                    child: Text(
+                      stops[i] == 1.0
+                          ? '100%'
+                          : '${(stops[i] * 100).round()}',
+                      textAlign: TextAlign.center,
+                      style: stops[i] == 1.0 ? detentStyle : style,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'adc_protocol.dart';
 import '../models/bucket_series.dart';
 import '../models/calibration.dart';
+import '../models/channel_limits.dart';
 import '../models/device_capabilities.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
@@ -442,6 +443,12 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
 
   @override
   int get calibrationVersion => _calibrationVersion;
+
+  @override
+  ChannelLimits limitsFor(int channelIndex) => ChannelLimits(
+    board: calibrationFor(channelIndex).board,
+    loadCellFsMvV: _loadCells[channelIndex]?.sensitivityMvV,
+  );
 
   @override
   Listenable get repaint => this;

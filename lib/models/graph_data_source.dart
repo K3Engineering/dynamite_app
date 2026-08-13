@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'bucket_series.dart';
 import 'calibration.dart';
+import 'channel_limits.dart';
 import 'gap_list.dart';
 
 /// A single channel's raw circular-buffer data plus its precomputed extremes,
@@ -42,6 +43,11 @@ abstract interface class GraphDataSource {
   /// The per-channel calibration used to convert raw counts to display
   /// units (board piecewise map + assigned load cell).
   ChannelCalibration calibrationFor(int channelIndex);
+
+  /// The channel's measurement limits (ADC clip, plus the assigned load
+  /// cell's full scale when known). Feeds the force graph's limit-line
+  /// overlay and the live stats' warning levels.
+  ChannelLimits limitsFor(int channelIndex);
 
   /// Monotonic identity of the calibration set: bumped when calibration
   /// changes (factory data arrives, a load-cell assignment changes), so

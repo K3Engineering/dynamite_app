@@ -9,10 +9,11 @@ import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
-/// Paint smoke test for the limit chrome: with a channel pinned at the ADC
-/// rail, the force pane paints the rail display (flood and dashes). No
-/// pixel assertions — the point is the paint path executing end to end
-/// without throwing.
+/// Paint smoke test for the limit chrome: with a cell assigned on one
+/// channel, data inside its warning band, and another channel pinned at the
+/// rail, the force pane paints the gutter ribbons and the rail display
+/// (flood and dashes). No pixel assertions — the point is the paint path
+/// executing end to end without throwing.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -30,7 +31,9 @@ void main() {
     tester,
   ) async {
     SharedPreferences.setMockInitialValues({});
-    final settings = AppSettings(prefs: await SharedPreferences.getInstance());
+    final settings = AppSettings(
+      prefs: await SharedPreferences.getInstance(),
+    );
     final hub = DataHub();
     hub.updateBoardCalibration(
       BoardCalibration(
@@ -46,8 +49,8 @@ void main() {
     ]);
 
     final frame = Int32List(channels);
-    // Channel 0 carries mid-scale data; channel 1 is pinned at the positive
-    // rail.
+    // Channel 0 sits at 90% of its rating (inside the default 80% warning
+    // band, below the FSR limit); channel 1 is pinned at the positive rail.
     frame[0] = (0.9 * 2.0 * testNominals.countsPerMvV).round();
     frame[1] = 0x7FFFFF;
     for (var i = 0; i < 200; i++) {
