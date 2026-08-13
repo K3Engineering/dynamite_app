@@ -443,6 +443,13 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// stats display are held values, not fresh data.
   bool get liveEdgeIsGap => gaps.contains(totalSamples - 1);
 
+  /// Latest raw value of a channel (ADC counts), for the live stats' limit
+  /// levels — the warning thresholds are evaluated in the raw domain.
+  int currentRawFor(int adcChannel) {
+    assert(adcChannel >= 0 && adcChannel < numAdcChannels);
+    return _currentRaw[adcChannel];
+  }
+
   /// Get current value for a given ADC channel in the specified unit. During
   /// a gap this returns the held (last real) value; check [liveEdgeIsGap] to
   /// mark it stale in the UI. Null when the unit is unavailable for the

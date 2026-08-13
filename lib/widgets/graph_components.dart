@@ -9,6 +9,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../models/app_settings.dart';
 import '../models/bucket_series.dart';
+import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
@@ -1706,7 +1707,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
               _LiveButton(data: widget.data, ctrl: widget.ctrl),
             // Zoom controls
             Positioned(
-              right: 72,
+              right: _kGraphRightSpace + 16,
               bottom: 72,
               child: _ZoomControls(
                 data: widget.data,
@@ -2121,6 +2122,42 @@ void _drawZeroBaseline(
   }
 }
 
+/// Always-on rail marker: a full-width hairline at [y] with 45° teeth
+/// pointing into the forbidden zone. The tooth grid is screen-fixed.
+/// Painted over the rail flood (the flood's src blend erases whatever is
+/// under it) and under the data ink.
+void _drawLimitZones(
+  Canvas canvas,
+  Color color, {
+  required double y,
+  required bool upperSide,
+  required double width,
+}) {
+  if (width < 1) return;
+
+  final linePen = Paint()
+    ..color = color.withAlpha(190)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.2;
+  final tickPen = Paint()
+    ..color = color.withAlpha(150)
+    ..style = PaintingStyle.stroke
+    ..strokeWidth = 1.1
+    ..strokeCap = StrokeCap.butt;
+
+  final double dy = upperSide ? -5 : 5;
+  final hairline = Path()
+    ..moveTo(0, y)
+    ..lineTo(width, y);
+  final teeth = Path();
+  for (double x = 2; x + 5 <= width; x += 10) {
+    teeth.moveTo(x, y);
+    teeth.lineTo(x + 5, y + dy);
+  }
+  canvas.drawPath(hairline, linePen);
+  canvas.drawPath(teeth, tickPen);
+}
+
 /// Draws a diagonal warning hatch pattern over the [GraphDataSource.gaps]
 /// ranges visible in the window (regions where packets were dropped).
 void _drawMissingDataHatching(
@@ -2527,8 +2564,7 @@ bool _paintEnvelopeDataLayer(
 }) {
   final totalSamples = data.totalSamples;
 
-  double valueToY(double val) =>
-      (gh - (val - yMin) * gh / (yMax - yMin)).clamp(0.0, gh);
+  double valueToY(double val) => gh - (val - yMin) * gh / (yMax - yMin);
 
   final int blockSize = _blockSizeFor(viewSpan, gw);
   final double blockPx = blockSize * gw / viewSpan;
@@ -2813,8 +2849,17 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// its tares because the difference cancels them.)
   List<double> cacheKeyTares() => const [];
 
-  /// Optional chrome drawn after the axes, before the data lines.
-  void drawOverlay(Canvas canvas, Size graphSz, YAxisRange yRange) {}
+  /// Optional chrome drawn after the axes, before the data lines. [yRange]
+  /// and [valueToY] are this paint pass's axis mapping, [viewStart]/
+  /// [viewEnd] the visible sample window.
+  void drawOverlay(
+    Canvas canvas,
+    Size graphSz,
+    YAxisRange yRange,
+    double Function(double value) valueToY,
+    double viewStart,
+    double viewEnd,
+  ) {}
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -2894,7 +2939,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       color: colorScheme.error,
     );
 
-    drawOverlay(canvas, graphSz, yRange);
+    drawOverlay(canvas, graphSz, yRange, valueToY, viewStart, viewEnd);
 
     // -- Data lines (segment-cached envelope) --
     final workRemains = _paintEnvelopeDataLayer(
@@ -2922,6 +2967,8 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 }
 
 /// Force graph: each channel's tared value in the selected display unit.
+/// The limit chrome (rail display) draws in [drawOverlay]: over the axes,
+/// under the data ink, so a signal sitting on the rail stays visible.
 class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   @override
   final bool showXLabels;
@@ -2996,15 +3043,15 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       rawMax = 0;
     }
 
-    // Enforce a minimum visible window (in raw counts) so a flat signal
-    // gets a non-degenerate axis: widen each channel's converted fold
-    // around the global tared-raw midpoint.
+    // Enforce a minimum visible range (noise floor) so the graph isn't
+    // degenerate: widen each channel's converted fold around the global
+    // tared-raw midpoint.
     // TODO: size this per board model once the model specs are plumbed
-    const double minWindowCounts = 10000; // raw counts
-    if (rawMax - rawMin < minWindowCounts) {
+    const double noiseFloor = 10000; // raw counts
+    if (rawMax - rawMin < noiseFloor) {
       final mid = (rawMax + rawMin) / 2;
-      final lo = mid - minWindowCounts / 2;
-      final hi = mid + minWindowCounts / 2;
+      final lo = mid - noiseFloor / 2;
+      final hi = mid + noiseFloor / 2;
       for (final MapEntry(key: ch, value: conv) in converters.entries) {
         final tare = _data.channel(ch).tare;
         yMin = math.min(yMin, conv(lo + tare));
@@ -3017,7 +3064,91 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       yMax = 1;
     }
 
-    return _computeYRange(yMin, yMax, _settings.displayUnit);
+    return _computeYRange(yMin, yMax, unit);
+  }
+
+  /// Rail chrome, gated on `AppSettings.limitWarningsEnabled`. Hairline at
+  /// each in-view rail; flood from the rail to the plot edge where the
+  /// converter railed. Mixed buckets are treated as hot when a bucket is
+  /// ≤1 px ([_blockSizeFor] >= [kBucketSize]).
+  @override
+  void drawOverlay(
+    Canvas canvas,
+    Size graphSz,
+    YAxisRange yRange,
+    double Function(double value) valueToY,
+    double viewStart,
+    double viewEnd,
+  ) {
+    if (!_settings.limitWarningsEnabled) return;
+
+    final unit = _settings.displayUnit;
+    final viewSpan = viewEnd - viewStart;
+    if (viewSpan <= 0 || graphSz.width <= 0) return;
+    final treatMixedAsHot =
+        _blockSizeFor(viewSpan, graphSz.width) >= kBucketSize;
+
+    final shadePaint = Paint()
+      ..color = colorScheme.error.withAlpha(22)
+      ..blendMode = BlendMode.src;
+    final rails = <({double y, bool upperSide})>[];
+
+    for (final ch in _activeChannels) {
+      final series = _data.channel(ch);
+      final conv = unit.converterFor(_data.calibrationFor(ch), series.tare);
+      if (conv == null) continue;
+
+      for (final positive in [true, false]) {
+        final clipRaw = positive
+            ? ChannelLimits.clipRawPos
+            : ChannelLimits.clipRawNeg;
+        final railY = valueToY(conv(clipRaw.toDouble()));
+        if (railY < 0 || railY > graphSz.height) continue;
+
+        rails.add((y: railY, upperSide: positive));
+
+        final couldBeHot = positive
+            ? series.max >= clipRaw
+            : series.min <= clipRaw;
+        if (!couldBeHot) continue;
+
+        final start = math.max(viewStart.floor(), _data.oldestSample);
+        final end = math.min(viewEnd.ceil(), _data.totalSamples);
+        for (final it in hotIntervals(
+          data: series.data,
+          cap: _data.bufferCapacity,
+          buckets: series.buckets,
+          start: start,
+          end: end,
+          threshold: clipRaw,
+          positive: positive,
+          treatMixedAsHot: treatMixedAsHot,
+        )) {
+          final x1 = (it.start - viewStart) * graphSz.width / viewSpan;
+          final x2 = (it.end - viewStart) * graphSz.width / viewSpan;
+          if (x2 - x1 < 1) continue;
+          canvas.drawRect(
+            Rect.fromLTRB(
+              x1,
+              positive ? 0 : railY,
+              x2,
+              positive ? railY : graphSz.height,
+            ),
+            shadePaint,
+          );
+        }
+      }
+    }
+
+    for (final r in rails) {
+      _drawLimitZones(
+        canvas,
+        colorScheme.error,
+        y: r.y,
+        upperSide: r.upperSide,
+        width: graphSz.width,
+      );
+    }
   }
 
   @override
@@ -3156,7 +3287,14 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
       '${_formatTickValue(tick / yRange.rung.factor, yRange.decimals)}/s';
 
   @override
-  void drawOverlay(Canvas canvas, Size graphSz, YAxisRange yRange) {
+  void drawOverlay(
+    Canvas canvas,
+    Size graphSz,
+    YAxisRange yRange,
+    double Function(double value) valueToY,
+    double viewStart,
+    double viewEnd,
+  ) {
     // "dF/dt" label in top-left
     final dLabel = labels.prepare(
       'dF/dt (${yRange.rung.symbol}/s)',

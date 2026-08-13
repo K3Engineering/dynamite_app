@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
 import '../models/calibration.dart';
+import '../models/channel_limits.dart';
 
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
@@ -507,6 +508,12 @@ class LiveStats extends StatelessWidget {
           // Same when nothing decodable is arriving at all.
           final stale = hub.liveEdgeIsGap || (health?.noDataFlowing ?? false);
 
+          final hasData = hub.totalSamples > 0;
+          final clipped = [
+            for (int i = 0; i < DataHub.numAdcChannels; i++)
+              hasData && ChannelLimits.isClipped(hub.currentRawFor(i)),
+          ];
+
           return Column(
             children: [
               ChannelStatsTable(
@@ -515,6 +522,7 @@ class LiveStats extends StatelessWidget {
                 onToggleChannel: (i) =>
                     settings.setChannelActive(i, !settings.activeChannels[i]),
                 unit: unit,
+                clipped: clipped,
                 rows: [
                   ChannelStatsRow(
                     label: 'Live',

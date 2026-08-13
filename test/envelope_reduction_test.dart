@@ -142,7 +142,7 @@ void main() {
         acc.series,
         start,
         end,
-        foldBucket: (bMin, bMax) {
+        foldBucket: (bMin, bMax, _, _) {
           fold(bMin);
           fold(bMax);
         },

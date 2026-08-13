@@ -37,18 +37,21 @@ class ChannelStatsTable extends StatelessWidget {
     required this.onToggleChannel,
     required this.unit,
     required this.rows,
+    this.clipped,
   }) : assert(
-         _oneValuePerChannel(labels, activeChannels, rows),
-         'labels, activeChannels and every row must have the same length',
+         _oneValuePerChannel(labels, activeChannels, rows, clipped),
+         'labels, activeChannels, rows and clipped must agree in length',
        );
 
   static bool _oneValuePerChannel(
     List<String> labels,
     List<bool> activeChannels,
     List<ChannelStatsRow> rows,
+    List<bool>? clipped,
   ) =>
       activeChannels.length == labels.length &&
-      rows.every((r) => r.values.length == labels.length);
+      rows.every((r) => r.values.length == labels.length) &&
+      (clipped == null || clipped.length == labels.length);
 
   final List<String> labels;
 
@@ -64,6 +67,27 @@ class ChannelStatsTable extends StatelessWidget {
 
   /// Stat rows below the channel header.
   final List<ChannelStatsRow> rows;
+
+  /// Per-channel ADC-rail flag. Null = no status display (session playback).
+  final List<bool>? clipped;
+
+  static Widget? _statusIcon(
+    BuildContext context, {
+    required bool clipped,
+    required bool active,
+    required int channel,
+  }) {
+    if (!active || !clipped) return null;
+    return Tooltip(
+      message: 'CH ${channel + 1} is at the ADC rail. The reading is clipping.',
+      triggerMode: TooltipTriggerMode.tap,
+      child: Icon(
+        Icons.warning_rounded,
+        size: 14,
+        color: Theme.of(context).colorScheme.error,
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -102,26 +126,47 @@ class ChannelStatsTable extends StatelessWidget {
                 children: [
                   const SizedBox.shrink(), // Empty top-left corner
                   for (int i = 0; i < channelCount; i++)
-                    _TappableChannelCell(
-                      onTap: () => onToggleChannel(i),
-                      child: Padding(
-                        padding: const EdgeInsets.only(
-                          bottom: 4,
-                          left: 4,
-                          right: 4,
-                        ),
-                        child: Text(
-                          labels[i],
-                          textAlign: TextAlign.right,
-                          style: Theme.of(context).textTheme.labelSmall
-                              ?.copyWith(
-                                color: activeChannels[i]
-                                    ? getChannelColor(i)
-                                    : staleColor.withValues(alpha: 0.5),
+                    Padding(
+                      padding: const EdgeInsets.only(
+                        bottom: 4,
+                        left: 4,
+                        right: 4,
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          // Fixed-width status slot: the label never
+                          // reflows when an icon appears or changes.
+                          // Outside the channel toggle so a tap shows
+                          // the tooltip instead of hiding the channel.
+                          SizedBox(
+                            width: 20,
+                            height: 16,
+                            child: _statusIcon(
+                              context,
+                              clipped: clipped?[i] ?? false,
+                              active: activeChannels[i],
+                              channel: i,
+                            ),
+                          ),
+                          Flexible(
+                            child: _TappableChannelCell(
+                              onTap: () => onToggleChannel(i),
+                              child: Text(
+                                labels[i],
+                                textAlign: TextAlign.right,
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: activeChannels[i]
+                                          ? getChannelColor(i)
+                                          : staleColor.withValues(alpha: 0.5),
+                                    ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                 ],

@@ -336,20 +336,26 @@ BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
 
 /// Fold the EXACT min/max of a bucket series over the sample window
 /// `[start, end)`: buckets fully inside the window are folded from the
-/// precomputed aggregates via [foldBucket]; the partial head/tail portions
-/// are handed to [scanExact], so the cost is O(window / bucketSize +
-/// bucketSize). Windows spanning fewer than two buckets fall back to a
-/// single [scanExact] (aggregates would not help).
+/// precomputed aggregates via [foldBucket] (which also receives the bucket's
+/// sample range); the partial head/tail portions are handed to [scanExact],
+/// so the cost is O(window / bucketSize + bucketSize). Windows spanning
+/// fewer than two buckets fall back to a single [scanExact] (aggregates
+/// would not help).
 ///
 /// Unlike [reduceBlockBuckets] this is exact, and it cannot read an aliased
 /// slot: a bucket fully inside `[start, end)` -- with the window clamped to
 /// the retained sample range, as renderers always do -- is always among the
 /// most recent `numBuckets` bucket indices.
+///
+/// The callbacks fire in ascending sample order (head scan, then buckets,
+/// then tail scan), so a caller can stream ordered state (e.g. an open
+/// interval) through the fold.
 void foldBucketRange(
   BucketSeries buckets,
   int start,
   int end, {
-  required void Function(int bucketMin, int bucketMax) foldBucket,
+  required void Function(int bucketMin, int bucketMax, int from, int to)
+  foldBucket,
   required void Function(int from, int to) scanExact,
 }) {
   final int bs = buckets.bucketSize;
@@ -361,11 +367,11 @@ void foldBucketRange(
   final int bFirst = (start + bs - 1) ~/ bs;
   final int bLastEx = end ~/ bs;
   final int numBuckets = buckets.mins.length;
+  scanExact(start, bFirst * bs);
   for (int b = bFirst; b < bLastEx; b++) {
     final int li = b % numBuckets;
-    foldBucket(buckets.mins[li], buckets.maxs[li]);
+    foldBucket(buckets.mins[li], buckets.maxs[li], b * bs, (b + 1) * bs);
   }
-  scanExact(start, bFirst * bs);
   scanExact(bLastEx * bs, end);
 }
 
@@ -399,7 +405,7 @@ void foldBucketRange(
     buckets,
     start,
     end,
-    foldBucket: (bMin, bMax) {
+    foldBucket: (bMin, bMax, _, _) {
       fold(bMin.toDouble());
       fold(bMax.toDouble());
     },
