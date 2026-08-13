@@ -2122,42 +2122,6 @@ void _drawZeroBaseline(
   }
 }
 
-/// Always-on rail marker: a full-width hairline at [y] with 45° teeth
-/// pointing into the forbidden zone. The tooth grid is screen-fixed.
-/// Painted over the rail flood (the flood's src blend erases whatever is
-/// under it) and under the data ink.
-void _drawLimitZones(
-  Canvas canvas,
-  Color color, {
-  required double y,
-  required bool upperSide,
-  required double width,
-}) {
-  if (width < 1) return;
-
-  final linePen = Paint()
-    ..color = color.withAlpha(190)
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 1.2;
-  final tickPen = Paint()
-    ..color = color.withAlpha(150)
-    ..style = PaintingStyle.stroke
-    ..strokeWidth = 1.1
-    ..strokeCap = StrokeCap.butt;
-
-  final double dy = upperSide ? -5 : 5;
-  final hairline = Path()
-    ..moveTo(0, y)
-    ..lineTo(width, y);
-  final teeth = Path();
-  for (double x = 2; x + 5 <= width; x += 10) {
-    teeth.moveTo(x, y);
-    teeth.lineTo(x + 5, y + dy);
-  }
-  canvas.drawPath(hairline, linePen);
-  canvas.drawPath(teeth, tickPen);
-}
-
 /// Draws a diagonal warning hatch pattern over the [GraphDataSource.gaps]
 /// ranges visible in the window (regions where packets were dropped).
 void _drawMissingDataHatching(
@@ -2968,7 +2932,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
 /// Force graph: each channel's tared value in the selected display unit.
 /// The limit chrome (rail display) draws in [drawOverlay]: over the axes,
-/// under the data ink, so a signal sitting on the rail stays visible.
+/// under the data ink.
 class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   @override
   final bool showXLabels;
@@ -3067,8 +3031,8 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     return _computeYRange(yMin, yMax, unit);
   }
 
-  /// Rail chrome, gated on `AppSettings.limitWarningsEnabled`. Hairline at
-  /// each in-view rail; flood from the rail to the plot edge where the
+  /// Rail chrome, gated on `AppSettings.limitWarningsEnabled`. Light fill
+  /// from each in-view rail to the plot edge; stronger fill where the
   /// converter railed. Mixed buckets are treated as hot when a bucket is
   /// ≤1 px ([_blockSizeFor] >= [kBucketSize]).
   @override
@@ -3088,10 +3052,10 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     final treatMixedAsHot =
         _blockSizeFor(viewSpan, graphSz.width) >= kBucketSize;
 
-    final shadePaint = Paint()
-      ..color = colorScheme.error.withAlpha(22)
-      ..blendMode = BlendMode.src;
-    final rails = <({double y, bool upperSide})>[];
+    final lightPaint = Paint()..color = colorScheme.error.withAlpha(22);
+    final clipPaint = Paint()..color = colorScheme.error.withAlpha(80);
+    final rails = <({double y, bool upperSide})>{};
+    final clipRects = <Rect>[];
 
     for (final ch in _activeChannels) {
       final series = _data.channel(ch);
@@ -3127,27 +3091,31 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
           final x1 = (it.start - viewStart) * graphSz.width / viewSpan;
           final x2 = (it.end - viewStart) * graphSz.width / viewSpan;
           if (x2 - x1 < 1) continue;
-          canvas.drawRect(
+          clipRects.add(
             Rect.fromLTRB(
               x1,
               positive ? 0 : railY,
               x2,
               positive ? railY : graphSz.height,
             ),
-            shadePaint,
           );
         }
       }
     }
 
     for (final r in rails) {
-      _drawLimitZones(
-        canvas,
-        colorScheme.error,
-        y: r.y,
-        upperSide: r.upperSide,
-        width: graphSz.width,
+      canvas.drawRect(
+        Rect.fromLTRB(
+          0,
+          r.upperSide ? 0 : r.y,
+          graphSz.width,
+          r.upperSide ? r.y : graphSz.height,
+        ),
+        lightPaint,
       );
+    }
+    for (final rect in clipRects) {
+      canvas.drawRect(rect, clipPaint);
     }
   }
 
