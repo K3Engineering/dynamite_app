@@ -119,9 +119,8 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   int _calibrationVersion = 0;
 
   /// Wall-clock time of the most recent malformed (undecodable) ADC packet
-  /// the decoder dropped, and that packet's byte length (e.g. a notification
-  /// truncated by a too-small link MTU). Read by [deriveFeedHealth]; reset by
-  /// [clear].
+  /// the decoder dropped, and that packet's byte length. Read by
+  /// [deriveFeedHealth]; reset by [clear].
   DateTime? lastMalformedPacketAt;
   int? lastMalformedPacketLen;
 
