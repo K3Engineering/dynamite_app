@@ -120,7 +120,9 @@ class DeviceLink {
       state == BtLinkState.subscribing ||
       state == BtLinkState.streaming;
 
-  /// The single "usable / connected" truth: link up AND the ADC feed is flowing.
+  /// The link's terminal "ready" state: link up AND the ADC feed subscribed.
+  /// NOT proof of data flow — notifications can still be absent or
+  /// undecodable; the measured-traffic truth is deriveFeedHealth's.
   bool get isStreaming => state == BtLinkState.streaming;
   bool get isDisconnecting => state == BtLinkState.disconnecting;
   bool get isCoolingDown => state == BtLinkState.cooldown;
@@ -168,18 +170,26 @@ class _SetupToken {
 }
 
 /// True for the web picker outcomes that are user choices, not failures: the
-/// user dismissed Chrome's requestDevice() chooser, or it reported no
-/// matching devices. flutter_web_bluetooth signals these with
-/// UserCancelledDialogError / DeviceNotFoundError — Error subclasses that
-/// universal_ble rethrows verbatim but does NOT re-export, so they can't be
-/// caught by type here without a direct dependency on the web-only package.
-/// Match the class's own toString prefix ("$errorName: …") instead; if the
-/// package ever renames them, a cancel falls into the genuine-failure path —
-/// a spurious snackbar, not broken state.
+/// user dismissed the requestDevice() chooser, it reported no matching
+/// devices, or the browser aborted the pick for its own reason. On web the
+/// picker IS the scan, so closing it without a selection means "the user
+/// changed their mind" — there is no radio failure to report. Chrome signals
+/// dismissal with UserCancelledDialogError / DeviceNotFoundError; Bluefy with
+/// a BrowserError carrying its own cancel code. flutter_web_bluetooth
+/// rethrows these verbatim but does NOT re-export the classes, so they can't
+/// be caught by type here without a direct dependency on the web-only
+/// package; match the class's own toString prefix ("$errorName: …") instead.
+/// A BrowserError wrapping a SecurityError (permissions-policy denial, not a
+/// cancel) stays on the genuine-failure path. Trade-off: a rare genuine
+/// browser error (e.g. Bluefy refusing the pick for another reason) is
+/// swallowed as a dismissal — the user just sees nothing happen and taps
+/// Scan again, preferable to toasting an inscrutable error for the everyday
+/// cancel.
 bool isWebPickerDismissal(Object e) {
   final s = e.toString();
   return s.startsWith('UserCancelledDialogError') ||
-      s.startsWith('DeviceNotFoundError');
+      s.startsWith('DeviceNotFoundError') ||
+      (s.startsWith('BrowserError') && !s.contains('SecurityError'));
 }
 
 /// The BLE link state machine: adapter availability, scanning, connect /
@@ -290,6 +300,19 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// none (or it was superseded/cleared).
   ConnectFailureKind? connectFailureFor(String deviceId) =>
       _connectFailures[deviceId];
+
+  /// Per-device record of the platform's error string from the most recent
+  /// UNEXPECTED link drop, keyed by device id. Set in [_onConnectionChange]
+  /// only when the platform actually provides one (many stacks give none);
+  /// cleared on the same occasions as [_connectFailures]. A user-requested
+  /// disconnect is not an error and records nothing. The Devices tab shows
+  /// this as the inactive row's hint when there is no connect-failure marker.
+  final Map<String, String> _lastDisconnectErrors = {};
+
+  /// The platform's error string from [deviceId]'s last unexpected drop, or
+  /// null when the platform provided none (or the device never dropped).
+  String? lastDisconnectErrorFor(String deviceId) =>
+      _lastDisconnectErrors[deviceId];
 
   /// Last "proof of life" per device id (ms since epoch): the most recent
   /// moment a GATT link to this device was provably up (see [_stampAlive]).
@@ -946,6 +969,14 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // false) and was already stamped in [disconnectSelectedDevice].
     if (wasActive) {
       _stampAlive(deviceId);
+      // Remember the platform's drop reason for the row hint (when it gave
+      // one); a reasonless drop clears any stale entry so it can't be
+      // misattributed to this drop.
+      if (err != null && err.isNotEmpty) {
+        _lastDisconnectErrors[deviceId] = err;
+      } else {
+        _lastDisconnectErrors.remove(deviceId);
+      }
     }
     _teardownLink(deviceId);
     if (wasActive) {
@@ -1086,6 +1117,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _cooldownTimer = null;
     // A new attempt supersedes every recorded failure marker.
     _connectFailures.clear();
+    _lastDisconnectErrors.clear();
     _supersedeSetupPasses();
     return true;
   }

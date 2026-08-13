@@ -6,6 +6,7 @@ import 'adc_packet_decoder.dart';
 import 'app_events.dart';
 import 'ble_link_manager.dart';
 import 'data_hub.dart';
+import 'feed_health.dart';
 import 'session_storage.dart';
 import '../models/device_info.dart';
 import '../models/display_unit.dart';
@@ -35,6 +36,14 @@ final class StartSessionTareInProgress extends StartSessionResult {
 /// [RecordingController.startSession]). Transient — retry once reconnected.
 final class StartSessionLinkLost extends StartSessionResult {
   const StartSessionLinkLost();
+}
+
+/// Refused: the link is streaming but no decodable data is flowing — the
+/// feed is silent, delivers only malformed packets, or has stalled (see
+/// [deriveFeedHealth]) — so the session would record nothing. Transient —
+/// retry once data flows.
+final class StartSessionNoData extends StartSessionResult {
+  const StartSessionNoData();
 }
 
 /// Session creation (the DB row / writer) threw; nothing was latched, so the
@@ -114,6 +123,15 @@ class RecordingController extends ChangeNotifier {
     if (sessionInProgress) return null;
     // A tare is still averaging; recording now would persist a zero tare.
     if (_dataHub.taring) return const StartSessionTareInProgress();
+    // Refuse to latch an empty session onto a feed that delivers nothing
+    // decodable (a stream that never produced data, produces only malformed
+    // packets, or has gone silent).
+    if (deriveFeedHealth(
+      streaming: _linkManager.isStreaming,
+      hub: _dataHub,
+    ) case FeedHealth.stopped || FeedHealth.blocked || FeedHealth.silent) {
+      return const StartSessionNoData();
+    }
 
     final sessionName = name ?? autoSessionName(DateTime.now());
     // Freeze the connected device's identity onto the row (the CSV `device`

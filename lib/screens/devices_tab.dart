@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
@@ -5,6 +7,8 @@ import 'package:universal_ble/universal_ble.dart'
     show AvailabilityState, BleDevice;
 
 import '../services/ble_link_manager.dart';
+import '../services/data_hub.dart';
+import '../services/feed_health.dart';
 import '../utils/format.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/empty_placeholder.dart';
@@ -64,7 +68,12 @@ class DevicesTab extends StatelessWidget {
           supportsScanRssi: bt.supportsScanRssi,
           failureHint: switch (bt.connectFailureFor(d.deviceId)) {
             final kind? => connectFailureHint(kind, isWeb: kIsWeb),
-            null => null,
+            // No failed connect on record: show why the last link dropped,
+            // when the platform gave a reason.
+            null => switch (bt.lastDisconnectErrorFor(d.deviceId)) {
+              final err? => 'Disconnected: $err',
+              null => null,
+            },
           },
           colors: scheme,
         ),
@@ -593,24 +602,34 @@ class _ActiveDeviceRow extends StatelessWidget {
         // phone → one letter per line). A single Text.rich wraps at word
         // boundaries — worst case "Connected •" / "▂ -58 dBm" on two tidy
         // lines — and the WidgetSpan moves the RSSI block as a unit.
-        subtitle: Text.rich(
-          TextSpan(
-            children: [
-              TextSpan(text: visual.label),
-              // The device model (DIS): null until the connect-time read
-              // lands, in which case nothing renders.
-              if (model != null) TextSpan(text: ' • $model'),
-              // Live RSSI (native only): null until the first poll lands —
-              // and forever on web — in which case nothing renders.
-              if (connectedRssi != null) ...[
-                const TextSpan(text: ' • '),
-                WidgetSpan(
-                  alignment: PlaceholderAlignment.middle,
-                  child: RssiIndicator(rssi: connectedRssi, color: onContainer),
-                ),
-              ],
-            ],
-          ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text.rich(
+              TextSpan(
+                children: [
+                  TextSpan(text: visual.label),
+                  // The device model (DIS): null until the connect-time read
+                  // lands, in which case nothing renders.
+                  if (model != null) TextSpan(text: ' • $model'),
+                  // Live RSSI (native only): null until the first poll lands —
+                  // and forever on web — in which case nothing renders.
+                  if (connectedRssi != null) ...[
+                    const TextSpan(text: ' • '),
+                    WidgetSpan(
+                      alignment: PlaceholderAlignment.middle,
+                      child: RssiIndicator(
+                        rssi: connectedRssi,
+                        color: onContainer,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const _FeedHealthLine(),
+          ],
         ),
         trailing: Row(
           mainAxisSize: MainAxisSize.min,
@@ -650,6 +669,65 @@ class _ActiveDeviceRow extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+/// One-line feed-health readout under the active row's subtitle
+/// ("Packets malformed…", "No data from device", "Stream stopped").
+/// Derived live from the hub on a 1 Hz tick (the same cadence as the live
+/// tab's health check); renders nothing while the feed is healthy or the
+/// link isn't streaming. Self-ticking because the hub probably shouldn't notify on
+/// malformed packets
+class _FeedHealthLine extends StatefulWidget {
+  const _FeedHealthLine();
+
+  @override
+  State<_FeedHealthLine> createState() => _FeedHealthLineState();
+}
+
+class _FeedHealthLineState extends State<_FeedHealthLine> {
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final streaming = context.select<BleLinkManager, bool>(
+      (l) => l.isStreaming,
+    );
+    final health = deriveFeedHealth(
+      streaming: streaming,
+      hub: context.read<DataHub>(),
+    );
+    final label = health?.shortLabel;
+    if (label == null) return const SizedBox.shrink();
+    final color = Theme.of(context).extension<StatusColors>()!.onConnectedWarning;
+    return Row(
+      children: [
+        Icon(Icons.error_outline, size: 14, color: color),
+        const SizedBox(width: 4),
+        Flexible(
+          child: Text(
+            label,
+            style: Theme.of(
+              context,
+            ).textTheme.labelSmall?.copyWith(color: color),
+          ),
+        ),
+      ],
     );
   }
 }
