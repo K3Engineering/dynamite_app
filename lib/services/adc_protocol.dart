@@ -14,6 +14,9 @@ const int nwNumAdcChan = 4;
 /// Packet header bytes (16-bit little-endian running sample counter).
 const int nwHeaderSize = 2;
 
+/// Total wire length of one ADC-feed packet (header + all frames).
+const int nwAdcPacketLength = nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;
+
 /// Encode one sample frame: [nwNumAdcChan] channel values as 24-bit
 /// little-endian. Values are masked to 24 bits (callers clamp to the signed
 /// 24-bit range as needed).

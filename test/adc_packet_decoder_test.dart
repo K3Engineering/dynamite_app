@@ -148,41 +148,43 @@ void main() {
       expect(hub.packetAnchor, isNull);
     });
 
-    test('an empty packet is ignored and flags a protocol error', () {
+    test('an empty packet is ignored and noted as malformed', () {
       decoder.onDataPacket(Uint8List(0));
       expect(hub.totalSamples, 0);
-      expect(hub.protocolErrorSeen, isTrue);
+      expect(hub.lastMalformedPacketAt, isNotNull);
+      expect(hub.lastMalformedPacketLen, 0);
     });
 
-    test('a truncated packet is ignored, flagged, and never throws; extra '
-        'trailing bytes still decode', () {
+    test('a truncated packet is ignored, noted with its length, and never '
+        'throws; extra trailing bytes still decode', () {
       // One byte short of a full packet: a firmware bug must not crash the
       // app (the in-loop asserts are stripped in release builds).
       final short = makePacket(0, (s, c) => 1);
       decoder.onDataPacket(Uint8List.sublistView(short, 0, short.length - 1));
       expect(hub.totalSamples, 0);
-      expect(hub.protocolErrorSeen, isTrue);
-      // A second malformed packet keeps the latch set (the UI surfaces it).
+      expect(hub.lastMalformedPacketLen, short.length - 1);
+      // A second malformed packet updates the note (it tracks the latest one,
+      // not a latch).
       decoder.onDataPacket(Uint8List(1));
-      expect(hub.protocolErrorSeen, isTrue);
+      expect(hub.lastMalformedPacketLen, 1);
       // A packet with trailing extra bytes still decodes its 20 samples.
       final long = Uint8List(short.length + 3)..setAll(0, short);
       decoder.onDataPacket(long);
       expect(hub.totalSamples, nwAdcNumSamples);
-      expect(hub.protocolErrorSeen, isTrue);
     });
 
-    test('the first malformed packet notifies once; later ones do not', () {
-      // The malformed path never reaches commitBatch, so without its own
-      // notify a stream where EVERY packet is bad would never surface the
-      // warning. The latch must notify exactly once per stream (no storm).
+    test('malformed packets never notify (the health display ticks on its '
+        'own)', () {
+      // noteMalformedPacket deliberately skips notifyListeners: a stream of
+      // only-bad packets at 50 Hz would otherwise be a lot of rebuilds, and
+      // the feed-health display re-derives on the live tab's 1 Hz tick.
       var notifyCount = 0;
       hub.addListener(() => notifyCount++);
 
       decoder.onDataPacket(Uint8List(0));
-      expect(notifyCount, 1);
       decoder.onDataPacket(Uint8List(1));
-      expect(notifyCount, 1);
+      expect(notifyCount, 0);
+      expect(hub.lastMalformedPacketLen, 1);
     });
   });
 

@@ -59,17 +59,15 @@ class AdcPacketDecoder {
   /// [DataHub.addSamplesAppendedListener] (notified from
   /// [DataHub.commitBatch]).
   void onDataPacket(Uint8List data) {
-    // A decodable packet holds the 2-byte counter plus at least
-    // nwAdcNumSamples full frames (extra trailing bytes are ignored, matching
-    // the fixed-size loop below). Anything shorter — e.g. a truncated
-    // notification from a firmware bug — can't be parsed (indexing past the
-    // end would throw in release builds). Drop it, but NOT silently: the
-    // hub's [DataHub.reportProtocolError] latch surfaces it in the live UI.
-    const int minLength = nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;
-    if (data.length < minLength) {
-      hub.reportProtocolError();
+    // A decodable packet holds the 2-byte counter plus nwAdcNumSamples full
+    // frames (extra trailing bytes are ignored, matching the fixed-size loop
+    // below). Anything shorter can't be parsed (indexing past the end would
+    // throw in release builds). Drop it, but NOT silently: the hub notes it
+    // for the feed-health display ([DataHub.noteMalformedPacket]).
+    if (data.length < nwAdcPacketLength) {
+      hub.noteMalformedPacket(data.length);
       debugPrint(
-        'Dropping short ADC packet: ${data.length} B (need $minLength B)',
+        'Dropping short ADC packet: ${data.length} B (need $nwAdcPacketLength B)',
       );
       return;
     }

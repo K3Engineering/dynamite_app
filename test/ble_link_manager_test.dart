@@ -669,6 +669,16 @@ void main() {
       );
     });
 
+    test('matches Bluefy picker cancels (BrowserError), but not '
+        'SecurityError', () {
+      // Bluefy (iOS Web Bluetooth) rejects a cancelled requestDevice() with
+      // its own code, which flutter_web_bluetooth wraps in a BrowserError.
+      expect(isWebPickerDismissal('BrowserError: 2'), isTrue);
+      // A BrowserError wrapping a SecurityError (permissions-policy denial)
+      // is a genuine failure, not a cancel.
+      expect(isWebPickerDismissal('BrowserError: SecurityError: x'), isFalse);
+    });
+
     test('rejects genuine failures', () {
       expect(isWebPickerDismissal(StateError('Mock scan failure')), isFalse);
       expect(

@@ -60,6 +60,37 @@ void main() {
     expect(recording.sessionInProgress, isFalse);
   });
 
+  test('startSession refuses when no decodable data is flowing', () async {
+    final (recording, hub, _) = wire();
+    // Age the stream past the feed-health freshness window with no packet
+    // ever arriving: positively silent, not merely starting.
+    hub.streamStartedAt = DateTime.now().subtract(const Duration(seconds: 5));
+
+    final result = await recording.startSession(
+      channelLabels: const ['a', 'b', 'c', 'd'],
+      visibleChannels: const [true, true, false, false],
+      displayUnit: DisplayUnit.kgf,
+    );
+
+    expect(result, isA<StartSessionNoData>());
+    expect(recording.sessionInProgress, isFalse);
+  });
+
+  test('startSession refuses when only malformed packets are arriving', () async {
+    final (recording, hub, _) = wire();
+    hub.streamStartedAt = DateTime.now().subtract(const Duration(seconds: 5));
+    hub.noteMalformedPacket(182);
+
+    final result = await recording.startSession(
+      channelLabels: const ['a', 'b', 'c', 'd'],
+      visibleChannels: const [true, true, false, false],
+      displayUnit: DisplayUnit.kgf,
+    );
+
+    expect(result, isA<StartSessionNoData>());
+    expect(recording.sessionInProgress, isFalse);
+  });
+
   test(
     'start creates the session row; stop finalizes it and returns its name',
     () async {

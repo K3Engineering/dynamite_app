@@ -118,11 +118,18 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// assignments); renderers mix it into their segment-cache keys.
   int _calibrationVersion = 0;
 
-  /// Whether a malformed/undecodable ADC packet (e.g. a truncated
-  /// notification) was seen on this stream. Latched by [reportProtocolError]
-  /// instead of silently dropping; the live UI surfaces the latch. Reset by
+  /// Wall-clock time of the most recent malformed (undecodable) ADC packet
+  /// the decoder dropped, and that packet's byte length (e.g. a notification
+  /// truncated by a too-small link MTU). Read by [deriveFeedHealth]; reset by
   /// [clear].
-  bool protocolErrorSeen = false;
+  DateTime? lastMalformedPacketAt;
+  int? lastMalformedPacketLen;
+
+  /// Wall-clock time the current stream's data began accumulating (set by
+  /// [clear], which runs on every new device stream). A stream younger than
+  /// the feed-health freshness window simply hasn't produced its first
+  /// packet yet — [deriveFeedHealth] reads that as "starting", not "silent".
+  DateTime? streamStartedAt;
 
   /// Wall-clock time of the last completed packet batch ([commitBatch]), or
   /// null before the first packet of the stream. The live UI derives a
@@ -206,7 +213,9 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     _tareCount = 0;
     totalSamples = 0;
     _generation++;
-    protocolErrorSeen = false;
+    lastMalformedPacketAt = null;
+    lastMalformedPacketLen = null;
+    streamStartedAt = DateTime.now();
     lastDataAt = null;
     packetAnchor = null;
     gaps.clear();
@@ -224,15 +233,14 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     notifyListeners();
   }
 
-  /// Latch [protocolErrorSeen] and notify observers — but only on the first
-  /// malformed packet of a stream. The malformed-packet path never reaches
-  /// [commitBatch], so without this notify a stream where EVERY packet is
-  /// undecodable (firmware/protocol mismatch) would show no warning at all;
-  /// latching keeps a flood of bad packets from becoming a notify storm.
-  void reportProtocolError() {
-    if (protocolErrorSeen) return;
-    protocolErrorSeen = true;
-    notifyListeners();
+  /// Note a malformed packet the decoder dropped. Deliberately does NOT
+  /// notify: malformed packets can arrive at the full notification rate (a
+  /// stream where EVERY packet is bad), and the feed-health display
+  /// re-derives on its own 1 Hz tick — a per-packet notify would be a
+  /// lot of rebuilds.
+  void noteMalformedPacket(int length) {
+    lastMalformedPacketAt = DateTime.now();
+    lastMalformedPacketLen = length;
   }
 
   bool get taring => (_tareCount > 0);

@@ -9,6 +9,7 @@ import '../models/calibration.dart';
 
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
+import '../services/feed_health.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
 import '../screens/app_shell.dart';
@@ -38,24 +39,51 @@ class _LiveTabState extends State<LiveTab> {
   /// toggling rebuilds only the stats/graph/toggles cluster, not the tab.
   final ValueNotifier<bool> _showDerivative = ValueNotifier(false);
 
-  /// Stream-stall flag consumed by [LiveStats]; edge-updated by [_stallTimer]
-  /// (running only while streaming) so a stall flips exactly one subtree.
-  final ValueNotifier<bool> _stalled = ValueNotifier(false);
+  /// Feed-health classification consumed by [LiveStatusBar] and [LiveStats];
+  /// edge-updated by [_healthTimer] (running only while streaming) so a
+  /// health change flips exactly one subtree.
+  final ValueNotifier<FeedHealth?> _health = ValueNotifier(null);
 
   /// App-lifetime singletons, captured (identity-guarded) in
   /// [didChangeDependencies] for listener registration only.
   DataHub? _hub;
   BleLinkManager? _link;
 
-  /// 1 Hz ticker driving the stall check, started/stopped on streaming edges
-  /// (see [_onLinkChanged]): during a stall no packets arrive, so the hub
-  /// never notifies and nothing else would flip the flag. Runs only while
-  /// streaming — with no live trace there is nothing to stall.
-  Timer? _stallTimer;
+  /// 1 Hz ticker driving the health recompute, started/stopped on streaming
+  /// edges (see [_onLinkChanged]): during a silent/broken feed no packets
+  /// arrive, so the hub never notifies and nothing else would refresh the
+  /// classification. Runs only while streaming — with no live trace there is
+  /// nothing to assess.
+  Timer? _healthTimer;
 
-  /// How long the stream may be silent (while the link reports streaming)
-  /// before the live stats read as stalled. Packets normally arrive at 50 Hz.
-  static const Duration _stallThreshold = Duration(seconds: 2);
+  /// Start/stop the health ticker on streaming edges. The link manager
+  /// notifies for many reasons (RSSI polls included); the edge guard keeps
+  /// this a no-op unless streaming actually flipped.
+  void _onLinkChanged() {
+    final streaming = _link!.isStreaming;
+    if (streaming == (_healthTimer != null)) return;
+    if (streaming) {
+      _healthTimer = Timer.periodic(
+        const Duration(seconds: 1),
+        (_) => _refreshHealth(),
+      );
+    } else {
+      _healthTimer?.cancel();
+      _healthTimer = null;
+      // No live trace — clear the classification so the next stream starts
+      // clean.
+      _health.value = null;
+    }
+  }
+
+  /// Recompute the feed-health classification. The ticker runs only while
+  /// streaming, so the link state needs no re-check here.
+  void _refreshHealth() {
+    final hub = _hub;
+    if (hub == null) return;
+    final health = deriveFeedHealth(streaming: true, hub: hub);
+    if (health != _health.value) _health.value = health;
+  }
 
   @override
   void didChangeDependencies() {
@@ -87,41 +115,13 @@ class _LiveTabState extends State<LiveTab> {
     _graphCtrl.goLive(totalSamples: hub.totalSamples, oldestSample: 0);
   }
 
-  /// Start/stop the stall ticker on streaming edges. The link manager
-  /// notifies for many reasons (RSSI polls included); the edge guard keeps
-  /// this a no-op unless streaming actually flipped.
-  void _onLinkChanged() {
-    final streaming = _link!.isStreaming;
-    if (streaming == (_stallTimer != null)) return;
-    if (streaming) {
-      _stallTimer = Timer.periodic(
-        const Duration(seconds: 1),
-        (_) => _checkStall(),
-      );
-    } else {
-      _stallTimer?.cancel();
-      _stallTimer = null;
-      // No live trace — clear the flag so the next stream starts clean.
-      _stalled.value = false;
-    }
-  }
-
-  /// Recompute the stalled flag. The ticker runs only while streaming, so
-  /// the link state needs no re-check here.
-  void _checkStall() {
-    final last = _hub?.lastDataAt;
-    final stalled =
-        last != null && DateTime.now().difference(last) > _stallThreshold;
-    if (stalled != _stalled.value) _stalled.value = stalled;
-  }
-
   @override
   void dispose() {
-    _stallTimer?.cancel();
+    _healthTimer?.cancel();
     _hub?.removeClearedListener(_onHubCleared);
     _link?.removeListener(_onLinkChanged);
     _showDerivative.dispose();
-    _stalled.dispose();
+    _health.dispose();
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -192,6 +192,13 @@ class _LiveTabState extends State<LiveTab> {
               behavior: SnackBarBehavior.floating,
             ),
           );
+        case StartSessionNoData():
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('No data from device — recording not started'),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
         case StartSessionFailed(:final error):
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -229,21 +236,21 @@ class _LiveTabState extends State<LiveTab> {
     // packet), so watching it here is cheap.
     final rig = context.watch<RigState>();
     // read (not watch): rebuilding this whole tab per packet would be a
-    // rebuild storm — LiveStats/graph subscribe to the hub themselves.
+    // lot of rebuilds — LiveStats/graph subscribe to the hub themselves.
     final hub = context.read<DataHub>();
 
     return SafeArea(
       child: Column(
         children: [
-          // The bar shows the hub's protocol-error latch, which changes with
-          // packet traffic — listen to the hub (per-packet notify) here
-          // rather than rebuilding the whole tab.
-          ListenableBuilder(
-            listenable: hub,
-            builder: (context, _) => LiveStatusBar(
+          // The bar presents the feed-health classification, which changes
+          // with time and packet traffic — the 1 Hz health ticker's notifier
+          // drives it, so no per-packet rebuilds of the whole tab.
+          ValueListenableBuilder<FeedHealth?>(
+            valueListenable: _health,
+            builder: (context, health, _) => LiveStatusBar(
               isConnected: isConnected,
               connectedDeviceName: deviceName,
-              protocolErrorSeen: hub.protocolErrorSeen,
+              health: health,
             ),
           ),
           if (isConnected)
@@ -257,7 +264,7 @@ class _LiveTabState extends State<LiveTab> {
                       rig: rig,
                       hub: hub,
                       showDerivative: showDerivative,
-                      stalledListenable: _stalled,
+                      healthListenable: _health,
                     ),
                     Expanded(
                       child: _buildGraphArea(settings, hub, showDerivative),
@@ -307,32 +314,62 @@ class LiveStatusBar extends StatelessWidget {
   final bool isConnected;
   final String connectedDeviceName;
 
-  /// Whether a malformed ADC packet was seen on this stream
-  /// ([DataHub.protocolErrorSeen]).
-  final bool protocolErrorSeen;
+  /// The measured feed-health classification (see [deriveFeedHealth]); null
+  /// presents as normal (also the case before the first health tick lands).
+  final FeedHealth? health;
 
   const LiveStatusBar({
     super.key,
     required this.isConnected,
     required this.connectedDeviceName,
-    this.protocolErrorSeen = false,
+    this.health,
   });
+
+  void _showHealthDetails(BuildContext context, FeedHealth health) {
+    final hub = context.read<DataHub>();
+    unawaited(
+      showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(health.shortLabel!),
+          content: Text(
+            health.detail(
+              malformedLen: hub.lastMalformedPacketLen,
+              lastDataAt: hub.lastDataAt,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final report = isConnected && (health?.worthReporting ?? false);
+    final noData = health?.noDataFlowing ?? false;
+    // Hard failures (no decodable data) read as errors; some-malformed while
+    // flowing reads as a warning.
+    final healthColor = noData ? scheme.error : Colors.amber;
     return GestureDetector(
-      onTap: isConnected
-          ? null
-          : () {
+      onTap: !isConnected
+          ? () {
               final shell = context.findAncestorStateOfType<AppShellState>();
               shell?.goToDevices();
-            },
+            }
+          : report
+          ? () => _showHealthDetails(context, health!)
+          : null,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        color: isConnected
-            ? Theme.of(context).colorScheme.primaryContainer
-            : Theme.of(context).colorScheme.errorContainer,
+        color: isConnected ? scheme.primaryContainer : scheme.errorContainer,
         child: Row(
           children: [
             Icon(
@@ -341,43 +378,40 @@ class LiveStatusBar extends StatelessWidget {
                   : Icons.bluetooth_disabled,
               size: 18,
               color: isConnected
-                  ? Theme.of(context).colorScheme.onPrimaryContainer
-                  : Theme.of(context).colorScheme.onErrorContainer,
+                  ? scheme.onPrimaryContainer
+                  : scheme.onErrorContainer,
             ),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(
-                isConnected
-                    ? 'Connected: $connectedDeviceName'
-                    : 'Not connected \u2014 tap to connect',
-                style: TextStyle(
-                  color: isConnected
-                      ? Theme.of(context).colorScheme.onPrimaryContainer
-                      : Theme.of(context).colorScheme.onErrorContainer,
-                  fontWeight: FontWeight.w500,
-                ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    isConnected
+                        ? 'Connected: $connectedDeviceName'
+                        : 'Not connected \u2014 tap to connect',
+                    style: TextStyle(
+                      color: isConnected
+                          ? scheme.onPrimaryContainer
+                          : scheme.onErrorContainer,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (report)
+                    Text(
+                      health!.shortLabel!,
+                      style: TextStyle(color: healthColor, fontSize: 12),
+                    ),
+                ],
               ),
             ),
-            if (isConnected && protocolErrorSeen)
-              Tooltip(
-                message:
-                    'Malformed ADC packets received — '
-                    'firmware/protocol mismatch',
-                child: Padding(
-                  padding: const EdgeInsets.only(right: 8),
-                  child: Icon(
-                    Icons.warning_amber,
-                    size: 18,
-                    color: Theme.of(context).colorScheme.error,
-                  ),
-                ),
-              ),
             if (isConnected) const _ConnectedRssiIndicator(),
             if (isConnected)
               Text(
-                '${DataHub.samplesPerSec} Hz',
+                noData ? 'no data' : '${DataHub.samplesPerSec} Hz',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onPrimaryContainer,
+                  color: noData ? scheme.outline : scheme.onPrimaryContainer,
                 ),
               ),
           ],
@@ -427,9 +461,10 @@ class LiveStats extends StatelessWidget {
   final DataHub hub;
   final bool showDerivative;
 
-  /// The stream has gone silent while the link reports streaming (no packets
-  /// for [_LiveTabState._stallThreshold]). Values are grayed out like a gap.
-  final ValueListenable<bool> stalledListenable;
+  /// The feed-health classification (see [deriveFeedHealth]). When nothing
+  /// decodable is arriving (stream stopped/blocked/silent), values gray out
+  /// like a gap: the newest "reading" is just the last one seen.
+  final ValueListenable<FeedHealth?> healthListenable;
 
   const LiveStats({
     super.key,
@@ -437,7 +472,7 @@ class LiveStats extends StatelessWidget {
     required this.rig,
     required this.hub,
     this.showDerivative = false,
-    required this.stalledListenable,
+    required this.healthListenable,
   });
 
   @override
@@ -453,15 +488,15 @@ class LiveStats extends StatelessWidget {
             if (settings.activeChannels[i] && rig.channelCells[i] == null) i,
         ].isNotEmpty;
 
-    return ValueListenableBuilder<bool>(
-      valueListenable: stalledListenable,
-      builder: (context, stalled, _) => ListenableBuilder(
+    return ValueListenableBuilder<FeedHealth?>(
+      valueListenable: healthListenable,
+      builder: (context, health, _) => ListenableBuilder(
         listenable: hub,
         builder: (context, _) {
           // During a live gap (dropped packets) the hub reports held values;
           // gray them out so they read as stale rather than fresh readings.
-          // Same for a stall: the newest "reading" is just the last one.
-          final stale = hub.liveEdgeIsGap || stalled;
+          // Same when nothing decodable is arriving at all.
+          final stale = hub.liveEdgeIsGap || (health?.noDataFlowing ?? false);
 
           return Column(
             children: [
