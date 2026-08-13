@@ -6,16 +6,26 @@ import 'dart:typed_data';
 /// Bytes per sample on the wire: [nwNumAdcChan] channels x 3 bytes (24-bit).
 const int nwAdcSampleLength = 12;
 
-/// Samples per notification packet.
+/// Max samples per notification (ATT payload 244 / Android).
 const int nwAdcNumSamples = 20;
+
+/// Min samples per notification (ATT MTU 185 / iOS).
+const int nwAdcMinSamples = 15;
 
 const int nwNumAdcChan = 4;
 
 /// Packet header bytes (16-bit little-endian running sample counter).
 const int nwHeaderSize = 2;
 
-/// Total wire length of one ADC-feed packet (header + all frames).
-const int nwAdcPacketLength = nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength;
+/// Sample count implied by a notification length, or null if it is not a
+/// complete 15–20 sample packet.
+int? adcSamplesInPacket(int length) {
+  final payload = length - nwHeaderSize;
+  if (payload < nwAdcMinSamples * nwAdcSampleLength) return null;
+  if (payload > nwAdcNumSamples * nwAdcSampleLength) return null;
+  if (payload % nwAdcSampleLength != 0) return null;
+  return payload ~/ nwAdcSampleLength;
+}
 
 /// Encode one sample frame: [nwNumAdcChan] channel values as 24-bit
 /// little-endian. Values are masked to 24 bits (callers clamp to the signed
@@ -32,17 +42,14 @@ Uint8List encodeAdcFrame(List<int> channels) {
 }
 
 /// Encode one ADC feed packet: the 16-bit LE running sample [counter] (the
-/// starting sample index of the packet) followed by exactly [nwAdcNumSamples]
-/// frames ([AdcPacketDecoder] decodes it).
+/// starting sample index of the packet) followed by 15–20 frames.
 Uint8List encodeAdcPacket({
   required int counter,
   required Iterable<Uint8List> frames,
 }) {
-  assert(
-    frames.length == nwAdcNumSamples,
-    'a packet holds exactly $nwAdcNumSamples frames',
-  );
-  final out = Uint8List(nwHeaderSize + nwAdcNumSamples * nwAdcSampleLength);
+  final n = frames.length;
+  assert(n >= nwAdcMinSamples && n <= nwAdcNumSamples);
+  final out = Uint8List(nwHeaderSize + n * nwAdcSampleLength);
   out[0] = counter & 0xFF;
   out[1] = (counter >> 8) & 0xFF;
   int offset = nwHeaderSize;

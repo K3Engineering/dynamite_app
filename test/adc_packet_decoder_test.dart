@@ -9,16 +9,17 @@ import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 
-/// Builds a 242-byte ADC-feed notification packet (the exact wire format the
-/// device emits and [AdcPacketDecoder] consumes):
-///   bytes 0..1 : 16-bit little-endian running sample counter ([startCounter])
-///   then [nwAdcNumSamples] samples of [nwAdcSampleLength] bytes each, where
-///   each channel value is packed as 3 bytes little-endian (24-bit signed).
-Uint8List makePacket(int startCounter, int Function(int s, int c) value) {
-  final ev = Uint8List(nwHeaderSize + nwAdcSampleLength * nwAdcNumSamples);
+/// Builds an ADC-feed notification: 16-bit LE sample counter plus [samples]
+/// frames of [nwAdcSampleLength] bytes (24-bit LE per channel).
+Uint8List makePacket(
+  int startCounter,
+  int Function(int s, int c) value, {
+  int samples = nwAdcNumSamples,
+}) {
+  final ev = Uint8List(nwHeaderSize + nwAdcSampleLength * samples);
   ev[0] = startCounter & 0xFF;
   ev[1] = (startCounter >> 8) & 0xFF;
-  for (int s = 0; s < nwAdcNumSamples; ++s) {
+  for (int s = 0; s < samples; ++s) {
     for (int c = 0; c < nwNumAdcChan; ++c) {
       final v = value(s, c) & 0xFFFFFF;
       final base = nwHeaderSize + s * nwAdcSampleLength + c * 3;
@@ -148,6 +149,15 @@ void main() {
       expect(hub.packetAnchor, isNull);
     });
 
+    test('a 15-sample packet decodes and advances continuity by 15', () {
+      decoder.onDataPacket(makePacket(0, (s, c) => c + 1, samples: 15));
+      decoder.onDataPacket(makePacket(15, (s, c) => c + 1, samples: 15));
+      expect(hub.totalSamples, 30);
+      expect(hub.gaps.contains(15), isFalse);
+      expect(hub.rawData[0][0], 1);
+      expect(hub.rawData[3][14], 4);
+    });
+
     test('an empty packet is ignored and noted as malformed', () {
       decoder.onDataPacket(Uint8List(0));
       expect(hub.totalSamples, 0);
@@ -156,21 +166,17 @@ void main() {
     });
 
     test('a truncated packet is ignored, noted with its length, and never '
-        'throws; extra trailing bytes still decode', () {
-      // One byte short of a full packet: a firmware bug must not crash the
-      // app (the in-loop asserts are stripped in release builds).
-      final short = makePacket(0, (s, c) => 1);
-      decoder.onDataPacket(Uint8List.sublistView(short, 0, short.length - 1));
+        'throws; leftover bytes are malformed', () {
+      final full = makePacket(0, (s, c) => 1);
+      decoder.onDataPacket(Uint8List.sublistView(full, 0, full.length - 1));
       expect(hub.totalSamples, 0);
-      expect(hub.lastMalformedPacketLen, short.length - 1);
-      // A second malformed packet updates the note (it tracks the latest one,
-      // not a latch).
+      expect(hub.lastMalformedPacketLen, full.length - 1);
       decoder.onDataPacket(Uint8List(1));
       expect(hub.lastMalformedPacketLen, 1);
-      // A packet with trailing extra bytes still decodes its 20 samples.
-      final long = Uint8List(short.length + 3)..setAll(0, short);
+      final long = Uint8List(full.length + 3)..setAll(0, full);
       decoder.onDataPacket(long);
-      expect(hub.totalSamples, nwAdcNumSamples);
+      expect(hub.totalSamples, 0);
+      expect(hub.lastMalformedPacketLen, full.length + 3);
     });
 
     test('malformed packets never notify (the health display ticks on its '
