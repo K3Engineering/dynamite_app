@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'board_calibration.dart';
 import 'device_flash.dart';
+import 'graph_data_source.dart';
 
 /// [adcCountsPerPolarity] lives in models/board_calibration.dart —
 /// re-exported so existing importers keep working.
@@ -12,13 +13,36 @@ export 'board_calibration.dart' show adcCountsPerPolarity;
 /// suffix for values expressed in the rung unit.
 typedef AxisRung = ({double factor, String symbol});
 
+/// The unit set a data source can convert right now: whether the board's
+/// resolved constants exist (electrical and force units convert) and whether
+/// any shown channel has a load cell assigned (force units convert).
+/// Derived, never stored — the saved preference re-applies the moment
+/// availability returns, and there is no secondary state to sync.
+typedef UnitAvailability = ({
+  bool boardHasNominals,
+  bool anyActiveHasLoadCell,
+});
+
+/// Resolve the unit availability of [data] for a view showing
+/// [activeChannels]. Board constants resolve all-or-nothing and are uniform
+/// across channels, so channel 0 stands in for the board.
+UnitAvailability resolveUnitAvailability(
+  GraphDataSource data,
+  Iterable<int> activeChannels,
+) => (
+  boardHasNominals: data.calibrationFor(0).board.nominals != null,
+  anyActiveHasLoadCell: activeChannels.any(
+    (ch) => data.calibrationFor(ch).loadCell != null,
+  ),
+);
+
 /// Supported force and electrical display units.
 ///
 /// Conversion is per channel: a unit maps absolute raw ADC counts to the
 /// display value net of tare via the channel's [ChannelCalibration] (the
 /// board's piecewise map plus the assigned load cell). Force units are
 /// unavailable — a null converter — for channels without an assigned load
-/// cell; the UI shows '—' there. Electrical units are always available.
+/// cell; the UI shows '—' there. Without board constants only raw converts.
 enum DisplayUnit {
   kN(
     'kN',
@@ -171,6 +195,24 @@ enum DisplayUnit {
   /// Force units need an assigned load cell; electrical units only need the
   /// board calibration. Drives the Settings picker's grouping.
   bool get isForce => kgfFactor != null;
+
+  /// Whether this unit can convert under [availability]: raw always can;
+  /// electrical units need board constants; force units also need a load
+  /// cell on a shown channel.
+  bool isAvailable(UnitAvailability availability) {
+    if (this == DisplayUnit.raw) return true;
+    if (!availability.boardHasNominals) return false;
+    return !isForce || availability.anyActiveHasLoadCell;
+  }
+
+  /// The unit the instrument actually draws under [availability]: this unit
+  /// when available, else the first available rung down the ladder. The
+  /// preference is not written; the saved unit re-applies as soon as it is
+  /// available again.
+  DisplayUnit effective(UnitAvailability availability) =>
+      [this, DisplayUnit.mVv, DisplayUnit.raw].firstWhere(
+        (u) => u.isAvailable(availability),
+      );
 
   /// The multiplier applied to net mV/V for this unit on [channel]: force
   /// units fold in the cell's kgf-per-mV/V, mV folds in the nominal

@@ -328,6 +328,70 @@ void main() {
       );
     });
 
+    test('empty flash replaces a nominals-only board', () {
+      final hub = DataHub()..updateBoardCalibration(nominalBoard());
+      feed(hub, frameOf(1000), 5);
+      expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
+      final v1 = hub.calibrationVersion;
+
+      hub.updateBoardCalibration(
+        BoardCalibration(
+          channels: [
+            for (int i = 0; i < channels; ++i) ChannelBoardCalibration(),
+          ],
+          constantsStatus: BoardDataStatus.unprovisioned,
+        ),
+      );
+      expect(hub.calibrationVersion, greaterThan(v1));
+      expect(hub.boardDataStatus, BoardDataStatus.unprovisioned);
+      expect(hub.calibrationFor(0).board.nominals, isNull);
+      expect(hub.currentValue(0, DisplayUnit.mVv), isNull);
+    });
+
+    test('clearing the board calibration degrades to raw counts', () {
+      final hub = DataHub()..updateBoardCalibration(nominalBoard());
+      feed(hub, frameOf(1000), 5);
+      expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
+      final v1 = hub.calibrationVersion;
+
+      hub.clearBoardCalibration();
+      expect(hub.calibrationVersion, greaterThan(v1));
+      expect(hub.boardDataStatus, BoardDataStatus.unreadable);
+      expect(hub.calibrationFor(0).board.nominals, isNull);
+      expect(hub.currentValue(0, DisplayUnit.mVv), isNull);
+
+      // A repeat clear is a no-op: no spurious cache invalidation.
+      final v2 = hub.calibrationVersion;
+      hub.clearBoardCalibration();
+      expect(hub.calibrationVersion, v2);
+    });
+
+    test('unit availability reflects the board constants and the rig', () {
+      final hub = DataHub();
+      final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
+      expect(
+        resolveUnitAvailability(hub, [0, 1]),
+        (boardHasNominals: false, anyActiveHasLoadCell: false),
+      );
+
+      hub.updateBoardCalibration(nominalBoard());
+      expect(
+        resolveUnitAvailability(hub, [0, 1]),
+        (boardHasNominals: true, anyActiveHasLoadCell: false),
+      );
+
+      // A cell counts only while its channel is among the shown ones.
+      hub.updateLoadCells([cell, null, null, null]);
+      expect(
+        resolveUnitAvailability(hub, [0]),
+        (boardHasNominals: true, anyActiveHasLoadCell: true),
+      );
+      expect(
+        resolveUnitAvailability(hub, [1]),
+        (boardHasNominals: true, anyActiveHasLoadCell: false),
+      );
+    });
+
     test('content-equal board calibration does not bump the version', () {
       final hub = DataHub();
       hub.updateBoardCalibration(

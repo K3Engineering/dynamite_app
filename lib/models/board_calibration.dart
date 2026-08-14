@@ -567,7 +567,8 @@ class BoardCalibration {
   final BoardNominals? nominals;
 
   /// The board-data verdict: whether [nominals] resolved, and why not.
-  /// Drives the raw-only notice in the live UI.
+  /// Drives the raw-only notice in the live UI and the unit availability
+  /// behind the Settings picker's disabled segments.
   final BoardDataStatus constantsStatus;
 
   /// Human-readable reason when [constantsStatus] is not ok

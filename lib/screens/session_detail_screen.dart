@@ -164,10 +164,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     Session session,
     SessionData data,
   ) {
-    final unit = settings.displayUnit;
     final visibleChannels = _parseVisibleChannels(
       session.visibleChannels,
       session.channelCount,
+    );
+    final unit = settings.displayUnit.effective(
+      resolveUnitAvailability(data, [
+        for (int i = 0; i < visibleChannels.length; i++)
+          if (visibleChannels[i]) i,
+      ]),
     );
 
     final channelLabels = parseJsonColumn(

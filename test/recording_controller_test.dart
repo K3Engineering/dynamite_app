@@ -4,12 +4,14 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_ble/universal_ble.dart';
 
+import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/database.dart';
+import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 
@@ -213,6 +215,25 @@ void main() {
     },
   );
 
+  test('a link drop forgets the dead device\'s board calibration', () {
+    final (_, hub, link) = wire();
+    hub.updateBoardCalibration(
+      BoardCalibration.parse(
+        demoBoardCalibrationDoc,
+        pgaGains: const [32, 32, 32, 32],
+      ),
+    );
+    // Sync the controller's transition tracker (idle -> streaming); the
+    // production controller pre-exists the first connection, so it sees
+    // every edge.
+    link.setStreaming(true);
+    expect(hub.boardDataStatus, BoardDataStatus.ok);
+
+    link.setStreaming(false);
+    expect(hub.boardCalibration, isNull);
+    expect(hub.boardDataStatus, BoardDataStatus.unreadable);
+  });
+
   group('autoSessionName', () {
     test('ISO Y-M-D with 24h zero-padded H:MM:SS', () {
       expect(
@@ -237,6 +258,13 @@ class _StreamingLink extends BleLinkManager {
   _StreamingLink({required super.events});
 
   bool streaming = true;
+
+  /// Flip [streaming] and notify, so the controller's transition detection
+  /// sees the edge.
+  void setStreaming(bool value) {
+    streaming = value;
+    notifyListeners();
+  }
 
   @override
   bool get isStreaming => streaming;

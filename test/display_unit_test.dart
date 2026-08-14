@@ -27,6 +27,58 @@ void main() {
   final assigned = ChannelCalibration(board: board, loadCell: cell);
   final bare = ChannelCalibration(board: board);
 
+  group('effective', () {
+    // The availability quadrants. (noBoard + cell) is meaningless — no
+    // board constants resolve without a read — but the ladder must not care.
+    const noBoard = (boardHasNominals: false, anyActiveHasLoadCell: false);
+    const boardNoCell = (
+      boardHasNominals: true,
+      anyActiveHasLoadCell: false,
+    );
+    const boardAndCell = (boardHasNominals: true, anyActiveHasLoadCell: true);
+
+    test('no board constants is raw, for every preference', () {
+      for (final u in DisplayUnit.values) {
+        expect(u.effective(noBoard), DisplayUnit.raw, reason: u.symbol);
+        expect(
+          u.effective((boardHasNominals: false, anyActiveHasLoadCell: true)),
+          DisplayUnit.raw,
+          reason: u.symbol,
+        );
+      }
+    });
+
+    test('force with no active load cell becomes mV/V', () {
+      for (final u in [
+        DisplayUnit.kN,
+        DisplayUnit.lbf,
+        DisplayUnit.kgf,
+        DisplayUnit.n,
+      ]) {
+        expect(u.effective(boardNoCell), DisplayUnit.mVv, reason: u.symbol);
+      }
+    });
+
+    test('force with a load cell stays', () {
+      expect(DisplayUnit.kN.effective(boardAndCell), DisplayUnit.kN);
+    });
+
+    test('electrical preferences are not promoted', () {
+      expect(DisplayUnit.mVv.effective(boardNoCell), DisplayUnit.mVv);
+      expect(DisplayUnit.mV.effective(boardNoCell), DisplayUnit.mV);
+      expect(DisplayUnit.raw.effective(boardNoCell), DisplayUnit.raw);
+      expect(DisplayUnit.raw.effective(boardAndCell), DisplayUnit.raw);
+    });
+
+    test('isAvailable matches the effective ladder', () {
+      expect(DisplayUnit.raw.isAvailable(noBoard), isTrue);
+      expect(DisplayUnit.mVv.isAvailable(noBoard), isFalse);
+      expect(DisplayUnit.mVv.isAvailable(boardNoCell), isTrue);
+      expect(DisplayUnit.kN.isAvailable(boardNoCell), isFalse);
+      expect(DisplayUnit.kN.isAvailable(boardAndCell), isTrue);
+    });
+  });
+
   group('availability', () {
     test(
       'electrical units convert without a load cell; force units do not',

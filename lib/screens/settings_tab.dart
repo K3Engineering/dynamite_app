@@ -10,6 +10,7 @@ import '../models/board_calibration.dart';
 import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
+import '../services/data_hub.dart';
 import '../services/rig_state.dart';
 import '../widgets/calibration_text.dart';
 import '../widgets/device_info_card.dart';
@@ -45,6 +46,17 @@ class SettingsTab extends StatelessWidget {
       (r) => r.boardCalibrationFor(deviceId),
     );
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
+    // Unit availability is derived from the hub (the samples-owner), not
+    // RigState's per-device document copy: it gates what the connected
+    // board can convert right now.
+    final availability = context.select<DataHub, UnitAvailability>(
+      (h) => resolveUnitAvailability(h, settings.activeChannelIndices),
+    );
+    final unit = settings.displayUnit.effective(availability);
+    final enabledUnits = {
+      for (final u in DisplayUnit.values)
+        if (u.isAvailable(availability)) u,
+    };
 
     return SafeArea(
       child: ListView(
@@ -64,6 +76,8 @@ class SettingsTab extends StatelessWidget {
               for (final u in DisplayUnit.values)
                 if (u.isForce) u,
             ],
+            selected: unit,
+            enabled: enabledUnits,
           ),
           _UnitGroup(
             label: 'Electrical',
@@ -71,6 +85,8 @@ class SettingsTab extends StatelessWidget {
               for (final u in DisplayUnit.values)
                 if (!u.isForce) u,
             ],
+            selected: unit,
+            enabled: enabledUnits,
           ),
           const SizedBox(height: 16),
 
@@ -211,10 +227,22 @@ class SettingsTab extends StatelessWidget {
 /// One row of the display-units picker: a label above a segmented button
 /// covering one unit family (force or electrical).
 class _UnitGroup extends StatelessWidget {
-  const _UnitGroup({required this.label, required this.units});
+  const _UnitGroup({
+    required this.label,
+    required this.units,
+    required this.selected,
+    required this.enabled,
+  });
 
   final String label;
   final List<DisplayUnit> units;
+
+  /// The unit the instrument draws (the effective preference); lives in one
+  /// of the two groups, the other shows an empty selection.
+  final DisplayUnit selected;
+
+  /// The units the board/rig can convert right now.
+  final Set<DisplayUnit> enabled;
 
   @override
   Widget build(BuildContext context) {
@@ -227,14 +255,21 @@ class _UnitGroup extends StatelessWidget {
         SegmentedButton<DisplayUnit>(
           segments: [
             for (final u in units)
-              ButtonSegment(value: u, label: Text(u.symbol)),
+              ButtonSegment(
+                value: u,
+                label: Text(u.symbol),
+                enabled: enabled.contains(u),
+              ),
           ],
-          selected: {settings.displayUnit},
+          selected: {if (units.contains(selected)) selected},
+          emptySelectionAllowed: true,
           // The default selected checkmark steals width from the labels
           // and makes the segments wrap on narrow (mobile) screens.
           showSelectedIcon: false,
-          onSelectionChanged: (set) =>
-              unawaited(settings.setDisplayUnit(set.first)),
+          onSelectionChanged: (set) {
+            if (set.isEmpty) return;
+            unawaited(settings.setDisplayUnit(set.first));
+          },
         ),
         const SizedBox(height: 8),
       ],

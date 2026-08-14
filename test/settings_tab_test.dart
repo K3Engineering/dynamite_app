@@ -8,9 +8,11 @@ import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/models/app_settings.dart';
 import 'package:dynamite_app/models/calibration.dart';
+import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/screens/settings_tab.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
+import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 
@@ -35,21 +37,24 @@ void main() {
     final prefs = await SharedPreferences.getInstance();
     final events = AppEvents();
     final link = BleLinkManager(events: events);
+    final hub = DataHub();
     final rig = RigState(transport: link, prefs: prefs);
     // Wire the link's calibration read to the rig — the app's wiring goes
     // through the packet decoder; the test shortcuts the (separately
     // tested) parsing.
-    link.onCalibrationData = (data, gains) => rig.onFlashRead(
-      link.connectedDeviceId,
-      link.connectedDeviceName,
-      DeviceFlash.parse(utf8.decode(data), pgaGains: gains),
-    );
+    link.onCalibrationData = (data, gains) {
+      final flash = DeviceFlash.parse(utf8.decode(data), pgaGains: gains);
+      hub.updateBoardCalibration(flash.board);
+      rig.onFlashRead(link.connectedDeviceId, link.connectedDeviceName, flash);
+      hub.updateLoadCells(rig.channelCells);
+    };
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           ChangeNotifierProvider<AppSettings>.value(
             value: AppSettings(prefs: prefs),
           ),
+          ChangeNotifierProvider<DataHub>.value(value: hub),
           ChangeNotifierProvider<BleLinkManager>.value(value: link),
           ChangeNotifierProvider<RigState>.value(value: rig),
         ],
@@ -83,6 +88,32 @@ void main() {
       const Offset(0, -300),
     );
     expect(find.text('No device connected'), findsOneWidget);
+  });
+
+  testWidgets('no board constants: only Raw is selectable', (tester) async {
+    await pump(tester);
+
+    final groups = tester
+        .widgetList<SegmentedButton<DisplayUnit>>(
+          find.byType(SegmentedButton<DisplayUnit>),
+        )
+        .toList();
+    expect(groups, hasLength(2));
+    final electrical = groups[1];
+    expect(electrical.selected, {DisplayUnit.raw});
+    expect(
+      electrical.segments
+          .singleWhere((s) => s.value == DisplayUnit.mVv)
+          .enabled,
+      isFalse,
+    );
+    expect(
+      electrical.segments
+          .singleWhere((s) => s.value == DisplayUnit.raw)
+          .enabled,
+      isTrue,
+    );
+    expect(groups[0].segments.every((s) => s.enabled == false), isTrue);
   });
 
   testWidgets('connected: the board calibration row summarizes and opens', (
