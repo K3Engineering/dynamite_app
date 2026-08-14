@@ -12,6 +12,10 @@ import 'kvs_flash_transport.dart';
 import 'kvs_protocol.dart';
 import '../models/calibration.dart';
 
+/// Samples per emitted feed packet: one packet every that many milliseconds
+/// makes 1 kHz (matches DataHub.samplesPerSec).
+const int _samplesPerPacket = 20;
+
 class MockBlePlatform extends UniversalBlePlatform {
   static MockBlePlatform? _instance;
   static MockBlePlatform get instance => _instance ??= MockBlePlatform._();
@@ -334,14 +338,14 @@ class MockBlePlatform extends UniversalBlePlatform {
     _generatedPacketCount = 0;
 
     if (BleInputProperty.notification == bleInputProperty) {
-      // One packet every [nwAdcNumSamples] ms => 1000 samples/sec (matches
-      // DataHub.samplesPerSec), with [nwAdcNumSamples] samples per packet.
-      const dataInterval = Duration(milliseconds: nwAdcNumSamples);
+      // One packet every [_samplesPerPacket] ms => 1000 samples/sec (matches
+      // DataHub.samplesPerSec), with [_samplesPerPacket] samples per packet.
+      const dataInterval = Duration(milliseconds: _samplesPerPacket);
       _notificationTimer = Timer.periodic(dataInterval, (_) {
         final int thisCounter = _packetCount;
         // Always advance the running counter by a full packet, whether or not
         // we deliver this packet, so a dropped packet produces a real gap.
-        _packetCount = (_packetCount + nwAdcNumSamples) & 0xFFFF;
+        _packetCount = (_packetCount + _samplesPerPacket) & 0xFFFF;
 
         final bool drop =
             dropEveryNPackets > 0 &&
@@ -353,11 +357,11 @@ class MockBlePlatform extends UniversalBlePlatform {
         final ev = encodeAdcPacket(
           counter: thisCounter,
           frames: [
-            for (int i = 0; i < nwAdcNumSamples; ++i)
+            for (int i = 0; i < _samplesPerPacket; ++i)
               _mockData[(_mockDataCount + i) % _mockData.length],
           ],
         );
-        _mockDataCount = (_mockDataCount + nwAdcNumSamples) % _mockData.length;
+        _mockDataCount = (_mockDataCount + _samplesPerPacket) % _mockData.length;
         updateCharacteristicValue(deviceId, characteristic, ev, null);
       });
     }

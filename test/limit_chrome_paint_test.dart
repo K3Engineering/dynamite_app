@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/app_settings.dart';
 import 'package:dynamite_app/models/calibration.dart';
+import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
@@ -16,7 +17,7 @@ import 'package:dynamite_app/widgets/graph_components.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const channels = DataHub.numAdcChannels;
+  const channels = wireNumAdcChan;
 
   /// Pro-like nominal chain (same fixture as channel_limits_test).
   const testNominals = ChannelNominals(

@@ -110,7 +110,7 @@ class BoardNominals {
     required this.excitationV,
     required this.pgaGains,
     this.provenance = const {},
-  }) : assert(pgaGains.length == nwNumAdcChan);
+  }) : assert(pgaGains.length == wireNumAdcChan);
 
   final double adcFsrV;
   final double afeGain;
@@ -533,7 +533,7 @@ class BoardCalibration {
     this.nominals,
     BoardDataStatus? constantsStatus,
     this.constantsDetail = '',
-  }) : assert(channels.length == nwNumAdcChan),
+  }) : assert(channels.length == wireNumAdcChan),
        constantsStatus =
            constantsStatus ??
            (nominals != null ? BoardDataStatus.ok : BoardDataStatus.unreadable);
@@ -622,7 +622,7 @@ class BoardCalibration {
 
     return BoardCalibration(
       channels: [
-        for (int i = 0; i < nwNumAdcChan; ++i)
+        for (int i = 0; i < wireNumAdcChan; ++i)
           ChannelBoardCalibration(
             resistors: parseList(kv['ch$i.r'], kLadderResistorCount),
             readings: parseList(kv['ch$i.raw'], kCalPointCount),
@@ -635,7 +635,7 @@ class BoardCalibration {
       calTool: kv['cal.tool'],
       calOrigin: kv['cal.origin'],
       calTempsC: parseTemps(kv['cal.temp']),
-      calAdcGains: parseList(kv['cal.adc'], nwNumAdcChan),
+      calAdcGains: parseList(kv['cal.adc'], wireNumAdcChan),
       nominals: nominals,
       constantsStatus: constants.status,
       constantsDetail: constants.detail,

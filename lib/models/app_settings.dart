@@ -26,7 +26,7 @@ class AppSettings extends ChangeNotifier {
     _displayUnit = DisplayUnit.fromName(_prefs.getString(_keyUnit));
 
     final active = _prefs.getStringList(_keyActiveChannels);
-    if (active != null && active.length == nwNumAdcChan) {
+    if (active != null && active.length == wireNumAdcChan) {
       _activeChannels = active.map((s) => s == 'true').toList();
     }
 
@@ -59,7 +59,7 @@ class AppSettings extends ChangeNotifier {
 
   /// Which channels are shown in the live view. Local to the live tab —
   /// each recorded session carries its own visibility set.
-  List<bool> _activeChannels = List.filled(nwNumAdcChan, true);
+  List<bool> _activeChannels = List.filled(wireNumAdcChan, true);
   List<bool> get activeChannels => List.unmodifiable(_activeChannels);
 
   List<int> get activeChannelIndices => [
