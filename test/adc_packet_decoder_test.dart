@@ -9,20 +9,24 @@ import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 
+/// Default packet size for tests that don't care about it (the decoder
+/// accepts any count).
+const int defaultPacketSamples = 20;
+
 /// Builds an ADC-feed notification: 16-bit LE sample counter plus [samples]
-/// frames of [nwAdcSampleLength] bytes (24-bit LE per channel).
+/// frames of [wireAdcSampleLength] bytes (24-bit LE per channel).
 Uint8List makePacket(
   int startCounter,
   int Function(int s, int c) value, {
-  int samples = nwAdcNumSamples,
+  int samples = defaultPacketSamples,
 }) {
-  final ev = Uint8List(nwHeaderSize + nwAdcSampleLength * samples);
+  final ev = Uint8List(wireAdcHeaderSize + wireAdcSampleLength * samples);
   ev[0] = startCounter & 0xFF;
   ev[1] = (startCounter >> 8) & 0xFF;
   for (int s = 0; s < samples; ++s) {
-    for (int c = 0; c < nwNumAdcChan; ++c) {
+    for (int c = 0; c < wireNumAdcChan; ++c) {
       final v = value(s, c) & 0xFFFFFF;
-      final base = nwHeaderSize + s * nwAdcSampleLength + c * 3;
+      final base = wireAdcHeaderSize + s * wireAdcSampleLength + c * 3;
       ev[base] = v & 0xFF;
       ev[base + 1] = (v >> 8) & 0xFF;
       ev[base + 2] = (v >> 16) & 0xFF;
@@ -41,9 +45,9 @@ void main() {
   });
 
   group('AdcPacketDecoder', () {
-    test('a well-formed packet appends nwAdcNumSamples samples', () {
+    test('a well-formed packet appends all its samples', () {
       decoder.onDataPacket(makePacket(0, (s, c) => c * 10));
-      expect(hub.totalSamples, nwAdcNumSamples);
+      expect(hub.totalSamples, defaultPacketSamples);
     });
 
     test('decodes signed 24-bit values including negatives and extrema', () {
@@ -69,33 +73,33 @@ void main() {
       expect(hub.rawData[2][0], 0x7FFFFF);
       expect(hub.rawData[3][0], -0x800000);
       // Every decoded sample in this packet is identical.
-      expect(hub.rawData[0][nwAdcNumSamples - 1], 10);
+      expect(hub.rawData[0][defaultPacketSamples - 1], 10);
     });
 
     test(
-      'consecutive packets with counter += nwAdcNumSamples report no gap',
+      'consecutive packets with counter += one packet report no gap',
       () {
         decoder.onDataPacket(makePacket(0, (s, c) => 1));
-        decoder.onDataPacket(makePacket(nwAdcNumSamples, (s, c) => 2));
-        decoder.onDataPacket(makePacket(2 * nwAdcNumSamples, (s, c) => 3));
+        decoder.onDataPacket(makePacket(defaultPacketSamples, (s, c) => 2));
+        decoder.onDataPacket(makePacket(2 * defaultPacketSamples, (s, c) => 3));
 
-        expect(hub.totalSamples, 3 * nwAdcNumSamples);
+        expect(hub.totalSamples, 3 * defaultPacketSamples);
         expect(hub.gaps.contains(0), isFalse);
-        expect(hub.gaps.contains(nwAdcNumSamples), isFalse);
-        expect(hub.gaps.contains(2 * nwAdcNumSamples), isFalse);
+        expect(hub.gaps.contains(defaultPacketSamples), isFalse);
+        expect(hub.gaps.contains(2 * defaultPacketSamples), isFalse);
       },
     );
 
     test('a counter jump injects the dropped range into DataHub.gaps', () {
       // Packet 0 covers samples [0, 20) (counter = 0). The next packet's
-      // counter is 2 * nwAdcNumSamples (40), one stride beyond the expected 20,
+      // counter is 2 * defaultPacketSamples (40), one stride beyond the expected 20,
       // so the decoder reports 20 dropped samples before decoding the new one.
       decoder.onDataPacket(makePacket(0, (s, c) => 1));
       final before = hub.totalSamples; // 20
-      decoder.onDataPacket(makePacket(2 * nwAdcNumSamples, (s, c) => 5));
+      decoder.onDataPacket(makePacket(2 * defaultPacketSamples, (s, c) => 5));
 
       // 20 held (gap) samples + 20 real samples from the second packet.
-      expect(hub.totalSamples, before + 2 * nwAdcNumSamples);
+      expect(hub.totalSamples, before + 2 * defaultPacketSamples);
       // The dropped range is half-open [20, 40).
       expect(hub.gaps.contains(20), isTrue);
       expect(hub.gaps.contains(39), isTrue);
@@ -108,11 +112,11 @@ void main() {
       // Start near the top of the 16-bit counter; the next packet's counter
       // is exactly one stride ahead, wrapping past 0xFFFF.
       const start = 0xFFF0;
-      const next = (start + nwAdcNumSamples) & 0xFFFF; // wraps to 0x0004
+      const next = (start + defaultPacketSamples) & 0xFFFF; // wraps to 0x0004
       decoder.onDataPacket(makePacket(start, (s, c) => 7));
       decoder.onDataPacket(makePacket(next, (s, c) => 8));
 
-      expect(hub.totalSamples, 2 * nwAdcNumSamples);
+      expect(hub.totalSamples, 2 * defaultPacketSamples);
       expect(hub.gaps.contains(start), isFalse);
     });
 
@@ -122,8 +126,8 @@ void main() {
       decoder.resetContinuity();
       decoder.onDataPacket(makePacket(0x7FFF, (s, c) => 2));
 
-      expect(hub.totalSamples, 2 * nwAdcNumSamples);
-      expect(hub.gaps.contains(nwAdcNumSamples), isFalse);
+      expect(hub.totalSamples, 2 * defaultPacketSamples);
+      expect(hub.gaps.contains(defaultPacketSamples), isFalse);
     });
 
     test('the packet counter anchors to the hub index after gap injection', () {
@@ -134,10 +138,10 @@ void main() {
       // A one-stride jump: 20 held samples are injected first, so the next
       // packet's first sample (counter 40) lands at hub index 40 — keeping
       // counter and hub timeline in lockstep (ssn = origin + row_index).
-      decoder.onDataPacket(makePacket(2 * nwAdcNumSamples, (s, c) => 5));
+      decoder.onDataPacket(makePacket(2 * defaultPacketSamples, (s, c) => 5));
       expect(hub.packetAnchor, (
-        counter: 2 * nwAdcNumSamples,
-        hubIndex: 2 * nwAdcNumSamples,
+        counter: 2 * defaultPacketSamples,
+        hubIndex: 2 * defaultPacketSamples,
       ));
     });
 
@@ -149,13 +153,27 @@ void main() {
       expect(hub.packetAnchor, isNull);
     });
 
-    test('a 15-sample packet decodes and advances continuity by 15', () {
-      decoder.onDataPacket(makePacket(0, (s, c) => c + 1, samples: 15));
-      decoder.onDataPacket(makePacket(15, (s, c) => c + 1, samples: 15));
-      expect(hub.totalSamples, 30);
-      expect(hub.gaps.contains(15), isFalse);
+    test('a 14-sample packet decodes and advances continuity by 14', () {
+      decoder.onDataPacket(makePacket(0, (s, c) => c + 1, samples: 14));
+      decoder.onDataPacket(makePacket(14, (s, c) => c + 1, samples: 14));
+      expect(hub.totalSamples, 28);
+      expect(hub.gaps.contains(14), isFalse);
       expect(hub.rawData[0][0], 1);
-      expect(hub.rawData[3][14], 4);
+      expect(hub.rawData[3][13], 4);
+    });
+
+    test('packets over 20 samples decode — the protocol caps nothing', () {
+      decoder.onDataPacket(makePacket(0, (s, c) => c + 1, samples: 30));
+      decoder.onDataPacket(makePacket(30, (s, c) => c + 1, samples: 30));
+      expect(hub.totalSamples, 60);
+      expect(hub.gaps.contains(30), isFalse);
+      expect(hub.rawData[3][59], 4);
+    });
+
+    test('a header-only packet (counter, no samples) is malformed', () {
+      decoder.onDataPacket(Uint8List(wireAdcHeaderSize));
+      expect(hub.totalSamples, 0);
+      expect(hub.lastMalformedPacketLen, wireAdcHeaderSize);
     });
 
     test('an empty packet is ignored and noted as malformed', () {

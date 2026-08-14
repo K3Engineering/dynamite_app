@@ -9,6 +9,7 @@ import '../models/calibration.dart';
 import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
 
+import '../services/adc_protocol.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/feed_health.dart';
@@ -520,7 +521,7 @@ class LiveStats extends StatelessWidget {
 
           final hasData = hub.totalSamples > 0;
           final clipped = [
-            for (int i = 0; i < DataHub.numAdcChannels; i++)
+            for (int i = 0; i < wireNumAdcChan; i++)
               hasData && ChannelLimits.isClipped(hub.currentRawFor(i)),
           ];
 
@@ -537,7 +538,7 @@ class LiveStats extends StatelessWidget {
                   ChannelStatsRow(
                     label: 'Live',
                     values: [
-                      for (int i = 0; i < DataHub.numAdcChannels; i++)
+                      for (int i = 0; i < wireNumAdcChan; i++)
                         hub.currentValue(i, unit),
                     ],
                     emphasized: true,
@@ -546,7 +547,7 @@ class LiveStats extends StatelessWidget {
                   ChannelStatsRow(
                     label: 'Peak',
                     values: [
-                      for (int i = 0; i < DataHub.numAdcChannels; i++)
+                      for (int i = 0; i < wireNumAdcChan; i++)
                         hub.peakValue(i, unit),
                     ],
                   ),
@@ -554,7 +555,7 @@ class LiveStats extends StatelessWidget {
                     ChannelStatsRow(
                       label: 'dF/dt',
                       values: [
-                        for (int i = 0; i < DataHub.numAdcChannels; i++)
+                        for (int i = 0; i < wireNumAdcChan; i++)
                           hub.currentDerivative(i, unit),
                       ],
                       stale: stale,

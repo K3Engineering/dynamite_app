@@ -9,13 +9,13 @@ import '../services/adc_protocol.dart';
 // certificate property this app does not store), a board has a zero OFFSET.
 // ---------------------------------------------------------------------------
 
-/// Number of load cell slots on a device. The first [nwNumAdcChan] slots are
+/// Number of load cell slots on a device. The first [wireNumAdcChan] slots are
 /// the channels (the plugged-in rig); the rest are spares carried on the
 /// device. Constant for the first prototype.
 const int kRigSlotCount = 10;
 
 String rigSlotTitle(int i) =>
-    i < nwNumAdcChan ? 'CH ${i + 1}' : 'Slot ${i + 1}';
+    i < wireNumAdcChan ? 'CH ${i + 1}' : 'Slot ${i + 1}';
 
 /// One populated device slot: the cell plus the write timestamp from flash
 /// (display metadata only — never a sync arbiter).
@@ -60,12 +60,12 @@ class RigSlots {
 
   /// Cells converting the four ADC channels (slots 0–3), nulls included.
   List<LoadCellProfile?> get channelCells => [
-    for (int i = 0; i < nwNumAdcChan; ++i) cellAt(i),
+    for (int i = 0; i < wireNumAdcChan; ++i) cellAt(i),
   ];
 
   /// Channel row titles: the cell's title, or the bare channel name.
   List<String> get channelTitles => [
-    for (int i = 0; i < nwNumAdcChan; ++i) cellAt(i)?.title ?? rigSlotTitle(i),
+    for (int i = 0; i < wireNumAdcChan; ++i) cellAt(i)?.title ?? rigSlotTitle(i),
   ];
 
   RigSlots withSlot(int i, RigSlot? slot) => RigSlots([

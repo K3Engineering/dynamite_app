@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dynamite_app/models/bucket_series.dart';
 import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/models/gap_list.dart';
+import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/session_storage.dart';
 
@@ -97,7 +98,7 @@ void main() {
   group('DataHub vs SessionData bucket mirror', () {
     test('same stream (with gaps) produces identical buckets', () {
       const int n = 12345;
-      const int channels = DataHub.numAdcChannels;
+      const int channels = wireNumAdcChan;
       final rng = math.Random(42);
 
       final hub = DataHub();
@@ -176,7 +177,7 @@ void main() {
     });
 
     test('gap-exit jump is suppressed in the diff buckets on both sides', () {
-      const int channels = DataHub.numAdcChannels;
+      const int channels = wireNumAdcChan;
       final hub = DataHub();
       final frame = Int32List(channels);
 

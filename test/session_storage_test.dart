@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/models/display_unit.dart';
+import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/database.dart';
 import 'package:dynamite_app/services/session_storage.dart';
@@ -18,7 +19,7 @@ import 'package:dynamite_app/services/session_storage.dart';
 /// writer persists its ssn origin at latch time (a harmless no-op when its
 /// session row doesn't exist), and several tests exercise the real DB path.
 void main() {
-  const int channels = DataHub.numAdcChannels;
+  const int channels = wireNumAdcChan;
 
   setUp(() {
     AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());

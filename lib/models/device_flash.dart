@@ -22,7 +22,7 @@ final Set<String> _knownFlashKeys = {
   'cal.origin',
   'cal.temp',
   'cal.adc',
-  for (int i = 0; i < nwNumAdcChan; ++i) ...['ch$i.r', 'ch$i.raw'],
+  for (int i = 0; i < wireNumAdcChan; ++i) ...['ch$i.r', 'ch$i.raw'],
   for (int i = 0; i < kRigSlotCount; ++i) ...[
     'lc$i.name',
     'lc$i.cap',

@@ -23,7 +23,7 @@ class AdcPacketDecoder {
 
   /// Reusable frame buffer (one value per channel) passed to
   /// [DataHub.addSampleFrame], which copies out of it synchronously.
-  final Int32List _frame = Int32List(nwNumAdcChan);
+  final Int32List _frame = Int32List(wireNumAdcChan);
 
   /// Forget the last seen packet counter so the next packet is not diffed
   /// against a stale value (which would report spurious dropped samples).
@@ -86,11 +86,11 @@ class AdcPacketDecoder {
     hub.notePacketCounter(count);
 
     for (
-      int packetStart = nwHeaderSize;
-      packetStart < nwHeaderSize + n * nwAdcSampleLength;
-      packetStart += nwAdcSampleLength
+      int packetStart = wireAdcHeaderSize;
+      packetStart < wireAdcHeaderSize + n * wireAdcSampleLength;
+      packetStart += wireAdcSampleLength
     ) {
-      for (int i = 0; i < nwNumAdcChan; ++i) {
+      for (int i = 0; i < wireNumAdcChan; ++i) {
         final int baseIndex = packetStart + i * 3;
         _frame[i] =
             ((data[baseIndex] << 0) |

@@ -7,6 +7,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
+import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
@@ -113,7 +114,7 @@ void main() {
       // streams hub slices to the writer via the samples-appended listener,
       // notified by commitBatch once per (simulated) packet.
       const n = 10;
-      final frame = Int32List(DataHub.numAdcChannels);
+      final frame = Int32List(wireNumAdcChan);
       for (var i = 0; i < n; i++) {
         frame[0] = 1000 + i;
         hub.addSampleFrame(frame);
@@ -198,7 +199,7 @@ void main() {
       );
       expect(start, isA<StartSessionOk>());
 
-      final frame = Int32List(DataHub.numAdcChannels);
+      final frame = Int32List(wireNumAdcChan);
       hub.addSampleFrame(frame);
       hub.commitBatch(0);
 

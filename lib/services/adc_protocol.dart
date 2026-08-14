@@ -3,36 +3,32 @@ library;
 
 import 'dart:typed_data';
 
-/// Bytes per sample on the wire: [nwNumAdcChan] channels x 3 bytes (24-bit).
-const int nwAdcSampleLength = 12;
+/// Bytes per sample on the wire: [wireNumAdcChan] channels x 3 bytes (24-bit).
+const int wireAdcSampleLength = 12;
 
-/// Max samples per notification (ATT payload 244 / Android).
-const int nwAdcNumSamples = 20;
-
-/// Min samples per notification (ATT MTU 185 / iOS).
-const int nwAdcMinSamples = 15;
-
-const int nwNumAdcChan = 4;
+/// Channels per sample frame.
+const int wireNumAdcChan = 4;
 
 /// Packet header bytes (16-bit little-endian running sample counter).
-const int nwHeaderSize = 2;
+const int wireAdcHeaderSize = 2;
 
-/// Sample count implied by a notification length, or null if it is not a
-/// complete 15–20 sample packet.
+/// Sample count implied by a notification length, or null if the payload is
+/// not a whole number of frames. The protocol accepts any sample count —
+/// the link MTU caps packet size in practice — but a packet holds at least
+/// one frame: a sample counter with no samples has no protocol meaning.
 int? adcSamplesInPacket(int length) {
-  final payload = length - nwHeaderSize;
-  if (payload < nwAdcMinSamples * nwAdcSampleLength) return null;
-  if (payload > nwAdcNumSamples * nwAdcSampleLength) return null;
-  if (payload % nwAdcSampleLength != 0) return null;
-  return payload ~/ nwAdcSampleLength;
+  final payload = length - wireAdcHeaderSize;
+  if (payload < wireAdcSampleLength) return null;
+  if (payload % wireAdcSampleLength != 0) return null;
+  return payload ~/ wireAdcSampleLength;
 }
 
-/// Encode one sample frame: [nwNumAdcChan] channel values as 24-bit
+/// Encode one sample frame: [wireNumAdcChan] channel values as 24-bit
 /// little-endian. Values are masked to 24 bits (callers clamp to the signed
 /// 24-bit range as needed).
 Uint8List encodeAdcFrame(List<int> channels) {
-  final out = Uint8List(nwAdcSampleLength);
-  for (int ch = 0; ch < nwNumAdcChan; ch++) {
+  final out = Uint8List(wireAdcSampleLength);
+  for (int ch = 0; ch < wireNumAdcChan; ch++) {
     final v = channels[ch] & 0xFFFFFF;
     out[ch * 3] = v & 0xFF;
     out[ch * 3 + 1] = (v >> 8) & 0xFF;
@@ -42,21 +38,21 @@ Uint8List encodeAdcFrame(List<int> channels) {
 }
 
 /// Encode one ADC feed packet: the 16-bit LE running sample [counter] (the
-/// starting sample index of the packet) followed by 15–20 frames.
+/// starting sample index of the packet) followed by the frames, one minimum.
 Uint8List encodeAdcPacket({
   required int counter,
   required Iterable<Uint8List> frames,
 }) {
   final n = frames.length;
-  assert(n >= nwAdcMinSamples && n <= nwAdcNumSamples);
-  final out = Uint8List(nwHeaderSize + n * nwAdcSampleLength);
+  assert(n >= 1);
+  final out = Uint8List(wireAdcHeaderSize + n * wireAdcSampleLength);
   out[0] = counter & 0xFF;
   out[1] = (counter >> 8) & 0xFF;
-  int offset = nwHeaderSize;
+  int offset = wireAdcHeaderSize;
   for (final frame in frames) {
-    assert(frame.length == nwAdcSampleLength);
+    assert(frame.length == wireAdcSampleLength);
     out.setAll(offset, frame);
-    offset += nwAdcSampleLength;
+    offset += wireAdcSampleLength;
   }
   return out;
 }
@@ -71,7 +67,7 @@ List<double>? parseAdcConfigPgaGains(Uint8List b) {
   if (b.length < structBytes || b[0] != 1) return null;
   final pga = b[9] | (b[10] << 8);
   return [
-    for (int i = 0; i < nwNumAdcChan; ++i)
+    for (int i = 0; i < wireNumAdcChan; ++i)
       (1 << ((pga >> (4 * i)) & 0x7)).toDouble(),
   ];
 }

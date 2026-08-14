@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
+import 'adc_protocol.dart';
 import 'database.dart';
 import 'data_hub.dart';
 import '../models/bucket_series.dart';
@@ -22,7 +23,7 @@ class SessionStorage {
   /// sample slices via [LiveSessionWriter.appendData] as data arrives and is
   /// passed to [finalizeSession] when recording stops.
   ///
-  /// Note: every session stores all [DataHub.numAdcChannels]; [channelLabels]
+  /// Note: every session stores all [wireNumAdcChan]; [channelLabels]
   /// and [visibleChannels] are retained for display only. [deviceMetadata] is
   /// the connected device's identity as the dynamite-csv `device` block (see
   /// [DeviceInfo.toCsvDeviceMetadata]), frozen for export.
@@ -44,13 +45,13 @@ class SessionStorage {
       sampleRate: DataHub.samplesPerSec,
       // We always persist every ADC channel, so the stored channel count must
       // match what the writer packs (and what loadSession reads back).
-      channelCount: DataHub.numAdcChannels,
+      channelCount: wireNumAdcChan,
       channelLabels: jsonEncode(channelLabels),
       tares: jsonEncode(tare.toList()),
       // Snapshot the per-channel calibration in effect now; playback
       // converts through it even if calibration changes later.
       calibrationJson: jsonEncode([
-        for (int ch = 0; ch < DataHub.numAdcChannels; ch++)
+        for (int ch = 0; ch < wireNumAdcChan; ch++)
           dataHub.calibrationFor(ch).toJson(),
       ]),
       visibleChannels: jsonEncode(visibleChannels),
@@ -531,7 +532,7 @@ class LiveSessionWriter {
   int? _ssnOrigin;
 
   /// Accumulates sample count and peak; shared scan logic with recovery.
-  final _ChunkAggregate _agg = _ChunkAggregate(DataHub.numAdcChannels);
+  final _ChunkAggregate _agg = _ChunkAggregate(wireNumAdcChan);
 
   /// First write failure encountered, if any. Once set it stays set.
   Object? writeError;
@@ -577,7 +578,7 @@ class LiveSessionWriter {
     }
 
     // Snapshot the sample slice before enqueueing.
-    const codec = SessionChunkCodec(DataHub.numAdcChannels);
+    const codec = SessionChunkCodec(wireNumAdcChan);
     final bytes = codec.pack(
       count,
       (s, ch) => dataHub.rawData[ch][(startIdx + s) % DataHub.maxDataSz],
