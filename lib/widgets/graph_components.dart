@@ -3031,10 +3031,10 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     return _computeYRange(yMin, yMax, unit);
   }
 
-  /// Rail chrome, gated on `AppSettings.limitWarningsEnabled`. Light fill
-  /// from each in-view rail to the plot edge; stronger fill where the
-  /// converter railed. Mixed buckets are treated as hot when a bucket is
-  /// ≤1 px ([_blockSizeFor] >= [kBucketSize]).
+  /// Rail chrome, gated on `AppSettings.limitWarningsEnabled`. Single light
+  /// fill from the outermost in-view rail to the plot edge; single stronger
+  /// fill over the union of clipping spans. Mixed buckets are treated as hot
+  /// when a bucket is ≤1 px ([_blockSizeFor] >= [kBucketSize]).
   @override
   void drawOverlay(
     Canvas canvas,
@@ -3053,9 +3053,8 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
         _blockSizeFor(viewSpan, graphSz.width) >= kBucketSize;
 
     final lightPaint = Paint()..color = colorScheme.error.withAlpha(22);
-    final clipPaint = Paint()..color = colorScheme.error.withAlpha(80);
-    final rails = <({double y, bool upperSide})>{};
-    final clipRects = <Rect>[];
+    final clipPath = Path()..fillType = PathFillType.evenOdd;
+    double topRailY = 0, bottomRailY = 0;
 
     for (final ch in _activeChannels) {
       final series = _data.channel(ch);
@@ -3069,7 +3068,12 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
         final railY = valueToY(conv(clipRaw.toDouble()));
         if (railY < 0 || railY > graphSz.height) continue;
 
-        rails.add((y: railY, upperSide: positive));
+        if (positive) {
+          topRailY = math.max(topRailY, railY);
+        } else {
+          bottomRailY =
+              bottomRailY == 0 ? railY : math.min(bottomRailY, railY);
+        }
 
         final couldBeHot = positive
             ? series.max >= clipRaw
@@ -3091,7 +3095,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
           final x1 = (it.start - viewStart) * graphSz.width / viewSpan;
           final x2 = (it.end - viewStart) * graphSz.width / viewSpan;
           if (x2 - x1 < 1) continue;
-          clipRects.add(
+          clipPath.addRect(
             Rect.fromLTRB(
               x1,
               positive ? 0 : railY,
@@ -3103,19 +3107,17 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       }
     }
 
-    for (final r in rails) {
+    if (topRailY > 0) {
+      canvas.drawRect(Rect.fromLTRB(0, 0, graphSz.width, topRailY), lightPaint);
+    }
+    if (bottomRailY > 0) {
       canvas.drawRect(
-        Rect.fromLTRB(
-          0,
-          r.upperSide ? 0 : r.y,
-          graphSz.width,
-          r.upperSide ? r.y : graphSz.height,
-        ),
+        Rect.fromLTRB(0, bottomRailY, graphSz.width, graphSz.height),
         lightPaint,
       );
     }
-    for (final rect in clipRects) {
-      canvas.drawRect(rect, clipPaint);
+    if (!clipPath.getBounds().isEmpty) {
+      canvas.drawPath(clipPath, Paint()..color = colorScheme.error.withAlpha(80));
     }
   }
 
