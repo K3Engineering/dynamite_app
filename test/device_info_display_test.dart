@@ -29,15 +29,19 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('DeviceInfoCard', () {
-    Future<void> pumpCard(WidgetTester tester, DeviceInfo? info) async {
+    Future<void> pumpCard(
+      WidgetTester tester,
+      DeviceInfo? info, {
+      int? mtu,
+    }) async {
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(body: DeviceInfoCard(info: info)),
+          home: Scaffold(body: DeviceInfoCard(info: info, mtu: mtu)),
         ),
       );
     }
 
-    testWidgets('renders all five identity fields', (tester) async {
+    testWidgets('renders identity fields and ATT MTU', (tester) async {
       await pumpCard(
         tester,
         const DeviceInfo(
@@ -47,6 +51,7 @@ void main() {
           hardwareRev: 'v700P',
           firmwareRev: 'v700P|v1.2.3',
         ),
+        mtu: 247,
       );
 
       expect(find.text('Dynamite Sampler Pro Mk1'), findsOneWidget);
@@ -54,6 +59,8 @@ void main() {
       expect(find.text('v700P|v1.2.3'), findsOneWidget);
       expect(find.text('A4CF1208F51E'), findsOneWidget);
       expect(find.text('K3 Engineering'), findsOneWidget);
+      expect(find.text('247'), findsOneWidget);
+      expect(find.text('ATT MTU'), findsOneWidget);
       expect(find.text('—'), findsNothing);
     });
 
@@ -62,9 +69,10 @@ void main() {
     ) async {
       // The read hasn't landed yet (or the device was just connected).
       await pumpCard(tester, null);
-      expect(find.text('—'), findsNWidgets(5));
+      expect(find.text('—'), findsNWidgets(6));
 
-      // The web case: only the serial is unreadable (0x2A25 blocklist).
+      // The web case: serial is unreadable (0x2A25 blocklist) and MTU is
+      // never negotiated.
       await pumpCard(
         tester,
         const DeviceInfo(
@@ -74,7 +82,7 @@ void main() {
           firmwareRev: 'v700P|v1.2.3',
         ),
       );
-      expect(find.text('—'), findsOneWidget);
+      expect(find.text('—'), findsNWidgets(2));
       expect(find.text('Dynamite Sampler Pro Mk1'), findsOneWidget);
     });
   });
@@ -194,8 +202,9 @@ void main() {
       expect(find.text('Device info'), findsOneWidget);
       expect(find.text('Dynamite Sampler Demo'), findsOneWidget);
       expect(find.text('DEMO00000000'), findsOneWidget);
-      // The demo identity is complete: no dash placeholders.
-      expect(find.text('—'), findsNothing);
+      expect(find.text('ATT MTU'), findsOneWidget);
+      // Demo has no GATT, so MTU is the only dash.
+      expect(find.text('—'), findsOneWidget);
 
       await teardownDemo(tester, link);
     });

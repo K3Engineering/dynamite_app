@@ -40,6 +40,9 @@ class SettingsTab extends StatelessWidget {
     final deviceInfo = context.select<BleLinkManager, DeviceInfo?>(
       (l) => l.connectedDeviceInfo,
     );
+    final negotiatedMtu = context.select<BleLinkManager, int?>(
+      (l) => l.negotiatedMtu,
+    );
     // The board-calibration row's one-line state; null until the
     // connect-time read lands for this device.
     final boardCal = context.select<RigState, BoardCalibration?>(
@@ -148,7 +151,7 @@ class SettingsTab extends StatelessWidget {
             // render as dashes.
             Text('Device info', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
-            DeviceInfoCard(info: deviceInfo),
+            DeviceInfoCard(info: deviceInfo, mtu: negotiatedMtu),
             const SizedBox(height: 16),
 
             // Device name — not editable yet. Keyed by the name so the

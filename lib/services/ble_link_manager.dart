@@ -110,6 +110,11 @@ class DeviceLink {
   /// Null until the read completes, and after reset.
   DeviceInfo? info;
 
+  /// ATT MTU returned by [UniversalBle.requestMtu] during post-connect
+  /// setup. Null until that call completes, after reset, and on paths that
+  /// never negotiate (web, demo).
+  int? mtu;
+
   bool get isConnecting => state == BtLinkState.connecting;
 
   /// The GATT link is up. True for the whole post-connect setup window and
@@ -134,6 +139,7 @@ class DeviceLink {
     state = BtLinkState.idle;
     rssi = null;
     info = null;
+    mtu = null;
   }
 
   bool get isDemoDevice => deviceId == demoDeviceId;
@@ -148,6 +154,7 @@ class DeviceLink {
     state = BtLinkState.cooldown;
     rssi = null;
     info = null;
+    mtu = null;
   }
 }
 
@@ -391,6 +398,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// read completes. Per-field nulls cover individual read failures (and web,
   /// where the serial number characteristic is blocklisted).
   DeviceInfo? get connectedDeviceInfo => _link.isLinkUp ? _link.info : null;
+
+  /// ATT MTU negotiated at connect, or null with no link up, until the
+  /// request completes, or on platforms/paths that never negotiate (web,
+  /// demo).
+  int? get negotiatedMtu => _link.isLinkUp ? _link.mtu : null;
 
   /// Live RSSI (dBm) of the connected device, or null when not streaming, not
   /// yet read, or unsupported on this platform. Polled every [rssiPollInterval]
@@ -1017,6 +1029,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
         final int mtu = await UniversalBle.requestMtu(deviceId, 247);
         debugPrint('MTU set to: $mtu');
         if (!token.isCurrent) return;
+        _link.mtu = mtu;
         // TODO(perf): investigate requesting high-performance connection
         // priority here for the 1 kHz ADC stream:
         //   await UniversalBle.requestConnectionPriority(

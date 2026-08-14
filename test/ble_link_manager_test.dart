@@ -114,10 +114,12 @@ void main() {
       expect(info.serial, 'A4CF1208F51E');
       expect(info.hardwareRev, 'v700P');
       expect(info.firmwareRev, 'v700P|mock-1.0.0');
+      expect(link.negotiatedMtu, 247);
       expect(seen, isEmpty);
 
       teardownLink(async, link);
       expect(link.connectedDeviceInfo, isNull);
+      expect(link.negotiatedMtu, isNull);
     });
   });
 
