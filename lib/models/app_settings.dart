@@ -70,7 +70,7 @@ class AppSettings extends ChangeNotifier {
   bool _wakelockEnabled = false;
   bool get wakelockEnabled => _wakelockEnabled;
 
-  /// Master switch for the chart's 1.2 V rail display (flood and dashes).
+  /// Master switch for the chart's 1.2 V rail display (forbidden-zone fill).
   /// When off, the graphs show no limit chrome. The at-the-rail clip icon
   /// in the live numbers is NOT gated: a railed converter is data validity,
   /// not a warning preference.

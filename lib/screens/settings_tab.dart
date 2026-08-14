@@ -75,7 +75,7 @@ class SettingsTab extends StatelessWidget {
           const SizedBox(height: 16),
 
           // Limit warnings: the master switch. Disabling removes the 1.2 V
-          // rail chrome (flood and dashes) from the chart — but not the
+          // rail chrome (forbidden-zone fill) from the chart — but not the
           // at-the-rail clip icon in the numbers (a railed converter is data
           // validity, not a warning preference).
           SwitchListTile(
