@@ -149,13 +149,27 @@ void main() {
       expect(hub.packetAnchor, isNull);
     });
 
-    test('a 15-sample packet decodes and advances continuity by 15', () {
-      decoder.onDataPacket(makePacket(0, (s, c) => c + 1, samples: 15));
-      decoder.onDataPacket(makePacket(15, (s, c) => c + 1, samples: 15));
-      expect(hub.totalSamples, 30);
-      expect(hub.gaps.contains(15), isFalse);
+    test('a 14-sample packet decodes and advances continuity by 14', () {
+      decoder.onDataPacket(makePacket(0, (s, c) => c + 1, samples: 14));
+      decoder.onDataPacket(makePacket(14, (s, c) => c + 1, samples: 14));
+      expect(hub.totalSamples, 28);
+      expect(hub.gaps.contains(14), isFalse);
       expect(hub.rawData[0][0], 1);
-      expect(hub.rawData[3][14], 4);
+      expect(hub.rawData[3][13], 4);
+    });
+
+    test('packets over 20 samples decode — the protocol caps nothing', () {
+      decoder.onDataPacket(makePacket(0, (s, c) => c + 1, samples: 30));
+      decoder.onDataPacket(makePacket(30, (s, c) => c + 1, samples: 30));
+      expect(hub.totalSamples, 60);
+      expect(hub.gaps.contains(30), isFalse);
+      expect(hub.rawData[3][59], 4);
+    });
+
+    test('a header-only packet (counter, no samples) is malformed', () {
+      decoder.onDataPacket(Uint8List(nwHeaderSize));
+      expect(hub.totalSamples, 0);
+      expect(hub.lastMalformedPacketLen, nwHeaderSize);
     });
 
     test('an empty packet is ignored and noted as malformed', () {

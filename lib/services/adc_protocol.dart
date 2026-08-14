@@ -6,23 +6,23 @@ import 'dart:typed_data';
 /// Bytes per sample on the wire: [nwNumAdcChan] channels x 3 bytes (24-bit).
 const int nwAdcSampleLength = 12;
 
-/// Max samples per notification (ATT payload 244 / Android).
+/// Samples per packet emitted by the in-app generators (demo signal, mock
+/// BLE). A simulation choice, not a protocol limit — see
+/// [adcSamplesInPacket].
 const int nwAdcNumSamples = 20;
-
-/// Min samples per notification (ATT MTU 185 / iOS).
-const int nwAdcMinSamples = 15;
 
 const int nwNumAdcChan = 4;
 
 /// Packet header bytes (16-bit little-endian running sample counter).
 const int nwHeaderSize = 2;
 
-/// Sample count implied by a notification length, or null if it is not a
-/// complete 15–20 sample packet.
+/// Sample count implied by a notification length, or null if the payload is
+/// not a whole number of frames. The protocol accepts any sample count —
+/// the link MTU caps packet size in practice — but a packet holds at least
+/// one frame: a sample counter with no samples has no protocol meaning.
 int? adcSamplesInPacket(int length) {
   final payload = length - nwHeaderSize;
-  if (payload < nwAdcMinSamples * nwAdcSampleLength) return null;
-  if (payload > nwAdcNumSamples * nwAdcSampleLength) return null;
+  if (payload < nwAdcSampleLength) return null;
   if (payload % nwAdcSampleLength != 0) return null;
   return payload ~/ nwAdcSampleLength;
 }
@@ -42,13 +42,13 @@ Uint8List encodeAdcFrame(List<int> channels) {
 }
 
 /// Encode one ADC feed packet: the 16-bit LE running sample [counter] (the
-/// starting sample index of the packet) followed by 15–20 frames.
+/// starting sample index of the packet) followed by the frames, one minimum.
 Uint8List encodeAdcPacket({
   required int counter,
   required Iterable<Uint8List> frames,
 }) {
   final n = frames.length;
-  assert(n >= nwAdcMinSamples && n <= nwAdcNumSamples);
+  assert(n >= 1);
   final out = Uint8List(nwHeaderSize + n * nwAdcSampleLength);
   out[0] = counter & 0xFF;
   out[1] = (counter >> 8) & 0xFF;
