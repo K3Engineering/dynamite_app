@@ -95,6 +95,18 @@ const double kSegmentTargetPx = 200;
 /// loss between bake and refresh.
 const double kMaxSegmentDrift = 0.08;
 
+/// Nominal baked line height (stroke + AA, logical px): the constant term
+/// the corrective vertical blit stretch multiplies (see
+/// [SegmentedGraphCache._isBlittable]).
+const double kBakedLinePx = 2.0;
+
+/// Max fraction of the plot height a vertically stretched baked line may
+/// occupy before the segment's blit is suppressed (see
+/// [SegmentedGraphCache._isBlittable]): past it, the stretch -- e.g. a
+/// channel switch-off collapsing the Y-range onto a quiet channel -- reads
+/// as a screen-filling smear, and the range vector-draws until re-baked.
+const double kMaxBlitLineFraction = 0.25;
+
 /// Min on-screen width (logical px) of an uncovered range before a bake is
 /// spent on it. Narrower gaps -- e.g. the live-edge sliver -- are drawn as
 /// vectors every frame until they outgrow this.
@@ -226,8 +238,10 @@ class SegmentedGraphCache {
 
   /// Current bake config. Segments carry their own stamps: a destructiveKey
   /// mismatch suppresses the blit (the range vector-draws until re-baked);
-  /// a remapKey/gh/dpr mismatch keeps blitting (best-effort ghost/shift)
-  /// and marks the segment for the rolling config sweep. gh and dpr are
+  /// a remapKey/gh/dpr mismatch keeps blitting (best-effort ghost/shift) --
+  /// except past an extreme vertical stretch, where the blit smears and
+  /// [_isBlittable] suppresses it -- and marks the segment for the rolling
+  /// config sweep. gh and dpr are
   /// deliberately NOT destructive: both are pure drift the blit affine
   /// corrects for. [_generation] identifies the data stream itself; a change
   /// clears everything (different data at the same absolute indices) -- the
@@ -385,6 +399,8 @@ class SegmentedGraphCache {
       viewStart,
       viewEnd,
       totalSamples,
+      yMin,
+      yMax,
       vPad,
       maxDirectGapPx,
       render,
@@ -451,19 +467,24 @@ class SegmentedGraphCache {
   }
 
   /// Uncovered sub-ranges of [viewStart, min(viewEnd, totalSamples)). With
-  /// [blittableOnly], segments whose destructive key no longer matches count
-  /// as uncovered (they are never blitted; the frame vector-draws them).
+  /// [blittableOnly], segments that may not blit under the current mapping
+  /// ([_isBlittable]: destructive-key mismatch or extreme vertical stretch)
+  /// count as uncovered: they are never blitted, so the frame vector-draws
+  /// them. [yMin], [yMax] and [gh] feed the stretch check.
   List<(int, int)> _gaps(
     int viewStart,
     int viewEnd,
-    int totalSamples, {
+    int totalSamples,
+    double yMin,
+    double yMax,
+    double gh, {
     bool blittableOnly = false,
   }) {
     final int domainEnd = math.min(viewEnd, totalSamples);
     final gaps = <(int, int)>[];
     int covered = viewStart;
     for (final s in _segments) {
-      if (blittableOnly && !listEquals(s.destructiveKey, _destructiveKey)) {
+      if (blittableOnly && !_isBlittable(s, yMin, yMax, gh)) {
         continue;
       }
       if (covered >= domainEnd) break;
@@ -505,7 +526,14 @@ class SegmentedGraphCache {
   bool _bakeWidestGap(_BakeEnv env) {
     (int, int)? bakeGap;
     double widestPx = kSegmentGapBakePx;
-    for (final g in _gaps(env.viewStart, env.viewEnd, env.totalSamples)) {
+    for (final g in _gaps(
+      env.viewStart,
+      env.viewEnd,
+      env.totalSamples,
+      env.yMin,
+      env.yMax,
+      env.gh,
+    )) {
       final double w = (g.$2 - g.$1) * env.pps;
       if (w > widestPx) {
         widestPx = w;
@@ -552,6 +580,20 @@ class SegmentedGraphCache {
       return true;
     }
     return false;
+  }
+
+  /// Whether [s] may blit under the current Y-mapping: the destructive key
+  /// must match, and the corrective vertical stretch must keep the baked
+  /// line ([kBakedLinePx] at bake) within [kMaxBlitLineFraction] of the plot
+  /// height. One-sided: shrinking only sharpens, but a large stretch -- e.g.
+  /// the Y-range collapsing onto a quiet channel -- smears the tile's line
+  /// across the screen. Suppressed segments are kept (a range snap-back
+  /// makes them blittable again); the sweep/refresh passes re-bake them and
+  /// [_drawGaps] vector-draws their ranges meanwhile.
+  bool _isBlittable(GraphSegment s, double yMin, double yMax, double gh) {
+    if (!listEquals(s.destructiveKey, _destructiveKey)) return false;
+    final double ys = (s.yMax - s.yMin) / (yMax - yMin) * (gh / s.gh);
+    return ys * kBakedLinePx <= gh * kMaxBlitLineFraction;
   }
 
   /// Whether [s] was baked under outdated config (any kind).
@@ -713,10 +755,11 @@ class SegmentedGraphCache {
   /// tares cancel out of the difference) AND for plot-height changes since
   /// the bake.
   ///
-  /// Segments whose destructive key no longer matches are never blitted:
-  /// their content is wrong in kind (a counts-shaped trace on a kg axis),
-  /// and [_drawGaps] vector-draws their ranges until the sweep re-bakes
-  /// them. Remap-stale segments (channels, tares, gh, dpr) DO blit --
+  /// Unblittable segments ([_isBlittable]) are never blitted: a destructive
+  /// key mismatch is wrong in kind (a counts-shaped trace on a kg axis) and
+  /// an extreme vertical stretch reads as a screen-filling smear;
+  /// [_drawGaps] vector-draws their ranges until the sweep re-bakes them.
+  /// Remap-stale segments (channels, tares, gh, dpr) DO blit --
   /// outdated/shifted but approximately right -- until swept.
   void _blitSegments(
     Canvas canvas,
@@ -731,7 +774,7 @@ class SegmentedGraphCache {
     final paint = Paint()..filterQuality = kSegmentFilterQuality;
     double coveredX = 0;
     for (final s in _segments) {
-      if (!listEquals(s.destructiveKey, _destructiveKey)) continue;
+      if (!_isBlittable(s, yMin, yMax, gh)) continue;
       final double x1 = (s.start - viewStart) * pps;
       final double x2 = (s.end - viewStart) * pps;
       // Where ranges overlap, the LEFT segment is the fresher one (refreshes
@@ -775,11 +818,11 @@ class SegmentedGraphCache {
   }
 
   /// Vector-render the uncovered visible ranges (live-edge sliver, freshly
-  /// exposed pan/zoom territory, bake backlog). Destructive-stale segments
-  /// count as uncovered: their content is never blitted, so these ranges
-  /// are drawn exactly until the sweep re-bakes them. Ranges wider than
-  /// [maxDirectGapPx] are left blank -- the rolling bakes cover them within
-  /// a few frames.
+  /// exposed pan/zoom territory, bake backlog). Unblittable segments
+  /// ([_isBlittable]) count as uncovered: their content is never blitted, so
+  /// these ranges are drawn exactly until the sweep re-bakes them. Ranges
+  /// wider than [maxDirectGapPx] are left blank -- the rolling bakes cover
+  /// them within a few frames.
   void _drawGaps(
     Canvas canvas,
     double pps,
@@ -788,6 +831,8 @@ class SegmentedGraphCache {
     double viewStart,
     double viewEnd,
     int totalSamples,
+    double yMin,
+    double yMax,
     double vPad,
     double maxDirectGapPx,
     SegmentRenderer render,
@@ -796,6 +841,9 @@ class SegmentedGraphCache {
       viewStart.floor(),
       viewEnd.ceil(),
       totalSamples,
+      yMin,
+      yMax,
+      gh,
       blittableOnly: true,
     )) {
       final double w = (ge - gs) * pps;

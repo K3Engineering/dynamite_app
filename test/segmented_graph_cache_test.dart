@@ -404,6 +404,131 @@ void main() {
     });
   });
 
+  group('SegmentedGraphCache vertical stretch suppression', () {
+    /// Cover the 400-sample view (two bakes) and verify steady state.
+    void fill() {
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isFalse);
+    }
+
+    test('an extreme y-range collapse suppresses the blit; the range '
+        'vector-draws until re-baked', () {
+      fill();
+      // yMax 100 -> 5 stretches the tiles 20x: the baked line would cover
+      // 40% of the plot height (> 25% cap), so the stale segment never
+      // blits and its range vector-draws. The config sweep re-bakes
+      // rightmost-first (the channel switch-off scenario).
+      expect(
+        h.paint(
+          viewStart: 0,
+          viewSpan: 400,
+          totalSamples: 400,
+          yMax: 5,
+          remapKey: const ['other'],
+        ),
+        isTrue,
+      );
+      expect(h.bakes.single.start, 200);
+      expect(h.gapDraws, [
+        (start: 0, end: 200, texW: 200, onFrameCanvas: true),
+      ]);
+
+      // Frame 2: the sweep re-bakes the left segment; everything blits again.
+      expect(
+        h.paint(
+          viewStart: 0,
+          viewSpan: 400,
+          totalSamples: 400,
+          yMax: 5,
+          remapKey: const ['other'],
+        ),
+        isTrue,
+      );
+      expect(h.bakes.single.start, 0);
+      expect(h.gapDraws, isEmpty);
+
+      // Converged.
+      expect(
+        h.paint(
+          viewStart: 0,
+          viewSpan: 400,
+          totalSamples: 400,
+          yMax: 5,
+          remapKey: const ['other'],
+        ),
+        isFalse,
+      );
+      expect(h.calls, isEmpty);
+    });
+
+    test('suppression also applies to pure y-drift (no config change)', () {
+      fill();
+      // Same collapse without a key bump: the drift refresh owns the
+      // re-bake (worst-first, left on ties); the still-stretched segment's
+      // range vector-draws.
+      expect(
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, yMax: 5),
+        isTrue,
+      );
+      expect(h.bakes.single.start, 0);
+      expect(h.gapDraws, [
+        (start: 200, end: 400, texW: 200, onFrameCanvas: true),
+      ]);
+
+      expect(
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, yMax: 5),
+        isTrue,
+      );
+      expect(h.bakes.single.start, 200);
+      expect(h.gapDraws, isEmpty);
+    });
+
+    test('a moderate stretch keeps blitting (no suppression)', () {
+      fill();
+      // yMax 100 -> 60: 1.67x stretch, the line would cover ~3% of the
+      // plot. Past kMaxSegmentDrift so the refresh still re-bakes, but the
+      // stale blit is shown meanwhile.
+      expect(
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, yMax: 60),
+        isTrue,
+      );
+      expect(h.gapDraws, isEmpty);
+    });
+
+    test('shrinkage never suppresses (a shrinking blit only sharpens)', () {
+      fill();
+      // yMax 100 -> 2000: 0.05x vertical shrink. Past the drift threshold
+      // (refresh fires) but suppression is one-sided.
+      expect(
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, yMax: 2000),
+        isTrue,
+      );
+      expect(h.gapDraws, isEmpty);
+    });
+
+    test('a range snap-back makes suppressed segments blittable again', () {
+      fill();
+      // Collapse + remap: the left range vector-draws this frame, the right
+      // segment is re-baked at the collapsed range.
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        yMax: 5,
+        remapKey: const ['other'],
+      );
+      expect(h.gapDraws, isNotEmpty);
+
+      // Snap back to the original mapping and keys: the kept left segment
+      // blits exactly again; the re-baked right segment is config-stale but
+      // blittable (a shrink ghost) while the sweep re-bakes it.
+      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isTrue);
+      expect(h.bakes.single.start, 200);
+      expect(h.gapDraws, isEmpty);
+    });
+  });
+
   group('SegmentedGraphCache eviction', () {
     test('segments far outside the view are evicted and re-bake on return', () {
       h.paint(viewStart: 0, viewSpan: 400, totalSamples: 4400);
