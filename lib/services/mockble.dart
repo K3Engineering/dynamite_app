@@ -458,7 +458,7 @@ class MockBlePlatform extends UniversalBlePlatform {
 
   @override
   Future<int> requestMtu(String deviceId, int expectedMtu) async {
-    return 244;
+    return expectedMtu;
   }
 
   @override

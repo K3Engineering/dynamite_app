@@ -16,6 +16,7 @@ import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/rig_state.dart';
+import 'package:dynamite_app/widgets/connection_info_card.dart';
 import 'package:dynamite_app/widgets/device_info_card.dart';
 
 /// Device identity (Device Information service) display. The card's own
@@ -195,7 +196,46 @@ void main() {
       expect(find.text('Dynamite Sampler Demo'), findsOneWidget);
       expect(find.text('DEMO00000000'), findsOneWidget);
       // The demo identity is complete: no dash placeholders.
-      expect(find.text('—'), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(DeviceInfoCard),
+          matching: find.text('—'),
+        ),
+        findsNothing,
+      );
+
+      await teardownDemo(tester, link);
+    });
+
+    testWidgets('Settings tab shows connection info without ATT MTU', (
+      tester,
+    ) async {
+      final link = await pumpApp(tester);
+      await connectDemo(tester);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.byType(NavigationDestination).at(3));
+      await tester.pump();
+      await tester.scrollUntilVisible(
+        find.text('Connection info'),
+        300,
+        scrollable: find.descendant(
+          of: find.byType(SettingsTab),
+          matching: find.byType(Scrollable),
+        ),
+      );
+
+      expect(find.text('Connection info'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(ConnectionInfoCard),
+          matching: find.text('ATT MTU'),
+        ),
+        findsNothing,
+      );
+      expect(find.text('Min packet size'), findsOneWidget);
+      expect(find.text('Max packet size'), findsOneWidget);
+      expect(find.text('242 B'), findsNWidgets(2));
 
       await teardownDemo(tester, link);
     });

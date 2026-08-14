@@ -13,6 +13,7 @@ import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/rig_state.dart';
 import '../widgets/calibration_text.dart';
+import '../widgets/connection_info_card.dart';
 import '../widgets/device_info_card.dart';
 import '../widgets/rig_slots_section.dart';
 import '../widgets/section_header.dart';
@@ -28,8 +29,8 @@ class SettingsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
-    // Narrow selects: the link manager notifies on every RSSI poll, but the
-    // device section only cares about identity changes.
+    // Narrow selects: the link manager notifies on every RSSI poll; this
+    // section only rebuilds on identity / connection-stat changes.
     final deviceId = context.select<BleLinkManager, String>(
       (l) => l.connectedDeviceId,
     );
@@ -39,6 +40,15 @@ class SettingsTab extends StatelessWidget {
     // The connect-time DIS identity read; null until it lands.
     final deviceInfo = context.select<BleLinkManager, DeviceInfo?>(
       (l) => l.connectedDeviceInfo,
+    );
+    final negotiatedMtu = context.select<BleLinkManager, int?>(
+      (l) => l.negotiatedMtu,
+    );
+    final minPacketBytes = context.select<BleLinkManager, int?>(
+      (l) => l.minAdcPacketBytes,
+    );
+    final maxPacketBytes = context.select<BleLinkManager, int?>(
+      (l) => l.maxAdcPacketBytes,
     );
     // The board-calibration row's one-line state; null until the
     // connect-time read lands for this device.
@@ -149,6 +159,18 @@ class SettingsTab extends StatelessWidget {
             Text('Device info', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
             DeviceInfoCard(info: deviceInfo),
+            const SizedBox(height: 16),
+
+            Text(
+              'Connection info',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            ConnectionInfoCard(
+              mtu: negotiatedMtu,
+              minPacketBytes: minPacketBytes,
+              maxPacketBytes: maxPacketBytes,
+            ),
             const SizedBox(height: 16),
 
             // Device name — not editable yet. Keyed by the name so the

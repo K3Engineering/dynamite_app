@@ -110,6 +110,16 @@ class DeviceLink {
   /// Null until the read completes, and after reset.
   DeviceInfo? info;
 
+  /// ATT MTU returned by [UniversalBle.requestMtu] during post-connect
+  /// setup. Null until that call completes, after reset, and on paths that
+  /// never negotiate (web, demo).
+  int? mtu;
+
+  /// Smallest / largest ADC-feed notification size (bytes) delivered on
+  /// this link, including malformed packets. Null until the first packet.
+  int? minAdcPacketBytes;
+  int? maxAdcPacketBytes;
+
   bool get isConnecting => state == BtLinkState.connecting;
 
   /// The GATT link is up. True for the whole post-connect setup window and
@@ -134,6 +144,9 @@ class DeviceLink {
     state = BtLinkState.idle;
     rssi = null;
     info = null;
+    mtu = null;
+    minAdcPacketBytes = null;
+    maxAdcPacketBytes = null;
   }
 
   bool get isDemoDevice => deviceId == demoDeviceId;
@@ -148,6 +161,9 @@ class DeviceLink {
     state = BtLinkState.cooldown;
     rssi = null;
     info = null;
+    mtu = null;
+    minAdcPacketBytes = null;
+    maxAdcPacketBytes = null;
   }
 }
 
@@ -391,6 +407,21 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// read completes. Per-field nulls cover individual read failures (and web,
   /// where the serial number characteristic is blocklisted).
   DeviceInfo? get connectedDeviceInfo => _link.isLinkUp ? _link.info : null;
+
+  /// ATT MTU negotiated at connect, or null with no link up, until the
+  /// request completes, or on platforms/paths that never negotiate (web,
+  /// demo).
+  int? get negotiatedMtu => _link.isLinkUp ? _link.mtu : null;
+
+  /// Smallest ADC-feed notification (bytes) on the current link, or null
+  /// until a packet arrives / once the link is down.
+  int? get minAdcPacketBytes =>
+      _link.isLinkUp ? _link.minAdcPacketBytes : null;
+
+  /// Largest ADC-feed notification (bytes) on the current link, or null
+  /// until a packet arrives / once the link is down.
+  int? get maxAdcPacketBytes =>
+      _link.isLinkUp ? _link.maxAdcPacketBytes : null;
 
   /// Live RSSI (dBm) of the connected device, or null when not streaming, not
   /// yet read, or unsupported on this platform. Polled every [rssiPollInterval]
@@ -1017,6 +1048,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
         final int mtu = await UniversalBle.requestMtu(deviceId, 247);
         debugPrint('MTU set to: $mtu');
         if (!token.isCurrent) return;
+        _link.mtu = mtu;
         // TODO(perf): investigate requesting high-performance connection
         // priority here for the 1 kHz ADC stream:
         //   await UniversalBle.requestConnectionPriority(
@@ -1147,9 +1179,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     );
 
     _demoSource ??= DemoSignalSource();
-    _demoSource?.start((data) {
-      onAdcData?.call(data);
-    });
+    _demoSource?.start(_deliverAdcData);
 
     notifyListeners();
     if (_isScanning) await _stopScan();
@@ -1422,6 +1452,23 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     return false;
   }
 
+  /// ADC-feed path shared by GATT notifications and the demo timer: record
+  /// the notification size, then hand the bytes to [onAdcData]. Notifies
+  /// only when min/max change so the connection-info card can update
+  /// without a rebuild on every packet.
+  void _deliverAdcData(Uint8List data) {
+    final n = data.length;
+    final prevMin = _link.minAdcPacketBytes;
+    final prevMax = _link.maxAdcPacketBytes;
+    if (prevMin == null || n < prevMin) _link.minAdcPacketBytes = n;
+    if (prevMax == null || n > prevMax) _link.maxAdcPacketBytes = n;
+    if (_link.minAdcPacketBytes != prevMin ||
+        _link.maxAdcPacketBytes != prevMax) {
+      notifyListeners();
+    }
+    onAdcData?.call(data);
+  }
+
   void _onValueChange(
     String deviceId,
     String characteristicId,
@@ -1447,7 +1494,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // Feed packets go straight to the protocol layer, KVS frames to the KVS
     // client; the link manager never interprets bytes itself.
     if (characteristicId == btChrAdcFeedId) {
-      onAdcData?.call(data);
+      _deliverAdcData(data);
     } else if (characteristicId == btChrKvs) {
       _kvsClient?.handleNotification(data);
     } else {
