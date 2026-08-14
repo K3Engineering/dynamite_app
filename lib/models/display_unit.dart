@@ -18,7 +18,7 @@ typedef AxisRung = ({double factor, String symbol});
 /// display value net of tare via the channel's [ChannelCalibration] (the
 /// board's piecewise map plus the assigned load cell). Force units are
 /// unavailable — a null converter — for channels without an assigned load
-/// cell; the UI shows '—' there. Electrical units are always available.
+/// cell; the UI shows '—' there. Without board constants only raw converts.
 enum DisplayUnit {
   kN(
     'kN',
@@ -171,6 +171,39 @@ enum DisplayUnit {
   /// Force units need an assigned load cell; electrical units only need the
   /// board calibration. Drives the Settings picker's grouping.
   bool get isForce => kgfFactor != null;
+
+  /// Whether this unit can convert on the current board / rig. Raw always
+  /// can; electrical units need board constants; force units also need a
+  /// load cell on an active channel.
+  bool isAvailable({
+    required bool boardHasNominals,
+    required bool anyActiveHasLoadCell,
+  }) {
+    if (this == DisplayUnit.raw) return true;
+    if (!boardHasNominals) return false;
+    return !isForce || anyActiveHasLoadCell;
+  }
+
+  /// The unit the instrument actually draws. Preference is not written:
+  /// no board constants → raw; a force unit with no active load cell → mV/V.
+  DisplayUnit effective({
+    required bool boardHasNominals,
+    required bool anyActiveHasLoadCell,
+  }) {
+    if (isAvailable(
+      boardHasNominals: boardHasNominals,
+      anyActiveHasLoadCell: anyActiveHasLoadCell,
+    )) {
+      return this;
+    }
+    if (DisplayUnit.mVv.isAvailable(
+      boardHasNominals: boardHasNominals,
+      anyActiveHasLoadCell: anyActiveHasLoadCell,
+    )) {
+      return DisplayUnit.mVv;
+    }
+    return DisplayUnit.raw;
+  }
 
   /// The multiplier applied to net mV/V for this unit on [channel]: force
   /// units fold in the cell's kgf-per-mV/V, mV folds in the nominal

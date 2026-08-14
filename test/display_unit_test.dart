@@ -27,6 +27,117 @@ void main() {
   final assigned = ChannelCalibration(board: board, loadCell: cell);
   final bare = ChannelCalibration(board: board);
 
+  group('effective', () {
+    test('no board constants is raw, for every preference', () {
+      for (final u in DisplayUnit.values) {
+        expect(
+          u.effective(boardHasNominals: false, anyActiveHasLoadCell: false),
+          DisplayUnit.raw,
+          reason: u.symbol,
+        );
+        expect(
+          u.effective(boardHasNominals: false, anyActiveHasLoadCell: true),
+          DisplayUnit.raw,
+          reason: u.symbol,
+        );
+      }
+    });
+
+    test('force with no active load cell becomes mV/V', () {
+      for (final u in [
+        DisplayUnit.kN,
+        DisplayUnit.lbf,
+        DisplayUnit.kgf,
+        DisplayUnit.n,
+      ]) {
+        expect(
+          u.effective(boardHasNominals: true, anyActiveHasLoadCell: false),
+          DisplayUnit.mVv,
+          reason: u.symbol,
+        );
+      }
+    });
+
+    test('force with a load cell stays', () {
+      expect(
+        DisplayUnit.kN.effective(
+          boardHasNominals: true,
+          anyActiveHasLoadCell: true,
+        ),
+        DisplayUnit.kN,
+      );
+    });
+
+    test('electrical preferences are not promoted', () {
+      expect(
+        DisplayUnit.mVv.effective(
+          boardHasNominals: true,
+          anyActiveHasLoadCell: false,
+        ),
+        DisplayUnit.mVv,
+      );
+      expect(
+        DisplayUnit.mV.effective(
+          boardHasNominals: true,
+          anyActiveHasLoadCell: false,
+        ),
+        DisplayUnit.mV,
+      );
+      expect(
+        DisplayUnit.raw.effective(
+          boardHasNominals: true,
+          anyActiveHasLoadCell: false,
+        ),
+        DisplayUnit.raw,
+      );
+      expect(
+        DisplayUnit.raw.effective(
+          boardHasNominals: true,
+          anyActiveHasLoadCell: true,
+        ),
+        DisplayUnit.raw,
+      );
+    });
+
+    test('isAvailable matches the effective ladder', () {
+      expect(
+        DisplayUnit.raw.isAvailable(
+          boardHasNominals: false,
+          anyActiveHasLoadCell: false,
+        ),
+        isTrue,
+      );
+      expect(
+        DisplayUnit.mVv.isAvailable(
+          boardHasNominals: false,
+          anyActiveHasLoadCell: false,
+        ),
+        isFalse,
+      );
+      expect(
+        DisplayUnit.mVv.isAvailable(
+          boardHasNominals: true,
+          anyActiveHasLoadCell: false,
+        ),
+        isTrue,
+      );
+      expect(
+        DisplayUnit.kN.isAvailable(
+          boardHasNominals: true,
+          anyActiveHasLoadCell: false,
+        ),
+        isFalse,
+      );
+      expect(
+        DisplayUnit.kN.isAvailable(
+          boardHasNominals: true,
+          anyActiveHasLoadCell: true,
+        ),
+        isTrue,
+      );
+    });
+  });
+
   group('availability', () {
     test(
       'electrical units convert without a load cell; force units do not',

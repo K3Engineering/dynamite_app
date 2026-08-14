@@ -10,6 +10,7 @@ import '../models/board_calibration.dart';
 import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
+import '../services/data_hub.dart';
 import '../services/rig_state.dart';
 import '../widgets/calibration_text.dart';
 import '../widgets/device_info_card.dart';
@@ -45,6 +46,22 @@ class SettingsTab extends StatelessWidget {
       (r) => r.boardCalibrationFor(deviceId),
     );
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
+    final boardHasNominals = context.select<DataHub, bool>(
+      (h) => h.calibrationFor(0).board.nominals != null,
+    );
+    final anyActiveHasLoadCell = context.select<DataHub, bool>((h) {
+      for (int i = 0; i < settings.activeChannels.length; i++) {
+        if (settings.activeChannels[i] &&
+            h.calibrationFor(i).loadCell != null) {
+          return true;
+        }
+      }
+      return false;
+    });
+    final unit = settings.displayUnit.effective(
+      boardHasNominals: boardHasNominals,
+      anyActiveHasLoadCell: anyActiveHasLoadCell,
+    );
 
     return SafeArea(
       child: ListView(
@@ -64,6 +81,9 @@ class SettingsTab extends StatelessWidget {
               for (final u in DisplayUnit.values)
                 if (u.isForce) u,
             ],
+            selected: unit,
+            boardHasNominals: boardHasNominals,
+            anyActiveHasLoadCell: anyActiveHasLoadCell,
           ),
           _UnitGroup(
             label: 'Electrical',
@@ -71,6 +91,9 @@ class SettingsTab extends StatelessWidget {
               for (final u in DisplayUnit.values)
                 if (!u.isForce) u,
             ],
+            selected: unit,
+            boardHasNominals: boardHasNominals,
+            anyActiveHasLoadCell: anyActiveHasLoadCell,
           ),
           const SizedBox(height: 16),
 
@@ -211,10 +234,19 @@ class SettingsTab extends StatelessWidget {
 /// One row of the display-units picker: a label above a segmented button
 /// covering one unit family (force or electrical).
 class _UnitGroup extends StatelessWidget {
-  const _UnitGroup({required this.label, required this.units});
+  const _UnitGroup({
+    required this.label,
+    required this.units,
+    required this.selected,
+    required this.boardHasNominals,
+    required this.anyActiveHasLoadCell,
+  });
 
   final String label;
   final List<DisplayUnit> units;
+  final DisplayUnit selected;
+  final bool boardHasNominals;
+  final bool anyActiveHasLoadCell;
 
   @override
   Widget build(BuildContext context) {
@@ -227,14 +259,24 @@ class _UnitGroup extends StatelessWidget {
         SegmentedButton<DisplayUnit>(
           segments: [
             for (final u in units)
-              ButtonSegment(value: u, label: Text(u.symbol)),
+              ButtonSegment(
+                value: u,
+                label: Text(u.symbol),
+                enabled: u.isAvailable(
+                  boardHasNominals: boardHasNominals,
+                  anyActiveHasLoadCell: anyActiveHasLoadCell,
+                ),
+              ),
           ],
-          selected: {settings.displayUnit},
+          selected: {if (units.contains(selected)) selected},
+          emptySelectionAllowed: true,
           // The default selected checkmark steals width from the labels
           // and makes the segments wrap on narrow (mobile) screens.
           showSelectedIcon: false,
-          onSelectionChanged: (set) =>
-              unawaited(settings.setDisplayUnit(set.first)),
+          onSelectionChanged: (set) {
+            if (set.isEmpty) return;
+            unawaited(settings.setDisplayUnit(set.first));
+          },
         ),
         const SizedBox(height: 8),
       ],

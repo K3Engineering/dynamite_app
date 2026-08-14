@@ -356,13 +356,16 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     notifyListeners();
   }
 
-  /// Content equality for cache invalidation: the channels' resistors and
-  /// readings (the conversion inputs). factoryDate/excitationMv are display
-  /// metadata — they change nothing the graphs render.
+  /// Content equality for cache invalidation: conversion inputs only.
+  /// factoryDate/excitationMv are display metadata. Nominals are conversion
+  /// inputs — an empty Factory doc has the same default ladder and no
+  /// readings as a nominals-only board, and must still replace it.
   static bool _sameBoardCalibration(BoardCalibration a, BoardCalibration b) {
+    if (a.constantsStatus != b.constantsStatus) return false;
     for (int i = 0; i < a.channels.length; ++i) {
       final x = a.channels[i];
       final y = b.channels[i];
+      if (!_sameNominals(x.nominals, y.nominals)) return false;
       for (int k = 0; k < x.resistors.length; ++k) {
         if (x.resistors[k] != y.resistors[k]) return false;
       }
@@ -376,6 +379,15 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
       }
     }
     return true;
+  }
+
+  static bool _sameNominals(ChannelNominals? a, ChannelNominals? b) {
+    if (identical(a, b)) return true;
+    if (a == null || b == null) return false;
+    return a.adcFsrV == b.adcFsrV &&
+        a.afeGain == b.afeGain &&
+        a.pgaGain == b.pgaGain &&
+        a.excitationV == b.excitationV;
   }
 
   /// Replace the per-channel load-cell assignments (the rig's slots changed:

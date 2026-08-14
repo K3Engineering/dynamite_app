@@ -328,6 +328,26 @@ void main() {
       );
     });
 
+    test('empty flash replaces a nominals-only board', () {
+      final hub = DataHub()..updateBoardCalibration(nominalBoard());
+      feed(hub, frameOf(1000), 5);
+      expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
+      final v1 = hub.calibrationVersion;
+
+      hub.updateBoardCalibration(
+        BoardCalibration(
+          channels: [
+            for (int i = 0; i < channels; ++i) ChannelBoardCalibration(),
+          ],
+          constantsStatus: BoardDataStatus.unprovisioned,
+        ),
+      );
+      expect(hub.calibrationVersion, greaterThan(v1));
+      expect(hub.boardDataStatus, BoardDataStatus.unprovisioned);
+      expect(hub.calibrationFor(0).board.nominals, isNull);
+      expect(hub.currentValue(0, DisplayUnit.mVv), isNull);
+    });
+
     test('content-equal board calibration does not bump the version', () {
       final hub = DataHub();
       hub.updateBoardCalibration(

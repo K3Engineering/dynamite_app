@@ -1216,7 +1216,7 @@ int _minimapSpan(int totalSamples, int oldestSample, int minLiveSpan) =>
 
 class _Minimap extends StatefulWidget {
   final GraphDataSource dataSource;
-  final AppSettings settings;
+  final DisplayUnit unit;
   final GraphController graphCtrl;
 
   /// Indices of the channels to plot (per-view; see [GraphWorkspace]).
@@ -1224,7 +1224,7 @@ class _Minimap extends StatefulWidget {
 
   const _Minimap({
     required this.dataSource,
-    required this.settings,
+    required this.unit,
     required this.graphCtrl,
     required this.activeChannels,
   });
@@ -1305,7 +1305,7 @@ class _MinimapState extends State<_Minimap> {
               child: CustomPaint(
                 foregroundPainter: _MinimapPainter(
                   widget.dataSource,
-                  widget.settings,
+                  widget.unit,
                   widget.graphCtrl,
                   widget.activeChannels,
                   colorScheme,
@@ -1325,7 +1325,7 @@ class _MinimapState extends State<_Minimap> {
 
 class _MinimapPainter extends CustomPainter {
   final GraphDataSource _data;
-  final AppSettings _settings;
+  final DisplayUnit _unit;
   final GraphController _ctrl;
   final List<int> _activeChannels;
   final ColorScheme _colorScheme;
@@ -1340,7 +1340,7 @@ class _MinimapPainter extends CustomPainter {
 
   _MinimapPainter(
     this._data,
-    this._settings,
+    this._unit,
     this._ctrl,
     this._activeChannels,
     this._colorScheme,
@@ -1371,7 +1371,7 @@ class _MinimapPainter extends CustomPainter {
     final mapStart = totalSamples - mapSpan;
 
     final activeIndices = _activeChannels;
-    final unit = _settings.displayUnit;
+    final unit = _unit;
 
     // Y-range from the precomputed per-channel extremes (O(channels); the
     // minimap always spans the whole history, so the extremes ARE the window
@@ -1680,13 +1680,20 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final dpr = MediaQuery.devicePixelRatioOf(context);
-    // Channels the display unit can't convert (a force unit with no load
-    // cell assigned) are excluded from plotting; the stats tables show '—'
-    // for them, and re-assigning a cell rebuilds this list (and the
-    // painters' cache keys, which contain the channel set).
+    final unit = widget.settings.displayUnit.effective(
+      boardHasNominals: widget.data.calibrationFor(0).board.nominals != null,
+      anyActiveHasLoadCell: [
+        for (final ch in widget.activeChannels)
+          if (widget.data.calibrationFor(ch).loadCell != null) ch,
+      ].isNotEmpty,
+    );
+    // Channels the (effective) unit can't convert (a force unit with no
+    // load cell assigned) are excluded from plotting; the stats tables
+    // show '—' for them, and re-assigning a cell rebuilds this list (and
+    // the painters' cache keys, which contain the channel set).
     final drawableChannels = [
       for (final ch in widget.activeChannels)
-        if (widget.settings.displayUnit.converterFor(
+        if (unit.converterFor(
               widget.data.calibrationFor(ch),
               widget.data.channel(ch).tare,
             ) !=
@@ -1709,6 +1716,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                       widget.data,
                       widget.settings,
                       widget.ctrl,
+                      unit: unit,
                       activeChannels: drawableChannels,
                       showXLabels: !widget.showDerivative,
                       vsync: _vsync,
@@ -1731,6 +1739,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                         widget.data,
                         widget.settings,
                         widget.ctrl,
+                        unit: unit,
                         activeChannels: drawableChannels,
                         vsync: _vsync,
                         cache: _derivCache ??= SegmentedGraphCache(),
@@ -1744,7 +1753,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                 // Minimap
                 _Minimap(
                   dataSource: widget.data,
-                  settings: widget.settings,
+                  unit: unit,
                   graphCtrl: widget.ctrl,
                   activeChannels: drawableChannels,
                 ),
@@ -2793,6 +2802,7 @@ _GraphLayout? _setupGraphFrame(
 abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final GraphDataSource _data;
   final AppSettings _settings;
+  final DisplayUnit _unit;
   final GraphController _ctrl;
 
   /// Indices of the channels to plot (per-view; see [GraphWorkspace]).
@@ -2816,6 +2826,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     this._data,
     this._settings,
     this._ctrl, {
+    required DisplayUnit unit,
     required List<int> activeChannels,
     required Listenable vsync,
     required this.cache,
@@ -2823,7 +2834,8 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     required this.dpr,
     required this.labels,
     required this.bakePump,
-  }) : _activeChannels = activeChannels,
+  }) : _unit = unit,
+       _activeChannels = activeChannels,
        super(
          repaint: Listenable.merge([_data.repaint, _ctrl, bakePump, vsync]),
        );
@@ -2960,7 +2972,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       data: _data,
       activeChannels: activeIndices,
       tares: cacheKeyTares(),
-      unit: _settings.displayUnit,
+      unit: _unit,
       gw: graphSz.width,
       gh: graphSz.height,
       dpr: dpr,
@@ -2990,6 +3002,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     super.settings,
     super.ctrl, {
     this.showXLabels = true,
+    required super.unit,
     required super.activeChannels,
     required super.vsync,
     required super.cache,
@@ -3011,7 +3024,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
 
   @override
   EnvelopeSeries series(int channel) =>
-      _taredEnvelopeSeries(_data, channel, _settings.displayUnit);
+      _taredEnvelopeSeries(_data, channel, _unit);
 
   @override
   YAxisRange computeYRange(double viewStart, double viewEnd) {
@@ -3022,7 +3035,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     // cost is O(window / bucketSize). The noise floor stays a raw-count
     // threshold, applied to the global tare-subtracted raw extremes.
     final bufferCap = _data.bufferCapacity;
-    final unit = _settings.displayUnit;
+    final unit = _unit;
     final start = math.max(viewStart.floor(), _data.oldestSample);
     final end = math.min(viewEnd.ceil(), _data.totalSamples);
 
@@ -3094,7 +3107,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   ) {
     if (!_settings.limitWarningsEnabled) return;
 
-    final unit = _settings.displayUnit;
+    final unit = _unit;
     final viewSpan = viewEnd - viewStart;
     if (viewSpan <= 0 || graphSz.width <= 0) return;
     final treatMixedAsHot =
@@ -3119,8 +3132,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
         if (positive) {
           topRailY = math.max(topRailY, railY);
         } else {
-          bottomRailY =
-              bottomRailY == 0 ? railY : math.min(bottomRailY, railY);
+          bottomRailY = bottomRailY == 0 ? railY : math.min(bottomRailY, railY);
         }
 
         final couldBeHot = positive
@@ -3165,7 +3177,10 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       );
     }
     if (!clipPath.getBounds().isEmpty) {
-      canvas.drawPath(clipPath, Paint()..color = colorScheme.error.withAlpha(80));
+      canvas.drawPath(
+        clipPath,
+        Paint()..color = colorScheme.error.withAlpha(80),
+      );
     }
   }
 
@@ -3184,6 +3199,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     super.data,
     super.settings,
     super.ctrl, {
+    required super.unit,
     required super.activeChannels,
     required super.vsync,
     required super.cache,
@@ -3221,7 +3237,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     final line = s.data;
     final bufferCap = _data.bufferCapacity;
     final gaps = _data.gaps;
-    final conv = _settings.displayUnit.converterFor(
+    final conv = _unit.converterFor(
       _data.calibrationFor(channel),
       s.tare,
     )!; // non-null: the workspace plots only convertible channels
@@ -3237,9 +3253,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   /// Raw-diff -> display-units-per-second map for the bucket fast path of
   /// [channel] (terminal-slope based, see [DisplayUnit.diffConverterFor]).
   double Function(double rawDiff) _diffDisplayFor(int channel) {
-    final diffConv = _settings.displayUnit.diffConverterFor(
-      _data.calibrationFor(channel),
-    )!;
+    final diffConv = _unit.diffConverterFor(_data.calibrationFor(channel))!;
     final rate = _data.sampleRate.toDouble();
     return (diff) => diffConv(diff) * rate;
   }
@@ -3297,7 +3311,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
         if (!d.isNaN) fold(d);
       }
     }
-    return _computeYRange(dMin, dMax, _settings.displayUnit);
+    return _computeYRange(dMin, dMax, _unit);
   }
 
   @override

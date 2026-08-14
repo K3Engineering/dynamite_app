@@ -161,13 +161,23 @@ class _LiveTabState extends State<LiveTab> {
       }
     } else {
       final settings = context.read<AppSettings>();
+      final hub = context.read<DataHub>();
       final result = await recording.startSession(
         // Row titles are the rig's cell names (or 'CH n'), snapshotted into
         // the session at record time.
         channelLabels: context.read<RigState>().channelTitles,
         visibleChannels: settings.activeChannels,
-        // Frozen as the CSV export's default converted unit.
-        displayUnit: settings.displayUnit,
+        // Frozen as the CSV export's default converted unit — the unit
+        // the instrument is actually drawing, not a disabled preference.
+        displayUnit: settings.displayUnit.effective(
+          boardHasNominals: hub.calibrationFor(0).board.nominals != null,
+          anyActiveHasLoadCell: [
+            for (int i = 0; i < settings.activeChannels.length; i++)
+              if (settings.activeChannels[i] &&
+                  hub.calibrationFor(i).loadCell != null)
+                i,
+          ].isNotEmpty,
+        ),
       );
 
       if (!mounted) return;
@@ -487,22 +497,34 @@ class LiveStats extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final unit = settings.displayUnit;
-
-    // Force units need a load cell per channel; when any visible channel's
-    // slot is empty its cells show '—'. Point at the fix once, under the table.
-    final anyUnassigned =
-        unit.isForce &&
-        [
-          for (int i = 0; i < settings.activeChannels.length; i++)
-            if (settings.activeChannels[i] && rig.channelCells[i] == null) i,
-        ].isNotEmpty;
-
     return ValueListenableBuilder<FeedHealth?>(
       valueListenable: healthListenable,
       builder: (context, health, _) => ListenableBuilder(
         listenable: hub,
         builder: (context, _) {
+          final preferred = settings.displayUnit;
+          final anyActiveHasLoadCell = [
+            for (int i = 0; i < settings.activeChannels.length; i++)
+              if (settings.activeChannels[i] &&
+                  hub.calibrationFor(i).loadCell != null)
+                i,
+          ].isNotEmpty;
+          final unit = preferred.effective(
+            boardHasNominals: hub.calibrationFor(0).board.nominals != null,
+            anyActiveHasLoadCell: anyActiveHasLoadCell,
+          );
+
+          // Force preference: a missing cell shows '—' (or the whole view
+          // bumps to mV/V).
+          final anyUnassigned =
+              preferred.isForce &&
+              [
+                for (int i = 0; i < settings.activeChannels.length; i++)
+                  if (settings.activeChannels[i] &&
+                      hub.calibrationFor(i).loadCell == null)
+                    i,
+              ].isNotEmpty;
+
           // During a live gap (dropped packets) the hub reports held values;
           // gray them out so they read as stale rather than fresh readings.
           // Same when nothing decodable is arriving at all.
