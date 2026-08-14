@@ -115,11 +115,25 @@ void main() {
       expect(info.hardwareRev, 'v700P');
       expect(info.firmwareRev, 'v700P|mock-1.0.0');
       expect(link.negotiatedMtu, 247);
+      expect(link.minAdcPacketBytes, 242);
+      expect(link.maxAdcPacketBytes, 242);
       expect(seen, isEmpty);
+
+      MockBlePlatform.instance.updateCharacteristicValue(
+        deviceId,
+        btChrAdcFeedId,
+        Uint8List(20),
+        null,
+      );
+      async.flushMicrotasks();
+      expect(link.minAdcPacketBytes, 20);
+      expect(link.maxAdcPacketBytes, 242);
 
       teardownLink(async, link);
       expect(link.connectedDeviceInfo, isNull);
       expect(link.negotiatedMtu, isNull);
+      expect(link.minAdcPacketBytes, isNull);
+      expect(link.maxAdcPacketBytes, isNull);
     });
   });
 
@@ -407,6 +421,9 @@ void main() {
       async.elapse(const Duration(seconds: 5));
 
       expect(MockBlePlatform.instance.readRssiCalls, 0);
+      expect(link.negotiatedMtu, isNull);
+      expect(link.minAdcPacketBytes, 242);
+      expect(link.maxAdcPacketBytes, 242);
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(milliseconds: 100));
@@ -577,23 +594,26 @@ void main() {
       expect(link.isStreaming, isTrue);
       final fromFeed = received;
       expect(fromFeed, greaterThan(0));
+      expect(link.minAdcPacketBytes, 242);
+      expect(link.maxAdcPacketBytes, 242);
 
       // Wrong characteristic on the active device, and the ADC characteristic
       // on a foreign device: both must be dropped by _onValueChange.
       MockBlePlatform.instance.updateCharacteristicValue(
         deviceId,
         'c1234567',
-        Uint8List(242),
+        Uint8List(10),
         null,
       );
       MockBlePlatform.instance.updateCharacteristicValue(
         'zzz',
         btChrAdcFeedId,
-        Uint8List(242),
+        Uint8List(10),
         null,
       );
       async.flushMicrotasks();
       expect(received, fromFeed);
+      expect(link.minAdcPacketBytes, 242);
 
       teardownLink(async, link);
     });

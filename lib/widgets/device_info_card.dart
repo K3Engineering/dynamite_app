@@ -3,21 +3,15 @@ import 'package:material_ui/material_ui.dart';
 import '../models/device_info.dart';
 
 /// The connected sampler's static identity, read from the BLE Device
-/// Information service (0x180A) once per link at connect time, plus the
-/// ATT MTU negotiated on that same setup pass. Purely read-only. A null
-/// [info] (the connect-time read hasn't landed yet) or a null field (that
-/// read failed — the serial is always null on web, where 0x2A25 is
-/// blocklisted) renders as an em dash. [mtu] is likewise dashed until
-/// negotiation completes, and stays dashed on web and the demo device
-/// (neither path calls requestMtu).
+/// Information service (0x180A) once per link at connect time. Purely
+/// read-only. A null [info] (the connect-time read hasn't landed yet) or a
+/// null field (that read failed — the serial is always null on web, where
+/// 0x2A25 is blocklisted) renders as an em dash.
 class DeviceInfoCard extends StatelessWidget {
-  const DeviceInfoCard({super.key, required this.info, this.mtu});
+  const DeviceInfoCard({super.key, required this.info});
 
   /// The connected device's identity, or null until the read completes.
   final DeviceInfo? info;
-
-  /// Negotiated ATT MTU, or null when unread / unsupported.
-  final int? mtu;
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +26,6 @@ class DeviceInfoCard extends StatelessWidget {
             _row('Firmware', i?.firmwareRev),
             _row('Serial', i?.serial),
             _row('Manufacturer', i?.manufacturer),
-            _row('ATT MTU', mtu?.toString()),
           ],
         ),
       ),

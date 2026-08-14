@@ -16,6 +16,7 @@ import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/rig_state.dart';
+import 'package:dynamite_app/widgets/connection_info_card.dart';
 import 'package:dynamite_app/widgets/device_info_card.dart';
 
 /// Device identity (Device Information service) display. The card's own
@@ -29,19 +30,15 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('DeviceInfoCard', () {
-    Future<void> pumpCard(
-      WidgetTester tester,
-      DeviceInfo? info, {
-      int? mtu,
-    }) async {
+    Future<void> pumpCard(WidgetTester tester, DeviceInfo? info) async {
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(body: DeviceInfoCard(info: info, mtu: mtu)),
+          home: Scaffold(body: DeviceInfoCard(info: info)),
         ),
       );
     }
 
-    testWidgets('renders identity fields and ATT MTU', (tester) async {
+    testWidgets('renders all five identity fields', (tester) async {
       await pumpCard(
         tester,
         const DeviceInfo(
@@ -51,7 +48,6 @@ void main() {
           hardwareRev: 'v700P',
           firmwareRev: 'v700P|v1.2.3',
         ),
-        mtu: 247,
       );
 
       expect(find.text('Dynamite Sampler Pro Mk1'), findsOneWidget);
@@ -59,8 +55,6 @@ void main() {
       expect(find.text('v700P|v1.2.3'), findsOneWidget);
       expect(find.text('A4CF1208F51E'), findsOneWidget);
       expect(find.text('K3 Engineering'), findsOneWidget);
-      expect(find.text('247'), findsOneWidget);
-      expect(find.text('ATT MTU'), findsOneWidget);
       expect(find.text('—'), findsNothing);
     });
 
@@ -69,10 +63,9 @@ void main() {
     ) async {
       // The read hasn't landed yet (or the device was just connected).
       await pumpCard(tester, null);
-      expect(find.text('—'), findsNWidgets(6));
+      expect(find.text('—'), findsNWidgets(5));
 
-      // The web case: serial is unreadable (0x2A25 blocklist) and MTU is
-      // never negotiated.
+      // The web case: only the serial is unreadable (0x2A25 blocklist).
       await pumpCard(
         tester,
         const DeviceInfo(
@@ -82,7 +75,7 @@ void main() {
           firmwareRev: 'v700P|v1.2.3',
         ),
       );
-      expect(find.text('—'), findsNWidgets(2));
+      expect(find.text('—'), findsOneWidget);
       expect(find.text('Dynamite Sampler Pro Mk1'), findsOneWidget);
     });
   });
@@ -202,9 +195,47 @@ void main() {
       expect(find.text('Device info'), findsOneWidget);
       expect(find.text('Dynamite Sampler Demo'), findsOneWidget);
       expect(find.text('DEMO00000000'), findsOneWidget);
-      expect(find.text('ATT MTU'), findsOneWidget);
-      // Demo has no GATT, so MTU is the only dash.
-      expect(find.text('—'), findsOneWidget);
+      // The demo identity is complete: no dash placeholders.
+      expect(
+        find.descendant(
+          of: find.byType(DeviceInfoCard),
+          matching: find.text('—'),
+        ),
+        findsNothing,
+      );
+
+      await teardownDemo(tester, link);
+    });
+
+    testWidgets('Settings tab shows connection info without ATT MTU', (
+      tester,
+    ) async {
+      final link = await pumpApp(tester);
+      await connectDemo(tester);
+      await tester.pump(const Duration(milliseconds: 50));
+
+      await tester.tap(find.byType(NavigationDestination).at(3));
+      await tester.pump();
+      await tester.scrollUntilVisible(
+        find.text('Connection info'),
+        300,
+        scrollable: find.descendant(
+          of: find.byType(SettingsTab),
+          matching: find.byType(Scrollable),
+        ),
+      );
+
+      expect(find.text('Connection info'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(ConnectionInfoCard),
+          matching: find.text('ATT MTU'),
+        ),
+        findsNothing,
+      );
+      expect(find.text('Min packet size'), findsOneWidget);
+      expect(find.text('Max packet size'), findsOneWidget);
+      expect(find.text('242 B'), findsNWidgets(2));
 
       await teardownDemo(tester, link);
     });

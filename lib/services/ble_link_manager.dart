@@ -115,6 +115,11 @@ class DeviceLink {
   /// never negotiate (web, demo).
   int? mtu;
 
+  /// Smallest / largest ADC-feed notification size (bytes) delivered on
+  /// this link, including malformed packets. Null until the first packet.
+  int? minAdcPacketBytes;
+  int? maxAdcPacketBytes;
+
   bool get isConnecting => state == BtLinkState.connecting;
 
   /// The GATT link is up. True for the whole post-connect setup window and
@@ -140,6 +145,8 @@ class DeviceLink {
     rssi = null;
     info = null;
     mtu = null;
+    minAdcPacketBytes = null;
+    maxAdcPacketBytes = null;
   }
 
   bool get isDemoDevice => deviceId == demoDeviceId;
@@ -155,6 +162,8 @@ class DeviceLink {
     rssi = null;
     info = null;
     mtu = null;
+    minAdcPacketBytes = null;
+    maxAdcPacketBytes = null;
   }
 }
 
@@ -403,6 +412,16 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// request completes, or on platforms/paths that never negotiate (web,
   /// demo).
   int? get negotiatedMtu => _link.isLinkUp ? _link.mtu : null;
+
+  /// Smallest ADC-feed notification (bytes) on the current link, or null
+  /// until a packet arrives / once the link is down.
+  int? get minAdcPacketBytes =>
+      _link.isLinkUp ? _link.minAdcPacketBytes : null;
+
+  /// Largest ADC-feed notification (bytes) on the current link, or null
+  /// until a packet arrives / once the link is down.
+  int? get maxAdcPacketBytes =>
+      _link.isLinkUp ? _link.maxAdcPacketBytes : null;
 
   /// Live RSSI (dBm) of the connected device, or null when not streaming, not
   /// yet read, or unsupported on this platform. Polled every [rssiPollInterval]
@@ -1160,9 +1179,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     );
 
     _demoSource ??= DemoSignalSource();
-    _demoSource?.start((data) {
-      onAdcData?.call(data);
-    });
+    _demoSource?.start(_deliverAdcData);
 
     notifyListeners();
     if (_isScanning) await _stopScan();
@@ -1435,6 +1452,23 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     return false;
   }
 
+  /// ADC-feed path shared by GATT notifications and the demo timer: record
+  /// the notification size, then hand the bytes to [onAdcData]. Notifies
+  /// only when min/max change so the connection-info card can update
+  /// without a rebuild on every packet.
+  void _deliverAdcData(Uint8List data) {
+    final n = data.length;
+    final prevMin = _link.minAdcPacketBytes;
+    final prevMax = _link.maxAdcPacketBytes;
+    if (prevMin == null || n < prevMin) _link.minAdcPacketBytes = n;
+    if (prevMax == null || n > prevMax) _link.maxAdcPacketBytes = n;
+    if (_link.minAdcPacketBytes != prevMin ||
+        _link.maxAdcPacketBytes != prevMax) {
+      notifyListeners();
+    }
+    onAdcData?.call(data);
+  }
+
   void _onValueChange(
     String deviceId,
     String characteristicId,
@@ -1460,7 +1494,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // Feed packets go straight to the protocol layer, KVS frames to the KVS
     // client; the link manager never interprets bytes itself.
     if (characteristicId == btChrAdcFeedId) {
-      onAdcData?.call(data);
+      _deliverAdcData(data);
     } else if (characteristicId == btChrKvs) {
       _kvsClient?.handleNotification(data);
     } else {
