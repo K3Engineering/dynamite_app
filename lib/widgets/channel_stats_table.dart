@@ -71,22 +71,13 @@ class ChannelStatsTable extends StatelessWidget {
   /// Per-channel ADC-rail flag. Null = no status display (session playback).
   final List<bool>? clipped;
 
-  static Widget? _statusIcon(
-    BuildContext context, {
+  static Widget? _statusIcon({
     required bool clipped,
     required bool active,
     required int channel,
   }) {
-    if (!active || !clipped) return null;
-    return Tooltip(
-      message: 'CH ${channel + 1} is at the ADC rail. The reading is clipping.',
-      triggerMode: TooltipTriggerMode.tap,
-      child: Icon(
-        Icons.warning_rounded,
-        size: 14,
-        color: Theme.of(context).colorScheme.error,
-      ),
-    );
+    if (!active) return null;
+    return _ClipStatusIcon(clipped: clipped, channel: channel);
   }
 
   @override
@@ -143,7 +134,6 @@ class ChannelStatsTable extends StatelessWidget {
                             width: 20,
                             height: 16,
                             child: _statusIcon(
-                              context,
                               clipped: clipped?[i] ?? false,
                               active: activeChannels[i],
                               channel: i,
@@ -224,6 +214,70 @@ class ChannelStatsTable extends StatelessWidget {
             child: Text('In ${unit.symbol}', style: headerStyle),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// ADC-rail warning icon with an asymmetric fade: it snaps on at the first
+/// clipped sample and fades out over [_fadeOut] once the rail clears, so a
+/// rail hovering at the clip point reads as a steady icon instead of
+/// popping at the sample rate. When the fade finishes the subtree is
+/// unmounted — an opacity-zero tooltip trigger still answers pointer hits,
+/// so leaving it in the tree would be a live invisible hotspot.
+class _ClipStatusIcon extends StatefulWidget {
+  const _ClipStatusIcon({required this.clipped, required this.channel});
+
+  /// Instantaneous rail flag; rebuilt at the packet rate.
+  final bool clipped;
+  final int channel;
+
+  static const Duration _fadeOut = Duration(milliseconds: 800);
+
+  @override
+  State<_ClipStatusIcon> createState() => _ClipStatusIconState();
+}
+
+class _ClipStatusIconState extends State<_ClipStatusIcon> {
+  /// Whether the icon is fully faded and unmounted. A never-clipped channel
+  /// mounts nothing; the initial zero-opacity build never animates, so
+  /// [AnimatedOpacity.onEnd] alone could not be relied upon to get here.
+  bool _gone = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _gone = !widget.clipped;
+  }
+
+  @override
+  void didUpdateWidget(_ClipStatusIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // The zero-duration fade-in makes the reappearance instant in this
+    // build; no setState needed since a build follows didUpdateWidget.
+    if (widget.clipped) _gone = false;
+  }
+
+  void _onFadeEnd() {
+    if (!widget.clipped) setState(() => _gone = true);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.clipped && _gone) return const SizedBox.shrink();
+    return AnimatedOpacity(
+      opacity: widget.clipped ? 1.0 : 0.0,
+      duration: widget.clipped ? Duration.zero : _ClipStatusIcon._fadeOut,
+      onEnd: _onFadeEnd,
+      child: Tooltip(
+        message:
+            'CH ${widget.channel + 1} is at the ADC rail. The reading is clipping.',
+        triggerMode: TooltipTriggerMode.tap,
+        child: Icon(
+          Icons.warning_rounded,
+          size: 14,
+          color: Theme.of(context).colorScheme.error,
+        ),
       ),
     );
   }
