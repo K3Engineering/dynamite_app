@@ -1681,11 +1681,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     final colorScheme = Theme.of(context).colorScheme;
     final dpr = MediaQuery.devicePixelRatioOf(context);
     final unit = widget.settings.displayUnit.effective(
-      boardHasNominals: widget.data.calibrationFor(0).board.nominals != null,
-      anyActiveHasLoadCell: [
-        for (final ch in widget.activeChannels)
-          if (widget.data.calibrationFor(ch).loadCell != null) ch,
-      ].isNotEmpty,
+      resolveUnitAvailability(widget.data, widget.activeChannels),
     );
     // Channels the (effective) unit can't convert (a force unit with no
     // load cell assigned) are excluded from plotting; the stats tables

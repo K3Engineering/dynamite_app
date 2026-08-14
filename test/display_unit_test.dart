@@ -28,15 +28,20 @@ void main() {
   final bare = ChannelCalibration(board: board);
 
   group('effective', () {
+    // The availability quadrants. (noBoard + cell) is meaningless — no
+    // board constants resolve without a read — but the ladder must not care.
+    const noBoard = (boardHasNominals: false, anyActiveHasLoadCell: false);
+    const boardNoCell = (
+      boardHasNominals: true,
+      anyActiveHasLoadCell: false,
+    );
+    const boardAndCell = (boardHasNominals: true, anyActiveHasLoadCell: true);
+
     test('no board constants is raw, for every preference', () {
       for (final u in DisplayUnit.values) {
+        expect(u.effective(noBoard), DisplayUnit.raw, reason: u.symbol);
         expect(
-          u.effective(boardHasNominals: false, anyActiveHasLoadCell: false),
-          DisplayUnit.raw,
-          reason: u.symbol,
-        );
-        expect(
-          u.effective(boardHasNominals: false, anyActiveHasLoadCell: true),
+          u.effective((boardHasNominals: false, anyActiveHasLoadCell: true)),
           DisplayUnit.raw,
           reason: u.symbol,
         );
@@ -50,91 +55,27 @@ void main() {
         DisplayUnit.kgf,
         DisplayUnit.n,
       ]) {
-        expect(
-          u.effective(boardHasNominals: true, anyActiveHasLoadCell: false),
-          DisplayUnit.mVv,
-          reason: u.symbol,
-        );
+        expect(u.effective(boardNoCell), DisplayUnit.mVv, reason: u.symbol);
       }
     });
 
     test('force with a load cell stays', () {
-      expect(
-        DisplayUnit.kN.effective(
-          boardHasNominals: true,
-          anyActiveHasLoadCell: true,
-        ),
-        DisplayUnit.kN,
-      );
+      expect(DisplayUnit.kN.effective(boardAndCell), DisplayUnit.kN);
     });
 
     test('electrical preferences are not promoted', () {
-      expect(
-        DisplayUnit.mVv.effective(
-          boardHasNominals: true,
-          anyActiveHasLoadCell: false,
-        ),
-        DisplayUnit.mVv,
-      );
-      expect(
-        DisplayUnit.mV.effective(
-          boardHasNominals: true,
-          anyActiveHasLoadCell: false,
-        ),
-        DisplayUnit.mV,
-      );
-      expect(
-        DisplayUnit.raw.effective(
-          boardHasNominals: true,
-          anyActiveHasLoadCell: false,
-        ),
-        DisplayUnit.raw,
-      );
-      expect(
-        DisplayUnit.raw.effective(
-          boardHasNominals: true,
-          anyActiveHasLoadCell: true,
-        ),
-        DisplayUnit.raw,
-      );
+      expect(DisplayUnit.mVv.effective(boardNoCell), DisplayUnit.mVv);
+      expect(DisplayUnit.mV.effective(boardNoCell), DisplayUnit.mV);
+      expect(DisplayUnit.raw.effective(boardNoCell), DisplayUnit.raw);
+      expect(DisplayUnit.raw.effective(boardAndCell), DisplayUnit.raw);
     });
 
     test('isAvailable matches the effective ladder', () {
-      expect(
-        DisplayUnit.raw.isAvailable(
-          boardHasNominals: false,
-          anyActiveHasLoadCell: false,
-        ),
-        isTrue,
-      );
-      expect(
-        DisplayUnit.mVv.isAvailable(
-          boardHasNominals: false,
-          anyActiveHasLoadCell: false,
-        ),
-        isFalse,
-      );
-      expect(
-        DisplayUnit.mVv.isAvailable(
-          boardHasNominals: true,
-          anyActiveHasLoadCell: false,
-        ),
-        isTrue,
-      );
-      expect(
-        DisplayUnit.kN.isAvailable(
-          boardHasNominals: true,
-          anyActiveHasLoadCell: false,
-        ),
-        isFalse,
-      );
-      expect(
-        DisplayUnit.kN.isAvailable(
-          boardHasNominals: true,
-          anyActiveHasLoadCell: true,
-        ),
-        isTrue,
-      );
+      expect(DisplayUnit.raw.isAvailable(noBoard), isTrue);
+      expect(DisplayUnit.mVv.isAvailable(noBoard), isFalse);
+      expect(DisplayUnit.mVv.isAvailable(boardNoCell), isTrue);
+      expect(DisplayUnit.kN.isAvailable(boardNoCell), isFalse);
+      expect(DisplayUnit.kN.isAvailable(boardAndCell), isTrue);
     });
   });
 

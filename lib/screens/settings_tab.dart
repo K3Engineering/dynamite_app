@@ -46,22 +46,17 @@ class SettingsTab extends StatelessWidget {
       (r) => r.boardCalibrationFor(deviceId),
     );
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
-    final boardHasNominals = context.select<DataHub, bool>(
-      (h) => h.calibrationFor(0).board.nominals != null,
+    // Unit availability is derived from the hub (the samples-owner), not
+    // RigState's per-device document copy: it gates what the connected
+    // board can convert right now.
+    final availability = context.select<DataHub, UnitAvailability>(
+      (h) => resolveUnitAvailability(h, settings.activeChannelIndices),
     );
-    final anyActiveHasLoadCell = context.select<DataHub, bool>((h) {
-      for (int i = 0; i < settings.activeChannels.length; i++) {
-        if (settings.activeChannels[i] &&
-            h.calibrationFor(i).loadCell != null) {
-          return true;
-        }
-      }
-      return false;
-    });
-    final unit = settings.displayUnit.effective(
-      boardHasNominals: boardHasNominals,
-      anyActiveHasLoadCell: anyActiveHasLoadCell,
-    );
+    final unit = settings.displayUnit.effective(availability);
+    final enabledUnits = {
+      for (final u in DisplayUnit.values)
+        if (u.isAvailable(availability)) u,
+    };
 
     return SafeArea(
       child: ListView(
@@ -82,8 +77,7 @@ class SettingsTab extends StatelessWidget {
                 if (u.isForce) u,
             ],
             selected: unit,
-            boardHasNominals: boardHasNominals,
-            anyActiveHasLoadCell: anyActiveHasLoadCell,
+            enabled: enabledUnits,
           ),
           _UnitGroup(
             label: 'Electrical',
@@ -92,8 +86,7 @@ class SettingsTab extends StatelessWidget {
                 if (!u.isForce) u,
             ],
             selected: unit,
-            boardHasNominals: boardHasNominals,
-            anyActiveHasLoadCell: anyActiveHasLoadCell,
+            enabled: enabledUnits,
           ),
           const SizedBox(height: 16),
 
@@ -238,15 +231,18 @@ class _UnitGroup extends StatelessWidget {
     required this.label,
     required this.units,
     required this.selected,
-    required this.boardHasNominals,
-    required this.anyActiveHasLoadCell,
+    required this.enabled,
   });
 
   final String label;
   final List<DisplayUnit> units;
+
+  /// The unit the instrument draws (the effective preference); lives in one
+  /// of the two groups, the other shows an empty selection.
   final DisplayUnit selected;
-  final bool boardHasNominals;
-  final bool anyActiveHasLoadCell;
+
+  /// The units the board/rig can convert right now.
+  final Set<DisplayUnit> enabled;
 
   @override
   Widget build(BuildContext context) {
@@ -262,10 +258,7 @@ class _UnitGroup extends StatelessWidget {
               ButtonSegment(
                 value: u,
                 label: Text(u.symbol),
-                enabled: u.isAvailable(
-                  boardHasNominals: boardHasNominals,
-                  anyActiveHasLoadCell: anyActiveHasLoadCell,
-                ),
+                enabled: enabled.contains(u),
               ),
           ],
           selected: {if (units.contains(selected)) selected},

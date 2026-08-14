@@ -169,11 +169,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       session.channelCount,
     );
     final unit = settings.displayUnit.effective(
-      boardHasNominals: data.calibrationFor(0).board.nominals != null,
-      anyActiveHasLoadCell: [
+      resolveUnitAvailability(data, [
         for (int i = 0; i < visibleChannels.length; i++)
-          if (visibleChannels[i] && data.calibrationFor(i).loadCell != null) i,
-      ].isNotEmpty,
+          if (visibleChannels[i]) i,
+      ]),
     );
 
     final channelLabels = parseJsonColumn(

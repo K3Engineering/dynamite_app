@@ -93,16 +93,17 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// constants ([boardDataStatus]); without them every unit but raw reports
   /// unavailable.
   ///
-  /// The UI never reads this: the settings page shows the flash-document
-  /// owner's copy (`RigState.boardCalibrationFor`), which carries the
-  /// device identity. This field describes the samples the hub holds.
+  /// Identity-free: it describes the samples the hub holds, not the attached
+  /// device (the settings page's calibration row shows the flash-document
+  /// owner's copy, `RigState.boardCalibrationFor`). Cleared when the link
+  /// drops ([clearBoardCalibration]) — a dead stream has no constants.
   BoardCalibration? get boardCalibration => _boardCalibration;
   BoardCalibration? _boardCalibration;
 
   /// The board-data verdict for the live UI's raw-only notice: the parsed
   /// document's verdict, or [BoardDataStatus.unreadable] before any
-  /// successful read (a failed connect-time read never delivers a document,
-  /// so absence IS the unreadable verdict).
+  /// successful read and after a link drop (a failed connect-time read never
+  /// delivers a document, so absence IS the unreadable verdict).
   BoardDataStatus get boardDataStatus =>
       _boardCalibration?.constantsStatus ?? BoardDataStatus.unreadable;
 
@@ -207,7 +208,8 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   ///
   /// Deliberately does NOT touch [boardCalibration]: a connecting device's
   /// calibration is read during post-connect setup, BEFORE the streaming
-  /// transition that triggers this reset.
+  /// transition that triggers this reset. The disconnect side is handled by
+  /// [clearBoardCalibration].
   void clear() {
     _tareCount = 0;
     totalSamples = 0;
@@ -352,6 +354,18 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     final prev = _boardCalibration;
     if (prev != null && _sameBoardCalibration(prev, calibration)) return;
     _boardCalibration = calibration;
+    _calibrationVersion++;
+    notifyListeners();
+  }
+
+  /// Forget the board calibration. Called when the link drops: the stream it
+  /// converted is dead, so conversions degrade to raw counts until the next
+  /// connect-time read lands. Safe while a session finalizes — the session
+  /// snapshotted its calibration at start; the final flush reads ring data
+  /// only. A no-op when already clear.
+  void clearBoardCalibration() {
+    if (_boardCalibration == null) return;
+    _boardCalibration = null;
     _calibrationVersion++;
     notifyListeners();
   }

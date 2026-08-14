@@ -239,13 +239,17 @@ class RecordingController extends ChangeNotifier {
     }
   }
 
-  /// React to the two link transitions that affect data integrity: a dropped
-  /// link finalizes any in-progress session; a freshly started stream resets
-  /// the hub and packet continuity.
+  /// React to the link transitions that affect data integrity: a dropped
+  /// link finalizes any in-progress session and forgets the dead device's
+  /// board calibration; a freshly started stream resets the hub and packet
+  /// continuity.
   void _onLinkChanged() {
     final bool streaming = _linkManager.isStreaming;
     if (sessionInProgress && !streaming) {
       unawaited(stopSession());
+    }
+    if (!streaming && _wasStreaming) {
+      _dataHub.clearBoardCalibration();
     }
     if (streaming && !_wasStreaming) {
       // New device stream. Clear the previous stream's ring buffer, peaks,

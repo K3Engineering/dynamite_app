@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../models/app_settings.dart';
 import '../models/calibration.dart';
 import '../models/channel_limits.dart';
+import '../models/display_unit.dart';
 
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
@@ -170,13 +171,7 @@ class _LiveTabState extends State<LiveTab> {
         // Frozen as the CSV export's default converted unit — the unit
         // the instrument is actually drawing, not a disabled preference.
         displayUnit: settings.displayUnit.effective(
-          boardHasNominals: hub.calibrationFor(0).board.nominals != null,
-          anyActiveHasLoadCell: [
-            for (int i = 0; i < settings.activeChannels.length; i++)
-              if (settings.activeChannels[i] &&
-                  hub.calibrationFor(i).loadCell != null)
-                i,
-          ].isNotEmpty,
+          resolveUnitAvailability(hub, settings.activeChannelIndices),
         ),
       );
 
@@ -502,22 +497,15 @@ class LiveStats extends StatelessWidget {
       builder: (context, health, _) => ListenableBuilder(
         listenable: hub,
         builder: (context, _) {
-          final preferred = settings.displayUnit;
-          final anyActiveHasLoadCell = [
-            for (int i = 0; i < settings.activeChannels.length; i++)
-              if (settings.activeChannels[i] &&
-                  hub.calibrationFor(i).loadCell != null)
-                i,
-          ].isNotEmpty;
-          final unit = preferred.effective(
-            boardHasNominals: hub.calibrationFor(0).board.nominals != null,
-            anyActiveHasLoadCell: anyActiveHasLoadCell,
+          final unit = settings.displayUnit.effective(
+            resolveUnitAvailability(hub, settings.activeChannelIndices),
           );
 
-          // Force preference: a missing cell shows '—' (or the whole view
-          // bumps to mV/V).
+          // A force view shows '—' for an active channel with no cell
+          // assigned; point at the fix once. When NO active channel has a
+          // cell the whole view bumps to mV/V — no '—' to explain.
           final anyUnassigned =
-              preferred.isForce &&
+              unit.isForce &&
               [
                 for (int i = 0; i < settings.activeChannels.length; i++)
                   if (settings.activeChannels[i] &&
