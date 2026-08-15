@@ -677,6 +677,41 @@ void main() {
     },
   );
 
+  test('scan tap with the radio off requests permissions and enables it', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.isEnabled = false;
+      final (link, _) = wire();
+      settleStartup(async);
+      expect(link.bluetoothState, AvailabilityState.poweredOff);
+
+      unawaited(link.toggleScan());
+      async.elapse(const Duration(seconds: 1));
+
+      expect(MockBlePlatform.instance.requestPermissionsCalls, 1);
+      expect(link.bluetoothState, AvailabilityState.poweredOn);
+      expect(link.isScanning, isTrue);
+
+      unawaited(link.toggleScan()); // stop scanning
+      async.elapse(const Duration(milliseconds: 100));
+    });
+  });
+
+  test('scan tap with a dismissed enable dialog does not scan', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.isEnabled = false;
+      MockBlePlatform.instance.refuseEnable = true;
+      final (link, _) = wire();
+      settleStartup(async);
+
+      unawaited(link.toggleScan());
+      async.elapse(const Duration(seconds: 1));
+
+      expect(MockBlePlatform.instance.requestPermissionsCalls, 1);
+      expect(link.bluetoothState, AvailabilityState.poweredOff);
+      expect(link.isScanning, isFalse);
+    });
+  });
+
   group('isWebPickerDismissal', () {
     test('matches the flutter_web_bluetooth picker-dismissal error names', () {
       expect(

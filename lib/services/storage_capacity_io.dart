@@ -25,7 +25,4 @@ Future<StorageCapacity?> fetchStorageCapacity() async {
   }
 }
 
-/// Native storage needs no persistence request — nothing auto-deletes it.
-Future<bool> requestPersistentStorage() async => true;
-
 bool browserMayAutoDeleteSessions() => false;

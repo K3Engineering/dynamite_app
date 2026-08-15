@@ -3,8 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dynamite_app/models/storage_capacity.dart';
 
 /// Tests for [StorageCapacity]'s derived numbers (the conservative runway
-/// and the clamped bar fraction) and [userAgentMayAutoDelete]'s Chromium
-/// detection — the pure logic behind the Sessions tab's capacity strip.
+/// and the clamped bar fraction) and [userAgentMayAutoDelete]'s browser
+/// family detection — the pure logic behind the Sessions tab's capacity
+/// strip.
 void main() {
   group('recordingRunway', () {
     test('applies the 0.9 safety factor at the worst-case write rate', () {
@@ -78,7 +79,7 @@ void main() {
       );
     });
 
-    test('Safari and Firefox warn', () {
+    test('Safari and other WebKit shells warn', () {
       expect(
         userAgentMayAutoDelete(
           'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
@@ -87,12 +88,34 @@ void main() {
         ),
         isTrue,
       );
+      // Bluefy on iOS: a WKWebView shell — AppleWebKit, no Chrome/ or
+      // Firefox/ token. A target platform with undocumented storage
+      // durability, so it must warn.
+      expect(
+        userAgentMayAutoDelete(
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) '
+          'AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148',
+        ),
+        isTrue,
+      );
+      // Chrome on iOS is also a WKWebView shell (CriOS/, no Chrome/ token).
+      expect(
+        userAgentMayAutoDelete(
+          'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) '
+          'AppleWebKit/605.1.15 (KHTML, like Gecko) CriOS/126.0.0.0 '
+          'Mobile/15E148 Safari/604.1',
+        ),
+        isTrue,
+      );
+    });
+
+    test('Firefox does not warn', () {
       expect(
         userAgentMayAutoDelete(
           'Mozilla/5.0 (X11; Linux x86_64; rv:127.0) Gecko/20100101 '
           'Firefox/127.0',
         ),
-        isTrue,
+        isFalse,
       );
     });
   });

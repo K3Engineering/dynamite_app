@@ -97,15 +97,9 @@ void main() {
     await pumpApp(tester);
 
     // Devices is the 3rd destination (Live, Sessions, Devices, Settings).
-    // Activating it fires requestEnableBluetooth() from a post-frame
-    // callback, so first pump one frame to let that callback schedule its
-    // timers, then pump past the mock's 200ms hwDelay AND universal_ble's 5s
-    // command-queue timeout so neither is left pending at the end-of-test
-    // check. (A single pump(6s) would advance the clock BEFORE the frame that
-    // creates the timers, leaving them pending.)
+    // Tab activation schedules no async work, so a single frame settles it.
     await tester.tap(find.byType(NavigationDestination).at(2));
     await tester.pump();
-    await tester.pump(const Duration(seconds: 6));
 
     // The Devices tab header is present (also matches the nav label, so
     // findsWidgets), and the Scan toggle button is shown.

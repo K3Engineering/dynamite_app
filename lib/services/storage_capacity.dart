@@ -1,6 +1,6 @@
 /// Platform storage probing for the Sessions tab's capacity strip, behind
 /// the repo's conditional-import pattern: the web implementation reads
-/// navigator.storage (estimate/persisted/persist), the native one reads
+/// navigator.storage (estimate/persisted), the native one reads
 /// disk_space_2 free space plus the exact database size. Unsupported
 /// platforms (desktop) report null and the strip hides — absence is a
 /// first-class result, not an error.
