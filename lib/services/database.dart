@@ -101,18 +101,30 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 10;
+  int get schemaVersion => 11;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
   /// migrations before release.
   @override
   MigrationStrategy get migration => MigrationStrategy(
+    onCreate: (Migrator m) async {
+      // auto_vacuum must be set before any table exists; afterwards SQLite
+      // ignores the pragma until the next VACUUM. With FULL, every commit
+      // that frees pages (session deletes, the dev wipe below) also shrinks
+      // the file — without it the file sits at its high-water mark forever.
+      await m.database.customStatement('PRAGMA auto_vacuum = FULL');
+      await m.createAll();
+    },
     onUpgrade: (Migrator m, int from, int to) async {
+      await m.database.customStatement('PRAGMA auto_vacuum = FULL');
       for (final table in allTables) {
         await m.deleteTable(table.actualTableName);
       }
       await m.createAll();
+      // Converts a pre-auto_vacuum file and reclaims the space the wipe
+      // just freed (DELETE alone never shrinks the file).
+      await m.database.customStatement('VACUUM');
     },
   );
 
