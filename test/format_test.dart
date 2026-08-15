@@ -86,4 +86,47 @@ void main() {
     expect(formatRelativeAge(const Duration(hours: 1)), '>1 hour ago');
     expect(formatRelativeAge(const Duration(hours: 30)), '>1 hour ago');
   });
+
+  group('formatBytes', () {
+    test('plain bytes below 1 kB', () {
+      expect(formatBytes(0), '0 B');
+      expect(formatBytes(512), '512 B');
+      expect(formatBytes(1023), '1023 B');
+    });
+
+    test('one decimal below 10 units, none above', () {
+      expect(formatBytes(1536), '1.5 kB');
+      expect(formatBytes(8 * 1024 * 1024 + 400 * 1024), '8.4 MB');
+      expect(formatBytes(84 * 1024 * 1024), '84 MB');
+      expect(formatBytes(512 * 1024 * 1024), '512 MB');
+    });
+
+    test('climbs the unit ladder', () {
+      expect(formatBytes(1024 * 1024), '1.0 MB');
+      expect(formatBytes(2 * 1024 * 1024 * 1024), '2.0 GB');
+      expect(formatBytes(3 * 1024 * 1024 * 1024 * 1024), '3.0 TB');
+    });
+  });
+
+  group('formatRunway', () {
+    test('whole days at 2+', () {
+      expect(formatRunway(const Duration(days: 4, hours: 5)), '≈ 4 d');
+      expect(formatRunway(const Duration(days: 2)), '≈ 2 d');
+    });
+
+    test('whole hours at 2+', () {
+      expect(formatRunway(const Duration(hours: 11, minutes: 42)), '≈ 11 h');
+      expect(formatRunway(const Duration(hours: 2)), '≈ 2 h');
+    });
+
+    test('5-minute steps below 2 hours', () {
+      expect(formatRunway(const Duration(minutes: 47)), '≈ 45 min');
+      expect(formatRunway(const Duration(minutes: 15)), '≈ 15 min');
+    });
+
+    test('the floor is a bare minimum', () {
+      expect(formatRunway(const Duration(minutes: 14)), '< 15 min');
+      expect(formatRunway(Duration.zero), '< 15 min');
+    });
+  });
 }

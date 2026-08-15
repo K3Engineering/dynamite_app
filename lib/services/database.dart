@@ -285,6 +285,32 @@ class AppDatabase extends _$AppDatabase {
     return [for (final r in rows) r.data];
   }
 
+  /// Per-session chunk payload sizes in bytes (exact blob lengths),
+  /// reactive: re-emits on every chunk insert/delete, so the Sessions tab's
+  /// card sizes and capacity strip stay fresh while a recording writes.
+  Stream<Map<int, int>> watchSessionByteSizes() {
+    return customSelect(
+          'SELECT session_id, SUM(LENGTH(data)) AS bytes '
+          'FROM session_chunks GROUP BY session_id',
+          readsFrom: {sessionChunks},
+        )
+        .watch()
+        .map(
+          (rows) => {
+            for (final r in rows)
+              r.read<int>('session_id'): r.read<int>('bytes'),
+          },
+        );
+  }
+
+  /// Exact on-disk database size (page_count x page_size) — the native
+  /// storage strip's "used" number.
+  Future<int> databaseFileBytes() async {
+    final count = await customSelect('PRAGMA page_count').getSingle();
+    final size = await customSelect('PRAGMA page_size').getSingle();
+    return count.read<int>('page_count') * size.read<int>('page_size');
+  }
+
   Future<void> _updateSession(int id, SessionsCompanion entry) async {
     await (update(sessions)..where((t) => t.id.equals(id))).write(entry);
   }
