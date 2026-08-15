@@ -20,7 +20,6 @@ extension type _WebNavigator(JSObject _) implements JSObject {
 extension type _StorageManager(JSObject _) implements JSObject {
   external JSPromise<_StorageEstimate> estimate();
   external JSPromise<JSBoolean> persisted();
-  external JSPromise<JSBoolean> persist();
 }
 
 extension type _StorageEstimate(JSObject _) implements JSObject {
@@ -43,18 +42,6 @@ Future<StorageCapacity?> fetchStorageCapacity() async {
     );
   } catch (_) {
     return null;
-  }
-}
-
-/// Chrome grants or denies silently from engagement heuristics; false means
-/// denied (or the API rejected) — the caller keeps showing the Protect line.
-Future<bool> requestPersistentStorage() async {
-  final storage = _navigator.storage;
-  if (storage == null) return false;
-  try {
-    return (await storage.persist().toDart).toDart;
-  } catch (_) {
-    return false;
   }
 }
 

@@ -44,10 +44,16 @@ class StorageCapacity {
   static const double _safetyFactor = 0.9;
 }
 
-/// True when a browser user agent is outside the Chromium family and may
-/// delete stored sessions on its own schedule (IIRC Safari evicts script-written
-/// storage after 7 days without user interaction). Chromium forks (Edge,
-/// Opera, Samsung Internet) all carry `Chrome/` in the UA and share Chrome's
-/// storage behavior; a false positive costs one info banner, a false
-/// negative costs lost sessions.
-bool userAgentMayAutoDelete(String userAgent) => !userAgent.contains('Chrome/');
+/// True when a browser user agent belongs to a family that may delete
+/// stored sessions on its own schedule — the WebKit crowd: Safari (ITP
+/// evicts script-written storage after 7 days without user interaction),
+/// Bluefy, and every other iOS browser (all WKWebView shells with
+/// WebKit-managed storage; their `CriOS`/`FxiOS` tokens carry neither
+/// `Chrome/` nor `Firefox/`). Firefox is excluded — it only evicts under
+/// disk pressure, LRU-ordered. Chromium forks (Edge, Opera, Samsung
+/// Internet) keep the `Chrome/` token and share Chrome's storage behavior.
+/// The check stays negative-match so unknown exotic browsers still warn: a
+/// false positive costs one info banner, a false negative costs lost
+/// sessions.
+bool userAgentMayAutoDelete(String userAgent) =>
+    !userAgent.contains('Chrome/') && !userAgent.contains('Firefox/');

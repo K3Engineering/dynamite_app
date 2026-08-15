@@ -116,6 +116,17 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// refused scan start, e.g. a radio error).
   bool failScan = false;
 
+  /// When false, the adapter reports poweredOff and [enableBluetooth] is the
+  /// way back (it flips this to true) — the radio-off recovery path.
+  bool isEnabled = true;
+
+  /// When true, [enableBluetooth] leaves the radio off and returns false —
+  /// the user dismissing the system enable dialog.
+  bool refuseEnable = false;
+
+  /// Test spy: how many [requestPermissions] calls arrived.
+  int requestPermissionsCalls = 0;
+
   /// When true, [disconnect] never fires the connection-change callback, so
   /// the client's disconnect-timeout reconciliation path is what tears the
   /// link down.
@@ -151,6 +162,9 @@ class MockBlePlatform extends UniversalBlePlatform {
     failConnect = false;
     failConnectViaCallback = false;
     failScan = false;
+    isEnabled = true;
+    refuseEnable = false;
+    requestPermissionsCalls = 0;
     hangDisconnect = false;
     slowConnect = false;
     disconnectCalls.clear();
@@ -169,13 +183,24 @@ class MockBlePlatform extends UniversalBlePlatform {
   @override
   Future<AvailabilityState> getBluetoothAvailabilityState() async {
     await Future<void>.delayed(hwDelay);
-    return AvailabilityState.poweredOn;
+    return isEnabled
+        ? AvailabilityState.poweredOn
+        : AvailabilityState.poweredOff;
   }
 
   @override
   Future<bool> enableBluetooth() async {
     await Future<void>.delayed(hwDelay);
+    if (refuseEnable) return false;
+    isEnabled = true;
     return true;
+  }
+
+  @override
+  Future<void> requestPermissions({
+    bool withAndroidFineLocation = false,
+  }) async {
+    requestPermissionsCalls++;
   }
 
   @override

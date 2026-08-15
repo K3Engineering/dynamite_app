@@ -5,15 +5,13 @@ import 'package:dynamite_app/models/storage_capacity.dart';
 import 'package:dynamite_app/widgets/storage_capacity_strip.dart';
 
 /// Tests for [StorageCapacityStrip]'s presentation: the usage/runway line
-/// (native phrasing on the test host — kIsWeb is false), and the Protect
-/// line's visibility keyed to persistence.
+/// (native phrasing on the test host — kIsWeb is false), and the reclaim
+/// warning's visibility keyed to persistence.
 void main() {
   const gb = 1024 * 1024 * 1024;
 
   Widget wrap(StorageCapacity capacity) => MaterialApp(
-    home: Scaffold(
-      body: StorageCapacityStrip(capacity: capacity, onProtect: () {}),
-    ),
+    home: Scaffold(body: StorageCapacityStrip(capacity: capacity)),
   );
 
   testWidgets('shows usage, free space and runway', (tester) async {
@@ -34,9 +32,13 @@ void main() {
     );
   });
 
-  testWidgets('Protect line only while storage is not persistent', (
+  testWidgets('reclaim warning only while storage is not persistent', (
     tester,
   ) async {
+    const warning =
+        'The browser may reclaim this space when storage runs low. '
+        'The native iOS and Android apps have larger, permanent storage.';
+
     await tester.pumpWidget(
       wrap(
         const StorageCapacity(
@@ -46,7 +48,7 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Protect'), findsNothing);
+    expect(find.text(warning), findsNothing);
 
     await tester.pumpWidget(
       wrap(
@@ -57,10 +59,6 @@ void main() {
         ),
       ),
     );
-    expect(find.text('Protect'), findsOneWidget);
-    expect(
-      find.text('The browser may reclaim this space when storage runs low.'),
-      findsOneWidget,
-    );
+    expect(find.text(warning), findsOneWidget);
   });
 }

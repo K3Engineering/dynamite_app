@@ -613,12 +613,25 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     notifyListeners();
   }
 
-  /// Request the system to enable Bluetooth (e.g. pop the permission/enable dialog).
-  Future<void> requestEnableBluetooth() async {
-    if (!kIsWeb) {
-      await UniversalBle.enableBluetooth();
-      await _updateBluetoothState();
+  /// How long the system enable-Bluetooth dialog may sit unanswered before
+  /// the queued command gives up. The default [UniversalBle.timeout] (5 s) is
+  /// shorter than a human reading a dialog.
+  static const Duration _enableDialogTimeout = Duration(minutes: 2);
+
+  /// Request everything a scan needs when the radio isn't usable: the runtime
+  /// Bluetooth permissions first (a clean install doesn't hold them, and the
+  /// enable intent is rejected with a SecurityException without
+  /// BLUETOOTH_CONNECT), then the system enable-Bluetooth dialog. Throws when
+  /// permissions are denied; a dismissed enable dialog completes normally
+  /// with the radio still off.
+  Future<void> _requestEnableBluetooth() async {
+    if (kIsWeb) return;
+    await UniversalBle.requestPermissions();
+    // iOS/macOS have no enable API (Bluetooth is toggled in system settings).
+    if (BleCapabilities.supportsBluetoothEnableApi) {
+      await UniversalBle.enableBluetooth(timeout: _enableDialogTimeout);
     }
+    await _updateBluetoothState();
   }
 
   void _onScanResult(BleDevice newDevice) {
@@ -673,7 +686,14 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
   Future<void> _startScan() async {
     if (_bluetoothState != AvailabilityState.poweredOn) {
-      return;
+      // The Scan tap is the recovery point for an unusable radio: pop the
+      // permission/enable prompts, then fall through if they worked. A
+      // permission denial throws (the Devices tab toasts it); a dismissed
+      // enable dialog leaves the radio off and we bail.
+      await _requestEnableBluetooth();
+      if (_bluetoothState != AvailabilityState.poweredOn) {
+        return;
+      }
     }
     // A scan kick-off during the post-disconnect settle window finishes the
     // window immediately (see [_finishCooldown]) so Scan works instead of
