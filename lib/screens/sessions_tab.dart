@@ -4,6 +4,7 @@ import '../services/database.dart';
 import '../utils/format.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/empty_placeholder.dart';
+import '../widgets/storage_capacity_strip.dart';
 import 'session_detail_screen.dart';
 
 class SessionsTab extends StatefulWidget {
@@ -19,6 +20,10 @@ class _SessionsTabState extends State<SessionsTab> {
   /// (this tab rebuilds on each shell tab switch).
   late final Stream<List<Session>> _sessions = AppDatabase.instance
       .watchAllSessions();
+
+  /// Per-session chunk byte sizes, same created-once rule as [_sessions].
+  late final Stream<Map<int, int>> _sizes = AppDatabase.instance
+      .watchSessionByteSizes();
 
   @override
   Widget build(BuildContext context) {
@@ -37,6 +42,8 @@ class _SessionsTabState extends State<SessionsTab> {
               ],
             ),
           ),
+          const BrowserStorageWarning(),
+          const StorageCapacityLoader(),
           Expanded(
             child: StreamBuilder<List<Session>>(
               stream: _sessions,
@@ -65,14 +72,21 @@ class _SessionsTabState extends State<SessionsTab> {
                   );
                 }
 
-                return ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  itemCount: sessions.length,
-                  itemBuilder: (context, index) => _SessionCard(
-                    session: sessions[index],
-                    onTap: () => _openDetail(sessions[index]),
-                    onDelete: () => _deleteSession(sessions[index]),
-                  ),
+                return StreamBuilder<Map<int, int>>(
+                  stream: _sizes,
+                  builder: (context, sizeSnapshot) {
+                    final sizes = sizeSnapshot.data ?? const <int, int>{};
+                    return ListView.builder(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      itemCount: sessions.length,
+                      itemBuilder: (context, index) => _SessionCard(
+                        session: sessions[index],
+                        byteSize: sizes[sessions[index].id],
+                        onTap: () => _openDetail(sessions[index]),
+                        onDelete: () => _deleteSession(sessions[index]),
+                      ),
+                    );
+                  },
                 );
               },
             ),
@@ -106,11 +120,16 @@ class _SessionsTabState extends State<SessionsTab> {
 class _SessionCard extends StatelessWidget {
   const _SessionCard({
     required this.session,
+    required this.byteSize,
     required this.onTap,
     required this.onDelete,
   });
 
   final Session session;
+
+  /// Exact chunk payload bytes, null until the sizes stream lands. Null
+  /// simply omits the size from the subtitle.
+  final int? byteSize;
   final VoidCallback onTap;
   final Future<void> Function() onDelete;
 
@@ -118,6 +137,7 @@ class _SessionCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final duration = Duration(milliseconds: session.durationMs);
     final durationStr = formatDuration(duration);
+    final sizeStr = byteSize != null ? ' · ${formatBytes(byteSize!)}' : '';
 
     return Dismissible(
       key: ValueKey(session.id),
@@ -145,7 +165,7 @@ class _SessionCard extends StatelessWidget {
           // inconsistent next to them.
           subtitle: Text(
             '${formatTimestamp(session.createdAt)} · $durationStr · '
-            '${session.channelCount} ch',
+            '${session.channelCount} ch$sizeStr',
           ),
           trailing: const Icon(Icons.chevron_right),
         ),

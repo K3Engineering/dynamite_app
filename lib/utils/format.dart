@@ -55,3 +55,32 @@ String formatRelativeAge(Duration age) {
   if (m < 60) return '>30 minutes ago';
   return '>1 hour ago';
 }
+
+/// "512 B", "84 MB", "8.4 GB" — 1024-based, one decimal below 10 units and
+/// none above: three significant digits are plenty for capacity display,
+/// and the web numbers behind this are fuzzed estimates anyway.
+String formatBytes(int bytes) {
+  const units = ['B', 'kB', 'MB', 'GB', 'TB'];
+  var value = bytes.toDouble();
+  var unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  if (unit == 0) return '$bytes B';
+  final rounded = value < 10
+      ? value.toStringAsFixed(1)
+      : value.toStringAsFixed(0);
+  return '$rounded ${units[unit]}';
+}
+
+/// Conservative recording runway, floored to a coarse bucket so the
+/// displayed number is always a minimum the user can expect ("≈ 11 h" means
+/// at least 11 h): whole days at 2+, whole hours at 2+, 5-minute steps
+/// below that, and a bare "< 15 min" at the floor.
+String formatRunway(Duration runway) {
+  if (runway.inDays >= 2) return '≈ ${runway.inDays} d';
+  if (runway.inHours >= 2) return '≈ ${runway.inHours} h';
+  if (runway.inMinutes >= 15) return '≈ ${runway.inMinutes ~/ 5 * 5} min';
+  return '< 15 min';
+}

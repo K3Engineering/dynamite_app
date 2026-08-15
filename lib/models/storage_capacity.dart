@@ -1,0 +1,53 @@
+/// Recording write rate estimate: 4 channels x 4 bytes x 1000 samples/s.
+const int kRecordingBytesPerSecond = 16000;
+
+/// A platform's storage verdict for the Sessions tab's capacity strip: how
+/// much the app is using, how much more it can expect to write, and whether
+/// the platform guarantees the data survives (web best-effort storage can be
+/// evicted under pressure; native app storage cannot).
+///
+/// The two producers give the fields comparable-but-not-identical semantics:
+/// on web, [usedBytes] is the origin's usage and [availableBytes] is quota
+/// headroom (an optimistic ceiling — Chrome derives quota from total disk
+/// size, not free space); on native, [usedBytes] is the exact database size
+/// and [availableBytes] is real free space on the volume.
+class StorageCapacity {
+  const StorageCapacity({
+    required this.usedBytes,
+    required this.availableBytes,
+    required this.isPersistent,
+  });
+
+  final int usedBytes;
+  final int availableBytes;
+  final bool isPersistent;
+
+  /// Bar fill for the strip: used over used+available (the origin's quota on
+  /// web, the app's share of remaining space on native). Clamped — the web
+  /// estimate is fuzzed and can transiently report usage above quota.
+  double get usedFraction {
+    final total = usedBytes + availableBytes;
+    if (total <= 0) return 0;
+    return (usedBytes / total).clamp(0.0, 1.0);
+  }
+
+  /// Conservative recording runway: what the user can expect to actually
+  /// get, with high probability. The safety factor covers estimate fuzzing,
+  /// cross-origin padding in the web usage number, and concurrent writers
+  /// (a second browser tab, other apps on native).
+  Duration get recordingRunway {
+    final seconds = (availableBytes * _safetyFactor / kRecordingBytesPerSecond)
+        .floor();
+    return Duration(seconds: seconds < 0 ? 0 : seconds);
+  }
+
+  static const double _safetyFactor = 0.9;
+}
+
+/// True when a browser user agent is outside the Chromium family and may
+/// delete stored sessions on its own schedule (IIRC Safari evicts script-written
+/// storage after 7 days without user interaction). Chromium forks (Edge,
+/// Opera, Samsung Internet) all carry `Chrome/` in the UA and share Chrome's
+/// storage behavior; a false positive costs one info banner, a false
+/// negative costs lost sessions.
+bool userAgentMayAutoDelete(String userAgent) => !userAgent.contains('Chrome/');

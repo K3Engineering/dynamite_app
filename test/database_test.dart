@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -55,5 +57,39 @@ void main() {
         expect(rows.map((r) => r.id), [newerId, olderId]);
       },
     );
+  });
+
+  group('watchSessionByteSizes', () {
+    test('sums chunk blob lengths per session', () async {
+      final id = await newSession(DateTime(2026, 7, 29, 12));
+      await AppDatabase.instance.insertChunk(id, 0, Uint8List(100));
+      await AppDatabase.instance.insertChunk(id, 1, Uint8List(50));
+
+      final sizes = await AppDatabase.instance.watchSessionByteSizes().first;
+      expect(sizes[id], 150);
+    });
+
+    test('sessions without chunks are absent, not zero', () async {
+      final id = await newSession(DateTime(2026, 7, 29, 12));
+
+      final sizes = await AppDatabase.instance.watchSessionByteSizes().first;
+      expect(sizes.containsKey(id), isFalse);
+    });
+
+    test('re-emits when a chunk lands', () async {
+      final id = await newSession(DateTime(2026, 7, 29, 12));
+      final stream = AppDatabase.instance.watchSessionByteSizes();
+
+      // Skip the initial (empty) emission, then the insert must produce one.
+      final next = stream.skip(1).first;
+      await AppDatabase.instance.insertChunk(id, 0, Uint8List(7));
+      expect((await next)[id], 7);
+    });
+  });
+
+  test('databaseFileBytes is a positive multiple of the page size', () async {
+    final bytes = await AppDatabase.instance.databaseFileBytes();
+    expect(bytes, greaterThan(0));
+    expect(bytes % 4096, 0);
   });
 }
