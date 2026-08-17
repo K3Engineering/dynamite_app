@@ -27,6 +27,25 @@ const String kvsFolderUser = 'U';
 /// Settings, factory-resettable: device name, gain.
 const String kvsFolderSettings = 'S';
 
+/// The Settings-namespace key holding the user-assigned device name
+/// (value grammar: docs/flash-schema-v1.md).
+const String kvsKeyDeviceName = 'device_name';
+
+/// Device-name length cap in chars (= bytes; the grammar is ASCII-only).
+/// 29 always fits the BLE advertising scan-response payload (31 B minus
+/// the 2-byte AD header), the GAP name buffer, and the KVS value limit.
+const int deviceNameMaxLength = 29;
+
+final RegExp _deviceNamePattern = RegExp(
+  r"^[A-Za-z0-9][A-Za-z0-9 ._()'-]{0,28}$",
+);
+
+/// Whether [name] is a legal device name (docs/flash-schema-v1.md).
+/// Callers trim first — surrounding whitespace is input hygiene, never
+/// part of the stored value; an empty (post-trim) input means "clear the
+/// name" (a DEL), which this check does not cover.
+bool isValidDeviceName(String name) => _deviceNamePattern.hasMatch(name);
+
 /// Firmware limits (user_kvs.cpp): keys up to 15 chars, values up to 128
 /// chars, and the whole request frame up to 240 bytes.
 const int kvsMaxKeyLength = 15;

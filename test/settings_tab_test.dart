@@ -146,4 +146,71 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 6));
   });
+
+  testWidgets('device name editor: save and clear round-trip', (tester) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final link = await pump(tester);
+    await link.connectToDemoDevice();
+    await tester.pump();
+
+    final field = find.byType(TextField);
+    expect(field, findsOneWidget);
+    // Unset on the demo: empty field, factory name displayed.
+    expect(tester.widget<TextField>(field).controller!.text, isEmpty);
+    expect(link.connectedDeviceName, 'Demo Device');
+
+    // Save a name: the display name overlays everywhere.
+    await tester.enterText(field, 'Rack 4 (West)');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('device_name_save')));
+    await tester.pump();
+    expect(link.connectedDeviceName, 'Rack 4 (West)');
+    expect(link.connectedStoredDeviceName, 'Rack 4 (West)');
+
+    // Clear: the field reverts to empty and the factory name returns.
+    await tester.enterText(find.byType(TextField), '');
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('device_name_save')));
+    await tester.pump();
+    expect(link.connectedDeviceName, 'Demo Device');
+    expect(link.connectedStoredDeviceName, isNull);
+
+    await link.disconnectSelectedDevice();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+  });
+
+  testWidgets('device name editor: invalid input blocks the save', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final link = await pump(tester);
+    await link.connectToDemoDevice();
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField), 'Bad,Name');
+    await tester.pump();
+
+    expect(
+      find.textContaining('start with a letter or digit'),
+      findsOneWidget,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(find.byKey(const Key('device_name_save')))
+          .onPressed,
+      isNull,
+    );
+    expect(link.connectedStoredDeviceName, isNull);
+
+    await link.disconnectSelectedDevice();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+  });
 }

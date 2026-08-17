@@ -11,6 +11,7 @@ import 'demo_calibration.dart';
 import 'demo_signal_source.dart';
 import 'kvs_client.dart';
 import 'kvs_flash_transport.dart';
+import 'kvs_protocol.dart';
 import 'mockble.dart';
 import 'rig_state.dart';
 import '../models/device_info.dart';
@@ -99,6 +100,15 @@ class DeviceLink {
   String name = '';
   BtLinkState state = BtLinkState.idle;
 
+  /// The Settings-namespace device name read at connect time (null when
+  /// unset on the device, not yet read, or after reset). When present it
+  /// replaces the advertised name everywhere in the app.
+  String? storedName;
+
+  /// The display name: the stored name when set, else the advertised name
+  /// (or the device id when that's empty too).
+  String get displayName => storedName ?? (name.isEmpty ? deviceId : name);
+
   /// Most recent live RSSI (dBm) for the connected device, polled while
   /// connected. Null until the first successful read (and after reset). This is
   /// the *connected* signal strength — distinct from the scan-time RSSI carried
@@ -142,6 +152,7 @@ class DeviceLink {
     deviceId = '';
     name = '';
     state = BtLinkState.idle;
+    storedName = null;
     rssi = null;
     info = null;
     mtu = null;
@@ -159,6 +170,7 @@ class DeviceLink {
     this.deviceId = deviceId;
     this.name = name;
     state = BtLinkState.cooldown;
+    storedName = null;
     rssi = null;
     info = null;
     mtu = null;
@@ -396,11 +408,17 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   @override
   String get connectedDeviceId => _link.isLinkUp ? _link.deviceId : '';
 
-  /// Name of the currently connected device; falls back to the device id when
-  /// the advertised name is empty.
+  /// Name of the currently connected device: the Settings-stored name when
+  /// the device has one, else the advertised name (or the device id when
+  /// that's empty).
   @override
-  String get connectedDeviceName =>
-      _link.name.isEmpty ? _link.deviceId : _link.name;
+  String get connectedDeviceName => _link.displayName;
+
+  /// The Settings-stored name of the connected device, or null when unset
+  /// on the device, not yet read, or no link up. [connectedDeviceName]
+  /// overlays this; write via [setDeviceName].
+  String? get connectedStoredDeviceName =>
+      _link.isLinkUp ? _link.storedName : null;
 
   /// Static identity (Device Information service) of the connected device,
   /// read once during post-connect setup; null with no link up or until the
@@ -503,6 +521,10 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// serves whatever was last written).
   String _demoFlashDoc = demoBoardCalibrationDoc;
 
+  /// The demo device's stored name — the same round-trip rationale as
+  /// [_demoFlashDoc], for [setDeviceName].
+  String? _demoDeviceName;
+
   /// The KVS channel of the active link (null for the demo device and after
   /// teardown). Created in post-connect setup BEFORE the ADC feed
   /// subscription, because firmware locks the KVS while the feed holds the
@@ -581,6 +603,44 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
         );
       }
     }
+  }
+
+  /// Write the Settings-namespace device name ([kvsKeyDeviceName]) to the
+  /// connected device; input is trimmed, and an empty (post-trim) input
+  /// CLEARS the name — the device reverts to its factory name. Returns
+  /// false when the device rejects the write (the local display name then
+  /// stays put); throws on invalid input ([isValidDeviceName]) or missing
+  /// link state. The display name updates only on device confirmation.
+  Future<bool> setDeviceName(String name) async {
+    final deviceId = _link.deviceId;
+    if (deviceId.isEmpty) {
+      throw StateError('setDeviceName with no device connected');
+    }
+    final trimmed = name.trim();
+    if (trimmed.isNotEmpty && !isValidDeviceName(trimmed)) {
+      throw ArgumentError.value(name, 'name', 'invalid device name');
+    }
+    final stored = trimmed.isEmpty ? null : trimmed;
+    if (deviceId == DeviceLink.demoDeviceId) {
+      _demoDeviceName = stored;
+      _link.storedName = stored;
+      notifyListeners();
+      return true;
+    }
+    final client = _kvsClient;
+    if (client == null) {
+      throw StateError('setDeviceName with no KVS channel on $deviceId');
+    }
+    final ok = await _withFeedPaused(
+      () => stored == null
+          ? client.delete(kvsFolderSettings, kvsKeyDeviceName)
+          : client.set(kvsFolderSettings, kvsKeyDeviceName, stored),
+    );
+    if (ok) {
+      _link.storedName = stored;
+      notifyListeners();
+    }
+    return ok;
   }
 
   BleLinkManager({required AppEvents events}) : _events = events {
@@ -884,13 +944,10 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       _link._reset();
     } else {
       // Web: hold the link in cooldown for the settle window, then release it.
-      // The name is whatever the link currently carries (empty when a connect
-      // was cancelled before the name lookup ran) so the row can label the
-      // cooling-down device.
-      _link._enterCooldown(
-        deviceId,
-        _link.name.isEmpty ? deviceId : _link.name,
-      );
+      // The label is the display name the link currently resolves to (or the
+      // id when nothing resolved), so the row stays consistent with what the
+      // user saw while streaming.
+      _link._enterCooldown(deviceId, _link.displayName);
       _cooldownTimer = Timer(reconnectSettleDelay, () {
         _cooldownTimer = null;
         // Only release if we're still cooling down THIS device (a new connect
@@ -1006,7 +1063,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // common teardown (the platform side is already down, so no GATT
     // release), which (on web) parks the link in cooldown for the
     // reconnect settle window before returning it to the idle sentinel.
-    final String name = _link.name.isEmpty ? deviceId : _link.name;
+    final String name = _link.displayName;
     // An unexpected drop while the link was up (setting up, starting the
     // stream, or streaming) gets a user notice. User-requested disconnects
     // arrive here in `disconnecting`, and post-connect setup failures already
@@ -1129,7 +1186,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
         return;
       }
       debugPrint('Post-connect setup failed for $deviceId: $e');
-      final String name = _link.name.isEmpty ? deviceId : _link.name;
+      final String name = _link.displayName;
       // The GATT link came up (connect succeeded) before setup failed —
       // that is a proof of life; stamp it before tearing down.
       _stampAlive(deviceId);
@@ -1179,6 +1236,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _link.deviceId = DeviceLink.demoDeviceId;
     _link.name = 'Demo Device';
     _link.state = BtLinkState.streaming;
+    _link.storedName = _demoDeviceName;
     // Simulated hardware has a simulated identity (real links read theirs
     // from the Device Information service in post-connect setup).
     _link.info = const DeviceInfo(
@@ -1296,7 +1354,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       return;
     }
     final String deviceId = _link.deviceId;
-    final String deviceName = _link.name.isEmpty ? deviceId : _link.name;
+    final String deviceName = _link.displayName;
     // Supersede any in-flight post-connect setup pass immediately so it stops
     // mutating state while we tear the link down.
     _supersedeSetupPasses();
@@ -1427,12 +1485,24 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     } catch (e) {
       if (!token.isCurrent) return;
       debugPrint('KVS subscription failed for $deviceId: $e');
-      _events.emit(CalibrationUnreadable(_link.name));
+      _events.emit(CalibrationUnreadable(_link.displayName));
       return;
     }
     final transport = KvsFlashTransport(client);
     _kvsClient = client;
     _kvsTransport = transport;
+    // The stored name lands before the flash read: the rig's provenance
+    // label is read off the link at doc delivery time (see
+    // [connectedDeviceName]).
+    try {
+      final stored = await client.get(kvsFolderSettings, kvsKeyDeviceName);
+      if (!token.isCurrent) return;
+      _link.storedName = stored;
+      notifyListeners();
+    } catch (e) {
+      if (!token.isCurrent) return;
+      debugPrint('KVS device-name read failed for $deviceId: $e');
+    }
     try {
       final doc = await transport.readFlashDoc();
       if (!token.isCurrent) return;
@@ -1441,7 +1511,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     } catch (e) {
       if (!token.isCurrent) return;
       debugPrint('KVS flash read failed for $deviceId: $e');
-      _events.emit(CalibrationUnreadable(_link.name));
+      _events.emit(CalibrationUnreadable(_link.displayName));
     }
   }
 

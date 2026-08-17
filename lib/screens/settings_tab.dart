@@ -11,6 +11,7 @@ import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
+import '../services/kvs_protocol.dart';
 import '../services/rig_state.dart';
 import '../widgets/calibration_text.dart';
 import '../widgets/connection_info_card.dart';
@@ -34,8 +35,8 @@ class SettingsTab extends StatelessWidget {
     final deviceId = context.select<BleLinkManager, String>(
       (l) => l.connectedDeviceId,
     );
-    final deviceName = context.select<BleLinkManager, String>(
-      (l) => l.connectedDeviceName,
+    final storedName = context.select<BleLinkManager, String?>(
+      (l) => l.connectedStoredDeviceName,
     );
     // The connect-time DIS identity read; null until it lands.
     final deviceInfo = context.select<BleLinkManager, DeviceInfo?>(
@@ -173,16 +174,12 @@ class SettingsTab extends StatelessWidget {
             ),
             const SizedBox(height: 16),
 
-            // Device name — not editable yet. Keyed by the name so the
-            // field rebuilds with the new value on connect/disconnect.
-            TextFormField(
-              key: ValueKey(deviceName),
-              initialValue: deviceName,
-              enabled: false,
-              decoration: const InputDecoration(
-                labelText: 'Device name',
-                border: OutlineInputBorder(),
-              ),
+            // The Settings-namespace device name. Keyed by device and
+            // stored value so the editor resets on connect/disconnect and
+            // after a save.
+            _DeviceNameEditor(
+              key: ValueKey('$deviceId/${storedName ?? ''}'),
+              storedName: storedName,
             ),
             const SizedBox(height: 16),
 
@@ -242,6 +239,111 @@ class SettingsTab extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// The device-name editor: the Settings-namespace name with an explicit
+/// save (device edits are deliberate, not fire-on-change, and failures
+/// surface as snackbars). Empty input clears the stored name — the device
+/// reverts to its factory name.
+class _DeviceNameEditor extends StatefulWidget {
+  const _DeviceNameEditor({super.key, required this.storedName});
+
+  /// The device's stored name, null when unset.
+  final String? storedName;
+
+  @override
+  State<_DeviceNameEditor> createState() => _DeviceNameEditorState();
+}
+
+class _DeviceNameEditorState extends State<_DeviceNameEditor> {
+  late final TextEditingController _controller;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.storedName ?? '');
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final link = context.read<BleLinkManager>();
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _saving = true);
+    String? error;
+    try {
+      if (!await link.setDeviceName(_controller.text)) {
+        error = 'The device rejected the name.';
+      }
+    } catch (e) {
+      error = 'Rename failed: $e';
+    }
+    if (!mounted) return;
+    setState(() => _saving = false);
+    if (error != null) {
+      messenger.showSnackBar(SnackBar(content: Text(error)));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final trimmed = _controller.text.trim();
+    final dirty = trimmed != (widget.storedName ?? '');
+    final invalid = trimmed.isNotEmpty && !isValidDeviceName(trimmed);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: _controller,
+          maxLength: deviceNameMaxLength,
+          enabled: !_saving,
+          onChanged: (_) => setState(() {}),
+          decoration: InputDecoration(
+            labelText: 'Device name',
+            border: const OutlineInputBorder(),
+            counterText: '',
+            helperText: 'Empty reverts to the factory name.',
+            errorText: invalid
+                ? 'Up to $deviceNameMaxLength characters: start with a '
+                      "letter or digit, then letters, digits, spaces or . _ ( ) - '"
+                : null,
+          ),
+        ),
+        // Same never-moving layout as the rig save bar.
+        Visibility(
+          visible: dirty,
+          maintainSize: true,
+          maintainAnimation: true,
+          maintainState: true,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                key: const Key('device_name_revert'),
+                onPressed: _saving
+                    ? null
+                    : () => setState(
+                        () => _controller.text = widget.storedName ?? '',
+                      ),
+                child: const Text('Revert'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                key: const Key('device_name_save'),
+                onPressed: dirty && !invalid && !_saving ? _save : null,
+                child: Text(_saving ? 'Saving…' : 'Save to device'),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
