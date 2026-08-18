@@ -285,11 +285,6 @@ class SessionStorage {
   );
 }
 
-/// The write side of the per-channel visibility column (the read side is
-/// [parseJsonColumn] at the call site): a plain JSON array of booleans.
-/// Kept next to the parser so the column's encoding has one home.
-String encodeVisibleChannels(List<bool> visible) => jsonEncode(visible);
-
 /// Parse a JSON-encoded list column into exactly [count] entries: entry i is
 /// [convert] applied to the i-th decoded element, or [fallback] when the
 /// document is malformed, shorter than [count], or the element fails to

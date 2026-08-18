@@ -4,8 +4,8 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
-import '../services/ble_link_manager.dart';
 import '../models/bt_scan.dart';
+import '../services/ble_link_manager.dart';
 import '../utils/format.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/empty_placeholder.dart';

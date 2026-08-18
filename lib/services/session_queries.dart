@@ -4,6 +4,8 @@
 /// UI code works with [SessionSummary].
 library;
 
+import 'dart:convert';
+
 import '../models/session_summary.dart';
 import 'database.dart';
 import 'session_storage.dart';
@@ -68,11 +70,6 @@ Future<void> setSessionNotes(int id, String notes) =>
     AppDatabase.instance.setSessionNotes(id, notes);
 
 Future<void> setSessionVisibleChannels(int id, List<bool> visible) =>
-    AppDatabase.instance.setSessionVisibleChannels(
-      id,
-      encodeVisibleChannels(visible),
-    );
+    AppDatabase.instance.setSessionVisibleChannels(id, jsonEncode(visible));
 
-Future<void> deleteSession(int id) async {
-  await AppDatabase.instance.deleteSession(id);
-}
+Future<void> deleteSession(int id) => AppDatabase.instance.deleteSession(id);
