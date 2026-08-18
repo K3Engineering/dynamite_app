@@ -4,7 +4,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../models/session_summary.dart';
 import '../services/session_queries.dart';
-import '../services/storage_capacity.dart' as probe;
+import '../services/storage_probe.dart';
 import '../utils/format.dart';
 import 'session_flows.dart';
 import '../widgets/empty_placeholder.dart';
@@ -32,7 +32,7 @@ class _SessionsTabState extends State<SessionsTab> {
 
   /// The platform's storage facts for the capacity strip; null where probing
   /// is unsupported (desktop) or failed — the strip hides then.
-  probe.StorageCapacity? _capacity;
+  StorageCapacity? _capacity;
   StreamSubscription<Map<int, int>>? _capacityCueSub;
 
   @override
@@ -55,7 +55,7 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   Future<void> _refreshCapacity() async {
-    final capacity = await probe.fetchStorageCapacity(
+    final capacity = await fetchStorageCapacity(
       usedBytes: sessionDatabaseFileBytes,
     );
     if (mounted) setState(() => _capacity = capacity);
@@ -78,8 +78,7 @@ class _SessionsTabState extends State<SessionsTab> {
               ],
             ),
           ),
-          if (probe.browserMayAutoDeleteSessions())
-            const BrowserStorageWarning(),
+          if (browserMayAutoDeleteSessions()) const BrowserStorageWarning(),
           if (_capacity case final capacity?)
             StorageCapacityStrip(capacity: capacity),
           Expanded(

@@ -3,11 +3,13 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
+import '../models/app_meta.dart';
 import '../models/app_settings.dart';
 import '../models/display_unit.dart';
 import '../models/session_summary.dart';
 import '../services/csv_export.dart';
 import '../services/export_delivery.dart';
+import '../services/session_data.dart';
 import '../services/session_queries.dart';
 import '../services/session_storage.dart';
 import '../services/share_capability.dart';
@@ -336,6 +338,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Future<void> _downloadCsv(SessionSummary session, SessionData data) =>
       _runCsvAction(() async {
+        final appMeta = context.read<AppMeta>();
         final unit = await _pickExportUnit(_recordedUnit(session));
         if (unit == null) return null;
         return downloadSessionCsv(
@@ -344,11 +347,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           deviceInfoJson: session.deviceInfoJson,
           data: data,
           unit: unit,
+          appMeta: appMeta,
         );
       });
 
   Future<void> _shareCsv(SessionSummary session, SessionData data) =>
       _runCsvAction(() async {
+        final appMeta = context.read<AppMeta>();
         final unit = await _pickExportUnit(_recordedUnit(session));
         if (unit == null) return null;
         return shareSessionCsv(
@@ -357,6 +362,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           deviceInfoJson: session.deviceInfoJson,
           data: data,
           unit: unit,
+          appMeta: appMeta,
           anchor: _shareAnchor(),
         );
       });

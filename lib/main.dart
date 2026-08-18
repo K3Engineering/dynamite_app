@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'models/app_meta.dart';
 import 'models/app_settings.dart';
 import 'services/adc_packet_decoder.dart';
 import 'services/app_events.dart';
@@ -12,6 +14,7 @@ import 'services/ble_link_manager.dart';
 import 'services/data_hub.dart';
 import 'services/database.dart';
 import 'services/demo_device.dart';
+import 'services/feed_health_tracker.dart';
 // Debug-only hot-restart hook: on web, BLE notification listeners and timers
 // survive a hot restart, so each generation registers a cleanup that the next
 // generation runs first thing in main(). No-op stub on native platforms.
@@ -46,6 +49,11 @@ void main() async {
   // Prefs are resolved here and injected into their owners, so their loads
   // are synchronous constructor work and can never race a user edit.
   final prefs = await SharedPreferences.getInstance();
+  final packageInfo = await PackageInfo.fromPlatform();
+  final appMeta = AppMeta(
+    version: packageInfo.version,
+    buildNumber: packageInfo.buildNumber,
+  );
 
   // Mock-BLE dev builds: swap in the simulated platform before any BLE call
   // (compile-time dev toggle in mockble.dart).
@@ -57,6 +65,7 @@ void main() async {
   final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
     ..onAdcData = decoder.onDataPacket
     ..onCalibrationData = decoder.onCalibrationPacket;
+  final feedHealth = FeedHealthTracker(hub: dataHub, link: linkManager);
   final rigState = RigState(transport: linkManager, prefs: prefs);
   // The device id/name are read off the link at delivery time (the read
   // only ever runs against the active link).
@@ -99,10 +108,12 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: appSettings),
+        Provider.value(value: appMeta),
         // App-lifetime singletons created above (never disposed — the app
         // root never unmounts), provided individually so each screen depends
         // only on the layer it actually uses.
         Provider.value(value: appEvents),
+        Provider.value(value: feedHealth),
         ChangeNotifierProvider.value(value: dataHub),
         ChangeNotifierProvider.value(value: linkManager),
         ChangeNotifierProvider.value(value: rigState),

@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 
-import 'bucket_series.dart';
-import 'device_flash.dart';
-import 'gap_list.dart';
+import '../models/bucket_series.dart';
+import '../models/device_flash.dart';
+import '../models/gap_list.dart';
 
 /// A single channel's raw circular-buffer data plus its precomputed extremes,
 /// tare offset, and raw-value [BucketSeries]. Returned by

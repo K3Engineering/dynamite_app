@@ -9,7 +9,7 @@ import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/gap_list.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/session_storage.dart';
+import 'package:dynamite_app/services/session_data.dart';
 
 /// Locks the live/session ingest mirror: DataHub's streaming ingest and
 /// SessionData's load-time pass must produce byte-identical value and diff

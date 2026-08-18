@@ -12,8 +12,8 @@ import '../models/display_unit.dart';
 import '../models/device_profile.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
+import '../services/feed_health_tracker.dart';
 import '../models/feed_health.dart';
-import '../widgets/feed_health_indicator.dart';
 import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
@@ -206,59 +206,58 @@ class _LiveTabState extends State<LiveTab> {
     final hub = context.read<DataHub>();
 
     // The feed-health classification (banner, stats graying) comes from the
-    // shared [FeedHealthScope]: one derivation owner for this tab and the
+    // shared FeedHealthTracker: one derivation owner for this tab and the
     // Devices tab's row chip.
-    return FeedHealthScope(
-      builder: (context, healthListenable) => SafeArea(
-        child: Column(
-          children: [
-            ValueListenableBuilder<FeedHealth?>(
-              valueListenable: healthListenable,
-              builder: (context, health, _) => LiveStatusBar(
-                isConnected: isConnected,
-                connectedDeviceName: deviceName,
-                health: health,
-                onGoToDevices: widget.onGoToDevices,
-              ),
+    final healthListenable = context.read<FeedHealthTracker>().health;
+    return SafeArea(
+      child: Column(
+        children: [
+          ValueListenableBuilder<FeedHealth?>(
+            valueListenable: healthListenable,
+            builder: (context, health, _) => LiveStatusBar(
+              isConnected: isConnected,
+              connectedDeviceName: deviceName,
+              health: health,
+              onGoToDevices: widget.onGoToDevices,
             ),
-            if (isConnected)
-              Expanded(
-                child: ValueListenableBuilder<bool>(
-                  valueListenable: _showDerivative,
-                  builder: (context, showDerivative, _) => Column(
-                    children: [
-                      LiveStats(
-                        settings: settings,
-                        rig: rig,
-                        hub: hub,
-                        ctrl: _graphCtrl,
-                        showDerivative: showDerivative,
-                        healthListenable: healthListenable,
-                      ),
-                      Expanded(
-                        child: _buildGraphArea(settings, hub, showDerivative),
-                      ),
-                      ViewToggles(
-                        showDerivative: showDerivative,
-                        onToggleDerivative: () =>
-                            _showDerivative.value = !showDerivative,
-                      ),
-                    ],
-                  ),
+          ),
+          if (isConnected)
+            Expanded(
+              child: ValueListenableBuilder<bool>(
+                valueListenable: _showDerivative,
+                builder: (context, showDerivative, _) => Column(
+                  children: [
+                    LiveStats(
+                      settings: settings,
+                      rig: rig,
+                      hub: hub,
+                      ctrl: _graphCtrl,
+                      showDerivative: showDerivative,
+                      healthListenable: healthListenable,
+                    ),
+                    Expanded(
+                      child: _buildGraphArea(settings, hub, showDerivative),
+                    ),
+                    ViewToggles(
+                      showDerivative: showDerivative,
+                      onToggleDerivative: () =>
+                          _showDerivative.value = !showDerivative,
+                    ),
+                  ],
                 ),
-              )
-            else
-              Expanded(
-                child: DisconnectedPrompt(onConnect: widget.onGoToDevices),
               ),
-            if (isConnected)
-              ActionButtons(
-                isRecording: recording.sessionInProgress,
-                onToggleRecord: _onToggleRecord,
-                onTare: _onTare,
-              ),
-          ],
-        ),
+            )
+          else
+            Expanded(
+              child: DisconnectedPrompt(onConnect: widget.onGoToDevices),
+            ),
+          if (isConnected)
+            ActionButtons(
+              isRecording: recording.sessionInProgress,
+              onToggleRecord: _onToggleRecord,
+              onTare: _onTare,
+            ),
+        ],
       ),
     );
   }

@@ -8,11 +8,11 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
-import 'package:package_info_plus/package_info_plus.dart';
-
+import '../models/app_meta.dart';
 import '../models/device_flash.dart';
 import '../models/display_unit.dart';
 import 'export_delivery.dart';
+import 'session_data.dart';
 import 'session_storage.dart';
 
 /// The dynamite-csv file format's view of a display unit
@@ -58,13 +58,15 @@ Future<String?> downloadSessionCsv({
   required String deviceInfoJson,
   required SessionData data,
   required DisplayUnit unit,
+  required AppMeta appMeta,
 }) async {
-  final (bytes, fileName) = await _prepareCsv(
+  final (bytes, fileName) = _prepareCsv(
     sessionName,
     recordedAt,
     deviceInfoJson,
     data,
     unit,
+    appMeta,
   );
   return downloadExport(
     bytes: bytes,
@@ -83,14 +85,16 @@ Future<String?> shareSessionCsv({
   required String deviceInfoJson,
   required SessionData data,
   required DisplayUnit unit,
+  required AppMeta appMeta,
   ShareAnchor? anchor,
 }) async {
-  final (bytes, fileName) = await _prepareCsv(
+  final (bytes, fileName) = _prepareCsv(
     sessionName,
     recordedAt,
     deviceInfoJson,
     data,
     unit,
+    appMeta,
   );
   return shareExport(
     bytes: bytes,
@@ -101,24 +105,21 @@ Future<String?> shareSessionCsv({
   );
 }
 
-/// App version for the metadata's `generator` field, fetched once (the
-/// platform answer can't change during a run).
-final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
-
 /// Build the CSV bytes and filename for one session's [data] in [unit].
 /// Shared by both delivery paths.
-Future<(Uint8List, String)> _prepareCsv(
+(Uint8List, String) _prepareCsv(
   String sessionName,
   DateTime recordedAt,
   String deviceInfoJson,
   SessionData data,
   DisplayUnit unit,
-) async {
+  AppMeta appMeta,
+) {
   final csv = buildSessionCsv(
     data,
     unit,
     recordedAt: recordedAt,
-    generator: 'dynamite-flutter ${(await _packageInfo).version}',
+    generator: appMeta.generator,
     deviceInfoJson: deviceInfoJson,
   );
   return (

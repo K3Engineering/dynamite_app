@@ -9,7 +9,7 @@ import '../models/device_flash.dart';
 import '../models/load_cell.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
-import '../models/graph_data_source.dart';
+import 'graph_data_source.dart';
 import '../models/sample_slice.dart';
 
 /// Invoked by [DataHub.commitBatch] with the exact slice of samples appended

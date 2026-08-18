@@ -1425,7 +1425,10 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// link was torn down mid-setup, which also aborts the client) bails
   /// silently — the failure belongs to a link that no longer exists.
   Future<void> _setupKvs(_SetupToken token, String deviceId) async {
-    final client = KvsClient(deviceId: deviceId);
+    final client = KvsClient(
+      write: (bytes) =>
+          UniversalBle.write(deviceId, btServiceId, btChrKvs, bytes),
+    );
     try {
       await UniversalBle.subscribeNotifications(
         deviceId,
