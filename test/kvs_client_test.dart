@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -202,6 +204,115 @@ void main() {
       async.flushMicrotasks();
       expect(errors, hasLength(3));
       expect(mock.kvsCommandLog, isEmpty);
+    });
+  });
+
+  test('stale frames for other commands are dropped; the live command '
+      'resolves', () {
+    fakeAsync((async) {
+      final client = wire();
+      // The mock answers when the write completes 1 s out, leaving a window
+      // where 'GETFch0.r' is live and foreign frames can be injected.
+      mock.kvsCommandDelay = const Duration(seconds: 1);
+
+      String? value;
+      unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
+      async.flushMicrotasks();
+
+      // None of these answers the live command: a shorter reject, a longer
+      // reject, a different key's success, and the prefix trap (the strict
+      // prefix's late success frame).
+      client.handleNotification(Uint8List.fromList(utf8.encode('0GETFch0')));
+      client.handleNotification(Uint8List.fromList(utf8.encode('0GETFch0.rX')));
+      client.handleNotification(Uint8List.fromList(utf8.encode('1GETFch1.r=9')));
+      client.handleNotification(Uint8List.fromList(utf8.encode('1GETFch0=9')));
+      async.elapse(const Duration(seconds: 2));
+
+      expect(value, mock.kvsStore[kvsFolderFactory]!['ch0.r']);
+    });
+  });
+
+  test("a timed-out command's late frame does not poison the next command", () {
+    fakeAsync((async) {
+      final client = wire();
+      lockDevice();
+      final errors = <Object>[];
+      track(client.get(kvsFolderFactory, 'ch0'), errors); // dropped, times out
+      async.elapse(const Duration(seconds: 4));
+      expect(errors, hasLength(1));
+
+      unlockDevice();
+      mock.kvsCommandDelay = const Duration(seconds: 1);
+      String? value;
+      unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
+      async.flushMicrotasks();
+      // The timed-out 'GETFch0's late reply lands while 'GETFch0.r' is live.
+      client.handleNotification(
+        Uint8List.fromList(utf8.encode('1GETFch0=stale')),
+      );
+      async.elapse(const Duration(seconds: 2));
+
+      expect(errors, hasLength(1));
+      expect(value, mock.kvsStore[kvsFolderFactory]!['ch0.r']);
+    });
+  });
+
+  test('a duplicate frame in the write window does not throw', () {
+    fakeAsync((async) {
+      final client = wire();
+      // The firmware notifies before the ATT write response, so a frame can
+      // land while the write is still awaited; a duplicate must be dropped,
+      // not double-complete the completer.
+      mock.kvsCommandDelay = const Duration(seconds: 1);
+
+      String? value;
+      unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
+      async.flushMicrotasks();
+
+      final f = Uint8List.fromList(utf8.encode('1GETFch0.r=1,2,3'));
+      client.handleNotification(f);
+      expect(() => client.handleNotification(f), returnsNormally);
+      async.flushMicrotasks();
+      expect(value, '1,2,3');
+      // The mock's own frame lands afterwards and drops quietly as well.
+      async.elapse(const Duration(seconds: 2));
+    });
+  });
+
+  test('a byte-identical late frame is accepted as the live answer', () {
+    fakeAsync((async) {
+      // The protocol has no transaction ID: a stale frame byte-identical to
+      // the live command's answer is indistinguishable from that answer.
+      // Accepting it is correct — KVS commands are idempotent, and the
+      // device did execute that exact command.
+      final client = wire();
+      mock.kvsCommandDelay = const Duration(seconds: 1);
+
+      String? value;
+      unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
+      async.flushMicrotasks();
+      client.handleNotification(
+        Uint8List.fromList(utf8.encode('1GETFch0.r=stale-value')),
+      );
+      async.flushMicrotasks();
+      expect(value, 'stale-value');
+      async.elapse(const Duration(seconds: 2));
+    });
+  });
+
+  test('frames arriving after abort are dropped without error', () {
+    fakeAsync((async) {
+      final client = wire();
+      lockDevice();
+      final errors = <Object>[];
+      track(client.get(kvsFolderFactory, 'ch0.r'), errors);
+      async.flushMicrotasks();
+
+      client.abort();
+      final f = Uint8List.fromList(utf8.encode('1GETFch0.r=1'));
+      expect(() => client.handleNotification(f), returnsNormally);
+      async.flushMicrotasks();
+      expect(errors, hasLength(1));
     });
   });
 }

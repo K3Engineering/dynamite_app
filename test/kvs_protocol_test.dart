@@ -51,42 +51,52 @@ void main() {
 
   group('response parsing', () {
     test('a successful GET carries the value as payload', () {
-      final r = parseKvsResponse('GETFch0.raw', frame('1GETFch0.raw=1,2,3'));
+      final r = parseKvsResponse('GETFch0.raw', frame('1GETFch0.raw=1,2,3'))!;
       expect(r.ok, isTrue);
       expect(r.payload, '1,2,3');
     });
 
     test('a successful SET carries an empty payload', () {
-      final r = parseKvsResponse('SETFk=v', frame('1SETFk=v='));
+      final r = parseKvsResponse('SETFk=v', frame('1SETFk=v='))!;
       expect(r.ok, isTrue);
       expect(r.payload, isEmpty);
     });
 
     test('a failed command is status 0 with no payload', () {
-      final r = parseKvsResponse('GETFmissing', frame('0GETFmissing'));
+      final r = parseKvsResponse('GETFmissing', frame('0GETFmissing'))!;
       expect(r.ok, isFalse);
       expect(r.payload, isEmpty);
     });
 
     test('payloads may contain = (values, IDX entries)', () {
-      final r = parseKvsResponse('IDXF0', frame('1IDXF0=ch0.raw=21'));
+      final r = parseKvsResponse('IDXF0', frame('1IDXF0=ch0.raw=21'))!;
       expect(r.ok, isTrue);
       expect(r.payload, 'ch0.raw=21');
     });
 
-    test('an echo mismatch is a protocol error', () {
-      expect(
-        () => parseKvsResponse('GETFaaa', frame('1GETFbbb=x')),
-        throwsFormatException,
-      );
+    test('SET echoes with = inside the request still match', () {
+      final r = parseKvsResponse('SETUlc0.cap=200', frame('1SETUlc0.cap=200='))!;
+      expect(r.ok, isTrue);
+      expect(r.payload, isEmpty);
     });
 
-    test('malformed frames are protocol errors', () {
+    test('a well-formed frame for a different command is stale, not an error', () {
+      expect(parseKvsResponse('GETFaaa', frame('1GETFbbb=x')), isNull);
+      // Reject frames shorter or longer than the pending request aren't its
+      // answer either (prefix-free matching, both directions).
+      expect(parseKvsResponse('GETFaa', frame('0GETFa')), isNull);
+      expect(parseKvsResponse('GETFaa', frame('0GETFaaX')), isNull);
+      // The prefix trap that killed live commands before: a longer request's
+      // late success frame while its strict prefix is pending.
+      expect(parseKvsResponse('GETFabc', frame('1GETFabcX=9')), isNull);
+    });
+
+    test('garbled frames are protocol errors', () {
       expect(
         () => parseKvsResponse('GETFa', Uint8List(0)),
         throwsFormatException,
       );
-      // Success status without the '=' separator.
+      // Success status without the '=' separator (matching echo).
       expect(
         () => parseKvsResponse('GETFa', frame('1GETFa')),
         throwsFormatException,
@@ -96,7 +106,7 @@ void main() {
         () => parseKvsResponse('GETFa', frame('2GETFa=x')),
         throwsFormatException,
       );
-      // Echo truncated relative to the request.
+      // Success frame with no separator anywhere.
       expect(
         () => parseKvsResponse('GETFaa', frame('1GETF')),
         throwsFormatException,

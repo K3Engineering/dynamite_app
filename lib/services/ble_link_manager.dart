@@ -542,6 +542,15 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     return op;
   }
 
+  /// TODO check if this is really needed
+  /// Settle grace between pausing the feed and the envelope's first KVS
+  /// command. The firmware releases its device lock inside the CCC-write
+  /// callback, ahead of the unsubscribe's completion — but only when the
+  /// platform actually ordered and awaited the descriptor write. A KVS
+  /// write that lands while the lock still holds is dropped silently and
+  /// costs a full command timeout; the grace is the cheap fix.
+  static const Duration _feedPauseSettle = Duration(milliseconds: 300);
+
   /// One feed-maintenance envelope: unsubscribe the ADC feed, run [body],
   /// resubscribe. Runs exclusively inside the [_feedMaintenance] chain, so
   /// subscribe/unsubscribe pairs of concurrent ops can never interleave.
@@ -550,6 +559,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     final pause = _link.isStreaming;
     if (pause) {
       await UniversalBle.unsubscribe(deviceId, btServiceId, btChrAdcFeedId);
+      await Future<void>.delayed(_feedPauseSettle);
     }
     try {
       return await body();

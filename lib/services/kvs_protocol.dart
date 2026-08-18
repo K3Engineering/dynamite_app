@@ -96,30 +96,29 @@ class KvsResponse {
   final String payload;
 }
 
-/// Parse the notification frame answering [request]. The echo must match
-/// the request verbatim — a mismatch means the frame answers some other
-/// command (or is not a KVS response at all), which is a protocol error.
-KvsResponse parseKvsResponse(String request, Uint8List frame) {
+/// Parse the notification frame answering [request].
+///
+/// Returns null when the frame is a well-formed answer to some OTHER command
+/// — a stale frame whose own command already timed out; the caller drops it
+/// and the live command keeps awaiting its own reply. Throws
+/// [FormatException] on a garbled frame, which fails the live command:
+/// garbage on the wire means the link can't be trusted.
+KvsResponse? parseKvsResponse(String request, Uint8List frame) {
   final requestBytes = utf8.encode(request);
-  // Smallest frame: status + echo (+'=' on success).
-  if (frame.length < 1 + requestBytes.length) {
+  if (frame.isEmpty || (frame[0] != 0x30 && frame[0] != 0x31)) {
     throw FormatException(
-      'KVS frame too short: ${frame.length} B for "$request"',
+      'KVS bad status byte: ${frame.isEmpty ? -1 : frame[0]}',
     );
   }
-  for (var i = 0; i < requestBytes.length; ++i) {
-    if (frame[1 + i] != requestBytes[i]) {
-      throw FormatException('KVS echo mismatch for "$request"');
-    }
-  }
-  switch (frame[0]) {
-    case 0x30: // '0'
-      return const KvsResponse(ok: false, payload: '');
-    case 0x31: // '1'
-      if (frame.length < 1 + requestBytes.length + 1 ||
-          frame[1 + requestBytes.length] != 0x3D /* = */ ) {
-        throw const FormatException('KVS frame missing payload separator');
-      }
+  final success = frame[0] == 0x31; // '1'
+  // Exact-echo match at the echo's fixed position: '<status><request>' for a
+  // failure, '<status><request>=<payload>' for a success. Prefix-free both
+  // ways: a stale '0GETFabcX' must not settle a pending GETFabc, nor a stale
+  // '0GETFabc' a pending GETFabcX.
+  if (_bytesAt(frame, 1, requestBytes)) {
+    if (success &&
+        frame.length > 1 + requestBytes.length &&
+        frame[1 + requestBytes.length] == 0x3D /* = */ ) {
       return KvsResponse(
         ok: true,
         payload: utf8.decode(
@@ -127,9 +126,44 @@ KvsResponse parseKvsResponse(String request, Uint8List frame) {
           allowMalformed: true,
         ),
       );
-    default:
-      throw FormatException('KVS bad status byte: ${frame[0]}');
+    }
+    if (!success && frame.length == 1 + requestBytes.length) {
+      return const KvsResponse(ok: false, payload: '');
+    }
   }
+  // Not this command's answer: well-formed means stale (drop), anything else
+  // is garbage (throw).
+  if (!_isWellFormedKvsFrame(frame)) {
+    throw FormatException('KVS garbled frame (${frame.length} B)');
+  }
+  return null;
+}
+
+/// Shaped like a KVS answer to SOME command: known command word, known
+/// folder letter, and (successes only) a payload separator — the firmware
+/// writes '=' even for an empty payload. Separates a stale frame (drop)
+/// from garbage on the wire (throw).
+bool _isWellFormedKvsFrame(Uint8List frame) {
+  // <Status:1><Cmd:3><Folder:1><Data…>; the data may be empty on a rejection.
+  if (frame.length < 5) return false;
+  final knownCommand =
+      _bytesAt(frame, 1, utf8.encode(kvsCmdGet)) ||
+      _bytesAt(frame, 1, utf8.encode(kvsCmdSet)) ||
+      _bytesAt(frame, 1, utf8.encode(kvsCmdDelete)) ||
+      _bytesAt(frame, 1, utf8.encode(kvsCmdIndex));
+  final knownFolder =
+      frame[4] == 0x46 /* F */ || frame[4] == 0x55 /* U */ || frame[4] == 0x53 /* S */;
+  if (!(knownCommand && knownFolder)) return false;
+  if (frame[0] == 0x31 && frame.indexOf(0x3D /* = */, 5) < 0) return false;
+  return true;
+}
+
+bool _bytesAt(Uint8List frame, int offset, List<int> bytes) {
+  if (frame.length < offset + bytes.length) return false;
+  for (var i = 0; i < bytes.length; ++i) {
+    if (frame[offset + i] != bytes[i]) return false;
+  }
+  return true;
 }
 
 /// Parse an IDX payload (`key=typeHex`) into its entry. A key can never

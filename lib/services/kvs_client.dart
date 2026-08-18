@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 
 import 'kvs_protocol.dart';
 
@@ -67,29 +68,38 @@ class KvsClient {
   }
 
   /// Entry point for KVS notifications (routed here by the link manager).
-  /// Frames arriving with no command outstanding (stale, duplicated) are
-  /// dropped.
+  /// A frame can only settle the live command; everything else is dropped:
+  /// frames with no command live, duplicates (the firmware notifies before
+  /// the ATT write response, so a frame can land while the write is still
+  /// awaited), and stale answers to other — already timed-out — commands
+  /// ([parseKvsResponse] returns null for those, throws only for garbage,
+  /// which fails the live command).
   void handleNotification(Uint8List data) {
     final current = _current;
-    if (current == null) return;
+    if (current == null || current.completer.isCompleted) return;
     try {
-      current.response.complete(parseKvsResponse(current.request, data));
+      final response = parseKvsResponse(current.request, data);
+      if (response == null) {
+        debugPrint('Dropping stale KVS frame; live: "${current.request}"');
+        return;
+      }
+      current.completer.complete(response);
     } on FormatException catch (e) {
-      current.response.completeError(e);
+      current.completer.completeError(e);
     }
   }
 
-  /// Fail every pending and queued command (link teardown). Known
-  /// limitation: a response arriving after its command timed out can be
-  /// misattributed to the next command (the echo check then fails THAT one)
-  /// — acceptable, because a seconds-late frame means the link is dying
-  /// anyway.
+  /// Fail every pending and queued command (link teardown); frames that
+  /// arrive afterwards hit [handleNotification]'s no-live-command drop.
   void abort() {
     _aborted = true;
+    // The live command sits at the queue's head.
     final error = StateError('KVS link torn down');
-    _current?.response.completeError(error);
+    _current = null;
     for (final command in _queue) {
-      command.finishError(error);
+      if (!command.completer.isCompleted) {
+        command.completer.completeError(error);
+      }
     }
     _queue.clear();
   }
@@ -97,12 +107,11 @@ class KvsClient {
   Future<KvsResponse> _execute(String request) {
     final command = _KvsCommand(request);
     if (_aborted) {
-      command.finishError(StateError('KVS client aborted'));
-      return command.done;
+      return Future.error(StateError('KVS client aborted'));
     }
     _queue.add(command);
     if (_queue.length == 1) unawaited(_pump());
-    return command.done;
+    return command.completer.future;
   }
 
   Future<void> _pump() async {
@@ -111,10 +120,13 @@ class KvsClient {
       _current = command;
       try {
         await write(Uint8List.fromList(utf8.encode(command.request)));
-        final response = await command.response.future.timeout(commandTimeout);
-        command.finish(response);
+        await command.completer.future.timeout(commandTimeout);
       } catch (e) {
-        command.finishError(e);
+        // The response may have landed in the write window; it's the caller's
+        // completer, so only fail it when no answer did.
+        if (!command.completer.isCompleted) {
+          command.completer.completeError(e);
+        }
       } finally {
         _current = null;
         // [abort] may have drained the queue while this command was
@@ -132,17 +144,8 @@ class _KvsCommand {
 
   final String request;
 
-  /// Completed by [KvsClient.handleNotification] with the parsed frame.
-  final Completer<KvsResponse> response = Completer();
-  final Completer<KvsResponse> _done = Completer();
-
-  Future<KvsResponse> get done => _done.future;
-
-  void finish(KvsResponse r) {
-    if (!_done.isCompleted) _done.complete(r);
-  }
-
-  void finishError(Object e) {
-    if (!_done.isCompleted) _done.completeError(e);
-  }
+  /// Completed by [KvsClient.handleNotification] with the parsed frame, or
+  /// by [_pump]/[KvsClient.abort] with the failure — it's the future the
+  /// caller awaits, so completion ordering needs no second channel.
+  final Completer<KvsResponse> completer = Completer();
 }
