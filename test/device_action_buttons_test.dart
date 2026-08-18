@@ -17,6 +17,9 @@ import 'package:dynamite_app/services/feed_health_tracker.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/rig_state.dart';
+import 'package:dynamite_app/services/session_metadata.dart';
+import 'package:dynamite_app/services/session_storage.dart';
+import 'package:dynamite_app/services/stream_reset_coordinator.dart';
 
 /// Layout contract for the Devices tab's action buttons: Scan/Stop (status
 /// row), Connect (inactive rows) and Cancel/Disconnect (active row) all share
@@ -50,10 +53,21 @@ void main() {
       linkManager.connectedDeviceName,
       flash,
     );
+    StreamResetCoordinator(
+      hub: dataHub,
+      streamingChanges: linkManager,
+      streamingNow: () => linkManager.isStreaming,
+    );
     final recording = RecordingController(
       dataHub: dataHub,
-      linkManager: linkManager,
-      decoder: decoder,
+      streamingChanges: linkManager,
+      streamingNow: () => linkManager.isStreaming,
+      deviceMetadataSnapshot: () => toSessionDeviceMetadata(
+        name: linkManager.connectedDeviceName,
+        info: linkManager.connectedDeviceInfo,
+      ),
+      onSessionBoundary: decoder.resetContinuity,
+      persistence: const StaticSessionPersistence(),
       events: appEvents,
     );
     final feedHealth = FeedHealthTracker(

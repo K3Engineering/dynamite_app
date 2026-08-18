@@ -23,7 +23,9 @@ import 'services/hot_restart_cleanup_stub.dart'
 import 'services/mockble.dart';
 import 'services/recording_controller.dart';
 import 'services/rig_state.dart';
+import 'services/session_metadata.dart';
 import 'services/session_storage.dart';
+import 'services/stream_reset_coordinator.dart';
 import 'screens/app_shell.dart';
 import 'widgets/status_colors.dart';
 
@@ -78,10 +80,23 @@ void main() async {
     linkManager.connectedDeviceName,
     flash,
   );
+  // New-stream clears and calibration forgetting on link transitions.
+  // Nothing reads this; it exists to react. Construction is the wiring.
+  StreamResetCoordinator(
+    hub: dataHub,
+    streamingChanges: linkManager,
+    streamingNow: () => linkManager.isStreaming,
+  );
   final recording = RecordingController(
     dataHub: dataHub,
-    linkManager: linkManager,
-    decoder: decoder,
+    streamingChanges: linkManager,
+    streamingNow: () => linkManager.isStreaming,
+    deviceMetadataSnapshot: () => toSessionDeviceMetadata(
+      name: linkManager.connectedDeviceName,
+      info: linkManager.connectedDeviceInfo,
+    ),
+    onSessionBoundary: decoder.resetContinuity,
+    persistence: const StaticSessionPersistence(),
     events: appEvents,
   );
   final appSettings = AppSettings(prefs: prefs);

@@ -2,12 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-import 'adc_packet_decoder.dart';
 import 'app_events.dart';
-import 'ble_link_manager.dart';
 import 'data_hub.dart';
-import 'session_metadata.dart';
-import 'session_storage.dart';
+import 'live_session_writer.dart';
+import 'session_persistence.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/feed_health.dart';
@@ -25,16 +23,27 @@ final class StartSessionOk extends StartSessionResult {
   const StartSessionOk();
 }
 
+/// Refused: another lifecycle operation is already in flight (a session is
+/// starting, recording, or stopping) — one outstanding operation at a time.
+/// The UI prevents this by toggling on [RecordingController.sessionInProgress];
+/// reaching it means a second tap landed inside the previous operation's
+/// async window.
+final class StartSessionBusy extends StartSessionResult {
+  const StartSessionBusy();
+}
+
 /// Refused: a tare is still averaging, and recording now would persist a zero
 /// tare. Transient — retry once the tare completes.
 final class StartSessionTareInProgress extends StartSessionResult {
   const StartSessionTareInProgress();
 }
 
-/// Refused: the link dropped while the session row was being created. The
-/// orphan row was discarded; nothing is recording (and a later reconnect can
-/// never splice a different device's stream into this session — see
-/// [RecordingController.startSession]). Transient — retry once reconnected.
+/// Refused: the stream this session was built on went away while the session
+/// row was being created — the link dropped, or a reconnect reset the hub
+/// (same or different device), which would have spliced the NEW stream into
+/// a session frozen with the OLD stream's tare, calibration and device
+/// metadata. The orphan row was discarded; nothing is recording. Transient —
+/// retry (press REC again) on the live stream.
 final class StartSessionLinkLost extends StartSessionResult {
   const StartSessionLinkLost();
 }
@@ -48,15 +57,35 @@ final class StartSessionNoData extends StartSessionResult {
 }
 
 /// Session creation (the DB row / writer) threw; nothing was latched, so the
-/// controller is still idle.
+/// controller is back to idle.
 final class StartSessionFailed extends StartSessionResult {
   const StartSessionFailed(this.error);
 
   final Object error;
 }
 
+/// The recording lifecycle, serialized: exactly one of these at a time, and
+/// every operation is refused unless the state matches. [starting] and
+/// [stopping] cover the async windows (session-row creation, finalization),
+/// so a recording can never be half-latched while another begins.
+enum _RecordingState { idle, starting, recording, stopping }
+
 /// Owns the recording session lifecycle start to finish; the UI only
 /// toggles and reports outcomes.
+///
+/// The lifecycle is the [_RecordingState] machine above: [startSession] may
+/// run only from idle, [stopSession] only from recording, and the async gaps
+/// in each are covered states rather than windows where the controller
+/// merely "looks" idle.
+///
+/// Dependencies are ports, not subsystems: the live store is [DataHub] (the
+/// data plane — same concrete-dependency status [FeedHealthTracker] gives
+/// it), stream liveness arrives through the [streamingChanges]/[streamingNow]
+/// port, and device metadata, packet-boundary resets and persistence are
+/// injected ([deviceMetadataSnapshot], [onSessionBoundary], [persistence]).
+/// The link-transition resets this controller used to own (hub clear on
+/// stream entry, calibration forget on drop) live in
+/// `StreamResetCoordinator`.
 ///
 /// Failures are reported two ways, by audience: [startSession] refuses or
 /// fails in response to the user who just tapped record, so its outcomes are
@@ -67,34 +96,46 @@ final class StartSessionFailed extends StartSessionResult {
 class RecordingController extends ChangeNotifier {
   RecordingController({
     required DataHub dataHub,
-    required BleLinkManager linkManager,
-    required AdcPacketDecoder decoder,
+
+    /// Stream liveness, as a notify source plus a poll closure (the same
+    /// port shape [FeedHealthTracker] uses); main wires the link manager
+    /// in. The controller's only link reaction is auto-stop: a recording
+    /// whose stream dies is finalized.
+    required Listenable streamingChanges,
+    required bool Function() streamingNow,
+
+    /// Snapshot of the connected device's identity (the CSV `device` block
+    /// — docs/csv-format-v1.md), frozen onto the session row at start.
+    required Map<String, Object?> Function() deviceMetadataSnapshot,
+
+    /// Marks a session boundary for packet continuity: the first packet of
+    /// a session must not be diffed against a stale counter from across the
+    /// boundary (the decoder's `resetContinuity`, wired in main).
+    required void Function() onSessionBoundary,
+
+    /// The session persistence port (see [SessionPersistence]).
+    required SessionPersistence persistence,
     required AppEvents events,
   }) : _dataHub = dataHub,
-       _linkManager = linkManager,
-       _decoder = decoder,
+       _streamingChanges = streamingChanges,
+       _streamingNow = streamingNow,
+       _deviceMetadataSnapshot = deviceMetadataSnapshot,
+       _onSessionBoundary = onSessionBoundary,
+       _persistence = persistence,
        _events = events {
     _dataHub.addSamplesAppendedListener(_onSamplesAppended);
-    _linkManager.addListener(_onLinkChanged);
+    _streamingChanges.addListener(_onStreamingChanged);
   }
 
   final DataHub _dataHub;
-  final BleLinkManager _linkManager;
+  final Listenable _streamingChanges;
+  final bool Function() _streamingNow;
+  final Map<String, Object?> Function() _deviceMetadataSnapshot;
+  final void Function() _onSessionBoundary;
+  final SessionPersistence _persistence;
   final AppEvents _events;
 
-  /// Needed to reset packet-continuity tracking at SESSION boundaries
-  /// (start/stop), so the first packet of a session isn't diffed against a
-  /// stale counter. New-stream resets are the decoder's own business (it
-  /// listens to the hub's cleared events — see `AdcPacketDecoder`).
-  final AdcPacketDecoder _decoder;
-
-  /// True while a session writer is latched. Derived (not stored) so the flag
-  /// can never disagree with the writer it describes.
-  bool get sessionInProgress => _sessionWriter != null;
-
-  /// Link state at the previous [_onLinkChanged] notification; used to detect
-  /// the not-streaming -> streaming edge (a new device stream starting).
-  bool _wasStreaming = false;
+  _RecordingState _state = _RecordingState.idle;
 
   LiveSessionWriter? _sessionWriter;
 
@@ -102,35 +143,47 @@ class RecordingController extends ChangeNotifier {
   /// [stopSession] can hand it back to the UI without a DB lookup.
   String? _sessionName;
 
+  /// True from the moment a start is committed (before its async row
+  /// creation) until finalization completes — the starting and stopping
+  /// windows included, so the UI's record toggle never sees a fake idle
+  /// gap. Derived from the state machine, so it can never disagree with
+  /// the lifecycle it describes.
+  bool get sessionInProgress => _state != _RecordingState.idle;
+
+  /// Every transition notifies: [sessionInProgress] covers the starting and
+  /// stopping windows, not just the latched recording.
+  void _transitionTo(_RecordingState next) {
+    _state = next;
+    notifyListeners();
+  }
+
   /// Start a new recording session: create the session row and its writer
-  /// (via [SessionStorage.startSession]) and latch them here.
+  /// (via the persistence port) and latch them here.
   ///
   /// [name] is the session's display name; null auto-names it from the wall
   /// clock (e.g. `2026-07-29 14:05:32` — see [autoSessionName]).
   /// [channelLabels] and [visibleChannels] are persisted for display only
-  /// (see [SessionStorage.startSession]). [displayUnit] is frozen onto the
-  /// session row as the CSV export's default converted unit. The connected
-  /// device's identity (BLE name + DIS strings) is frozen alongside as the
-  /// CSV `device` block (docs/csv-format-v1.md).
+  /// (see [SessionPersistence.startSession]). [displayUnit] is frozen onto
+  /// the session row as the CSV export's default converted unit. The connected
+  /// device's identity is frozen alongside (the CSV `device` block).
   ///
   /// Outcomes are returned, not thrown, so the caller (the live tab's record
-  /// button) can snackbar them locally; null means a session was already in
-  /// progress (a no-op the UI prevents by toggling on [sessionInProgress]).
-  Future<StartSessionResult?> startSession({
+  /// button) can snackbar them locally.
+  Future<StartSessionResult> startSession({
     String? name,
     required List<String> channelLabels,
     required List<bool> visibleChannels,
     required DisplayUnit displayUnit,
   }) async {
-    assert(_linkManager.isStreaming);
-    if (sessionInProgress) return null;
+    assert(_streamingNow());
+    if (_state != _RecordingState.idle) return const StartSessionBusy();
     // A tare is still averaging; recording now would persist a zero tare.
     if (_dataHub.taring) return const StartSessionTareInProgress();
     // Refuse to latch an empty session onto a feed that delivers nothing
     // decodable (a stream that never produced data, produces only malformed
     // packets, or has gone silent).
     if (deriveFeedHealth(
-          streaming: _linkManager.isStreaming,
+          streaming: _streamingNow(),
           totalSamples: _dataHub.totalSamples,
           lastDataAt: _dataHub.lastDataAt,
           lastMalformedPacketAt: _dataHub.lastMalformedPacketAt,
@@ -140,17 +193,16 @@ class RecordingController extends ChangeNotifier {
       return const StartSessionNoData();
     }
 
+    _transitionTo(_RecordingState.starting);
     final sessionName = name ?? autoSessionName(DateTime.now());
-    // Freeze the connected device's identity onto the row (the CSV `device`
-    // block — docs/csv-format-v1.md): export must never consult live device
-    // state.
-    final deviceMetadata = toSessionDeviceMetadata(
-      name: _linkManager.connectedDeviceName,
-      info: _linkManager.connectedDeviceInfo,
-    );
+    // Stream identity for the post-await check: any stream reset during the
+    // await (a reconnect, same or different device) clears the hub and bumps
+    // [DataHub.generation], so this snapshot detects a device swap that the
+    // bare streaming check below would miss.
+    final generation = _dataHub.generation;
     final LiveSessionWriter writer;
     try {
-      writer = await SessionStorage.startSession(
+      writer = await _persistence.startSession(
         tare: _dataHub.tare,
         // Snapshot the per-channel calibration in effect now; playback
         // converts through it even if calibration changes later.
@@ -164,26 +216,29 @@ class RecordingController extends ChangeNotifier {
         channelLabels: channelLabels,
         visibleChannels: visibleChannels,
         displayUnit: displayUnit,
-        deviceMetadata: deviceMetadata,
+        deviceMetadata: _deviceMetadataSnapshot(),
       );
     } catch (e) {
+      _transitionTo(_RecordingState.idle);
       return StartSessionFailed(e);
     }
 
-    // Re-check the link after the await: if it dropped while the row was
-    // being created, [_onLinkChanged] saw no writer latched and did nothing.
-    // Latching now would leave a live session on a dead link — and a later
-    // reconnect would splice the NEW device's stream (post-clear, indices
-    // restarted) into it. Discard the empty row and refuse instead.
-    if (!_linkManager.isStreaming) {
-      await SessionStorage.discardSession(writer);
+    // Re-check the stream after the await: the snapshots above (tare,
+    // calibration, device metadata) all describe THIS stream. If the link
+    // dropped meanwhile — or the stream was reset by a reconnect, moving
+    // [DataHub.generation] — latching now would splice the NEW device's
+    // stream (post-clear, indices restarted) into a session frozen with the
+    // OLD stream's identity. Discard the empty row and refuse instead.
+    if (!_streamingNow() || _dataHub.generation != generation) {
+      await _persistence.discardSession(writer);
+      _transitionTo(_RecordingState.idle);
       return const StartSessionLinkLost();
     }
 
     _sessionWriter = writer;
     _sessionName = sessionName;
-    _decoder.resetContinuity();
-    notifyListeners();
+    _onSessionBoundary();
+    _transitionTo(_RecordingState.recording);
     return const StartSessionOk();
   }
 
@@ -204,38 +259,41 @@ class RecordingController extends ChangeNotifier {
   }
 
   /// Stop the current recording and finalize it. Returns the saved session id
-  /// and name (or nulls if nothing was recording) and any write error the
-  /// storage writer latched (non-null means the session may be truncated).
+  /// and name (or nulls when called outside the recording state — the state
+  /// machine refuses the no-op, e.g. a stop tapped while a start is still in
+  /// flight) and any write error the storage writer latched (non-null means
+  /// the session may be truncated).
   ///
   /// This is the single place a storage failure is surfaced to the user (as a
   /// [RecordingStorageError] on [AppEvents]); callers only use the returned
   /// error to branch (e.g. suppress the "Session saved" notice).
   Future<({int? sessionId, String? name, Object? error})> stopSession() async {
-    final writer = _sessionWriter;
-    if (writer != null) {
-      final name = _sessionName;
-      _sessionWriter = null;
-      _sessionName = null;
-      _decoder.resetContinuity();
-      notifyListeners();
-
-      // finalizeSession flushes through the writer's serialized queue, which
-      // drains any in-flight (unawaited) appends first. A failure there (e.g.
-      // the DB itself is gone) is folded into the returned error rather than
-      // thrown: stopSession also runs on unawaited auto-stop paths (link
-      // drop, writer error), where a throw would be an unhandled async error.
-      Object? error;
-      try {
-        error = await SessionStorage.finalizeSession(writer: writer);
-      } catch (e) {
-        error = e;
-      }
-      if (error != null) {
-        _events.emit(RecordingStorageError(error));
-      }
-      return (sessionId: writer.sessionId, name: name, error: error);
+    if (_state != _RecordingState.recording) {
+      return (sessionId: null, name: null, error: null);
     }
-    return (sessionId: null, name: null, error: null);
+    final writer = _sessionWriter!;
+    final name = _sessionName;
+    _sessionWriter = null;
+    _sessionName = null;
+    _onSessionBoundary();
+    _transitionTo(_RecordingState.stopping);
+
+    // finalizeSession flushes through the writer's serialized queue, which
+    // drains any in-flight (unawaited) appends first. A failure there (e.g.
+    // the DB itself is gone) is folded into the returned error rather than
+    // thrown: stopSession also runs on unawaited auto-stop paths (link
+    // drop, writer error), where a throw would be an unhandled async error.
+    Object? error;
+    try {
+      error = await _persistence.finalizeSession(writer: writer);
+    } catch (e) {
+      error = e;
+    }
+    if (error != null) {
+      _events.emit(RecordingStorageError(error));
+    }
+    _transitionTo(_RecordingState.idle);
+    return (sessionId: writer.sessionId, name: name, error: error);
   }
 
   /// Slice of freshly decoded samples, straight from the decoder (via the
@@ -254,33 +312,20 @@ class RecordingController extends ChangeNotifier {
     }
   }
 
-  /// React to the link transitions that affect data integrity: a dropped
-  /// link finalizes any in-progress session and forgets the dead device's
-  /// board calibration; a freshly started stream resets the hub and packet
-  /// continuity.
-  void _onLinkChanged() {
-    final bool streaming = _linkManager.isStreaming;
-    if (sessionInProgress && !streaming) {
+  /// The controller's only link reaction: a recording whose stream dies is
+  /// finalized. (A start in flight aborts itself via [startSession]'s
+  /// post-await checks; a finalization in flight reads only snapshots it
+  /// already took.) Stream resets on connection transitions are
+  /// `StreamResetCoordinator`'s job.
+  void _onStreamingChanged() {
+    if (_state == _RecordingState.recording && !_streamingNow()) {
       unawaited(stopSession());
     }
-    if (!streaming && _wasStreaming) {
-      _dataHub.clearBoardCalibration();
-    }
-    if (streaming && !_wasStreaming) {
-      // New device stream. Clear the previous stream's ring buffer, peaks,
-      // tare and gaps so two connections never splice into one trace; the
-      // decoder restarts continuity itself off the clear (see its
-      // constructor). Runs on stream entry (not on disconnect) so a
-      // recording being finalized after an unexpected drop can still read
-      // the old ring data while it flushes.
-      _dataHub.clear();
-    }
-    _wasStreaming = streaming;
   }
 
   @override
   void dispose() {
-    _linkManager.removeListener(_onLinkChanged);
+    _streamingChanges.removeListener(_onStreamingChanged);
     _dataHub.removeSamplesAppendedListener(_onSamplesAppended);
     super.dispose();
   }

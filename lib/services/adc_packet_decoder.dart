@@ -36,8 +36,8 @@ class AdcPacketDecoder {
   /// Forget the last seen packet counter so the next packet is not diffed
   /// against a stale value (which would report spurious dropped samples).
   /// Self-invoked on a new device stream (via the hub's cleared listeners,
-  /// see the constructor); recording start/stop call it for the session
-  /// boundary (see `RecordingController`).
+  /// see the constructor); `RecordingController` requests it at session
+  /// boundaries through the session-boundary callback main wires here.
   void resetContinuity() {
     _prevSampleCount = -1;
   }

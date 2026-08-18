@@ -207,7 +207,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   }
 
   /// Reset every per-stream accumulation: ring position, peaks, tare, gaps
-  /// and buckets. Invoked from the constructor and by [RecordingController]
+  /// and buckets. Invoked from the constructor and by `StreamResetCoordinator`
   /// each time a new device stream starts, so two connections (or two
   /// devices) never splice into one trace and "Peak" never survives a
   /// disconnect.

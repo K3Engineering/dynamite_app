@@ -67,7 +67,7 @@ class _LiveTabState extends State<LiveTab> {
     }
   }
 
-  /// A hub reset (a new device stream, see [RecordingController]) means the
+  /// A hub reset (a new device stream, see `StreamResetCoordinator`) means the
   /// previous trace is gone: drop any stale pan/zoom window and follow the
   /// fresh live edge. Without this, a user-panned (non-live) window survives
   /// the disconnect and [GraphController.effectiveRange] would clamp the
@@ -137,9 +137,9 @@ class _LiveTabState extends State<LiveTab> {
       if (!mounted) return;
 
       switch (result) {
-        case StartSessionOk() || null:
-          // Recording (or already was, which the button state prevents). No
-          // announcement on start.
+        case StartSessionOk() || StartSessionBusy():
+          // Recording (or another lifecycle op is in flight, which the
+          // button state prevents). No announcement on start.
           break;
         case StartSessionTareInProgress():
           ScaffoldMessenger.of(context).showSnackBar(

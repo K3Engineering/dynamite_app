@@ -1,50 +1,61 @@
-import 'dart:typed_data';
-
 import 'package:drift/native.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:universal_ble/universal_ble.dart';
 
-import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/app_events.dart';
-import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/database.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
-import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
+import 'package:dynamite_app/services/session_metadata.dart';
+import 'package:dynamite_app/services/session_storage.dart';
 
-/// [RecordingController] owns the session lifecycle start to finish: it
-/// creates the session (via SessionStorage) on start, refuses to start while
-/// a tare is averaging, and hands the session name back on stop so the UI
+/// [RecordingController] owns the session lifecycle start to finish, as an
+/// explicit idle/starting/recording/stopping machine: it creates the session
+/// (via its persistence port) on start, refuses every operation whose state
+/// doesn't match, refuses to start while a tare is averaging or the stream
+/// changed mid-creation, and hands the session name back on stop so the UI
 /// never touches storage.
 ///
-/// startSession asserts the link is streaming (the live tab only shows the
-/// record button while streaming), so these tests fake that one state rather
-/// than driving a mock connection.
+/// startSession asserts the stream is live (the live tab only shows the
+/// record button while streaming), so these tests hold the stream-liveness
+/// port at a constant true rather than driving a mock connection.
 void main() {
-  setUp(() {
-    // Satisfy BleLinkManager's startup availability query without platform
-    // channels (same harness as widget_test).
-    UniversalBle.setInstance(MockBlePlatform.instance);
-    MockBlePlatform.instance.dropEveryNPackets = 0;
-  });
-
-  (RecordingController, DataHub, _StreamingLink) wire() {
+  (RecordingController, DataHub, ValueNotifier<bool>) wire() {
     final events = AppEvents();
     final hub = DataHub();
     final decoder = AdcPacketDecoder(hub);
-    final link = _StreamingLink(events: events);
+    final streaming = ValueNotifier<bool>(true);
     final recording = RecordingController(
       dataHub: hub,
-      linkManager: link,
-      decoder: decoder,
+      streamingChanges: streaming,
+      streamingNow: () => streaming.value,
+      deviceMetadataSnapshot: () =>
+          toSessionDeviceMetadata(name: null, info: null),
+      onSessionBoundary: decoder.resetContinuity,
+      persistence: const StaticSessionPersistence(),
       events: events,
     );
     addTearDown(recording.dispose);
-    return (recording, hub, link);
+    return (recording, hub, streaming);
+  }
+
+  Future<StartSessionResult> start(RecordingController recording) =>
+      recording.startSession(
+        channelLabels: const ['a', 'b', 'c', 'd'],
+        visibleChannels: const [true, true, true, true],
+        displayUnit: DisplayUnit.kgf,
+      );
+
+  void feedFrames(DataHub hub, int n) {
+    final frame = Int32List(kAdcChannelCount);
+    for (var i = 0; i < n; i++) {
+      frame[0] = 1000 + i;
+      hub.addSampleFrame(frame);
+    }
+    hub.commitBatch(0);
   }
 
   test('startSession refuses while a tare is averaging', () async {
@@ -53,11 +64,7 @@ void main() {
     hub.requestTare();
     expect(hub.taring, isTrue);
 
-    final result = await recording.startSession(
-      channelLabels: const ['a', 'b', 'c', 'd'],
-      visibleChannels: const [true, true, false, false],
-      displayUnit: DisplayUnit.kgf,
-    );
+    final result = await start(recording);
 
     expect(result, isA<StartSessionTareInProgress>());
     expect(recording.sessionInProgress, isFalse);
@@ -69,11 +76,7 @@ void main() {
     // ever arriving: positively silent, not merely starting.
     hub.streamStartedAt = DateTime.now().subtract(const Duration(seconds: 5));
 
-    final result = await recording.startSession(
-      channelLabels: const ['a', 'b', 'c', 'd'],
-      visibleChannels: const [true, true, false, false],
-      displayUnit: DisplayUnit.kgf,
-    );
+    final result = await start(recording);
 
     expect(result, isA<StartSessionNoData>());
     expect(recording.sessionInProgress, isFalse);
@@ -84,11 +87,7 @@ void main() {
     hub.streamStartedAt = DateTime.now().subtract(const Duration(seconds: 5));
     hub.noteMalformedPacket(182);
 
-    final result = await recording.startSession(
-      channelLabels: const ['a', 'b', 'c', 'd'],
-      visibleChannels: const [true, true, false, false],
-      displayUnit: DisplayUnit.kgf,
-    );
+    final result = await start(recording);
 
     expect(result, isA<StartSessionNoData>());
     expect(recording.sessionInProgress, isFalse);
@@ -102,24 +101,18 @@ void main() {
 
       final (recording, hub, _) = wire();
 
-      final start = await recording.startSession(
+      final startResult = await recording.startSession(
         channelLabels: const ['Load Cell 1', 'Load Cell 2', 'Ch 3', 'Ch 4'],
         visibleChannels: const [true, true, false, false],
         displayUnit: DisplayUnit.kN,
       );
-      expect(start, isA<StartSessionOk>());
+      expect(startResult, isA<StartSessionOk>());
       expect(recording.sessionInProgress, isTrue);
 
       // Record a few frames so the finalized session has data. The controller
       // streams hub slices to the writer via the samples-appended listener,
       // notified by commitBatch once per (simulated) packet.
-      const n = 10;
-      final frame = Int32List(kAdcChannelCount);
-      for (var i = 0; i < n; i++) {
-        frame[0] = 1000 + i;
-        hub.addSampleFrame(frame);
-      }
-      hub.commitBatch(0);
+      feedFrames(hub, 10);
 
       final stop = await recording.stopSession();
       expect(recording.sessionInProgress, isFalse);
@@ -131,7 +124,7 @@ void main() {
       final saved = await AppDatabase.instance.sessionById(stop.sessionId!);
       expect(saved, isNotNull);
       expect(saved!.isCompleted, isTrue);
-      expect(saved.sampleCount, n);
+      expect(saved.sampleCount, 10);
       expect(
         saved.name,
         matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$')),
@@ -145,8 +138,8 @@ void main() {
       // default converted unit).
       expect(saved.displayUnit, 'kN');
       // The device identity block is frozen alongside (the CSV `device`
-      // metadata). This harness's link has no name/DIS read, so every field
-      // is the null placeholder.
+      // metadata). This harness's snapshot has no name/DIS read, so every
+      // field is the null placeholder.
       expect(
         saved.deviceInfoJson,
         '{"name":null,"id":null,"model":null,"firmware":null,'
@@ -161,24 +154,118 @@ void main() {
       AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
       addTearDown(AppDatabase.closeInstance);
 
-      final (recording, _, link) = wire();
+      final (recording, _, streaming) = wire();
 
-      // Flip the flag synchronously, before the event loop can resume the
+      // Flip liveness synchronously, before the event loop can resume the
       // creation future: this is the drop landing mid-insert. Without the
-      // post-await link re-check, the writer would latch onto the dead link —
-      // and a later reconnect would splice the new device's stream into it.
-      final future = recording.startSession(
-        channelLabels: const ['a', 'b', 'c', 'd'],
-        visibleChannels: const [true, true, true, true],
-        displayUnit: DisplayUnit.kgf,
-      );
-      link.streaming = false;
+      // post-await stream re-check, the writer would latch onto the dead
+      // stream — and a later reconnect would splice the new device's stream
+      // into it.
+      final future = start(recording);
+      streaming.value = false;
       final result = await future;
 
       expect(result, isA<StartSessionLinkLost>());
       expect(recording.sessionInProgress, isFalse);
       // The orphan row was discarded, not left behind for crash recovery.
       expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
+    },
+  );
+
+  test(
+    'a stream reset during session creation refuses and discards the row',
+    () async {
+      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(AppDatabase.closeInstance);
+
+      final (recording, hub, _) = wire();
+
+      // A reconnect (same or different device) mid-insert clears the hub and
+      // bumps its generation — the stream the tare/calibration/device
+      // snapshots describe no longer exists, even though the link reports
+      // streaming again. Clearing here is exactly what StreamResetCoordinator
+      // runs on stream entry.
+      final future = start(recording);
+      hub.clear();
+      final result = await future;
+
+      expect(result, isA<StartSessionLinkLost>());
+      expect(recording.sessionInProgress, isFalse);
+      expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
+    },
+  );
+
+  test(
+    'a second start while creation is in flight is refused',
+    () async {
+      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(AppDatabase.closeInstance);
+
+      final (recording, _, _) = wire();
+
+      // The first start synchronously enters the starting state before its
+      // DB await; a double-tap landing in that window must not create a
+      // second session (the second writer would overwrite the first's latch
+      // and orphan its row).
+      final first = start(recording);
+      final second = await start(recording);
+
+      expect(second, isA<StartSessionBusy>());
+      expect(await first, isA<StartSessionOk>());
+      expect(recording.sessionInProgress, isTrue);
+
+      final stop = await recording.stopSession();
+      expect(stop.error, isNull);
+      // Only one session was ever created in this test.
+      expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
+    },
+  );
+
+  test(
+    'a stop while creation is in flight is refused; the start still latches',
+    () async {
+      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(AppDatabase.closeInstance);
+
+      final (recording, hub, _) = wire();
+
+      final first = start(recording);
+      final stop = await recording.stopSession();
+
+      expect(stop.sessionId, isNull);
+      expect(stop.error, isNull);
+      expect(await first, isA<StartSessionOk>());
+      expect(recording.sessionInProgress, isTrue);
+
+      feedFrames(hub, 4);
+      final finalStop = await recording.stopSession();
+      expect(finalStop.error, isNull);
+      expect(finalStop.sessionId, isNotNull);
+    },
+  );
+
+  test(
+    'a start while finalization is in flight is refused',
+    () async {
+      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(AppDatabase.closeInstance);
+
+      final (recording, hub, _) = wire();
+
+      expect(await start(recording), isA<StartSessionOk>());
+      feedFrames(hub, 4);
+
+      // The stop synchronously enters the stopping state before its
+      // finalization await; a REC tap landing in that window must not
+      // overlap a new session with the old one's finalization (the old
+      // session's storage-error event would otherwise surface mid-recording).
+      final stopping = recording.stopSession();
+      final second = await start(recording);
+
+      expect(second, isA<StartSessionBusy>());
+      final stop = await stopping;
+      expect(stop.error, isNull);
+      expect(recording.sessionInProgress, isFalse);
     },
   );
 
@@ -192,16 +279,8 @@ void main() {
 
       final (recording, hub, _) = wire();
 
-      final start = await recording.startSession(
-        channelLabels: const ['a', 'b', 'c', 'd'],
-        visibleChannels: const [true, true, true, true],
-        displayUnit: DisplayUnit.kgf,
-      );
-      expect(start, isA<StartSessionOk>());
-
-      final frame = Int32List(kAdcChannelCount);
-      hub.addSampleFrame(frame);
-      hub.commitBatch(0);
+      expect(await start(recording), isA<StartSessionOk>());
+      feedFrames(hub, 1);
 
       // Close the DB out from under the session: the finalizing completion
       // write then throws. The failure must surface as the returned error —
@@ -215,25 +294,6 @@ void main() {
       expect(stop.error, isNotNull);
     },
   );
-
-  test('a link drop forgets the dead device\'s board calibration', () {
-    final (_, hub, link) = wire();
-    hub.updateBoardCalibration(
-      BoardCalibration.parse(
-        demoBoardCalibrationDoc,
-        pgaGains: const [32, 32, 32, 32],
-      ),
-    );
-    // Sync the controller's transition tracker (idle -> streaming); the
-    // production controller pre-exists the first connection, so it sees
-    // every edge.
-    link.setStreaming(true);
-    expect(hub.boardDataStatus, BoardDataStatus.ok);
-
-    link.setStreaming(false);
-    expect(hub.boardCalibration, isNull);
-    expect(hub.boardDataStatus, BoardDataStatus.unreadable);
-  });
 
   group('autoSessionName', () {
     test('ISO Y-M-D with 24h zero-padded H:MM:SS', () {
@@ -250,23 +310,4 @@ void main() {
       );
     });
   });
-}
-
-/// A [BleLinkManager] whose streaming state is a plain settable flag, so
-/// [RecordingController.startSession]'s streaming precondition holds without
-/// driving a mock connection (and can be flipped mid-test to simulate a drop).
-class _StreamingLink extends BleLinkManager {
-  _StreamingLink({required super.events});
-
-  bool streaming = true;
-
-  /// Flip [streaming] and notify, so the controller's transition detection
-  /// sees the edge.
-  void setStreaming(bool value) {
-    streaming = value;
-    notifyListeners();
-  }
-
-  @override
-  bool get isStreaming => streaming;
 }
