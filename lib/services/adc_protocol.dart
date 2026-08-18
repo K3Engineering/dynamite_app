@@ -3,11 +3,11 @@ library;
 
 import 'dart:typed_data';
 
-/// Bytes per sample on the wire: [wireNumAdcChan] channels x 3 bytes (24-bit).
-const int wireAdcSampleLength = 12;
+import '../models/device_profile.dart';
 
-/// Channels per sample frame.
-const int wireNumAdcChan = 4;
+/// Bytes per sample on the wire: [kAdcChannelCount] channels x 3 bytes
+/// (24-bit).
+const int wireAdcSampleLength = 3 * kAdcChannelCount;
 
 /// Packet header bytes (16-bit little-endian running sample counter).
 const int wireAdcHeaderSize = 2;
@@ -23,12 +23,12 @@ int? adcSamplesInPacket(int length) {
   return payload ~/ wireAdcSampleLength;
 }
 
-/// Encode one sample frame: [wireNumAdcChan] channel values as 24-bit
+/// Encode one sample frame: [kAdcChannelCount] channel values as 24-bit
 /// little-endian. Values are masked to 24 bits (callers clamp to the signed
 /// 24-bit range as needed).
 Uint8List encodeAdcFrame(List<int> channels) {
   final out = Uint8List(wireAdcSampleLength);
-  for (int ch = 0; ch < wireNumAdcChan; ch++) {
+  for (int ch = 0; ch < kAdcChannelCount; ch++) {
     final v = channels[ch] & 0xFFFFFF;
     out[ch * 3] = v & 0xFF;
     out[ch * 3 + 1] = (v >> 8) & 0xFF;
@@ -67,7 +67,7 @@ List<double>? parseAdcConfigPgaGains(Uint8List b) {
   if (b.length < structBytes || b[0] != 1) return null;
   final pga = b[9] | (b[10] << 8);
   return [
-    for (int i = 0; i < wireNumAdcChan; ++i)
+    for (int i = 0; i < kAdcChannelCount; ++i)
       (1 << ((pga >> (4 * i)) & 0x7)).toDouble(),
   ];
 }

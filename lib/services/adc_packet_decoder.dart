@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'adc_protocol.dart';
 import 'data_hub.dart';
 import '../models/calibration.dart';
+import '../models/device_profile.dart';
 import '../utils/log.dart';
 
 /// Protocol layer: decodes the device's ADC-feed notification packets and the
@@ -23,7 +24,7 @@ class AdcPacketDecoder {
 
   /// Reusable frame buffer (one value per channel) passed to
   /// [DataHub.addSampleFrame], which copies out of it synchronously.
-  final Int32List _frame = Int32List(wireNumAdcChan);
+  final Int32List _frame = Int32List(kAdcChannelCount);
 
   /// Forget the last seen packet counter so the next packet is not diffed
   /// against a stale value (which would report spurious dropped samples).
@@ -90,7 +91,7 @@ class AdcPacketDecoder {
       packetStart < wireAdcHeaderSize + n * wireAdcSampleLength;
       packetStart += wireAdcSampleLength
     ) {
-      for (int i = 0; i < wireNumAdcChan; ++i) {
+      for (int i = 0; i < kAdcChannelCount; ++i) {
         final int baseIndex = packetStart + i * 3;
         _frame[i] =
             ((data[baseIndex] << 0) |

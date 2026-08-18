@@ -62,7 +62,12 @@ void main() {
           ChangeNotifierProvider<BleLinkManager>.value(value: link),
         ],
         child: const MaterialApp(
-          home: Scaffold(body: SingleChildScrollView(child: RigSlotsSection())),
+          // No connected device: the Save button stays disabled.
+          home: Scaffold(
+            body: SingleChildScrollView(
+              child: RigSlotsSection(connectedDeviceId: ''),
+            ),
+          ),
         ),
       ),
     );

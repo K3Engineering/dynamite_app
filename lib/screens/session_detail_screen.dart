@@ -12,6 +12,7 @@ import '../services/session_storage.dart';
 import '../utils/format.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
+import 'session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 
@@ -356,7 +357,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       _runCsvAction(() async {
         final unit = await _pickExportUnit(_recordedUnit(session));
         if (unit == null) return null;
-        return downloadSessionCsv(session: session, data: data, unit: unit);
+        return downloadSessionCsv(
+          sessionName: session.name,
+          recordedAt: session.createdAt,
+          deviceInfoJson: session.deviceInfoJson,
+          data: data,
+          unit: unit,
+        );
       });
 
   Future<void> _shareCsv(Session session, SessionData data) =>
@@ -364,7 +371,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         final unit = await _pickExportUnit(_recordedUnit(session));
         if (unit == null) return null;
         return shareSessionCsv(
-          session: session,
+          sessionName: session.name,
+          recordedAt: session.createdAt,
+          deviceInfoJson: session.deviceInfoJson,
           data: data,
           unit: unit,
           sharePositionOrigin: _shareAnchor(),

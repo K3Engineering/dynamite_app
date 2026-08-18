@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
+import 'package:dynamite_app/services/bt_scan.dart';
 import 'package:dynamite_app/widgets/bt_icon.dart';
 
 /// Tests for [topIndicatorMode], the "quiet when nominal" presentation
@@ -10,7 +10,7 @@ import 'package:dynamite_app/widgets/bt_icon.dart';
 /// empty block is on screen as the single voice.
 void main() {
   TopIndicatorMode mode({
-    AvailabilityState availability = AvailabilityState.poweredOn,
+    BtAvailability availability = BtAvailability.poweredOn,
     bool isScanning = false,
     bool emptyBlockVisible = false,
   }) => topIndicatorMode(
@@ -20,7 +20,7 @@ void main() {
   );
 
   test('the empty block showing forces quiet in every adapter state', () {
-    for (final a in AvailabilityState.values) {
+    for (final a in BtAvailability.values) {
       expect(
         mode(availability: a, emptyBlockVisible: true),
         TopIndicatorMode.quiet,
@@ -37,8 +37,8 @@ void main() {
     // Distinct glyphs (off / permission / unsupported / startup) carry real
     // information; they reach the indicator only when the empty block isn't
     // covering them (a stale populated list — see the quiet case above).
-    for (final a in AvailabilityState.values) {
-      if (a == AvailabilityState.poweredOn) continue;
+    for (final a in BtAvailability.values) {
+      if (a == BtAvailability.poweredOn) continue;
       expect(
         mode(availability: a),
         TopIndicatorMode.iconAndLabel,

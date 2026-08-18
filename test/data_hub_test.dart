@@ -4,14 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/models/display_unit.dart';
-import 'package:dynamite_app/services/adc_protocol.dart';
+import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 
 /// Unit tests for the hub's per-stream lifecycle (peaks, tare, reset). Uses
 /// [DisplayUnit.raw] throughout so forces equal tare-adjusted raw counts.
 void main() {
-  const int channels = wireNumAdcChan;
+  const int channels = kAdcChannelCount;
 
   /// Pro-like test chain, reproducing the app's former compiled constants.
   const testNominals = ChannelNominals(

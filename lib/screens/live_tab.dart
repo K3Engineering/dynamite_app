@@ -9,15 +9,15 @@ import '../models/calibration.dart';
 import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
 
-import '../services/adc_protocol.dart';
+import '../models/device_profile.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/feed_health.dart';
+import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
-import '../screens/app_shell.dart';
 import '../widgets/channel_stats_table.dart';
-import '../widgets/dialogs.dart';
+import 'session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 import '../widgets/rssi_indicator.dart';
@@ -28,7 +28,12 @@ import '../widgets/status_colors.dart';
 // ---------------------------------------------------------------------------
 
 class LiveTab extends StatefulWidget {
-  const LiveTab({super.key});
+  const LiveTab({super.key, required this.onGoToDevices});
+
+  /// Jump to the Devices tab (the disconnected prompt's "Connect a device"
+  /// action, and tapping the status bar while disconnected). Supplied by the
+  /// app shell, which owns the tab index.
+  final VoidCallback onGoToDevices;
 
   @override
   State<LiveTab> createState() => _LiveTabState();
@@ -259,6 +264,7 @@ class _LiveTabState extends State<LiveTab> {
               isConnected: isConnected,
               connectedDeviceName: deviceName,
               health: health,
+              onGoToDevices: widget.onGoToDevices,
             ),
           ),
           if (isConnected)
@@ -288,7 +294,9 @@ class _LiveTabState extends State<LiveTab> {
               ),
             )
           else
-            const Expanded(child: DisconnectedPrompt()),
+            Expanded(
+              child: DisconnectedPrompt(onConnect: widget.onGoToDevices),
+            ),
           if (isConnected)
             ActionButtons(
               isRecording: recording.sessionInProgress,
@@ -331,8 +339,12 @@ class LiveStatusBar extends StatelessWidget {
     super.key,
     required this.isConnected,
     required this.connectedDeviceName,
+    required this.onGoToDevices,
     this.health,
   });
+
+  /// Tapping the bar while disconnected jumps to the Devices tab.
+  final VoidCallback onGoToDevices;
 
   void _showHealthDetails(BuildContext context, FeedHealth health) {
     final hub = context.read<DataHub>();
@@ -368,10 +380,7 @@ class LiveStatusBar extends StatelessWidget {
         : null;
     return GestureDetector(
       onTap: !isConnected
-          ? () {
-              final shell = context.findAncestorStateOfType<AppShellState>();
-              shell?.goToDevices();
-            }
+          ? onGoToDevices
           : report
           ? () => _showHealthDetails(context, health!)
           : null,
@@ -528,7 +537,7 @@ class LiveStats extends StatelessWidget {
 
           final hasData = hub.totalSamples > 0;
           final clipped = [
-            for (int i = 0; i < wireNumAdcChan; i++)
+            for (int i = 0; i < kAdcChannelCount; i++)
               hasData && ChannelLimits.isClipped(hub.currentRawFor(i)),
           ];
 
@@ -552,7 +561,7 @@ class LiveStats extends StatelessWidget {
                   ChannelStatsRow(
                     label: 'Live',
                     values: [
-                      for (int i = 0; i < wireNumAdcChan; i++)
+                      for (int i = 0; i < kAdcChannelCount; i++)
                         hub.currentValue(i, unit),
                     ],
                     emphasized: true,
@@ -561,7 +570,7 @@ class LiveStats extends StatelessWidget {
                   ChannelStatsRow(
                     label: 'Peak',
                     values: [
-                      for (int i = 0; i < wireNumAdcChan; i++)
+                      for (int i = 0; i < kAdcChannelCount; i++)
                         hub.peakValue(i, unit, start: viewStart, end: viewEnd),
                     ],
                   ),
@@ -569,7 +578,7 @@ class LiveStats extends StatelessWidget {
                     ChannelStatsRow(
                       label: 'dF/dt',
                       values: [
-                        for (int i = 0; i < wireNumAdcChan; i++)
+                        for (int i = 0; i < kAdcChannelCount; i++)
                           hub.currentDerivative(i, unit),
                       ],
                       stale: stale,
@@ -612,7 +621,10 @@ class LiveStats extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class DisconnectedPrompt extends StatelessWidget {
-  const DisconnectedPrompt({super.key});
+  const DisconnectedPrompt({super.key, required this.onConnect});
+
+  /// "Connect a device" action: jumps to the Devices tab.
+  final VoidCallback onConnect;
 
   @override
   Widget build(BuildContext context) {
@@ -620,10 +632,7 @@ class DisconnectedPrompt extends StatelessWidget {
       icon: Icons.bluetooth_searching,
       title: 'No device connected',
       action: FilledButton.tonal(
-        onPressed: () {
-          final shell = context.findAncestorStateOfType<AppShellState>();
-          shell?.goToDevices();
-        },
+        onPressed: onConnect,
         child: const Text('Connect a device'),
       ),
     );

@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../services/adc_protocol.dart';
+import 'device_profile.dart';
 import 'display_unit.dart';
 
 /// Application-wide settings, persisted via SharedPreferences.
@@ -26,7 +26,7 @@ class AppSettings extends ChangeNotifier {
     _displayUnit = DisplayUnit.fromName(_prefs.getString(_keyUnit));
 
     final active = _prefs.getStringList(_keyActiveChannels);
-    if (active != null && active.length == wireNumAdcChan) {
+    if (active != null && active.length == kAdcChannelCount) {
       _activeChannels = active.map((s) => s == 'true').toList();
     }
 
@@ -59,7 +59,7 @@ class AppSettings extends ChangeNotifier {
 
   /// Which channels are shown in the live view. Local to the live tab —
   /// each recorded session carries its own visibility set.
-  List<bool> _activeChannels = List.filled(wireNumAdcChan, true);
+  List<bool> _activeChannels = List.filled(kAdcChannelCount, true);
   List<bool> get activeChannels => List.unmodifiable(_activeChannels);
 
   List<int> get activeChannelIndices => [

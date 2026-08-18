@@ -38,9 +38,13 @@ void main() {
     await tester.pumpWidget(
       ChangeNotifierProvider.value(
         value: link,
-        child: const MaterialApp(
+        child: MaterialApp(
           home: Scaffold(
-            body: LiveStatusBar(isConnected: true, connectedDeviceName: 'K3'),
+            body: LiveStatusBar(
+              isConnected: true,
+              connectedDeviceName: 'K3',
+              onGoToDevices: () {},
+            ),
           ),
         ),
       ),

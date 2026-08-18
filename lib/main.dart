@@ -4,18 +4,22 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:universal_ble/universal_ble.dart';
 
 import 'models/app_settings.dart';
 import 'services/adc_packet_decoder.dart';
 import 'services/app_events.dart';
 import 'services/ble_link_manager.dart';
+import 'services/bt_device_config.dart';
 import 'services/data_hub.dart';
 import 'services/database.dart';
+import 'services/demo_device.dart';
 // Debug-only hot-restart hook: on web, BLE notification listeners and timers
 // survive a hot restart, so each generation registers a cleanup that the next
 // generation runs first thing in main(). No-op stub on native platforms.
 import 'services/hot_restart_cleanup_stub.dart'
     if (dart.library.js_interop) 'services/hot_restart_cleanup_web.dart';
+import 'services/mockble.dart';
 import 'services/recording_controller.dart';
 import 'services/rig_state.dart';
 import 'services/session_storage.dart';
@@ -45,10 +49,16 @@ void main() async {
   // are synchronous constructor work and can never race a user edit.
   final prefs = await SharedPreferences.getInstance();
 
+  // Mock-BLE dev build: swap in the simulated platform before any BLE call
+  // (compile-time toggle in bt_device_config.dart).
+  if (useMockBt) {
+    UniversalBle.setInstance(MockBlePlatform.instance);
+  }
+
   final appEvents = AppEvents();
   final dataHub = DataHub();
   final decoder = AdcPacketDecoder(dataHub);
-  final linkManager = BleLinkManager(events: appEvents)
+  final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
     ..onAdcData = decoder.onDataPacket
     ..onCalibrationData = decoder.onCalibrationPacket;
   final rigState = RigState(transport: linkManager, prefs: prefs);

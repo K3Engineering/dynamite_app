@@ -11,18 +11,21 @@ import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
-import '../services/kvs_protocol.dart';
+import '../models/device_profile.dart';
 import '../services/rig_state.dart';
 import '../widgets/calibration_text.dart';
 import '../widgets/connection_info_card.dart';
 import '../widgets/device_info_card.dart';
 import '../widgets/rig_slots_section.dart';
 import '../widgets/section_header.dart';
-import 'app_shell.dart';
 import 'calibration_screen.dart';
 
 class SettingsTab extends StatelessWidget {
-  const SettingsTab({super.key});
+  const SettingsTab({super.key, required this.onGoToDevices});
+
+  /// The "Connect" action shown while no device is linked: jumps to the
+  /// Devices tab. Supplied by the app shell, which owns the tab index.
+  final VoidCallback onGoToDevices;
 
   /// Fetched once per process, not per rebuild of the tab.
   static final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
@@ -143,12 +146,7 @@ class SettingsTab extends StatelessWidget {
                   'Connect to a device to manage its settings',
                 ),
                 trailing: FilledButton.tonal(
-                  onPressed: () {
-                    // Navigate to the Devices tab (same pattern as Live tab).
-                    final shell = context
-                        .findAncestorStateOfType<AppShellState>();
-                    shell?.goToDevices();
-                  },
+                  onPressed: onGoToDevices,
                   child: const Text('Connect'),
                 ),
               ),
@@ -188,7 +186,7 @@ class SettingsTab extends StatelessWidget {
             // device".
             Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
-            const RigSlotsSection(),
+            RigSlotsSection(connectedDeviceId: deviceId),
             const SizedBox(height: 16),
 
             Card(

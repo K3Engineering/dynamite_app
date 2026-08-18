@@ -1,8 +1,5 @@
 import 'package:material_ui/material_ui.dart';
 
-import '../services/database.dart';
-import '../utils/format.dart';
-
 /// Shared dialog helpers: one text prompt and one delete confirmation.
 
 /// Prompt for a single text value. Returns the entered text (which may be
@@ -75,38 +72,4 @@ Future<bool> showDeleteConfirm(
     ),
   );
   return confirmed ?? false;
-}
-
-/// Rename-a-session flow. Callers relying on reactive session streams need
-/// no further refresh.
-Future<void> renameSessionFlow(
-  BuildContext context, {
-  required int sessionId,
-  required String currentName,
-  String title = 'Rename session',
-}) async {
-  final newName = (await showTextPrompt(
-    context,
-    title: title,
-    label: 'Session name',
-    initial: currentName,
-  ))?.trim();
-  if (newName != null && newName.isNotEmpty) {
-    await AppDatabase.instance.renameSession(sessionId, newName);
-  }
-}
-
-/// Delete-a-session flow. Returns true when the session was deleted (so
-/// callers can e.g. pop a detail screen).
-Future<bool> deleteSessionFlow(BuildContext context, Session session) async {
-  // An empty name would render as Delete ""? — fall back to the shared
-  // placeholder title.
-  if (!await showDeleteConfirm(
-    context,
-    what: session.name.isEmpty ? untitledSessionName : session.name,
-  )) {
-    return false;
-  }
-  await AppDatabase.instance.deleteSession(session.id);
-  return true;
 }

@@ -27,7 +27,12 @@ extension type _StorageEstimate(JSObject _) implements JSObject {
   external JSNumber get quota;
 }
 
-Future<StorageCapacity?> fetchStorageCapacity() async {
+/// [usedBytes] is ignored: the usage half of estimate() already covers this
+/// origin's storage wholesale. The parameter exists because the conditional
+/// import shares one signature with the native producer.
+Future<StorageCapacity?> fetchStorageCapacity({
+  required Future<int> Function() usedBytes,
+}) async {
   final storage = _navigator.storage;
   if (storage == null) return null;
   try {

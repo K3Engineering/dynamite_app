@@ -9,6 +9,7 @@ import 'data_hub.dart';
 import 'feed_health.dart';
 import 'session_storage.dart';
 import '../models/device_info.dart';
+import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 
 /// Outcome of [RecordingController.startSession]. The outcomes are mutually
@@ -144,7 +145,15 @@ class RecordingController extends ChangeNotifier {
     final LiveSessionWriter writer;
     try {
       writer = await SessionStorage.startSession(
-        dataHub: _dataHub,
+        tare: _dataHub.tare,
+        // Snapshot the per-channel calibration in effect now; playback
+        // converts through it even if calibration changes later.
+        channelCalibration: [
+          for (int ch = 0; ch < kAdcChannelCount; ch++)
+            _dataHub.calibrationFor(ch),
+        ],
+        samplesPerSec: DataHub.samplesPerSec,
+        sourceRingCapacity: DataHub.maxDataSz,
         name: sessionName,
         channelLabels: channelLabels,
         visibleChannels: visibleChannels,
@@ -235,7 +244,7 @@ class RecordingController extends ChangeNotifier {
     if (writer.hasError) {
       unawaited(stopSession());
     } else {
-      unawaited(writer.appendData(_dataHub, startIdx, count));
+      unawaited(writer.appendData(_dataHub.snapshotRange(startIdx, count)));
     }
   }
 

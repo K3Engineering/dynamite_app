@@ -1,5 +1,5 @@
-import '../services/adc_protocol.dart';
 import 'board_calibration.dart';
+import 'device_profile.dart';
 import 'load_cell.dart';
 
 // ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ final Set<String> _knownFlashKeys = {
   'cal.origin',
   'cal.temp',
   'cal.adc',
-  for (int i = 0; i < wireNumAdcChan; ++i) ...['ch$i.r', 'ch$i.raw'],
+  for (int i = 0; i < kAdcChannelCount; ++i) ...['ch$i.r', 'ch$i.raw'],
   for (int i = 0; i < kRigSlotCount; ++i) ...[
     'lc$i.name',
     'lc$i.cap',

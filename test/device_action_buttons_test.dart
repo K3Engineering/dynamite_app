@@ -11,6 +11,7 @@ import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
+import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/rig_state.dart';
@@ -37,7 +38,7 @@ void main() {
     final appEvents = AppEvents();
     final dataHub = DataHub();
     final decoder = AdcPacketDecoder(dataHub);
-    final linkManager = BleLinkManager(events: appEvents)
+    final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
       ..onAdcData = decoder.onDataPacket
       ..onCalibrationData = decoder.onCalibrationPacket;
     final prefs = await SharedPreferences.getInstance();

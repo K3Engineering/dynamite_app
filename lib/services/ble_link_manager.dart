@@ -7,14 +7,13 @@ import 'package:universal_ble/universal_ble.dart';
 import 'app_events.dart';
 import 'adc_protocol.dart';
 import 'bt_device_config.dart';
-import 'demo_calibration.dart';
-import 'demo_signal_source.dart';
+import 'bt_scan.dart';
 import 'kvs_client.dart';
 import 'kvs_flash_transport.dart';
 import 'kvs_protocol.dart';
-import 'mockble.dart';
 import 'rig_state.dart';
 import '../models/device_info.dart';
+import '../models/device_profile.dart';
 import '../utils/log.dart';
 
 /// Lifecycle of a single device's BLE link.
@@ -86,6 +85,34 @@ enum ConnectFailureKind {
   timeout,
 }
 
+/// What [BleLinkManager] needs from the demo device: a synthetic link
+/// source whose flash doc and stored name round-trip exactly like real
+/// hardware ("Save to device" and the name editor work on the demo). The
+/// implementation (`DemoDevice`) is constructed and wired by the
+/// composition root — the manager never constructs one.
+abstract interface class DemoLink {
+  /// The flash document, mutable so "Save to device" round-trips (a
+  /// reconnect serves whatever was last written).
+  String get flashDoc;
+  set flashDoc(String doc);
+
+  /// The demo's stored name — the same round-trip rationale as [flashDoc].
+  String? get storedName;
+  set storedName(String? name);
+
+  /// The simulated identity (real links read theirs from the Device
+  /// Information service in post-connect setup).
+  DeviceInfo get deviceInfo;
+
+  /// Per-channel PGA gains served alongside the flash doc (the analogue of
+  /// the GAIN-register readback on real links).
+  List<double> get pgaGains;
+
+  /// Start/stop the simulated ADC feed, delivered like GATT notifications.
+  void startFeed(void Function(Uint8List) onData);
+  void stopFeed();
+}
+
 /// All per-device link state for a single BLE device. Everything logically
 /// per-device lives here rather than as loose fields on [BleLinkManager] —
 /// see the multi-device roadmap on [BleLinkManager].
@@ -112,7 +139,7 @@ class DeviceLink {
   /// Most recent live RSSI (dBm) for the connected device, polled while
   /// connected. Null until the first successful read (and after reset). This is
   /// the *connected* signal strength — distinct from the scan-time RSSI carried
-  /// on each discovered [BleDevice].
+  /// on each discovered [DiscoveredDevice].
   int? rssi;
 
   /// The device's static identity, read from the Device Information service
@@ -299,11 +326,17 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// or a teardown happened).
   void _supersedeSetupPasses() => _setupEpoch++;
 
-  AvailabilityState _bluetoothState = AvailabilityState.unknown;
-  AvailabilityState get bluetoothState => _bluetoothState;
+  /// The adapter state, exposed as the app-level [BtAvailability]: the
+  /// plugin's `AvailabilityState` never leaves this class (converted on
+  /// ingress — see [_updateBluetoothState]).
+  BtAvailability _bluetoothState = BtAvailability.unknown;
+  BtAvailability get bluetoothState => _bluetoothState;
 
-  final List<BleDevice> _devices = [];
-  List<BleDevice> get devices => List.unmodifiable(_devices);
+  /// Scanned devices as app-level [DiscoveredDevice]s: universal_ble's
+  /// `BleDevice` is mapped at the scan-result boundary (see [_onScanResult])
+  /// and never escapes.
+  final List<DiscoveredDevice> _devices = [];
+  List<DiscoveredDevice> get devices => List.unmodifiable(_devices);
 
   bool _isScanning = false;
   bool get isScanning => _isScanning;
@@ -350,7 +383,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
   /// The most recent moment (ms since epoch) this device was provably alive,
   /// or null if never. Native folds in the latest advertisement receipt
-  /// ([BleDevice.timestamp], refreshed per advert while scanning) so the
+  /// ([DiscoveredDevice.timestamp], refreshed per advert while scanning) so the
   /// value covers both "seen" and "connected" evidence; web uses connection
   /// stamps only — the picker pick-time is not a connection and must not
   /// count as a sighting on its own. The Devices tab renders this as "Last
@@ -514,16 +547,10 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// go here; the shell shows them regardless of which tab is mounted.
   final AppEvents _events;
 
-  DemoSignalSource? _demoSource;
-
-  /// The demo device's flash document, mutable so the "Save to device" flow
-  /// round-trips on the demo exactly like on real hardware (a reconnect
-  /// serves whatever was last written).
-  String _demoFlashDoc = demoBoardCalibrationDoc;
-
-  /// The demo device's stored name — the same round-trip rationale as
-  /// [_demoFlashDoc], for [setDeviceName].
-  String? _demoDeviceName;
+  /// The demo device (see [DemoLink]), wired by the composition root. Null
+  /// only in tests that construct a bare manager; every demo code path is
+  /// then unreachable (no demo connect can begin without [_demo]).
+  final DemoLink? _demo;
 
   /// The KVS channel of the active link (null for the demo device and after
   /// teardown). Created in post-connect setup BEFORE the ADC feed
@@ -550,7 +577,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       throw StateError('writeFlashDoc with no device connected');
     }
     if (deviceId == DeviceLink.demoDeviceId) {
-      _demoFlashDoc = doc;
+      _demo!.flashDoc = doc;
       return;
     }
     final transport = _kvsTransport;
@@ -568,7 +595,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   Future<String?> readFlashDoc() async {
     final deviceId = _link.deviceId;
     if (deviceId.isEmpty) return null;
-    if (deviceId == DeviceLink.demoDeviceId) return _demoFlashDoc;
+    if (deviceId == DeviceLink.demoDeviceId) return _demo!.flashDoc;
     final transport = _kvsTransport;
     if (transport == null) return null;
     try {
@@ -622,7 +649,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     }
     final stored = trimmed.isEmpty ? null : trimmed;
     if (deviceId == DeviceLink.demoDeviceId) {
-      _demoDeviceName = stored;
+      _demo!.storedName = stored;
       _link.storedName = stored;
       notifyListeners();
       return true;
@@ -643,10 +670,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     return ok;
   }
 
-  BleLinkManager({required AppEvents events}) : _events = events {
-    if (useMockBt) {
-      UniversalBle.setInstance(MockBlePlatform.instance);
-    }
+  BleLinkManager({required AppEvents events, DemoLink? demo})
+    : _events = events,
+      _demo = demo {
     // Run each device's BLE commands in its own queue. With the default
     // `global` queue, a command stuck against a half-torn-down device (common on
     // web when the user rapidly connects/disconnects) blocks and serially times
@@ -669,7 +695,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   }
 
   Future<void> _updateBluetoothState() async {
-    _bluetoothState = await UniversalBle.getBluetoothAvailabilityState();
+    _bluetoothState = BtAvailability.values.byName(
+      (await UniversalBle.getBluetoothAvailabilityState()).name,
+    );
     notifyListeners();
   }
 
@@ -694,7 +722,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     await _updateBluetoothState();
   }
 
-  void _onScanResult(BleDevice newDevice) {
+  void _onScanResult(BleDevice result) {
     // Keep all discovered devices; a repeat advertisement from a known device
     // always replaces the stored entry so the row shows the FRESHEST RSSI —
     // signal may weaken as well as strengthen. A null RSSI is kept as-is: on
@@ -706,31 +734,36 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // re-advertisement must not blank the row title — keep the last known
     // name in that case.
     final existingIdx = _devices.indexWhere(
-      (d) => d.deviceId == newDevice.deviceId,
+      (d) => d.deviceId == result.deviceId,
+    );
+    final mapped = DiscoveredDevice(
+      deviceId: result.deviceId,
+      name: result.name ?? (existingIdx >= 0 ? _devices[existingIdx].name : null),
+      rssi: result.rssi,
+      timestamp: result.timestamp,
     );
     if (existingIdx >= 0) {
-      newDevice.name ??= _devices[existingIdx].name;
-      _devices[existingIdx] = newDevice;
+      _devices[existingIdx] = mapped;
     } else {
-      _devices.add(newDevice);
+      _devices.add(mapped);
     }
     // A fresh advertisement is a fresh platform handle, so any recorded
     // connect failure for this device is moot (on web a scan result IS the
     // picker round-trip the row's failure hint tells the user to do).
-    _connectFailures.remove(newDevice.deviceId);
+    _connectFailures.remove(mapped.deviceId);
     notifyListeners();
     _syncFreshnessPoke(); // rows exist now — start ageing them if visible
     // Web: a scan result is not a passive advertisement — it is the device
     // the user just picked in Chrome's requestDevice() chooser (the popup IS
     // the scan). Treat it as an explicit connect request and end the scan.
     if (kIsWeb) {
-      unawaited(_connectPickedWebDevice(newDevice));
+      unawaited(_connectPickedWebDevice(mapped));
     }
   }
 
   void _onBluetoothAvailabilityChanged(AvailabilityState state) {
-    _bluetoothState = state;
-    if (state == AvailabilityState.poweredOff) {
+    _bluetoothState = BtAvailability.values.byName(state.name);
+    if (_bluetoothState == BtAvailability.poweredOff) {
       _isScanning = false;
       _devices.clear();
     }
@@ -745,13 +778,13 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   }
 
   Future<void> _startScan() async {
-    if (_bluetoothState != AvailabilityState.poweredOn) {
+    if (_bluetoothState != BtAvailability.poweredOn) {
       // The Scan tap is the recovery point for an unusable radio: pop the
       // permission/enable prompts, then fall through if they worked. A
       // permission denial throws (the Devices tab toasts it); a dismissed
       // enable dialog leaves the radio off and we bail.
       await _requestEnableBluetooth();
-      if (_bluetoothState != AvailabilityState.poweredOn) {
+      if (_bluetoothState != BtAvailability.poweredOn) {
         return;
       }
     }
@@ -793,7 +826,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // on Chrome: that connect succeeds at human pace, so it is deliberately
     // unguarded (the machine-speed guard is the cooldown itself, during
     // which linkBusy disables every row's Connect button).
-    final previousDevices = List<BleDevice>.of(_devices);
+    final previousDevices = List<DiscoveredDevice>.of(_devices);
     if (!kIsWeb) {
       _devices.clear();
     }
@@ -1232,32 +1265,30 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   }
 
   Future<void> connectToDemoDevice() async {
+    final demo = _demo;
+    // Guarded structurally, not visibly: the demo row's Connect is always
+    // wired (see main), so a null [_demo] is a test-harness artifact.
+    if (demo == null) {
+      throw StateError('connectToDemoDevice with no DemoLink wired');
+    }
     if (!_beginConnect()) return;
     _link.deviceId = DeviceLink.demoDeviceId;
     _link.name = 'Demo Device';
     _link.state = BtLinkState.streaming;
-    _link.storedName = _demoDeviceName;
+    _link.storedName = demo.storedName;
     // Simulated hardware has a simulated identity (real links read theirs
     // from the Device Information service in post-connect setup).
-    _link.info = const DeviceInfo(
-      manufacturer: 'K3 Engineering',
-      model: 'Dynamite Sampler Demo',
-      serial: 'DEMO00000000',
-      hardwareRev: 'demo',
-      firmwareRev: 'demo',
-    );
+    _link.info = demo.deviceInfo;
 
     // The demo device is factory-calibrated: serve its flash doc through the
     // same path a real device's calibration read would take. The doc is
-    // mutable (see [_demoFlashDoc]) so "Save to device" round-trips. The demo
-    // chain is Pro-like (AFE 101x, PGA 1x on every channel).
+    // mutable so "Save to device" round-trips.
     onCalibrationData?.call(
-      Uint8List.fromList(utf8.encode(_demoFlashDoc)),
-      const [1, 1, 1, 1],
+      Uint8List.fromList(utf8.encode(demo.flashDoc)),
+      demo.pgaGains,
     );
 
-    _demoSource ??= DemoSignalSource();
-    _demoSource?.start(_deliverAdcData);
+    demo.startFeed(_deliverAdcData);
 
     notifyListeners();
     if (_isScanning) await _stopScan();
@@ -1322,7 +1353,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// Web only: connect to a device the user just picked in Chrome's
   /// requestDevice() chooser (see [_onScanResult]). [connectToDevice] stops
   /// the scan itself before connecting.
-  Future<void> _connectPickedWebDevice(BleDevice device) async {
+  Future<void> _connectPickedWebDevice(DiscoveredDevice device) async {
     // If the scan just tore a link down (it was streaming when Scan was
     // pressed), the link is parked in the reconnect-settle window. Finish it
     // immediately: the picker round-trip already gave Chrome human-scale
@@ -1360,7 +1391,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _supersedeSetupPasses();
 
     if (_link.isDemoDevice) {
-      _demoSource?.stop();
+      _demo?.stopFeed();
       _teardownLink(_link.deviceId);
       notifyListeners();
       return;
@@ -1611,7 +1642,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   Future<void> shutdownForHotRestart() async {
     onAdcData = null;
     onCalibrationData = null;
-    _demoSource?.stop();
+    _demo?.stopFeed();
     _kvsClient?.abort();
     _kvsClient = null;
     _kvsTransport = null;

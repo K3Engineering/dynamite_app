@@ -3,22 +3,25 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
-import 'package:universal_ble/universal_ble.dart'
-    show AvailabilityState, BleDevice;
 
 import '../services/ble_link_manager.dart';
+import '../services/bt_scan.dart';
 import '../services/data_hub.dart';
 import '../services/feed_health.dart';
+import '../widgets/feed_health_text.dart';
 import '../utils/format.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/rssi_indicator.dart';
 import '../widgets/section_header.dart';
 import '../widgets/status_colors.dart';
-import 'app_shell.dart';
 
 class DevicesTab extends StatelessWidget {
-  const DevicesTab({super.key});
+  const DevicesTab({super.key, required this.onGoToSettings});
+
+  /// The active device row's gear action: jumps to the Settings tab.
+  /// Supplied by the app shell, which owns the tab index.
+  final VoidCallback onGoToSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -78,8 +81,8 @@ class DevicesTab extends StatelessWidget {
           colors: scheme,
         ),
     };
-    final freshRows = <BleDevice>[];
-    final staleRows = <BleDevice>[];
+    final freshRows = <DiscoveredDevice>[];
+    final staleRows = <DiscoveredDevice>[];
     for (final d in bt.devices) {
       (d.deviceId != activeId &&
                   visuals[d.deviceId]!.mood == InactiveRowMood.stale
@@ -149,6 +152,7 @@ class DevicesTab extends StatelessWidget {
                     linkState: bt.link.state,
                     connectedRssi: bt.connectedRssi,
                     onDisconnect: bt.disconnectSelectedDevice,
+                    onGoToSettings: onGoToSettings,
                   )
                 : _InactiveDeviceRow(
                     name: device.name ?? 'Unknown device',
@@ -174,6 +178,7 @@ class DevicesTab extends StatelessWidget {
               linkState: bt.link.state,
               connectedRssi: null,
               onDisconnect: bt.disconnectSelectedDevice,
+              onGoToSettings: onGoToSettings,
             )
           else
             _InactiveDeviceRow(
@@ -202,31 +207,31 @@ class DevicesTab extends StatelessWidget {
   /// and color come straight from the shared [btStatusVisual] mapping.
   Widget _buildEmptyBlock(
     BtStatusVisual visual,
-    AvailabilityState availability,
+    BtAvailability availability,
   ) {
     final (title, hint) = switch (availability) {
-      AvailabilityState.poweredOn => (
+      BtAvailability.poweredOn => (
         'No devices found',
         'Tap Scan to search for nearby devices',
       ),
-      AvailabilityState.poweredOff => (
+      BtAvailability.poweredOff => (
         visual.label,
         'Turn on Bluetooth to find devices',
       ),
-      AvailabilityState.unauthorized => (
+      BtAvailability.unauthorized => (
         visual.label,
         'Grant Bluetooth permission to find devices',
       ),
-      AvailabilityState.unsupported => (
+      BtAvailability.unsupported => (
         visual.label,
         unsupportedHint(isWeb: kIsWeb),
       ),
-      AvailabilityState.unknown || AvailabilityState.resetting => (
+      BtAvailability.unknown || BtAvailability.resetting => (
         visual.label,
         'This should only take a moment',
       ),
     };
-    final poweredOn = availability == AvailabilityState.poweredOn;
+    final poweredOn = availability == BtAvailability.poweredOn;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 24),
       child: EmptyPlaceholder(
@@ -255,7 +260,7 @@ String connectFailureHint(
     'Timed out — check that the device is on, nearby, and not connected to another device',
 };
 
-/// The empty block's hint for [AvailabilityState.unsupported], per platform.
+/// The empty block's hint for [BtAvailability.unsupported], per platform.
 /// Web means the browser lacks Web Bluetooth (Firefox, Safari, every iOS
 /// browser). Native means the device itself reports no Bluetooth
 /// support — a baffling case with no clear recommendation, so the
@@ -533,6 +538,7 @@ class _ActiveDeviceRow extends StatelessWidget {
     required this.linkState,
     required this.connectedRssi,
     required this.onDisconnect,
+    required this.onGoToSettings,
   });
 
   final String name;
@@ -553,12 +559,15 @@ class _ActiveDeviceRow extends StatelessWidget {
 
   final VoidCallback onDisconnect;
 
+  /// The gear button: jumps to the Settings tab.
+  final VoidCallback onGoToSettings;
+
   @override
   Widget build(BuildContext context) {
     // Reuse the shared, unit-tested state → visual mapping.
     final visual = btStatusVisual(
       linkState: linkState,
-      availability: AvailabilityState.poweredOn, // a link is up → radio is on
+      availability: BtAvailability.poweredOn, // a link is up → radio is on
       isScanning: false,
       // Never consulted: link branches return before the connectability gate.
       hasConnectableDevices: true,
@@ -640,9 +649,7 @@ class _ActiveDeviceRow extends StatelessWidget {
               // Compact (48→40): part of the subtitle-lane width reclamation
               // above.
               visualDensity: VisualDensity.compact,
-              onPressed: () => context
-                  .findAncestorStateOfType<AppShellState>()
-                  ?.goToSettings(),
+              onPressed: onGoToSettings,
             ),
             // Fixed width: same column/shape as the Scan and Connect buttons
             // (see [deviceActionButtonWidth]).

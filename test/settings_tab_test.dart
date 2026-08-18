@@ -13,6 +13,7 @@ import 'package:dynamite_app/screens/settings_tab.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
+import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 
@@ -36,7 +37,7 @@ void main() {
   Future<BleLinkManager> pump(WidgetTester tester) async {
     final prefs = await SharedPreferences.getInstance();
     final events = AppEvents();
-    final link = BleLinkManager(events: events);
+    final link = BleLinkManager(events: events, demo: DemoDevice());
     final hub = DataHub();
     final rig = RigState(transport: link, prefs: prefs);
     // Wire the link's calibration read to the rig — the app's wiring goes
@@ -58,7 +59,9 @@ void main() {
           ChangeNotifierProvider<BleLinkManager>.value(value: link),
           ChangeNotifierProvider<RigState>.value(value: rig),
         ],
-        child: const MaterialApp(home: Scaffold(body: SettingsTab())),
+        child: MaterialApp(
+          home: Scaffold(body: SettingsTab(onGoToDevices: () {})),
+        ),
       ),
     );
     // Pump past the construction-time BLE timers (the mock's 200ms

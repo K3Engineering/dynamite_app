@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/feed_health.dart';
+import 'package:dynamite_app/widgets/feed_health_text.dart';
 
 /// [deriveFeedHealth] is the UI's source of truth for "is data actually
 /// flowing" — a pure function of hub measurements, so this pins every branch

@@ -6,7 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/calibration.dart';
 import 'package:dynamite_app/models/display_unit.dart';
-import 'package:dynamite_app/services/adc_protocol.dart';
+import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/database.dart';
 import 'package:dynamite_app/services/session_storage.dart';
@@ -19,7 +19,7 @@ import 'package:dynamite_app/services/session_storage.dart';
 /// writer persists its ssn origin at latch time (a harmless no-op when its
 /// session row doesn't exist), and several tests exercise the real DB path.
 void main() {
-  const int channels = wireNumAdcChan;
+  const int channels = kAdcChannelCount;
 
   setUp(() {
     AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
@@ -30,6 +30,23 @@ void main() {
     for (int ch = 0; ch < channels; ch++)
       ChannelCalibration(board: ChannelBoardCalibration()),
   ];
+
+  /// startSession with the caller-side hub snapshots production now passes
+  /// explicitly (see SessionStorage.startSession's hub-agnostic contract).
+  Future<LiveSessionWriter> startFromHub(DataHub hub, {required String name}) =>
+      SessionStorage.startSession(
+        tare: hub.tare,
+        channelCalibration: [
+          for (int ch = 0; ch < channels; ch++) hub.calibrationFor(ch),
+        ],
+        samplesPerSec: DataHub.samplesPerSec,
+        sourceRingCapacity: DataHub.maxDataSz,
+        name: name,
+        channelLabels: const ['a', 'b', 'c', 'd'],
+        visibleChannels: const [true, true, true, true],
+        displayUnit: DisplayUnit.kgf,
+        deviceMetadata: const {},
+      );
 
   group('SessionData.maxs', () {
     SessionData makeSession(List<int> values) => SessionData(
@@ -69,8 +86,9 @@ void main() {
         1,
         Float64List(channels),
         DataHub.samplesPerSec,
+        sourceRingCapacity: DataHub.maxDataSz,
       );
-      await writer.appendData(hub, 0, n);
+      await writer.appendData(hub.snapshotRange(0, n));
 
       expect(writer.totalSamplesRecorded, n);
       expect(writer.peaksRaw, List.filled(channels, -1000.0 + n - 1));
@@ -93,6 +111,7 @@ void main() {
         1,
         Float64List(channels),
         DataHub.samplesPerSec,
+        sourceRingCapacity: DataHub.maxDataSz,
         chunkSink: (sessionId, chunkIndex, data, gapsJson) async =>
             saved.add(data),
       );
@@ -108,7 +127,7 @@ void main() {
 
       // Enqueue, then keep the producer busy before the queued op can drain
       // (it runs in a microtask, which this synchronous pump never yields to).
-      unawaited(writer.appendData(hub, 0, n));
+      unawaited(writer.appendData(hub.snapshotRange(0, n)));
       pumpSamples(hub, frame, 1000, 100000); // much larger values, no wrap
 
       await writer.flush();
@@ -128,16 +147,20 @@ void main() {
       }
     });
 
-    test('a full-ring storage stall latches an error and truncates the '
-        'recording instead of persisting wrapped data', () async {
+    test('a storage stall past a ring of backlog latches an error and '
+        'truncates the recording', () async {
       final gate = Completer<void>();
       final entered = Completer<void>();
       final saved = <Uint8List>[];
       var sinkCalls = 0;
+      // Test-scale ring capacity: the latch then needs only ~2 stalled
+      // chunks of backlog instead of a real 10-minute ring.
+      const ringCapacity = 4096;
       final writer = LiveSessionWriter(
         1,
         Float64List(channels),
         DataHub.samplesPerSec,
+        sourceRingCapacity: ringCapacity,
         chunkSink: (sessionId, chunkIndex, data, gapsJson) async {
           sinkCalls++;
           if (!entered.isCompleted) entered.complete();
@@ -152,26 +175,30 @@ void main() {
       // chunk write goes in flight and blocks inside the sink.
       const chunkSamples = 2048; // 2048 * 4 ch * 4 B = 32 KB > 16 KB
       pumpSamples(hub, frame, chunkSamples, 7);
-      unawaited(writer.appendData(hub, 0, chunkSamples));
+      unawaited(writer.appendData(hub.snapshotRange(0, chunkSamples)));
       await entered.future; // the queue is now stuck behind the gated write
 
-      // Enqueue one more slice, then simulate the producer running for a
-      // whole ring while storage stays stalled: this slice's ring slots get
-      // overwritten before its queued op ever runs.
-      pumpSamples(hub, frame, 100, 42);
-      unawaited(writer.appendData(hub, chunkSamples, 100));
-      pumpSamples(hub, frame, DataHub.maxDataSz, 66666); // ring wrap
+      // The producer keeps streaming while storage stays stuck: appends are
+      // accepted but never written. The second one's backlog fits; the third
+      // pushes it past the ring capacity and the accept-time latch trips.
+      pumpSamples(hub, frame, chunkSamples, 42);
+      unawaited(
+        writer.appendData(hub.snapshotRange(chunkSamples, chunkSamples)),
+      );
+      expect(writer.hasError, isFalse);
+      pumpSamples(hub, frame, 100, 13);
+      unawaited(
+        writer.appendData(hub.snapshotRange(2 * chunkSamples, 100)),
+      );
+      expect(writer.hasError, isTrue);
+      expect(writer.writeError, isA<StateError>());
 
       gate.complete();
       await writer.flush();
 
-      // The backpressure latch must trip on the stale slice: it is dropped
-      // (never reaches the sink), the error is latched for the controller's
-      // auto-stop path, and only the pre-stall chunk was persisted.
-      expect(writer.hasError, isTrue);
-      expect(writer.writeError, isA<StateError>());
+      // Only the pre-stall chunk reached the sink; the post-latch slices
+      // no-op, and the aggregates cover the first chunk only.
       expect(writer.totalSamplesRecorded, chunkSamples);
-      // wrapped (66666) data never scanned
       expect(writer.peaksRaw, List.filled(channels, 7.0));
       expect(sinkCalls, 1);
       expect(saved, hasLength(1));
@@ -197,9 +224,10 @@ void main() {
           1,
           Float64List(channels),
           DataHub.samplesPerSec,
+          sourceRingCapacity: DataHub.maxDataSz,
           chunkSink: (sessionId, chunkIndex, data, gapsJson) async {},
         );
-        await writer.appendData(hub, 0, 50);
+        await writer.appendData(hub.snapshotRange(0, 50));
 
         // The latch persists the origin in the same breath (a write-once
         // constant — here a no-op since session row 1 doesn't exist); the
@@ -226,11 +254,12 @@ void main() {
           1,
           Float64List(channels),
           DataHub.samplesPerSec,
+          sourceRingCapacity: DataHub.maxDataSz,
           chunkSink: (sessionId, chunkIndex, data, gapsJson) async {},
         );
         // The session starts at hub index 120: ssn_origin = 65530 + 20 — above
         // the 16-bit wrap, as the format requires.
-        await writer.appendData(hub, 120, 30);
+        await writer.appendData(hub.snapshotRange(120, 30));
         expect(writer.ssnOrigin, 65550);
       },
     );
@@ -244,15 +273,8 @@ void main() {
         hub.addSampleFrame(frame);
       }
 
-      final writer = await SessionStorage.startSession(
-        dataHub: hub,
-        name: 'ssn',
-        channelLabels: const ['a', 'b', 'c', 'd'],
-        visibleChannels: const [true, true, true, true],
-        displayUnit: DisplayUnit.kgf,
-        deviceMetadata: const {},
-      );
-      await writer.appendData(hub, 0, hub.totalSamples);
+      final writer = await startFromHub(hub, name: 'ssn');
+      await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
 
       // The origin was persisted at latch time, ahead of the first chunk
       // flush — this is what a crash mid-recording would recover from.
@@ -317,17 +339,10 @@ void main() {
       hub.addDroppedFrames(20);
       pump(100, 9);
 
-      final writer = await SessionStorage.startSession(
-        dataHub: hub,
-        name: 'crash me',
-        channelLabels: const ['a', 'b', 'c', 'd'],
-        visibleChannels: const [true, true, true, true],
-        displayUnit: DisplayUnit.kgf,
-        deviceMetadata: const {},
-      );
+      final writer = await startFromHub(hub, name: 'crash me');
       // The single append crosses the flush threshold, so the chunk insert
       // AND the incremental gaps update land in the DB.
-      await writer.appendData(hub, 0, hub.totalSamples);
+      await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
 
       final beforeCrash = await AppDatabase.instance.sessionById(
         writer.sessionId,
@@ -428,15 +443,8 @@ void main() {
           hub.addSampleFrame(frame);
         }
 
-        final writer = await SessionStorage.startSession(
-          dataHub: hub,
-          name: 'cal',
-          channelLabels: const ['a', 'b', 'c', 'd'],
-          visibleChannels: const [true, true, true, true],
-          displayUnit: DisplayUnit.kgf,
-          deviceMetadata: const {},
-        );
-        await writer.appendData(hub, 0, hub.totalSamples);
+        final writer = await startFromHub(hub, name: 'cal');
+        await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
         await SessionStorage.finalizeSession(writer: writer);
 
         final row = await AppDatabase.instance.sessionById(writer.sessionId);

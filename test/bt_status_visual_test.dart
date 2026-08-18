@@ -1,8 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
 
 import 'package:dynamite_app/services/ble_link_manager.dart' show BtLinkState;
+import 'package:dynamite_app/services/bt_scan.dart';
 import 'package:dynamite_app/widgets/bt_icon.dart';
 import 'package:dynamite_app/widgets/status_colors.dart';
 
@@ -14,7 +14,7 @@ void main() {
 
   BtStatusVisual visual({
     BtLinkState linkState = BtLinkState.idle,
-    AvailabilityState availability = AvailabilityState.poweredOn,
+    BtAvailability availability = BtAvailability.poweredOn,
     bool isScanning = false,
     bool hasConnectableDevices = false,
   }) => btStatusVisual(
@@ -66,7 +66,7 @@ void main() {
   test('idle + scanning outranks adapter status', () {
     final v = visual(
       isScanning: true,
-      availability: AvailabilityState.poweredOff,
+      availability: BtAvailability.poweredOff,
     );
     expect(v.label, contains('Scanning'));
     expect(v.showSpinner, isTrue);
@@ -90,31 +90,31 @@ void main() {
 
   test('adapter problems surface in the idle state', () {
     expect(
-      visual(availability: AvailabilityState.poweredOff).label,
+      visual(availability: BtAvailability.poweredOff).label,
       'Bluetooth is off',
     );
     expect(
-      visual(availability: AvailabilityState.poweredOff).color,
+      visual(availability: BtAvailability.poweredOff).color,
       colors.outline,
     );
     expect(
-      visual(availability: AvailabilityState.unsupported).color,
+      visual(availability: BtAvailability.unsupported).color,
       colors.error,
     );
     expect(
-      visual(availability: AvailabilityState.unauthorized).color,
+      visual(availability: BtAvailability.unauthorized).color,
       colors.tertiary,
     );
     expect(
-      visual(availability: AvailabilityState.unknown).label,
+      visual(availability: BtAvailability.unknown).label,
       contains('Starting up'),
     );
     expect(
-      visual(availability: AvailabilityState.resetting).label,
+      visual(availability: BtAvailability.resetting).label,
       'Bluetooth resetting…',
     );
     expect(
-      visual(availability: AvailabilityState.resetting).color,
+      visual(availability: BtAvailability.resetting).color,
       status.linkActive,
     );
   });

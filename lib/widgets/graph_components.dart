@@ -13,6 +13,7 @@ import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
+import 'channel_palette.dart';
 
 // ---------------------------------------------------------------------------
 // Shared graph layout constants
@@ -1127,20 +1128,6 @@ class GraphController extends ChangeNotifier {
       oldestSample: oldestSample,
     );
   }
-}
-
-// ---------------------------------------------------------------------------
-// Channel colors
-// ---------------------------------------------------------------------------
-
-Color getChannelColor(int index) {
-  const colors = [
-    Colors.blueAccent,
-    Colors.deepOrangeAccent,
-    Colors.green,
-    Colors.purple,
-  ];
-  return colors[index % colors.length];
 }
 
 /// Shared mouse-wheel zoom for graph surfaces (main graphs and minimap):

@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 
 import '../services/database.dart';
+import '../services/storage_capacity.dart' as probe;
 import '../utils/format.dart';
-import '../widgets/dialogs.dart';
+import 'session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/storage_capacity_strip.dart';
 import 'session_detail_screen.dart';
@@ -22,8 +25,42 @@ class _SessionsTabState extends State<SessionsTab> {
       .watchAllSessions();
 
   /// Per-session chunk byte sizes, same created-once rule as [_sessions].
+  /// Also the capacity strip's refresh cue: everything that changes stored
+  /// bytes (deletes, recording finalization, live chunk writes) lands on the
+  /// chunk table this stream watches.
   late final Stream<Map<int, int>> _sizes = AppDatabase.instance
       .watchSessionByteSizes();
+
+  /// The platform's storage facts for the capacity strip; null where probing
+  /// is unsupported (desktop) or failed — the strip hides then.
+  probe.StorageCapacity? _capacity;
+  StreamSubscription<Map<int, int>>? _capacityCueSub;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_refreshCapacity());
+    // Errors are swallowed: on hosts without platform channels the DB never
+    // opens, and the strip simply stays hidden (the smoke test pumps all
+    // tabs in exactly that situation).
+    _capacityCueSub = _sizes.listen(
+      (_) => unawaited(_refreshCapacity()),
+      onError: (_) {},
+    );
+  }
+
+  @override
+  void dispose() {
+    unawaited(_capacityCueSub?.cancel());
+    super.dispose();
+  }
+
+  Future<void> _refreshCapacity() async {
+    final capacity = await probe.fetchStorageCapacity(
+      usedBytes: AppDatabase.instance.databaseFileBytes,
+    );
+    if (mounted) setState(() => _capacity = capacity);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -42,8 +79,10 @@ class _SessionsTabState extends State<SessionsTab> {
               ],
             ),
           ),
-          const BrowserStorageWarning(),
-          const StorageCapacityLoader(),
+          if (probe.browserMayAutoDeleteSessions())
+            const BrowserStorageWarning(),
+          if (_capacity case final capacity?)
+            StorageCapacityStrip(capacity: capacity),
           Expanded(
             child: StreamBuilder<List<Session>>(
               stream: _sessions,

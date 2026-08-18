@@ -27,7 +27,6 @@ import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import 'csv_export_temp_stub.dart'
     if (dart.library.io) 'csv_export_temp_io.dart';
-import 'database.dart';
 import 'session_storage.dart';
 
 /// Whether the file-share flow ([shareSessionCsv], `shareCalibrationReport`)
@@ -39,9 +38,12 @@ bool get fileShareSupportedHere {
       defaultTargetPlatform != TargetPlatform.fuchsia;
 }
 
-/// Download [session]'s recorded [data] as CSV: a save-as dialog on native
-/// platforms, a browser download on web. [unit] is the file's converted unit
-/// (the user's pick in the export flow — see docs/csv-format-v1.md).
+/// Download the session's recorded [data] as CSV: a save-as dialog on
+/// native platforms, a browser download on web. [unit] is the file's
+/// converted unit (the user's pick in the export flow — see
+/// docs/csv-format-v1.md). [sessionName]/[recordedAt]/[deviceInfoJson] are
+/// the session row's fields, passed flat so the export API doesn't take the
+/// drift row type.
 ///
 /// Returns a user-facing result message, or null when the user cancelled —
 /// callers should stay silent then. Errors are thrown for the caller to
@@ -49,11 +51,19 @@ bool get fileShareSupportedHere {
 /// bytes (file_picker's only API); a chunked writer is planned with the
 /// format milestone.
 Future<String?> downloadSessionCsv({
-  required Session session,
+  required String sessionName,
+  required DateTime recordedAt,
+  required String deviceInfoJson,
   required SessionData data,
   required DisplayUnit unit,
 }) async {
-  final (bytes, fileName) = await _prepareCsv(session, data, unit);
+  final (bytes, fileName) = await _prepareCsv(
+    sessionName,
+    recordedAt,
+    deviceInfoJson,
+    data,
+    unit,
+  );
   final savedTo = await FilePicker.saveFile(
     dialogTitle: 'Download session CSV',
     fileName: fileName,
@@ -69,7 +79,7 @@ Future<String?> downloadSessionCsv({
   return savedTo == null ? null : 'Saved to $savedTo';
 }
 
-/// Share [session]'s recorded [data] as CSV via the platform share sheet.
+/// Share the session's recorded [data] as CSV via the platform share sheet.
 /// [unit] is the file's converted unit (see docs/csv-format-v1.md).
 ///
 /// [sharePositionOrigin] anchors the iPad share popover; ignored elsewhere.
@@ -79,12 +89,20 @@ Future<String?> downloadSessionCsv({
 /// did with it), so the message can't either. Errors are thrown for the
 /// caller to surface.
 Future<String?> shareSessionCsv({
-  required Session session,
+  required String sessionName,
+  required DateTime recordedAt,
+  required String deviceInfoJson,
   required SessionData data,
   required DisplayUnit unit,
   Rect? sharePositionOrigin,
 }) async {
-  final (bytes, fileName) = await _prepareCsv(session, data, unit);
+  final (bytes, fileName) = await _prepareCsv(
+    sessionName,
+    recordedAt,
+    deviceInfoJson,
+    data,
+    unit,
+  );
   final XFile file;
   if (kIsWeb) {
     // XFile.name is ignored by most platforms; share_plus's fileNameOverrides
@@ -119,23 +137,25 @@ Future<String?> shareSessionCsv({
 /// platform answer can't change during a run).
 final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
 
-/// Build the CSV bytes and filename for [session]'s [data] in [unit].
+/// Build the CSV bytes and filename for one session's [data] in [unit].
 /// Shared by both delivery paths.
 Future<(Uint8List, String)> _prepareCsv(
-  Session session,
+  String sessionName,
+  DateTime recordedAt,
+  String deviceInfoJson,
   SessionData data,
   DisplayUnit unit,
 ) async {
   final csv = buildSessionCsv(
     data,
     unit,
-    recordedAt: session.createdAt,
+    recordedAt: recordedAt,
     generator: 'dynamite-flutter ${(await _packageInfo).version}',
-    deviceInfoJson: session.deviceInfoJson,
+    deviceInfoJson: deviceInfoJson,
   );
   return (
     Uint8List.fromList(utf8.encode(csv)),
-    csvFileNameForSession(session.name),
+    csvFileNameForSession(sessionName),
   );
 }
 
