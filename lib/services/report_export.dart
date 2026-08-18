@@ -1,13 +1,14 @@
 /// Calibration-report export: the plain-text report (see
-/// `calibration_text.dart`) handed to the OS via the shared export delivery
-/// module (export_delivery.dart — both delivery paths, plus the shared
-/// filename rules below).
+/// `models/calibration_text.dart`) handed to the OS via the shared export
+/// delivery module (export_delivery.dart — both delivery paths, plus the
+/// shared filename rules below).
 library;
 
 import 'dart:convert';
 import 'dart:typed_data';
 
 import 'export_delivery.dart';
+import 'share_capability.dart';
 
 /// The report export's file name: `calibration_report_<device label>.txt`,
 /// sanitized per the shared export rules ([exportFileNameFor]).

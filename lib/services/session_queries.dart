@@ -8,7 +8,7 @@ import 'dart:convert';
 
 import '../models/session_summary.dart';
 import 'database.dart';
-import 'session_storage.dart';
+import 'session_metadata.dart';
 
 /// All sessions, newest-first (same ordering as the DB stream), mapped to
 /// the UI model.

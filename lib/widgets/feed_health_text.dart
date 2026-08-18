@@ -5,13 +5,6 @@ import '../utils/format.dart';
 /// detail dialog body. Kept out of the model layer: the enum and
 /// classification live in `models/feed_health.dart`; the copy lives here.
 extension FeedHealthPresentation on FeedHealth {
-  /// Nothing decodable is arriving right now: the live UI grays its readings
-  /// and the rate label reads "no data".
-  bool get noDataFlowing =>
-      this == FeedHealth.stopped ||
-      this == FeedHealth.blocked ||
-      this == FeedHealth.silent;
-
   /// Worth surfacing to the user (a label, and details on tap). [starting]
   /// and [flowing] present as normal instead.
   bool get worthReporting =>

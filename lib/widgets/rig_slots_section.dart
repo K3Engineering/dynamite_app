@@ -1,8 +1,6 @@
 import 'package:material_ui/material_ui.dart';
-import 'package:provider/provider.dart';
 
 import '../models/load_cell.dart';
-import '../models/rig_edits.dart';
 import '../services/rig_state.dart';
 import '../utils/format.dart';
 
@@ -19,11 +17,19 @@ const quickSensitivitiesMvV = <double>[1, 2, 3];
 /// until "Save to device" (the flash doc is the rig's single truth —
 /// reads are automatic, writes are explicit).
 class RigSlotsSection extends StatefulWidget {
-  const RigSlotsSection({super.key, required this.connectedDeviceId});
+  const RigSlotsSection({
+    super.key,
+    required this.connectedDeviceId,
+    required this.rig,
+  });
 
   /// The currently connected device ('' when none): gates the Save button —
   /// saving needs the very device the flash doc came from to be connected.
   final String connectedDeviceId;
+
+  /// The rig's slot state. Passed in (not reached through Provider) so this
+  /// section renders without an app-wide provider above it.
+  final RigState rig;
 
   @override
   State<RigSlotsSection> createState() => _RigSlotsSectionState();
@@ -61,10 +67,18 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
 
   @override
   Widget build(BuildContext context) {
-    // Narrow selects: the section renders three slices of the rig (doc
-    // presence, the slots, the dirty state), not every RigState notify.
-    final hasDoc = context.select<RigState, bool>((r) => r.hasDeviceDoc);
-    if (!hasDoc) {
+    // The section rebuilds on any RigState notify: the rig changes only on
+    // edits/reads, so a 10-row rebuild is free and keeps the section's
+    // dependency a plain constructor parameter.
+    return ListenableBuilder(
+      listenable: widget.rig,
+      builder: (context, _) => _buildContent(context),
+    );
+  }
+
+  Widget _buildContent(BuildContext context) {
+    final rig = widget.rig;
+    if (!rig.hasDeviceDoc) {
       // The dim "nothing here" affordance: the theme's outline role, as in
       // EmptyPlaceholder — not a raw Material grey.
       return Card(
@@ -80,11 +94,8 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
         ),
       );
     }
-    final slots = context.select<RigState, RigSlots>((r) => r.effectiveSlots);
-    final pending = context.select<RigState, PendingRigEdits?>(
-      (r) => r.pending,
-    );
-    final rig = context.read<RigState>();
+    final slots = rig.effectiveSlots;
+    final pending = rig.pending;
     final connectedId = widget.connectedDeviceId;
 
     final canSave =

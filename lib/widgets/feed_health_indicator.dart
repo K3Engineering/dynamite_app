@@ -1,8 +1,7 @@
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:provider/provider.dart';
 
 import '../models/feed_health.dart';
-import '../services/feed_health_tracker.dart';
 import 'feed_health_text.dart';
 import 'status_colors.dart';
 
@@ -11,12 +10,17 @@ import 'status_colors.dart';
 /// row's subtitle. Renders nothing while the feed is healthy or the link
 /// isn't streaming.
 class FeedHealthIndicator extends StatelessWidget {
-  const FeedHealthIndicator({super.key});
+  const FeedHealthIndicator({super.key, required this.health});
+
+  /// The live feed-health classification (see `FeedHealthTracker.health`).
+  /// Passed in (not reached through Provider) so the indicator renders
+  /// without an app-wide provider above it.
+  final ValueListenable<FeedHealth?> health;
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<FeedHealth?>(
-      valueListenable: context.read<FeedHealthTracker>().health,
+      valueListenable: health,
       builder: (context, health, _) {
         final label = health?.shortLabel;
         if (label == null) return const SizedBox.shrink();

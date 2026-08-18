@@ -65,7 +65,11 @@ void main() async {
   final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
     ..onAdcData = decoder.onDataPacket
     ..onCalibrationData = decoder.onCalibrationPacket;
-  final feedHealth = FeedHealthTracker(hub: dataHub, link: linkManager);
+  final feedHealth = FeedHealthTracker(
+    hub: dataHub,
+    streamingChanges: linkManager,
+    streamingNow: () => linkManager.isStreaming,
+  );
   final rigState = RigState(transport: linkManager, prefs: prefs);
   // The device id/name are read off the link at delivery time (the read
   // only ever runs against the active link).

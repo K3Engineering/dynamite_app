@@ -110,7 +110,11 @@ void main() {
         decoder: decoder,
         events: appEvents,
       );
-      final feedHealth = FeedHealthTracker(hub: dataHub, link: linkManager);
+      final feedHealth = FeedHealthTracker(
+        hub: dataHub,
+        streamingChanges: linkManager,
+        streamingNow: () => linkManager.isStreaming,
+      );
       addTearDown(feedHealth.dispose);
 
       await tester.pumpWidget(

@@ -24,7 +24,14 @@ enum FeedHealth {
   blocked,
 
   /// No decodable packet ever, and nothing at all is arriving.
-  silent,
+  silent;
+
+  /// Nothing decodable is arriving right now: the live UI grays its readings
+  /// and the rate label reads "no data"; recording refuses to start here.
+  bool get noDataFlowing =>
+      this == FeedHealth.stopped ||
+      this == FeedHealth.blocked ||
+      this == FeedHealth.silent;
 }
 
 /// Classify the feed from stream measurements (the live source is DataHub;
