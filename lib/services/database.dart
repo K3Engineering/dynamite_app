@@ -21,11 +21,6 @@ class Sessions extends Table {
   TextColumn get channelLabels => text()();
   TextColumn get tares => text()();
 
-  /// Per-channel peaks (max tare-subtracted raw per channel) as a JSON list.
-  /// Informational only — the detail view computes its own per-channel
-  /// peaks from the chunk data.
-  TextColumn get peaksRaw => text().withDefault(const Constant('[]'))();
-
   /// Per-channel calibration in effect at recording time, as a JSON list of
   /// [ChannelCalibration] snapshots (board piecewise map + assigned load
   /// cell per channel). Playback converts through this, never through the
@@ -101,7 +96,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 11;
+  int get schemaVersion => 12;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -172,15 +167,15 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  /// Record a session's final aggregates and mark it completed. [gaps] is the
-  /// JSON-encoded dropped-sample range list (session-relative); crash recovery
-  /// passes the row's existing value so the ranges the live writer persisted
-  /// incrementally (see [setSessionGaps]) survive the crash.
+  /// Record a session's final aggregate (sample count) and mark it
+  /// completed. [gaps] is the JSON-encoded dropped-sample range list
+  /// (session-relative); crash recovery passes the row's existing value so
+  /// the ranges the live writer persisted incrementally (see
+  /// [setSessionGaps]) survive the crash.
   Future<void> completeSession(
     int id, {
     required int sampleCount,
     required int durationMs,
-    required String peaksRaw,
     String gaps = '[]',
   }) {
     return _updateSession(
@@ -188,7 +183,6 @@ class AppDatabase extends _$AppDatabase {
       SessionsCompanion(
         sampleCount: Value(sampleCount),
         durationMs: Value(durationMs),
-        peaksRaw: Value(peaksRaw),
         isCompleted: const Value(true),
         gaps: Value(gaps),
       ),

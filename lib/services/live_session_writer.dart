@@ -11,9 +11,8 @@ import '../models/sample_slice.dart';
 /// The one home of the packed chunk format: interleaved int32 LE values
 /// `[ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]`, [channelCount] values per
 /// sample frame. Live writes ([LiveSessionWriter.appendData]), session loads
-/// ([`SessionStorage.loadSession`]) and aggregate scans
-/// ([SessionChunkAggregate]) share this so the layout, endianness and frame
-/// math can't drift apart.
+/// ([`SessionStorage.loadSession`]) and crash recovery's frame counting
+/// share this so the layout, endianness and frame math can't drift apart.
 class SessionChunkCodec {
   const SessionChunkCodec(this.channelCount);
 
@@ -53,37 +52,6 @@ class SessionChunkCodec {
   }
 }
 
-/// Scans interleaved int32 chunk bytes, accumulating sample count and the
-/// per-channel tare-adjusted peaks. Shared by the live writer and
-/// `SessionStorage`'s recovery path so the two can never compute peaks
-/// differently.
-class SessionChunkAggregate {
-  SessionChunkAggregate(this.channelCount);
-
-  final int channelCount;
-  int samples = 0;
-
-  /// Per-channel maxima of (raw - tare). Starts at -infinity so the first
-  /// real sample always replaces it; a never-positive channel must report
-  /// its (negative) true max, not 0. Callers persisting this must guard the
-  /// no-samples case (see `SessionStorage._completeSession`).
-  late final List<double> peaksRaw = List.filled(
-    channelCount,
-    double.negativeInfinity,
-  );
-
-  void scan(Uint8List bytes, Float64List tare) {
-    final codec = SessionChunkCodec(channelCount);
-    samples += codec.framesOf(bytes);
-    codec.decode(bytes, (_, ch, raw) {
-      final val = raw - (ch < tare.length ? tare[ch] : 0);
-      if (ch < peaksRaw.length && val > peaksRaw[ch]) {
-        peaksRaw[ch] = val.toDouble();
-      }
-    });
-  }
-}
-
 /// Streams recorded samples to the DB as they arrive, flushing in chunks so a
 /// session can outlive the in-memory ring buffer and survive a crash.
 ///
@@ -98,7 +66,6 @@ class SessionChunkAggregate {
 class LiveSessionWriter {
   LiveSessionWriter(
     this.sessionId,
-    this.tare,
     this.sampleRate, {
     required this.sourceRingCapacity,
     @visibleForTesting
@@ -112,11 +79,6 @@ class LiveSessionWriter {
   }) : _chunkSink = chunkSink;
 
   final int sessionId;
-
-  /// Tare snapshot taken at recording start. Identical to the values persisted
-  /// in the session's `tares` column, so the peak computed here always matches
-  /// what playback shows, regardless of later re-tares.
-  final Float64List tare;
 
   /// The rate persisted on the session row at recording start, kept here so
   /// finalization math uses the same value the row carries.
@@ -134,11 +96,6 @@ class LiveSessionWriter {
 
   int _chunkIndex = 0;
   int totalSamplesRecorded = 0;
-
-  /// Per-channel tare-adjusted peaks accumulated so far (see
-  /// [SessionChunkAggregate.peaksRaw]); read by
-  /// `SessionStorage.finalizeSession`.
-  List<double> get peaksRaw => _agg.peaksRaw;
 
   /// Dropped-sample ranges accumulated across the recording, relative to the
   /// session's first sample. Persisted to the session row on every chunk
@@ -161,9 +118,6 @@ class LiveSessionWriter {
   /// append.
   int? get ssnOrigin => _ssnOrigin;
   int? _ssnOrigin;
-
-  /// Accumulates sample count and peak; shared scan logic with recovery.
-  final SessionChunkAggregate _agg = SessionChunkAggregate(kAdcChannelCount);
 
   /// First write failure encountered, if any. Once set it stays set.
   Object? writeError;
@@ -236,9 +190,7 @@ class LiveSessionWriter {
       try {
         if (writeError != null) return;
 
-        // Update peaks/sample-count via the same scan logic recovery uses.
-        _agg.scan(bytes, tare);
-        totalSamplesRecorded = _agg.samples;
+        totalSamplesRecorded += codec.framesOf(bytes);
 
         _staging.add(bytes);
 

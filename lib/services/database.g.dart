@@ -96,18 +96,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _peaksRawMeta = const VerificationMeta(
-    'peaksRaw',
-  );
-  @override
-  late final GeneratedColumn<String> peaksRaw = GeneratedColumn<String>(
-    'peaks_raw',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    defaultValue: const Constant('[]'),
-  );
   static const VerificationMeta _calibrationJsonMeta = const VerificationMeta(
     'calibrationJson',
   );
@@ -220,7 +208,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     channelCount,
     channelLabels,
     tares,
-    peaksRaw,
     calibrationJson,
     notes,
     sampleCount,
@@ -303,12 +290,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
       );
     } else if (isInserting) {
       context.missing(_taresMeta);
-    }
-    if (data.containsKey('peaks_raw')) {
-      context.handle(
-        _peaksRawMeta,
-        peaksRaw.isAcceptableOrUnknown(data['peaks_raw']!, _peaksRawMeta),
-      );
     }
     if (data.containsKey('calibration_json')) {
       context.handle(
@@ -431,10 +412,6 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.string,
         data['${effectivePrefix}tares'],
       )!,
-      peaksRaw: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}peaks_raw'],
-      )!,
       calibrationJson: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}calibration_json'],
@@ -490,11 +467,6 @@ class Session extends DataClass implements Insertable<Session> {
   final String channelLabels;
   final String tares;
 
-  /// Per-channel peaks (max tare-subtracted raw per channel) as a JSON list.
-  /// Informational only — the detail view computes its own per-channel
-  /// peaks from the chunk data.
-  final String peaksRaw;
-
   /// Per-channel calibration in effect at recording time, as a JSON list of
   /// [ChannelCalibration] snapshots (board piecewise map + assigned load
   /// cell per channel). Playback converts through this, never through the
@@ -526,8 +498,8 @@ class Session extends DataClass implements Insertable<Session> {
 
   /// The connected device's identity at recording start (BLE name + the DIS
   /// strings), as the JSON-encoded dynamite-csv `device` metadata block —
-  /// see [DeviceInfo.toCsvDeviceMetadata]. Frozen so export never consults
-  /// live device state (docs/csv-format-v1.md).
+  /// see `toCsvDeviceMetadata` in csv_export.dart. Frozen so export never
+  /// consults live device state (docs/csv-format-v1.md).
   final String deviceInfoJson;
   const Session({
     required this.id,
@@ -538,7 +510,6 @@ class Session extends DataClass implements Insertable<Session> {
     required this.channelCount,
     required this.channelLabels,
     required this.tares,
-    required this.peaksRaw,
     required this.calibrationJson,
     required this.notes,
     required this.sampleCount,
@@ -560,7 +531,6 @@ class Session extends DataClass implements Insertable<Session> {
     map['channel_count'] = Variable<int>(channelCount);
     map['channel_labels'] = Variable<String>(channelLabels);
     map['tares'] = Variable<String>(tares);
-    map['peaks_raw'] = Variable<String>(peaksRaw);
     map['calibration_json'] = Variable<String>(calibrationJson);
     map['notes'] = Variable<String>(notes);
     map['sample_count'] = Variable<int>(sampleCount);
@@ -585,7 +555,6 @@ class Session extends DataClass implements Insertable<Session> {
       channelCount: Value(channelCount),
       channelLabels: Value(channelLabels),
       tares: Value(tares),
-      peaksRaw: Value(peaksRaw),
       calibrationJson: Value(calibrationJson),
       notes: Value(notes),
       sampleCount: Value(sampleCount),
@@ -614,7 +583,6 @@ class Session extends DataClass implements Insertable<Session> {
       channelCount: serializer.fromJson<int>(json['channelCount']),
       channelLabels: serializer.fromJson<String>(json['channelLabels']),
       tares: serializer.fromJson<String>(json['tares']),
-      peaksRaw: serializer.fromJson<String>(json['peaksRaw']),
       calibrationJson: serializer.fromJson<String>(json['calibrationJson']),
       notes: serializer.fromJson<String>(json['notes']),
       sampleCount: serializer.fromJson<int>(json['sampleCount']),
@@ -638,7 +606,6 @@ class Session extends DataClass implements Insertable<Session> {
       'channelCount': serializer.toJson<int>(channelCount),
       'channelLabels': serializer.toJson<String>(channelLabels),
       'tares': serializer.toJson<String>(tares),
-      'peaksRaw': serializer.toJson<String>(peaksRaw),
       'calibrationJson': serializer.toJson<String>(calibrationJson),
       'notes': serializer.toJson<String>(notes),
       'sampleCount': serializer.toJson<int>(sampleCount),
@@ -660,7 +627,6 @@ class Session extends DataClass implements Insertable<Session> {
     int? channelCount,
     String? channelLabels,
     String? tares,
-    String? peaksRaw,
     String? calibrationJson,
     String? notes,
     int? sampleCount,
@@ -679,7 +645,6 @@ class Session extends DataClass implements Insertable<Session> {
     channelCount: channelCount ?? this.channelCount,
     channelLabels: channelLabels ?? this.channelLabels,
     tares: tares ?? this.tares,
-    peaksRaw: peaksRaw ?? this.peaksRaw,
     calibrationJson: calibrationJson ?? this.calibrationJson,
     notes: notes ?? this.notes,
     sampleCount: sampleCount ?? this.sampleCount,
@@ -708,7 +673,6 @@ class Session extends DataClass implements Insertable<Session> {
           ? data.channelLabels.value
           : this.channelLabels,
       tares: data.tares.present ? data.tares.value : this.tares,
-      peaksRaw: data.peaksRaw.present ? data.peaksRaw.value : this.peaksRaw,
       calibrationJson: data.calibrationJson.present
           ? data.calibrationJson.value
           : this.calibrationJson,
@@ -744,7 +708,6 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('channelCount: $channelCount, ')
           ..write('channelLabels: $channelLabels, ')
           ..write('tares: $tares, ')
-          ..write('peaksRaw: $peaksRaw, ')
           ..write('calibrationJson: $calibrationJson, ')
           ..write('notes: $notes, ')
           ..write('sampleCount: $sampleCount, ')
@@ -768,7 +731,6 @@ class Session extends DataClass implements Insertable<Session> {
     channelCount,
     channelLabels,
     tares,
-    peaksRaw,
     calibrationJson,
     notes,
     sampleCount,
@@ -791,7 +753,6 @@ class Session extends DataClass implements Insertable<Session> {
           other.channelCount == this.channelCount &&
           other.channelLabels == this.channelLabels &&
           other.tares == this.tares &&
-          other.peaksRaw == this.peaksRaw &&
           other.calibrationJson == this.calibrationJson &&
           other.notes == this.notes &&
           other.sampleCount == this.sampleCount &&
@@ -812,7 +773,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<int> channelCount;
   final Value<String> channelLabels;
   final Value<String> tares;
-  final Value<String> peaksRaw;
   final Value<String> calibrationJson;
   final Value<String> notes;
   final Value<int> sampleCount;
@@ -831,7 +791,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.channelCount = const Value.absent(),
     this.channelLabels = const Value.absent(),
     this.tares = const Value.absent(),
-    this.peaksRaw = const Value.absent(),
     this.calibrationJson = const Value.absent(),
     this.notes = const Value.absent(),
     this.sampleCount = const Value.absent(),
@@ -851,7 +810,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     required int channelCount,
     required String channelLabels,
     required String tares,
-    this.peaksRaw = const Value.absent(),
     required String calibrationJson,
     this.notes = const Value.absent(),
     this.sampleCount = const Value.absent(),
@@ -879,7 +837,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<int>? channelCount,
     Expression<String>? channelLabels,
     Expression<String>? tares,
-    Expression<String>? peaksRaw,
     Expression<String>? calibrationJson,
     Expression<String>? notes,
     Expression<int>? sampleCount,
@@ -899,7 +856,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (channelCount != null) 'channel_count': channelCount,
       if (channelLabels != null) 'channel_labels': channelLabels,
       if (tares != null) 'tares': tares,
-      if (peaksRaw != null) 'peaks_raw': peaksRaw,
       if (calibrationJson != null) 'calibration_json': calibrationJson,
       if (notes != null) 'notes': notes,
       if (sampleCount != null) 'sample_count': sampleCount,
@@ -921,7 +877,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<int>? channelCount,
     Value<String>? channelLabels,
     Value<String>? tares,
-    Value<String>? peaksRaw,
     Value<String>? calibrationJson,
     Value<String>? notes,
     Value<int>? sampleCount,
@@ -941,7 +896,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       channelCount: channelCount ?? this.channelCount,
       channelLabels: channelLabels ?? this.channelLabels,
       tares: tares ?? this.tares,
-      peaksRaw: peaksRaw ?? this.peaksRaw,
       calibrationJson: calibrationJson ?? this.calibrationJson,
       notes: notes ?? this.notes,
       sampleCount: sampleCount ?? this.sampleCount,
@@ -980,9 +934,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     }
     if (tares.present) {
       map['tares'] = Variable<String>(tares.value);
-    }
-    if (peaksRaw.present) {
-      map['peaks_raw'] = Variable<String>(peaksRaw.value);
     }
     if (calibrationJson.present) {
       map['calibration_json'] = Variable<String>(calibrationJson.value);
@@ -1025,7 +976,6 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('channelCount: $channelCount, ')
           ..write('channelLabels: $channelLabels, ')
           ..write('tares: $tares, ')
-          ..write('peaksRaw: $peaksRaw, ')
           ..write('calibrationJson: $calibrationJson, ')
           ..write('notes: $notes, ')
           ..write('sampleCount: $sampleCount, ')
@@ -1329,7 +1279,6 @@ typedef $$SessionsTableCreateCompanionBuilder =
       required int channelCount,
       required String channelLabels,
       required String tares,
-      Value<String> peaksRaw,
       required String calibrationJson,
       Value<String> notes,
       Value<int> sampleCount,
@@ -1350,7 +1299,6 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<int> channelCount,
       Value<String> channelLabels,
       Value<String> tares,
-      Value<String> peaksRaw,
       Value<String> calibrationJson,
       Value<String> notes,
       Value<int> sampleCount,
@@ -1408,11 +1356,6 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<String> get tares => $composableBuilder(
     column: $table.tares,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get peaksRaw => $composableBuilder(
-    column: $table.peaksRaw,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -1511,11 +1454,6 @@ class $$SessionsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<String> get peaksRaw => $composableBuilder(
-    column: $table.peaksRaw,
-    builder: (column) => ColumnOrderings(column),
-  );
-
   ColumnOrderings<String> get calibrationJson => $composableBuilder(
     column: $table.calibrationJson,
     builder: (column) => ColumnOrderings(column),
@@ -1603,9 +1541,6 @@ class $$SessionsTableAnnotationComposer
   GeneratedColumn<String> get tares =>
       $composableBuilder(column: $table.tares, builder: (column) => column);
 
-  GeneratedColumn<String> get peaksRaw =>
-      $composableBuilder(column: $table.peaksRaw, builder: (column) => column);
-
   GeneratedColumn<String> get calibrationJson => $composableBuilder(
     column: $table.calibrationJson,
     builder: (column) => column,
@@ -1682,7 +1617,6 @@ class $$SessionsTableTableManager
                 Value<int> channelCount = const Value.absent(),
                 Value<String> channelLabels = const Value.absent(),
                 Value<String> tares = const Value.absent(),
-                Value<String> peaksRaw = const Value.absent(),
                 Value<String> calibrationJson = const Value.absent(),
                 Value<String> notes = const Value.absent(),
                 Value<int> sampleCount = const Value.absent(),
@@ -1701,7 +1635,6 @@ class $$SessionsTableTableManager
                 channelCount: channelCount,
                 channelLabels: channelLabels,
                 tares: tares,
-                peaksRaw: peaksRaw,
                 calibrationJson: calibrationJson,
                 notes: notes,
                 sampleCount: sampleCount,
@@ -1722,7 +1655,6 @@ class $$SessionsTableTableManager
                 required int channelCount,
                 required String channelLabels,
                 required String tares,
-                Value<String> peaksRaw = const Value.absent(),
                 required String calibrationJson,
                 Value<String> notes = const Value.absent(),
                 Value<int> sampleCount = const Value.absent(),
@@ -1741,7 +1673,6 @@ class $$SessionsTableTableManager
                 channelCount: channelCount,
                 channelLabels: channelLabels,
                 tares: tares,
-                peaksRaw: peaksRaw,
                 calibrationJson: calibrationJson,
                 notes: notes,
                 sampleCount: sampleCount,

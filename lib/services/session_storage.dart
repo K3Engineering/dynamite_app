@@ -43,9 +43,8 @@ class SessionStorage {
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
   }) async {
-    // Snapshot the tare once; the same values are persisted below and used by
-    // the writer's peak scan, so stored peaks, stored tares and playback can
-    // never disagree even if the user re-tares mid-recording.
+    // Snapshot the tare once and persist it with the session; playback
+    // converts through it, so a later re-tare can never rewrite history.
     final tareSnapshot = Float64List.fromList(tare);
 
     final sessionId = await AppDatabase.instance.createSession(
@@ -71,7 +70,6 @@ class SessionStorage {
 
     return LiveSessionWriter(
       sessionId,
-      tareSnapshot,
       samplesPerSec,
       sourceRingCapacity: sourceRingCapacity,
     );
@@ -98,30 +96,25 @@ class SessionStorage {
       sessionId: writer.sessionId,
       sampleCount: writer.totalSamplesRecorded,
       sampleRate: writer.sampleRate,
-      peaksRaw: writer.peaksRaw,
       gapsJson: writer.gaps.toJson(),
     );
 
     return writer.writeError;
   }
 
-  /// Write a finished (or recovered) session's aggregates to its row and mark
-  /// it completed. Shared by [finalizeSession] and [recoverIncompleteSessions]
-  /// so both paths apply identical guards and duration math.
+  /// Write a finished (or recovered) session's final sample count and mark it
+  /// completed. Shared by [finalizeSession] and [recoverIncompleteSessions]
+  /// so both paths apply identical duration math.
   static Future<void> _completeSession({
     required int sessionId,
     required int sampleCount,
     required int sampleRate,
-    required List<double> peaksRaw,
     required String gapsJson,
   }) {
     return AppDatabase.instance.completeSession(
       sessionId,
       sampleCount: sampleCount,
       durationMs: (sampleCount * 1000) ~/ sampleRate,
-      // A channel that captured no samples leaves its peak at -infinity;
-      // that must not reach the DB.
-      peaksRaw: jsonEncode([for (final p in peaksRaw) p.isFinite ? p : 0.0]),
       gaps: gapsJson,
     );
   }
@@ -143,24 +136,24 @@ class SessionStorage {
         continue;
       }
 
-      // Rebuild aggregates against the tare persisted at recording start, the
-      // same one loadSession applies, so recovered peaks match playback.
-      final agg = SessionChunkAggregate(session.channelCount);
-      final tare = _parseTares(session.tares, session.channelCount);
+      // The sample count comes from chunk byte lengths — recovery never
+      // decodes samples (and couldn't reconstruct gaps either; those stay as
+      // the live writer persisted them).
+      final codec = SessionChunkCodec(session.channelCount);
+      int sampleCount = 0;
       for (final chunk in chunks) {
-        agg.scan(chunk, tare);
+        sampleCount += codec.framesOf(chunk);
       }
 
       // Preserve the gaps persisted incrementally by the live writer (chunk
       // bytes alone can't reconstruct them).
       await _completeSession(
         sessionId: session.id,
-        sampleCount: agg.samples,
+        sampleCount: sampleCount,
         // Recovery uses the rate persisted on the row (finalize uses the
         // writer's, which is the same value from recording start) so a future
         // configurable rate can't skew reconstructed durations.
         sampleRate: session.sampleRate,
-        peaksRaw: agg.peaksRaw,
         gapsJson: session.gaps,
       );
     }

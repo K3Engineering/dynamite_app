@@ -27,7 +27,7 @@ void main() {
       )
       .then(
         (id) => AppDatabase.instance
-            .completeSession(id, sampleCount: 0, durationMs: 0, peaksRaw: '[]')
+            .completeSession(id, sampleCount: 0, durationMs: 0)
             .then((_) => id),
       );
 

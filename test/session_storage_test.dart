@@ -15,9 +15,7 @@ import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_data.dart';
 import 'package:dynamite_app/services/session_storage.dart';
 
-/// Peak-bias tests for the storage side: a never-positive stream must report
-/// its true (negative) max, both for loaded sessions and for the live
-/// writer's streaming aggregate.
+/// Storage-side session tests.
 ///
 /// An in-memory database is installed for every test in this file: the
 /// writer persists its ssn origin at latch time (a harmless no-op when its
@@ -74,31 +72,6 @@ void main() {
     });
   });
 
-  group('LiveSessionWriter peak scan', () {
-    test('a never-positive stream yields a negative stored peak', () async {
-      final hub = DataHub();
-      final frame = Int32List(channels);
-      const n = 50;
-      for (int i = 0; i < n; i++) {
-        for (int ch = 0; ch < channels; ch++) {
-          frame[ch] = -1000 + i; // least negative: -951 at i = 49
-        }
-        hub.addSampleFrame(frame);
-      }
-
-      final writer = LiveSessionWriter(
-        1,
-        Float64List(channels),
-        DataHub.samplesPerSec,
-        sourceRingCapacity: DataHub.maxDataSz,
-      );
-      await writer.appendData(hub.snapshotRange(0, n));
-
-      expect(writer.totalSamplesRecorded, n);
-      expect(writer.peaksRaw, List.filled(channels, -1000.0 + n - 1));
-    });
-  });
-
   group('LiveSessionWriter ring-buffer safety', () {
     void pumpSamples(DataHub hub, Int32List frame, int count, int value) {
       for (int ch = 0; ch < channels; ch++) {
@@ -113,7 +86,6 @@ void main() {
       final saved = <Uint8List>[];
       final writer = LiveSessionWriter(
         1,
-        Float64List(channels),
         DataHub.samplesPerSec,
         sourceRingCapacity: DataHub.maxDataSz,
         chunkSink: (sessionId, chunkIndex, data, gapsJson) async =>
@@ -137,8 +109,6 @@ void main() {
       await writer.flush();
       expect(writer.hasError, isFalse);
       expect(writer.totalSamplesRecorded, n);
-      // not 100000: the slice was snapshotted
-      expect(writer.peaksRaw, List.filled(channels, n - 1.0));
 
       // The persisted chunk holds the call-time values, byte for byte.
       expect(saved, hasLength(1));
@@ -162,7 +132,6 @@ void main() {
       const ringCapacity = 4096;
       final writer = LiveSessionWriter(
         1,
-        Float64List(channels),
         DataHub.samplesPerSec,
         sourceRingCapacity: ringCapacity,
         chunkSink: (sessionId, chunkIndex, data, gapsJson) async {
@@ -199,9 +168,8 @@ void main() {
       await writer.flush();
 
       // Only the pre-stall chunk reached the sink; the post-latch slices
-      // no-op, and the aggregates cover the first chunk only.
+      // no-op, so only the first chunk is counted.
       expect(writer.totalSamplesRecorded, chunkSamples);
-      expect(writer.peaksRaw, List.filled(channels, 7.0));
       expect(sinkCalls, 1);
       expect(saved, hasLength(1));
       expect(saved.single.lengthInBytes, chunkSamples * channels * 4);
@@ -224,7 +192,6 @@ void main() {
 
         final writer = LiveSessionWriter(
           1,
-          Float64List(channels),
           DataHub.samplesPerSec,
           sourceRingCapacity: DataHub.maxDataSz,
           chunkSink: (sessionId, chunkIndex, data, gapsJson) async {},
@@ -254,7 +221,6 @@ void main() {
 
         final writer = LiveSessionWriter(
           1,
-          Float64List(channels),
           DataHub.samplesPerSec,
           sourceRingCapacity: DataHub.maxDataSz,
           chunkSink: (sessionId, chunkIndex, data, gapsJson) async {},
@@ -373,11 +339,10 @@ void main() {
     });
 
     test(
-      'a session with only empty chunks completes with zero peaks',
+      'a session with only empty chunks completes as empty',
       () async {
         // A chunk row exists, but it holds no complete frame (0 bytes), so
-        // the recovered aggregate scan finds no samples and every channel's
-        // peak stays at -infinity — which must never reach the DB.
+        // the recovered frame count is 0.
         final sessionId = await AppDatabase.instance.createSession(
           name: 'empty chunks',
           sampleRate: DataHub.samplesPerSec,
@@ -398,7 +363,6 @@ void main() {
         expect(row!.isCompleted, isTrue);
         expect(row.sampleCount, 0);
         expect(row.durationMs, 0);
-        expect(row.peaksRaw, '[0.0,0.0,0.0,0.0]');
       },
     );
   });

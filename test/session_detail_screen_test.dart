@@ -43,7 +43,6 @@ void main() {
       sessionId,
       sampleCount: 0,
       durationMs: 0,
-      peaksRaw: '[]',
     );
     final session = (await sessionSummaryById(sessionId))!;
 
