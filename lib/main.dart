@@ -7,7 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'models/app_meta.dart';
-import 'models/app_settings.dart';
+import 'services/app_settings.dart';
 import 'services/adc_packet_decoder.dart';
 import 'services/app_events.dart';
 import 'services/ble_link_manager.dart';

@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'device_profile.dart';
-import 'display_unit.dart';
+import '../models/device_profile.dart';
+import '../models/display_unit.dart';
 
 /// Application-wide settings, persisted via SharedPreferences.
 ///

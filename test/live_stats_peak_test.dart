@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:dynamite_app/models/app_settings.dart';
+import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/screens/live_tab.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';

@@ -6,7 +6,7 @@ import '../models/board_calibration.dart';
 import '../services/report_export.dart';
 import '../services/share_capability.dart';
 import '../services/rig_state.dart';
-import '../models/calibration_text.dart';
+import '../widgets/calibration_text.dart';
 import '../widgets/calibration_view.dart';
 
 /// The board calibration page: the factory calibration view

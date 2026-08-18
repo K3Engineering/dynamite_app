@@ -11,7 +11,7 @@ import '../models/bucket_series.dart';
 import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
-import '../services/graph_data_source.dart';
+import '../models/graph_data_source.dart';
 import 'channel_palette.dart';
 
 // ---------------------------------------------------------------------------

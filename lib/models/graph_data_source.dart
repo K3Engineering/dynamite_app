@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 
-import '../models/bucket_series.dart';
-import '../models/channel_calibration.dart';
-import '../models/gap_list.dart';
+import 'bucket_series.dart';
+import 'channel_calibration.dart';
+import 'gap_list.dart';
 
 /// A single channel's raw circular-buffer data plus its precomputed extremes,
 /// tare offset, and raw-value [BucketSeries]. Returned by
@@ -20,10 +20,6 @@ typedef ChannelSeries = ({
 /// (live stream) and [SessionData] (static recording) — so the components
 /// render either without an adapter layer.
 ///
-/// Location is deliberate: the contract is renderer-facing, but it lives in
-/// services/ because it sits on the PRODUCER side of the services ↔ widgets
-/// seam — keeping it here is what lets both sources implement it without
-/// importing the widgets folder.
 ///
 /// Sources are not required to be [ChangeNotifier]s; instead they expose a
 /// [repaint] [Listenable] that fires when their data changes (a never-firing

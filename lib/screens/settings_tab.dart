@@ -5,7 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_meta.dart';
-import '../models/app_settings.dart';
+import '../services/app_settings.dart';
 import '../models/board_calibration.dart';
 import '../models/device_info.dart';
 import '../models/device_name.dart';
@@ -13,7 +13,7 @@ import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/rig_state.dart';
-import '../models/calibration_text.dart';
+import '../widgets/calibration_text.dart';
 import '../widgets/connection_info_card.dart';
 import '../widgets/device_info_card.dart';
 import '../widgets/rig_slots_section.dart';

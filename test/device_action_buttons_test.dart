@@ -6,7 +6,7 @@ import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/main.dart';
 import 'package:dynamite_app/models/app_meta.dart';
-import 'package:dynamite_app/models/app_settings.dart';
+import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/screens/devices_tab.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';

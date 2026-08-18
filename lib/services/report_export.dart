@@ -1,5 +1,5 @@
 /// Calibration-report export: the plain-text report (see
-/// `models/calibration_text.dart`) handed to the OS via the shared export
+/// `widgets/calibration_text.dart`) handed to the OS via the shared export
 /// delivery module (export_delivery.dart — both delivery paths, plus the
 /// shared filename rules below).
 library;

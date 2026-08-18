@@ -4,7 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_meta.dart';
-import '../models/app_settings.dart';
+import '../services/app_settings.dart';
 import '../models/display_unit.dart';
 import '../models/session_summary.dart';
 import '../services/csv_export.dart';

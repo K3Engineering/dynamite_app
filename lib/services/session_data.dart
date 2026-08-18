@@ -3,7 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../models/bucket_series.dart';
 import '../models/channel_calibration.dart';
 import '../models/gap_list.dart';
-import 'graph_data_source.dart';
+import '../models/graph_data_source.dart';
 
 /// Loaded session data for playback/review.
 class SessionData implements GraphDataSource {

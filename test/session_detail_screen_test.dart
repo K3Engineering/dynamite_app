@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:dynamite_app/models/app_settings.dart';
+import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/screens/session_detail_screen.dart';
 import 'package:dynamite_app/services/database.dart';
 import 'package:dynamite_app/services/session_queries.dart';

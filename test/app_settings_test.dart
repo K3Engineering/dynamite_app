@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:dynamite_app/models/app_settings.dart';
+import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 
 /// Tests for [AppSettings] persistence (SharedPreferences backed by the

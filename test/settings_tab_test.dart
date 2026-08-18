@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/models/app_meta.dart';
-import 'package:dynamite_app/models/app_settings.dart';
+import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/screens/settings_tab.dart';

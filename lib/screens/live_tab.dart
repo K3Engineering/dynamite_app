@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
-import '../models/app_settings.dart';
+import '../services/app_settings.dart';
 import '../models/board_calibration.dart';
 import '../models/channel_limits.dart';
 import '../models/display_unit.dart';

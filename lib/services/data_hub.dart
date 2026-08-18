@@ -9,8 +9,9 @@ import '../models/channel_calibration.dart';
 import '../models/load_cell.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
-import 'graph_data_source.dart';
+import '../models/graph_data_source.dart';
 import '../models/sample_slice.dart';
+import 'adc_sink.dart';
 
 /// Invoked by [DataHub.commitBatch] with the exact slice of samples appended
 /// by the decoder for one packet ([startIdx] is the logical index of the
@@ -25,7 +26,7 @@ typedef SamplesAppendedListener = void Function(int startIdx, int count);
 ///
 /// Channel count is [kAdcChannelCount]; channel index == storage index ==
 /// display index.
-class DataHub extends ChangeNotifier implements GraphDataSource {
+class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   static const int _tareWindow = 1024;
   static const int samplesPerSec = 1000;
   static const int maxDataSz = samplesPerSec * 60 * 10;
@@ -157,6 +158,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// the current [totalSamples]. Called by the decoder after gap injection
   /// and before the packet's frames are added. Raw 16-bit value; wrap
   /// adjustment falls out of the pairing with the hub index.
+  @override
   void notePacketCounter(int counter) {
     packetAnchor = (counter: counter, hubIndex: totalSamples);
   }
@@ -193,6 +195,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   final ObserverList<void Function()> _clearedListeners =
       ObserverList<void Function()>();
 
+  @override
   void addClearedListener(void Function() listener) =>
       _clearedListeners.add(listener);
 
@@ -242,6 +245,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// stream where EVERY packet is bad), and the feed-health display
   /// re-derives on its own 1 Hz tick — a per-packet notify would be a
   /// lot of rebuilds.
+  @override
   void noteMalformedPacket(int length) {
     lastMalformedPacketAt = DateTime.now();
     lastMalformedPacketLen = length;
@@ -278,6 +282,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// unmarked hole in an ongoing recording. A tare only re-zeros the display
   /// offset: while taring, each real frame is ADDITIONALLY accumulated into
   /// the tare average.
+  @override
   void addSampleFrame(Int32List values) {
     assert(values.length >= kAdcChannelCount);
     for (int i = 0; i < kAdcChannelCount; ++i) {
@@ -314,6 +319,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// 4 channels) synchronously inside one BLE callback, stalling the UI
   /// isolate for a beat. If that becomes visible, chunk the injection across
   /// frames (or fast-forward the ring/bucket state without per-sample work).
+  @override
   void addDroppedFrames(int count) {
     final int toInject = math.min(count, maxDataSz);
     gaps.append(totalSamples, totalSamples + toInject);
@@ -348,6 +354,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Close out one decoded packet: notify [SamplesAppendedListener]s of the
   /// slice appended since [startIdx] (the caller snapshots [totalSamples]
   /// before decoding) and notify listeners once per packet.
+  @override
   void commitBatch(int startIdx) {
     final int count = totalSamples - startIdx;
     if (count > 0) {
@@ -373,6 +380,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Content-equal updates are a no-op (same rule as [updateLoadCells]): a
   /// reconnect re-reading an identical document must not invalidate the
   /// graph segment caches.
+  @override
   void updateBoardCalibration(BoardCalibration calibration) {
     final prev = _boardCalibration;
     if (prev != null && _sameBoardCalibration(prev, calibration)) return;

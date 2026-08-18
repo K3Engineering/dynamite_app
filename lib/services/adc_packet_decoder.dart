@@ -3,26 +3,26 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import 'adc_protocol.dart';
-import 'data_hub.dart';
+import 'adc_sink.dart';
 import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../utils/log.dart';
 
 /// Protocol layer: decodes the device's ADC-feed notification packets and the
-/// calibration characteristic into [DataHub] updates.
+/// calibration characteristic into [AdcSink] updates.
 ///
 /// Owns the packet-continuity counter used to detect dropped packets (reported
-/// to the hub via [DataHub.addDroppedFrames]).
+/// to the sink via [AdcSink.addDroppedFrames]).
 class AdcPacketDecoder {
   AdcPacketDecoder(this.hub) {
-    // A hub clear means a NEW device stream just took over; its first packet
-    // must not be diffed against the previous stream's counter. The hub's
+    // A sink clear means a NEW device stream just took over; its first packet
+    // must not be diffed against the previous stream's counter. The sink's
     // cleared event IS the stream-boundary signal, so the decoder resets
     // itself rather than the link-change orchestrator doing it.
     hub.addClearedListener(resetContinuity);
   }
 
-  final DataHub hub;
+  final AdcSink hub;
 
   /// Expected value of the next packet's 16-bit running sample counter, or -1
   /// when continuity tracking is reset (new device stream, session
@@ -30,7 +30,7 @@ class AdcPacketDecoder {
   int _prevSampleCount = -1;
 
   /// Reusable frame buffer (one value per channel) passed to
-  /// [DataHub.addSampleFrame], which copies out of it synchronously.
+  /// [AdcSink.addSampleFrame], which copies out of it synchronously.
   final Int32List _frame = Int32List(kAdcChannelCount);
 
   /// Forget the last seen packet counter so the next packet is not diffed
@@ -51,7 +51,7 @@ class AdcPacketDecoder {
   /// missing keys), plus the ADC's per-channel PGA gains read back alongside
   /// ([adcGains], null when that read failed — the board constants then
   /// resolve to the unreadable verdict). The board calibration feeds the
-  /// hub; the full document (slots included) goes to [onDeviceFlash].
+  /// sink; the full document (slots included) goes to [onDeviceFlash].
   /// Malformed reads degrade to per-channel nominal values and empty slots.
   void onCalibrationPacket(Uint8List data, List<double>? adcGains) {
     final flash = DeviceFlash.parse(
@@ -62,11 +62,11 @@ class AdcPacketDecoder {
     onDeviceFlash?.call(flash);
   }
 
-  /// Parse one BLE ADC-feed notification packet into the hub.
+  /// Parse one BLE ADC-feed notification packet into the sink.
   ///
-  /// Data is always buffered for live display; recording observes the hub via
-  /// [DataHub.addSamplesAppendedListener] (notified from
-  /// [DataHub.commitBatch]).
+  /// Data is always buffered for live display; recording observes the sink via
+  /// `DataHub.addSamplesAppendedListener` (notified from
+  /// [AdcSink.commitBatch]).
   void onDataPacket(Uint8List data) {
     final n = adcSamplesInPacket(data.length);
     if (n == null) {
@@ -82,14 +82,14 @@ class AdcPacketDecoder {
       final int diff = (count - _prevSampleCount) & 0xFFFF;
       if (diff != 0) {
         logTrace(() => '# lost $diff samples');
-        // Report the dropped range to the hub (capped inside the hub to avoid
-        // OOM if the device reboots and the counter jumps).
+        // Report the dropped range to the sink (capped inside the sink to
+        // avoid OOM if the device reboots and the counter jumps).
         hub.addDroppedFrames(diff);
       }
     }
     _prevSampleCount = (count + n) & 0xFFFF;
 
-    // Anchor the packet's counter to the hub timeline (after gap injection,
+    // Anchor the packet's counter to the sink timeline (after gap injection,
     // so totalSamples is this packet's first-sample index). The recording
     // writer derives the session's ssn_origin from this pairing.
     hub.notePacketCounter(count);

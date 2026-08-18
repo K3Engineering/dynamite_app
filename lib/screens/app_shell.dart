@@ -4,7 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-import '../models/app_settings.dart';
+import '../services/app_settings.dart';
 import '../services/app_events.dart';
 import '../services/ble_link_manager.dart';
 import 'live_tab.dart';
