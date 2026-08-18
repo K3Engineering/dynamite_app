@@ -1,8 +1,7 @@
 import 'package:material_ui/material_ui.dart';
-import 'package:provider/provider.dart';
 
-import '../models/calibration.dart';
-import '../services/rig_state.dart';
+import '../models/load_cell.dart';
+import '../models/rig_edits.dart';
 import '../utils/format.dart';
 
 /// Quick-pick values for the slot editor: the common nameplate numbers,
@@ -17,12 +16,58 @@ const quickSensitivitiesMvV = <double>[1, 2, 3];
 /// Edits take effect in this app immediately; nothing reaches the device
 /// until "Save to device" (the flash doc is the rig's single truth —
 /// reads are automatic, writes are explicit).
+///
+/// Dumb: the rig slices and the mutation callbacks are handed in by the
+/// caller (the Settings tab wires them to `RigState`).
 class RigSlotsSection extends StatefulWidget {
-  const RigSlotsSection({super.key, required this.connectedDeviceId});
+  const RigSlotsSection({
+    super.key,
+    required this.connectedDeviceId,
+    required this.hasDeviceDoc,
+    required this.slots,
+    required this.pending,
+    required this.history,
+    required this.onSave,
+    required this.onRevert,
+    required this.onSwapSlots,
+    required this.onSetSlot,
+    required this.onClearSlot,
+  });
 
   /// The currently connected device ('' when none): gates the Save button —
   /// saving needs the very device the flash doc came from to be connected.
   final String connectedDeviceId;
+
+  /// Whether a flash document has been read this run; without one the
+  /// section renders its placeholder.
+  final bool hasDeviceDoc;
+
+  /// The slot list to render (the rig's effective slots: pending edits when
+  /// dirty, else the device's flash state).
+  final RigSlots slots;
+
+  /// The unsaved-edit session, or null when clean.
+  final PendingRigEdits? pending;
+
+  /// Cells this app has met before, newest first (the add dialog's quick
+  /// picks).
+  final List<RigHistoryEntry> history;
+
+  /// Write the edited slots to the device; false means the write or its
+  /// verification failed (changes are kept).
+  final Future<bool> Function() onSave;
+
+  /// Discard the pending edits.
+  final VoidCallback onRevert;
+
+  /// Exchange two slots' contents.
+  final void Function(int a, int b) onSwapSlots;
+
+  /// Place a cell into a slot (add or edit).
+  final void Function(int slot, LoadCellProfile cell) onSetSlot;
+
+  /// Empty a slot.
+  final void Function(int slot) onClearSlot;
 
   @override
   State<RigSlotsSection> createState() => _RigSlotsSectionState();
@@ -42,9 +87,9 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   /// Slot index currently being dragged (dims its source row), or null.
   int? _dragIndex;
 
-  Future<void> _save(RigState rig) async {
+  Future<void> _save() async {
     setState(() => _saving = true);
-    final ok = await rig.saveToDevice();
+    final ok = await widget.onSave();
     if (!mounted) return;
     setState(() => _saving = false);
     ScaffoldMessenger.of(context).showSnackBar(
@@ -60,10 +105,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
 
   @override
   Widget build(BuildContext context) {
-    // Narrow selects: the section renders three slices of the rig (doc
-    // presence, the slots, the dirty state), not every RigState notify.
-    final hasDoc = context.select<RigState, bool>((r) => r.hasDeviceDoc);
-    if (!hasDoc) {
+    if (!widget.hasDeviceDoc) {
       // The dim "nothing here" affordance: the theme's outline role, as in
       // EmptyPlaceholder — not a raw Material grey.
       return Card(
@@ -79,11 +121,8 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
         ),
       );
     }
-    final slots = context.select<RigState, RigSlots>((r) => r.effectiveSlots);
-    final pending = context.select<RigState, PendingRigEdits?>(
-      (r) => r.pending,
-    );
-    final rig = context.read<RigState>();
+    final slots = widget.slots;
+    final pending = widget.pending;
     final connectedId = widget.connectedDeviceId;
 
     final canSave =
@@ -99,8 +138,8 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
           dirty: pending != null,
           saving: _saving,
           canSave: canSave,
-          onRevert: rig.revert,
-          onSave: () => _save(rig),
+          onRevert: widget.onRevert,
+          onSave: _save,
         ),
         const SizedBox(height: 8),
         Row(
@@ -121,7 +160,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
                     return Column(
                       children: [
                         for (int i = 0; i < kRigSlotCount; ++i)
-                          _slotTile(context, rig, slots, i, rowWidth),
+                          _slotTile(context, slots, i, rowWidth),
                       ],
                     );
                   },
@@ -152,13 +191,8 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   /// All edit affordances (tap, drag start, drop) close while a save is in
   /// flight: an edit landing mid-write would mutate the pending session the
   /// save already snapshotted (see RigState.saveToDevice's state guard).
-  ///
-  /// TODO: also start the drag on a long-press anywhere on the row — the
-  /// touch-platform pattern in ReorderableListView — while keeping the
-  /// handle for immediate dragging on desktop.
   Widget _slotTile(
     BuildContext context,
-    RigState rig,
     RigSlots slots,
     int i,
     double rowWidth,
@@ -169,7 +203,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     return DragTarget<int>(
       // Dropping a row onto itself is not offered (and not highlighted).
       onWillAcceptWithDetails: (details) => !_saving && details.data != i,
-      onAcceptWithDetails: (details) => rig.swapSlots(details.data, i),
+      onAcceptWithDetails: (details) => widget.onSwapSlots(details.data, i),
       // The tile is built inside the builder so the drag feedback can be
       // anchored to this row's render box (rowContext).
       builder: (rowContext, candidateData, rejectedData) {
@@ -189,7 +223,15 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
               Icons.add_circle_outline,
               color: theme.colorScheme.outline,
             ),
-            onTap: _saving ? null : () => showAddToSlot(context, rig, i),
+            onTap: _saving
+                ? null
+                : () => showAddToSlot(
+                    context,
+                    slot: i,
+                    history: widget.history,
+                    onSetSlot: widget.onSetSlot,
+                    onClearSlot: widget.onClearSlot,
+                  ),
           );
         } else {
           final cell = slot.cell;
@@ -236,7 +278,15 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
                 ),
               ),
             ),
-            onTap: _saving ? null : () => showSlotEditor(context, rig, i),
+            onTap: _saving
+                ? null
+                : () => showSlotEditor(
+                    context,
+                    slot: i,
+                    initial: cell,
+                    onSetSlot: widget.onSetSlot,
+                    onClearSlot: widget.onClearSlot,
+                  ),
           );
         }
 
@@ -385,7 +435,13 @@ class _StatusBar extends StatelessWidget {
 /// The "+" sheet for an empty slot: cells this app has met before (on any
 /// device, or typed in), newest first; a custom entry goes through the same
 /// editor as an edit. Picking either fills the slot as a pending edit.
-Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
+Future<void> showAddToSlot(
+  BuildContext context, {
+  required int slot,
+  required List<RigHistoryEntry> history,
+  required void Function(int slot, LoadCellProfile cell) onSetSlot,
+  required void Function(int slot) onClearSlot,
+}) {
   return showDialog<void>(
     context: context,
     builder: (ctx) => AlertDialog(
@@ -397,13 +453,13 @@ Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              if (rig.history.isNotEmpty) ...[
+              if (history.isNotEmpty) ...[
                 Text(
                   'Last seen in this app',
                   style: Theme.of(ctx).textTheme.labelMedium,
                 ),
                 const SizedBox(height: 4),
-                for (final entry in rig.history)
+                for (final entry in history)
                   ListTile(
                     dense: true,
                     contentPadding: EdgeInsets.zero,
@@ -417,7 +473,7 @@ Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
                       '${entry.deviceName.isNotEmpty ? ' on ${entry.deviceName}' : ''}',
                     ),
                     onTap: () {
-                      rig.setSlot(slot, entry.cell);
+                      onSetSlot(slot, entry.cell);
                       Navigator.of(ctx).pop();
                     },
                   ),
@@ -437,7 +493,13 @@ Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
                 title: const Text('Custom entry…'),
                 onTap: () async {
                   Navigator.of(ctx).pop();
-                  await showSlotEditor(context, rig, slot);
+                  await showSlotEditor(
+                    context,
+                    slot: slot,
+                    initial: null,
+                    onSetSlot: onSetSlot,
+                    onClearSlot: onClearSlot,
+                  );
                 },
               ),
             ],
@@ -458,12 +520,24 @@ Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
 // Slot editor dialog (edit a populated slot, or custom entry for an empty one)
 // ---------------------------------------------------------------------------
 
-/// Edit slot [slot]'s cell (or create it, when the slot is empty). Saving
-/// writes a PENDING edit — it reaches the device only via "Save to device".
-Future<void> showSlotEditor(BuildContext context, RigState rig, int slot) {
+/// Edit slot [slot]'s cell ([initial]; null to create one for an empty
+/// slot). Saving writes a PENDING edit — it reaches the device only via
+/// "Save to device".
+Future<void> showSlotEditor(
+  BuildContext context, {
+  required int slot,
+  required LoadCellProfile? initial,
+  required void Function(int slot, LoadCellProfile cell) onSetSlot,
+  required void Function(int slot) onClearSlot,
+}) {
   return showDialog<void>(
     context: context,
-    builder: (_) => _SlotEditorDialog(rig: rig, slot: slot),
+    builder: (_) => _SlotEditorDialog(
+      slot: slot,
+      initial: initial,
+      onSetSlot: onSetSlot,
+      onClearSlot: onClearSlot,
+    ),
   );
 }
 
@@ -471,10 +545,21 @@ Future<void> showSlotEditor(BuildContext context, RigState rig, int slot) {
 /// [State], so they're disposed only when the route's pop animation finally
 /// unmounts the dialog.
 class _SlotEditorDialog extends StatefulWidget {
-  const _SlotEditorDialog({required this.rig, required this.slot});
+  const _SlotEditorDialog({
+    required this.slot,
+    required this.initial,
+    required this.onSetSlot,
+    required this.onClearSlot,
+  });
 
-  final RigState rig;
   final int slot;
+
+  /// The cell being edited, or null when this is a custom entry for an
+  /// empty slot.
+  final LoadCellProfile? initial;
+
+  final void Function(int slot, LoadCellProfile cell) onSetSlot;
+  final void Function(int slot) onClearSlot;
 
   @override
   State<_SlotEditorDialog> createState() => _SlotEditorDialogState();
@@ -485,17 +570,12 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
   late final TextEditingController capCtrl;
   late final TextEditingController sensCtrl;
 
-  RigState get rig => widget.rig;
   int get slot => widget.slot;
-
-  /// The cell being edited, or null when this is a custom entry for an
-  /// empty slot.
-  LoadCellProfile? get initial => rig.effectiveSlots.cellAt(slot);
 
   @override
   void initState() {
     super.initState();
-    final cell = initial;
+    final cell = widget.initial;
     nameCtrl = TextEditingController(text: cell?.name ?? '');
     capCtrl = TextEditingController(
       text: cell != null ? _num(cell.capacityKg) : '',
@@ -522,7 +602,7 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
     final sens = _typedNumber(sensCtrl.text);
     // The Save button is gated on [_valid], so both parse positive here.
     if (cap == null || sens == null || cap <= 0 || sens <= 0) return;
-    rig.setSlot(
+    widget.onSetSlot(
       slot,
       LoadCellProfile(
         name: nameCtrl.text.trim(),
@@ -534,13 +614,13 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
   }
 
   void _clear() {
-    rig.clearSlot(slot);
+    widget.onClearSlot(slot);
     Navigator.of(context).pop();
   }
 
   @override
   Widget build(BuildContext context) {
-    final editing = initial != null;
+    final editing = widget.initial != null;
     return AlertDialog(
       title: Text(
         '${editing ? 'Edit' : 'New'} load cell — ${rigSlotTitle(slot)}',

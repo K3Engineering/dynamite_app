@@ -8,9 +8,8 @@ import 'package:universal_ble/universal_ble.dart';
 import 'adc_protocol.dart';
 import 'bt_device_config.dart';
 import 'demo_calibration.dart';
-import 'kvs_flash_transport.dart';
 import 'kvs_protocol.dart';
-import '../models/calibration.dart';
+import '../models/board_calibration.dart';
 
 /// Samples per emitted feed packet: one packet every that many milliseconds
 /// makes 1 kHz (matches DataHub.samplesPerSec).
@@ -89,13 +88,13 @@ class MockBlePlatform extends UniversalBlePlatform {
   final List<String> kvsCommandLog = [];
 
   /// (Re)populate [kvsStore] from a `key=value` flash document, routing
-  /// keys to folders the way the app does (see [KvsFlashTransport]).
+  /// keys to folders the way the app does (see [kvsFolderForKey]).
   void seedKvsFromDoc(String doc) {
     for (final folder in kvsStore.values) {
       folder.clear();
     }
     for (final e in parseFlashKv(doc).entries) {
-      kvsStore[KvsFlashTransport.folderForKey(e.key)]![e.key] = e.value;
+      kvsStore[kvsFolderForKey(e.key)]![e.key] = e.value;
     }
   }
 

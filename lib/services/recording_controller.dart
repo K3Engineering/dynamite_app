@@ -6,11 +6,11 @@ import 'adc_packet_decoder.dart';
 import 'app_events.dart';
 import 'ble_link_manager.dart';
 import 'data_hub.dart';
-import 'feed_health.dart';
 import 'session_storage.dart';
 import '../models/device_info.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
+import '../models/feed_health.dart';
 
 /// Outcome of [RecordingController.startSession]. The outcomes are mutually
 /// exclusive, so they form a sealed type the caller switches exhaustively —
@@ -129,7 +129,10 @@ class RecordingController extends ChangeNotifier {
     // packets, or has gone silent).
     if (deriveFeedHealth(
       streaming: _linkManager.isStreaming,
-      hub: _dataHub,
+      totalSamples: _dataHub.totalSamples,
+      lastDataAt: _dataHub.lastDataAt,
+      lastMalformedPacketAt: _dataHub.lastMalformedPacketAt,
+      streamStartedAt: _dataHub.streamStartedAt,
     ) case FeedHealth.stopped || FeedHealth.blocked || FeedHealth.silent) {
       return const StartSessionNoData();
     }

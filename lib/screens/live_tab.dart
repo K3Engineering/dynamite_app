@@ -5,14 +5,14 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_settings.dart';
-import '../models/calibration.dart';
+import '../models/board_calibration.dart';
 import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
 
 import '../models/device_profile.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
-import '../services/feed_health.dart';
+import '../models/feed_health.dart';
 import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
@@ -90,7 +90,13 @@ class _LiveTabState extends State<LiveTab> {
   void _refreshHealth() {
     final hub = _hub;
     if (hub == null) return;
-    final health = deriveFeedHealth(streaming: true, hub: hub);
+    final health = deriveFeedHealth(
+      streaming: true,
+      totalSamples: hub.totalSamples,
+      lastDataAt: hub.lastDataAt,
+      lastMalformedPacketAt: hub.lastMalformedPacketAt,
+      streamStartedAt: hub.streamStartedAt,
+    );
     if (health != _health.value) _health.value = health;
   }
 
@@ -177,7 +183,7 @@ class _LiveTabState extends State<LiveTab> {
         // Frozen as the CSV export's default converted unit — the unit
         // the instrument is actually drawing, not a disabled preference.
         displayUnit: settings.displayUnit.effective(
-          resolveUnitAvailability(hub, settings.activeChannelIndices),
+          resolveUnitAvailability(hub.calibrationFor, settings.activeChannelIndices),
         ),
       );
 
@@ -515,7 +521,7 @@ class LiveStats extends StatelessWidget {
         listenable: Listenable.merge([hub, ctrl]),
         builder: (context, _) {
           final unit = settings.displayUnit.effective(
-            resolveUnitAvailability(hub, settings.activeChannelIndices),
+            resolveUnitAvailability(hub.calibrationFor, settings.activeChannelIndices),
           );
 
           // A force view shows '—' for an active channel with no cell

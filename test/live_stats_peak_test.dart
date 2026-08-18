@@ -8,7 +8,7 @@ import 'package:dynamite_app/models/app_settings.dart';
 import 'package:dynamite_app/screens/live_tab.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/feed_health.dart';
+import 'package:dynamite_app/models/feed_health.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 

@@ -2,11 +2,6 @@ import 'dart:math' as math;
 
 import 'board_calibration.dart';
 import 'device_flash.dart';
-import 'graph_data_source.dart';
-
-/// [adcCountsPerPolarity] lives in models/board_calibration.dart —
-/// re-exported so existing importers keep working.
-export 'board_calibration.dart' show adcCountsPerPolarity;
 
 /// One rung of a unit's SI-prefix axis ladder: [factor] base units equal one
 /// rung unit (1e-3 mV per µV, 1e3 kgf per tf); [symbol] is the axis-label
@@ -23,16 +18,16 @@ typedef UnitAvailability = ({
   bool anyActiveHasLoadCell,
 });
 
-/// Resolve the unit availability of [data] for a view showing
-/// [activeChannels]. Board constants resolve all-or-nothing and are uniform
-/// across channels, so channel 0 stands in for the board.
+/// Resolve the unit availability for a view showing [activeChannels], given
+/// a per-channel calibration lookup. Board constants resolve all-or-nothing
+/// and are uniform across channels, so channel 0 stands in for the board.
 UnitAvailability resolveUnitAvailability(
-  GraphDataSource data,
+  ChannelCalibration Function(int channel) calibrationFor,
   Iterable<int> activeChannels,
 ) => (
-  boardHasNominals: data.calibrationFor(0).board.nominals != null,
+  boardHasNominals: calibrationFor(0).board.nominals != null,
   anyActiveHasLoadCell: activeChannels.any(
-    (ch) => data.calibrationFor(ch).loadCell != null,
+    (ch) => calibrationFor(ch).loadCell != null,
   ),
 );
 
@@ -155,41 +150,17 @@ enum DisplayUnit {
     orElse: () => fallback,
   );
 
-  /// The unit's verbatim symbol in a dynamite-csv file (docs/csv-format-v1.md):
-  /// exactly as the firmware certificates write it — lowercase `raw`, `mV/V`
-  /// with the slash — used in header suffixes and the metadata's
-  /// `converted_unit`. Differs from [symbol] only for [DisplayUnit.raw]
-  /// (whose display label is capitalized).
-  String get csvSymbol => this == DisplayUnit.raw ? 'raw' : symbol;
-
-  /// The value of 1 ADC count in this unit on [channel]: the export's
-  /// fixed-point quantum (see [exportDecimalsFor]) and the derivative path's
-  /// per-count scale (see [diffConverterFor]). Raw bypasses the board map,
-  /// so its quantum is exactly 1 count. Null exactly when [converterFor] is
-  /// (a force unit with no load cell assigned, or no resolved board
-  /// constants).
+  /// The value of 1 ADC count in this unit on [channel]: the CSV export's
+  /// fixed-point quantum (see `exportDecimalsFor` in csv_export.dart) and
+  /// the derivative path's per-count scale (see [diffConverterFor]). Raw
+  /// bypasses the board map, so its quantum is exactly 1 count. Null
+  /// exactly when [converterFor] is (a force unit with no load cell
+  /// assigned, or no resolved board constants).
   double? countQuantumFor(ChannelCalibration channel) {
     if (this == DisplayUnit.raw) return 1.0;
     final scale = _scalePerMvV(channel);
     final span = channel.board.sensitivityCountsPerMvV;
     return scale == null || span == null ? null : scale / span;
-  }
-
-  /// Fixed-point decimals for this unit on [channel] in a dynamite-csv file
-  /// (docs/csv-format-v1.md): one guard digit beyond the value of 1 ADC
-  /// count in this unit (`ceil(1 − log10(quantum))`, clamped to 0..10),
-  /// computed from the recorded board cal's sensitivity. Null exactly when
-  /// [converterFor] is (a force unit with no load cell — the file column is
-  /// all-blank, so no precision is needed).
-  int? exportDecimalsFor(ChannelCalibration channel) {
-    final quantum = countQuantumFor(channel)?.abs();
-    if (quantum == null) return null;
-    // The nudge keeps an exact power-of-ten quantum from gaining a spurious
-    // extra decimal to floating-point error in the log.
-    return (1 - math.log(quantum) / math.ln10 - 1e-9)
-        .ceil()
-        .clamp(0, 10)
-        .toInt();
   }
 
   /// Force units need an assigned load cell; electrical units only need the

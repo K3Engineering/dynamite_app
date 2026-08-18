@@ -32,7 +32,7 @@ class CalibrationScreen extends StatelessWidget {
             _exportButtons(context, board, deviceName),
             const SizedBox(height: 16),
           ],
-          CalibrationView(deviceId: deviceId),
+          CalibrationView(board: board),
         ],
       ),
     );

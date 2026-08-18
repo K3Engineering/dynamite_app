@@ -1,9 +1,9 @@
-import '../services/feed_health.dart';
+import '../models/feed_health.dart';
 import '../utils/format.dart';
 
 /// User-facing presentation for feed health: the status-bar label and the
-/// detail dialog body. Kept out of the service layer: the enum and
-/// classification live in `feed_health.dart`; the copy lives here.
+/// detail dialog body. Kept out of the model layer: the enum and
+/// classification live in `models/feed_health.dart`; the copy lives here.
 extension FeedHealthPresentation on FeedHealth {
   /// Nothing decodable is arriving right now: the live UI grays its readings
   /// and the rate label reads "no data".

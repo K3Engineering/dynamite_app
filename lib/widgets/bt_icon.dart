@@ -1,8 +1,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 
-import '../services/ble_link_manager.dart' show BtLinkState;
-import '../services/bt_scan.dart' show BtAvailability;
+import '../services/bt_scan.dart' show BtAvailability, BtLinkState;
 import 'status_colors.dart';
 
 /// Everything the [BluetoothIndicator] displays, resolved from link/adapter/

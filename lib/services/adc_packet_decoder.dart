@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'adc_protocol.dart';
 import 'data_hub.dart';
-import '../models/calibration.dart';
+import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../utils/log.dart';
 

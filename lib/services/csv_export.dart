@@ -15,6 +15,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:math' as math;
 import 'dart:ui' show Rect;
 
 import 'package:file_picker/file_picker.dart';
@@ -22,12 +23,42 @@ import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../models/calibration.dart';
+import '../models/device_flash.dart';
 import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import 'csv_export_temp_stub.dart'
     if (dart.library.io) 'csv_export_temp_io.dart';
 import 'session_storage.dart';
+
+/// The dynamite-csv file format's view of a display unit
+/// (docs/csv-format-v1.md): the header/metadata symbol and the per-column
+/// fixed-point precision. Kept here, not on the enum — the file format is
+/// this service's concern.
+extension DisplayUnitCsv on DisplayUnit {
+  /// The unit's verbatim symbol in a dynamite-csv file: exactly as the
+  /// firmware certificates write it — lowercase `raw`, `mV/V` with the
+  /// slash — used in header suffixes and the metadata's `converted_unit`.
+  /// Differs from [symbol] only for [DisplayUnit.raw] (whose display label
+  /// is capitalized).
+  String get csvSymbol => this == DisplayUnit.raw ? 'raw' : symbol;
+
+  /// Fixed-point decimals for this unit on [channel] in a dynamite-csv
+  /// file: one guard digit beyond the value of 1 ADC count in this unit
+  /// (`ceil(1 − log10(quantum))`, clamped to 0..10), computed from the
+  /// recorded board cal's sensitivity. Null exactly when the unit can't
+  /// convert on the channel (a force unit with no load cell — the file
+  /// column is all-blank, so no precision is needed).
+  int? exportDecimalsFor(ChannelCalibration channel) {
+    final quantum = countQuantumFor(channel)?.abs();
+    if (quantum == null) return null;
+    // The nudge keeps an exact power-of-ten quantum from gaining a spurious
+    // extra decimal to floating-point error in the log.
+    return (1 - math.log(quantum) / math.ln10 - 1e-9)
+        .ceil()
+        .clamp(0, 10)
+        .toInt();
+  }
+}
 
 /// Whether the file-share flow ([shareSessionCsv], `shareCalibrationReport`)
 /// can present a share UI on this platform: share_plus shares files on

@@ -2,7 +2,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/models/calibration.dart';
+import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
@@ -452,24 +453,24 @@ void main() {
       final hub = DataHub();
       final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
       expect(
-        resolveUnitAvailability(hub, [0, 1]),
+        resolveUnitAvailability(hub.calibrationFor, [0, 1]),
         (boardHasNominals: false, anyActiveHasLoadCell: false),
       );
 
       hub.updateBoardCalibration(nominalBoard());
       expect(
-        resolveUnitAvailability(hub, [0, 1]),
+        resolveUnitAvailability(hub.calibrationFor, [0, 1]),
         (boardHasNominals: true, anyActiveHasLoadCell: false),
       );
 
       // A cell counts only while its channel is among the shown ones.
       hub.updateLoadCells([cell, null, null, null]);
       expect(
-        resolveUnitAvailability(hub, [0]),
+        resolveUnitAvailability(hub.calibrationFor, [0]),
         (boardHasNominals: true, anyActiveHasLoadCell: true),
       );
       expect(
-        resolveUnitAvailability(hub, [1]),
+        resolveUnitAvailability(hub.calibrationFor, [1]),
         (boardHasNominals: true, anyActiveHasLoadCell: false),
       );
     });

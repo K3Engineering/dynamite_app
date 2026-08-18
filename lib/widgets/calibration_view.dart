@@ -1,24 +1,22 @@
 import 'package:material_ui/material_ui.dart';
-import 'package:provider/provider.dart';
 
-import '../models/calibration.dart';
-import '../services/rig_state.dart';
+import '../models/board_calibration.dart';
 import 'cal_deviation_plot.dart';
 import 'calibration_text.dart';
 
 /// The factory calibration view: identity/traceability, the trust statement,
-/// and each channel's measured corrections
+/// and each channel's measured corrections. Renders the board it's handed —
+/// the per-device document gating is the caller's concern.
 class CalibrationView extends StatelessWidget {
-  const CalibrationView({super.key, required this.deviceId});
+  const CalibrationView({super.key, required this.board});
 
-  /// The connected device this view renders for.
-  final String deviceId;
+  /// The board calibration to render; null shows the unreadable-data
+  /// placeholder.
+  final BoardCalibration? board;
 
   @override
   Widget build(BuildContext context) {
-    final board = context.select<RigState, BoardCalibration?>(
-      (r) => r.boardCalibrationFor(deviceId),
-    );
+    final board = this.board;
     if (board == null) {
       // The dim "nothing here" affordance: the theme's outline role, as in
       // EmptyPlaceholder — not a raw Material grey.
@@ -166,7 +164,6 @@ class _ChannelCalCard extends StatelessWidget {
     // The plot and the Nonlinearity column need only the measured points;
     // the Error column additionally needs the nominal chain as its
     // reference, so it alone drops out without board constants.
-    // TODO I don't think we need this conditional
     final errors = channel.measuredErrorsUvV;
     final nonlinearities = channel.deviationsUvV;
     return Card(

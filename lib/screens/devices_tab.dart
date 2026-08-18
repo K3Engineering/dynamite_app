@@ -7,7 +7,7 @@ import 'package:provider/provider.dart';
 import '../services/ble_link_manager.dart';
 import '../services/bt_scan.dart';
 import '../services/data_hub.dart';
-import '../services/feed_health.dart';
+import '../models/feed_health.dart';
 import '../widgets/feed_health_text.dart';
 import '../utils/format.dart';
 import '../widgets/bt_icon.dart';
@@ -715,9 +715,13 @@ class _FeedHealthLineState extends State<_FeedHealthLine> {
     final streaming = context.select<BleLinkManager, bool>(
       (l) => l.isStreaming,
     );
+    final hub = context.read<DataHub>();
     final health = deriveFeedHealth(
       streaming: streaming,
-      hub: context.read<DataHub>(),
+      totalSamples: hub.totalSamples,
+      lastDataAt: hub.lastDataAt,
+      lastMalformedPacketAt: hub.lastMalformedPacketAt,
+      streamStartedAt: hub.streamStartedAt,
     );
     final label = health?.shortLabel;
     if (label == null) return const SizedBox.shrink();

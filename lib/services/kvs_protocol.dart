@@ -27,6 +27,12 @@ const String kvsFolderUser = 'U';
 /// Settings, factory-resettable: device name, gain.
 const String kvsFolderSettings = 'S';
 
+/// The folder a flash-document key lives in: load cell keys in User, board
+/// calibration and metadata in Factory. (Settings holds name/gain — never
+/// document keys.)
+String kvsFolderForKey(String key) =>
+    key.startsWith('lc') ? kvsFolderUser : kvsFolderFactory;
+
 /// The Settings-namespace key holding the user-assigned device name (value
 /// grammar: docs/flash-schema-v1.md — enforced by `isValidDeviceName` in
 /// the model layer, not here).
