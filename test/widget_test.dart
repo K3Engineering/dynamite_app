@@ -5,11 +5,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/main.dart';
+import 'package:dynamite_app/models/app_meta.dart';
 import 'package:dynamite_app/models/app_settings.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
+import 'package:dynamite_app/services/demo_device.dart';
+import 'package:dynamite_app/services/feed_health_tracker.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/rig_state.dart';
@@ -28,7 +31,7 @@ import 'package:dynamite_app/services/rig_state.dart';
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    // Install the mock regardless of useMockBt so BleLinkManager's unawaited
+    // Install the mock regardless of the dev toggle so BleLinkManager's unawaited
     // availability query resolves without platform channels.
     UniversalBle.setInstance(MockBlePlatform.instance);
     MockBlePlatform.instance.dropEveryNPackets = 0;
@@ -38,7 +41,7 @@ void main() {
     final appEvents = AppEvents();
     final dataHub = DataHub();
     final decoder = AdcPacketDecoder(dataHub);
-    final linkManager = BleLinkManager(events: appEvents)
+    final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
       ..onAdcData = decoder.onDataPacket
       ..onCalibrationData = decoder.onCalibrationPacket;
     final prefs = await SharedPreferences.getInstance();
@@ -54,12 +57,18 @@ void main() {
       decoder: decoder,
       events: appEvents,
     );
+    final feedHealth = FeedHealthTracker(hub: dataHub, link: linkManager);
+    addTearDown(feedHealth.dispose);
 
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           ChangeNotifierProvider.value(value: AppSettings(prefs: prefs)),
+          Provider<AppMeta>.value(
+            value: const AppMeta(version: '0.0.0', buildNumber: '0'),
+          ),
           Provider.value(value: appEvents),
+          Provider.value(value: feedHealth),
           ChangeNotifierProvider.value(value: dataHub),
           ChangeNotifierProvider.value(value: linkManager),
           ChangeNotifierProvider.value(value: rigState),

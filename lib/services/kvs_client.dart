@@ -3,9 +3,6 @@ import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:universal_ble/universal_ble.dart';
-
-import 'bt_device_config.dart';
 import 'kvs_protocol.dart';
 
 /// Request/response client for the device's key-value store. The firmware
@@ -19,11 +16,14 @@ import 'kvs_protocol.dart';
 /// is spent afterwards — a new link builds a new client.
 class KvsClient {
   KvsClient({
-    required this.deviceId,
+    required this.write,
     this.commandTimeout = const Duration(seconds: 3),
   });
 
-  final String deviceId;
+  /// The transport for one command frame: a write to the link's KVS
+  /// characteristic, supplied by the link manager (which owns the platform
+  /// BLE call).
+  final Future<void> Function(Uint8List bytes) write;
 
   /// Upper bound on one command's write + response round trip. Comfortably
   /// below the BLE stack's own command timeout so a silently dropped
@@ -110,12 +110,7 @@ class KvsClient {
       final command = _queue.first;
       _current = command;
       try {
-        await UniversalBle.write(
-          deviceId,
-          btServiceId,
-          btChrKvs,
-          Uint8List.fromList(utf8.encode(command.request)),
-        );
+        await write(Uint8List.fromList(utf8.encode(command.request)));
         final response = await command.response.future.timeout(commandTimeout);
         command.finish(response);
       } catch (e) {

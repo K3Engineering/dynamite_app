@@ -6,10 +6,10 @@ import 'adc_packet_decoder.dart';
 import 'app_events.dart';
 import 'ble_link_manager.dart';
 import 'data_hub.dart';
-import 'feed_health.dart';
 import 'session_storage.dart';
-import '../models/device_info.dart';
+import '../models/device_profile.dart';
 import '../models/display_unit.dart';
+import '../models/feed_health.dart';
 
 /// Outcome of [RecordingController.startSession]. The outcomes are mutually
 /// exclusive, so they form a sealed type the caller switches exhaustively —
@@ -127,9 +127,13 @@ class RecordingController extends ChangeNotifier {
     // decodable (a stream that never produced data, produces only malformed
     // packets, or has gone silent).
     if (deriveFeedHealth(
-      streaming: _linkManager.isStreaming,
-      hub: _dataHub,
-    ) case FeedHealth.stopped || FeedHealth.blocked || FeedHealth.silent) {
+          streaming: _linkManager.isStreaming,
+          totalSamples: _dataHub.totalSamples,
+          lastDataAt: _dataHub.lastDataAt,
+          lastMalformedPacketAt: _dataHub.lastMalformedPacketAt,
+          streamStartedAt: _dataHub.streamStartedAt,
+        )
+        case FeedHealth.stopped || FeedHealth.blocked || FeedHealth.silent) {
       return const StartSessionNoData();
     }
 
@@ -137,14 +141,22 @@ class RecordingController extends ChangeNotifier {
     // Freeze the connected device's identity onto the row (the CSV `device`
     // block — docs/csv-format-v1.md): export must never consult live device
     // state.
-    final deviceMetadata = DeviceInfo.toCsvDeviceMetadata(
+    final deviceMetadata = toSessionDeviceMetadata(
       name: _linkManager.connectedDeviceName,
       info: _linkManager.connectedDeviceInfo,
     );
     final LiveSessionWriter writer;
     try {
       writer = await SessionStorage.startSession(
-        dataHub: _dataHub,
+        tare: _dataHub.tare,
+        // Snapshot the per-channel calibration in effect now; playback
+        // converts through it even if calibration changes later.
+        channelCalibration: [
+          for (int ch = 0; ch < kAdcChannelCount; ch++)
+            _dataHub.calibrationFor(ch),
+        ],
+        samplesPerSec: DataHub.samplesPerSec,
+        sourceRingCapacity: DataHub.maxDataSz,
         name: sessionName,
         channelLabels: channelLabels,
         visibleChannels: visibleChannels,
@@ -235,7 +247,7 @@ class RecordingController extends ChangeNotifier {
     if (writer.hasError) {
       unawaited(stopSession());
     } else {
-      unawaited(writer.appendData(_dataHub, startIdx, count));
+      unawaited(writer.appendData(_dataHub.snapshotRange(startIdx, count)));
     }
   }
 

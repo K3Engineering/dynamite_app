@@ -1,8 +1,8 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
-import '../models/calibration.dart';
-import '../services/ble_link_manager.dart';
+import '../models/load_cell.dart';
+import '../models/rig_edits.dart';
 import '../services/rig_state.dart';
 import '../utils/format.dart';
 
@@ -19,7 +19,11 @@ const quickSensitivitiesMvV = <double>[1, 2, 3];
 /// until "Save to device" (the flash doc is the rig's single truth —
 /// reads are automatic, writes are explicit).
 class RigSlotsSection extends StatefulWidget {
-  const RigSlotsSection({super.key});
+  const RigSlotsSection({super.key, required this.connectedDeviceId});
+
+  /// The currently connected device ('' when none): gates the Save button —
+  /// saving needs the very device the flash doc came from to be connected.
+  final String connectedDeviceId;
 
   @override
   State<RigSlotsSection> createState() => _RigSlotsSectionState();
@@ -81,11 +85,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
       (r) => r.pending,
     );
     final rig = context.read<RigState>();
-    // The section reads the link only to gate the Save button: saving needs
-    // the very device the flash doc came from to be connected.
-    final connectedId = context.select<BleLinkManager, String>(
-      (l) => l.connectedDeviceId,
-    );
+    final connectedId = widget.connectedDeviceId;
 
     final canSave =
         pending != null &&

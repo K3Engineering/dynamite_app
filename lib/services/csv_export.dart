@@ -1,141 +1,130 @@
-/// CSV export of a recorded session, plus the save/share plumbing that hands
-/// the generated file to the OS.
-///
-/// Two delivery paths, two plugins (no single package does both well):
-/// - [downloadSessionCsv] — file_picker's `saveFile`: a save-as dialog on
-///   Android/iOS/macOS/Windows/Linux, a browser download on web.
-/// - [shareSessionCsv] — share_plus's share sheet ("Save to Files" on iOS,
-///   the Web Share API with download fallback on web). File sharing is
-///   unsupported on Linux — see [fileShareSupportedHere].
-///
-/// `file_selector` was dropped for this: its `getSaveLocation` is
-/// unimplemented on Android and iOS (throws `UnimplementedError`), which is
-/// what broke the previous export on mobile. (Verified against plugin
-/// sources, July 2026.)
+/// CSV export of a recorded session: building the dynamite-csv file
+/// (docs/csv-format-v1.md) and handing it to the OS via the shared export
+/// delivery module (export_delivery.dart — both delivery paths, plus the
+/// shared filename rules below).
 library;
 
 import 'dart:convert';
-import 'dart:ui' show Rect;
+import 'dart:math' as math;
+import 'dart:typed_data';
 
-import 'package:file_picker/file_picker.dart';
-import 'package:flutter/foundation.dart';
-import 'package:package_info_plus/package_info_plus.dart';
-import 'package:share_plus/share_plus.dart';
-
-import '../models/calibration.dart';
-import '../models/device_info.dart';
+import '../models/app_meta.dart';
+import '../models/device_flash.dart';
 import '../models/display_unit.dart';
-import 'csv_export_temp_stub.dart'
-    if (dart.library.io) 'csv_export_temp_io.dart';
-import 'database.dart';
+import 'export_delivery.dart';
+import 'session_data.dart';
 import 'session_storage.dart';
 
-/// Whether the file-share flow ([shareSessionCsv], `shareCalibrationReport`)
-/// can present a share UI on this platform: share_plus shares files on
-/// Android, iOS, macOS, Windows and web, but not Linux.
-bool get fileShareSupportedHere {
-  if (kIsWeb) return true;
-  return defaultTargetPlatform != TargetPlatform.linux &&
-      defaultTargetPlatform != TargetPlatform.fuchsia;
+/// The dynamite-csv file format's view of a display unit
+/// (docs/csv-format-v1.md): the header/metadata symbol and the per-column
+/// fixed-point precision. Kept here, not on the enum — the file format is
+/// this service's concern.
+extension DisplayUnitCsv on DisplayUnit {
+  /// The unit's verbatim symbol in a dynamite-csv file: exactly as the
+  /// firmware certificates write it — lowercase `raw`, `mV/V` with the
+  /// slash — used in header suffixes and the metadata's `converted_unit`.
+  /// Differs from [symbol] only for [DisplayUnit.raw] (whose display label
+  /// is capitalized).
+  String get csvSymbol => this == DisplayUnit.raw ? 'raw' : symbol;
+
+  /// Fixed-point decimals for this unit on [channel] in a dynamite-csv
+  /// file: one guard digit beyond the value of 1 ADC count in this unit
+  /// (`ceil(1 − log10(quantum))`, clamped to 0..10), computed from the
+  /// recorded board cal's sensitivity. Null exactly when the unit can't
+  /// convert on the channel (a force unit with no load cell — the file
+  /// column is all-blank, so no precision is needed).
+  int? exportDecimalsFor(ChannelCalibration channel) {
+    final quantum = countQuantumFor(channel)?.abs();
+    if (quantum == null) return null;
+    // The nudge keeps an exact power-of-ten quantum from gaining a spurious
+    // extra decimal to floating-point error in the log.
+    return (1 - math.log(quantum) / math.ln10 - 1e-9)
+        .ceil()
+        .clamp(0, 10)
+        .toInt();
+  }
 }
 
-/// Download [session]'s recorded [data] as CSV: a save-as dialog on native
-/// platforms, a browser download on web. [unit] is the file's converted unit
-/// (the user's pick in the export flow — see docs/csv-format-v1.md).
-///
-/// Returns a user-facing result message, or null when the user cancelled —
-/// callers should stay silent then. Errors are thrown for the caller to
-/// surface. Note the whole file crosses the platform channel as in-memory
-/// bytes (file_picker's only API); a chunked writer is planned with the
-/// format milestone.
+/// Download the session's recorded [data] as CSV: a save-as dialog on
+/// native platforms, a browser download on web. [unit] is the file's
+/// converted unit (the user's pick in the export flow — see
+/// docs/csv-format-v1.md). [sessionName]/[recordedAt]/[deviceInfoJson] are
+/// the session row's fields, passed flat so the export API doesn't take the
+/// drift row type. Returns per the shared delivery contract
+/// ([downloadExport]).
 Future<String?> downloadSessionCsv({
-  required Session session,
+  required String sessionName,
+  required DateTime recordedAt,
+  required String deviceInfoJson,
   required SessionData data,
   required DisplayUnit unit,
+  required AppMeta appMeta,
 }) async {
-  final (bytes, fileName) = await _prepareCsv(session, data, unit);
-  final savedTo = await FilePicker.saveFile(
-    dialogTitle: 'Download session CSV',
-    fileName: fileName,
-    type: FileType.custom,
-    allowedExtensions: const ['csv'],
-    bytes: bytes,
+  final (bytes, fileName) = _prepareCsv(
+    sessionName,
+    recordedAt,
+    deviceInfoJson,
+    data,
+    unit,
+    appMeta,
   );
-  if (kIsWeb) {
-    // The browser handles the download; saveFile always returns null there.
-    return 'Download started for $fileName';
-  }
-  // Null = user cancelled the dialog.
-  return savedTo == null ? null : 'Saved to $savedTo';
+  return downloadExport(
+    bytes: bytes,
+    fileName: fileName,
+    dialogTitle: 'Download session CSV',
+  );
 }
 
-/// Share [session]'s recorded [data] as CSV via the platform share sheet.
-/// [unit] is the file's converted unit (see docs/csv-format-v1.md).
-///
-/// [sharePositionOrigin] anchors the iPad share popover; ignored elsewhere.
-///
-/// Returns a user-facing result message, or null when the user dismissed the
-/// sheet. The share sheet doesn't say where the file went (or what the user
-/// did with it), so the message can't either. Errors are thrown for the
-/// caller to surface.
+/// Share the session's recorded [data] as CSV via the platform share sheet.
+/// [unit] is the file's converted unit (see docs/csv-format-v1.md). [anchor]
+/// positions the iPad share popover; ignored elsewhere. Returns per the
+/// shared delivery contract ([shareExport]).
 Future<String?> shareSessionCsv({
-  required Session session,
+  required String sessionName,
+  required DateTime recordedAt,
+  required String deviceInfoJson,
   required SessionData data,
   required DisplayUnit unit,
-  Rect? sharePositionOrigin,
+  required AppMeta appMeta,
+  ShareAnchor? anchor,
 }) async {
-  final (bytes, fileName) = await _prepareCsv(session, data, unit);
-  final XFile file;
-  if (kIsWeb) {
-    // XFile.name is ignored by most platforms; share_plus's fileNameOverrides
-    // is what sets the shared/downloaded file's name.
-    file = XFile.fromData(bytes, mimeType: 'text/csv');
-  } else {
-    file = XFile(await writeTempCsv(bytes, fileName), mimeType: 'text/csv');
-  }
-  ShareResult result;
-  try {
-    result = await SharePlus.instance.share(
-      ShareParams(
-        title: 'Share CSV',
-        files: [file],
-        fileNameOverrides: [fileName],
-        sharePositionOrigin: sharePositionOrigin,
-      ),
-    );
-  } finally {
-    if (!kIsWeb) await deleteTempCsv(file.path);
-  }
-  return switch (result.status) {
-    ShareResultStatus.success => 'Shared $fileName',
-    // Backed out of the share sheet: null = the caller shows no snackbar.
-    ShareResultStatus.dismissed => null,
-    // The platform can't tell what happened; treat as shared.
-    ShareResultStatus.unavailable => 'Shared $fileName (status unknown)',
-  };
+  final (bytes, fileName) = _prepareCsv(
+    sessionName,
+    recordedAt,
+    deviceInfoJson,
+    data,
+    unit,
+    appMeta,
+  );
+  return shareExport(
+    bytes: bytes,
+    fileName: fileName,
+    mimeType: 'text/csv',
+    dialogTitle: 'Share CSV',
+    anchor: anchor,
+  );
 }
 
-/// App version for the metadata's `generator` field, fetched once (the
-/// platform answer can't change during a run).
-final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
-
-/// Build the CSV bytes and filename for [session]'s [data] in [unit].
+/// Build the CSV bytes and filename for one session's [data] in [unit].
 /// Shared by both delivery paths.
-Future<(Uint8List, String)> _prepareCsv(
-  Session session,
+(Uint8List, String) _prepareCsv(
+  String sessionName,
+  DateTime recordedAt,
+  String deviceInfoJson,
   SessionData data,
   DisplayUnit unit,
-) async {
+  AppMeta appMeta,
+) {
   final csv = buildSessionCsv(
     data,
     unit,
-    recordedAt: session.createdAt,
-    generator: 'dynamite-flutter ${(await _packageInfo).version}',
-    deviceInfoJson: session.deviceInfoJson,
+    recordedAt: recordedAt,
+    generator: appMeta.generator,
+    deviceInfoJson: deviceInfoJson,
   );
   return (
     Uint8List.fromList(utf8.encode(csv)),
-    csvFileNameForSession(session.name),
+    csvFileNameForSession(sessionName),
   );
 }
 
@@ -154,7 +143,7 @@ Future<(Uint8List, String)> _prepareCsv(
 /// conventions are `\n` endings, no BOM, dot decimals — see the spec.
 ///
 /// [deviceInfoJson] is the session row's frozen `device` block (see
-/// [DeviceInfo.toCsvDeviceMetadata]); null or malformed degrades to all-null
+/// [toSessionDeviceMetadata]); null or malformed degrades to all-null
 /// placeholders rather than failing the export.
 ///
 /// TODO(perf): the whole CSV is built in memory as one string — the format
@@ -172,8 +161,8 @@ String buildSessionCsv(
   // only on sessions with no recorded packets (no data rows anyway).
   final int ssnOrigin = data.ssnOrigin ?? 0;
   final device = deviceInfoJson == null
-      ? DeviceInfo.toCsvDeviceMetadata(name: null, info: null)
-      : DeviceInfo.fromCsvDeviceMetadata(deviceInfoJson);
+      ? toSessionDeviceMetadata(name: null, info: null)
+      : fromSessionDeviceMetadata(deviceInfoJson);
 
   // Per-channel quartet-2 cell formatters, computed once from the session's
   // frozen calibration; each closure folds in the column's fixed-point
@@ -304,34 +293,3 @@ Map<String, Object?> _channelMetadata(ChannelCalibration cal, double tareRaw) {
 /// [exportFileNameFor].
 String csvFileNameForSession(String sessionName) =>
     exportFileNameFor(sessionName, 'csv', fallback: 'session');
-
-/// An export file name: [base] with characters that are illegal in
-/// Windows/macOS/Android filenames replaced (auto session names contain `:`
-/// — e.g. `2026-07-29 14:05:32`), leading dots stripped (they would hide the
-/// file on macOS/Linux), trailing dots/spaces trimmed (illegal on Windows),
-/// and a Windows reserved device name disambiguated with an underscore —
-/// Windows refuses CON, NUL, COM1–COM9, LPT1–LPT9 and friends regardless of
-/// extension, so the save dialog would reject the suggested name outright.
-/// An empty (or scrubbed-away) base becomes [fallback].
-String exportFileNameFor(
-  String base,
-  String extension, {
-  String fallback = 'export',
-}) {
-  var name = (base.isEmpty ? fallback : base)
-      .replaceAll(RegExp(r'[\\/:*?"<>|]'), '-')
-      .replaceAll(RegExp(r'^\.+'), '')
-      .replaceAll(RegExp(r'[. ]+$'), '');
-  if (name.isEmpty) name = fallback;
-  // Reserved when followed by the end of the name or an extension dot
-  // ("con.txt" is as refused as "con"); keep the name recognizable by
-  // marking it right after the reserved word ("con_.txt").
-  final reserved = RegExp(
-    r'^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?=\.|$)',
-    caseSensitive: false,
-  ).firstMatch(name);
-  if (reserved != null) {
-    name = '${reserved[0]}_${name.substring(reserved.end)}';
-  }
-  return '$name.$extension';
-}

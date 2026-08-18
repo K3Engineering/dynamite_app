@@ -4,81 +4,11 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../models/calibration.dart';
-
-/// The piece of the BLE stack [RigState] needs: which device is connected,
-/// and a way to write the whole flash document back to it. Implemented by
-/// `BleLinkManager` (demo device mutates an in-memory doc; real devices go
-/// through the device KVS — see `KvsFlashTransport`).
-abstract interface class RigFlashTransport {
-  /// Empty string when no device is connected.
-  String get connectedDeviceId;
-
-  /// Display name of the connected device ('' when none).
-  String get connectedDeviceName;
-
-  /// Write a serialized [DeviceFlash] document to the connected device.
-  /// Throws on failure — the caller keeps its pending edits.
-  Future<void> writeFlashDoc(String doc);
-
-  /// Read the flash document back from the connected device (save
-  /// verification). Null on failure or when no device is connected.
-  Future<String?> readFlashDoc();
-}
-
-/// A "last seen values" entry: a cell this app has met (on a device flash
-/// read, or typed in by the user), offered as a quick pick when filling an
-/// empty slot. Purely advisory app memory — the device is the rig's truth.
-class RigHistoryEntry {
-  RigHistoryEntry({
-    required this.cell,
-    required this.lastSeen,
-    required this.deviceName,
-  });
-
-  final LoadCellProfile cell;
-  DateTime lastSeen;
-
-  /// Device the entry was last seen on (or added on), for display.
-  String deviceName;
-
-  Map<String, dynamic> toJson() => {
-    'cell': cell.toJson(),
-    'lastSeen': lastSeen.millisecondsSinceEpoch,
-    'deviceName': deviceName,
-  };
-
-  /// Tolerant of extra keys (older versions persisted an 'origin' field).
-  factory RigHistoryEntry.fromJson(Map<String, dynamic> json) =>
-      RigHistoryEntry(
-        cell: LoadCellProfile.fromJson(
-          Map<String, dynamic>.from(json['cell'] as Map),
-        ),
-        lastSeen: DateTime.fromMillisecondsSinceEpoch(json['lastSeen'] as int),
-        deviceName: json['deviceName'] as String? ?? '',
-      );
-}
-
-/// Unsaved slot edits. In-memory ONLY (never persisted): they survive a
-/// device disconnect for the SAME device (restored on reconnect, see
-/// [RigState.onFlashRead]), but an app restart drops them — by design, so a
-/// stale edit can never resurface days later against an unknown rig.
-class PendingRigEdits {
-  PendingRigEdits({
-    required this.deviceId,
-    required this.base,
-    required this.edited,
-  });
-
-  final String deviceId;
-
-  /// The flash state the edits are based on. If a reconnect finds the device
-  /// no longer matches this, the edits are stale and get discarded.
-  final RigSlots base;
-
-  /// The edited slot list (what the app's readings already use).
-  RigSlots edited;
-}
+import '../models/board_calibration.dart';
+import '../models/device_flash.dart';
+import '../models/load_cell.dart';
+import '../models/rig_edits.dart';
+import 'rig_flash_transport.dart';
 
 /// Owns the rig: the slot list read from the connected device, unsaved
 /// edits, and the cross-device cell history.

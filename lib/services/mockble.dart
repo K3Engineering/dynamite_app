@@ -8,17 +8,31 @@ import 'package:universal_ble/universal_ble.dart';
 import 'adc_protocol.dart';
 import 'bt_device_config.dart';
 import 'demo_calibration.dart';
-import 'kvs_flash_transport.dart';
 import 'kvs_protocol.dart';
-import '../models/calibration.dart';
+import '../models/board_calibration.dart';
 
 /// Samples per emitted feed packet: one packet every that many milliseconds
 /// makes 1 kHz (matches DataHub.samplesPerSec).
 const int _samplesPerPacket = 20;
 
+/// Compile-time dev toggle: run the app against the simulated BLE platform
+/// instead of the real radio. Flip to true only on a dev machine. Tests
+/// install the platform directly (see `installMockBle` helpers there) —
+/// this flag is the app entrypoint's toggle.
+const bool installMockBlePlatform = false;
+
 class MockBlePlatform extends UniversalBlePlatform {
   static MockBlePlatform? _instance;
   static MockBlePlatform get instance => _instance ??= MockBlePlatform._();
+
+  /// Install the mock platform when [installMockBlePlatform] is set;
+  /// otherwise leave the real platform in place. Called once from main().
+  static void installIfEnabled() {
+    if (installMockBlePlatform) {
+      UniversalBle.setInstance(MockBlePlatform.instance);
+    }
+  }
+
   static const netDelay = Duration(seconds: 1);
   static const hwDelay = Duration(milliseconds: 200);
 
@@ -89,13 +103,13 @@ class MockBlePlatform extends UniversalBlePlatform {
   final List<String> kvsCommandLog = [];
 
   /// (Re)populate [kvsStore] from a `key=value` flash document, routing
-  /// keys to folders the way the app does (see [KvsFlashTransport]).
+  /// keys to folders the way the app does (see [kvsFolderForKey]).
   void seedKvsFromDoc(String doc) {
     for (final folder in kvsStore.values) {
       folder.clear();
     }
     for (final e in parseFlashKv(doc).entries) {
-      kvsStore[KvsFlashTransport.folderForKey(e.key)]![e.key] = e.value;
+      kvsStore[kvsFolderForKey(e.key)]![e.key] = e.value;
     }
   }
 
@@ -386,7 +400,8 @@ class MockBlePlatform extends UniversalBlePlatform {
               _mockData[(_mockDataCount + i) % _mockData.length],
           ],
         );
-        _mockDataCount = (_mockDataCount + _samplesPerPacket) % _mockData.length;
+        _mockDataCount =
+            (_mockDataCount + _samplesPerPacket) % _mockData.length;
         updateCharacteristicValue(deviceId, characteristic, ev, null);
       });
     }

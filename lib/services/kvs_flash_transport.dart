@@ -1,4 +1,5 @@
-import '../models/calibration.dart';
+import '../models/board_calibration.dart';
+import '../models/device_flash.dart';
 import 'kvs_client.dart';
 import 'kvs_protocol.dart';
 
@@ -19,12 +20,6 @@ class KvsFlashTransport {
   /// they were found.
   final Map<String, String> _keyFolders = {};
   Map<String, String> _snapshot = const {};
-
-  /// The folder a document key lives in: load cell keys in User, board
-  /// calibration and metadata in Factory. (Settings holds name/gain — never
-  /// document keys.)
-  static String folderForKey(String key) =>
-      key.startsWith('lc') ? kvsFolderUser : kvsFolderFactory;
 
   /// Read every key from the Factory and User folders and reassemble the
   /// document text. Null on transport/protocol failure (the caller treats
@@ -78,5 +73,5 @@ class KvsFlashTransport {
     _snapshot = kv;
   }
 
-  String _folderFor(String key) => _keyFolders[key] ?? folderForKey(key);
+  String _folderFor(String key) => _keyFolders[key] ?? kvsFolderForKey(key);
 }

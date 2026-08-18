@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dynamite_app/models/app_settings.dart';
 import 'package:dynamite_app/screens/session_detail_screen.dart';
 import 'package:dynamite_app/services/database.dart';
+import 'package:dynamite_app/services/session_queries.dart';
 import 'package:dynamite_app/widgets/empty_placeholder.dart';
 
 /// Widget test for the Session detail screen's empty state: a session with
@@ -44,7 +45,7 @@ void main() {
       durationMs: 0,
       peaksRaw: '[]',
     );
-    final session = (await AppDatabase.instance.sessionById(sessionId))!;
+    final session = (await sessionSummaryById(sessionId))!;
 
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();

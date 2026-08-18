@@ -6,13 +6,15 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_ble/universal_ble.dart';
 
+import 'package:dynamite_app/models/app_meta.dart';
 import 'package:dynamite_app/models/app_settings.dart';
-import 'package:dynamite_app/models/calibration.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/screens/settings_tab.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
+import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 
@@ -26,7 +28,7 @@ import 'package:dynamite_app/services/rig_state.dart';
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    // Install the mock regardless of useMockBt so BleLinkManager's
+    // Install the mock regardless of the dev toggle so BleLinkManager's
     // unawaited availability query resolves without platform channels (same
     // pattern as widget_test.dart).
     UniversalBle.setInstance(MockBlePlatform.instance);
@@ -36,7 +38,7 @@ void main() {
   Future<BleLinkManager> pump(WidgetTester tester) async {
     final prefs = await SharedPreferences.getInstance();
     final events = AppEvents();
-    final link = BleLinkManager(events: events);
+    final link = BleLinkManager(events: events, demo: DemoDevice());
     final hub = DataHub();
     final rig = RigState(transport: link, prefs: prefs);
     // Wire the link's calibration read to the rig — the app's wiring goes
@@ -54,11 +56,16 @@ void main() {
           ChangeNotifierProvider<AppSettings>.value(
             value: AppSettings(prefs: prefs),
           ),
+          Provider<AppMeta>.value(
+            value: const AppMeta(version: '0.0.0', buildNumber: '0'),
+          ),
           ChangeNotifierProvider<DataHub>.value(value: hub),
           ChangeNotifierProvider<BleLinkManager>.value(value: link),
           ChangeNotifierProvider<RigState>.value(value: rig),
         ],
-        child: const MaterialApp(home: Scaffold(body: SettingsTab())),
+        child: MaterialApp(
+          home: Scaffold(body: SettingsTab(onGoToDevices: () {})),
+        ),
       ),
     );
     // Pump past the construction-time BLE timers (the mock's 200ms
@@ -197,10 +204,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'Bad,Name');
     await tester.pump();
 
-    expect(
-      find.textContaining('start with a letter or digit'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('start with a letter or digit'), findsOneWidget);
     expect(
       tester
           .widget<FilledButton>(find.byKey(const Key('device_name_save')))

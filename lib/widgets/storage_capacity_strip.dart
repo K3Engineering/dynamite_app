@@ -4,8 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../models/storage_capacity.dart';
-import '../services/database.dart';
-import '../services/storage_capacity.dart' as probe;
 import '../utils/format.dart';
 
 /// Warning for the Sessions tab shown on browsers that may delete stored
@@ -14,13 +12,13 @@ import '../utils/format.dart';
 /// browsers are WKWebView shells with undocumented storage durability).
 /// Firefox is excluded: it only evicts under disk pressure, LRU-ordered.
 /// Permanent and non-dismissible — the risk is ongoing, and dismissal would
-/// be state to keep. Self-hides on Chromium, Firefox, and native.
+/// be state to keep. The Sessions tab includes this only where
+/// `browserMayAutoDeleteSessions()` says the browser qualifies.
 class BrowserStorageWarning extends StatelessWidget {
   const BrowserStorageWarning({super.key});
 
   @override
   Widget build(BuildContext context) {
-    if (!probe.browserMayAutoDeleteSessions()) return const SizedBox.shrink();
     final scheme = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
@@ -48,54 +46,6 @@ class BrowserStorageWarning extends StatelessWidget {
         ],
       ),
     );
-  }
-}
-
-/// Fetches the platform's [StorageCapacity] and renders
-/// [StorageCapacityStrip]; renders nothing where probing is unsupported
-/// (desktop) or fails. Refetches on chunk-table changes — the Sessions
-/// tab's refresh triggers (deletes, recording finalization, live chunk
-/// writes) all land there.
-class StorageCapacityLoader extends StatefulWidget {
-  const StorageCapacityLoader({super.key});
-
-  @override
-  State<StorageCapacityLoader> createState() => _StorageCapacityLoaderState();
-}
-
-class _StorageCapacityLoaderState extends State<StorageCapacityLoader> {
-  StorageCapacity? _capacity;
-  StreamSubscription<Map<int, int>>? _cueSub;
-
-  @override
-  void initState() {
-    super.initState();
-    unawaited(_refresh());
-    // Errors are swallowed: on hosts without platform channels the DB never
-    // opens, and the strip simply stays hidden (the smoke test pumps all
-    // tabs in exactly that situation).
-    _cueSub = AppDatabase.instance.watchSessionByteSizes().listen(
-      (_) => unawaited(_refresh()),
-      onError: (_) {},
-    );
-  }
-
-  @override
-  void dispose() {
-    unawaited(_cueSub?.cancel());
-    super.dispose();
-  }
-
-  Future<void> _refresh() async {
-    final capacity = await probe.fetchStorageCapacity();
-    if (mounted) setState(() => _capacity = capacity);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final capacity = _capacity;
-    if (capacity == null) return const SizedBox.shrink();
-    return StorageCapacityStrip(capacity: capacity);
   }
 }
 

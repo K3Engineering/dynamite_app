@@ -1,9 +1,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 
-import 'package:universal_ble/universal_ble.dart' show AvailabilityState;
-
-import '../services/ble_link_manager.dart' show BtLinkState;
+import '../models/bt_scan.dart' show BtAvailability, BtLinkState;
 import 'status_colors.dart';
 
 /// Everything the [BluetoothIndicator] displays, resolved from link/adapter/
@@ -31,7 +29,7 @@ typedef BtStatusVisual = ({
 /// real link state and uses the link branches.
 BtStatusVisual btStatusVisual({
   required BtLinkState linkState,
-  required AvailabilityState availability,
+  required BtAvailability availability,
   required bool isScanning,
   required bool hasConnectableDevices,
   required StatusColors status,
@@ -80,7 +78,7 @@ BtStatusVisual btStatusVisual({
       );
     }
     switch (availability) {
-      case AvailabilityState.poweredOn:
+      case BtAvailability.poweredOn:
         // A previously-discovered device can remain connectable after a scan
         // stops, so surface that rather than implying a scan is required —
         // but only while a Connect action actually exists (see
@@ -95,15 +93,15 @@ BtStatusVisual btStatusVisual({
         // either here would put the same instruction twice on screen.
         // The indicator renders icon-only for an empty label.
         return (Icons.bluetooth, connected, '');
-      case AvailabilityState.poweredOff:
+      case BtAvailability.poweredOff:
         return (Icons.bluetooth_disabled, colors.outline, 'Bluetooth is off');
-      case AvailabilityState.unknown:
+      case BtAvailability.unknown:
         return (Icons.question_mark, colors.outline, 'Starting up Bluetooth…');
-      case AvailabilityState.resetting:
+      case BtAvailability.resetting:
         return (Icons.question_mark, active, 'Bluetooth resetting…');
-      case AvailabilityState.unsupported:
+      case BtAvailability.unsupported:
         return (Icons.stop, colors.error, 'Bluetooth not supported');
-      case AvailabilityState.unauthorized:
+      case BtAvailability.unauthorized:
         return (Icons.stop, colors.tertiary, 'Bluetooth permission needed');
     }
   }
@@ -152,7 +150,7 @@ enum TopIndicatorMode {
 /// icon + label only survive the dedupe in the rare case of a stale
 /// populated list (e.g. permission revoked mid-session).
 TopIndicatorMode topIndicatorMode({
-  required AvailabilityState availability,
+  required BtAvailability availability,
   required bool isScanning,
   required bool emptyBlockVisible,
 }) {
@@ -163,7 +161,7 @@ TopIndicatorMode topIndicatorMode({
   if (isScanning) return TopIndicatorMode.iconAndLabel;
   // Adapter failures: distinct glyphs (off / permission / unsupported /
   // startup) carry real information.
-  if (availability != AvailabilityState.poweredOn) {
+  if (availability != BtAvailability.poweredOn) {
     return TopIndicatorMode.iconAndLabel;
   }
   // Powered-on nominal: no icon.

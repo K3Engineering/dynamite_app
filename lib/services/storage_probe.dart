@@ -7,5 +7,5 @@
 library;
 
 export '../models/storage_capacity.dart';
-export 'storage_capacity_io.dart'
-    if (dart.library.js_interop) 'storage_capacity_web.dart';
+export 'storage_probe_io.dart'
+    if (dart.library.js_interop) 'storage_probe_web.dart';

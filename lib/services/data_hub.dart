@@ -2,12 +2,15 @@ import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
-import 'adc_protocol.dart';
+import '../models/device_profile.dart';
 import '../models/bucket_series.dart';
-import '../models/calibration.dart';
+import '../models/board_calibration.dart';
+import '../models/device_flash.dart';
+import '../models/load_cell.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
-import '../models/graph_data_source.dart';
+import 'graph_data_source.dart';
+import '../models/sample_slice.dart';
 
 /// Invoked by [DataHub.commitBatch] with the exact slice of samples appended
 /// by the decoder for one packet ([startIdx] is the logical index of the
@@ -20,8 +23,8 @@ typedef SamplesAppendedListener = void Function(int startIdx, int count);
 /// the previous sample's value across a gap, so every stored value is a real
 /// ADC reading and downstream consumers need no magic-value checks.
 ///
-/// Channel count is [wireNumAdcChan] (a wire-format fact); channel index ==
-/// storage index == display index.
+/// Channel count is [kAdcChannelCount]; channel index == storage index ==
+/// display index.
 class DataHub extends ChangeNotifier implements GraphDataSource {
   static const int _tareWindow = 1024;
   static const int samplesPerSec = 1000;
@@ -36,16 +39,16 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   static const int _noMaxYet = -0x80000000;
   static const int _noMinYet = 0x7FFFFFFF;
 
-  final Float64List tare = Float64List(wireNumAdcChan);
-  final Float64List _runningTotal = Float64List(wireNumAdcChan);
-  final Int32List rawMax = Int32List(wireNumAdcChan);
-  final Int32List rawMin = Int32List(wireNumAdcChan);
+  final Float64List tare = Float64List(kAdcChannelCount);
+  final Float64List _runningTotal = Float64List(kAdcChannelCount);
+  final Int32List rawMax = Int32List(kAdcChannelCount);
+  final Int32List rawMin = Int32List(kAdcChannelCount);
 
   /// Latest raw value per channel (for live stats display).
-  final Int32List _currentRaw = Int32List(wireNumAdcChan);
+  final Int32List _currentRaw = Int32List(kAdcChannelCount);
 
   final List<Int32List> rawData = List.generate(
-    wireNumAdcChan,
+    kAdcChannelCount,
     (_) => Int32List(maxDataSz),
     growable: false,
   );
@@ -55,7 +58,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Gap samples hold the previous real value, so buckets are always fully
   /// populated and need no missing-data handling.
   final List<BucketAccumulator> valueBuckets = List.generate(
-    wireNumAdcChan,
+    kAdcChannelCount,
     (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
     growable: false,
   );
@@ -65,7 +68,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Used by the derivative graph's bucket fast path; the gap/first-sample
   /// diff rule lives in [ingestDiff].
   final List<BucketAccumulator> diffBuckets = List.generate(
-    wireNumAdcChan,
+    kAdcChannelCount,
     (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
     growable: false,
   );
@@ -73,7 +76,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// The shared per-sample ingester feeding [valueBuckets]/[diffBuckets]
   /// (see [ChannelIngest]).
   late final List<ChannelIngest> _ingest = List.generate(
-    wireNumAdcChan,
+    kAdcChannelCount,
     (i) => ChannelIngest(
       valueBuckets: valueBuckets[i],
       diffBuckets: diffBuckets[i],
@@ -113,7 +116,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Load cell converting each channel (null = unassigned, electrical units
   /// only). Owned by `RigState` (device slots, including unsaved edits);
   /// pushed here via [updateLoadCells].
-  List<LoadCellProfile?> _loadCells = List.filled(wireNumAdcChan, null);
+  List<LoadCellProfile?> _loadCells = List.filled(kAdcChannelCount, null);
 
   /// Bumped whenever the calibration set changes (board data or load-cell
   /// assignments); renderers mix it into their segment-cache keys.
@@ -220,7 +223,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     lastDataAt = null;
     packetAnchor = null;
     gaps.clear();
-    for (int i = 0; i < wireNumAdcChan; ++i) {
+    for (int i = 0; i < kAdcChannelCount; ++i) {
       rawMax[i] = _noMaxYet;
       rawMin[i] = _noMinYet;
       tare[i] = 0;
@@ -261,7 +264,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   void requestTare() {
     _tareCount = _tareWindow;
     _tareDeadline = DateTime.now().add(_tareTimeout);
-    for (int i = 0; i < wireNumAdcChan; ++i) {
+    for (int i = 0; i < kAdcChannelCount; ++i) {
       _runningTotal[i] = 0;
     }
     // Notify so observers of [taring] (the TARE button's "TARING" label)
@@ -276,8 +279,8 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// offset: while taring, each real frame is ADDITIONALLY accumulated into
   /// the tare average.
   void addSampleFrame(Int32List values) {
-    assert(values.length >= wireNumAdcChan);
-    for (int i = 0; i < wireNumAdcChan; ++i) {
+    assert(values.length >= kAdcChannelCount);
+    for (int i = 0; i < kAdcChannelCount; ++i) {
       final int val = values[i];
       _currentRaw[i] = val;
       // Always buffer data for live display.
@@ -315,11 +318,31 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     final int toInject = math.min(count, maxDataSz);
     gaps.append(totalSamples, totalSamples + toInject);
     for (int d = 0; d < toInject; d++) {
-      for (int i = 0; i < wireNumAdcChan; ++i) {
+      for (int i = 0; i < kAdcChannelCount; ++i) {
         _addData(_currentRaw[i], i);
       }
       totalSamples++;
     }
+  }
+
+  /// Copy the [count] samples starting at logical index [startIdx] out of
+  /// the ring, together with everything the session writer needs about the
+  /// same span (gap ranges, the packet-counter anchor). This is the
+  /// recording path's only read of the ring — [SampleSlice] is the whole
+  /// handoff, so the writer never indexes [rawData] itself.
+  SampleSlice snapshotRange(int startIdx, int count) {
+    return SampleSlice(
+      startIndex: startIdx,
+      channels: [
+        for (int ch = 0; ch < kAdcChannelCount; ++ch)
+          Int32List.fromList([
+            for (int s = 0; s < count; ++s)
+              rawData[ch][(startIdx + s) % maxDataSz],
+          ]),
+      ],
+      gapRanges: gaps.rangesIn(startIdx, startIdx + count).toList(),
+      anchor: packetAnchor,
+    );
   }
 
   /// Close out one decoded packet: notify [SamplesAppendedListener]s of the
@@ -337,7 +360,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     // zeroed up front — and the user can simply tare again.
     if (taring && DateTime.now().isAfter(_tareDeadline)) {
       _tareCount = 0;
-      for (int i = 0; i < wireNumAdcChan; ++i) {
+      for (int i = 0; i < kAdcChannelCount; ++i) {
         _runningTotal[i] = 0;
       }
     }
@@ -408,7 +431,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// flash read, edit, save, revert). Content-equal updates are a no-op so an
   /// unrelated change can't invalidate the graph caches.
   void updateLoadCells(List<LoadCellProfile?> cells) {
-    assert(cells.length == wireNumAdcChan);
+    assert(cells.length == kAdcChannelCount);
     var same = _loadCells.length == cells.length;
     for (int i = 0; same && i < cells.length; i++) {
       same = _loadCells[i] == cells[i];
@@ -472,7 +495,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Latest raw value of a channel (ADC counts), for the live stats' limit
   /// levels — the warning thresholds are evaluated in the raw domain.
   int currentRawFor(int adcChannel) {
-    assert(adcChannel >= 0 && adcChannel < wireNumAdcChan);
+    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
     return _currentRaw[adcChannel];
   }
 
@@ -481,7 +504,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// mark it stale in the UI. Null when the unit is unavailable for the
   /// channel (a force unit without an assigned load cell).
   double? currentValue(int adcChannel, DisplayUnit unit) {
-    assert(adcChannel >= 0 && adcChannel < wireNumAdcChan);
+    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
     final conv = unit.converterFor(
       calibrationFor(adcChannel),
       tare[adcChannel],
@@ -501,7 +524,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     required int start,
     required int end,
   }) {
-    assert(adcChannel >= 0 && adcChannel < wireNumAdcChan);
+    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
     if (totalSamples == 0) return 0;
     final conv = unit.converterFor(
       calibrationFor(adcChannel),
@@ -521,7 +544,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// specified unit. Returns 0 before the first sample arrives; null when
   /// the unit is unavailable for the channel.
   double? minValue(int adcChannel, DisplayUnit unit) {
-    assert(adcChannel >= 0 && adcChannel < wireNumAdcChan);
+    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
     if (totalSamples == 0) return 0;
     final conv = unit.converterFor(
       calibrationFor(adcChannel),
@@ -533,7 +556,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
   /// Get the instantaneous derivative (first-difference) for a channel in
   /// unit/s; null when the unit is unavailable for the channel.
   double? currentDerivative(int adcChannel, DisplayUnit unit) {
-    assert(adcChannel >= 0 && adcChannel < wireNumAdcChan);
+    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
     if (totalSamples < 2) return 0;
 
     // A held value on either side would fabricate a flat or spiking

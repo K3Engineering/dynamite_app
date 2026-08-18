@@ -2,20 +2,18 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:universal_ble/universal_ble.dart';
 
-import 'package:dynamite_app/models/calibration.dart';
-import 'package:dynamite_app/services/app_events.dart';
-import 'package:dynamite_app/services/ble_link_manager.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
-import 'package:dynamite_app/services/mockble.dart';
+import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/rig_slots_section.dart';
 
 /// Widget tests for the rig slot section: rows from the device flash doc,
-/// the add/edit dialogs, and the dirty banner. The BLE link manager is real
-/// (mock platform) but never connected, so the Save button stays disabled —
-/// save logic itself is covered in rig_state_test.dart.
+/// the add/edit dialogs, and the dirty banner. The harness provides a real
+/// [RigState] (fake transport) for the section's selects. No device is
+/// connected, so the Save button stays disabled — save logic itself is
+/// covered in rig_state_test.dart.
 class _FakeTransport implements RigFlashTransport {
   String? lastWrittenDoc;
 
@@ -39,9 +37,6 @@ void main() {
 
   Future<RigState> pump(WidgetTester tester, {bool withFlash = true}) async {
     SharedPreferences.setMockInitialValues({});
-    UniversalBle.setInstance(MockBlePlatform.instance);
-    final events = AppEvents();
-    final link = BleLinkManager(events: events);
     final rig = RigState(
       transport: _FakeTransport(),
       // The rig's prefs load is synchronous in the constructor, so reading
@@ -56,21 +51,19 @@ void main() {
       );
     }
     await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider<RigState>.value(value: rig),
-          ChangeNotifierProvider<BleLinkManager>.value(value: link),
-        ],
-        child: const MaterialApp(
-          home: Scaffold(body: SingleChildScrollView(child: RigSlotsSection())),
+      MaterialApp(
+        // No connected device: the Save button stays disabled.
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: ChangeNotifierProvider.value(
+              value: rig,
+              child: const RigSlotsSection(connectedDeviceId: ''),
+            ),
+          ),
         ),
       ),
     );
-    // Pump past the construction-time BLE timers (the mock's 200ms
-    // availability query and universal_ble's 5s command-queue timeout) so
-    // none are left pending at the end-of-test timer check — same pattern
-    // as widget_test.dart.
-    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
     return rig;
   }
 

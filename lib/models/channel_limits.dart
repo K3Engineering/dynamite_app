@@ -1,5 +1,5 @@
+import 'board_calibration.dart';
 import 'bucket_series.dart';
-import 'calibration.dart';
 
 /// ADC-rail clip checks. Clipping is a property of the 24-bit converter:
 /// +/-2^23 counts, regardless of tare, display unit, or front-end gain.

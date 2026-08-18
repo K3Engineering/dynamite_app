@@ -9,7 +9,9 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
+import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
+import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
 import 'package:dynamite_app/services/mockble.dart';
 
@@ -54,7 +56,8 @@ void main() {
     final seen = <AppEvent>[];
     final sub = events.stream.listen(seen.add);
     addTearDown(() => unawaited(sub.cancel()));
-    final link = BleLinkManager(events: events)..onCalibrationData = (_, _) {};
+    final link = BleLinkManager(events: events, demo: DemoDevice())
+      ..onCalibrationData = (_, _) {};
     return (link, seen);
   }
 
@@ -682,13 +685,13 @@ void main() {
       MockBlePlatform.instance.isEnabled = false;
       final (link, _) = wire();
       settleStartup(async);
-      expect(link.bluetoothState, AvailabilityState.poweredOff);
+      expect(link.bluetoothState, BtAvailability.poweredOff);
 
       unawaited(link.toggleScan());
       async.elapse(const Duration(seconds: 1));
 
       expect(MockBlePlatform.instance.requestPermissionsCalls, 1);
-      expect(link.bluetoothState, AvailabilityState.poweredOn);
+      expect(link.bluetoothState, BtAvailability.poweredOn);
       expect(link.isScanning, isTrue);
 
       unawaited(link.toggleScan()); // stop scanning
@@ -707,7 +710,7 @@ void main() {
       async.elapse(const Duration(seconds: 1));
 
       expect(MockBlePlatform.instance.requestPermissionsCalls, 1);
-      expect(link.bluetoothState, AvailabilityState.poweredOff);
+      expect(link.bluetoothState, BtAvailability.poweredOff);
       expect(link.isScanning, isFalse);
     });
   });

@@ -1,4 +1,6 @@
-import 'package:dynamite_app/models/calibration.dart';
+import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/device_flash.dart';
+import 'package:dynamite_app/models/load_cell.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Pro-like test chain, reproducing the app's former compiled constants

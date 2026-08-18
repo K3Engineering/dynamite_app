@@ -57,8 +57,8 @@ class Sessions extends Table {
 
   /// The connected device's identity at recording start (BLE name + the DIS
   /// strings), as the JSON-encoded dynamite-csv `device` metadata block —
-  /// see [DeviceInfo.toCsvDeviceMetadata]. Frozen so export never consults
-  /// live device state (docs/csv-format-v1.md).
+  /// see `toCsvDeviceMetadata` in csv_export.dart. Frozen so export never
+  /// consults live device state (docs/csv-format-v1.md).
   TextColumn get deviceInfoJson => text()();
 }
 

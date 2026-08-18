@@ -19,7 +19,10 @@ void main() {
   KvsClient wire() {
     UniversalBle.setInstance(MockBlePlatform.instance);
     MockBlePlatform.instance.resetKnobs();
-    final client = KvsClient(deviceId: deviceId);
+    final client = KvsClient(
+      write: (bytes) =>
+          UniversalBle.write(deviceId, btServiceId, btChrKvs, bytes),
+    );
     UniversalBle.onValueChange = (deviceId, characteristicId, data, timestamp) {
       if (characteristicId == btChrKvs) client.handleNotification(data);
     };

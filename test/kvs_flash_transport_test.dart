@@ -4,7 +4,8 @@ import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_ble/universal_ble.dart';
 
-import 'package:dynamite_app/models/calibration.dart';
+import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/kvs_client.dart';
@@ -21,7 +22,10 @@ void main() {
   (KvsFlashTransport, KvsClient) wire() {
     UniversalBle.setInstance(MockBlePlatform.instance);
     MockBlePlatform.instance.resetKnobs();
-    final client = KvsClient(deviceId: deviceId);
+    final client = KvsClient(
+      write: (bytes) =>
+          UniversalBle.write(deviceId, btServiceId, btChrKvs, bytes),
+    );
     UniversalBle.onValueChange = (deviceId, characteristicId, data, timestamp) {
       if (characteristicId == btChrKvs) client.handleNotification(data);
     };

@@ -4,20 +4,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:dynamite_app/models/calibration.dart';
+import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/screens/calibration_screen.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/report_export.dart';
+import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/cal_deviation_plot.dart';
 import 'package:dynamite_app/widgets/calibration_text.dart';
 import 'package:dynamite_app/widgets/calibration_view.dart';
 
 /// Widget tests for the factory calibration view (the board calibration
-/// page's body). The view renders the flash document owned by [RigState] —
-/// and only while that document belongs to the device it was handed — so
-/// the harness is a [RigState] fed the fixture document, with the PGA
-/// readback the demo device reports (1x on all channels).
+/// page's body). The view renders the board it's handed; the per-device
+/// document gating lives in [RigState.boardCalibrationFor] — so the harness
+/// is a [RigState] fed the fixture document (with the PGA readback the demo
+/// device reports, 1x on all channels), and the view gets the board the
+/// gate returns.
 class _FakeTransport implements RigFlashTransport {
   @override
   String get connectedDeviceId => 'dev1';
@@ -35,7 +38,7 @@ class _FakeTransport implements RigFlashTransport {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  Future<RigState> pump(
+  Future<void> pump(
     WidgetTester tester, {
     bool withFlash = true,
     String deviceId = 'dev1',
@@ -58,19 +61,15 @@ void main() {
       );
     }
     await tester.pumpWidget(
-      MultiProvider(
-        providers: [ChangeNotifierProvider<RigState>.value(value: rig)],
-        child: MaterialApp(
-          home: Scaffold(
-            body: SingleChildScrollView(
-              child: CalibrationView(deviceId: deviceId),
-            ),
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: CalibrationView(board: rig.boardCalibrationFor(deviceId)),
           ),
         ),
       ),
     );
     await tester.pumpAndSettle();
-    return rig;
   }
 
   testWidgets('shows header, trust line, provenance and channel corrections', (

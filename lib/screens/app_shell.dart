@@ -111,7 +111,8 @@ class AppShellState extends State<AppShell> {
     }
   }
 
-  /// Navigate to a specific tab programmatically (e.g. from status bar tap).
+  /// Navigate to a specific tab programmatically (passed to the tabs as
+  /// navigation callbacks, e.g. the Live tab's "Connect a device" action).
   void switchToTab(int index) {
     if (index < 0 || index >= _tabs.length || index == _currentIndex) return;
     setState(() => _currentIndex = index);
@@ -139,7 +140,12 @@ class AppShellState extends State<AppShell> {
     return Scaffold(
       body: IndexedStack(
         index: _currentIndex,
-        children: const [LiveTab(), SessionsTab(), DevicesTab(), SettingsTab()],
+        children: [
+          LiveTab(onGoToDevices: goToDevices),
+          const SessionsTab(),
+          DevicesTab(onGoToSettings: goToSettings),
+          SettingsTab(onGoToDevices: goToDevices),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,

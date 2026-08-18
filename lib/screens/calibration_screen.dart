@@ -3,8 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/board_calibration.dart';
-import '../services/csv_export.dart' show fileShareSupportedHere;
+import '../services/export_delivery.dart';
 import '../services/report_export.dart';
+import '../services/share_capability.dart';
 import '../services/rig_state.dart';
 import '../widgets/calibration_text.dart';
 import '../widgets/calibration_view.dart';
@@ -32,7 +33,7 @@ class CalibrationScreen extends StatelessWidget {
             _exportButtons(context, board, deviceName),
             const SizedBox(height: 16),
           ],
-          CalibrationView(deviceId: deviceId),
+          CalibrationView(board: board),
         ],
       ),
     );
@@ -81,7 +82,7 @@ class CalibrationScreen extends StatelessWidget {
                     () => shareCalibrationReport(
                       report: report,
                       deviceLabel: label,
-                      sharePositionOrigin: _shareAnchor(context),
+                      anchor: _shareAnchor(context),
                     ),
                   )
                 : null,
@@ -119,8 +120,16 @@ class CalibrationScreen extends StatelessWidget {
   }
 
   /// Anchor rect for the iPad share popover (the whole screen).
-  Rect? _shareAnchor(BuildContext context) {
+  ShareAnchor? _shareAnchor(BuildContext context) {
     final box = context.findRenderObject();
-    return box is RenderBox ? box.localToGlobal(Offset.zero) & box.size : null;
+    if (box is! RenderBox) return null;
+    final global = box.localToGlobal(Offset.zero);
+    final size = box.size;
+    return (
+      left: global.dx,
+      top: global.dy,
+      width: size.width,
+      height: size.height,
+    );
   }
 }

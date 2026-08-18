@@ -1,24 +1,29 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
+import '../models/app_meta.dart';
 import '../models/app_settings.dart';
 import '../models/display_unit.dart';
+import '../models/session_summary.dart';
 import '../services/csv_export.dart';
-import '../services/database.dart';
+import '../services/export_delivery.dart';
+import '../services/session_data.dart';
+import '../services/session_queries.dart';
 import '../services/session_storage.dart';
+import '../services/share_capability.dart';
 import '../utils/format.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
+import 'session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   const SessionDetailScreen({super.key, required this.session});
 
-  final Session session;
+  final SessionSummary session;
 
   @override
   State<SessionDetailScreen> createState() => _SessionDetailScreenState();
@@ -33,37 +38,20 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   /// The session row, reactively: name, notes, duration, and the per-session
   /// channel-visibility set. Edits are written to the DB and surface via
   /// this stream.
-  late final Stream<Session?> _sessionStream;
+  late final Stream<SessionSummary?> _sessionStream;
 
   @override
   void initState() {
     super.initState();
-    _sessionStream = AppDatabase.instance.watchSessionById(widget.session.id);
+    _sessionStream = watchSessionSummary(widget.session.id);
     unawaited(_loadData());
   }
 
-  /// Parse the JSON-encoded per-channel visibility stored on a [Session]
-  /// row. Missing or malformed entries fall back to visible.
-  static List<bool> _parseVisibleChannels(String json, int channelCount) =>
-      parseJsonColumn(
-        json,
-        channelCount,
-        convert: (e) => e == true,
-        fallback: (_) => true,
-      );
-
   /// Persist a channel-visibility flip; the row stream drives the UI update.
-  Future<void> _toggleChannel(
-    Session session,
-    List<bool> current,
-    int index,
-  ) async {
-    final updated = [...current];
+  Future<void> _toggleChannel(SessionSummary session, int index) async {
+    final updated = [...session.visibleChannels];
     updated[index] = !updated[index];
-    await AppDatabase.instance.setSessionVisibleChannels(
-      session.id,
-      jsonEncode(updated),
-    );
+    await setSessionVisibleChannels(session.id, updated);
   }
 
   @override
@@ -74,7 +62,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Future<void> _loadData() async {
     try {
-      final data = await SessionStorage.loadSession(widget.session);
+      final data = await SessionStorage.loadSession(widget.session.id);
       if (!mounted) return;
       setState(() => _loadState = _Ready(data));
     } catch (e) {
@@ -87,7 +75,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
 
-    return StreamBuilder<Session?>(
+    return StreamBuilder<SessionSummary?>(
       stream: _sessionStream,
       builder: (context, snapshot) {
         // Until the stream's first emission — and after the row is deleted on
@@ -161,25 +149,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Widget _buildContent(
     AppSettings settings,
-    Session session,
+    SessionSummary session,
     SessionData data,
   ) {
-    final visibleChannels = _parseVisibleChannels(
-      session.visibleChannels,
-      session.channelCount,
-    );
+    final visibleChannels = session.visibleChannels;
+    final channelLabels = session.channelLabels;
     final unit = settings.displayUnit.effective(
-      resolveUnitAvailability(data, [
+      resolveUnitAvailability(data.calibrationFor, [
         for (int i = 0; i < visibleChannels.length; i++)
           if (visibleChannels[i]) i,
       ]),
-    );
-
-    final channelLabels = parseJsonColumn(
-      session.channelLabels,
-      data.channels.length,
-      convert: (e) => e.toString(),
-      fallback: (i) => 'Ch ${i + 1}',
     );
 
     return SingleChildScrollView(
@@ -192,7 +171,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             labels: channelLabels,
             activeChannels: visibleChannels,
             onToggleChannel: (index) =>
-                unawaited(_toggleChannel(session, visibleChannels, index)),
+                unawaited(_toggleChannel(session, index)),
             unit: unit,
             rows: [
               ChannelStatsRow(
@@ -216,7 +195,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               child: GraphWorkspace(
                 data: data,
                 ctrl: _graphCtrl,
-                settings: settings,
+                unit: settings.displayUnit,
+                limitWarningsEnabled: settings.limitWarningsEnabled,
                 activeChannels: [
                   for (int i = 0; i < visibleChannels.length; i++)
                     if (visibleChannels[i]) i,
@@ -306,7 +286,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     );
   }
 
-  Future<void> _onMenuAction(String action, Session session) async {
+  Future<void> _onMenuAction(String action, SessionSummary session) async {
     switch (action) {
       case 'rename':
         await _showRenameDialog(session);
@@ -327,13 +307,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     }
   }
 
-  Future<void> _showRenameDialog(Session session) => renameSessionFlow(
+  Future<void> _showRenameDialog(SessionSummary session) => renameSessionFlow(
     context,
     sessionId: session.id,
     currentName: session.name,
   );
 
-  Future<void> _showNotesDialog(Session session) async {
+  Future<void> _showNotesDialog(SessionSummary session) async {
     final newNotes = await showTextPrompt(
       context,
       title: 'Edit notes',
@@ -342,39 +322,55 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       maxLines: 5,
     );
     if (newNotes != null) {
-      await AppDatabase.instance.setSessionNotes(session.id, newNotes);
+      await setSessionNotes(session.id, newNotes);
     }
   }
 
-  Future<void> _deleteAndPop(Session session) async {
-    if (await deleteSessionFlow(context, session)) {
+  Future<void> _deleteAndPop(SessionSummary session) async {
+    if (await deleteSessionFlow(
+      context,
+      sessionId: session.id,
+      name: session.name,
+    )) {
       if (mounted) Navigator.of(context).pop();
     }
   }
 
-  Future<void> _downloadCsv(Session session, SessionData data) =>
+  Future<void> _downloadCsv(SessionSummary session, SessionData data) =>
       _runCsvAction(() async {
+        final appMeta = context.read<AppMeta>();
         final unit = await _pickExportUnit(_recordedUnit(session));
         if (unit == null) return null;
-        return downloadSessionCsv(session: session, data: data, unit: unit);
+        return downloadSessionCsv(
+          sessionName: session.name,
+          recordedAt: session.createdAt,
+          deviceInfoJson: session.deviceInfoJson,
+          data: data,
+          unit: unit,
+          appMeta: appMeta,
+        );
       });
 
-  Future<void> _shareCsv(Session session, SessionData data) =>
+  Future<void> _shareCsv(SessionSummary session, SessionData data) =>
       _runCsvAction(() async {
+        final appMeta = context.read<AppMeta>();
         final unit = await _pickExportUnit(_recordedUnit(session));
         if (unit == null) return null;
         return shareSessionCsv(
-          session: session,
+          sessionName: session.name,
+          recordedAt: session.createdAt,
+          deviceInfoJson: session.deviceInfoJson,
           data: data,
           unit: unit,
-          sharePositionOrigin: _shareAnchor(),
+          appMeta: appMeta,
+          anchor: _shareAnchor(),
         );
       });
 
   /// The session's recorded display unit (frozen at recording start): the
   /// export picker's preselection. An unrecognizable stored value falls
   /// back to the platform default unit.
-  static DisplayUnit _recordedUnit(Session session) =>
+  static DisplayUnit _recordedUnit(SessionSummary session) =>
       DisplayUnit.fromName(session.displayUnit);
 
   /// Ask the user for the export's converted unit (docs/csv-format-v1.md:
@@ -448,9 +444,17 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   /// Anchor rect for the iPad share popover (the whole screen when invoked
   /// from the app-bar menu or the button row).
-  Rect? _shareAnchor() {
+  ShareAnchor? _shareAnchor() {
     final box = context.findRenderObject();
-    return box is RenderBox ? box.localToGlobal(Offset.zero) & box.size : null;
+    if (box is! RenderBox) return null;
+    final global = box.localToGlobal(Offset.zero);
+    final size = box.size;
+    return (
+      left: global.dx,
+      top: global.dy,
+      width: size.width,
+      height: size.height,
+    );
   }
 }
 

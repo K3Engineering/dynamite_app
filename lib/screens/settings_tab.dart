@@ -3,33 +3,34 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 
+import '../models/app_meta.dart';
 import '../models/app_settings.dart';
 import '../models/board_calibration.dart';
 import '../models/device_info.dart';
+import '../models/device_name.dart';
 import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
-import '../services/kvs_protocol.dart';
 import '../services/rig_state.dart';
 import '../widgets/calibration_text.dart';
 import '../widgets/connection_info_card.dart';
 import '../widgets/device_info_card.dart';
 import '../widgets/rig_slots_section.dart';
 import '../widgets/section_header.dart';
-import 'app_shell.dart';
 import 'calibration_screen.dart';
 
 class SettingsTab extends StatelessWidget {
-  const SettingsTab({super.key});
+  const SettingsTab({super.key, required this.onGoToDevices});
 
-  /// Fetched once per process, not per rebuild of the tab.
-  static final Future<PackageInfo> _packageInfo = PackageInfo.fromPlatform();
+  /// The "Connect" action shown while no device is linked: jumps to the
+  /// Devices tab. Supplied by the app shell, which owns the tab index.
+  final VoidCallback onGoToDevices;
 
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
+    final appMeta = context.read<AppMeta>();
     // Narrow selects: the link manager notifies on every RSSI poll; this
     // section only rebuilds on identity / connection-stat changes.
     final deviceId = context.select<BleLinkManager, String>(
@@ -61,7 +62,10 @@ class SettingsTab extends StatelessWidget {
     // RigState's per-device document copy: it gates what the connected
     // board can convert right now.
     final availability = context.select<DataHub, UnitAvailability>(
-      (h) => resolveUnitAvailability(h, settings.activeChannelIndices),
+      (h) => resolveUnitAvailability(
+        h.calibrationFor,
+        settings.activeChannelIndices,
+      ),
     );
     final unit = settings.displayUnit.effective(availability);
     final enabledUnits = {
@@ -143,12 +147,7 @@ class SettingsTab extends StatelessWidget {
                   'Connect to a device to manage its settings',
                 ),
                 trailing: FilledButton.tonal(
-                  onPressed: () {
-                    // Navigate to the Devices tab (same pattern as Live tab).
-                    final shell = context
-                        .findAncestorStateOfType<AppShellState>();
-                    shell?.goToDevices();
-                  },
+                  onPressed: onGoToDevices,
                   child: const Text('Connect'),
                 ),
               ),
@@ -188,7 +187,7 @@ class SettingsTab extends StatelessWidget {
             // device".
             Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
-            const RigSlotsSection(),
+            RigSlotsSection(connectedDeviceId: deviceId),
             const SizedBox(height: 16),
 
             Card(
@@ -209,32 +208,25 @@ class SettingsTab extends StatelessWidget {
 
           const SectionHeader('About'),
           const SizedBox(height: 16),
-          FutureBuilder<PackageInfo>(
-            future: _packageInfo,
-            builder: (context, snapshot) {
-              if (snapshot.hasData) {
-                final packageInfo = snapshot.data!;
-                final version =
-                    '${packageInfo.version}+${packageInfo.buildNumber}';
-                const buildMode = kDebugMode
-                    ? 'Debug'
-                    : (kProfileMode ? 'Profile' : 'Release');
+          Builder(
+            builder: (context) {
+              const buildMode = kDebugMode
+                  ? 'Debug'
+                  : (kProfileMode ? 'Profile' : 'Release');
 
-                String targetInfo = 'Target: ${kIsWeb ? "Web" : "Native"}';
-                if (kIsWeb) {
-                  targetInfo += ' (${dart2wasm ? "WASM" : "JS"})';
-                }
-
-                return Text(
-                  'Dynamite App v$version\n'
-                  'Build Mode: $buildMode\n'
-                  '$targetInfo',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                );
+              var targetInfo = 'Target: ${kIsWeb ? "Web" : "Native"}';
+              if (kIsWeb) {
+                targetInfo += ' (${dart2wasm ? "WASM" : "JS"})';
               }
-              return const SizedBox.shrink(); // Hide while loading
+
+              return Text(
+                'Dynamite App v${appMeta.versionLabel}\n'
+                'Build Mode: $buildMode\n'
+                '$targetInfo',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              );
             },
           ),
         ],

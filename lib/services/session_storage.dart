@@ -4,15 +4,59 @@ import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
-import 'adc_protocol.dart';
+import '../models/device_profile.dart';
 import 'database.dart';
-import 'data_hub.dart';
-import '../models/bucket_series.dart';
-import '../models/calibration.dart';
+import '../models/board_calibration.dart';
+import '../models/device_flash.dart';
 import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
-import '../models/graph_data_source.dart';
+import '../models/sample_slice.dart';
+import 'session_data.dart';
+
+/// The session-row `device` metadata block: the connected device's identity,
+/// frozen onto the session row at recording start (the CSV format's
+/// recording-time snapshot requirement — docs/csv-format-v1.md). Built from
+/// the link's advertised/stored [name] and the DIS identity [info] (null
+/// when the connect-time read never ran — every identity field is then
+/// null). Map order matches the CSV spec's emission order.
+/// `id` is the serial (the true hardware identity, unlike the platform
+/// device id) — null for sessions recorded on web, where 0x2A25 is
+/// blocklisted.
+Map<String, Object?> toSessionDeviceMetadata({
+  required String? name,
+  required DeviceInfo? info,
+}) => {
+  'name': (name == null || name.isEmpty) ? null : name,
+  'id': info?.serial,
+  'model': info?.model,
+  'firmware': info?.firmwareRev,
+  'manufacturer': info?.manufacturer,
+};
+
+/// Parse a session row's frozen `device` block (see [toSessionDeviceMetadata]).
+/// A malformed document, or non-string values in it, degrade to nulls —
+/// this is a display-only metadata path and must never throw. Unknown keys
+/// are dropped; unknown-to-this-app fields stay available to readers of
+/// the raw JSON.
+Map<String, Object?> fromSessionDeviceMetadata(String json) {
+  try {
+    final decoded = jsonDecode(json);
+    if (decoded is Map) {
+      String? s(Object? v) => v is String && v.isNotEmpty ? v : null;
+      return {
+        'name': s(decoded['name']),
+        'id': s(decoded['id']),
+        'model': s(decoded['model']),
+        'firmware': s(decoded['firmware']),
+        'manufacturer': s(decoded['manufacturer']),
+      };
+    }
+  } catch (e) {
+    debugPrint('Failed to parse session device metadata "$json": $e');
+  }
+  return toSessionDeviceMetadata(name: null, info: null);
+}
 
 /// Each [SessionChunks] row holds a whole number of samples in the packed
 /// chunk format (see [SessionChunkCodec], its one home). The owning
@@ -23,12 +67,20 @@ class SessionStorage {
   /// sample slices via [LiveSessionWriter.appendData] as data arrives and is
   /// passed to [finalizeSession] when recording stops.
   ///
-  /// Note: every session stores all [wireNumAdcChan]; [channelLabels]
+  /// Note: every session stores all [kAdcChannelCount]; [channelLabels]
   /// and [visibleChannels] are retained for display only. [deviceMetadata] is
-  /// the connected device's identity as the dynamite-csv `device` block (see
-  /// [DeviceInfo.toCsvDeviceMetadata]), frozen for export.
+  /// the connected device's identity (see [toSessionDeviceMetadata]), frozen
+  /// for export.
+  ///
+  /// This is hub-agnostic by contract: the caller snapshots everything the
+  /// live buffer would supply ([tare], [channelCalibration],
+  /// [samplesPerSec], [sourceRingCapacity]), so the storage layer never
+  /// imports the hub.
   static Future<LiveSessionWriter> startSession({
-    required DataHub dataHub,
+    required Float64List tare,
+    required List<ChannelCalibration> channelCalibration,
+    required int samplesPerSec,
+    required int sourceRingCapacity,
     required String name,
     required List<String> channelLabels,
     required List<bool> visibleChannels,
@@ -38,21 +90,21 @@ class SessionStorage {
     // Snapshot the tare once; the same values are persisted below and used by
     // the writer's peak scan, so stored peaks, stored tares and playback can
     // never disagree even if the user re-tares mid-recording.
-    final tare = Float64List.fromList(dataHub.tare);
+    final tareSnapshot = Float64List.fromList(tare);
 
     final sessionId = await AppDatabase.instance.createSession(
       name: name,
-      sampleRate: DataHub.samplesPerSec,
+      sampleRate: samplesPerSec,
       // We always persist every ADC channel, so the stored channel count must
       // match what the writer packs (and what loadSession reads back).
-      channelCount: wireNumAdcChan,
+      channelCount: kAdcChannelCount,
       channelLabels: jsonEncode(channelLabels),
-      tares: jsonEncode(tare.toList()),
+      tares: jsonEncode(tareSnapshot.toList()),
       // Snapshot the per-channel calibration in effect now; playback
       // converts through it even if calibration changes later.
       calibrationJson: jsonEncode([
-        for (int ch = 0; ch < wireNumAdcChan; ch++)
-          dataHub.calibrationFor(ch).toJson(),
+        for (int ch = 0; ch < kAdcChannelCount; ch++)
+          channelCalibration[ch].toJson(),
       ]),
       visibleChannels: jsonEncode(visibleChannels),
       // Frozen as the CSV export's default converted unit
@@ -61,7 +113,12 @@ class SessionStorage {
       deviceInfoJson: jsonEncode(deviceMetadata),
     );
 
-    return LiveSessionWriter(sessionId, tare, DataHub.samplesPerSec);
+    return LiveSessionWriter(
+      sessionId,
+      tareSnapshot,
+      samplesPerSec,
+      sourceRingCapacity: sourceRingCapacity,
+    );
   }
 
   /// Discard a session that was created but never latched by its caller
@@ -160,7 +217,12 @@ class SessionStorage {
   /// session is ~58 MB of samples). If long sessions become common, stream
   /// the deinterleave (and consider isolating the [SessionData] stats scan,
   /// which currently runs eagerly on the UI thread below).
-  static Future<SessionData?> loadSession(Session session) async {
+  static Future<SessionData?> loadSession(int sessionId) async {
+    final row = await AppDatabase.instance.sessionById(sessionId);
+    if (row == null) {
+      throw StateError('loadSession: no session row with id $sessionId');
+    }
+    final session = row;
     final chunks = await AppDatabase.instance.sessionChunkData(session.id);
 
     if (chunks.isEmpty) {
@@ -222,6 +284,11 @@ class SessionStorage {
     fallback: (_) => ChannelCalibration(board: ChannelBoardCalibration()),
   );
 }
+
+/// The write side of the per-channel visibility column (the read side is
+/// [parseJsonColumn] at the call site): a plain JSON array of booleans.
+/// Kept next to the parser so the column's encoding has one home.
+String encodeVisibleChannels(List<bool> visible) => jsonEncode(visible);
 
 /// Parse a JSON-encoded list column into exactly [count] entries: entry i is
 /// [convert] applied to the i-th decoded element, or [fallback] when the
@@ -328,159 +395,23 @@ class SessionChunkCodec {
   }
 }
 
-/// Loaded session data for playback/review.
-class SessionData implements GraphDataSource {
-  final List<Int32List> channels;
-  @override
-  final int sampleRate;
-  final int sampleCount;
-
-  /// Per-channel calibration snapshots recorded with the session.
-  final List<ChannelCalibration> calibrations;
-  final List<double> tares;
-
-  /// Device sample-counter value at the session's first sample (the
-  /// dynamite-csv `ssn_origin`), latched by the live writer from the first
-  /// recorded packet and persisted on the session row. Null only for
-  /// sessions finalized before any packet arrived (which have no data to
-  /// export) or pre-column rows; exporters fall back to 0.
-  final int? ssnOrigin;
-
-  /// Dropped-sample ranges (session-relative). The channel data holds held
-  /// values across these ranges, so stats/buckets need no exclusion logic;
-  /// renderers use this to hatch and break the polyline, and CSV export
-  /// blanks these rows. Crash-recovered sessions keep the ranges the live
-  /// writer persisted incrementally up to its last chunk flush (see
-  /// [AppDatabase.setSessionGaps]); a crash before the first flush leaves
-  /// this empty.
-  @override
-  final GapList gaps;
-
-  /// Per-channel extremes, computed once on construction.
-  final List<double> mins;
-  final List<double> maxs;
-
-  /// Per-channel bucket aggregates over [bucketSize]-sample windows of the
-  /// raw values. Mirrors DataHub's live buckets (same [BucketAccumulator])
-  /// so the graphs can downsample cheaply. Gap samples hold the previous
-  /// real value, so buckets are always fully populated and need no
-  /// missing-data handling.
-  final int bucketSize = kBucketSize;
-  late final List<BucketAccumulator> valueBuckets;
-
-  /// Per-channel bucket aggregates of the first-difference series
-  /// (`diff[i] = raw[i] - raw[i-1]`), same bucket grid. Used by the
-  /// derivative graph's bucket fast path; the gap/first-sample diff rule
-  /// lives in [ingestDiff], applied through the same [ChannelIngest] the
-  /// live hub uses.
-  late final List<BucketAccumulator> diffBuckets;
-
-  SessionData({
-    required this.channels,
-    required this.sampleRate,
-    required this.sampleCount,
-    required this.calibrations,
-    required this.tares,
-    GapList? gaps,
-    this.ssnOrigin,
-  }) : gaps = gaps ?? GapList(),
-       mins = List.filled(channels.length, 0.0),
-       maxs = List.filled(channels.length, 0.0) {
-    final int numBuckets = (sampleCount == 0)
-        ? 0
-        : ((sampleCount - 1) ~/ bucketSize) + 1;
-    valueBuckets = List.generate(
-      channels.length,
-      (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
-    );
-    diffBuckets = List.generate(
-      channels.length,
-      (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
-    );
-
-    for (int ch = 0; ch < channels.length; ch++) {
-      if (sampleCount == 0) continue;
-      double mn = double.infinity;
-      double mx = double.negativeInfinity;
-      final ingest = ChannelIngest(
-        valueBuckets: valueBuckets[ch],
-        diffBuckets: diffBuckets[ch],
-        gaps: this.gaps,
-      );
-
-      for (int i = 0; i < sampleCount; i++) {
-        final v = channels[ch][i];
-        if (v < mn) mn = v.toDouble();
-        if (v > mx) mx = v.toDouble();
-        ingest.add(i, v, i > 0 ? channels[ch][i - 1] : 0);
-      }
-      mins[ch] = mn;
-      maxs[ch] = mx;
-    }
-  }
-
-  double get durationSeconds => sampleCount / sampleRate;
-
-  // -- GraphDataSource --------------------------------------------------------
-
-  @override
-  int get totalSamples => sampleCount;
-
-  @override
-  int get bufferCapacity => sampleCount;
-
-  @override
-  int get oldestSample => 0;
-
-  @override
-  Listenable get repaint => kNeverRepaints;
-
-  /// Static data has no arrival clock.
-  @override
-  DateTime? get lastDataAt => null;
-
-  /// Session data is immutable after load; there is no "new stream".
-  @override
-  int get dataGeneration => 0;
-
-  @override
-  ChannelCalibration calibrationFor(int channelIndex) =>
-      calibrations[channelIndex];
-
-  /// Session calibration is frozen at recording time; it never changes.
-  @override
-  int get calibrationVersion => 0;
-
-  @override
-  ChannelSeries channel(int channelIndex) => (
-    data: channels[channelIndex],
-    min: mins[channelIndex],
-    max: maxs[channelIndex],
-    tare: tares[channelIndex],
-    buckets: valueBuckets[channelIndex].series,
-  );
-
-  @override
-  BucketSeries? diffBucketsFor(int channelIndex) =>
-      diffBuckets[channelIndex].series;
-}
-
 /// Streams recorded samples to the DB as they arrive, flushing in chunks so a
 /// session can outlive the in-memory ring buffer and survive a crash.
 ///
 /// All DB writes are serialized through [_writeQueue] so concurrent (unawaited)
 /// [appendData] calls and the finalizing [flush] cannot interleave or reorder
-/// chunks. The queue serializes ONLY the writes: [appendData] snapshots its
-/// sample slice synchronously at call time, so a stalled queue can never
-/// observe ring-buffer slots the producer has since overwritten. If storage
-/// nonetheless falls a full ring behind, an error is latched (see
-/// [appendData]) so the backlog — and its memory — stops growing and the
-/// failure is surfaced instead of recording into the void.
+/// chunks. The queue serializes ONLY the writes: each [SampleSlice] arrives
+/// fully snapshotted at call time (see `DataHub.snapshotRange`), so a stalled
+/// queue never observes ring slots the producer has since overwritten. If
+/// storage falls a full ring behind, an error is latched (see [appendData])
+/// so the backlog — and its memory — stops growing and the failure is
+/// surfaced instead of recording into the void.
 class LiveSessionWriter {
   LiveSessionWriter(
     this.sessionId,
     this.tare,
     this.sampleRate, {
+    required this.sourceRingCapacity,
     @visibleForTesting
     Future<void> Function(
       int sessionId,
@@ -502,6 +433,16 @@ class LiveSessionWriter {
   /// finalization math uses the same value the row carries.
   final int sampleRate;
 
+  /// Capacity (samples) of the producer's ring — the backlog bound for the
+  /// backpressure latch in [appendData]. Supplied by the caller (the hub's
+  /// `maxDataSz`); not read from the hub here.
+  final int sourceRingCapacity;
+
+  /// Samples accepted by [appendData] but not yet written by the serialized
+  /// queue. Decrementing happens in the queued op's finally, so a wedged
+  /// sink grows the count unboundedly — detecting that is the latch's job.
+  int _unflushedSamples = 0;
+
   int _chunkIndex = 0;
   int totalSamplesRecorded = 0;
 
@@ -521,7 +462,7 @@ class LiveSessionWriter {
 
   /// Device sample-counter value at the session's first sample (the
   /// dynamite-csv `ssn_origin`), latched alongside [_originIdx] from the
-  /// hub's packet-counter anchor ([DataHub.notePacketCounter]) and persisted
+  /// hub's packet-counter anchor (see `DataHub.notePacketCounter`) and persisted
   /// to the session row in the same breath (see [_persistSsnOrigin]).
   /// Sessions start on a packet boundary (the decoder's continuity reset at
   /// recording start suppresses gap injection for the first recorded
@@ -532,7 +473,7 @@ class LiveSessionWriter {
   int? _ssnOrigin;
 
   /// Accumulates sample count and peak; shared scan logic with recovery.
-  final _ChunkAggregate _agg = _ChunkAggregate(wireNumAdcChan);
+  final _ChunkAggregate _agg = _ChunkAggregate(kAdcChannelCount);
 
   /// First write failure encountered, if any. Once set it stays set.
   Object? writeError;
@@ -561,56 +502,61 @@ class LiveSessionWriter {
   /// (~1 s at 1 kHz, 4 ch, 4 B/value).
   static const int _flushThreshold = 16384;
 
-  /// Append [count] samples starting at ring-buffer logical index [startIdx].
-  /// Returns when this slice has been buffered (and flushed, if the threshold
-  /// was crossed). Safe to call without awaiting; calls are serialized.
-  Future<void> appendData(DataHub dataHub, int startIdx, int count) {
+  /// Append a fully snapshotted slice of fresh samples (see
+  /// `DataHub.snapshotRange`). Returns when this slice has been buffered
+  /// (and flushed, if the threshold was crossed). Safe to call without
+  /// awaiting; calls are serialized.
+  Future<void> appendData(SampleSlice slice) {
     // Capture this slice's gap ranges synchronously, rebased to
     // session-relative indices.
-    final int origin = _originIdx ??= startIdx;
+    final int origin = _originIdx ??= slice.startIndex;
     if (_ssnOrigin == null) {
-      final anchor = dataHub.packetAnchor;
+      final anchor = slice.anchor;
       _ssnOrigin = (anchor?.counter ?? 0) + (origin - (anchor?.hubIndex ?? 0));
       unawaited(_enqueue(_persistSsnOrigin));
     }
-    for (final (s, e) in dataHub.gaps.rangesIn(startIdx, startIdx + count)) {
+    for (final (s, e) in slice.gapRanges) {
       gaps.append(s - origin, e - origin);
     }
 
+    final count = slice.sampleCount;
+    _unflushedSamples += count;
+    // Backpressure latch: once the accepted-but-unwritten backlog exceeds the
+    // source ring's capacity, storage is a full ring behind the producer and
+    // the backlog only grows (~16 KB/s) into a possibly wedged sink. Latch
+    // an error so the session auto-stops loudly via the existing hasError
+    // path. Checked at accept time — it trips even if the write queue never
+    // runs again.
+    if (writeError == null && _unflushedSamples > sourceRingCapacity) {
+      writeError = StateError(
+        'Storage fell more than the ring capacity ($sourceRingCapacity '
+        'samples) behind the live stream; aborting recording',
+      );
+      debugPrint(
+        'Session storage backpressure tripped (session $sessionId): '
+        '$writeError',
+      );
+    }
+
     // Snapshot the sample slice before enqueueing.
-    const codec = SessionChunkCodec(wireNumAdcChan);
-    final bytes = codec.pack(
-      count,
-      (s, ch) => dataHub.rawData[ch][(startIdx + s) % DataHub.maxDataSz],
-    );
+    const codec = SessionChunkCodec(kAdcChannelCount);
+    final bytes = codec.pack(count, (s, ch) => slice.channels[ch][s]);
 
     return _enqueue(() async {
-      if (writeError != null) return;
-      // Backpressure latch: if storage has fallen a full ring behind, the
-      // producer has overwritten this slice's slots (the snapshot above is
-      // still correct, but the backlog of snapshots grows ~16 KB/s while the
-      // stall lasts). Latch an error so the session auto-stops loudly via the
-      // existing hasError path instead of leaking memory into a wedged sink.
-      if (startIdx < dataHub.totalSamples - DataHub.maxDataSz) {
-        writeError ??= StateError(
-          'Storage fell more than the ring capacity (${DataHub.maxDataSz} '
-          'samples) behind the live stream; aborting recording',
-        );
-        debugPrint(
-          'Session storage backpressure tripped (session $sessionId): '
-          '$writeError',
-        );
-        return;
-      }
+      try {
+        if (writeError != null) return;
 
-      // Update peaks/sample-count via the same scan logic recovery uses.
-      _agg.scan(bytes, tare);
-      totalSamplesRecorded = _agg.samples;
+        // Update peaks/sample-count via the same scan logic recovery uses.
+        _agg.scan(bytes, tare);
+        totalSamplesRecorded = _agg.samples;
 
-      _staging.add(bytes);
+        _staging.add(bytes);
 
-      if (_staging.length >= _flushThreshold) {
-        await _flushStaging();
+        if (_staging.length >= _flushThreshold) {
+          await _flushStaging();
+        }
+      } finally {
+        _unflushedSamples -= count;
       }
     });
   }

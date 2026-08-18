@@ -3,7 +3,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/models/calibration.dart';
+import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/data_hub.dart';
@@ -24,7 +25,7 @@ Uint8List makePacket(
   ev[0] = startCounter & 0xFF;
   ev[1] = (startCounter >> 8) & 0xFF;
   for (int s = 0; s < samples; ++s) {
-    for (int c = 0; c < wireNumAdcChan; ++c) {
+    for (int c = 0; c < kAdcChannelCount; ++c) {
       final v = value(s, c) & 0xFFFFFF;
       final base = wireAdcHeaderSize + s * wireAdcSampleLength + c * 3;
       ev[base] = v & 0xFF;

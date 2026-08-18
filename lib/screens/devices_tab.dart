@@ -3,22 +3,23 @@ import 'dart:async';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
-import 'package:universal_ble/universal_ble.dart'
-    show AvailabilityState, BleDevice;
 
 import '../services/ble_link_manager.dart';
-import '../services/data_hub.dart';
-import '../services/feed_health.dart';
+import '../models/bt_scan.dart';
 import '../utils/format.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/empty_placeholder.dart';
+import '../widgets/feed_health_indicator.dart';
 import '../widgets/rssi_indicator.dart';
 import '../widgets/section_header.dart';
 import '../widgets/status_colors.dart';
-import 'app_shell.dart';
 
 class DevicesTab extends StatelessWidget {
-  const DevicesTab({super.key});
+  const DevicesTab({super.key, required this.onGoToSettings});
+
+  /// The active device row's gear action: jumps to the Settings tab.
+  /// Supplied by the app shell, which owns the tab index.
+  final VoidCallback onGoToSettings;
 
   @override
   Widget build(BuildContext context) {
@@ -78,8 +79,8 @@ class DevicesTab extends StatelessWidget {
           colors: scheme,
         ),
     };
-    final freshRows = <BleDevice>[];
-    final staleRows = <BleDevice>[];
+    final freshRows = <DiscoveredDevice>[];
+    final staleRows = <DiscoveredDevice>[];
     for (final d in bt.devices) {
       (d.deviceId != activeId &&
                   visuals[d.deviceId]!.mood == InactiveRowMood.stale
@@ -149,6 +150,7 @@ class DevicesTab extends StatelessWidget {
                     linkState: bt.link.state,
                     connectedRssi: bt.connectedRssi,
                     onDisconnect: bt.disconnectSelectedDevice,
+                    onGoToSettings: onGoToSettings,
                   )
                 : _InactiveDeviceRow(
                     name: device.name ?? 'Unknown device',
@@ -166,7 +168,7 @@ class DevicesTab extends StatelessWidget {
           // so it reflects connected state inline like a BLE row.
           const SectionHeader('Demo devices'),
           const SizedBox(height: 8),
-          if (bt.link.isDemoDevice && bt.link.state != BtLinkState.idle)
+          if (bt.link.isSimulated && bt.link.state != BtLinkState.idle)
             _ActiveDeviceRow(
               name: 'Demo Device',
               icon: Icons.science,
@@ -174,6 +176,7 @@ class DevicesTab extends StatelessWidget {
               linkState: bt.link.state,
               connectedRssi: null,
               onDisconnect: bt.disconnectSelectedDevice,
+              onGoToSettings: onGoToSettings,
             )
           else
             _InactiveDeviceRow(
@@ -200,33 +203,30 @@ class DevicesTab extends StatelessWidget {
 
   /// The big state-aware empty block: the single empty-state voice. Icon
   /// and color come straight from the shared [btStatusVisual] mapping.
-  Widget _buildEmptyBlock(
-    BtStatusVisual visual,
-    AvailabilityState availability,
-  ) {
+  Widget _buildEmptyBlock(BtStatusVisual visual, BtAvailability availability) {
     final (title, hint) = switch (availability) {
-      AvailabilityState.poweredOn => (
+      BtAvailability.poweredOn => (
         'No devices found',
         'Tap Scan to search for nearby devices',
       ),
-      AvailabilityState.poweredOff => (
+      BtAvailability.poweredOff => (
         visual.label,
         'Turn on Bluetooth to find devices',
       ),
-      AvailabilityState.unauthorized => (
+      BtAvailability.unauthorized => (
         visual.label,
         'Grant Bluetooth permission to find devices',
       ),
-      AvailabilityState.unsupported => (
+      BtAvailability.unsupported => (
         visual.label,
         unsupportedHint(isWeb: kIsWeb),
       ),
-      AvailabilityState.unknown || AvailabilityState.resetting => (
+      BtAvailability.unknown || BtAvailability.resetting => (
         visual.label,
         'This should only take a moment',
       ),
     };
-    final poweredOn = availability == AvailabilityState.poweredOn;
+    final poweredOn = availability == BtAvailability.poweredOn;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 24),
       child: EmptyPlaceholder(
@@ -255,7 +255,7 @@ String connectFailureHint(
     'Timed out — check that the device is on, nearby, and not connected to another device',
 };
 
-/// The empty block's hint for [AvailabilityState.unsupported], per platform.
+/// The empty block's hint for [BtAvailability.unsupported], per platform.
 /// Web means the browser lacks Web Bluetooth (Firefox, Safari, every iOS
 /// browser). Native means the device itself reports no Bluetooth
 /// support — a baffling case with no clear recommendation, so the
@@ -533,6 +533,7 @@ class _ActiveDeviceRow extends StatelessWidget {
     required this.linkState,
     required this.connectedRssi,
     required this.onDisconnect,
+    required this.onGoToSettings,
   });
 
   final String name;
@@ -553,12 +554,15 @@ class _ActiveDeviceRow extends StatelessWidget {
 
   final VoidCallback onDisconnect;
 
+  /// The gear button: jumps to the Settings tab.
+  final VoidCallback onGoToSettings;
+
   @override
   Widget build(BuildContext context) {
     // Reuse the shared, unit-tested state → visual mapping.
     final visual = btStatusVisual(
       linkState: linkState,
-      availability: AvailabilityState.poweredOn, // a link is up → radio is on
+      availability: BtAvailability.poweredOn, // a link is up → radio is on
       isScanning: false,
       // Never consulted: link branches return before the connectability gate.
       hasConnectableDevices: true,
@@ -628,7 +632,7 @@ class _ActiveDeviceRow extends StatelessWidget {
                 ],
               ),
             ),
-            const _FeedHealthLine(),
+            const FeedHealthIndicator(),
           ],
         ),
         trailing: Row(
@@ -640,9 +644,7 @@ class _ActiveDeviceRow extends StatelessWidget {
               // Compact (48→40): part of the subtitle-lane width reclamation
               // above.
               visualDensity: VisualDensity.compact,
-              onPressed: () => context
-                  .findAncestorStateOfType<AppShellState>()
-                  ?.goToSettings(),
+              onPressed: onGoToSettings,
             ),
             // Fixed width: same column/shape as the Scan and Connect buttons
             // (see [deviceActionButtonWidth]).
@@ -669,65 +671,6 @@ class _ActiveDeviceRow extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// One-line feed-health readout under the active row's subtitle
-/// ("Packets malformed…", "No data from device", "Stream stopped").
-/// Derived live from the hub on a 1 Hz tick (the same cadence as the live
-/// tab's health check); renders nothing while the feed is healthy or the
-/// link isn't streaming. Self-ticking because the hub probably shouldn't notify on
-/// malformed packets
-class _FeedHealthLine extends StatefulWidget {
-  const _FeedHealthLine();
-
-  @override
-  State<_FeedHealthLine> createState() => _FeedHealthLineState();
-}
-
-class _FeedHealthLineState extends State<_FeedHealthLine> {
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final streaming = context.select<BleLinkManager, bool>(
-      (l) => l.isStreaming,
-    );
-    final health = deriveFeedHealth(
-      streaming: streaming,
-      hub: context.read<DataHub>(),
-    );
-    final label = health?.shortLabel;
-    if (label == null) return const SizedBox.shrink();
-    final color = Theme.of(context).extension<StatusColors>()!.onConnectedWarning;
-    return Row(
-      children: [
-        Icon(Icons.error_outline, size: 14, color: color),
-        const SizedBox(width: 4),
-        Flexible(
-          child: Text(
-            label,
-            style: Theme.of(
-              context,
-            ).textTheme.labelSmall?.copyWith(color: color),
-          ),
-        ),
-      ],
     );
   }
 }
