@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/models/device_profile.dart';
+import 'package:dynamite_app/models/device_name.dart';
 
 void main() {
   group('device-name grammar', () {

@@ -6,7 +6,8 @@
 ///   Android/iOS/macOS/Windows/Linux, a browser download on web.
 /// - [shareSessionCsv] — share_plus's share sheet ("Save to Files" on iOS,
 ///   the Web Share API with download fallback on web). File sharing is
-///   unsupported on Linux — see [fileShareSupportedHere].
+///   unsupported on Linux — see `fileShareSupportedHere` in
+///   share_capability.dart.
 ///
 /// `file_selector` was dropped for this: its `getSaveLocation` is
 /// unimplemented on Android and iOS (throws `UnimplementedError`), which is
@@ -29,6 +30,52 @@ import '../models/display_unit.dart';
 import 'csv_export_temp_stub.dart'
     if (dart.library.io) 'csv_export_temp_io.dart';
 import 'session_storage.dart';
+
+// -- CSV session metadata (docs/csv-format-v1.md, the `device` block) -------
+
+/// The dynamite-csv `device` metadata block for a session recorded on the
+/// device known to the link as [name] with DIS identity [info] (null when
+/// the connect-time read never ran — every identity field is then null).
+/// Frozen onto the session row at recording start (the spec's
+/// recording-time snapshot requirement); [fromCsvDeviceMetadata] is the
+/// read side. Map order is the emission order (and matches the spec).
+/// `id` is the serial (the true hardware identity, unlike the platform
+/// device id) — null for sessions recorded on web, where 0x2A25 is
+/// blocklisted.
+Map<String, Object?> toCsvDeviceMetadata({
+  required String? name,
+  required DeviceInfo? info,
+}) => {
+  'name': (name == null || name.isEmpty) ? null : name,
+  'id': info?.serial,
+  'model': info?.model,
+  'firmware': info?.firmwareRev,
+  'manufacturer': info?.manufacturer,
+};
+
+/// Parse a session row's frozen `device` block (see [toCsvDeviceMetadata]).
+/// A malformed document, or non-string values in it, degrade to nulls —
+/// this is a display-only metadata path and must never throw. Unknown keys
+/// are dropped; unknown-to-this-app fields stay available to readers of
+/// the raw JSON.
+Map<String, Object?> fromCsvDeviceMetadata(String json) {
+  try {
+    final decoded = jsonDecode(json);
+    if (decoded is Map) {
+      String? s(Object? v) => v is String && v.isNotEmpty ? v : null;
+      return {
+        'name': s(decoded['name']),
+        'id': s(decoded['id']),
+        'model': s(decoded['model']),
+        'firmware': s(decoded['firmware']),
+        'manufacturer': s(decoded['manufacturer']),
+      };
+    }
+  } catch (e) {
+    debugPrint('Failed to parse session device metadata "$json": $e');
+  }
+  return toCsvDeviceMetadata(name: null, info: null);
+}
 
 /// The dynamite-csv file format's view of a display unit
 /// (docs/csv-format-v1.md): the header/metadata symbol and the per-column
@@ -58,15 +105,6 @@ extension DisplayUnitCsv on DisplayUnit {
         .clamp(0, 10)
         .toInt();
   }
-}
-
-/// Whether the file-share flow ([shareSessionCsv], `shareCalibrationReport`)
-/// can present a share UI on this platform: share_plus shares files on
-/// Android, iOS, macOS, Windows and web, but not Linux.
-bool get fileShareSupportedHere {
-  if (kIsWeb) return true;
-  return defaultTargetPlatform != TargetPlatform.linux &&
-      defaultTargetPlatform != TargetPlatform.fuchsia;
 }
 
 /// Download the session's recorded [data] as CSV: a save-as dialog on
@@ -205,7 +243,7 @@ Future<(Uint8List, String)> _prepareCsv(
 /// conventions are `\n` endings, no BOM, dot decimals — see the spec.
 ///
 /// [deviceInfoJson] is the session row's frozen `device` block (see
-/// [DeviceInfo.toCsvDeviceMetadata]); null or malformed degrades to all-null
+/// [toCsvDeviceMetadata]); null or malformed degrades to all-null
 /// placeholders rather than failing the export.
 ///
 /// TODO(perf): the whole CSV is built in memory as one string — the format
@@ -223,8 +261,8 @@ String buildSessionCsv(
   // only on sessions with no recorded packets (no data rows anyway).
   final int ssnOrigin = data.ssnOrigin ?? 0;
   final device = deviceInfoJson == null
-      ? DeviceInfo.toCsvDeviceMetadata(name: null, info: null)
-      : DeviceInfo.fromCsvDeviceMetadata(deviceInfoJson);
+      ? toCsvDeviceMetadata(name: null, info: null)
+      : fromCsvDeviceMetadata(deviceInfoJson);
 
   // Per-channel quartet-2 cell formatters, computed once from the session's
   // frozen calibration; each closure folds in the column's fixed-point

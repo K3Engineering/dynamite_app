@@ -7,7 +7,6 @@ import 'package:flutter/gestures.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter/scheduler.dart';
 
-import '../models/app_settings.dart';
 import '../models/bucket_series.dart';
 import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
@@ -1561,10 +1560,17 @@ class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
 class GraphWorkspace extends StatefulWidget {
   final GraphDataSource data;
   final GraphController ctrl;
-  final AppSettings settings;
+
+  /// The user's display-unit preference; resolved against this view's data
+  /// (see [DisplayUnit.effective]) in build.
+  final DisplayUnit unit;
+
+  /// Master switch for the rail/forbidden-zone chrome (the app's
+  /// limit-warnings setting, handed in as a scalar).
+  final bool limitWarningsEnabled;
 
   /// Indices of the channels to plot. Kept per view (live tab, each session)
-  /// rather than in [settings], so each surface chooses its own set.
+  /// rather than in the app settings, so each surface chooses its own set.
   final List<int> activeChannels;
   final bool showDerivative;
   final bool isLiveGraph;
@@ -1573,7 +1579,8 @@ class GraphWorkspace extends StatefulWidget {
     super.key,
     required this.data,
     required this.ctrl,
-    required this.settings,
+    required this.unit,
+    required this.limitWarningsEnabled,
     required this.activeChannels,
     this.showDerivative = false,
     this.isLiveGraph = true,
@@ -1667,7 +1674,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final dpr = MediaQuery.devicePixelRatioOf(context);
-    final unit = widget.settings.displayUnit.effective(
+    final unit = widget.unit.effective(
       resolveUnitAvailability(widget.data.calibrationFor, widget.activeChannels),
     );
     // Channels the (effective) unit can't convert (a force unit with no
@@ -1697,7 +1704,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                     ctrl: widget.ctrl,
                     painter: _ForceGraphPainter(
                       widget.data,
-                      widget.settings,
+                      widget.limitWarningsEnabled,
                       widget.ctrl,
                       unit: unit,
                       activeChannels: drawableChannels,
@@ -1720,7 +1727,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                       ctrl: widget.ctrl,
                       painter: _DerivativeGraphPainter(
                         widget.data,
-                        widget.settings,
+                        widget.limitWarningsEnabled,
                         widget.ctrl,
                         unit: unit,
                         activeChannels: drawableChannels,
@@ -2784,7 +2791,7 @@ _GraphLayout? _setupGraphFrame(
 /// [yTickLabel] -- plus layout tweaks and cache-key extras.
 abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final GraphDataSource _data;
-  final AppSettings _settings;
+  final bool _limitWarningsEnabled;
   final DisplayUnit _unit;
   final GraphController _ctrl;
 
@@ -2807,7 +2814,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   _TimeSeriesGraphPainter(
     this._data,
-    this._settings,
+    this._limitWarningsEnabled,
     this._ctrl, {
     required DisplayUnit unit,
     required List<int> activeChannels,
@@ -2982,7 +2989,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
 
   _ForceGraphPainter(
     super.data,
-    super.settings,
+    super.limitWarningsEnabled,
     super.ctrl, {
     this.showXLabels = true,
     required super.unit,
@@ -3075,10 +3082,11 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     return _computeYRange(yMin, yMax, unit);
   }
 
-  /// Rail chrome, gated on `AppSettings.limitWarningsEnabled`. Single light
-  /// fill from the outermost in-view rail to the plot edge; single stronger
-  /// fill over the union of clipping spans. Mixed buckets are treated as hot
-  /// when a bucket is ≤1 px ([_blockSizeFor] >= [kBucketSize]).
+  /// Rail chrome, gated on [_limitWarningsEnabled] (the app's limit-warnings
+  /// master switch). Single light fill from the outermost in-view rail to
+  /// the plot edge; single stronger fill over the union of clipping spans.
+  /// Mixed buckets are treated as hot when a bucket is ≤1 px
+  /// ([_blockSizeFor] >= [kBucketSize]).
   @override
   void drawOverlay(
     Canvas canvas,
@@ -3088,7 +3096,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     double viewStart,
     double viewEnd,
   ) {
-    if (!_settings.limitWarningsEnabled) return;
+    if (!_limitWarningsEnabled) return;
 
     final unit = _unit;
     final viewSpan = viewEnd - viewStart;
@@ -3180,7 +3188,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
 class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   _DerivativeGraphPainter(
     super.data,
-    super.settings,
+    super.limitWarningsEnabled,
     super.ctrl, {
     required super.unit,
     required super.activeChannels,

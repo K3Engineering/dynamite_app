@@ -9,7 +9,6 @@ import 'database.dart';
 import '../models/bucket_series.dart';
 import '../models/board_calibration.dart';
 import '../models/device_flash.dart';
-import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
@@ -27,7 +26,7 @@ class SessionStorage {
   /// Note: every session stores all [kAdcChannelCount]; [channelLabels]
   /// and [visibleChannels] are retained for display only. [deviceMetadata] is
   /// the connected device's identity as the dynamite-csv `device` block (see
-  /// [DeviceInfo.toCsvDeviceMetadata]), frozen for export.
+  /// `toCsvDeviceMetadata` in csv_export.dart), frozen for export.
   ///
   /// This is hub-agnostic by contract: the caller snapshots everything the
   /// live buffer would supply ([tare], [channelCalibration],
@@ -236,6 +235,11 @@ class SessionStorage {
     fallback: (_) => ChannelCalibration(board: ChannelBoardCalibration()),
   );
 }
+
+/// The write side of the per-channel visibility column (the read side is
+/// [parseJsonColumn] at the call site): a plain JSON array of booleans.
+/// Kept next to the parser so the column's encoding has one home.
+String encodeVisibleChannels(List<bool> visible) => jsonEncode(visible);
 
 /// Parse a JSON-encoded list column into exactly [count] entries: entry i is
 /// [convert] applied to the i-th decoded element, or [fallback] when the

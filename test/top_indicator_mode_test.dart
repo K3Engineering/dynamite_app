@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/services/bt_scan.dart';
+import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/widgets/bt_icon.dart';
 
 /// Tests for [topIndicatorMode], the "quiet when nominal" presentation

@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/device_flash.dart';
@@ -8,10 +9,10 @@ import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/rig_slots_section.dart';
 
 /// Widget tests for the rig slot section: rows from the device flash doc,
-/// the add/edit dialogs, and the dirty banner. The section is dumb, so the
-/// harness is a real [RigState] (fake transport) with the section rebuilt
-/// off its notifies. No device is connected, so the Save button stays
-/// disabled — save logic itself is covered in rig_state_test.dart.
+/// the add/edit dialogs, and the dirty banner. The harness provides a real
+/// [RigState] (fake transport) for the section's selects. No device is
+/// connected, so the Save button stays disabled — save logic itself is
+/// covered in rig_state_test.dart.
 class _FakeTransport implements RigFlashTransport {
   String? lastWrittenDoc;
 
@@ -53,20 +54,9 @@ void main() {
         // No connected device: the Save button stays disabled.
         home: Scaffold(
           body: SingleChildScrollView(
-            child: ListenableBuilder(
-              listenable: rig,
-              builder: (context, _) => RigSlotsSection(
-                connectedDeviceId: '',
-                hasDeviceDoc: rig.hasDeviceDoc,
-                slots: rig.effectiveSlots,
-                pending: rig.pending,
-                history: rig.history,
-                onSave: rig.saveToDevice,
-                onRevert: rig.revert,
-                onSwapSlots: rig.swapSlots,
-                onSetSlot: rig.setSlot,
-                onClearSlot: rig.clearSlot,
-              ),
+            child: ChangeNotifierProvider.value(
+              value: rig,
+              child: const RigSlotsSection(connectedDeviceId: ''),
             ),
           ),
         ),

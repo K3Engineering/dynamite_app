@@ -5,9 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'adc_packet_decoder.dart';
 import 'app_events.dart';
 import 'ble_link_manager.dart';
+import 'csv_export.dart';
 import 'data_hub.dart';
 import 'session_storage.dart';
-import '../models/device_info.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/feed_health.dart';
@@ -141,7 +141,7 @@ class RecordingController extends ChangeNotifier {
     // Freeze the connected device's identity onto the row (the CSV `device`
     // block — docs/csv-format-v1.md): export must never consult live device
     // state.
-    final deviceMetadata = DeviceInfo.toCsvDeviceMetadata(
+    final deviceMetadata = toCsvDeviceMetadata(
       name: _linkManager.connectedDeviceName,
       info: _linkManager.connectedDeviceInfo,
     );

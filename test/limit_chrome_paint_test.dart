@@ -2,10 +2,9 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:dynamite_app/models/app_settings.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
@@ -31,8 +30,6 @@ void main() {
   testWidgets('limit chrome paints with data in the band and at the rail', (
     tester,
   ) async {
-    SharedPreferences.setMockInitialValues({});
-    final settings = AppSettings(prefs: await SharedPreferences.getInstance());
     final hub = DataHub();
     hub.updateBoardCalibration(
       BoardCalibration(
@@ -62,7 +59,8 @@ void main() {
         home: GraphWorkspace(
           data: hub,
           ctrl: ctrl,
-          settings: settings,
+          unit: DisplayUnit.mVv,
+          limitWarningsEnabled: true,
           activeChannels: [for (int i = 0; i < channels; i++) i],
         ),
       ),

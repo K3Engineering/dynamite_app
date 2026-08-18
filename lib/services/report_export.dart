@@ -4,7 +4,7 @@
 /// - [downloadCalibrationReport] — file_picker's `saveFile`: a save-as
 ///   dialog on Android/iOS/macOS/Windows/Linux, a browser download on web.
 /// - [shareCalibrationReport] — share_plus's share sheet (unsupported on
-///   Linux — see [fileShareSupportedHere]).
+///   Linux — see `fileShareSupportedHere` in share_capability.dart).
 library;
 
 import 'dart:convert';

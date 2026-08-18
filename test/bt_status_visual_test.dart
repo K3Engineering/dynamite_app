@@ -1,7 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/services/bt_scan.dart';
+import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/widgets/bt_icon.dart';
 import 'package:dynamite_app/widgets/status_colors.dart';
 

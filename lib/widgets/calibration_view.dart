@@ -164,6 +164,7 @@ class _ChannelCalCard extends StatelessWidget {
     // The plot and the Nonlinearity column need only the measured points;
     // the Error column additionally needs the nominal chain as its
     // reference, so it alone drops out without board constants.
+    // TODO I don't think we need this conditional
     final errors = channel.measuredErrorsUvV;
     final nonlinearities = channel.deviationsUvV;
     return Card(

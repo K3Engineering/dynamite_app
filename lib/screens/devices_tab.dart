@@ -5,7 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../services/ble_link_manager.dart';
-import '../services/bt_scan.dart';
+import '../models/bt_scan.dart';
 import '../services/data_hub.dart';
 import '../models/feed_health.dart';
 import '../widgets/feed_health_text.dart';

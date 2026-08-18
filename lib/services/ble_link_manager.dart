@@ -7,13 +7,13 @@ import 'package:universal_ble/universal_ble.dart';
 import 'app_events.dart';
 import 'adc_protocol.dart';
 import 'bt_device_config.dart';
-import 'bt_scan.dart';
+import '../models/bt_scan.dart';
 import 'kvs_client.dart';
 import 'kvs_flash_transport.dart';
 import 'kvs_protocol.dart';
 import 'rig_state.dart';
 import '../models/device_info.dart';
-import '../models/device_profile.dart';
+import '../models/device_name.dart';
 import '../utils/log.dart';
 
 /// Why a connect attempt failed, for the Devices tab's per-row failure marker

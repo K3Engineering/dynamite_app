@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
@@ -9,6 +8,7 @@ import '../models/display_unit.dart';
 import '../services/csv_export.dart';
 import '../services/database.dart';
 import '../services/session_storage.dart';
+import '../services/share_capability.dart';
 import '../utils/format.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
@@ -63,7 +63,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     updated[index] = !updated[index];
     await AppDatabase.instance.setSessionVisibleChannels(
       session.id,
-      jsonEncode(updated),
+      encodeVisibleChannels(updated),
     );
   }
 
@@ -217,7 +217,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               child: GraphWorkspace(
                 data: data,
                 ctrl: _graphCtrl,
-                settings: settings,
+                unit: settings.displayUnit,
+                limitWarningsEnabled: settings.limitWarningsEnabled,
                 activeChannels: [
                   for (int i = 0; i < visibleChannels.length; i++)
                     if (visibleChannels[i]) i,

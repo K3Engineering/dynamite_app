@@ -9,7 +9,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
-import 'package:dynamite_app/services/bt_scan.dart';
+import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';

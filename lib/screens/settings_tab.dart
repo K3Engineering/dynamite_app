@@ -8,12 +8,10 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../models/app_settings.dart';
 import '../models/board_calibration.dart';
 import '../models/device_info.dart';
+import '../models/device_name.dart';
 import '../models/display_unit.dart';
-import '../models/load_cell.dart';
-import '../models/rig_edits.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
-import '../models/device_profile.dart';
 import '../services/rig_state.dart';
 import '../widgets/calibration_text.dart';
 import '../widgets/connection_info_card.dart';
@@ -188,7 +186,7 @@ class SettingsTab extends StatelessWidget {
             // device".
             Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
-            _RigSlotsConnector(deviceId: deviceId),
+            RigSlotsSection(connectedDeviceId: deviceId),
             const SizedBox(height: 16),
 
             Card(
@@ -239,40 +237,6 @@ class SettingsTab extends StatelessWidget {
           ),
         ],
       ),
-    );
-  }
-}
-
-/// Wires [RigSlotsSection] to [RigState]: the rig slices are selected here
-/// (narrowly, so the section doesn't rebuild on every notify) and the
-/// mutation callbacks are handed down — the section widget itself is dumb.
-class _RigSlotsConnector extends StatelessWidget {
-  const _RigSlotsConnector({required this.deviceId});
-
-  final String deviceId;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasDoc = context.select<RigState, bool>((r) => r.hasDeviceDoc);
-    final slots = context.select<RigState, RigSlots>((r) => r.effectiveSlots);
-    final pending = context.select<RigState, PendingRigEdits?>(
-      (r) => r.pending,
-    );
-    final rig = context.read<RigState>();
-    return RigSlotsSection(
-      connectedDeviceId: deviceId,
-      hasDeviceDoc: hasDoc,
-      slots: slots,
-      pending: pending,
-      // Read at build time: history only ever changes alongside one of the
-      // selected slices (a slot edit or a flash read), so it needs no
-      // select of its own.
-      history: rig.history,
-      onSave: rig.saveToDevice,
-      onRevert: rig.revert,
-      onSwapSlots: rig.swapSlots,
-      onSetSlot: rig.setSlot,
-      onClearSlot: rig.clearSlot,
     );
   }
 }

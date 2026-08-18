@@ -3,8 +3,8 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/board_calibration.dart';
-import '../services/csv_export.dart' show fileShareSupportedHere;
 import '../services/report_export.dart';
+import '../services/share_capability.dart';
 import '../services/rig_state.dart';
 import '../widgets/calibration_text.dart';
 import '../widgets/calibration_view.dart';

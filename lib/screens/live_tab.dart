@@ -322,7 +322,8 @@ class _LiveTabState extends State<LiveTab> {
     return GraphWorkspace(
       data: hub,
       ctrl: _graphCtrl,
-      settings: settings,
+      unit: settings.displayUnit,
+      limitWarningsEnabled: settings.limitWarningsEnabled,
       activeChannels: settings.activeChannelIndices,
       showDerivative: showDerivative,
     );
