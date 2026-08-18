@@ -9,11 +9,12 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import '../models/app_meta.dart';
-import '../models/device_flash.dart';
+import '../models/channel_calibration.dart';
 import '../models/display_unit.dart';
 import 'export_delivery.dart';
 import 'session_data.dart';
-import 'session_storage.dart';
+import 'session_metadata.dart';
+import 'share_capability.dart';
 
 /// The dynamite-csv file format's view of a display unit
 /// (docs/csv-format-v1.md): the header/metadata symbol and the per-column

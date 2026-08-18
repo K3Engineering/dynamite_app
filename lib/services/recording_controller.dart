@@ -6,6 +6,7 @@ import 'adc_packet_decoder.dart';
 import 'app_events.dart';
 import 'ble_link_manager.dart';
 import 'data_hub.dart';
+import 'session_metadata.dart';
 import 'session_storage.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
@@ -81,8 +82,10 @@ class RecordingController extends ChangeNotifier {
   final BleLinkManager _linkManager;
   final AppEvents _events;
 
-  /// Needed to reset packet-continuity tracking at stream/session boundaries
-  /// so the first packet after a boundary isn't diffed against a stale counter.
+  /// Needed to reset packet-continuity tracking at SESSION boundaries
+  /// (start/stop), so the first packet of a session isn't diffed against a
+  /// stale counter. New-stream resets are the decoder's own business (it
+  /// listens to the hub's cleared events — see `AdcPacketDecoder`).
   final AdcPacketDecoder _decoder;
 
   /// True while a session writer is latched. Derived (not stored) so the flag
@@ -132,8 +135,8 @@ class RecordingController extends ChangeNotifier {
           lastDataAt: _dataHub.lastDataAt,
           lastMalformedPacketAt: _dataHub.lastMalformedPacketAt,
           streamStartedAt: _dataHub.streamStartedAt,
-        )
-        case FeedHealth.stopped || FeedHealth.blocked || FeedHealth.silent) {
+        )?.noDataFlowing ??
+        false) {
       return const StartSessionNoData();
     }
 
@@ -265,13 +268,12 @@ class RecordingController extends ChangeNotifier {
     }
     if (streaming && !_wasStreaming) {
       // New device stream. Clear the previous stream's ring buffer, peaks,
-      // tare and gaps so two connections never splice into one trace, and
-      // restart continuity so the new stream's first packet isn't diffed
-      // against the old stream's counter. Runs on stream entry (not on
-      // disconnect) so a recording being finalized after an unexpected drop
-      // can still read the old ring data while it flushes.
+      // tare and gaps so two connections never splice into one trace; the
+      // decoder restarts continuity itself off the clear (see its
+      // constructor). Runs on stream entry (not on disconnect) so a
+      // recording being finalized after an unexpected drop can still read
+      // the old ring data while it flushes.
       _dataHub.clear();
-      _decoder.resetContinuity();
     }
     _wasStreaming = streaming;
   }

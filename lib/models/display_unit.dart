@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
 import 'board_calibration.dart';
-import 'device_flash.dart';
+import 'channel_calibration.dart';
 
 /// One rung of a unit's SI-prefix axis ladder: [factor] base units equal one
 /// rung unit (1e-3 mV per µV, 1e3 kgf per tf); [symbol] is the axis-label

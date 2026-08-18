@@ -3,11 +3,10 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/board_calibration.dart';
-import '../services/export_delivery.dart';
 import '../services/report_export.dart';
 import '../services/share_capability.dart';
 import '../services/rig_state.dart';
-import '../widgets/calibration_text.dart';
+import '../models/calibration_text.dart';
 import '../widgets/calibration_view.dart';
 
 /// The board calibration page: the factory calibration view

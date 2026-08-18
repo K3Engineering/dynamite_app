@@ -1,7 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/bucket_series.dart';
-import '../models/device_flash.dart';
+import '../models/channel_calibration.dart';
 import '../models/gap_list.dart';
 import 'graph_data_source.dart';
 

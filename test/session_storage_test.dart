@@ -5,7 +5,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
-import 'package:dynamite_app/models/device_flash.dart';
+import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';

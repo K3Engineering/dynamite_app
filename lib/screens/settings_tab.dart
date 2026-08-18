@@ -13,7 +13,7 @@ import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/rig_state.dart';
-import '../widgets/calibration_text.dart';
+import '../models/calibration_text.dart';
 import '../widgets/connection_info_card.dart';
 import '../widgets/device_info_card.dart';
 import '../widgets/rig_slots_section.dart';
@@ -187,7 +187,10 @@ class SettingsTab extends StatelessWidget {
             // device".
             Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
-            RigSlotsSection(connectedDeviceId: deviceId),
+            RigSlotsSection(
+              connectedDeviceId: deviceId,
+              rig: context.read<RigState>(),
+            ),
             const SizedBox(height: 16),
 
             Card(

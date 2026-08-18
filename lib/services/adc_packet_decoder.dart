@@ -14,12 +14,19 @@ import '../utils/log.dart';
 /// Owns the packet-continuity counter used to detect dropped packets (reported
 /// to the hub via [DataHub.addDroppedFrames]).
 class AdcPacketDecoder {
-  AdcPacketDecoder(this.hub);
+  AdcPacketDecoder(this.hub) {
+    // A hub clear means a NEW device stream just took over; its first packet
+    // must not be diffed against the previous stream's counter. The hub's
+    // cleared event IS the stream-boundary signal, so the decoder resets
+    // itself rather than the link-change orchestrator doing it.
+    hub.addClearedListener(resetContinuity);
+  }
 
   final DataHub hub;
 
   /// Expected value of the next packet's 16-bit running sample counter, or -1
-  /// when continuity tracking is reset (link start, session boundaries).
+  /// when continuity tracking is reset (new device stream, session
+  /// boundaries).
   int _prevSampleCount = -1;
 
   /// Reusable frame buffer (one value per channel) passed to
@@ -28,8 +35,9 @@ class AdcPacketDecoder {
 
   /// Forget the last seen packet counter so the next packet is not diffed
   /// against a stale value (which would report spurious dropped samples).
-  /// Called when a new device stream starts (see [RecordingController]) and
-  /// at recording start/stop.
+  /// Self-invoked on a new device stream (via the hub's cleared listeners,
+  /// see the constructor); recording start/stop call it for the session
+  /// boundary (see `RecordingController`).
   void resetContinuity() {
     _prevSampleCount = -1;
   }

@@ -21,12 +21,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:share_plus/share_plus.dart';
 
+import 'share_capability.dart';
 import 'export_temp_stub.dart' if (dart.library.io) 'export_temp_io.dart';
-
-/// Screen-position rect for the iPad share popover, in global coordinates
-/// (ignored elsewhere). A plain record so the delivery API stays free of
-/// `dart:ui`; converted to share_plus's `Rect` type at the plugin boundary.
-typedef ShareAnchor = ({double left, double top, double width, double height});
 
 /// Download the export as a save-as dialog on native platforms, a browser
 /// download on web.

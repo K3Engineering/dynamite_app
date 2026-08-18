@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../models/bt_scan.dart';
 import '../services/ble_link_manager.dart';
+import '../services/feed_health_tracker.dart';
 import '../utils/format.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/empty_placeholder.dart';
@@ -632,7 +633,9 @@ class _ActiveDeviceRow extends StatelessWidget {
                 ],
               ),
             ),
-            const FeedHealthIndicator(),
+            FeedHealthIndicator(
+              health: context.read<FeedHealthTracker>().health,
+            ),
           ],
         ),
         trailing: Row(

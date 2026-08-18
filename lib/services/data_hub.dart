@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../models/device_profile.dart';
 import '../models/bucket_series.dart';
 import '../models/board_calibration.dart';
-import '../models/device_flash.dart';
+import '../models/channel_calibration.dart';
 import '../models/load_cell.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
