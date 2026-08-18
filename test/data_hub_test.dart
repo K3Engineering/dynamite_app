@@ -42,7 +42,7 @@ void main() {
     test('an untouched hub reports zero peak/min, not sentinel garbage', () {
       final hub = DataHub();
       for (int ch = 0; ch < channels; ch++) {
-        expect(hub.peakValue(ch, DisplayUnit.raw), 0);
+        expect(hub.peakValue(ch, DisplayUnit.raw, start: 0, end: 0), 0);
         expect(hub.minValue(ch, DisplayUnit.raw), 0);
       }
     });
@@ -72,7 +72,7 @@ void main() {
         frame[0] = v;
         hub.addSampleFrame(frame);
       }
-      expect(hub.peakValue(0, DisplayUnit.raw), -50);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples), -50);
       expect(hub.minValue(0, DisplayUnit.raw), -300);
     });
 
@@ -83,7 +83,7 @@ void main() {
         frame[0] = v;
         hub.addSampleFrame(frame);
       }
-      expect(hub.peakValue(0, DisplayUnit.raw), 300);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples), 300);
       expect(hub.minValue(0, DisplayUnit.raw), 50);
     });
 
@@ -92,8 +92,89 @@ void main() {
       feed(hub, frameOf(1000), 10);
       hub.requestTare();
       feed(hub, frameOf(1000), 1024); // completes the tare at 1000
-      expect(hub.peakValue(0, DisplayUnit.raw), 0);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples), 0);
       expect(hub.minValue(0, DisplayUnit.raw), 0);
+    });
+  });
+
+  group('windowed peak', () {
+    test('only samples inside the window count', () {
+      final hub = DataHub();
+      final frame = Int32List(channels);
+      // 300 samples of 100 with a 9000-count spike at index 50.
+      for (int i = 0; i < 300; i++) {
+        frame[0] = i == 50 ? 9000 : 100;
+        hub.addSampleFrame(frame);
+      }
+      final total = hub.totalSamples;
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: total), 9000);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 100, end: total), 100);
+      // end is exclusive: the spike at 50 falls outside [0, 50).
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 50), 100);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 50, end: 51), 9000);
+    });
+
+    test('bucket-misaligned windows are exact', () {
+      final hub = DataHub();
+      final frame = Int32List(channels);
+      // Bucket size is 100: maxima at 37 (bucket 0) and 237 (bucket 2).
+      for (int i = 0; i < 500; i++) {
+        frame[0] = switch (i) {
+          37 => 7000,
+          237 => 8000,
+          _ => 10,
+        };
+        hub.addSampleFrame(frame);
+      }
+      // Head scan (38..100) + folded buckets: misses the 7000 at 37.
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 38, end: 500), 8000);
+      // Folded buckets + tail scan (200..237): misses the 8000 at 237.
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 237), 7000);
+    });
+
+    test('held values inside a gap count toward the window peak', () {
+      final hub = DataHub();
+      feed(hub, frameOf(100), 100);
+      hub.addDroppedFrames(50); // samples 100..149 held at 100
+      feed(hub, frameOf(50), 100);
+      // Same rule as the envelope rendering: gaps hold real stored values.
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 100, end: 150), 100);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 150, end: 250), 50);
+    });
+
+    test('windows past the live edge clamp to the retained data', () {
+      final hub = DataHub();
+      feed(hub, frameOf(42), 200);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 200 + 5000), 42);
+      // Entirely beyond the newest sample: no retained samples in view.
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 5000, end: 9999), 0);
+    });
+
+    test('windows reaching into evicted samples clamp after a ring wrap', () {
+      final hub = DataHub();
+      feed(hub, frameOf(1000), 1000); // evicted by the wrap below
+      feed(hub, frameOf(1000), DataHub.maxDataSz - 100);
+      feed(hub, frameOf(2000), 100); // live edge: samples 600900..600999
+      expect(hub.totalSamples, DataHub.maxDataSz + 1000);
+      expect(hub.oldestSample, 1000);
+
+      // [0, 2000) clamps to [1000, 2000) — all 1000s. Without the clamp the
+      // fold would read aliased bucket slot 9 (bucket 6009: the 2000s).
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 2000), 1000);
+      // The live edge and the whole retained range both see the 2000s.
+      expect(
+        hub.peakValue(
+          0,
+          DisplayUnit.raw,
+          start: hub.totalSamples - 200,
+          end: hub.totalSamples,
+        ),
+        2000,
+      );
+      expect(
+        hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples),
+        2000,
+      );
     });
   });
 
@@ -116,7 +197,7 @@ void main() {
       expect(hub.gaps.isEmpty, isTrue);
       expect(hub.taring, isFalse);
       expect(hub.tare[0], 0);
-      expect(hub.peakValue(0, DisplayUnit.raw), 0);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 0), 0);
       expect(hub.minValue(0, DisplayUnit.raw), 0);
       expect(hub.valueBuckets[0].series.samples, 0);
       expect(hub.diffBuckets[0].series.samples, 0);
@@ -125,7 +206,7 @@ void main() {
       feed(hub, frameOf(-500), 10);
       expect(hub.totalSamples, 10);
       expect(hub.rawData[0][0], -500);
-      expect(hub.peakValue(0, DisplayUnit.raw), -500);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples), -500);
     });
 
     test('aborts an in-progress tare', () {
@@ -245,7 +326,7 @@ void main() {
       feed(hub, frameOf(1000), 5);
 
       expect(hub.currentValue(0, DisplayUnit.kgf), isNull);
-      expect(hub.peakValue(0, DisplayUnit.kgf), isNull);
+      expect(hub.peakValue(0, DisplayUnit.kgf, start: 0, end: hub.totalSamples), isNull);
       expect(hub.minValue(0, DisplayUnit.kgf), isNull);
       expect(hub.currentDerivative(0, DisplayUnit.kgf), isNull);
       // Electrical units convert with board calibration alone.
