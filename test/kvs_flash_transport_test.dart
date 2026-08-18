@@ -9,7 +9,7 @@ import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/kvs_client.dart';
-import 'package:dynamite_app/services/kvs_flash_transport.dart';
+import 'package:dynamite_app/services/gatt_link_backend.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
 import 'package:dynamite_app/services/mockble.dart';
 

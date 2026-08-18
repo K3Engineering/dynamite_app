@@ -1,7 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/widgets/connection_info_card.dart';
+import 'package:dynamite_app/widgets/info_cards.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

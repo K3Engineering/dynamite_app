@@ -19,8 +19,7 @@ import 'package:dynamite_app/services/feed_health_tracker.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/rig_state.dart';
-import 'package:dynamite_app/widgets/connection_info_card.dart';
-import 'package:dynamite_app/widgets/device_info_card.dart';
+import 'package:dynamite_app/widgets/info_cards.dart';
 
 /// Device identity (Device Information service) display. The card's own
 /// rendering is covered with a standalone harness; the two surfaces it feeds
