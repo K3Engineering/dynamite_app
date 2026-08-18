@@ -13,11 +13,11 @@ import 'package:dynamite_app/services/session_metadata.dart';
 import 'package:dynamite_app/services/session_storage.dart';
 
 /// [RecordingController] owns the session lifecycle start to finish, as an
-/// explicit idle/starting/recording/stopping machine: it creates the session
-/// (via its persistence port) on start, refuses every operation whose state
-/// doesn't match, refuses to start while a tare is averaging or the stream
-/// changed mid-creation, and hands the session name back on stop so the UI
-/// never touches storage.
+/// explicit idle/recording/stopping machine: it latches the session's writer
+/// on start (synchronously — no DB work happens until data exists), refuses
+/// every operation whose state doesn't match, refuses to start while a tare
+/// is averaging or no decodable data is flowing, and hands the session name
+/// back on stop so the UI never touches storage.
 ///
 /// startSession asserts the stream is live (the live tab only shows the
 /// record button while streaming), so these tests hold the stream-liveness
@@ -42,7 +42,7 @@ void main() {
     return (recording, hub, streaming);
   }
 
-  Future<StartSessionResult> start(RecordingController recording) =>
+  StartSessionResult start(RecordingController recording) =>
       recording.startSession(
         channelLabels: const ['a', 'b', 'c', 'd'],
         visibleChannels: const [true, true, true, true],
@@ -64,7 +64,7 @@ void main() {
     hub.requestTare();
     expect(hub.taring, isTrue);
 
-    final result = await start(recording);
+    final result = start(recording);
 
     expect(result, isA<StartSessionTareInProgress>());
     expect(recording.sessionInProgress, isFalse);
@@ -76,7 +76,7 @@ void main() {
     // ever arriving: positively silent, not merely starting.
     hub.streamStartedAt = DateTime.now().subtract(const Duration(seconds: 5));
 
-    final result = await start(recording);
+    final result = start(recording);
 
     expect(result, isA<StartSessionNoData>());
     expect(recording.sessionInProgress, isFalse);
@@ -87,27 +87,30 @@ void main() {
     hub.streamStartedAt = DateTime.now().subtract(const Duration(seconds: 5));
     hub.noteMalformedPacket(182);
 
-    final result = await start(recording);
+    final result = start(recording);
 
     expect(result, isA<StartSessionNoData>());
     expect(recording.sessionInProgress, isFalse);
   });
 
   test(
-    'start creates the session row; stop finalizes it and returns its name',
+    'start latches the writer; stop finalizes it and returns its name',
     () async {
       AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
       addTearDown(AppDatabase.closeInstance);
 
       final (recording, hub, _) = wire();
 
-      final startResult = await recording.startSession(
+      final startResult = recording.startSession(
         channelLabels: const ['Load Cell 1', 'Load Cell 2', 'Ch 3', 'Ch 4'],
         visibleChannels: const [true, true, false, false],
         displayUnit: DisplayUnit.kN,
       );
       expect(startResult, isA<StartSessionOk>());
       expect(recording.sessionInProgress, isTrue);
+      // No data yet, so no row: the writer creates it on its first chunk
+      // flush (no row without data).
+      expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
 
       // Record a few frames so the finalized session has data. The controller
       // streams hub slices to the writer via the samples-appended listener,
@@ -149,98 +152,23 @@ void main() {
   );
 
   test(
-    'a link drop during session creation refuses and discards the row',
-    () async {
-      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
-      addTearDown(AppDatabase.closeInstance);
-
-      final (recording, _, streaming) = wire();
-
-      // Flip liveness synchronously, before the event loop can resume the
-      // creation future: this is the drop landing mid-insert. Without the
-      // post-await stream re-check, the writer would latch onto the dead
-      // stream — and a later reconnect would splice the new device's stream
-      // into it.
-      final future = start(recording);
-      streaming.value = false;
-      final result = await future;
-
-      expect(result, isA<StartSessionLinkLost>());
-      expect(recording.sessionInProgress, isFalse);
-      // The orphan row was discarded, not left behind for crash recovery.
-      expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
-    },
-  );
-
-  test(
-    'a stream reset during session creation refuses and discards the row',
-    () async {
-      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
-      addTearDown(AppDatabase.closeInstance);
-
-      final (recording, hub, _) = wire();
-
-      // A reconnect (same or different device) mid-insert clears the hub and
-      // bumps its generation — the stream the tare/calibration/device
-      // snapshots describe no longer exists, even though the link reports
-      // streaming again. Clearing here is exactly what StreamResetCoordinator
-      // runs on stream entry.
-      final future = start(recording);
-      hub.clear();
-      final result = await future;
-
-      expect(result, isA<StartSessionLinkLost>());
-      expect(recording.sessionInProgress, isFalse);
-      expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
-    },
-  );
-
-  test(
-    'a second start while creation is in flight is refused',
+    'a second start while recording is refused',
     () async {
       AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
       addTearDown(AppDatabase.closeInstance);
 
       final (recording, _, _) = wire();
 
-      // The first start synchronously enters the starting state before its
-      // DB await; a double-tap landing in that window must not create a
-      // second session (the second writer would overwrite the first's latch
-      // and orphan its row).
-      final first = start(recording);
-      final second = await start(recording);
-
-      expect(second, isA<StartSessionBusy>());
-      expect(await first, isA<StartSessionOk>());
+      expect(start(recording), isA<StartSessionOk>());
+      expect(start(recording), isA<StartSessionBusy>());
       expect(recording.sessionInProgress, isTrue);
 
+      // No frames ever arrived, so no row ever existed: stopping finalizes
+      // nothing (recorded nothing saves nothing).
       final stop = await recording.stopSession();
       expect(stop.error, isNull);
-      // Only one session was ever created in this test.
-      expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
-    },
-  );
-
-  test(
-    'a stop while creation is in flight is refused; the start still latches',
-    () async {
-      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
-      addTearDown(AppDatabase.closeInstance);
-
-      final (recording, hub, _) = wire();
-
-      final first = start(recording);
-      final stop = await recording.stopSession();
-
       expect(stop.sessionId, isNull);
-      expect(stop.error, isNull);
-      expect(await first, isA<StartSessionOk>());
-      expect(recording.sessionInProgress, isTrue);
-
-      feedFrames(hub, 4);
-      final finalStop = await recording.stopSession();
-      expect(finalStop.error, isNull);
-      expect(finalStop.sessionId, isNotNull);
+      expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
     },
   );
 
@@ -252,7 +180,7 @@ void main() {
 
       final (recording, hub, _) = wire();
 
-      expect(await start(recording), isA<StartSessionOk>());
+      expect(start(recording), isA<StartSessionOk>());
       feedFrames(hub, 4);
 
       // The stop synchronously enters the stopping state before its
@@ -260,7 +188,7 @@ void main() {
       // overlap a new session with the old one's finalization (the old
       // session's storage-error event would otherwise surface mid-recording).
       final stopping = recording.stopSession();
-      final second = await start(recording);
+      final second = start(recording);
 
       expect(second, isA<StartSessionBusy>());
       final stop = await stopping;
@@ -279,18 +207,24 @@ void main() {
 
       final (recording, hub, _) = wire();
 
-      expect(await start(recording), isA<StartSessionOk>());
+      expect(start(recording), isA<StartSessionOk>());
       feedFrames(hub, 1);
 
-      // Close the DB out from under the session: the finalizing completion
-      // write then throws. The failure must surface as the returned error —
+      // Open the connection, then close the DB out from under the session:
+      // drift opens the underlying database lazily on the first statement,
+      // so closing a never-spoken-to database would be a no-op and the write
+      // below would succeed on a fresh (empty) connection. With a real
+      // connection closed, the finalizing first-chunk flush fails — and
+      // since that flush is also what creates the session row, no id was
+      // ever latched. The failure must surface as the returned error —
       // stopSession also runs on unawaited auto-stop paths, so it must never
       // throw itself.
+      await db.incompleteSessions();
       await db.close();
 
       final stop = await recording.stopSession();
       expect(recording.sessionInProgress, isFalse);
-      expect(stop.sessionId, isNotNull);
+      expect(stop.sessionId, isNull);
       expect(stop.error, isNotNull);
     },
   );

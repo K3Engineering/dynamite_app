@@ -119,7 +119,7 @@ class _LiveTabState extends State<LiveTab> {
     } else {
       final settings = context.read<AppSettings>();
       final hub = context.read<DataHub>();
-      final result = await recording.startSession(
+      final result = recording.startSession(
         // Row titles are the rig's cell names (or 'CH n'), snapshotted into
         // the session at record time.
         channelLabels: context.read<RigState>().channelTitles,
@@ -134,8 +134,6 @@ class _LiveTabState extends State<LiveTab> {
         ),
       );
 
-      if (!mounted) return;
-
       switch (result) {
         case StartSessionOk() || StartSessionBusy():
           // Recording (or another lifecycle op is in flight, which the
@@ -148,30 +146,11 @@ class _LiveTabState extends State<LiveTab> {
               behavior: SnackBarBehavior.floating,
             ),
           );
-        case StartSessionLinkLost():
-          // The link drop itself is announced by the shell's
-          // BleConnectionLost notice; this just confirms the REC tap didn't
-          // start anything.
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Connection lost — recording not started'),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
         case StartSessionNoData():
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
               content: Text('No data from device — recording not started'),
               behavior: SnackBarBehavior.floating,
-            ),
-          );
-        case StartSessionFailed(:final error):
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Failed to start recording: $error'),
-              behavior: SnackBarBehavior.floating,
-              persist: true,
-              showCloseIcon: true,
             ),
           );
       }

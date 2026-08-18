@@ -139,6 +139,7 @@ void main() {
             ChannelCalibration(board: ChannelBoardCalibration()),
         ],
         tares: List.filled(channels, 0.0),
+        ssnOrigin: 0,
         gaps: GapList.fromJson(hub.gaps.toJson()),
       );
 
@@ -209,6 +210,7 @@ void main() {
             ChannelCalibration(board: ChannelBoardCalibration()),
         ],
         tares: List.filled(channels, 0.0),
+        ssnOrigin: 0,
         gaps: GapList.fromJson(hub.gaps.toJson()),
       );
 

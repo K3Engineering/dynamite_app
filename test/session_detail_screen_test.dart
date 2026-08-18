@@ -38,12 +38,12 @@ void main() {
       visibleChannels: '[]',
       displayUnit: 'kgf',
       deviceInfoJson: '{}',
+      ssnOrigin: 0,
     );
     await AppDatabase.instance.completeSession(
       sessionId,
       sampleCount: 0,
       durationMs: 0,
-      peaksRaw: '[]',
     );
     final session = (await sessionSummaryById(sessionId))!;
 

@@ -23,11 +23,12 @@ void main() {
         visibleChannels: '[]',
         displayUnit: 'kgf',
         deviceInfoJson: '{}',
+        ssnOrigin: 0,
         createdAt: createdAt,
       )
       .then(
         (id) => AppDatabase.instance
-            .completeSession(id, sampleCount: 0, durationMs: 0, peaksRaw: '[]')
+            .completeSession(id, sampleCount: 0, durationMs: 0)
             .then((_) => id),
       );
 

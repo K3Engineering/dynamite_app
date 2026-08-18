@@ -21,7 +21,9 @@ import 'session_persistence.dart';
 class SessionStorage {
   /// Start a new streaming session. The returned [LiveSessionWriter] is fed
   /// sample slices via [LiveSessionWriter.appendData] as data arrives and is
-  /// passed to [finalizeSession] when recording stops.
+  /// passed to [finalizeSession] when recording stops. Pure construction —
+  /// the session row is only created by the writer's first chunk flush, so
+  /// starting can never fail and never leaves a row behind without data.
   ///
   /// Note: every session stores all [kAdcChannelCount]; [channelLabels]
   /// and [visibleChannels] are retained for display only. [deviceMetadata] is
@@ -32,7 +34,7 @@ class SessionStorage {
   /// live buffer would supply ([tare], [channelCalibration],
   /// [samplesPerSec], [sourceRingCapacity]), so the storage layer never
   /// imports the hub.
-  static Future<LiveSessionWriter> startSession({
+  static LiveSessionWriter startSession({
     required Float64List tare,
     required List<ChannelCalibration> channelCalibration,
     required int samplesPerSec,
@@ -42,50 +44,41 @@ class SessionStorage {
     required List<bool> visibleChannels,
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
-  }) async {
-    // Snapshot the tare once; the same values are persisted below and used by
-    // the writer's peak scan, so stored peaks, stored tares and playback can
-    // never disagree even if the user re-tares mid-recording.
+  }) {
+    // Snapshot the tare once and persist it with the session; playback
+    // converts through it, so a later re-tare can never rewrite history.
     final tareSnapshot = Float64List.fromList(tare);
 
-    final sessionId = await AppDatabase.instance.createSession(
-      name: name,
-      sampleRate: samplesPerSec,
-      // We always persist every ADC channel, so the stored channel count must
-      // match what the writer packs (and what loadSession reads back).
-      channelCount: kAdcChannelCount,
-      channelLabels: jsonEncode(channelLabels),
-      tares: jsonEncode(tareSnapshot.toList()),
-      // Snapshot the per-channel calibration in effect now; playback
-      // converts through it even if calibration changes later.
-      calibrationJson: jsonEncode([
-        for (int ch = 0; ch < kAdcChannelCount; ch++)
-          channelCalibration[ch].toJson(),
-      ]),
-      visibleChannels: jsonEncode(visibleChannels),
-      // Frozen as the CSV export's default converted unit
-      // (docs/csv-format-v1.md's recording-time snapshot requirement).
-      displayUnit: displayUnit.name,
-      deviceInfoJson: jsonEncode(deviceMetadata),
-    );
-
     return LiveSessionWriter(
-      sessionId,
-      tareSnapshot,
-      samplesPerSec,
+      (
+        name: name,
+        sampleRate: samplesPerSec,
+        // We always persist every ADC channel, so the stored channel count
+        // must match what the writer packs (and what loadSession reads back).
+        channelCount: kAdcChannelCount,
+        channelLabels: jsonEncode(channelLabels),
+        tares: jsonEncode(tareSnapshot.toList()),
+        // Snapshot the per-channel calibration in effect now; playback
+        // converts through it even if calibration changes later.
+        calibrationJson: jsonEncode([
+          for (int ch = 0; ch < kAdcChannelCount; ch++)
+            channelCalibration[ch].toJson(),
+        ]),
+        visibleChannels: jsonEncode(visibleChannels),
+        // Frozen as the CSV export's default converted unit
+        // (docs/csv-format-v1.md's recording-time snapshot requirement).
+        displayUnit: displayUnit.name,
+        deviceInfoJson: jsonEncode(deviceMetadata),
+      ),
       sourceRingCapacity: sourceRingCapacity,
     );
   }
 
-  /// Discard a session that was created but never latched by its caller
-  /// (e.g. the link dropped while its row was being inserted — see
-  /// `RecordingController.startSession`). The writer has written no chunks,
-  /// so this is a plain row delete, not a recovery case.
-  static Future<void> discardSession(LiveSessionWriter writer) =>
-      AppDatabase.instance.deleteSession(writer.sessionId);
-
-  /// Finalize a streaming session: flush any buffered samples, then record the
-  /// aggregates the writer accumulated and mark the session completed.
+  /// Finalize a streaming session: flush any buffered samples, then record
+  /// the final sample count and mark the session completed.
+  ///
+  /// If no data ever reached storage, the session row was never created and
+  /// there is nothing to finalize (recording nothing saves nothing).
   ///
   /// Returns the writer's latched write error (if any). When non-null, the
   /// session may be short/truncated; the caller should surface it.
@@ -94,41 +87,41 @@ class SessionStorage {
   }) async {
     await writer.flush();
 
-    await _completeSession(
-      sessionId: writer.sessionId,
-      sampleCount: writer.totalSamplesRecorded,
-      sampleRate: writer.sampleRate,
-      peaksRaw: writer.peaksRaw,
-      gapsJson: writer.gaps.toJson(),
-    );
+    final sessionId = writer.sessionId;
+    if (sessionId != null) {
+      await _completeSession(
+        sessionId: sessionId,
+        sampleCount: writer.totalSamplesRecorded,
+        sampleRate: writer.sampleRate,
+        gapsJson: writer.gaps.toJson(),
+      );
+    }
 
     return writer.writeError;
   }
 
-  /// Write a finished (or recovered) session's aggregates to its row and mark
-  /// it completed. Shared by [finalizeSession] and [recoverIncompleteSessions]
-  /// so both paths apply identical guards and duration math.
+  /// Write a finished (or recovered) session's final sample count and mark it
+  /// completed. Shared by [finalizeSession] and [recoverIncompleteSessions]
+  /// so both paths apply identical duration math.
   static Future<void> _completeSession({
     required int sessionId,
     required int sampleCount,
     required int sampleRate,
-    required List<double> peaksRaw,
     required String gapsJson,
   }) {
     return AppDatabase.instance.completeSession(
       sessionId,
       sampleCount: sampleCount,
       durationMs: (sampleCount * 1000) ~/ sampleRate,
-      // A channel that captured no samples leaves its peak at -infinity;
-      // that must not reach the DB.
-      peaksRaw: jsonEncode([for (final p in peaksRaw) p.isFinite ? p : 0.0]),
       gaps: gapsJson,
     );
   }
 
   /// Recovers any sessions left incomplete (e.g. the app crashed mid-recording)
-  /// by scanning their persisted chunks to rebuild aggregates and marking them
-  /// completed. Sessions with no chunks are deleted.
+  /// by counting their persisted frames and marking them completed. A
+  /// production session row only exists alongside its first chunk (see
+  /// [AppDatabase.createSessionWithFirstChunk]), so "incomplete and
+  /// dataless" cannot occur.
   static Future<void> recoverIncompleteSessions() async {
     final incomplete = await AppDatabase.instance.incompleteSessions();
 
@@ -137,30 +130,24 @@ class SessionStorage {
 
       final chunks = await AppDatabase.instance.sessionChunkData(session.id);
 
-      if (chunks.isEmpty) {
-        // Started but never wrote a chunk. Nothing to keep.
-        await AppDatabase.instance.deleteSession(session.id);
-        continue;
-      }
-
-      // Rebuild aggregates against the tare persisted at recording start, the
-      // same one loadSession applies, so recovered peaks match playback.
-      final agg = SessionChunkAggregate(session.channelCount);
-      final tare = _parseTares(session.tares, session.channelCount);
+      // The sample count comes from chunk byte lengths — recovery never
+      // decodes samples (and couldn't reconstruct gaps either; those stay as
+      // the live writer persisted them).
+      final codec = SessionChunkCodec(session.channelCount);
+      int sampleCount = 0;
       for (final chunk in chunks) {
-        agg.scan(chunk, tare);
+        sampleCount += codec.framesOf(chunk);
       }
 
       // Preserve the gaps persisted incrementally by the live writer (chunk
       // bytes alone can't reconstruct them).
       await _completeSession(
         sessionId: session.id,
-        sampleCount: agg.samples,
+        sampleCount: sampleCount,
         // Recovery uses the rate persisted on the row (finalize uses the
         // writer's, which is the same value from recording start) so a future
         // configurable rate can't skew reconstructed durations.
         sampleRate: session.sampleRate,
-        peaksRaw: agg.peaksRaw,
         gapsJson: session.gaps,
       );
     }
@@ -248,7 +235,7 @@ class StaticSessionPersistence implements SessionPersistence {
   const StaticSessionPersistence();
 
   @override
-  Future<LiveSessionWriter> startSession({
+  LiveSessionWriter startSession({
     required Float64List tare,
     required List<ChannelCalibration> channelCalibration,
     required int samplesPerSec,
@@ -269,10 +256,6 @@ class StaticSessionPersistence implements SessionPersistence {
     displayUnit: displayUnit,
     deviceMetadata: deviceMetadata,
   );
-
-  @override
-  Future<void> discardSession(LiveSessionWriter writer) =>
-      SessionStorage.discardSession(writer);
 
   @override
   Future<Object?> finalizeSession({required LiveSessionWriter writer}) =>
