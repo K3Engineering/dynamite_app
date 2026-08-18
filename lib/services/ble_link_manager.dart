@@ -520,6 +520,15 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     }
   }
 
+  /// The feed-maintenance chain. [KvsClient] serializes individual KVS
+  /// commands, but nothing stops one envelope's resubscribe from landing
+  /// inside the NEXT envelope's command body — locking the device against
+  /// its remaining commands. Envelopes are appended here so each runs to
+  /// completion before the next starts; the chain always settles, so a
+  /// failed envelope never wedges the ones queued behind it (an op queued
+  /// behind a torn-down link fails loudly on the aborted KVS client).
+  Future<void> _feedMaintenance = Future.value();
+
   /// Run [body] with the ADC feed subscription paused: firmware rejects KVS
   /// commands while the feed's subscription holds the device lock, so doc
   /// writes (and the verifying re-read) briefly unsubscribe, then
@@ -527,7 +536,16 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// gap via the decoder's continuity check. When the feed isn't active
   /// (mid setup) [body] just runs. Handed to the GATT backend, the only
   /// caller.
-  Future<T> _withFeedPaused<T>(Future<T> Function() body) async {
+  Future<T> _withFeedPaused<T>(Future<T> Function() body) {
+    final op = _feedMaintenance.then((_) => _feedPausedEnvelope(body));
+    _feedMaintenance = op.then<void>((_) {}, onError: (_) {});
+    return op;
+  }
+
+  /// One feed-maintenance envelope: unsubscribe the ADC feed, run [body],
+  /// resubscribe. Runs exclusively inside the [_feedMaintenance] chain, so
+  /// subscribe/unsubscribe pairs of concurrent ops can never interleave.
+  Future<T> _feedPausedEnvelope<T>(Future<T> Function() body) async {
     final deviceId = _link.deviceId;
     final pause = _link.isStreaming;
     if (pause) {
@@ -539,11 +557,23 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       // Resume only if the same link is still up (a disconnect mid-write
       // already tore everything down).
       if (pause && _link.isStreaming && _link.deviceId == deviceId) {
-        await UniversalBle.subscribeNotifications(
-          deviceId,
-          btServiceId,
-          btChrAdcFeedId,
-        );
+        try {
+          await UniversalBle.subscribeNotifications(
+            deviceId,
+            btServiceId,
+            btChrAdcFeedId,
+          );
+        } catch (_) {
+          // Resume failed: the link would stay marked streaming with a dead
+          // feed and no recovery path (nothing retries this subscription).
+          // Tear it down — connect-time fails the same way when the feed
+          // can't be subscribed (see [_subscribeToAdcFeed]).
+          final name = _link.displayName;
+          _teardownLink(deviceId, releaseGatt: true);
+          _events.emit(BleConnectionLost(name));
+          notifyListeners();
+          rethrow;
+        }
       }
     }
   }

@@ -803,6 +803,103 @@ void main() {
     });
   });
 
+  test('concurrent flash write and name store run as serialized feed '
+      'pauses', () {
+    fakeAsync((async) {
+      // The firmware lock emulated + slow KVS answers: without envelope
+      // serialization, the write's resubscribe lands while the rename's
+      // command is still in flight and the lock silently drops it. The
+      // command delay is set only once streaming so the connect-time flash
+      // read (~70 KVS round-trips) stays fast.
+      MockBlePlatform.instance.kvsLockWhenStreaming = true;
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+      MockBlePlatform.instance.kvsCommandDelay = const Duration(
+        milliseconds: 200,
+      );
+      MockBlePlatform.instance.gattOpLog.clear();
+
+      final doc = demoBoardCalibrationDoc.replaceFirst(
+        'lc0.cap=200',
+        'lc0.cap=250',
+      );
+      Object? writeError;
+      Object? nameError;
+      unawaited(
+        link.writeFlashDoc(
+          doc,
+        ).then((_) {}, onError: (Object e) => writeError = e),
+      );
+      unawaited(
+        link.setDeviceName('Rig 7').then(
+          (_) {},
+          onError: (Object e) => nameError = e,
+        ),
+      );
+      async.elapse(const Duration(seconds: 5));
+
+      expect(writeError, isNull);
+      expect(nameError, isNull);
+      expect(
+        MockBlePlatform.instance.kvsStore[kvsFolderUser]!['lc0.cap'],
+        '250',
+      );
+      expect(
+        MockBlePlatform.instance.kvsStore[kvsFolderSettings]![kvsKeyDeviceName],
+        'Rig 7',
+      );
+      expect(link.isStreaming, isTrue);
+      expect(seen, isEmpty);
+      // The envelopes ran back to back, not interleaved: each op's KVS
+      // command is bracketed by ITS unsubscribe/subscribe pair.
+      expect(MockBlePlatform.instance.gattOpLog, [
+        'adc:unsub',
+        'kvs:SET${kvsFolderUser}lc0.cap=250',
+        'adc:sub',
+        'adc:unsub',
+        'kvs:SET$kvsFolderSettings$kvsKeyDeviceName=Rig 7',
+        'adc:sub',
+      ]);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('a failed feed resume after a flash write tears the link down', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      MockBlePlatform.instance.failFeedSubscribe = true;
+      final doc = demoBoardCalibrationDoc.replaceFirst(
+        'lc0.cap=200',
+        'lc0.cap=250',
+      );
+      Object? error;
+      unawaited(
+        link.writeFlashDoc(doc).then((_) {}, onError: (Object e) => error = e),
+      );
+      async.elapse(const Duration(seconds: 1));
+
+      // The write propagated the resume failure, and the link is gone:
+      // marked streaming with a dead feed forever is not an option.
+      expect(error, isA<StateError>());
+      expect(link.isStreaming, isFalse);
+      expect(link.link.state, BtLinkState.idle);
+      expect(seen, [isA<BleConnectionLost>()]);
+      // The platform link was still up, so teardown released the GATT side.
+      expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
+      // The link is connectable again immediately (native: no cooldown).
+      expect(link.linkBusy, isFalse);
+    });
+  });
+
   test('demo device serves the fixture calibration document', () {
     fakeAsync((async) {
       final (link, seen) = wire();

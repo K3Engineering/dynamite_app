@@ -83,6 +83,11 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// ADC feed subscription is active — the firmware device lock.
   bool kvsLockWhenStreaming = false;
 
+  /// When true, ENABLING the ADC feed subscription throws. Tests set this
+  /// once the link is streaming so a feed-pause envelope's resubscribe
+  /// fails (the connect-time subscription would fail with it set).
+  bool failFeedSubscribe = false;
+
   /// How long a KVS command takes to answer (default zero — instant). A
   /// non-zero delay lets tests hold the link in the "Starting data
   /// stream…" window (the connect-time flash read) or exercise the KVS
@@ -101,6 +106,11 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// Test spy: every KVS command string received, in order. Lets tests
   /// assert write diffs are minimal and folder-routed.
   final List<String> kvsCommandLog = [];
+
+  /// Test spy: GATT ops in device-observed order — `adc:sub`/`adc:unsub`
+  /// for the feed subscription and `kvs:<request>` for each KVS command.
+  /// Lets tests assert feed-maintenance envelopes don't interleave.
+  final List<String> gattOpLog = [];
 
   /// (Re)populate [kvsStore] from a `key=value` flash document, routing
   /// keys to folders the way the app does (see [kvsFolderForKey]).
@@ -172,6 +182,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     includeAdcService = true;
     failCalibrationRead = false;
     kvsLockWhenStreaming = false;
+    failFeedSubscribe = false;
     kvsCommandDelay = Duration.zero;
     failConnect = false;
     failConnectViaCallback = false;
@@ -184,6 +195,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     disconnectCalls.clear();
     readRssiCalls = 0;
     kvsCommandLog.clear();
+    gattOpLog.clear();
     seedKvsFromDoc(demoBoardCalibrationDoc);
     _adcFeedSubscribed = false;
     _connectedDeviceId = null;
@@ -359,6 +371,11 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic,
     BleInputProperty bleInputProperty,
   ) async {
+    if (failFeedSubscribe &&
+        characteristic == btChrAdcFeedId &&
+        bleInputProperty == BleInputProperty.notification) {
+      throw StateError('Mock feed subscribe failure');
+    }
     // Only the ADC feed characteristic drives the packet timer (and the
     // device-lock state); the KVS characteristic is request/response — its
     // notifications are answers to writes, fired from [writeValue]. An
@@ -367,6 +384,9 @@ class MockBlePlatform extends UniversalBlePlatform {
       return;
     }
     _adcFeedSubscribed = bleInputProperty == BleInputProperty.notification;
+    if (characteristic == btChrAdcFeedId) {
+      gattOpLog.add(_adcFeedSubscribed ? 'adc:sub' : 'adc:unsub');
+    }
     // The feed is reset on every (re)subscription: continuity counter and the
     // synthetic-data cursor both restart from zero so reconnects behave like a
     // fresh device, and an induced-drop run can be repeated deterministically.
@@ -449,6 +469,7 @@ class MockBlePlatform extends UniversalBlePlatform {
       if (kvsLockWhenStreaming && _adcFeedSubscribed) return;
       final request = utf8.decode(value, allowMalformed: true);
       kvsCommandLog.add(request);
+      gattOpLog.add('kvs:$request');
       final response = _executeKvsCommand(request);
       // Firmware answers within the write handling: the response
       // notification is already there when the write completes.
