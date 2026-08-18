@@ -40,10 +40,11 @@ class Sessions extends Table {
   TextColumn get visibleChannels => text()();
 
   /// Device sample-counter value at the session's first sample (the
-  /// dynamite-csv `ssn_origin` — docs/csv-format-v1.md). Nullable because the
-  /// counter value only becomes knowable when the first packet of the
-  /// recording arrives; the live writer records it on its first chunk flush.
-  IntColumn get ssnOrigin => integer().nullable()();
+  /// dynamite-csv `ssn_origin` — docs/csv-format-v1.md). Non-nullable: a
+  /// session row only ever exists alongside its first chunk (see
+  /// [AppDatabase.createSessionWithFirstChunk]), and the writer knows the
+  /// origin by the time that row is created.
+  IntColumn get ssnOrigin => integer()();
 
   /// The app's display unit at recording start (a `DisplayUnit.name`),
   /// frozen as the CSV export's default converted unit — the
@@ -56,6 +57,22 @@ class Sessions extends Table {
   /// consults live device state (docs/csv-format-v1.md).
   TextColumn get deviceInfoJson => text()();
 }
+
+/// The [Sessions]-row metadata snapshotted at recording start, frozen for
+/// playback and export. The live writer ([LiveSessionWriter]) carries it
+/// until its first chunk flush creates the row — see
+/// [AppDatabase.createSessionWithFirstChunk].
+typedef SessionHeader = ({
+  String name,
+  int sampleRate,
+  int channelCount,
+  String channelLabels,
+  String tares,
+  String calibrationJson,
+  String visibleChannels,
+  String displayUnit,
+  String deviceInfoJson,
+});
 
 class SessionChunks extends Table {
   IntColumn get sessionId => integer()();
@@ -96,7 +113,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 12;
+  int get schemaVersion => 13;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -135,9 +152,15 @@ class AppDatabase extends _$AppDatabase {
 
   // -- Session access --
 
-  /// Create a new recording session row, marked incomplete until
+  /// Insert a bare session row (no chunks), marked incomplete until
   /// [completeSession] finalizes it. Returns the generated id.
-  /// [createdAt] defaults to now; tests inject it to control ordering ties.
+  ///
+  /// Production rows come from [createSessionWithFirstChunk] instead: a
+  /// session row exists only alongside its first chunk, so [ssnOrigin] can
+  /// never be unknown and crash recovery never sees a dataless session.
+  /// This bare insert exists for tests that need chunk-less rows (ordering,
+  /// empty UI states). [createdAt] defaults to now; tests inject it to
+  /// control ordering ties.
   Future<int> createSession({
     required String name,
     required int sampleRate,
@@ -148,6 +171,8 @@ class AppDatabase extends _$AppDatabase {
     required String visibleChannels,
     required String displayUnit,
     required String deviceInfoJson,
+    required int ssnOrigin,
+    String gaps = '[]',
     DateTime? createdAt,
   }) {
     return into(sessions).insert(
@@ -160,11 +185,50 @@ class AppDatabase extends _$AppDatabase {
         tares: tares,
         calibrationJson: calibrationJson,
         isCompleted: const Value(false),
+        gaps: Value(gaps),
         visibleChannels: visibleChannels,
         displayUnit: displayUnit,
         deviceInfoJson: deviceInfoJson,
+        ssnOrigin: ssnOrigin,
       ),
     );
+  }
+
+  /// Create a new recording session row together with its first chunk,
+  /// atomically: the row and the chunk land in one transaction, so in
+  /// production a [Sessions] row can never exist without data. Called by
+  /// the live writer's first chunk flush, at which point the device-counter
+  /// origin ([ssnOrigin]) and the gap ranges accrued so far ([gaps]) are
+  /// known — both are recorded with the row itself.
+  Future<int> createSessionWithFirstChunk({
+    required SessionHeader header,
+    required int ssnOrigin,
+    required String gaps,
+    required Uint8List data,
+  }) {
+    return transaction(() async {
+      final id = await createSession(
+        name: header.name,
+        sampleRate: header.sampleRate,
+        channelCount: header.channelCount,
+        channelLabels: header.channelLabels,
+        tares: header.tares,
+        calibrationJson: header.calibrationJson,
+        visibleChannels: header.visibleChannels,
+        displayUnit: header.displayUnit,
+        deviceInfoJson: header.deviceInfoJson,
+        ssnOrigin: ssnOrigin,
+        gaps: gaps,
+      );
+      await into(sessionChunks).insert(
+        SessionChunksCompanion.insert(
+          sessionId: id,
+          chunkIndex: 0,
+          data: data,
+        ),
+      );
+      return id;
+    });
   }
 
   /// Record a session's final aggregate (sample count) and mark it
@@ -196,15 +260,6 @@ class AppDatabase extends _$AppDatabase {
   /// aggregates; it cannot reconstruct gaps from chunk bytes).
   Future<void> setSessionGaps(int id, String gaps) {
     return _updateSession(id, SessionsCompanion(gaps: Value(gaps)));
-  }
-
-  /// Record a session's device sample-counter origin ([ssnOrigin]). Called
-  /// by the live writer once it has been latched — on the first chunk
-  /// flush — so a crash-recovered session exports the same `ssn` column the
-  /// uninterrupted recording would have (chunk bytes alone can't
-  /// reconstruct it).
-  Future<void> setSessionSsnOrigin(int id, int ssnOrigin) {
-    return _updateSession(id, SessionsCompanion(ssnOrigin: Value(ssnOrigin)));
   }
 
   Future<void> renameSession(int id, String name) {

@@ -172,9 +172,9 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
   late final GeneratedColumn<int> ssnOrigin = GeneratedColumn<int>(
     'ssn_origin',
     aliasedName,
-    true,
+    false,
     type: DriftSqlType.int,
-    requiredDuringInsert: false,
+    requiredDuringInsert: true,
   );
   static const VerificationMeta _displayUnitMeta = const VerificationMeta(
     'displayUnit',
@@ -348,6 +348,8 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         _ssnOriginMeta,
         ssnOrigin.isAcceptableOrUnknown(data['ssn_origin']!, _ssnOriginMeta),
       );
+    } else if (isInserting) {
+      context.missing(_ssnOriginMeta);
     }
     if (data.containsKey('display_unit')) {
       context.handle(
@@ -439,7 +441,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
       ssnOrigin: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}ssn_origin'],
-      ),
+      )!,
       displayUnit: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}display_unit'],
@@ -486,10 +488,11 @@ class Session extends DataClass implements Insertable<Session> {
   final String visibleChannels;
 
   /// Device sample-counter value at the session's first sample (the
-  /// dynamite-csv `ssn_origin` — docs/csv-format-v1.md). Nullable because the
-  /// counter value only becomes knowable when the first packet of the
-  /// recording arrives; the live writer records it on its first chunk flush.
-  final int? ssnOrigin;
+  /// dynamite-csv `ssn_origin` — docs/csv-format-v1.md). Non-nullable: a
+  /// session row only ever exists alongside its first chunk (see
+  /// [AppDatabase.createSessionWithFirstChunk]), and the writer knows the
+  /// origin by the time that row is created.
+  final int ssnOrigin;
 
   /// The app's display unit at recording start (a `DisplayUnit.name`),
   /// frozen as the CSV export's default converted unit — the
@@ -516,7 +519,7 @@ class Session extends DataClass implements Insertable<Session> {
     required this.isCompleted,
     required this.gaps,
     required this.visibleChannels,
-    this.ssnOrigin,
+    required this.ssnOrigin,
     required this.displayUnit,
     required this.deviceInfoJson,
   });
@@ -537,9 +540,7 @@ class Session extends DataClass implements Insertable<Session> {
     map['is_completed'] = Variable<bool>(isCompleted);
     map['gaps'] = Variable<String>(gaps);
     map['visible_channels'] = Variable<String>(visibleChannels);
-    if (!nullToAbsent || ssnOrigin != null) {
-      map['ssn_origin'] = Variable<int>(ssnOrigin);
-    }
+    map['ssn_origin'] = Variable<int>(ssnOrigin);
     map['display_unit'] = Variable<String>(displayUnit);
     map['device_info_json'] = Variable<String>(deviceInfoJson);
     return map;
@@ -561,9 +562,7 @@ class Session extends DataClass implements Insertable<Session> {
       isCompleted: Value(isCompleted),
       gaps: Value(gaps),
       visibleChannels: Value(visibleChannels),
-      ssnOrigin: ssnOrigin == null && nullToAbsent
-          ? const Value.absent()
-          : Value(ssnOrigin),
+      ssnOrigin: Value(ssnOrigin),
       displayUnit: Value(displayUnit),
       deviceInfoJson: Value(deviceInfoJson),
     );
@@ -589,7 +588,7 @@ class Session extends DataClass implements Insertable<Session> {
       isCompleted: serializer.fromJson<bool>(json['isCompleted']),
       gaps: serializer.fromJson<String>(json['gaps']),
       visibleChannels: serializer.fromJson<String>(json['visibleChannels']),
-      ssnOrigin: serializer.fromJson<int?>(json['ssnOrigin']),
+      ssnOrigin: serializer.fromJson<int>(json['ssnOrigin']),
       displayUnit: serializer.fromJson<String>(json['displayUnit']),
       deviceInfoJson: serializer.fromJson<String>(json['deviceInfoJson']),
     );
@@ -612,7 +611,7 @@ class Session extends DataClass implements Insertable<Session> {
       'isCompleted': serializer.toJson<bool>(isCompleted),
       'gaps': serializer.toJson<String>(gaps),
       'visibleChannels': serializer.toJson<String>(visibleChannels),
-      'ssnOrigin': serializer.toJson<int?>(ssnOrigin),
+      'ssnOrigin': serializer.toJson<int>(ssnOrigin),
       'displayUnit': serializer.toJson<String>(displayUnit),
       'deviceInfoJson': serializer.toJson<String>(deviceInfoJson),
     };
@@ -633,7 +632,7 @@ class Session extends DataClass implements Insertable<Session> {
     bool? isCompleted,
     String? gaps,
     String? visibleChannels,
-    Value<int?> ssnOrigin = const Value.absent(),
+    int? ssnOrigin,
     String? displayUnit,
     String? deviceInfoJson,
   }) => Session(
@@ -651,7 +650,7 @@ class Session extends DataClass implements Insertable<Session> {
     isCompleted: isCompleted ?? this.isCompleted,
     gaps: gaps ?? this.gaps,
     visibleChannels: visibleChannels ?? this.visibleChannels,
-    ssnOrigin: ssnOrigin.present ? ssnOrigin.value : this.ssnOrigin,
+    ssnOrigin: ssnOrigin ?? this.ssnOrigin,
     displayUnit: displayUnit ?? this.displayUnit,
     deviceInfoJson: deviceInfoJson ?? this.deviceInfoJson,
   );
@@ -779,7 +778,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<bool> isCompleted;
   final Value<String> gaps;
   final Value<String> visibleChannels;
-  final Value<int?> ssnOrigin;
+  final Value<int> ssnOrigin;
   final Value<String> displayUnit;
   final Value<String> deviceInfoJson;
   const SessionsCompanion({
@@ -816,7 +815,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.isCompleted = const Value.absent(),
     this.gaps = const Value.absent(),
     required String visibleChannels,
-    this.ssnOrigin = const Value.absent(),
+    required int ssnOrigin,
     required String displayUnit,
     required String deviceInfoJson,
   }) : createdAt = Value(createdAt),
@@ -826,6 +825,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
        tares = Value(tares),
        calibrationJson = Value(calibrationJson),
        visibleChannels = Value(visibleChannels),
+       ssnOrigin = Value(ssnOrigin),
        displayUnit = Value(displayUnit),
        deviceInfoJson = Value(deviceInfoJson);
   static Insertable<Session> custom({
@@ -883,7 +883,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<bool>? isCompleted,
     Value<String>? gaps,
     Value<String>? visibleChannels,
-    Value<int?>? ssnOrigin,
+    Value<int>? ssnOrigin,
     Value<String>? displayUnit,
     Value<String>? deviceInfoJson,
   }) {
@@ -1285,7 +1285,7 @@ typedef $$SessionsTableCreateCompanionBuilder =
       Value<bool> isCompleted,
       Value<String> gaps,
       required String visibleChannels,
-      Value<int?> ssnOrigin,
+      required int ssnOrigin,
       required String displayUnit,
       required String deviceInfoJson,
     });
@@ -1305,7 +1305,7 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<bool> isCompleted,
       Value<String> gaps,
       Value<String> visibleChannels,
-      Value<int?> ssnOrigin,
+      Value<int> ssnOrigin,
       Value<String> displayUnit,
       Value<String> deviceInfoJson,
     });
@@ -1623,7 +1623,7 @@ class $$SessionsTableTableManager
                 Value<bool> isCompleted = const Value.absent(),
                 Value<String> gaps = const Value.absent(),
                 Value<String> visibleChannels = const Value.absent(),
-                Value<int?> ssnOrigin = const Value.absent(),
+                Value<int> ssnOrigin = const Value.absent(),
                 Value<String> displayUnit = const Value.absent(),
                 Value<String> deviceInfoJson = const Value.absent(),
               }) => SessionsCompanion(
@@ -1661,7 +1661,7 @@ class $$SessionsTableTableManager
                 Value<bool> isCompleted = const Value.absent(),
                 Value<String> gaps = const Value.absent(),
                 required String visibleChannels,
-                Value<int?> ssnOrigin = const Value.absent(),
+                required int ssnOrigin,
                 required String displayUnit,
                 required String deviceInfoJson,
               }) => SessionsCompanion.insert(

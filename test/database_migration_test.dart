@@ -43,6 +43,7 @@ void main() {
       visibleChannels: '[]',
       displayUnit: 'kgf',
       deviceInfoJson: '{}',
+      ssnOrigin: 0,
     );
     // Match the live writer's chunk size (~1 s of samples, 16 KiB).
     final chunk = Uint8List(16384);

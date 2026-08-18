@@ -38,6 +38,7 @@ void main() {
       visibleChannels: '[]',
       displayUnit: 'kgf',
       deviceInfoJson: '{}',
+      ssnOrigin: 0,
     );
     await AppDatabase.instance.completeSession(
       sessionId,

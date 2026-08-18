@@ -17,9 +17,9 @@ import 'package:dynamite_app/services/session_storage.dart';
 
 /// Storage-side session tests.
 ///
-/// An in-memory database is installed for every test in this file: the
-/// writer persists its ssn origin at latch time (a harmless no-op when its
-/// session row doesn't exist), and several tests exercise the real DB path.
+/// An in-memory database is installed for every test in this file: several
+/// tests exercise the real DB path (the writer creates the session row on
+/// its first chunk flush); the rest substitute no-op or stallable sinks.
 void main() {
   const int channels = kAdcChannelCount;
 
@@ -35,7 +35,7 @@ void main() {
 
   /// startSession with the caller-side hub snapshots production now passes
   /// explicitly (see SessionStorage.startSession's hub-agnostic contract).
-  Future<LiveSessionWriter> startFromHub(DataHub hub, {required String name}) =>
+  LiveSessionWriter startFromHub(DataHub hub, {required String name}) =>
       SessionStorage.startSession(
         tare: hub.tare,
         channelCalibration: [
@@ -50,6 +50,20 @@ void main() {
         deviceMetadata: const {},
       );
 
+  /// A writer constructed without SessionStorage still needs the row header
+  /// its first flush creates (see AppDatabase.createSessionWithFirstChunk).
+  SessionHeader testHeader() => (
+    name: '',
+    sampleRate: DataHub.samplesPerSec,
+    channelCount: channels,
+    channelLabels: '[]',
+    tares: '[]',
+    calibrationJson: '[]',
+    visibleChannels: '[]',
+    displayUnit: 'kgf',
+    deviceInfoJson: '{}',
+  );
+
   group('SessionData.maxs', () {
     SessionData makeSession(List<int> values) => SessionData(
       channels: [
@@ -59,6 +73,7 @@ void main() {
       sampleCount: values.length,
       calibrations: nominalCals(),
       tares: List.filled(channels, 0.0),
+      ssnOrigin: 0,
     );
 
     test('a never-positive channel reports its true (negative) peak', () {
@@ -85,11 +100,12 @@ void main() {
     test('a slice is snapshotted at call time, not at dequeue time', () async {
       final saved = <Uint8List>[];
       final writer = LiveSessionWriter(
-        1,
-        DataHub.samplesPerSec,
+        testHeader(),
         sourceRingCapacity: DataHub.maxDataSz,
-        chunkSink: (sessionId, chunkIndex, data, gapsJson) async =>
-            saved.add(data),
+        chunkSink: (sessionId, chunkIndex, data, gapsJson) async {
+          saved.add(data);
+          return sessionId ?? 1;
+        },
       );
       final hub = DataHub();
       final frame = Int32List(channels);
@@ -131,14 +147,14 @@ void main() {
       // chunks of backlog instead of a real 10-minute ring.
       const ringCapacity = 4096;
       final writer = LiveSessionWriter(
-        1,
-        DataHub.samplesPerSec,
+        testHeader(),
         sourceRingCapacity: ringCapacity,
         chunkSink: (sessionId, chunkIndex, data, gapsJson) async {
           sinkCalls++;
           if (!entered.isCompleted) entered.complete();
           await gate.future; // wedge every chunk write until released
           saved.add(data);
+          return sessionId ?? 1;
         },
       );
       final hub = DataHub();
@@ -191,16 +207,16 @@ void main() {
         }
 
         final writer = LiveSessionWriter(
-          1,
-          DataHub.samplesPerSec,
+          testHeader(),
           sourceRingCapacity: DataHub.maxDataSz,
-          chunkSink: (sessionId, chunkIndex, data, gapsJson) async {},
+          chunkSink: (sessionId, chunkIndex, data, gapsJson) async =>
+              sessionId ?? 1,
         );
         await writer.appendData(hub.snapshotRange(0, 50));
 
-        // The latch persists the origin in the same breath (a write-once
-        // constant — here a no-op since session row 1 doesn't exist); the
-        // startSession-based test below covers the persisted value.
+        // The latch is held until the first chunk flush writes it into the
+        // row it creates; the startSession-based test below covers the
+        // persisted value.
         expect(writer.ssnOrigin, 41230);
       },
     );
@@ -220,10 +236,10 @@ void main() {
         }
 
         final writer = LiveSessionWriter(
-          1,
-          DataHub.samplesPerSec,
+          testHeader(),
           sourceRingCapacity: DataHub.maxDataSz,
-          chunkSink: (sessionId, chunkIndex, data, gapsJson) async {},
+          chunkSink: (sessionId, chunkIndex, data, gapsJson) async =>
+              sessionId ?? 1,
         );
         // The session starts at hub index 120: ssn_origin = 65530 + 20 — above
         // the 16-bit wrap, as the format requires.
@@ -232,7 +248,8 @@ void main() {
       },
     );
 
-    test('persists at first append and loads back with the session', () async {
+    test('is written when the first chunk creates the row, and loads back '
+        'with the session', () async {
       final hub = DataHub();
       final frame = Int32List(channels);
       hub.notePacketCounter(41230);
@@ -241,16 +258,19 @@ void main() {
         hub.addSampleFrame(frame);
       }
 
-      final writer = await startFromHub(hub, name: 'ssn');
+      final writer = startFromHub(hub, name: 'ssn');
+
+      // No data yet, so no row: the session row is created by the writer's
+      // first chunk flush (no row without data).
+      expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
+
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
 
-      // The origin was persisted at latch time, ahead of the first chunk
-      // flush — this is what a crash mid-recording would recover from.
-      var row = (await AppDatabase.instance.sessionById(writer.sessionId))!;
+      var row = (await AppDatabase.instance.sessionById(writer.sessionId!))!;
       expect(row.ssnOrigin, 41230);
 
       await SessionStorage.finalizeSession(writer: writer);
-      row = (await AppDatabase.instance.sessionById(writer.sessionId))!;
+      row = (await AppDatabase.instance.sessionById(writer.sessionId!))!;
       expect(row.ssnOrigin, 41230);
 
       final loaded = (await SessionStorage.loadSession(row.id))!;
@@ -307,13 +327,13 @@ void main() {
       hub.addDroppedFrames(20);
       pump(100, 9);
 
-      final writer = await startFromHub(hub, name: 'crash me');
+      final writer = startFromHub(hub, name: 'crash me');
       // The single append crosses the flush threshold, so the chunk insert
       // AND the incremental gaps update land in the DB.
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
 
       final beforeCrash = await AppDatabase.instance.sessionById(
-        writer.sessionId,
+        writer.sessionId!,
       );
       expect(beforeCrash!.gaps, '[[2100,2120]]');
       expect(beforeCrash.ssnOrigin, 41230);
@@ -321,7 +341,7 @@ void main() {
       // Simulate the crash: recover without finalizeSession ever running.
       await SessionStorage.recoverIncompleteSessions();
 
-      final row = await AppDatabase.instance.sessionById(writer.sessionId);
+      final row = await AppDatabase.instance.sessionById(writer.sessionId!);
       expect(row, isNotNull);
       expect(row!.isCompleted, isTrue);
       expect(row.sampleCount, hub.totalSamples);
@@ -353,6 +373,7 @@ void main() {
           visibleChannels: '[true,true,true,true]',
           displayUnit: 'kgf',
           deviceInfoJson: '{}',
+          ssnOrigin: 0,
         );
         await AppDatabase.instance.insertChunk(sessionId, 0, Uint8List(0));
 
@@ -409,11 +430,11 @@ void main() {
           hub.addSampleFrame(frame);
         }
 
-        final writer = await startFromHub(hub, name: 'cal');
+        final writer = startFromHub(hub, name: 'cal');
         await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
         await SessionStorage.finalizeSession(writer: writer);
 
-        final row = await AppDatabase.instance.sessionById(writer.sessionId);
+        final row = await AppDatabase.instance.sessionById(writer.sessionId!);
         final loaded = (await SessionStorage.loadSession(row!.id))!;
 
         // Board snapshot: ch0 at 0.5x nominal sensitivity.

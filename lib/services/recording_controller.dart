@@ -24,7 +24,7 @@ final class StartSessionOk extends StartSessionResult {
 }
 
 /// Refused: another lifecycle operation is already in flight (a session is
-/// starting, recording, or stopping) — one outstanding operation at a time.
+/// recording, or a stop is finalizing) — one outstanding operation at a time.
 /// The UI prevents this by toggling on [RecordingController.sessionInProgress];
 /// reaching it means a second tap landed inside the previous operation's
 /// async window.
@@ -38,16 +38,6 @@ final class StartSessionTareInProgress extends StartSessionResult {
   const StartSessionTareInProgress();
 }
 
-/// Refused: the stream this session was built on went away while the session
-/// row was being created — the link dropped, or a reconnect reset the hub
-/// (same or different device), which would have spliced the NEW stream into
-/// a session frozen with the OLD stream's tare, calibration and device
-/// metadata. The orphan row was discarded; nothing is recording. Transient —
-/// retry (press REC again) on the live stream.
-final class StartSessionLinkLost extends StartSessionResult {
-  const StartSessionLinkLost();
-}
-
 /// Refused: the link is streaming but no decodable data is flowing — the
 /// feed is silent, delivers only malformed packets, or has stalled (see
 /// [deriveFeedHealth]) — so the session would record nothing. Transient —
@@ -56,19 +46,12 @@ final class StartSessionNoData extends StartSessionResult {
   const StartSessionNoData();
 }
 
-/// Session creation (the DB row / writer) threw; nothing was latched, so the
-/// controller is back to idle.
-final class StartSessionFailed extends StartSessionResult {
-  const StartSessionFailed(this.error);
-
-  final Object error;
-}
-
 /// The recording lifecycle, serialized: exactly one of these at a time, and
-/// every operation is refused unless the state matches. [starting] and
-/// [stopping] cover the async windows (session-row creation, finalization),
-/// so a recording can never be half-latched while another begins.
-enum _RecordingState { idle, starting, recording, stopping }
+/// every operation is refused unless the state matches. [stopping] covers
+/// the finalization's async window, so a recording can never be half-latched
+/// while another begins. (Starting has no async window: the storage layer
+/// does no DB work until data exists, so latching is synchronous.)
+enum _RecordingState { idle, recording, stopping }
 
 /// Owns the recording session lifecycle start to finish; the UI only
 /// toggles and reports outcomes.
@@ -143,22 +126,25 @@ class RecordingController extends ChangeNotifier {
   /// [stopSession] can hand it back to the UI without a DB lookup.
   String? _sessionName;
 
-  /// True from the moment a start is committed (before its async row
-  /// creation) until finalization completes — the starting and stopping
-  /// windows included, so the UI's record toggle never sees a fake idle
-  /// gap. Derived from the state machine, so it can never disagree with
-  /// the lifecycle it describes.
+  /// True from the moment a start is committed until finalization completes
+  /// — the stopping window included, so the UI's record toggle never sees a
+  /// fake idle gap. Derived from the state machine, so it can never
+  /// disagree with the lifecycle it describes.
   bool get sessionInProgress => _state != _RecordingState.idle;
 
-  /// Every transition notifies: [sessionInProgress] covers the starting and
-  /// stopping windows, not just the latched recording.
+  /// Every transition notifies: [sessionInProgress] covers the stopping
+  /// window, not just the latched recording.
   void _transitionTo(_RecordingState next) {
     _state = next;
     notifyListeners();
   }
 
-  /// Start a new recording session: create the session row and its writer
-  /// (via the persistence port) and latch them here.
+  /// Start a new recording session: construct the writer (via the
+  /// persistence port) and latch it here. Synchronous end to end — the
+  /// storage layer does no DB work until the first chunk flush creates the
+  /// session row — so there is no async window in which the stream could
+  /// change out from under the snapshots the writer is built on, and no
+  /// discarded row to clean up if it did.
   ///
   /// [name] is the session's display name; null auto-names it from the wall
   /// clock (e.g. `2026-07-29 14:05:32` — see [autoSessionName]).
@@ -169,12 +155,12 @@ class RecordingController extends ChangeNotifier {
   ///
   /// Outcomes are returned, not thrown, so the caller (the live tab's record
   /// button) can snackbar them locally.
-  Future<StartSessionResult> startSession({
+  StartSessionResult startSession({
     String? name,
     required List<String> channelLabels,
     required List<bool> visibleChannels,
     required DisplayUnit displayUnit,
-  }) async {
+  }) {
     assert(_streamingNow());
     if (_state != _RecordingState.idle) return const StartSessionBusy();
     // A tare is still averaging; recording now would persist a zero tare.
@@ -193,49 +179,23 @@ class RecordingController extends ChangeNotifier {
       return const StartSessionNoData();
     }
 
-    _transitionTo(_RecordingState.starting);
     final sessionName = name ?? autoSessionName(DateTime.now());
-    // Stream identity for the post-await check: any stream reset during the
-    // await (a reconnect, same or different device) clears the hub and bumps
-    // [DataHub.generation], so this snapshot detects a device swap that the
-    // bare streaming check below would miss.
-    final generation = _dataHub.generation;
-    final LiveSessionWriter writer;
-    try {
-      writer = await _persistence.startSession(
-        tare: _dataHub.tare,
-        // Snapshot the per-channel calibration in effect now; playback
-        // converts through it even if calibration changes later.
-        channelCalibration: [
-          for (int ch = 0; ch < kAdcChannelCount; ch++)
-            _dataHub.calibrationFor(ch),
-        ],
-        samplesPerSec: DataHub.samplesPerSec,
-        sourceRingCapacity: DataHub.maxDataSz,
-        name: sessionName,
-        channelLabels: channelLabels,
-        visibleChannels: visibleChannels,
-        displayUnit: displayUnit,
-        deviceMetadata: _deviceMetadataSnapshot(),
-      );
-    } catch (e) {
-      _transitionTo(_RecordingState.idle);
-      return StartSessionFailed(e);
-    }
-
-    // Re-check the stream after the await: the snapshots above (tare,
-    // calibration, device metadata) all describe THIS stream. If the link
-    // dropped meanwhile — or the stream was reset by a reconnect, moving
-    // [DataHub.generation] — latching now would splice the NEW device's
-    // stream (post-clear, indices restarted) into a session frozen with the
-    // OLD stream's identity. Discard the empty row and refuse instead.
-    if (!_streamingNow() || _dataHub.generation != generation) {
-      await _persistence.discardSession(writer);
-      _transitionTo(_RecordingState.idle);
-      return const StartSessionLinkLost();
-    }
-
-    _sessionWriter = writer;
+    _sessionWriter = _persistence.startSession(
+      tare: _dataHub.tare,
+      // Snapshot the per-channel calibration in effect now; playback
+      // converts through it even if calibration changes later.
+      channelCalibration: [
+        for (int ch = 0; ch < kAdcChannelCount; ch++)
+          _dataHub.calibrationFor(ch),
+      ],
+      samplesPerSec: DataHub.samplesPerSec,
+      sourceRingCapacity: DataHub.maxDataSz,
+      name: sessionName,
+      channelLabels: channelLabels,
+      visibleChannels: visibleChannels,
+      displayUnit: displayUnit,
+      deviceMetadata: _deviceMetadataSnapshot(),
+    );
     _sessionName = sessionName;
     _onSessionBoundary();
     _transitionTo(_RecordingState.recording);
@@ -260,9 +220,10 @@ class RecordingController extends ChangeNotifier {
 
   /// Stop the current recording and finalize it. Returns the saved session id
   /// and name (or nulls when called outside the recording state — the state
-  /// machine refuses the no-op, e.g. a stop tapped while a start is still in
-  /// flight) and any write error the storage writer latched (non-null means
-  /// the session may be truncated).
+  /// machine refuses the no-op) and any write error the storage writer
+  /// latched (non-null means the session may be truncated). The id is also
+  /// null when the session recorded nothing: with no first chunk there was
+  /// never a row, so "recorded nothing" saves nothing.
   ///
   /// This is the single place a storage failure is surfaced to the user (as a
   /// [RecordingStorageError] on [AppEvents]); callers only use the returned

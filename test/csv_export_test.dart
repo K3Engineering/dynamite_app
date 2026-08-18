@@ -43,7 +43,7 @@ void main() {
     List<ChannelCalibration>? calibrations,
     List<double>? tares,
     GapList? gaps,
-    int? ssnOrigin,
+    int ssnOrigin = 0,
   }) => SessionData(
     channels: [for (final values in perChannel) Int32List.fromList(values)],
     sampleRate: sampleRate,
@@ -81,18 +81,6 @@ void main() {
       expect(lines[3], '41230,10,-1,,');
       expect(lines[4], '41231,20,-2,,');
       expect(lines[5], '41232,30,-3,,');
-    });
-
-    test('a missing ssnOrigin exports as origin 0', () {
-      final data = makeSession([
-        [7],
-        [8],
-      ]);
-
-      final lines = buildCsv(data, DisplayUnit.mVv).trim().split('\n');
-
-      expect(lines[3], startsWith('0,'));
-      expect(metadataOf(buildCsv(data, DisplayUnit.mVv))['ssn_origin'], 0);
     });
 
     test('metadata line carries the spec schema from the frozen session', () {

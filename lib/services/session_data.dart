@@ -18,10 +18,9 @@ class SessionData implements GraphDataSource {
 
   /// Device sample-counter value at the session's first sample (the
   /// dynamite-csv `ssn_origin`), latched by the live writer from the first
-  /// recorded packet and persisted on the session row. Null only for
-  /// sessions finalized before any packet arrived (which have no data to
-  /// export) or pre-column rows; exporters fall back to 0.
-  final int? ssnOrigin;
+  /// recorded packet and written into the session row when the first chunk
+  /// flush created it — so it always exists for any session that has data.
+  final int ssnOrigin;
 
   /// Dropped-sample ranges (session-relative). The channel data holds held
   /// values across these ranges, so stats/buckets need no exclusion logic;
@@ -58,8 +57,8 @@ class SessionData implements GraphDataSource {
     required this.sampleCount,
     required this.calibrations,
     required this.tares,
+    required this.ssnOrigin,
     GapList? gaps,
-    this.ssnOrigin,
   }) : gaps = gaps ?? GapList(),
        mins = List.filled(channels.length, 0.0),
        maxs = List.filled(channels.length, 0.0) {

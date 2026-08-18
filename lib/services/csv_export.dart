@@ -158,9 +158,9 @@ String buildSessionCsv(
   String? deviceInfoJson,
 }) {
   final int n = data.channels.length;
-  // The writer persists the true device counter at row 0; null survives
-  // only on sessions with no recorded packets (no data rows anyway).
-  final int ssnOrigin = data.ssnOrigin ?? 0;
+  // The writer recorded the true device counter at the session's first
+  // sample when the row was created.
+  final int ssnOrigin = data.ssnOrigin;
   final device = deviceInfoJson == null
       ? toSessionDeviceMetadata(name: null, info: null)
       : fromSessionDeviceMetadata(deviceInfoJson);
