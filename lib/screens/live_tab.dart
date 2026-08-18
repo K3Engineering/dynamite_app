@@ -271,6 +271,7 @@ class _LiveTabState extends State<LiveTab> {
                       settings: settings,
                       rig: rig,
                       hub: hub,
+                      ctrl: _graphCtrl,
                       showDerivative: showDerivative,
                       healthListenable: _health,
                     ),
@@ -475,6 +476,11 @@ class LiveStats extends StatelessWidget {
   final AppSettings settings;
   final RigState rig;
   final DataHub hub;
+
+  /// The graph viewport: the Peak row reports the max over this window.
+  /// Merged into the rebuild listenable — when the user parks a historical
+  /// window, no packets arrive, so only [ctrl] drives the rebuild.
+  final GraphController ctrl;
   final bool showDerivative;
 
   /// The feed-health classification (see [deriveFeedHealth]). When nothing
@@ -487,6 +493,7 @@ class LiveStats extends StatelessWidget {
     required this.settings,
     required this.rig,
     required this.hub,
+    required this.ctrl,
     this.showDerivative = false,
     required this.healthListenable,
   });
@@ -496,7 +503,7 @@ class LiveStats extends StatelessWidget {
     return ValueListenableBuilder<FeedHealth?>(
       valueListenable: healthListenable,
       builder: (context, health, _) => ListenableBuilder(
-        listenable: hub,
+        listenable: Listenable.merge([hub, ctrl]),
         builder: (context, _) {
           final unit = settings.displayUnit.effective(
             resolveUnitAvailability(hub, settings.activeChannelIndices),
@@ -525,6 +532,13 @@ class LiveStats extends StatelessWidget {
               hasData && ChannelLimits.isClipped(hub.currentRawFor(i)),
           ];
 
+          // The Peak row's window = the graph's viewport.
+          final (viewStart, viewEnd) = ctrl.effectiveRange(
+            hub.totalSamples,
+            hub.oldestSample,
+            bufferCapacity: hub.bufferCapacity,
+          );
+
           return Column(
             children: [
               ChannelStatsTable(
@@ -548,7 +562,7 @@ class LiveStats extends StatelessWidget {
                     label: 'Peak',
                     values: [
                       for (int i = 0; i < wireNumAdcChan; i++)
-                        hub.peakValue(i, unit),
+                        hub.peakValue(i, unit, start: viewStart, end: viewEnd),
                     ],
                   ),
                   if (showDerivative)

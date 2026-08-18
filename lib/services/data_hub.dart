@@ -489,17 +489,32 @@ class DataHub extends ChangeNotifier implements GraphDataSource {
     return conv?.call(_currentRaw[adcChannel].toDouble());
   }
 
-  /// Get peak value for a given ADC channel in the specified unit. Returns 0
-  /// before the first sample arrives ([rawMax] still holds its sentinel);
-  /// null when the unit is unavailable for the channel.
-  double? peakValue(int adcChannel, DisplayUnit unit) {
+  /// Peak value for a given ADC channel in the specified unit: the max over
+  /// the sample window [start, end), converted through the channel's
+  /// calibration. The window is clamped to the retained data, so callers may
+  /// pass a graph window unclamped; a window holding no retained samples
+  /// reports 0, as does an empty stream. Exact and bucket-accelerated (see
+  /// [windowedExtremes]). Null when the unit is unavailable for the channel.
+  double? peakValue(
+    int adcChannel,
+    DisplayUnit unit, {
+    required int start,
+    required int end,
+  }) {
     assert(adcChannel >= 0 && adcChannel < wireNumAdcChan);
     if (totalSamples == 0) return 0;
     final conv = unit.converterFor(
       calibrationFor(adcChannel),
       tare[adcChannel],
     );
-    return conv?.call(rawMax[adcChannel].toDouble());
+    if (conv == null) return null;
+    final ext = windowedExtremes(
+      valueBuckets[adcChannel].series,
+      math.max(start, oldestSample),
+      math.min(end, totalSamples),
+      (i) => rawData[adcChannel][i % maxDataSz].toDouble(),
+    );
+    return ext == null ? 0 : conv(ext.$2);
   }
 
   /// Get minimum (most negative) value for a given ADC channel in the
