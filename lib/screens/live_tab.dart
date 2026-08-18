@@ -13,6 +13,7 @@ import '../models/device_profile.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../models/feed_health.dart';
+import '../widgets/feed_health_indicator.dart';
 import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
@@ -48,75 +49,21 @@ class _LiveTabState extends State<LiveTab> {
   /// toggling rebuilds only the stats/graph/toggles cluster, not the tab.
   final ValueNotifier<bool> _showDerivative = ValueNotifier(false);
 
-  /// Feed-health classification consumed by [LiveStatusBar] and [LiveStats];
-  /// edge-updated by [_healthTimer] (running only while streaming) so a
-  /// health change flips exactly one subtree.
-  final ValueNotifier<FeedHealth?> _health = ValueNotifier(null);
-
-  /// App-lifetime singletons, captured (identity-guarded) in
+  /// App-lifetime hub, captured (identity-guarded) in
   /// [didChangeDependencies] for listener registration only.
   DataHub? _hub;
-  BleLinkManager? _link;
-
-  /// 1 Hz ticker driving the health recompute, started/stopped on streaming
-  /// edges (see [_onLinkChanged]): during a silent/broken feed no packets
-  /// arrive, so the hub never notifies and nothing else would refresh the
-  /// classification. Runs only while streaming — with no live trace there is
-  /// nothing to assess.
-  Timer? _healthTimer;
-
-  /// Start/stop the health ticker on streaming edges. The link manager
-  /// notifies for many reasons (RSSI polls included); the edge guard keeps
-  /// this a no-op unless streaming actually flipped.
-  void _onLinkChanged() {
-    final streaming = _link!.isStreaming;
-    if (streaming == (_healthTimer != null)) return;
-    if (streaming) {
-      _healthTimer = Timer.periodic(
-        const Duration(seconds: 1),
-        (_) => _refreshHealth(),
-      );
-    } else {
-      _healthTimer?.cancel();
-      _healthTimer = null;
-      // No live trace — clear the classification so the next stream starts
-      // clean.
-      _health.value = null;
-    }
-  }
-
-  /// Recompute the feed-health classification. The ticker runs only while
-  /// streaming, so the link state needs no re-check here.
-  void _refreshHealth() {
-    final hub = _hub;
-    if (hub == null) return;
-    final health = deriveFeedHealth(
-      streaming: true,
-      totalSamples: hub.totalSamples,
-      lastDataAt: hub.lastDataAt,
-      lastMalformedPacketAt: hub.lastMalformedPacketAt,
-      streamStartedAt: hub.streamStartedAt,
-    );
-    if (health != _health.value) _health.value = health;
-  }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
     // read (not watch): the hub notifies on every decoded packet, which must
-    // NOT retrigger didChangeDependencies/build. Both are app-lifetime
-    // singletons, so the identity checks below only fire once.
+    // NOT retrigger didChangeDependencies/build. The hub is an app-lifetime
+    // singleton, so the identity check below only fires once.
     final hub = context.read<DataHub>();
     if (_hub != hub) {
       _hub?.removeClearedListener(_onHubCleared);
       _hub = hub;
       hub.addClearedListener(_onHubCleared);
-    }
-    final link = context.read<BleLinkManager>();
-    if (_link != link) {
-      _link?.removeListener(_onLinkChanged);
-      _link = link;
-      link.addListener(_onLinkChanged);
     }
   }
 
@@ -132,11 +79,8 @@ class _LiveTabState extends State<LiveTab> {
 
   @override
   void dispose() {
-    _healthTimer?.cancel();
     _hub?.removeClearedListener(_onHubCleared);
-    _link?.removeListener(_onLinkChanged);
     _showDerivative.dispose();
-    _health.dispose();
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -183,7 +127,10 @@ class _LiveTabState extends State<LiveTab> {
         // Frozen as the CSV export's default converted unit — the unit
         // the instrument is actually drawing, not a disabled preference.
         displayUnit: settings.displayUnit.effective(
-          resolveUnitAvailability(hub.calibrationFor, settings.activeChannelIndices),
+          resolveUnitAvailability(
+            hub.calibrationFor,
+            settings.activeChannelIndices,
+          ),
         ),
       );
 
@@ -258,58 +205,60 @@ class _LiveTabState extends State<LiveTab> {
     // lot of rebuilds — LiveStats/graph subscribe to the hub themselves.
     final hub = context.read<DataHub>();
 
-    return SafeArea(
-      child: Column(
-        children: [
-          // The bar presents the feed-health classification, which changes
-          // with time and packet traffic — the 1 Hz health ticker's notifier
-          // drives it, so no per-packet rebuilds of the whole tab.
-          ValueListenableBuilder<FeedHealth?>(
-            valueListenable: _health,
-            builder: (context, health, _) => LiveStatusBar(
-              isConnected: isConnected,
-              connectedDeviceName: deviceName,
-              health: health,
-              onGoToDevices: widget.onGoToDevices,
-            ),
-          ),
-          if (isConnected)
-            Expanded(
-              child: ValueListenableBuilder<bool>(
-                valueListenable: _showDerivative,
-                builder: (context, showDerivative, _) => Column(
-                  children: [
-                    LiveStats(
-                      settings: settings,
-                      rig: rig,
-                      hub: hub,
-                      ctrl: _graphCtrl,
-                      showDerivative: showDerivative,
-                      healthListenable: _health,
-                    ),
-                    Expanded(
-                      child: _buildGraphArea(settings, hub, showDerivative),
-                    ),
-                    ViewToggles(
-                      showDerivative: showDerivative,
-                      onToggleDerivative: () =>
-                          _showDerivative.value = !showDerivative,
-                    ),
-                  ],
-                ),
+    // The feed-health classification (banner, stats graying) comes from the
+    // shared [FeedHealthScope]: one derivation owner for this tab and the
+    // Devices tab's row chip.
+    return FeedHealthScope(
+      builder: (context, healthListenable) => SafeArea(
+        child: Column(
+          children: [
+            ValueListenableBuilder<FeedHealth?>(
+              valueListenable: healthListenable,
+              builder: (context, health, _) => LiveStatusBar(
+                isConnected: isConnected,
+                connectedDeviceName: deviceName,
+                health: health,
+                onGoToDevices: widget.onGoToDevices,
               ),
-            )
-          else
-            Expanded(
-              child: DisconnectedPrompt(onConnect: widget.onGoToDevices),
             ),
-          if (isConnected)
-            ActionButtons(
-              isRecording: recording.sessionInProgress,
-              onToggleRecord: _onToggleRecord,
-              onTare: _onTare,
-            ),
-        ],
+            if (isConnected)
+              Expanded(
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: _showDerivative,
+                  builder: (context, showDerivative, _) => Column(
+                    children: [
+                      LiveStats(
+                        settings: settings,
+                        rig: rig,
+                        hub: hub,
+                        ctrl: _graphCtrl,
+                        showDerivative: showDerivative,
+                        healthListenable: healthListenable,
+                      ),
+                      Expanded(
+                        child: _buildGraphArea(settings, hub, showDerivative),
+                      ),
+                      ViewToggles(
+                        showDerivative: showDerivative,
+                        onToggleDerivative: () =>
+                            _showDerivative.value = !showDerivative,
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: DisconnectedPrompt(onConnect: widget.onGoToDevices),
+              ),
+            if (isConnected)
+              ActionButtons(
+                isRecording: recording.sessionInProgress,
+                onToggleRecord: _onToggleRecord,
+                onTare: _onTare,
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -522,7 +471,10 @@ class LiveStats extends StatelessWidget {
         listenable: Listenable.merge([hub, ctrl]),
         builder: (context, _) {
           final unit = settings.displayUnit.effective(
-            resolveUnitAvailability(hub.calibrationFor, settings.activeChannelIndices),
+            resolveUnitAvailability(
+              hub.calibrationFor,
+              settings.activeChannelIndices,
+            ),
           );
 
           // A force view shows '—' for an active channel with no cell

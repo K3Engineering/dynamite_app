@@ -9,10 +9,55 @@ import 'database.dart';
 import '../models/bucket_series.dart';
 import '../models/board_calibration.dart';
 import '../models/device_flash.dart';
+import '../models/device_info.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 import '../models/sample_slice.dart';
+
+/// The session-row `device` metadata block: the connected device's identity,
+/// frozen onto the session row at recording start (the CSV format's
+/// recording-time snapshot requirement — docs/csv-format-v1.md). Built from
+/// the link's advertised/stored [name] and the DIS identity [info] (null
+/// when the connect-time read never ran — every identity field is then
+/// null). Map order matches the CSV spec's emission order.
+/// `id` is the serial (the true hardware identity, unlike the platform
+/// device id) — null for sessions recorded on web, where 0x2A25 is
+/// blocklisted.
+Map<String, Object?> toSessionDeviceMetadata({
+  required String? name,
+  required DeviceInfo? info,
+}) => {
+  'name': (name == null || name.isEmpty) ? null : name,
+  'id': info?.serial,
+  'model': info?.model,
+  'firmware': info?.firmwareRev,
+  'manufacturer': info?.manufacturer,
+};
+
+/// Parse a session row's frozen `device` block (see [toSessionDeviceMetadata]).
+/// A malformed document, or non-string values in it, degrade to nulls —
+/// this is a display-only metadata path and must never throw. Unknown keys
+/// are dropped; unknown-to-this-app fields stay available to readers of
+/// the raw JSON.
+Map<String, Object?> fromSessionDeviceMetadata(String json) {
+  try {
+    final decoded = jsonDecode(json);
+    if (decoded is Map) {
+      String? s(Object? v) => v is String && v.isNotEmpty ? v : null;
+      return {
+        'name': s(decoded['name']),
+        'id': s(decoded['id']),
+        'model': s(decoded['model']),
+        'firmware': s(decoded['firmware']),
+        'manufacturer': s(decoded['manufacturer']),
+      };
+    }
+  } catch (e) {
+    debugPrint('Failed to parse session device metadata "$json": $e');
+  }
+  return toSessionDeviceMetadata(name: null, info: null);
+}
 
 /// Each [SessionChunks] row holds a whole number of samples in the packed
 /// chunk format (see [SessionChunkCodec], its one home). The owning
@@ -25,8 +70,8 @@ class SessionStorage {
   ///
   /// Note: every session stores all [kAdcChannelCount]; [channelLabels]
   /// and [visibleChannels] are retained for display only. [deviceMetadata] is
-  /// the connected device's identity as the dynamite-csv `device` block (see
-  /// `toCsvDeviceMetadata` in csv_export.dart), frozen for export.
+  /// the connected device's identity (see [toSessionDeviceMetadata]), frozen
+  /// for export.
   ///
   /// This is hub-agnostic by contract: the caller snapshots everything the
   /// live buffer would supply ([tare], [channelCalibration],
@@ -173,7 +218,12 @@ class SessionStorage {
   /// session is ~58 MB of samples). If long sessions become common, stream
   /// the deinterleave (and consider isolating the [SessionData] stats scan,
   /// which currently runs eagerly on the UI thread below).
-  static Future<SessionData?> loadSession(Session session) async {
+  static Future<SessionData?> loadSession(int sessionId) async {
+    final row = await AppDatabase.instance.sessionById(sessionId);
+    if (row == null) {
+      throw StateError('loadSession: no session row with id $sessionId');
+    }
+    final session = row;
     final chunks = await AppDatabase.instance.sessionChunkData(session.id);
 
     if (chunks.isEmpty) {

@@ -9,6 +9,7 @@ import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/screens/calibration_screen.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/report_export.dart';
+import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/cal_deviation_plot.dart';
 import 'package:dynamite_app/widgets/calibration_text.dart';

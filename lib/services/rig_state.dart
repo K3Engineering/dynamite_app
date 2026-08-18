@@ -8,26 +8,7 @@ import '../models/board_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/load_cell.dart';
 import '../models/rig_edits.dart';
-
-/// The piece of the BLE stack [RigState] needs: which device is connected,
-/// and a way to write the whole flash document back to it. Implemented by
-/// `BleLinkManager` (demo device mutates an in-memory doc; real devices go
-/// through the device KVS — see `KvsFlashTransport`).
-abstract interface class RigFlashTransport {
-  /// Empty string when no device is connected.
-  String get connectedDeviceId;
-
-  /// Display name of the connected device ('' when none).
-  String get connectedDeviceName;
-
-  /// Write a serialized [DeviceFlash] document to the connected device.
-  /// Throws on failure — the caller keeps its pending edits.
-  Future<void> writeFlashDoc(String doc);
-
-  /// Read the flash document back from the connected device (save
-  /// verification). Null on failure or when no device is connected.
-  Future<String?> readFlashDoc();
-}
+import 'rig_flash_transport.dart';
 
 /// Owns the rig: the slot list read from the connected device, unsaved
 /// edits, and the cross-device cell history.

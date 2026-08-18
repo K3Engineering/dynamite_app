@@ -4,13 +4,11 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:universal_ble/universal_ble.dart';
 
 import 'models/app_settings.dart';
 import 'services/adc_packet_decoder.dart';
 import 'services/app_events.dart';
 import 'services/ble_link_manager.dart';
-import 'services/bt_device_config.dart';
 import 'services/data_hub.dart';
 import 'services/database.dart';
 import 'services/demo_device.dart';
@@ -49,11 +47,9 @@ void main() async {
   // are synchronous constructor work and can never race a user edit.
   final prefs = await SharedPreferences.getInstance();
 
-  // Mock-BLE dev build: swap in the simulated platform before any BLE call
-  // (compile-time toggle in bt_device_config.dart).
-  if (useMockBt) {
-    UniversalBle.setInstance(MockBlePlatform.instance);
-  }
+  // Mock-BLE dev builds: swap in the simulated platform before any BLE call
+  // (compile-time dev toggle in mockble.dart).
+  MockBlePlatform.installIfEnabled();
 
   final appEvents = AppEvents();
   final dataHub = DataHub();

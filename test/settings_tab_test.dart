@@ -27,7 +27,7 @@ import 'package:dynamite_app/services/rig_state.dart';
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    // Install the mock regardless of useMockBt so BleLinkManager's
+    // Install the mock regardless of the dev toggle so BleLinkManager's
     // unawaited availability query resolves without platform channels (same
     // pattern as widget_test.dart).
     UniversalBle.setInstance(MockBlePlatform.instance);
@@ -200,10 +200,7 @@ void main() {
     await tester.enterText(find.byType(TextField), 'Bad,Name');
     await tester.pump();
 
-    expect(
-      find.textContaining('start with a letter or digit'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('start with a letter or digit'), findsOneWidget);
     expect(
       tester
           .widget<FilledButton>(find.byKey(const Key('device_name_save')))

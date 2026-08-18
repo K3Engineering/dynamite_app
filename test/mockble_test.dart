@@ -25,7 +25,7 @@ void main() {
   const deviceId = '2';
 
   /// Builds the same object graph as main.dart, but with the mock platform
-  /// installed regardless of [useMockBt]. Returns the hub to inspect and a
+  /// installed regardless of the dev toggle (mockble.dart). Returns the hub to inspect and a
   /// teardown that disconnects (cancelling the feed timer) and clears state so
   /// the singleton mock is reusable across tests.
   (DataHub, BleLinkManager, VoidCallback) wire({required FakeAsync async}) {

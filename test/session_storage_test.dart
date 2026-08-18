@@ -189,9 +189,7 @@ void main() {
       );
       expect(writer.hasError, isFalse);
       pumpSamples(hub, frame, 100, 13);
-      unawaited(
-        writer.appendData(hub.snapshotRange(2 * chunkSamples, 100)),
-      );
+      unawaited(writer.appendData(hub.snapshotRange(2 * chunkSamples, 100)));
       expect(writer.hasError, isTrue);
       expect(writer.writeError, isA<StateError>());
 
@@ -287,7 +285,7 @@ void main() {
       row = (await AppDatabase.instance.sessionById(writer.sessionId))!;
       expect(row.ssnOrigin, 41230);
 
-      final loaded = (await SessionStorage.loadSession(row))!;
+      final loaded = (await SessionStorage.loadSession(row.id))!;
       expect(loaded.ssnOrigin, 41230);
     });
   });
@@ -364,7 +362,7 @@ void main() {
       expect(row.gaps, '[[2100,2120]]');
       expect(row.ssnOrigin, 41230);
 
-      final loaded = await SessionStorage.loadSession(row);
+      final loaded = await SessionStorage.loadSession(row.id);
       expect(loaded, isNotNull);
       expect(loaded!.gaps.contains(2100), isTrue);
       expect(loaded.gaps.contains(2119), isTrue);
@@ -450,7 +448,7 @@ void main() {
         await SessionStorage.finalizeSession(writer: writer);
 
         final row = await AppDatabase.instance.sessionById(writer.sessionId);
-        final loaded = (await SessionStorage.loadSession(row!))!;
+        final loaded = (await SessionStorage.loadSession(row!.id))!;
 
         // Board snapshot: ch0 at 0.5x nominal sensitivity.
         expect(

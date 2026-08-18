@@ -6,12 +6,10 @@ import 'package:provider/provider.dart';
 
 import '../services/ble_link_manager.dart';
 import '../models/bt_scan.dart';
-import '../services/data_hub.dart';
-import '../models/feed_health.dart';
-import '../widgets/feed_health_text.dart';
 import '../utils/format.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/empty_placeholder.dart';
+import '../widgets/feed_health_indicator.dart';
 import '../widgets/rssi_indicator.dart';
 import '../widgets/section_header.dart';
 import '../widgets/status_colors.dart';
@@ -205,10 +203,7 @@ class DevicesTab extends StatelessWidget {
 
   /// The big state-aware empty block: the single empty-state voice. Icon
   /// and color come straight from the shared [btStatusVisual] mapping.
-  Widget _buildEmptyBlock(
-    BtStatusVisual visual,
-    BtAvailability availability,
-  ) {
+  Widget _buildEmptyBlock(BtStatusVisual visual, BtAvailability availability) {
     final (title, hint) = switch (availability) {
       BtAvailability.poweredOn => (
         'No devices found',
@@ -637,7 +632,7 @@ class _ActiveDeviceRow extends StatelessWidget {
                 ],
               ),
             ),
-            const _FeedHealthLine(),
+            const FeedHealthIndicator(),
           ],
         ),
         trailing: Row(
@@ -676,69 +671,6 @@ class _ActiveDeviceRow extends StatelessWidget {
           ],
         ),
       ),
-    );
-  }
-}
-
-/// One-line feed-health readout under the active row's subtitle
-/// ("Packets malformed…", "No data from device", "Stream stopped").
-/// Derived live from the hub on a 1 Hz tick (the same cadence as the live
-/// tab's health check); renders nothing while the feed is healthy or the
-/// link isn't streaming. Self-ticking because the hub probably shouldn't notify on
-/// malformed packets
-class _FeedHealthLine extends StatefulWidget {
-  const _FeedHealthLine();
-
-  @override
-  State<_FeedHealthLine> createState() => _FeedHealthLineState();
-}
-
-class _FeedHealthLineState extends State<_FeedHealthLine> {
-  Timer? _timer;
-
-  @override
-  void initState() {
-    super.initState();
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
-      if (mounted) setState(() {});
-    });
-  }
-
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final streaming = context.select<BleLinkManager, bool>(
-      (l) => l.isStreaming,
-    );
-    final hub = context.read<DataHub>();
-    final health = deriveFeedHealth(
-      streaming: streaming,
-      totalSamples: hub.totalSamples,
-      lastDataAt: hub.lastDataAt,
-      lastMalformedPacketAt: hub.lastMalformedPacketAt,
-      streamStartedAt: hub.streamStartedAt,
-    );
-    final label = health?.shortLabel;
-    if (label == null) return const SizedBox.shrink();
-    final color = Theme.of(context).extension<StatusColors>()!.onConnectedWarning;
-    return Row(
-      children: [
-        Icon(Icons.error_outline, size: 14, color: color),
-        const SizedBox(width: 4),
-        Flexible(
-          child: Text(
-            label,
-            style: Theme.of(
-              context,
-            ).textTheme.labelSmall?.copyWith(color: color),
-          ),
-        ),
-      ],
     );
   }
 }

@@ -5,7 +5,6 @@ import 'package:flutter/foundation.dart';
 import 'adc_packet_decoder.dart';
 import 'app_events.dart';
 import 'ble_link_manager.dart';
-import 'csv_export.dart';
 import 'data_hub.dart';
 import 'session_storage.dart';
 import '../models/device_profile.dart';
@@ -128,12 +127,13 @@ class RecordingController extends ChangeNotifier {
     // decodable (a stream that never produced data, produces only malformed
     // packets, or has gone silent).
     if (deriveFeedHealth(
-      streaming: _linkManager.isStreaming,
-      totalSamples: _dataHub.totalSamples,
-      lastDataAt: _dataHub.lastDataAt,
-      lastMalformedPacketAt: _dataHub.lastMalformedPacketAt,
-      streamStartedAt: _dataHub.streamStartedAt,
-    ) case FeedHealth.stopped || FeedHealth.blocked || FeedHealth.silent) {
+          streaming: _linkManager.isStreaming,
+          totalSamples: _dataHub.totalSamples,
+          lastDataAt: _dataHub.lastDataAt,
+          lastMalformedPacketAt: _dataHub.lastMalformedPacketAt,
+          streamStartedAt: _dataHub.streamStartedAt,
+        )
+        case FeedHealth.stopped || FeedHealth.blocked || FeedHealth.silent) {
       return const StartSessionNoData();
     }
 
@@ -141,7 +141,7 @@ class RecordingController extends ChangeNotifier {
     // Freeze the connected device's identity onto the row (the CSV `device`
     // block — docs/csv-format-v1.md): export must never consult live device
     // state.
-    final deviceMetadata = toCsvDeviceMetadata(
+    final deviceMetadata = toSessionDeviceMetadata(
       name: _linkManager.connectedDeviceName,
       info: _linkManager.connectedDeviceInfo,
     );

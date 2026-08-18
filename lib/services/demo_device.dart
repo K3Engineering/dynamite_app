@@ -2,8 +2,8 @@ import 'dart:typed_data';
 
 import '../models/device_info.dart';
 import '../models/device_profile.dart';
-import 'ble_link_manager.dart' show DemoLink;
 import 'demo_calibration.dart';
+import 'demo_link.dart';
 import 'demo_signal_source.dart';
 
 /// The simulated demo device (see [DemoLink] for the manager's view).

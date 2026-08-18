@@ -2,7 +2,8 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
-import '../services/database.dart';
+import '../models/session_summary.dart';
+import '../services/session_queries.dart';
 import '../services/storage_capacity.dart' as probe;
 import '../utils/format.dart';
 import 'session_flows.dart';
@@ -18,18 +19,16 @@ class SessionsTab extends StatefulWidget {
 }
 
 class _SessionsTabState extends State<SessionsTab> {
-  /// Created once: a fresh `watchAllSessions()` per build would make the
-  /// [StreamBuilder] unsubscribe and re-run the query on every rebuild
+  /// Created once: a fresh `watchSessionSummaries()` per build would make
+  /// the [StreamBuilder] unsubscribe and re-run the query on every rebuild
   /// (this tab rebuilds on each shell tab switch).
-  late final Stream<List<Session>> _sessions = AppDatabase.instance
-      .watchAllSessions();
+  late final Stream<List<SessionSummary>> _sessions = watchSessionSummaries();
 
   /// Per-session chunk byte sizes, same created-once rule as [_sessions].
   /// Also the capacity strip's refresh cue: everything that changes stored
   /// bytes (deletes, recording finalization, live chunk writes) lands on the
   /// chunk table this stream watches.
-  late final Stream<Map<int, int>> _sizes = AppDatabase.instance
-      .watchSessionByteSizes();
+  late final Stream<Map<int, int>> _sizes = watchSessionByteSizes();
 
   /// The platform's storage facts for the capacity strip; null where probing
   /// is unsupported (desktop) or failed — the strip hides then.
@@ -57,7 +56,7 @@ class _SessionsTabState extends State<SessionsTab> {
 
   Future<void> _refreshCapacity() async {
     final capacity = await probe.fetchStorageCapacity(
-      usedBytes: AppDatabase.instance.databaseFileBytes,
+      usedBytes: sessionDatabaseFileBytes,
     );
     if (mounted) setState(() => _capacity = capacity);
   }
@@ -84,7 +83,7 @@ class _SessionsTabState extends State<SessionsTab> {
           if (_capacity case final capacity?)
             StorageCapacityStrip(capacity: capacity),
           Expanded(
-            child: StreamBuilder<List<Session>>(
+            child: StreamBuilder<List<SessionSummary>>(
               stream: _sessions,
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
@@ -135,7 +134,7 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  Future<void> _openDetail(Session session) async {
+  Future<void> _openDetail(SessionSummary session) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
         builder: (_) => SessionDetailScreen(session: session),
@@ -143,9 +142,13 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  Future<void> _deleteSession(Session session) async {
+  Future<void> _deleteSession(SessionSummary session) async {
     try {
-      await deleteSessionFlow(context, session);
+      await deleteSessionFlow(
+        context,
+        sessionId: session.id,
+        name: session.name,
+      );
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -164,7 +167,7 @@ class _SessionCard extends StatelessWidget {
     required this.onDelete,
   });
 
-  final Session session;
+  final SessionSummary session;
 
   /// Exact chunk payload bytes, null until the sizes stream lands. Null
   /// simply omits the size from the subtitle.

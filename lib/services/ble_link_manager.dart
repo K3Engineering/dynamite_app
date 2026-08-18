@@ -8,10 +8,11 @@ import 'app_events.dart';
 import 'adc_protocol.dart';
 import 'bt_device_config.dart';
 import '../models/bt_scan.dart';
+import 'demo_link.dart';
 import 'kvs_client.dart';
 import 'kvs_flash_transport.dart';
 import 'kvs_protocol.dart';
-import 'rig_state.dart';
+import 'rig_flash_transport.dart';
 import '../models/device_info.dart';
 import '../models/device_name.dart';
 import '../utils/log.dart';
@@ -30,34 +31,6 @@ enum ConnectFailureKind {
   /// The attempt exceeded [BleLinkManager.connectTimeout]. The platform
   /// attempt may still complete late; the unwanted-link guard releases it.
   timeout,
-}
-
-/// What [BleLinkManager] needs from the demo device: a synthetic link
-/// source whose flash doc and stored name round-trip exactly like real
-/// hardware ("Save to device" and the name editor work on the demo). The
-/// implementation (`DemoDevice`) is constructed and wired by the
-/// composition root — the manager never constructs one.
-abstract interface class DemoLink {
-  /// The flash document, mutable so "Save to device" round-trips (a
-  /// reconnect serves whatever was last written).
-  String get flashDoc;
-  set flashDoc(String doc);
-
-  /// The demo's stored name — the same round-trip rationale as [flashDoc].
-  String? get storedName;
-  set storedName(String? name);
-
-  /// The simulated identity (real links read theirs from the Device
-  /// Information service in post-connect setup).
-  DeviceInfo get deviceInfo;
-
-  /// Per-channel PGA gains served alongside the flash doc (the analogue of
-  /// the GAIN-register readback on real links).
-  List<double> get pgaGains;
-
-  /// Start/stop the simulated ADC feed, delivered like GATT notifications.
-  void startFeed(void Function(Uint8List) onData);
-  void stopFeed();
 }
 
 /// All per-device link state for a single BLE device. Everything logically
@@ -413,13 +386,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
   /// Smallest ADC-feed notification (bytes) on the current link, or null
   /// until a packet arrives / once the link is down.
-  int? get minAdcPacketBytes =>
-      _link.isLinkUp ? _link.minAdcPacketBytes : null;
+  int? get minAdcPacketBytes => _link.isLinkUp ? _link.minAdcPacketBytes : null;
 
   /// Largest ADC-feed notification (bytes) on the current link, or null
   /// until a packet arrives / once the link is down.
-  int? get maxAdcPacketBytes =>
-      _link.isLinkUp ? _link.maxAdcPacketBytes : null;
+  int? get maxAdcPacketBytes => _link.isLinkUp ? _link.maxAdcPacketBytes : null;
 
   /// Live RSSI (dBm) of the connected device, or null when not streaming, not
   /// yet read, or unsupported on this platform. Polled every [rssiPollInterval]
@@ -685,7 +656,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     );
     final mapped = DiscoveredDevice(
       deviceId: result.deviceId,
-      name: result.name ?? (existingIdx >= 0 ? _devices[existingIdx].name : null),
+      name:
+          result.name ?? (existingIdx >= 0 ? _devices[existingIdx].name : null),
       rssi: result.rssi,
       timestamp: result.timestamp,
     );
