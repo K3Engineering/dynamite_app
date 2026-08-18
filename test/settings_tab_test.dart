@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_ble/universal_ble.dart';
 
+import 'package:dynamite_app/models/app_meta.dart';
 import 'package:dynamite_app/models/app_settings.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/display_unit.dart';
@@ -54,6 +55,9 @@ void main() {
         providers: [
           ChangeNotifierProvider<AppSettings>.value(
             value: AppSettings(prefs: prefs),
+          ),
+          Provider<AppMeta>.value(
+            value: const AppMeta(version: '0.0.0', buildNumber: '0'),
           ),
           ChangeNotifierProvider<DataHub>.value(value: hub),
           ChangeNotifierProvider<BleLinkManager>.value(value: link),

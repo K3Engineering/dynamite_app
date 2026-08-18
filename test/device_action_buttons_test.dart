@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/main.dart';
+import 'package:dynamite_app/models/app_meta.dart';
 import 'package:dynamite_app/models/app_settings.dart';
 import 'package:dynamite_app/screens/devices_tab.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
@@ -12,6 +13,7 @@ import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_device.dart';
+import 'package:dynamite_app/services/feed_health_tracker.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/rig_state.dart';
@@ -54,12 +56,18 @@ void main() {
       decoder: decoder,
       events: appEvents,
     );
+    final feedHealth = FeedHealthTracker(hub: dataHub, link: linkManager);
+    addTearDown(feedHealth.dispose);
 
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           ChangeNotifierProvider.value(value: AppSettings(prefs: prefs)),
+          Provider<AppMeta>.value(
+            value: const AppMeta(version: '0.0.0', buildNumber: '0'),
+          ),
           Provider.value(value: appEvents),
+          Provider.value(value: feedHealth),
           ChangeNotifierProvider.value(value: dataHub),
           ChangeNotifierProvider.value(value: linkManager),
           ChangeNotifierProvider.value(value: rigState),

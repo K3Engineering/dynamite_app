@@ -8,10 +8,9 @@ import 'app_events.dart';
 import 'adc_protocol.dart';
 import 'bt_device_config.dart';
 import '../models/bt_scan.dart';
-import 'demo_link.dart';
+import 'gatt_link_backend.dart';
 import 'kvs_client.dart';
-import 'kvs_flash_transport.dart';
-import 'kvs_protocol.dart';
+import 'link_backend.dart';
 import 'rig_flash_transport.dart';
 import '../models/device_info.dart';
 import '../models/device_name.dart';
@@ -39,11 +38,13 @@ enum ConnectFailureKind {
 class DeviceLink {
   DeviceLink({this.deviceId = ''});
 
-  /// The [deviceId] of the simulated demo device (never a real BLE link).
-  static const String demoDeviceId = 'demo_device';
-
   /// Empty string means "no device" (the [BtLinkState.idle] sentinel).
   String deviceId;
+
+  /// True when this link is simulated (the demo device) rather than a GATT
+  /// link: no RSSI polling, no reconnect cooldown, no proof-of-life stamps,
+  /// and the BLE status readout reports idle while it occupies the slot.
+  bool isSimulated = false;
   String name = '';
   BtLinkState state = BtLinkState.idle;
 
@@ -69,7 +70,7 @@ class DeviceLink {
 
   /// ATT MTU returned by [UniversalBle.requestMtu] during post-connect
   /// setup. Null until that call completes, after reset, and on paths that
-  /// never negotiate (web, demo).
+  /// never negotiate (web, simulated links).
   int? mtu;
 
   /// Smallest / largest ADC-feed notification size (bytes) delivered on
@@ -99,6 +100,7 @@ class DeviceLink {
     deviceId = '';
     name = '';
     state = BtLinkState.idle;
+    isSimulated = false;
     storedName = null;
     rssi = null;
     info = null;
@@ -106,8 +108,6 @@ class DeviceLink {
     minAdcPacketBytes = null;
     maxAdcPacketBytes = null;
   }
-
-  bool get isDemoDevice => deviceId == demoDeviceId;
 
   /// Like [_reset], but parks the link in [BtLinkState.cooldown] for the given
   /// [deviceId] (the device just torn down). Keeps [deviceId]/[name] so the UI
@@ -298,7 +298,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// Last "proof of life" per device id (ms since epoch): the most recent
   /// moment a GATT link to this device was provably up (see [_stampAlive]).
   /// Never stamped for failed/cancelled connects (a refused attempt proves
-  /// nothing about the device being alive) or for the demo device.
+  /// nothing about the device being alive) or for simulated links.
   final Map<String, int> _lastAliveMs = {};
 
   /// The most recent moment (ms since epoch) this device was provably alive,
@@ -329,7 +329,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// discovery/subscription failed). All four are moments where the device
   /// demonstrably answered.
   void _stampAlive(String deviceId) {
-    if (deviceId.isEmpty || deviceId == DeviceLink.demoDeviceId) return;
+    if (deviceId.isEmpty) return;
+    // Simulated links have no radio lifetime to attest.
+    if (_link.isSimulated && _link.deviceId == deviceId) return;
     _lastAliveMs[deviceId] = DateTime.now().millisecondsSinceEpoch;
   }
 
@@ -337,12 +339,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// streaming. Every screen keys its connected UI off this.
   bool get isStreaming => _link.isStreaming;
 
-  /// The link state as the BLE status readout should see it. The demo device
-  /// is not BLE: while it occupies the link slot the BLE link reports
+  /// The link state as the BLE status readout should see it. A simulated
+  /// link is not BLE: while it occupies the link slot the BLE link reports
   /// [BtLinkState.idle], so the status falls through to scan/adapter state
   /// instead of claiming "Connected".
   BtLinkState get bleLinkState =>
-      _link.isDemoDevice ? BtLinkState.idle : _link.state;
+      _link.isSimulated ? BtLinkState.idle : _link.state;
 
   /// True during the post-disconnect settle window (web only) — the link has
   /// fully torn down but the stack isn't yet ready to reconnect to the same
@@ -465,17 +467,18 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// go here; the shell shows them regardless of which tab is mounted.
   final AppEvents _events;
 
-  /// The demo device (see [DemoLink]), wired by the composition root. Null
-  /// only in tests that construct a bare manager; every demo code path is
-  /// then unreachable (no demo connect can begin without [_demo]).
-  final DemoLink? _demo;
+  /// The simulated link (see [SimulatedLink]), wired by the composition
+  /// root. Null only in tests that construct a bare manager; every simulated
+  /// connect path is then unreachable (no demo connect can begin without
+  /// [_demo]).
+  final SimulatedLink? _demo;
 
-  /// The KVS channel of the active link (null for the demo device and after
-  /// teardown). Created in post-connect setup BEFORE the ADC feed
-  /// subscription, because firmware locks the KVS while the feed holds the
-  /// device lock.
-  KvsClient? _kvsClient;
-  KvsFlashTransport? _kvsTransport;
+  /// The backend of the active link (null when no link is up, and for a
+  /// real link whose KVS channel never came up). For a GATT link this is
+  /// the per-link KVS channel, created in post-connect setup BEFORE the
+  /// ADC feed subscription, because firmware locks the KVS while the feed
+  /// holds the device lock.
+  LinkBackend? _backend;
 
   /// The ADC's per-channel PGA gains as read back during the "Reading board
   /// constants…" stage (null until read, or when the read failed). Handed to
@@ -487,22 +490,18 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// Write a serialized `DeviceFlash` document to the connected device.
   /// Called only by `RigState.saveToDevice`, which has already composed the
   /// full document (board keys round-tripping verbatim + edited slots). The
-  /// KVS transport turns it into per-key writes (see [KvsFlashTransport]).
+  /// active link's backend applies it (see [LinkBackend.writeFlashDoc]).
   @override
   Future<void> writeFlashDoc(String doc) async {
     final deviceId = _link.deviceId;
     if (deviceId.isEmpty) {
       throw StateError('writeFlashDoc with no device connected');
     }
-    if (deviceId == DeviceLink.demoDeviceId) {
-      _demo!.flashDoc = doc;
-      return;
+    final backend = _backend;
+    if (backend == null) {
+      throw StateError('writeFlashDoc with no device channel on $deviceId');
     }
-    final transport = _kvsTransport;
-    if (transport == null) {
-      throw StateError('writeFlashDoc with no KVS channel on $deviceId');
-    }
-    await _withFeedPaused(() => transport.writeFlashDoc(doc));
+    await backend.writeFlashDoc(doc);
   }
 
   /// Read the flash document back from the connected device (save
@@ -511,13 +510,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// never crash it.
   @override
   Future<String?> readFlashDoc() async {
-    final deviceId = _link.deviceId;
-    if (deviceId.isEmpty) return null;
-    if (deviceId == DeviceLink.demoDeviceId) return _demo!.flashDoc;
-    final transport = _kvsTransport;
-    if (transport == null) return null;
+    if (_link.deviceId.isEmpty) return null;
+    final backend = _backend;
+    if (backend == null) return null;
     try {
-      return await _withFeedPaused(transport.readFlashDoc);
+      return await backend.readFlashDoc();
     } catch (_) {
       return null;
     }
@@ -528,10 +525,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// writes (and the verifying re-read) briefly unsubscribe, then
   /// resubscribe. The feed's counter jump on resume surfaces as an honest
   /// gap via the decoder's continuity check. When the feed isn't active
-  /// (mid setup, demo device) [body] just runs.
+  /// (mid setup) [body] just runs. Handed to the GATT backend, the only
+  /// caller.
   Future<T> _withFeedPaused<T>(Future<T> Function() body) async {
     final deviceId = _link.deviceId;
-    final pause = _link.isStreaming && deviceId != DeviceLink.demoDeviceId;
+    final pause = _link.isStreaming;
     if (pause) {
       await UniversalBle.unsubscribe(deviceId, btServiceId, btChrAdcFeedId);
     }
@@ -566,21 +564,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       throw ArgumentError.value(name, 'name', 'invalid device name');
     }
     final stored = trimmed.isEmpty ? null : trimmed;
-    if (deviceId == DeviceLink.demoDeviceId) {
-      _demo!.storedName = stored;
-      _link.storedName = stored;
-      notifyListeners();
-      return true;
+    final backend = _backend;
+    if (backend == null) {
+      throw StateError('setDeviceName with no device channel on $deviceId');
     }
-    final client = _kvsClient;
-    if (client == null) {
-      throw StateError('setDeviceName with no KVS channel on $deviceId');
-    }
-    final ok = await _withFeedPaused(
-      () => stored == null
-          ? client.delete(kvsFolderSettings, kvsKeyDeviceName)
-          : client.set(kvsFolderSettings, kvsKeyDeviceName, stored),
-    );
+    final ok = await backend.storeDeviceName(stored);
     if (ok) {
       _link.storedName = stored;
       notifyListeners();
@@ -588,7 +576,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     return ok;
   }
 
-  BleLinkManager({required AppEvents events, DemoLink? demo})
+  BleLinkManager({required AppEvents events, SimulatedLink? demo})
     : _events = events,
       _demo = demo {
     // Run each device's BLE commands in its own queue. With the default
@@ -819,7 +807,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// is swallowed silently and retried on the next tick
   void _startRssiPolling(String deviceId) {
     _stopRssiPolling();
-    if (!_supportsRssi || _link.isDemoDevice) {
+    if (!_supportsRssi || _link.isSimulated) {
       return;
     }
     _rssiPollTimer = Timer.periodic(rssiPollInterval, (_) async {
@@ -863,7 +851,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// is NOT returned straight to [BtLinkState.idle]: it is parked in
   /// [BtLinkState.cooldown] for [reconnectSettleDelay] so the UI keeps Connect
   /// disabled (with a hint) until Chrome has finished GATT teardown. Native
-  /// stacks and the demo device don't exhibit the too-soon-reconnect race, so
+  /// stacks and simulated links don't exhibit the too-soon-reconnect race, so
   /// they reset directly to idle.
   ///
   /// [cooldown] must be false when no live link was ever up — i.e. a failed
@@ -880,19 +868,18 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // Supersede any in-flight post-connect setup pass so it bails out instead of
     // writing state for a link we're tearing down.
     _supersedeSetupPasses();
-    // The KVS channel dies with the link: fail any pending command. A fresh
-    // link builds a fresh client in post-connect setup.
-    _kvsClient?.abort();
-    _kvsClient = null;
-    _kvsTransport = null;
+    // The backend dies with the link: stop the feed / fail any pending
+    // command. A fresh link gets a fresh backend in post-connect setup.
+    _backend?.dispose();
+    _backend = null;
     _adcGains = null;
     _stopRssiPolling();
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
 
-    // Cooldown applies to real BLE links on web only — not native, not demo,
-    // and not failed connect attempts.
-    if (!kIsWeb || _link.isDemoDevice || !cooldown) {
+    // Cooldown applies to real BLE links on web only — not native, not
+    // simulated links, and not failed connect attempts.
+    if (!kIsWeb || _link.isSimulated || !cooldown) {
       _link._reset();
     } else {
       // Web: hold the link in cooldown for the settle window, then release it.
@@ -1188,16 +1175,18 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // Guarded structurally, not visibly: the demo row's Connect is always
     // wired (see main), so a null [_demo] is a test-harness artifact.
     if (demo == null) {
-      throw StateError('connectToDemoDevice with no DemoLink wired');
+      throw StateError('connectToDemoDevice with no simulated link wired');
     }
     if (!_beginConnect()) return;
-    _link.deviceId = DeviceLink.demoDeviceId;
-    _link.name = 'Demo Device';
+    _link.deviceId = demo.id;
+    _link.name = demo.displayName;
+    _link.isSimulated = true;
     _link.state = BtLinkState.streaming;
     _link.storedName = demo.storedName;
     // Simulated hardware has a simulated identity (real links read theirs
     // from the Device Information service in post-connect setup).
-    _link.info = demo.deviceInfo;
+    _link.info = demo.identity;
+    _backend = demo;
 
     // The demo device is factory-calibrated: serve its flash doc through the
     // same path a real device's calibration read would take. The doc is
@@ -1309,8 +1298,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // mutating state while we tear the link down.
     _supersedeSetupPasses();
 
-    if (_link.isDemoDevice) {
-      _demo?.stopFeed();
+    // A simulated link has no platform side: teardown stops its feed (via
+    // the backend) and returns it to idle immediately.
+    if (_link.isSimulated) {
       _teardownLink(_link.deviceId);
       notifyListeners();
       return;
@@ -1441,14 +1431,16 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       _events.emit(CalibrationUnreadable(_link.displayName));
       return;
     }
-    final transport = KvsFlashTransport(client);
-    _kvsClient = client;
-    _kvsTransport = transport;
+    final backend = GattLinkBackend(
+      client: client,
+      withFeedPaused: _withFeedPaused,
+    );
+    _backend = backend;
     // The stored name lands before the flash read: the rig's provenance
     // label is read off the link at doc delivery time (see
     // [connectedDeviceName]).
     try {
-      final stored = await client.get(kvsFolderSettings, kvsKeyDeviceName);
+      final stored = await backend.readDeviceName();
       if (!token.isCurrent) return;
       _link.storedName = stored;
       notifyListeners();
@@ -1457,7 +1449,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       debugPrint('KVS device-name read failed for $deviceId: $e');
     }
     try {
-      final doc = await transport.readFlashDoc();
+      final doc = await backend.readFlashDoc();
       if (!token.isCurrent) return;
       if (doc == null) throw StateError('KVS flash read failed');
       onCalibrationData?.call(Uint8List.fromList(utf8.encode(doc)), _adcGains);
@@ -1539,7 +1531,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     if (characteristicId == btChrAdcFeedId) {
       _deliverAdcData(data);
     } else if (characteristicId == btChrKvs) {
-      _kvsClient?.handleNotification(data);
+      _backend?.handleKvsFrame(data);
     } else {
       logTrace(
         () =>
@@ -1564,10 +1556,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   Future<void> shutdownForHotRestart() async {
     onAdcData = null;
     onCalibrationData = null;
-    _demo?.stopFeed();
-    _kvsClient?.abort();
-    _kvsClient = null;
-    _kvsTransport = null;
+    _backend?.dispose();
+    _backend = null;
     _stopRssiPolling();
     _freshnessPoke?.cancel();
     _freshnessPoke = null;
@@ -1582,7 +1572,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       if (_isScanning) {
         await UniversalBle.stopScan();
       }
-      if (_link.isLinkUp && !_link.isDemoDevice) {
+      if (_link.isLinkUp && !_link.isSimulated) {
         await UniversalBle.disconnect(
           _link.deviceId,
           timeout: disconnectTimeout,

@@ -51,4 +51,14 @@ class FeedHealthTracker {
     );
     if (next != health.value) health.value = next;
   }
+
+  /// Cancel the ticker and release [health]. The real instance is
+  /// app-lifetime (never disposed); tests dispose theirs so the ticker
+  /// can't leak past a widget test's end-of-test timer check.
+  void dispose() {
+    _timer?.cancel();
+    _timer = null;
+    _link.removeListener(_onLinkChanged);
+    health.dispose();
+  }
 }

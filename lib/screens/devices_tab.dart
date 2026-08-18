@@ -168,7 +168,7 @@ class DevicesTab extends StatelessWidget {
           // so it reflects connected state inline like a BLE row.
           const SectionHeader('Demo devices'),
           const SizedBox(height: 8),
-          if (bt.link.isDemoDevice && bt.link.state != BtLinkState.idle)
+          if (bt.link.isSimulated && bt.link.state != BtLinkState.idle)
             _ActiveDeviceRow(
               name: 'Demo Device',
               icon: Icons.science,
