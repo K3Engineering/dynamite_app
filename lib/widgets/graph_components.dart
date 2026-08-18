@@ -3110,7 +3110,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
         _blockSizeFor(viewSpan, graphSz.width) >= kBucketSize;
 
     final lightPaint = Paint()..color = colorScheme.error.withAlpha(22);
-    final clipPath = Path()..fillType = PathFillType.evenOdd;
+    final clipPath = Path();
     double topRailY = 0, bottomRailY = 0;
 
     for (final ch in _activeChannels) {
