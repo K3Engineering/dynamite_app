@@ -51,9 +51,11 @@ Map<String, Object?> fromSessionDeviceMetadata(String json) {
 /// Parse a JSON-encoded list column into exactly [count] entries: entry i is
 /// [convert] applied to the i-th decoded element, or [fallback] when the
 /// document is malformed, shorter than [count], or the element fails to
-/// convert. Session metadata columns (tares, channel labels, visible
-/// channels) are display-only, so a corrupt value degrades to defaults
-/// instead of throwing.
+/// convert. For display-only columns only (channel labels, visible
+/// channels): a corrupt value degrades to defaults instead of throwing.
+/// Measurement columns (tares, calibration, gaps) do NOT use this — they
+/// parse strictly at the SessionStorage boundary, where damage sets a
+/// [SessionDamage] flag rather than silently fabricating defaults.
 List<T> parseJsonColumn<T>(
   String json,
   int count, {

@@ -8,6 +8,7 @@ import '../services/app_settings.dart';
 import '../models/display_unit.dart';
 import '../models/session_summary.dart';
 import '../services/csv_export.dart';
+import '../services/salvage_export.dart';
 import '../services/session_data.dart';
 import '../services/session_queries.dart';
 import '../services/session_storage.dart';
@@ -107,6 +108,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                       '${fileShareSupportedHere ? '' : ' (not supported here)'}',
                     ),
                   ),
+                  // Raw samples that failed integrity verification (see
+                  // SessionDamage.truncatedAt) — the hand-recovery artifact.
+                  const PopupMenuItem(
+                    value: 'salvage_csv',
+                    child: Text('Export salvage data'),
+                  ),
                   PopupMenuItem(
                     value: 'delete',
                     // Destructive action: the theme's error role, as in the
@@ -154,7 +161,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     final visibleChannels = session.visibleChannels;
     final channelLabels = session.channelLabels;
     final unit = settings.displayUnit.effective(
-      resolveUnitAvailability(data.calibrationFor, [
+      data.unitAvailabilityFor([
         for (int i = 0; i < visibleChannels.length; i++)
           if (visibleChannels[i]) i,
       ]),
@@ -164,6 +171,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // Storage-integrity damage is surfaced loudly and permanently —
+          // the floors in effect (raw-only conversion, gross counts, a
+          // truncated extent) must be unmissable next to the data.
+          if (!data.damage.isEmpty) _DamageBanner(damage: data.damage),
           // Channel header (same tappable table as the live view; toggles
           // this session's per-session channel visibility).
           ChannelStatsTable(
@@ -301,6 +312,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         if (state is _Ready && state.data != null) {
           await _shareCsv(session, state.data!);
         }
+      case 'salvage_csv':
+        // Available in every load state — including _Failed, where it is
+        // the only export possible. Reports when nothing is salvageable.
+        await _downloadSalvage(session);
       case 'delete':
         await _deleteAndPop(session);
     }
@@ -338,7 +353,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Future<void> _downloadCsv(SessionSummary session, SessionData data) =>
       _runCsvAction(() async {
         final appMeta = context.read<AppMeta>();
-        final unit = await _pickExportUnit(_recordedUnit(session));
+        final unit = await _pickExportUnit(
+          _recordedUnit(session),
+          damage: data.damage,
+        );
         if (unit == null) return null;
         return downloadSessionCsv(
           sessionName: session.name,
@@ -353,7 +371,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Future<void> _shareCsv(SessionSummary session, SessionData data) =>
       _runCsvAction(() async {
         final appMeta = context.read<AppMeta>();
-        final unit = await _pickExportUnit(_recordedUnit(session));
+        final unit = await _pickExportUnit(
+          _recordedUnit(session),
+          damage: data.damage,
+        );
         if (unit == null) return null;
         return shareSessionCsv(
           sessionName: session.name,
@@ -366,6 +387,19 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         );
       });
 
+  /// Export every decodable sample that failed integrity verification as a
+  /// salvage CSV (see salvage_export.dart). Works in every load state —
+  /// for a session whose view failed to load it is the only export.
+  Future<void> _downloadSalvage(SessionSummary session) =>
+      _runCsvAction(() async {
+        final appMeta = context.read<AppMeta>();
+        return downloadSalvageCsv(
+          sessionId: session.id,
+          sessionName: session.name,
+          appMeta: appMeta,
+        );
+      });
+
   /// The session's recorded display unit (frozen at recording start): the
   /// export picker's preselection. An unrecognizable stored value falls
   /// back to the platform default unit.
@@ -374,8 +408,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   /// Ask the user for the export's converted unit (docs/csv-format-v1.md:
   /// one file, one unit, chosen by the user), preselected to [initial].
-  /// Returns null when cancelled — the caller stays silent then.
-  Future<DisplayUnit?> _pickExportUnit(DisplayUnit initial) {
+  /// Returns null when cancelled — the caller stays silent then. A damaged
+  /// session is exported knowingly: the dialog names the damage and its
+  /// consequences for the file (they ride along in its `warnings`
+  /// metadata), never blocks the export.
+  Future<DisplayUnit?> _pickExportUnit(
+    DisplayUnit initial, {
+    SessionDamage damage = SessionDamage.none,
+  }) {
     return showDialog<DisplayUnit>(
       context: context,
       builder: (ctx) {
@@ -392,6 +432,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (!damage.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Text(
+                          'Session data damaged (${damage.warningCodes.join(', ')}). '
+                          'The CSV discloses this in its metadata; converted '
+                          'columns may be blank.${damage.truncatedAt != null ? ' Samples that failed verification are available via "Export salvage data".' : ''}',
+                        ),
+                      ),
                     for (final u in DisplayUnit.values)
                       RadioListTile<DisplayUnit>(
                         value: u,
@@ -479,6 +528,64 @@ final class _Ready extends _LoadState {
   const _Ready(this.data);
 
   final SessionData? data;
+}
+
+// -- Damage banner --
+
+/// Persistent banner for a session whose stored data failed integrity
+/// checks (see [SessionDamage]): the warning codes verbatim (the same
+/// strings the CSV export embeds), each with its one-line consequence.
+class _DamageBanner extends StatelessWidget {
+  const _DamageBanner({required this.damage});
+
+  final SessionDamage damage;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      color: scheme.errorContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.warning_amber, color: scheme.onErrorContainer, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Session data damaged',
+                  style: TextStyle(
+                    color: scheme.onErrorContainer,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                for (final line in _consequences)
+                  Text(line, style: TextStyle(color: scheme.onErrorContainer)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// One human line per flag, naming the code (shared verbatim with the
+  /// CSV `warnings` metadata) and the floor in effect.
+  List<String> get _consequences => [
+    if (damage.tare)
+      'session_tare_damaged — tare unknown; showing gross raw counts',
+    if (damage.calibration)
+      'session_calibration_damaged — calibration unknown; raw counts only',
+    if (damage.gapsLost)
+      'session_gaps_lost — dropout positions unknown; some samples may be '
+          'repeated held values',
+    if (damage.truncatedAt case final t?)
+      'session_truncated_at_sample:$t — data beyond this point failed '
+          'integrity checks (see Export salvage data)',
+  ];
 }
 
 // -- Stat row widget --

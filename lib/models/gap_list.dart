@@ -77,28 +77,47 @@ class GapList {
     for (int k = 0; k < _bounds.length; k += 2) [_bounds[k], _bounds[k + 1]],
   ]);
 
-  /// Parse the [toJson] format. Malformed input yields an empty list —
-  /// including ranges that are empty, inverted, overlapping or out of order:
-  /// those violate the sorted-disjoint invariant [contains] binary-searches
-  /// on, so a corrupt document degrades to "no gaps" rather than a corrupt
-  /// list. (Adjacent ranges are valid and merge on [append].)
+  /// Parse the [toJson] format. Strict: malformed input throws
+  /// [FormatException] — a malformed document (including ranges that are
+  /// empty, inverted, overlapping or out of order) violates the
+  /// sorted-disjoint invariant [contains] binary-searches on, and silently
+  /// degrading to "no gaps" would fabricate continuity (the caller decides
+  /// the damage policy; see SessionStorage.loadSession). (Adjacent ranges
+  /// are valid and merge on [append].)
   factory GapList.fromJson(String json) {
     final gaps = GapList();
-    try {
-      final List<dynamic> parsed = jsonDecode(json);
-      var lastEnd = -1;
-      for (final pair in parsed) {
-        final start = (pair[0] as num).toInt();
-        final end = (pair[1] as num).toInt();
-        if (end <= start || start < lastEnd) {
-          throw const FormatException('gap ranges must be increasing');
-        }
-        gaps.append(start, end);
-        lastEnd = end;
+    final parsed = jsonDecode(json);
+    if (parsed is! List) {
+      throw const FormatException('gap list must be a JSON list');
+    }
+    var lastEnd = 0;
+    for (final pair in parsed) {
+      if (pair is! List || pair.length != 2) {
+        throw const FormatException('gap range must be a [start, end] pair');
       }
-    } catch (_) {
-      gaps.clear();
+      final s = pair[0], e = pair[1];
+      if (s is! num || e is! num) {
+        throw const FormatException('gap bounds must be numbers');
+      }
+      final start = s.toInt(), end = e.toInt();
+      if (start < 0 || end <= start || start < lastEnd) {
+        throw const FormatException('gap ranges must be increasing');
+      }
+      gaps.append(start, end);
+      lastEnd = end;
     }
     return gaps;
+  }
+
+  /// A copy with every range clamped to [0, end): ranges beyond are
+  /// dropped, a straddling range is cut short. Used when a session's data
+  /// is truncated to its verified prefix — gap ranges beyond the cut would
+  /// claim dropped samples the session no longer claims to contain.
+  GapList clampedTo(int end) {
+    final out = GapList();
+    for (final (s, e) in rangesIn(0, end)) {
+      out.append(s, e);
+    }
+    return out;
   }
 }
