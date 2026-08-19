@@ -53,13 +53,12 @@ class DeviceFlash {
   final List<String> extraLines;
 
   /// Parse a whole flash document. Never throws: structural problems degrade
-  /// only the affected piece (channel → nominal, slot → empty). Unknown
-  /// `key=value` lines are preserved in [extraLines]. [pgaGains] is the ADC's
-  /// GAIN-register readback for board-constant resolution; null only when
-  /// the caller doesn't care about conversions (e.g. the save-verification
-  /// re-read — the live path always has gains: an unreadable ADC config
-  /// fails the connection, see `BleLinkManager`).
-  factory DeviceFlash.parse(String text, {List<double>? pgaGains}) {
+  /// only the affected piece (a corrupt or partial calibration → uncalibrated
+  /// board, slot → empty). Unknown `key=value` lines are preserved in
+  /// [extraLines]. [pgaGains] is the ADC's GAIN-register readback for
+  /// board-constant resolution — always present: an unreadable ADC config
+  /// fails the connection upstream (see `BleLinkManager`).
+  factory DeviceFlash.parse(String text, {required List<double> pgaGains}) {
     final kv = parseFlashKv(text);
     return DeviceFlash(
       board: BoardCalibration.fromKv(kv, pgaGains: pgaGains),
@@ -94,15 +93,13 @@ class DeviceFlash {
     if (adc != null) b.writeln('cal.adc=${adc.join(',')}');
     for (int i = 0; i < board.channels.length; ++i) {
       final ch = board.channels[i];
-      // Only write the resistor key when it carries real information:
-      // characterized values, or factory readings present. Stamping the
-      // nominal ladder onto a blank flash would write values no hardware
-      // ever produced, presented as characterization.
-      if (ch.readings != null || !_isNominalLadder(ch.resistors)) {
-        b.writeln('ch$i.r=${ch.resistors.join(',')}');
-      }
+      // Ladder and readings are one datum (see ChannelBoardCalibration):
+      // both written for a calibrated channel, neither otherwise.
       final r = ch.readings;
-      if (r != null) b.writeln('ch$i.raw=${r.join(',')}');
+      if (r != null) {
+        b.writeln('ch$i.r=${ch.resistors!.join(',')}');
+        b.writeln('ch$i.raw=${r.join(',')}');
+      }
     }
     for (final line in extraLines) {
       b.writeln(line);
@@ -112,14 +109,3 @@ class DeviceFlash {
     return b.toString();
   }
 }
-
-/// Whether [r] is exactly the nominal ladder (i.e. carries no characterized
-/// information worth persisting).
-bool _isNominalLadder(List<double> r) {
-  for (int i = 0; i < kLadderResistorCount; ++i) {
-    if (r[i] != nominalLadderResistors[i]) return false;
-  }
-  return true;
-}
-
-

@@ -81,8 +81,9 @@ class AdcPacketDecoder {
   /// readback ([adcGains] — non-null: an unreadable config fails the
   /// connection upstream, so this layer never resolves constants without
   /// them). The board calibration feeds the sink; the full document (slots
-  /// included) goes to [onDeviceFlash]. Malformed reads degrade to
-  /// per-channel nominal values and empty slots.
+  /// included) goes to [onDeviceFlash]. Malformed or partial calibration
+  /// reads degrade to an uncalibrated board (nominal chain) and empty slots
+  /// — see `BoardCalibration.fromKv`.
   void onCalibrationPacket(Uint8List data, List<double> adcGains) {
     final flash = DeviceFlash.parse(
       utf8.decode(data, allowMalformed: true),
@@ -128,8 +129,7 @@ class AdcPacketDecoder {
       // Within slack the counter is consistent with the clock — report its
       // (wrap-resolved) gap. Beyond it the counter is lying (firmware bug);
       // the monotonic clock is the authority.
-      final int loss = (elapsedSamples - gap).abs() <=
-              _clockToleranceSec * rate
+      final int loss = (elapsedSamples - gap).abs() <= _clockToleranceSec * rate
           ? gap
           : elapsedSamples;
       if (loss > 0) {

@@ -19,8 +19,10 @@ void main() {
     pgaGain: 1,
     excitationV: 4.53,
   );
-  final sp = ladderSetpointsMvV(nominalLadderResistors);
+  const nominalLadder = <double>[10000, 10, 10, 10, 10, 10000];
+  final sp = ladderSetpointsMvV(nominalLadder);
   final board = ChannelBoardCalibration(
+    resistors: nominalLadder,
     readings: [for (final d in sp) alpha + beta * d],
     nominals: testNominals,
   );
@@ -33,10 +35,7 @@ void main() {
     // The availability quadrants. (noBoard + cell) is meaningless — no
     // board constants resolve without a read — but the ladder must not care.
     const noBoard = (boardHasNominals: false, anyActiveHasLoadCell: false);
-    const boardNoCell = (
-      boardHasNominals: true,
-      anyActiveHasLoadCell: false,
-    );
+    const boardNoCell = (boardHasNominals: true, anyActiveHasLoadCell: false);
     const boardAndCell = (boardHasNominals: true, anyActiveHasLoadCell: true);
 
     test('no board constants is raw, for every preference', () {

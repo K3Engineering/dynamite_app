@@ -58,21 +58,14 @@ class _BoardCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final calibrated = board.channels
-        .where((c) => c.isFactoryCalibrated)
-        .length;
+    final calibrated = board.isFactoryCalibrated;
     final age = calibrationAge(board.factoryDate);
 
     final String status;
-    if (calibrated == 0) {
+    if (!calibrated) {
       status = 'No factory calibration — nominal values in use';
     } else {
-      final parts = [
-        ?board.factoryDate,
-        if (age != null) '($age)',
-        if (calibrated < board.channels.length)
-          '$calibrated of ${board.channels.length} channels',
-      ];
+      final parts = [?board.factoryDate, if (age != null) '($age)'];
       status = 'Calibrated ${parts.join(' ')}'.trimRight();
     }
 
@@ -95,12 +88,21 @@ class _BoardCard extends StatelessWidget {
             Text(status, style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
             Text(
-              calibrated == 0 ? kTrustLineUncalibrated : kTrustLineCalibrated,
+              calibrated ? kTrustLineCalibrated : kTrustLineUncalibrated,
               style: theme.textTheme.bodySmall,
             ),
-            if (calibrated > 0) ...[
+            if (calibrated) ...[
               const SizedBox(height: 4),
               Text(kCorrectionApplied, style: theme.textTheme.bodySmall),
+            ],
+            if (board.calDataInvalid) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Calibration data in flash is invalid — nominal values in use.',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.error,
+                ),
+              ),
             ],
             if (board.adcConfigDrifted == true) ...[
               const SizedBox(height: 4),
@@ -161,10 +163,9 @@ class _ChannelCalCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final calibrated = channel.isFactoryCalibrated;
-    // The plot and the Nonlinearity column need only the measured points;
-    // the Error column additionally needs the nominal chain as its
-    // reference, so it alone drops out without board constants.
-    // TODO I don't think we need this conditional
+    // Both diagnostic series exist exactly for a calibrated channel (with
+    // the resolved nominal chain — see ChannelBoardCalibration's invariants),
+    // so the table is always 5 columns in the calibrated branch.
     final errors = channel.measuredErrorsUvV;
     final nonlinearities = channel.deviationsUvV;
     return Card(
@@ -220,9 +221,12 @@ class _ChannelCalCard extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Table(
-                columnWidths: {
-                  for (int c = 0; c < (errors != null ? 5 : 4); ++c)
-                    c: const FlexColumnWidth(),
+                columnWidths: const {
+                  0: FlexColumnWidth(),
+                  1: FlexColumnWidth(),
+                  2: FlexColumnWidth(),
+                  3: FlexColumnWidth(),
+                  4: FlexColumnWidth(),
                 },
                 children: [
                   TableRow(
@@ -230,7 +234,7 @@ class _ChannelCalCard extends StatelessWidget {
                       _th(context, 'Config'),
                       _th(context, 'Setpoint'),
                       _th(context, 'Reading'),
-                      if (errors != null) _th(context, 'Error'),
+                      _th(context, 'Error'),
                       _th(context, 'Nonlinearity'),
                     ],
                   ),
@@ -239,7 +243,7 @@ class _ChannelCalCard extends StatelessWidget {
                       _unit(context, ''),
                       _unit(context, 'mV/V'),
                       _unit(context, 'counts'),
-                      if (errors != null) _unit(context, 'µV/V'),
+                      _unit(context, 'µV/V'),
                       _unit(context, 'µV/V'),
                     ],
                   ),
@@ -249,7 +253,7 @@ class _ChannelCalCard extends StatelessWidget {
                         _td(calConfigLabels[k]),
                         _td(channel.setpoints[k].toStringAsFixed(4)),
                         _td(channel.readings![k].toStringAsFixed(1)),
-                        if (errors != null) _td(fmtSignedUvV(errors[k])),
+                        _td(fmtSignedUvV(errors![k])),
                         _td(fmtSignedUvV(nonlinearities![k])),
                       ],
                     ),

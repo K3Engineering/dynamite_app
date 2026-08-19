@@ -358,34 +358,31 @@ void main() {
       expect(loaded.ssnOrigin, 41230);
     });
 
-    test(
-      'a session with only empty chunks completes as empty',
-      () async {
-        // A chunk row exists, but it holds no complete frame (0 bytes), so
-        // the recovered frame count is 0.
-        final sessionId = await AppDatabase.instance.createSession(
-          name: 'empty chunks',
-          sampleRate: 1000,
-          channelCount: channels,
-          channelLabels: '["a","b","c","d"]',
-          tares: '[0,0,0,0]',
-          calibrationJson: '[]',
-          visibleChannels: '[true,true,true,true]',
-          displayUnit: 'kgf',
-          deviceInfoJson: '{}',
-          ssnOrigin: 0,
-        );
-        await AppDatabase.instance.insertChunk(sessionId, 0, Uint8List(0));
+    test('a session with only empty chunks completes as empty', () async {
+      // A chunk row exists, but it holds no complete frame (0 bytes), so
+      // the recovered frame count is 0.
+      final sessionId = await AppDatabase.instance.createSession(
+        name: 'empty chunks',
+        sampleRate: 1000,
+        channelCount: channels,
+        channelLabels: '["a","b","c","d"]',
+        tares: '[0,0,0,0]',
+        calibrationJson: '[]',
+        visibleChannels: '[true,true,true,true]',
+        displayUnit: 'kgf',
+        deviceInfoJson: '{}',
+        ssnOrigin: 0,
+      );
+      await AppDatabase.instance.insertChunk(sessionId, 0, Uint8List(0));
 
-        await SessionStorage.recoverIncompleteSessions();
+      await SessionStorage.recoverIncompleteSessions();
 
-        final row = await AppDatabase.instance.sessionById(sessionId);
-        expect(row, isNotNull);
-        expect(row!.isCompleted, isTrue);
-        expect(row.sampleCount, 0);
-        expect(row.durationMs, 0);
-      },
-    );
+      final row = await AppDatabase.instance.sessionById(sessionId);
+      expect(row, isNotNull);
+      expect(row!.isCompleted, isTrue);
+      expect(row.sampleCount, 0);
+      expect(row.durationMs, 0);
+    });
   });
 
   group('session calibration snapshot', () {
@@ -401,20 +398,22 @@ void main() {
           excitationV: 4.53,
         );
         final hub = DataHub();
-        final sp = ladderSetpointsMvV(nominalLadderResistors);
-        // ch0 measures at half the nominal span; other channels nominal.
+        const nominalLadder = <double>[10000, 10, 10, 10, 10, 10000];
+        final sp = ladderSetpointsMvV(nominalLadder);
+        // Every channel measures at half the nominal span (calibration is
+        // board-uniform — a mixed board is invalid flash, rejected at parse).
         hub.updateBoardCalibration(
           BoardCalibration(
             channels: [
-              ChannelBoardCalibration(
-                readings: [
-                  for (final d in sp) 500 + 0.5 * testNominals.countsPerMvV * d,
-                ],
-                nominals: testNominals,
-              ),
-              ChannelBoardCalibration(nominals: testNominals),
-              ChannelBoardCalibration(nominals: testNominals),
-              ChannelBoardCalibration(nominals: testNominals),
+              for (int i = 0; i < channels; ++i)
+                ChannelBoardCalibration(
+                  resistors: nominalLadder,
+                  readings: [
+                    for (final d in sp)
+                      500 + 0.5 * testNominals.countsPerMvV * d,
+                  ],
+                  nominals: testNominals,
+                ),
             ],
           ),
         );

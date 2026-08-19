@@ -273,7 +273,8 @@ Map<String, Object?> _metadata(
 /// One `channels[]` entry: the assigned load cell (null = none), the
 /// recording-time tare in raw counts, and the factory board cal — null when
 /// the channel is uncalibrated (the honesty marker: converted values are
-/// nominal-referred; the piecewise map ignores the ladder resistors anyway).
+/// nominal-referred). Calibration is board-uniform (all channels calibrated
+/// or none — see [BoardCalibration.fromKv]), so the markers agree.
 Map<String, Object?> _channelMetadata(ChannelCalibration cal, double tareRaw) {
   final cell = cal.loadCell;
   final board = cal.board;

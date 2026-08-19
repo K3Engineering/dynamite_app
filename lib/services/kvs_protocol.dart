@@ -63,7 +63,19 @@ String encodeKvsGet(String folder, String key) {
   return '$kvsCmdGet$folder$key';
 }
 
+/// The app never writes the Factory partition (board calibration is
+/// read-only to it — factory tooling owns those keys). This is a core
+/// assumption the document-diff saver currently satisfies only implicitly,
+/// so every SET/DEL frame asserts it here at the choke point.
+void _checkWritableFolder(String folder) {
+  assert(
+    folder != kvsFolderFactory,
+    'the app never writes the Factory partition',
+  );
+}
+
 String encodeKvsSet(String folder, String key, String value) {
+  _checkWritableFolder(folder);
   _checkKey(key);
   if (value.isEmpty || value.length > kvsMaxValueLength) {
     throw ArgumentError.value(
@@ -76,6 +88,7 @@ String encodeKvsSet(String folder, String key, String value) {
 }
 
 String encodeKvsDelete(String folder, String key) {
+  _checkWritableFolder(folder);
   _checkKey(key);
   return '$kvsCmdDelete$folder$key';
 }
@@ -152,7 +165,9 @@ bool _isWellFormedKvsFrame(Uint8List frame) {
       _bytesAt(frame, 1, utf8.encode(kvsCmdDelete)) ||
       _bytesAt(frame, 1, utf8.encode(kvsCmdIndex));
   final knownFolder =
-      frame[4] == 0x46 /* F */ || frame[4] == 0x55 /* U */ || frame[4] == 0x53 /* S */;
+      frame[4] == 0x46 /* F */ ||
+      frame[4] == 0x55 /* U */ ||
+      frame[4] == 0x53 /* S */;
   if (!(knownCommand && knownFolder)) return false;
   if (frame[0] == 0x31 && frame.indexOf(0x3D /* = */, 5) < 0) return false;
   return true;

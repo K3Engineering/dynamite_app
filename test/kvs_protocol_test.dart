@@ -12,10 +12,26 @@ void main() {
     test('builds the firmware command strings', () {
       expect(encodeKvsGet(kvsFolderFactory, 'ch0.raw'), 'GETFch0.raw');
       expect(encodeKvsSet(kvsFolderUser, 'lc0.cap', '200'), 'SETUlc0.cap=200');
-      expect(encodeKvsDelete(kvsFolderFactory, 'ch0.raw'), 'DELFch0.raw');
+      expect(encodeKvsDelete(kvsFolderUser, 'lc0.name'), 'DELUlc0.name');
       expect(encodeKvsIndex(kvsFolderFactory, 0), 'IDXF0');
       // IDX numbers are hex text (firmware parses base 16).
       expect(encodeKvsIndex(kvsFolderFactory, 26), 'IDXF1a');
+    });
+
+    test('SET/DEL refuse the Factory partition (read-only to the app)', () {
+      // Board calibration belongs to factory tooling; the app reads it but
+      // must never write it — asserted at the frame-build choke point.
+      expect(
+        () => encodeKvsSet(kvsFolderFactory, 'ch0.raw', '1'),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => encodeKvsDelete(kvsFolderFactory, 'ch0.raw'),
+        throwsA(isA<AssertionError>()),
+      );
+      // Reads and the writable folders are unaffected.
+      expect(encodeKvsGet(kvsFolderFactory, 'ch0.raw'), isNotEmpty);
+      expect(encodeKvsSet(kvsFolderSettings, 'device_name', 'x'), isNotEmpty);
     });
 
     test('rejects keys/values beyond the firmware limits', () {
@@ -25,22 +41,18 @@ void main() {
         throwsArgumentError,
       );
       expect(
-        () => encodeKvsSet(kvsFolderFactory, 'a=b', 'v'),
+        () => encodeKvsSet(kvsFolderUser, 'a=b', 'v'),
         throwsArgumentError,
       );
+      expect(() => encodeKvsSet(kvsFolderUser, 'k', ''), throwsArgumentError);
       expect(
-        () => encodeKvsSet(kvsFolderFactory, 'k', ''),
-        throwsArgumentError,
-      );
-      expect(
-        () =>
-            encodeKvsSet(kvsFolderFactory, 'k', 'v' * (kvsMaxValueLength + 1)),
+        () => encodeKvsSet(kvsFolderUser, 'k', 'v' * (kvsMaxValueLength + 1)),
         throwsArgumentError,
       );
       // The limits themselves are accepted.
       expect(
         encodeKvsSet(
-          kvsFolderFactory,
+          kvsFolderUser,
           'k' * kvsMaxKeyLength,
           'v' * kvsMaxValueLength,
         ),
@@ -75,21 +87,27 @@ void main() {
     });
 
     test('SET echoes with = inside the request still match', () {
-      final r = parseKvsResponse('SETUlc0.cap=200', frame('1SETUlc0.cap=200='))!;
+      final r = parseKvsResponse(
+        'SETUlc0.cap=200',
+        frame('1SETUlc0.cap=200='),
+      )!;
       expect(r.ok, isTrue);
       expect(r.payload, isEmpty);
     });
 
-    test('a well-formed frame for a different command is stale, not an error', () {
-      expect(parseKvsResponse('GETFaaa', frame('1GETFbbb=x')), isNull);
-      // Reject frames shorter or longer than the pending request aren't its
-      // answer either (prefix-free matching, both directions).
-      expect(parseKvsResponse('GETFaa', frame('0GETFa')), isNull);
-      expect(parseKvsResponse('GETFaa', frame('0GETFaaX')), isNull);
-      // The prefix trap that killed live commands before: a longer request's
-      // late success frame while its strict prefix is pending.
-      expect(parseKvsResponse('GETFabc', frame('1GETFabcX=9')), isNull);
-    });
+    test(
+      'a well-formed frame for a different command is stale, not an error',
+      () {
+        expect(parseKvsResponse('GETFaaa', frame('1GETFbbb=x')), isNull);
+        // Reject frames shorter or longer than the pending request aren't its
+        // answer either (prefix-free matching, both directions).
+        expect(parseKvsResponse('GETFaa', frame('0GETFa')), isNull);
+        expect(parseKvsResponse('GETFaa', frame('0GETFaaX')), isNull);
+        // The prefix trap that killed live commands before: a longer request's
+        // late success frame while its strict prefix is pending.
+        expect(parseKvsResponse('GETFabc', frame('1GETFabcX=9')), isNull);
+      },
+    );
 
     test('garbled frames are protocol errors', () {
       expect(
