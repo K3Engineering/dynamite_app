@@ -2,8 +2,59 @@ import 'package:flutter/foundation.dart';
 
 import '../models/bucket_series.dart';
 import '../models/channel_calibration.dart';
+import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
+
+/// The integrity verdict for a session's stored data, computed at load
+/// time. Each flag maps to exactly one honest floor state (zeroed tares,
+/// uncalibrated channels, empty gaps, a truncated sample prefix) and one
+/// machine-readable warning code, shared verbatim between the UI banner
+/// and the CSV metadata's `warnings` field (docs/csv-format-v1.md).
+class SessionDamage {
+  const SessionDamage({
+    this.tare = false,
+    this.calibration = false,
+    this.gapsLost = false,
+    this.truncatedAt,
+  });
+
+  static const none = SessionDamage();
+
+  /// The tare column failed to parse: stored tares are floored to zero, so
+  /// views show gross counts and conversion is forced to raw (a zero tare
+  /// is a legitimate recorded value, so only this flag distinguishes
+  /// "damaged" from "never tared").
+  final bool tare;
+
+  /// The calibration column failed to parse (whole column, board-uniform —
+  /// a partially-malformed snapshot is damage, never a mixed board):
+  /// channels floor to uncalibrated, so conversion reports unavailable and
+  /// the view shows raw counts.
+  final bool calibration;
+
+  /// The gaps column failed to parse: dropout positions are unknown, so
+  /// held (fabricated) values may appear as data and CSV gap rows can't be
+  /// blanked. The sample stream itself is intact.
+  final bool gapsLost;
+
+  /// Chunk data failed integrity at this sample index (a missing chunk,
+  /// a misaligned blob, or disagreement with the metadata's sample count):
+  /// samples from here on are shown neither in the view nor in the CSV —
+  /// they remain available via the salvage export.
+  final int? truncatedAt;
+
+  bool get isEmpty => !tare && !calibration && !gapsLost && truncatedAt == null;
+
+  /// The machine-readable codes for the set flags, shared verbatim between
+  /// the UI banner and the CSV `warnings` metadata field.
+  List<String> get warningCodes => [
+    if (tare) 'session_tare_damaged',
+    if (calibration) 'session_calibration_damaged',
+    if (gapsLost) 'session_gaps_lost',
+    if (truncatedAt case final t?) 'session_truncated_at_sample:$t',
+  ];
+}
 
 /// Loaded session data for playback/review.
 class SessionData implements GraphDataSource {
@@ -32,6 +83,10 @@ class SessionData implements GraphDataSource {
   @override
   final GapList gaps;
 
+  /// The storage-integrity verdict for this session (see [SessionDamage]).
+  /// Healthy sessions carry [SessionDamage.none].
+  final SessionDamage damage;
+
   /// Per-channel extremes, computed once on construction.
   final List<double> mins;
   final List<double> maxs;
@@ -58,6 +113,7 @@ class SessionData implements GraphDataSource {
     required this.calibrations,
     required this.tares,
     required this.ssnOrigin,
+    this.damage = SessionDamage.none,
     GapList? gaps,
   }) : gaps = gaps ?? GapList(),
        mins = List.filled(channels.length, 0.0),
@@ -96,6 +152,17 @@ class SessionData implements GraphDataSource {
   }
 
   double get durationSeconds => sampleCount / sampleRate;
+
+  /// The unit set this session can convert right now: the nominal lookup,
+  /// forced raw-only when tare or calibration metadata is damaged — the
+  /// floors those flags carry (zeroed tares, uncalibrated channels) must
+  /// never produce converted numbers that pose as net measurements.
+  UnitAvailability unitAvailabilityFor(Iterable<int> activeChannels) {
+    if (damage.tare || damage.calibration) {
+      return (boardHasNominals: false, anyActiveHasLoadCell: false);
+    }
+    return resolveUnitAvailability(calibrationFor, activeChannels);
+  }
 
   // -- GraphDataSource --------------------------------------------------------
 

@@ -44,6 +44,7 @@ void main() {
     List<double>? tares,
     GapList? gaps,
     int ssnOrigin = 0,
+    SessionDamage damage = SessionDamage.none,
   }) => SessionData(
     channels: [for (final values in perChannel) Int32List.fromList(values)],
     sampleRate: sampleRate,
@@ -52,6 +53,7 @@ void main() {
     tares: tares ?? List.filled(channels, 0.0),
     gaps: gaps,
     ssnOrigin: ssnOrigin,
+    damage: damage,
   );
 
   String buildCsv(SessionData data, DisplayUnit unit) =>
@@ -243,6 +245,95 @@ void main() {
 
         expect(lines[3], '0,1000,5,${expectedKgf(1000)},');
         expect(lines[4], '1,2000,6,${expectedKgf(2000)},');
+      },
+    );
+
+    test(
+      'storage damage discloses itself and blanks what it cannot vouch for',
+      () {
+        final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
+        final cals = [
+          for (int ch = 0; ch < channels; ch++)
+            ChannelCalibration(
+              board: ChannelBoardCalibration(nominals: testNominals),
+              loadCell: cell,
+            ),
+        ];
+
+        // Damaged tare: converted columns blank, tare_raw null (zero is a
+        // legitimate tare; null is the honesty marker), warning disclosed.
+        final tareDamaged = makeSession(
+          [
+            [1000],
+            [2000],
+          ],
+          calibrations: cals,
+          tares: [100.0, 0.0],
+          damage: const SessionDamage(tare: true),
+        );
+        final csv = buildCsv(tareDamaged, DisplayUnit.kgf);
+        expect(csv.trim().split('\n')[3], '0,1000,2000,,');
+        final meta = metadataOf(csv);
+        expect(meta['warnings'], contains('session_tare_damaged'));
+        expect(
+          meta['warnings'],
+          isNot(contains('session_calibration_damaged')),
+        );
+        expect((meta['channels'] as List).first['tare_raw'], isNull);
+
+        // Damaged calibration: same blanking, its own code.
+        final calDamaged = makeSession([
+          [1000],
+          [2000],
+        ], damage: const SessionDamage(calibration: true));
+        final calMeta = metadataOf(buildCsv(calDamaged, DisplayUnit.kgf));
+        expect(calMeta['warnings'], contains('session_calibration_damaged'));
+        expect(
+          buildCsv(calDamaged, DisplayUnit.kgf).trim().split('\n')[3],
+          '0,1000,2000,,',
+        );
+
+        // Lost gaps: data rows are NOT blanked (positions unknown)…
+        final gapsLost = makeSession(
+          [
+            [10, 20],
+            [30, 40],
+          ],
+          calibrations: cals,
+          damage: const SessionDamage(gapsLost: true),
+        );
+        final gapsMeta = metadataOf(buildCsv(gapsLost, DisplayUnit.kgf));
+        expect(gapsMeta['warnings'], contains('session_gaps_lost'));
+        final gapsLines = buildCsv(
+          gapsLost,
+          DisplayUnit.kgf,
+        ).trim().split('\n');
+        expect(gapsLines[4].split(',')[1], '20'); // row 1 exports raw values
+
+        // Truncation: the code names the cut; data is the session's prefix.
+        final truncated = makeSession(
+          [
+            [1, 2],
+            [3, 4],
+          ],
+          calibrations: cals,
+          damage: const SessionDamage(truncatedAt: 2),
+        );
+        final truncMeta = metadataOf(buildCsv(truncated, DisplayUnit.kgf));
+        expect(
+          truncMeta['warnings'],
+          contains('session_truncated_at_sample:2'),
+        );
+
+        // A healthy session emits no warnings field at all.
+        final healthy = makeSession([
+          [1],
+          [2],
+        ], calibrations: cals);
+        expect(
+          metadataOf(buildCsv(healthy, DisplayUnit.kgf)),
+          isNot(contains('warnings')),
+        );
       },
     );
 

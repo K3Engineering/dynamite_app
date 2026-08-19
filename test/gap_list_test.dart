@@ -84,18 +84,40 @@ void main() {
       final parsed = GapList.fromJson(g.toJson());
       expect(parsed.rangesIn(0, 100).toList(), [(10, 20), (30, 40)]);
       expect(GapList.fromJson('[]').isEmpty, isTrue);
-      expect(GapList.fromJson('garbage').isEmpty, isTrue);
+      expect(() => GapList.fromJson('garbage'), throwsFormatException);
     });
 
-    test('fromJson rejects empty, inverted, and non-monotonic ranges', () {
+    test('fromJson throws on empty, inverted, and non-monotonic ranges', () {
       // contains() binary-searches the sorted-disjoint invariant; corrupt
-      // documents must degrade to an empty list, not a corrupt one.
-      expect(GapList.fromJson('[[10,10]]').isEmpty, isTrue); // empty
-      expect(GapList.fromJson('[[10,5]]').isEmpty, isTrue); // inverted
-      expect(GapList.fromJson('[[30,40],[10,20]]').isEmpty, isTrue); // order
-      expect(GapList.fromJson('[[10,30],[20,40]]').isEmpty, isTrue); // overlap
-      expect(GapList.fromJson('[1,2]').isEmpty, isTrue); // wrong shape
-      expect(GapList.fromJson('[["a","b"]]').isEmpty, isTrue); // wrong types
+      // documents throw rather than degrade — silently dropping gaps would
+      // fabricate continuity. The caller flags the damage.
+      expect(() => GapList.fromJson('[[10,10]]'), throwsFormatException);
+      expect(() => GapList.fromJson('[[10,5]]'), throwsFormatException);
+      expect(
+        () => GapList.fromJson('[[30,40],[10,20]]'),
+        throwsFormatException,
+      );
+      expect(
+        () => GapList.fromJson('[[10,30],[20,40]]'),
+        throwsFormatException,
+      );
+      expect(() => GapList.fromJson('[1,2]'), throwsFormatException);
+      expect(() => GapList.fromJson('[["a","b"]]'), throwsFormatException);
+      expect(() => GapList.fromJson('{}'), throwsFormatException);
+    });
+
+    test('clampedTo cuts ranges at the truncation point', () {
+      final g = GapList()
+        ..append(10, 20)
+        ..append(30, 60)
+        ..append(70, 80);
+      expect(g.clampedTo(50).rangesIn(0, 100).toList(), [(10, 20), (30, 50)]);
+      expect(g.clampedTo(0).isEmpty, isTrue);
+      expect(g.clampedTo(100).rangesIn(0, 100).toList(), [
+        (10, 20),
+        (30, 60),
+        (70, 80),
+      ]);
     });
 
     test('fromJson accepts adjacent ranges (they merge on append)', () {

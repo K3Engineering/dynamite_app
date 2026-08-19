@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:drift/native.dart';
@@ -307,6 +308,289 @@ void main() {
       expect(codec.framesOf(Uint8List(channels * 4)), 1);
       expect(codec.framesOf(Uint8List(channels * 4 + 1)), 1);
     });
+  });
+
+  group('session data integrity', () {
+    const codec = SessionChunkCodec(channels);
+
+    /// Pro-like test chain; sessions using it convert unless damaged.
+    const testNominals = ChannelNominals(
+      adcFsrV: 1.2,
+      afeGain: 101,
+      pgaGain: 1,
+      excitationV: 4.53,
+    );
+
+    final validCalsJson = jsonEncode([
+      for (int ch = 0; ch < channels; ch++)
+        ChannelCalibration(
+          board: ChannelBoardCalibration(nominals: testNominals),
+        ).toJson(),
+    ]);
+
+    /// Pack [frames] (per-frame channel values) into one chunk per entry.
+    Uint8List packChunk(List<List<int>> frames) =>
+        codec.pack(frames.length, (s, ch) => frames[s][ch]);
+
+    /// A completed session row with chunk rows inserted at [chunkIndices]
+    /// (default: 0..N-1 contiguous) and the given metadata columns.
+    Future<int> makeSessionRow({
+      required List<Uint8List> chunks,
+      List<int>? chunkIndices,
+      String tares = '[0,0,0,0]',
+      String? calibrationJson,
+      String gaps = '[]',
+      int? sampleCount,
+      bool complete = true,
+    }) async {
+      final id = await AppDatabase.instance.createSession(
+        name: 'integrity',
+        sampleRate: 1000,
+        channelCount: channels,
+        channelLabels: '["a","b","c","d"]',
+        tares: tares,
+        calibrationJson: calibrationJson ?? validCalsJson,
+        visibleChannels: '[true,true,true,true]',
+        displayUnit: 'kgf',
+        deviceInfoJson: '{}',
+        ssnOrigin: 100,
+        gaps: gaps,
+      );
+      final indices =
+          chunkIndices ?? [for (var i = 0; i < chunks.length; i++) i];
+      for (var i = 0; i < chunks.length; i++) {
+        await AppDatabase.instance.insertChunk(id, indices[i], chunks[i]);
+      }
+      if (complete) {
+        final frames = chunks.fold<int>(0, (acc, c) => acc + codec.framesOf(c));
+        await AppDatabase.instance.completeSession(
+          id,
+          sampleCount: sampleCount ?? frames,
+          durationMs: 1,
+          gaps: gaps,
+        );
+      }
+      return id;
+    }
+
+    test('an intact session loads with no damage flags', () async {
+      final id = await makeSessionRow(
+        chunks: [
+          packChunk([
+            [1, 2, 3, 4],
+            [5, 6, 7, 8],
+          ]),
+        ],
+      );
+      final data = (await SessionStorage.loadSession(id))!;
+      expect(data.damage.isEmpty, isTrue);
+      expect(data.damage.warningCodes, isEmpty);
+      expect(data.sampleCount, 2);
+      expect(data.channels[3][1], 8);
+      expect(data.unitAvailabilityFor([0]).boardHasNominals, isTrue);
+    });
+
+    test(
+      'a damaged tare column floors to gross counts and forces raw',
+      () async {
+        final id = await makeSessionRow(
+          chunks: [
+            packChunk([
+              [10, 2, 3, 4],
+            ]),
+          ],
+          tares: '[0,0,"bogus",0]',
+        );
+        final data = (await SessionStorage.loadSession(id))!;
+        expect(data.damage.tare, isTrue);
+        expect(data.tares, everyElement(0.0));
+        // Zero is a legitimate tare — the flag, not the value, says "unknown".
+        expect(data.damage.warningCodes, contains('session_tare_damaged'));
+        // Conversion is forced raw-only even though calibration is intact.
+        expect(data.unitAvailabilityFor([0]).boardHasNominals, isFalse);
+        // The sample data itself is untouched.
+        expect(data.channels[0][0], 10);
+      },
+    );
+
+    test(
+      'a damaged calibration column floors the whole board uniformly',
+      () async {
+        // One malformed entry: per-entry salvage would produce a mixed board
+        // (exactly what the flash parser rejects) — the whole column is damage.
+        final badCals = jsonEncode([
+          ChannelCalibration(
+            board: ChannelBoardCalibration(nominals: testNominals),
+          ).toJson(),
+          {'board': 'junk'},
+          ChannelCalibration(
+            board: ChannelBoardCalibration(nominals: testNominals),
+          ).toJson(),
+          ChannelCalibration(
+            board: ChannelBoardCalibration(nominals: testNominals),
+          ).toJson(),
+        ]);
+        final id = await makeSessionRow(
+          chunks: [
+            packChunk([
+              [1, 2, 3, 4],
+            ]),
+          ],
+          calibrationJson: badCals,
+        );
+        final data = (await SessionStorage.loadSession(id))!;
+        expect(data.damage.calibration, isTrue);
+        for (int ch = 0; ch < channels; ch++) {
+          expect(data.calibrationFor(ch).board.nominals, isNull);
+        }
+        expect(
+          data.damage.warningCodes,
+          contains('session_calibration_damaged'),
+        );
+        expect(data.unitAvailabilityFor([0]).boardHasNominals, isFalse);
+      },
+    );
+
+    test('a damaged gaps column loses the dropouts but keeps the data', () async {
+      final id = await makeSessionRow(
+        chunks: [
+          packChunk([
+            [1, 2, 3, 4],
+          ]),
+        ],
+        gaps: '[[0,5]] garbage',
+      );
+      final data = (await SessionStorage.loadSession(id))!;
+      expect(data.damage.gapsLost, isTrue);
+      expect(data.gaps.isEmpty, isTrue);
+      expect(data.damage.warningCodes, contains('session_gaps_lost'));
+      // Conversion is NOT forced: the sample stream and calibration are intact.
+      expect(data.unitAvailabilityFor([0]).boardHasNominals, isTrue);
+    });
+
+    test('a missing middle chunk truncates instead of splicing', () async {
+      final chunk0 = packChunk([
+        [1, 1, 1, 1],
+        [2, 2, 2, 2],
+      ]);
+      final chunk1 = packChunk([
+        [3, 3, 3, 3],
+      ]);
+      // Index 2 is missing; index 3's samples have no knowable position.
+      final chunk3 = packChunk([
+        [9, 9, 9, 9],
+        [9, 9, 9, 9],
+      ]);
+      final id = await makeSessionRow(
+        chunks: [chunk0, chunk1, chunk3],
+        chunkIndices: [0, 1, 3],
+        sampleCount: 5,
+        gaps: '[[2,5]]',
+      );
+      final data = (await SessionStorage.loadSession(id))!;
+      expect(data.damage.truncatedAt, 3);
+      expect(data.sampleCount, 3);
+      // The verified prefix is intact; nothing from chunk 3 spliced in.
+      expect(data.channels[0].toList(), [1, 2, 3]);
+      // The gap range is clamped to the truncation point.
+      expect(data.gaps.contains(2), isTrue);
+      expect(data.gaps.contains(4), isFalse);
+      expect(
+        data.damage.warningCodes,
+        contains('session_truncated_at_sample:3'),
+      );
+    });
+
+    test('a misaligned blob truncates at that chunk', () async {
+      final good = packChunk([
+        [1, 1, 1, 1],
+        [2, 2, 2, 2],
+      ]);
+      final bad = Uint8List(channels * 4 + 3); // 3 trailing garbage bytes
+      final id = await makeSessionRow(chunks: [good, bad], sampleCount: 2);
+      final data = (await SessionStorage.loadSession(id))!;
+      expect(data.damage.truncatedAt, 2);
+      expect(data.sampleCount, 2);
+    });
+
+    test(
+      'frame-count overflow and underflow truncate to the smaller claim',
+      () async {
+        final chunks = [
+          packChunk([
+            [1, 1, 1, 1],
+            [2, 2, 2, 2],
+            [3, 3, 3, 3],
+            [4, 4, 4, 4],
+          ]),
+        ];
+        // Metadata claims fewer than the chunks hold.
+        final over = await makeSessionRow(chunks: chunks, sampleCount: 3);
+        var data = (await SessionStorage.loadSession(over))!;
+        expect(data.sampleCount, 3);
+        expect(data.damage.truncatedAt, 3);
+        // Metadata claims more than the chunks hold.
+        final under = await makeSessionRow(chunks: chunks, sampleCount: 9);
+        data = (await SessionStorage.loadSession(under))!;
+        expect(data.sampleCount, 4);
+        expect(data.damage.truncatedAt, 4);
+      },
+    );
+
+    test('damage at chunk 0 has no honest view and throws', () async {
+      // Hole at index 0.
+      var id = await makeSessionRow(
+        chunks: [
+          packChunk([
+            [1, 1, 1, 1],
+          ]),
+        ],
+        chunkIndices: [1],
+        sampleCount: 1,
+      );
+      await expectLater(SessionStorage.loadSession(id), throwsStateError);
+      // Misaligned first blob.
+      id = await makeSessionRow(chunks: [Uint8List(3)], sampleCount: 0);
+      await expectLater(SessionStorage.loadSession(id), throwsStateError);
+    });
+
+    test(
+      'collision-free zero-frame chunks still load as an empty session',
+      () async {
+        final id = await makeSessionRow(chunks: [Uint8List(0)], sampleCount: 0);
+        final data = (await SessionStorage.loadSession(id))!;
+        expect(data.sampleCount, 0);
+        expect(data.damage.isEmpty, isTrue);
+      },
+    );
+
+    test(
+      'recovery completes the verified prefix of a damaged recording',
+      () async {
+        final good = packChunk([
+          [1, 1, 1, 1],
+          [2, 2, 2, 2],
+        ]);
+        final bad = Uint8List(7); // misaligned trailing chunk
+        final id = await makeSessionRow(
+          chunks: [good, bad],
+          complete: false,
+          gaps: '[[0,3]]',
+        );
+
+        await SessionStorage.recoverIncompleteSessions();
+
+        final row = (await AppDatabase.instance.sessionById(id))!;
+        expect(row.isCompleted, isTrue);
+        // The misaligned chunk's frames are not counted.
+        expect(row.sampleCount, 2);
+        // Gaps are clamped to the verified prefix.
+        expect(row.gaps, '[[0,2]]');
+        // The damaged chunk stays on disk, so the load re-flags the damage.
+        final data = (await SessionStorage.loadSession(id))!;
+        expect(data.damage.truncatedAt, 2);
+      },
+    );
   });
 
   group('crash recovery', () {

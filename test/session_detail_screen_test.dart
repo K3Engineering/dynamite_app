@@ -7,16 +7,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/screens/session_detail_screen.dart';
 import 'package:dynamite_app/services/database.dart';
+import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_queries.dart';
 import 'package:dynamite_app/widgets/empty_placeholder.dart';
 
-/// Widget test for the Session detail screen's empty state: a session with
-/// no chunks (e.g. its data was deleted externally) renders the shared
-/// [EmptyPlaceholder] — the single-voice empty-state treatment used by the
-/// Sessions/Devices/Live tabs — not a bare text. (The failure branch maps
-/// to the same widget with the error color; no clean in-harness trigger
-/// exists for it — a corrupt chunk/metadata degrades silently rather than
-/// throwing.)
+/// Widget tests for the Session detail screen's data-integrity surfaces:
+/// the empty state for a session with no chunks, the error state for one
+/// whose chunk data has no verified prefix, and the damage banner for one
+/// whose metadata columns failed strict parsing.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -75,5 +73,109 @@ void main() {
     // fake clock, so give it a duration.
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(milliseconds: 1));
+  });
+
+  /// Minimal row boilerplate for the integrity tests below.
+  Future<int> makeRow({
+    String tares = '[0,0,0,0]',
+    String calibrationJson = '[]',
+  }) => AppDatabase.instance.createSession(
+    name: 'Integrity session',
+    sampleRate: 1000,
+    channelCount: 4,
+    channelLabels: '[]',
+    tares: tares,
+    calibrationJson: calibrationJson,
+    visibleChannels: '[]',
+    displayUnit: 'kgf',
+    deviceInfoJson: '{}',
+    ssnOrigin: 0,
+  );
+
+  Future<void> pumpDetail(WidgetTester tester, int sessionId) async {
+    final session = (await sessionSummaryById(sessionId))!;
+    SharedPreferences.setMockInitialValues({});
+    final prefs = await SharedPreferences.getInstance();
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppSettings>.value(
+            value: AppSettings(prefs: prefs),
+          ),
+        ],
+        child: MaterialApp(home: SessionDetailScreen(session: session)),
+      ),
+    );
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> unmount(WidgetTester tester) async {
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(milliseconds: 1));
+  }
+
+  testWidgets('a session damaged from its first chunk renders the error '
+      'placeholder and offers the salvage export', (tester) async {
+    final sessionId = await makeRow();
+    // Chunk 0 missing: no verifiable prefix — no honest view exists.
+    const codec = SessionChunkCodec(4);
+    await AppDatabase.instance.insertChunk(
+      sessionId,
+      1,
+      codec.pack(1, (s, ch) => 42),
+    );
+    await AppDatabase.instance.completeSession(
+      sessionId,
+      sampleCount: 1,
+      durationMs: 1,
+    );
+
+    await pumpDetail(tester, sessionId);
+
+    expect(find.byType(EmptyPlaceholder), findsOneWidget);
+    expect(find.text('Error loading session'), findsOneWidget);
+    expect(find.byIcon(Icons.error_outline), findsOneWidget);
+
+    // The salvage export is reachable from the menu even here — the only
+    // export possible for this session.
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    expect(find.text('Export salvage data'), findsOneWidget);
+    // Dismiss the menu without invoking (delivery is platform code).
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    await unmount(tester);
+  });
+
+  testWidgets('a damaged tare column is surfaced by the banner', (
+    tester,
+  ) async {
+    final sessionId = await makeRow(tares: '[0,0,"bogus",0]');
+    const codec = SessionChunkCodec(4);
+    await AppDatabase.instance.insertChunk(
+      sessionId,
+      0,
+      codec.pack(2, (s, ch) => s),
+    );
+    await AppDatabase.instance.completeSession(
+      sessionId,
+      sampleCount: 2,
+      durationMs: 2,
+    );
+
+    await pumpDetail(tester, sessionId);
+
+    expect(find.text('Session data damaged'), findsOneWidget);
+    expect(
+      find.text(
+        'session_tare_damaged — tare unknown; showing gross raw counts',
+      ),
+      findsOneWidget,
+    );
+    // The data itself still renders (the floor is a view, not a refusal).
+    expect(find.text('Samples'), findsOneWidget);
+
+    await unmount(tester);
   });
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
@@ -11,7 +12,6 @@ import '../models/channel_calibration.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import 'session_data.dart';
-import 'session_metadata.dart';
 import 'session_persistence.dart';
 
 /// Each [SessionChunks] row holds a whole number of samples in the packed
@@ -122,33 +122,53 @@ class SessionStorage {
   /// production session row only exists alongside its first chunk (see
   /// [AppDatabase.createSessionWithFirstChunk]), so "incomplete and
   /// dataless" cannot occur.
+  ///
+  /// Chunk integrity is verified the same way [loadSession] does: a damaged
+  /// tail (missing index, misaligned blob) is NOT counted — the session
+  /// completes with its verified prefix and clamped gaps. The damaged
+  /// chunks stay on disk, so later loads re-flag the truncation and the
+  /// salvage export can recover them.
   static Future<void> recoverIncompleteSessions() async {
     final incomplete = await AppDatabase.instance.incompleteSessions();
 
     for (final session in incomplete) {
       debugPrint('Recovering incomplete session: ${session.id}');
 
-      final chunks = await AppDatabase.instance.sessionChunkData(session.id);
+      final chunks = await AppDatabase.instance.sessionChunkRows(session.id);
 
-      // The sample count comes from chunk byte lengths — recovery never
-      // decodes samples (and couldn't reconstruct gaps either; those stay as
-      // the live writer persisted them).
+      // The sample count comes from verified chunk byte lengths — recovery
+      // never decodes samples (and couldn't reconstruct gaps either; those
+      // stay as the live writer persisted them, clamped to the prefix).
       final codec = SessionChunkCodec(session.channelCount);
-      int sampleCount = 0;
-      for (final chunk in chunks) {
-        sampleCount += codec.framesOf(chunk);
+      final integrity = verifyChunkIntegrity(codec, [
+        for (final c in chunks) (c.chunkIndex, c.data),
+      ]);
+      if (integrity.stoppedEarly) {
+        debugPrint(
+          'Session ${session.id}: chunk integrity failed at sample '
+          '${integrity.prefixFrames}; completing the verified prefix',
+        );
       }
 
-      // Preserve the gaps persisted incrementally by the live writer (chunk
-      // bytes alone can't reconstruct them).
+      // A corrupt gaps column is left untouched for loadSession to flag —
+      // recovery cannot repair it, only refrain from masking it.
+      String gapsJson = session.gaps;
+      try {
+        gapsJson = GapList.fromJson(
+          session.gaps,
+        ).clampedTo(integrity.prefixFrames).toJson();
+      } on FormatException {
+        debugPrint('Session ${session.id}: gaps column is corrupt');
+      }
+
       await _completeSession(
         sessionId: session.id,
-        sampleCount: sampleCount,
+        sampleCount: integrity.prefixFrames,
         // Recovery uses the rate persisted on the row (finalize uses the
         // writer's, which is the same value from recording start) so a future
         // configurable rate can't skew reconstructed durations.
         sampleRate: session.sampleRate,
-        gapsJson: session.gaps,
+        gapsJson: gapsJson,
       );
     }
   }
@@ -166,7 +186,7 @@ class SessionStorage {
       throw StateError('loadSession: no session row with id $sessionId');
     }
     final session = row;
-    final chunks = await AppDatabase.instance.sessionChunkData(session.id);
+    final chunks = await AppDatabase.instance.sessionChunkRows(session.id);
 
     if (chunks.isEmpty) {
       debugPrint('No chunks found for session: ${session.id}');
@@ -174,58 +194,143 @@ class SessionStorage {
     }
 
     final channelCount = session.channelCount;
-    final sampleCount = session.sampleCount;
-    final channels = List.generate(channelCount, (_) => Int32List(sampleCount));
     final codec = SessionChunkCodec(channelCount);
+    final integrity = verifyChunkIntegrity(codec, [
+      for (final c in chunks) (c.chunkIndex, c.data),
+    ]);
+
+    // No honest subset: the damage starts at the first frame, so no view
+    // shape can vouch for anything (the salvage export may still recover
+    // raw samples). Zero-frame chunks with a zero metadata count are NOT
+    // this case — they verify clean and load as an empty session.
+    if (integrity.stoppedEarly && integrity.prefixFrames == 0) {
+      throw StateError(
+        'Session $sessionId: chunk data damaged from the first chunk — '
+        'no verifiable data to display',
+      );
+    }
+
+    // The honest extent: disagreement between chunks and the metadata's
+    // sample count truncates to whichever claims less (both directions
+    // fabricate otherwise — overflow poses never-recorded samples as data,
+    // underflow splices).
+    final sampleCount = math.min(integrity.prefixFrames, session.sampleCount);
+    final truncatedAt = integrity.stoppedEarly
+        ? integrity.prefixFrames
+        : (integrity.prefixFrames != session.sampleCount ? sampleCount : null);
+    if (truncatedAt != null) {
+      debugPrint(
+        'Session $sessionId: chunk integrity damage — truncating to '
+        '$sampleCount verified samples',
+      );
+    }
+
+    final channels = List.generate(channelCount, (_) => Int32List(sampleCount));
 
     int globalS = 0;
-    for (final chunk in chunks) {
-      // Frames beyond the metadata's sampleCount are silently truncated
-      // (chunk/metadata disagreement is not surfaced today).
-      codec.decode(chunk, (s, ch, raw) {
+    for (final c in chunks.take(integrity.prefixChunks)) {
+      codec.decode(c.data, (s, ch, raw) {
         final g = globalS + s;
         if (g < sampleCount) channels[ch][g] = raw;
       });
-      globalS += codec.framesOf(chunk);
+      globalS += codec.framesOf(c.data);
       if (globalS >= sampleCount) break;
+    }
+
+    // Metadata columns parse strictly at this boundary: each damaged column
+    // floors to its honest degraded state (see SessionDamage) and sets its
+    // flag — salvage per entry would fabricate values indistinguishable
+    // from legitimate recorded ones (a zero tare IS a valid recording).
+    var tareDamaged = false;
+    Float64List tares;
+    try {
+      tares = _parseTares(session.tares, channelCount);
+    } on FormatException catch (e) {
+      debugPrint('Session $sessionId: tares damaged ($e)');
+      tareDamaged = true;
+      tares = Float64List(channelCount);
+    }
+
+    var calibrationDamaged = false;
+    List<ChannelCalibration> calibrations;
+    try {
+      calibrations = _parseCalibrations(session.calibrationJson, channelCount);
+    } on FormatException catch (e) {
+      debugPrint('Session $sessionId: calibration damaged ($e)');
+      calibrationDamaged = true;
+      calibrations = [
+        for (int ch = 0; ch < channelCount; ch++)
+          ChannelCalibration(board: ChannelBoardCalibration()),
+      ];
+    }
+
+    var gapsLost = false;
+    GapList gaps;
+    try {
+      gaps = GapList.fromJson(session.gaps).clampedTo(sampleCount);
+    } on FormatException catch (e) {
+      debugPrint('Session $sessionId: gaps damaged ($e)');
+      gapsLost = true;
+      gaps = GapList();
     }
 
     return SessionData(
       channels: channels,
       sampleRate: session.sampleRate,
-      sampleCount: globalS,
-      calibrations: _parseCalibrations(session.calibrationJson, channelCount),
-      tares: _parseTares(session.tares, channelCount),
-      gaps: GapList.fromJson(session.gaps),
+      sampleCount: sampleCount,
+      calibrations: calibrations,
+      tares: tares,
+      gaps: gaps,
       ssnOrigin: session.ssnOrigin,
+      damage: SessionDamage(
+        tare: tareDamaged,
+        calibration: calibrationDamaged,
+        gapsLost: gapsLost,
+        truncatedAt: truncatedAt,
+      ),
     );
   }
 
   /// Parse the JSON-encoded per-channel tares stored on a [Session] row.
-  /// Missing or malformed entries fall back to zero.
-  static Float64List _parseTares(String json, int channelCount) =>
-      Float64List.fromList(
-        parseJsonColumn(
-          json,
-          channelCount,
-          convert: (e) => (e as num).toDouble(),
-          fallback: (_) => 0.0,
-        ),
-      );
+  /// Strict — exactly [channelCount] finite numbers, else [FormatException]
+  /// (jsonDecode's own malformed-document exceptions included).
+  static Float64List _parseTares(String json, int channelCount) {
+    final decoded = jsonDecode(json);
+    if (decoded is! List || decoded.length != channelCount) {
+      throw FormatException('tares must be a list of $channelCount numbers');
+    }
+    return Float64List.fromList([
+      for (final e in decoded)
+        e is num && e.toDouble().isFinite
+            ? e.toDouble()
+            : throw const FormatException('tare entries must be numbers'),
+    ]);
+  }
 
   /// Parse the JSON-encoded per-channel calibration snapshots stored on a
-  /// [Session] row. Missing or malformed entries fall back to a nominal
-  /// board with no load cell (electrical units only).
+  /// [Session] row. Strict — exactly [channelCount] well-formed entries
+  /// (see [ChannelCalibration.fromJson]), else [FormatException].
   static List<ChannelCalibration> _parseCalibrations(
     String json,
     int channelCount,
-  ) => parseJsonColumn(
-    json,
-    channelCount,
-    convert: (e) =>
-        ChannelCalibration.fromJson(Map<String, dynamic>.from(e as Map)),
-    fallback: (_) => ChannelCalibration(board: ChannelBoardCalibration()),
-  );
+  ) {
+    final decoded = jsonDecode(json);
+    if (decoded is! List || decoded.length != channelCount) {
+      throw FormatException(
+        'calibration must be a list of $channelCount entries',
+      );
+    }
+    return [
+      for (final e in decoded)
+        ChannelCalibration.fromJson(
+          e is Map
+              ? Map<String, dynamic>.from(e)
+              : throw const FormatException(
+                  'calibration entries must be objects',
+                ),
+        ),
+    ];
+  }
 }
 
 /// Adapts the [SessionStorage] statics to the [SessionPersistence] port

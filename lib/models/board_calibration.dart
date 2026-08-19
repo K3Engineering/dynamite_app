@@ -55,20 +55,24 @@ class ChannelNominals {
     'exc': excitationV,
   };
 
-  /// Tolerant inverse of [toJson]: any missing/malformed/non-positive field
-  /// degrades the whole chain to null (raw-only), never a partial chain.
-  static ChannelNominals? fromJson(Map<String, dynamic> json) {
-    double? pos(Object? v) => v is num && v > 0 ? v.toDouble() : null;
-    final fsr = pos(json['fsr']);
-    final afe = pos(json['afe']);
-    final pga = pos(json['pga']);
-    final exc = pos(json['exc']);
-    if (fsr == null || afe == null || pga == null || exc == null) return null;
+  /// Strict inverse of [toJson]: every field must be present, finite and
+  /// positive, else [FormatException] — a partial chain is never guessed.
+  /// Session-snapshot callers catch at their boundary (damage policy lives
+  /// there, not here).
+  factory ChannelNominals.fromJson(Map<String, dynamic> json) {
+    double pos(Object? v, String key) {
+      final d = v is num ? v.toDouble() : double.nan;
+      if (!d.isFinite || d <= 0) {
+        throw FormatException('channel nominals: bad $key: $v');
+      }
+      return d;
+    }
+
     return ChannelNominals(
-      adcFsrV: fsr,
-      afeGain: afe,
-      pgaGain: pga,
-      excitationV: exc,
+      adcFsrV: pos(json['fsr'], 'fsr'),
+      afeGain: pos(json['afe'], 'afe'),
+      pgaGain: pos(json['pga'], 'pga'),
+      excitationV: pos(json['exc'], 'exc'),
     );
   }
 }
@@ -321,7 +325,9 @@ class ChannelBoardCalibration {
     assert(resistors.length == kLadderResistorCount);
     assert(readings.length == kCalPointCount);
     for (final v in resistors) {
-      if (v <= 0) return false;
+      // A non-finite or non-positive resistor produces nonsense setpoints
+      // (or a zero ladder total → NaN).
+      if (!v.isFinite || v <= 0) return false;
     }
     final sorted = [...readings]..sort();
     for (final v in sorted) {
@@ -478,43 +484,52 @@ class ChannelBoardCalibration {
     'n': ?nominals?.toJson(),
   };
 
-  /// Tolerant inverse of [toJson], honoring the class invariants: a
-  /// missing/malformed half drops the whole calibration to uncalibrated
-  /// rather than remixing, and readings without resolved nominals
-  /// (a snapshot from an older format) drop likewise — replay never
-  /// substitutes guessed values.
+  /// Strict inverse of [toJson], honoring the class invariants: absent
+  /// optional keys are legal (no factory data, or no resolved nominals),
+  /// but present-but-malformed data throws [FormatException] — one half of
+  /// the ladder/readings pair without the other, readings without resolved
+  /// nominals, or values failing [channelDataIsValid]. Replay never
+  /// substitutes guessed values; the caller decides the damage policy
+  /// (see SessionStorage.loadSession).
   factory ChannelBoardCalibration.fromJson(Map<String, dynamic> json) {
-    List<double>? numList(Object? v, int count) {
-      if (v is! List || v.length != count) return null;
-      final out = <double>[];
-      for (final e in v) {
-        if (e is! num) return null;
-        out.add(e.toDouble());
+    List<double>? numList(Object? v, int count, String key) {
+      if (v == null) return null;
+      if (v is! List || v.length != count) {
+        throw FormatException('board calibration: bad $key list');
       }
-      return out;
+      return [
+        for (final e in v)
+          e is num
+              ? e.toDouble()
+              : throw FormatException('board calibration: bad $key entry'),
+      ];
     }
 
-    ChannelNominals? nominals;
-    if (json['n'] case final n?) {
-      try {
-        nominals = ChannelNominals.fromJson(
-          Map<String, dynamic>.from(n as Map),
-        );
-      } catch (_) {
-        nominals = null;
-      }
-    }
+    final n = json['n'];
+    final nominals = n == null
+        ? null
+        : ChannelNominals.fromJson(
+            n is Map
+                ? Map<String, dynamic>.from(n)
+                : throw const FormatException('board calibration: bad n'),
+          );
 
-    final resistors = numList(json['r'], kLadderResistorCount);
-    final readings = numList(json['raw'], kCalPointCount);
-    final valid =
-        nominals != null &&
-        resistors != null &&
-        readings != null &&
-        channelDataIsValid(resistors, readings);
+    final resistors = numList(json['r'], kLadderResistorCount, 'r');
+    final readings = numList(json['raw'], kCalPointCount, 'raw');
+    if (resistors == null && readings == null) {
+      return ChannelBoardCalibration(nominals: nominals);
+    }
+    // One half of the pair, or readings without a nominal chain, can only
+    // be a damaged snapshot — never a partial instrument.
+    if (resistors == null ||
+        readings == null ||
+        nominals == null ||
+        !channelDataIsValid(resistors, readings)) {
+      throw const FormatException('board calibration: invalid channel data');
+    }
     return ChannelBoardCalibration(
-      resistors: valid ? resistors : null,
-      readings: valid ? readings : null,
+      resistors: resistors,
+      readings: readings,
       nominals: nominals,
     );
   }

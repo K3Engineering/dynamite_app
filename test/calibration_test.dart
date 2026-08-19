@@ -230,23 +230,35 @@ void main() {
       expect(bare.nominals, isNull);
     });
 
-    test('snapshot readings without nominals replay as uncalibrated', () {
+    test('snapshot readings without nominals are rejected as damaged', () {
       // A pre-invariant snapshot could hold readings with no resolved
-      // nominal chain; the tolerant parser drops them rather than replaying
-      // a partial instrument.
-      final loaded = ChannelBoardCalibration.fromJson({
-        'r': nominalLadder,
-        'raw': [1.0e6, 5.0e5, 0.0, -5.0e5, -1.0e6],
-      });
-      expect(loaded.isFactoryCalibrated, isFalse);
-      // So does a snapshot with one malformed half.
-      final mixed = ChannelBoardCalibration.fromJson({
-        'r': 'junk',
-        'raw': [1.0e6, 5.0e5, 0.0, -5.0e5, -1.0e6],
-        'n': testNominals.toJson(),
-      });
-      expect(mixed.isFactoryCalibrated, isFalse);
-      expect(mixed.nominals, isNotNull);
+      // nominal chain; the strict parser refuses it rather than replaying
+      // a partial instrument (the session boundary flags the damage).
+      expect(
+        () => ChannelBoardCalibration.fromJson({
+          'r': nominalLadder,
+          'raw': [1.0e6, 5.0e5, 0.0, -5.0e5, -1.0e6],
+        }),
+        throwsFormatException,
+      );
+      // So is a snapshot with one malformed half.
+      expect(
+        () => ChannelBoardCalibration.fromJson({
+          'r': 'junk',
+          'raw': [1.0e6, 5.0e5, 0.0, -5.0e5, -1.0e6],
+          'n': testNominals.toJson(),
+        }),
+        throwsFormatException,
+      );
+      // And one with readings that could never have come from hardware.
+      expect(
+        () => ChannelBoardCalibration.fromJson({
+          'r': nominalLadder,
+          'raw': [1.0e9, 5.0e5, 0.0, -5.0e5, -1.0e6],
+          'n': testNominals.toJson(),
+        }),
+        throwsFormatException,
+      );
     });
 
     test('a valid snapshot round-trips the full correction', () {

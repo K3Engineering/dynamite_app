@@ -18,8 +18,11 @@ class SessionChunkCodec {
 
   final int channelCount;
 
+  /// Byte length of one packed sample frame.
+  int get frameBytes => channelCount * 4;
+
   /// Whole sample frames in [bytes] (trailing partial bytes are ignored).
-  int framesOf(Uint8List bytes) => bytes.lengthInBytes ~/ (channelCount * 4);
+  int framesOf(Uint8List bytes) => bytes.lengthInBytes ~/ frameBytes;
 
   /// Pack [frames] samples as sample-major little-endian int32 bytes (the
   /// chunk format [decode] reads back), pulling each value from [valueAt].
@@ -50,6 +53,44 @@ class SessionChunkCodec {
       }
     }
   }
+}
+
+/// The verified-prefix verdict over one session's chunks, ordered by chunk
+/// index: how many leading chunks form a contiguous (indices 0,1,2,…),
+/// frame-aligned run, and whether the walk stopped early at a missing index
+/// or a misaligned blob (see [verifyChunkIntegrity]).
+typedef ChunkIntegrity = ({
+  /// Whole frames in the verified run.
+  int prefixFrames,
+
+  /// Chunks in the verified run (its leading slice of the input).
+  int prefixChunks,
+
+  /// The walk stopped before the last chunk: a hole or a misaligned blob
+  /// ends the verifiable prefix. Everything from there on is unknowable
+  /// (a missing chunk's frame count — and thus every later sample's
+  /// position — cannot be reconstructed from the remaining data).
+  bool stoppedEarly,
+});
+
+/// Verify one session's ordered chunks against the write-side guarantees
+/// (consecutive indices from 0, whole-frame blobs). The verified prefix is
+/// the longest leading run satisfying both; anything beyond it is damaged
+/// data that read paths must neither splice nor silently drop (session
+/// views truncate to the prefix; the salvage export preserves the rest).
+ChunkIntegrity verifyChunkIntegrity(
+  SessionChunkCodec codec,
+  List<(int index, Uint8List data)> chunks,
+) {
+  int frames = 0, count = 0;
+  for (final (index, data) in chunks) {
+    if (index != count || data.lengthInBytes % codec.frameBytes != 0) {
+      return (prefixFrames: frames, prefixChunks: count, stoppedEarly: true);
+    }
+    frames += codec.framesOf(data);
+    count++;
+  }
+  return (prefixFrames: frames, prefixChunks: count, stoppedEarly: false);
 }
 
 /// Streams recorded samples to the DB as they arrive, flushing in chunks so a

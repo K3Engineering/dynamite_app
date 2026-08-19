@@ -196,11 +196,25 @@ class LoadCellProfile {
     'sensitivityMvV': sensitivityMvV,
   };
 
-  /// Tolerant parse: unknown keys are ignored, so the format can grow.
-  factory LoadCellProfile.fromJson(Map<String, dynamic> json) =>
-      LoadCellProfile(
-        name: json['name'] as String? ?? '',
-        capacityKg: (json['capacityKg'] as num).toDouble(),
-        sensitivityMvV: (json['sensitivityMvV'] as num).toDouble(),
-      );
+  /// Strict parse: capacity and sensitivity must be positive finite
+  /// numbers (a malformed certificate value would poison every force
+  /// conversion), else [FormatException]. Unknown keys are ignored, so the
+  /// format can grow. The caller decides the damage policy (rig history
+  /// drops the entry; session snapshots flag the whole column).
+  factory LoadCellProfile.fromJson(Map<String, dynamic> json) {
+    double req(Object? v, String key) {
+      final d = v is num ? v.toDouble() : double.nan;
+      if (!d.isFinite || d <= 0) {
+        throw FormatException('load cell: bad $key: $v');
+      }
+      return d;
+    }
+
+    final name = json['name'];
+    return LoadCellProfile(
+      name: name is String ? name : '',
+      capacityKg: req(json['capacityKg'], 'capacityKg'),
+      sensitivityMvV: req(json['sensitivityMvV'], 'sensitivityMvV'),
+    );
+  }
 }

@@ -324,14 +324,14 @@ class AppDatabase extends _$AppDatabase {
     );
   }
 
-  /// A session's chunk payloads, ordered by chunk index.
-  Future<List<Uint8List>> sessionChunkData(int sessionId) async {
-    final rows =
-        await (select(sessionChunks)
-              ..where((t) => t.sessionId.equals(sessionId))
-              ..orderBy([(t) => OrderingTerm(expression: t.chunkIndex)]))
-            .get();
-    return [for (final r in rows) r.data];
+  /// A session's chunk rows (index + payload), ordered by chunk index.
+  /// Integrity verification needs the indices (see [verifyChunkIntegrity]),
+  /// so payloads never travel without them.
+  Future<List<SessionChunk>> sessionChunkRows(int sessionId) {
+    return (select(sessionChunks)
+          ..where((t) => t.sessionId.equals(sessionId))
+          ..orderBy([(t) => OrderingTerm(expression: t.chunkIndex)]))
+        .get();
   }
 
   /// Per-session chunk payload sizes in bytes (exact blob lengths),
