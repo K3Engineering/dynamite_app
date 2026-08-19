@@ -55,7 +55,8 @@ void main() {
     prefs: await SharedPreferences.getInstance(),
   );
 
-  DeviceFlash fixture() => DeviceFlash.parse(demoBoardCalibrationDoc);
+  DeviceFlash fixture() =>
+      DeviceFlash.parse(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1]);
 
   /// The fixture doc with a recalibrated CH1 cell (sensitivity re-entered).
   String recalibratedDoc() => demoBoardCalibrationDoc.replaceFirst(
@@ -113,7 +114,7 @@ void main() {
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        DeviceFlash.parse(recalibratedDoc()),
+        DeviceFlash.parse(recalibratedDoc(), pgaGains: const [1, 1, 1, 1]),
       );
 
       expect(rig.channelCells[0]?.sensitivityMvV, closeTo(1.9985, 1e-12));
@@ -186,6 +187,7 @@ void main() {
               '2026-07-20T10:15:00.000Z',
               '2026-07-21T08:00:00.000Z',
             ),
+            pgaGains: const [1, 1, 1, 1],
           ),
         );
         expect(rig.hasPending, isTrue);
@@ -204,7 +206,7 @@ void main() {
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        DeviceFlash.parse(recalibratedDoc()),
+        DeviceFlash.parse(recalibratedDoc(), pgaGains: const [1, 1, 1, 1]),
       );
       expect(rig.hasPending, isFalse);
       expect(rig.channelTitles[3], 'CH 4'); // edited slot is gone
@@ -238,7 +240,10 @@ void main() {
         expect(rig.hasPending, isFalse);
         expect(rig.channelTitles[3], 'New'); // saved state stays effective
 
-        final written = DeviceFlash.parse(transport.lastWrittenDoc!);
+        final written = DeviceFlash.parse(
+          transport.lastWrittenDoc!,
+          pgaGains: const [1, 1, 1, 1],
+        );
         expect(written.slots.cellAt(3)?.name, 'New');
         expect(
           written.slots[3] != null && written.slots[3]!.mtime != null,
@@ -336,7 +341,11 @@ void main() {
           'hw.rev=3\n'
           'future.tooling=keep me\n'
           'END\n';
-      rig.onFlashRead('dev1', 'Bench unit', DeviceFlash.parse(withExtras));
+      rig.onFlashRead(
+        'dev1',
+        'Bench unit',
+        DeviceFlash.parse(withExtras, pgaGains: const [1, 1, 1, 1]),
+      );
       rig.setSlot(
         3,
         LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),

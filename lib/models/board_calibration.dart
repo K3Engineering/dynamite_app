@@ -150,15 +150,13 @@ class BoardConstantsResolution {
 const List<String> boardConstantKeys = ['adc_fsr', 'exc', 'afe_gain'];
 
 /// Resolve the board constants from a flash document's key=value map and the
-/// ADC's PGA readback ([pgaGains], null only when the caller never read them
-/// — e.g. the save-verification re-parse, which doesn't care about
-/// conversions; the live path always has them, since an unreadable ADC
-/// config fails the connection). All-or-nothing: every required value must
+/// ADC's PGA readback ([pgaGains] — always present: an unreadable ADC config
+/// fails the connection upstream). All-or-nothing: every required value must
 /// be present and positive, else the whole chain degrades (the app never
 /// guesses a partial chain).
 BoardConstantsResolution resolveBoardConstants(
   Map<String, String> kv, {
-  required List<double>? pgaGains,
+  required List<double> pgaGains,
 }) {
   if (!boardConstantKeys.any(kv.containsKey)) {
     return const BoardConstantsResolution.failure(
@@ -192,12 +190,6 @@ BoardConstantsResolution resolveBoardConstants(
     if (parts.length > 1) {
       provenance[key] = parts.sublist(1).join(',').trim();
     }
-  }
-  if (pgaGains == null) {
-    return const BoardConstantsResolution.failure(
-      BoardDataStatus.unreadable,
-      'ADC gain register unreadable',
-    );
   }
   return BoardConstantsResolution.ok(
     BoardNominals(
@@ -243,17 +235,6 @@ const List<String> calConfigLabels = [
   '(t5, t1)',
 ];
 
-/// Nominal resistor values used when a channel's characterized values are
-/// absent from flash.
-const List<double> nominalLadderResistors = <double>[
-  10000,
-  10,
-  10,
-  10,
-  10,
-  10000,
-];
-
 /// Differential setpoints (mV/V of excitation) for the [kCalPointCount]
 /// configs, computed from the ladder's resistor values alone — the ladder is
 /// ratiometric, so the excitation cancels and only ratios matter. Tap order
@@ -291,13 +272,27 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 /// with no resolved nominals it converts nothing at all: the board-data
 /// verdict ([BoardDataStatus]) has already decided such a board shows raw
 /// counts only, so [nominals] == null means "unavailable".
+///
+/// Invariants (enforced by the parse paths, asserted here): the ladder and
+/// the readings are one datum — [resistors] is null exactly when [readings]
+/// is (never a characterized-rereading-over-nominal-ladder remix), and
+/// readings never exist without resolved [nominals] (cal keys are only
+/// parsed once the board constants resolved).
 class ChannelBoardCalibration {
   ChannelBoardCalibration({
     List<double>? resistors,
     List<double>? readings,
     this.nominals,
-  }) : resistors = _validatedResistors(resistors),
-       readings = _validatedReadings(readings) {
+  }) : assert(
+         (resistors == null) == (readings == null),
+         'ladder and readings are one datum',
+       ),
+       assert(
+         readings == null || nominals != null,
+         'no factory readings without board constants',
+       ),
+       resistors = resistors == null ? null : List.unmodifiable(resistors),
+       readings = readings == null ? null : List.unmodifiable(readings) {
     final r = this.readings;
     if (r != null) {
       // Sort the five points ascending by raw reading for interpolation.
@@ -309,44 +304,43 @@ class ChannelBoardCalibration {
     }
   }
 
-  /// Corrupt resistor values degrade to the nominal ladder: a real ladder
-  /// resistor is ~10k/~10 ohms, and a zero or negative value would produce
-  /// nonsense setpoints (or a zero ladder total → NaN).
-  static List<double> _validatedResistors(List<double>? r) {
-    if (r == null) return nominalLadderResistors;
-    assert(r.length == kLadderResistorCount);
-    for (final v in r) {
-      if (v <= 0) return nominalLadderResistors;
+  /// Joint validity check for one channel's factory data, shared by the
+  /// flash and session-snapshot parsers: the ladder ([kLadderResistorCount]
+  /// positive values — a real ladder resistor is ~10k/~10 ohms, and a zero
+  /// or negative value produces nonsense setpoints or a NaN ladder total)
+  /// and the readings ([kCalPointCount] finite values inside the ADC's
+  /// bipolar range, at least 1000 counts apart — a real ladder spread is
+  /// millions of counts, so a sub-thousand gap can only be corrupt flash,
+  /// and exact duplicates would divide by zero during interpolation). Both
+  /// null = "no factory data" is NOT valid here; callers check presence
+  /// before calling.
+  static bool channelDataIsValid(
+    List<double> resistors,
+    List<double> readings,
+  ) {
+    assert(resistors.length == kLadderResistorCount);
+    assert(readings.length == kCalPointCount);
+    for (final v in resistors) {
+      if (v <= 0) return false;
     }
-    return List.unmodifiable(r);
-  }
-
-  /// Reject unusable readings by treating the channel as uncalibrated:
-  /// values beyond the ADC's bipolar range can't have come from hardware,
-  /// and duplicates (exact or near) would divide by ~zero during
-  /// interpolation — a real ladder spread is millions of counts, so a
-  /// sub-thousand-count gap can only be corrupt flash.
-  static List<double>? _validatedReadings(List<double>? r) {
-    if (r == null) return null;
-    assert(r.length == kCalPointCount);
-    final sorted = [...r]..sort();
+    final sorted = [...readings]..sort();
     for (final v in sorted) {
       // 'NaN'/'Infinity' parse fine with double.tryParse — reject them and
       // anything beyond the ADC's bipolar range: neither came from hardware.
       if (!v.isFinite ||
           v >= adcCountsPerPolarity ||
           v < -adcCountsPerPolarity) {
-        return null;
+        return false;
       }
     }
     for (int i = 1; i < sorted.length; ++i) {
-      if (sorted[i] - sorted[i - 1] < 1000) return null;
+      if (sorted[i] - sorted[i - 1] < 1000) return false;
     }
-    return List.unmodifiable(r);
+    return true;
   }
 
-  /// Characterized ladder resistors (6), or nominal values.
-  final List<double> resistors;
+  /// Characterized ladder resistors (6); null exactly when [readings] is.
+  final List<double>? resistors;
 
   /// Factory-averaged raw counts per config, in [kCalPointCount] storage
   /// order; null when the channel has no factory calibration.
@@ -361,8 +355,9 @@ class ChannelBoardCalibration {
 
   /// Setpoints (mV/V) per config, derived from [resistors]. Cached: pure
   /// function of the immutable [resistors], and per-sample conversion paths
-  /// reach it via [sensitivityCountsPerMvV].
-  late final List<double> setpoints = ladderSetpointsMvV(resistors);
+  /// reach it via [sensitivityCountsPerMvV]. Non-null [resistors] is
+  /// guaranteed on every path that touches this (all are [readings]-gated).
+  late final List<double> setpoints = ladderSetpointsMvV(resistors!);
 
   late final List<double> _sortedRaw;
   late final List<double> _sortedSetpoints;
@@ -422,22 +417,18 @@ class ChannelBoardCalibration {
   /// the gain factor — far below the calibration's uncertainty. Both are
   /// displayed, deliberately: two conventions, no reconciliation text.
   double? get zeroOffsetUvV {
-    final s = sensitivityCountsPerMvV;
-    if (readings == null || s == null) return null;
-    return offsetCounts / s * 1000.0;
+    if (readings == null) return null;
+    return offsetCounts / sensitivityCountsPerMvV! * 1000.0;
   }
 
   /// Gain error vs the nominal chain (1.0 = exactly nominal): the measured
   /// end-point sensitivity relative to the nominal counts-per-mV/V. It
   /// folds excitation, AFE gain, ADC reference and ladder tolerances into
   /// one factor — the split is unknowable by design. The one diagnostic
-  /// that references the nominal chain. Null without factory data or
-  /// [nominals].
+  /// that references the nominal chain. Null without factory data.
   double? get sensitivityVsNominal {
-    final n = nominals;
-    final s = sensitivityCountsPerMvV;
-    if (n == null || s == null || readings == null) return null;
-    return s / n.countsPerMvV;
+    if (readings == null) return null;
+    return sensitivityCountsPerMvV! / nominals!.countsPerMvV;
   }
 
   /// Measured error per cal point in µV/V, in [kCalPointCount] storage
@@ -445,12 +436,11 @@ class ChannelBoardCalibration {
   /// ladder setpoint — the as-found error, what an uncorrected reading
   /// would show. Offset, gain error and curvature all appear; the ±FS
   /// entries are NOT zero (unlike [deviationsUvV], nothing here is pinned
-  /// by construction). Null without factory data or without [nominals] —
-  /// no reference chain, no error figures.
+  /// by construction). Null without factory data.
   List<double>? get measuredErrorsUvV {
     final r = readings;
-    final n = nominals;
-    if (r == null || n == null) return null;
+    if (r == null) return null;
+    final n = nominals!;
     final sp = setpoints;
     return [
       for (int k = 0; k < kCalPointCount; ++k)
@@ -483,13 +473,16 @@ class ChannelBoardCalibration {
   /// they were taken with, so playback converts identically later). The
   /// resolved [nominals] ride along: replay must never re-resolve anything.
   Map<String, dynamic> toJson() => {
-    'r': resistors,
+    'r': ?resistors,
     'raw': ?readings,
     'n': ?nominals?.toJson(),
   };
 
-  /// Tolerant inverse of [toJson]: missing/malformed entries degrade to
-  /// nominal resistors / no readings / no nominals rather than throwing.
+  /// Tolerant inverse of [toJson], honoring the class invariants: a
+  /// missing/malformed half drops the whole calibration to uncalibrated
+  /// rather than remixing, and readings without resolved nominals
+  /// (a snapshot from an older format) drop likewise — replay never
+  /// substitutes guessed values.
   factory ChannelBoardCalibration.fromJson(Map<String, dynamic> json) {
     List<double>? numList(Object? v, int count) {
       if (v is! List || v.length != count) return null;
@@ -512,9 +505,16 @@ class ChannelBoardCalibration {
       }
     }
 
+    final resistors = numList(json['r'], kLadderResistorCount);
+    final readings = numList(json['raw'], kCalPointCount);
+    final valid =
+        nominals != null &&
+        resistors != null &&
+        readings != null &&
+        channelDataIsValid(resistors, readings);
     return ChannelBoardCalibration(
-      resistors: numList(json['r'], kLadderResistorCount),
-      readings: numList(json['raw'], kCalPointCount),
+      resistors: valid ? resistors : null,
+      readings: valid ? readings : null,
       nominals: nominals,
     );
   }
@@ -536,12 +536,26 @@ class BoardCalibration {
     this.nominals,
     BoardDataStatus? constantsStatus,
     this.constantsDetail = '',
+    this.calDataInvalid = false,
   }) : assert(channels.length == kAdcChannelCount),
+       assert(
+         channels.every((c) => c.isFactoryCalibrated) ||
+             channels.every((c) => !c.isFactoryCalibrated),
+         'calibration is uniform across channels — a mixed board is '
+         'invalid flash, rejected at parse (see fromKv)',
+       ),
        constantsStatus =
            constantsStatus ??
            (nominals != null ? BoardDataStatus.ok : BoardDataStatus.unreadable);
 
   final List<ChannelBoardCalibration> channels;
+
+  /// Flash held calibration data the app refused to adopt: a channel's
+  /// entries were present but malformed, or only some channels carried
+  /// calibration. Such a board runs on the nominal chain like an
+  /// uncalibrated one — this flag is the only remaining trace (one warning
+  /// in the UI; the app does not diagnose what exactly is broken in flash).
+  final bool calDataInvalid;
 
   /// Factory calibration date string as written in flash (`cal.date`), if any.
   final String? factoryDate;
@@ -592,20 +606,36 @@ class BoardCalibration {
     return false;
   }
 
+  /// Whether the board has factory calibration. Calibration is all-or-
+  /// nothing per board (see [fromKv]): every channel is calibrated, or none
+  /// is — a mixed board is never representable here.
+  bool get isFactoryCalibrated => channels.every((c) => c.isFactoryCalibrated);
+
   /// Parse the board-calibration keys of a `key=value` flash document.
   /// Slot (`lcN.*`) and other unknown keys are ignored. Never throws — see
   /// [DeviceFlash.parse].
-  factory BoardCalibration.parse(String text, {List<double>? pgaGains}) =>
-      BoardCalibration.fromKv(parseFlashKv(text), pgaGains: pgaGains);
+  factory BoardCalibration.parse(
+    String text, {
+    required List<double> pgaGains,
+  }) => BoardCalibration.fromKv(parseFlashKv(text), pgaGains: pgaGains);
 
   /// Build from an already-split key=value map (see [parseFlashKv]).
-  /// Structural problems degrade only the affected channel to nominal.
-  /// [pgaGains] is the ADC's GAIN-register readback (null only for callers
-  /// that never read it — see [resolveBoardConstants]) — it resolves the
-  /// board constants whose verdict the result carries.
+  /// [pgaGains] is the ADC's GAIN-register readback (always present — see
+  /// [resolveBoardConstants]) — it resolves the board constants whose
+  /// verdict the result carries.
+  ///
+  /// Calibration is all-or-nothing at two levels. Channel: a channel's
+  /// ladder resistors and readings validate together or drop together —
+  /// never a characterized-readings-over-nominal-ladder remix. Board: every
+  /// channel must carry valid data or the whole board reads as uncalibrated
+  /// (a factory always calibrates all channels in one document; partial or
+  /// malformed data is invalid flash, not a mixed instrument), with
+  /// [calDataInvalid] set as the only trace. Calibration keys are only
+  /// consulted once the board constants resolved — factory readings without
+  /// a nominal chain convert nothing, so they parse as absent.
   factory BoardCalibration.fromKv(
     Map<String, String> kv, {
-    List<double>? pgaGains,
+    required List<double> pgaGains,
   }) {
     List<double>? parseList(String? value, int count) {
       if (value == null) return null;
@@ -623,12 +653,45 @@ class BoardCalibration {
     final constants = resolveBoardConstants(kv, pgaGains: pgaGains);
     final nominals = constants.nominals;
 
+    // Content-validated calibration per channel, but only once the board
+    // constants resolved (readings never exist without nominals).
+    final calData = <({List<double> resistors, List<double> readings})?>[];
+    var sawAbsent = false;
+    var sawPresent = false;
+    var calDataInvalid = false;
+    if (nominals != null) {
+      for (int i = 0; i < kAdcChannelCount; ++i) {
+        final resistors = parseList(kv['ch$i.r'], kLadderResistorCount);
+        final readings = parseList(kv['ch$i.raw'], kCalPointCount);
+        final valid =
+            resistors != null &&
+            readings != null &&
+            ChannelBoardCalibration.channelDataIsValid(resistors, readings);
+        if (valid) {
+          calData.add((resistors: resistors, readings: readings));
+          sawPresent = true;
+        } else {
+          calData.add(null);
+          if (kv['ch$i.r'] != null || kv['ch$i.raw'] != null) {
+            sawPresent = true;
+            calDataInvalid = true;
+          } else {
+            sawAbsent = true;
+          }
+        }
+      }
+    }
+    // Partial flash (some channels calibrated, others absent entirely) is
+    // invalid data too, not a mixed instrument.
+    if (sawPresent && sawAbsent) calDataInvalid = true;
+    final adoptCal = sawPresent && !calDataInvalid;
+
     return BoardCalibration(
       channels: [
         for (int i = 0; i < kAdcChannelCount; ++i)
           ChannelBoardCalibration(
-            resistors: parseList(kv['ch$i.r'], kLadderResistorCount),
-            readings: parseList(kv['ch$i.raw'], kCalPointCount),
+            resistors: adoptCal ? calData[i]?.resistors : null,
+            readings: adoptCal ? calData[i]?.readings : null,
             nominals: nominals?.forChannel(i),
           ),
       ],
@@ -642,6 +705,7 @@ class BoardCalibration {
       nominals: nominals,
       constantsStatus: constants.status,
       constantsDetail: constants.detail,
+      calDataInvalid: calDataInvalid,
     );
   }
 }

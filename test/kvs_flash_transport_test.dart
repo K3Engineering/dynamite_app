@@ -58,8 +58,12 @@ void main() {
       final doc = read(transport, async);
 
       expect(doc, isNotNull);
-      final flash = DeviceFlash.parse(doc!);
-      final fixture = DeviceFlash.parse(demoBoardCalibrationDoc);
+      const gains = [1.0, 1.0, 1.0, 1.0];
+      final flash = DeviceFlash.parse(doc!, pgaGains: gains);
+      final fixture = DeviceFlash.parse(
+        demoBoardCalibrationDoc,
+        pgaGains: gains,
+      );
       expect(flash.board.factoryDate, fixture.board.factoryDate);
       expect(flash.board.excitationMv, fixture.board.excitationMv);
       expect(flash.board.channels.every((c) => c.isFactoryCalibrated), isTrue);
@@ -115,7 +119,7 @@ void main() {
     });
   });
 
-  test('unknown keys round-trip to the folder they came from', () {
+  test('unknown keys round-trip untouched; Factory keys are never deleted', () {
     fakeAsync((async) {
       final (transport, _) = wire();
       // A key the model doesn't know, planted in the Factory folder.
@@ -131,35 +135,37 @@ void main() {
       expect(mock.kvsCommandLog.where((c) => c.contains('vendor.x')), isEmpty);
       expect(mock.kvsStore[kvsFolderFactory]!['vendor.x'], '42');
 
-      // Dropping it from the document deletes it from ITS folder.
-      mock.kvsCommandLog.clear();
+      // Dropping it from the document must NOT delete it: the app never
+      // writes the Factory partition, not even DELs of unknown keys — the
+      // document-level diff's attempt trips the protocol-layer assertion.
       final stripped = modified
           .split('\n')
           .where((l) => !l.startsWith('vendor.x'))
           .join('\n');
-      expect(write(transport, stripped, async), isNull);
-      expect(mock.kvsCommandLog, contains('DELFvendor.x'));
-      expect(mock.kvsStore[kvsFolderFactory]!.containsKey('vendor.x'), isFalse);
+      expect(write(transport, stripped, async), isA<AssertionError>());
+      expect(mock.kvsStore[kvsFolderFactory]!['vendor.x'], '42');
     });
   });
 
-  test('a write without a prior read writes every key', () {
+  test('a write without a prior read writes every user key', () {
     fakeAsync((async) {
       final (transport, client) = wire();
-      // Empty the device, then write the fixture doc with no snapshot.
+      // Empty the device, then write a slots-only doc with no snapshot
+      // (every key is new; Factory keys would trip the no-write assertion).
       mock.kvsStore.forEach((_, folder) => folder.clear());
-      expect(write(transport, demoBoardCalibrationDoc, async), isNull);
+      const slotsDoc = 'lc0.name=Thrust cell\nlc0.cap=200\nlc0.sens=1.9993';
+      expect(write(transport, slotsDoc, async), isNull);
 
       // Everything landed, folder-routed.
-      expect(mock.kvsStore[kvsFolderFactory]!['ch0.raw'], isNotNull);
       expect(mock.kvsStore[kvsFolderUser]!['lc0.name'], 'Thrust cell');
+      expect(mock.kvsStore[kvsFolderFactory], isEmpty);
       expect(mock.kvsStore[kvsFolderSettings], isEmpty);
 
       // And a fresh read reassembles the same content.
       final reread = read(KvsFlashTransport(client), async)!;
       expect(
-        DeviceFlash.parse(reread).slots,
-        DeviceFlash.parse(demoBoardCalibrationDoc).slots,
+        DeviceFlash.parse(reread, pgaGains: const [1, 1, 1, 1]).slots,
+        DeviceFlash.parse(slotsDoc, pgaGains: const [1, 1, 1, 1]).slots,
       );
     });
   });
@@ -171,7 +177,7 @@ void main() {
 
       expect(read(transport, async), isNull);
       expect(
-        write(transport, demoBoardCalibrationDoc, async),
+        write(transport, 'lc0.cap=100\nlc0.sens=2', async),
         isA<StateError>(),
       );
     });

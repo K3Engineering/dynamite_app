@@ -76,13 +76,15 @@ String? calibrationAge(String? isoDate) {
 }
 
 /// The Settings row's one-line board-calibration state. Facts only: when
-/// calibrated, the flash document's own date; the other two states describe
+/// calibrated, the flash document's own date; the other states describe
 /// what the app holds (a failed connect-time read, a document without
-/// factory data) — never a verdict on the device.
+/// usable factory data) — never a verdict on the device.
 String boardCalibrationStatusLine(BoardCalibration? board) {
   if (board == null) return 'Could not read calibration data';
-  if (!board.channels.any((c) => c.isFactoryCalibrated)) {
-    return 'Missing factory calibration';
+  if (!board.isFactoryCalibrated) {
+    return board.calDataInvalid
+        ? 'Calibration data in flash invalid'
+        : 'Missing factory calibration';
   }
   final age = calibrationAge(board.factoryDate);
   return [
@@ -116,7 +118,7 @@ String calibrationReport(BoardCalibration board, String deviceLabel) {
     );
   }
   b.writeln('Trust: $kTrustLineCalibrated');
-  if (board.channels.any((c) => c.isFactoryCalibrated)) {
+  if (board.isFactoryCalibrated) {
     b.writeln('Correction: $kCorrectionApplied');
   }
   b.writeln('Note: $kUvVToPpmNote');
@@ -134,6 +136,11 @@ String calibrationReport(BoardCalibration board, String deviceLabel) {
   );
   if (board.adcConfigDrifted == true) {
     b.writeln('WARNING: ADC gain configuration changed since calibration.');
+  }
+  if (board.calDataInvalid) {
+    b.writeln(
+      'WARNING: Calibration data in flash is invalid — nominal values in use.',
+    );
   }
   for (int i = 0; i < board.channels.length; ++i) {
     final ch = board.channels[i];

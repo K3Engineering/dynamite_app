@@ -239,7 +239,12 @@ class RigState extends ChangeNotifier {
     // not a fact (firmware may reject, truncate or normalize the write).
     // Adopting the composed document as truth without checking would let
     // app state diverge from the device silently — and there is no later
-    // change detection to catch it.
+    // change detection to catch it. Only the slots need verifying, and only
+    // the slots are adopted: the board calibration and the extraLines were
+    // read from this device and only those (writable) slot keys were
+    // written, so a slot save must never rebuild or replace board data —
+    // re-parsing the read-back without runtime PGA gains would only
+    // degrade it.
     final String? readBack;
     try {
       readBack = await _transport.readFlashDoc();
@@ -247,8 +252,8 @@ class RigState extends ChangeNotifier {
       return false;
     }
     if (readBack == null) return false;
-    final verified = DeviceFlash.parse(readBack);
-    if (!_sameCells(verified.slots, stamped)) return false;
+    final verifiedSlots = RigSlots.fromKv(parseFlashKv(readBack));
+    if (!_sameCells(verifiedSlots, stamped)) return false;
     // Commit only if nothing moved under the in-flight write: a revert, a
     // fresh edit, or a reconnect's flash read means the newer state wins.
     // (The UI also blocks edits while saving; this is the model-side guard.)
@@ -257,10 +262,14 @@ class RigState extends ChangeNotifier {
         !identical(_lastFlash, flash)) {
       return false;
     }
-    // The device provably holds this document — adopt the READ-BACK version
-    // as the new flash truth (not the composed one), so any normalization
-    // the device applied is reflected in app state too.
-    _lastFlash = verified;
+    // The device provably holds the slots we wrote — adopt them (any
+    // normalization the device applied reflected), keeping the immutable
+    // board and courier lines exactly as read.
+    _lastFlash = DeviceFlash(
+      board: flash.board,
+      slots: verifiedSlots,
+      extraLines: flash.extraLines,
+    );
     _pending = null;
     notifyListeners();
     return true;

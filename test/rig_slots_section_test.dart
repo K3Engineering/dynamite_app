@@ -46,7 +46,10 @@ void main() {
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        DeviceFlash.parse(demoBoardCalibrationDoc),
+        DeviceFlash.parse(
+          demoBoardCalibrationDoc,
+          pgaGains: const [1, 1, 1, 1],
+        ),
       );
     }
     await tester.pumpWidget(

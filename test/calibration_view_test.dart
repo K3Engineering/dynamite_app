@@ -43,7 +43,7 @@ void main() {
     bool withFlash = true,
     String deviceId = 'dev1',
     String? flashDoc,
-    List<double>? pgaGains = const [1, 1, 1, 1],
+    List<double> pgaGains = const [1, 1, 1, 1],
   }) async {
     SharedPreferences.setMockInitialValues({});
     final rig = RigState(
@@ -98,62 +98,53 @@ void main() {
     );
   });
 
-  testWidgets('a calibrated channel shows the plot and the 5-point table', (
+  testWidgets('calibrated channels show the plot and the 5-point table', (
     tester,
   ) async {
-    // Only CH1 of this document has factory data, so exactly one card has
-    // the plot and the table.
-    const singleCalDoc = '''
-K3CAL1
-cal.date=2026-07-20
-adc_fsr=1.2,nominal
-exc=4.53,nominal
-afe_gain=101,nominal
-ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4
-ch0.raw=6386310.2,3193480.0,845.2,-3191769.6,-6384619.8
-END
-''';
+    // The fixture document calibrates all four channels, so every card
+    // carries the plot and the table (calibration is board-uniform — see
+    // BoardCalibration.fromKv).
     final board = BoardCalibration.parse(
-      singleCalDoc,
+      demoBoardCalibrationDoc,
       pgaGains: const [1, 1, 1, 1],
     );
-    await pump(tester, flashDoc: singleCalDoc);
+    await pump(tester);
 
     // The titled nonlinearity plot, with its convention caption.
-    expect(find.byType(CalDeviationPlot), findsOneWidget);
-    // 'Nonlinearity' appears twice: the plot section title and the table
-    // column header.
-    expect(find.text('Nonlinearity'), findsNWidgets(2));
-    expect(find.textContaining('gain and offset removed'), findsOneWidget);
-    expect(find.textContaining('0 by definition'), findsOneWidget);
-    expect(find.text('Zero offset'), findsOneWidget);
+    expect(find.byType(CalDeviationPlot), findsNWidgets(4));
+    // 'Nonlinearity' appears twice per card: the plot section title and the
+    // table column header.
+    expect(find.text('Nonlinearity'), findsNWidgets(8));
+    expect(find.textContaining('gain and offset removed'), findsNWidgets(4));
+    expect(find.textContaining('0 by definition'), findsNWidgets(4));
+    expect(find.text('Zero offset'), findsNWidgets(4));
     expect(find.textContaining('+0.264 µV/V'), findsWidgets);
-    expect(find.text('Gain vs nominal'), findsOneWidget);
+    expect(find.text('Gain vs nominal'), findsNWidgets(4));
     expect(find.textContaining('+0.02%'), findsWidgets);
-    expect(find.text('End-point linearity'), findsOneWidget);
+    expect(find.text('End-point linearity'), findsNWidgets(4));
     // The table: quantity header row and subdued units row.
-    expect(find.text('(t1, t5)'), findsOneWidget);
-    expect(find.text('(t3, t3)'), findsOneWidget);
-    expect(find.text('Error'), findsOneWidget);
-    expect(find.text('mV/V'), findsOneWidget);
-    expect(find.text('counts'), findsOneWidget);
-    expect(find.text('µV/V'), findsNWidgets(2));
+    expect(find.text('(t1, t5)'), findsNWidgets(4));
+    expect(find.text('(t3, t3)'), findsNWidgets(4));
+    expect(find.text('Error'), findsNWidgets(4));
+    expect(find.text('mV/V'), findsNWidgets(4));
+    expect(find.text('counts'), findsNWidgets(4));
+    expect(find.text('µV/V'), findsNWidgets(8));
     // The old measured-error presentation is gone.
     expect(find.text('Measured error'), findsNothing);
-    // Error column: as-found, nothing pinned — every cell nonzero here.
+    // Error column: as-found, nothing pinned — ch0's cells all appear.
     final ch0 = board.channels[0];
     String fmt(double v) => '${v > 0 ? '+' : ''}${v.toStringAsFixed(3)}';
     for (final v in ch0.measuredErrorsUvV!) {
-      expect(find.text(fmt(v)), findsOneWidget, reason: 'error cell $v');
+      expect(find.text(fmt(v)), findsWidgets, reason: 'error cell $v');
     }
     // Nonlinearity column: the end-point deviations.
-    expect(find.text('+0.009'), findsOneWidget); // ch0 bow at +mid
-    expect(find.text('-0.003'), findsOneWidget); // ...and the −mid sag
+    expect(find.text('+0.009'), findsWidgets); // ch0 bow at +mid
+    expect(find.text('-0.003'), findsWidgets); // ...and the −mid sag
     // Setpoints formatted to 4 decimals, readings to 1.
     for (int k = 0; k < kCalPointCount; k++) {
       expect(
         find.text(ch0.setpoints[k].toStringAsFixed(4)),
-        findsOneWidget,
+        findsWidgets,
         reason: 'setpoint $k',
       );
       expect(
@@ -162,31 +153,6 @@ END
         reason: 'reading $k',
       );
     }
-  });
-
-  testWidgets('calibrated channel without board constants: no error figures', (
-    tester,
-  ) async {
-    // ch0 has factory data, but the constants are unresolvable (no
-    // afe_gain) — the measured error has no reference chain.
-    const noConstantsDoc = '''
-K3CAL1
-cal.date=2026-07-20
-adc_fsr=1.2,nominal
-exc=4.53,nominal
-ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4
-ch0.raw=6386310.2,3193480.0,845.2,-3191769.6,-6384619.8
-END
-''';
-    await pump(tester, flashDoc: noConstantsDoc);
-
-    expect(find.text('Error'), findsNothing);
-    // The end-point nonlinearity needs no nominal chain: the plot, its
-    // caption, and the column all survive.
-    expect(find.byType(CalDeviationPlot), findsOneWidget);
-    expect(find.text('Nonlinearity'), findsNWidgets(2));
-    expect(find.textContaining('0 by definition'), findsOneWidget);
-    expect(find.text('+0.009'), findsOneWidget);
   });
 
   testWidgets('no flash doc: placeholder card, no values', (tester) async {
@@ -205,19 +171,33 @@ END
     expect(find.textContaining('Calibrated'), findsNothing);
   });
 
-  testWidgets('the header counts the factory-calibrated channels', (
+  testWidgets('a partially-calibrated board is refused, with one warning', (
     tester,
   ) async {
-    // Only CH1 of this document has factory data.
+    // Only CH1 of this document has factory data — invalid flash, not a
+    // mixed instrument (a factory calibrates all channels in one document).
     const partialCalDoc = '''
 K3CAL1
+adc_fsr=1.2,nominal
+exc=4.53,nominal
+afe_gain=101,nominal
 ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4
 ch0.raw=6386310.2,3193480.0,845.2,-3191769.6,-6384619.8
 END
 ''';
     await pump(tester, flashDoc: partialCalDoc);
 
-    expect(find.textContaining('1 of 4 channels'), findsOneWidget);
+    expect(
+      find.text('No factory calibration — nominal values in use'),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Calibration data in flash is invalid'),
+      findsOneWidget,
+    );
+    // No channel presents a correction.
+    expect(find.byType(CalDeviationPlot), findsNothing);
+    expect(find.text('1 of 4 channels'), findsNothing);
   });
 
   testWidgets('a PGA config change since calibration warns', (tester) async {
@@ -352,19 +332,41 @@ END
       expect(report, contains('nonlinearity +0.009 µV/V'));
     });
 
-    test('an uncalibrated channel reports nominal, not a void', () {
+    test('an uncalibrated board reports nominal, not a void', () {
+      const nominalDoc = '''
+K3CAL1
+adc_fsr=1.2,nominal
+exc=4.53,nominal
+afe_gain=101,nominal
+END
+''';
+      final report = calibrationReport(
+        BoardCalibration.parse(nominalDoc, pgaGains: const [1, 1, 1, 1]),
+        'dev1',
+      );
+      expect(report, contains('CH 1: nominal values (no factory data)'));
+      expect(report, contains('CH 4: nominal values (no factory data)'));
+      expect(report, isNot(contains('WARNING')));
+    });
+
+    test('invalid calibration data is flagged in the report', () {
       const partialCalDoc = '''
 K3CAL1
+adc_fsr=1.2,nominal
+exc=4.53,nominal
+afe_gain=101,nominal
 ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4
 ch0.raw=6386310.2,3193480.0,845.2,-3191769.6,-6384619.8
 END
 ''';
       final report = calibrationReport(
-        BoardCalibration.parse(partialCalDoc),
+        BoardCalibration.parse(partialCalDoc, pgaGains: const [1, 1, 1, 1]),
         'dev1',
       );
-      expect(report, contains('CH 1: zero offset'));
-      expect(report, contains('CH 4: nominal values (no factory data)'));
+      expect(report, contains('WARNING: Calibration data in flash is invalid'));
+      // No channel claims a correction.
+      expect(report, contains('CH 1: nominal values (no factory data)'));
+      expect(report, isNot(contains('zero offset')));
     });
 
     test('the export file name carries the device label', () {
@@ -395,8 +397,27 @@ cal.date=2026-07-20
 END
 ''';
       expect(
-        boardCalibrationStatusLine(BoardCalibration.parse(noCalDoc)),
+        boardCalibrationStatusLine(
+          BoardCalibration.parse(noCalDoc, pgaGains: const [1, 1, 1, 1]),
+        ),
         'Missing factory calibration',
+      );
+    });
+
+    test('invalid calibration data in flash', () {
+      const partialCalDoc = '''
+K3CAL1
+adc_fsr=1.2,nominal
+exc=4.53,nominal
+afe_gain=101,nominal
+ch0.raw=6386310.2,3193480.0,845.2,-3191769.6,-6384619.8
+END
+''';
+      expect(
+        boardCalibrationStatusLine(
+          BoardCalibration.parse(partialCalDoc, pgaGains: const [1, 1, 1, 1]),
+        ),
+        'Calibration data in flash invalid',
       );
     });
 

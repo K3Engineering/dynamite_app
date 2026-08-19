@@ -421,25 +421,26 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
 
   /// Content equality for cache invalidation: conversion inputs only.
   /// factoryDate/excitationMv are display metadata. Nominals are conversion
-  /// inputs — an empty Factory doc has the same default ladder and no
-  /// readings as a nominals-only board, and must still replace it.
+  /// inputs — a nominals-only board must still replace a constants-failed
+  /// one (and vice versa).
   static bool _sameBoardCalibration(BoardCalibration a, BoardCalibration b) {
     if (a.constantsStatus != b.constantsStatus) return false;
     for (int i = 0; i < a.channels.length; ++i) {
       final x = a.channels[i];
       final y = b.channels[i];
       if (!_sameNominals(x.nominals, y.nominals)) return false;
-      for (int k = 0; k < x.resistors.length; ++k) {
-        if (x.resistors[k] != y.resistors[k]) return false;
-      }
-      final xr = x.readings;
-      final yr = y.readings;
-      if ((xr == null) != (yr == null)) return false;
-      if (xr != null && yr != null) {
-        for (int k = 0; k < xr.length; ++k) {
-          if (xr[k] != yr[k]) return false;
-        }
-      }
+      if (!_sameList(x.resistors, y.resistors)) return false;
+      if (!_sameList(x.readings, y.readings)) return false;
+    }
+    return true;
+  }
+
+  static bool _sameList(List<double>? a, List<double>? b) {
+    if ((a == null) != (b == null)) return false;
+    if (a == null || b == null) return true;
+    if (a.length != b.length) return false;
+    for (int k = 0; k < a.length; ++k) {
+      if (a[k] != b[k]) return false;
     }
     return true;
   }

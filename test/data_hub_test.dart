@@ -30,6 +30,13 @@ void main() {
     ],
   );
 
+  /// Nominal ladder values (test input; the model no longer substitutes
+  /// them for missing hardware characterization).
+  const nominalLadder = <double>[10000, 10, 10, 10, 10, 10000];
+
+  /// The demo device's PGA readback (1x on all channels, matching cal.adc).
+  const demoGains = <double>[1, 1, 1, 1];
+
   Int32List frameOf(int value) =>
       Int32List(channels)..fillRange(0, channels, value);
 
@@ -73,7 +80,10 @@ void main() {
         frame[0] = v;
         hub.addSampleFrame(frame);
       }
-      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples), -50);
+      expect(
+        hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples),
+        -50,
+      );
       expect(hub.minValue(0, DisplayUnit.raw), -300);
     });
 
@@ -84,7 +94,10 @@ void main() {
         frame[0] = v;
         hub.addSampleFrame(frame);
       }
-      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples), 300);
+      expect(
+        hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples),
+        300,
+      );
       expect(hub.minValue(0, DisplayUnit.raw), 50);
     });
 
@@ -93,7 +106,10 @@ void main() {
       feed(hub, frameOf(1000), 10);
       hub.requestTare();
       feed(hub, frameOf(1000), 1024); // completes the tare at 1000
-      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples), 0);
+      expect(
+        hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples),
+        0,
+      );
       expect(hub.minValue(0, DisplayUnit.raw), 0);
     });
   });
@@ -207,7 +223,10 @@ void main() {
       feed(hub, frameOf(-500), 10);
       expect(hub.totalSamples, 10);
       expect(hub.rawData[0][0], -500);
-      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples), -500);
+      expect(
+        hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples),
+        -500,
+      );
     });
 
     test('aborts an in-progress tare', () {
@@ -327,7 +346,10 @@ void main() {
       feed(hub, frameOf(1000), 5);
 
       expect(hub.currentValue(0, DisplayUnit.kgf), isNull);
-      expect(hub.peakValue(0, DisplayUnit.kgf, start: 0, end: hub.totalSamples), isNull);
+      expect(
+        hub.peakValue(0, DisplayUnit.kgf, start: 0, end: hub.totalSamples),
+        isNull,
+      );
       expect(hub.minValue(0, DisplayUnit.kgf), isNull);
       expect(hub.currentDerivative(0, DisplayUnit.kgf), isNull);
       // Electrical units convert with board calibration alone.
@@ -370,19 +392,19 @@ void main() {
     test('board calibration replaces the nominal chain and bumps version', () {
       final hub = DataHub();
       final v0 = hub.calibrationVersion;
-      // ch0 measures at half the nominal span; other channels stay nominal.
-      final sp = ladderSetpointsMvV(nominalLadderResistors);
+      // Every channel measures at half the nominal span (calibration is
+      // board-uniform — a mixed calibrated/nominal board is invalid flash).
+      final sp = ladderSetpointsMvV(nominalLadder);
       final board = BoardCalibration(
         channels: [
-          ChannelBoardCalibration(
-            readings: [
-              for (final d in sp) 500 + 0.5 * testNominals.countsPerMvV * d,
-            ],
-            nominals: testNominals,
-          ),
-          ChannelBoardCalibration(nominals: testNominals),
-          ChannelBoardCalibration(nominals: testNominals),
-          ChannelBoardCalibration(nominals: testNominals),
+          for (int i = 0; i < channels; ++i)
+            ChannelBoardCalibration(
+              resistors: nominalLadder,
+              readings: [
+                for (final d in sp) 500 + 0.5 * testNominals.countsPerMvV * d,
+              ],
+              nominals: testNominals,
+            ),
         ],
       );
 
@@ -390,14 +412,12 @@ void main() {
       expect(hub.calibrationVersion, greaterThan(v0));
 
       feed(hub, frameOf(1000), 5);
-      expect(
-        hub.currentValue(0, DisplayUnit.mVv),
-        closeTo(1000 / (0.5 * testNominals.countsPerMvV), 1e-12),
-      );
-      expect(
-        hub.currentValue(1, DisplayUnit.mVv),
-        closeTo(1000 / testNominals.countsPerMvV, 1e-12),
-      );
+      for (final ch in [0, 1]) {
+        expect(
+          hub.currentValue(ch, DisplayUnit.mVv),
+          closeTo(1000 / (0.5 * testNominals.countsPerMvV), 1e-12),
+        );
+      }
     });
 
     test('derivative scales the converted difference per second', () {
@@ -452,40 +472,40 @@ void main() {
     test('unit availability reflects the board constants and the rig', () {
       final hub = DataHub();
       final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
-      expect(
-        resolveUnitAvailability(hub.calibrationFor, [0, 1]),
-        (boardHasNominals: false, anyActiveHasLoadCell: false),
-      );
+      expect(resolveUnitAvailability(hub.calibrationFor, [0, 1]), (
+        boardHasNominals: false,
+        anyActiveHasLoadCell: false,
+      ));
 
       hub.updateBoardCalibration(nominalBoard());
-      expect(
-        resolveUnitAvailability(hub.calibrationFor, [0, 1]),
-        (boardHasNominals: true, anyActiveHasLoadCell: false),
-      );
+      expect(resolveUnitAvailability(hub.calibrationFor, [0, 1]), (
+        boardHasNominals: true,
+        anyActiveHasLoadCell: false,
+      ));
 
       // A cell counts only while its channel is among the shown ones.
       hub.updateLoadCells([cell, null, null, null]);
-      expect(
-        resolveUnitAvailability(hub.calibrationFor, [0]),
-        (boardHasNominals: true, anyActiveHasLoadCell: true),
-      );
-      expect(
-        resolveUnitAvailability(hub.calibrationFor, [1]),
-        (boardHasNominals: true, anyActiveHasLoadCell: false),
-      );
+      expect(resolveUnitAvailability(hub.calibrationFor, [0]), (
+        boardHasNominals: true,
+        anyActiveHasLoadCell: true,
+      ));
+      expect(resolveUnitAvailability(hub.calibrationFor, [1]), (
+        boardHasNominals: true,
+        anyActiveHasLoadCell: false,
+      ));
     });
 
     test('content-equal board calibration does not bump the version', () {
       final hub = DataHub();
       hub.updateBoardCalibration(
-        BoardCalibration.parse(demoBoardCalibrationDoc),
+        BoardCalibration.parse(demoBoardCalibrationDoc, pgaGains: demoGains),
       );
       final v1 = hub.calibrationVersion;
 
       // A reconnect re-reading the identical document (new instances, same
       // content) must not invalidate the graph caches.
       hub.updateBoardCalibration(
-        BoardCalibration.parse(demoBoardCalibrationDoc),
+        BoardCalibration.parse(demoBoardCalibrationDoc, pgaGains: demoGains),
       );
       expect(hub.calibrationVersion, v1);
 
@@ -496,6 +516,7 @@ void main() {
             'ch0.raw=6386310.2',
             'ch0.raw=6386310.3',
           ),
+          pgaGains: demoGains,
         ),
       );
       expect(hub.calibrationVersion, greaterThan(v1));
