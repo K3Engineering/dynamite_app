@@ -407,7 +407,7 @@ void main() {
       hub.addSampleFrame(frameOf(1000));
       expect(
         hub.currentDerivative(0, DisplayUnit.raw),
-        1000.0 * DataHub.samplesPerSec,
+        1000.0 * hub.sampleRateHz,
       );
     });
 

@@ -188,7 +188,7 @@ class RecordingController extends ChangeNotifier {
         for (int ch = 0; ch < kAdcChannelCount; ch++)
           _dataHub.calibrationFor(ch),
       ],
-      samplesPerSec: DataHub.samplesPerSec,
+      samplesPerSec: _dataHub.sampleRateHz,
       sourceRingCapacity: DataHub.maxDataSz,
       name: sessionName,
       channelLabels: channelLabels,

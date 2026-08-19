@@ -41,9 +41,9 @@ class LiveTab extends StatefulWidget {
 }
 
 class _LiveTabState extends State<LiveTab> {
-  final GraphController _graphCtrl = GraphController(
-    minLiveSpan: 20 * DataHub.samplesPerSec,
-  );
+  // Live window floor: 20 s in samples at the 1 kHz the device boots at (a
+  // UI anchor, like the hub's ring capacity — not read from the device).
+  final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * 1000);
 
   /// dF/dt row + derivative graph visibility. A notifier (not setState) so
   /// toggling rebuilds only the stats/graph/toggles cluster, not the tab.
@@ -196,6 +196,7 @@ class _LiveTabState extends State<LiveTab> {
             builder: (context, health, _) => LiveStatusBar(
               isConnected: isConnected,
               connectedDeviceName: deviceName,
+              sampleRateHz: hub.sampleRateHz,
               health: health,
               onGoToDevices: widget.onGoToDevices,
             ),
@@ -265,6 +266,9 @@ class LiveStatusBar extends StatelessWidget {
   final bool isConnected;
   final String connectedDeviceName;
 
+  /// The stream's sample rate for the Hz readout next to the RSSI indicator.
+  final int sampleRateHz;
+
   /// The measured feed-health classification (see [deriveFeedHealth]); null
   /// presents as normal (also the case before the first health tick lands).
   final FeedHealth? health;
@@ -273,6 +277,7 @@ class LiveStatusBar extends StatelessWidget {
     super.key,
     required this.isConnected,
     required this.connectedDeviceName,
+    required this.sampleRateHz,
     required this.onGoToDevices,
     this.health,
   });
@@ -369,7 +374,7 @@ class LiveStatusBar extends StatelessWidget {
             if (isConnected) const _ConnectedRssiIndicator(),
             if (isConnected)
               Text(
-                noData ? 'no data' : '${DataHub.samplesPerSec} Hz',
+                noData ? 'no data' : '$sampleRateHz Hz',
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
                   color: noData ? scheme.outline : scheme.onPrimaryContainer,
                 ),

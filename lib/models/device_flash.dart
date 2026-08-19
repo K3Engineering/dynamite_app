@@ -55,9 +55,10 @@ class DeviceFlash {
   /// Parse a whole flash document. Never throws: structural problems degrade
   /// only the affected piece (channel → nominal, slot → empty). Unknown
   /// `key=value` lines are preserved in [extraLines]. [pgaGains] is the ADC's
-  /// GAIN-register readback for board-constant resolution (null when that
-  /// read failed, or when the caller doesn't care about conversions — e.g.
-  /// the save-verification re-read).
+  /// GAIN-register readback for board-constant resolution; null only when
+  /// the caller doesn't care about conversions (e.g. the save-verification
+  /// re-read — the live path always has gains: an unreadable ADC config
+  /// fails the connection, see `BleLinkManager`).
   factory DeviceFlash.parse(String text, {List<double>? pgaGains}) {
     final kv = parseFlashKv(text);
     return DeviceFlash(

@@ -459,9 +459,16 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
   /// The flash document (board calibration + load cell slots), reassembled
   /// from the device KVS once during post-connect setup, plus the ADC's
-  /// per-channel PGA gains read back just before (null when that read
-  /// failed). Wired to [AdcPacketDecoder.onCalibrationPacket] at app startup.
-  void Function(Uint8List data, List<double>? adcGains)? onCalibrationData;
+  /// per-channel PGA gains from the config readback. Wired to
+  /// [AdcPacketDecoder.onCalibrationPacket] at app startup.
+  void Function(Uint8List data, List<double> adcGains)? onCalibrationData;
+
+  /// The stream's sample rate (Hz), delivered once per link before the feed
+  /// starts (parsed from the ADC config readback on GATT links; the demo
+  /// device declares its own). Wired to [DataHub.setSampleRate] at app
+  /// startup — everything below the protocol layer reads the rate from the
+  /// hub.
+  void Function(int sampleRateHz)? onSampleRate;
 
   /// One-shot user notices ([BleDisconnectTimeout], [BleConnectionFailed])
   /// go here; the shell shows them regardless of which tab is mounted.
@@ -480,10 +487,13 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// holds the device lock.
   LinkBackend? _backend;
 
-  /// The ADC's per-channel PGA gains as read back during the "Reading board
-  /// constants…" stage (null until read, or when the read failed). Handed to
-  /// the protocol layer with the flash document (see [onCalibrationData]).
-  List<double>? _adcGains;
+  /// The ADC's decoded boot configuration as read back during the "Reading
+  /// board constants…" stage (null until read; never null once a link
+  /// reaches the flash read — an unreadable config fails the connection, see
+  /// [_readAdcConfig]). The gains are handed to the protocol layer with the
+  /// flash document (see [onCalibrationData]); the rate went out via
+  /// [onSampleRate] right after the read.
+  AdcConfig? _adcConfig;
 
   // -- RigFlashTransport ------------------------------------------------------
 
@@ -912,7 +922,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // command. A fresh link gets a fresh backend in post-connect setup.
     _backend?.dispose();
     _backend = null;
-    _adcGains = null;
+    _adcConfig = null;
     _stopRssiPolling();
     _cooldownTimer?.cancel();
     _cooldownTimer = null;
@@ -1131,8 +1141,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
           // device lock, so the flash read must happen first.
           _link.state = BtLinkState.readingConstants;
           notifyListeners();
-          _adcGains = await _readAdcConfigGains(deviceId);
+          _adcConfig = await _readAdcConfig(deviceId);
           if (!token.isCurrent) return;
+          onSampleRate?.call(_adcConfig!.sampleRateHz);
           await _setupKvs(token, deviceId);
           if (!token.isCurrent) return;
           // Constants in; the ADC feed subscription is the "Starting data
@@ -1227,6 +1238,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // from the Device Information service in post-connect setup).
     _link.info = demo.identity;
     _backend = demo;
+
+    onSampleRate?.call(demo.sampleRateHz);
 
     // The demo device is factory-calibrated: serve its flash doc through the
     // same path a real device's calibration read would take. The doc is
@@ -1425,12 +1438,13 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     );
   }
 
-  /// Read the ADC config characteristic and parse the per-channel PGA gains
-  /// from its GAIN register readback. One retry on failure (a transient BLE
-  /// hiccup is not a broken board); null when both attempts fail — the flash
-  /// read then resolves the constants without them and the board degrades
-  /// to raw counts, which is exactly what an unreadable chain should do.
-  Future<List<double>?> _readAdcConfigGains(String deviceId) async {
+  /// Read and parse the ADC config characteristic (the boot register
+  /// snapshot: per-channel PGA gains and the sample rate). One retry on
+  /// failure (a transient BLE hiccup is not a broken board); throws when both
+  /// attempts fail — the caller fails the connection: the stream's sample
+  /// timeline and the electrical conversions both derive from this read, so
+  /// a link without it is unusable (same verdict as a missing ADC feed).
+  Future<AdcConfig> _readAdcConfig(String deviceId) async {
     for (var attempt = 0; attempt < 2; ++attempt) {
       try {
         final bytes = await UniversalBle.read(
@@ -1438,14 +1452,14 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
           btServiceId,
           btChrAdcConfig,
         );
-        final gains = parseAdcConfigPgaGains(bytes);
-        if (gains != null) return gains;
+        final config = parseAdcConfig(bytes);
+        if (config != null) return config;
         debugPrint('ADC config parse failed for $deviceId: ${bytes.length} B');
       } catch (e) {
         debugPrint('ADC config read failed for $deviceId (try $attempt): $e');
       }
     }
-    return null;
+    throw StateError('ADC config characteristic unreadable on $deviceId');
   }
 
   /// Bring up the KVS channel: subscribe to its notifications, then run the
@@ -1492,7 +1506,10 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       final doc = await backend.readFlashDoc();
       if (!token.isCurrent) return;
       if (doc == null) throw StateError('KVS flash read failed');
-      onCalibrationData?.call(Uint8List.fromList(utf8.encode(doc)), _adcGains);
+      onCalibrationData?.call(
+        Uint8List.fromList(utf8.encode(doc)),
+        _adcConfig!.pgaGains,
+      );
     } catch (e) {
       if (!token.isCurrent) return;
       debugPrint('KVS flash read failed for $deviceId: $e');
@@ -1596,6 +1613,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   Future<void> shutdownForHotRestart() async {
     onAdcData = null;
     onCalibrationData = null;
+    onSampleRate = null;
     _backend?.dispose();
     _backend = null;
     _stopRssiPolling();

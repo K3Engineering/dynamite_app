@@ -66,7 +66,8 @@ void main() async {
   final decoder = AdcPacketDecoder(dataHub);
   final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
     ..onAdcData = decoder.onDataPacket
-    ..onCalibrationData = decoder.onCalibrationPacket;
+    ..onCalibrationData = decoder.onCalibrationPacket
+    ..onSampleRate = dataHub.setSampleRate;
   final feedHealth = FeedHealthTracker(
     hub: dataHub,
     streamingChanges: linkManager,

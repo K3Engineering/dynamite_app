@@ -41,7 +41,7 @@ void main() {
         channelCalibration: [
           for (int ch = 0; ch < channels; ch++) hub.calibrationFor(ch),
         ],
-        samplesPerSec: DataHub.samplesPerSec,
+        samplesPerSec: hub.sampleRateHz,
         sourceRingCapacity: DataHub.maxDataSz,
         name: name,
         channelLabels: const ['a', 'b', 'c', 'd'],
@@ -54,7 +54,7 @@ void main() {
   /// its first flush creates (see AppDatabase.createSessionWithFirstChunk).
   SessionHeader testHeader() => (
     name: '',
-    sampleRate: DataHub.samplesPerSec,
+    sampleRate: 1000,
     channelCount: channels,
     channelLabels: '[]',
     tares: '[]',
@@ -69,7 +69,7 @@ void main() {
       channels: [
         for (int ch = 0; ch < channels; ch++) Int32List.fromList(values),
       ],
-      sampleRate: DataHub.samplesPerSec,
+      sampleRate: 1000,
       sampleCount: values.length,
       calibrations: nominalCals(),
       tares: List.filled(channels, 0.0),
@@ -365,7 +365,7 @@ void main() {
         // the recovered frame count is 0.
         final sessionId = await AppDatabase.instance.createSession(
           name: 'empty chunks',
-          sampleRate: DataHub.samplesPerSec,
+          sampleRate: 1000,
           channelCount: channels,
           channelLabels: '["a","b","c","d"]',
           tares: '[0,0,0,0]',
