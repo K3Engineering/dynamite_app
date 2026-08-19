@@ -99,6 +99,14 @@ class AppShellState extends State<AppShell> {
             showCloseIcon: true,
           ),
         );
+      case RigEditsDiscarded():
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Disconnected — unsaved load cell changes were discarded.',
+            ),
+          ),
+        );
       case CalibrationUnreadable(:final deviceName):
         messenger.showSnackBar(
           SnackBar(

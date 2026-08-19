@@ -19,9 +19,11 @@ class CalibrationScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Document and device name both follow the link: the flash doc dies
+    // with the connection (RigState), and the name is read live off it.
     final (board, deviceName) = context
         .select<RigState, (BoardCalibration?, String)>(
-          (r) => (r.boardCalibrationFor(deviceId), r.deviceNameFor(deviceId)),
+          (r) => (r.boardCalibration, r.connectedDeviceName),
         );
     return Scaffold(
       appBar: AppBar(title: const Text('Board calibration')),

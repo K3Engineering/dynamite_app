@@ -9,8 +9,8 @@ import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 
-/// Tests for [RigState]: flash reads, pending edits (restore/discard across
-/// reconnects), save/revert, and history. Transport is a fake capturing the
+/// Tests for [RigState]: flash reads, pending edits (which die with the
+/// link), save/revert, and history. Transport is a fake capturing the
 /// written document; SharedPreferences is mocked.
 class _FakeTransport implements RigFlashTransport {
   String deviceId = 'dev1';
@@ -87,25 +87,28 @@ void main() {
       expect(rig.history, hasLength(4));
     });
 
-    test('a flash read with an empty device id is ignored', () async {
+    test('a flash read without a device id violates the delivery contract', () async {
       final rig = await newRig();
-      // A link that dropped mid-read delivers with no identity; the
-      // document can't be attributed to anything.
-      rig.onFlashRead('', '', fixture());
-      expect(rig.hasDeviceDoc, isFalse);
-      expect(rig.history, isEmpty);
+      // Delivery is token-gated to a live link upstream, so an identity-
+      // less document can never arrive — assert, don't silently ignore.
+      expect(
+        () => rig.onFlashRead('', '', fixture()),
+        throwsA(isA<AssertionError>()),
+      );
     });
 
-    test('boardCalibrationFor gates on document ownership', () async {
+    test('boardCalibration follows the current connection\'s document', () async {
       final rig = await newRig();
 
       // No flash document read yet.
-      expect(rig.boardCalibrationFor('dev1'), isNull);
+      expect(rig.boardCalibration, isNull);
 
       rig.onFlashRead('dev1', 'Bench unit', fixture());
-      expect(rig.boardCalibrationFor('dev1'), isNotNull);
-      // Any other device is refused.
-      expect(rig.boardCalibrationFor('dev2'), isNull);
+      expect(rig.boardCalibration, isNotNull);
+
+      // The document dies with the link.
+      rig.onLinkDropped();
+      expect(rig.boardCalibration, isNull);
     });
 
     test('a changed device wins: readings use the new values', () async {
@@ -167,35 +170,7 @@ void main() {
       },
     );
 
-    test(
-      'pending survives a disconnect+reconnect to the same device',
-      () async {
-        final rig = await newRig();
-        rig.onFlashRead('dev1', 'Bench unit', fixture());
-        rig.setSlot(
-          3,
-          LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
-        );
-
-        // Reconnect: the device re-reads with unchanged content — fresh
-        // mtimes (a pure rewrite elsewhere) do NOT count as a change.
-        rig.onFlashRead(
-          'dev1',
-          'Bench unit',
-          DeviceFlash.parse(
-            demoBoardCalibrationDoc.replaceFirst(
-              '2026-07-20T10:15:00.000Z',
-              '2026-07-21T08:00:00.000Z',
-            ),
-            pgaGains: const [1, 1, 1, 1],
-          ),
-        );
-        expect(rig.hasPending, isTrue);
-        expect(rig.channelTitles[3], 'New');
-      },
-    );
-
-    test('pending is discarded when the device changed while away', () async {
+    test('a link drop discards the document and pending edits', () async {
       final rig = await newRig();
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
@@ -203,60 +178,54 @@ void main() {
         LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
       );
 
-      rig.onFlashRead(
-        'dev1',
-        'Bench unit',
-        DeviceFlash.parse(recalibratedDoc(), pgaGains: const [1, 1, 1, 1]),
-      );
+      rig.onLinkDropped();
+      expect(rig.hasDeviceDoc, isFalse);
       expect(rig.hasPending, isFalse);
-      expect(rig.channelTitles[3], 'CH 4'); // edited slot is gone
-    });
+      expect(rig.channelTitles[3], 'CH 4'); // no document: bare channels
 
-    test('pending for another device is discarded on connect', () async {
-      final rig = await newRig();
+      // The typed-in cell was recorded in history at edit time, so
+      // re-entering it after a reconnect is a pick, not a re-type.
+      expect(rig.history.map((e) => e.cell.name), contains('New'));
+
+      // Reconnecting re-reads and starts clean.
       rig.onFlashRead('dev1', 'Bench unit', fixture());
-      rig.setSlot(
-        3,
-        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
-      );
-
-      rig.onFlashRead('dev2', 'Other unit', fixture());
       expect(rig.hasPending, isFalse);
+      expect(rig.channelTitles[3], 'CH 4');
     });
   });
 
   group('save to device', () {
-    test(
-      'writes edited slots with fresh mtimes and verbatim board keys',
-      () async {
-        final rig = await newRig();
-        rig.onFlashRead('dev1', 'Bench unit', fixture());
-        rig.setSlot(
-          3,
-          LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
-        );
+    test('writes edited slots with verbatim board keys', () async {
+      final rig = await newRig();
+      rig.onFlashRead('dev1', 'Bench unit', fixture());
+      rig.setSlot(
+        3,
+        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+      );
 
-        expect(await rig.saveToDevice(), isTrue);
-        expect(rig.hasPending, isFalse);
-        expect(rig.channelTitles[3], 'New'); // saved state stays effective
+      expect(await rig.saveToDevice(), isTrue);
+      expect(rig.hasPending, isFalse);
+      expect(rig.channelTitles[3], 'New'); // saved state stays effective
 
-        final written = DeviceFlash.parse(
-          transport.lastWrittenDoc!,
-          pgaGains: const [1, 1, 1, 1],
-        );
-        expect(written.slots.cellAt(3)?.name, 'New');
-        expect(
-          written.slots[3] != null && written.slots[3]!.mtime != null,
-          isTrue,
-        );
-        // Board keys round-trip byte-identical in content.
-        expect(
-          written.board.channels[0].readings,
-          fixture().board.channels[0].readings,
-        );
-        expect(written.board.factoryDate, '2026-07-20');
-      },
-    );
+      final written = DeviceFlash.parse(
+        transport.lastWrittenDoc!,
+        pgaGains: const [1, 1, 1, 1],
+      );
+      expect(written.slots.cellAt(3)?.name, 'New');
+      // Board keys round-trip byte-identical in content.
+      expect(
+        written.board.channels[0].readings,
+        fixture().board.channels[0].readings,
+      );
+      expect(written.board.factoryDate, '2026-07-20');
+      // The commit keeps the read-time (PGA-resolved) board, not the
+      // gain-less read-back's nominal one.
+      expect(rig.boardCalibration, isNotNull);
+      expect(
+        rig.boardCalibration!.channels[0].readings,
+        fixture().board.channels[0].readings,
+      );
+    });
 
     test('a failed write keeps the pending edits', () async {
       final rig = await newRig();
@@ -272,21 +241,24 @@ void main() {
       expect(rig.channelTitles[3], 'New');
     });
 
-    test('refuses to write while a different device is connected', () async {
+    test('a link drop mid-save fails the save', () async {
       final rig = await newRig();
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
         3,
         LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
       );
-      // The pending edits belong to dev1, but dev2 is on the link now:
-      // writing would stamp dev1's factory board keys onto dev2's flash.
-      transport.deviceId = 'dev2';
 
-      expect(await rig.saveToDevice(), isFalse);
-      expect(transport.lastWrittenDoc, isNull); // nothing was sent
-      expect(rig.hasPending, isTrue);
-      expect(rig.channelTitles[3], 'New');
+      transport.writeGate = Completer<void>();
+      final saveFuture = rig.saveToDevice();
+      // The link dies while the write is in flight: the document and the
+      // pending session go with it, so the save must NOT commit.
+      rig.onLinkDropped();
+      transport.writeGate!.complete();
+
+      expect(await saveFuture, isFalse);
+      expect(rig.hasDeviceDoc, isFalse);
+      expect(rig.hasPending, isFalse);
     });
 
     test('a read-back mismatch fails the save and keeps the edits', () async {
@@ -303,7 +275,7 @@ void main() {
       expect(rig.hasPending, isTrue);
       expect(rig.channelTitles[3], 'New');
       // The flash truth was NOT advanced to the unverified write.
-      expect(rig.pending?.edited.cellAt(3)?.name, 'New');
+      expect(rig.effectiveSlots.cellAt(3)?.name, 'New');
     });
 
     test('an edit landing mid-write is kept, not silently discarded', () async {
@@ -329,8 +301,6 @@ void main() {
       expect(rig.hasPending, isTrue);
       expect(rig.channelTitles[3], 'New');
       expect(rig.effectiveSlots.cellAt(4)?.name, 'Other');
-      // The flash truth was not advanced past the real read.
-      expect(rig.pending?.edited.cellAt(4)?.name, 'Other');
     });
 
     test('unknown flash keys ride through the save verbatim', () async {

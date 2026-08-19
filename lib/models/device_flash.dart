@@ -28,7 +28,6 @@ final Set<String> _knownFlashKeys = {
     'lc$i.name',
     'lc$i.cap',
     'lc$i.sens',
-    'lc$i.mtime',
   ],
 };
 

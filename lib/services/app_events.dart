@@ -47,6 +47,12 @@ class RecordingStorageError extends AppEvent {
   final Object error;
 }
 
+/// The link ended with unsaved load cell edits in flight; they were
+/// discarded (unsaved rig edits die with the link — see `RigState`).
+class RigEditsDiscarded extends AppEvent {
+  const RigEditsDiscarded();
+}
+
 /// The device's calibration characteristic could not be read; the app runs
 /// on nominal values (no factory calibration) until a read succeeds.
 class CalibrationUnreadable extends AppEvent {

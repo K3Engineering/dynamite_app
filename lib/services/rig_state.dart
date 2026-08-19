@@ -12,9 +12,18 @@ import 'rig_flash_transport.dart';
 /// Owns the rig: the slot list read from the connected device, unsaved
 /// edits, and the cross-device cell history.
 ///
-/// The model is deliberately low-state: the device flash is the ONLY rig
-/// truth; this class adds (a) pending edits the user hasn't saved yet and
-/// (b) advisory history that can inform but never competes with the device.
+/// The model is deliberately low-state, built around two use cases:
+///
+/// * Several people share one device: rig data should travel with the
+///   hardware - a new person in a lab gets all the saved LC data.
+/// * One person moves a load cell between devices: [history] remembers
+///   every cell this app has met, so setting up the receiving device
+///   offers the cell as a one-tap pick instead of a re-type. History
+///   informs new slots; it never feeds device state.
+///
+/// Unsaved edits live die with a disconnect. Typed-in
+/// cell values survive in [history] (recorded at edit time),
+/// so a discard costs a few slot gestures, not the re-typing
 class RigState extends ChangeNotifier {
   /// [prefs] is injected (see `main`): the instance is available
   /// synchronously, so the history load happens right here in the
@@ -47,31 +56,27 @@ class RigState extends ChangeNotifier {
   final SharedPreferences _prefs;
 
   /// The flash document as last read from the connected device (board +
-  /// slots). Null before the first successful read of this run — and save is
-  /// IMPOSSIBLE without it: the board keys round-trip verbatim through a
-  /// save, so writing without a prior read would stamp nominal board values
-  /// over real factory data.
+  /// slots). Null before this connection's first successful read — and
+  /// save is IMPOSSIBLE without it: the board keys round-trip verbatim
+  /// through a save, so writing without a prior read would stamp nominal
+  /// board values over real factory data. Also null after
+  /// [onLinkDropped]: the document is a claim about the device's current
+  /// contents, which a dead link cannot back.
   DeviceFlash? _lastFlash;
 
-  /// The device [_lastFlash] was read from. Kept (with the doc) across
-  /// disconnects, so edits made while offline still attach to the right
-  /// device and a later reconnect can restore the pending session.
-  String _flashDeviceId = '';
-
-  /// Display name of [_flashDeviceId] at read time ('' when unknown) — for
-  /// surfaces that must name the document's owner (the calibration report).
-  String _flashDeviceName = '';
-
-  PendingRigEdits? _pending;
+  /// Unsaved slot edits — what the app's readings already use. Null when
+  /// clean. Dies with the link ([onLinkDropped]); nothing reaches the
+  /// device until [saveToDevice].
+  RigSlots? _pendingEdits;
 
   List<RigHistoryEntry> _history = [];
 
   // -- Reads -----------------------------------------------------------------
 
-  /// The slot list driving the UI and conversions: pending edits when dirty,
-  /// else the device's flash state (empty before the first read).
+  /// The slot list driving the UI and conversions: pending edits when
+  /// dirty, else the device's flash state (empty before the first read).
   RigSlots get effectiveSlots =>
-      _pending?.edited ?? _lastFlash?.slots ?? RigSlots.empty();
+      _pendingEdits ?? _lastFlash?.slots ?? RigSlots.empty();
 
   /// Cells converting the four channels (slots 0–3 of [effectiveSlots]).
   List<LoadCellProfile?> get channelCells => effectiveSlots.channelCells;
@@ -79,58 +84,35 @@ class RigState extends ChangeNotifier {
   /// Live-view row titles: cell title or bare 'CH n'.
   List<String> get channelTitles => effectiveSlots.channelTitles;
 
-  PendingRigEdits? get pending => _pending;
-  bool get hasPending => _pending != null;
+  bool get hasPending => _pendingEdits != null;
 
-  /// Whether a flash document has been read this run. The slot UI and saves
-  /// are gated on this (see [_lastFlash]).
+  /// Whether this connection has delivered its flash document. The slot
+  /// UI and saves are gated on this (see [_lastFlash]).
   bool get hasDeviceDoc => _lastFlash != null;
 
-  /// The board half of the flash document, but only while the document
-  /// belongs to [deviceId]: null before the first read of this run, and
-  /// null while the document on file came from ANOTHER device (it is kept
-  /// across disconnects — see [_flashDeviceId]). The settings UI's single
-  /// ownership query, decided HERE by the document owner: the hub's
-  /// conversion-side snapshot is never the UI's source, so what renders
-  /// always belongs to an identified device.
-  BoardCalibration? boardCalibrationFor(String deviceId) {
-    final flash = _lastFlash;
-    if (flash == null || _flashDeviceId != deviceId) return null;
-    return flash.board;
-  }
+  /// The board half of the flash document; null before this connection's
+  /// first successful read.
+  BoardCalibration? get boardCalibration => _lastFlash?.board;
 
-  /// The display name of the device the flash document belongs to — the
-  /// same ownership rule as [boardCalibrationFor]: '' for another device's
-  /// document or before the first read.
-  String deviceNameFor(String deviceId) =>
-      _flashDeviceId == deviceId ? _flashDeviceName : '';
+  /// The connected device's display name, live off the link: history
+  /// provenance and the calibration report's owner label.
+  String get connectedDeviceName => _transport.connectedDeviceName;
 
   List<RigHistoryEntry> get history => List.unmodifiable(_history);
 
-  // -- Flash reads (connect time) ---------------------------------------------
+  // -- Connection events ------------------------------------------------------
 
   /// A flash document just arrived from device [deviceId] (named
-  /// [deviceName]): adopt it as the rig truth, restore or discard matching
-  /// pending edits, and record every populated slot in the cell history.
+  /// [deviceName]): adopt it as the rig truth and record every populated
+  /// slot in the cell history. Fires once per connect; nothing from the
+  /// previous connection is around to reconcile — the link's death
+  /// cleared it ([onLinkDropped]).
   void onFlashRead(String deviceId, String deviceName, DeviceFlash flash) {
-    // A link that dropped mid-read delivers with no identity — without an
-    // owning device id the document can't be attributed to anything.
-    if (deviceId.isEmpty) return;
-
-    // Pending edits: restore only when they belong to this device AND the
-    // device still matches their base. A changed device makes them stale —
-    // discard rather than resurrect an edit based on a rig that no longer
-    // exists.
-    final pending = _pending;
-    if (pending != null &&
-        !(pending.deviceId == deviceId &&
-            _sameCells(pending.base, flash.slots))) {
-      _pending = null;
-    }
+    // Delivery is token-gated to a live link upstream (BleLinkManager),
+    // so the document always arrives with its owning device's identity.
+    assert(deviceId.isNotEmpty, 'a flash read belongs to an identified device');
 
     _lastFlash = flash;
-    _flashDeviceId = deviceId;
-    _flashDeviceName = deviceName;
 
     // History: every populated slot on the device was "seen" now. One
     // persist for the batch, not one per cell.
@@ -148,35 +130,30 @@ class RigState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Content comparison for the pending-restore check: a pure rewrite with
-  /// fresh mtimes is NOT a change, so compare the cells, not the slots.
-  static bool _sameCells(RigSlots a, RigSlots b) {
-    for (int i = 0; i < kRigSlotCount; ++i) {
-      if (a.cellAt(i) != b.cellAt(i)) return false;
-    }
-    return true;
+  /// The link went away (user disconnect, drop, teardown — one event as
+  /// far as the rig is concerned): the flash document and any unsaved
+  /// edits die with the connection.
+  void onLinkDropped() {
+    if (_lastFlash == null && _pendingEdits == null) return;
+    _lastFlash = null;
+    _pendingEdits = null;
+    notifyListeners();
   }
 
   // -- Edits (UI gestures; require a read doc — see [hasDeviceDoc]) ------------
 
-  /// Start (if needed) the pending-edit session. Edits attach to the device
-  /// the flash doc came from (which may be offline right now — see
-  /// [_flashDeviceId]).
-  PendingRigEdits _ensurePending() {
+  /// The slot list an edit applies to: the pending buffer, started from
+  /// the flash state by the first edit.
+  RigSlots _editBuffer() {
     final flash = _lastFlash;
     assert(flash != null, 'edits require a read flash document');
-    return _pending ??= PendingRigEdits(
-      deviceId: _flashDeviceId,
-      base: flash!.slots,
-      edited: flash.slots,
-    );
+    return _pendingEdits ??= flash!.slots;
   }
 
   /// Place [cell] into slot [i] (add or edit). Recorded in history
   /// immediately: typed-in values are exactly what "last seen" is for.
   void setSlot(int i, LoadCellProfile cell) {
-    final p = _ensurePending();
-    p.edited = p.edited.withSlot(i, RigSlot(cell: cell));
+    _pendingEdits = _editBuffer().withSlot(i, RigSlot(cell: cell));
     _upsertHistory(cell, _transport.connectedDeviceName, DateTime.now());
     notifyListeners();
   }
@@ -184,8 +161,7 @@ class RigState extends ChangeNotifier {
   /// Empty slot [i]. Not recorded in history (contrast [setSlot]): an
   /// emptied slot is not a reusable "last seen" value.
   void clearSlot(int i) {
-    final p = _ensurePending();
-    p.edited = p.edited.withSlot(i, null);
+    _pendingEdits = _editBuffer().withSlot(i, null);
     notifyListeners();
   }
 
@@ -194,40 +170,32 @@ class RigState extends ChangeNotifier {
   /// the list never shifts under the user's finger.
   void swapSlots(int a, int b) {
     if (a == b) return;
-    final p = _ensurePending();
-    p.edited = p.edited.withSwap(a, b);
+    _pendingEdits = _editBuffer().withSwap(a, b);
     notifyListeners();
   }
 
   /// Discard pending edits; the flash state becomes effective again.
   void revert() {
-    if (_pending == null) return;
-    _pending = null;
+    if (_pendingEdits == null) return;
+    _pendingEdits = null;
     notifyListeners();
   }
 
-  /// Write the edited slots (with fresh mtimes) to the device, alongside the
-  /// board keys exactly as read, then verify with a read-back. Returns false
-  /// when the write or the verification fails — pending edits are kept so
-  /// the user can retry or revert.
+  /// Write the edited slots to the device, alongside the board keys
+  /// exactly as read, then verify with a read-back. Returns false when
+  /// the write or the verification fails — pending edits are kept so the
+  /// user can retry or revert.
   Future<bool> saveToDevice() async {
-    final pending = _pending;
+    final edited = _pendingEdits;
     final flash = _lastFlash;
-    if (pending == null || flash == null) return true;
-    // The write must go to the device the edits belong to — anything else
-    // would stamp this document's factory board keys onto another device's
-    // flash. The UI gates the Save button on this; the check belongs here
-    // too, next to the write.
-    if (pending.deviceId != _transport.connectedDeviceId) return false;
-    final edited = pending.edited;
-    final now = DateTime.now().toUtc();
-    final stamped = RigSlots([
-      for (int i = 0; i < kRigSlotCount; ++i)
-        edited.slots[i]?.copyWith(mtime: now),
-    ]);
+    if (edited == null) return true;
+    // Pending edits imply a read document (see [_editBuffer]), and both
+    // die with the link — so the document provably belongs to the device
+    // this write goes to.
+    assert(flash != null, 'pending edits imply a read flash document');
     final doc = DeviceFlash(
-      board: flash.board,
-      slots: stamped,
+      board: flash!.board,
+      slots: edited,
       extraLines: flash.extraLines,
     ).serialize();
     try {
@@ -237,14 +205,8 @@ class RigState extends ChangeNotifier {
     }
     // Verify: "the device holds exactly what we wrote" is an assumption,
     // not a fact (firmware may reject, truncate or normalize the write).
-    // Adopting the composed document as truth without checking would let
-    // app state diverge from the device silently — and there is no later
-    // change detection to catch it. Only the slots need verifying, and only
-    // the slots are adopted: the board calibration and the extraLines were
-    // read from this device and only those (writable) slot keys were
-    // written, so a slot save must never rebuild or replace board data —
-    // re-parsing the read-back without runtime PGA gains would only
-    // degrade it.
+    // Committing without checking would let app state diverge from the
+    // device silently — and there is no change detection to catch it.
     final String? readBack;
     try {
       readBack = await _transport.readFlashDoc();
@@ -252,26 +214,37 @@ class RigState extends ChangeNotifier {
       return false;
     }
     if (readBack == null) return false;
-    final verifiedSlots = RigSlots.fromKv(parseFlashKv(readBack));
-    if (!_sameCells(verifiedSlots, stamped)) return false;
+    // Verify against the slot keys only — the write can't have changed
+    // board keys, so a board re-parse would add nothing while resolving
+    // constants to nominal (the read-back isn't accompanied by the ADC's
+    // PGA readback).
+    final verified = RigSlots.fromKv(parseFlashKv(readBack));
+    if (!_sameCells(verified, edited)) return false;
     // Commit only if nothing moved under the in-flight write: a revert, a
-    // fresh edit, or a reconnect's flash read means the newer state wins.
-    // (The UI also blocks edits while saving; this is the model-side guard.)
-    if (!identical(_pending, pending) ||
-        !identical(pending.edited, edited) ||
-        !identical(_lastFlash, flash)) {
+    // fresh edit, or a link drop means the newer state wins. (The UI also
+    // blocks edits while saving; this is the model-side guard.)
+    if (!identical(_pendingEdits, edited) || !identical(_lastFlash, flash)) {
       return false;
     }
-    // The device provably holds the slots we wrote — adopt them (any
-    // normalization the device applied reflected), keeping the immutable
-    // board and courier lines exactly as read.
+    // The device provably holds these slots: adopt the read-back's slot
+    // list (any normalization the device applied is reflected), keep the
+    // read-time board and extra lines.
     _lastFlash = DeviceFlash(
       board: flash.board,
-      slots: verifiedSlots,
+      slots: verified,
       extraLines: flash.extraLines,
     );
-    _pending = null;
+    _pendingEdits = null;
     notifyListeners();
+    return true;
+  }
+
+  /// The save verification's equality: the read-back may differ textually
+  /// (key order, formatting), so compare the cells slot by slot.
+  static bool _sameCells(RigSlots a, RigSlots b) {
+    for (int i = 0; i < kRigSlotCount; ++i) {
+      if (a.cellAt(i) != b.cellAt(i)) return false;
+    }
     return true;
   }
 
@@ -349,7 +322,15 @@ class RigState extends ChangeNotifier {
 
 /// A "last seen values" entry: a cell this app has met (on a device flash
 /// read, or typed in by the user), offered as a quick pick when filling an
-/// empty slot. Purely advisory app memory — the device is the rig's truth.
+/// empty slot. This is the mechanism for moving a cell from one device to
+/// another: it was seen on the source device, and the receiving device's
+/// slot editor offers it back.
+///
+/// Purely advisory app memory — the device is the rig's truth; history
+/// never feeds device state. Identity is the profile VALUE (see
+/// [LoadCellProfile.==]), so two physically distinct cells with identical
+/// name/capacity/sensitivity are one entry — acceptable for a suggestion
+/// list.
 class RigHistoryEntry {
   RigHistoryEntry({
     required this.cell,
@@ -378,25 +359,4 @@ class RigHistoryEntry {
         lastSeen: DateTime.fromMillisecondsSinceEpoch(json['lastSeen'] as int),
         deviceName: json['deviceName'] as String? ?? '',
       );
-}
-
-/// Unsaved slot edits. In-memory ONLY (never persisted): they survive a
-/// device disconnect for the SAME device (restored on reconnect, see
-/// `RigState.onFlashRead`), but an app restart drops them — by design, so a
-/// stale edit can never resurface days later against an unknown rig.
-class PendingRigEdits {
-  PendingRigEdits({
-    required this.deviceId,
-    required this.base,
-    required this.edited,
-  });
-
-  final String deviceId;
-
-  /// The flash state the edits are based on. If a reconnect finds the device
-  /// no longer matches this, the edits are stale and get discarded.
-  final RigSlots base;
-
-  /// The edited slot list (what the app's readings already use).
-  RigSlots edited;
 }

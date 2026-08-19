@@ -117,7 +117,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   ///
   /// Identity-free: it describes the samples the hub holds, not the attached
   /// device (the settings page's calibration row shows the flash-document
-  /// owner's copy, `RigState.boardCalibrationFor`). Cleared when the link
+  /// copy, `RigState.boardCalibration`). Cleared when the link
   /// drops ([clearBoardCalibration]) — a dead stream has no constants.
   BoardCalibration? get boardCalibration => _boardCalibration;
   BoardCalibration? _boardCalibration;

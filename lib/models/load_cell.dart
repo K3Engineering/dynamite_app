@@ -17,25 +17,17 @@ const int kRigSlotCount = 10;
 String rigSlotTitle(int i) =>
     i < kAdcChannelCount ? 'CH ${i + 1}' : 'Slot ${i + 1}';
 
-/// One populated device slot: the cell plus the write timestamp from flash
-/// (display metadata only — never a sync arbiter).
+/// One populated device slot: the cell it holds.
 class RigSlot {
-  const RigSlot({required this.cell, this.mtime});
+  const RigSlot({required this.cell});
 
   final LoadCellProfile cell;
 
-  /// When this slot was written to the device, if known.
-  final DateTime? mtime;
-
-  RigSlot copyWith({LoadCellProfile? cell, DateTime? mtime}) =>
-      RigSlot(cell: cell ?? this.cell, mtime: mtime ?? this.mtime);
+  @override
+  bool operator ==(Object other) => other is RigSlot && other.cell == cell;
 
   @override
-  bool operator ==(Object other) =>
-      other is RigSlot && other.cell == cell && other.mtime == mtime;
-
-  @override
-  int get hashCode => Object.hash(cell, mtime);
+  int get hashCode => cell.hashCode;
 }
 
 /// The device's ten load cell slots: identity is positional (slots 0–3 are
@@ -109,7 +101,6 @@ class RigSlots {
               capacityKg: cap,
               sensitivityMvV: sens,
             ),
-            mtime: DateTime.tryParse(kv['lc$i.mtime'] ?? ''),
           ),
           _ => null,
         },
@@ -129,8 +120,6 @@ class RigSlots {
       }
       b.writeln('lc$i.cap=${c.capacityKg}');
       b.writeln('lc$i.sens=${c.sensitivityMvV}');
-      final m = s.mtime;
-      if (m != null) b.writeln('lc$i.mtime=${m.toUtc().toIso8601String()}');
     }
   }
 }

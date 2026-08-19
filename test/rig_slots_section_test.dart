@@ -10,9 +10,8 @@ import 'package:dynamite_app/widgets/rig_slots_section.dart';
 
 /// Widget tests for the rig slot section: rows from the device flash doc,
 /// the add/edit dialogs, and the dirty banner. The harness hands the
-/// section a real [RigState] (fake transport). No device is connected, so
-/// the Save button stays disabled — save logic itself is covered in
-/// rig_state_test.dart.
+/// section a real [RigState] (fake transport) with a flash doc already
+/// read. Save behavior itself is covered in rig_state_test.dart.
 class _FakeTransport implements RigFlashTransport {
   String? lastWrittenDoc;
 
@@ -54,11 +53,8 @@ void main() {
     }
     await tester.pumpWidget(
       MaterialApp(
-        // No connected device: the Save button stays disabled.
         home: Scaffold(
-          body: SingleChildScrollView(
-            child: RigSlotsSection(connectedDeviceId: '', rig: rig),
-          ),
+          body: SingleChildScrollView(child: RigSlotsSection(rig: rig)),
         ),
       ),
     );
@@ -111,11 +107,12 @@ void main() {
     expect(rig.hasPending, isTrue);
     expect(rig.channelCells[3]?.name, 'Thrust cell');
     expect(find.textContaining('Changes not saved to device'), findsOneWidget);
-    // Offline (no connected device): Save is disabled.
+    // Dirty: the Save button is live (the section only renders while
+    // connected — the pending session dies with the link).
     final saveButton = tester.widget<FilledButton>(
       find.widgetWithText(FilledButton, 'Save to device'),
     );
-    expect(saveButton.onPressed, isNull);
+    expect(saveButton.onPressed, isNotNull);
 
     // Revert restores the flash state and returns the bar to clean.
     await tester.tap(find.text('Revert'));

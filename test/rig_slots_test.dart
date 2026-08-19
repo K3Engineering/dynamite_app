@@ -22,12 +22,11 @@ void main() {
       expect(flash.board.factoryDate, '2026-07-20');
     });
 
-    test('slots parse with names, exact sensitivities and mtimes', () {
+    test('slots parse with names and exact sensitivities', () {
       final slots = flash.slots;
       expect(slots.cellAt(0)?.name, 'Thrust cell');
       expect(slots.cellAt(0)?.capacityKg, 200);
       expect(slots.cellAt(0)?.sensitivityMvV, closeTo(1.9993, 1e-12));
-      expect(slots[0]?.mtime, isNotNull);
 
       expect(slots.cellAt(1)?.name, 'Break jig');
       expect(slots.cellAt(2)?.name, ''); // unnamed cell on CH3

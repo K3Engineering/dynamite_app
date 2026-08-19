@@ -15,17 +15,12 @@ const quickSensitivitiesMvV = <double>[1, 2, 3];
 ///
 /// Edits take effect in this app immediately; nothing reaches the device
 /// until "Save to device" (the flash doc is the rig's single truth —
-/// reads are automatic, writes are explicit).
+/// reads are automatic, writes are explicit). Both the document and
+/// unsaved edits die with the link, so a connected session is the only
+/// context this section ever renders: the parent mounts it only while a
+/// device is connected, and a mid-session drop clears the rig under it.
 class RigSlotsSection extends StatefulWidget {
-  const RigSlotsSection({
-    super.key,
-    required this.connectedDeviceId,
-    required this.rig,
-  });
-
-  /// The currently connected device ('' when none): gates the Save button —
-  /// saving needs the very device the flash doc came from to be connected.
-  final String connectedDeviceId;
+  const RigSlotsSection({super.key, required this.rig});
 
   /// The rig's slot state. Passed in (not reached through Provider) so this
   /// section renders without an app-wide provider above it.
@@ -95,20 +90,18 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
       );
     }
     final slots = rig.effectiveSlots;
-    final pending = rig.pending;
-    final connectedId = widget.connectedDeviceId;
+    final dirty = rig.hasPending;
 
-    final canSave =
-        pending != null &&
-        connectedId.isNotEmpty &&
-        connectedId == pending.deviceId &&
-        !_saving;
+    // Dirty implies connected: both the document and pending edits die
+    // with the link (see RigState), and the parent unmounts this section
+    // once no device is connected.
+    final canSave = dirty && !_saving;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _StatusBar(
-          dirty: pending != null,
+          dirty: dirty,
           saving: _saving,
           canSave: canSave,
           onRevert: rig.revert,
@@ -205,12 +198,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
           );
         } else {
           final cell = slot.cell;
-          final mtime = slot.mtime?.toLocal();
-          // Date only: the mtime answers "how old is this calibration" — a
-          // months/years question, so the time of day would be noise.
-          final subtitle =
-              cell.valuesLine +
-              (mtime != null ? ' · saved ${formatDate(mtime)}' : '');
+          final subtitle = cell.valuesLine;
           tile = ListTile(
             title: Text(cell.title),
             subtitle: Text(subtitle),

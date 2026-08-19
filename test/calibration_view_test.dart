@@ -16,11 +16,10 @@ import 'package:dynamite_app/widgets/calibration_text.dart';
 import 'package:dynamite_app/widgets/calibration_view.dart';
 
 /// Widget tests for the factory calibration view (the board calibration
-/// page's body). The view renders the board it's handed; the per-device
-/// document gating lives in [RigState.boardCalibrationFor] — so the harness
-/// is a [RigState] fed the fixture document (with the PGA readback the demo
-/// device reports, 1x on all channels), and the view gets the board the
-/// gate returns.
+/// page's body). The view renders the board it's handed, so the harness
+/// is a [RigState] fed the fixture document (with the PGA readback the
+/// demo device reports, 1x on all channels), and the view gets
+/// [RigState.boardCalibration].
 class _FakeTransport implements RigFlashTransport {
   @override
   String get connectedDeviceId => 'dev1';
@@ -41,7 +40,6 @@ void main() {
   Future<void> pump(
     WidgetTester tester, {
     bool withFlash = true,
-    String deviceId = 'dev1',
     String? flashDoc,
     List<double> pgaGains = const [1, 1, 1, 1],
   }) async {
@@ -64,7 +62,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: SingleChildScrollView(
-            child: CalibrationView(board: rig.boardCalibrationFor(deviceId)),
+            child: CalibrationView(board: rig.boardCalibration),
           ),
         ),
       ),
@@ -161,14 +159,6 @@ void main() {
     expect(find.text('Could not read calibration data'), findsOneWidget);
     expect(find.textContaining('nominal values in use'), findsNothing);
     expect(find.text('CH 1'), findsNothing);
-  });
-
-  testWidgets('another device\'s flash doc is refused', (tester) async {
-    // The doc on file belongs to dev1, but the view was handed dev2.
-    await pump(tester, deviceId: 'dev2');
-
-    expect(find.text('Could not read calibration data'), findsOneWidget);
-    expect(find.textContaining('Calibrated'), findsNothing);
   });
 
   testWidgets('a partially-calibrated board is refused, with one warning', (

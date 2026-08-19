@@ -81,6 +81,15 @@ void main() async {
     linkManager.connectedDeviceName,
     flash,
   );
+  // A link loss (of any flavor — the getter reads the same '' for all of
+  // them) ends the rig session: the flash document and any unsaved edits
+  // die with the connection. A dirty discard is surfaced — losing edits
+  // silently is exactly the quiet failure this design rejects.
+  linkManager.addListener(() {
+    if (linkManager.connectedDeviceId.isNotEmpty) return;
+    if (rigState.hasPending) appEvents.emit(const RigEditsDiscarded());
+    rigState.onLinkDropped();
+  });
   // New-stream clears and calibration forgetting on link transitions.
   // Nothing reads this; it exists to react. Construction is the wiring.
   StreamResetCoordinator(

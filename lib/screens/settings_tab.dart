@@ -52,9 +52,9 @@ class SettingsTab extends StatelessWidget {
       (l) => l.maxAdcPacketBytes,
     );
     // The board-calibration row's one-line state; null until the
-    // connect-time read lands for this device.
+    // connect-time read lands.
     final boardCal = context.select<RigState, BoardCalibration?>(
-      (r) => r.boardCalibrationFor(deviceId),
+      (r) => r.boardCalibration,
     );
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
     // Unit availability is derived from the hub (the samples-owner), not
@@ -186,10 +186,7 @@ class SettingsTab extends StatelessWidget {
             // device".
             Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
             const SizedBox(height: 8),
-            RigSlotsSection(
-              connectedDeviceId: deviceId,
-              rig: context.read<RigState>(),
-            ),
+            RigSlotsSection(rig: context.read<RigState>()),
             const SizedBox(height: 16),
 
             Card(
