@@ -379,17 +379,70 @@ class _StatusBar extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Add-to-empty-slot dialog: last-seen values, or a custom entry
+// Add-to-empty-slot dialog: the entry fields, with last-seen cells below
 // ---------------------------------------------------------------------------
 
-/// The "+" sheet for an empty slot: cells this app has met before (on any
-/// device, or typed in), newest first; a custom entry goes through the same
-/// editor as an edit. Picking either fills the slot as a pending edit.
+/// The "+" sheet for an empty slot: type a cell in, or tap a cell this app
+/// has met before (on any device) to pre-fill the fields and tweak before
+/// saving. Either way the slot fills through the one Save button, as a
+/// pending edit.
 Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
   return showDialog<void>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text('Add load cell — ${rigSlotTitle(slot)}'),
+    builder: (_) => _AddToSlotDialog(rig: rig, slot: slot),
+  );
+}
+
+/// The add dialog as a stateful widget: the text controllers live in the
+/// [State], so they're disposed only when the route's pop animation finally
+/// unmounts the dialog.
+class _AddToSlotDialog extends StatefulWidget {
+  const _AddToSlotDialog({required this.rig, required this.slot});
+
+  final RigState rig;
+  final int slot;
+
+  @override
+  State<_AddToSlotDialog> createState() => _AddToSlotDialogState();
+}
+
+class _AddToSlotDialogState extends State<_AddToSlotDialog> {
+  final nameCtrl = TextEditingController();
+  final capCtrl = TextEditingController();
+  final sensCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    nameCtrl.dispose();
+    capCtrl.dispose();
+    sensCtrl.dispose();
+    super.dispose();
+  }
+
+  void _pick(RigHistoryEntry entry) {
+    final cell = entry.cell;
+    setState(() {
+      nameCtrl.text = cell.name;
+      capCtrl.text = _num(cell.capacityKg);
+      sensCtrl.text = _num(cell.sensitivityMvV);
+    });
+  }
+
+  void _save() {
+    final cell = _typedCell(nameCtrl.text, capCtrl.text, sensCtrl.text);
+    // The Save button is gated on the same check, so null here is
+    // unreachable.
+    if (cell == null) return;
+    widget.rig.setSlot(widget.slot, cell);
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final rig = widget.rig;
+    final theme = Theme.of(context);
+    return AlertDialog(
+      title: Text('Add load cell — ${rigSlotTitle(widget.slot)}'),
       content: SizedBox(
         width: 380,
         child: SingleChildScrollView(
@@ -397,11 +450,15 @@ Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              _CellFields(
+                nameCtrl: nameCtrl,
+                capCtrl: capCtrl,
+                sensCtrl: sensCtrl,
+                onChanged: () => setState(() {}),
+              ),
+              const Divider(height: 24),
               if (rig.history.isNotEmpty) ...[
-                Text(
-                  'Last seen in this app',
-                  style: Theme.of(ctx).textTheme.labelMedium,
-                ),
+                Text('Last seen in this app', style: theme.textTheme.labelMedium),
                 const SizedBox(height: 4),
                 for (final entry in rig.history)
                   ListTile(
@@ -416,50 +473,122 @@ Future<void> showAddToSlot(BuildContext context, RigState rig, int slot) {
                       '${formatTimestamp(entry.lastSeen)}'
                       '${entry.deviceName.isNotEmpty ? ' on ${entry.deviceName}' : ''}',
                     ),
-                    onTap: () {
-                      rig.setSlot(slot, entry.cell);
-                      Navigator.of(ctx).pop();
-                    },
+                    onTap: () => _pick(entry),
                   ),
-                const Divider(),
               ] else
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Text(
-                    'Cells you connect or type in will show up here for '
-                    'quick reuse.',
+                Text(
+                  'Cells you connect or type in will show up here for '
+                  'quick reuse.',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.outline,
                   ),
                 ),
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.tune),
-                title: const Text('Custom entry…'),
-                onTap: () async {
-                  Navigator.of(ctx).pop();
-                  await showSlotEditor(context, rig, slot);
-                },
-              ),
             ],
           ),
         ),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(ctx).pop(),
+          onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
+        FilledButton(
+          onPressed:
+              _typedCell(nameCtrl.text, capCtrl.text, sensCtrl.text) != null
+                  ? _save
+                  : null,
+          child: const Text('Save'),
+        ),
       ],
-    ),
-  );
+    );
+  }
+}
+
+/// The name + capacity + sensitivity fields with their quick-pick chips,
+/// shared by the add and edit dialogs. [onChanged] fires after any field or
+/// chip change so the host dialog can re-validate its Save button.
+class _CellFields extends StatelessWidget {
+  const _CellFields({
+    required this.nameCtrl,
+    required this.capCtrl,
+    required this.sensCtrl,
+    required this.onChanged,
+  });
+
+  final TextEditingController nameCtrl;
+  final TextEditingController capCtrl;
+  final TextEditingController sensCtrl;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          controller: nameCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Name (optional)',
+            hintText: 'e.g. Golden cell',
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: capCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(labelText: 'Capacity (kg)'),
+          onChanged: (_) => onChanged(),
+        ),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final v in quickCapacitiesKg)
+              ActionChip(
+                label: Text('${_num(v)} kg'),
+                onPressed: () {
+                  capCtrl.text = _num(v);
+                  onChanged();
+                },
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: sensCtrl,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+            labelText: 'Sensitivity (mV/V at full scale)',
+            hintText: 'Exact value from the cal cert, e.g. 2.007',
+          ),
+          onChanged: (_) => onChanged(),
+        ),
+        const SizedBox(height: 4),
+        Wrap(
+          spacing: 8,
+          children: [
+            for (final v in quickSensitivitiesMvV)
+              ActionChip(
+                label: Text('${_num(v)} mV/V'),
+                onPressed: () {
+                  sensCtrl.text = _num(v);
+                  onChanged();
+                },
+              ),
+          ],
+        ),
+      ],
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Slot editor dialog (edit a populated slot, or custom entry for an empty one)
+// Slot editor dialog (edit a populated slot)
 // ---------------------------------------------------------------------------
 
-/// Edit slot [slot]'s cell (or create it, when the slot is empty). Saving
-/// writes a PENDING edit — it reaches the device only via "Save to device".
+/// Edit slot [slot]'s cell. Saving writes a PENDING edit — it reaches the
+/// device only via "Save to device".
 Future<void> showSlotEditor(BuildContext context, RigState rig, int slot) {
   return showDialog<void>(
     context: context,
@@ -488,21 +617,14 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
   RigState get rig => widget.rig;
   int get slot => widget.slot;
 
-  /// The cell being edited, or null when this is a custom entry for an
-  /// empty slot.
-  LoadCellProfile? get initial => rig.effectiveSlots.cellAt(slot);
-
   @override
   void initState() {
     super.initState();
-    final cell = initial;
-    nameCtrl = TextEditingController(text: cell?.name ?? '');
-    capCtrl = TextEditingController(
-      text: cell != null ? _num(cell.capacityKg) : '',
-    );
-    sensCtrl = TextEditingController(
-      text: cell != null ? _num(cell.sensitivityMvV) : '',
-    );
+    // The editor only opens from a populated slot.
+    final cell = rig.effectiveSlots.cellAt(slot)!;
+    nameCtrl = TextEditingController(text: cell.name);
+    capCtrl = TextEditingController(text: _num(cell.capacityKg));
+    sensCtrl = TextEditingController(text: _num(cell.sensitivityMvV));
   }
 
   @override
@@ -514,22 +636,13 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
   }
 
   bool _valid() =>
-      (_typedNumber(capCtrl.text) ?? 0) > 0 &&
-      (_typedNumber(sensCtrl.text) ?? 0) > 0;
+      _typedCell(nameCtrl.text, capCtrl.text, sensCtrl.text) != null;
 
   void _save() {
-    final cap = _typedNumber(capCtrl.text);
-    final sens = _typedNumber(sensCtrl.text);
-    // The Save button is gated on [_valid], so both parse positive here.
-    if (cap == null || sens == null || cap <= 0 || sens <= 0) return;
-    rig.setSlot(
-      slot,
-      LoadCellProfile(
-        name: nameCtrl.text.trim(),
-        capacityKg: cap,
-        sensitivityMvV: sens,
-      ),
-    );
+    final cell = _typedCell(nameCtrl.text, capCtrl.text, sensCtrl.text);
+    // The Save button is gated on [_valid], so null here is unreachable.
+    if (cell == null) return;
+    rig.setSlot(slot, cell);
     Navigator.of(context).pop();
   }
 
@@ -540,81 +653,27 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final editing = initial != null;
     return AlertDialog(
-      title: Text(
-        '${editing ? 'Edit' : 'New'} load cell — ${rigSlotTitle(slot)}',
-      ),
+      title: Text('Edit load cell — ${rigSlotTitle(slot)}'),
       content: SizedBox(
         width: 380,
         child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Name (optional)',
-                  hintText: 'e.g. Golden cell',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: capCtrl,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(labelText: 'Capacity (kg)'),
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 4),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final v in quickCapacitiesKg)
-                    ActionChip(
-                      label: Text('${_num(v)} kg'),
-                      onPressed: () => setState(() => capCtrl.text = _num(v)),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                controller: sensCtrl,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                decoration: const InputDecoration(
-                  labelText: 'Sensitivity (mV/V at full scale)',
-                  hintText: 'Exact value from the cal cert, e.g. 2.007',
-                ),
-                onChanged: (_) => setState(() {}),
-              ),
-              const SizedBox(height: 4),
-              Wrap(
-                spacing: 8,
-                children: [
-                  for (final v in quickSensitivitiesMvV)
-                    ActionChip(
-                      label: Text('${_num(v)} mV/V'),
-                      onPressed: () => setState(() => sensCtrl.text = _num(v)),
-                    ),
-                ],
-              ),
-            ],
+          child: _CellFields(
+            nameCtrl: nameCtrl,
+            capCtrl: capCtrl,
+            sensCtrl: sensCtrl,
+            onChanged: () => setState(() {}),
           ),
         ),
       ),
       actions: [
-        if (editing)
-          TextButton(
-            onPressed: _clear,
-            style: TextButton.styleFrom(
-              foregroundColor: Theme.of(context).colorScheme.error,
-            ),
-            child: const Text('Clear slot'),
+        TextButton(
+          onPressed: _clear,
+          style: TextButton.styleFrom(
+            foregroundColor: Theme.of(context).colorScheme.error,
           ),
+          child: const Text('Clear slot'),
+        ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
@@ -631,6 +690,21 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
 /// Render a double without a trailing '.0' for whole numbers.
 String _num(double v) =>
     v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+
+/// The cell the three field contents describe, or null when either number
+/// is missing or non-positive. The add and edit dialogs gate their Save
+/// button on this and build their cell from it, so the enable condition and
+/// the value committed can never disagree.
+LoadCellProfile? _typedCell(String name, String cap, String sens) {
+  final c = _typedNumber(cap);
+  final s = _typedNumber(sens);
+  if (c == null || s == null || c <= 0 || s <= 0) return null;
+  return LoadCellProfile(
+    name: name.trim(),
+    capacityKg: c,
+    sensitivityMvV: s,
+  );
+}
 
 /// Parse a typed-in number, tolerating a comma decimal separator (some
 /// locales' decimal key inserts one). A single comma with no '.' is treated

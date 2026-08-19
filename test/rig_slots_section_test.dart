@@ -101,7 +101,12 @@ void main() {
     expect(inDialog(find.text('Add load cell — CH 4')), findsOneWidget);
     expect(inDialog(find.text('Last seen in this app')), findsOneWidget);
 
+    // A history tap pre-fills the fields; the Save button commits.
+    await tester.ensureVisible(inDialog(find.text('Thrust cell')));
+    await tester.pump();
     await tester.tap(inDialog(find.text('Thrust cell')));
+    await tester.pump();
+    await tester.tap(inDialog(find.widgetWithText(FilledButton, 'Save')));
     await tester.pumpAndSettle();
 
     expect(rig.hasPending, isTrue);
@@ -183,16 +188,42 @@ void main() {
     expect(find.text('Empty slot'), findsNWidgets(7));
   });
 
-  testWidgets('custom entry from the add dialog opens the editor', (
+  testWidgets('add dialog carries the fields; a history tap pre-fills them', (
     tester,
   ) async {
     await pump(tester);
 
     await tester.tap(find.text('Empty slot').first);
     await tester.pumpAndSettle();
-    await tester.tap(inDialog(find.text('Custom entry…')));
-    await tester.pumpAndSettle();
 
-    expect(inDialog(find.text('New load cell — CH 4')), findsOneWidget);
+    // Fields and history in one dialog — no second window.
+    expect(inDialog(find.text('Add load cell — CH 4')), findsOneWidget);
+    expect(
+      inDialog(find.widgetWithText(TextField, 'Capacity (kg)')),
+      findsOneWidget,
+    );
+    expect(inDialog(find.text('Last seen in this app')), findsOneWidget);
+    expect(find.text('Custom entry…'), findsNothing);
+    expect(find.text('New load cell — CH 4'), findsNothing);
+
+    FilledButton saveButton() => tester.widget<FilledButton>(
+      inDialog(find.widgetWithText(FilledButton, 'Save')),
+    );
+    TextField field(String label) => tester.widget<TextField>(
+      inDialog(find.widgetWithText(TextField, label)),
+    );
+
+    // Save stays off until a capacity AND a sensitivity parse positive…
+    expect(saveButton().onPressed, isNull);
+
+    // …a history tap fills them in (Thrust cell: 200 kg, 1.9993 mV/V).
+    await tester.ensureVisible(inDialog(find.text('Thrust cell')));
+    await tester.pump();
+    await tester.tap(inDialog(find.text('Thrust cell')));
+    await tester.pump();
+    expect(saveButton().onPressed, isNotNull);
+    expect(field('Name (optional)').controller!.text, 'Thrust cell');
+    expect(field('Capacity (kg)').controller!.text, '200');
+    expect(field('Sensitivity (mV/V at full scale)').controller!.text, '1.9993');
   });
 }
