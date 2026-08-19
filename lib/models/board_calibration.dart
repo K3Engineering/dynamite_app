@@ -150,9 +150,12 @@ class BoardConstantsResolution {
 const List<String> boardConstantKeys = ['adc_fsr', 'exc', 'afe_gain'];
 
 /// Resolve the board constants from a flash document's key=value map and the
-/// ADC's PGA readback ([pgaGains], null when that read failed). All-or-
-/// nothing: every required value must be present and positive, else the
-/// whole chain degrades (the app never guesses a partial chain).
+/// ADC's PGA readback ([pgaGains], null only when the caller never read them
+/// — e.g. the save-verification re-parse, which doesn't care about
+/// conversions; the live path always has them, since an unreadable ADC
+/// config fails the connection). All-or-nothing: every required value must
+/// be present and positive, else the whole chain degrades (the app never
+/// guesses a partial chain).
 BoardConstantsResolution resolveBoardConstants(
   Map<String, String> kv, {
   required List<double>? pgaGains,
@@ -597,9 +600,9 @@ class BoardCalibration {
 
   /// Build from an already-split key=value map (see [parseFlashKv]).
   /// Structural problems degrade only the affected channel to nominal.
-  /// [pgaGains] is the ADC's GAIN-register readback (null when that read
-  /// failed) — it resolves the board constants ([resolveBoardConstants])
-  /// whose verdict the result carries.
+  /// [pgaGains] is the ADC's GAIN-register readback (null only for callers
+  /// that never read it — see [resolveBoardConstants]) — it resolves the
+  /// board constants whose verdict the result carries.
   factory BoardCalibration.fromKv(
     Map<String, String> kv, {
     List<double>? pgaGains,

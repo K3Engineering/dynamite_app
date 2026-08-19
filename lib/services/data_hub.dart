@@ -28,10 +28,28 @@ typedef SamplesAppendedListener = void Function(int startIdx, int count);
 /// display index.
 class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   static const int _tareWindow = 1024;
-  static const int samplesPerSec = 1000;
-  static const int maxDataSz = samplesPerSec * 60 * 10;
+
+  /// Ring capacity in samples — ~10 min at the 1 kHz the device boots at.
+  /// A capacity decision, NOT derived from the device rate ([sampleRateHz]):
+  /// a faster stream simply covers less time in the same memory.
+  static const int maxDataSz = 600 * 1000;
   static const int bucketSize = kBucketSize;
   static const int numBuckets = maxDataSz ~/ bucketSize;
+
+  /// The active stream's sample rate (Hz), parsed from the device's config
+  /// readback and pushed by the link layer ([setSampleRate]) before
+  /// streaming starts. 1000 before any link: a display default so the
+  /// pre-connection UI (graph span readouts) has a defined value — the
+  /// number is only trusted downstream (recording metadata, the decoder's
+  /// continuity cross-check) once a link's readback has landed, and the
+  /// config read is mandatory, so a link without it never reaches streaming.
+  @override
+  int get sampleRateHz => _sampleRateHz;
+  int _sampleRateHz = 1000;
+
+  /// Push the sample rate parsed from the device config readback (once per
+  /// link, before the feed subscription).
+  void setSampleRate(int hz) => _sampleRateHz = hz;
 
   /// "No sample seen yet" sentinels for [rawMax]/[rawMin]: int32 min/max, so
   /// the first real sample always replaces them. Initializing to 0 instead
@@ -460,7 +478,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
       totalSamples > maxDataSz ? totalSamples - maxDataSz : 0;
 
   @override
-  int get sampleRate => samplesPerSec;
+  int get sampleRate => sampleRateHz;
 
   @override
   ChannelCalibration calibrationFor(int channelIndex) => ChannelCalibration(
@@ -584,7 +602,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
 
     // Difference the converter output (not the raw diff): exact under the
     // piecewise map, and tare cancels. Scaled to units per second.
-    return (conv(raw1.toDouble()) - conv(raw2.toDouble())) * samplesPerSec;
+    return (conv(raw1.toDouble()) - conv(raw2.toDouble())) * sampleRateHz;
   }
 
   void _addTare(int val, int idx) {

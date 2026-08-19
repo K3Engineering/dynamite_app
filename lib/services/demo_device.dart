@@ -68,6 +68,11 @@ class DemoDevice implements SimulatedLink {
   @override
   final List<double> pgaGains = List.filled(kAdcChannelCount, 1.0);
 
+  /// The demo feed's rate — its analogue of the config readback's sample
+  /// rate on real links.
+  @override
+  int get sampleRateHz => DemoSignalSource.sampleRateHz;
+
   DemoSignalSource? _source;
 
   @override

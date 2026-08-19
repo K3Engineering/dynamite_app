@@ -161,6 +161,45 @@ void main() {
     });
   });
 
+  test('an unreadable ADC config fails setup instead of "connecting"', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.badAdcConfig = true;
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+
+      expect(link.isStreaming, isFalse);
+      expect(link.link.state, BtLinkState.idle);
+      expect(seen.whereType<BleConnectionFailed>(), hasLength(1));
+      expect(seen.whereType<BleConnectionLost>(), isEmpty);
+      expect(MockBlePlatform.instance.disconnectCalls, contains(deviceId));
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('connect pushes the parsed sample rate before streaming (GATT and '
+      'demo)', () {
+    fakeAsync((async) {
+      final (link, _) = wire();
+      final rates = <int>[];
+      link.onSampleRate = rates.add;
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+      expect(rates, [1000]);
+      teardownLink(async, link);
+
+      unawaited(link.connectToDemoDevice());
+      async.elapse(const Duration(seconds: 1));
+      expect(rates, [1000, 1000]);
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(milliseconds: 100));
+    });
+  });
+
   test('an unexpected disconnect while streaming emits BleConnectionLost', () {
     fakeAsync((async) {
       final (link, seen) = wire();

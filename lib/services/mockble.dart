@@ -12,7 +12,7 @@ import 'kvs_protocol.dart';
 import '../models/board_calibration.dart';
 
 /// Samples per emitted feed packet: one packet every that many milliseconds
-/// makes 1 kHz (matches DataHub.samplesPerSec).
+/// makes 1 kHz (matches the mock's ADC config readback, see [readValue]).
 const int _samplesPerPacket = 20;
 
 /// Compile-time dev toggle: run the app against the simulated BLE platform
@@ -74,6 +74,11 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// When false, [discoverServices] reports a GATT table WITHOUT the ADC feed
   /// service, so post-connect setup cannot subscribe to the feed.
   bool includeAdcService = true;
+
+  /// When true, the ADC config characteristic serves garbage, so its read
+  /// never parses — the app's connect-time config read (mandatory) fails the
+  /// connection.
+  bool badAdcConfig = false;
 
   /// When true, KVS commands throw (a transport-level failure — the app's
   /// connect-time flash read then surfaces as "calibration unreadable").
@@ -180,6 +185,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   void resetKnobs() {
     dropEveryNPackets = 0;
     includeAdcService = true;
+    badAdcConfig = false;
     failCalibrationRead = false;
     kvsLockWhenStreaming = false;
     failFeedSubscribe = false;
@@ -398,7 +404,8 @@ class MockBlePlatform extends UniversalBlePlatform {
 
     if (BleInputProperty.notification == bleInputProperty) {
       // One packet every [_samplesPerPacket] ms => 1000 samples/sec (matches
-      // DataHub.samplesPerSec), with [_samplesPerPacket] samples per packet.
+      // the mock's ADC config readback), with [_samplesPerPacket] samples
+      // per packet.
       const dataInterval = Duration(milliseconds: _samplesPerPacket);
       _notificationTimer = Timer.periodic(dataInterval, (_) {
         final int thisCounter = _packetCount;
@@ -441,9 +448,15 @@ class MockBlePlatform extends UniversalBlePlatform {
       return Uint8List.fromList(utf8.encode(disValue));
     }
     if (characteristic == btChrAdcConfig) {
-      // The ADC config snapshot: struct version 1, zeroed registers, GAIN =
-      // 0x0000 (PGA 1x on all four channels — the mock is Pro-like).
-      return Uint8List(11)..[0] = 1;
+      if (badAdcConfig) return Uint8List(3);
+      // The ADC config snapshot: struct version 1; CLOCK = 0x0F14 (all four
+      // channels enabled, OSR = 4096 → 1000 SPS at the 8.192 MHz clock,
+      // matching the feed timer above); GAIN = 0x0000 (PGA 1x on all four
+      // channels — the mock is Pro-like).
+      return Uint8List(11)
+        ..[0] = 1
+        ..[8] = 0x0F
+        ..[7] = 0x14;
     }
     await Future<void>.delayed(netDelay);
     return Uint8List(255);

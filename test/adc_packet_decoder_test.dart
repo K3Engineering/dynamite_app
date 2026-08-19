@@ -213,6 +213,102 @@ void main() {
     });
   });
 
+  group('AdcPacketDecoder clock cross-check', () {
+    // Deterministic arrival clock: real packets arrive ~1 kHz / samples, and
+    // the cross-check only cares about coarse (100 ms-scale) agreement.
+    late int fakeUs;
+    Duration clock() => Duration(microseconds: fakeUs);
+    void advanceMs(int ms) => fakeUs += ms * 1000;
+
+    setUp(() => fakeUs = 0);
+
+    test('counter loss consistent with the clock injects the reported gap',
+        () {
+      final d = AdcPacketDecoder(hub, now: clock);
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+      // ~1 s of silence: the device counted 1020 samples the link never
+      // delivered, and the clock agrees within a packet interval.
+      advanceMs(1040);
+      d.onDataPacket(makePacket(1040, (s, c) => 2));
+
+      expect(hub.totalSamples, 20 + 1020 + 20);
+      expect(hub.gaps.contains(20), isTrue);
+      expect(hub.gaps.contains(1039), isTrue);
+      expect(hub.gaps.contains(1040), isFalse);
+    });
+
+    test('a loss spanning a full counter wrap is recovered from the clock',
+        () {
+      final d = AdcPacketDecoder(hub, now: clock);
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+      // 65.5+ s of silence consumes a full counter wrap: the wire counter
+      // moved by only the 20-sample remainder, which on the counter alone
+      // would read as continuity.
+      advanceMs(65556);
+      d.onDataPacket(makePacket(65556 & 0xFFFF, (s, c) => 2));
+
+      expect(hub.totalSamples, 20 + 65536 + 20);
+      expect(hub.gaps.contains(20), isTrue);
+      expect(hub.gaps.contains(20 + 65536 - 1), isTrue);
+      expect(hub.gaps.contains(20 + 65536), isFalse);
+    });
+
+    test('a counter jump the clock rules out injects the clock-sized gap, '
+        'and the next packet diffs the new numbering', () {
+      final d = AdcPacketDecoder(hub, now: clock);
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+      // 4 s since the previous packet but the counter restarted near 0 (a
+      // firmware counter bug): no wrap count gets the 65521 modulo-delta
+      // into 4000, so the clock is the authority. NOT a malformed packet —
+      // the framing is fine, only the counter disagrees.
+      advanceMs(4000);
+      d.onDataPacket(makePacket(5, (s, c) => 2));
+
+      expect(hub.lastMalformedPacketAt, isNull);
+      expect(hub.totalSamples, 20 + 4000 + 20);
+      expect(hub.gaps.contains(20), isTrue);
+      expect(hub.gaps.contains(20 + 4000 - 1), isTrue);
+      expect(hub.gaps.contains(20 + 4000), isFalse);
+
+      advanceMs(20);
+      d.onDataPacket(makePacket(5 + defaultPacketSamples, (s, c) => 3));
+      expect(hub.totalSamples, 4040 + 20);
+      expect(hub.gaps.contains(4040), isFalse);
+    });
+
+    test('sub-tolerance counter jumps stay plain gaps; beyond-tolerance ones '
+        'fall back to the clock', () {
+      final d = AdcPacketDecoder(hub, now: clock);
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+
+      // No time passed and the counter jumped 2900 samples: inside the
+      // 3 s slack, so it remains a plain counter-reported gap.
+      d.onDataPacket(makePacket(20 + 2900, (s, c) => 2));
+      expect(hub.totalSamples, 20 + 2900 + 20);
+
+      // One beyond the slack with zero elapsed: counter/clock disagreement.
+      // Zero clock samples elapsed, so the injected (clock-sized) gap is
+      // empty — the packet just appends its own samples.
+      d.onDataPacket(makePacket(2920 + 20 + 3101, (s, c) => 3));
+      expect(hub.totalSamples, 2940 + 20);
+      expect(hub.lastMalformedPacketAt, isNull);
+    });
+
+    test('a delivery stall inside the slack injects nothing', () {
+      final d = AdcPacketDecoder(hub, now: clock);
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+      // 2 s of silence, then the very next counter value: the clock says
+      // 2000 samples of wall time passed but the counter says the stream is
+      // continuous. That disagreement (2 s) is what the slack absorbs —
+      // delivery jank on a healthy stream, so no gap.
+      advanceMs(2000);
+      d.onDataPacket(makePacket(defaultPacketSamples, (s, c) => 2));
+
+      expect(hub.totalSamples, 2 * defaultPacketSamples);
+      expect(hub.gaps.contains(defaultPacketSamples), isFalse);
+    });
+  });
+
   group('AdcPacketDecoder calibration', () {
     test('a calibration document populates the hub board calibration', () {
       decoder.onCalibrationPacket(

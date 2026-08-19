@@ -1,4 +1,5 @@
-/// Recording write rate estimate: 4 channels x 4 bytes x 1000 samples/s.
+/// Recording write rate estimate: 4 channels x 4 bytes x the 1 kHz the
+/// device boots at (a planning estimate, not the stream's parsed rate).
 const int kRecordingBytesPerSecond = 16000;
 
 /// A platform's storage verdict for the Sessions tab's capacity strip: how

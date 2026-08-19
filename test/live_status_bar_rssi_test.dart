@@ -43,6 +43,7 @@ void main() {
             body: LiveStatusBar(
               isConnected: true,
               connectedDeviceName: 'K3',
+              sampleRateHz: 1000,
               onGoToDevices: () {},
             ),
           ),

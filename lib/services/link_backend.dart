@@ -60,7 +60,11 @@ abstract interface class SimulatedLink extends LinkBackend {
 
   /// Per-channel PGA gains served alongside the flash doc (the analogue
   /// of the GAIN-register readback on real links).
-  List<double>? get pgaGains;
+  List<double> get pgaGains;
+
+  /// The simulated feed's sample rate (the analogue of the CLOCK-register
+  /// data rate parsed from the config readback on real links).
+  int get sampleRateHz;
 
   /// Start the simulated ADC feed, delivered like GATT notifications.
   /// The matching stop is [LinkBackend.dispose].

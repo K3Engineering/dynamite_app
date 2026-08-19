@@ -10,6 +10,11 @@ abstract interface class AdcSink {
   /// as the start index of the batch it is about to append).
   int get totalSamples;
 
+  /// The active stream's sample rate (Hz), from the device config readback
+  /// — the decoder's counter/clock continuity cross-check counts elapsed
+  /// time in samples at this rate.
+  int get sampleRateHz;
+
   /// Anchor the device's packet counter to the sink's timeline (the session
   /// writer derives ssn_origin from this pairing).
   void notePacketCounter(int counter);

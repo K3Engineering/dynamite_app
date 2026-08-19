@@ -132,7 +132,7 @@ void main() {
 
       final sess = SessionData(
         channels: recorded,
-        sampleRate: DataHub.samplesPerSec,
+        sampleRate: hub.sampleRateHz,
         sampleCount: n,
         calibrations: [
           for (int ch = 0; ch < channels; ch++)
@@ -203,7 +203,7 @@ void main() {
       });
       final sess = SessionData(
         channels: recorded,
-        sampleRate: DataHub.samplesPerSec,
+        sampleRate: hub.sampleRateHz,
         sampleCount: n,
         calibrations: [
           for (int ch = 0; ch < channels; ch++)

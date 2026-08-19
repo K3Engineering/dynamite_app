@@ -57,17 +57,41 @@ Uint8List encodeAdcPacket({
   return out;
 }
 
-/// Parse the per-channel PGA gains from the ADC config characteristic's
-/// value (`AdcConfigNetworkData`, packed little-endian: version u8, id u16,
-/// status u16, mode u16, clock u16, pga u16 — the GAIN register readback,
-/// four 4-bit fields, gain = 2^field). Null on a short buffer or an unknown
-/// struct version — a failed parse is a failed read, never a guessed gain.
-List<double>? parseAdcConfigPgaGains(Uint8List b) {
+/// The ADC's decoded boot configuration: the per-channel PGA gains (the
+/// GAIN register readback) and the sample rate (the CLOCK register's OSR
+/// field against [kAdcClockHz]).
+typedef AdcConfig = ({List<double> pgaGains, int sampleRateHz});
+
+/// The ADC's modulator runs at [kAdcClockHz] / 2.
+const int _kModulatorDivider = 2;
+
+/// OSR values indexed by the CLOCK register's OSR[2:0] field. (The datasheet
+/// table prints 16256 for 111b; that is a typo — the field selects 16384.)
+const List<int> _kOsrTable = [128, 256, 512, 1024, 2048, 4096, 8192, 16384];
+
+/// Parse the ADC config characteristic's value (`AdcConfigNetworkData`,
+/// packed little-endian: version u8, id u16, status u16, mode u16, clock
+/// u16, pga u16). The CLOCK register carries the data-rate setting: 64 when
+/// its TBM bit is set, else the OSR field — sample_rate =
+/// [kAdcClockHz] / 2 / OSR, an integer for every selectable configuration.
+/// The GAIN register holds four 4-bit PGA fields, gain = 2^field. Null on a
+/// short buffer, an unknown struct version, or a rate that doesn't divide
+/// exactly (an impossible register value says this parse or the readback is
+/// wrong) — a failed parse is a failed read: the link manager fails the
+/// connection rather than guess the config.
+AdcConfig? parseAdcConfig(Uint8List b) {
   const structBytes = 11;
   if (b.length < structBytes || b[0] != 1) return null;
+  final clock = b[7] | (b[8] << 8);
+  final osr = (clock & 0x20) != 0 ? 64 : _kOsrTable[(clock >> 2) & 0x7];
+  final divisor = _kModulatorDivider * osr;
+  if (kAdcClockHz % divisor != 0) return null;
   final pga = b[9] | (b[10] << 8);
-  return [
-    for (int i = 0; i < kAdcChannelCount; ++i)
-      (1 << ((pga >> (4 * i)) & 0x7)).toDouble(),
-  ];
+  return (
+    pgaGains: [
+      for (int i = 0; i < kAdcChannelCount; ++i)
+        (1 << ((pga >> (4 * i)) & 0x7)).toDouble(),
+    ],
+    sampleRateHz: kAdcClockHz ~/ divisor,
+  );
 }

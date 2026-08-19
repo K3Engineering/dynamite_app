@@ -4,12 +4,16 @@ import 'dart:typed_data';
 
 import 'adc_protocol.dart';
 
-/// Samples per emitted packet: 20 on the 20 ms timer makes 1 kHz.
+/// The demo feed's sample rate: 20 samples on the 20 ms timer.
 const int _samplesPerPacket = 20;
 
 /// Generates realistic demo-quality simulated signals roughly scaled to a
 /// typical load cell (±2²³ FS). Emits real 1 kHz ADC packets to a callback.
 class DemoSignalSource {
+  /// The demo feed's rate (Hz): the value [DemoDevice] declares as its
+  /// sample rate (its analogue of the real device's config readback).
+  static const int sampleRateHz = 1000;
+
   Timer? _timer;
   int _counter = 0;
   int _globalSampleIndex = 0;
@@ -34,8 +38,8 @@ class DemoSignalSource {
       final frames = <Uint8List>[];
 
       for (int i = 0; i < _samplesPerPacket; i++) {
-        // Time in seconds since start (1 kHz sample rate)
-        final double t = _globalSampleIndex / 1000.0;
+        // Time in seconds since start.
+        final double t = _globalSampleIndex / sampleRateHz;
 
         // --- Channel 1: ~4s Thrust Curve (repeating) ---
         // Ramp up, rough plateau, tail-off
