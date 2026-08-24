@@ -567,19 +567,6 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
     return ext == null ? 0 : conv(ext.$2);
   }
 
-  /// Get minimum (most negative) value for a given ADC channel in the
-  /// specified unit. Returns 0 before the first sample arrives; null when
-  /// the unit is unavailable for the channel.
-  double? minValue(int adcChannel, DisplayUnit unit) {
-    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
-    if (totalSamples == 0) return 0;
-    final conv = unit.converterFor(
-      calibrationFor(adcChannel),
-      tare[adcChannel],
-    );
-    return conv?.call(rawMin[adcChannel].toDouble());
-  }
-
   /// Get the instantaneous derivative (first-difference) for a channel in
   /// unit/s; null when the unit is unavailable for the channel.
   double? currentDerivative(int adcChannel, DisplayUnit unit) {

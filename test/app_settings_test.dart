@@ -28,19 +28,4 @@ void main() {
     final s2 = await newSettings();
     expect(s2.displayUnit, DisplayUnit.kgf);
   });
-
-  test('legacy pre-slot keys are erased on load', () async {
-    SharedPreferences.setMockInitialValues({
-      'channel_labels': ['a', 'b', 'c', 'd'],
-      'load_cell_bank': '[{"id":"x"}]',
-      'channel_load_cells': '["x",null,null,null]',
-    });
-    await newSettings();
-    await pumpEventQueue(); // the constructor's erases are fire-and-forget
-
-    final prefs = await SharedPreferences.getInstance();
-    expect(prefs.getString('channel_labels'), isNull);
-    expect(prefs.getString('load_cell_bank'), isNull);
-    expect(prefs.getString('channel_load_cells'), isNull);
-  });
 }

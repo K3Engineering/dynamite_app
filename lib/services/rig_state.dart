@@ -33,20 +33,10 @@ class RigState extends ChangeNotifier {
     required SharedPreferences prefs,
   }) : _transport = transport,
        _prefs = prefs {
-    // Keys of removed subsystems (per-device change detection, the DMM
-    // cross-check), erased on load; there are no field devices, so no
-    // migration is performed.
-    for (final key in _legacyKeys) {
-      unawaited(_prefs.remove(key));
-    }
     _loadHistory();
   }
 
   static const String _keyHistory = 'rig_history';
-  static const List<String> _legacyKeys = [
-    'rig_lastseen',
-    'rig_dmm_excitation_mv',
-  ];
 
   /// History is a suggestion list, not an archive — cap it so it stays
   /// scannable (least-recently-seen evicted).

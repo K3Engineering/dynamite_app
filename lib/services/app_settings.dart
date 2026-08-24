@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -10,17 +8,12 @@ import '../models/display_unit.dart';
 ///
 /// Deliberately NOT here: channel labels (gone — row titles come from the
 /// rig's load cell slots) and everything load cell (device slots, history —
-/// owned by `RigState`). Legacy keys from the pre-slot model are erased on
-/// load; there are no field devices, so no migration is performed.
+/// owned by `RigState`).
 class AppSettings extends ChangeNotifier {
   /// [prefs] is injected (see `main`): the instance is available
   /// synchronously, so the load happens right here in the constructor and
   /// can never race a later setter.
   AppSettings({required SharedPreferences prefs}) : _prefs = prefs {
-    for (final key in _legacyKeys) {
-      unawaited(_prefs.remove(key));
-    }
-
     // A missing or unrecognizable stored value falls back to the platform
     // default unit (mV/V — see [_displayUnit]).
     _displayUnit = DisplayUnit.fromName(_prefs.getString(_keyUnit));
@@ -39,15 +32,6 @@ class AppSettings extends ChangeNotifier {
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
   static const String _keyLimitWarnings = 'limit_warnings_enabled';
-
-  /// Keys of the pre-slot model (channel labels, load cell bank, per-channel
-  /// assignments, the app-global DMM reading), erased on load.
-  static const List<String> _legacyKeys = [
-    'channel_labels',
-    'load_cell_bank',
-    'channel_load_cells',
-    'measured_excitation_mv',
-  ];
 
   final SharedPreferences _prefs;
 

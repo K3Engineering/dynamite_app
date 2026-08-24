@@ -47,11 +47,10 @@ void main() {
   }
 
   group('peaks', () {
-    test('an untouched hub reports zero peak/min, not sentinel garbage', () {
+    test('an untouched hub reports zero peak, not sentinel garbage', () {
       final hub = DataHub();
       for (int ch = 0; ch < channels; ch++) {
         expect(hub.peakValue(ch, DisplayUnit.raw, start: 0, end: 0), 0);
-        expect(hub.minValue(ch, DisplayUnit.raw), 0);
       }
     });
 
@@ -84,21 +83,6 @@ void main() {
         hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples),
         -50,
       );
-      expect(hub.minValue(0, DisplayUnit.raw), -300);
-    });
-
-    test('a never-negative channel reports its true (positive) min', () {
-      final hub = DataHub();
-      final frame = Int32List(channels);
-      for (final v in [100, 300, 50, 200]) {
-        frame[0] = v;
-        hub.addSampleFrame(frame);
-      }
-      expect(
-        hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples),
-        300,
-      );
-      expect(hub.minValue(0, DisplayUnit.raw), 50);
     });
 
     test('peaks are tare-adjusted at read time', () {
@@ -110,7 +94,6 @@ void main() {
         hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples),
         0,
       );
-      expect(hub.minValue(0, DisplayUnit.raw), 0);
     });
   });
 
@@ -215,7 +198,6 @@ void main() {
       expect(hub.taring, isFalse);
       expect(hub.tare[0], 0);
       expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 0), 0);
-      expect(hub.minValue(0, DisplayUnit.raw), 0);
       expect(hub.valueBuckets[0].series.samples, 0);
       expect(hub.diffBuckets[0].series.samples, 0);
 
@@ -350,7 +332,6 @@ void main() {
         hub.peakValue(0, DisplayUnit.kgf, start: 0, end: hub.totalSamples),
         isNull,
       );
-      expect(hub.minValue(0, DisplayUnit.kgf), isNull);
       expect(hub.currentDerivative(0, DisplayUnit.kgf), isNull);
       // Electrical units convert with board calibration alone.
       expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
