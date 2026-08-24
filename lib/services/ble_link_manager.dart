@@ -42,7 +42,7 @@ class DeviceLink {
   String deviceId;
 
   /// True when this link is simulated (the demo device) rather than a GATT
-  /// link: no RSSI polling, no reconnect cooldown, no proof-of-life stamps,
+  /// link: no RSSI polling, no reconnect embargo, no proof-of-life stamps,
   /// and the BLE status readout reports idle while it occupies the slot.
   bool isSimulated = false;
   String name = '';
@@ -92,8 +92,6 @@ class DeviceLink {
   /// NOT proof of data flow — notifications can still be absent or
   /// undecodable; the measured-traffic truth is deriveFeedHealth's.
   bool get isStreaming => state == BtLinkState.streaming;
-  bool get isDisconnecting => state == BtLinkState.disconnecting;
-  bool get isCoolingDown => state == BtLinkState.cooldown;
 
   /// Reset back to the idle sentinel (used on disconnect).
   void _reset() {
@@ -101,22 +99,6 @@ class DeviceLink {
     name = '';
     state = BtLinkState.idle;
     isSimulated = false;
-    storedName = null;
-    rssi = null;
-    info = null;
-    mtu = null;
-    minAdcPacketBytes = null;
-    maxAdcPacketBytes = null;
-  }
-
-  /// Like [_reset], but parks the link in [BtLinkState.cooldown] for the given
-  /// [deviceId] (the device just torn down). Keeps [deviceId]/[name] so the UI
-  /// can label that specific device's row while the reconnect settle window
-  /// elapses; everything else is cleared as in [_reset].
-  void _enterCooldown(String deviceId, String name) {
-    this.deviceId = deviceId;
-    this.name = name;
-    state = BtLinkState.cooldown;
     storedName = null;
     rssi = null;
     info = null;
@@ -168,7 +150,8 @@ bool isWebPickerDismissal(Object e) {
 }
 
 /// The BLE link state machine: adapter availability, scanning, connect /
-/// post-connect setup / disconnect / cooldown, and live RSSI polling.
+/// post-connect setup / disconnect, the web reconnect-settle embargo
+/// ([reconnectSettleDelay]), and live RSSI polling.
 ///
 /// This class owns *only* the link. It knows nothing about the wire protocol
 /// or recording: raw notification bytes and calibration reads are handed off
@@ -213,22 +196,42 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// Chrome) need a moment to finish tearing down GATT before they will accept
   /// a fresh connection to the SAME device. Reconnecting sooner makes Chrome
   /// briefly accept then drop the link (and throws "Cannot discover services if
-  /// the device is not connected"). On web we hold the link in
-  /// [BtLinkState.cooldown] for this window after teardown — Connect stays
-  /// disabled (with a hint) until it elapses. Web Bluetooth exposes no reliable
-  /// teardown signal, so the window is enforced as a timer, not a state query.
-  /// Native stacks don't exhibit the race and go straight back to idle. The
-  /// scan flow finishes the window early (see [_finishCooldown]): tested on
-  /// Chrome, the requestDevice() picker only surfaces a device once teardown
-  /// has settled, so the picker round-trip is the real settle signal on that
-  /// path — this timer remains the only signal for the manual Connect path.
+  /// the device is not connected"). Web Bluetooth exposes no teardown-complete
+  /// event, so the safety margin is a wall-clock guess — which is exactly
+  /// what a timestamp models: see [_reconnectNotBefore]. Native stacks don't
+  /// exhibit the race and stamp nothing.
   static const Duration reconnectSettleDelay = Duration(milliseconds: 4000);
 
-  /// One-shot timer that returns the active link from [BtLinkState.cooldown]
-  /// back to [BtLinkState.idle] once [reconnectSettleDelay] has elapsed since
-  /// the last teardown. Web-only (see [_teardownLink]). Cancelled if the
-  /// link is superseded before it fires.
-  Timer? _cooldownTimer;
+  /// Per-device "do not reconnect before" embargo (ms-precision wall clock),
+  /// stamped at teardown of a LIVE web link (see [_teardownLink]; web only —
+  /// a failed connect attempt never had a live link to settle and stamps
+  /// nothing). At most one unexpired stamp can exist: a new link can't come
+  /// up while [linkBusy] reports one pending, so each teardown's stamp is
+  /// sealed before the next one can be written. This is the ONLY fact kept
+  /// about the window: [linkBusy] and [reconnectPendingFor] both recompute
+  /// from it when consulted, so nothing needs maintaining (no early-finish
+  /// cleanup on scan kick-off — a cancelled picker leaves the embargo
+  /// standing, which is what blocks the machine-speed manual-reconnect race
+  /// on a device the user never re-picked). A successful picker pass clears
+  /// it: tested on Chrome, a device mid-teardown doesn't appear in
+  /// requestDevice() at all, so a pick IS the teardown-settle signal this
+  /// stamp otherwise guesses at (see [_connectPickedWebDevice]).
+  final Map<String, DateTime> _reconnectNotBefore = {};
+
+  /// Whether [deviceId] is inside its web reconnect-settle window. The
+  /// Devices tab shows the row's "Waiting after disconnect…" hint (and keeps
+  /// Connect disabled via [linkBusy]) while this is true.
+  bool reconnectPendingFor(String deviceId) {
+    final notBefore = _reconnectNotBefore[deviceId];
+    return notBefore != null && notBefore.isAfter(DateTime.now());
+  }
+
+  /// Zero-state poke so Connect buttons re-enable promptly at window end
+  /// even when nothing else happens meanwhile. It DECIDES nothing (it never
+  /// mutates the stamp — getters recompute from [_reconnectNotBefore]), so a
+  /// late, early, or superseded fire is harmless; a fresh teardown replaces
+  /// it with its own deadline.
+  Timer? _reconnectPoke;
 
   /// Epoch counter for the async post-connect setup cancellation tokens (see
   /// [_SetupToken]). Bumped on every connect request, disconnect request, and
@@ -285,9 +288,14 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// Per-device record of the platform's error string from the most recent
   /// UNEXPECTED link drop, keyed by device id. Set in [_onConnectionChange]
   /// only when the platform actually provides one (many stacks give none);
-  /// cleared on the same occasions as [_connectFailures]. A user-requested
-  /// disconnect is not an error and records nothing. The Devices tab shows
-  /// this as the inactive row's hint when there is no connect-failure marker.
+  /// a reasonless drop clears any stale entry for that device so it can't be
+  /// misattributed to the new drop. Cleared wholesale when any new connect
+  /// attempt begins (see [_beginConnect]) — but NOT on re-discovery: unlike
+  /// a connect FAILURE marker (whose remedy is "rescan and retry", moot once
+  /// re-found), this string describes the drop event itself, which stays
+  /// true however the device is re-discovered. A user-requested disconnect
+  /// is not an error and records nothing. The Devices tab shows this as the
+  /// inactive row's hint when there is no connect-failure marker.
   final Map<String, String> _lastDisconnectErrors = {};
 
   /// The platform's error string from [deviceId]'s last unexpected drop, or
@@ -339,24 +347,17 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// streaming. Every screen keys its connected UI off this.
   bool get isStreaming => _link.isStreaming;
 
-  /// The link state as the BLE status readout should see it. A simulated
-  /// link is not BLE: while it occupies the link slot the BLE link reports
-  /// [BtLinkState.idle], so the status falls through to scan/adapter state
-  /// instead of claiming "Connected".
-  BtLinkState get bleLinkState =>
-      _link.isSimulated ? BtLinkState.idle : _link.state;
-
-  /// True during the post-disconnect settle window (web only) — the link has
-  /// fully torn down but the stack isn't yet ready to reconnect to the same
-  /// device. Connect stays blocked while this is true.
-  bool get isCoolingDown => _link.isCoolingDown;
-
-  /// A link is "busy" whenever it is mid-transition, active, or cooling down
-  /// after a disconnect; device-row Connect buttons stay disabled until the
-  /// link returns to idle. This is what prevents the disconnect→reconnect
-  /// double-click race — including the web post-disconnect settle window where
-  /// the stack isn't yet ready to accept a fresh connection.
-  bool get linkBusy => _link.state != BtLinkState.idle;
+  /// A link is "busy" whenever it is mid-transition or active; device-row
+  /// Connect buttons stay disabled until it returns to idle. This is what
+  /// prevents the disconnect→reconnect double-click race. On web the busy
+  /// window OUTLIVES the link: a just-torn-down device keeps its
+  /// [_reconnectNotBefore] embargo until [reconnectSettleDelay] has elapsed,
+  /// because the stack isn't yet ready to accept a fresh connection to it.
+  /// Recomputed on every call from the stored facts (link state + stamp), so
+  /// it can't drift from either.
+  bool get linkBusy =>
+      _link.state != BtLinkState.idle ||
+      _reconnectNotBefore.values.any((t) => t.isAfter(DateTime.now()));
 
   /// Device id of the active link whenever the GATT link is up (during setup or
   /// while streaming); empty otherwise.
@@ -745,12 +746,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
         return;
       }
     }
-    // A scan kick-off during the post-disconnect settle window finishes the
-    // window immediately (see [_finishCooldown]) so Scan works instead of
-    // being a silent no-op for the remainder of the delay.
-    if (_link.isCoolingDown) {
-      _finishCooldown();
-    }
+    // A scan kick-off during the post-disconnect settle window does NOT
+    // shorten the window (no pre-commitment — the picker may be cancelled,
+    // and only a successful pick is settle evidence; see
+    // [_connectPickedWebDevice]). A mid-teardown device simply doesn't appear
+    // in the picker on web, so the scan is the honest answer on its own.
     // Guard before any destructive clears: if we can't/shouldn't start a scan,
     // don't wipe the existing device list (which would leave the UI showing an
     // empty list with no picker having opened).
@@ -777,12 +777,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // a no-op — nothing was cleared, and no result can precede a picker
     // throw.
     //
-    // NOTE: on web a just-torn-down device now stays listed and tappable
-    // inside the reconnect-settle window (Scan pressed right after a
-    // disconnect finishes the window early — see [_finishCooldown]). Tested
-    // on Chrome: that connect succeeds at human pace, so it is deliberately
-    // unguarded (the machine-speed guard is the cooldown itself, during
-    // which linkBusy disables every row's Connect button).
+    // NOTE: on web a just-torn-down device stays listed inside the
+    // reconnect-settle window, but its row's hint shows the embargo and
+    // [linkBusy] keeps Connect disabled — a manual reconnect can't start
+    // until the stamp expires (a scan kick-off no longer ends the window,
+    // so the old disconnect → Scan → cancel → fast reconnect race is gone).
     final previousDevices = List<DiscoveredDevice>.of(_devices);
     if (!kIsWeb) {
       _devices.clear();
@@ -886,9 +885,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
   /// Common teardown for every path that ends a link (clean disconnect, failed
   /// post-connect setup, disconnect timeout, abandoned connect): stop RSSI
-  /// polling, supersede in-flight setup, and clear the link. Recording is NOT
-  /// handled here — [RecordingController] observes this notifier and stops its
-  /// session when streaming ends.
+  /// polling, supersede in-flight setup, and reset the link to idle. Recording
+  /// is NOT handled here — [RecordingController] observes this notifier and
+  /// stops its session when streaming ends.
   ///
   /// [releaseGatt] must be true when the platform-level GATT link is (or may
   /// still be) up: a failed post-connect setup, or an abandoned/timed-out
@@ -897,24 +896,17 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// resulting disconnect callback arrives to an unwanted link and is ignored
   /// by the guard in [_onConnectionChange].
   ///
-  /// On web (real BLE devices only, and only when [cooldown] is true) the link
-  /// is NOT returned straight to [BtLinkState.idle]: it is parked in
-  /// [BtLinkState.cooldown] for [reconnectSettleDelay] so the UI keeps Connect
-  /// disabled (with a hint) until Chrome has finished GATT teardown. Native
-  /// stacks and simulated links don't exhibit the too-soon-reconnect race, so
-  /// they reset directly to idle.
-  ///
-  /// [cooldown] must be false when no live link was ever up — i.e. a failed
-  /// connect attempt. The settle window exists to let the stack finish
-  /// tearing down a LIVE GATT link; parking a rejected or timed-out attempt
-  /// there would show a "waiting after disconnect" state for a device that
-  /// was never connected (a lie, and it delays an immediate retry for
-  /// nothing). Does NOT call [notifyListeners] — callers do.
-  void _teardownLink(
-    String deviceId, {
-    bool releaseGatt = false,
-    bool cooldown = true,
-  }) {
+  /// On web, tearing down a LIVE link also stamps the device's reconnect
+  /// embargo (see [_reconnectNotBefore]): the link goes idle immediately, and
+  /// [linkBusy] blocks the too-soon-reconnect race from there. A teardown
+  /// while the link is still in `connecting` is a failed connect attempt —
+  /// no live link ever came up, so nothing settles and NO stamp is made
+  /// (parking such an attempt in the window would flash a fake "waiting
+  /// after disconnect" hint for a device that never connected, and delay an
+  /// immediate retry for nothing). Native stacks and simulated links don't
+  /// exhibit the race and stamp nothing either. Does NOT call
+  /// [notifyListeners] — callers do.
+  void _teardownLink(String deviceId, {bool releaseGatt = false}) {
     // Supersede any in-flight post-connect setup pass so it bails out instead of
     // writing state for a link we're tearing down.
     _supersedeSetupPasses();
@@ -924,59 +916,21 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _backend = null;
     _adcConfig = null;
     _stopRssiPolling();
-    _cooldownTimer?.cancel();
-    _cooldownTimer = null;
 
-    // Cooldown applies to real BLE links on web only — not native, not
-    // simulated links, and not failed connect attempts.
-    if (!kIsWeb || _link.isSimulated || !cooldown) {
-      _link._reset();
-    } else {
-      // Web: hold the link in cooldown for the settle window, then release it.
-      // The label is the display name the link currently resolves to (or the
-      // id when nothing resolved), so the row stays consistent with what the
-      // user saw while streaming.
-      _link._enterCooldown(deviceId, _link.displayName);
-      _cooldownTimer = Timer(reconnectSettleDelay, () {
-        _cooldownTimer = null;
-        // Only release if we're still cooling down THIS device (a new connect
-        // attempt to a different device, or a fresh teardown, may have moved on).
-        if (_link.isCoolingDown && _link.deviceId == deviceId) {
-          _link._reset();
-          notifyListeners();
-        }
+    if (kIsWeb && !_link.isSimulated && _link.state != BtLinkState.connecting) {
+      _reconnectNotBefore[deviceId] = DateTime.now().add(reconnectSettleDelay);
+      // See [_reconnectPoke]: decide nothing, only re-render at window end.
+      _reconnectPoke?.cancel();
+      _reconnectPoke = Timer(reconnectSettleDelay, () {
+        _reconnectPoke = null;
+        notifyListeners();
       });
     }
+    _link._reset();
 
     if (releaseGatt) {
       unawaited(_releaseGatt(deviceId));
     }
-  }
-
-  /// Finish a pending reconnect-settle window immediately: cancel the timer
-  /// and return the link to [BtLinkState.idle] now, rather than when
-  /// [reconnectSettleDelay] elapses. Called on a scan kick-off ([_startScan])
-  /// and on a web auto-connect ([_connectPickedWebDevice]).
-  ///
-  /// Tested on Chrome: a device mid-GATT-teardown does not appear in the
-  /// requestDevice() picker at all (it resurfaces only once it resumes
-  /// advertising, i.e. after teardown settles), so the picker round-trip IS
-  /// the teardown-settle signal Web Bluetooth otherwise lacks — the early
-  /// finish cannot fire inside a live accept-then-drop window, and a connect
-  /// issued right after the pick succeeds.
-  ///
-  /// KNOWN UNGUARDED EDGE: disconnect → Scan → cancel → Connect on the
-  /// still-listed device issues a manual connect that bypasses both the
-  /// picker signal and the remaining window. Tested: connects cleanly at
-  /// human pace. Deliberately left unguarded — the manual-path cooldown
-  /// stays as the guard against machine-speed reconnects, which testing did
-  /// not stress.
-  ///
-  /// Does NOT call [notifyListeners] — callers do.
-  void _finishCooldown() {
-    _cooldownTimer?.cancel();
-    _cooldownTimer = null;
-    _link._reset();
   }
 
   /// Best-effort release of a platform-level GATT link that has no app-side
@@ -1000,11 +954,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
     // Unwanted-link guard: ignore any connection event that has no app-side
     // owner — events for a different device than the active link, or events
-    // for OUR device arriving when no connect result is expected (idle,
-    // cooldown, disconnecting). A platform-level connect can complete AFTER
-    // we gave up on it (connect timeout, user cancel); the GATT link is then
-    // live at the platform level with nothing tracking it. Release such links
-    // so they can't leak, then ignore the event.
+    // for OUR device arriving when no connect result is expected (idle —
+    // including inside a pending reconnect-settle window — or disconnecting).
+    // A platform-level connect can complete AFTER we gave up on it (connect
+    // timeout, user cancel); the GATT link is then live at the platform level
+    // with nothing tracking it. Release such links so they can't leak, then
+    // ignore the event.
     final bool isActiveDevice =
         _link.deviceId.isNotEmpty && _link.deviceId == deviceId;
     if (!isActiveDevice ||
@@ -1035,23 +990,23 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // this handler synchronously, THEN completes the connect() future with an
     // error from that same event (see _connectionEventCompleter in
     // universal_ble — its only error source besides the timeout is this event
-    // stream). Record the per-row failure marker here and tear down WITHOUT
-    // cooldown (no live link ever came up); the future's error then lands in
-    // connectToDevice's catch, which finds the link already idle and returns
-    // silently — exactly one marker for either failure flavor. A
-    // user-requested cancel transitions through `disconnecting` first, so it
-    // never records a marker here.
+    // stream). Record the per-row failure marker here and tear down — still
+    // in `connecting`, so no reconnect embargo is stamped (no live link ever
+    // came up); the future's error then lands in connectToDevice's catch,
+    // which finds the link already idle and returns silently — exactly one
+    // marker for either failure flavor. A user-requested cancel transitions
+    // through `disconnecting` first, so it never records a marker here.
     if (_link.isConnecting) {
       _connectFailures[deviceId] = ConnectFailureKind.failed;
-      _teardownLink(deviceId, cooldown: false);
+      _teardownLink(deviceId);
       notifyListeners();
       return;
     }
 
     // Disconnect resolved (whether user-requested or unexpected): run the
     // common teardown (the platform side is already down, so no GATT
-    // release), which (on web) parks the link in cooldown for the
-    // reconnect settle window before returning it to the idle sentinel.
+    // release), which stamps the device's reconnect-settle embargo on web
+    // before returning the link to the idle sentinel.
     final String name = _link.displayName;
     // An unexpected drop while the link was up (setting up, starting the
     // stream, or streaming) gets a user notice. User-requested disconnects
@@ -1188,13 +1143,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     }
   }
 
-  /// Synchronous part of the connect preamble: refuse while a link is
-  /// mid-transition (the device row's Connect button is disabled until the
-  /// link returns to idle — first via the disconnect callback or the
-  /// disconnect() timeout reconciliation, then through the post-disconnect
-  /// cooldown window on web — so we never start a connect against a link the
-  /// stack isn't ready for), cancel a now-moot pending cooldown timer, and
-  /// supersede any lingering setup pass from a prior attempt.
+  /// Synchronous part of the connect preamble: refuse while [linkBusy] (a
+  /// link mid-transition or active, or — on web — a device still inside its
+  /// post-disconnect settle window — so we never start a connect against a
+  /// link the stack isn't ready for) and supersede any lingering setup pass
+  /// from a prior attempt.
   ///
   /// Kept synchronous so callers write their busy state in the same task —
   /// a Scan tap dispatched right after a Connect tap then sees `connecting`
@@ -1206,14 +1159,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// push updates, so it can't replace callback-driven state without polling
   /// (just a different timer).
   bool _beginConnect() {
-    if (_link.state != BtLinkState.idle) {
+    if (linkBusy) {
       return false;
     }
-    // A pending cooldown timer (from a prior teardown) is now moot: its guard
-    // would no-op once we move to `connecting`, but cancel it eagerly so it
-    // can't fire against this new attempt.
-    _cooldownTimer?.cancel();
-    _cooldownTimer = null;
     // A new attempt supersedes every recorded failure marker.
     _connectFailures.clear();
     _lastDisconnectErrors.clear();
@@ -1261,10 +1209,10 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _link.state = BtLinkState.connecting;
     notifyListeners();
 
-    // The post-disconnect settle window is enforced as the visible
-    // [BtLinkState.cooldown] state (see [_teardownLink]) BEFORE Connect is
-    // re-enabled, so by the time we get here the stack has already had time
-    // to finish GATT teardown. No inline sleep is needed.
+    // The post-disconnect settle window is enforced by the
+    // [_reconnectNotBefore] embargo (see [_teardownLink]), which [linkBusy]
+    // consulted in [_beginConnect] above: by the time we get here the stack
+    // has already had time to finish GATT teardown. No inline sleep is needed.
 
     try {
       // Stop scanning before connecting (the package advises it). The busy
@@ -1295,17 +1243,18 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       // [_teardownLink] (not a bare reset): it supersedes any lingering
       // setup pass and releases the platform GATT link (a timed-out connect
       // can still complete later — the guard in [_onConnectionChange] handles
-      // that callback). NO cooldown: the attempt never had a live link, so
-      // there is no teardown to settle — parking in cooldown would flash a
-      // fake "waiting after disconnect" state (a lie for e.g. Chrome's
-      // overnight-stale device handle, which rejects gatt.connect() outright).
+      // that callback). The link is still in `connecting` here, so the
+      // teardown stamps NO reconnect embargo: the attempt never had a live
+      // link to settle — the row must not flash a fake "waiting after
+      // disconnect" hint (a lie for e.g. Chrome's overnight-stale device
+      // handle, which rejects gatt.connect() outright).
       //
       // Record the failure kind for the Devices tab's per-row marker — the
       // user-facing channel for this failure (no toast).
       _connectFailures[deviceId] = e is TimeoutException
           ? ConnectFailureKind.timeout
           : ConnectFailureKind.failed;
-      _teardownLink(deviceId, releaseGatt: true, cooldown: false);
+      _teardownLink(deviceId, releaseGatt: true);
       notifyListeners();
       rethrow;
     }
@@ -1315,14 +1264,16 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// requestDevice() chooser (see [_onScanResult]). [connectToDevice] stops
   /// the scan itself before connecting.
   Future<void> _connectPickedWebDevice(DiscoveredDevice device) async {
-    // If the scan just tore a link down (it was streaming when Scan was
-    // pressed), the link is parked in the reconnect-settle window. Finish it
-    // immediately: the picker round-trip already gave Chrome human-scale
-    // time, and we're testing whether its own teardown serialization covers
-    // the rest (see [_finishCooldown]).
-    if (_link.isCoolingDown) {
-      _finishCooldown();
-    }
+    // The pick is the teardown-settle signal Web Bluetooth otherwise lacks:
+    // tested on Chrome, a device mid-GATT-teardown does not appear in the
+    // picker at all (it resurfaces only once it resumes advertising), so a
+    // successful pick means the stack is ready. Clear any pending reconnect
+    // embargo unconditionally — as the old early-finish path did — rather
+    // than waiting it out. (A scan kick-off does NOT clear it, so the manual
+    // reconnect race on a never-re-picked device stays closed.)
+    _reconnectNotBefore.clear();
+    _reconnectPoke?.cancel();
+    _reconnectPoke = null;
     try {
       // Refuses silently if the link has meanwhile become busy (e.g. the user
       // tapped Connect on another row or started the demo device) — the
@@ -1619,8 +1570,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _stopRssiPolling();
     _freshnessPoke?.cancel();
     _freshnessPoke = null;
-    _cooldownTimer?.cancel();
-    _cooldownTimer = null;
+    _reconnectPoke?.cancel();
+    _reconnectPoke = null;
     // Supersede any in-flight post-connect setup pass so it bails out.
     _supersedeSetupPasses();
 

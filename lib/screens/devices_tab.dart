@@ -30,12 +30,13 @@ class DevicesTab extends StatelessWidget {
     // Top indicator reflects only adapter/scan state; per-device link state
     // lives on the rows. We use raw linkBusy to withhold hints when ANY
     // link is busy, ensuring Connect buttons are disabled.
+    final status = Theme.of(context).extension<StatusColors>()!;
     final visual = btStatusVisual(
       linkState: BtLinkState.idle,
       availability: bt.bluetoothState,
       isScanning: bt.isScanning,
       hasConnectableDevices: bt.devices.isNotEmpty && !bt.linkBusy,
-      status: Theme.of(context).extension<StatusColors>()!,
+      status: status,
       colors: scheme,
     );
 
@@ -68,6 +69,12 @@ class DevicesTab extends StatelessWidget {
           lastAliveMs: bt.lastAliveMs(d.deviceId),
           nowMs: nowMs,
           supportsScanRssi: bt.supportsScanRssi,
+          // Transient beats history: while the reconnect embargo runs, the
+          // row explains why its Connect button is disabled instead of
+          // dwelling on the last outcome (it resurfaces at window end).
+          reconnectHint: bt.reconnectPendingFor(d.deviceId)
+              ? 'Waiting after disconnect…'
+              : null,
           failureHint: switch (bt.connectFailureFor(d.deviceId)) {
             final kind? => connectFailureHint(kind, isWeb: kIsWeb),
             // No failed connect on record: show why the last link dropped,
@@ -77,6 +84,7 @@ class DevicesTab extends StatelessWidget {
               null => null,
             },
           },
+          status: status,
           colors: scheme,
         ),
     };
@@ -311,7 +319,8 @@ int compareStaleRowsByRecency(int? aAliveMs, int? bAliveMs) =>
     (bAliveMs ?? 0).compareTo(aAliveMs ?? 0);
 
 /// The inactive device row's presentation state, resolved by
-/// [inactiveRowVisual]. Priority: a recorded connect failure outranks
+/// [inactiveRowVisual]. Priority: the reconnect-settle window outranks a
+/// recorded connect failure (transient beats history), which outranks
 /// staleness (actionable beats maybe-gone), which outranks the normal look.
 /// The mood also drives the Devices tab's row ordering (stale sinks last,
 /// then ordered by recency — see [compareStaleRowsByRecency]).
@@ -353,9 +362,26 @@ InactiveRowVisual inactiveRowVisual({
   required int? lastAliveMs,
   required int nowMs,
   required bool supportsScanRssi,
+  required String? reconnectHint,
   required String? failureHint,
+  required StatusColors status,
   required ColorScheme colors,
 }) {
+  // Web only (a reconnect-limited row exists there): a just-disconnected
+  // device whose stack isn't ready for a reconnect yet. NOT an error —
+  // linkActive signals "in flight", and the mood stays normal so the row
+  // keeps the fresh-group ordering an actually-stale row would lose.
+  if (reconnectHint != null) {
+    return (
+      mood: InactiveRowMood.normal,
+      icon: Icons.bluetooth_searching,
+      iconColor: status.linkActive,
+      subtitle: reconnectHint,
+      subtitleColor: null,
+      cardColor: null,
+      titleColor: null,
+    );
+  }
   if (failureHint != null) {
     return (
       mood: InactiveRowMood.failed,
@@ -574,7 +600,6 @@ class _ActiveDeviceRow extends StatelessWidget {
     final onContainer = scheme.onPrimaryContainer;
     final isConnecting = linkState == BtLinkState.connecting;
     final isDisconnecting = linkState == BtLinkState.disconnecting;
-    final isCoolingDown = linkState == BtLinkState.cooldown;
 
     // Compresses horizontal metrics (leading width, title gap, icon size)
     // to ensure text fits on small screens, while maintaining button alignment.
@@ -656,12 +681,8 @@ class _ActiveDeviceRow extends StatelessWidget {
               child: OutlinedButton(
                 style: activeRowActionButtonStyle(onContainer: onContainer),
                 // Disabled while the disconnect is in flight so the button
-                // truthfully reflects the in-progress teardown — and during the
-                // post-disconnect cooldown, where the link is already down and
-                // disconnectSelectedDevice would be an enabled no-op.
-                onPressed: (isDisconnecting || isCoolingDown)
-                    ? null
-                    : onDisconnect,
+                // truthfully reflects the in-progress teardown.
+                onPressed: isDisconnecting ? null : onDisconnect,
                 child: Text(
                   isDisconnecting
                       ? 'Disconnecting…'

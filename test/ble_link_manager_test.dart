@@ -321,12 +321,12 @@ void main() {
 
       expect(error, isA<ConnectionException>());
       // The catch path runs the common teardown: back to idle (VM tests are
-      // non-web, so no cooldown), no connection-lost notice for a link that
+      // non-web, so no reconnect embargo), no connection-lost notice for a link that
       // never came up.
       expect(link.link.state, BtLinkState.idle);
       expect(seen, isEmpty);
 
-      // An immediate retry must not be blocked by leftover busy/cooldown state.
+      // An immediate retry must not be blocked by leftover busy/embargo state.
       MockBlePlatform.instance.failConnect = false;
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -398,7 +398,7 @@ void main() {
   });
 
   test('a connect refused via the callback (native flavor) records a failure '
-      'marker and skips the cooldown', () {
+      'marker and skips the reconnect embargo', () {
     fakeAsync((async) {
       final (link, seen) = wire();
       MockBlePlatform.instance.failConnectViaCallback = true;
@@ -416,7 +416,7 @@ void main() {
 
       expect(error, isNull);
       expect(link.connectFailureFor(deviceId), ConnectFailureKind.failed);
-      // Back to idle (VM tests are non-web, so no cooldown either way) with
+      // Back to idle (VM tests are non-web, so no reconnect embargo either way) with
       // no notices and no GATT release: the platform reported the link down.
       expect(link.link.state, BtLinkState.idle);
       expect(seen, isEmpty);
@@ -933,7 +933,7 @@ void main() {
       expect(seen, [isA<BleConnectionLost>()]);
       // The platform link was still up, so teardown released the GATT side.
       expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
-      // The link is connectable again immediately (native: no cooldown).
+      // The link is connectable again immediately (native: no reconnect embargo).
       expect(link.linkBusy, isFalse);
     });
   });
@@ -968,16 +968,12 @@ void main() {
 
       unawaited(link.connectToDemoDevice());
       expect(link.isStreaming, isTrue);
-      // The demo device is not BLE: while it occupies the link slot, the BLE
-      // status projection stays idle so it never claims "Connected".
-      expect(link.bleLinkState, BtLinkState.idle);
       async.elapse(const Duration(milliseconds: 100));
       expect(received, greaterThan(0));
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(milliseconds: 100));
       expect(link.link.state, BtLinkState.idle);
-      expect(link.bleLinkState, BtLinkState.idle);
       expect(seen, isEmpty);
     });
   });

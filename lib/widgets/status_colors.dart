@@ -12,7 +12,7 @@ class StatusColors extends ThemeExtension<StatusColors> {
   });
 
   /// A link transition is in flight: scanning, connecting, post-connect
-  /// setup, disconnecting, or the post-disconnect cooldown.
+  /// setup, disconnecting, or a device inside its reconnect-settle window.
   final Color linkActive;
 
   /// The link is up and usable (streaming).

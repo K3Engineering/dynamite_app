@@ -56,10 +56,6 @@ void main() {
       visual(linkState: BtLinkState.disconnecting).label,
       'Disconnecting…',
     );
-    expect(
-      visual(linkState: BtLinkState.cooldown).label,
-      'Waiting after disconnect…',
-    );
   });
 
   test('idle + scanning outranks adapter status', () {

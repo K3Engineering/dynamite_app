@@ -44,17 +44,6 @@ enum BtLinkState {
   /// disconnect() timeout). Connect must stay blocked while in this state so we
   /// never issue a connect against a half-torn-down link.
   disconnecting,
-
-  /// The link has fully disconnected, but the platform stack (Web Bluetooth on
-  /// Chrome in particular) may not yet be ready to accept a fresh connection to
-  /// the SAME device. We hold the link here for [BleLinkManager.reconnectSettleDelay]
-  /// after teardown so the UI keeps Connect disabled (with a "waiting after
-  /// disconnect" hint) instead of silently sleeping inside the connect call. Web-only; native stacks go straight back to [idle] on disconnect. A
-  /// scan kick-off finishes the window early (see [BleLinkManager._finishCooldown]).
-  /// Only live-link teardowns park here: a FAILED connect attempt (rejected or
-  /// timed out) never had a live link to settle and goes straight back to
-  /// [idle] — see [BleLinkManager.connectToDevice].
-  cooldown,
 }
 
 /// Adapter availability. One-to-one with universal_ble's `AvailabilityState`

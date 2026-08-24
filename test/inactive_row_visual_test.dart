@@ -9,12 +9,15 @@ import 'package:dynamite_app/screens/devices_tab.dart'
         staleCardTintAlpha;
 import 'package:dynamite_app/services/ble_link_manager.dart'
     show BleLinkManager;
+import 'package:dynamite_app/widgets/status_colors.dart' show StatusColors;
 
 /// Tests for [inactiveRowVisual], the inactive device row's full presentation
 /// mapping (icon/colors/subtitle + the mood that drives stale-last ordering).
-/// The mood priority is the point: a recorded connect failure outranks
+/// The mood priority is the point: a reconnect-settle window outranks a
+/// recorded connect failure (transient beats history), which outranks
 /// staleness (actionable beats maybe-gone), which outranks the normal look.
 void main() {
+  const status = StatusColors.light;
   final colors = ColorScheme.fromSeed(seedColor: Colors.blue);
   // Fixed reference clock; ages are computed backwards from it.
   final now = DateTime(2026, 7, 22, 12).millisecondsSinceEpoch;
@@ -25,6 +28,7 @@ void main() {
     int? scanTs,
     int? lastAliveMs,
     bool supportsScanRssi = true,
+    String? reconnectHint,
     String? failureHint,
   }) => inactiveRowVisual(
     scanRssi: scanRssi,
@@ -32,11 +36,32 @@ void main() {
     lastAliveMs: lastAliveMs,
     nowMs: now,
     supportsScanRssi: supportsScanRssi,
+    reconnectHint: reconnectHint,
     failureHint: failureHint,
+    status: status,
     colors: colors,
   );
 
   group('mood priority', () {
+    test(
+      'a reconnect hint outranks a failure hint and is not an error look',
+      () {
+        // Both records can coexist (an unexpected drop with a reason string,
+        // then its reconnect embargo on web); the transient explanation of the
+        // disabled Connect button wins, with the link "in flight" color.
+        final v = row(
+          lastAliveMs: now - 1000,
+          reconnectHint: 'Waiting after disconnect…',
+          failureHint: "Couldn't connect",
+        );
+        expect(v.mood, InactiveRowMood.normal);
+        expect(v.icon, Icons.bluetooth_searching);
+        expect(v.iconColor, status.linkActive);
+        expect(v.subtitle, 'Waiting after disconnect…');
+        expect(v.subtitleColor, isNull);
+      },
+    );
+
     test('a failure hint outranks an otherwise-stale row', () {
       final v = row(lastAliveMs: now - 60000, failureHint: "Couldn't connect");
       expect(v.mood, InactiveRowMood.failed);
