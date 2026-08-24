@@ -293,6 +293,83 @@ void main() {
     });
   });
 
+  /// The chunk table must back the writer's accepted-sample count at
+  /// finalize: if writes were acknowledged but rows never landed (however
+  /// that happens — a storage-layer drop, or a writer-side skip), pretending
+  /// all is well would surface later as a truncated session. finalizeSession
+  /// must fail loud instead.
+  group('finalizeSession consistency check', () {
+    test('a dropped chunk makes finalizeSession return an error', () async {
+      final hub = DataHub();
+      hub.notePacketCounter(0);
+      final frame = Int32List(channels);
+      // Two chunks' worth of samples (the flush threshold is ~1024 samples),
+      // fed as two appends so the first flushes chunk 0 and the second chunk 1.
+      const perAppend = 1100;
+      for (int i = 0; i < perAppend * 2; i++) {
+        hub.addSampleFrame(frame);
+      }
+
+      // A sink that persists chunk 0 (creating the row through the real DB
+      // path) but silently drops every later chunk — storage acknowledging
+      // writes it never lands.
+      final db = AppDatabase.instance;
+      final dropping = LiveSessionWriter(
+        testHeader(),
+        sourceRingCapacity: DataHub.maxDataSz,
+        chunkSink: (id, chunkIndex, data, gapsJson) async {
+          if (chunkIndex == 0) {
+            return db.createSessionWithFirstChunk(
+              header: testHeader(),
+              ssnOrigin: 0,
+              gaps: gapsJson,
+              data: data,
+            );
+          }
+          return id!; // acknowledge chunks 1+ without writing them
+        },
+      );
+      await dropping.appendData(hub.snapshotRange(0, perAppend));
+      await dropping.appendData(hub.snapshotRange(perAppend, perAppend));
+      final error = await SessionStorage.finalizeSession(writer: dropping);
+
+      expect(error, isA<StateError>());
+      expect(error.toString(), contains('storage layer dropped samples'));
+    });
+
+    test('an intact multi-chunk recording finalizes with no error', () async {
+      final hub = DataHub();
+      hub.notePacketCounter(0);
+      final frame = Int32List(channels);
+      // Regression for the skipped-sink bug: the writer latched the session
+      // id with `_sessionId ??= await sink(...)`, so after chunk 0 the sink
+      // call itself was never evaluated and every later chunk was silently
+      // discarded. Two appends of 1100 frames each cross the ~16 KB flush
+      // threshold twice, so this fails unless chunks 0 AND 1 are written —
+      // a single append would land entirely in chunk 0 and miss the bug.
+      const perAppend = 1100;
+      const total = 2 * perAppend;
+      for (int i = 0; i < total; i++) {
+        hub.addSampleFrame(frame);
+      }
+      final writer = startFromHub(hub, name: 'ok');
+      await writer.appendData(hub.snapshotRange(0, perAppend));
+      await writer.appendData(hub.snapshotRange(perAppend, perAppend));
+      final error = await SessionStorage.finalizeSession(writer: writer);
+      expect(error, isNull);
+      expect(
+        (await AppDatabase.instance.sessionById(
+          writer.sessionId!,
+        ))!.sampleCount,
+        total,
+      );
+      final loaded = await SessionStorage.loadSession(writer.sessionId!);
+      expect(loaded, isNotNull);
+      expect(loaded!.sampleCount, total);
+      expect(loaded.damage.truncatedAt, isNull);
+    });
+  });
+
   group('SessionChunkCodec', () {
     test('pack/decode round-trips frames exactly', () {
       const codec = SessionChunkCodec(channels);

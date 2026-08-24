@@ -266,12 +266,16 @@ class LiveSessionWriter {
     final chunkIdx = _chunkIndex++;
     final gapsJson = gaps.toJson();
     try {
-      _sessionId ??= await (_chunkSink ?? _defaultSink)(
+      // The sink runs for EVERY chunk — only the returned row id is latched
+      // once. `_sessionId ??= await sink(...)` would skip the write itself
+      // after the first chunk (this bug silently discarded all chunks > 0).
+      final id = await (_chunkSink ?? _defaultSink)(
         _sessionId,
         chunkIdx,
         dataToSave,
         gapsJson,
       );
+      _sessionId ??= id;
     } catch (e) {
       // Latch the first failure; stop accumulating so we don't grow unbounded
       // after the sink has gone away (e.g. disk full / web quota exceeded).
@@ -303,8 +307,15 @@ class LiveSessionWriter {
         data: data,
       );
     }
-    await AppDatabase.instance.insertChunk(sessionId, chunkIndex, data);
-    await AppDatabase.instance.setSessionGaps(sessionId, gapsJson);
+    // The chunk and its gap-range update must commit together — the row's
+    // ranges describe every chunk up to the latest, so a split pair would
+    // misread held values as data (see AppDatabase.appendChunkAndGaps).
+    await AppDatabase.instance.appendChunkAndGaps(
+      sessionId,
+      chunkIndex,
+      data,
+      gapsJson,
+    );
     return sessionId;
   }
 

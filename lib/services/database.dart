@@ -241,7 +241,7 @@ class AppDatabase extends _$AppDatabase {
   /// completed. [gaps] is the JSON-encoded dropped-sample range list
   /// (session-relative); crash recovery passes the row's existing value so
   /// the ranges the live writer persisted incrementally (see
-  /// [setSessionGaps]) survive the crash.
+  /// [appendChunkAndGaps]) survive the crash.
   Future<void> completeSession(
     int id, {
     required int sampleCount,
@@ -257,15 +257,6 @@ class AppDatabase extends _$AppDatabase {
         gaps: Value(gaps),
       ),
     );
-  }
-
-  /// Replace a session's dropped-sample ranges ([gaps] is the JSON-encoded
-  /// range list, session-relative). Called by the live writer on every chunk
-  /// flush, so a crash mid-recording keeps the gap info up to the last
-  /// flushed chunk instead of losing it all (crash recovery only rebuilds
-  /// aggregates; it cannot reconstruct gaps from chunk bytes).
-  Future<void> setSessionGaps(int id, String gaps) {
-    return _updateSession(id, SessionsCompanion(gaps: Value(gaps)));
   }
 
   Future<void> renameSession(int id, String name) {
@@ -319,9 +310,38 @@ class AppDatabase extends _$AppDatabase {
     });
   }
 
+  /// Append one chunk of packed sample bytes to a session, keeping the row's
+  /// gap ranges current in the same unit of work.
+  ///
+  /// One transaction because the two must land or fail together: the row's
+  /// gap ranges describe every chunk up to the latest, so a chunk persisted
+  /// without its updated ranges (or ranges ahead of their chunk) would
+  /// misread held values as data on load.
+  Future<void> appendChunkAndGaps(
+    int sessionId,
+    int chunkIndex,
+    Uint8List data,
+    String gapsJson,
+  ) {
+    return transaction(() async {
+      await into(sessionChunks).insert(
+        SessionChunksCompanion.insert(
+          sessionId: sessionId,
+          chunkIndex: chunkIndex,
+          data: data,
+        ),
+      );
+      await _updateSession(sessionId, SessionsCompanion(gaps: Value(gapsJson)));
+    });
+  }
+
   /// Append one chunk of packed sample bytes to a session.
-  Future<void> insertChunk(int sessionId, int chunkIndex, Uint8List data) {
-    return into(sessionChunks).insert(
+  Future<void> insertChunk(
+    int sessionId,
+    int chunkIndex,
+    Uint8List data,
+  ) async {
+    await into(sessionChunks).insert(
       SessionChunksCompanion.insert(
         sessionId: sessionId,
         chunkIndex: chunkIndex,
