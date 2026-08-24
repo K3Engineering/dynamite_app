@@ -1,8 +1,8 @@
-/// The vocabulary of the share_plus-backed file-share flow
-/// (`shareSessionCsv` in csv_export.dart, `shareCalibrationReport` in
-/// report_export.dart) that screens need without importing an export
-/// module: the platform capability ([fileShareSupportedHere], to gate a
-/// Share button) and the iPad popover anchor ([ShareAnchor]).
+/// The vocabulary of the share_plus-backed file-share flow (`shareExport`
+/// in export_delivery.dart, driven by the session/calibration export
+/// actions) that screens need without importing an export module: the
+/// platform capability ([fileShareSupportedHere], to gate a Share button)
+/// and the iPad popover anchor ([ShareAnchor]).
 library;
 
 import 'package:flutter/foundation.dart';

@@ -2,7 +2,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../models/board_calibration.dart';
 import 'cal_deviation_plot.dart';
-import 'calibration_text.dart';
+import '../services/calibration_text.dart';
 
 /// The factory calibration view: identity/traceability, the trust statement,
 /// and each channel's measured corrections. Renders the board it's handed —

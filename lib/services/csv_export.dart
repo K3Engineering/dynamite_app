@@ -1,7 +1,7 @@
 /// CSV export of a recorded session: building the dynamite-csv file
-/// (docs/csv-format-v1.md) and handing it to the OS via the shared export
-/// delivery module (export_delivery.dart — both delivery paths, plus the
-/// shared filename rules below).
+/// (docs/csv-format-v1.md) as a deliverable artifact. Handing the file to
+/// the OS (save-as dialog, share sheet) is the caller's composition with
+/// export_delivery.dart — this module never touches platform UI.
 library;
 
 import 'dart:convert';
@@ -11,10 +11,9 @@ import 'dart:typed_data';
 import '../models/app_meta.dart';
 import '../models/channel_calibration.dart';
 import '../models/display_unit.dart';
-import 'export_delivery.dart';
+import 'export_names.dart';
 import 'session_data.dart';
 import 'session_metadata.dart';
-import 'share_capability.dart';
 
 /// The dynamite-csv file format's view of a display unit
 /// (docs/csv-format-v1.md): the header/metadata symbol and the per-column
@@ -46,76 +45,20 @@ extension DisplayUnitCsv on DisplayUnit {
   }
 }
 
-/// Download the session's recorded [data] as CSV: a save-as dialog on
-/// native platforms, a browser download on web. [unit] is the file's
+/// The session's recorded [data] as a deliverable CSV artifact: the file
+/// bytes, its sanitized name, and its MIME type. [unit] is the file's
 /// converted unit (the user's pick in the export flow — see
 /// docs/csv-format-v1.md). [sessionName]/[recordedAt]/[deviceInfoJson] are
 /// the session row's fields, passed flat so the export API doesn't take the
-/// drift row type. Returns per the shared delivery contract
-/// ([downloadExport]).
-Future<String?> downloadSessionCsv({
+/// drift row type. Delivery is the caller's job (export_delivery.dart).
+({Uint8List bytes, String fileName, String mimeType}) buildSessionCsvArtifact({
   required String sessionName,
   required DateTime recordedAt,
   required String deviceInfoJson,
   required SessionData data,
   required DisplayUnit unit,
   required AppMeta appMeta,
-}) async {
-  final (bytes, fileName) = _prepareCsv(
-    sessionName,
-    recordedAt,
-    deviceInfoJson,
-    data,
-    unit,
-    appMeta,
-  );
-  return downloadExport(
-    bytes: bytes,
-    fileName: fileName,
-    dialogTitle: 'Download session CSV',
-  );
-}
-
-/// Share the session's recorded [data] as CSV via the platform share sheet.
-/// [unit] is the file's converted unit (see docs/csv-format-v1.md). [anchor]
-/// positions the iPad share popover; ignored elsewhere. Returns per the
-/// shared delivery contract ([shareExport]).
-Future<String?> shareSessionCsv({
-  required String sessionName,
-  required DateTime recordedAt,
-  required String deviceInfoJson,
-  required SessionData data,
-  required DisplayUnit unit,
-  required AppMeta appMeta,
-  ShareAnchor? anchor,
-}) async {
-  final (bytes, fileName) = _prepareCsv(
-    sessionName,
-    recordedAt,
-    deviceInfoJson,
-    data,
-    unit,
-    appMeta,
-  );
-  return shareExport(
-    bytes: bytes,
-    fileName: fileName,
-    mimeType: 'text/csv',
-    dialogTitle: 'Share CSV',
-    anchor: anchor,
-  );
-}
-
-/// Build the CSV bytes and filename for one session's [data] in [unit].
-/// Shared by both delivery paths.
-(Uint8List, String) _prepareCsv(
-  String sessionName,
-  DateTime recordedAt,
-  String deviceInfoJson,
-  SessionData data,
-  DisplayUnit unit,
-  AppMeta appMeta,
-) {
+}) {
   final csv = buildSessionCsv(
     data,
     unit,
@@ -124,8 +67,9 @@ Future<String?> shareSessionCsv({
     deviceInfoJson: deviceInfoJson,
   );
   return (
-    Uint8List.fromList(utf8.encode(csv)),
-    csvFileNameForSession(sessionName),
+    bytes: Uint8List.fromList(utf8.encode(csv)),
+    fileName: csvFileNameForSession(sessionName),
+    mimeType: 'text/csv',
   );
 }
 

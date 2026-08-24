@@ -26,6 +26,7 @@ import 'services/rig_state.dart';
 import 'services/session_metadata.dart';
 import 'services/session_storage.dart';
 import 'services/stream_reset_coordinator.dart';
+import 'services/wakelock_policy.dart';
 import 'screens/app_shell.dart';
 import 'widgets/status_colors.dart';
 
@@ -125,6 +126,13 @@ void main() async {
     events: appEvents,
   );
   final appSettings = AppSettings(prefs: prefs);
+  // Keep the screen awake while a device stream is live and the setting is
+  // on. Nothing reads this; it exists to react. Construction is the wiring.
+  WakelockPolicy(
+    settings: appSettings,
+    streamingChanges: linkManager,
+    streamingNow: () => linkManager.isStreaming,
+  );
   // Content-equal pushes are a no-op inside the hub.
   dataHub.updateLoadCells(rigState.channelCells);
   rigState.addListener(() => dataHub.updateLoadCells(rigState.channelCells));

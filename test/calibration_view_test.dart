@@ -12,7 +12,7 @@ import 'package:dynamite_app/services/report_export.dart';
 import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/cal_deviation_plot.dart';
-import 'package:dynamite_app/widgets/calibration_text.dart';
+import 'package:dynamite_app/services/calibration_text.dart';
 import 'package:dynamite_app/widgets/calibration_view.dart';
 
 /// Widget tests for the factory calibration view (the board calibration

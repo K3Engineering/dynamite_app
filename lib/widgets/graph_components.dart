@@ -14,6 +14,7 @@ import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 import '../services/session_data.dart';
 import 'channel_palette.dart';
+import 'clip_intervals.dart';
 
 // ---------------------------------------------------------------------------
 // Shared graph layout constants

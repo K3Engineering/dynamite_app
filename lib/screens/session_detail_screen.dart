@@ -8,6 +8,7 @@ import '../services/app_settings.dart';
 import '../models/display_unit.dart';
 import '../models/session_summary.dart';
 import '../services/csv_export.dart';
+import '../services/export_delivery.dart';
 import '../services/salvage_export.dart';
 import '../services/session_data.dart';
 import '../services/session_queries.dart';
@@ -16,7 +17,7 @@ import '../services/share_capability.dart';
 import '../utils/format.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
-import 'session_flows.dart';
+import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 
@@ -363,13 +364,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           damage: data.damage,
         );
         if (unit == null) return null;
-        return downloadSessionCsv(
+        final artifact = buildSessionCsvArtifact(
           sessionName: session.name,
           recordedAt: session.createdAt,
           deviceInfoJson: session.deviceInfoJson,
           data: data,
           unit: unit,
           appMeta: appMeta,
+        );
+        return downloadExport(
+          bytes: artifact.bytes,
+          fileName: artifact.fileName,
+          dialogTitle: 'Download session CSV',
         );
       });
 
@@ -381,13 +387,19 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           damage: data.damage,
         );
         if (unit == null) return null;
-        return shareSessionCsv(
+        final artifact = buildSessionCsvArtifact(
           sessionName: session.name,
           recordedAt: session.createdAt,
           deviceInfoJson: session.deviceInfoJson,
           data: data,
           unit: unit,
           appMeta: appMeta,
+        );
+        return shareExport(
+          bytes: artifact.bytes,
+          fileName: artifact.fileName,
+          mimeType: artifact.mimeType,
+          dialogTitle: 'Share CSV',
           anchor: _shareAnchor(),
         );
       });

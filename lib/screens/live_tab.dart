@@ -18,7 +18,7 @@ import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
 import '../widgets/channel_stats_table.dart';
-import 'session_flows.dart';
+import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 import '../widgets/rssi_indicator.dart';

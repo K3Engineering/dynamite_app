@@ -8,7 +8,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../services/session_queries.dart';
 import '../utils/format.dart';
-import '../widgets/dialogs.dart';
+import 'dialogs.dart';
 
 /// Rename-a-session flow. Callers relying on reactive session streams need
 /// no further refresh.

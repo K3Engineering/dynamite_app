@@ -3,10 +3,11 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/board_calibration.dart';
+import '../services/export_delivery.dart';
 import '../services/report_export.dart';
 import '../services/share_capability.dart';
 import '../services/rig_state.dart';
-import '../widgets/calibration_text.dart';
+import '../services/calibration_text.dart';
 import '../widgets/calibration_view.dart';
 
 /// The board calibration page: the factory calibration view
@@ -65,11 +66,17 @@ class CalibrationScreen extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: OutlinedButton.icon(
-            onPressed: () => _runExport(
-              context,
-              () =>
-                  downloadCalibrationReport(report: report, deviceLabel: label),
-            ),
+            onPressed: () => _runExport(context, () {
+              final artifact = calibrationReportArtifact(
+                report,
+                deviceLabel: label,
+              );
+              return downloadExport(
+                bytes: artifact.bytes,
+                fileName: artifact.fileName,
+                dialogTitle: 'Download calibration report',
+              );
+            }),
             icon: const Icon(Icons.download),
             label: const Text('Download'),
           ),
@@ -78,14 +85,19 @@ class CalibrationScreen extends StatelessWidget {
         Expanded(
           child: OutlinedButton.icon(
             onPressed: fileShareSupportedHere
-                ? () => _runExport(
-                    context,
-                    () => shareCalibrationReport(
-                      report: report,
+                ? () => _runExport(context, () {
+                    final artifact = calibrationReportArtifact(
+                      report,
                       deviceLabel: label,
+                    );
+                    return shareExport(
+                      bytes: artifact.bytes,
+                      fileName: artifact.fileName,
+                      mimeType: artifact.mimeType,
+                      dialogTitle: 'Share calibration report',
                       anchor: _shareAnchor(context),
-                    ),
-                  )
+                    );
+                  })
                 : null,
             icon: const Icon(Icons.share),
             label: const Text('Share'),

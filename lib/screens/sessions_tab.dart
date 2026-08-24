@@ -6,7 +6,7 @@ import '../models/session_summary.dart';
 import '../services/session_queries.dart';
 import '../services/storage_probe.dart';
 import '../utils/format.dart';
-import 'session_flows.dart';
+import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/storage_capacity_strip.dart';
 import 'session_detail_screen.dart';

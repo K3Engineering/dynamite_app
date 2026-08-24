@@ -6,7 +6,7 @@ import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
-import 'package:dynamite_app/widgets/rig_slots_section.dart';
+import 'package:dynamite_app/screens/rig_slots_section.dart';
 
 /// Widget tests for the rig slot section: rows from the device flash doc,
 /// the add/edit dialogs, and the dirty banner. The harness hands the

@@ -2,9 +2,7 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
-import 'package:wakelock_plus/wakelock_plus.dart';
 
-import '../services/app_settings.dart';
 import '../services/app_events.dart';
 import '../services/ble_link_manager.dart';
 import 'live_tab.dart';
@@ -17,6 +15,12 @@ import 'settings_tab.dart';
 /// Also the single consumer of [AppEvents]: one-shot notices from the service
 /// layer surface here as SnackBars, so delivery doesn't depend on which tab
 /// happens to be mounted or rebuilding.
+///
+/// The tab-index side effect (the Devices-tab visibility poke) lives here
+/// because the IndexedStack keeps every tab mounted — tab-local
+/// initState/dispose never see visibility changes. The keep-awake policy is
+/// application-lifecycle, not navigation: it lives in
+/// services/wakelock_policy.dart, wired in main.
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 
@@ -28,13 +32,8 @@ class AppShellState extends State<AppShell> {
   int _currentIndex = 0;
   StreamSubscription<AppEvent>? _eventsSub;
 
-  /// Last wakelock state pushed to the plugin, so [_syncWakelock] only calls
-  /// the platform channel on an actual edge (the link manager notifies on
-  /// every RSSI poll; enabling repeatedly would be a pointless side effect).
-  bool? _wakelockApplied;
-
-  /// App-lifetime singletons driving the wakelock; captured in [initState].
-  late final AppSettings _settings = context.read<AppSettings>();
+  /// App-lifetime link manager for the tab-visibility poke; captured in
+  /// [initState].
   late final BleLinkManager _link = context.read<BleLinkManager>();
 
   static const _tabs = [
@@ -48,28 +47,13 @@ class AppShellState extends State<AppShell> {
   void initState() {
     super.initState();
     _eventsSub = context.read<AppEvents>().stream.listen(_onAppEvent);
-    // Keep the screen awake while a device stream is live and the setting is
-    // on. Both inputs are app-lifetime singletons; the listener only reacts
-    // to actual edges.
-    _settings.addListener(_syncWakelock);
-    _link.addListener(_syncWakelock);
-    _syncWakelock();
     _onTabActivated(_currentIndex);
   }
 
   @override
   void dispose() {
     unawaited(_eventsSub?.cancel());
-    _settings.removeListener(_syncWakelock);
-    _link.removeListener(_syncWakelock);
     super.dispose();
-  }
-
-  void _syncWakelock() {
-    final target = _settings.wakelockEnabled && _link.isStreaming;
-    if (target == _wakelockApplied) return;
-    _wakelockApplied = target;
-    unawaited(target ? WakelockPlus.enable() : WakelockPlus.disable());
   }
 
   void _onAppEvent(AppEvent event) {

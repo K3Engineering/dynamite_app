@@ -13,9 +13,9 @@ import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/rig_state.dart';
-import '../widgets/calibration_text.dart';
+import '../services/calibration_text.dart';
 import '../widgets/info_cards.dart';
-import '../widgets/rig_slots_section.dart';
+import 'rig_slots_section.dart';
 import '../widgets/section_header.dart';
 import 'calibration_screen.dart';
 

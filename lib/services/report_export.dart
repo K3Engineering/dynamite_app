@@ -1,14 +1,14 @@
-/// Calibration-report export: the plain-text report (see
-/// `widgets/calibration_text.dart`) handed to the OS via the shared export
-/// delivery module (export_delivery.dart — both delivery paths, plus the
-/// shared filename rules below).
+/// Calibration-report export: packaging the plain-text report (content
+/// built by services/calibration_text.dart) as a deliverable artifact.
+/// Handing the file to the OS (save-as dialog, share sheet) is the caller's
+/// composition with export_delivery.dart — this module never touches
+/// platform UI.
 library;
 
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'export_delivery.dart';
-import 'share_capability.dart';
+import 'export_names.dart';
 
 /// The report export's file name: `calibration_report_<device label>.txt`,
 /// sanitized per the shared export rules ([exportFileNameFor]).
@@ -18,29 +18,14 @@ String calibrationReportFileName(String deviceLabel) => exportFileNameFor(
   fallback: 'calibration_report',
 );
 
-/// Download [report] as a .txt file: a save-as dialog on native platforms,
-/// a browser download on web. [deviceLabel] names the file. Returns per the
-/// shared delivery contract ([downloadExport]).
-Future<String?> downloadCalibrationReport({
-  required String report,
+/// The plain-text calibration [report] as a deliverable artifact: the file
+/// bytes, its sanitized name, and its MIME type. [deviceLabel] names the
+/// file. Delivery is the caller's job (export_delivery.dart).
+({Uint8List bytes, String fileName, String mimeType}) calibrationReportArtifact(
+  String report, {
   required String deviceLabel,
-}) => downloadExport(
-  bytes: Uint8List.fromList(utf8.encode(report)),
-  fileName: calibrationReportFileName(deviceLabel),
-  dialogTitle: 'Download calibration report',
-);
-
-/// Share [report] as a .txt file via the platform share sheet. [anchor]
-/// positions the iPad share popover; ignored elsewhere. [deviceLabel] names
-/// the file. Returns per the shared delivery contract ([shareExport]).
-Future<String?> shareCalibrationReport({
-  required String report,
-  required String deviceLabel,
-  ShareAnchor? anchor,
-}) => shareExport(
+}) => (
   bytes: Uint8List.fromList(utf8.encode(report)),
   fileName: calibrationReportFileName(deviceLabel),
   mimeType: 'text/plain',
-  dialogTitle: 'Share calibration report',
-  anchor: anchor,
 );
