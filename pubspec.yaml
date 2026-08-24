@@ -52,7 +52,7 @@ dependencies:
   # Linux). file_picker 12 beta: the 11.x line pins win32 ^5, conflicting
   # with share_plus 13's win32 ^6 — re-evaluate at file_picker 12 stable.
   share_plus: ^13.3.0
-  file_picker: ^12.0.0-beta.1
+  file_picker: ^12.0.0
 
   material_ui: any
 dev_dependencies:
