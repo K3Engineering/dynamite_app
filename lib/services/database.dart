@@ -100,6 +100,15 @@ class AppDatabase extends _$AppDatabase {
   factory AppDatabase.forTesting(QueryExecutor executor) =>
       AppDatabase._(executor);
 
+  /// Session-row creation must not race crash recovery's incomplete-session
+  /// scan: recovery runs after the first frame (see main()), so its SELECT
+  /// executes once the DB opens — on a cold web load, seconds after a
+  /// recording could already have created its isCompleted=false row, which
+  /// recovery must not finalize. The live writer awaits this before
+  /// creating its row. The completed default keeps tests and non-main
+  /// entry points ungated.
+  static Future<void> crashRecoveryFence = Future.value();
+
   /// Close the shared instance (if open) and reset the singleton, so the
   /// next [instance] access opens a fresh connection — which is when drift
   /// runs schema migrations. The web hot-restart cleanup uses this: hot
