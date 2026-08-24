@@ -34,20 +34,35 @@ void main() async {
   // Silence and tear down the previous hot-restart generation's BLE link
   // (web debug only) BEFORE anything else, so its stale notification stream
   // stops spamming the disposed engine view and its GATT connection is
-  // released for us to reconnect. Runs before session recovery so a recording
-  // interrupted by the restart is finalized by the recovery pass below.
+  // released for us to reconnect. Runs before session recovery is scheduled
+  // so a recording interrupted by the restart is finalized by its pass.
   runPreviousHotRestartCleanup();
-  // Repair any sessions left incomplete by a crash before the UI reads the
-  // session list, so partial sessions are finalized (or pruned) first.
-  try {
-    await SessionStorage.recoverIncompleteSessions();
-  } catch (e) {
-    // The first DB open crashes here if web/sqlite3.wasm is stale.
-    if (kIsWeb) {
-      debugPrint('Double-check web/sqlite3.wasm against pubspec.lock.');
-    }
-    rethrow;
-  }
+  // Crash recovery is deferred to after the first frame: opening the web DB
+  // spawns drift_worker.js and fetches sqlite3.wasm, and first paint must
+  // not wait on either. The Sessions list needs no gating — it excludes
+  // incomplete rows by construction and simply gains the recovered ones
+  // when recovery lands. The fence keeps the live writer's row creation
+  // out of recovery's incomplete-session scan (see
+  // AppDatabase.crashRecoveryFence).
+  final recoveryFence = Completer<void>();
+  AppDatabase.crashRecoveryFence = recoveryFence.future;
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(() async {
+      try {
+        await SessionStorage.recoverIncompleteSessions();
+      } catch (e) {
+        // The first DB open crashes here if web/sqlite3.wasm is stale.
+        if (kIsWeb) {
+          debugPrint('Double-check web/sqlite3.wasm against pubspec.lock.');
+        }
+        rethrow;
+      } finally {
+        // Release the writer even when recovery fails: a broken DB then
+        // fails loudly at the row-creation write instead.
+        recoveryFence.complete();
+      }
+    }());
+  });
   // Prefs are resolved here and injected into their owners, so their loads
   // are synchronous constructor work and can never race a user edit.
   final prefs = await SharedPreferences.getInstance();

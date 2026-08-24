@@ -288,6 +288,9 @@ class LiveSessionWriter {
     String gapsJson,
   ) async {
     if (sessionId == null) {
+      // Row creation must stay out of a concurrent recovery scan — see
+      // AppDatabase.crashRecoveryFence.
+      await AppDatabase.crashRecoveryFence;
       // The ssn origin always precedes the first flush: appendData latches
       // it synchronously before any chunk bytes can exist.
       return AppDatabase.instance.createSessionWithFirstChunk(
