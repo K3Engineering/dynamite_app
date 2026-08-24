@@ -374,8 +374,7 @@ class SegmentedGraphCache {
 
   /// Draw the window [viewStart, viewStart + viewSpan) mapped to x in
   /// [0, gw): blit cached segments under their corrective affine transforms
-  /// and vector-draw uncovered gaps up to [maxDirectGapPx] wide (wider gaps
-  /// stay blank until the rolling bakes cover them).
+  /// and vector-draw the uncovered gaps.
   void draw(
     Canvas canvas, {
     required double gw,
@@ -386,7 +385,6 @@ class SegmentedGraphCache {
     required double yMax,
     required int totalSamples,
     required double vPad,
-    required double maxDirectGapPx,
     required SegmentRenderer render,
   }) {
     final double pps = gw / viewSpan;
@@ -403,7 +401,6 @@ class SegmentedGraphCache {
       yMin,
       yMax,
       vPad,
-      maxDirectGapPx,
       render,
     );
   }
@@ -431,7 +428,6 @@ class SegmentedGraphCache {
     required int tailSpan,
     required double hPad,
     required double vPad,
-    required double maxDirectGapPx,
     required SegmentRenderer render,
   }) {
     final baked = maintain(
@@ -461,7 +457,6 @@ class SegmentedGraphCache {
       yMax: yMax,
       totalSamples: totalSamples,
       vPad: vPad,
-      maxDirectGapPx: maxDirectGapPx,
       render: render,
     );
     return baked;
@@ -821,9 +816,7 @@ class SegmentedGraphCache {
   /// Vector-render the uncovered visible ranges (live-edge sliver, freshly
   /// exposed pan/zoom territory, bake backlog). Unblittable segments
   /// ([_isBlittable]) count as uncovered: their content is never blitted, so
-  /// these ranges are drawn exactly until the sweep re-bakes them. Ranges
-  /// wider than [maxDirectGapPx] are left blank -- the rolling bakes cover
-  /// them within a few frames.
+  /// these ranges are drawn exactly until the sweep re-bakes them.
   void _drawGaps(
     Canvas canvas,
     double pps,
@@ -835,7 +828,6 @@ class SegmentedGraphCache {
     double yMin,
     double yMax,
     double vPad,
-    double maxDirectGapPx,
     SegmentRenderer render,
   ) {
     for (final (gs, ge) in _gaps(
@@ -848,7 +840,7 @@ class SegmentedGraphCache {
       blittableOnly: true,
     )) {
       final double w = (ge - gs) * pps;
-      if (w <= 0 || w > maxDirectGapPx) continue;
+      if (w <= 0) continue;
       final double x = (gs - viewStart) * pps;
       canvas.save();
       // The floored coverage start can put a gap's left edge up to one
@@ -2608,10 +2600,6 @@ bool _paintEnvelopeDataLayer(
     // zoomed in past 1 sample/px -- the horizontal pad must cover it.
     hPad: math.max(kSegmentImagePad, blockPx + 2),
     vPad: kSegmentImagePad,
-    // Gaps (live edge, bake backlog after pans/zooms) are always drawn as
-    // vectors; with the bucket-accelerated reduction even history-wide gaps
-    // are cheap enough to render directly.
-    maxDirectGapPx: double.infinity,
     render: (cCanvas, start, end, texW) {
       // The polyline overshoots the segment end into the first block past
       // it (the join block) so the line reaches the seam with the

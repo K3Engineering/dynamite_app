@@ -33,7 +33,6 @@ class _Harness {
     int generation = 0,
     List<Object?> destructiveKey = const ['u'],
     List<Object?> remapKey = const ['k'],
-    double maxDirectGapPx = double.infinity,
     int tailSpan = 10,
   }) {
     calls.clear();
@@ -55,7 +54,6 @@ class _Harness {
       tailSpan: tailSpan,
       hPad: kSegmentImagePad,
       vPad: kSegmentImagePad,
-      maxDirectGapPx: maxDirectGapPx,
       render: (canvas, start, end, texW) {
         calls.add((
           start: start,
@@ -103,17 +101,6 @@ void main() {
       // Fully covered and fresh: no bake work remains, no gap draws.
       expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isFalse);
       expect(h.calls, isEmpty);
-    });
-
-    test('gaps wider than maxDirectGapPx are left blank, not vector-drawn', () {
-      h.paint(
-        viewStart: 0,
-        viewSpan: 400,
-        totalSamples: 400,
-        maxDirectGapPx: 100,
-      );
-      // The 200px uncovered remainder exceeds the 100px direct-draw limit.
-      expect(h.gapDraws, isEmpty);
     });
   });
 
