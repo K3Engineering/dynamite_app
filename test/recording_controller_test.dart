@@ -82,16 +82,19 @@ void main() {
     expect(recording.sessionInProgress, isFalse);
   });
 
-  test('startSession refuses when only malformed packets are arriving', () async {
-    final (recording, hub, _) = wire();
-    hub.streamStartedAt = DateTime.now().subtract(const Duration(seconds: 5));
-    hub.noteMalformedPacket(182);
+  test(
+    'startSession refuses when only malformed packets are arriving',
+    () async {
+      final (recording, hub, _) = wire();
+      hub.streamStartedAt = DateTime.now().subtract(const Duration(seconds: 5));
+      hub.noteMalformedPacket(182);
 
-    final result = start(recording);
+      final result = start(recording);
 
-    expect(result, isA<StartSessionNoData>());
-    expect(recording.sessionInProgress, isFalse);
-  });
+      expect(result, isA<StartSessionNoData>());
+      expect(recording.sessionInProgress, isFalse);
+    },
+  );
 
   test(
     'start latches the writer; stop finalizes it and returns its name',
@@ -151,51 +154,45 @@ void main() {
     },
   );
 
-  test(
-    'a second start while recording is refused',
-    () async {
-      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
-      addTearDown(AppDatabase.closeInstance);
+  test('a second start while recording is refused', () async {
+    AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(AppDatabase.closeInstance);
 
-      final (recording, _, _) = wire();
+    final (recording, _, _) = wire();
 
-      expect(start(recording), isA<StartSessionOk>());
-      expect(start(recording), isA<StartSessionBusy>());
-      expect(recording.sessionInProgress, isTrue);
+    expect(start(recording), isA<StartSessionOk>());
+    expect(start(recording), isA<StartSessionBusy>());
+    expect(recording.sessionInProgress, isTrue);
 
-      // No frames ever arrived, so no row ever existed: stopping finalizes
-      // nothing (recorded nothing saves nothing).
-      final stop = await recording.stopSession();
-      expect(stop.error, isNull);
-      expect(stop.sessionId, isNull);
-      expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
-    },
-  );
+    // No frames ever arrived, so no row ever existed: stopping finalizes
+    // nothing (recorded nothing saves nothing).
+    final stop = await recording.stopSession();
+    expect(stop.error, isNull);
+    expect(stop.sessionId, isNull);
+    expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
+  });
 
-  test(
-    'a start while finalization is in flight is refused',
-    () async {
-      AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
-      addTearDown(AppDatabase.closeInstance);
+  test('a start while finalization is in flight is refused', () async {
+    AppDatabase.instance = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(AppDatabase.closeInstance);
 
-      final (recording, hub, _) = wire();
+    final (recording, hub, _) = wire();
 
-      expect(start(recording), isA<StartSessionOk>());
-      feedFrames(hub, 4);
+    expect(start(recording), isA<StartSessionOk>());
+    feedFrames(hub, 4);
 
-      // The stop synchronously enters the stopping state before its
-      // finalization await; a REC tap landing in that window must not
-      // overlap a new session with the old one's finalization (the old
-      // session's storage-error event would otherwise surface mid-recording).
-      final stopping = recording.stopSession();
-      final second = start(recording);
+    // The stop synchronously enters the stopping state before its
+    // finalization await; a REC tap landing in that window must not
+    // overlap a new session with the old one's finalization (the old
+    // session's storage-error event would otherwise surface mid-recording).
+    final stopping = recording.stopSession();
+    final second = start(recording);
 
-      expect(second, isA<StartSessionBusy>());
-      final stop = await stopping;
-      expect(stop.error, isNull);
-      expect(recording.sessionInProgress, isFalse);
-    },
-  );
+    expect(second, isA<StartSessionBusy>());
+    final stop = await stopping;
+    expect(stop.error, isNull);
+    expect(recording.sessionInProgress, isFalse);
+  });
 
   test(
     'stopSession folds a finalization failure into the returned error',

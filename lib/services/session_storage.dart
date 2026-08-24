@@ -49,29 +49,26 @@ class SessionStorage {
     // converts through it, so a later re-tare can never rewrite history.
     final tareSnapshot = Float64List.fromList(tare);
 
-    return LiveSessionWriter(
-      (
-        name: name,
-        sampleRate: samplesPerSec,
-        // We always persist every ADC channel, so the stored channel count
-        // must match what the writer packs (and what loadSession reads back).
-        channelCount: kAdcChannelCount,
-        channelLabels: jsonEncode(channelLabels),
-        tares: jsonEncode(tareSnapshot.toList()),
-        // Snapshot the per-channel calibration in effect now; playback
-        // converts through it even if calibration changes later.
-        calibrationJson: jsonEncode([
-          for (int ch = 0; ch < kAdcChannelCount; ch++)
-            channelCalibration[ch].toJson(),
-        ]),
-        visibleChannels: jsonEncode(visibleChannels),
-        // Frozen as the CSV export's default converted unit
-        // (docs/csv-format-v1.md's recording-time snapshot requirement).
-        displayUnit: displayUnit.name,
-        deviceInfoJson: jsonEncode(deviceMetadata),
-      ),
-      sourceRingCapacity: sourceRingCapacity,
-    );
+    return LiveSessionWriter((
+      name: name,
+      sampleRate: samplesPerSec,
+      // We always persist every ADC channel, so the stored channel count
+      // must match what the writer packs (and what loadSession reads back).
+      channelCount: kAdcChannelCount,
+      channelLabels: jsonEncode(channelLabels),
+      tares: jsonEncode(tareSnapshot.toList()),
+      // Snapshot the per-channel calibration in effect now; playback
+      // converts through it even if calibration changes later.
+      calibrationJson: jsonEncode([
+        for (int ch = 0; ch < kAdcChannelCount; ch++)
+          channelCalibration[ch].toJson(),
+      ]),
+      visibleChannels: jsonEncode(visibleChannels),
+      // Frozen as the CSV export's default converted unit
+      // (docs/csv-format-v1.md's recording-time snapshot requirement).
+      displayUnit: displayUnit.name,
+      deviceInfoJson: jsonEncode(deviceMetadata),
+    ), sourceRingCapacity: sourceRingCapacity);
   }
 
   /// Finalize a streaming session: flush any buffered samples, then record

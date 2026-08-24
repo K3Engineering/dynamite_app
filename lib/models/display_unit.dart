@@ -13,10 +13,7 @@ typedef AxisRung = ({double factor, String symbol});
 /// any shown channel has a load cell assigned (force units convert).
 /// Derived, never stored — the saved preference re-applies the moment
 /// availability returns, and there is no secondary state to sync.
-typedef UnitAvailability = ({
-  bool boardHasNominals,
-  bool anyActiveHasLoadCell,
-});
+typedef UnitAvailability = ({bool boardHasNominals, bool anyActiveHasLoadCell});
 
 /// Resolve the unit availability for a view showing [activeChannels], given
 /// a per-channel calibration lookup. Board constants resolve all-or-nothing
@@ -180,10 +177,11 @@ enum DisplayUnit {
   /// when available, else the first available rung down the ladder. The
   /// preference is not written; the saved unit re-applies as soon as it is
   /// available again.
-  DisplayUnit effective(UnitAvailability availability) =>
-      [this, DisplayUnit.mVv, DisplayUnit.raw].firstWhere(
-        (u) => u.isAvailable(availability),
-      );
+  DisplayUnit effective(UnitAvailability availability) => [
+    this,
+    DisplayUnit.mVv,
+    DisplayUnit.raw,
+  ].firstWhere((u) => u.isAvailable(availability));
 
   /// The multiplier applied to net mV/V for this unit on [channel]: force
   /// units fold in the cell's kgf-per-mV/V, mV folds in the nominal

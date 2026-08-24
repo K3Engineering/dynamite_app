@@ -224,7 +224,9 @@ void main() {
       // prefix's late success frame).
       client.handleNotification(Uint8List.fromList(utf8.encode('0GETFch0')));
       client.handleNotification(Uint8List.fromList(utf8.encode('0GETFch0.rX')));
-      client.handleNotification(Uint8List.fromList(utf8.encode('1GETFch1.r=9')));
+      client.handleNotification(
+        Uint8List.fromList(utf8.encode('1GETFch1.r=9')),
+      );
       client.handleNotification(Uint8List.fromList(utf8.encode('1GETFch0=9')));
       async.elapse(const Duration(seconds: 2));
 

@@ -87,29 +87,35 @@ void main() {
       expect(rig.history, hasLength(4));
     });
 
-    test('a flash read without a device id violates the delivery contract', () async {
-      final rig = await newRig();
-      // Delivery is token-gated to a live link upstream, so an identity-
-      // less document can never arrive — assert, don't silently ignore.
-      expect(
-        () => rig.onFlashRead('', '', fixture()),
-        throwsA(isA<AssertionError>()),
-      );
-    });
+    test(
+      'a flash read without a device id violates the delivery contract',
+      () async {
+        final rig = await newRig();
+        // Delivery is token-gated to a live link upstream, so an identity-
+        // less document can never arrive — assert, don't silently ignore.
+        expect(
+          () => rig.onFlashRead('', '', fixture()),
+          throwsA(isA<AssertionError>()),
+        );
+      },
+    );
 
-    test('boardCalibration follows the current connection\'s document', () async {
-      final rig = await newRig();
+    test(
+      'boardCalibration follows the current connection\'s document',
+      () async {
+        final rig = await newRig();
 
-      // No flash document read yet.
-      expect(rig.boardCalibration, isNull);
+        // No flash document read yet.
+        expect(rig.boardCalibration, isNull);
 
-      rig.onFlashRead('dev1', 'Bench unit', fixture());
-      expect(rig.boardCalibration, isNotNull);
+        rig.onFlashRead('dev1', 'Bench unit', fixture());
+        expect(rig.boardCalibration, isNotNull);
 
-      // The document dies with the link.
-      rig.onLinkDropped();
-      expect(rig.boardCalibration, isNull);
-    });
+        // The document dies with the link.
+        rig.onLinkDropped();
+        expect(rig.boardCalibration, isNull);
+      },
+    );
 
     test('a changed device wins: readings use the new values', () async {
       final rig = await newRig();

@@ -230,11 +230,7 @@ class AppDatabase extends _$AppDatabase {
         gaps: gaps,
       );
       await into(sessionChunks).insert(
-        SessionChunksCompanion.insert(
-          sessionId: id,
-          chunkIndex: 0,
-          data: data,
-        ),
+        SessionChunksCompanion.insert(sessionId: id, chunkIndex: 0, data: data),
       );
       return id;
     });
@@ -348,17 +344,14 @@ class AppDatabase extends _$AppDatabase {
   /// card sizes and capacity strip stay fresh while a recording writes.
   Stream<Map<int, int>> watchSessionByteSizes() {
     return customSelect(
-          'SELECT session_id, SUM(LENGTH(data)) AS bytes '
-          'FROM session_chunks GROUP BY session_id',
-          readsFrom: {sessionChunks},
-        )
-        .watch()
-        .map(
-          (rows) => {
-            for (final r in rows)
-              r.read<int>('session_id'): r.read<int>('bytes'),
-          },
-        );
+      'SELECT session_id, SUM(LENGTH(data)) AS bytes '
+      'FROM session_chunks GROUP BY session_id',
+      readsFrom: {sessionChunks},
+    ).watch().map(
+      (rows) => {
+        for (final r in rows) r.read<int>('session_id'): r.read<int>('bytes'),
+      },
+    );
   }
 
   /// Exact on-disk database size (page_count x page_size) — the native

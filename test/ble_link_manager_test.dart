@@ -868,15 +868,14 @@ void main() {
       Object? writeError;
       Object? nameError;
       unawaited(
-        link.writeFlashDoc(
-          doc,
-        ).then((_) {}, onError: (Object e) => writeError = e),
+        link
+            .writeFlashDoc(doc)
+            .then((_) {}, onError: (Object e) => writeError = e),
       );
       unawaited(
-        link.setDeviceName('Rig 7').then(
-          (_) {},
-          onError: (Object e) => nameError = e,
-        ),
+        link
+            .setDeviceName('Rig 7')
+            .then((_) {}, onError: (Object e) => nameError = e),
       );
       async.elapse(const Duration(seconds: 5));
 

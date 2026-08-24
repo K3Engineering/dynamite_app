@@ -11,6 +11,7 @@ import 'data_hub.dart';
 class StreamResetCoordinator {
   StreamResetCoordinator({
     required DataHub hub,
+
     /// Notifies when the stream's liveness may have changed; polled via
     /// [streamingNow]. main wires the link manager in.
     required Listenable streamingChanges,

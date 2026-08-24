@@ -101,7 +101,10 @@ void main() {
 
       // Empty clears the key (a DEL); the display reverts to the fallback.
       expect(setName(link, '   ', async), true);
-      expect(mock.kvsStore[kvsFolderSettings]!.containsKey(kvsKeyDeviceName), isFalse);
+      expect(
+        mock.kvsStore[kvsFolderSettings]!.containsKey(kvsKeyDeviceName),
+        isFalse,
+      );
       expect(link.connectedStoredDeviceName, isNull);
       expect(link.connectedDeviceName, '2');
 
@@ -137,7 +140,10 @@ void main() {
       mock.kvsCommandLog.clear();
 
       expect(setName(link, 'Bad,Name', async), isA<ArgumentError>());
-      expect(setName(link, 'A' * (deviceNameMaxLength + 1), async), isA<ArgumentError>());
+      expect(
+        setName(link, 'A' * (deviceNameMaxLength + 1), async),
+        isA<ArgumentError>(),
+      );
       expect(setName(link, 'Bad\nName', async), isA<ArgumentError>());
       expect(mock.kvsCommandLog, isEmpty);
       expect(mock.kvsStore[kvsFolderSettings], isEmpty);
@@ -149,10 +155,7 @@ void main() {
   test('setDeviceName with no device connected throws', () {
     fakeAsync((async) {
       final (link, _) = wire(async: async);
-      expect(
-        setName(link, 'Rack 4', async),
-        isA<StateError>(),
-      );
+      expect(setName(link, 'Rack 4', async), isA<StateError>());
     });
   });
 }

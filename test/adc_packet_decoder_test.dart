@@ -77,19 +77,16 @@ void main() {
       expect(hub.rawData[0][defaultPacketSamples - 1], 10);
     });
 
-    test(
-      'consecutive packets with counter += one packet report no gap',
-      () {
-        decoder.onDataPacket(makePacket(0, (s, c) => 1));
-        decoder.onDataPacket(makePacket(defaultPacketSamples, (s, c) => 2));
-        decoder.onDataPacket(makePacket(2 * defaultPacketSamples, (s, c) => 3));
+    test('consecutive packets with counter += one packet report no gap', () {
+      decoder.onDataPacket(makePacket(0, (s, c) => 1));
+      decoder.onDataPacket(makePacket(defaultPacketSamples, (s, c) => 2));
+      decoder.onDataPacket(makePacket(2 * defaultPacketSamples, (s, c) => 3));
 
-        expect(hub.totalSamples, 3 * defaultPacketSamples);
-        expect(hub.gaps.contains(0), isFalse);
-        expect(hub.gaps.contains(defaultPacketSamples), isFalse);
-        expect(hub.gaps.contains(2 * defaultPacketSamples), isFalse);
-      },
-    );
+      expect(hub.totalSamples, 3 * defaultPacketSamples);
+      expect(hub.gaps.contains(0), isFalse);
+      expect(hub.gaps.contains(defaultPacketSamples), isFalse);
+      expect(hub.gaps.contains(2 * defaultPacketSamples), isFalse);
+    });
 
     test('a counter jump injects the dropped range into DataHub.gaps', () {
       // Packet 0 covers samples [0, 20) (counter = 0). The next packet's
@@ -222,8 +219,7 @@ void main() {
 
     setUp(() => fakeUs = 0);
 
-    test('counter loss consistent with the clock injects the reported gap',
-        () {
+    test('counter loss consistent with the clock injects the reported gap', () {
       final d = AdcPacketDecoder(hub, now: clock);
       d.onDataPacket(makePacket(0, (s, c) => 1));
       // ~1 s of silence: the device counted 1020 samples the link never
@@ -237,8 +233,7 @@ void main() {
       expect(hub.gaps.contains(1040), isFalse);
     });
 
-    test('a loss spanning a full counter wrap is recovered from the clock',
-        () {
+    test('a loss spanning a full counter wrap is recovered from the clock', () {
       final d = AdcPacketDecoder(hub, now: clock);
       d.onDataPacket(makePacket(0, (s, c) => 1));
       // 65.5+ s of silence consumes a full counter wrap: the wire counter

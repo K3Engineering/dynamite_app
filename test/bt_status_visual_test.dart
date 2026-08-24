@@ -63,10 +63,7 @@ void main() {
   });
 
   test('idle + scanning outranks adapter status', () {
-    final v = visual(
-      isScanning: true,
-      availability: BtAvailability.poweredOff,
-    );
+    final v = visual(isScanning: true, availability: BtAvailability.poweredOff);
     expect(v.label, contains('Scanning'));
     expect(v.showSpinner, isTrue);
   });

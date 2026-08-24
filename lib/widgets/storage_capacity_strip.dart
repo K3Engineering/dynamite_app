@@ -135,9 +135,7 @@ class StorageCapacityStrip extends StatelessWidget {
               'The browser may reclaim this space when storage runs low. '
               'The native iOS and Android apps have larger, permanent '
               'storage.',
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: scheme.error,
-              ),
+              style: theme.textTheme.labelSmall?.copyWith(color: scheme.error),
             ),
         ],
       ),

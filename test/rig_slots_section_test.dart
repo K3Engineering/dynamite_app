@@ -224,6 +224,9 @@ void main() {
     expect(saveButton().onPressed, isNotNull);
     expect(field('Name (optional)').controller!.text, 'Thrust cell');
     expect(field('Capacity (kg)').controller!.text, '200');
-    expect(field('Sensitivity (mV/V at full scale)').controller!.text, '1.9993');
+    expect(
+      field('Sensitivity (mV/V at full scale)').controller!.text,
+      '1.9993',
+    );
   });
 }

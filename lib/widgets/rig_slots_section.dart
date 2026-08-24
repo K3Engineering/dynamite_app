@@ -458,7 +458,10 @@ class _AddToSlotDialogState extends State<_AddToSlotDialog> {
               ),
               const Divider(height: 24),
               if (rig.history.isNotEmpty) ...[
-                Text('Last seen in this app', style: theme.textTheme.labelMedium),
+                Text(
+                  'Last seen in this app',
+                  style: theme.textTheme.labelMedium,
+                ),
                 const SizedBox(height: 4),
                 for (final entry in rig.history)
                   ListTile(
@@ -495,8 +498,8 @@ class _AddToSlotDialogState extends State<_AddToSlotDialog> {
         FilledButton(
           onPressed:
               _typedCell(nameCtrl.text, capCtrl.text, sensCtrl.text) != null
-                  ? _save
-                  : null,
+              ? _save
+              : null,
           child: const Text('Save'),
         ),
       ],
@@ -699,11 +702,7 @@ LoadCellProfile? _typedCell(String name, String cap, String sens) {
   final c = _typedNumber(cap);
   final s = _typedNumber(sens);
   if (c == null || s == null || c <= 0 || s <= 0) return null;
-  return LoadCellProfile(
-    name: name.trim(),
-    capacityKg: c,
-    sensitivityMvV: s,
-  );
+  return LoadCellProfile(name: name.trim(), capacityKg: c, sensitivityMvV: s);
 }
 
 /// Parse a typed-in number, tolerating a comma decimal separator (some

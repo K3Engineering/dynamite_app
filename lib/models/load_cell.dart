@@ -57,7 +57,8 @@ class RigSlots {
 
   /// Channel row titles: the cell's title, or the bare channel name.
   List<String> get channelTitles => [
-    for (int i = 0; i < kAdcChannelCount; ++i) cellAt(i)?.title ?? rigSlotTitle(i),
+    for (int i = 0; i < kAdcChannelCount; ++i)
+      cellAt(i)?.title ?? rigSlotTitle(i),
   ];
 
   RigSlots withSlot(int i, RigSlot? slot) => RigSlots([

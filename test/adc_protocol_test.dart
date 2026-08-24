@@ -18,13 +18,15 @@ Uint8List makeConfig({required int clock, required int pga}) {
 
 void main() {
   group('parseAdcConfig', () {
-    test('the shipping configuration: all channels on, OSR 4096 → 1000 SPS',
-        () {
-      // CLOCK = 0x0F14: CH0-3 enabled, TBM clear, OSR field 101b (4096).
-      final config = parseAdcConfig(makeConfig(clock: 0x0F14, pga: 0x0000))!;
-      expect(config.sampleRateHz, 1000);
-      expect(config.pgaGains, [1.0, 1.0, 1.0, 1.0]);
-    });
+    test(
+      'the shipping configuration: all channels on, OSR 4096 → 1000 SPS',
+      () {
+        // CLOCK = 0x0F14: CH0-3 enabled, TBM clear, OSR field 101b (4096).
+        final config = parseAdcConfig(makeConfig(clock: 0x0F14, pga: 0x0000))!;
+        expect(config.sampleRateHz, 1000);
+        expect(config.pgaGains, [1.0, 1.0, 1.0, 1.0]);
+      },
+    );
 
     test('PGA gains decode per 4-bit field as 2^field', () {
       // Fields ch0..ch3 = 0,1,2,4 → gains 1,2,4,16. Field value 5+ stays
@@ -46,9 +48,7 @@ void main() {
         7: 250, // OSR 16384 (datasheet prints 16256 — a typo)
       };
       for (final MapEntry(key: field, value: rate) in expected.entries) {
-        final config = parseAdcConfig(
-          makeConfig(clock: field << 2, pga: 0),
-        )!;
+        final config = parseAdcConfig(makeConfig(clock: field << 2, pga: 0))!;
         expect(config.sampleRateHz, rate, reason: 'OSR field $field');
       }
     });
@@ -57,14 +57,20 @@ void main() {
       final config = parseAdcConfig(makeConfig(clock: 0x20, pga: 0))!;
       expect(config.sampleRateHz, 64000);
       // TBM wins regardless of the OSR field's value.
-      expect(parseAdcConfig(makeConfig(clock: 0x20 | (7 << 2), pga: 0))!
-          .sampleRateHz, 64000);
+      expect(
+        parseAdcConfig(
+          makeConfig(clock: 0x20 | (7 << 2), pga: 0),
+        )!.sampleRateHz,
+        64000,
+      );
     });
 
     test('a short buffer or unknown struct version fails the parse', () {
       expect(parseAdcConfig(Uint8List(10)), isNull);
-      expect(parseAdcConfig(makeConfig(clock: 0x0F14, pga: 0)..[0] = 2),
-          isNull);
+      expect(
+        parseAdcConfig(makeConfig(clock: 0x0F14, pga: 0)..[0] = 2),
+        isNull,
+      );
     });
   });
 }
