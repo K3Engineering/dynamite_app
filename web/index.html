@@ -34,6 +34,12 @@
   <title>Dynamite Sampler</title>
   <link rel="manifest" href="manifest.json">
 
+  <!-- Starts the 3 MB app wasm while the HTML is still parsing instead of
+       waiting for the loader to reach it. as=fetch + crossorigin must match
+       the loader's request exactly, otherwise the browser keeps this and
+       the loader's fetch as two full downloads. -->
+  <link rel="preload" href="main.dart.wasm" as="fetch" crossorigin>
+
   <style>
     /* Splash colors mirror DynoApp's schemes: scaffold backgrounds, and the
        disconnected status bar's errorContainer/onErrorContainer (which fall
@@ -108,10 +114,19 @@
     }
 
     #splash #bar-fill {
-      width: 0;
+      width: 40%;
       height: 100%;
       background-color: var(--accent);
-      transition: width 200ms linear;
+      animation: splash-slide 1.4s ease-in-out infinite;
+    }
+
+    @keyframes splash-slide {
+      from {
+        transform: translateX(-100%);
+      }
+      to {
+        transform: translateX(250%);
+      }
     }
 
     #splash #status-row {
@@ -157,43 +172,27 @@
     </div>
   </div>
   <script>
-    // Meter the main.dart.wasm download into the splash bar. The byte array
-    // is the WasmGC feature-sniff module copied from flutter.js: on browsers
-    // without WasmGC the dart2js fallback boots instead, and prefetching 3 MB
-    // of unused wasm on a metered link would be pure waste.
-    // The bar is a b/(b+K) asymptote: byte count comes from the response
-    // stream (brotli makes Content-Length unreliable), so there is no fixed
-    // denominator to overshoot; the fill never quite reaches 100% until the
-    // bootstrap removes the splash.
-    (function () {
-      var wasmGC = new Uint8Array([
-        0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 95, 1, 120, 0,
-      ]);
-      if (typeof WebAssembly !== 'object' || !WebAssembly.validate(wasmGC)) {
-        return;
-      }
-      var fill = document.getElementById('bar-fill');
-      var status = document.getElementById('status');
-      if (!fill || !status) return;
-      var K = 300 * 1024;
-      fetch('main.dart.wasm')
-        .then(function (response) {
-          if (!response.body) return;
-          status.textContent = 'Downloading app\u2026';
-          var reader = response.body.getReader();
-          var loaded = 0;
-          (function pump() {
-            reader.read().then(function (chunk) {
-              if (chunk.done) return;
-              loaded += chunk.value.byteLength;
-              fill.style.width =
-                ((loaded / (loaded + K)) * 100).toFixed(1) + '%';
-              pump();
-            });
-          })();
-        })
-        .catch(function () {});
-    })();
+    // Advance the status through the network milestones: one resource-timing
+    // entry fires per completed file. Entries can arrive out of order (the
+    // preloaded app wasm races the renderer), so only ever move forward;
+    // flutter_bootstrap.js then takes over for the engine stages.
+    var stages = [
+      ['flutter_bootstrap.js', 'Loading engine…'],
+      ['main.dart.mjs', 'Loading renderer…'],
+      ['skwasm.wasm', 'Downloading app…'],
+      ['main.dart.wasm', 'Compiling…'],
+    ];
+    var reached = -1;
+    new PerformanceObserver(function (list) {
+      list.getEntries().forEach(function (entry) {
+        stages.forEach(function (stage, i) {
+          if (i > reached && entry.name.endsWith(stage[0])) {
+            reached = i;
+            document.getElementById('status').textContent = stage[1];
+          }
+        });
+      });
+    }).observe({ type: 'resource', buffered: true });
   </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
