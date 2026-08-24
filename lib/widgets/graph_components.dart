@@ -1635,7 +1635,12 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
         last != null &&
         DateTime.now().difference(last).inMilliseconds < _kTickerStallMs;
     final bool shouldTick = widget.ctrl.isLive && fresh;
-    if (shouldTick == _ticker.isTicking) return;
+    // Guard on isActive, not isTicking: start() throws on isActive, and a
+    // started ticker is active for the whole window until its first frame
+    // fires. isTicking is false in that window, so a second _syncTicker call
+    // landing there (web delivers BLE batches as in-frame microtasks) would
+    // start() twice. isActive stays true throughout, so the guard holds.
+    if (shouldTick == _ticker.isActive) return;
     shouldTick ? _ticker.start() : _ticker.stop();
   }
 
