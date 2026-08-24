@@ -92,6 +92,26 @@ class SessionStorage {
         sampleRate: writer.sampleRate,
         gapsJson: writer.gaps.toJson(),
       );
+
+      // Fail loud on a count/persisted mismatch: the writer counted every
+      // accepted slice, so the chunk table must hold exactly that many frames.
+      // A silent drop anywhere between accepted slice and persisted row would
+      // otherwise leave the row claiming samples that were never written —
+      // surfaced only later as a truncated session.
+      final chunks = await AppDatabase.instance.sessionChunkRows(sessionId);
+      const codec = SessionChunkCodec(kAdcChannelCount);
+      final persisted = verifyChunkIntegrity(codec, [
+        for (final c in chunks) (c.chunkIndex, c.data),
+      ]).prefixFrames;
+      if (persisted != writer.totalSamplesRecorded) {
+        final message =
+            'Session $sessionId: persisted $persisted frames but counted '
+            '${writer.totalSamplesRecorded} — the storage layer dropped samples '
+            '(chunk rows: '
+            '${[for (final c in chunks) (c.chunkIndex, c.data.lengthInBytes)]})';
+        debugPrint(message);
+        return StateError(message);
+      }
     }
 
     return writer.writeError;

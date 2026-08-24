@@ -78,7 +78,7 @@ class SessionData implements GraphDataSource {
   /// renderers use this to hatch and break the polyline, and CSV export
   /// blanks these rows. Crash-recovered sessions keep the ranges the live
   /// writer persisted incrementally up to its last chunk flush (see
-  /// [AppDatabase.setSessionGaps]); a crash before the first flush leaves
+  /// [AppDatabase.appendChunkAndGaps]); a crash before the first flush leaves
   /// this empty.
   @override
   final GapList gaps;
