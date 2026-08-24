@@ -29,7 +29,6 @@ class SettingsTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
-    final appMeta = context.read<AppMeta>();
     // Narrow selects: the link manager notifies on every RSSI poll; this
     // section only rebuilds on identity / connection-stat changes.
     final deviceId = context.select<BleLinkManager, String>(
@@ -207,8 +206,15 @@ class SettingsTab extends StatelessWidget {
 
           const SectionHeader('About'),
           const SizedBox(height: 16),
-          Builder(
-            builder: (context) {
+          // Version resolves late by design (main does not await the
+          // version.json fetch; see the appMeta provider). The About text
+          // fills in when it lands; a failed fetch fails loudly here rather
+          // than rendering a blank version.
+          FutureBuilder<AppMeta>(
+            future: context.read<Future<AppMeta>>(),
+            builder: (context, snapshot) {
+              if (snapshot.hasError) throw snapshot.error!;
+
               const buildMode = kDebugMode
                   ? 'Debug'
                   : (kProfileMode ? 'Profile' : 'Release');
@@ -219,7 +225,7 @@ class SettingsTab extends StatelessWidget {
               }
 
               return Text(
-                'Dynamite App v${appMeta.versionLabel}\n'
+                'Dynamite App v${snapshot.data?.versionLabel ?? ''}\n'
                 'Build Mode: $buildMode\n'
                 '$targetInfo',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(

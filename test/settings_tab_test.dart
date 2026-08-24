@@ -56,8 +56,10 @@ void main() {
           ChangeNotifierProvider<AppSettings>.value(
             value: AppSettings(prefs: prefs),
           ),
-          Provider<AppMeta>.value(
-            value: const AppMeta(version: '0.0.0', buildNumber: '0'),
+          Provider<Future<AppMeta>>.value(
+            value: Future<AppMeta>.value(
+              const AppMeta(version: '0.0.0', buildNumber: '0'),
+            ),
           ),
           ChangeNotifierProvider<DataHub>.value(value: hub),
           ChangeNotifierProvider<BleLinkManager>.value(value: link),

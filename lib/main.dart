@@ -66,10 +66,11 @@ void main() async {
   // Prefs are resolved here and injected into their owners, so their loads
   // are synchronous constructor work and can never race a user edit.
   final prefs = await SharedPreferences.getInstance();
-  final packageInfo = await PackageInfo.fromPlatform();
-  final appMeta = AppMeta(
-    version: packageInfo.version,
-    buildNumber: packageInfo.buildNumber,
+  // PackageInfo fetches version.json over HTTP on web, so it is started but
+  // NOT awaited — every consumer (About text, export stamping) is off the
+  // first-paint path and awaits the future there instead.
+  final appMeta = PackageInfo.fromPlatform().then(
+    (info) => AppMeta(version: info.version, buildNumber: info.buildNumber),
   );
 
   // Mock-BLE dev builds: swap in the simulated platform before any BLE call
@@ -152,7 +153,7 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider.value(value: appSettings),
-        Provider.value(value: appMeta),
+        Provider<Future<AppMeta>>.value(value: appMeta),
         // App-lifetime singletons created above (never disposed — the app
         // root never unmounts), provided individually so each screen depends
         // only on the layer it actually uses.

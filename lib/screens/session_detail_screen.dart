@@ -352,7 +352,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Future<void> _downloadCsv(SessionSummary session, SessionData data) =>
       _runCsvAction(() async {
-        final appMeta = context.read<AppMeta>();
+        final appMeta = await context.read<Future<AppMeta>>();
         final unit = await _pickExportUnit(
           _recordedUnit(session),
           damage: data.damage,
@@ -370,7 +370,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Future<void> _shareCsv(SessionSummary session, SessionData data) =>
       _runCsvAction(() async {
-        final appMeta = context.read<AppMeta>();
+        final appMeta = await context.read<Future<AppMeta>>();
         final unit = await _pickExportUnit(
           _recordedUnit(session),
           damage: data.damage,
@@ -392,7 +392,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   /// for a session whose view failed to load it is the only export.
   Future<void> _downloadSalvage(SessionSummary session) =>
       _runCsvAction(() async {
-        final appMeta = context.read<AppMeta>();
+        final appMeta = await context.read<Future<AppMeta>>();
         return downloadSalvageCsv(
           sessionId: session.id,
           sessionName: session.name,
