@@ -644,7 +644,6 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     UniversalBle.onScanResult = _onScanResult;
     UniversalBle.onAvailabilityChange = _onBluetoothAvailabilityChanged;
     UniversalBle.onConnectionChange = _onConnectionChange;
-    UniversalBle.onPairingStateChange = _onPairingStateChange;
     UniversalBle.onConnectionParametersChange = _onConnectionParametersChange;
     UniversalBle.onValueChange = _onValueChange;
 
@@ -823,10 +822,6 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     } else {
       await _startScan();
     }
-  }
-
-  void _onPairingStateChange(String deviceId, bool isPaired) {
-    debugPrint('isPaired $deviceId, $isPaired');
   }
 
   /// Live connection-parameter updates. Only fires on Android (API 26+); a

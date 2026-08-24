@@ -142,7 +142,7 @@ class BoardConstantsResolution {
   const BoardConstantsResolution.ok(this.nominals)
     : status = BoardDataStatus.ok,
       detail = '';
-  const BoardConstantsResolution.failure(this.status, this.detail)
+  const BoardConstantsResolution.failure(this.status, [this.detail = ''])
     : nominals = null;
 
   final BoardNominals? nominals;
@@ -165,7 +165,6 @@ BoardConstantsResolution resolveBoardConstants(
   if (!boardConstantKeys.any(kv.containsKey)) {
     return const BoardConstantsResolution.failure(
       BoardDataStatus.unprovisioned,
-      'no board constants in flash',
     );
   }
   final missing = [
