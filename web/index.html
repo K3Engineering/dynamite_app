@@ -34,24 +34,166 @@
   <title>Dynamite Sampler</title>
   <link rel="manifest" href="manifest.json">
 
+  <!-- Starts the 3 MB app wasm while the HTML is still parsing instead of
+       waiting for the loader to reach it. as=fetch + crossorigin must match
+       the loader's request exactly, otherwise the browser keeps this and
+       the loader's fetch as two full downloads. -->
+  <link rel="preload" href="main.dart.wasm" as="fetch" crossorigin>
+
   <style>
+    /* Splash colors mirror DynoApp's schemes: scaffold backgrounds, and the
+       disconnected status bar's errorContainer/onErrorContainer (which fall
+       back to error/onError in the M2-era scheme constructors: light
+       #B00020/white, dark #CF6679/black). Accent is scheme.primary. */
+    :root {
+      --bg: #F8F9FA;
+      --stripe-bg: #B00020;
+      --stripe-fg: #FFFFFF;
+      --fg: #3A2222;
+      --accent: #455A64;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #121212;
+        --stripe-bg: #CF6679;
+        --stripe-fg: #000000;
+        --fg: #FFFFFF;
+        --accent: #679BB3;
+      }
+    }
+
     body {
-      background-color: #F8F9FA;
-      /* Light mode scaffold color */
+      background-color: var(--bg);
       margin: 0;
       padding: 0;
     }
 
-    @media (prefers-color-scheme: dark) {
-      body {
-        background-color: #121212;
-        /* Dark mode scaffold color */
+    #splash {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      background-color: var(--bg);
+      color: var(--fg);
+      font-family: Roboto, system-ui, sans-serif;
+    }
+
+    #splash #stripe {
+      padding: 8px 16px;
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 20px;
+      background-color: var(--stripe-bg);
+      color: var(--stripe-fg);
+    }
+
+    #splash #center {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 16px;
+    }
+
+    #splash #title {
+      font-size: 16px;
+      font-weight: 500;
+      letter-spacing: 0.15px;
+    }
+
+    #splash #bar {
+      width: min(480px, 70vw);
+      height: 4px;
+      border-radius: 2px;
+      background-color: color-mix(in srgb, var(--fg) 15%, transparent);
+      overflow: hidden;
+    }
+
+    #splash #bar-fill {
+      width: 40%;
+      height: 100%;
+      background-color: var(--accent);
+      animation: splash-slide 1.4s ease-in-out infinite;
+    }
+
+    @keyframes splash-slide {
+      from {
+        transform: translateX(-100%);
+      }
+      to {
+        transform: translateX(250%);
+      }
+    }
+
+    #splash #status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      opacity: 0.7;
+    }
+
+    #splash #spinner {
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--accent);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: splash-spin 0.8s linear infinite;
+    }
+
+    @keyframes splash-spin {
+      to {
+        transform: rotate(360deg);
       }
     }
   </style>
 </head>
 
 <body>
+  <!-- Static splash: renders from the first HTML packet, themed by
+       prefers-color-scheme like the app's ThemeMode.system. Removed by
+       flutter_bootstrap.js when the engine fires flutter-first-frame. -->
+  <div id="splash" role="status">
+    <div id="stripe">Not connected</div>
+    <div id="center">
+      <div id="title">No device connected</div>
+      <div id="bar">
+        <div id="bar-fill"></div>
+      </div>
+      <div id="status-row">
+        <div id="spinner"></div>
+        <span id="status">Loading&hellip;</span>
+      </div>
+    </div>
+  </div>
+  <script>
+    // Advance the status through the network milestones: one resource-timing
+    // entry fires per completed file. Entries can arrive out of order (the
+    // preloaded app wasm races the renderer), so only ever move forward;
+    // flutter_bootstrap.js then takes over for the engine stages.
+    var stages = [
+      ['flutter_bootstrap.js', 'Loading engine…'],
+      ['main.dart.mjs', 'Loading renderer…'],
+      ['skwasm.wasm', 'Downloading app…'],
+      ['main.dart.wasm', 'Compiling…'],
+    ];
+    var reached = -1;
+    new PerformanceObserver(function (list) {
+      list.getEntries().forEach(function (entry) {
+        stages.forEach(function (stage, i) {
+          if (i > reached && entry.name.endsWith(stage[0])) {
+            reached = i;
+            document.getElementById('status').textContent = stage[1];
+          }
+        });
+      });
+    }).observe({ type: 'resource', buffered: true });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 
