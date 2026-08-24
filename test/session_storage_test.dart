@@ -36,20 +36,27 @@ void main() {
 
   /// startSession with the caller-side hub snapshots production now passes
   /// explicitly (see SessionStorage.startSession's hub-agnostic contract).
-  LiveSessionWriter startFromHub(DataHub hub, {required String name}) =>
-      SessionStorage.startSession(
-        tare: hub.tare,
-        channelCalibration: [
-          for (int ch = 0; ch < channels; ch++) hub.calibrationFor(ch),
-        ],
-        samplesPerSec: hub.sampleRateHz,
-        sourceRingCapacity: DataHub.maxDataSz,
-        name: name,
-        channelLabels: const ['a', 'b', 'c', 'd'],
-        visibleChannels: const [true, true, true, true],
-        displayUnit: DisplayUnit.kgf,
-        deviceMetadata: const {},
-      );
+  /// Establishes the packet counter anchor the writer requires (in production
+  /// packets precede samples, so an anchor always precedes the first append);
+  /// tests that assert specific anchor behavior set their own.
+  LiveSessionWriter startFromHub(DataHub hub, {required String name}) {
+    if (hub.packetAnchor == null) {
+      hub.notePacketCounter(0);
+    }
+    return SessionStorage.startSession(
+      tare: hub.tare,
+      channelCalibration: [
+        for (int ch = 0; ch < channels; ch++) hub.calibrationFor(ch),
+      ],
+      samplesPerSec: hub.sampleRateHz,
+      sourceRingCapacity: DataHub.maxDataSz,
+      name: name,
+      channelLabels: const ['a', 'b', 'c', 'd'],
+      visibleChannels: const [true, true, true, true],
+      displayUnit: DisplayUnit.kgf,
+      deviceMetadata: const {},
+    );
+  }
 
   /// A writer constructed without SessionStorage still needs the row header
   /// its first flush creates (see AppDatabase.createSessionWithFirstChunk).
@@ -82,14 +89,18 @@ void main() {
       expect(sess.maxs[0], -50);
     });
 
-    test('an empty session reports 0', () {
+    test('an empty session has no extremes', () {
       final sess = makeSession(const []);
-      expect(sess.maxs[0], 0);
+      expect(sess.maxs[0], isNull);
+      expect(sess.mins[0], isNull);
     });
   });
 
   group('LiveSessionWriter ring-buffer safety', () {
+    /// Pump samples like the decoder does: packets precede samples, so the
+    /// first call also seeds the packet-counter anchor the writer requires.
     void pumpSamples(DataHub hub, Int32List frame, int count, int value) {
+      hub.notePacketCounter(0);
       for (int ch = 0; ch < channels; ch++) {
         frame[ch] = value;
       }
@@ -109,6 +120,9 @@ void main() {
         },
       );
       final hub = DataHub();
+      // Packets precede samples: seed the encoder's counter anchor the
+      // writer requires before any append.
+      hub.notePacketCounter(0);
       final frame = Int32List(channels);
       const n = 50;
       for (int i = 0; i < n; i++) {

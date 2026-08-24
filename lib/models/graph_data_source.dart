@@ -6,11 +6,11 @@ import 'gap_list.dart';
 
 /// A single channel's raw circular-buffer data plus its precomputed extremes,
 /// tare offset, and raw-value [BucketSeries]. Returned by
-/// [GraphDataSource.channel].
+/// [GraphDataSource.channel]. Extreme values are null on an empty session.
 typedef ChannelSeries = ({
   List<int> data,
-  double min,
-  double max,
+  double? min,
+  double? max,
   double tare,
   BucketSeries buckets,
 });

@@ -189,9 +189,14 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 emphasized: true,
                 values: [
                   for (int ch = 0; ch < data.channels.length; ch++)
-                    unit
-                        .converterFor(data.calibrationFor(ch), data.tares[ch])
-                        ?.call(data.maxs[ch]),
+                    data.maxs[ch] == null
+                        ? null
+                        : unit
+                              .converterFor(
+                                data.calibrationFor(ch),
+                                data.tares[ch],
+                              )
+                              ?.call(data.maxs[ch]!),
                 ],
               ),
             ],

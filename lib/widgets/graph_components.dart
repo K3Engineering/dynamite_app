@@ -1364,8 +1364,9 @@ class _MinimapPainter extends CustomPainter {
       final s = _data.channel(ch);
       final conv = unit.converterFor(_data.calibrationFor(ch), s.tare);
       if (conv == null) continue;
-      final lo = conv(math.min(s.min, s.tare - 10000));
-      final hi = conv(math.max(s.max, s.tare + 10000));
+      // No data on this channel: the +/-10000 tare band alone matters.
+      final lo = conv(math.min(s.min ?? s.tare, s.tare - 10000));
+      final hi = conv(math.max(s.max ?? s.tare, s.tare + 10000));
       if (lo < yMin) yMin = lo;
       if (hi > yMax) yMax = hi;
     }
@@ -3121,9 +3122,10 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
           bottomRailY = bottomRailY == 0 ? railY : math.min(bottomRailY, railY);
         }
 
+        // A null extreme means the channel has no data: nothing can be hot.
         final couldBeHot = positive
-            ? series.max >= clipRaw
-            : series.min <= clipRaw;
+            ? (series.max ?? double.nan) >= clipRaw
+            : (series.min ?? double.nan) <= clipRaw;
         if (!couldBeHot) continue;
 
         final start = math.max(viewStart.floor(), _data.oldestSample);

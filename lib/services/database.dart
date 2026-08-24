@@ -167,9 +167,10 @@ class AppDatabase extends _$AppDatabase {
   /// Production rows come from [createSessionWithFirstChunk] instead: a
   /// session row exists only alongside its first chunk, so [ssnOrigin] can
   /// never be unknown and crash recovery never sees a dataless session.
-  /// This bare insert exists for tests that need chunk-less rows (ordering,
-  /// empty UI states). [createdAt] defaults to now; tests inject it to
-  /// control ordering ties.
+  /// Tests that need chunk-less rows (ordering, empty UI states) use this;
+  /// production code must not. [createdAt] defaults to now; tests inject it
+  /// to control ordering ties.
+  @visibleForTesting
   Future<int> createSession({
     required String name,
     required int sampleRate,

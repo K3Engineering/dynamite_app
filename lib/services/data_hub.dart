@@ -54,7 +54,8 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   /// "No sample seen yet" sentinels for [rawMax]/[rawMin]: int32 min/max, so
   /// the first real sample always replaces them. Initializing to 0 instead
   /// would bias the extremes toward zero (a never-positive channel would
-  /// report a peak of `0 - tare`). ADC values are 24-bit, well inside int32.
+  /// report a peak of `0 - tare`). Exposed as null via [channel]; ADC values
+  /// are 24-bit, well inside int32.
   static const int _noMaxYet = -0x80000000;
   static const int _noMinYet = 0x7FFFFFFF;
 
@@ -505,8 +506,12 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   @override
   ChannelSeries channel(int channelIndex) => (
     data: rawData[channelIndex],
-    min: rawMin[channelIndex].toDouble(),
-    max: rawMax[channelIndex].toDouble(),
+    min: rawMin[channelIndex] == _noMinYet
+        ? null
+        : rawMin[channelIndex].toDouble(),
+    max: rawMax[channelIndex] == _noMaxYet
+        ? null
+        : rawMax[channelIndex].toDouble(),
     tare: tare[channelIndex],
     buckets: valueBuckets[channelIndex].series,
   );

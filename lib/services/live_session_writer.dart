@@ -204,9 +204,12 @@ class LiveSessionWriter {
     // session-relative indices.
     final int origin = _originIdx ??= slice.startIndex;
     if (_ssnOrigin == null) {
-      final anchor = slice.anchor;
-      // Latched now, written when the first chunk flush creates the row.
-      _ssnOrigin = (anchor?.counter ?? 0) + (origin - (anchor?.hubIndex ?? 0));
+      // The decoder's packet-counter anchor is non-null at any append: a
+      // recording can latch only on a flowing feed (StartSessionNoData), and
+      // a flowing feed has seen packets. Null here means the guard was
+      // bypassed — fabricating `0` would silently persist a wrong origin.
+      final anchor = slice.anchor!;
+      _ssnOrigin = anchor.counter + (origin - anchor.hubIndex);
     }
     for (final (s, e) in slice.gapRanges) {
       gaps.append(s - origin, e - origin);

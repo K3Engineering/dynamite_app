@@ -88,8 +88,8 @@ class SessionData implements GraphDataSource {
   final SessionDamage damage;
 
   /// Per-channel extremes, computed once on construction.
-  final List<double> mins;
-  final List<double> maxs;
+  final List<double?> mins;
+  final List<double?> maxs;
 
   /// Per-channel bucket aggregates over [bucketSize]-sample windows of the
   /// raw values. Mirrors DataHub's live buckets (same [BucketAccumulator])
@@ -116,8 +116,8 @@ class SessionData implements GraphDataSource {
     this.damage = SessionDamage.none,
     GapList? gaps,
   }) : gaps = gaps ?? GapList(),
-       mins = List.filled(channels.length, 0.0),
-       maxs = List.filled(channels.length, 0.0) {
+       mins = List.filled(channels.length, null),
+       maxs = List.filled(channels.length, null) {
     final int numBuckets = (sampleCount == 0)
         ? 0
         : ((sampleCount - 1) ~/ bucketSize) + 1;
@@ -132,6 +132,8 @@ class SessionData implements GraphDataSource {
 
     for (int ch = 0; ch < channels.length; ch++) {
       if (sampleCount == 0) continue;
+      // int32-compared doubles: ±.infinity seeds are guaranteed to be
+      // displaced on the first sample, so null-readers never see them.
       double mn = double.infinity;
       double mx = double.negativeInfinity;
       final ingest = ChannelIngest(

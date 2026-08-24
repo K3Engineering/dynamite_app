@@ -38,6 +38,9 @@ void main() {
       persistence: const StaticSessionPersistence(),
       events: events,
     );
+    // In production a packet counter anchor precedes any samples (packets
+    // precede samples); tests must satisfy the same invariant.
+    hub.notePacketCounter(0);
     addTearDown(recording.dispose);
     return (recording, hub, streaming);
   }
