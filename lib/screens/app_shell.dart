@@ -6,12 +6,14 @@ import 'package:provider/provider.dart';
 import '../services/app_events.dart';
 import '../services/ble_link_manager.dart';
 import '../widgets/snackbars.dart';
+import '../widgets/wide_layout.dart';
 import 'live_tab.dart';
 import 'sessions_tab.dart';
 import 'devices_tab.dart';
 import 'settings_tab.dart';
 
-/// Root scaffold with bottom navigation tabs.
+/// Root scaffold holding the four tabs: a bottom `NavigationBar` on narrow
+/// screens, a side `NavigationRail` at [kWideLayoutWidth] and above.
 ///
 /// Also the single consumer of [AppEvents]: one-shot notices from the service
 /// layer surface here as SnackBars, so delivery doesn't depend on which tab
@@ -116,24 +118,46 @@ class AppShellState extends State<AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    final useRail = MediaQuery.sizeOf(context).width >= kWideLayoutWidth;
     return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
+      body: Row(
         children: [
-          LiveTab(onGoToDevices: goToDevices),
-          const SessionsTab(),
-          DevicesTab(onGoToSettings: goToSettings),
-          SettingsTab(onGoToDevices: goToDevices),
+          if (useRail)
+            NavigationRail(
+              selectedIndex: _currentIndex,
+              onDestinationSelected: switchToTab,
+              labelType: NavigationRailLabelType.all,
+              destinations: [
+                for (final tab in _tabs)
+                  NavigationRailDestination(
+                    icon: Icon(tab.icon),
+                    label: Text(tab.label),
+                  ),
+              ],
+            ),
+          Expanded(
+            child: IndexedStack(
+              index: _currentIndex,
+              children: [
+                LiveTab(onGoToDevices: goToDevices),
+                const SessionsTab(),
+                DevicesTab(onGoToSettings: goToSettings),
+                SettingsTab(onGoToDevices: goToDevices),
+              ],
+            ),
+          ),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: switchToTab,
-        destinations: [
-          for (final tab in _tabs)
-            NavigationDestination(icon: Icon(tab.icon), label: tab.label),
-        ],
-      ),
+      bottomNavigationBar: useRail
+          ? null
+          : NavigationBar(
+              selectedIndex: _currentIndex,
+              onDestinationSelected: switchToTab,
+              destinations: [
+                for (final tab in _tabs)
+                  NavigationDestination(icon: Icon(tab.icon), label: tab.label),
+              ],
+            ),
     );
   }
 }
