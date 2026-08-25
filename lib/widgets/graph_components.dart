@@ -9,12 +9,12 @@ import 'package:flutter/scheduler.dart';
 
 import '../models/bucket_series.dart';
 import '../models/channel_limits.dart';
+import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 import '../services/session_data.dart';
 import 'channel_palette.dart';
-import 'clip_intervals.dart';
 
 // ---------------------------------------------------------------------------
 // Shared graph layout constants
@@ -2889,6 +2889,14 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     double viewEnd,
   ) {}
 
+  /// Optional chrome drawn in the right gutter, before the Y-axis labels, so
+  /// the labels sit on top of it.
+  void drawGutterChrome(
+    Canvas canvas,
+    Size graphSz,
+    double Function(double value) valueToY,
+  ) {}
+
   @override
   void paint(Canvas canvas, Size size) {
     final layout = _setupGraphFrame(
@@ -2920,6 +2928,8 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     }
 
     // -- Grid and labels --
+    drawGutterChrome(canvas, graphSz, valueToY);
+
     final grid = Path();
     _drawTimeAxis(
       canvas,
@@ -2995,8 +3005,8 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 }
 
 /// Force graph: each channel's tared value in the selected display unit.
-/// The limit chrome (rail display) draws in [drawOverlay]: over the axes,
-/// under the data ink.
+/// The limit chrome (rail bars) draws in [drawGutterChrome], in the right
+/// gutter under the axis labels.
 class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   @override
   final bool showXLabels;
@@ -3096,97 +3106,42 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     return _computeYRange(yMin, yMax, unit);
   }
 
-  /// Rail chrome, gated on [_limitWarningsEnabled] (the app's limit-warnings
-  /// master switch). Single light fill from the outermost in-view rail to
-  /// the plot edge; single stronger fill over the union of clipping spans.
-  /// Mixed buckets are treated as hot when a bucket is ≤1 px
-  /// ([_blockSizeFor] >= [kBucketSize]).
+  /// Rail bars in the right gutter, gated on [_limitWarningsEnabled] (the
+  /// app's limit-warnings master switch). One fixed-width column per channel;
+  /// each bar runs from the plot edge to that channel's ADC rail, projected
+  /// through its own unit converter (post-tare). Clamping to the plot rect
+  /// collapses beyond-view rails to nothing.
   @override
-  void drawOverlay(
+  void drawGutterChrome(
     Canvas canvas,
     Size graphSz,
-    YAxisRange yRange,
     double Function(double value) valueToY,
-    double viewStart,
-    double viewEnd,
   ) {
     if (!_limitWarningsEnabled) return;
 
-    final unit = _unit;
-    final viewSpan = viewEnd - viewStart;
-    if (viewSpan <= 0 || graphSz.width <= 0) return;
-    final treatMixedAsHot =
-        _blockSizeFor(viewSpan, graphSz.width) >= kBucketSize;
-
-    final lightPaint = Paint()..color = colorScheme.error.withAlpha(22);
-    final clipPath = Path();
-    double topRailY = 0, bottomRailY = 0;
+    final paint = Paint()..color = colorScheme.error.withAlpha(22);
+    const colW = _kGraphRightSpace / kAdcChannelCount;
 
     for (final ch in _activeChannels) {
-      final series = _data.channel(ch);
-      final conv = unit.converterFor(_data.calibrationFor(ch), series.tare);
+      final conv = _unit.converterFor(
+        _data.calibrationFor(ch),
+        _data.channel(ch).tare,
+      );
       if (conv == null) continue;
-
+      final left = graphSz.width + colW * ch;
       for (final positive in [true, false]) {
         final clipRaw = positive
             ? ChannelLimits.clipRawPos
             : ChannelLimits.clipRawNeg;
-        final railY = valueToY(conv(clipRaw.toDouble()));
-        if (railY < 0 || railY > graphSz.height) continue;
-
-        if (positive) {
-          topRailY = math.max(topRailY, railY);
-        } else {
-          bottomRailY = bottomRailY == 0 ? railY : math.min(bottomRailY, railY);
-        }
-
-        // A null extreme means the channel has no data: nothing can be hot.
-        final couldBeHot = positive
-            ? (series.max ?? double.nan) >= clipRaw
-            : (series.min ?? double.nan) <= clipRaw;
-        if (!couldBeHot) continue;
-
-        final start = math.max(viewStart.floor(), _data.oldestSample);
-        final end = math.min(viewEnd.ceil(), _data.totalSamples);
-        for (final it in hotIntervals(
-          data: series.data,
-          cap: _data.bufferCapacity,
-          buckets: series.buckets,
-          start: start,
-          end: end,
-          threshold: clipRaw,
-          positive: positive,
-          treatMixedAsHot: treatMixedAsHot,
-        )) {
-          final x1 = (it.start - viewStart) * graphSz.width / viewSpan;
-          final x2 = (it.end - viewStart) * graphSz.width / viewSpan;
-          if (x2 - x1 < 1) continue;
-          clipPath.addRect(
-            Rect.fromLTRB(
-              x1,
-              positive ? 0 : railY,
-              x2,
-              positive ? railY : graphSz.height,
-            ),
-          );
-        }
+        final railY = valueToY(
+          conv(clipRaw.toDouble()),
+        ).clamp(0.0, graphSz.height).toDouble();
+        final bar = positive
+            ? Rect.fromLTRB(left, 0.0, left + colW, railY)
+            : Rect.fromLTRB(left, railY, left + colW, graphSz.height);
+        if (bar.height <= 0) continue;
+        canvas.drawRect(bar, paint);
       }
-    }
-
-    if (topRailY > 0) {
-      canvas.drawRect(Rect.fromLTRB(0, 0, graphSz.width, topRailY), lightPaint);
-    }
-    if (bottomRailY > 0) {
-      canvas.drawRect(
-        Rect.fromLTRB(0, bottomRailY, graphSz.width, graphSz.height),
-        lightPaint,
-      );
-    }
-    if (!clipPath.getBounds().isEmpty) {
-      canvas.drawPath(
-        clipPath,
-        Paint()..color = colorScheme.error.withAlpha(80),
-      );
     }
   }
 
