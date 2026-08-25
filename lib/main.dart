@@ -201,7 +201,7 @@ class DynoApp extends StatelessWidget {
       onTertiary: Colors.white,
       surface: Colors.white,
       // text
-      onSurface: Color.fromARGB(255, 58, 34, 34),
+      onSurface: Colors.black,
       error: Color(0xFFB00020),
       onError: Colors.white,
       // Dimmed/inactive content (BT-off icon, expired-scan rows).
@@ -212,7 +212,7 @@ class DynoApp extends StatelessWidget {
       onSurfaceVariant: Color(0xFF546E7A), // blueGrey 600
       // De-emphasized surface (the stale device row's card tint):
       // onSurface at 6% blended over surface.
-      surfaceContainerHighest: Color(0xFFF3F2F2),
+      surfaceContainerHighest: Color(0xFFF0F0F0),
       // SnackBar themes itself off these three; identical in both schemes,
       // so one toast style regardless of mode. Error toasts override
       // background/content via showErrorSnackBar.
