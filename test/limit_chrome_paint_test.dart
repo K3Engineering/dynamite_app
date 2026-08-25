@@ -11,9 +11,8 @@ import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
 /// Paint smoke test for the limit chrome: with a channel pinned at the ADC
-/// rail, the force pane paints the rail display (light + clip fills). No
-/// pixel assertions — the point is the paint path executing end to end
-/// without throwing.
+/// rail, the force pane paints the gutter rail bars. No pixel assertions —
+/// the point is the paint path executing end to end without throwing.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
