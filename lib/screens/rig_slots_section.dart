@@ -301,9 +301,11 @@ class _ChannelGutter extends StatelessWidget {
   }
 }
 
-/// The always-present save-state bar. Dirty: the red of the Live tab's
-/// "Not connected" header (errorContainer), with content in the matching
-/// on-color so it stays readable. Clean: a quiet confirmation. One layout
+/// The always-present save-state bar. Dirty: errorContainer with content
+/// in the matching on-color so it stays readable — unsaved edits are the
+/// one resting state that loses user data (discarded on disconnect), so
+/// they earn the error tint the app's other resting states don't get.
+/// Clean: a quiet confirmation. One layout
 /// for both states — the buttons keep their space while hidden, so the bar
 /// (and the slot list below) never moves when the dirty state flips.
 class _StatusBar extends StatelessWidget {
