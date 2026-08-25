@@ -86,6 +86,15 @@ class _LiveTabState extends State<LiveTab> {
   }
 
   void _onTare() {
+    // A session freezes its tares at record start, so re-zeroing mid-recording
+    // would desync the live display from the export. Refuse loudly.
+    if (context.read<RecordingController>().sessionInProgress) {
+      showErrorSnackBar(
+        ScaffoldMessenger.of(context),
+        'Stop recording to tare',
+      );
+      return;
+    }
     context.read<DataHub>().requestTare();
   }
 
@@ -654,7 +663,7 @@ class ActionButtons extends StatelessWidget {
             ),
           ),
           OutlinedButton.icon(
-            onPressed: onTare,
+            onPressed: isRecording ? null : onTare,
             icon: const Icon(Icons.exposure_zero),
             label: Text(taring ? 'TARING' : 'TARE'),
           ),
