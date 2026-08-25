@@ -347,6 +347,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// streaming. Every screen keys its connected UI off this.
   bool get isStreaming => _link.isStreaming;
 
+  /// Lifecycle state of the active link ([BtLinkState.idle] when no link):
+  /// the full progression for status readouts that must distinguish "no
+  /// link" from "a link transition is in flight" (the Live tab's banner
+  /// and connect prompt). For "usable", use [isStreaming].
+  BtLinkState get linkState => _link.state;
+
   /// A link is "busy" whenever it is mid-transition or active; device-row
   /// Connect buttons stay disabled until it returns to idle. This is what
   /// prevents the disconnect→reconnect double-click race. On web the busy

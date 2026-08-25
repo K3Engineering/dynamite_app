@@ -13,6 +13,21 @@ typedef BtStatusVisual = ({
   bool showSpinner,
 });
 
+/// Stage label for a non-idle link state ("Connecting…", "Disconnecting…");
+/// null for [BtLinkState.idle], which has no link-side label (the scan /
+/// adapter status is the voice there). What each stage means is documented
+/// on [BtLinkState] itself. Shared by [btStatusVisual] (Devices tab) and the
+/// Live tab's status bar, so the two can't phrase the same state differently.
+String? btLinkStateLabel(BtLinkState state) => switch (state) {
+  BtLinkState.disconnecting => 'Disconnecting…',
+  BtLinkState.streaming => 'Connected',
+  BtLinkState.connected => 'Setting up…',
+  BtLinkState.readingConstants => 'Reading board constants…',
+  BtLinkState.subscribing => 'Starting data stream…',
+  BtLinkState.connecting => 'Connecting…',
+  BtLinkState.idle => null,
+};
+
 /// Map the link/adapter/scan state to the indicator visual. Link states
 /// outrank scan status, which outranks adapter status. [status]/[colors]
 /// carry the theme's semantic + scheme colors.
@@ -39,29 +54,16 @@ BtStatusVisual btStatusVisual({
   final connected = status.linkConnected;
 
   (IconData, Color, String) resolve() {
-    switch (linkState) {
-      case BtLinkState.disconnecting:
-        return (Icons.bluetooth_searching, active, 'Disconnecting…');
-      case BtLinkState.streaming:
-        return (Icons.bluetooth_connected, connected, 'Connected');
-      case BtLinkState.connected:
-        // GATT link is up but MTU negotiation / service discovery is still
-        // in progress. Not usable yet.
-        return (Icons.bluetooth_searching, active, 'Setting up…');
-      case BtLinkState.readingConstants:
-        // Services are discovered; the board constants (ADC config readback
-        // + the connect-time flash read) are still coming in. Not usable
-        // yet.
-        return (Icons.bluetooth_searching, active, 'Reading board constants…');
-      case BtLinkState.subscribing:
-        // Services are discovered; the ADC feed subscription (calibration
-        // read + enabling notifications) is still in progress. Not usable
-        // yet, but data starts flowing at the end of this stage.
-        return (Icons.bluetooth_searching, active, 'Starting data stream…');
-      case BtLinkState.connecting:
-        return (Icons.bluetooth_searching, active, 'Connecting…');
-      case BtLinkState.idle:
-        break; // Fall through to scan / adapter status.
+    // Any link transition outranks scan / adapter status. Every non-idle
+    // state shares the searching-in-flight treatment except the steady
+    // streaming state (see [showSpinner] below).
+    if (linkState != BtLinkState.idle) {
+      final streaming = linkState == BtLinkState.streaming;
+      return (
+        streaming ? Icons.bluetooth_connected : Icons.bluetooth_searching,
+        streaming ? connected : active,
+        btLinkStateLabel(linkState)!,
+      );
     }
     if (isScanning) {
       // On web the device list lives in the browser's own picker popup, not

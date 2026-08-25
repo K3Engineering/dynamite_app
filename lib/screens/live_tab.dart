@@ -9,6 +9,7 @@ import '../models/board_calibration.dart';
 import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
 
+import '../models/bt_scan.dart';
 import '../models/device_profile.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
@@ -17,6 +18,7 @@ import '../models/feed_health.dart';
 import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
+import '../widgets/bt_icon.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/tare_sheet.dart';
 import '../widgets/session_flows.dart';
@@ -33,9 +35,8 @@ import '../widgets/status_colors.dart';
 class LiveTab extends StatefulWidget {
   const LiveTab({super.key, required this.onGoToDevices});
 
-  /// Jump to the Devices tab (the disconnected prompt's "Connect a device"
-  /// action, and tapping the status bar while disconnected). Supplied by the
-  /// app shell, which owns the tab index.
+  /// Jump to the Devices tab (the idle prompt's "Connect a device" action).
+  /// Supplied by the app shell, which owns the tab index.
   final VoidCallback onGoToDevices;
 
   @override
@@ -175,10 +176,11 @@ class _LiveTabState extends State<LiveTab> {
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
     // Narrow selects: the link manager notifies on every RSSI poll — only
-    // streaming edges and device-name changes may rebuild this tab.
-    final isConnected = context.select<BleLinkManager, bool>(
-      (l) => l.isStreaming,
+    // link-state transitions and device-name changes may rebuild this tab.
+    final linkState = context.select<BleLinkManager, BtLinkState>(
+      (l) => l.linkState,
     );
+    final streaming = linkState == BtLinkState.streaming;
     final deviceName = context.select<BleLinkManager, String>(
       (l) => l.connectedDeviceName,
     );
@@ -200,14 +202,13 @@ class _LiveTabState extends State<LiveTab> {
           ValueListenableBuilder<FeedHealth?>(
             valueListenable: healthListenable,
             builder: (context, health, _) => LiveStatusBar(
-              isConnected: isConnected,
+              linkState: linkState,
               connectedDeviceName: deviceName,
               sampleRateHz: hub.sampleRateHz,
               health: health,
-              onGoToDevices: widget.onGoToDevices,
             ),
           ),
-          if (isConnected)
+          if (streaming)
             Expanded(
               child: ValueListenableBuilder<bool>(
                 valueListenable: _showDerivative,
@@ -235,9 +236,13 @@ class _LiveTabState extends State<LiveTab> {
             )
           else
             Expanded(
-              child: DisconnectedPrompt(onConnect: widget.onGoToDevices),
+              child: DisconnectedPrompt(
+                linkState: linkState,
+                deviceName: deviceName,
+                onConnect: widget.onGoToDevices,
+              ),
             ),
-          if (isConnected)
+          if (streaming)
             ActionButtons(
               isRecording: recording.sessionInProgress,
               onToggleRecord: _onToggleRecord,
@@ -275,8 +280,13 @@ class _LiveTabState extends State<LiveTab> {
 // LiveStatusBar
 // ---------------------------------------------------------------------------
 
+/// A pure status readout of the link state: no actions (the prompt below
+/// owns the "Connect a device" CTA, and the Devices tab owns transitions in
+/// flight). Only the streaming state gets a tinted surface — a neutral strip
+/// means "resting or in transition", never an error (disconnected is the
+/// app's modal resting state, not a failure).
 class LiveStatusBar extends StatelessWidget {
-  final bool isConnected;
+  final BtLinkState linkState;
   final String connectedDeviceName;
 
   /// The stream's sample rate for the Hz readout next to the RSSI indicator.
@@ -288,15 +298,11 @@ class LiveStatusBar extends StatelessWidget {
 
   const LiveStatusBar({
     super.key,
-    required this.isConnected,
+    required this.linkState,
     required this.connectedDeviceName,
     required this.sampleRateHz,
-    required this.onGoToDevices,
     this.health,
   });
-
-  /// Tapping the bar while disconnected jumps to the Devices tab.
-  final VoidCallback onGoToDevices;
 
   void _showHealthDetails(BuildContext context, FeedHealth health) {
     final hub = context.read<DataHub>();
@@ -325,31 +331,53 @@ class LiveStatusBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final report = isConnected && (health?.worthReporting ?? false);
+    if (linkState != BtLinkState.streaming) {
+      // One line for both idle and in-flight states; the in-flight stage
+      // wording comes from btLinkStateLabel, shared with the Devices tab.
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        color: scheme.surfaceContainerHighest,
+        child: Row(
+          children: [
+            Icon(
+              linkState == BtLinkState.idle
+                  ? Icons.bluetooth
+                  : Icons.bluetooth_searching,
+              size: 18,
+              color: scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              linkState == BtLinkState.idle
+                  ? 'Not connected'
+                  : btLinkStateLabel(linkState)!,
+              style: TextStyle(
+                color: scheme.onSurfaceVariant,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    final report = health?.worthReporting ?? false;
     final noData = health?.noDataFlowing ?? false;
     final warning = report
         ? Theme.of(context).extension<StatusColors>()!.onConnectedWarning
         : null;
     return GestureDetector(
-      onTap: !isConnected
-          ? onGoToDevices
-          : report
-          ? () => _showHealthDetails(context, health!)
-          : null,
+      onTap: report ? () => _showHealthDetails(context, health!) : null,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        color: isConnected ? scheme.primaryContainer : scheme.errorContainer,
+        color: scheme.primaryContainer,
         child: Row(
           children: [
             Icon(
-              isConnected
-                  ? Icons.bluetooth_connected
-                  : Icons.bluetooth_disabled,
+              Icons.bluetooth_connected,
               size: 18,
-              color: isConnected
-                  ? scheme.onPrimaryContainer
-                  : scheme.onErrorContainer,
+              color: scheme.onPrimaryContainer,
             ),
             const SizedBox(width: 8),
             Expanded(
@@ -358,13 +386,9 @@ class LiveStatusBar extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    isConnected
-                        ? 'Connected: $connectedDeviceName'
-                        : 'Not connected \u2014 tap to connect',
+                    'Connected: $connectedDeviceName',
                     style: TextStyle(
-                      color: isConnected
-                          ? scheme.onPrimaryContainer
-                          : scheme.onErrorContainer,
+                      color: scheme.onPrimaryContainer,
                       fontWeight: FontWeight.w500,
                     ),
                   ),
@@ -384,14 +408,13 @@ class LiveStatusBar extends StatelessWidget {
                 ],
               ),
             ),
-            if (isConnected) const _ConnectedRssiIndicator(),
-            if (isConnected)
-              Text(
-                noData ? 'no data' : '$sampleRateHz Hz',
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: noData ? scheme.outline : scheme.onPrimaryContainer,
-                ),
+            const _ConnectedRssiIndicator(),
+            Text(
+              noData ? 'no data' : '$sampleRateHz Hz',
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: noData ? scheme.outline : scheme.onPrimaryContainer,
               ),
+            ),
           ],
         ),
       ),
@@ -583,15 +606,38 @@ class LiveStats extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class DisconnectedPrompt extends StatelessWidget {
-  const DisconnectedPrompt({super.key, required this.onConnect});
+  // Only ever shown while not streaming (the tab shows the live content
+  // instead) — a streaming state here would render "Connecting to …".
+  const DisconnectedPrompt({
+    super.key,
+    required this.linkState,
+    required this.deviceName,
+    required this.onConnect,
+  }) : assert(linkState != BtLinkState.streaming);
 
-  /// "Connect a device" action: jumps to the Devices tab.
+  final BtLinkState linkState;
+  final String deviceName;
+
+  /// "Connect a device" action (idle only): jumps to the Devices tab.
   final VoidCallback onConnect;
 
   @override
   Widget build(BuildContext context) {
+    // A link transition is in flight: it can take seconds, and only the
+    // Devices tab controls it. No action here — a dead Connect button would
+    // only beg the question why it's dead. The precise stage label sits in
+    // the status bar right above; here the user gets the one thing they
+    // care about: it's coming, and to which device.
+    if (linkState != BtLinkState.idle) {
+      return EmptyPlaceholder(
+        icon: Icons.bluetooth_searching,
+        title: linkState == BtLinkState.disconnecting
+            ? 'Disconnecting from $deviceName…'
+            : 'Connecting to $deviceName…',
+      );
+    }
     return EmptyPlaceholder(
-      icon: Icons.bluetooth_searching,
+      icon: Icons.bluetooth,
       title: 'No device connected',
       action: FilledButton.tonal(
         onPressed: onConnect,
