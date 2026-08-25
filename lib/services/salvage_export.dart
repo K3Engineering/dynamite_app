@@ -16,6 +16,7 @@ import 'dart:typed_data';
 
 import '../models/app_meta.dart';
 import '../models/gap_list.dart';
+import '../utils/format.dart';
 import 'database.dart';
 import 'export_delivery.dart';
 import 'export_names.dart';
@@ -50,7 +51,7 @@ Future<String?> downloadSalvageCsv({
       'salvage.csv',
       fallback: 'session_salvage',
     ),
-    dialogTitle: 'Export salvage data',
+    dialogTitle: salvageExportLabel,
   );
 }
 

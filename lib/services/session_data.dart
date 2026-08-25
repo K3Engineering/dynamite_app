@@ -9,8 +9,9 @@ import '../models/graph_data_source.dart';
 /// The integrity verdict for a session's stored data, computed at load
 /// time. Each flag maps to exactly one honest floor state (zeroed tares,
 /// uncalibrated channels, empty gaps, a truncated sample prefix) and one
-/// machine-readable warning code, shared verbatim between the UI banner
-/// and the CSV metadata's `warnings` field (docs/csv-format-v1.md).
+/// machine-readable warning code carried in the CSV metadata's `warnings`
+/// field (docs/csv-format-v1.md). The UI renders a human interpretation
+/// of each flag, never the code itself.
 class SessionDamage {
   const SessionDamage({
     this.tare = false,
@@ -46,8 +47,9 @@ class SessionDamage {
 
   bool get isEmpty => !tare && !calibration && !gapsLost && truncatedAt == null;
 
-  /// The machine-readable codes for the set flags, shared verbatim between
-  /// the UI banner and the CSV `warnings` metadata field.
+  /// The machine-readable codes for the set flags — the CSV `warnings`
+  /// metadata field's contract (the UI banner interprets them instead of
+  /// quoting them).
   List<String> get warningCodes => [
     if (tare) 'session_tare_damaged',
     if (calibration) 'session_calibration_damaged',

@@ -2,12 +2,24 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/utils/format.dart';
 
-/// Tests for the shared formatters: [formatDuration]'s unit ladder,
-/// [formatDate]/[formatTimestamp]'s ISO zero-padding, and
-/// [formatRelativeAge]'s coarse bucket ladder — the Devices tab's
-/// "Last seen/connected" ages deliberately change rarely instead of ticking
-/// every second.
+/// Tests for the shared formatters: [formatThousands]' comma grouping,
+/// [formatDuration]'s unit ladder, [formatDate]/[formatTimestamp]'s ISO
+/// zero-padding, and [formatRelativeAge]'s coarse bucket ladder — the
+/// Devices tab's "Last seen/connected" ages deliberately change rarely
+/// instead of ticking every second.
 void main() {
+  group('formatThousands', () {
+    test('no separator below a thousand', () {
+      expect(formatThousands(0), '0');
+      expect(formatThousands(999), '999');
+    });
+
+    test('comma groups from the right', () {
+      expect(formatThousands(1000), '1,000');
+      expect(formatThousands(1234567), '1,234,567');
+    });
+  });
+
   group('formatDuration', () {
     test('below a minute is seconds only', () {
       expect(formatDuration(Duration.zero), '0s');

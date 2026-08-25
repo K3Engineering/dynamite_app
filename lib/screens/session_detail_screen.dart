@@ -83,6 +83,19 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         // the way out — fall back to the row this screen was pushed with.
         final session = snapshot.data ?? widget.session;
 
+        // The CSV-vs-salvage menu contrast rides on the damage verdict:
+        // a loaded session knows it, a failed load can't rule salvage out.
+        final damaged = switch (_loadState) {
+          _Ready(data: final d?) => !d.damage.isEmpty,
+          _ => false,
+        };
+        final showSalvage = switch (_loadState) {
+          _Ready(data: final d?) => d.damage.truncatedAt != null,
+          _Failed() => true,
+          _ => false,
+        };
+        final csvSuffix = damaged ? ' (verified data)' : '';
+
         return Scaffold(
           appBar: AppBar(
             title: Text(
@@ -97,24 +110,26 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                     value: 'notes',
                     child: Text('Edit notes'),
                   ),
-                  const PopupMenuItem(
+                  PopupMenuItem(
                     value: 'download_csv',
-                    child: Text('Download CSV'),
+                    child: Text('Download CSV$csvSuffix'),
                   ),
                   PopupMenuItem(
                     value: 'share_csv',
                     enabled: fileShareSupportedHere,
                     child: Text(
-                      'Share CSV'
+                      'Share CSV$csvSuffix'
                       '${fileShareSupportedHere ? '' : ' (not supported here)'}',
                     ),
                   ),
                   // Raw samples that failed integrity verification (see
                   // SessionDamage.truncatedAt) — the hand-recovery artifact.
-                  const PopupMenuItem(
-                    value: 'salvage_csv',
-                    child: Text('Export salvage data'),
-                  ),
+                  // Hidden when the loaded session has nothing salvageable.
+                  if (showSalvage)
+                    const PopupMenuItem(
+                      value: 'salvage_csv',
+                      child: Text(salvageExportLabel),
+                    ),
                   PopupMenuItem(
                     value: 'delete',
                     // Destructive action: the theme's error role, as in the
@@ -175,7 +190,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           // Storage-integrity damage is surfaced loudly and permanently —
           // the floors in effect (raw-only conversion, gross counts, a
           // truncated extent) must be unmissable next to the data.
-          if (!data.damage.isEmpty) _DamageBanner(damage: data.damage),
+          if (!data.damage.isEmpty)
+            _DamageBanner(damage: data.damage, sampleRate: data.sampleRate),
           // Channel header (same tappable table as the live view; toggles
           // this session's per-session channel visibility).
           ChannelStatsTable(
@@ -319,8 +335,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           await _shareCsv(session, state.data!);
         }
       case 'salvage_csv':
-        // Available in every load state — including _Failed, where it is
-        // the only export possible. Reports when nothing is salvageable.
+        // The menu gates its visibility, but the action itself is safe in
+        // every load state: it reports when nothing is salvageable.
         await _downloadSalvage(session);
       case 'delete':
         await _deleteAndPop(session);
@@ -453,9 +469,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                       Padding(
                         padding: const EdgeInsets.only(bottom: 8),
                         child: Text(
-                          'Session data damaged (${damage.warningCodes.join(', ')}). '
-                          'The CSV discloses this in its metadata; converted '
-                          'columns may be blank.${damage.truncatedAt != null ? ' Samples that failed verification are available via "Export salvage data".' : ''}',
+                          'Session data damaged — the CSV carries the details '
+                          'in its metadata; converted columns may be blank.'
+                          '${damage.truncatedAt != null ? ' Data outside the verified extent is in "$salvageExportLabel".' : ''}',
                         ),
                       ),
                     for (final u in DisplayUnit.values)
@@ -550,12 +566,19 @@ final class _Ready extends _LoadState {
 // -- Damage banner --
 
 /// Persistent banner for a session whose stored data failed integrity
-/// checks (see [SessionDamage]): the warning codes verbatim (the same
-/// strings the CSV export embeds), each with its one-line consequence.
+/// checks (see [SessionDamage]): one human line per flag naming the floor
+/// in effect. The machine-readable codes stay out of the UI — they are the
+/// CSV `warnings` metadata's contract, and this screen always has an exact
+/// interpretation.
 class _DamageBanner extends StatelessWidget {
-  const _DamageBanner({required this.damage});
+  const _DamageBanner({required this.damage, required this.sampleRate});
 
   final SessionDamage damage;
+
+  /// The session's recorded rate (a session-row scalar, authoritative here
+  /// as in the statistics rows) — derives the truncation point's elapsed
+  /// time from its sample index.
+  final int sampleRate;
 
   @override
   Widget build(BuildContext context) {
@@ -589,20 +612,25 @@ class _DamageBanner extends StatelessWidget {
     );
   }
 
-  /// One human line per flag, naming the code (shared verbatim with the
-  /// CSV `warnings` metadata) and the floor in effect.
+  /// One human line per flag, naming the floor in effect.
   List<String> get _consequences => [
-    if (damage.tare)
-      'session_tare_damaged — tare unknown; showing gross raw counts',
-    if (damage.calibration)
-      'session_calibration_damaged — calibration unknown; raw counts only',
+    if (damage.tare) 'Tare unknown — showing gross raw counts.',
+    if (damage.calibration) 'Calibration unknown — raw counts only.',
     if (damage.gapsLost)
-      'session_gaps_lost — dropout positions unknown; some samples may be '
-          'repeated held values',
+      'Dropout positions unknown — some samples may be repeated held values.',
     if (damage.truncatedAt case final t?)
-      'session_truncated_at_sample:$t — data beyond this point failed '
-          'integrity checks (see Export salvage data)',
+      'Data truncated at sample ${formatThousands(t)} (${_elapsedAt(t)} of '
+          'recording) — later storage failed integrity checks and is '
+          'hidden. Available raw via menu → "$salvageExportLabel".',
   ];
+
+  /// The recording time at [sample], whole seconds. Sub-second cuts clamp
+  /// to "<1s" — a bare "0s" would read like a UI bug next to the truth.
+  String _elapsedAt(int sample) {
+    final ms = sample * 1000 ~/ sampleRate;
+    if (ms == 0) return '<1s';
+    return '≈ ${formatDuration(Duration(milliseconds: ms))}';
+  }
 }
 
 // -- Stat row widget --

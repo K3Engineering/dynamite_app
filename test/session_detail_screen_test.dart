@@ -9,6 +9,7 @@ import 'package:dynamite_app/screens/session_detail_screen.dart';
 import 'package:dynamite_app/services/database.dart';
 import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_queries.dart';
+import 'package:dynamite_app/utils/format.dart';
 import 'package:dynamite_app/widgets/empty_placeholder.dart';
 
 /// Widget tests for the Session detail screen's data-integrity surfaces:
@@ -140,7 +141,7 @@ void main() {
     // export possible for this session.
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
-    expect(find.text('Export salvage data'), findsOneWidget);
+    expect(find.text(salvageExportLabel), findsOneWidget);
     // Dismiss the menu without invoking (delivery is platform code).
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
@@ -168,13 +169,59 @@ void main() {
 
     expect(find.text('Session data damaged'), findsOneWidget);
     expect(
-      find.text(
-        'session_tare_damaged — tare unknown; showing gross raw counts',
-      ),
+      find.text('Tare unknown — showing gross raw counts.'),
       findsOneWidget,
     );
     // The data itself still renders (the floor is a view, not a refusal).
     expect(find.text('Samples'), findsOneWidget);
+
+    // Damaged but nothing salvageable (no truncation): the menu marks the
+    // verified CSV and hides the salvage export.
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    expect(find.text('Download CSV (verified data)'), findsOneWidget);
+    expect(find.text(salvageExportLabel), findsNothing);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
+
+    await unmount(tester);
+  });
+
+  testWidgets('a truncated session names the cut point and offers the '
+      'salvage export', (tester) async {
+    final sessionId = await makeRow();
+    const codec = SessionChunkCodec(4);
+    // Chunks say 1,000 samples; the metadata claim of 1,500 fails against
+    // them — the honest extent truncates at sample 1,000 (= 1s @ 1 kHz).
+    await AppDatabase.instance.insertChunk(
+      sessionId,
+      0,
+      codec.pack(1000, (s, ch) => s),
+    );
+    await AppDatabase.instance.completeSession(
+      sessionId,
+      sampleCount: 1500,
+      durationMs: 1500,
+    );
+
+    await pumpDetail(tester, sessionId);
+
+    expect(find.text('Session data damaged'), findsOneWidget);
+    expect(
+      find.text(
+        'Data truncated at sample 1,000 (≈ 1s of recording) — later storage '
+        'failed integrity checks and is hidden. Available raw via menu → '
+        '"$salvageExportLabel".',
+      ),
+      findsOneWidget,
+    );
+
+    await tester.tap(find.byType(PopupMenuButton<String>));
+    await tester.pumpAndSettle();
+    expect(find.text('Download CSV (verified data)'), findsOneWidget);
+    expect(find.text(salvageExportLabel), findsOneWidget);
+    await tester.tapAt(const Offset(10, 10));
+    await tester.pumpAndSettle();
 
     await unmount(tester);
   });

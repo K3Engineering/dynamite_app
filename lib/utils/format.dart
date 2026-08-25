@@ -1,6 +1,22 @@
 /// Shared display formatters for the session screens.
 library;
 
+/// Menu label of the damaged-data export, the one source so the menu item,
+/// the save-as dialog title, and every cross-reference in copy can't drift.
+const String salvageExportLabel = 'Export full raw data (damaged)';
+
+/// "1,040" — comma-grouped integer. Hand-rolled on purpose: the intl
+/// package is a heavier dep than one separator loop justifies.
+String formatThousands(int n) {
+  final digits = n.abs().toString();
+  final buf = StringBuffer(n < 0 ? '-' : '');
+  for (var i = 0; i < digits.length; i++) {
+    if (i > 0 && (digits.length - i) % 3 == 0) buf.write(',');
+    buf.write(digits[i]);
+  }
+  return buf.toString();
+}
+
 /// "45s" below a minute, "3m 12s" below an hour, "1h 15m" above.
 String formatDuration(Duration d) {
   if (d.inHours >= 1) {
