@@ -157,33 +157,40 @@ class _TareSheetState extends State<_TareSheet> {
 
   /// The drag-handle row: the dismiss pill centered (showModalBottomSheet's
   /// own showDragHandle can't host the close affordance) with the close
-  /// button at the row's right end.
+  /// button at the row's right end. The height is pinned to the handle
+  /// zone, so the button's optical center is the pill's centerline by
+  /// construction, not by coincidence of widget sizes.
   Widget _topBar() {
-    return Stack(
-      alignment: Alignment.center,
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10),
-          child: Container(
-            width: 32,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Theme.of(
-                context,
-              ).colorScheme.onSurfaceVariant.withAlpha(0x66),
-              borderRadius: BorderRadius.circular(2),
+    return SizedBox(
+      height: 24,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Center(
+            child: Container(
+              width: 32,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurfaceVariant.withAlpha(0x66),
+                borderRadius: BorderRadius.circular(2),
+              ),
             ),
           ),
-        ),
-        Align(
-          alignment: Alignment.centerRight,
-          child: IconButton(
-            tooltip: 'Close',
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.close),
+          Align(
+            alignment: Alignment.centerRight,
+            child: SizedBox(
+              height: 24,
+              child: IconButton(
+                tooltip: 'Close',
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close),
+              ),
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -201,7 +208,9 @@ class _TareSheetState extends State<_TareSheet> {
   }
 
   Widget _headerRow() {
-    final captionStyle = Theme.of(context).textTheme.labelSmall;
+    final captionStyle = Theme.of(
+      context,
+    ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.w600);
     return Row(
       children: [
         // The color-bar + gap prefix of a channel row.
@@ -215,7 +224,8 @@ class _TareSheetState extends State<_TareSheet> {
             style: captionStyle,
           ),
         ),
-        // Match the two buttons below so headers sit over the values.
+        // Match the gap + two buttons below so headers sit over the values.
+        const SizedBox(width: 12),
         const SizedBox(width: 48),
         const SizedBox(width: 48),
       ],
@@ -226,7 +236,7 @@ class _TareSheetState extends State<_TareSheet> {
     const tabularFigures = [FontFeature.tabularFigures()];
     final valueStyle = Theme.of(
       context,
-    ).textTheme.bodySmall?.copyWith(fontFeatures: tabularFigures);
+    ).textTheme.bodyMedium?.copyWith(fontFeatures: tabularFigures);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
@@ -241,6 +251,7 @@ class _TareSheetState extends State<_TareSheet> {
             ),
           ),
           Expanded(flex: 3, child: _tareOffsetCell(ch, unit, valueStyle)),
+          const SizedBox(width: 12),
           SizedBox(
             width: 48,
             child: IconButton.filledTonal(
@@ -252,11 +263,14 @@ class _TareSheetState extends State<_TareSheet> {
           ),
           SizedBox(
             width: 48,
-            child: IconButton.filledTonal(
+            // The app's destructive pairing (see dialogs.dart): contrast
+            // comes from the scheme, not a raw primary-tint glyph.
+            child: IconButton.filled(
               tooltip: 'Reset this channel',
               onPressed: () => hub.resetTare(channel: ch),
               style: IconButton.styleFrom(
-                foregroundColor: Theme.of(context).colorScheme.error,
+                backgroundColor: Theme.of(context).colorScheme.errorContainer,
+                foregroundColor: Theme.of(context).colorScheme.onErrorContainer,
               ),
               icon: const Icon(Icons.restart_alt, size: 20),
               visualDensity: VisualDensity.compact,
