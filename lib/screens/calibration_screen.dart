@@ -9,6 +9,7 @@ import '../services/share_capability.dart';
 import '../services/rig_state.dart';
 import '../services/calibration_text.dart';
 import '../widgets/calibration_view.dart';
+import '../widgets/snackbars.dart';
 
 /// The board calibration page: the factory calibration view
 /// ([CalibrationView]) plus the export row for the plain-text calibration
@@ -122,9 +123,10 @@ class CalibrationScreen extends StatelessWidget {
     }
     if (!context.mounted) return;
     if (error != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Report export failed: $error')));
+      showErrorSnackBar(
+        ScaffoldMessenger.of(context),
+        'Report export failed: $error',
+      );
     } else if (message != null) {
       ScaffoldMessenger.of(
         context,

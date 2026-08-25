@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import '../models/load_cell.dart';
 import '../services/rig_state.dart';
 import '../utils/format.dart';
+import '../widgets/snackbars.dart';
 
 /// Quick-pick values for the slot editor: the common nameplate numbers,
 /// one tap away; anything else goes in the text field.
@@ -49,15 +50,16 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     final ok = await rig.saveToDevice();
     if (!mounted) return;
     setState(() => _saving = false);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          ok
-              ? 'Load cells saved to device.'
-              : 'Could not write to the device — changes kept.',
-        ),
-      ),
-    );
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Load cells saved to device.')),
+      );
+    } else {
+      showErrorSnackBar(
+        ScaffoldMessenger.of(context),
+        'Could not write to the device — changes kept.',
+      );
+    }
   }
 
   @override

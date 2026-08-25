@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 
 import '../services/app_events.dart';
 import '../services/ble_link_manager.dart';
+import '../widgets/snackbars.dart';
 import 'live_tab.dart';
 import 'sessions_tab.dart';
 import 'devices_tab.dart';
@@ -61,44 +62,30 @@ class AppShellState extends State<AppShell> {
     final messenger = ScaffoldMessenger.of(context);
     switch (event) {
       case BleDisconnectTimeout(:final deviceName):
-        messenger.showSnackBar(
-          SnackBar(content: Text('$deviceName didn\'t disconnect cleanly.')),
-        );
+        showErrorSnackBar(messenger, '$deviceName didn\'t disconnect cleanly.');
       case BleConnectionFailed(:final deviceName):
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('Lost connection to $deviceName during setup.'),
-          ),
+        showErrorSnackBar(
+          messenger,
+          'Lost connection to $deviceName during setup.',
         );
       case BleConnectionLost(:final deviceName):
-        messenger.showSnackBar(
-          SnackBar(content: Text('Connection to $deviceName lost.')),
-        );
+        showErrorSnackBar(messenger, 'Connection to $deviceName lost.');
       case RecordingStorageError(:final error):
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('Recording stopped — storage error: $error'),
-            behavior: SnackBarBehavior.floating,
-            persist: true,
-            showCloseIcon: true,
-          ),
+        showErrorSnackBar(
+          messenger,
+          'Recording stopped — storage error: $error',
+          persist: true,
         );
       case RigEditsDiscarded():
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text(
-              'Disconnected — unsaved load cell changes were discarded.',
-            ),
-          ),
+        showErrorSnackBar(
+          messenger,
+          'Disconnected — unsaved load cell changes were discarded.',
         );
       case CalibrationUnreadable(:final deviceName):
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text(
-              'Could not read calibration from $deviceName — '
-              'nominal values in use.',
-            ),
-          ),
+        showErrorSnackBar(
+          messenger,
+          'Could not read calibration from $deviceName — '
+          'nominal values in use.',
         );
     }
   }

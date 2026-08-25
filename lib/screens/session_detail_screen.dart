@@ -20,6 +20,7 @@ import '../widgets/dialogs.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
+import '../widgets/snackbars.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   const SessionDetailScreen({super.key, required this.session});
@@ -513,9 +514,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     }
     if (!mounted) return;
     if (error != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('CSV export failed: $error')));
+      showErrorSnackBar(
+        ScaffoldMessenger.of(context),
+        'CSV export failed: $error',
+      );
     } else if (message != null) {
       ScaffoldMessenger.of(
         context,

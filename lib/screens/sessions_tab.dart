@@ -8,6 +8,7 @@ import '../services/storage_probe.dart';
 import '../utils/format.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
+import '../widgets/snackbars.dart';
 import '../widgets/storage_capacity_strip.dart';
 import 'session_detail_screen.dart';
 
@@ -150,9 +151,10 @@ class _SessionsTabState extends State<SessionsTab> {
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Failed to delete session: $e')));
+        showErrorSnackBar(
+          ScaffoldMessenger.of(context),
+          'Failed to delete session: $e',
+        );
       }
     }
   }

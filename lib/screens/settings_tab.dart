@@ -17,6 +17,7 @@ import '../services/calibration_text.dart';
 import '../widgets/info_cards.dart';
 import 'rig_slots_section.dart';
 import '../widgets/section_header.dart';
+import '../widgets/snackbars.dart';
 import 'calibration_screen.dart';
 
 class SettingsTab extends StatelessWidget {
@@ -279,7 +280,7 @@ class _DeviceNameEditorState extends State<_DeviceNameEditor> {
     if (!mounted) return;
     setState(() => _saving = false);
     if (error != null) {
-      messenger.showSnackBar(SnackBar(content: Text(error)));
+      showErrorSnackBar(messenger, error);
     }
   }
 

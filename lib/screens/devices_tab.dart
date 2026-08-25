@@ -13,6 +13,7 @@ import '../widgets/empty_placeholder.dart';
 import '../widgets/feed_health_indicator.dart';
 import '../widgets/rssi_indicator.dart';
 import '../widgets/section_header.dart';
+import '../widgets/snackbars.dart';
 import '../widgets/status_colors.dart';
 
 class DevicesTab extends StatelessWidget {
@@ -456,9 +457,10 @@ Future<void> _scanWithFeedback(BuildContext context, BleLinkManager bt) async {
   } catch (e) {
     debugPrint('Scan toggle failed: $e');
     if (context.mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to start scan: $e')));
+      showErrorSnackBar(
+        ScaffoldMessenger.of(context),
+        'Failed to start scan: $e',
+      );
     }
   }
 }

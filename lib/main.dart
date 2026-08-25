@@ -215,7 +215,7 @@ class DynoApp extends StatelessWidget {
       secondary: Color.fromARGB(255, 137, 178, 197),
       onSecondary: Colors.black,
       tertiary: Color(0xFFEF5350),
-      onTertiary: Color.fromARGB(255, 255, 55, 55),
+      onTertiary: Colors.white,
       surface: Color(0xFF1E1E1E),
       onSurface: Colors.white,
     );
@@ -229,6 +229,17 @@ class DynoApp extends StatelessWidget {
     ListTileThemeData selectedTileTheme(ColorScheme scheme) =>
         ListTileThemeData(selectedColor: scheme.onPrimaryContainer);
 
+    // One toast style for both modes: the schemes' inverse roles fall back
+    // to base roles (see the note above), so they can't theme the snackbar —
+    // in dark mode that made the toast white with a white action label.
+    // Error toasts override background/content via showErrorSnackBar.
+    const snackBarTheme = SnackBarThemeData(
+      backgroundColor: Color(0xFF323232),
+      contentTextStyle: TextStyle(color: Colors.white),
+      closeIconColor: Colors.white,
+      actionTextColor: Color(0xFF89B2C5),
+    );
+
     return MaterialApp(
       title: 'Dynamite',
       themeMode: ThemeMode.system,
@@ -238,6 +249,7 @@ class DynoApp extends StatelessWidget {
         extensions: const [StatusColors.light],
         colorScheme: lightScheme,
         listTileTheme: selectedTileTheme(lightScheme),
+        snackBarTheme: snackBarTheme,
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
@@ -245,6 +257,7 @@ class DynoApp extends StatelessWidget {
         extensions: const [StatusColors.dark],
         colorScheme: darkScheme,
         listTileTheme: selectedTileTheme(darkScheme),
+        snackBarTheme: snackBarTheme,
       ),
       home: const AppShell(),
     );

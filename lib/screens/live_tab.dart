@@ -22,6 +22,7 @@ import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 import '../widgets/rssi_indicator.dart';
+import '../widgets/snackbars.dart';
 import '../widgets/status_colors.dart';
 
 // ---------------------------------------------------------------------------
@@ -140,18 +141,14 @@ class _LiveTabState extends State<LiveTab> {
           // button state prevents). No announcement on start.
           break;
         case StartSessionTareInProgress():
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Taring in progress — try again in a moment'),
-              behavior: SnackBarBehavior.floating,
-            ),
+          showErrorSnackBar(
+            ScaffoldMessenger.of(context),
+            'Taring in progress — try again in a moment',
           );
         case StartSessionNoData():
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('No data from device — recording not started'),
-              behavior: SnackBarBehavior.floating,
-            ),
+          showErrorSnackBar(
+            ScaffoldMessenger.of(context),
+            'No data from device — recording not started',
           );
       }
     }
