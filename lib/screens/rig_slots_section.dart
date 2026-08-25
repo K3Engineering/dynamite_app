@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:material_ui/material_ui.dart';
 
 import '../models/load_cell.dart';
@@ -156,13 +157,17 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   /// — to the row's X for the whole drag, so it slides straight up and
   /// down the list instead of following the pointer sideways.
   ///
+  /// The whole row is the drag source; how a drag starts depends on the
+  /// platform. Touch platforms require a tap-and-hold so a swipe still
+  /// scrolls; desktops start dragging on mouse-down (the recognizer claims
+  /// the gesture only past the 1 px precise-pointer slop, so taps still
+  /// open the editor). On web the reported platform is the browser's OS,
+  /// which puts phone browsers (Android Chrome, Bluefy on iOS) on the
+  /// tap-and-hold path.
+  ///
   /// All edit affordances (tap, drag start, drop) close while a save is in
   /// flight: an edit landing mid-write would mutate the pending session the
   /// save already snapshotted (see RigState.saveToDevice's state guard).
-  ///
-  /// TODO: also start the drag on a long-press anywhere on the row — the
-  /// touch-platform pattern in ReorderableListView — while keeping the
-  /// handle for immediate dragging on desktop.
   Widget _slotTile(
     BuildContext context,
     RigState rig,
@@ -177,9 +182,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
       // Dropping a row onto itself is not offered (and not highlighted).
       onWillAcceptWithDetails: (details) => !_saving && details.data != i,
       onAcceptWithDetails: (details) => rig.swapSlots(details.data, i),
-      // The tile is built inside the builder so the drag feedback can be
-      // anchored to this row's render box (rowContext).
-      builder: (rowContext, candidateData, rejectedData) {
+      builder: (context, candidateData, rejectedData) {
         final highlighted = candidateData.isNotEmpty;
 
         final Widget tile;
@@ -201,45 +204,52 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
         } else {
           final cell = slot.cell;
           final subtitle = cell.valuesLine;
-          tile = ListTile(
+          final feedback = Material(
+            elevation: 4,
+            borderRadius: BorderRadius.circular(8),
+            clipBehavior: Clip.antiAlias,
+            child: SizedBox(
+              width: rowWidth,
+              child: ListTile(
+                title: Text(cell.title),
+                subtitle: Text(subtitle),
+              ),
+            ),
+          );
+          final row = ListTile(
             title: Text(cell.title),
             subtitle: Text(subtitle),
-            trailing: Draggable<int>(
-              data: i,
-              axis: Axis.vertical,
-              maxSimultaneousDrags: _saving ? 0 : 1,
-              // Anchor the feedback to the row, not the handle: the
-              // default childDragAnchorStrategy would pin the feedback's
-              // X to the handle's left edge, hanging the full-width row
-              // replica off the side of the list.
-              dragAnchorStrategy: (draggable, handleContext, position) {
-                final rowBox = rowContext.findRenderObject()! as RenderBox;
-                return position - rowBox.localToGlobal(Offset.zero);
-              },
-              onDragStarted: () => setState(() => _dragIndex = i),
-              onDragEnd: (_) => setState(() => _dragIndex = null),
-              feedback: Material(
-                elevation: 4,
-                borderRadius: BorderRadius.circular(8),
-                clipBehavior: Clip.antiAlias,
-                child: SizedBox(
-                  width: rowWidth,
-                  child: ListTile(
-                    title: Text(cell.title),
-                    subtitle: Text(subtitle),
-                  ),
-                ),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(8),
-                child: Icon(
-                  Icons.drag_indicator,
-                  color: theme.colorScheme.outline,
-                ),
+            trailing: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Icon(
+                Icons.drag_indicator,
+                color: theme.colorScheme.outline,
               ),
             ),
             onTap: _saving ? null : () => showSlotEditor(context, rig, i),
           );
+          tile = switch (defaultTargetPlatform) {
+            TargetPlatform.android ||
+            TargetPlatform.iOS ||
+            TargetPlatform.fuchsia => LongPressDraggable<int>(
+              data: i,
+              axis: Axis.vertical,
+              maxSimultaneousDrags: _saving ? 0 : 1,
+              onDragStarted: () => setState(() => _dragIndex = i),
+              onDragEnd: (_) => setState(() => _dragIndex = null),
+              feedback: feedback,
+              child: row,
+            ),
+            _ => Draggable<int>(
+              data: i,
+              axis: Axis.vertical,
+              maxSimultaneousDrags: _saving ? 0 : 1,
+              onDragStarted: () => setState(() => _dragIndex = i),
+              onDragEnd: (_) => setState(() => _dragIndex = null),
+              feedback: feedback,
+              child: row,
+            ),
+          };
         }
 
         return AnimatedContainer(
@@ -253,7 +263,13 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
                 ? Border.all(color: theme.colorScheme.primary, width: 1.5)
                 : null,
           ),
-          child: Opacity(opacity: _dragIndex == i ? 0.35 : 1.0, child: tile),
+          // The tile gets its own Material: with the highlight decoration
+          // painting behind it, a bare ListTile can't paint its background
+          // or ink splashes (and trips a debug assert).
+          child: Opacity(
+            opacity: _dragIndex == i ? 0.35 : 1.0,
+            child: Material(type: MaterialType.transparency, child: tile),
+          ),
         );
       },
     );

@@ -1,3 +1,7 @@
+import 'package:flutter/foundation.dart'
+    show debugDefaultTargetPlatformOverride;
+import 'package:flutter/gestures.dart'
+    show PointerDeviceKind, kLongPressTimeout;
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -131,28 +135,69 @@ void main() {
     );
   });
 
-  testWidgets('dragging a slot onto another swaps them', (tester) async {
-    final rig = await pump(tester);
-
-    // The drag handle inside the 'Break jig' row (slot 1, CH2).
-    final handle = find.descendant(
-      of: find.ancestor(
-        of: find.text('Break jig'),
-        matching: find.byType(ListTile),
-      ),
-      matching: find.byIcon(Icons.drag_indicator),
-    );
-    expect(handle, findsOneWidget);
-
-    // Drag it three rows down onto 'Spare 50' (slot 4).
-    await tester.drag(handle, const Offset(0, 3 * 72));
-    await tester.pump();
-
+  void expectSwapped(RigState rig) {
     expect(rig.effectiveSlots.cellAt(1)?.name, 'Spare 50');
     expect(rig.effectiveSlots.cellAt(4)?.name, 'Break jig');
     // A swap is a pending edit: the dirty state of the bar is up.
     expect(rig.hasPending, isTrue);
     expect(find.textContaining('Changes not saved to device'), findsOneWidget);
+  }
+
+  testWidgets('desktop: a mouse drag anywhere on a row swaps it', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    final rig = await pump(tester);
+
+    // Press in the middle of the 'Break jig' row (slot 1, CH2) — not on the
+    // grip icon — and drag three rows down onto 'Spare 50' (slot 4).
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('Break jig')),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pump();
+    await gesture.moveBy(const Offset(0, 3 * 72));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expectSwapped(rig);
+    // The binding's invariant check rejects a leftover override (it runs
+    // before tearDowns), so reset in the test body.
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('touch: tap-and-hold drags; a quick flick scrolls instead', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final rig = await pump(tester);
+
+    // A quick vertical flick on the row scrolls the page; it must not start
+    // a drag (the drag needs a settled hold first).
+    final flick = await tester.startGesture(
+      tester.getCenter(find.text('Break jig')),
+    );
+    await tester.pump(const Duration(milliseconds: 100));
+    await flick.moveBy(const Offset(0, -200));
+    await flick.up();
+    await tester.pumpAndSettle();
+    expect(rig.effectiveSlots.cellAt(1)?.name, 'Break jig');
+    expect(rig.hasPending, isFalse);
+
+    // Tap-and-hold on 'Break jig' (slot 1, CH2), then drag three rows down
+    // onto 'Spare 50' (slot 4).
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('Break jig')),
+    );
+    await tester.pump(kLongPressTimeout + const Duration(milliseconds: 100));
+    await gesture.moveBy(const Offset(0, 3 * 72));
+    await tester.pump();
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expectSwapped(rig);
+    debugDefaultTargetPlatformOverride = null;
   });
 
   testWidgets('edit a populated slot via the editor', (tester) async {
