@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:material_ui/material_ui.dart';
 
+import '../models/device_profile.dart';
 import '../models/load_cell.dart';
 import '../services/rig_state.dart';
 import '../utils/format.dart';
@@ -32,12 +33,8 @@ class RigSlotsSection extends StatefulWidget {
   State<RigSlotsSection> createState() => _RigSlotsSectionState();
 }
 
-/// Uniform row height: the channel gutter's labels align with the first
-/// four rows by construction, so every row must be exactly this tall
-/// (72 = a two-line ListTile's natural height).
-const double _kRowHeight = 72;
-
-/// Width of the static gutter holding the channel rail + CH tags.
+/// Width of the per-row channel tag cell (rail + rotated CH tag). Spare
+/// rows get a same-width spacer so every tile in the list aligns.
 const double _kGutterWidth = 28;
 
 class _RigSlotsSectionState extends State<RigSlotsSection> {
@@ -111,32 +108,21 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
           onSave: () => _save(rig),
         ),
         const SizedBox(height: 8),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // The gutter's top padding matches the card's default margin,
-            // so the tags stay centered on the four channel rows.
-            const Padding(
-              padding: EdgeInsets.only(top: 4),
-              child: _ChannelGutter(),
-            ),
-            Expanded(
-              child: Card(
-                clipBehavior: Clip.antiAlias,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final rowWidth = constraints.maxWidth;
-                    return Column(
-                      children: [
-                        for (int i = 0; i < kRigSlotCount; ++i)
-                          _slotTile(context, rig, slots, i, rowWidth),
-                      ],
-                    );
-                  },
-                ),
-              ),
-            ),
-          ],
+        Card(
+          clipBehavior: Clip.antiAlias,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // The tiles sit right of the tag column; the drag feedback
+              // replica is sized to the tile, not the whole card.
+              final tileWidth = constraints.maxWidth - _kGutterWidth;
+              return Column(
+                children: [
+                  for (int i = 0; i < kRigSlotCount; ++i)
+                    _slotRow(context, rig, slots, i, tileWidth),
+                ],
+              );
+            },
+          ),
         ),
         const SizedBox(height: 4),
         Text(
@@ -151,11 +137,37 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     );
   }
 
-  /// One slot row: a drop target for swaps, fixed height so the channel
-  /// gutter aligns. The drag is vertical-only:
-  /// [Draggable.axis] pins the feedback — a full-width replica of the row
-  /// — to the row's X for the whole drag, so it slides straight up and
-  /// down the list instead of following the pointer sideways.
+  /// One slot row: the channel tag cell (channel rows) or a same-width
+  /// spacer (spares), then the tile itself. IntrinsicHeight lets the tag
+  /// cell match its OWN row's height — the framework keeps tag and row
+  /// aligned at any text scale, so no fixed row height is needed anywhere.
+  /// (Two layout passes should be cheap for a static ten-row list.)
+  Widget _slotRow(
+    BuildContext context,
+    RigState rig,
+    RigSlots slots,
+    int i,
+    double tileWidth,
+  ) {
+    return IntrinsicHeight(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (i < kAdcChannelCount)
+            _ChannelTagCell(index: i)
+          else
+            const SizedBox(width: _kGutterWidth),
+          Expanded(child: _slotTile(context, rig, slots, i, tileWidth)),
+        ],
+      ),
+    );
+  }
+
+  /// One slot row's tile: a drop target for swaps. The drag is
+  /// vertical-only: [Draggable.axis] pins the feedback — a replica of the
+  /// tile, sized to [tileWidth] — to the row's X for the whole drag, so it
+  /// slides straight up and down the list instead of following the pointer
+  /// sideways.
   ///
   /// The whole row is the drag source; how a drag starts depends on the
   /// platform. Touch platforms require a tap-and-hold so a swipe still
@@ -173,7 +185,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     RigState rig,
     RigSlots slots,
     int i,
-    double rowWidth,
+    double tileWidth,
   ) {
     final theme = Theme.of(context);
     final slot = slots[i];
@@ -209,7 +221,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
             borderRadius: BorderRadius.circular(8),
             clipBehavior: Clip.antiAlias,
             child: SizedBox(
-              width: rowWidth,
+              width: tileWidth,
               child: ListTile(
                 title: Text(cell.title),
                 subtitle: Text(subtitle),
@@ -254,21 +266,30 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
 
         return AnimatedContainer(
           duration: const Duration(milliseconds: 120),
-          height: _kRowHeight,
           decoration: BoxDecoration(
             color: highlighted
                 ? theme.colorScheme.primary.withValues(alpha: 0.08)
                 : null,
+          ),
+          // The highlight border lives in the FOREGROUND decoration: a
+          // border in `decoration` becomes real layout padding and would
+          // grow the highlighted row, jittering the list as the hover
+          // moves; the foreground paint does not affect layout. (Always a
+          // BoxDecoration — never null — so the border keeps its 120ms
+          // fade in both directions.)
+          foregroundDecoration: BoxDecoration(
             border: highlighted
                 ? Border.all(color: theme.colorScheme.primary, width: 1.5)
                 : null,
           ),
-          // The tile gets its own Material: with the highlight decoration
-          // painting behind it, a bare ListTile can't paint its background
-          // or ink splashes (and trips a debug assert).
-          child: Opacity(
-            opacity: _dragIndex == i ? 0.35 : 1.0,
-            child: Material(type: MaterialType.transparency, child: tile),
+          // A transparent Material between the tinted DecoratedBox and the
+          // tile: the ListTile paints its ink splash on its nearest
+          // Material ancestor, so without this the splash lands on the
+          // Card BELOW the highlight tint (and trips ListTile's debug
+          // check for exactly that).
+          child: Material(
+            type: MaterialType.transparency,
+            child: Opacity(opacity: _dragIndex == i ? 0.35 : 1.0, child: tile),
           ),
         );
       },
@@ -276,42 +297,38 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   }
 }
 
-/// The static channel gutter. Sits outside the card so the channel
-/// markings annotate the list without being part of any row, and dragging
-/// a slot can never move them.
-class _ChannelGutter extends StatelessWidget {
-  const _ChannelGutter();
+/// One channel row's tag cell: the rotated CH tag centered in it, the
+/// primary-color rail as its right border (contiguous cells stack into one
+/// rail spanning the channel rows). Stretched to its own row's height by
+/// the enclosing IntrinsicHeight — alignment comes from the layout, not a
+/// shared constant. Sits OUTSIDE the row's Draggable/drop target, so it
+/// can never travel with a drag.
+class _ChannelTagCell extends StatelessWidget {
+  const _ChannelTagCell({required this.index});
+
+  final int index;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Container(
       width: _kGutterWidth,
-      height: _kRowHeight * 4,
       decoration: BoxDecoration(
         border: Border(
           right: BorderSide(color: theme.colorScheme.primary, width: 3),
         ),
       ),
-      child: Column(
-        children: [
-          for (int i = 0; i < 4; ++i)
-            SizedBox(
-              height: _kRowHeight,
-              child: Center(
-                child: RotatedBox(
-                  quarterTurns: 3,
-                  child: Text(
-                    'CH ${i + 1}',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ),
+      child: Center(
+        child: RotatedBox(
+          quarterTurns: 3,
+          child: Text(
+            'CH ${index + 1}',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: theme.colorScheme.primary,
+              fontWeight: FontWeight.bold,
             ),
-        ],
+          ),
+        ),
       ),
     );
   }

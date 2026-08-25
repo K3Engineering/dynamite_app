@@ -83,7 +83,7 @@ void main() {
     expect(find.text('100 kg · 2 mV/V'), findsNWidgets(2));
     expect(find.text('Spare 50'), findsOneWidget); // the spare
     expect(find.text('Empty slot'), findsNWidgets(6));
-    // The rotated tags on the four channel rows (in the static gutter).
+    // The rotated tags on the four channel rows (in the rail cells).
     for (int i = 1; i <= 4; ++i) {
       expect(find.text('CH $i'), findsOneWidget);
     }
@@ -93,6 +93,40 @@ void main() {
       findsOneWidget,
     );
     expect(find.textContaining('Changes not saved to device'), findsNothing);
+  });
+
+  testWidgets('large text scale: rows grow, tags stay centered on them', (
+    tester,
+  ) async {
+    await pump(tester);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await tester.pump();
+
+    // Clipped or overflowed content would surface as an exception here.
+    expect(tester.takeException(), isNull);
+    for (int i = 1; i <= 4; ++i) {
+      expect(find.text('CH $i'), findsOneWidget);
+    }
+
+    // The row grew past a two-line tile's default height instead of
+    // clipping…
+    final row = find.ancestor(
+      of: find.text('Thrust cell'),
+      matching: find.byType(ListTile),
+    );
+    expect(tester.getRect(row).height, greaterThan(72));
+
+    // …and its CH tag is still centered on the row itself, not on a stale
+    // height constant.
+    final tag = find.ancestor(
+      of: find.text('CH 1'),
+      matching: find.byType(RotatedBox),
+    );
+    expect(
+      (tester.getCenter(tag).dy - tester.getRect(row).center.dy).abs(),
+      lessThan(4),
+    );
   });
 
   testWidgets('add from history fills the slot and raises the dirty banner', (
@@ -198,6 +232,57 @@ void main() {
 
     expectSwapped(rig);
     debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('drag hover highlight does not grow or shift rows', (
+    tester,
+  ) async {
+    await pump(tester);
+
+    // The hover target's AnimatedContainer ('Spare 50', slot 4) and the
+    // topmost empty row below it, measured before the drag.
+    final target = find.ancestor(
+      of: find.text('Spare 50'),
+      matching: find.byType(AnimatedContainer),
+    );
+    final below = find.ancestor(
+      of: find.text('Empty slot').first,
+      matching: find.byType(AnimatedContainer),
+    );
+    final targetBefore = tester.getRect(target);
+    final belowBefore = tester.getRect(below);
+
+    // Drag the 'Break jig' row (slot 1) down over 'Spare 50' and HOLD it
+    // there: startGesture keeps the drag in flight so the target stays
+    // highlighted (tester.drag would drop immediately). Touch drag starts
+    // on tap-and-hold, so settle first.
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.text('Break jig')),
+    );
+    await tester.pump(kLongPressTimeout + const Duration(milliseconds: 100));
+    await gesture.moveBy(const Offset(0, 3 * 72));
+    await tester.pump();
+    // Run the 120ms highlight animation to completion.
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // The target really is highlighted — otherwise the height assertions
+    // below would be vacuous. (The border lives in foregroundDecoration;
+    // checking both slots keeps the assertion about the highlight, not
+    // about which decoration carries it.)
+    final container = tester.widget<AnimatedContainer>(target);
+    final highlight =
+        (container.foregroundDecoration ?? container.decoration)
+            as BoxDecoration?;
+    expect(highlight?.border, isNotNull);
+
+    // Regression: the highlighted row keeps its height and the list below
+    // it does not shift — a border in `decoration` would become layout
+    // padding and grow the row.
+    expect(tester.getRect(target).height, targetBefore.height);
+    expect(tester.getRect(below).top, belowBefore.top);
+
+    await gesture.up();
+    await tester.pumpAndSettle();
   });
 
   testWidgets('edit a populated slot via the editor', (tester) async {
