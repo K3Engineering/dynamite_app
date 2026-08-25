@@ -172,10 +172,12 @@ class EnvelopeSeries {
   ///    values for the force graph, first differences for the derivative --
   ///    diff extremes cannot be reconstructed from raw-value buckets, hence
   ///    the dedicated ingest-time diff buckets).
-  ///  * [rawToDisplay] MUST be affine (e.g. tare offset + unit scale) so the
-  ///    average survives the mapping, and must agree with [sampleAt]
-  ///    (`sampleAt(j) == rawToDisplay(raw sample j)` outside gaps) so both
-  ///    paths plot the same series.
+  ///  * [rawToDisplay] must agree with [sampleAt] (`sampleAt(j) ==
+  ///    rawToDisplay(raw sample j)` outside gaps) and be monotone
+  ///    nondecreasing, so bucket extremes map exactly to display extremes.
+  ///    It need NOT be affine: the calibrated board's map is piecewise, so
+  ///    the bucket mean passes through it with ppm-level error -- confined
+  ///    to the average trace, invisible next to the envelope width.
   EnvelopeSeries.bucketed({
     required this.sampleAt,
     required BucketSeries this.buckets,
@@ -383,8 +385,8 @@ void foldBucketRange(
 ///
 /// [sampleAt] must evaluate the SAME series [buckets] aggregates and in the
 /// same (raw) space, so bucket bounds and scanned samples fold together.
-/// Affine display maps (tare offset, unit scale) are applied by the caller to
-/// the two returned bounds only.
+/// Display maps (tare offset, unit scale) are applied by the caller to the
+/// two returned bounds only.
 (double, double)? windowedExtremes(
   BucketSeries buckets,
   int start,

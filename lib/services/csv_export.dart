@@ -10,6 +10,7 @@ import 'dart:typed_data';
 
 import '../models/app_meta.dart';
 import '../models/channel_calibration.dart';
+import '../models/channel_converter.dart';
 import '../models/display_unit.dart';
 import 'export_names.dart';
 import 'session_data.dart';
@@ -27,14 +28,14 @@ extension DisplayUnitCsv on DisplayUnit {
   /// is capitalized).
   String get csvSymbol => this == DisplayUnit.raw ? 'raw' : symbol;
 
-  /// Fixed-point decimals for this unit on [channel] in a dynamite-csv
-  /// file: one guard digit beyond the value of 1 ADC count in this unit
-  /// (`ceil(1 − log10(quantum))`, clamped to 0..10), computed from the
-  /// recorded board cal's sensitivity. Null exactly when the unit can't
-  /// convert on the channel (a force unit with no load cell — the file
-  /// column is all-blank, so no precision is needed).
-  int? exportDecimalsFor(ChannelCalibration channel) {
-    final quantum = countQuantumFor(channel)?.abs();
+  /// Fixed-point decimals for this unit on the channel behind [conv] in a
+  /// dynamite-csv file: one guard digit beyond the value of 1 ADC count in
+  /// this unit (`ceil(1 − log10(quantum))`, clamped to 0..10), computed
+  /// from the recorded board cal's sensitivity. Null exactly when the unit
+  /// can't convert on the channel (a force unit with no load cell — the
+  /// file column is all-blank, so no precision is needed).
+  int? exportDecimalsFor(ChannelConverter conv) {
+    final quantum = conv.countQuantum(this)?.abs();
     if (quantum == null) return null;
     // The nudge keeps an exact power-of-ten quantum from gaining a spurious
     // extra decimal to floating-point error in the log.
@@ -119,9 +120,7 @@ String buildSessionCsv(
   final blankConverted = data.damage.calibration;
   final formatters = [
     for (int ch = 0; ch < n; ch++)
-      blankConverted
-          ? null
-          : _columnFormatter(unit, data.calibrationFor(ch), data.tares[ch]),
+      blankConverted ? null : _columnFormatter(unit, data.converterFor(ch)),
   ];
 
   final buf = StringBuffer()
@@ -169,11 +168,10 @@ String buildSessionCsv(
 /// with no load cell — the file's all-blank column).
 String Function(int raw)? _columnFormatter(
   DisplayUnit unit,
-  ChannelCalibration cal,
-  double? tare,
+  ChannelConverter conv,
 ) {
-  final convert = unit.converterFor(cal, tare);
-  final decimals = unit.exportDecimalsFor(cal);
+  final convert = conv.netMap(unit);
+  final decimals = unit.exportDecimalsFor(conv);
   if (convert == null || decimals == null) return null;
   return (raw) => convert(raw.toDouble()).toStringAsFixed(decimals);
 }

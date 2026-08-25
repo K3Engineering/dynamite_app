@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/bucket_series.dart';
 import '../models/channel_calibration.dart';
-import '../models/display_unit.dart';
+import '../models/channel_converter.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 
@@ -157,17 +157,6 @@ class SessionData implements GraphDataSource {
 
   double get durationSeconds => sampleCount / sampleRate;
 
-  /// The unit set this session can convert right now: the nominal lookup,
-  /// forced raw-only when calibration metadata is damaged — its floor
-  /// (uncalibrated channels) must never produce converted numbers that
-  /// pose as net measurements.
-  UnitAvailability unitAvailabilityFor(Iterable<int> activeChannels) {
-    if (damage.calibration) {
-      return (boardHasNominals: false, anyActiveHasLoadCell: false);
-    }
-    return resolveUnitAvailability(calibrationFor, activeChannels);
-  }
-
   // -- GraphDataSource --------------------------------------------------------
 
   @override
@@ -193,6 +182,10 @@ class SessionData implements GraphDataSource {
   @override
   ChannelCalibration calibrationFor(int channelIndex) =>
       calibrations[channelIndex];
+
+  @override
+  ChannelConverter converterFor(int channelIndex) =>
+      ChannelConverter(calibrations[channelIndex], tares[channelIndex]);
 
   /// Session calibration is frozen at recording time; it never changes.
   @override

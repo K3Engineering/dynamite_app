@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
+import 'package:dynamite_app/models/channel_converter.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/gap_list.dart';
@@ -237,10 +238,10 @@ void main() {
 
         final lines = buildCsv(data, DisplayUnit.kgf).trim().split('\n');
 
-        final decimals = DisplayUnit.kgf.exportDecimalsFor(cals[0])!;
-        String expectedKgf(int raw) => DisplayUnit.kgf
-            .converterFor(cals[0], 100.0)!
-            .call(raw.toDouble())
+        final conv = ChannelConverter(cals[0], 100.0);
+        final decimals = DisplayUnit.kgf.exportDecimalsFor(conv)!;
+        String expectedKgf(int raw) => conv
+            .netMap(DisplayUnit.kgf)!(raw.toDouble())
             .toStringAsFixed(decimals);
 
         expect(lines[3], '0,1000,5,${expectedKgf(1000)},');
@@ -268,11 +269,13 @@ void main() {
 
       final csv = buildCsv(data, DisplayUnit.kgf);
       final lines = csv.trim().split('\n');
-      final decimals = DisplayUnit.kgf.exportDecimalsFor(cals[0])!;
-      String expected(int raw, double? tare) => DisplayUnit.kgf
-          .converterFor(cals[0], tare)!
-          .call(raw.toDouble())
-          .toStringAsFixed(decimals);
+      final decimals = DisplayUnit.kgf.exportDecimalsFor(
+        ChannelConverter(cals[0], null),
+      )!;
+      String expected(int raw, double? tare) => ChannelConverter(
+        cals[0],
+        tare,
+      ).netMap(DisplayUnit.kgf)!(raw.toDouble()).toStringAsFixed(decimals);
 
       // One sample: ch0 nets through its frozen tare, ch1 converts gross.
       expect(
@@ -425,7 +428,10 @@ void main() {
 
     for (final entry in expected.entries) {
       test('${entry.key.symbol} → ${entry.value} decimals', () {
-        expect(entry.key.exportDecimalsFor(cal), entry.value);
+        expect(
+          entry.key.exportDecimalsFor(ChannelConverter(cal, null)),
+          entry.value,
+        );
       });
     }
 
@@ -433,8 +439,11 @@ void main() {
         'column)', () {
       expect(
         DisplayUnit.kgf.exportDecimalsFor(
-          ChannelCalibration(
-            board: ChannelBoardCalibration(nominals: testNominals),
+          ChannelConverter(
+            ChannelCalibration(
+              board: ChannelBoardCalibration(nominals: testNominals),
+            ),
+            null,
           ),
         ),
         isNull,

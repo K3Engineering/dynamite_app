@@ -358,6 +358,16 @@ class ChannelBoardCalibration {
 
   bool get isFactoryCalibrated => readings != null;
 
+  /// Excitation used to express the ratiometric map as mV: the nominal
+  /// value until flash carries a characterized one (`cal.exc.mv`, currently
+  /// unpopulated by the fleet). This value IS the mV unit's entire
+  /// uncertainty — the calibration is ratiometric, so the calibrated units
+  /// never touch it. Deliberately NOT [ChannelNominals.excitationV]'s name:
+  /// the nominal chain constant and the mV anchor are two roles, and
+  /// adopting `cal.exc.mv` later must change only this resolution. Null
+  /// with no resolved nominals (conversion reports unavailable anyway).
+  double? get displayExcitationV => nominals?.excitationV;
+
   /// Setpoints (mV/V) per config, derived from [resistors]. Cached: pure
   /// function of the immutable [resistors], and per-sample conversion paths
   /// reach it via [sensitivityCountsPerMvV]. Non-null [resistors] is
@@ -370,7 +380,7 @@ class ChannelBoardCalibration {
   /// Map an absolute raw ADC reading to mV/V of excitation via the piecewise
   /// map. Out-of-range readings extend the outermost segment. Readings are
   /// absolute (offset included): net values come from subtracting the map at
-  /// the tare point — see `DisplayUnit.converterFor`.
+  /// the tare point — see `ChannelConverter.netMap`.
   ///
   /// The nominal fallback requires [nominals]; callers guard it (the unit
   /// layer reports unavailable instead), so a null here is a usage error.

@@ -107,10 +107,7 @@ class _TareSheetState extends State<_TareSheet> {
       setState(() => _editError = 'Enter a number');
       return;
     }
-    hub.setTareOffset(
-      ch,
-      unit.rawFromGrossValue(hub.calibrationFor(ch), value)!,
-    );
+    hub.setTareOffset(ch, hub.converterFor(ch).rawAtGross(unit, value)!);
     setState(_cancelEdit);
   }
 

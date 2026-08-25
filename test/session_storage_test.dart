@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
+import 'package:dynamite_app/models/channel_converter.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
@@ -478,7 +479,10 @@ void main() {
       expect(data.damage.warningCodes, isEmpty);
       expect(data.sampleCount, 2);
       expect(data.channels[3][1], 8);
-      expect(data.unitAvailabilityFor([0]).boardHasNominals, isTrue);
+      expect(
+        resolveUnitAvailability(data.calibrationFor, [0]).boardHasNominals,
+        isTrue,
+      );
     });
 
     test(
@@ -499,7 +503,10 @@ void main() {
         expect(data.damage.isEmpty, isTrue);
         // Conversion stays available: calibration is intact, and a null tare
         // converts as gross.
-        expect(data.unitAvailabilityFor([0]).boardHasNominals, isTrue);
+        expect(
+          resolveUnitAvailability(data.calibrationFor, [0]).boardHasNominals,
+          isTrue,
+        );
         // The sample data itself is untouched.
         expect(data.channels[0][0], 10);
       },
@@ -556,7 +563,10 @@ void main() {
           data.damage.warningCodes,
           contains('session_calibration_damaged'),
         );
-        expect(data.unitAvailabilityFor([0]).boardHasNominals, isFalse);
+        expect(
+          resolveUnitAvailability(data.calibrationFor, [0]).boardHasNominals,
+          isFalse,
+        );
       },
     );
 
@@ -574,7 +584,10 @@ void main() {
       expect(data.gaps.isEmpty, isTrue);
       expect(data.damage.warningCodes, contains('session_gaps_lost'));
       // Conversion is NOT forced: the sample stream and calibration are intact.
-      expect(data.unitAvailabilityFor([0]).boardHasNominals, isTrue);
+      expect(
+        resolveUnitAvailability(data.calibrationFor, [0]).boardHasNominals,
+        isTrue,
+      );
     });
 
     test('a missing middle chunk truncates instead of splicing', () async {
@@ -846,7 +859,10 @@ void main() {
         expect(cell.name, 'Ref');
         expect(cell.sensitivityMvV, closeTo(2.02, 1e-12));
         // End-to-end: kgf converts through the stored board AND stored cell.
-        final kgf = DisplayUnit.kgf.converterFor(loaded.calibrationFor(0), 0)!;
+        final kgf = ChannelConverter(
+          loaded.calibrationFor(0),
+          0,
+        ).netMap(DisplayUnit.kgf)!;
         expect(
           kgf(1000),
           closeTo(
@@ -856,7 +872,7 @@ void main() {
         );
         // ch1 had no load cell assigned at recording time.
         expect(
-          DisplayUnit.kgf.converterFor(loaded.calibrationFor(1), 0),
+          ChannelConverter(loaded.calibrationFor(1), 0).netMap(DisplayUnit.kgf),
           isNull,
         );
       },

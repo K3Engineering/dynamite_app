@@ -1,6 +1,5 @@
 import 'dart:math' as math;
 
-import 'board_calibration.dart';
 import 'channel_calibration.dart';
 
 /// One rung of a unit's SI-prefix axis ladder: [factor] base units equal one
@@ -28,13 +27,12 @@ UnitAvailability resolveUnitAvailability(
   ),
 );
 
-/// Supported force and electrical display units.
-///
-/// Conversion is per channel: a unit maps absolute raw ADC counts to the
-/// display value net of tare via the channel's [ChannelCalibration] (the
-/// board's piecewise map plus the assigned load cell). Force units are
-/// unavailable — a null converter — for channels without an assigned load
-/// cell; the UI shows '—' there. Without board constants only raw converts.
+/// Supported force and electrical display units: presentation metadata
+/// (symbol, axis ladder, force factor, formatting). Conversion itself is
+/// calibration-side — see `ChannelConverter`, which binds a channel's
+/// [ChannelCalibration] to its tare offset. Force units are unavailable
+/// for channels without an assigned load cell; the UI shows '—' there.
+/// Without board constants only raw converts.
 enum DisplayUnit {
   kN(
     'kN',
@@ -147,19 +145,6 @@ enum DisplayUnit {
     orElse: () => fallback,
   );
 
-  /// The value of 1 ADC count in this unit on [channel]: the CSV export's
-  /// fixed-point quantum (see `exportDecimalsFor` in csv_export.dart) and
-  /// the derivative path's per-count scale (see [diffConverterFor]). Raw
-  /// bypasses the board map, so its quantum is exactly 1 count. Null
-  /// exactly when [converterFor] is (a force unit with no load cell
-  /// assigned, or no resolved board constants).
-  double? countQuantumFor(ChannelCalibration channel) {
-    if (this == DisplayUnit.raw) return 1.0;
-    final scale = _scalePerMvV(channel);
-    final span = channel.board.sensitivityCountsPerMvV;
-    return scale == null || span == null ? null : scale / span;
-  }
-
   /// Force units need an assigned load cell; electrical units only need the
   /// board calibration. Drives the Settings picker's grouping.
   bool get isForce => kgfFactor != null;
@@ -182,93 +167,6 @@ enum DisplayUnit {
     DisplayUnit.mVv,
     DisplayUnit.raw,
   ].firstWhere((u) => u.isAvailable(availability));
-
-  /// The multiplier applied to net mV/V for this unit on [channel]: force
-  /// units fold in the cell's kgf-per-mV/V, mV folds in the nominal
-  /// excitation (the board cal is ratiometric, so the mV rung rests on the
-  /// nominal chain — the least-calibrated unit), mV/V is unity. Null when
-  /// the unit is unavailable on the channel: a force unit with no load cell
-  /// assigned, or ANY unit when the board's constants never resolved (raw
-  /// counts only — see [BoardDataStatus]). Raw counts bypass the board map
-  /// entirely and never consult this.
-  double? _scalePerMvV(ChannelCalibration channel) {
-    if (channel.board.nominals == null) return null;
-    final f = kgfFactor;
-    if (f != null) {
-      final cell = channel.loadCell;
-      return cell == null ? null : f * cell.kgfPerMvV;
-    }
-    return this == DisplayUnit.mV ? channel.board.nominals!.excitationV : 1.0;
-  }
-
-  /// Build the absolute-raw -> display-unit converter for one channel, net of
-  /// [tare] in counts (the board map is evaluated at both points and
-  /// differenced, so piecewise nonlinearity applies on both sides).
-  /// Monotone nondecreasing. A null tare means NO offset: the net converter
-  /// is the gross map itself (zero is the map's own zero point, not zero
-  /// counts — the two are not the same physical reading). Returns null when
-  /// unavailable: a force unit on a channel with no assigned load cell.
-  ///
-  /// The returned closure is invoked per sample by the hot paths (graph
-  /// reduction, stats), so the tare-side map value — loop-invariant — is
-  /// evaluated once here instead of inside the closure.
-  double Function(double raw)? converterFor(
-    ChannelCalibration channel,
-    double? tare,
-  ) {
-    if (this == DisplayUnit.raw) return (raw) => raw - (tare ?? 0);
-    final scale = _scalePerMvV(channel);
-    if (scale == null) return null;
-    final board = channel.board;
-    final tareMvV = tare == null ? 0.0 : board.mvVFromRaw(tare);
-    return (raw) => (board.mvVFromRaw(raw) - tareMvV) * scale;
-  }
-
-  /// Build the absolute-raw -> display-unit converter for one channel with no
-  /// tare netting: the GROSS value at a raw point. Used to show where a tare
-  /// sits (the tare is stored in counts; its display value is the map
-  /// evaluated at that point). Null exactly when [converterFor] is.
-  double Function(double raw)? grossConverterFor(ChannelCalibration channel) {
-    if (this == DisplayUnit.raw) return (raw) => raw;
-    final scale = _scalePerMvV(channel);
-    if (scale == null) return null;
-    final board = channel.board;
-    return (raw) => board.mvVFromRaw(raw) * scale;
-  }
-
-  /// The display value of a stored tare [tare] (counts, null = no offset):
-  /// the amount the net converter subtracts, i.e. the gross value at the
-  /// tare point. "No offset" is exactly 0 in every unit — zero counts is a
-  /// meaningless anchor, so null carries the state deliberately. Null when
-  /// the unit is unavailable for the channel (and [tare] is set).
-  double? tareOffsetFor(ChannelCalibration channel, double? tare) {
-    if (tare == null) return 0;
-    return grossConverterFor(channel)?.call(tare);
-  }
-
-  /// Inverse of [grossConverterFor]: the raw count at which the channel's
-  /// gross map reads [value] in this unit. Manual tare entry stores counts,
-  /// so a typed display value converts back through here. Null exactly when
-  /// [grossConverterFor] is.
-  double? rawFromGrossValue(ChannelCalibration channel, double value) {
-    if (this == DisplayUnit.raw) return value;
-    final scale = _scalePerMvV(channel);
-    if (scale == null) return null;
-    return channel.board.rawFromMvV(value / scale);
-  }
-
-  /// Build the raw-diff -> display-unit converter for one channel (no tare:
-  /// offsets cancel in a difference). Uses the channel's terminal slope:
-  /// the piecewise-local slope differs by ppm, and the derivative graph's
-  /// bucket fast path needs a position-free map. Null exactly when
-  /// [converterFor] is.
-  double Function(double rawDiff)? diffConverterFor(
-    ChannelCalibration channel,
-  ) {
-    final perCount = countQuantumFor(channel);
-    if (perCount == null) return null;
-    return (diff) => diff * perCount;
-  }
 
   /// Format a [value] (already in this unit) with an explicit sign, and a
   /// trailing [suffix] when given (e.g. the unit symbol).
