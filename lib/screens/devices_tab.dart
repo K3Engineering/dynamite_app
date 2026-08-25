@@ -15,6 +15,7 @@ import '../widgets/rssi_indicator.dart';
 import '../widgets/section_header.dart';
 import '../widgets/snackbars.dart';
 import '../widgets/status_colors.dart';
+import '../widgets/wide_layout.dart';
 
 class DevicesTab extends StatelessWidget {
   const DevicesTab({super.key, required this.onGoToSettings});
@@ -109,104 +110,109 @@ class DevicesTab extends StatelessWidget {
     );
 
     return SafeArea(
-      child: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 16),
-
-          // BLE devices section.
-          const SectionHeader('BLE devices'),
-          const SizedBox(height: 8),
-
-          // Padding aligns the status readout and Scan button with the M3 Card
-          // and ListTile contents below.
-          Padding(
-            padding: const EdgeInsets.only(left: 4, right: 28),
-            child: Row(
-              children: [
-                Expanded(
-                  child: BluetoothIndicator(
-                    visual: visual,
-                    mode: indicatorMode,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                SizedBox(
-                  width: deviceActionButtonWidth,
-                  child: FilledButton.tonal(
-                    // TODO(ux): see BleLinkManager._startScan — starting a scan
-                    // while streaming kills the active link (and any in-progress
-                    // recording). Decide disable-vs-confirm.
-                    onPressed: () => _scanWithFeedback(context, bt),
-                    child: Text(bt.isScanning ? 'Stop' : 'Scan'),
-                  ),
-                ),
-              ],
-            ),
+      child: LayoutBuilder(
+        builder: (context, constraints) => ListView(
+          padding: EdgeInsets.symmetric(
+            horizontal: contentSideInset(constraints.maxWidth),
+            vertical: 16,
           ),
-          const SizedBox(height: 8),
+          children: [
+            Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 16),
 
-          if (showEmptyBlock) _buildEmptyBlock(visual, bt.bluetoothState),
+            // BLE devices section.
+            const SectionHeader('BLE devices'),
+            const SizedBox(height: 8),
 
-          // The active link's row is found in the scan list. No current path
-          // clears the list while a link is up without tearing the link down,
-          // so the active row always exists.
-          for (final device in [...freshRows, ...staleRows])
-            device.deviceId == activeId
-                ? _ActiveDeviceRow(
-                    name: device.name ?? 'Unknown device',
-                    model: bt.connectedDeviceInfo?.model,
-                    linkState: bt.link.state,
-                    connectedRssi: bt.connectedRssi,
-                    onDisconnect: bt.disconnectSelectedDevice,
-                    onGoToSettings: onGoToSettings,
-                  )
-                : _InactiveDeviceRow(
-                    name: device.name ?? 'Unknown device',
-                    visual: visuals[device.deviceId]!,
-                    linkBusy: bt.linkBusy,
-                    onConnect: () => _connectWithFeedback(
-                      () => bt.connectToDevice(device.deviceId),
-                      device.name ?? 'device',
+            // Padding aligns the status readout and Scan button with the M3 Card
+            // and ListTile contents below.
+            Padding(
+              padding: const EdgeInsets.only(left: 4, right: 28),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: BluetoothIndicator(
+                      visual: visual,
+                      mode: indicatorMode,
                     ),
                   ),
-          const SizedBox(height: 16),
-
-          // Demo devices section — simulated hardware, kept at the bottom so
-          // real BLE devices get top billing. Rendered through the same rows
-          // so it reflects connected state inline like a BLE row.
-          const SectionHeader('Demo devices'),
-          const SizedBox(height: 8),
-          if (bt.link.isSimulated && bt.link.state != BtLinkState.idle)
-            _ActiveDeviceRow(
-              name: 'Demo Device',
-              icon: Icons.science,
-              model: bt.connectedDeviceInfo?.model,
-              linkState: bt.link.state,
-              connectedRssi: null,
-              onDisconnect: bt.disconnectSelectedDevice,
-              onGoToSettings: onGoToSettings,
-            )
-          else
-            _InactiveDeviceRow(
-              name: 'Demo Device',
-              // A fixed presentation: simulated hardware is never stale and
-              // never fails to connect.
-              visual: (
-                mood: InactiveRowMood.normal,
-                icon: Icons.science,
-                iconColor: Colors.teal,
-                subtitle: 'Simulated data — no hardware',
-                subtitleColor: null,
-                cardColor: null,
-                titleColor: null,
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: deviceActionButtonWidth,
+                    child: FilledButton.tonal(
+                      // TODO(ux): see BleLinkManager._startScan — starting a scan
+                      // while streaming kills the active link (and any in-progress
+                      // recording). Decide disable-vs-confirm.
+                      onPressed: () => _scanWithFeedback(context, bt),
+                      child: Text(bt.isScanning ? 'Stop' : 'Scan'),
+                    ),
+                  ),
+                ],
               ),
-              linkBusy: bt.linkBusy,
-              onConnect: () =>
-                  _connectWithFeedback(bt.connectToDemoDevice, 'Demo Device'),
             ),
-        ],
+            const SizedBox(height: 8),
+
+            if (showEmptyBlock) _buildEmptyBlock(visual, bt.bluetoothState),
+
+            // The active link's row is found in the scan list. No current path
+            // clears the list while a link is up without tearing the link down,
+            // so the active row always exists.
+            for (final device in [...freshRows, ...staleRows])
+              device.deviceId == activeId
+                  ? _ActiveDeviceRow(
+                      name: device.name ?? 'Unknown device',
+                      model: bt.connectedDeviceInfo?.model,
+                      linkState: bt.link.state,
+                      connectedRssi: bt.connectedRssi,
+                      onDisconnect: bt.disconnectSelectedDevice,
+                      onGoToSettings: onGoToSettings,
+                    )
+                  : _InactiveDeviceRow(
+                      name: device.name ?? 'Unknown device',
+                      visual: visuals[device.deviceId]!,
+                      linkBusy: bt.linkBusy,
+                      onConnect: () => _connectWithFeedback(
+                        () => bt.connectToDevice(device.deviceId),
+                        device.name ?? 'device',
+                      ),
+                    ),
+            const SizedBox(height: 16),
+
+            // Demo devices section — simulated hardware, kept at the bottom so
+            // real BLE devices get top billing. Rendered through the same rows
+            // so it reflects connected state inline like a BLE row.
+            const SectionHeader('Demo devices'),
+            const SizedBox(height: 8),
+            if (bt.link.isSimulated && bt.link.state != BtLinkState.idle)
+              _ActiveDeviceRow(
+                name: 'Demo Device',
+                icon: Icons.science,
+                model: bt.connectedDeviceInfo?.model,
+                linkState: bt.link.state,
+                connectedRssi: null,
+                onDisconnect: bt.disconnectSelectedDevice,
+                onGoToSettings: onGoToSettings,
+              )
+            else
+              _InactiveDeviceRow(
+                name: 'Demo Device',
+                // A fixed presentation: simulated hardware is never stale and
+                // never fails to connect.
+                visual: (
+                  mood: InactiveRowMood.normal,
+                  icon: Icons.science,
+                  iconColor: Colors.teal,
+                  subtitle: 'Simulated data — no hardware',
+                  subtitleColor: null,
+                  cardColor: null,
+                  titleColor: null,
+                ),
+                linkBusy: bt.linkBusy,
+                onConnect: () =>
+                    _connectWithFeedback(bt.connectToDemoDevice, 'Demo Device'),
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -10,6 +10,7 @@ import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/snackbars.dart';
 import '../widgets/storage_capacity_strip.dart';
+import '../widgets/wide_layout.dart';
 import 'session_detail_screen.dart';
 
 class SessionsTab extends StatefulWidget {
@@ -67,21 +68,24 @@ class _SessionsTabState extends State<SessionsTab> {
     return SafeArea(
       child: Column(
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-            child: Row(
-              children: [
-                Text(
-                  'Sessions',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                const Spacer(),
-              ],
+          TabContentColumn(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+              child: Row(
+                children: [
+                  Text(
+                    'Sessions',
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const Spacer(),
+                ],
+              ),
             ),
           ),
-          if (browserMayAutoDeleteSessions()) const BrowserStorageWarning(),
+          if (browserMayAutoDeleteSessions())
+            const TabContentColumn(child: BrowserStorageWarning()),
           if (_capacity case final capacity?)
-            StorageCapacityStrip(capacity: capacity),
+            TabContentColumn(child: StorageCapacityStrip(capacity: capacity)),
           Expanded(
             child: StreamBuilder<List<SessionSummary>>(
               stream: _sessions,
@@ -114,14 +118,18 @@ class _SessionsTabState extends State<SessionsTab> {
                   stream: _sizes,
                   builder: (context, sizeSnapshot) {
                     final sizes = sizeSnapshot.data ?? const <int, int>{};
-                    return ListView.builder(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      itemCount: sessions.length,
-                      itemBuilder: (context, index) => _SessionCard(
-                        session: sessions[index],
-                        byteSize: sizes[sessions[index].id],
-                        onTap: () => _openDetail(sessions[index]),
-                        onDelete: () => _deleteSession(sessions[index]),
+                    return LayoutBuilder(
+                      builder: (context, constraints) => ListView.builder(
+                        padding: EdgeInsets.symmetric(
+                          horizontal: contentSideInset(constraints.maxWidth),
+                        ),
+                        itemCount: sessions.length,
+                        itemBuilder: (context, index) => _SessionCard(
+                          session: sessions[index],
+                          byteSize: sizes[sessions[index].id],
+                          onTap: () => _openDetail(sessions[index]),
+                          onDelete: () => _deleteSession(sessions[index]),
+                        ),
                       ),
                     );
                   },
