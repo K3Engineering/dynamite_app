@@ -288,6 +288,14 @@ class LiveSessionWriter {
   /// metadata, the latched ssn origin, the gaps accrued so far) in the same
   /// transaction as the chunk; later flushes append chunks and keep the
   /// row's gap ranges current. Returns the session id for the latch.
+  ///
+  /// TODO(known-issue): bound these awaits with a timeout. A sink future
+  /// that never completes (e.g. a dead web drift worker that never rejects)
+  /// wedges the write queue: SessionStorage.finalizeSession's flush hangs
+  /// behind it, RecordingController.stopSession never returns, and the
+  /// latching failure is never surfaced (the record button sticks in the
+  /// stopping state). Timing out converts the hang into an ordinary latched
+  /// writeError, which the existing error path already handles end to end.
   Future<int> _defaultSink(
     int? sessionId,
     int chunkIndex,

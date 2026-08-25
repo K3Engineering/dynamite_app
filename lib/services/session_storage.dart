@@ -82,6 +82,12 @@ class SessionStorage {
   static Future<Object?> finalizeSession({
     required LiveSessionWriter writer,
   }) async {
+    // TODO(known-issue): a sink future that never completes hangs this
+    // flush forever (see the TODO on LiveSessionWriter._defaultSink), and
+    // _completeSession's own write below has the same exposure if the DB
+    // dies mid-finalize. A coarse timeout here (or on the whole finalize
+    // in RecordingController.stopSession) would be the backstop; on
+    // timeout the row stays incomplete for recoverIncompleteSessions.
     await writer.flush();
 
     final sessionId = writer.sessionId;
@@ -145,6 +151,15 @@ class SessionStorage {
   /// completes with its verified prefix and clamped gaps. The damaged
   /// chunks stay on disk, so later loads re-flag the truncation and the
   /// salvage export can recover them.
+  ///
+  /// TODO(known-issue): recovery completes with the verified prefix count,
+  /// so samples the live writer accepted but never flushed (a crash, or a
+  /// wedged stop that never finalized) vanish invisibly — the recovered
+  /// session loads clean, only shorter. Persisting the running accepted
+  /// count on the row with each appendChunkAndGaps update (it already
+  /// writes the gaps in that transaction) and keeping that count here
+  /// instead of the prefix count would let loadSession's min() clamp flag
+  /// the truncation instead.
   static Future<void> recoverIncompleteSessions() async {
     final incomplete = await AppDatabase.instance.incompleteSessions();
 
