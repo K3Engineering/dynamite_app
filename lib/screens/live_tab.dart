@@ -74,8 +74,7 @@ class _LiveTabState extends State<LiveTab> {
   /// the disconnect and [GraphController.effectiveRange] would clamp the
   /// stale window against a now-empty buffer (inverted clamp limits -> throw).
   void _onHubCleared() {
-    final hub = _hub!;
-    _graphCtrl.goLive(totalSamples: hub.totalSamples, oldestSample: 0);
+    _graphCtrl.reset();
   }
 
   @override

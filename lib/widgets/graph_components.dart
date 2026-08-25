@@ -924,6 +924,13 @@ class GraphController extends ChangeNotifier {
   /// Whether we're following the live edge (auto-scroll with new data).
   bool get isLive => _viewport is GraphLive;
 
+  /// Restore the initial state (a fresh stream erased the data: any pan/zoom
+  /// window over the old trace is meaningless).
+  void reset() {
+    _viewport = minLiveSpan > 0 ? GraphLive(minLiveSpan) : const GraphLive();
+    notifyListeners();
+  }
+
   /// Snap to live mode -- follow the right edge.
   /// If [span] is provided, locks to that scrolling window.
   /// If not provided, derives the lock from the current window (or keeps the
@@ -945,8 +952,13 @@ class GraphController extends ChangeNotifier {
           lockedSpan = span;
         case GraphWindow(:final start, :final end):
           final currentSpan = end - start;
-          if (currentSpan < totalSamples - oldestSample) {
-            // User is zoomed in to a specific window, lock to it
+          if (currentSpan <
+              math.max(totalSamples - oldestSample, minLiveSpan)) {
+            // Zoomed in from the default view: lock to it. Compared against
+            // the default live span, not the data on hand: early in a
+            // stream the two differ (e.g. a 17s window over 5s of data), and
+            // the data comparison would misread that zoom as the "zoomed
+            // out" cases below.
             lockedSpan = currentSpan;
           } else if (currentSpan > minLiveSpan) {
             // They zoomed out to see all available data (beyond minLiveSpan);

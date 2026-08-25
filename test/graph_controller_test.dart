@@ -138,6 +138,36 @@ void main() {
     });
   });
 
+  /// Early in a stream (less data than minLiveSpan) a zoomed window exceeds
+  /// the data on hand, e.g. a 17s view over 5s of samples. Any interaction
+  /// that snaps to the live edge (minimap tap, pan) must keep the zoom;
+  /// comparing the span against the data's size would misread it as "zoomed
+  /// out" and snap back to the minLiveSpan default (regression test).
+  group('GraphController while under minLiveSpan', () {
+    test('zooming in survives a recenter at the live edge', () {
+      final ctrl = GraphController(minLiveSpan: 20000);
+      ctrl.zoom(1.2, 1.0, 5000, 0, 600000);
+      expect(ctrl.isLive, isTrue);
+      final before = ctrl.effectiveRange(5000, 0);
+
+      // The tap centers on the middle of the history — right at the data
+      // edge since the window overhangs it both ways.
+      ctrl.centerOn(2500, 5000, 0, 600000);
+
+      expect(ctrl.isLive, isTrue);
+      expect(ctrl.effectiveRange(5000, 0), before);
+    });
+
+    test('the untouched default window stays locked to minLiveSpan', () {
+      final ctrl = GraphController(minLiveSpan: 20000);
+      ctrl.centerOn(2500, 5000, 0, 600000);
+      expect(ctrl.isLive, isTrue);
+      // Locked, not auto-expanding: at 25s of data it shows the trailing
+      // 20s, not everything.
+      expect(ctrl.effectiveRange(25000, 0), (5000, 25000));
+    });
+  });
+
   group('GraphController notifies listeners', () {
     test('every mutating call fires exactly once', () {
       final ctrl = GraphController();
