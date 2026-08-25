@@ -6,6 +6,7 @@ import '../models/device_profile.dart';
 import '../models/bucket_series.dart';
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
+import '../models/channel_converter.dart';
 import '../models/load_cell.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
@@ -543,6 +544,10 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   int get sampleRate => sampleRateHz;
 
   @override
+  ChannelConverter converterFor(int channelIndex) =>
+      ChannelConverter(calibrationFor(channelIndex), tare[channelIndex]);
+
+  @override
   ChannelCalibration calibrationFor(int channelIndex) => ChannelCalibration(
     // A missing/never-read board leaves the channel with no calibration and
     // no nominals: electrical and force units report unavailable and only
@@ -597,19 +602,17 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   /// channel (a force unit without an assigned load cell).
   double? currentValue(int adcChannel, DisplayUnit unit) {
     assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
-    final conv = unit.converterFor(
-      calibrationFor(adcChannel),
-      tare[adcChannel],
-    );
-    return conv?.call(_currentRaw[adcChannel].toDouble());
+    return converterFor(
+      adcChannel,
+    ).net(unit, _currentRaw[adcChannel].toDouble());
   }
 
   /// Where a channel's tare sits, in the specified unit: the amount being
-  /// zeroed out (see `DisplayUnit.tareOffsetFor`). Null when the unit is
+  /// zeroed out (see `ChannelConverter.tareOffset`). Null when the unit is
   /// unavailable for the channel.
   double? tareOffset(int adcChannel, DisplayUnit unit) {
     assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
-    return unit.tareOffsetFor(calibrationFor(adcChannel), tare[adcChannel]);
+    return converterFor(adcChannel).tareOffset(unit);
   }
 
   /// Peak value for a given ADC channel in the specified unit: the max over
@@ -626,10 +629,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   }) {
     assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
     if (totalSamples == 0) return 0;
-    final conv = unit.converterFor(
-      calibrationFor(adcChannel),
-      tare[adcChannel],
-    );
+    final conv = converterFor(adcChannel).netMap(unit);
     if (conv == null) return null;
     final ext = windowedExtremes(
       valueBuckets[adcChannel].series,
@@ -652,10 +652,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
       return 0;
     }
 
-    final conv = unit.converterFor(
-      calibrationFor(adcChannel),
-      tare[adcChannel],
-    );
+    final conv = converterFor(adcChannel).netMap(unit);
     if (conv == null) return null;
 
     final raw1 = rawData[adcChannel][(totalSamples - 1) % maxDataSz];

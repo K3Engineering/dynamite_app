@@ -209,12 +209,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   for (int ch = 0; ch < data.channels.length; ch++)
                     data.maxs[ch] == null
                         ? null
-                        : unit
-                              .converterFor(
-                                data.calibrationFor(ch),
-                                data.tares[ch],
-                              )
-                              ?.call(data.maxs[ch]!),
+                        : data.converterFor(ch).net(unit, data.maxs[ch]!),
                 ],
               ),
               // The amount the session's frozen tare zeroed out (gross at
@@ -223,7 +218,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 label: 'Tare offset',
                 values: [
                   for (int ch = 0; ch < data.channels.length; ch++)
-                    unit.tareOffsetFor(data.calibrationFor(ch), data.tares[ch]),
+                    data.converterFor(ch).tareOffset(unit),
                 ],
               ),
             ],

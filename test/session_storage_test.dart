@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
+import 'package:dynamite_app/models/channel_converter.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
@@ -846,7 +847,10 @@ void main() {
         expect(cell.name, 'Ref');
         expect(cell.sensitivityMvV, closeTo(2.02, 1e-12));
         // End-to-end: kgf converts through the stored board AND stored cell.
-        final kgf = DisplayUnit.kgf.converterFor(loaded.calibrationFor(0), 0)!;
+        final kgf = ChannelConverter(
+          loaded.calibrationFor(0),
+          0,
+        ).netMap(DisplayUnit.kgf)!;
         expect(
           kgf(1000),
           closeTo(
@@ -856,7 +860,7 @@ void main() {
         );
         // ch1 had no load cell assigned at recording time.
         expect(
-          DisplayUnit.kgf.converterFor(loaded.calibrationFor(1), 0),
+          ChannelConverter(loaded.calibrationFor(1), 0).netMap(DisplayUnit.kgf),
           isNull,
         );
       },

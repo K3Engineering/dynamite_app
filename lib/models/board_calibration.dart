@@ -380,7 +380,7 @@ class ChannelBoardCalibration {
   /// Map an absolute raw ADC reading to mV/V of excitation via the piecewise
   /// map. Out-of-range readings extend the outermost segment. Readings are
   /// absolute (offset included): net values come from subtracting the map at
-  /// the tare point — see `DisplayUnit.converterFor`.
+  /// the tare point — see `ChannelConverter.netMap`.
   ///
   /// The nominal fallback requires [nominals]; callers guard it (the unit
   /// layer reports unavailable instead), so a null here is a usage error.

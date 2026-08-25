@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/bucket_series.dart';
 import '../models/channel_calibration.dart';
+import '../models/channel_converter.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
@@ -193,6 +194,10 @@ class SessionData implements GraphDataSource {
   @override
   ChannelCalibration calibrationFor(int channelIndex) =>
       calibrations[channelIndex];
+
+  @override
+  ChannelConverter converterFor(int channelIndex) =>
+      ChannelConverter(calibrations[channelIndex], tares[channelIndex]);
 
   /// Session calibration is frozen at recording time; it never changes.
   @override

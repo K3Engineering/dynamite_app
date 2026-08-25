@@ -1375,7 +1375,7 @@ class _MinimapPainter extends CustomPainter {
     double yMax = double.negativeInfinity;
     for (final ch in activeIndices) {
       final s = _data.channel(ch);
-      final conv = unit.converterFor(_data.calibrationFor(ch), s.tare);
+      final conv = _data.converterFor(ch).netMap(unit);
       if (conv == null) continue;
       // No data on this channel: the +/-10000 tare band alone matters.
       final tare = s.tare ?? 0;
@@ -1702,12 +1702,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     // the painters' cache keys, which contain the channel set).
     final drawableChannels = [
       for (final ch in widget.activeChannels)
-        if (unit.converterFor(
-              widget.data.calibrationFor(ch),
-              widget.data.channel(ch).tare,
-            ) !=
-            null)
-          ch,
+        if (widget.data.converterFor(ch).converts(unit)) ch,
     ];
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -2518,7 +2513,7 @@ double Function(int j) _taredDisplaySampleAt(
   final bufferCap = data.bufferCapacity;
   final gaps = data.gaps;
   // Non-null: the workspace plots only channels the unit can convert.
-  final toUnit = unit.converterFor(data.calibrationFor(channel), s.tare)!;
+  final toUnit = data.converterFor(channel).netMap(unit)!;
   return (j) {
     if (gaps.contains(j)) return double.nan; // break the polyline
     return toUnit(line[j % bufferCap].toDouble());
@@ -2536,8 +2531,7 @@ double Function(double raw) _taredDisplayFromRaw(
   int channel,
   DisplayUnit unit,
 ) {
-  final tare = data.channel(channel).tare;
-  return unit.converterFor(data.calibrationFor(channel), tare)!;
+  return data.converterFor(channel).netMap(unit)!;
 }
 
 /// The tared-force rendering recipe for one channel (exact per-sample
@@ -3104,7 +3098,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     for (final ch in _activeChannels) {
       final s = _data.channel(ch);
       if (s.data.isEmpty) continue;
-      final conv = unit.converterFor(_data.calibrationFor(ch), s.tare);
+      final conv = _data.converterFor(ch).netMap(unit);
       if (conv == null) continue;
       converters[ch] = conv;
       final ext = windowedExtremes(
@@ -3167,10 +3161,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     const colW = _kGraphRightSpace / kAdcChannelCount;
 
     for (final ch in _activeChannels) {
-      final conv = _unit.converterFor(
-        _data.calibrationFor(ch),
-        _data.channel(ch).tare,
-      );
+      final conv = _data.converterFor(ch).netMap(_unit);
       if (conv == null) continue;
       final left = graphSz.width + colW * ch;
       for (final positive in [true, false]) {
@@ -3242,10 +3233,8 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     final line = s.data;
     final bufferCap = _data.bufferCapacity;
     final gaps = _data.gaps;
-    final conv = _unit.converterFor(
-      _data.calibrationFor(channel),
-      s.tare,
-    )!; // non-null: the workspace plots only convertible channels
+    // Non-null: the workspace plots only convertible channels.
+    final conv = _data.converterFor(channel).netMap(_unit)!;
     final rate = _data.sampleRate.toDouble();
     return (j) {
       if (gaps.contains(j) || gaps.contains(j - 1)) return double.nan;
@@ -3256,9 +3245,9 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   }
 
   /// Raw-diff -> display-units-per-second map for the bucket fast path of
-  /// [channel] (terminal-slope based, see [DisplayUnit.diffConverterFor]).
+  /// [channel] (terminal-slope based, see [ChannelConverter.diffMap]).
   double Function(double rawDiff) _diffDisplayFor(int channel) {
-    final diffConv = _unit.diffConverterFor(_data.calibrationFor(channel))!;
+    final diffConv = _data.converterFor(channel).diffMap(_unit)!;
     final rate = _data.sampleRate.toDouble();
     return (diff) => diffConv(diff) * rate;
   }

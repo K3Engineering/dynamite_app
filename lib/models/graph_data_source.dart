@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'bucket_series.dart';
 import 'channel_calibration.dart';
+import 'channel_converter.dart';
 import 'gap_list.dart';
 
 /// A single channel's raw circular-buffer data plus its precomputed extremes,
@@ -41,8 +42,14 @@ abstract interface class GraphDataSource {
   int get sampleRate;
 
   /// The per-channel calibration used to convert raw counts to display
-  /// units (board piecewise map + assigned load cell).
+  /// units (board piecewise map + assigned load cell). Read directly for
+  /// calibration snapshots and metadata; CONVERSION goes through
+  /// [converterFor].
   ChannelCalibration calibrationFor(int channelIndex);
+
+  /// The channel's converter: its calibration bound to its current tare
+  /// offset, so one lookup yields everything a consumer converts through.
+  ChannelConverter converterFor(int channelIndex);
 
   /// Monotonic identity of the calibration set: bumped when calibration
   /// changes (factory data arrives, a load-cell assignment changes), so
