@@ -482,7 +482,7 @@ void main() {
     });
 
     test(
-      'a damaged tare column floors to gross counts and forces raw',
+      'a damaged tare column floors to null without a damage flag',
       () async {
         final id = await makeSessionRow(
           chunks: [
@@ -493,16 +493,34 @@ void main() {
           tares: '[0,0,"bogus",0]',
         );
         final data = (await SessionStorage.loadSession(id))!;
-        expect(data.damage.tare, isTrue);
-        expect(data.tares, everyElement(0.0));
-        // Zero is a legitimate tare — the flag, not the value, says "unknown".
-        expect(data.damage.warningCodes, contains('session_tare_damaged'));
-        // Conversion is forced raw-only even though calibration is intact.
-        expect(data.unitAvailabilityFor([0]).boardHasNominals, isFalse);
+        // Null (no offset) IS the honest floor — a first-class state every
+        // viewer renders, so no flag distinguishes damage from never-tared.
+        expect(data.tares, everyElement(isNull));
+        expect(data.damage.isEmpty, isTrue);
+        // Conversion stays available: calibration is intact, and a null tare
+        // converts as gross.
+        expect(data.unitAvailabilityFor([0]).boardHasNominals, isTrue);
         // The sample data itself is untouched.
         expect(data.channels[0][0], 10);
       },
     );
+
+    test('null tares load; legacy zeroed tares parse as no offset', () async {
+      Future<List<double?>> loadTares(String tares) async {
+        final id = await makeSessionRow(
+          chunks: [
+            packChunk([
+              [1, 2, 3, 4],
+            ]),
+          ],
+          tares: tares,
+        );
+        return (await SessionStorage.loadSession(id))!.tares;
+      }
+
+      expect(await loadTares('[null,null,null,null]'), everyElement(isNull));
+      expect(await loadTares('[10,null,-5,0]'), [10.0, null, -5.0, null]);
+    });
 
     test(
       'a damaged calibration column floors the whole board uniformly',

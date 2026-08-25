@@ -35,7 +35,7 @@ class SessionStorage {
   /// [samplesPerSec], [sourceRingCapacity]), so the storage layer never
   /// imports the hub.
   static LiveSessionWriter startSession({
-    required Float64List tare,
+    required List<double?> tare,
     required List<ChannelCalibration> channelCalibration,
     required int samplesPerSec,
     required int sourceRingCapacity,
@@ -47,7 +47,9 @@ class SessionStorage {
   }) {
     // Snapshot the tare once and persist it with the session; playback
     // converts through it, so a later re-tare can never rewrite history.
-    final tareSnapshot = Float64List.fromList(tare);
+    // Nulls (never tared) serialize as JSON null — a first-class state,
+    // not a floored number.
+    final tareSnapshot = List<double?>.of(tare);
 
     return LiveSessionWriter((
       name: name,
@@ -270,17 +272,16 @@ class SessionStorage {
     }
 
     // Metadata columns parse strictly at this boundary: each damaged column
-    // floors to its honest degraded state (see SessionDamage) and sets its
-    // flag — salvage per entry would fabricate values indistinguishable
-    // from legitimate recorded ones (a zero tare IS a valid recording).
-    var tareDamaged = false;
-    Float64List tares;
+    // floors to its honest degraded state and sets its flag — salvage per
+    // entry would fabricate values indistinguishable from legitimate
+    // recorded ones. Tares need no flag: their floor (null = no offset)
+    // is itself a first-class state that every viewer renders honestly.
+    List<double?> tares;
     try {
       tares = _parseTares(session.tares, channelCount);
     } on FormatException catch (e) {
       debugPrint('Session $sessionId: tares damaged ($e)');
-      tareDamaged = true;
-      tares = Float64List(channelCount);
+      tares = List<double?>.filled(channelCount, null);
     }
 
     var calibrationDamaged = false;
@@ -315,7 +316,6 @@ class SessionStorage {
       gaps: gaps,
       ssnOrigin: session.ssnOrigin,
       damage: SessionDamage(
-        tare: tareDamaged,
         calibration: calibrationDamaged,
         gapsLost: gapsLost,
         truncatedAt: truncatedAt,
@@ -324,19 +324,28 @@ class SessionStorage {
   }
 
   /// Parse the JSON-encoded per-channel tares stored on a [Session] row.
-  /// Strict — exactly [channelCount] finite numbers, else [FormatException]
-  /// (jsonDecode's own malformed-document exceptions included).
-  static Float64List _parseTares(String json, int channelCount) {
+  /// Entries are finite numbers or null (no offset); anything else is
+  /// [FormatException] (jsonDecode's own malformed-document exceptions
+  /// included). Legacy rows (written before null became a value) used 0
+  /// for never-tared, and an exactly-zero sampled tare is a measure-zero
+  /// coincidence against any real dead-short reading, so a numeric 0
+  /// parses to null here.
+  static List<double?> _parseTares(String json, int channelCount) {
     final decoded = jsonDecode(json);
     if (decoded is! List || decoded.length != channelCount) {
-      throw FormatException('tares must be a list of $channelCount numbers');
+      throw FormatException(
+        'tares must be a list of $channelCount numbers or nulls',
+      );
     }
-    return Float64List.fromList([
+    return [
       for (final e in decoded)
-        e is num && e.toDouble().isFinite
-            ? e.toDouble()
-            : throw const FormatException('tare entries must be numbers'),
-    ]);
+        if (e == null)
+          null
+        else if (e is num && e.toDouble().isFinite)
+          e.toDouble() == 0 ? null : e.toDouble()
+        else
+          throw const FormatException('tare entries must be numbers or null'),
+    ];
   }
 
   /// Parse the JSON-encoded per-channel calibration snapshots stored on a
@@ -373,7 +382,7 @@ class StaticSessionPersistence implements SessionPersistence {
 
   @override
   LiveSessionWriter startSession({
-    required Float64List tare,
+    required List<double?> tare,
     required List<ChannelCalibration> channelCalibration,
     required int samplesPerSec,
     required int sourceRingCapacity,

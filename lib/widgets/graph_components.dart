@@ -1378,8 +1378,9 @@ class _MinimapPainter extends CustomPainter {
       final conv = unit.converterFor(_data.calibrationFor(ch), s.tare);
       if (conv == null) continue;
       // No data on this channel: the +/-10000 tare band alone matters.
-      final lo = conv(math.min(s.min ?? s.tare, s.tare - 10000));
-      final hi = conv(math.max(s.max ?? s.tare, s.tare + 10000));
+      final tare = s.tare ?? 0;
+      final lo = conv(math.min(s.min ?? tare, tare - 10000));
+      final hi = conv(math.max(s.max ?? tare, tare + 10000));
       if (lo < yMin) yMin = lo;
       if (hi > yMax) yMax = hi;
     }
@@ -2576,7 +2577,7 @@ bool _paintEnvelopeDataLayer(
   required SegmentedGraphCache cache,
   required GraphDataSource data,
   required List<int> activeChannels,
-  required List<double> tares,
+  required List<double?> tares,
   required DisplayUnit unit,
   required double gw,
   required double gh,
@@ -2885,7 +2886,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// tares when the series depends on them. (A remap change keeps stale
   /// segments blittable while the sweep re-bakes them; the derivative omits
   /// its tares because the difference cancels them.)
-  List<double> cacheKeyTares() => const [];
+  List<double?> cacheKeyTares() => const [];
 
   /// Optional chrome drawn after the axes, before the data lines. [yRange]
   /// and [valueToY] are this paint pass's axis mapping, [viewStart]/
@@ -3043,7 +3044,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   bool get drawMinorGrid => true;
 
   @override
-  List<double> cacheKeyTares() =>
+  List<double?> cacheKeyTares() =>
       _activeChannels.map((ch) => _data.channel(ch).tare).toList();
 
   @override
@@ -3082,8 +3083,9 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       );
       if (ext == null) continue;
       // Tare-subtracted raw extremes feed the noise floor below.
-      rawMin = math.min(rawMin, ext.$1 - s.tare);
-      rawMax = math.max(rawMax, ext.$2 - s.tare);
+      final tare = s.tare ?? 0;
+      rawMin = math.min(rawMin, ext.$1 - tare);
+      rawMax = math.max(rawMax, ext.$2 - tare);
       yMin = math.min(yMin, conv(ext.$1));
       yMax = math.max(yMax, conv(ext.$2));
     }
@@ -3102,7 +3104,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       final lo = mid - noiseFloor / 2;
       final hi = mid + noiseFloor / 2;
       for (final MapEntry(key: ch, value: conv) in converters.entries) {
-        final tare = _data.channel(ch).tare;
+        final tare = _data.channel(ch).tare ?? 0;
         yMin = math.min(yMin, conv(lo + tare));
         yMax = math.max(yMax, conv(hi + tare));
       }

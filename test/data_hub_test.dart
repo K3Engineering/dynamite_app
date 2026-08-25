@@ -196,7 +196,7 @@ void main() {
       expect(hub.totalSamples, 0);
       expect(hub.gaps.isEmpty, isTrue);
       expect(hub.taring, isFalse);
-      expect(hub.tare[0], 0);
+      expect(hub.tare[0], isNull);
       expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 0), 0);
       expect(hub.valueBuckets[0].series.samples, 0);
       expect(hub.diffBuckets[0].series.samples, 0);
@@ -220,7 +220,7 @@ void main() {
 
       hub.clear();
       expect(hub.taring, isFalse);
-      expect(hub.tare[0], 0);
+      expect(hub.tare[0], isNull);
     });
   });
 
@@ -326,7 +326,7 @@ void main() {
       hub.requestTare();
       feed(hub, frameOf(500), 99);
       expect(hub.taring, isTrue);
-      expect(hub.tare[0], 0);
+      expect(hub.tare[0], isNull);
       feed(hub, frameOf(500), 1);
       expect(hub.taring, isFalse);
       expect(hub.tare[0], 500);
@@ -340,7 +340,7 @@ void main() {
       hub.requestTare(channel: 1);
       feed(hub, frame, 1000);
       expect(hub.taring, isFalse);
-      expect(hub.tare[0], 0);
+      expect(hub.tare[0], isNull);
       expect(hub.tare[1], 2000);
       expect(hub.currentValue(0, DisplayUnit.raw), 1000);
       expect(hub.currentValue(1, DisplayUnit.raw), 0);
@@ -354,11 +354,11 @@ void main() {
       feed(hub, frameOf(2000), 1000);
       expect(hub.taring, isFalse);
       // The replaced request never committed; its partial average is gone.
-      expect(hub.tare[0], 0);
+      expect(hub.tare[0], isNull);
       expect(hub.tare[1], 2000);
     });
 
-    test('resetTare zeroes per channel and cancels the tare in flight', () {
+    test('resetTare clears per channel and cancels the tare in flight', () {
       final hub = DataHub();
       hub.requestTare(channel: 0);
       feed(hub, frameOf(1000), 1000);
@@ -373,49 +373,49 @@ void main() {
 
       hub.resetTare(channel: 0);
       expect(hub.taring, isFalse); // in-flight tare canceled
-      expect(hub.tare[0], 0);
+      expect(hub.tare[0], isNull);
       expect(hub.tare[1], 2000); // untouched
 
       // The canceled window must not commit later.
       feed(hub, frameOf(42), 1000);
-      expect(hub.tare[0], 0);
+      expect(hub.tare[0], isNull);
 
       hub.resetTare();
-      expect(hub.tare[1], 0);
+      expect(hub.tare[1], isNull);
     });
 
     test(
-      'setTarePoint writes the offset absolutely and cancels the tare in flight',
+      'setTareOffset writes the offset absolutely and cancels the tare in flight',
       () {
         final hub = DataHub();
-        hub.setTarePoint(1, 1234);
+        hub.setTareOffset(1, 1234);
         expect(hub.tare[1], 1234);
-        expect(hub.tare[0], 0);
+        expect(hub.tare[0], isNull);
 
         // Absolute: replaces the offset regardless of the old value.
-        hub.setTarePoint(1, -50);
+        hub.setTareOffset(1, -50);
         expect(hub.tare[1], -50);
 
         hub.requestTare(channel: 2);
         feed(hub, frameOf(1000), 500);
         expect(hub.taring, isTrue);
-        hub.setTarePoint(1, 0);
+        hub.setTareOffset(1, 0);
         expect(hub.taring, isFalse); // canceled
 
         // The canceled window must not commit later.
         feed(hub, frameOf(1000), 1000);
-        expect(hub.tare[2], 0);
+        expect(hub.tare[2], isNull);
       },
     );
 
-    test('tarePoint reports the gross tare value in the unit', () {
+    test('tareOffset reports the amount zeroed out in the unit', () {
       final hub = DataHub()..updateBoardCalibration(nominalBoard());
-      expect(hub.tarePoint(0, DisplayUnit.raw), 0);
+      expect(hub.tareOffset(0, DisplayUnit.raw), 0);
       hub.requestTare();
       feed(hub, frameOf(1000), 1000);
-      expect(hub.tarePoint(0, DisplayUnit.raw), 1000);
-      expect(hub.tarePoint(0, DisplayUnit.mVv), isNotNull);
-      expect(hub.tarePoint(0, DisplayUnit.kgf), isNull); // no cell assigned
+      expect(hub.tareOffset(0, DisplayUnit.raw), 1000);
+      expect(hub.tareOffset(0, DisplayUnit.mVv), isNotNull);
+      expect(hub.tareOffset(0, DisplayUnit.kgf), isNull); // no cell assigned
     });
   });
 
@@ -491,9 +491,11 @@ void main() {
 
       feed(hub, frameOf(1000), 5);
       for (final ch in [0, 1]) {
+        // With no tare set, the reading is gross: anchored at the map's own
+        // zero setpoint (raw 500 here), NOT at zero counts.
         expect(
           hub.currentValue(ch, DisplayUnit.mVv),
-          closeTo(1000 / (0.5 * testNominals.countsPerMvV), 1e-12),
+          closeTo(500 / (0.5 * testNominals.countsPerMvV), 1e-12),
         );
       }
     });

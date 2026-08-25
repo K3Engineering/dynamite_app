@@ -217,14 +217,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                               ?.call(data.maxs[ch]!),
                 ],
               ),
-              // Where the session's frozen tare sat, gross (not netted).
+              // The amount the session's frozen tare zeroed out (gross at
+              // the tare point; 0 for a channel recorded without a tare).
               ChannelStatsRow(
-                label: 'Tare',
+                label: 'Tare offset',
                 values: [
                   for (int ch = 0; ch < data.channels.length; ch++)
-                    unit
-                        .grossConverterFor(data.calibrationFor(ch))
-                        ?.call(data.tares[ch]),
+                    unit.tareOffsetFor(data.calibrationFor(ch), data.tares[ch]),
                 ],
               ),
             ],
@@ -626,7 +625,6 @@ class _DamageBanner extends StatelessWidget {
 
   /// One human line per flag, naming the floor in effect.
   List<String> get _consequences => [
-    if (damage.tare) 'Tare unknown — showing gross raw counts.',
     if (damage.calibration) 'Calibration unknown — raw counts only.',
     if (damage.gapsLost)
       'Dropout positions unknown — some samples may be repeated held values.',

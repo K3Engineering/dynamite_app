@@ -112,11 +112,11 @@ String buildSessionCsv(
   // Per-channel quartet-2 cell formatters, computed once from the session's
   // frozen calibration; each closure folds in the column's fixed-point
   // precision. Null is a force unit on a cell-less channel — an all-blank
-  // column (the file's '—'). Damaged tare or calibration metadata blanks
-  // the whole converted quartet: the floors those flags carry (zeroed
-  // tares, uncalibrated channels) must never produce converted numbers
-  // that pose as net measurements (the raw quartet always exports).
-  final blankConverted = data.damage.tare || data.damage.calibration;
+  // column (the file's '—'). Damaged calibration metadata blanks the whole
+  // converted quartet: its floor (uncalibrated channels) must never produce
+  // converted numbers that pose as net measurements (the raw quartet always
+  // exports).
+  final blankConverted = data.damage.calibration;
   final formatters = [
     for (int ch = 0; ch < n; ch++)
       blankConverted
@@ -170,7 +170,7 @@ String buildSessionCsv(
 String Function(int raw)? _columnFormatter(
   DisplayUnit unit,
   ChannelCalibration cal,
-  double tare,
+  double? tare,
 ) {
   final convert = unit.converterFor(cal, tare);
   final decimals = unit.exportDecimalsFor(cal);
@@ -221,24 +221,18 @@ Map<String, Object?> _metadata(
     },
     'channels': [
       for (int ch = 0; ch < n; ch++)
-        // A damaged tare column exports tare_raw: null rather than the
-        // zeroed floor — zero is a legitimate tare, null is the honesty
-        // marker for "unknown" (and `warnings` says why).
-        _channelMetadata(
-          data.calibrationFor(ch),
-          data.damage.tare ? null : data.tares[ch],
-        ),
+        _channelMetadata(data.calibrationFor(ch), data.tares[ch]),
     ],
   };
 }
 
 /// One `channels[]` entry: the assigned load cell (null = none), the
-/// recording-time tare in raw counts (null when the stored tare failed
-/// integrity checks — unknown, not zero), and the factory board cal —
-/// null when the channel is uncalibrated (the honesty marker: converted
-/// values are nominal-referred). Calibration is board-uniform (all
-/// channels calibrated or none — see [BoardCalibration.fromKv]), so the
-/// markers agree.
+/// recording-time tare in raw counts (null = no offset — the channel
+/// recorded gross, or the stored tare failed integrity checks), and the
+/// factory board cal — null when the channel is uncalibrated (the honesty
+/// marker: converted values are nominal-referred). Calibration is
+/// board-uniform (all channels calibrated or none — see
+/// [BoardCalibration.fromKv]), so the markers agree.
 Map<String, Object?> _channelMetadata(ChannelCalibration cal, double? tareRaw) {
   final cell = cal.loadCell;
   final board = cal.board;

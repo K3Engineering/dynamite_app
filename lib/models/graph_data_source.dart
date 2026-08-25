@@ -11,7 +11,7 @@ typedef ChannelSeries = ({
   List<int> data,
   double? min,
   double? max,
-  double tare,
+  double? tare,
   BucketSeries buckets,
 });
 
