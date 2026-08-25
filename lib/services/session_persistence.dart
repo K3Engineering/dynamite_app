@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import '../models/channel_calibration.dart';
 import '../models/display_unit.dart';
 import 'live_session_writer.dart';
@@ -18,7 +16,7 @@ abstract interface class SessionPersistence {
   /// the writer's first chunk flush creates the session row, so this can
   /// never fail and never needs discarding.
   LiveSessionWriter startSession({
-    required Float64List tare,
+    required List<double?> tare,
     required List<ChannelCalibration> channelCalibration,
     required int samplesPerSec,
     required int sourceRingCapacity,

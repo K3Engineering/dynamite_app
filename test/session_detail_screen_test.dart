@@ -1,9 +1,13 @@
+import 'dart:convert';
+
 import 'package:drift/native.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/screens/session_detail_screen.dart';
 import 'package:dynamite_app/services/database.dart';
@@ -76,22 +80,36 @@ void main() {
     await tester.pump(const Duration(milliseconds: 1));
   });
 
+  /// A valid calibration column (nominal chain only — no factory readings),
+  /// so tests can target one damaged column at a time.
+  final validCalibrationJson = jsonEncode([
+    for (int ch = 0; ch < 4; ch++)
+      ChannelCalibration(
+        board: ChannelBoardCalibration(
+          nominals: const ChannelNominals(
+            adcFsrV: 1.2,
+            afeGain: 101,
+            pgaGain: 1,
+            excitationV: 4.53,
+          ),
+        ),
+      ).toJson(),
+  ]);
+
   /// Minimal row boilerplate for the integrity tests below.
-  Future<int> makeRow({
-    String tares = '[0,0,0,0]',
-    String calibrationJson = '[]',
-  }) => AppDatabase.instance.createSession(
-    name: 'Integrity session',
-    sampleRate: 1000,
-    channelCount: 4,
-    channelLabels: '[]',
-    tares: tares,
-    calibrationJson: calibrationJson,
-    visibleChannels: '[]',
-    displayUnit: 'kgf',
-    deviceInfoJson: '{}',
-    ssnOrigin: 0,
-  );
+  Future<int> makeRow({String tares = '[0,0,0,0]', String? calibrationJson}) =>
+      AppDatabase.instance.createSession(
+        name: 'Integrity session',
+        sampleRate: 1000,
+        channelCount: 4,
+        channelLabels: '[]',
+        tares: tares,
+        calibrationJson: calibrationJson ?? validCalibrationJson,
+        visibleChannels: '[]',
+        displayUnit: 'kgf',
+        deviceInfoJson: '{}',
+        ssnOrigin: 0,
+      );
 
   Future<void> pumpDetail(WidgetTester tester, int sessionId) async {
     final session = (await sessionSummaryById(sessionId))!;
@@ -149,9 +167,8 @@ void main() {
     await unmount(tester);
   });
 
-  testWidgets('a damaged tare column is surfaced by the banner', (
-    tester,
-  ) async {
+  testWidgets('a damaged tare column needs no banner: the gross floor is '
+      'honest', (tester) async {
     final sessionId = await makeRow(tares: '[0,0,"bogus",0]');
     const codec = SessionChunkCodec(4);
     await AppDatabase.instance.insertChunk(
@@ -167,22 +184,11 @@ void main() {
 
     await pumpDetail(tester, sessionId);
 
-    expect(find.text('Session data damaged'), findsOneWidget);
-    expect(
-      find.text('Tare unknown — showing gross raw counts.'),
-      findsOneWidget,
-    );
-    // The data itself still renders (the floor is a view, not a refusal).
+    // The floor (null = no offset) is a first-class state — the screen is
+    // exactly what a never-tared healthy session shows.
+    expect(find.text('Session data damaged'), findsNothing);
+    expect(find.text('Tare offset'), findsOneWidget);
     expect(find.text('Samples'), findsOneWidget);
-
-    // Damaged but nothing salvageable (no truncation): the menu marks the
-    // verified CSV and hides the salvage export.
-    await tester.tap(find.byType(PopupMenuButton<String>));
-    await tester.pumpAndSettle();
-    expect(find.text('Download CSV (verified data)'), findsOneWidget);
-    expect(find.text(salvageExportLabel), findsNothing);
-    await tester.tapAt(const Offset(10, 10));
-    await tester.pumpAndSettle();
 
     await unmount(tester);
   });

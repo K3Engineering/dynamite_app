@@ -252,7 +252,6 @@ class _LiveTabState extends State<LiveTab> {
                 hub: hub,
                 rig: rig,
                 settings: settings,
-                health: healthListenable,
               ),
             ),
         ],
@@ -553,10 +552,10 @@ class LiveStats extends StatelessWidget {
                     ],
                   ),
                   ChannelStatsRow(
-                    label: 'Tare',
+                    label: 'Tare offset',
                     values: [
                       for (int i = 0; i < kAdcChannelCount; i++)
-                        hub.tarePoint(i, unit),
+                        hub.tareOffset(i, unit),
                     ],
                   ),
                   if (showDerivative)

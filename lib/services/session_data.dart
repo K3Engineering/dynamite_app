@@ -7,26 +7,23 @@ import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 
 /// The integrity verdict for a session's stored data, computed at load
-/// time. Each flag maps to exactly one honest floor state (zeroed tares,
-/// uncalibrated channels, empty gaps, a truncated sample prefix) and one
-/// machine-readable warning code carried in the CSV metadata's `warnings`
-/// field (docs/csv-format-v1.md). The UI renders a human interpretation
-/// of each flag, never the code itself.
+/// time. Each flag maps to exactly one honest floor state (uncalibrated
+/// channels, empty gaps, a truncated sample prefix) and one machine-readable
+/// warning code carried in the CSV metadata's `warnings` field
+/// (docs/csv-format-v1.md). The UI renders a human interpretation of each
+/// flag, never the code itself.
+///
+/// A damaged tare column sets no flag: its floor is null (no offset), which
+/// is itself a first-class, honestly-rendered state — not a number posing
+/// as a measurement.
 class SessionDamage {
   const SessionDamage({
-    this.tare = false,
     this.calibration = false,
     this.gapsLost = false,
     this.truncatedAt,
   });
 
   static const none = SessionDamage();
-
-  /// The tare column failed to parse: stored tares are floored to zero, so
-  /// views show gross counts and conversion is forced to raw (a zero tare
-  /// is a legitimate recorded value, so only this flag distinguishes
-  /// "damaged" from "never tared").
-  final bool tare;
 
   /// The calibration column failed to parse (whole column, board-uniform —
   /// a partially-malformed snapshot is damage, never a mixed board):
@@ -45,13 +42,12 @@ class SessionDamage {
   /// they remain available via the salvage export.
   final int? truncatedAt;
 
-  bool get isEmpty => !tare && !calibration && !gapsLost && truncatedAt == null;
+  bool get isEmpty => !calibration && !gapsLost && truncatedAt == null;
 
   /// The machine-readable codes for the set flags — the CSV `warnings`
   /// metadata field's contract (the UI banner interprets them instead of
   /// quoting them).
   List<String> get warningCodes => [
-    if (tare) 'session_tare_damaged',
     if (calibration) 'session_calibration_damaged',
     if (gapsLost) 'session_gaps_lost',
     if (truncatedAt case final t?) 'session_truncated_at_sample:$t',
@@ -67,7 +63,11 @@ class SessionData implements GraphDataSource {
 
   /// Per-channel calibration snapshots recorded with the session.
   final List<ChannelCalibration> calibrations;
-  final List<double> tares;
+
+  /// Per-channel tare offsets in counts, frozen at record start; null =
+  /// that channel was recording gross (never tared). A damaged column
+  /// floors to all-null at load (see SessionStorage.loadSession).
+  final List<double?> tares;
 
   /// Device sample-counter value at the session's first sample (the
   /// dynamite-csv `ssn_origin`), latched by the live writer from the first
@@ -158,11 +158,11 @@ class SessionData implements GraphDataSource {
   double get durationSeconds => sampleCount / sampleRate;
 
   /// The unit set this session can convert right now: the nominal lookup,
-  /// forced raw-only when tare or calibration metadata is damaged — the
-  /// floors those flags carry (zeroed tares, uncalibrated channels) must
-  /// never produce converted numbers that pose as net measurements.
+  /// forced raw-only when calibration metadata is damaged — its floor
+  /// (uncalibrated channels) must never produce converted numbers that
+  /// pose as net measurements.
   UnitAvailability unitAvailabilityFor(Iterable<int> activeChannels) {
-    if (damage.tare || damage.calibration) {
+    if (damage.calibration) {
       return (boardHasNominals: false, anyActiveHasLoadCell: false);
     }
     return resolveUnitAvailability(calibrationFor, activeChannels);

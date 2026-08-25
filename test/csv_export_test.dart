@@ -41,7 +41,7 @@ void main() {
   SessionData makeSession(
     List<List<int>> perChannel, {
     List<ChannelCalibration>? calibrations,
-    List<double>? tares,
+    List<double?>? tares,
     GapList? gaps,
     int ssnOrigin = 0,
     SessionDamage damage = SessionDamage.none,
@@ -50,7 +50,7 @@ void main() {
     sampleRate: sampleRate,
     sampleCount: perChannel.first.length,
     calibrations: calibrations ?? nominalCals(),
-    tares: tares ?? List.filled(channels, 0.0),
+    tares: tares ?? List.filled(channels, null),
     gaps: gaps,
     ssnOrigin: ssnOrigin,
     damage: damage,
@@ -248,6 +248,43 @@ void main() {
       },
     );
 
+    test('a null tare exports gross, not blanks: no offset is no damage', () {
+      final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
+      final cals = [
+        for (int ch = 0; ch < channels; ch++)
+          ChannelCalibration(
+            board: ChannelBoardCalibration(nominals: testNominals),
+            loadCell: cell,
+          ),
+      ];
+      final data = makeSession(
+        [
+          [1000],
+          [2000],
+        ],
+        calibrations: cals,
+        tares: [100.0, null],
+      );
+
+      final csv = buildCsv(data, DisplayUnit.kgf);
+      final lines = csv.trim().split('\n');
+      final decimals = DisplayUnit.kgf.exportDecimalsFor(cals[0])!;
+      String expected(int raw, double? tare) => DisplayUnit.kgf
+          .converterFor(cals[0], tare)!
+          .call(raw.toDouble())
+          .toStringAsFixed(decimals);
+
+      // One sample: ch0 nets through its frozen tare, ch1 converts gross.
+      expect(
+        lines[3],
+        '0,1000,2000,${expected(1000, 100.0)},'
+        '${expected(2000, null)}',
+      );
+      final meta = metadataOf(csv);
+      expect(meta.containsKey('warnings'), isFalse);
+      expect((meta['channels'] as List)[1]['tare_raw'], isNull);
+    });
+
     test(
       'storage damage discloses itself and blanks what it cannot vouch for',
       () {
@@ -260,28 +297,7 @@ void main() {
             ),
         ];
 
-        // Damaged tare: converted columns blank, tare_raw null (zero is a
-        // legitimate tare; null is the honesty marker), warning disclosed.
-        final tareDamaged = makeSession(
-          [
-            [1000],
-            [2000],
-          ],
-          calibrations: cals,
-          tares: [100.0, 0.0],
-          damage: const SessionDamage(tare: true),
-        );
-        final csv = buildCsv(tareDamaged, DisplayUnit.kgf);
-        expect(csv.trim().split('\n')[3], '0,1000,2000,,');
-        final meta = metadataOf(csv);
-        expect(meta['warnings'], contains('session_tare_damaged'));
-        expect(
-          meta['warnings'],
-          isNot(contains('session_calibration_damaged')),
-        );
-        expect((meta['channels'] as List).first['tare_raw'], isNull);
-
-        // Damaged calibration: same blanking, its own code.
+        // Damaged calibration: converted columns blank, its own code.
         final calDamaged = makeSession([
           [1000],
           [2000],

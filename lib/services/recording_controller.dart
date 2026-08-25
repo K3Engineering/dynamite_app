@@ -32,8 +32,9 @@ final class StartSessionBusy extends StartSessionResult {
   const StartSessionBusy();
 }
 
-/// Refused: a tare is still averaging, and recording now would persist a zero
-/// tare. Transient — retry once the tare completes.
+/// Refused: a tare is still averaging, so recording now would freeze the
+/// pre-tare offsets (re-taring is refused for the session's lifetime).
+/// Transient — retry once the tare completes.
 final class StartSessionTareInProgress extends StartSessionResult {
   const StartSessionTareInProgress();
 }
@@ -163,7 +164,8 @@ class RecordingController extends ChangeNotifier {
   }) {
     assert(_streamingNow());
     if (_state != _RecordingState.idle) return const StartSessionBusy();
-    // A tare is still averaging; recording now would persist a zero tare.
+    // A tare is still averaging; recording now would freeze the pre-tare
+    // offsets for the session's lifetime.
     if (_dataHub.taring) return const StartSessionTareInProgress();
     // Refuse to latch an empty session onto a feed that delivers nothing
     // decodable (a stream that never produced data, produces only malformed

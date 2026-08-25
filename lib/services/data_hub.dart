@@ -57,7 +57,11 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   static const int _noMaxYet = -0x80000000;
   static const int _noMinYet = 0x7FFFFFFF;
 
-  final Float64List tare = Float64List(kAdcChannelCount);
+  /// Per-channel tare offset in raw counts, or null = no offset. Null is
+  /// first-class: zero counts is not a meaningful "untared" anchor (the
+  /// board's physical zero is its dead-short reading, not zero counts), so
+  /// the absent state must not be smuggled through a number.
+  final List<double?> tare = List<double?>.filled(kAdcChannelCount, null);
   final Float64List _runningTotal = Float64List(kAdcChannelCount);
   final Int32List rawMax = Int32List(kAdcChannelCount);
   final Int32List rawMin = Int32List(kAdcChannelCount);
@@ -255,7 +259,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
     for (int i = 0; i < kAdcChannelCount; ++i) {
       rawMax[i] = _noMaxYet;
       rawMin[i] = _noMinYet;
-      tare[i] = 0;
+      tare[i] = null;
       _runningTotal[i] = 0;
       _currentRaw[i] = 0;
       _ingest[i].reset();
@@ -328,7 +332,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
     assert(channel == null || (channel >= 0 && channel < kAdcChannelCount));
     _cancelPendingTare();
     for (int i = 0; i < kAdcChannelCount; ++i) {
-      if (channel == null || channel == i) tare[i] = 0;
+      if (channel == null || channel == i) tare[i] = null;
     }
     notifyListeners();
   }
@@ -337,7 +341,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   /// manual-entry path). Absolute: replaces the current offset regardless
   /// of what it was. Cancels any in-progress tare (see
   /// [_cancelPendingTare]).
-  void setTarePoint(int channel, double rawValue) {
+  void setTareOffset(int channel, double rawValue) {
     assert(channel >= 0 && channel < kAdcChannelCount);
     assert(rawValue.isFinite);
     _cancelPendingTare();
@@ -600,13 +604,12 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
     return conv?.call(_currentRaw[adcChannel].toDouble());
   }
 
-  /// Where a channel's tare sits, in the specified unit: the gross value of
-  /// the tare point (the calibration map evaluated AT the tare, not netted).
-  /// Null when the unit is unavailable for the channel.
-  double? tarePoint(int adcChannel, DisplayUnit unit) {
+  /// Where a channel's tare sits, in the specified unit: the amount being
+  /// zeroed out (see `DisplayUnit.tareOffsetFor`). Null when the unit is
+  /// unavailable for the channel.
+  double? tareOffset(int adcChannel, DisplayUnit unit) {
     assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
-    final conv = unit.grossConverterFor(calibrationFor(adcChannel));
-    return conv?.call(tare[adcChannel]);
+    return unit.tareOffsetFor(calibrationFor(adcChannel), tare[adcChannel]);
   }
 
   /// Peak value for a given ADC channel in the specified unit: the max over

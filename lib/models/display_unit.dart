@@ -202,23 +202,25 @@ enum DisplayUnit {
   }
 
   /// Build the absolute-raw -> display-unit converter for one channel, net of
-  /// [tare] (the board map is evaluated at both points and differenced, so
-  /// piecewise nonlinearity applies on both sides). Monotone nondecreasing.
-  /// Returns null when unavailable: a force unit on a channel with no
-  /// assigned load cell.
+  /// [tare] in counts (the board map is evaluated at both points and
+  /// differenced, so piecewise nonlinearity applies on both sides).
+  /// Monotone nondecreasing. A null tare means NO offset: the net converter
+  /// is the gross map itself (zero is the map's own zero point, not zero
+  /// counts — the two are not the same physical reading). Returns null when
+  /// unavailable: a force unit on a channel with no assigned load cell.
   ///
   /// The returned closure is invoked per sample by the hot paths (graph
   /// reduction, stats), so the tare-side map value — loop-invariant — is
   /// evaluated once here instead of inside the closure.
   double Function(double raw)? converterFor(
     ChannelCalibration channel,
-    double tare,
+    double? tare,
   ) {
-    if (this == DisplayUnit.raw) return (raw) => raw - tare;
+    if (this == DisplayUnit.raw) return (raw) => raw - (tare ?? 0);
     final scale = _scalePerMvV(channel);
     if (scale == null) return null;
     final board = channel.board;
-    final tareMvV = board.mvVFromRaw(tare);
+    final tareMvV = tare == null ? 0.0 : board.mvVFromRaw(tare);
     return (raw) => (board.mvVFromRaw(raw) - tareMvV) * scale;
   }
 
@@ -232,6 +234,16 @@ enum DisplayUnit {
     if (scale == null) return null;
     final board = channel.board;
     return (raw) => board.mvVFromRaw(raw) * scale;
+  }
+
+  /// The display value of a stored tare [tare] (counts, null = no offset):
+  /// the amount the net converter subtracts, i.e. the gross value at the
+  /// tare point. "No offset" is exactly 0 in every unit — zero counts is a
+  /// meaningless anchor, so null carries the state deliberately. Null when
+  /// the unit is unavailable for the channel (and [tare] is set).
+  double? tareOffsetFor(ChannelCalibration channel, double? tare) {
+    if (tare == null) return 0;
+    return grossConverterFor(channel)?.call(tare);
   }
 
   /// Inverse of [grossConverterFor]: the raw count at which the channel's

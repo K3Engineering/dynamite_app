@@ -5,21 +5,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/device_profile.dart';
-import 'package:dynamite_app/models/feed_health.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/tare_sheet.dart';
 
-/// The tare sheet: per-channel live/tare-point readouts drive masked hub
+/// The tare sheet: per-channel tare-offset readouts drive masked hub
 /// requests, the footer drives the all-channel variants, and a tapped tare
-/// point takes a typed absolute value. No board data here, so the effective
-/// unit is raw counts and values equal tare-adjusted counts.
+/// offset takes a typed absolute value. No board data here, so the effective
+/// unit is raw counts and an untared channel's offset reads 0 ("no offset"
+/// is first-class: hub storage is null, the display isn't a sentineled
+/// number).
 void main() {
   setUp(() => SharedPreferences.setMockInitialValues({}));
 
-  Finder tarePointCell(int ch) => find.byKey(Key('tare-point-$ch'));
+  Finder tareOffsetCell(int ch) => find.byKey(Key('tare-offset-$ch'));
 
   Future<DataHub> openSheet(WidgetTester tester) async {
     final prefs = await SharedPreferences.getInstance();
@@ -35,7 +36,6 @@ void main() {
                 hub: hub,
                 rig: rig,
                 settings: AppSettings(prefs: prefs),
-                health: ValueNotifier<FeedHealth?>(null),
               ),
               child: const Text('open'),
             ),
@@ -59,22 +59,21 @@ void main() {
     hub.commitBatch(start);
   }
 
-  testWidgets('shows one row per active channel, live and tare points', (
-    tester,
-  ) async {
+  testWidgets('shows one row per active channel, tare offsets', (tester) async {
     final hub = await openSheet(tester);
     feed(hub, 500, 10);
     await tester.pump();
 
     expect(find.text('Tare'), findsOneWidget);
-    expect(find.text('In Raw'), findsOneWidget);
+    expect(find.text('(Raw)'), findsOneWidget);
+    expect(find.text('Name'), findsOneWidget);
+    expect(find.text('Tare offset'), findsOneWidget);
     expect(find.text('CH 1'), findsOneWidget);
     expect(find.text('CH 4'), findsOneWidget);
-    expect(find.text('+500'), findsNWidgets(kAdcChannelCount)); // live
     expect(
       find.text('+0'),
       findsNWidgets(kAdcChannelCount),
-    ); // untared: all tare points 0
+    ); // untared: all offsets exactly 0
   });
 
   testWidgets('per-channel TARE masks the commit; RESET clears per channel', (
@@ -90,14 +89,16 @@ void main() {
     await tester.pump();
     expect(hub.taring, isFalse);
     expect(hub.tare[0], 1000);
-    expect(hub.tare[1], 0);
-    // Live: CH 1 nets to 0, the rest read gross. Tare point: CH 1 only.
-    expect(find.text('+0'), findsNWidgets(kAdcChannelCount));
-    expect(find.text('+1000'), findsNWidgets(kAdcChannelCount));
+    expect(hub.tare[1], isNull);
+    // The offset column: CH 1 zeroed out its gross reading, the rest are
+    // untared.
+    expect(find.text('+1000'), findsOneWidget);
+    expect(find.text('+0'), findsNWidgets(kAdcChannelCount - 1));
 
     await tester.tap(find.byTooltip('Reset this channel').first);
     await tester.pump();
-    expect(hub.tare[0], 0);
+    expect(hub.tare[0], isNull);
+    expect(find.text('+0'), findsNWidgets(kAdcChannelCount));
   });
 
   testWidgets('footer drives the all-channel variants and Close pops', (
@@ -109,21 +110,21 @@ void main() {
     expect(hub.taring, isTrue);
     feed(hub, 700, 1000);
     await tester.pump();
-    expect([...hub.tare], [700.0, 700.0, 700.0, 700.0]);
+    expect(hub.tare, everyElement(700.0));
 
     await tester.tap(find.text('Reset all'));
     await tester.pump();
-    expect([...hub.tare], [0.0, 0.0, 0.0, 0.0]);
+    expect(hub.tare, everyElement(isNull));
 
     await tester.tap(find.byTooltip('Close'));
     await tester.pumpAndSettle();
     expect(find.text('Tare all'), findsNothing);
   });
 
-  testWidgets('tapping a tare point enters an absolute value', (tester) async {
+  testWidgets('tapping a tare offset enters an absolute value', (tester) async {
     final hub = await openSheet(tester);
 
-    await tester.tap(tarePointCell(1));
+    await tester.tap(tareOffsetCell(1));
     await tester.pump();
     expect(find.byType(TextField), findsOneWidget);
 
@@ -131,17 +132,17 @@ void main() {
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
     expect(hub.tare[1], 250);
-    expect(hub.tare[0], 0);
+    expect(hub.tare[0], isNull);
 
     // Absolute: re-entering replaces the offset outright.
-    await tester.tap(tarePointCell(1));
+    await tester.tap(tareOffsetCell(1));
     await tester.pump();
     await tester.enterText(find.byType(TextField), '-75');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
     expect(hub.tare[1], -75);
 
-    // The field is gone; the new point reads back in the cell.
+    // The field is gone; the new offset reads back in the cell.
     expect(find.byType(TextField), findsNothing);
     expect(find.text('-75'), findsOneWidget);
   });
@@ -151,7 +152,7 @@ void main() {
     (tester) async {
       final hub = await openSheet(tester);
 
-      await tester.tap(tarePointCell(0));
+      await tester.tap(tareOffsetCell(0));
       await tester.pump();
       await tester.enterText(find.byType(TextField), 'abc');
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -159,7 +160,7 @@ void main() {
 
       expect(find.text('Enter a number'), findsOneWidget);
       expect(find.byType(TextField), findsOneWidget);
-      expect(hub.tare[0], 0);
+      expect(hub.tare[0], isNull);
     },
   );
 
@@ -185,7 +186,7 @@ void main() {
       matching: find.byType(IconButton),
     );
     expect(tester.widget<IconButton>(rowTare).onPressed, isNull);
-    await tester.tap(tarePointCell(0));
+    await tester.tap(tareOffsetCell(0));
     await tester.pump();
     expect(find.byType(TextField), findsNothing);
 
