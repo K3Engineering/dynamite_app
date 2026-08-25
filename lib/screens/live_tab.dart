@@ -18,6 +18,7 @@ import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
 import '../widgets/channel_stats_table.dart';
+import '../widgets/tare_dialog.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
@@ -241,6 +242,12 @@ class _LiveTabState extends State<LiveTab> {
               isRecording: recording.sessionInProgress,
               onToggleRecord: _onToggleRecord,
               onTare: _onTare,
+              onTareSettings: () => showTareDialog(
+                context,
+                hub: hub,
+                rig: rig,
+                settings: settings,
+              ),
             ),
         ],
       ),
@@ -521,6 +528,13 @@ class LiveStats extends StatelessWidget {
                         hub.peakValue(i, unit, start: viewStart, end: viewEnd),
                     ],
                   ),
+                  ChannelStatsRow(
+                    label: 'Tare',
+                    values: [
+                      for (int i = 0; i < kAdcChannelCount; i++)
+                        hub.tarePoint(i, unit),
+                    ],
+                  ),
                   if (showDerivative)
                     ChannelStatsRow(
                       label: 'dF/dt',
@@ -632,11 +646,16 @@ class ActionButtons extends StatelessWidget {
   final VoidCallback onToggleRecord;
   final VoidCallback onTare;
 
+  /// Opens the per-channel tare dialog; disabled alongside TARE while
+  /// recording (same reason — a session's tares are frozen at record start).
+  final VoidCallback onTareSettings;
+
   const ActionButtons({
     super.key,
     required this.isRecording,
     required this.onToggleRecord,
     required this.onTare,
+    required this.onTareSettings,
   });
 
   @override
@@ -666,6 +685,11 @@ class ActionButtons extends StatelessWidget {
             onPressed: isRecording ? null : onTare,
             icon: const Icon(Icons.exposure_zero),
             label: Text(taring ? 'TARING' : 'TARE'),
+          ),
+          IconButton(
+            tooltip: 'Per-channel tare',
+            onPressed: isRecording ? null : onTareSettings,
+            icon: const Icon(Icons.tune),
           ),
         ],
       ),

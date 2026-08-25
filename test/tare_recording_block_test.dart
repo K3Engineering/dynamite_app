@@ -28,6 +28,7 @@ void main() {
               isRecording: isRecording,
               onToggleRecord: () {},
               onTare: onTare,
+              onTareSettings: () {},
             ),
           ),
         ),

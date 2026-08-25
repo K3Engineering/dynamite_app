@@ -160,6 +160,27 @@ void main() {
     });
   });
 
+  group('gross converters', () {
+    test('gross differenced at the tare equals the net converter', () {
+      final net = DisplayUnit.kgf.converterFor(assigned, alpha)!;
+      final gross = DisplayUnit.kgf.grossConverterFor(assigned)!;
+      for (final rawValue in [alpha, ...board.readings!]) {
+        expect(gross(rawValue) - gross(alpha), closeTo(net(rawValue), 1e-9));
+      }
+    });
+
+    test('raw gross is identity', () {
+      expect(DisplayUnit.raw.grossConverterFor(assigned)!(1234), 1234);
+    });
+
+    test('null exactly when converterFor is', () {
+      final noData = ChannelCalibration(board: ChannelBoardCalibration());
+      expect(DisplayUnit.kgf.grossConverterFor(bare), isNull);
+      expect(DisplayUnit.mVv.grossConverterFor(bare), isNotNull);
+      expect(DisplayUnit.mVv.grossConverterFor(noData), isNull);
+    });
+  });
+
   group('diff converters', () {
     test('mV/V diff is counts over the end-point sensitivity', () {
       final diff = DisplayUnit.mVv.diffConverterFor(assigned)!;

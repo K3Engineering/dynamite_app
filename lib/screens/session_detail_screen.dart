@@ -217,6 +217,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                               ?.call(data.maxs[ch]!),
                 ],
               ),
+              // Where the session's frozen tare sat, gross (not netted).
+              ChannelStatsRow(
+                label: 'Tare',
+                values: [
+                  for (int ch = 0; ch < data.channels.length; ch++)
+                    unit
+                        .grossConverterFor(data.calibrationFor(ch))
+                        ?.call(data.tares[ch]),
+                ],
+              ),
             ],
           ),
 
