@@ -682,15 +682,24 @@ class ActionButtons extends StatelessWidget {
                   : Theme.of(context).colorScheme.onPrimary,
             ),
           ),
-          OutlinedButton.icon(
-            onPressed: isRecording ? null : onTare,
-            icon: const Icon(Icons.exposure_zero),
-            label: Text(taring ? 'TARING' : 'TARE'),
-          ),
-          IconButton(
-            tooltip: 'Tare options',
-            onPressed: isRecording ? null : onTareSettings,
-            icon: const Icon(Icons.more_horiz),
+          // TARE and its options read as one control: the outlined ⋮
+          // segment hugs the button rather than floating as a third
+          // action in the row.
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              OutlinedButton.icon(
+                onPressed: isRecording ? null : onTare,
+                icon: const Icon(Icons.exposure_zero),
+                label: Text(taring ? 'TARING' : 'TARE'),
+              ),
+              const SizedBox(width: 4),
+              IconButton.outlined(
+                tooltip: 'Tare options',
+                onPressed: isRecording ? null : onTareSettings,
+                icon: const Icon(Icons.tune),
+              ),
+            ],
           ),
         ],
       ),

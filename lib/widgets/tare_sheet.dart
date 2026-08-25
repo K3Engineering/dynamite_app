@@ -190,7 +190,7 @@ class _TareSheetState extends State<_TareSheet> {
           flex: 4,
           child: Text('In ${unit.symbol}', style: captionStyle),
         ),
-        Expanded(flex: 3, child: cell('Live')),
+        Expanded(flex: 3, child: cell('Live (tared)')),
         Expanded(flex: 3, child: cell('Tare point')),
         // Match the two icon buttons below so headers sit over the values.
         const SizedBox(width: 40),
@@ -245,7 +245,11 @@ class _TareSheetState extends State<_TareSheet> {
             child: IconButton(
               tooltip: 'Reset this channel',
               onPressed: () => hub.resetTare(channel: ch),
-              icon: const Icon(Icons.restart_alt, size: 20),
+              icon: Icon(
+                Icons.restart_alt,
+                size: 20,
+                color: Theme.of(context).colorScheme.error,
+              ),
               visualDensity: VisualDensity.compact,
             ),
           ),
