@@ -195,10 +195,10 @@ class GraphSegment {
   final double dpr;
 
   /// Config keys at bake, compared against the cache's current ones:
-  /// [destructiveKey] (unit, calibration) -- a mismatch means the content is
-  /// wrong in kind and must never blit; [remapKey] (channels, tares) -- a
-  /// mismatch leaves it approximately right (a ghost/shift) and blittable
-  /// until the rolling sweep replaces it.
+  /// [destructiveKey] (unit, calibration, tares) -- a mismatch means the
+  /// content is wrong in kind or place and must never blit; [remapKey]
+  /// (channels) -- a mismatch leaves it approximately right (a ghost) and
+  /// blittable until the rolling sweep replaces it.
   final List<Object?> destructiveKey;
   final List<Object?> remapKey;
 
@@ -269,8 +269,8 @@ class SegmentedGraphCache {
   ///
   /// Config identity is split in three (see the file header for the model):
   /// [generation] clears the cache on change; [destructiveKey] (unit,
-  /// calibration) suppresses blitting of mismatched segments; [remapKey]
-  /// (channels, tares) keeps them blitting. Both kinds of mismatch are
+  /// calibration, tares) suppresses blitting of mismatched segments;
+  /// [remapKey] (channels) keeps them blitting. Both kinds of mismatch are
   /// re-baked by the rolling rightmost-first sweep at the bake budget, so a
   /// config change never costs more than one bake per call.
   ///
@@ -561,8 +561,8 @@ class SegmentedGraphCache {
 
   /// Priority 2: refresh the RIGHTMOST visible segment whose bake config no
   /// longer matches -- the smeared rebake after a config bump. Destructive
-  /// mismatches (unit, calibration) are never blitted meanwhile (their
-  /// ranges vector-draw); remap mismatches (channels, tares, gh, dpr) keep
+  /// mismatches (unit, calibration, tares) are never blitted meanwhile
+  /// (their ranges vector-draw); remap mismatches (channels, gh, dpr) keep
   /// blitting as best-effort ghosts/shifts. Right-to-left so the live edge
   /// converges first and history backfills.
   bool _sweepConfigStaleSegment(_BakeEnv env) {
@@ -747,16 +747,17 @@ class SegmentedGraphCache {
   /// drawImageRect repositions the content exactly. Vertically, content rows
   /// [0, s.gh] covered values [s.yMax, s.yMin] at bake; a valueToY of the
   /// form gh - (v - yMin) * gh / (yMax - yMin) is affine in (yMin, yMax), so
-  /// a y scale+offset corrects for range changes (per-channel offsets like
-  /// tares cancel out of the difference) AND for plot-height changes since
-  /// the bake.
+  /// a y scale+offset corrects for range changes AND for plot-height changes
+  /// since the bake. Per-channel offsets (tares) are NOT corrected here:
+  /// one tile composites every channel, so no single affine can hold
+  /// per-channel shifts -- tares ride the destructive key instead.
   ///
   /// Unblittable segments ([_isBlittable]) are never blitted: a destructive
-  /// key mismatch is wrong in kind (a counts-shaped trace on a kg axis) and
-  /// an extreme vertical stretch reads as a screen-filling smear;
-  /// [_drawGaps] vector-draws their ranges until the sweep re-bakes them.
-  /// Remap-stale segments (channels, tares, gh, dpr) DO blit --
-  /// outdated/shifted but approximately right -- until swept.
+  /// key mismatch is wrong in kind or place (a counts-shaped trace on a kg
+  /// axis, a pre-tare trace) and an extreme vertical stretch reads as a
+  /// screen-filling smear; [_drawGaps] vector-draws their ranges until the
+  /// sweep re-bakes them. Remap-stale segments (channels, gh, dpr) DO blit
+  /// -- outdated/shifted but approximately right -- until swept.
   void _blitSegments(
     Canvas canvas,
     double pps,
@@ -2589,11 +2590,13 @@ EnvelopeSeries _taredEnvelopeSeries(
 /// use [EnvelopeSeries.exact] for series that cannot use buckets.
 ///
 /// Cache keying (see the staleness model on [SegmentedGraphCache]): the
-/// display [unit] and the source's calibration version form the destructive
-/// key (a change makes baked content wrong in kind: never blitted, swept);
-/// [tares] joins the channel list in the remap key (a change leaves stale
-/// segments blittable as ghosts/shifts while swept); the source's data
-/// generation clears the cache outright.
+/// display [unit], the source's calibration version, and [tares] form the
+/// destructive key (a change makes baked content wrong in kind or place:
+/// never blitted, swept; a tare shifts each channel by its own offset and
+/// one tile composites every channel, so blit reuse cannot hold it -- the
+/// view vector-draws while the smear-rebake converges). The channel list is
+/// the remap key (a change leaves stale segments blittable as ghosts while
+/// swept); the source's data generation clears the cache outright.
 ///
 /// Returns true when bake work remains; the owner should then schedule
 /// another frame.
@@ -2627,8 +2630,8 @@ bool _paintEnvelopeDataLayer(
   return cache.paint(
     canvas,
     generation: data.dataGeneration,
-    destructiveKey: [unit, data.calibrationVersion],
-    remapKey: [...activeChannels, ...tares],
+    destructiveKey: [unit, data.calibrationVersion, ...tares],
+    remapKey: activeChannels,
     gw: gw,
     gh: gh,
     dpr: dpr,
@@ -2907,10 +2910,10 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   String yTickLabel(double tick, YAxisRange yRange);
 
-  /// Per-channel values mixed into the segment-cache remap key; return the
-  /// tares when the series depends on them. (A remap change keeps stale
-  /// segments blittable while the sweep re-bakes them; the derivative omits
-  /// its tares because the difference cancels them.)
+  /// Per-channel tares mixed into the segment-cache destructive key; return
+  /// them when the series depends on them. (The derivative omits its tares
+  /// because the difference cancels them: including them would invalidate
+  /// and smear-rebake the whole view on every tare for no visible change.)
   List<double?> cacheKeyTares() => const [];
 
   /// Optional chrome drawn after the axes, before the data lines. [yRange]
