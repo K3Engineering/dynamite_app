@@ -2,11 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/screens/devices_tab.dart'
-    show
-        InactiveRowMood,
-        InactiveRowVisual,
-        inactiveRowVisual,
-        staleCardTintAlpha;
+    show InactiveRowMood, InactiveRowVisual, inactiveRowVisual;
 import 'package:dynamite_app/services/ble_link_manager.dart'
     show BleLinkManager;
 import 'package:dynamite_app/widgets/status_colors.dart' show StatusColors;
@@ -78,17 +74,9 @@ void main() {
       final v = row(scanRssi: -58, lastAliveMs: now - staleMs - 1);
       expect(v.mood, InactiveRowMood.stale);
       expect(v.icon, Icons.bluetooth);
-      // The card tint is an explicit onSurface-over-surface blend — and
-      // crucially NOT the default card color (this app's M2-era schemes fall
-      // the M3 container roles back to `surface`, an invisible no-op; the
-      // blend is what makes the stale card visibly distinct).
-      expect(
-        v.cardColor,
-        Color.alphaBlend(
-          colors.onSurface.withValues(alpha: staleCardTintAlpha),
-          colors.surface,
-        ),
-      );
+      // The card tint is the scheme's de-emphasized surface — and crucially
+      // NOT the default card color, so the stale card reads as distinct.
+      expect(v.cardColor, colors.surfaceContainerHighest);
       expect(v.cardColor, isNot(colors.surface));
       expect(v.titleColor, isNotNull);
       expect(v.subtitleColor, isNotNull);
