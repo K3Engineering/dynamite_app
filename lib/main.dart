@@ -181,12 +181,11 @@ class DynoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Every role the app reads is declared explicitly: the M2-era
-    // ColorScheme.light()/.dark() constructors fall undeclared M3 roles back
-    // to base roles (surfaceContainer* -> surface, outline -> onSurface,
-    // inverseSurface -> onSurface), which used to theme widgets with the
-    // wrong color (a white-on-white dark toast; dimmed states rendering in
-    // full onSurface). Nothing here may be left to a fallback getter.
+    // The M2-era ColorScheme.light()/.dark() constructors fall undeclared
+    // M3 roles back to base roles (surfaceContainer* -> surface, outline and
+    // friends -> onSurface, inverseSurface -> onSurface), which used to theme
+    // widgets with the wrong color (a white-on-white dark toast; dividers in
+    // full onSurface). We try to declare every role the app reads explicitly.
     const lightScheme = ColorScheme.light(
       // top "connected" bar, rec, tare buttons, button fonts
       primary: Color(0xFF455A64),
@@ -207,6 +206,10 @@ class DynoApp extends StatelessWidget {
       onError: Colors.white,
       // Dimmed/inactive content (BT-off icon, expired-scan rows).
       outline: Color(0xFF78909C), // blueGrey 400
+      // Quiet hairlines; Dividers default to this role in M3.
+      outlineVariant: Color(0xFFCFD8DC), // blueGrey 100
+      // De-emphasized secondary text (settings notes, plot axis labels).
+      onSurfaceVariant: Color(0xFF546E7A), // blueGrey 600
       // De-emphasized surface (the stale device row's card tint):
       // onSurface at 6% blended over surface.
       surfaceContainerHighest: Color(0xFFF3F2F2),
@@ -234,6 +237,8 @@ class DynoApp extends StatelessWidget {
       onError: Colors.black,
       // Dimmed/inactive content (BT-off icon, expired-scan rows).
       outline: Color(0xFF90A4AE), // blueGrey 300
+      outlineVariant: Color(0xFF546E7A), // blueGrey 600
+      onSurfaceVariant: Color(0xFF78909C), // blueGrey 400
       // De-emphasized surface (the stale device row's card tint):
       // onSurface at 6% blended over surface.
       surfaceContainerHighest: Color(0xFF2B2B2B),
@@ -252,6 +257,40 @@ class DynoApp extends StatelessWidget {
     ListTileThemeData selectedTileTheme(ColorScheme scheme) =>
         ListTileThemeData(selectedColor: scheme.onPrimaryContainer);
 
+    // M3 styles the navigation bar's inactive destinations at
+    // onSurfaceVariant — footnote level, too quiet for the app's primary
+    // switching control. Size/weight/spacing replicate the M3 defaults
+    // (this theme property replaces the whole resolve, color included);
+    // only the inactive color moves, from onSurfaceVariant to
+    // near-body-strength onSurface. Playground: 0.7–1.0.
+    NavigationBarThemeData navBarTheme(ColorScheme colors) {
+      const inactiveAlpha = 0.8;
+      return NavigationBarThemeData(
+        iconTheme: WidgetStateProperty.resolveWith(
+          (states) => IconThemeData(
+            size: 24,
+            color: states.contains(WidgetState.disabled)
+                ? colors.onSurfaceVariant.withValues(alpha: 0.38)
+                : states.contains(WidgetState.selected)
+                ? colors.onSecondaryContainer
+                : colors.onSurface.withValues(alpha: inactiveAlpha),
+          ),
+        ),
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (states) => TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0.5,
+            color: states.contains(WidgetState.disabled)
+                ? colors.onSurfaceVariant.withValues(alpha: 0.38)
+                : states.contains(WidgetState.selected)
+                ? colors.onSurface
+                : colors.onSurface.withValues(alpha: inactiveAlpha),
+          ),
+        ),
+      );
+    }
+
     return MaterialApp(
       title: 'Dynamite',
       themeMode: ThemeMode.system,
@@ -261,6 +300,7 @@ class DynoApp extends StatelessWidget {
         extensions: const [StatusColors.light],
         colorScheme: lightScheme,
         listTileTheme: selectedTileTheme(lightScheme),
+        navigationBarTheme: navBarTheme(lightScheme),
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
@@ -268,6 +308,7 @@ class DynoApp extends StatelessWidget {
         extensions: const [StatusColors.dark],
         colorScheme: darkScheme,
         listTileTheme: selectedTileTheme(darkScheme),
+        navigationBarTheme: navBarTheme(darkScheme),
       ),
       home: const AppShell(),
     );
