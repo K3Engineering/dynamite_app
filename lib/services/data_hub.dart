@@ -27,8 +27,6 @@ typedef SamplesAppendedListener = void Function(int startIdx, int count);
 /// Channel count is [kAdcChannelCount]; channel index == storage index ==
 /// display index.
 class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
-  static const int _tareWindow = 1024;
-
   /// Ring capacity in samples — ~10 min at the 1 kHz the device boots at.
   /// A capacity decision, NOT derived from the device rate ([sampleRateHz]):
   /// a faster stream simply covers less time in the same memory.
@@ -105,6 +103,13 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
     growable: false,
   );
   int _tareCount = 0;
+
+  /// Window length of the in-progress tare (captured at request time, so a
+  /// config landing mid-tare can't change it) and the channel it will commit
+  /// to (null = all). Meaningless while idle.
+  int _tareTotal = 0;
+  int? _tareChannel;
+
   @override
   int totalSamples = 0;
 
@@ -237,6 +242,8 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   /// [clearBoardCalibration].
   void clear() {
     _tareCount = 0;
+    _tareTotal = 0;
+    _tareChannel = null;
     totalSamples = 0;
     _generation++;
     lastMalformedPacketAt = null;
@@ -275,23 +282,66 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   /// Wall-clock deadline for an in-progress tare: a window that stops
   /// filling (device gone silent) would otherwise leave the hub "taring"
   /// forever — recording stays refused and the user gets no completion.
-  /// Generous (several window lengths) so a lossy link pausing the average
-  /// doesn't abort a legitimate tare. Checked in [commitBatch].
-  static const Duration _tareTimeout = Duration(milliseconds: _tareWindow * 5);
+  /// Generous vs the ~1 s window (see [requestTare]) so a lossy link pausing
+  /// the average doesn't abort a legitimate tare. Checked in [commitBatch].
+  static const Duration _tareTimeout = Duration(seconds: 5);
   DateTime _tareDeadline = DateTime.fromMillisecondsSinceEpoch(0);
 
-  /// Request a new tare operation (zeros readings using the next N real
-  /// samples). The previous offsets stay in effect while the window fills —
-  /// zeroing them up front would make live values jump to absolute
-  /// (offset-inclusive) readings for a second, then snap back.
-  void requestTare() {
-    _tareCount = _tareWindow;
+  /// Request a new tare operation (zeros readings using the next second of
+  /// real samples) for one [channel], or all channels when null. One second
+  /// of window at any rate: the sinc3 downsampler flattens high-rate noise
+  /// to the same 1 s floor, so more raw samples buy nothing. A new request
+  /// replaces any in-progress one. The previous offsets stay in effect
+  /// while the window fills — zeroing them up front would make live values
+  /// jump to absolute (offset-inclusive) readings for a second, then snap
+  /// back.
+  void requestTare({int? channel}) {
+    assert(channel == null || (channel >= 0 && channel < kAdcChannelCount));
+    _tareCount = _tareTotal = _sampleRateHz;
+    _tareChannel = channel;
     _tareDeadline = DateTime.now().add(_tareTimeout);
     for (int i = 0; i < kAdcChannelCount; ++i) {
       _runningTotal[i] = 0;
     }
     // Notify so observers of [taring] (the TARE button's "TARING" label)
     // flip on the tap rather than on the next packet's [commitBatch].
+    notifyListeners();
+  }
+
+  /// Abort an in-progress tare without committing. Every explicit user
+  /// action (reset, manual set) cancels a pending window: letting it
+  /// commit right after would silently re-zero or overwrite what the
+  /// user just did.
+  void _cancelPendingTare() {
+    _tareCount = 0;
+    _tareTotal = 0;
+    _tareChannel = null;
+    for (int i = 0; i < kAdcChannelCount; ++i) {
+      _runningTotal[i] = 0;
+    }
+  }
+
+  /// Drop tare offsets (back to gross display) for one [channel], or all
+  /// channels when null. Cancels any in-progress tare (see
+  /// [_cancelPendingTare]).
+  void resetTare({int? channel}) {
+    assert(channel == null || (channel >= 0 && channel < kAdcChannelCount));
+    _cancelPendingTare();
+    for (int i = 0; i < kAdcChannelCount; ++i) {
+      if (channel == null || channel == i) tare[i] = 0;
+    }
+    notifyListeners();
+  }
+
+  /// Write one channel's tare offset directly, in counts (the tare sheet's
+  /// manual-entry path). Absolute: replaces the current offset regardless
+  /// of what it was. Cancels any in-progress tare (see
+  /// [_cancelPendingTare]).
+  void setTarePoint(int channel, double rawValue) {
+    assert(channel >= 0 && channel < kAdcChannelCount);
+    assert(rawValue.isFinite);
+    _cancelPendingTare();
+    tare[channel] = rawValue;
     notifyListeners();
   }
 
@@ -319,9 +369,13 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
       _tareCount--;
       if (!taring) {
         for (int i = 0; i < _runningTotal.length; ++i) {
-          tare[i] = _runningTotal[i] / _tareWindow;
+          if (_tareChannel == null || _tareChannel == i) {
+            tare[i] = _runningTotal[i] / _tareTotal;
+          }
           _runningTotal[i] = 0;
         }
+        _tareChannel = null;
+        _tareTotal = 0;
       }
     }
   }
@@ -386,6 +440,8 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
     // zeroed up front — and the user can simply tare again.
     if (taring && DateTime.now().isAfter(_tareDeadline)) {
       _tareCount = 0;
+      _tareTotal = 0;
+      _tareChannel = null;
       for (int i = 0; i < kAdcChannelCount; ++i) {
         _runningTotal[i] = 0;
       }
@@ -542,6 +598,15 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
       tare[adcChannel],
     );
     return conv?.call(_currentRaw[adcChannel].toDouble());
+  }
+
+  /// Where a channel's tare sits, in the specified unit: the gross value of
+  /// the tare point (the calibration map evaluated AT the tare, not netted).
+  /// Null when the unit is unavailable for the channel.
+  double? tarePoint(int adcChannel, DisplayUnit unit) {
+    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
+    final conv = unit.grossConverterFor(calibrationFor(adcChannel));
+    return conv?.call(tare[adcChannel]);
   }
 
   /// Peak value for a given ADC channel in the specified unit: the max over

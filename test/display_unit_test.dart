@@ -160,6 +160,69 @@ void main() {
     });
   });
 
+  group('gross converters', () {
+    test('gross differenced at the tare equals the net converter', () {
+      final net = DisplayUnit.kgf.converterFor(assigned, alpha)!;
+      final gross = DisplayUnit.kgf.grossConverterFor(assigned)!;
+      for (final rawValue in [alpha, ...board.readings!]) {
+        expect(gross(rawValue) - gross(alpha), closeTo(net(rawValue), 1e-9));
+      }
+    });
+
+    test('raw gross is identity', () {
+      expect(DisplayUnit.raw.grossConverterFor(assigned)!(1234), 1234);
+    });
+
+    test('null exactly when converterFor is', () {
+      final noData = ChannelCalibration(board: ChannelBoardCalibration());
+      expect(DisplayUnit.kgf.grossConverterFor(bare), isNull);
+      expect(DisplayUnit.mVv.grossConverterFor(bare), isNotNull);
+      expect(DisplayUnit.mVv.grossConverterFor(noData), isNull);
+    });
+  });
+
+  group('gross inverse (manual tare entry)', () {
+    test('round-trips through the piecewise board map', () {
+      final gross = DisplayUnit.mVv.grossConverterFor(assigned)!;
+      for (final rawValue in [alpha, ...board.readings!, -3e6]) {
+        expect(
+          DisplayUnit.mVv.rawFromGrossValue(assigned, gross(rawValue)),
+          closeTo(rawValue, 1e-6),
+          reason: 'raw $rawValue',
+        );
+      }
+    });
+
+    test('folds in the load cell scale for force units', () {
+      final gross = DisplayUnit.kgf.grossConverterFor(assigned)!;
+      final rawValue = board.readings![0];
+      expect(
+        DisplayUnit.kgf.rawFromGrossValue(assigned, gross(rawValue)),
+        closeTo(rawValue, 1e-6),
+      );
+    });
+
+    test('nominal chain round-trips', () {
+      final nominal = ChannelCalibration(board: nominalBoard);
+      final gross = DisplayUnit.mVv.grossConverterFor(nominal)!;
+      expect(
+        DisplayUnit.mVv.rawFromGrossValue(nominal, gross(1000)),
+        closeTo(1000, 1e-9),
+      );
+    });
+
+    test('raw is identity', () {
+      expect(DisplayUnit.raw.rawFromGrossValue(assigned, 1234), 1234);
+    });
+
+    test('null exactly when grossConverterFor is', () {
+      final noData = ChannelCalibration(board: ChannelBoardCalibration());
+      expect(DisplayUnit.kgf.rawFromGrossValue(bare, 0), isNull);
+      expect(DisplayUnit.mVv.rawFromGrossValue(bare, 0), isNotNull);
+      expect(DisplayUnit.mVv.rawFromGrossValue(noData, 0), isNull);
+    });
+  });
+
   group('diff converters', () {
     test('mV/V diff is counts over the end-point sensitivity', () {
       final diff = DisplayUnit.mVv.diffConverterFor(assigned)!;

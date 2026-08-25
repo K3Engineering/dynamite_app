@@ -320,6 +320,103 @@ void main() {
       expect(hub.tare[0], 1500);
       expect(hub.currentValue(0, DisplayUnit.raw), 0);
     });
+
+    test('the window is one second of the configured rate', () {
+      final hub = DataHub()..setSampleRate(100);
+      hub.requestTare();
+      feed(hub, frameOf(500), 99);
+      expect(hub.taring, isTrue);
+      expect(hub.tare[0], 0);
+      feed(hub, frameOf(500), 1);
+      expect(hub.taring, isFalse);
+      expect(hub.tare[0], 500);
+    });
+
+    test('a channel-masked tare commits only that channel', () {
+      final hub = DataHub();
+      final frame = Int32List(channels)
+        ..[0] = 1000
+        ..[1] = 2000;
+      hub.requestTare(channel: 1);
+      feed(hub, frame, 1000);
+      expect(hub.taring, isFalse);
+      expect(hub.tare[0], 0);
+      expect(hub.tare[1], 2000);
+      expect(hub.currentValue(0, DisplayUnit.raw), 1000);
+      expect(hub.currentValue(1, DisplayUnit.raw), 0);
+    });
+
+    test('a new tare request replaces the one in flight', () {
+      final hub = DataHub();
+      hub.requestTare(channel: 0);
+      feed(hub, frameOf(1000), 500);
+      hub.requestTare(channel: 1);
+      feed(hub, frameOf(2000), 1000);
+      expect(hub.taring, isFalse);
+      // The replaced request never committed; its partial average is gone.
+      expect(hub.tare[0], 0);
+      expect(hub.tare[1], 2000);
+    });
+
+    test('resetTare zeroes per channel and cancels the tare in flight', () {
+      final hub = DataHub();
+      hub.requestTare(channel: 0);
+      feed(hub, frameOf(1000), 1000);
+      hub.requestTare(channel: 1);
+      feed(hub, frameOf(2000), 1000);
+      expect(hub.tare[0], 1000);
+      expect(hub.tare[1], 2000);
+
+      hub.requestTare();
+      feed(hub, frameOf(42), 100);
+      expect(hub.taring, isTrue);
+
+      hub.resetTare(channel: 0);
+      expect(hub.taring, isFalse); // in-flight tare canceled
+      expect(hub.tare[0], 0);
+      expect(hub.tare[1], 2000); // untouched
+
+      // The canceled window must not commit later.
+      feed(hub, frameOf(42), 1000);
+      expect(hub.tare[0], 0);
+
+      hub.resetTare();
+      expect(hub.tare[1], 0);
+    });
+
+    test(
+      'setTarePoint writes the offset absolutely and cancels the tare in flight',
+      () {
+        final hub = DataHub();
+        hub.setTarePoint(1, 1234);
+        expect(hub.tare[1], 1234);
+        expect(hub.tare[0], 0);
+
+        // Absolute: replaces the offset regardless of the old value.
+        hub.setTarePoint(1, -50);
+        expect(hub.tare[1], -50);
+
+        hub.requestTare(channel: 2);
+        feed(hub, frameOf(1000), 500);
+        expect(hub.taring, isTrue);
+        hub.setTarePoint(1, 0);
+        expect(hub.taring, isFalse); // canceled
+
+        // The canceled window must not commit later.
+        feed(hub, frameOf(1000), 1000);
+        expect(hub.tare[2], 0);
+      },
+    );
+
+    test('tarePoint reports the gross tare value in the unit', () {
+      final hub = DataHub()..updateBoardCalibration(nominalBoard());
+      expect(hub.tarePoint(0, DisplayUnit.raw), 0);
+      hub.requestTare();
+      feed(hub, frameOf(1000), 1000);
+      expect(hub.tarePoint(0, DisplayUnit.raw), 1000);
+      expect(hub.tarePoint(0, DisplayUnit.mVv), isNotNull);
+      expect(hub.tarePoint(0, DisplayUnit.kgf), isNull); // no cell assigned
+    });
   });
 
   group('calibration', () {

@@ -18,6 +18,7 @@ import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
 import '../widgets/channel_stats_table.dart';
+import '../widgets/tare_sheet.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
@@ -86,6 +87,15 @@ class _LiveTabState extends State<LiveTab> {
   }
 
   void _onTare() {
+    // A session freezes its tares at record start, so re-zeroing mid-recording
+    // would desync the live display from the export. Refuse loudly.
+    if (context.read<RecordingController>().sessionInProgress) {
+      showErrorSnackBar(
+        ScaffoldMessenger.of(context),
+        'Stop recording to tare',
+      );
+      return;
+    }
     context.read<DataHub>().requestTare();
   }
 
@@ -232,6 +242,13 @@ class _LiveTabState extends State<LiveTab> {
               isRecording: recording.sessionInProgress,
               onToggleRecord: _onToggleRecord,
               onTare: _onTare,
+              onTareSettings: () => showTareSheet(
+                context,
+                hub: hub,
+                rig: rig,
+                settings: settings,
+                health: healthListenable,
+              ),
             ),
         ],
       ),
@@ -512,6 +529,13 @@ class LiveStats extends StatelessWidget {
                         hub.peakValue(i, unit, start: viewStart, end: viewEnd),
                     ],
                   ),
+                  ChannelStatsRow(
+                    label: 'Tare',
+                    values: [
+                      for (int i = 0; i < kAdcChannelCount; i++)
+                        hub.tarePoint(i, unit),
+                    ],
+                  ),
                   if (showDerivative)
                     ChannelStatsRow(
                       label: 'dF/dt',
@@ -623,11 +647,16 @@ class ActionButtons extends StatelessWidget {
   final VoidCallback onToggleRecord;
   final VoidCallback onTare;
 
+  /// Opens the per-channel tare sheet; disabled alongside TARE while
+  /// recording (same reason — a session's tares are frozen at record start).
+  final VoidCallback onTareSettings;
+
   const ActionButtons({
     super.key,
     required this.isRecording,
     required this.onToggleRecord,
     required this.onTare,
+    required this.onTareSettings,
   });
 
   @override
@@ -653,10 +682,24 @@ class ActionButtons extends StatelessWidget {
                   : Theme.of(context).colorScheme.onPrimary,
             ),
           ),
-          OutlinedButton.icon(
-            onPressed: onTare,
-            icon: const Icon(Icons.exposure_zero),
-            label: Text(taring ? 'TARING' : 'TARE'),
+          // TARE and its options read as one control: the outlined ⋮
+          // segment hugs the button rather than floating as a third
+          // action in the row.
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              OutlinedButton.icon(
+                onPressed: isRecording ? null : onTare,
+                icon: const Icon(Icons.exposure_zero),
+                label: Text(taring ? 'TARING' : 'TARE'),
+              ),
+              const SizedBox(width: 4),
+              IconButton.outlined(
+                tooltip: 'Tare options',
+                onPressed: isRecording ? null : onTareSettings,
+                icon: const Icon(Icons.tune),
+              ),
+            ],
           ),
         ],
       ),

@@ -222,6 +222,29 @@ enum DisplayUnit {
     return (raw) => (board.mvVFromRaw(raw) - tareMvV) * scale;
   }
 
+  /// Build the absolute-raw -> display-unit converter for one channel with no
+  /// tare netting: the GROSS value at a raw point. Used to show where a tare
+  /// sits (the tare is stored in counts; its display value is the map
+  /// evaluated at that point). Null exactly when [converterFor] is.
+  double Function(double raw)? grossConverterFor(ChannelCalibration channel) {
+    if (this == DisplayUnit.raw) return (raw) => raw;
+    final scale = _scalePerMvV(channel);
+    if (scale == null) return null;
+    final board = channel.board;
+    return (raw) => board.mvVFromRaw(raw) * scale;
+  }
+
+  /// Inverse of [grossConverterFor]: the raw count at which the channel's
+  /// gross map reads [value] in this unit. Manual tare entry stores counts,
+  /// so a typed display value converts back through here. Null exactly when
+  /// [grossConverterFor] is.
+  double? rawFromGrossValue(ChannelCalibration channel, double value) {
+    if (this == DisplayUnit.raw) return value;
+    final scale = _scalePerMvV(channel);
+    if (scale == null) return null;
+    return channel.board.rawFromMvV(value / scale);
+  }
+
   /// Build the raw-diff -> display-unit converter for one channel (no tare:
   /// offsets cancel in a difference). Uses the channel's terminal slope:
   /// the piecewise-local slope differs by ppm, and the derivative graph's
