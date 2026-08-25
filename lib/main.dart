@@ -181,13 +181,11 @@ class DynoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // NOTE on color roles: these schemes use the M2-era ColorScheme.light() /
-    // .dark() constructors, whose M3 roles silently fall back to the base
-    // roles when unspecified (e.g. primaryContainer -> primary; see the SDK
-    // getters in color_scheme.dart). The container pairs below are declared
-    // explicitly so the surface/content contract the app already relies on —
-    // dark-blue "connected" surfaces with white content — lives here instead
-    // of hiding in fallback behavior.
+    // The M2-era ColorScheme.light()/.dark() constructors fall undeclared
+    // M3 roles back to base roles (surfaceContainer* -> surface, outline and
+    // friends -> onSurface, inverseSurface -> onSurface), which used to theme
+    // widgets with the wrong color (a white-on-white dark toast; dividers in
+    // full onSurface). We try to declare every role the app reads explicitly.
     const lightScheme = ColorScheme.light(
       // top "connected" bar, rec, tare buttons, button fonts
       primary: Color(0xFF455A64),
@@ -204,6 +202,23 @@ class DynoApp extends StatelessWidget {
       surface: Colors.white,
       // text
       onSurface: Color.fromARGB(255, 58, 34, 34),
+      error: Color(0xFFB00020),
+      onError: Colors.white,
+      // Dimmed/inactive content (BT-off icon, expired-scan rows).
+      outline: Color(0xFF78909C), // blueGrey 400
+      // Quiet hairlines; Dividers default to this role in M3.
+      outlineVariant: Color(0xFFCFD8DC), // blueGrey 100
+      // De-emphasized secondary text (settings notes, plot axis labels).
+      onSurfaceVariant: Color(0xFF546E7A), // blueGrey 600
+      // De-emphasized surface (the stale device row's card tint):
+      // onSurface at 6% blended over surface.
+      surfaceContainerHighest: Color(0xFFF3F2F2),
+      // SnackBar themes itself off these three; identical in both schemes,
+      // so one toast style regardless of mode. Error toasts override
+      // background/content via showErrorSnackBar.
+      inverseSurface: Color(0xFF323232),
+      onInverseSurface: Colors.white,
+      inversePrimary: Color(0xFF89B2C5),
     );
     const darkScheme = ColorScheme.dark(
       primary: Color.fromARGB(255, 103, 155, 179),
@@ -218,6 +233,19 @@ class DynoApp extends StatelessWidget {
       onTertiary: Colors.white,
       surface: Color(0xFF1E1E1E),
       onSurface: Colors.white,
+      error: Color(0xFFCF6679),
+      onError: Colors.black,
+      // Dimmed/inactive content (BT-off icon, expired-scan rows).
+      outline: Color(0xFF90A4AE), // blueGrey 300
+      outlineVariant: Color(0xFF546E7A), // blueGrey 600
+      onSurfaceVariant: Color(0xFF78909C), // blueGrey 400
+      // De-emphasized surface (the stale device row's card tint):
+      // onSurface at 6% blended over surface.
+      surfaceContainerHighest: Color(0xFF2B2B2B),
+      // Same toast as light.
+      inverseSurface: Color(0xFF323232),
+      onInverseSurface: Colors.white,
+      inversePrimary: Color(0xFF89B2C5),
     );
 
     // A selected ListTile is the app's highlighted/active row (the connected
@@ -229,16 +257,39 @@ class DynoApp extends StatelessWidget {
     ListTileThemeData selectedTileTheme(ColorScheme scheme) =>
         ListTileThemeData(selectedColor: scheme.onPrimaryContainer);
 
-    // One toast style for both modes: the schemes' inverse roles fall back
-    // to base roles (see the note above), so they can't theme the snackbar —
-    // in dark mode that made the toast white with a white action label.
-    // Error toasts override background/content via showErrorSnackBar.
-    const snackBarTheme = SnackBarThemeData(
-      backgroundColor: Color(0xFF323232),
-      contentTextStyle: TextStyle(color: Colors.white),
-      closeIconColor: Colors.white,
-      actionTextColor: Color(0xFF89B2C5),
-    );
+    // M3 styles the navigation bar's inactive destinations at
+    // onSurfaceVariant — footnote level, too quiet for the app's primary
+    // switching control. Size/weight/spacing replicate the M3 defaults
+    // (this theme property replaces the whole resolve, color included);
+    // only the inactive color moves, from onSurfaceVariant to
+    // near-body-strength onSurface. Playground: 0.7–1.0.
+    NavigationBarThemeData navBarTheme(ColorScheme colors) {
+      const inactiveAlpha = 0.8;
+      return NavigationBarThemeData(
+        iconTheme: WidgetStateProperty.resolveWith(
+          (states) => IconThemeData(
+            size: 24,
+            color: states.contains(WidgetState.disabled)
+                ? colors.onSurfaceVariant.withValues(alpha: 0.38)
+                : states.contains(WidgetState.selected)
+                ? colors.onSecondaryContainer
+                : colors.onSurface.withValues(alpha: inactiveAlpha),
+          ),
+        ),
+        labelTextStyle: WidgetStateProperty.resolveWith(
+          (states) => TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            letterSpacing: 0.5,
+            color: states.contains(WidgetState.disabled)
+                ? colors.onSurfaceVariant.withValues(alpha: 0.38)
+                : states.contains(WidgetState.selected)
+                ? colors.onSurface
+                : colors.onSurface.withValues(alpha: inactiveAlpha),
+          ),
+        ),
+      );
+    }
 
     return MaterialApp(
       title: 'Dynamite',
@@ -249,7 +300,7 @@ class DynoApp extends StatelessWidget {
         extensions: const [StatusColors.light],
         colorScheme: lightScheme,
         listTileTheme: selectedTileTheme(lightScheme),
-        snackBarTheme: snackBarTheme,
+        navigationBarTheme: navBarTheme(lightScheme),
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
@@ -257,7 +308,7 @@ class DynoApp extends StatelessWidget {
         extensions: const [StatusColors.dark],
         colorScheme: darkScheme,
         listTileTheme: selectedTileTheme(darkScheme),
-        snackBarTheme: snackBarTheme,
+        navigationBarTheme: navBarTheme(darkScheme),
       ),
       home: const AppShell(),
     );

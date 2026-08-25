@@ -341,13 +341,6 @@ typedef InactiveRowVisual = ({
   Color? titleColor,
 });
 
-/// Card tint for a stale device row: an onSurface-over-surface blend at this
-/// alpha. The M3 container roles (e.g. surfaceContainerHighest) can't be
-/// used for this — this app's M2-era ColorScheme constructors fall them back
-/// to `surface`, a no-op. A small grey nudge in both modes: darkens the card
-/// in light mode, lightens it in dark mode. Playground: 0.04–0.10.
-const double staleCardTintAlpha = 0.06;
-
 /// Shared width for action buttons to maintain vertical alignment.
 /// Sized to fit "Disconnecting…".
 const double deviceActionButtonWidth = 136;
@@ -409,12 +402,9 @@ InactiveRowVisual inactiveRowVisual({
       iconColor: dim,
       subtitle: freshness.text,
       subtitleColor: dim,
-      // A real grey nudge in both modes (darkens the card in light mode,
-      // lightens it in dark mode) — see [staleCardTintAlpha].
-      cardColor: Color.alphaBlend(
-        colors.onSurface.withValues(alpha: staleCardTintAlpha),
-        colors.surface,
-      ),
+      // A small grey nudge in both modes: darkens the card in light mode,
+      // lightens it in dark mode.
+      cardColor: colors.surfaceContainerHighest,
       titleColor: dim,
     );
   }
