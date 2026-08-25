@@ -1711,47 +1711,38 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     ];
     return LayoutBuilder(
       builder: (context, constraints) {
-        return Stack(
-          children: [
-            Column(
-              children: [
-                // Main force graph
-                Expanded(
-                  flex: widget.showDerivative ? 6 : 10,
-                  child: _GraphPane(
-                    data: widget.data,
-                    ctrl: widget.ctrl,
-                    painter: _ForceGraphPainter(
-                      widget.data,
-                      widget.limitWarningsEnabled,
-                      widget.ctrl,
-                      unit: unit,
-                      activeChannels: drawableChannels,
-                      showXLabels: !widget.showDerivative,
-                      vsync: _vsync,
-                      cache: _forceCache,
-                      colorScheme: colorScheme,
-                      dpr: dpr,
-                      labels: _labelCache,
-                      bakePump: _bakePump,
-                    ),
-                  ),
-                ),
-                // Derivative graph (when enabled)
-                if (widget.showDerivative)
+        // The graph body is raw canvas — nothing in the Column exposes
+        // semantics of its own. explicitChildNodes keeps descendants (zoom
+        // buttons, span readout, gesture actions) as their own nodes instead
+        // of merging them into this label.
+        return Semantics(
+          container: true,
+          explicitChildNodes: true,
+          label: _graphSemanticsLabel(
+            live: widget.isLiveGraph,
+            channels: drawableChannels,
+            unit: unit,
+            hasDerivative: widget.showDerivative,
+          ),
+          child: Stack(
+            children: [
+              Column(
+                children: [
+                  // Main force graph
                   Expanded(
-                    flex: 4,
+                    flex: widget.showDerivative ? 6 : 10,
                     child: _GraphPane(
                       data: widget.data,
                       ctrl: widget.ctrl,
-                      painter: _DerivativeGraphPainter(
+                      painter: _ForceGraphPainter(
                         widget.data,
                         widget.limitWarningsEnabled,
                         widget.ctrl,
                         unit: unit,
                         activeChannels: drawableChannels,
+                        showXLabels: !widget.showDerivative,
                         vsync: _vsync,
-                        cache: _derivCache ??= SegmentedGraphCache(),
+                        cache: _forceCache,
                         colorScheme: colorScheme,
                         dpr: dpr,
                         labels: _labelCache,
@@ -1759,29 +1750,52 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                       ),
                     ),
                   ),
-                // Minimap
-                _Minimap(
-                  dataSource: widget.data,
-                  unit: unit,
-                  graphCtrl: widget.ctrl,
-                  activeChannels: drawableChannels,
-                ),
-              ],
-            ),
-            // LIVE button (appears when not following live edge)
-            if (widget.isLiveGraph)
-              _LiveButton(data: widget.data, ctrl: widget.ctrl),
-            // Zoom controls
-            Positioned(
-              right: _kGraphRightSpace + 16,
-              bottom: 72,
-              child: _ZoomControls(
-                data: widget.data,
-                ctrl: widget.ctrl,
-                onZoom: _zoomBy,
+                  // Derivative graph (when enabled)
+                  if (widget.showDerivative)
+                    Expanded(
+                      flex: 4,
+                      child: _GraphPane(
+                        data: widget.data,
+                        ctrl: widget.ctrl,
+                        painter: _DerivativeGraphPainter(
+                          widget.data,
+                          widget.limitWarningsEnabled,
+                          widget.ctrl,
+                          unit: unit,
+                          activeChannels: drawableChannels,
+                          vsync: _vsync,
+                          cache: _derivCache ??= SegmentedGraphCache(),
+                          colorScheme: colorScheme,
+                          dpr: dpr,
+                          labels: _labelCache,
+                          bakePump: _bakePump,
+                        ),
+                      ),
+                    ),
+                  // Minimap
+                  _Minimap(
+                    dataSource: widget.data,
+                    unit: unit,
+                    graphCtrl: widget.ctrl,
+                    activeChannels: drawableChannels,
+                  ),
+                ],
               ),
-            ),
-          ],
+              // LIVE button (appears when not following live edge)
+              if (widget.isLiveGraph)
+                _LiveButton(data: widget.data, ctrl: widget.ctrl),
+              // Zoom controls
+              Positioned(
+                right: _kGraphRightSpace + 16,
+                bottom: 72,
+                child: _ZoomControls(
+                  data: widget.data,
+                  ctrl: widget.ctrl,
+                  onZoom: _zoomBy,
+                ),
+              ),
+            ],
+          ),
         );
       },
     );
@@ -1919,6 +1933,24 @@ class _SpanReadout extends StatelessWidget {
       },
     );
   }
+}
+
+/// Screen-reader summary of the painted graph. Deliberately structural —
+/// no current values or window span, which churn per packet and would
+/// re-announce constantly while the node is focused. Live readings are
+/// spoken from the stats table instead.
+String _graphSemanticsLabel({
+  required bool live,
+  required List<int> channels,
+  required DisplayUnit unit,
+  required bool hasDerivative,
+}) {
+  final kind = live ? 'Live' : 'Recorded';
+  final chs = channels.isEmpty
+      ? 'No channels plotted'
+      : 'Channels: ${channels.map((ch) => 'CH ${ch + 1}').join(', ')}';
+  final deriv = hasDerivative ? '. Rate-of-change graph below' : '';
+  return '$kind force graph. $chs. Unit: ${unit.symbol}$deriv.';
 }
 
 /// Format a zoom-window span in seconds for the readout.
