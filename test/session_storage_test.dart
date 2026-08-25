@@ -479,7 +479,10 @@ void main() {
       expect(data.damage.warningCodes, isEmpty);
       expect(data.sampleCount, 2);
       expect(data.channels[3][1], 8);
-      expect(data.unitAvailabilityFor([0]).boardHasNominals, isTrue);
+      expect(
+        resolveUnitAvailability(data.calibrationFor, [0]).boardHasNominals,
+        isTrue,
+      );
     });
 
     test(
@@ -500,7 +503,10 @@ void main() {
         expect(data.damage.isEmpty, isTrue);
         // Conversion stays available: calibration is intact, and a null tare
         // converts as gross.
-        expect(data.unitAvailabilityFor([0]).boardHasNominals, isTrue);
+        expect(
+          resolveUnitAvailability(data.calibrationFor, [0]).boardHasNominals,
+          isTrue,
+        );
         // The sample data itself is untouched.
         expect(data.channels[0][0], 10);
       },
@@ -557,7 +563,10 @@ void main() {
           data.damage.warningCodes,
           contains('session_calibration_damaged'),
         );
-        expect(data.unitAvailabilityFor([0]).boardHasNominals, isFalse);
+        expect(
+          resolveUnitAvailability(data.calibrationFor, [0]).boardHasNominals,
+          isFalse,
+        );
       },
     );
 
@@ -575,7 +584,10 @@ void main() {
       expect(data.gaps.isEmpty, isTrue);
       expect(data.damage.warningCodes, contains('session_gaps_lost'));
       // Conversion is NOT forced: the sample stream and calibration are intact.
-      expect(data.unitAvailabilityFor([0]).boardHasNominals, isTrue);
+      expect(
+        resolveUnitAvailability(data.calibrationFor, [0]).boardHasNominals,
+        isTrue,
+      );
     });
 
     test('a missing middle chunk truncates instead of splicing', () async {

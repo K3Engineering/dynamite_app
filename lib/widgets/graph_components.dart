@@ -13,7 +13,6 @@ import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
-import '../services/session_data.dart';
 import 'channel_palette.dart';
 
 // ---------------------------------------------------------------------------
@@ -1687,14 +1686,14 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final dpr = MediaQuery.devicePixelRatioOf(context);
-    // Playback sessions carry a storage-integrity verdict that can force
-    // raw-only conversion (SessionData.unitAvailabilityFor); the live hub
-    // has no such override and resolves from its calibration alone.
+    // A playback session with damaged calibration floors its calibrations
+    // at load (raw-only channels), so availability needs no damage switch —
+    // it reads the conversion inputs alone.
     final data = widget.data;
-    final availability = switch (data) {
-      SessionData() => data.unitAvailabilityFor(widget.activeChannels),
-      _ => resolveUnitAvailability(data.calibrationFor, widget.activeChannels),
-    };
+    final availability = resolveUnitAvailability(
+      data.calibrationFor,
+      widget.activeChannels,
+    );
     final unit = widget.unit.effective(availability);
     // Channels the (effective) unit can't convert (a force unit with no
     // load cell assigned) are excluded from plotting; the stats tables

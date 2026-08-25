@@ -178,7 +178,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     final visibleChannels = session.visibleChannels;
     final channelLabels = session.channelLabels;
     final unit = settings.displayUnit.effective(
-      data.unitAvailabilityFor([
+      resolveUnitAvailability(data.calibrationFor, [
         for (int i = 0; i < visibleChannels.length; i++)
           if (visibleChannels[i]) i,
       ]),
