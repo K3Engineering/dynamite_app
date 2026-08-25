@@ -136,6 +136,7 @@ void main() {
           'adc_ref_v': 1.2,
           'front_end_gain': 101.0,
           'adc_gain': [1, 1],
+          'excitation_v': 4.53,
         },
         'channels': [
           {

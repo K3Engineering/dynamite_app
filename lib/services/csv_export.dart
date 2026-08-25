@@ -216,6 +216,11 @@ Map<String, Object?> _metadata(
         for (int ch = 0; ch < n; ch++)
           data.calibrationFor(ch).board.nominals?.pgaGain,
       ],
+      // The excitation the mV columns are scaled by (the mV anchor):
+      // nominal until flash carries a characterized value — reproducing an
+      // mV column outside the app needs exactly this number, and it lives
+      // nowhere else in the file for a session without board_cal.
+      'excitation_v': data.calibrationFor(0).board.displayExcitationV,
     },
     'channels': [
       for (int ch = 0; ch < n; ch++)
