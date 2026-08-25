@@ -41,14 +41,10 @@
   <link rel="preload" href="main.dart.wasm" as="fetch" crossorigin>
 
   <style>
-    /* Splash colors mirror DynoApp's schemes: scaffold backgrounds, and the
-       disconnected status bar's errorContainer/onErrorContainer (which fall
-       back to error/onError in the M2-era scheme constructors: light
-       #B00020/white, dark #CF6679/black). Accent is scheme.primary. */
+    /* Splash colors mirror DynoApp's schemes: scaffold backgrounds.
+       Accent is scheme.primary. */
     :root {
       --bg: #F8F9FA;
-      --stripe-bg: #B00020;
-      --stripe-fg: #FFFFFF;
       --fg: #3A2222;
       --accent: #455A64;
     }
@@ -56,8 +52,6 @@
     @media (prefers-color-scheme: dark) {
       :root {
         --bg: #121212;
-        --stripe-bg: #CF6679;
-        --stripe-fg: #000000;
         --fg: #FFFFFF;
         --accent: #679BB3;
       }
@@ -78,15 +72,6 @@
       background-color: var(--bg);
       color: var(--fg);
       font-family: Roboto, system-ui, sans-serif;
-    }
-
-    #splash #stripe {
-      padding: 8px 16px;
-      font-size: 14px;
-      font-weight: 500;
-      line-height: 20px;
-      background-color: var(--stripe-bg);
-      color: var(--stripe-fg);
     }
 
     #splash #center {
@@ -141,7 +126,6 @@
        prefers-color-scheme like the app's ThemeMode.system. Removed by
        flutter_bootstrap.js when the engine fires flutter-first-frame. -->
   <div id="splash" role="status">
-    <div id="stripe">Not connected</div>
     <div id="center">
       <div id="title">No device connected</div>
       <div id="bar">
