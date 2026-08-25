@@ -2710,6 +2710,13 @@ Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
 /// device stops the scroll after one period.
 const double _kLiveEdgeLeadMs = 20;
 
+/// The lead is additionally capped at this fraction of the visible span:
+/// a full packet of lead is negligible in a wide window, but at a span of
+/// a few packets it detaches the trace end from the plot's right edge.
+/// Below 20ms/[_kLiveEdgeLeadSpanFraction] of span (400ms at 5%) the scroll
+/// degrades to packet-quantized jumps smaller than the lead was.
+const double _kLiveEdgeLeadSpanFraction = 0.05;
+
 /// How stale the stream may get before the smooth-scroll ticker stops: well
 /// past the worst normal inter-packet gap (~20ms plus BLE jitter), so the
 /// ticker never churns mid-stream, but a silent device stops the repaints.
@@ -2717,15 +2724,18 @@ const int _kTickerStallMs = 100;
 
 /// The live-follow window's right edge in fractional samples: the newest
 /// sample count plus wall-clock elapsed since it landed, capped by
-/// [_kLiveEdgeLeadMs].
-double _liveEdge(GraphDataSource data) {
+/// [_kLiveEdgeLeadMs] and [_kLiveEdgeLeadSpanFraction] of [spanSamples].
+double _liveEdge(GraphDataSource data, int spanSamples) {
   final int total = data.totalSamples;
   final DateTime? last = data.lastDataAt;
   if (last == null) return total.toDouble();
   final double elapsedMs =
       DateTime.now().difference(last).inMicroseconds / 1000.0;
-  return total +
-      elapsedMs.clamp(0.0, _kLiveEdgeLeadMs) * data.sampleRate / 1000.0;
+  final double leadCapMs = math.min(
+    _kLiveEdgeLeadMs,
+    _kLiveEdgeLeadSpanFraction * spanSamples / data.sampleRate * 1000.0,
+  );
+  return total + elapsedMs.clamp(0.0, leadCapMs) * data.sampleRate / 1000.0;
 }
 
 /// Common painter prologue shared by the force and derivative graphs: translate
@@ -2782,7 +2792,7 @@ _GraphLayout? _setupGraphFrame(
   double viewStartF = viewStart.toDouble();
   double viewEndF = viewEnd.toDouble();
   if (ctrl.isLive) {
-    viewEndF = _liveEdge(data);
+    viewEndF = _liveEdge(data, viewEnd - viewStart);
     viewStartF = viewEndF - (viewEnd - viewStart);
   }
   final viewSamples = viewEndF - viewStartF;
