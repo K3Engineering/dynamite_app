@@ -129,27 +129,9 @@
       }
     }
 
-    #splash #status-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
+    #splash #status {
       font-size: 13px;
       opacity: 0.7;
-    }
-
-    #splash #spinner {
-      width: 16px;
-      height: 16px;
-      border: 2px solid var(--accent);
-      border-top-color: transparent;
-      border-radius: 50%;
-      animation: splash-spin 0.8s linear infinite;
-    }
-
-    @keyframes splash-spin {
-      to {
-        transform: rotate(360deg);
-      }
     }
   </style>
 </head>
@@ -165,10 +147,7 @@
       <div id="bar">
         <div id="bar-fill"></div>
       </div>
-      <div id="status-row">
-        <div id="spinner"></div>
-        <span id="status">Loading&hellip;</span>
-      </div>
+      <span id="status">Loading&hellip;</span>
     </div>
   </div>
   <script>
