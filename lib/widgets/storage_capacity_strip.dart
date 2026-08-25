@@ -128,7 +128,9 @@ class StorageCapacityStrip extends StatelessWidget {
           const SizedBox(height: 4),
           Text(
             '$usageText · $runway of recording left',
-            style: theme.textTheme.labelSmall?.copyWith(color: scheme.outline),
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
           ),
           if (!capacity.isPersistent)
             Text(

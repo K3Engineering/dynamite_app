@@ -143,7 +143,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
           'slot to swap them; swap a spare into the top four to put it on '
           'a channel.',
           style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.outline,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
           ),
         ),
       ],

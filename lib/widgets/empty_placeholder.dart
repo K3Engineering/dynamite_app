@@ -16,24 +16,25 @@ class EmptyPlaceholder extends StatelessWidget {
   final String? hint;
   final Widget? action;
 
-  /// Color override for the icon/title/hint (e.g. an error color when the
-  /// empty state reports a failure). Defaults to the dim outline color.
+  /// Semantic color override for a failure empty state (e.g. the error
+  /// color). Without it, the icon is the dim outline role, the title is
+  /// primary text, and the hint is secondary text.
   final Color? color;
 
   @override
   Widget build(BuildContext context) {
-    final dim = color ?? Theme.of(context).colorScheme.outline;
+    final scheme = Theme.of(context).colorScheme;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 64, color: dim),
+          Icon(icon, size: 64, color: color ?? scheme.outline),
           const SizedBox(height: 16),
           Text(
             title,
             style: Theme.of(
               context,
-            ).textTheme.titleMedium?.copyWith(color: dim),
+            ).textTheme.titleMedium?.copyWith(color: color ?? scheme.onSurface),
           ),
           if (hint != null) ...[
             const SizedBox(height: 8),
@@ -42,7 +43,7 @@ class EmptyPlaceholder extends StatelessWidget {
             // centered icon/title.
             Text(
               hint!,
-              style: TextStyle(color: dim),
+              style: TextStyle(color: color ?? scheme.onSurfaceVariant),
               textAlign: TextAlign.center,
             ),
           ],
