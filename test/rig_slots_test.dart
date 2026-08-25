@@ -45,7 +45,7 @@ void main() {
       expect(flash.slots.channelTitles, [
         'Thrust cell',
         'Break jig',
-        '100 kg · 2 mV/V',
+        'CH 3 · 100 kg · 2 mV/V',
         'CH 4',
       ]);
     });

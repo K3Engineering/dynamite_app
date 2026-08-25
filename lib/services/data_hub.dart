@@ -308,19 +308,40 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
     notifyListeners();
   }
 
-  /// Drop tare offsets (back to gross display) for one [channel], or all
-  /// channels when null. Cancels any in-progress tare: letting its window
-  /// commit right after a reset would silently re-zero what the user just
-  /// cleared.
-  void resetTare({int? channel}) {
-    assert(channel == null || (channel >= 0 && channel < kAdcChannelCount));
+  /// Abort an in-progress tare without committing. Every explicit user
+  /// action (reset, manual set) cancels a pending window: letting it
+  /// commit right after would silently re-zero or overwrite what the
+  /// user just did.
+  void _cancelPendingTare() {
     _tareCount = 0;
     _tareTotal = 0;
     _tareChannel = null;
     for (int i = 0; i < kAdcChannelCount; ++i) {
       _runningTotal[i] = 0;
+    }
+  }
+
+  /// Drop tare offsets (back to gross display) for one [channel], or all
+  /// channels when null. Cancels any in-progress tare (see
+  /// [_cancelPendingTare]).
+  void resetTare({int? channel}) {
+    assert(channel == null || (channel >= 0 && channel < kAdcChannelCount));
+    _cancelPendingTare();
+    for (int i = 0; i < kAdcChannelCount; ++i) {
       if (channel == null || channel == i) tare[i] = 0;
     }
+    notifyListeners();
+  }
+
+  /// Write one channel's tare offset directly, in counts (the tare sheet's
+  /// manual-entry path). Absolute: replaces the current offset regardless
+  /// of what it was. Cancels any in-progress tare (see
+  /// [_cancelPendingTare]).
+  void setTarePoint(int channel, double rawValue) {
+    assert(channel >= 0 && channel < kAdcChannelCount);
+    assert(rawValue.isFinite);
+    _cancelPendingTare();
+    tare[channel] = rawValue;
     notifyListeners();
   }
 

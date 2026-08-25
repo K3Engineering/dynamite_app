@@ -389,6 +389,25 @@ class ChannelBoardCalibration {
         (raw - xs[i - 1]) * (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
   }
 
+  /// Inverse of [mvVFromRaw]: the raw reading mapping to [mvV] under the
+  /// piecewise map (manual tare entry converts a typed display value back
+  /// to counts). The map is monotone across a valid channel's span, so
+  /// inversion is the same segment lookup run against the setpoint axis;
+  /// out-of-range values extend the outermost segment, mirroring
+  /// [mvVFromRaw].
+  double rawFromMvV(double mvV) {
+    final r = readings;
+    if (r == null) return mvV * nominals!.countsPerMvV;
+    final xs = _sortedRaw;
+    final ys = _sortedSetpoints;
+    var i = 1;
+    while (i < ys.length - 1 && mvV > ys[i]) {
+      ++i;
+    }
+    return xs[i - 1] +
+        (mvV - ys[i - 1]) * (xs[i] - xs[i - 1]) / (ys[i] - ys[i - 1]);
+  }
+
   // -- Diagnostics ----------------------------------------------------------
 
   /// Board zero offset in counts: the dead-short (t3,t3) reading measures

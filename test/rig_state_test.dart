@@ -78,7 +78,7 @@ void main() {
       expect(rig.channelTitles, [
         'Thrust cell',
         'Break jig',
-        '100 kg · 2 mV/V',
+        'CH 3 · 100 kg · 2 mV/V',
         'CH 4',
       ]);
       expect(rig.channelCells[0]?.name, 'Thrust cell');

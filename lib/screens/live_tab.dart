@@ -18,7 +18,7 @@ import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
 import '../widgets/channel_stats_table.dart';
-import '../widgets/tare_dialog.dart';
+import '../widgets/tare_sheet.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
@@ -242,11 +242,12 @@ class _LiveTabState extends State<LiveTab> {
               isRecording: recording.sessionInProgress,
               onToggleRecord: _onToggleRecord,
               onTare: _onTare,
-              onTareSettings: () => showTareDialog(
+              onTareSettings: () => showTareSheet(
                 context,
                 hub: hub,
                 rig: rig,
                 settings: settings,
+                health: healthListenable,
               ),
             ),
         ],
@@ -646,7 +647,7 @@ class ActionButtons extends StatelessWidget {
   final VoidCallback onToggleRecord;
   final VoidCallback onTare;
 
-  /// Opens the per-channel tare dialog; disabled alongside TARE while
+  /// Opens the per-channel tare sheet; disabled alongside TARE while
   /// recording (same reason — a session's tares are frozen at record start).
   final VoidCallback onTareSettings;
 
@@ -687,9 +688,9 @@ class ActionButtons extends StatelessWidget {
             label: Text(taring ? 'TARING' : 'TARE'),
           ),
           IconButton(
-            tooltip: 'Per-channel tare',
+            tooltip: 'Tare options',
             onPressed: isRecording ? null : onTareSettings,
-            icon: const Icon(Icons.tune),
+            icon: const Icon(Icons.more_horiz),
           ),
         ],
       ),

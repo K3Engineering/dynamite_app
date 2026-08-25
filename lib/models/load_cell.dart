@@ -55,10 +55,19 @@ class RigSlots {
     for (int i = 0; i < kAdcChannelCount; ++i) cellAt(i),
   ];
 
-  /// Channel row titles: the cell's title, or the bare channel name.
+  /// Channel row titles: the cell's name when the user set one, the
+  /// channel-anchored spec line for an unnamed cell, or the bare channel
+  /// name when no cell is assigned. The anchor keeps an unnamed cell
+  /// readable in channel-bound contexts (stats table, tare sheet, session
+  /// labels); the settings' slot list renders [LoadCellProfile.title]
+  /// directly and never sees this composition.
   List<String> get channelTitles => [
     for (int i = 0; i < kAdcChannelCount; ++i)
-      cellAt(i)?.title ?? rigSlotTitle(i),
+      switch (cellAt(i)) {
+        null => rigSlotTitle(i),
+        final cell when cell.name.isNotEmpty => cell.name,
+        final cell => '${rigSlotTitle(i)} · ${cell.valuesLine}',
+      },
   ];
 
   RigSlots withSlot(int i, RigSlot? slot) => RigSlots([

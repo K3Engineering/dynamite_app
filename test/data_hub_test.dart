@@ -384,6 +384,30 @@ void main() {
       expect(hub.tare[1], 0);
     });
 
+    test(
+      'setTarePoint writes the offset absolutely and cancels the tare in flight',
+      () {
+        final hub = DataHub();
+        hub.setTarePoint(1, 1234);
+        expect(hub.tare[1], 1234);
+        expect(hub.tare[0], 0);
+
+        // Absolute: replaces the offset regardless of the old value.
+        hub.setTarePoint(1, -50);
+        expect(hub.tare[1], -50);
+
+        hub.requestTare(channel: 2);
+        feed(hub, frameOf(1000), 500);
+        expect(hub.taring, isTrue);
+        hub.setTarePoint(1, 0);
+        expect(hub.taring, isFalse); // canceled
+
+        // The canceled window must not commit later.
+        feed(hub, frameOf(1000), 1000);
+        expect(hub.tare[2], 0);
+      },
+    );
+
     test('tarePoint reports the gross tare value in the unit', () {
       final hub = DataHub()..updateBoardCalibration(nominalBoard());
       expect(hub.tarePoint(0, DisplayUnit.raw), 0);
