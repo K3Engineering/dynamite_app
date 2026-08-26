@@ -325,7 +325,6 @@ void main() {
         '''
 K3CAL1
 cal.date=2026-07-20
-cal.exc.mv=4530.24
 $testConstantKeys${''}ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4
 ch0.raw=6399057.3,3200621.9,845.2,-3199374.1,-6397331.0
 ch1.r=9999.2,9.9994,10.0006,10.0001,9.9997,10000.6
@@ -340,7 +339,6 @@ END
     test('full document parses every channel plus metadata', () {
       final board = BoardCalibration.parse(doc, pgaGains: testGains);
       expect(board.factoryDate, '2026-07-20');
-      expect(board.excitationMv, closeTo(4530.24, 1e-9));
       expect(board.isFactoryCalibrated, isTrue);
       expect(board.calDataInvalid, isFalse);
       expect(board.channels[0].resistors![0], closeTo(10000.8, 1e-9));

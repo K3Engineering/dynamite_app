@@ -316,7 +316,6 @@ void main() {
       expect(board.channels[0].offsetCounts, closeTo(845.2, 1e-9));
       expect(board.channels[2].offsetCounts, closeTo(1502.8, 1e-9));
       expect(board.factoryDate, '2026-07-20');
-      expect(board.excitationMv, closeTo(4530.24, 1e-9));
       // The demo doc carries board constants: the verdict is ok.
       expect(board.constantsStatus, BoardDataStatus.ok);
       expect(board.channels[0].nominals, isNotNull);

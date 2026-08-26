@@ -358,14 +358,12 @@ class ChannelBoardCalibration {
 
   bool get isFactoryCalibrated => readings != null;
 
-  /// Excitation used to express the ratiometric map as mV: the nominal
-  /// value until flash carries a characterized one (`cal.exc.mv`, currently
-  /// unpopulated by the fleet). This value IS the mV unit's entire
-  /// uncertainty — the calibration is ratiometric, so the calibrated units
-  /// never touch it. Deliberately NOT [ChannelNominals.excitationV]'s name:
-  /// the nominal chain constant and the mV anchor are two roles, and
-  /// adopting `cal.exc.mv` later must change only this resolution. Null
-  /// with no resolved nominals (conversion reports unavailable anyway).
+  /// The excitation anchor expressing the ratiometric map as mV. This value
+  /// is the mV unit's entire uncertainty — the calibration is ratiometric,
+  /// so the calibrated units never touch it. Deliberately not
+  /// [ChannelNominals.excitationV]'s name: the nominal chain constant and
+  /// the mV anchor are two roles that happen to resolve to the same number.
+  /// Null with no resolved nominals (conversion reports unavailable anyway).
   double? get displayExcitationV => nominals?.excitationV;
 
   /// Setpoints (mV/V) per config, derived from [resistors]. Cached: pure
@@ -570,7 +568,6 @@ class BoardCalibration {
   BoardCalibration({
     required this.channels,
     this.factoryDate,
-    this.excitationMv,
     this.calBoardId,
     this.calTool,
     this.calOrigin,
@@ -602,9 +599,6 @@ class BoardCalibration {
 
   /// Factory calibration date string as written in flash (`cal.date`), if any.
   final String? factoryDate;
-
-  /// Factory DMM reading of the excitation (`cal.exc.mv`), if any.
-  final double? excitationMv;
 
   /// Calibration board firmware id (`cal.board`), if any.
   final String? calBoardId;
@@ -739,7 +733,6 @@ class BoardCalibration {
           ),
       ],
       factoryDate: kv['cal.date'],
-      excitationMv: double.tryParse(kv['cal.exc.mv'] ?? ''),
       calBoardId: kv['cal.board'],
       calTool: kv['cal.tool'],
       calOrigin: kv['cal.origin'],

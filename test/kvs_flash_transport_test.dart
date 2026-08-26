@@ -65,7 +65,6 @@ void main() {
         pgaGains: gains,
       );
       expect(flash.board.factoryDate, fixture.board.factoryDate);
-      expect(flash.board.excitationMv, fixture.board.excitationMv);
       expect(flash.board.channels.every((c) => c.isFactoryCalibrated), isTrue);
       expect(flash.board.channels[0].offsetCounts, closeTo(845.2, 1e-9));
       expect(flash.slots, fixture.slots);

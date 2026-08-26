@@ -63,7 +63,6 @@ void main() {
       );
 
       expect(reparsed.board.factoryDate, flash.board.factoryDate);
-      expect(reparsed.board.excitationMv, flash.board.excitationMv);
       for (int i = 0; i < 4; ++i) {
         expect(
           reparsed.board.channels[i].readings,

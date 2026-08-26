@@ -482,9 +482,9 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   }
 
   /// Content equality for cache invalidation: conversion inputs only.
-  /// factoryDate/excitationMv are display metadata. Nominals are conversion
-  /// inputs — a nominals-only board must still replace a constants-failed
-  /// one (and vice versa).
+  /// factoryDate and the other cal metadata are display-only. Nominals are
+  /// conversion inputs — a nominals-only board must still replace a
+  /// constants-failed one (and vice versa).
   static bool _sameBoardCalibration(BoardCalibration a, BoardCalibration b) {
     if (a.constantsStatus != b.constantsStatus) return false;
     for (int i = 0; i < a.channels.length; ++i) {

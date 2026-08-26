@@ -17,7 +17,6 @@ import 'load_cell.dart';
 /// save can't erase them.
 final Set<String> _knownFlashKeys = {
   'cal.date',
-  'cal.exc.mv',
   'cal.board',
   'cal.tool',
   'cal.origin',
@@ -80,9 +79,6 @@ class DeviceFlash {
   String serialize() {
     final b = StringBuffer('K3CAL1\n');
     if (board.factoryDate != null) b.writeln('cal.date=${board.factoryDate}');
-    if (board.excitationMv != null) {
-      b.writeln('cal.exc.mv=${board.excitationMv}');
-    }
     if (board.calBoardId != null) b.writeln('cal.board=${board.calBoardId}');
     if (board.calTool != null) b.writeln('cal.tool=${board.calTool}');
     if (board.calOrigin != null) b.writeln('cal.origin=${board.calOrigin}');

@@ -11,7 +11,6 @@
 const String demoBoardCalibrationDoc = '''
 K3CAL1
 cal.date=2026-07-20
-cal.exc.mv=4530.24
 cal.board=calboard-fw 1.2.1
 cal.tool=board_calibration 1.0
 cal.origin=factory
