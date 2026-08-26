@@ -200,6 +200,29 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('touch: the grip icon drags without the tap-and-hold delay', (
+    tester,
+  ) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    final rig = await pump(tester);
+
+    // The drag handle inside the 'Break jig' row (slot 1, CH2). The drag
+    // starts on the first movement — no settled hold like the row body.
+    final handle = find.descendant(
+      of: find.ancestor(
+        of: find.text('Break jig'),
+        matching: find.byType(ListTile),
+      ),
+      matching: find.byIcon(Icons.drag_indicator),
+    );
+    expect(handle, findsOneWidget);
+    await tester.drag(handle, const Offset(0, 3 * 72));
+    await tester.pumpAndSettle();
+
+    expectSwapped(rig);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('edit a populated slot via the editor', (tester) async {
     final rig = await pump(tester);
 

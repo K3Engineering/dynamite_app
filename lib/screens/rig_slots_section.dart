@@ -157,13 +157,17 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   /// — to the row's X for the whole drag, so it slides straight up and
   /// down the list instead of following the pointer sideways.
   ///
-  /// The whole row is the drag source; how a drag starts depends on the
-  /// platform. Touch platforms require a tap-and-hold so a swipe still
-  /// scrolls; desktops start dragging on mouse-down (the recognizer claims
-  /// the gesture only past the 1 px precise-pointer slop, so taps still
-  /// open the editor). On web the reported platform is the browser's OS,
-  /// which puts phone browsers (Android Chrome, Bluefy on iOS) on the
-  /// tap-and-hold path.
+  /// How a drag starts depends on the platform. Desktops start dragging on
+  /// mouse-down anywhere on the row (the recognizer claims the gesture only
+  /// past the 1 px precise-pointer slop, so taps still open the editor).
+  /// Touch platforms have two drag sources: a tap-and-hold anywhere on the
+  /// row, so a swipe still scrolls, and an immediate drag from the grip
+  /// icon. Both recognizers sit in the same gesture arena with
+  /// non-overlapping win conditions — the row's needs the pointer to hold
+  /// still for the long-press delay, the handle's needs it to move past
+  /// touch slop — so exactly one of them starts, whichever the finger does
+  /// first. On web the reported platform is the browser's OS, which puts
+  /// phone browsers (Android Chrome, Bluefy on iOS) on the touch path.
   ///
   /// All edit affordances (tap, drag start, drop) close while a save is in
   /// flight: an edit landing mid-write would mutate the pending session the
@@ -216,40 +220,62 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
               ),
             ),
           );
+          final grip = Padding(
+            padding: const EdgeInsets.all(8),
+            child: Icon(Icons.drag_indicator, color: theme.colorScheme.outline),
+          );
+          final touchPlatform = switch (defaultTargetPlatform) {
+            TargetPlatform.android ||
+            TargetPlatform.iOS ||
+            TargetPlatform.fuchsia => true,
+            _ => false,
+          };
           final row = ListTile(
             title: Text(cell.title),
             subtitle: Text(subtitle),
-            trailing: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Icon(
-                Icons.drag_indicator,
-                color: theme.colorScheme.outline,
-              ),
-            ),
+            // On touch the grip is its own immediate Draggable (see this
+            // method's doc); on desktop the whole already-immediate row
+            // carries it, so it's decorative.
+            trailing: touchPlatform
+                ? Draggable<int>(
+                    data: i,
+                    axis: Axis.vertical,
+                    maxSimultaneousDrags: _saving ? 0 : 1,
+                    // Anchor the feedback to the row, not the grip: the
+                    // default childDragAnchorStrategy would pin the
+                    // feedback's X to the grip's left edge, hanging the
+                    // full-width row replica off the side of the list.
+                    dragAnchorStrategy: (draggable, handleContext, position) {
+                      final rowBox = context.findRenderObject()! as RenderBox;
+                      return position - rowBox.localToGlobal(Offset.zero);
+                    },
+                    onDragStarted: () => setState(() => _dragIndex = i),
+                    onDragEnd: (_) => setState(() => _dragIndex = null),
+                    feedback: feedback,
+                    child: grip,
+                  )
+                : grip,
             onTap: _saving ? null : () => showSlotEditor(context, rig, i),
           );
-          tile = switch (defaultTargetPlatform) {
-            TargetPlatform.android ||
-            TargetPlatform.iOS ||
-            TargetPlatform.fuchsia => LongPressDraggable<int>(
-              data: i,
-              axis: Axis.vertical,
-              maxSimultaneousDrags: _saving ? 0 : 1,
-              onDragStarted: () => setState(() => _dragIndex = i),
-              onDragEnd: (_) => setState(() => _dragIndex = null),
-              feedback: feedback,
-              child: row,
-            ),
-            _ => Draggable<int>(
-              data: i,
-              axis: Axis.vertical,
-              maxSimultaneousDrags: _saving ? 0 : 1,
-              onDragStarted: () => setState(() => _dragIndex = i),
-              onDragEnd: (_) => setState(() => _dragIndex = null),
-              feedback: feedback,
-              child: row,
-            ),
-          };
+          tile = touchPlatform
+              ? LongPressDraggable<int>(
+                  data: i,
+                  axis: Axis.vertical,
+                  maxSimultaneousDrags: _saving ? 0 : 1,
+                  onDragStarted: () => setState(() => _dragIndex = i),
+                  onDragEnd: (_) => setState(() => _dragIndex = null),
+                  feedback: feedback,
+                  child: row,
+                )
+              : Draggable<int>(
+                  data: i,
+                  axis: Axis.vertical,
+                  maxSimultaneousDrags: _saving ? 0 : 1,
+                  onDragStarted: () => setState(() => _dragIndex = i),
+                  onDragEnd: (_) => setState(() => _dragIndex = null),
+                  feedback: feedback,
+                  child: row,
+                );
         }
 
         return AnimatedContainer(
