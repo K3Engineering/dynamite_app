@@ -56,6 +56,15 @@ class Sessions extends Table {
   /// see `toCsvDeviceMetadata` in csv_export.dart. Frozen so export never
   /// consults live device state (docs/csv-format-v1.md).
   TextColumn get deviceInfoJson => text()();
+
+  /// The board-level calibration metadata at recording start (cal.*
+  /// provenance, the constants verdict, calDataInvalid — see
+  /// `SessionBoardMeta` in board_calibration.dart), as a JSON block.
+  /// Nullable: a session recorded with no board data resolved carries NULL.
+  /// The per-channel operative numbers ride in [calibrationJson]; this block
+  /// is their provenance, parsed strictly at load (a malformed block flags
+  /// SessionDamage, unlike the display-only [deviceInfoJson]).
+  TextColumn get boardMetaJson => text().nullable()();
 }
 
 /// The [Sessions]-row metadata snapshotted at recording start, frozen for
@@ -72,6 +81,7 @@ typedef SessionHeader = ({
   String visibleChannels,
   String displayUnit,
   String deviceInfoJson,
+  String? boardMetaJson,
 });
 
 class SessionChunks extends Table {
@@ -122,7 +132,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 14;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -181,6 +191,7 @@ class AppDatabase extends _$AppDatabase {
     required String visibleChannels,
     required String displayUnit,
     required String deviceInfoJson,
+    required String? boardMetaJson,
     required int ssnOrigin,
     String gaps = '[]',
     DateTime? createdAt,
@@ -199,6 +210,7 @@ class AppDatabase extends _$AppDatabase {
         visibleChannels: visibleChannels,
         displayUnit: displayUnit,
         deviceInfoJson: deviceInfoJson,
+        boardMetaJson: Value(boardMetaJson),
         ssnOrigin: ssnOrigin,
       ),
     );
@@ -227,6 +239,7 @@ class AppDatabase extends _$AppDatabase {
         visibleChannels: header.visibleChannels,
         displayUnit: header.displayUnit,
         deviceInfoJson: header.deviceInfoJson,
+        boardMetaJson: header.boardMetaJson,
         ssnOrigin: ssnOrigin,
         gaps: gaps,
       );

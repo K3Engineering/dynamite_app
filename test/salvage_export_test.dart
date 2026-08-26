@@ -41,6 +41,7 @@ void main() {
       visibleChannels: '[]',
       displayUnit: 'kgf',
       deviceInfoJson: '{}',
+      boardMetaJson: null,
       ssnOrigin: ssnOrigin,
     );
     final indices = chunkIndices ?? [for (var i = 0; i < chunks.length; i++) i];

@@ -129,6 +129,7 @@ void main() {
           'name': null,
           'id': null,
           'model': null,
+          'hardware_rev': null,
           'firmware': null,
           'manufacturer': null,
         },
@@ -173,7 +174,8 @@ void main() {
           generator: generator,
           deviceInfoJson:
               '{"name":"DS A4CF1208F51E","id":"A4CF1208F51E",'
-              '"model":"Dynamite Sampler Pro Mk1","firmware":"v700P|v1.2.3",'
+              '"model":"Dynamite Sampler Pro Mk1","hardware_rev":"rev B",'
+              '"firmware":"v700P|v1.2.3",'
               '"manufacturer":"K3 Engineering"}',
         ),
       );
@@ -182,6 +184,7 @@ void main() {
         'name': 'DS A4CF1208F51E',
         'id': 'A4CF1208F51E',
         'model': 'Dynamite Sampler Pro Mk1',
+        'hardware_rev': 'rev B',
         'firmware': 'v700P|v1.2.3',
         'manufacturer': 'K3 Engineering',
       });
@@ -209,6 +212,7 @@ void main() {
           'name': null,
           'id': null,
           'model': null,
+          'hardware_rev': null,
           'firmware': null,
           'manufacturer': null,
         });

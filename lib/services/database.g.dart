@@ -198,6 +198,17 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _boardMetaJsonMeta = const VerificationMeta(
+    'boardMetaJson',
+  );
+  @override
+  late final GeneratedColumn<String> boardMetaJson = GeneratedColumn<String>(
+    'board_meta_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -217,6 +228,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     ssnOrigin,
     displayUnit,
     deviceInfoJson,
+    boardMetaJson,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -373,6 +385,15 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     } else if (isInserting) {
       context.missing(_deviceInfoJsonMeta);
     }
+    if (data.containsKey('board_meta_json')) {
+      context.handle(
+        _boardMetaJsonMeta,
+        boardMetaJson.isAcceptableOrUnknown(
+          data['board_meta_json']!,
+          _boardMetaJsonMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -450,6 +471,10 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.string,
         data['${effectivePrefix}device_info_json'],
       )!,
+      boardMetaJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}board_meta_json'],
+      ),
     );
   }
 
@@ -504,6 +529,15 @@ class Session extends DataClass implements Insertable<Session> {
   /// see `toCsvDeviceMetadata` in csv_export.dart. Frozen so export never
   /// consults live device state (docs/csv-format-v1.md).
   final String deviceInfoJson;
+
+  /// The board-level calibration metadata at recording start (cal.*
+  /// provenance, the constants verdict, calDataInvalid — see
+  /// `SessionBoardMeta` in board_calibration.dart), as a JSON block.
+  /// Nullable: a session recorded with no board data resolved carries NULL.
+  /// The per-channel operative numbers ride in [calibrationJson]; this block
+  /// is their provenance, parsed strictly at load (a malformed block flags
+  /// SessionDamage, unlike the display-only [deviceInfoJson]).
+  final String? boardMetaJson;
   const Session({
     required this.id,
     required this.name,
@@ -522,6 +556,7 @@ class Session extends DataClass implements Insertable<Session> {
     required this.ssnOrigin,
     required this.displayUnit,
     required this.deviceInfoJson,
+    this.boardMetaJson,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -543,6 +578,9 @@ class Session extends DataClass implements Insertable<Session> {
     map['ssn_origin'] = Variable<int>(ssnOrigin);
     map['display_unit'] = Variable<String>(displayUnit);
     map['device_info_json'] = Variable<String>(deviceInfoJson);
+    if (!nullToAbsent || boardMetaJson != null) {
+      map['board_meta_json'] = Variable<String>(boardMetaJson);
+    }
     return map;
   }
 
@@ -565,6 +603,9 @@ class Session extends DataClass implements Insertable<Session> {
       ssnOrigin: Value(ssnOrigin),
       displayUnit: Value(displayUnit),
       deviceInfoJson: Value(deviceInfoJson),
+      boardMetaJson: boardMetaJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(boardMetaJson),
     );
   }
 
@@ -591,6 +632,7 @@ class Session extends DataClass implements Insertable<Session> {
       ssnOrigin: serializer.fromJson<int>(json['ssnOrigin']),
       displayUnit: serializer.fromJson<String>(json['displayUnit']),
       deviceInfoJson: serializer.fromJson<String>(json['deviceInfoJson']),
+      boardMetaJson: serializer.fromJson<String?>(json['boardMetaJson']),
     );
   }
   @override
@@ -614,6 +656,7 @@ class Session extends DataClass implements Insertable<Session> {
       'ssnOrigin': serializer.toJson<int>(ssnOrigin),
       'displayUnit': serializer.toJson<String>(displayUnit),
       'deviceInfoJson': serializer.toJson<String>(deviceInfoJson),
+      'boardMetaJson': serializer.toJson<String?>(boardMetaJson),
     };
   }
 
@@ -635,6 +678,7 @@ class Session extends DataClass implements Insertable<Session> {
     int? ssnOrigin,
     String? displayUnit,
     String? deviceInfoJson,
+    Value<String?> boardMetaJson = const Value.absent(),
   }) => Session(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -653,6 +697,9 @@ class Session extends DataClass implements Insertable<Session> {
     ssnOrigin: ssnOrigin ?? this.ssnOrigin,
     displayUnit: displayUnit ?? this.displayUnit,
     deviceInfoJson: deviceInfoJson ?? this.deviceInfoJson,
+    boardMetaJson: boardMetaJson.present
+        ? boardMetaJson.value
+        : this.boardMetaJson,
   );
   Session copyWithCompanion(SessionsCompanion data) {
     return Session(
@@ -693,6 +740,9 @@ class Session extends DataClass implements Insertable<Session> {
       deviceInfoJson: data.deviceInfoJson.present
           ? data.deviceInfoJson.value
           : this.deviceInfoJson,
+      boardMetaJson: data.boardMetaJson.present
+          ? data.boardMetaJson.value
+          : this.boardMetaJson,
     );
   }
 
@@ -715,7 +765,8 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('visibleChannels: $visibleChannels, ')
           ..write('ssnOrigin: $ssnOrigin, ')
           ..write('displayUnit: $displayUnit, ')
-          ..write('deviceInfoJson: $deviceInfoJson')
+          ..write('deviceInfoJson: $deviceInfoJson, ')
+          ..write('boardMetaJson: $boardMetaJson')
           ..write(')'))
         .toString();
   }
@@ -739,6 +790,7 @@ class Session extends DataClass implements Insertable<Session> {
     ssnOrigin,
     displayUnit,
     deviceInfoJson,
+    boardMetaJson,
   );
   @override
   bool operator ==(Object other) =>
@@ -760,7 +812,8 @@ class Session extends DataClass implements Insertable<Session> {
           other.visibleChannels == this.visibleChannels &&
           other.ssnOrigin == this.ssnOrigin &&
           other.displayUnit == this.displayUnit &&
-          other.deviceInfoJson == this.deviceInfoJson);
+          other.deviceInfoJson == this.deviceInfoJson &&
+          other.boardMetaJson == this.boardMetaJson);
 }
 
 class SessionsCompanion extends UpdateCompanion<Session> {
@@ -781,6 +834,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<int> ssnOrigin;
   final Value<String> displayUnit;
   final Value<String> deviceInfoJson;
+  final Value<String?> boardMetaJson;
   const SessionsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
@@ -799,6 +853,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.ssnOrigin = const Value.absent(),
     this.displayUnit = const Value.absent(),
     this.deviceInfoJson = const Value.absent(),
+    this.boardMetaJson = const Value.absent(),
   });
   SessionsCompanion.insert({
     this.id = const Value.absent(),
@@ -818,6 +873,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     required int ssnOrigin,
     required String displayUnit,
     required String deviceInfoJson,
+    this.boardMetaJson = const Value.absent(),
   }) : createdAt = Value(createdAt),
        sampleRate = Value(sampleRate),
        channelCount = Value(channelCount),
@@ -846,6 +902,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<int>? ssnOrigin,
     Expression<String>? displayUnit,
     Expression<String>? deviceInfoJson,
+    Expression<String>? boardMetaJson,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -865,6 +922,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (ssnOrigin != null) 'ssn_origin': ssnOrigin,
       if (displayUnit != null) 'display_unit': displayUnit,
       if (deviceInfoJson != null) 'device_info_json': deviceInfoJson,
+      if (boardMetaJson != null) 'board_meta_json': boardMetaJson,
     });
   }
 
@@ -886,6 +944,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<int>? ssnOrigin,
     Value<String>? displayUnit,
     Value<String>? deviceInfoJson,
+    Value<String?>? boardMetaJson,
   }) {
     return SessionsCompanion(
       id: id ?? this.id,
@@ -905,6 +964,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       ssnOrigin: ssnOrigin ?? this.ssnOrigin,
       displayUnit: displayUnit ?? this.displayUnit,
       deviceInfoJson: deviceInfoJson ?? this.deviceInfoJson,
+      boardMetaJson: boardMetaJson ?? this.boardMetaJson,
     );
   }
 
@@ -962,6 +1022,9 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     if (deviceInfoJson.present) {
       map['device_info_json'] = Variable<String>(deviceInfoJson.value);
     }
+    if (boardMetaJson.present) {
+      map['board_meta_json'] = Variable<String>(boardMetaJson.value);
+    }
     return map;
   }
 
@@ -984,7 +1047,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('visibleChannels: $visibleChannels, ')
           ..write('ssnOrigin: $ssnOrigin, ')
           ..write('displayUnit: $displayUnit, ')
-          ..write('deviceInfoJson: $deviceInfoJson')
+          ..write('deviceInfoJson: $deviceInfoJson, ')
+          ..write('boardMetaJson: $boardMetaJson')
           ..write(')'))
         .toString();
   }
@@ -1288,6 +1352,7 @@ typedef $$SessionsTableCreateCompanionBuilder =
       required int ssnOrigin,
       required String displayUnit,
       required String deviceInfoJson,
+      Value<String?> boardMetaJson,
     });
 typedef $$SessionsTableUpdateCompanionBuilder =
     SessionsCompanion Function({
@@ -1308,6 +1373,7 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<int> ssnOrigin,
       Value<String> displayUnit,
       Value<String> deviceInfoJson,
+      Value<String?> boardMetaJson,
     });
 
 class $$SessionsTableFilterComposer
@@ -1401,6 +1467,11 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<String> get deviceInfoJson => $composableBuilder(
     column: $table.deviceInfoJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get boardMetaJson => $composableBuilder(
+    column: $table.boardMetaJson,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1498,6 +1569,11 @@ class $$SessionsTableOrderingComposer
     column: $table.deviceInfoJson,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get boardMetaJson => $composableBuilder(
+    column: $table.boardMetaJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SessionsTableAnnotationComposer
@@ -1579,6 +1655,11 @@ class $$SessionsTableAnnotationComposer
     column: $table.deviceInfoJson,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get boardMetaJson => $composableBuilder(
+    column: $table.boardMetaJson,
+    builder: (column) => column,
+  );
 }
 
 class $$SessionsTableTableManager
@@ -1626,6 +1707,7 @@ class $$SessionsTableTableManager
                 Value<int> ssnOrigin = const Value.absent(),
                 Value<String> displayUnit = const Value.absent(),
                 Value<String> deviceInfoJson = const Value.absent(),
+                Value<String?> boardMetaJson = const Value.absent(),
               }) => SessionsCompanion(
                 id: id,
                 name: name,
@@ -1644,6 +1726,7 @@ class $$SessionsTableTableManager
                 ssnOrigin: ssnOrigin,
                 displayUnit: displayUnit,
                 deviceInfoJson: deviceInfoJson,
+                boardMetaJson: boardMetaJson,
               ),
           createCompanionCallback:
               ({
@@ -1664,6 +1747,7 @@ class $$SessionsTableTableManager
                 required int ssnOrigin,
                 required String displayUnit,
                 required String deviceInfoJson,
+                Value<String?> boardMetaJson = const Value.absent(),
               }) => SessionsCompanion.insert(
                 id: id,
                 name: name,
@@ -1682,6 +1766,7 @@ class $$SessionsTableTableManager
                 ssnOrigin: ssnOrigin,
                 displayUnit: displayUnit,
                 deviceInfoJson: deviceInfoJson,
+                boardMetaJson: boardMetaJson,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))

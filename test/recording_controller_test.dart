@@ -151,8 +151,8 @@ void main() {
       // field is the null placeholder.
       expect(
         saved.deviceInfoJson,
-        '{"name":null,"id":null,"model":null,"firmware":null,'
-        '"manufacturer":null}',
+        '{"name":null,"id":null,"model":null,"hardware_rev":null,'
+        '"firmware":null,"manufacturer":null}',
       );
     },
   );

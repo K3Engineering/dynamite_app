@@ -20,6 +20,7 @@ Map<String, Object?> toSessionDeviceMetadata({
   'name': (name == null || name.isEmpty) ? null : name,
   'id': info?.serial,
   'model': info?.model,
+  'hardware_rev': info?.hardwareRev,
   'firmware': info?.firmwareRev,
   'manufacturer': info?.manufacturer,
 };
@@ -38,6 +39,7 @@ Map<String, Object?> fromSessionDeviceMetadata(String json) {
         'name': s(decoded['name']),
         'id': s(decoded['id']),
         'model': s(decoded['model']),
+        'hardware_rev': s(decoded['hardware_rev']),
         'firmware': s(decoded['firmware']),
         'manufacturer': s(decoded['manufacturer']),
       };

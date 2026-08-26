@@ -41,6 +41,7 @@ void main() {
       visibleChannels: '[]',
       displayUnit: 'kgf',
       deviceInfoJson: '{}',
+      boardMetaJson: null,
       ssnOrigin: 0,
     );
     await AppDatabase.instance.completeSession(
@@ -108,6 +109,7 @@ void main() {
         visibleChannels: '[]',
         displayUnit: 'kgf',
         deviceInfoJson: '{}',
+        boardMetaJson: null,
         ssnOrigin: 0,
       );
 

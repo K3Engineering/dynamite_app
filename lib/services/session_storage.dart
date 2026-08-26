@@ -28,7 +28,9 @@ class SessionStorage {
   /// Note: every session stores all [kAdcChannelCount]; [channelLabels]
   /// and [visibleChannels] are retained for display only. [deviceMetadata] is
   /// the connected device's identity (see [toSessionDeviceMetadata]), frozen
-  /// for export.
+  /// for export. [boardMeta] is the board-level calibration provenance
+  /// (see [SessionBoardMeta]); null when no board data resolved, persisted
+  /// as a NULL column.
   ///
   /// This is hub-agnostic by contract: the caller snapshots everything the
   /// live buffer would supply ([tare], [channelCalibration],
@@ -44,6 +46,7 @@ class SessionStorage {
     required List<bool> visibleChannels,
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
+    required SessionBoardMeta? boardMeta,
   }) {
     // Snapshot the tare once and persist it with the session; playback
     // converts through it, so a later re-tare can never rewrite history.
@@ -70,6 +73,7 @@ class SessionStorage {
       // (docs/csv-format-v1.md's recording-time snapshot requirement).
       displayUnit: displayUnit.name,
       deviceInfoJson: jsonEncode(deviceMetadata),
+      boardMetaJson: boardMeta == null ? null : jsonEncode(boardMeta.toJson()),
     ), sourceRingCapacity: sourceRingCapacity);
   }
 
@@ -307,6 +311,27 @@ class SessionStorage {
       gaps = GapList();
     }
 
+    // The board-meta column parses strictly like the measurement columns:
+    // NULL (a session recorded with no board data resolved) loads as an
+    // absent block; a malformed block floors to absent and flags damage —
+    // its verdicts are about the calibration chain itself.
+    var boardMetaLost = false;
+    SessionBoardMeta? boardMeta;
+    final boardMetaJson = session.boardMetaJson;
+    if (boardMetaJson != null) {
+      try {
+        final decoded = jsonDecode(boardMetaJson);
+        boardMeta = SessionBoardMeta.fromJson(
+          decoded is Map
+              ? Map<String, dynamic>.from(decoded)
+              : throw const FormatException('board meta must be an object'),
+        );
+      } on FormatException catch (e) {
+        debugPrint('Session $sessionId: board metadata damaged ($e)');
+        boardMetaLost = true;
+      }
+    }
+
     return SessionData(
       channels: channels,
       sampleRate: session.sampleRate,
@@ -315,9 +340,11 @@ class SessionStorage {
       tares: tares,
       gaps: gaps,
       ssnOrigin: session.ssnOrigin,
+      boardMeta: boardMeta,
       damage: SessionDamage(
         calibration: calibrationDamaged,
         gapsLost: gapsLost,
+        boardMetaLost: boardMetaLost,
         truncatedAt: truncatedAt,
       ),
     );
@@ -391,6 +418,7 @@ class StaticSessionPersistence implements SessionPersistence {
     required List<bool> visibleChannels,
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
+    required SessionBoardMeta? boardMeta,
   }) => SessionStorage.startSession(
     tare: tare,
     channelCalibration: channelCalibration,
@@ -401,6 +429,7 @@ class StaticSessionPersistence implements SessionPersistence {
     visibleChannels: visibleChannels,
     displayUnit: displayUnit,
     deviceMetadata: deviceMetadata,
+    boardMeta: boardMeta,
   );
 
   @override

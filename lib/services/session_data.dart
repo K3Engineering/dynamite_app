@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../models/board_calibration.dart';
 import '../models/bucket_series.dart';
 import '../models/channel_calibration.dart';
 import '../models/channel_converter.dart';
@@ -20,6 +21,7 @@ class SessionDamage {
   const SessionDamage({
     this.calibration = false,
     this.gapsLost = false,
+    this.boardMetaLost = false,
     this.truncatedAt,
   });
 
@@ -36,13 +38,20 @@ class SessionDamage {
   /// blanked. The sample stream itself is intact.
   final bool gapsLost;
 
+  /// The board-metadata column failed to parse: the calibration provenance
+  /// (cal.* fields, constants verdict, calDataInvalid) the session was
+  /// recorded under is lost. The conversion numbers themselves
+  /// ([calibration]) are separate and may be intact.
+  final bool boardMetaLost;
+
   /// Chunk data failed integrity at this sample index (a missing chunk,
   /// a misaligned blob, or disagreement with the metadata's sample count):
   /// samples from here on are shown neither in the view nor in the CSV —
   /// they remain available via the salvage export.
   final int? truncatedAt;
 
-  bool get isEmpty => !calibration && !gapsLost && truncatedAt == null;
+  bool get isEmpty =>
+      !calibration && !gapsLost && !boardMetaLost && truncatedAt == null;
 
   /// The machine-readable codes for the set flags — the CSV `warnings`
   /// metadata field's contract (the UI banner interprets them instead of
@@ -50,6 +59,7 @@ class SessionDamage {
   List<String> get warningCodes => [
     if (calibration) 'session_calibration_damaged',
     if (gapsLost) 'session_gaps_lost',
+    if (boardMetaLost) 'session_board_meta_damaged',
     if (truncatedAt case final t?) 'session_truncated_at_sample:$t',
   ];
 }
@@ -68,6 +78,12 @@ class SessionData implements GraphDataSource {
   /// that channel was recording gross (never tared). A damaged column
   /// floors to all-null at load (see SessionStorage.loadSession).
   final List<double?> tares;
+
+  /// The board-level calibration provenance frozen at record start
+  /// (see [SessionBoardMeta]). Null for sessions recorded with no board
+  /// data resolved, or on a damaged board-meta column (which sets
+  /// [SessionDamage.boardMetaLost] instead).
+  final SessionBoardMeta? boardMeta;
 
   /// Device sample-counter value at the session's first sample (the
   /// dynamite-csv `ssn_origin`), latched by the live writer from the first
@@ -116,6 +132,7 @@ class SessionData implements GraphDataSource {
     required this.tares,
     required this.ssnOrigin,
     this.damage = SessionDamage.none,
+    this.boardMeta,
     GapList? gaps,
   }) : gaps = gaps ?? GapList(),
        mins = List.filled(channels.length, null),

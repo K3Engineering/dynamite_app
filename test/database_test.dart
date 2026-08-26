@@ -23,6 +23,7 @@ void main() {
         visibleChannels: '[]',
         displayUnit: 'kgf',
         deviceInfoJson: '{}',
+        boardMetaJson: null,
         ssnOrigin: 0,
         createdAt: createdAt,
       )
