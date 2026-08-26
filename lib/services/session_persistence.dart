@@ -1,3 +1,4 @@
+import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
 import '../models/display_unit.dart';
 import 'live_session_writer.dart';
@@ -25,6 +26,7 @@ abstract interface class SessionPersistence {
     required List<bool> visibleChannels,
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
+    required SessionBoardMeta? boardMeta,
   });
 
   /// Flush any buffered samples, then record the writer's final sample count

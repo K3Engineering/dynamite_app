@@ -6,6 +6,7 @@ import 'app_events.dart';
 import 'data_hub.dart';
 import 'live_session_writer.dart';
 import 'session_persistence.dart';
+import '../models/board_calibration.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/feed_health.dart';
@@ -89,7 +90,7 @@ class RecordingController extends ChangeNotifier {
     required bool Function() streamingNow,
 
     /// Snapshot of the connected device's identity (the CSV `device` block
-    /// — docs/csv-format-v1.md), frozen onto the session row at start.
+    /// — csv-format-v1.md), frozen onto the session row at start.
     required Map<String, Object?> Function() deviceMetadataSnapshot,
 
     /// Marks a session boundary for packet continuity: the first packet of
@@ -197,6 +198,12 @@ class RecordingController extends ChangeNotifier {
       visibleChannels: visibleChannels,
       displayUnit: displayUnit,
       deviceMetadata: _deviceMetadataSnapshot(),
+      // Freeze the board-level calibration provenance alongside the
+      // per-channel snapshot above; null when no board data resolved.
+      boardMeta: switch (_dataHub.boardCalibration) {
+        final board? => SessionBoardMeta.fromBoard(board),
+        null => null,
+      },
     );
     _sessionName = sessionName;
     _onSessionBoundary();

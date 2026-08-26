@@ -41,6 +41,7 @@ void main() {
       visibleChannels: '[]',
       displayUnit: 'kgf',
       deviceInfoJson: '{}',
+      boardMetaJson: null,
       ssnOrigin: 0,
     );
     await AppDatabase.instance.completeSession(
@@ -97,19 +98,23 @@ void main() {
   ]);
 
   /// Minimal row boilerplate for the integrity tests below.
-  Future<int> makeRow({String tares = '[0,0,0,0]', String? calibrationJson}) =>
-      AppDatabase.instance.createSession(
-        name: 'Integrity session',
-        sampleRate: 1000,
-        channelCount: 4,
-        channelLabels: '[]',
-        tares: tares,
-        calibrationJson: calibrationJson ?? validCalibrationJson,
-        visibleChannels: '[]',
-        displayUnit: 'kgf',
-        deviceInfoJson: '{}',
-        ssnOrigin: 0,
-      );
+  Future<int> makeRow({
+    String tares = '[0,0,0,0]',
+    String? calibrationJson,
+    String? boardMetaJson,
+  }) => AppDatabase.instance.createSession(
+    name: 'Integrity session',
+    sampleRate: 1000,
+    channelCount: 4,
+    channelLabels: '[]',
+    tares: tares,
+    calibrationJson: calibrationJson ?? validCalibrationJson,
+    visibleChannels: '[]',
+    displayUnit: 'kgf',
+    deviceInfoJson: '{}',
+    boardMetaJson: boardMetaJson,
+    ssnOrigin: 0,
+  );
 
   Future<void> pumpDetail(WidgetTester tester, int sessionId) async {
     final session = (await sessionSummaryById(sessionId))!;
@@ -228,6 +233,39 @@ void main() {
     expect(find.text(salvageExportLabel), findsOneWidget);
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
+
+    await unmount(tester);
+  });
+
+  testWidgets('a damaged board-meta column flags the banner but keeps the '
+      'conversion floors off it', (tester) async {
+    // Present-but-malformed provenance block: the strict parse flags it.
+    final sessionId = await makeRow(boardMetaJson: '{}');
+    const codec = SessionChunkCodec(4);
+    await AppDatabase.instance.insertChunk(
+      sessionId,
+      0,
+      codec.pack(2, (s, ch) => s),
+    );
+    await AppDatabase.instance.completeSession(
+      sessionId,
+      sampleCount: 2,
+      durationMs: 2,
+    );
+
+    await pumpDetail(tester, sessionId);
+
+    expect(find.text('Session data damaged'), findsOneWidget);
+    expect(
+      find.text(
+        'Calibration provenance lost — which calibration this session was '
+        'recorded under is unknown; conversions are unaffected.',
+      ),
+      findsOneWidget,
+    );
+    // The sample view itself is intact: no raw-only or truncation floors.
+    expect(find.text('Calibration unknown — raw counts only.'), findsNothing);
+    expect(find.textContaining('Data truncated'), findsNothing);
 
     await unmount(tester);
   });

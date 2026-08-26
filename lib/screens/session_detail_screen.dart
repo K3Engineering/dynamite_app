@@ -387,7 +387,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         if (unit == null) return null;
         final artifact = buildSessionCsvArtifact(
           sessionName: session.name,
-          recordedAt: session.createdAt,
+          recordedAtIso: session.recordedAt,
           deviceInfoJson: session.deviceInfoJson,
           data: data,
           unit: unit,
@@ -410,7 +410,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         if (unit == null) return null;
         final artifact = buildSessionCsvArtifact(
           sessionName: session.name,
-          recordedAt: session.createdAt,
+          recordedAtIso: session.recordedAt,
           deviceInfoJson: session.deviceInfoJson,
           data: data,
           unit: unit,
@@ -444,7 +444,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   static DisplayUnit _recordedUnit(SessionSummary session) =>
       DisplayUnit.fromName(session.displayUnit);
 
-  /// Ask the user for the export's converted unit (docs/csv-format-v1.md:
+  /// Ask the user for the export's converted unit (csv-format-v1.md:
   /// one file, one unit, chosen by the user), preselected to [initial].
   /// Returns null when cancelled — the caller stays silent then. A damaged
   /// session is exported knowingly: the dialog names the damage and its
@@ -623,6 +623,9 @@ class _DamageBanner extends StatelessWidget {
     if (damage.calibration) 'Calibration unknown — raw counts only.',
     if (damage.gapsLost)
       'Dropout positions unknown — some samples may be repeated held values.',
+    if (damage.boardMetaLost)
+      'Calibration provenance lost — which calibration this session was '
+          'recorded under is unknown; conversions are unaffected.',
     if (damage.truncatedAt case final t?)
       'Data truncated at sample ${formatThousands(t)} (${_elapsedAt(t)} of '
           'recording) — later storage failed integrity checks and is '

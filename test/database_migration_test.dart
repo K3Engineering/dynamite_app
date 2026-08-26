@@ -43,6 +43,7 @@ void main() {
       visibleChannels: '[]',
       displayUnit: 'kgf',
       deviceInfoJson: '{}',
+      boardMetaJson: null,
       ssnOrigin: 0,
     );
     // Match the live writer's chunk size (~1 s of samples, 16 KiB).

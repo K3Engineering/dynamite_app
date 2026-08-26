@@ -746,6 +746,155 @@ class BoardCalibration {
   }
 }
 
+/// The board-level calibration facts a recorded session freezes next to its
+/// per-channel snapshot. [ChannelBoardCalibration.toJson] already carries the
+/// operative numbers (r/raw/n); this block carries what those numbers WERE —
+/// which calibration produced them (the `cal.*` provenance document) and
+/// under what board state (the constants verdict, [BoardCalibration.calDataInvalid]) —
+/// so a session recorded on a board with corrupt calibration flash reads
+/// differently from one recorded on a genuinely uncalibrated board.
+class SessionBoardMeta {
+  const SessionBoardMeta({
+    this.factoryDate,
+    this.calBoardId,
+    this.calTool,
+    this.calOrigin,
+    this.calTempsC,
+    this.calAdcGains,
+    required this.calDataInvalid,
+    required this.constantsStatus,
+    required this.constantsDetail,
+    required this.provenance,
+  });
+
+  /// Snapshot of a live [BoardCalibration]'s board-level state.
+  factory SessionBoardMeta.fromBoard(BoardCalibration board) =>
+      SessionBoardMeta(
+        factoryDate: board.factoryDate,
+        calBoardId: board.calBoardId,
+        calTool: board.calTool,
+        calOrigin: board.calOrigin,
+        calTempsC: board.calTempsC,
+        calAdcGains: board.calAdcGains,
+        calDataInvalid: board.calDataInvalid,
+        constantsStatus: board.constantsStatus,
+        constantsDetail: board.constantsDetail,
+        provenance: board.nominals?.provenance ?? const {},
+      );
+
+  /// See [BoardCalibration.factoryDate].
+  final String? factoryDate;
+
+  /// See [BoardCalibration.calBoardId].
+  final String? calBoardId;
+
+  /// See [BoardCalibration.calTool].
+  final String? calTool;
+
+  /// See [BoardCalibration.calOrigin].
+  final String? calOrigin;
+
+  /// See [BoardCalibration.calTempsC].
+  final ({double dut, double calBoard})? calTempsC;
+
+  /// See [BoardCalibration.calAdcGains].
+  final List<double>? calAdcGains;
+
+  /// See [BoardCalibration.calDataInvalid].
+  final bool calDataInvalid;
+
+  /// See [BoardCalibration.constantsStatus].
+  final BoardDataStatus constantsStatus;
+
+  /// See [BoardCalibration.constantsDetail].
+  final String constantsDetail;
+
+  /// The flash-value provenance tags (`adc_fsr` -> `nominal`, ...); see
+  /// [BoardNominals.provenance]. Empty when the constants never resolved.
+  final Map<String, String> provenance;
+
+  Map<String, dynamic> toJson() {
+    final temps = calTempsC;
+    return {
+      'cal_date': ?factoryDate,
+      'cal_board': ?calBoardId,
+      'cal_tool': ?calTool,
+      'cal_origin': ?calOrigin,
+      'cal_temp': ?(temps == null ? null : [temps.dut, temps.calBoard]),
+      'cal_adc': ?calAdcGains,
+      'cal_data_invalid': calDataInvalid,
+      'constants_status': constantsStatus.name,
+      'constants_detail': constantsDetail,
+      'provenance': provenance,
+    };
+  }
+
+  /// Strict inverse of [toJson]: absent optional keys are legal (`null`
+  /// flash fields stay null), but present-but-malformed data throws
+  /// [FormatException] — the caller decides the damage policy (see
+  /// SessionStorage.loadSession). Unknown keys are ignored.
+  factory SessionBoardMeta.fromJson(Map<String, dynamic> json) {
+    String? str(String key) {
+      final v = json[key];
+      if (v == null) return null;
+      if (v is! String || v.isEmpty) {
+        throw FormatException('board meta: bad $key: $v');
+      }
+      return v;
+    }
+
+    List<double>? numList(String key, int count) {
+      final v = json[key];
+      if (v == null) return null;
+      if (v is! List || v.length != count) {
+        throw FormatException('board meta: bad $key list');
+      }
+      return [
+        for (final e in v)
+          e is num && e.toDouble().isFinite
+              ? e.toDouble()
+              : throw FormatException('board meta: bad $key entry'),
+      ];
+    }
+
+    final statusName = json['constants_status'];
+    final status = statusName is String
+        ? BoardDataStatus.values.asNameMap()[statusName]
+        : null;
+    if (status == null) {
+      throw FormatException('board meta: bad constants_status: $statusName');
+    }
+    final detail = json['constants_detail'];
+    if (detail is! String) {
+      throw FormatException('board meta: bad constants_detail: $detail');
+    }
+    final invalid = json['cal_data_invalid'];
+    if (invalid is! bool) {
+      throw FormatException('board meta: bad cal_data_invalid: $invalid');
+    }
+    final prov = json['provenance'];
+    if (prov is! Map || prov.values.any((v) => v is! String)) {
+      throw const FormatException('board meta: bad provenance');
+    }
+    final temps = numList('cal_temp', 2);
+    return SessionBoardMeta(
+      factoryDate: str('cal_date'),
+      calBoardId: str('cal_board'),
+      calTool: str('cal_tool'),
+      calOrigin: str('cal_origin'),
+      calTempsC: temps == null ? null : (dut: temps[0], calBoard: temps[1]),
+      calAdcGains: numList('cal_adc', kAdcChannelCount),
+      calDataInvalid: invalid,
+      constantsStatus: status,
+      constantsDetail: detail,
+      provenance: {
+        for (final MapEntry(key: k, value: v) in prov.entries)
+          k as String: v as String,
+      },
+    );
+  }
+}
+
 /// Split a `key=value` flash document into a map. Lines without `key=value`
 /// shape (version token, END marker, comments) are ignored, so the format
 /// can grow; values may contain `=` (split happens at the first one). The

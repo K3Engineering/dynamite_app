@@ -1,5 +1,5 @@
 /// CSV export of a recorded session: building the dynamite-csv file
-/// (docs/csv-format-v1.md) as a deliverable artifact. Handing the file to
+/// (csv-format-v1.md) as a deliverable artifact. Handing the file to
 /// the OS (save-as dialog, share sheet) is the caller's composition with
 /// export_delivery.dart — this module never touches platform UI.
 library;
@@ -17,7 +17,7 @@ import 'session_data.dart';
 import 'session_metadata.dart';
 
 /// The dynamite-csv file format's view of a display unit
-/// (docs/csv-format-v1.md): the header/metadata symbol and the per-column
+/// (csv-format-v1.md): the header/metadata symbol and the per-column
 /// fixed-point precision. Kept here, not on the enum — the file format is
 /// this service's concern.
 extension DisplayUnitCsv on DisplayUnit {
@@ -49,12 +49,12 @@ extension DisplayUnitCsv on DisplayUnit {
 /// The session's recorded [data] as a deliverable CSV artifact: the file
 /// bytes, its sanitized name, and its MIME type. [unit] is the file's
 /// converted unit (the user's pick in the export flow — see
-/// docs/csv-format-v1.md). [sessionName]/[recordedAt]/[deviceInfoJson] are
+/// csv-format-v1C.md). [sessionName]/[recordedAtIso]/[deviceInfoJson] are
 /// the session row's fields, passed flat so the export API doesn't take the
 /// drift row type. Delivery is the caller's job (export_delivery.dart).
 ({Uint8List bytes, String fileName, String mimeType}) buildSessionCsvArtifact({
   required String sessionName,
-  required DateTime recordedAt,
+  required String recordedAtIso,
   required String deviceInfoJson,
   required SessionData data,
   required DisplayUnit unit,
@@ -63,7 +63,7 @@ extension DisplayUnitCsv on DisplayUnit {
   final csv = buildSessionCsv(
     data,
     unit,
-    recordedAt: recordedAt,
+    recordedAtIso: recordedAtIso,
     generator: appMeta.generator,
     deviceInfoJson: deviceInfoJson,
   );
@@ -74,12 +74,13 @@ extension DisplayUnitCsv on DisplayUnit {
   );
 }
 
-/// Build the session's CSV in the dynamite-csv v1 format
-/// (docs/csv-format-v1.md): a `# dynamite-csv 1` magic line, a one-line
+/// Build the session's CSV in the dynamite-csv v1 format, v1C framing
+/// (csv-format-v1C.md): a `# dynamite-csv 1` magic line, a one-line
 /// metadata JSON carrying everything needed to reproduce the converted
 /// columns (frozen recording-time calibration, tares, sample rate, ssn
-/// origin, device identity), then the grid of raw + converted columns
-/// (`ssn, ch0..chN-1, ch0_<unit>..chN-1_<unit>`).
+/// origin, device identity + board-cal provenance), the same object
+/// re-rendered as glanceable YAML comment lines, then the grid of raw +
+/// converted columns (`ssn, ch0..chN-1, ch0_<unit>..chN-1_<unit>`).
 ///
 /// [unit] is the file's single converted unit (quartet 2), chosen by the
 /// user in the export flow; a channel that can't reach it (a force unit
@@ -88,9 +89,12 @@ extension DisplayUnitCsv on DisplayUnit {
 /// fixed-point with per-column precision ([DisplayUnit.exportDecimalsFor]);
 /// conventions are `\n` endings, no BOM, dot decimals — see the spec.
 ///
-/// [deviceInfoJson] is the session row's frozen `device` block (see
-/// [toSessionDeviceMetadata]); null or malformed degrades to all-null
-/// placeholders rather than failing the export.
+/// [recordedAtIso] is the session row's frozen `recorded_at` string (the
+/// local wall clock with offset); `recorded_unix` is derived from it here,
+/// so the two fields can never disagree. [deviceInfoJson] is the session
+/// row's frozen device-identity block (see [toSessionDeviceMetadata]);
+/// null or malformed degrades to all-null placeholders rather than failing
+/// the export.
 ///
 /// TODO(perf): the whole CSV is built in memory as one string — the format
 /// milestone will replace this with a chunked writer (see
@@ -98,7 +102,7 @@ extension DisplayUnitCsv on DisplayUnit {
 String buildSessionCsv(
   SessionData data,
   DisplayUnit unit, {
-  required DateTime recordedAt,
+  required String recordedAtIso,
   required String generator,
   String? deviceInfoJson,
 }) {
@@ -123,11 +127,23 @@ String buildSessionCsv(
       blankConverted ? null : _columnFormatter(unit, data.converterFor(ch)),
   ];
 
+  final metadata = _metadata(
+    data,
+    unit,
+    ssnOrigin,
+    recordedAtIso,
+    generator,
+    device,
+    n,
+  );
   final buf = StringBuffer()
     ..writeln('# dynamite-csv 1')
-    ..writeln(
-      '# ${jsonEncode(_metadata(data, unit, ssnOrigin, recordedAt, generator, device))}',
-    );
+    ..writeln('# ${jsonEncode(metadata)}');
+  // The human-glanceable rendering of the same object (csv-format-v1C.md
+  // §The two renderings): line 2 stays the only machine form.
+  for (final line in yamlLinesForCsvMetadata(metadata)) {
+    buf.writeln('# $line');
+  }
 
   // Header: ssn, then the raw quartet, then the converted quartet. Header
   // cells only ever contain [A-Za-z0-9_/], so no quoting is ever needed.
@@ -176,23 +192,28 @@ String Function(int raw)? _columnFormatter(
   return (raw) => convert(raw.toDouble()).toStringAsFixed(decimals);
 }
 
-/// The metadata line's JSON object (docs/csv-format-v1.md): one compact
-/// object, all top-level fields required in v1, nullable subfields emitted
-/// as null. Map order here is the emission order (and matches the spec).
+/// The metadata line's JSON object (csv-format-v1C.md §Metadata schema):
+/// one compact object, all top-level fields required in v1, nullable
+/// subfields emitted as null. Map order here is the emission order (and
+/// matches the spec).
 Map<String, Object?> _metadata(
   SessionData data,
   DisplayUnit unit,
   int ssnOrigin,
-  DateTime recordedAt,
+  String recordedAtIso,
   String generator,
   Map<String, Object?> device,
+  int n,
 ) {
-  final int n = data.channels.length;
   return {
     'format': 'dynamite-csv',
     'version': 1,
     'generator': generator,
-    'recorded_at': recordedAt.toUtc().toIso8601String(),
+    // The human-glanceable timestamp; machines use recorded_unix, which is
+    // derived from the stored string here so the two cannot disagree.
+    'recorded_at': recordedAtIso,
+    'recorded_unix':
+        DateTime.parse(recordedAtIso).millisecondsSinceEpoch ~/ 1000,
     'sample_rate_hz': data.sampleRate,
     'ssn_origin': ssnOrigin,
     'converted_unit': unit.csvSymbol,
@@ -202,31 +223,107 @@ Map<String, Object?> _metadata(
     // absent on healthy sessions.
     if (data.damage.warningCodes.isNotEmpty)
       'warnings': data.damage.warningCodes,
-    // Frozen at recording start (the session row's deviceInfoJson); a session
-    // without identity (web-recorded serial, unreadable DIS) carries the
-    // corresponding nulls.
-    'device': device,
-    // Descriptive traceability (the hardware configuration in effect); the
-    // operative transfer function is each channel's board_cal. Nulls when
-    // the board's constants never resolved (raw-only session).
-    'afe': {
-      'adc_ref_v': data.calibrationFor(0).board.nominals?.adcFsrV,
-      'front_end_gain': data.calibrationFor(0).board.nominals?.afeGain,
-      'adc_gain': [
-        for (int ch = 0; ch < n; ch++)
-          data.calibrationFor(ch).board.nominals?.pgaGain,
-      ],
-      // The excitation the mV columns are scaled by (the mV anchor):
-      // nominal until flash carries a characterized value — reproducing an
-      // mV column outside the app needs exactly this number, and it lives
-      // nowhere else in the file for a session without board_cal.
-      'excitation_v': data.calibrationFor(0).board.displayExcitationV,
+    // The recording apparatus (frozen at recording start): identity from
+    // the session row's deviceInfoJson (nulls for a session without
+    // identity — web-recorded serial, unreadable DIS), the electrical
+    // configuration in effect, and the board calibration's provenance.
+    // Both afe and cal are descriptive traceability; the operative
+    // transfer function is each channel's board_cal.
+    'device': {
+      ...device,
+      'afe': {
+        'adc_ref_v': data.calibrationFor(0).board.nominals?.adcFsrV,
+        'front_end_gain': data.calibrationFor(0).board.nominals?.afeGain,
+        'adc_gain': [
+          for (int ch = 0; ch < n; ch++)
+            data.calibrationFor(ch).board.nominals?.pgaGain,
+        ],
+        // The excitation the mV columns are scaled by (the mV anchor):
+        // nominal until flash carries a characterized value — reproducing
+        // an mV column outside the app needs exactly this number, and it
+        // lives nowhere else in the file for a session without board_cal.
+        'excitation_v': data.calibrationFor(0).board.displayExcitationV,
+      },
+      // Board-cal provenance (SessionBoardMeta.toJson): the cal.* document,
+      // the board-state verdicts (cal_data_invalid, constants status), and
+      // the per-constant provenance tags. Null for a session recorded with
+      // no board data resolved (or whose board-meta column was lost).
+      'cal': data.boardMeta?.toJson(),
     },
     'channels': [
       for (int ch = 0; ch < n; ch++)
         _channelMetadata(data.calibrationFor(ch), data.tares[ch]),
     ],
   };
+}
+
+/// The canonical YAML rendering of the metadata object (csv-format-v1C.md
+/// §The two renderings): a deterministic function of the JSON object's
+/// emission order and values — derived documentation, re-derivable from
+/// line 2 by a validator without parsing YAML. The closed schema (maps,
+/// strings, numbers, booleans, null, scalar flow sequences, sequences of
+/// mappings) is a complete emitter; anything outside it throws.
+List<String> yamlLinesForCsvMetadata(Map<String, Object?> metadata) => [
+  for (final MapEntry(:key, :value) in metadata.entries)
+    ..._yamlEntry(key, value, 0),
+];
+
+List<String> _yamlEntry(String key, Object? value, int indent) {
+  final pad = ' ' * indent;
+  if (value is Map) {
+    if (value.isEmpty) return ['$pad$key: {}'];
+    return [
+      '$pad$key:',
+      for (final MapEntry(:key, :value) in value.entries)
+        ..._yamlEntry(key as String, value, indent + 2),
+    ];
+  }
+  if (value is List) {
+    if (value.isEmpty) return ['$pad$key: []'];
+    if (value.every((e) => e is! Map)) {
+      return ['$pad$key: [${value.map(_yamlScalar).join(', ')}]'];
+    }
+    return [
+      '$pad$key:',
+      for (final item in value)
+        ..._yamlSequenceMapping(item as Map, indent + 2),
+    ];
+  }
+  return ['$pad$key: ${_yamlScalar(value)}'];
+}
+
+/// One `- ` item of a mapping sequence: the indicator sits at the parent's
+/// child indent, the first key rides its line, subsequent keys align under
+/// it (children nest another two).
+List<String> _yamlSequenceMapping(Map<dynamic, dynamic> mapping, int indent) {
+  if (mapping.isEmpty) {
+    throw ArgumentError('empty mapping in a YAML sequence');
+  }
+  final pad = ' ' * indent;
+  final lines = <String>[];
+  var first = true;
+  for (final MapEntry(:key, :value) in mapping.entries) {
+    final sub = _yamlEntry(key as String, value, indent + 2);
+    if (first) {
+      lines.add('$pad- ${sub.first.trimLeft()}');
+      lines.addAll(sub.skip(1));
+      first = false;
+    } else {
+      lines.addAll(sub);
+    }
+  }
+  return lines;
+}
+
+/// Scalar rendering per the canonical rules: strings single-quoted with `'`
+/// doubled; numbers exactly as JSON renders them (fixed-point); booleans and
+/// null as the YAML 1.2 core-schema spellings.
+String _yamlScalar(Object? value) {
+  if (value == null) return 'null';
+  if (value is String) return "'${value.replaceAll("'", "''")}'";
+  if (value is bool) return '$value';
+  if (value is num) return jsonEncode(value);
+  throw ArgumentError('no canonical YAML form for ${value.runtimeType}');
 }
 
 /// One `channels[]` entry: the assigned load cell (null = none), the

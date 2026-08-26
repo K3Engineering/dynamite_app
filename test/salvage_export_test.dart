@@ -10,7 +10,7 @@ import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/salvage_export.dart';
 
 /// Tests for the pure salvage-CSV builder (delivery half is platform code).
-/// Format reference: docs/csv-format-v1.md's salvage appendix.
+/// Format reference: csv-format-v1.md's salvage appendix.
 void main() {
   const int channels = kAdcChannelCount;
   const codec = SessionChunkCodec(channels);
@@ -41,6 +41,7 @@ void main() {
       visibleChannels: '[]',
       displayUnit: 'kgf',
       deviceInfoJson: '{}',
+      boardMetaJson: null,
       ssnOrigin: ssnOrigin,
     );
     final indices = chunkIndices ?? [for (var i = 0; i < chunks.length; i++) i];

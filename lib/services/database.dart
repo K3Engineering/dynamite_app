@@ -2,6 +2,8 @@ import 'package:drift/drift.dart';
 import 'package:drift_flutter/drift_flutter.dart';
 import 'package:flutter/foundation.dart';
 
+import '../utils/format.dart';
+
 part 'database.g.dart';
 
 /// Table for recorded measurement sessions.
@@ -40,7 +42,7 @@ class Sessions extends Table {
   TextColumn get visibleChannels => text()();
 
   /// Device sample-counter value at the session's first sample (the
-  /// dynamite-csv `ssn_origin` — docs/csv-format-v1.md). Non-nullable: a
+  /// dynamite-csv `ssn_origin` — csv-format-v1.md). Non-nullable: a
   /// session row only ever exists alongside its first chunk (see
   /// [AppDatabase.createSessionWithFirstChunk]), and the writer knows the
   /// origin by the time that row is created.
@@ -48,14 +50,30 @@ class Sessions extends Table {
 
   /// The app's display unit at recording start (a `DisplayUnit.name`),
   /// frozen as the CSV export's default converted unit — the
-  /// recording-time snapshot requirement of docs/csv-format-v1.md.
+  /// recording-time snapshot requirement of csv-format-v1.md.
   TextColumn get displayUnit => text()();
 
   /// The connected device's identity at recording start (BLE name + the DIS
   /// strings), as the JSON-encoded dynamite-csv `device` metadata block —
   /// see `toCsvDeviceMetadata` in csv_export.dart. Frozen so export never
-  /// consults live device state (docs/csv-format-v1.md).
+  /// consults live device state (csv-format-v1.md).
   TextColumn get deviceInfoJson => text()();
+
+  /// The board-level calibration metadata at recording start (cal.*
+  /// provenance, the constants verdict, calDataInvalid — see
+  /// `SessionBoardMeta` in board_calibration.dart), as a JSON block.
+  /// Nullable: a session recorded with no board data resolved carries NULL.
+  /// The per-channel operative numbers ride in [calibrationJson]; this block
+  /// is their provenance, parsed strictly at load (a malformed block flags
+  /// SessionDamage, unlike the display-only [deviceInfoJson]).
+  TextColumn get boardMetaJson => text().nullable()();
+
+  /// The dynamite-csv `recorded_at` string (csv-format-v1C.md): the local
+  /// wall clock at recording start with its zone offset, frozen as the
+  /// CSV's human-glanceable timestamp. The machine form (`recorded_unix`)
+  /// derives from [createdAt] at export; the offset is NOT derivable after
+  /// the fact, so the rendered string is stored verbatim.
+  TextColumn get recordedAt => text()();
 }
 
 /// The [Sessions]-row metadata snapshotted at recording start, frozen for
@@ -72,6 +90,8 @@ typedef SessionHeader = ({
   String visibleChannels,
   String displayUnit,
   String deviceInfoJson,
+  String? boardMetaJson,
+  String recordedAt,
 });
 
 class SessionChunks extends Table {
@@ -122,7 +142,7 @@ class AppDatabase extends _$AppDatabase {
   }
 
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 15;
 
   /// DEV ONLY: any schema version bump wipes the database and recreates it
   /// from scratch. No user data is migrated. Replace with real per-version
@@ -181,14 +201,17 @@ class AppDatabase extends _$AppDatabase {
     required String visibleChannels,
     required String displayUnit,
     required String deviceInfoJson,
+    required String? boardMetaJson,
     required int ssnOrigin,
     String gaps = '[]',
     DateTime? createdAt,
+    String? recordedAt,
   }) {
+    final created = createdAt ?? DateTime.now();
     return into(sessions).insert(
       SessionsCompanion.insert(
         name: Value(name),
-        createdAt: createdAt ?? DateTime.now(),
+        createdAt: created,
         sampleRate: sampleRate,
         channelCount: channelCount,
         channelLabels: channelLabels,
@@ -199,6 +222,8 @@ class AppDatabase extends _$AppDatabase {
         visibleChannels: visibleChannels,
         displayUnit: displayUnit,
         deviceInfoJson: deviceInfoJson,
+        boardMetaJson: Value(boardMetaJson),
+        recordedAt: recordedAt ?? iso8601WithOffset(created),
         ssnOrigin: ssnOrigin,
       ),
     );
@@ -227,6 +252,8 @@ class AppDatabase extends _$AppDatabase {
         visibleChannels: header.visibleChannels,
         displayUnit: header.displayUnit,
         deviceInfoJson: header.deviceInfoJson,
+        boardMetaJson: header.boardMetaJson,
+        recordedAt: header.recordedAt,
         ssnOrigin: ssnOrigin,
         gaps: gaps,
       );

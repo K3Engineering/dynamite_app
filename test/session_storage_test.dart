@@ -56,6 +56,10 @@ void main() {
       visibleChannels: const [true, true, true, true],
       displayUnit: DisplayUnit.kgf,
       deviceMetadata: const {},
+      boardMeta: switch (hub.boardCalibration) {
+        final board? => SessionBoardMeta.fromBoard(board),
+        null => null,
+      },
     );
   }
 
@@ -71,6 +75,8 @@ void main() {
     visibleChannels: '[]',
     displayUnit: 'kgf',
     deviceInfoJson: '{}',
+    boardMetaJson: null,
+    recordedAt: '2026-07-29T14:05:32.000Z',
   );
 
   group('SessionData.maxs', () {
@@ -292,6 +298,64 @@ void main() {
       final loaded = (await SessionStorage.loadSession(row.id))!;
       expect(loaded.ssnOrigin, 41230);
     });
+
+    test('the board meta is frozen at start and loads back with the '
+        'session', () async {
+      final hub = DataHub();
+      hub.updateBoardCalibration(
+        BoardCalibration(
+          channels: [
+            for (int ch = 0; ch < channels; ch++)
+              ChannelBoardCalibration(
+                nominals: const ChannelNominals(
+                  adcFsrV: 1.2,
+                  afeGain: 101,
+                  pgaGain: 2,
+                  excitationV: 4.53,
+                ),
+              ),
+          ],
+          factoryDate: '2026-01-15',
+          calTool: 'calibrate.py v3',
+          nominals: BoardNominals(
+            adcFsrV: 1.2,
+            afeGain: 101,
+            excitationV: 4.53,
+            pgaGains: const [2, 2, 2, 2],
+            provenance: const {'exc': 'nominal'},
+          ),
+        ),
+      );
+      final frame = Int32List(channels);
+      hub.notePacketCounter(0);
+      for (int i = 0; i < 1100; i++) {
+        hub.addSampleFrame(frame);
+      }
+      final writer = startFromHub(hub, name: 'meta');
+
+      // No board-meta column before the row exists (no row without data).
+      expect(await AppDatabase.instance.incompleteSessions(), isEmpty);
+
+      await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
+      await SessionStorage.finalizeSession(writer: writer);
+
+      final row = (await AppDatabase.instance.sessionById(writer.sessionId!))!;
+      expect(row.boardMetaJson, isNotNull);
+      // The CSV recorded_at was frozen at recording start (before this
+      // test's first flush created the row) and parses back to an instant.
+      final startedAt = DateTime.now();
+      final recordedAt = DateTime.parse(row.recordedAt);
+      expect(recordedAt.isAfter(startedAt), isFalse);
+
+      final loaded = (await SessionStorage.loadSession(row.id))!;
+      expect(loaded.damage.isEmpty, isTrue);
+      final meta = loaded.boardMeta!;
+      expect(meta.factoryDate, '2026-01-15');
+      expect(meta.calTool, 'calibrate.py v3');
+      expect(meta.constantsStatus, BoardDataStatus.ok);
+      expect(meta.provenance, {'exc': 'nominal'});
+      expect(meta.calDataInvalid, isFalse);
+    });
   });
 
   /// The chunk table must back the writer's accepted-sample count at
@@ -434,6 +498,7 @@ void main() {
       String gaps = '[]',
       int? sampleCount,
       bool complete = true,
+      String? boardMetaJson,
     }) async {
       final id = await AppDatabase.instance.createSession(
         name: 'integrity',
@@ -445,6 +510,7 @@ void main() {
         visibleChannels: '[true,true,true,true]',
         displayUnit: 'kgf',
         deviceInfoJson: '{}',
+        boardMetaJson: boardMetaJson,
         ssnOrigin: 100,
         gaps: gaps,
       );
@@ -589,6 +655,85 @@ void main() {
         isTrue,
       );
     });
+
+    test(
+      'a NULL board-meta column loads as an absent block, no flag',
+      () async {
+        final id = await makeSessionRow(
+          chunks: [
+            packChunk([
+              [1, 2, 3, 4],
+            ]),
+          ],
+        );
+        final data = (await SessionStorage.loadSession(id))!;
+        expect(data.boardMeta, isNull);
+        expect(data.damage.isEmpty, isTrue);
+      },
+    );
+
+    test('a board-meta column round-trips its frozen provenance', () async {
+      const meta = SessionBoardMeta(
+        factoryDate: '2026-01-15',
+        calBoardId: 'cal-01',
+        calTool: 'calibrate.py v3',
+        calOrigin: 'factory',
+        calTempsC: (dut: 23.1, calBoard: 22.8),
+        calAdcGains: [1, 2, 4, 8],
+        calDataInvalid: true,
+        constantsStatus: BoardDataStatus.invalid,
+        constantsDetail: 'missing afe_gain',
+        provenance: {'exc': 'nominal'},
+      );
+      final id = await makeSessionRow(
+        chunks: [
+          packChunk([
+            [1, 2, 3, 4],
+          ]),
+        ],
+        boardMetaJson: jsonEncode(meta.toJson()),
+      );
+      final data = (await SessionStorage.loadSession(id))!;
+      expect(data.damage.isEmpty, isTrue);
+      final loaded = data.boardMeta!;
+      expect(loaded.factoryDate, '2026-01-15');
+      expect(loaded.calBoardId, 'cal-01');
+      expect(loaded.calTool, 'calibrate.py v3');
+      expect(loaded.calOrigin, 'factory');
+      expect(loaded.calTempsC, (dut: 23.1, calBoard: 22.8));
+      expect(loaded.calAdcGains, [1.0, 2.0, 4.0, 8.0]);
+      expect(loaded.calDataInvalid, isTrue);
+      expect(loaded.constantsStatus, BoardDataStatus.invalid);
+      expect(loaded.constantsDetail, 'missing afe_gain');
+      expect(loaded.provenance, {'exc': 'nominal'});
+    });
+
+    test(
+      'a damaged board-meta column floors to absent and flags the loss',
+      () async {
+        final id = await makeSessionRow(
+          chunks: [
+            packChunk([
+              [1, 2, 3, 4],
+            ]),
+          ],
+          boardMetaJson: '{"constants_status":"bogus"}',
+        );
+        final data = (await SessionStorage.loadSession(id))!;
+        expect(data.boardMeta, isNull);
+        expect(data.damage.boardMetaLost, isTrue);
+        expect(data.damage.isEmpty, isFalse);
+        expect(
+          data.damage.warningCodes,
+          contains('session_board_meta_damaged'),
+        );
+        // The operative calibration is a separate column, still intact.
+        expect(
+          resolveUnitAvailability(data.calibrationFor, [0]).boardHasNominals,
+          isTrue,
+        );
+      },
+    );
 
     test('a missing middle chunk truncates instead of splicing', () async {
       final chunk0 = packChunk([
@@ -777,6 +922,7 @@ void main() {
         visibleChannels: '[true,true,true,true]',
         displayUnit: 'kgf',
         deviceInfoJson: '{}',
+        boardMetaJson: null,
         ssnOrigin: 0,
       );
       await AppDatabase.instance.insertChunk(sessionId, 0, Uint8List(0));

@@ -179,7 +179,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   /// timeline: sample i carries counter
   /// `anchor.counter + (i - anchor.hubIndex)` (past 0xFFFF, i.e. unwrapped).
   /// The recording writer reads this once to latch a session's `ssn_origin`
-  /// (docs/csv-format-v1.md); nothing else consumes it. One nullable record
+  /// (csv-format-v1.md); nothing else consumes it. One nullable record
   /// so the pair can never be half-set or half-reset.
   ({int counter, int hubIndex})? packetAnchor;
 
