@@ -76,6 +76,7 @@ void main() {
     displayUnit: 'kgf',
     deviceInfoJson: '{}',
     boardMetaJson: null,
+    recordedAt: '2026-07-29T14:05:32.000Z',
   );
 
   group('SessionData.maxs', () {
@@ -340,6 +341,11 @@ void main() {
 
       final row = (await AppDatabase.instance.sessionById(writer.sessionId!))!;
       expect(row.boardMetaJson, isNotNull);
+      // The CSV recorded_at was frozen at recording start (before this
+      // test's first flush created the row) and parses back to an instant.
+      final startedAt = DateTime.now();
+      final recordedAt = DateTime.parse(row.recordedAt);
+      expect(recordedAt.isAfter(startedAt), isFalse);
 
       final loaded = (await SessionStorage.loadSession(row.id))!;
       expect(loaded.damage.isEmpty, isTrue);

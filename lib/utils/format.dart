@@ -48,6 +48,27 @@ String formatTimestamp(DateTime dt) {
   return '${formatDate(dt)} $h:$min';
 }
 
+/// ISO 8601 with an explicit zone designator: `...Z` for UTC, the wall clock
+/// with its `±hh:mm` offset for local times. [DateTime.toIso8601String]
+/// leaves local times suffix-less (ambiguous against UTC); [timeZoneOffset]
+/// — the zone offset the OS tz database assigns to this instant, DST included
+/// — supplies the suffix. Frozen into the session row at recording start as
+/// the dynamite-csv `recorded_at` (csv-format-v1C.md).
+String iso8601WithOffset(DateTime value) {
+  if (value.isUtc) return value.toIso8601String();
+  final offset = value.timeZoneOffset;
+  if (offset.inSeconds % 60 != 0) {
+    throw StateError(
+      'unrepresentable zone offset $offset for $value (±hh:mm only)',
+    );
+  }
+  final minutes = offset.inMinutes.abs();
+  final sign = offset.isNegative ? '-' : '+';
+  return '${value.toIso8601String()}$sign'
+      '${(minutes ~/ 60).toString().padLeft(2, '0')}:'
+      '${(minutes % 60).toString().padLeft(2, '0')}';
+}
+
 /// Display title for a session with an empty name (reachable only via
 /// out-of-band DB edits — rename refuses empty input and auto-names are
 /// never empty). One shared string so the list, detail and delete-confirm

@@ -387,7 +387,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         if (unit == null) return null;
         final artifact = buildSessionCsvArtifact(
           sessionName: session.name,
-          recordedAt: session.createdAt,
+          recordedAtIso: session.recordedAt,
           deviceInfoJson: session.deviceInfoJson,
           data: data,
           unit: unit,
@@ -410,7 +410,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         if (unit == null) return null;
         final artifact = buildSessionCsvArtifact(
           sessionName: session.name,
-          recordedAt: session.createdAt,
+          recordedAtIso: session.recordedAt,
           deviceInfoJson: session.deviceInfoJson,
           data: data,
           unit: unit,
@@ -444,7 +444,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   static DisplayUnit _recordedUnit(SessionSummary session) =>
       DisplayUnit.fromName(session.displayUnit);
 
-  /// Ask the user for the export's converted unit (docs/csv-format-v1.md:
+  /// Ask the user for the export's converted unit (csv-format-v1.md:
   /// one file, one unit, chosen by the user), preselected to [initial].
   /// Returns null when cancelled — the caller stays silent then. A damaged
   /// session is exported knowingly: the dialog names the damage and its

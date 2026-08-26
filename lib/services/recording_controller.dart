@@ -90,7 +90,7 @@ class RecordingController extends ChangeNotifier {
     required bool Function() streamingNow,
 
     /// Snapshot of the connected device's identity (the CSV `device` block
-    /// — docs/csv-format-v1.md), frozen onto the session row at start.
+    /// — csv-format-v1.md), frozen onto the session row at start.
     required Map<String, Object?> Function() deviceMetadataSnapshot,
 
     /// Marks a session boundary for packet continuity: the first packet of

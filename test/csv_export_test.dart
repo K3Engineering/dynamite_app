@@ -14,15 +14,18 @@ import 'package:dynamite_app/services/session_data.dart';
 
 /// Tests for the pure CSV-building half of the export path (the plugin
 /// dispatch half is platform code and stays untested). The format reference
-/// is docs/csv-format-v1.md.
+/// is csv-format-v1C.md.
 void main() {
   const int channels = 2;
   const int sampleRate = 1000;
 
   /// Fixed provenance for the metadata line: the app version string is
-  /// injected by the plugin half, the wall clock by the session row.
+  /// injected by the plugin half, the frozen recorded_at string by the
+  /// session row (recorded_unix derives from it at export).
   const generator = 'dynamite-flutter 1.0.0';
-  final recordedAt = DateTime.utc(2026, 7, 29, 14, 5, 32);
+  const recordedAtIso = '2026-07-29T14:05:32.000Z';
+  final recordedUnix =
+      DateTime.parse(recordedAtIso).millisecondsSinceEpoch ~/ 1000;
 
   /// Pro-like test chain, reproducing the app's former compiled constants.
   const testNominals = ChannelNominals(
@@ -46,6 +49,7 @@ void main() {
     GapList? gaps,
     int ssnOrigin = 0,
     SessionDamage damage = SessionDamage.none,
+    SessionBoardMeta? boardMeta,
   }) => SessionData(
     channels: [for (final values in perChannel) Int32List.fromList(values)],
     sampleRate: sampleRate,
@@ -55,10 +59,15 @@ void main() {
     gaps: gaps,
     ssnOrigin: ssnOrigin,
     damage: damage,
+    boardMeta: boardMeta,
   );
 
-  String buildCsv(SessionData data, DisplayUnit unit) =>
-      buildSessionCsv(data, unit, recordedAt: recordedAt, generator: generator);
+  String buildCsv(SessionData data, DisplayUnit unit) => buildSessionCsv(
+    data,
+    unit,
+    recordedAtIso: recordedAtIso,
+    generator: generator,
+  );
 
   /// The metadata line parsed as JSON (line index 1, `# ` prefix stripped).
   Map<String, dynamic> metadataOf(String csv) {
@@ -67,6 +76,12 @@ void main() {
     return jsonDecode(line.substring(2)) as Map<String, dynamic>;
   }
 
+  /// The file's non-comment lines: index 0 is the header row, then one data
+  /// row per sample. This is the v1C consumer contract — data begins at the
+  /// first line not starting with `#`, never at a fixed line number.
+  List<String> bodyOf(String csv) =>
+      csv.trim().split('\n').skipWhile((l) => l.startsWith('#')).toList();
+
   group('buildSessionCsv', () {
     test('emits magic, quartet header, and ssn-keyed data rows', () {
       final data = makeSession([
@@ -74,16 +89,17 @@ void main() {
         [-1, -2, -3],
       ], ssnOrigin: 41230);
 
-      final lines = buildCsv(data, DisplayUnit.kgf).trim().split('\n');
+      final lines = buildCsv(data, DisplayUnit.kgf).split('\n');
+      final body = bodyOf(buildCsv(data, DisplayUnit.kgf));
 
       expect(lines[0], '# dynamite-csv 1');
       expect(lines[1], startsWith('# {'));
-      expect(lines[2], 'ssn,ch0,ch1,ch0_kgf,ch1_kgf');
+      expect(body[0], 'ssn,ch0,ch1,ch0_kgf,ch1_kgf');
       // ssn is an arithmetic progression from ssn_origin; with no load cell
       // assigned, both converted columns are all-blank (the file's '—').
-      expect(lines[3], '41230,10,-1,,');
-      expect(lines[4], '41231,20,-2,,');
-      expect(lines[5], '41232,30,-3,,');
+      expect(body[1], '41230,10,-1,,');
+      expect(body[2], '41231,20,-2,,');
+      expect(body[3], '41232,30,-3,,');
     });
 
     test('metadata line carries the spec schema from the frozen session', () {
@@ -122,6 +138,7 @@ void main() {
         'version': 1,
         'generator': 'dynamite-flutter 1.0.0',
         'recorded_at': '2026-07-29T14:05:32.000Z',
+        'recorded_unix': recordedUnix,
         'sample_rate_hz': 1000,
         'ssn_origin': 41230,
         'converted_unit': 'kgf',
@@ -132,12 +149,13 @@ void main() {
           'hardware_rev': null,
           'firmware': null,
           'manufacturer': null,
-        },
-        'afe': {
-          'adc_ref_v': 1.2,
-          'front_end_gain': 101.0,
-          'adc_gain': [1, 1],
-          'excitation_v': 4.53,
+          'afe': {
+            'adc_ref_v': 1.2,
+            'front_end_gain': 101.0,
+            'adc_gain': [1, 1],
+            'excitation_v': 4.53,
+          },
+          'cal': null,
         },
         'channels': [
           {
@@ -170,7 +188,7 @@ void main() {
         buildSessionCsv(
           data,
           DisplayUnit.kgf,
-          recordedAt: recordedAt,
+          recordedAtIso: recordedAtIso,
           generator: generator,
           deviceInfoJson:
               '{"name":"DS A4CF1208F51E","id":"A4CF1208F51E",'
@@ -187,6 +205,13 @@ void main() {
         'hardware_rev': 'rev B',
         'firmware': 'v700P|v1.2.3',
         'manufacturer': 'K3 Engineering',
+        'afe': {
+          'adc_ref_v': 1.2,
+          'front_end_gain': 101.0,
+          'adc_gain': [1, 1],
+          'excitation_v': 4.53,
+        },
+        'cal': null,
       });
     });
 
@@ -203,7 +228,7 @@ void main() {
           buildSessionCsv(
             data,
             DisplayUnit.kgf,
-            recordedAt: recordedAt,
+            recordedAtIso: recordedAtIso,
             generator: generator,
             deviceInfoJson: json,
           ),
@@ -215,8 +240,67 @@ void main() {
           'hardware_rev': null,
           'firmware': null,
           'manufacturer': null,
+          'afe': {
+            'adc_ref_v': 1.2,
+            'front_end_gain': 101.0,
+            'adc_gain': [1, 1],
+            'excitation_v': 4.53,
+          },
+          'cal': null,
         });
       }
+    });
+
+    test('the board-cal provenance joins the device block as cal', () {
+      const boardMeta = SessionBoardMeta(
+        factoryDate: '2026-06-14',
+        calBoardId: 'CB42 v1.0.3',
+        calTool: 'calibrate v3.1',
+        calOrigin: 'factory',
+        calTempsC: (dut: 23.8, calBoard: 24.1),
+        calAdcGains: [1, 1, 1, 1],
+        calDataInvalid: false,
+        constantsStatus: BoardDataStatus.ok,
+        constantsDetail: '',
+        provenance: {'exc': 'nominal'},
+      );
+      final data = makeSession([
+        [1],
+        [2],
+      ], boardMeta: boardMeta);
+
+      final csv = buildCsv(data, DisplayUnit.kgf);
+      final meta = metadataOf(csv);
+
+      expect((meta['device'] as Map)['cal'], {
+        'cal_date': '2026-06-14',
+        'cal_board': 'CB42 v1.0.3',
+        'cal_tool': 'calibrate v3.1',
+        'cal_origin': 'factory',
+        'cal_temp': [23.8, 24.1],
+        'cal_adc': [1, 1, 1, 1],
+        'cal_data_invalid': false,
+        'constants_status': 'ok',
+        'constants_detail': '',
+        'provenance': {'exc': 'nominal'},
+      });
+      expect(meta.containsKey('warnings'), isFalse);
+      // The human rendering reflects it too (nested one more under device).
+      expect(csv, contains('#   cal:'));
+      expect(csv, contains('#     cal_data_invalid: false'));
+      expect(csv, contains("#       exc: 'nominal'"));
+    });
+
+    test('a lost board meta degrades cal to null and discloses the damage', () {
+      final data = makeSession([
+        [1],
+        [2],
+      ], damage: const SessionDamage(boardMetaLost: true));
+
+      final meta = metadataOf(buildCsv(data, DisplayUnit.kgf));
+
+      expect((meta['device'] as Map)['cal'], isNull);
+      expect(meta['warnings'], contains('session_board_meta_damaged'));
     });
 
     test(
@@ -241,7 +325,7 @@ void main() {
           tares: [100.0, 0.0],
         );
 
-        final lines = buildCsv(data, DisplayUnit.kgf).trim().split('\n');
+        final body = bodyOf(buildCsv(data, DisplayUnit.kgf));
 
         final conv = ChannelConverter(cals[0], 100.0);
         final decimals = DisplayUnit.kgf.exportDecimalsFor(conv)!;
@@ -249,8 +333,8 @@ void main() {
             .netMap(DisplayUnit.kgf)!(raw.toDouble())
             .toStringAsFixed(decimals);
 
-        expect(lines[3], '0,1000,5,${expectedKgf(1000)},');
-        expect(lines[4], '1,2000,6,${expectedKgf(2000)},');
+        expect(body[1], '0,1000,5,${expectedKgf(1000)},');
+        expect(body[2], '1,2000,6,${expectedKgf(2000)},');
       },
     );
 
@@ -273,7 +357,7 @@ void main() {
       );
 
       final csv = buildCsv(data, DisplayUnit.kgf);
-      final lines = csv.trim().split('\n');
+      final body = bodyOf(csv);
       final decimals = DisplayUnit.kgf.exportDecimalsFor(
         ChannelConverter(cals[0], null),
       )!;
@@ -284,7 +368,7 @@ void main() {
 
       // One sample: ch0 nets through its frozen tare, ch1 converts gross.
       expect(
-        lines[3],
+        body[1],
         '0,1000,2000,${expected(1000, 100.0)},'
         '${expected(2000, null)}',
       );
@@ -313,7 +397,7 @@ void main() {
         final calMeta = metadataOf(buildCsv(calDamaged, DisplayUnit.kgf));
         expect(calMeta['warnings'], contains('session_calibration_damaged'));
         expect(
-          buildCsv(calDamaged, DisplayUnit.kgf).trim().split('\n')[3],
+          bodyOf(buildCsv(calDamaged, DisplayUnit.kgf))[1],
           '0,1000,2000,,',
         );
 
@@ -328,11 +412,8 @@ void main() {
         );
         final gapsMeta = metadataOf(buildCsv(gapsLost, DisplayUnit.kgf));
         expect(gapsMeta['warnings'], contains('session_gaps_lost'));
-        final gapsLines = buildCsv(
-          gapsLost,
-          DisplayUnit.kgf,
-        ).trim().split('\n');
-        expect(gapsLines[4].split(',')[1], '20'); // row 1 exports raw values
+        final gapsBody = bodyOf(buildCsv(gapsLost, DisplayUnit.kgf));
+        expect(gapsBody[2].split(',')[1], '20'); // row 1 exports raw values
 
         // Truncation: the code names the cut; data is the session's prefix.
         final truncated = makeSession(
@@ -372,14 +453,14 @@ void main() {
         ssnOrigin: 41230,
       );
 
-      final lines = buildCsv(data, DisplayUnit.mVv).trim().split('\n');
+      final body = bodyOf(buildCsv(data, DisplayUnit.mVv));
 
-      String ssnOf(int row) => lines[3 + row].split(',').first;
+      String ssnOf(int row) => body[1 + row].split(',').first;
       expect(ssnOf(0), '41230');
-      expect(lines[4], '41231,,,,');
+      expect(body[2], '41231,,,,');
       expect(ssnOf(2), '41232');
       // The gap did not consume extra rows: dropped SSNs are the blank rows.
-      expect(lines, hasLength(3 + 3));
+      expect(body, hasLength(1 + 3));
     });
 
     test('mV/V header suffixes keep the slash verbatim', () {
@@ -388,9 +469,9 @@ void main() {
         [2],
       ]);
 
-      final lines = buildCsv(data, DisplayUnit.mVv).trim().split('\n');
+      final body = bodyOf(buildCsv(data, DisplayUnit.mVv));
 
-      expect(lines[2], 'ssn,ch0,ch1,ch0_mV/V,ch1_mV/V');
+      expect(body[0], 'ssn,ch0,ch1,ch0_mV/V,ch1_mV/V');
       expect(
         metadataOf(buildCsv(data, DisplayUnit.mVv))['converted_unit'],
         'mV/V',
@@ -406,10 +487,126 @@ void main() {
         tares: [100.3, 0.0],
       );
 
-      final lines = buildCsv(data, DisplayUnit.raw).trim().split('\n');
+      final body = bodyOf(buildCsv(data, DisplayUnit.raw));
 
-      expect(lines[2], 'ssn,ch0,ch1,ch0_raw,ch1_raw');
-      expect(lines[3], '0,1000,5,899.7,5.0');
+      expect(body[0], 'ssn,ch0,ch1,ch0_raw,ch1_raw');
+      expect(body[1], '0,1000,5,899.7,5.0');
+    });
+  });
+
+  group('YAML comment block (csv-format-v1C §The two renderings)', () {
+    test('renders the closed schema canonically', () {
+      final lines = yamlLinesForCsvMetadata({
+        'str': "John's cell",
+        'num_i': 1,
+        'num_f': 2.007,
+        'truth': true,
+        'lying': false,
+        'absent': null,
+        'flow': [1, 4.53, 'x'],
+        'empty_list': <Object?>[],
+        'empty_map': <String, Object?>{},
+        'mapping': {'x': 1, 'y': null},
+        'sequence': [
+          {
+            'm': 'v1',
+            'n': [4.53],
+            'o': {'p': false},
+          },
+          {'m': null, 'n': <Object?>[], 'o': null},
+        ],
+      });
+
+      expect(lines, [
+        "str: 'John''s cell'",
+        'num_i: 1',
+        'num_f: 2.007',
+        'truth: true',
+        'lying: false',
+        'absent: null',
+        "flow: [1, 4.53, 'x']",
+        'empty_list: []',
+        'empty_map: {}',
+        'mapping:',
+        '  x: 1',
+        '  y: null',
+        'sequence:',
+        "  - m: 'v1'",
+        '    n: [4.53]',
+        '    o:',
+        '      p: false',
+        '  - m: null',
+        '    n: []',
+        '    o: null',
+      ]);
+    });
+
+    test('throws on values outside the closed schema', () {
+      expect(
+        () => yamlLinesForCsvMetadata({
+          'bad': {'when': DateTime.utc(2026)},
+        }),
+        throwsArgumentError,
+      );
+      expect(
+        () => yamlLinesForCsvMetadata({
+          'bad': [<String, Object?>{}],
+        }),
+        throwsArgumentError,
+      );
+    });
+
+    test('the block re-renders byte-identically from line 2 (the validator '
+        'path: re-render and byte-compare without parsing YAML)', () {
+      final cals = [
+        ChannelCalibration(
+          board: ChannelBoardCalibration(
+            resistors: const [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
+            readings: const [
+              6383553.0,
+              3192096.0,
+              120.0,
+              -3191776.0,
+              -6383313.0,
+            ],
+            nominals: testNominals,
+          ),
+          loadCell: LoadCellProfile(
+            name: "John Smith's 100 kg",
+            capacityKg: 100,
+            sensitivityMvV: 2.007,
+          ),
+        ),
+        ChannelCalibration(
+          board: ChannelBoardCalibration(nominals: testNominals),
+        ),
+      ];
+      final data = makeSession(
+        [
+          [1],
+          [2],
+        ],
+        calibrations: cals,
+        boardMeta: const SessionBoardMeta(
+          factoryDate: '2026-06-14',
+          calDataInvalid: false,
+          constantsStatus: BoardDataStatus.ok,
+          constantsDetail: '',
+          provenance: {},
+        ),
+      );
+
+      final csv = buildCsv(data, DisplayUnit.kgf);
+      final lines = csv.trim().split('\n');
+      final commentLines = lines.takeWhile((l) => l.startsWith('#')).toList();
+
+      final reparsed = jsonDecode(commentLines[1].substring(2));
+      final rerendered = yamlLinesForCsvMetadata(
+        reparsed as Map<String, dynamic>,
+      );
+      expect(commentLines.sublist(2), [
+        for (final line in rerendered) '# $line',
+      ]);
     });
   });
 
@@ -420,7 +617,7 @@ void main() {
       loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0),
     );
 
-    // docs/csv-format-v1.md's table: decimals per unit for this setup.
+    // csv-format-v1.md's table: decimals per unit for this setup.
     final expected = {
       DisplayUnit.kgf: 6,
       DisplayUnit.n: 5,

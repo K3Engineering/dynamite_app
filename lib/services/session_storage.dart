@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import '../models/device_profile.dart';
+import '../utils/format.dart';
 import 'database.dart';
 import 'live_session_writer.dart';
 import '../models/board_calibration.dart';
@@ -70,10 +71,13 @@ class SessionStorage {
       ]),
       visibleChannels: jsonEncode(visibleChannels),
       // Frozen as the CSV export's default converted unit
-      // (docs/csv-format-v1.md's recording-time snapshot requirement).
+      // (csv-format-v1.md's recording-time snapshot requirement).
       displayUnit: displayUnit.name,
       deviceInfoJson: jsonEncode(deviceMetadata),
       boardMetaJson: boardMeta == null ? null : jsonEncode(boardMeta.toJson()),
+      // Frozen at recording start, NOT at row creation (which is the first
+      // chunk flush, later): the wall clock the CSV's recorded_at asserts.
+      recordedAt: iso8601WithOffset(DateTime.now()),
     ), sourceRingCapacity: sourceRingCapacity);
   }
 

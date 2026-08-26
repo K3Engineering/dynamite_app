@@ -14,6 +14,7 @@ class SessionSummary {
     required this.sampleRate,
     required this.displayUnit,
     required this.deviceInfoJson,
+    required this.recordedAt,
     required List<String> channelLabels,
     required List<bool> visibleChannels,
   }) : channelLabels = List.unmodifiable(channelLabels),
@@ -33,6 +34,11 @@ class SessionSummary {
   /// The frozen `device` metadata block, as stored JSON (see
   /// `toSessionDeviceMetadata` in session_storage.dart).
   final String deviceInfoJson;
+
+  /// The frozen dynamite-csv `recorded_at` string (local wall clock with
+  /// zone offset) — the export's human timestamp. [createdAt] is the
+  /// internal sort/index instant; this is the artifact field.
+  final String recordedAt;
 
   /// Per-channel titles; 'Ch n' where the stored column had nothing
   /// usable for that index.

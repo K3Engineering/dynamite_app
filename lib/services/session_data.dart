@@ -11,7 +11,7 @@ import '../models/graph_data_source.dart';
 /// time. Each flag maps to exactly one honest floor state (uncalibrated
 /// channels, empty gaps, a truncated sample prefix) and one machine-readable
 /// warning code carried in the CSV metadata's `warnings` field
-/// (docs/csv-format-v1.md). The UI renders a human interpretation of each
+/// (csv-format-v1.md). The UI renders a human interpretation of each
 /// flag, never the code itself.
 ///
 /// A damaged tare column sets no flag: its floor is null (no offset), which

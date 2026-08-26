@@ -49,6 +49,7 @@ SessionSummary sessionSummaryFor(Session row) => SessionSummary(
   sampleRate: row.sampleRate,
   displayUnit: row.displayUnit,
   deviceInfoJson: row.deviceInfoJson,
+  recordedAt: row.recordedAt,
   channelLabels: parseJsonColumn(
     row.channelLabels,
     row.channelCount,

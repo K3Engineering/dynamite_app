@@ -209,6 +209,17 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _recordedAtMeta = const VerificationMeta(
+    'recordedAt',
+  );
+  @override
+  late final GeneratedColumn<String> recordedAt = GeneratedColumn<String>(
+    'recorded_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -229,6 +240,7 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
     displayUnit,
     deviceInfoJson,
     boardMetaJson,
+    recordedAt,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -394,6 +406,14 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         ),
       );
     }
+    if (data.containsKey('recorded_at')) {
+      context.handle(
+        _recordedAtMeta,
+        recordedAt.isAcceptableOrUnknown(data['recorded_at']!, _recordedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_recordedAtMeta);
+    }
     return context;
   }
 
@@ -475,6 +495,10 @@ class $SessionsTable extends Sessions with TableInfo<$SessionsTable, Session> {
         DriftSqlType.string,
         data['${effectivePrefix}board_meta_json'],
       ),
+      recordedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}recorded_at'],
+      )!,
     );
   }
 
@@ -513,7 +537,7 @@ class Session extends DataClass implements Insertable<Session> {
   final String visibleChannels;
 
   /// Device sample-counter value at the session's first sample (the
-  /// dynamite-csv `ssn_origin` — docs/csv-format-v1.md). Non-nullable: a
+  /// dynamite-csv `ssn_origin` — csv-format-v1.md). Non-nullable: a
   /// session row only ever exists alongside its first chunk (see
   /// [AppDatabase.createSessionWithFirstChunk]), and the writer knows the
   /// origin by the time that row is created.
@@ -521,13 +545,13 @@ class Session extends DataClass implements Insertable<Session> {
 
   /// The app's display unit at recording start (a `DisplayUnit.name`),
   /// frozen as the CSV export's default converted unit — the
-  /// recording-time snapshot requirement of docs/csv-format-v1.md.
+  /// recording-time snapshot requirement of csv-format-v1.md.
   final String displayUnit;
 
   /// The connected device's identity at recording start (BLE name + the DIS
   /// strings), as the JSON-encoded dynamite-csv `device` metadata block —
   /// see `toCsvDeviceMetadata` in csv_export.dart. Frozen so export never
-  /// consults live device state (docs/csv-format-v1.md).
+  /// consults live device state (csv-format-v1.md).
   final String deviceInfoJson;
 
   /// The board-level calibration metadata at recording start (cal.*
@@ -538,6 +562,13 @@ class Session extends DataClass implements Insertable<Session> {
   /// is their provenance, parsed strictly at load (a malformed block flags
   /// SessionDamage, unlike the display-only [deviceInfoJson]).
   final String? boardMetaJson;
+
+  /// The dynamite-csv `recorded_at` string (csv-format-v1C.md): the local
+  /// wall clock at recording start with its zone offset, frozen as the
+  /// CSV's human-glanceable timestamp. The machine form (`recorded_unix`)
+  /// derives from [createdAt] at export; the offset is NOT derivable after
+  /// the fact, so the rendered string is stored verbatim.
+  final String recordedAt;
   const Session({
     required this.id,
     required this.name,
@@ -557,6 +588,7 @@ class Session extends DataClass implements Insertable<Session> {
     required this.displayUnit,
     required this.deviceInfoJson,
     this.boardMetaJson,
+    required this.recordedAt,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -581,6 +613,7 @@ class Session extends DataClass implements Insertable<Session> {
     if (!nullToAbsent || boardMetaJson != null) {
       map['board_meta_json'] = Variable<String>(boardMetaJson);
     }
+    map['recorded_at'] = Variable<String>(recordedAt);
     return map;
   }
 
@@ -606,6 +639,7 @@ class Session extends DataClass implements Insertable<Session> {
       boardMetaJson: boardMetaJson == null && nullToAbsent
           ? const Value.absent()
           : Value(boardMetaJson),
+      recordedAt: Value(recordedAt),
     );
   }
 
@@ -633,6 +667,7 @@ class Session extends DataClass implements Insertable<Session> {
       displayUnit: serializer.fromJson<String>(json['displayUnit']),
       deviceInfoJson: serializer.fromJson<String>(json['deviceInfoJson']),
       boardMetaJson: serializer.fromJson<String?>(json['boardMetaJson']),
+      recordedAt: serializer.fromJson<String>(json['recordedAt']),
     );
   }
   @override
@@ -657,6 +692,7 @@ class Session extends DataClass implements Insertable<Session> {
       'displayUnit': serializer.toJson<String>(displayUnit),
       'deviceInfoJson': serializer.toJson<String>(deviceInfoJson),
       'boardMetaJson': serializer.toJson<String?>(boardMetaJson),
+      'recordedAt': serializer.toJson<String>(recordedAt),
     };
   }
 
@@ -679,6 +715,7 @@ class Session extends DataClass implements Insertable<Session> {
     String? displayUnit,
     String? deviceInfoJson,
     Value<String?> boardMetaJson = const Value.absent(),
+    String? recordedAt,
   }) => Session(
     id: id ?? this.id,
     name: name ?? this.name,
@@ -700,6 +737,7 @@ class Session extends DataClass implements Insertable<Session> {
     boardMetaJson: boardMetaJson.present
         ? boardMetaJson.value
         : this.boardMetaJson,
+    recordedAt: recordedAt ?? this.recordedAt,
   );
   Session copyWithCompanion(SessionsCompanion data) {
     return Session(
@@ -743,6 +781,9 @@ class Session extends DataClass implements Insertable<Session> {
       boardMetaJson: data.boardMetaJson.present
           ? data.boardMetaJson.value
           : this.boardMetaJson,
+      recordedAt: data.recordedAt.present
+          ? data.recordedAt.value
+          : this.recordedAt,
     );
   }
 
@@ -766,7 +807,8 @@ class Session extends DataClass implements Insertable<Session> {
           ..write('ssnOrigin: $ssnOrigin, ')
           ..write('displayUnit: $displayUnit, ')
           ..write('deviceInfoJson: $deviceInfoJson, ')
-          ..write('boardMetaJson: $boardMetaJson')
+          ..write('boardMetaJson: $boardMetaJson, ')
+          ..write('recordedAt: $recordedAt')
           ..write(')'))
         .toString();
   }
@@ -791,6 +833,7 @@ class Session extends DataClass implements Insertable<Session> {
     displayUnit,
     deviceInfoJson,
     boardMetaJson,
+    recordedAt,
   );
   @override
   bool operator ==(Object other) =>
@@ -813,7 +856,8 @@ class Session extends DataClass implements Insertable<Session> {
           other.ssnOrigin == this.ssnOrigin &&
           other.displayUnit == this.displayUnit &&
           other.deviceInfoJson == this.deviceInfoJson &&
-          other.boardMetaJson == this.boardMetaJson);
+          other.boardMetaJson == this.boardMetaJson &&
+          other.recordedAt == this.recordedAt);
 }
 
 class SessionsCompanion extends UpdateCompanion<Session> {
@@ -835,6 +879,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
   final Value<String> displayUnit;
   final Value<String> deviceInfoJson;
   final Value<String?> boardMetaJson;
+  final Value<String> recordedAt;
   const SessionsCompanion({
     this.id = const Value.absent(),
     this.name = const Value.absent(),
@@ -854,6 +899,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     this.displayUnit = const Value.absent(),
     this.deviceInfoJson = const Value.absent(),
     this.boardMetaJson = const Value.absent(),
+    this.recordedAt = const Value.absent(),
   });
   SessionsCompanion.insert({
     this.id = const Value.absent(),
@@ -874,6 +920,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     required String displayUnit,
     required String deviceInfoJson,
     this.boardMetaJson = const Value.absent(),
+    required String recordedAt,
   }) : createdAt = Value(createdAt),
        sampleRate = Value(sampleRate),
        channelCount = Value(channelCount),
@@ -883,7 +930,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
        visibleChannels = Value(visibleChannels),
        ssnOrigin = Value(ssnOrigin),
        displayUnit = Value(displayUnit),
-       deviceInfoJson = Value(deviceInfoJson);
+       deviceInfoJson = Value(deviceInfoJson),
+       recordedAt = Value(recordedAt);
   static Insertable<Session> custom({
     Expression<int>? id,
     Expression<String>? name,
@@ -903,6 +951,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Expression<String>? displayUnit,
     Expression<String>? deviceInfoJson,
     Expression<String>? boardMetaJson,
+    Expression<String>? recordedAt,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -923,6 +972,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       if (displayUnit != null) 'display_unit': displayUnit,
       if (deviceInfoJson != null) 'device_info_json': deviceInfoJson,
       if (boardMetaJson != null) 'board_meta_json': boardMetaJson,
+      if (recordedAt != null) 'recorded_at': recordedAt,
     });
   }
 
@@ -945,6 +995,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     Value<String>? displayUnit,
     Value<String>? deviceInfoJson,
     Value<String?>? boardMetaJson,
+    Value<String>? recordedAt,
   }) {
     return SessionsCompanion(
       id: id ?? this.id,
@@ -965,6 +1016,7 @@ class SessionsCompanion extends UpdateCompanion<Session> {
       displayUnit: displayUnit ?? this.displayUnit,
       deviceInfoJson: deviceInfoJson ?? this.deviceInfoJson,
       boardMetaJson: boardMetaJson ?? this.boardMetaJson,
+      recordedAt: recordedAt ?? this.recordedAt,
     );
   }
 
@@ -1025,6 +1077,9 @@ class SessionsCompanion extends UpdateCompanion<Session> {
     if (boardMetaJson.present) {
       map['board_meta_json'] = Variable<String>(boardMetaJson.value);
     }
+    if (recordedAt.present) {
+      map['recorded_at'] = Variable<String>(recordedAt.value);
+    }
     return map;
   }
 
@@ -1048,7 +1103,8 @@ class SessionsCompanion extends UpdateCompanion<Session> {
           ..write('ssnOrigin: $ssnOrigin, ')
           ..write('displayUnit: $displayUnit, ')
           ..write('deviceInfoJson: $deviceInfoJson, ')
-          ..write('boardMetaJson: $boardMetaJson')
+          ..write('boardMetaJson: $boardMetaJson, ')
+          ..write('recordedAt: $recordedAt')
           ..write(')'))
         .toString();
   }
@@ -1353,6 +1409,7 @@ typedef $$SessionsTableCreateCompanionBuilder =
       required String displayUnit,
       required String deviceInfoJson,
       Value<String?> boardMetaJson,
+      required String recordedAt,
     });
 typedef $$SessionsTableUpdateCompanionBuilder =
     SessionsCompanion Function({
@@ -1374,6 +1431,7 @@ typedef $$SessionsTableUpdateCompanionBuilder =
       Value<String> displayUnit,
       Value<String> deviceInfoJson,
       Value<String?> boardMetaJson,
+      Value<String> recordedAt,
     });
 
 class $$SessionsTableFilterComposer
@@ -1472,6 +1530,11 @@ class $$SessionsTableFilterComposer
 
   ColumnFilters<String> get boardMetaJson => $composableBuilder(
     column: $table.boardMetaJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get recordedAt => $composableBuilder(
+    column: $table.recordedAt,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -1574,6 +1637,11 @@ class $$SessionsTableOrderingComposer
     column: $table.boardMetaJson,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get recordedAt => $composableBuilder(
+    column: $table.recordedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$SessionsTableAnnotationComposer
@@ -1660,6 +1728,11 @@ class $$SessionsTableAnnotationComposer
     column: $table.boardMetaJson,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get recordedAt => $composableBuilder(
+    column: $table.recordedAt,
+    builder: (column) => column,
+  );
 }
 
 class $$SessionsTableTableManager
@@ -1708,6 +1781,7 @@ class $$SessionsTableTableManager
                 Value<String> displayUnit = const Value.absent(),
                 Value<String> deviceInfoJson = const Value.absent(),
                 Value<String?> boardMetaJson = const Value.absent(),
+                Value<String> recordedAt = const Value.absent(),
               }) => SessionsCompanion(
                 id: id,
                 name: name,
@@ -1727,6 +1801,7 @@ class $$SessionsTableTableManager
                 displayUnit: displayUnit,
                 deviceInfoJson: deviceInfoJson,
                 boardMetaJson: boardMetaJson,
+                recordedAt: recordedAt,
               ),
           createCompanionCallback:
               ({
@@ -1748,6 +1823,7 @@ class $$SessionsTableTableManager
                 required String displayUnit,
                 required String deviceInfoJson,
                 Value<String?> boardMetaJson = const Value.absent(),
+                required String recordedAt,
               }) => SessionsCompanion.insert(
                 id: id,
                 name: name,
@@ -1767,6 +1843,7 @@ class $$SessionsTableTableManager
                 displayUnit: displayUnit,
                 deviceInfoJson: deviceInfoJson,
                 boardMetaJson: boardMetaJson,
+                recordedAt: recordedAt,
               ),
           withReferenceMapper: (p0) => p0
               .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
