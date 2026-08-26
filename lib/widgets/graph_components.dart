@@ -68,8 +68,22 @@ ui.Image _bakeImage(
 // plus the vector-drawn live-edge sliver.
 //
 // Full re-renders are avoided. All changes should prefer to smear the rebake
-// across multiple frames. Changes should also prefer to reuse old tiles
-// when applicable (e.g. taring is a shift) as opposed to a clean-slate rerender
+// across multiple frames, and STALE content is never vector-redrawn: a
+// segment that cannot blit ([SegmentedGraphCache._isBlittable]) draws
+// NOTHING and refills only via the sweep (blank-then-refill, one segment
+// per frame). Never extend the redraw set -- the per-frame raster budget is
+// one segment of work, on web especially (no engine raster cache).
+// Genuinely uncovered ranges ARE vector-drawn whole and are the only
+// remaining full-redraw paths: the live-edge sliver, and bootstrap /
+// zoom-out / pan exposures where no tile exists at all (tolerated as
+// exploratory).
+//
+// Config changes split by kind. Pure drift -- plot height, dpr, channel
+// add/remove -- reuses old tiles (ghosts/shifts) while the rolling sweep
+// re-bakes them. Tares do NOT reuse: a tare shifts each channel by its own
+// display offset, and one tile composites every channel, so no single blit
+// correction can hold every trace -- tares ride the destructive key with
+// unit/calibration (never blitted once stale, blank per above).
 // The sweep re-bakes config-stale segments rightmost-first (freshest data
 // converges first, history backfills) at the usual [kSegmentBakeBudget] per
 // frame. On any config bump, segments outside the view are disposed so stale
@@ -105,7 +119,7 @@ const double kBakedLinePx = 2.0;
 /// occupy before the segment's blit is suppressed (see
 /// [SegmentedGraphCache._isBlittable]): past it, the stretch -- e.g. a
 /// channel switch-off collapsing the Y-range onto a quiet channel -- reads
-/// as a screen-filling smear, and the range vector-draws until re-baked.
+/// as a screen-filling smear, and the range draws nothing until re-baked.
 const double kMaxBlitLineFraction = 0.25;
 
 /// Min on-screen width (logical px) of an uncovered range before a bake is
@@ -113,7 +127,7 @@ const double kMaxBlitLineFraction = 0.25;
 /// vectors every frame until they outgrow this.
 const double kSegmentGapBakePx = 40;
 
-/// Segment (re)bakes allowed per frame. Each costs ~1-2ms of UI-thread
+/// Segment (re)bakes allowed per frame. Each costs time in UI-thread
 /// toImageSync; raising this shortens the fill-in after zooms/jumps at the
 /// price of larger per-frame spikes.
 const int kSegmentBakeBudget = 1;
@@ -195,10 +209,10 @@ class GraphSegment {
   final double dpr;
 
   /// Config keys at bake, compared against the cache's current ones:
-  /// [destructiveKey] (unit, calibration) -- a mismatch means the content is
-  /// wrong in kind and must never blit; [remapKey] (channels, tares) -- a
-  /// mismatch leaves it approximately right (a ghost/shift) and blittable
-  /// until the rolling sweep replaces it.
+  /// [destructiveKey] (unit, calibration, tares) -- a mismatch means the
+  /// content is wrong in kind or place and must never blit; [remapKey]
+  /// (channels) -- a mismatch leaves it approximately right (a ghost) and
+  /// blittable until the rolling sweep replaces it.
   final List<Object?> destructiveKey;
   final List<Object?> remapKey;
 
@@ -238,7 +252,7 @@ class SegmentedGraphCache {
   final List<GraphSegment> _segments = [];
 
   /// Current bake config. Segments carry their own stamps: a destructiveKey
-  /// mismatch suppresses the blit (the range vector-draws until re-baked);
+  /// mismatch suppresses the blit (its pixels draw nothing until re-baked);
   /// a remapKey/gh/dpr mismatch keeps blitting (best-effort ghost/shift) --
   /// except past an extreme vertical stretch, where the blit smears and
   /// [_isBlittable] suppresses it -- and marks the segment for the rolling
@@ -269,8 +283,8 @@ class SegmentedGraphCache {
   ///
   /// Config identity is split in three (see the file header for the model):
   /// [generation] clears the cache on change; [destructiveKey] (unit,
-  /// calibration) suppresses blitting of mismatched segments; [remapKey]
-  /// (channels, tares) keeps them blitting. Both kinds of mismatch are
+  /// calibration, tares) suppresses blitting of mismatched segments;
+  /// [remapKey] (channels) keeps them blitting. Both kinds of mismatch are
   /// re-baked by the rolling rightmost-first sweep at the bake budget, so a
   /// config change never costs more than one bake per call.
   ///
@@ -398,8 +412,6 @@ class SegmentedGraphCache {
       viewStart,
       viewEnd,
       totalSamples,
-      yMin,
-      yMax,
       vPad,
       render,
     );
@@ -462,27 +474,16 @@ class SegmentedGraphCache {
     return baked;
   }
 
-  /// Uncovered sub-ranges of [viewStart, min(viewEnd, totalSamples)). With
-  /// [blittableOnly], segments that may not blit under the current mapping
-  /// ([_isBlittable]: destructive-key mismatch or extreme vertical stretch)
-  /// count as uncovered: they are never blitted, so the frame vector-draws
-  /// them. [yMin], [yMax] and [gh] feed the stretch check.
-  List<(int, int)> _gaps(
-    int viewStart,
-    int viewEnd,
-    int totalSamples,
-    double yMin,
-    double yMax,
-    double gh, {
-    bool blittableOnly = false,
-  }) {
+  /// Uncovered sub-ranges of [viewStart, min(viewEnd, totalSamples)).
+  /// Coverage is purely geometric: a segment counts as covered even when it
+  /// may not blit ([_isBlittable]), because unblittable content draws
+  /// NOTHING (see the raster budget in the file header) instead of
+  /// vector-redrawing its range.
+  List<(int, int)> _gaps(int viewStart, int viewEnd, int totalSamples) {
     final int domainEnd = math.min(viewEnd, totalSamples);
     final gaps = <(int, int)>[];
     int covered = viewStart;
     for (final s in _segments) {
-      if (blittableOnly && !_isBlittable(s, yMin, yMax, gh)) {
-        continue;
-      }
       if (covered >= domainEnd) break;
       if (s.start > covered) {
         gaps.add((covered, math.min(s.start, domainEnd)));
@@ -522,14 +523,7 @@ class SegmentedGraphCache {
   bool _bakeWidestGap(_BakeEnv env) {
     (int, int)? bakeGap;
     double widestPx = kSegmentGapBakePx;
-    for (final g in _gaps(
-      env.viewStart,
-      env.viewEnd,
-      env.totalSamples,
-      env.yMin,
-      env.yMax,
-      env.gh,
-    )) {
+    for (final g in _gaps(env.viewStart, env.viewEnd, env.totalSamples)) {
       final double w = (g.$2 - g.$1) * env.pps;
       if (w > widestPx) {
         widestPx = w;
@@ -561,10 +555,10 @@ class SegmentedGraphCache {
 
   /// Priority 2: refresh the RIGHTMOST visible segment whose bake config no
   /// longer matches -- the smeared rebake after a config bump. Destructive
-  /// mismatches (unit, calibration) are never blitted meanwhile (their
-  /// ranges vector-draw); remap mismatches (channels, tares, gh, dpr) keep
-  /// blitting as best-effort ghosts/shifts. Right-to-left so the live edge
-  /// converges first and history backfills.
+  /// mismatches (unit, calibration, tares) are never blitted meanwhile
+  /// (their pixels draw nothing -- blank-then-refill); remap mismatches
+  /// (channels, gh, dpr) keep blitting as best-effort ghosts/shifts.
+  /// Right-to-left so the live edge converges first and history backfills.
   bool _sweepConfigStaleSegment(_BakeEnv env) {
     for (int i = _segments.length - 1; i >= 0; i--) {
       final s = _segments[i];
@@ -585,7 +579,7 @@ class SegmentedGraphCache {
   /// the Y-range collapsing onto a quiet channel -- smears the tile's line
   /// across the screen. Suppressed segments are kept (a range snap-back
   /// makes them blittable again); the sweep/refresh passes re-bake them and
-  /// [_drawGaps] vector-draws their ranges meanwhile.
+  /// their pixels draw nothing meanwhile.
   bool _isBlittable(GraphSegment s, double yMin, double yMax, double gh) {
     if (!listEquals(s.destructiveKey, _destructiveKey)) return false;
     final double ys = (s.yMax - s.yMin) / (yMax - yMin) * (gh / s.gh);
@@ -747,16 +741,18 @@ class SegmentedGraphCache {
   /// drawImageRect repositions the content exactly. Vertically, content rows
   /// [0, s.gh] covered values [s.yMax, s.yMin] at bake; a valueToY of the
   /// form gh - (v - yMin) * gh / (yMax - yMin) is affine in (yMin, yMax), so
-  /// a y scale+offset corrects for range changes (per-channel offsets like
-  /// tares cancel out of the difference) AND for plot-height changes since
-  /// the bake.
+  /// a y scale+offset corrects for range changes AND for plot-height changes
+  /// since the bake. Per-channel offsets (tares) are NOT corrected here:
+  /// one tile composites every channel, so no single affine can hold
+  /// per-channel shifts -- tares ride the destructive key instead.
   ///
   /// Unblittable segments ([_isBlittable]) are never blitted: a destructive
-  /// key mismatch is wrong in kind (a counts-shaped trace on a kg axis) and
-  /// an extreme vertical stretch reads as a screen-filling smear;
-  /// [_drawGaps] vector-draws their ranges until the sweep re-bakes them.
-  /// Remap-stale segments (channels, tares, gh, dpr) DO blit --
-  /// outdated/shifted but approximately right -- until swept.
+  /// key mismatch is wrong in kind or place (a counts-shaped trace on a kg
+  /// axis, a pre-tare trace) and an extreme vertical stretch reads as a
+  /// screen-filling smear. Their pixels draw nothing until the sweep
+  /// re-bakes them -- blank, never vector-redrawn (see the raster budget in
+  /// the file header). Remap-stale segments (channels, gh, dpr) DO blit
+  /// -- outdated/shifted but approximately right -- until swept.
   void _blitSegments(
     Canvas canvas,
     double pps,
@@ -814,9 +810,11 @@ class SegmentedGraphCache {
   }
 
   /// Vector-render the uncovered visible ranges (live-edge sliver, freshly
-  /// exposed pan/zoom territory, bake backlog). Unblittable segments
-  /// ([_isBlittable]) count as uncovered: their content is never blitted, so
-  /// these ranges are drawn exactly until the sweep re-bakes them.
+  /// exposed pan/zoom territory, bake backlog). Ranges covered by an
+  /// unblittable segment ([_isBlittable]) draw NOTHING: their pixels stay
+  /// blank until the sweep re-bakes them -- the deliberate
+  /// blank-then-refill that bounds per-frame raster work on config bumps
+  /// (see the file header).
   void _drawGaps(
     Canvas canvas,
     double pps,
@@ -825,8 +823,6 @@ class SegmentedGraphCache {
     double viewStart,
     double viewEnd,
     int totalSamples,
-    double yMin,
-    double yMax,
     double vPad,
     SegmentRenderer render,
   ) {
@@ -834,10 +830,6 @@ class SegmentedGraphCache {
       viewStart.floor(),
       viewEnd.ceil(),
       totalSamples,
-      yMin,
-      yMax,
-      gh,
-      blittableOnly: true,
     )) {
       final double w = (ge - gs) * pps;
       if (w <= 0) continue;
@@ -2589,11 +2581,13 @@ EnvelopeSeries _taredEnvelopeSeries(
 /// use [EnvelopeSeries.exact] for series that cannot use buckets.
 ///
 /// Cache keying (see the staleness model on [SegmentedGraphCache]): the
-/// display [unit] and the source's calibration version form the destructive
-/// key (a change makes baked content wrong in kind: never blitted, swept);
-/// [tares] joins the channel list in the remap key (a change leaves stale
-/// segments blittable as ghosts/shifts while swept); the source's data
-/// generation clears the cache outright.
+/// display [unit], the source's calibration version, and [tares] form the
+/// destructive key (a change makes baked content wrong in kind or place:
+/// never blitted, blank until swept; a tare shifts each channel by its own
+/// offset and one tile composites every channel, so blit reuse cannot hold
+/// it). The channel list is the remap key (a change leaves stale segments
+/// blittable as ghosts while swept); the source's data generation clears
+/// the cache outright.
 ///
 /// Returns true when bake work remains; the owner should then schedule
 /// another frame.
@@ -2627,8 +2621,8 @@ bool _paintEnvelopeDataLayer(
   return cache.paint(
     canvas,
     generation: data.dataGeneration,
-    destructiveKey: [unit, data.calibrationVersion],
-    remapKey: [...activeChannels, ...tares],
+    destructiveKey: [unit, data.calibrationVersion, ...tares],
+    remapKey: activeChannels,
     gw: gw,
     gh: gh,
     dpr: dpr,
@@ -2907,10 +2901,10 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   String yTickLabel(double tick, YAxisRange yRange);
 
-  /// Per-channel values mixed into the segment-cache remap key; return the
-  /// tares when the series depends on them. (A remap change keeps stale
-  /// segments blittable while the sweep re-bakes them; the derivative omits
-  /// its tares because the difference cancels them.)
+  /// Per-channel tares mixed into the segment-cache destructive key; return
+  /// them when the series depends on them. (The derivative omits its tares
+  /// because the difference cancels them: including them would invalidate
+  /// and smear-rebake the whole view on every tare for no visible change.)
   List<double?> cacheKeyTares() => const [];
 
   /// Optional chrome drawn after the axes, before the data lines. [yRange]

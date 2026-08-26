@@ -162,7 +162,8 @@ void main() {
       () {
         fill();
         // Frame 1: the rightmost stale segment is re-baked in place; the
-        // still-stale range is vector-drawn (its segment never blits).
+        // still-stale range draws nothing -- blank-then-refill, suppressed
+        // segments never vector-redraw.
         expect(
           h.paint(
             viewStart: 0,
@@ -175,9 +176,7 @@ void main() {
         expect(h.bakes, [
           (start: 200, end: 400, texW: 200, onFrameCanvas: false),
         ]);
-        expect(h.gapDraws, [
-          (start: 0, end: 200, texW: 200, onFrameCanvas: true),
-        ]);
+        expect(h.gapDraws, isEmpty);
 
         // Frame 2: the sweep reaches the left segment; nothing left to draw.
         expect(
@@ -400,12 +399,12 @@ void main() {
     }
 
     test('an extreme y-range collapse suppresses the blit; the range '
-        'vector-draws until re-baked', () {
+        'draws nothing until re-baked', () {
       fill();
       // yMax 100 -> 5 stretches the tiles 20x: the baked line would cover
       // 40% of the plot height (> 25% cap), so the stale segment never
-      // blits and its range vector-draws. The config sweep re-bakes
-      // rightmost-first (the channel switch-off scenario).
+      // blits and its range draws nothing (blank-then-refill). The config
+      // sweep re-bakes rightmost-first (the channel switch-off scenario).
       expect(
         h.paint(
           viewStart: 0,
@@ -417,9 +416,7 @@ void main() {
         isTrue,
       );
       expect(h.bakes.single.start, 200);
-      expect(h.gapDraws, [
-        (start: 0, end: 200, texW: 200, onFrameCanvas: true),
-      ]);
+      expect(h.gapDraws, isEmpty);
 
       // Frame 2: the sweep re-bakes the left segment; everything blits again.
       expect(
@@ -453,15 +450,13 @@ void main() {
       fill();
       // Same collapse without a key bump: the drift refresh owns the
       // re-bake (worst-first, left on ties); the still-stretched segment's
-      // range vector-draws.
+      // range draws nothing.
       expect(
         h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, yMax: 5),
         isTrue,
       );
       expect(h.bakes.single.start, 0);
-      expect(h.gapDraws, [
-        (start: 200, end: 400, texW: 200, onFrameCanvas: true),
-      ]);
+      expect(h.gapDraws, isEmpty);
 
       expect(
         h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, yMax: 5),
@@ -496,8 +491,8 @@ void main() {
 
     test('a range snap-back makes suppressed segments blittable again', () {
       fill();
-      // Collapse + remap: the left range vector-draws this frame, the right
-      // segment is re-baked at the collapsed range.
+      // Collapse + remap: the left range draws nothing this frame, the
+      // right segment is re-baked at the collapsed range.
       h.paint(
         viewStart: 0,
         viewSpan: 400,
@@ -505,7 +500,7 @@ void main() {
         yMax: 5,
         remapKey: const ['other'],
       );
-      expect(h.gapDraws, isNotEmpty);
+      expect(h.gapDraws, isEmpty);
 
       // Snap back to the original mapping and keys: the kept left segment
       // blits exactly again; the re-baked right segment is config-stale but
