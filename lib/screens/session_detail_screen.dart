@@ -623,6 +623,9 @@ class _DamageBanner extends StatelessWidget {
     if (damage.calibration) 'Calibration unknown — raw counts only.',
     if (damage.gapsLost)
       'Dropout positions unknown — some samples may be repeated held values.',
+    if (damage.boardMetaLost)
+      'Calibration provenance lost — which calibration this session was '
+          'recorded under is unknown; conversions are unaffected.',
     if (damage.truncatedAt case final t?)
       'Data truncated at sample ${formatThousands(t)} (${_elapsedAt(t)} of '
           'recording) — later storage failed integrity checks and is '
