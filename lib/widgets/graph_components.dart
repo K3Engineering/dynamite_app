@@ -94,12 +94,12 @@ ui.Image _bakeImage(
 // ONE bilinear resample away from a vector render, scaled by at most
 // ~kMaxSegmentDrift before a refresh re-sharpens it.
 //
-// Live-edge invariant: a segment baked while its tail was at the data edge
-// (trailing block reduced from partial data, polyline join block incomplete)
-// goes stale as more samples arrive -- the seam reads as a tear that scrolls
-// with the data. Such segments are marked provisional and re-baked once the
-// tail completes (see [SegmentedGraphCache._repairProvisionalTail]), so the
-// tear never lives longer than ~one block.
+// Live-edge invariant: baked tiles always contain complete data. Segments
+// never end past a bake horizon ([SegmentedGraphCache.maintain]'s
+// bakeableSamples) that excludes the renderer's incomplete tail at the data
+// edge (the envelope layer's join block); that trailing span is vector-drawn
+// every frame instead. No tile can therefore go stale at its right seam as
+// samples arrive.
 // ---------------------------------------------------------------------------
 
 /// Target on-screen width (logical px) of one baked segment texture.
@@ -147,23 +147,13 @@ const FilterQuality kSegmentFilterQuality = FilterQuality.low;
 /// bounds (the graphs' one-block polyline join) pass a larger horizontal pad.
 const double kSegmentImagePad = 4;
 
-typedef SegmentRenderResult = ({
-  /// Logical px the content occupies (x in [0, contentW) after the hPad
-  /// translate); the blit's x-scale reference. At most the allocated texW.
-  double contentW,
-
-  /// Whether the render's trailing edge was cut short by the live data edge
-  /// (trailing block partial, polyline join block incomplete). Such a bake
-  /// goes stale at its right seam as more samples arrive; the cache re-bakes
-  /// it once the tail completes. Ignored for direct gap draws (always fresh).
-  bool tailProvisional,
-});
-
 /// Renders samples [start, end) mapped to x in [0, ~texW) at the plot's
 /// current y-mapping. Called both to bake segment textures and to draw
-/// uncovered gaps directly to the frame canvas.
+/// uncovered gaps directly to the frame canvas. Returns the logical px the
+/// content occupies (x in [0, contentW) after the hPad translate); the
+/// blit's x-scale reference. At most the allocated texW.
 typedef SegmentRenderer =
-    SegmentRenderResult Function(Canvas canvas, int start, int end, int texW);
+    double Function(Canvas canvas, int start, int end, int texW);
 
 /// Everything one (re)bake needs, computed once per
 /// [SegmentedGraphCache.paint] call.
@@ -175,9 +165,8 @@ typedef _BakeEnv = ({
   int viewEnd,
   double yMin,
   double yMax,
-  int totalSamples,
+  int bakeable,
   int targetSpan,
-  int tailSpan,
   double hPad,
   double vPad,
   SegmentRenderer render,
@@ -220,11 +209,6 @@ class GraphSegment {
   final double hPad;
   final double vPad;
 
-  /// Whether the bake's trailing edge was cut short by the live data edge
-  /// (see [SegmentRenderResult.tailProvisional]). The cache re-bakes the
-  /// segment once its tail completes.
-  final bool tailProvisional;
-
   GraphSegment({
     required this.image,
     required this.start,
@@ -238,7 +222,6 @@ class GraphSegment {
     required this.remapKey,
     required this.hPad,
     required this.vPad,
-    required this.tailProvisional,
   });
 
   void dispose() => image.dispose();
@@ -288,10 +271,13 @@ class SegmentedGraphCache {
   /// re-baked by the rolling rightmost-first sweep at the bake budget, so a
   /// config change never costs more than one bake per call.
   ///
-  /// [tailSpan] is the sample span the renderer needs past a segment's end
-  /// for its tail to be complete (the envelope layer's join block: up to
-  /// twice the block size): a provisional segment becomes repairable once
-  /// `end + tailSpan` samples exist.
+  /// [bakeableSamples] caps segment coverage: no bake ever ends past it.
+  /// Renderers pass the data edge minus the span their tail needs to be
+  /// final (the envelope layer's join block past a segment end: up to two
+  /// block sizes, see [joinBlockEnd]), so every baked tile reduces only
+  /// complete blocks -- see the live-edge invariant in the file header. The
+  /// trailing span past the horizon is never baked and vector-draws every
+  /// frame via [draw].
   ///
   /// Returns true when a bake happened — rolling work may remain, so the
   /// owner should schedule another pass.
@@ -306,8 +292,7 @@ class SegmentedGraphCache {
     required double viewSpan,
     required double yMin,
     required double yMax,
-    required int totalSamples,
-    required int tailSpan,
+    required int bakeableSamples,
     required double hPad,
     required double vPad,
     required SegmentRenderer render,
@@ -357,9 +342,8 @@ class SegmentedGraphCache {
       viewEnd: covEnd,
       yMin: yMin,
       yMax: yMax,
-      totalSamples: totalSamples,
+      bakeable: bakeableSamples,
       targetSpan: targetSpan,
-      tailSpan: tailSpan,
       hPad: hPad,
       vPad: vPad,
       render: render,
@@ -418,7 +402,9 @@ class SegmentedGraphCache {
   }
 
   /// One [maintain] + [draw] pass for the window [viewStart, viewStart +
-  /// viewSpan) mapped to x in [0, gw).
+  /// viewSpan) mapped to x in [0, gw). [totalSamples] is the data edge the
+  /// draw covers (see [draw]); [bakeableSamples] caps segment coverage (see
+  /// [maintain]).
   ///
   /// Returns true when a bake happened this frame; the owner should then
   /// schedule another frame so rolling bakes continue (one extra frame may
@@ -437,7 +423,7 @@ class SegmentedGraphCache {
     required double yMin,
     required double yMax,
     required int totalSamples,
-    required int tailSpan,
+    required int bakeableSamples,
     required double hPad,
     required double vPad,
     required SegmentRenderer render,
@@ -453,8 +439,7 @@ class SegmentedGraphCache {
       viewSpan: viewSpan,
       yMin: yMin,
       yMax: yMax,
-      totalSamples: totalSamples,
-      tailSpan: tailSpan,
+      bakeableSamples: bakeableSamples,
       hPad: hPad,
       vPad: vPad,
       render: render,
@@ -500,16 +485,13 @@ class SegmentedGraphCache {
   ///   2. the rightmost visible segment baked under outdated config (the
   ///      destructive/remap sweep: freshest data converges first, history
   ///      backfills);
-  ///   3. a visible provisional-tail segment whose tail has since completed
-  ///      (repair of the stale live-edge seam, see [_repairProvisionalTail]);
-  ///   4. the visible segment furthest past its drift/size thresholds
+  ///   3. the visible segment furthest past its drift/size thresholds
   ///      (rolling refresh, merging undersized neighbors and splitting
   ///      oversized ranges).
   /// Returns whether a bake happened.
   bool _bakeOne(_BakeEnv env) =>
       _bakeWidestGap(env) ||
       _sweepConfigStaleSegment(env) ||
-      _repairProvisionalTail(env) ||
       _refreshStalestSegment(env);
 
   /// Priority 1: bake the widest uncovered gap past the threshold (left
@@ -523,7 +505,7 @@ class SegmentedGraphCache {
   bool _bakeWidestGap(_BakeEnv env) {
     (int, int)? bakeGap;
     double widestPx = kSegmentGapBakePx;
-    for (final g in _gaps(env.viewStart, env.viewEnd, env.totalSamples)) {
+    for (final g in _gaps(env.viewStart, env.viewEnd, env.bakeable)) {
       final double w = (g.$2 - g.$1) * env.pps;
       if (w > widestPx) {
         widestPx = w;
@@ -535,6 +517,7 @@ class SegmentedGraphCache {
     int start = bakeGap.$1;
     final int end = math.min(bakeGap.$2, start + env.targetSpan);
     if (end <= start) return false;
+    assert(end <= env.bakeable); // _gaps caps domainEnd at the bake horizon
 
     // Insertion point: first segment starting inside/after the bake range.
     int at = 0;
@@ -559,13 +542,20 @@ class SegmentedGraphCache {
   /// (their pixels draw nothing -- blank-then-refill); remap mismatches
   /// (channels, gh, dpr) keep blitting as best-effort ghosts/shifts.
   /// Right-to-left so the live edge converges first and history backfills.
+  ///
+  /// A stale segment starting at or past the bake horizon is dropped, not
+  /// re-baked: its range falls to the per-frame vector draw (see
+  /// [_refreshRange] for when the horizon can recede under an old segment).
   bool _sweepConfigStaleSegment(_BakeEnv env) {
     for (int i = _segments.length - 1; i >= 0; i--) {
       final s = _segments[i];
       if (s.end <= env.viewStart || s.start >= env.viewEnd) continue;
       if (!_isConfigStale(s, env)) continue;
       final range = _refreshRange(i, env);
-      if (range.end <= range.start) return false;
+      if (range.end <= range.start) {
+        _segments.removeAt(i).dispose();
+        continue;
+      }
       _splice(i, range.removeTo, _bake(range.start, range.end, env));
       return true;
     }
@@ -593,31 +583,10 @@ class SegmentedGraphCache {
       (s.gh - env.gh).abs() > 0.1 ||
       s.dpr != env.dpr;
 
-  /// Priority 3: re-bake a visible segment whose tail was cut short by the
-  /// live data edge at bake time ([GraphSegment.tailProvisional]) once its
-  /// tail has completed -- i.e. enough samples now exist for the trailing
-  /// block plus the join block past it (`end + tailSpan`). Without this
-  /// the stale tail (a partial polyline join, an envelope band reduced from
-  /// partial data) reads as a tear at the segment's right seam, and in pure
-  /// slide mode -- where nothing else re-bakes the segment -- it scrolls
-  /// along with the data. Ordered after the gap bake on purpose: a live-edge
-  /// gap bake absorbs its left neighbor, repairing the tail as a side
-  /// effect, so this pass only pays for sealed segments no gap will touch.
-  bool _repairProvisionalTail(_BakeEnv env) {
-    for (int i = 0; i < _segments.length; i++) {
-      final s = _segments[i];
-      if (!s.tailProvisional) continue;
-      if (s.end <= env.viewStart || s.start >= env.viewEnd) continue;
-      if (s.end + env.tailSpan > env.totalSamples) continue;
-      _splice(i, i, _bake(s.start, s.end, env));
-      return true;
-    }
-    return false;
-  }
-
-  /// Priority 4: refresh the visible segment furthest past its drift/size
+  /// Priority 3: refresh the visible segment furthest past its drift/size
   /// thresholds, merging undersized neighbors and splitting oversized ranges
-  /// (see [_refreshRange]).
+  /// (see [_refreshRange]). A stale segment starting at or past the bake
+  /// horizon is dropped instead (see [_sweepConfigStaleSegment]).
   bool _refreshStalestSegment(_BakeEnv env) {
     // Score each visible segment; > 1.0 means past a threshold. Under
     // uniform squeeze all segments drift together, so picking the worst
@@ -647,7 +616,10 @@ class SegmentedGraphCache {
     if (worst < 0) return false;
 
     final range = _refreshRange(worst, env);
-    if (range.end <= range.start) return false;
+    if (range.end <= range.start) {
+      _segments.removeAt(worst).dispose();
+      return true;
+    }
 
     final seg = _bake(range.start, range.end, env);
     _splice(worst, range.removeTo, seg);
@@ -661,6 +633,11 @@ class SegmentedGraphCache {
   /// blit time in this segment's favor, and fully-covered neighbors are
   /// replaced outright); when oversized, clamp to one target width (the
   /// remainder becomes a gap that refills over the following frames).
+  ///
+  /// The end is clamped to the bake horizon, which can recede under an old
+  /// segment ([SegmentedGraphCache.maintain] explains the horizon); a
+  /// segment starting at or past it yields an empty range, and the caller
+  /// drops the segment instead of re-baking it.
   ({int start, int end, int removeTo}) _refreshRange(int i, _BakeEnv env) {
     final s = _segments[i];
     final int newStart = s.start;
@@ -677,7 +654,7 @@ class SegmentedGraphCache {
     if ((newEnd - newStart) * env.pps < kSegmentTargetPx / 2) {
       // Still undersized (right neighbor too big to swallow whole): extend
       // into it.
-      newEnd = math.min(env.totalSamples, newStart + env.targetSpan);
+      newEnd = math.min(env.bakeable, newStart + env.targetSpan);
       while (removeTo + 1 < _segments.length &&
           _segments[removeTo + 1].end <= newEnd) {
         removeTo++;
@@ -687,6 +664,7 @@ class SegmentedGraphCache {
       // Oversized: bake only the leading target-width range.
       newEnd = newStart + env.targetSpan;
     }
+    newEnd = math.min(newEnd, env.bakeable);
     return (start: newStart, end: newEnd, removeTo: removeTo);
   }
 
@@ -705,16 +683,13 @@ class SegmentedGraphCache {
   GraphSegment _bake(int start, int end, _BakeEnv env) {
     final int texW = math.max(1, ((end - start) * env.pps).ceil());
     double contentW = texW.toDouble();
-    bool tailProvisional = false;
     final img = _bakeImage(
       ((texW + 2 * env.hPad) * env.dpr).ceil(),
       ((env.gh + 2 * env.vPad) * env.dpr).ceil(),
       env.dpr,
       (c) {
         c.translate(env.hPad, env.vPad);
-        final r = env.render(c, start, end, texW);
-        contentW = r.contentW;
-        tailProvisional = r.tailProvisional;
+        contentW = env.render(c, start, end, texW);
       },
     );
     return GraphSegment(
@@ -730,7 +705,6 @@ class SegmentedGraphCache {
       remapKey: _remapKey,
       hPad: env.hPad,
       vPad: env.vPad,
-      tailProvisional: tailProvisional,
     );
   }
 
@@ -873,8 +847,9 @@ int _blockSizeFor(double viewSamples, double graphW) {
 /// vertical step at the seam.
 ///
 /// The result is block-aligned and lies in (end + blockSize, end + 2 *
-/// blockSize]; capping at totalSamples (and the provisional tail that
-/// results) is the caller's job.
+/// blockSize]; capping at totalSamples is the caller's job (the envelope
+/// layer keeps bakes two block sizes behind the data edge, so a baked join
+/// block is always complete -- see [SegmentedGraphCache.maintain]).
 int joinBlockEnd(int end, int blockSize) => (end ~/ blockSize + 2) * blockSize;
 
 // ---------------------------------------------------------------------------
@@ -2631,9 +2606,10 @@ bool _paintEnvelopeDataLayer(
     yMin: yMin,
     yMax: yMax,
     totalSamples: totalSamples,
-    // A bake's tail is complete once the join block past the segment end is
-    // fully available -- up to two block sizes (see [joinBlockEnd]).
-    tailSpan: 2 * blockSize,
+    // A bake's join block past the segment end is complete only once it
+    // lies fully behind the data edge -- up to two block sizes (see
+    // [joinBlockEnd]). The span past the horizon vector-draws every frame.
+    bakeableSamples: math.max(0, totalSamples - 2 * blockSize),
     // The recorded polyline overshoots a segment's edges by up to one
     // block (the join to the neighbor), and one block can be many px when
     // zoomed in past 1 sample/px -- the horizontal pad must cover it.
@@ -2682,15 +2658,7 @@ bool _paintEnvelopeDataLayer(
       }
       if (clip != null) cCanvas.restore();
       // _drawChannelEnvelope maps sample s to (s - start) * gw / viewSpan.
-      return (
-        contentW: (end - start) * gw / viewSpan,
-        // Baked at the live data edge: the join block was reduced from
-        // partial data, so this bake goes stale at the seam as more samples
-        // arrive. The cache re-bakes it once the join block completes (live
-        // streams only; for a static source the partial tail IS the final
-        // data, never stale).
-        tailProvisional: joinBlockEnd(end, blockSize) > totalSamples,
-      );
+      return (end - start) * gw / viewSpan;
     },
   );
 }

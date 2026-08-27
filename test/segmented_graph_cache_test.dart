@@ -17,14 +17,14 @@ class _Harness {
 
   /// Run one [SegmentedGraphCache.paint] frame with test-friendly defaults:
   /// gw 400 x gh 100 at dpr 1 => 1 px/sample for a 400-sample window, so the
-  /// bake target span equals kSegmentTargetPx samples (200). [tailSpan] is
-  /// small enough (10) to leave existing coverage scenarios unaffected; the
-  /// fake renderer reports tail provisionality the same way the envelope
-  /// renderer does (bake end within one tail span of the data edge).
+  /// bake target span equals kSegmentTargetPx samples (200). [bakeableSamples]
+  /// defaults to [totalSamples] (no reserved tail), so coverage scenarios are
+  /// unaffected unless a test sets an explicit bake horizon.
   bool paint({
     required double viewStart,
     required double viewSpan,
     required int totalSamples,
+    int? bakeableSamples,
     double gw = 400,
     double gh = 100,
     double dpr = 1.0,
@@ -33,7 +33,6 @@ class _Harness {
     int generation = 0,
     List<Object?> destructiveKey = const ['u'],
     List<Object?> remapKey = const ['k'],
-    int tailSpan = 10,
   }) {
     calls.clear();
     final recorder = ui.PictureRecorder();
@@ -51,7 +50,7 @@ class _Harness {
       yMin: yMin,
       yMax: yMax,
       totalSamples: totalSamples,
-      tailSpan: tailSpan,
+      bakeableSamples: bakeableSamples ?? totalSamples,
       hPad: kSegmentImagePad,
       vPad: kSegmentImagePad,
       render: (canvas, start, end, texW) {
@@ -61,10 +60,7 @@ class _Harness {
           texW: texW,
           onFrameCanvas: identical(canvas, frameCanvas),
         ));
-        return (
-          contentW: texW.toDouble(),
-          tailProvisional: end + tailSpan > totalSamples,
-        );
+        return texW.toDouble();
       },
     );
     recorder.endRecording().dispose();
@@ -529,54 +525,93 @@ void main() {
     });
   });
 
-  group('SegmentedGraphCache provisional tail repair', () {
-    test('a segment baked at the data edge is re-baked once its tail '
-        'completes', () {
-      // Bake [0, 200) with the data edge inside its tail span (205 <
-      // 200 + tailSpan=10): the bake is provisional. The 5-sample sliver
-      // stays a direct draw.
-      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 205), isTrue);
-      expect(h.bakes.single, (
-        start: 0,
-        end: 200,
-        texW: 200,
-        onFrameCanvas: false,
-      ));
-
-      // Tail not complete yet (209 < 200 + 10): no repair, no other work.
-      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 209), isFalse);
-
-      // Tail complete (210 >= 200 + 10): re-baked in place (this is what
-      // erases the stale live-edge seam before it can scroll far).
-      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 210), isTrue);
-      expect(h.bakes.single, (
-        start: 0,
-        end: 200,
-        texW: 200,
-        onFrameCanvas: false,
-      ));
-
-      // Repaired: the fresh bake's tail is complete, so no further work.
-      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 210), isFalse);
-    });
-
-    test('repair is skipped while the segment is outside the view', () {
-      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 205);
-
-      // Pan right (within the eviction margin, past the data edge): the
-      // tail has completed, but the segment is not visible, so no repair
-      // bake is spent on it.
+  group('SegmentedGraphCache bake horizon', () {
+    test('the span past the horizon is never baked and vector-draws every '
+        'frame', () {
+      // 390 bakeable of 400 total: bakes cover [0, 390), the [390, 400)
+      // tail stays a direct draw forever.
       expect(
-        h.paint(viewStart: 800, viewSpan: 400, totalSamples: 210),
+        h.paint(
+          viewStart: 0,
+          viewSpan: 400,
+          totalSamples: 400,
+          bakeableSamples: 390,
+        ),
+        isTrue,
+      );
+      expect(h.bakes.single.end, lessThanOrEqualTo(390));
+      expect(h.gapDraws.single, (
+        start: 200,
+        end: 400,
+        texW: 200,
+        onFrameCanvas: true,
+      ));
+
+      expect(
+        h.paint(
+          viewStart: 0,
+          viewSpan: 400,
+          totalSamples: 400,
+          bakeableSamples: 390,
+        ),
+        isTrue,
+      );
+      expect(h.bakes.single.end, 390);
+      expect(h.gapDraws.single, (
+        start: 390,
+        end: 400,
+        texW: 10,
+        onFrameCanvas: true,
+      ));
+
+      // Fully covered to the horizon: no more bake work, only the tail draw.
+      expect(
+        h.paint(
+          viewStart: 0,
+          viewSpan: 400,
+          totalSamples: 400,
+          bakeableSamples: 390,
+        ),
         isFalse,
       );
-      expect(h.calls, isEmpty);
+      expect(h.gapDraws.single, (
+        start: 390,
+        end: 400,
+        texW: 10,
+        onFrameCanvas: true,
+      ));
+    });
 
-      // Pan back: the stale seam is visible again and repaired.
-      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 210), isTrue);
+    test('an advancing horizon frees the tail to bake', () {
+      // First two frames cover [0, 340); the [340, 400) tail direct-draws.
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        bakeableSamples: 340,
+      );
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        bakeableSamples: 340,
+      );
+
+      // Data arrives: the horizon passes the old tail, which is now baked
+      // like any other uncovered range -- here grown past the gap-bake
+      // threshold, absorbing the [200, 340) strip in one target-width bake.
+      expect(
+        h.paint(
+          viewStart: 0,
+          viewSpan: 400,
+          totalSamples: 410,
+          bakeableSamples: 400,
+        ),
+        isTrue,
+      );
       expect(h.bakes.single, (
-        start: 0,
-        end: 200,
+        start: 200,
+        end: 400,
         texW: 200,
         onFrameCanvas: false,
       ));
@@ -600,9 +635,8 @@ void main() {
           // the last covered sample index (j - 1) lies in the join block.
           expect((j - 1) ~/ bs, (end ~/ bs) + 1, reason: 'end=$end bs=$bs');
           // Never more than two block sizes past the end -- the envelope
-          // layer passes 2 * blockSize as the cache's tailSpan, and the
-          // provisional-repair gate (`end + tailSpan`) must stay an upper
-          // bound on the renderer's real need.
+          // layer's bake horizon (totalSamples - 2 * blockSize) must cover
+          // the renderer's real need.
           expect(j - end, lessThanOrEqualTo(2 * bs), reason: 'end=$end bs=$bs');
           // ...and it must exceed one block size, or the join block is
           // truncated (the seam-step regression).
