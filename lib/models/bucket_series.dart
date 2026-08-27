@@ -144,25 +144,18 @@ class ChannelIngest {
 // ---------------------------------------------------------------------------
 
 /// Everything needed to reduce one channel's series into min/avg/max blocks:
-/// the exact per-sample evaluator plus, optionally, the bucket aggregates
-/// that accelerate zoomed-out reductions.
-///
-/// [EnvelopeSeries.bucketed] is the only way to attach buckets, so a series
-/// can never carry buckets without the matching raw->display conversion.
+/// the exact per-sample evaluator plus the bucket aggregates that accelerate
+/// zoomed-out reductions.
 class EnvelopeSeries {
   /// Value at an absolute sample index, in display units. NaN marks a
   /// missing (gap) sample and breaks the polyline.
   final double Function(int sampleIndex) sampleAt;
 
-  /// Bucket aggregates of the same series, in raw integer space; null for
-  /// series that render exclusively on the exact path.
-  final BucketSeries? buckets;
+  /// Bucket aggregates of the same series, in raw integer space.
+  final BucketSeries buckets;
 
-  /// Raw-space -> display-units map matching [sampleAt]; non-null iff
-  /// [buckets] is.
-  final double Function(double raw)? rawToDisplay;
-
-  EnvelopeSeries.exact(this.sampleAt) : buckets = null, rawToDisplay = null;
+  /// Raw-space -> display-units map matching [sampleAt].
+  final double Function(double raw) rawToDisplay;
 
   /// A series with bucket-accelerated reduction (see [reduceBlockBuckets]
   /// for the accuracy tradeoff).
@@ -180,8 +173,8 @@ class EnvelopeSeries {
   ///    to the average trace, invisible next to the envelope width.
   EnvelopeSeries.bucketed({
     required this.sampleAt,
-    required BucketSeries this.buckets,
-    required double Function(double raw) this.rawToDisplay,
+    required this.buckets,
+    required this.rawToDisplay,
   });
 }
 
@@ -255,8 +248,8 @@ BlockReduction reduceBlockExact(
 /// through [EnvelopeSeries.sampleAt] instead, so stale aggregates are never
 /// read and no sample is silently dropped.
 BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
-  final buckets = series.buckets!;
-  final rawToDisplay = series.rawToDisplay!;
+  final buckets = series.buckets;
+  final rawToDisplay = series.rawToDisplay;
   final int bs = buckets.bucketSize;
   final int numBuckets = buckets.mins.length;
   final int samples = buckets.samples;

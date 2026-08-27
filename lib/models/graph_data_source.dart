@@ -76,11 +76,10 @@ abstract interface class GraphDataSource {
   ChannelSeries channel(int channelIndex);
 
   /// Bucket aggregates of the first-difference series for a channel,
-  /// enabling the derivative graph's bucket fast path; null when the source
-  /// does not track them (the derivative then renders on the exact path).
-  /// Named `diffBucketsFor` so implementations may keep their
+  /// enabling the derivative graph's bucket fast path. Both implementations
+  /// track them; named `diffBucketsFor` so implementations may keep their
   /// `diffBuckets` accumulator field without a member collision.
-  BucketSeries? diffBucketsFor(int channelIndex);
+  BucketSeries diffBucketsFor(int channelIndex);
 
   /// Sample ranges where data was lost (dropped packets). The buffer holds
   /// held values there; renderers break the polyline and hatch these ranges.
