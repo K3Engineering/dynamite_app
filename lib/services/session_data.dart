@@ -218,6 +218,6 @@ class SessionData implements GraphDataSource {
   );
 
   @override
-  BucketSeries? diffBucketsFor(int channelIndex) =>
+  BucketSeries diffBucketsFor(int channelIndex) =>
       diffBuckets[channelIndex].series;
 }

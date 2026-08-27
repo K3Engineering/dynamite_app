@@ -582,7 +582,7 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   );
 
   @override
-  BucketSeries? diffBucketsFor(int channelIndex) =>
+  BucketSeries diffBucketsFor(int channelIndex) =>
       diffBuckets[channelIndex].series;
 
   /// Whether the newest sample is a dropped one — i.e. the live readings the

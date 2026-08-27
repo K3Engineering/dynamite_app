@@ -2399,8 +2399,7 @@ void _drawChannelEnvelope(
   // ACCURACY TRADEOFF on reduceBlockBuckets) once a block spans at least
   // two buckets.
   final buckets = series.buckets;
-  final bool useBuckets =
-      buckets != null && blockSize >= 2 * buckets.bucketSize;
+  final bool useBuckets = blockSize >= 2 * buckets.bucketSize;
 
   // Blocks are anchored to absolute sample 0 (sStart = k * blockSize), NOT to
   // viewStart. This is what lets a block fall on the same pixels regardless of
@@ -2551,9 +2550,8 @@ EnvelopeSeries _taredEnvelopeSeries(
 /// min/avg/max envelope per active channel via [_drawChannelEnvelope].
 ///
 /// [seriesFor] returns the per-channel rendering recipe ([EnvelopeSeries]):
-/// the exact per-sample evaluator plus optional bucket acceleration for the
-/// block reduction (see [reduceBlockBuckets] for the accuracy tradeoff) --
-/// use [EnvelopeSeries.exact] for series that cannot use buckets.
+/// the exact per-sample evaluator plus bucket acceleration for the block
+/// reduction (see [reduceBlockBuckets] for the accuracy tradeoff).
 ///
 /// Cache keying (see the staleness model on [SegmentedGraphCache]): the
 /// display [unit], the source's calibration version, and [tares] form the
@@ -3214,16 +3212,11 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   }
 
   @override
-  EnvelopeSeries series(int channel) {
-    final sampleAt = _sampleAt(channel);
-    final buckets = _data.diffBucketsFor(channel);
-    if (buckets == null) return EnvelopeSeries.exact(sampleAt);
-    return EnvelopeSeries.bucketed(
-      sampleAt: sampleAt,
-      buckets: buckets,
-      rawToDisplay: _diffDisplayFor(channel),
-    );
-  }
+  EnvelopeSeries series(int channel) => EnvelopeSeries.bucketed(
+    sampleAt: _sampleAt(channel),
+    buckets: _data.diffBucketsFor(channel),
+    rawToDisplay: _diffDisplayFor(channel),
+  );
 
   @override
   YAxisRange computeYRange(double viewStart, double viewEnd) {
@@ -3243,29 +3236,17 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
       first = false;
     }
 
-    // Channels with diff aggregates fold via the bucket fast path, each
-    // through its own diff map (monotone, so both bounds fold safely).
+    // Each channel folds via the bucket fast path through its own diff map
+    // (monotone, so both bounds fold safely).
     final ext = _foldChannelExtremes(_activeChannels, startI, endI, (ch) {
       if (_data.channel(ch).data.isEmpty) return null;
-      final buckets = _data.diffBucketsFor(ch);
-      return buckets == null ? null : (buckets, _rawDiffAt(ch));
+      return (_data.diffBucketsFor(ch), _rawDiffAt(ch));
     }, (raw, ch) => _diffDisplayFor(ch)(raw));
     if (ext != null) {
       fold(ext.$1);
       fold(ext.$2);
     }
 
-    // Exact-only fallback for channels without diff aggregates.
-    for (final ch in _activeChannels) {
-      if (_data.channel(ch).data.isEmpty || _data.diffBucketsFor(ch) != null) {
-        continue;
-      }
-      final valueAt = _sampleAt(ch);
-      for (int i = startI; i < endI; i++) {
-        final d = valueAt(i);
-        if (!d.isNaN) fold(d);
-      }
-    }
     return _computeYRange(dMin, dMax, _unit);
   }
 
