@@ -18,6 +18,7 @@ import '../models/feed_health.dart';
 import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
+import '../widgets/active_listenable_builder.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/tare_sheet.dart';
@@ -33,11 +34,14 @@ import '../widgets/status_colors.dart';
 // ---------------------------------------------------------------------------
 
 class LiveTab extends StatefulWidget {
-  const LiveTab({super.key, required this.onGoToDevices});
+  const LiveTab({super.key, required this.onGoToDevices, this.isActive = true});
 
   /// Jump to the Devices tab (the idle prompt's "Connect a device" action).
   /// Supplied by the app shell, which owns the tab index.
   final VoidCallback onGoToDevices;
+
+  /// Whether the tab is the shell's visible one.
+  final bool isActive;
 
   @override
   State<LiveTab> createState() => _LiveTabState();
@@ -221,6 +225,7 @@ class _LiveTabState extends State<LiveTab> {
                       ctrl: _graphCtrl,
                       showDerivative: showDerivative,
                       healthListenable: healthListenable,
+                      isActive: widget.isActive,
                     ),
                     Expanded(
                       child: _buildGraphArea(settings, hub, showDerivative),
@@ -271,6 +276,7 @@ class _LiveTabState extends State<LiveTab> {
       limitWarningsEnabled: settings.limitWarningsEnabled,
       activeChannels: settings.activeChannelIndices,
       showDerivative: showDerivative,
+      isActive: widget.isActive,
     );
   }
 }
@@ -471,6 +477,9 @@ class LiveStats extends StatelessWidget {
   /// like a gap: the newest "reading" is just the last one seen.
   final ValueListenable<FeedHealth?> healthListenable;
 
+  /// See [LiveTab.isActive].
+  final bool isActive;
+
   const LiveStats({
     super.key,
     required this.settings,
@@ -479,15 +488,17 @@ class LiveStats extends StatelessWidget {
     required this.ctrl,
     this.showDerivative = false,
     required this.healthListenable,
+    this.isActive = true,
   });
 
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<FeedHealth?>(
       valueListenable: healthListenable,
-      builder: (context, health, _) => ListenableBuilder(
+      builder: (context, health, _) => ActiveListenableBuilder(
+        active: isActive,
         listenable: Listenable.merge([hub, ctrl]),
-        builder: (context, _) {
+        builder: (context) {
           final unit = settings.displayUnit.effective(
             resolveUnitAvailability(
               hub.calibrationFor,

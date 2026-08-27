@@ -1205,11 +1205,15 @@ class _Minimap extends StatefulWidget {
   /// Indices of the channels to plot (per-view; see [GraphWorkspace]).
   final List<int> activeChannels;
 
+  /// See [GraphWorkspace.isActive].
+  final bool isActive;
+
   const _Minimap({
     required this.dataSource,
     required this.unit,
     required this.graphCtrl,
     required this.activeChannels,
+    required this.isActive,
   });
 
   @override
@@ -1295,6 +1299,7 @@ class _MinimapState extends State<_Minimap> {
                   dpr,
                   _cache,
                   _bakePump,
+                  widget.isActive,
                 ),
                 size: Size.infinite,
               ),
@@ -1330,7 +1335,12 @@ class _MinimapPainter extends CustomPainter {
     this._dpr,
     this._cache,
     this._bakePump,
-  ) : super(repaint: Listenable.merge([_data.repaint, _ctrl, _bakePump]));
+    bool isActive,
+  ) : super(
+        repaint: isActive
+            ? Listenable.merge([_data.repaint, _ctrl, _bakePump])
+            : null,
+      );
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1574,6 +1584,9 @@ class GraphWorkspace extends StatefulWidget {
   final bool showDerivative;
   final bool isLiveGraph;
 
+  /// Whether the graph is on screen.
+  final bool isActive;
+
   const GraphWorkspace({
     super.key,
     required this.data,
@@ -1583,6 +1596,7 @@ class GraphWorkspace extends StatefulWidget {
     required this.activeChannels,
     this.showDerivative = false,
     this.isLiveGraph = true,
+    this.isActive = true,
   });
 
   @override
@@ -1625,20 +1639,20 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       oldWidget.data.repaint.removeListener(_syncTicker);
       widget.ctrl.addListener(_syncTicker);
       widget.data.repaint.addListener(_syncTicker);
-      _syncTicker();
     }
+    _syncTicker();
   }
 
-  /// The ticker runs only while following the live edge with a fresh
-  /// stream: a parked view has no motion, and a stalled device freezes the
-  /// scroll anyway (the live edge is lead-capped). The next packet's
-  /// commitBatch (data.repaint) restarts it after a stall.
+  /// The ticker runs only while the graph is on screen, following the live
+  /// edge, with a fresh stream: a parked view has no motion, and a stalled
+  /// device freezes the scroll anyway (the live edge is lead-capped). The
+  /// next packet's commitBatch (data.repaint) restarts it after a stall.
   void _syncTicker() {
     final DateTime? last = widget.data.lastDataAt;
     final bool fresh =
         last != null &&
         DateTime.now().difference(last).inMilliseconds < _kTickerStallMs;
-    final bool shouldTick = widget.ctrl.isLive && fresh;
+    final bool shouldTick = widget.isActive && widget.ctrl.isLive && fresh;
     // Guard on isActive, not isTicking: start() throws on isActive, and a
     // started ticker is active for the whole window until its first frame
     // fires. isTicking is false in that window, so a second _syncTicker call
@@ -1728,6 +1742,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                         activeChannels: drawableChannels,
                         showXLabels: !widget.showDerivative,
                         vsync: _vsync,
+                        isActive: widget.isActive,
                         cache: _forceCache,
                         colorScheme: colorScheme,
                         dpr: dpr,
@@ -1750,6 +1765,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                           unit: unit,
                           activeChannels: drawableChannels,
                           vsync: _vsync,
+                          isActive: widget.isActive,
                           cache: _derivCache ??= SegmentedGraphCache(),
                           colorScheme: colorScheme,
                           dpr: dpr,
@@ -1764,6 +1780,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                     unit: unit,
                     graphCtrl: widget.ctrl,
                     activeChannels: drawableChannels,
+                    isActive: widget.isActive,
                   ),
                 ],
               ),
@@ -1778,6 +1795,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                   data: widget.data,
                   ctrl: widget.ctrl,
                   onZoom: _zoomBy,
+                  isActive: widget.isActive,
                 ),
               ),
             ],
@@ -1855,11 +1873,15 @@ class _ZoomControls extends StatelessWidget {
     required this.data,
     required this.ctrl,
     required this.onZoom,
+    required this.isActive,
   });
 
   final GraphDataSource data;
   final GraphController ctrl;
   final void Function(double factor) onZoom;
+
+  /// See [GraphWorkspace.isActive].
+  final bool isActive;
 
   @override
   Widget build(BuildContext context) {
@@ -1875,7 +1897,7 @@ class _ZoomControls extends StatelessWidget {
             icon: Icon(Icons.zoom_out, color: cs.onPrimary),
             onPressed: () => onZoom(1 / 1.2),
           ),
-          _SpanReadout(data: data, ctrl: ctrl),
+          _SpanReadout(data: data, ctrl: ctrl, isActive: isActive),
           IconButton(
             icon: Icon(Icons.zoom_in, color: cs.onPrimary),
             onPressed: () => onZoom(1.2),
@@ -1889,15 +1911,22 @@ class _ZoomControls extends StatelessWidget {
 /// The current zoom-window span ("800 ms", "4.2 s", "2:05"), updating with
 /// both viewport moves and live-edge growth.
 class _SpanReadout extends StatelessWidget {
-  const _SpanReadout({required this.data, required this.ctrl});
+  const _SpanReadout({
+    required this.data,
+    required this.ctrl,
+    required this.isActive,
+  });
 
   final GraphDataSource data;
   final GraphController ctrl;
 
+  /// See [GraphWorkspace.isActive].
+  final bool isActive;
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge([ctrl, data.repaint]),
+      listenable: isActive ? Listenable.merge([ctrl, data.repaint]) : ctrl,
       builder: (context, _) {
         final (start, end) = ctrl.effectiveRange(
           data.totalSamples,
@@ -2863,6 +2892,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     required DisplayUnit unit,
     required List<int> activeChannels,
     required Listenable vsync,
+    required bool isActive,
     required this.cache,
     required this.colorScheme,
     required this.dpr,
@@ -2871,7 +2901,9 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   }) : _unit = unit,
        _activeChannels = activeChannels,
        super(
-         repaint: Listenable.merge([_data.repaint, _ctrl, bakePump, vsync]),
+         repaint: isActive
+             ? Listenable.merge([_data.repaint, _ctrl, bakePump, vsync])
+             : null,
        );
 
   // --- Layout hooks --------------------------------------------------------
@@ -3049,6 +3081,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     required super.unit,
     required super.activeChannels,
     required super.vsync,
+    required super.isActive,
     required super.cache,
     required super.colorScheme,
     required super.dpr,
@@ -3191,6 +3224,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     required super.unit,
     required super.activeChannels,
     required super.vsync,
+    required super.isActive,
     required super.cache,
     required super.colorScheme,
     required super.dpr,

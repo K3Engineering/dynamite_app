@@ -139,7 +139,10 @@ class AppShellState extends State<AppShell> {
             child: IndexedStack(
               index: _currentIndex,
               children: [
-                LiveTab(onGoToDevices: goToDevices),
+                LiveTab(
+                  onGoToDevices: goToDevices,
+                  isActive: _currentIndex == 0,
+                ),
                 const SessionsTab(),
                 DevicesTab(onGoToSettings: goToSettings),
                 SettingsTab(onGoToDevices: goToDevices),
