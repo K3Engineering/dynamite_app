@@ -4,8 +4,8 @@ import 'package:material_ui/material_ui.dart';
 import '../models/bt_scan.dart' show BtAvailability, BtLinkState;
 import 'status_colors.dart';
 
-/// Everything the [BluetoothIndicator] displays, resolved from link/adapter/
-/// scan state by [btStatusVisual]; colors are supplied from the theme.
+/// Everything a Bluetooth status readout displays; colors are supplied from
+/// the theme.
 typedef BtStatusVisual = ({
   IconData icon,
   Color color,
@@ -14,10 +14,10 @@ typedef BtStatusVisual = ({
 });
 
 /// Stage label for a non-idle link state ("Connecting…", "Disconnecting…");
-/// null for [BtLinkState.idle], which has no link-side label (the scan /
-/// adapter status is the voice there). What each stage means is documented
-/// on [BtLinkState] itself. Shared by [btStatusVisual] (Devices tab) and the
-/// Live tab's status bar, so the two can't phrase the same state differently.
+/// null for [BtLinkState.idle], which has no link-side label. What each stage
+/// means is documented on [BtLinkState] itself. Shared by [btActiveLinkVisual]
+/// and the Live tab's status bar, so the two can't phrase the same state
+/// differently.
 String? btLinkStateLabel(BtLinkState state) => switch (state) {
   BtLinkState.disconnecting => 'Disconnecting…',
   BtLinkState.streaming => 'Connected',
@@ -28,22 +28,42 @@ String? btLinkStateLabel(BtLinkState state) => switch (state) {
   BtLinkState.idle => null,
 };
 
-/// Map the link/adapter/scan state to the indicator visual. Link states
-/// outrank scan status, which outranks adapter status. [status]/[colors]
-/// carry the theme's semantic + scheme colors.
+/// Map an active link state to its active-row visual.
+///
+/// Throws [ArgumentError] for [BtLinkState.idle]: active rows must not
+/// represent an absent link.
+BtStatusVisual btActiveLinkVisual({
+  required BtLinkState linkState,
+  required StatusColors status,
+}) {
+  final label = btLinkStateLabel(linkState);
+  if (label == null) {
+    throw ArgumentError.value(
+      linkState,
+      'linkState',
+      'must represent an active link',
+    );
+  }
+
+  final streaming = linkState == BtLinkState.streaming;
+  return (
+    icon: streaming ? Icons.bluetooth_connected : Icons.bluetooth_searching,
+    color: streaming ? status.linkConnected : status.linkActive,
+    label: label,
+    showSpinner: !streaming,
+  );
+}
+
+/// Map adapter/scan state to the Devices tab top indicator visual. Scan state
+/// outranks adapter status. Link-state presentation lives in
+/// [btActiveLinkVisual].
 ///
 /// [hasConnectableDevices] is the caller-resolved truth condition for the
 /// "Tap a device to connect" hint: devices are discovered AND no link is
 /// busy. A busy link — including the demo device, which occupies the single
 /// link slot and so gets BLE connects refused — disables every Connect
 /// button on screen, so the hint must not be emitted then.
-///
-/// Two callers, two scopes: the Devices tab's top indicator passes
-/// [BtLinkState.idle] so it speaks only for the adapter and the scan (link
-/// state belongs to the per-device rows); the active device row passes the
-/// real link state and uses the link branches.
-BtStatusVisual btStatusVisual({
-  required BtLinkState linkState,
+BtStatusVisual btAdapterScanVisual({
   required BtAvailability availability,
   required bool isScanning,
   required bool hasConnectableDevices,
@@ -54,17 +74,6 @@ BtStatusVisual btStatusVisual({
   final connected = status.linkConnected;
 
   (IconData, Color, String) resolve() {
-    // Any link transition outranks scan / adapter status. Every non-idle
-    // state shares the searching-in-flight treatment except the steady
-    // streaming state (see [showSpinner] below).
-    if (linkState != BtLinkState.idle) {
-      final streaming = linkState == BtLinkState.streaming;
-      return (
-        streaming ? Icons.bluetooth_connected : Icons.bluetooth_searching,
-        streaming ? connected : active,
-        btLinkStateLabel(linkState)!,
-      );
-    }
     if (isScanning) {
       // On web the device list lives in the browser's own picker popup, not
       // in our list, so we tell the user to choose there.
@@ -104,16 +113,7 @@ BtStatusVisual btStatusVisual({
   }
 
   final (icon, color, label) = resolve();
-  return (
-    icon: icon,
-    color: color,
-    label: label,
-    // Spinner while anything is in flight (scanning or a link transition);
-    // the steady "streaming" state gets the plain connected icon.
-    showSpinner:
-        isScanning ||
-        (linkState != BtLinkState.idle && linkState != BtLinkState.streaming),
-  );
+  return (icon: icon, color: color, label: label, showSpinner: isScanning);
 }
 
 /// The Devices tab top indicator's presentation mode, resolved by

@@ -5,19 +5,19 @@ import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/widgets/bt_icon.dart';
 import 'package:dynamite_app/widgets/status_colors.dart';
 
-/// Tests for [btStatusVisual], the pure link/adapter/scan -> indicator
-/// mapping behind [BluetoothIndicator].
+/// Tests for the pure link and adapter/scan -> indicator mappings.
 void main() {
   const status = StatusColors.light;
   final colors = ColorScheme.fromSeed(seedColor: Colors.blue);
 
-  BtStatusVisual visual({
-    BtLinkState linkState = BtLinkState.idle,
+  BtStatusVisual linkVisual(BtLinkState linkState) =>
+      btActiveLinkVisual(linkState: linkState, status: status);
+
+  BtStatusVisual adapterVisual({
     BtAvailability availability = BtAvailability.poweredOn,
     bool isScanning = false,
     bool hasConnectableDevices = false,
-  }) => btStatusVisual(
-    linkState: linkState,
+  }) => btAdapterScanVisual(
     availability: availability,
     isScanning: isScanning,
     hasConnectableDevices: hasConnectableDevices,
@@ -25,88 +25,85 @@ void main() {
     colors: colors,
   );
 
-  test('link states outrank scan and adapter status', () {
-    // Even while scanning with the radio on, a link transition wins.
-    final v = visual(
-      linkState: BtLinkState.connecting,
-      isScanning: true,
-      hasConnectableDevices: true,
+  test('active link states map to their stage visual', () {
+    for (final s in BtLinkState.values.where((s) => s != BtLinkState.idle)) {
+      expect(
+        linkVisual(s).showSpinner,
+        s == BtLinkState.streaming ? isFalse : isTrue,
+        reason: 'state $s',
+      );
+    }
+
+    expect(linkVisual(BtLinkState.streaming).label, 'Connected');
+    expect(linkVisual(BtLinkState.streaming).color, status.linkConnected);
+    expect(linkVisual(BtLinkState.connected).label, 'Setting up…');
+    expect(
+      linkVisual(BtLinkState.readingConstants).label,
+      'Reading board constants…',
     );
-    expect(v.label, 'Connecting…');
+    expect(linkVisual(BtLinkState.subscribing).label, 'Starting data stream…');
+    expect(linkVisual(BtLinkState.connecting).label, 'Connecting…');
+    expect(linkVisual(BtLinkState.connecting).color, status.linkActive);
+    expect(linkVisual(BtLinkState.disconnecting).label, 'Disconnecting…');
+  });
+
+  test('active link visual rejects idle', () {
+    expect(() => linkVisual(BtLinkState.idle), throwsArgumentError);
+  });
+
+  test('scanning outranks adapter status', () {
+    final v = adapterVisual(
+      isScanning: true,
+      availability: BtAvailability.poweredOff,
+    );
+    expect(v.label, contains('Scanning'));
     expect(v.color, status.linkActive);
     expect(v.showSpinner, isTrue);
   });
 
-  test('streaming is the only non-spinner link state', () {
-    for (final s in BtLinkState.values) {
-      final v = visual(linkState: s);
-      expect(
-        v.showSpinner,
-        s == BtLinkState.idle || s == BtLinkState.streaming ? isFalse : isTrue,
-        reason: 'state $s',
-      );
-    }
-    expect(visual(linkState: BtLinkState.streaming).label, 'Connected');
-    expect(visual(linkState: BtLinkState.connected).label, 'Setting up…');
-    expect(
-      visual(linkState: BtLinkState.subscribing).label,
-      'Starting data stream…',
-    );
-    expect(
-      visual(linkState: BtLinkState.disconnecting).label,
-      'Disconnecting…',
-    );
-  });
-
-  test('idle + scanning outranks adapter status', () {
-    final v = visual(isScanning: true, availability: BtAvailability.poweredOff);
-    expect(v.label, contains('Scanning'));
-    expect(v.showSpinner, isTrue);
-  });
-
-  test('idle powered-on hint requires a working Connect action', () {
+  test('powered-on hint requires a working Connect action', () {
     // Devices discovered and no link busy: every row is a tappable Connect,
     // so the hint is true.
-    expect(
-      visual(hasConnectableDevices: true).label,
-      'Tap a device to connect',
-    );
+    final hint = adapterVisual(hasConnectableDevices: true);
+    expect(hint.label, 'Tap a device to connect');
+    expect(hint.showSpinner, isFalse);
+
     // No connectable device — whether because the list is empty or because
     // a link is busy (the caller folds linkBusy into this flag: while
     // connected to the only discovered device, or while the demo device
     // holds the link slot, every Connect button on screen is disabled) —
     // the hint must not be emitted. An empty label: the empty block or the
     // active device row is the voice for those states.
-    expect(visual(hasConnectableDevices: false).label, isEmpty);
+    expect(adapterVisual(hasConnectableDevices: false).label, isEmpty);
   });
 
-  test('adapter problems surface in the idle state', () {
+  test('adapter problems surface when not scanning', () {
     expect(
-      visual(availability: BtAvailability.poweredOff).label,
+      adapterVisual(availability: BtAvailability.poweredOff).label,
       'Bluetooth is off',
     );
     expect(
-      visual(availability: BtAvailability.poweredOff).color,
+      adapterVisual(availability: BtAvailability.poweredOff).color,
       colors.outline,
     );
     expect(
-      visual(availability: BtAvailability.unsupported).color,
+      adapterVisual(availability: BtAvailability.unsupported).color,
       colors.error,
     );
     expect(
-      visual(availability: BtAvailability.unauthorized).color,
+      adapterVisual(availability: BtAvailability.unauthorized).color,
       colors.tertiary,
     );
     expect(
-      visual(availability: BtAvailability.unknown).label,
+      adapterVisual(availability: BtAvailability.unknown).label,
       contains('Starting up'),
     );
     expect(
-      visual(availability: BtAvailability.resetting).label,
+      adapterVisual(availability: BtAvailability.resetting).label,
       'Bluetooth resetting…',
     );
     expect(
-      visual(availability: BtAvailability.resetting).color,
+      adapterVisual(availability: BtAvailability.resetting).color,
       status.linkActive,
     );
   });

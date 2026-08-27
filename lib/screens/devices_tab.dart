@@ -33,8 +33,7 @@ class DevicesTab extends StatelessWidget {
     // lives on the rows. We use raw linkBusy to withhold hints when ANY
     // link is busy, ensuring Connect buttons are disabled.
     final status = Theme.of(context).extension<StatusColors>()!;
-    final visual = btStatusVisual(
-      linkState: BtLinkState.idle,
+    final visual = btAdapterScanVisual(
       availability: bt.bluetoothState,
       isScanning: bt.isScanning,
       hasConnectableDevices: bt.devices.isNotEmpty && !bt.linkBusy,
@@ -218,7 +217,7 @@ class DevicesTab extends StatelessWidget {
   }
 
   /// The big state-aware empty block: the single empty-state voice. Icon
-  /// and color come straight from the shared [btStatusVisual] mapping.
+  /// and color come straight from [btAdapterScanVisual].
   Widget _buildEmptyBlock(BtStatusVisual visual, BtAvailability availability) {
     final (title, hint) = switch (availability) {
       BtAvailability.poweredOn => (
@@ -564,7 +563,7 @@ class _ActiveDeviceRow extends StatelessWidget {
   final String name;
 
   /// Leading icon override (e.g. the demo device's science beaker). When
-  /// null, the state-driven Bluetooth icon from [btStatusVisual] is used.
+  /// null, the state-driven Bluetooth icon from [btActiveLinkVisual] is used.
   final IconData? icon;
 
   /// The device model from the connect-time Device Information read (e.g.
@@ -584,15 +583,9 @@ class _ActiveDeviceRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Reuse the shared, unit-tested state → visual mapping.
-    final visual = btStatusVisual(
+    final visual = btActiveLinkVisual(
       linkState: linkState,
-      availability: BtAvailability.poweredOn, // a link is up → radio is on
-      isScanning: false,
-      // Never consulted: link branches return before the connectability gate.
-      hasConnectableDevices: true,
       status: Theme.of(context).extension<StatusColors>()!,
-      colors: Theme.of(context).colorScheme,
     );
     final scheme = Theme.of(context).colorScheme;
     final onContainer = scheme.onPrimaryContainer;
