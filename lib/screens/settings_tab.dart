@@ -15,18 +15,32 @@ import '../services/data_hub.dart';
 import '../services/rig_state.dart';
 import '../services/calibration_text.dart';
 import '../widgets/info_cards.dart';
+import '../widgets/middle_click_autoscroll.dart';
 import '../widgets/rig_slots_section.dart';
 import '../widgets/section_header.dart';
 import '../widgets/snackbars.dart';
 import '../widgets/wide_layout.dart';
 import 'calibration_screen.dart';
 
-class SettingsTab extends StatelessWidget {
+class SettingsTab extends StatefulWidget {
   const SettingsTab({super.key, required this.onGoToDevices});
 
   /// The "Connect" action shown while no device is linked: jumps to the
   /// Devices tab. Supplied by the app shell, which owns the tab index.
   final VoidCallback onGoToDevices;
+
+  @override
+  State<SettingsTab> createState() => _SettingsTabState();
+}
+
+class _SettingsTabState extends State<SettingsTab> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -76,171 +90,181 @@ class SettingsTab extends StatelessWidget {
 
     return SafeArea(
       child: LayoutBuilder(
-        builder: (context, constraints) => ListView(
-          padding: EdgeInsets.symmetric(
-            horizontal: contentSideInset(constraints.maxWidth),
-            vertical: 16,
-          ),
-          children: [
-            Text('Settings', style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 16),
-
-            const SectionHeader('App settings'),
-            const SizedBox(height: 16),
-
-            Text(
-              'Display Units',
-              style: Theme.of(context).textTheme.titleSmall,
+        builder: (context, constraints) => MiddleClickAutoscroll(
+          controller: _scrollController,
+          child: ListView(
+            controller: _scrollController,
+            padding: EdgeInsets.symmetric(
+              horizontal: contentSideInset(constraints.maxWidth),
+              vertical: 16,
             ),
-            const SizedBox(height: 8),
-            _UnitGroup(
-              label: 'Force',
-              units: [
-                for (final u in DisplayUnit.values)
-                  if (u.isForce) u,
-              ],
-              selected: unit,
-              enabled: enabledUnits,
-            ),
-            _UnitGroup(
-              label: 'Electrical',
-              units: [
-                for (final u in DisplayUnit.values)
-                  if (!u.isForce) u,
-              ],
-              selected: unit,
-              enabled: enabledUnits,
-            ),
-            const SizedBox(height: 16),
-
-            // Limit warnings: the master switch. Disabling removes the 1.2 V
-            // rail chrome (forbidden-zone fill) from the chart — but not the
-            // at-the-rail clip icon in the numbers (a railed converter is data
-            // validity, not a warning preference).
-            SwitchListTile(
-              title: const Text('Limit warnings'),
-              subtitle: const Text('Clipped-range indication on the chart'),
-              value: settings.limitWarningsEnabled,
-              onChanged: settings.setLimitWarningsEnabled,
-              contentPadding: EdgeInsets.zero,
-            ),
-            const SizedBox(height: 8),
-
-            // Wakelock
-            SwitchListTile(
-              title: const Text('Keep screen awake'),
-              subtitle: const Text(
-                'Prevents the screen from turning off while connected to a device.',
+            children: [
+              Text(
+                'Settings',
+                style: Theme.of(context).textTheme.headlineSmall,
               ),
-              value: settings.wakelockEnabled,
-              onChanged: settings.setWakelockEnabled,
-              contentPadding: EdgeInsets.zero,
-            ),
-            const SizedBox(height: 24),
+              const SizedBox(height: 16),
 
-            const SectionHeader('Device settings'),
-            const SizedBox(height: 16),
+              const SectionHeader('App settings'),
+              const SizedBox(height: 16),
 
-            if (deviceId.isEmpty)
-              Card(
-                child: ListTile(
-                  // The dim "nothing here" affordance: the theme's outline
-                  // role, as in EmptyPlaceholder — not a raw Material grey.
-                  leading: Icon(
-                    Icons.bluetooth_disabled,
-                    color: Theme.of(context).colorScheme.outline,
-                  ),
-                  title: const Text('No device connected'),
-                  subtitle: const Text(
-                    'Connect to a device to manage its settings',
-                  ),
-                  trailing: FilledButton.tonal(
-                    onPressed: onGoToDevices,
-                    child: const Text('Connect'),
-                  ),
+              Text(
+                'Display Units',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+              const SizedBox(height: 8),
+              _UnitGroup(
+                label: 'Force',
+                units: [
+                  for (final u in DisplayUnit.values)
+                    if (u.isForce) u,
+                ],
+                selected: unit,
+                enabled: enabledUnits,
+              ),
+              _UnitGroup(
+                label: 'Electrical',
+                units: [
+                  for (final u in DisplayUnit.values)
+                    if (!u.isForce) u,
+                ],
+                selected: unit,
+                enabled: enabledUnits,
+              ),
+              const SizedBox(height: 16),
+
+              // Limit warnings: the master switch. Disabling removes the 1.2 V
+              // rail chrome (forbidden-zone fill) from the chart — but not the
+              // at-the-rail clip icon in the numbers (a railed converter is data
+              // validity, not a warning preference).
+              SwitchListTile(
+                title: const Text('Limit warnings'),
+                subtitle: const Text('Clipped-range indication on the chart'),
+                value: settings.limitWarningsEnabled,
+                onChanged: settings.setLimitWarningsEnabled,
+                contentPadding: EdgeInsets.zero,
+              ),
+              const SizedBox(height: 8),
+
+              // Wakelock
+              SwitchListTile(
+                title: const Text('Keep screen awake'),
+                subtitle: const Text(
+                  'Prevents the screen from turning off while connected to a device.',
                 ),
-              )
-            else ...[
-              // Device identity, read from the Device Information service at
-              // connect time. Read-only; unread fields (e.g. serial on web)
-              // render as dashes.
-              Text(
-                'Device info',
-                style: Theme.of(context).textTheme.titleSmall,
+                value: settings.wakelockEnabled,
+                onChanged: settings.setWakelockEnabled,
+                contentPadding: EdgeInsets.zero,
               ),
-              const SizedBox(height: 8),
-              DeviceInfoCard(info: deviceInfo),
+              const SizedBox(height: 24),
+
+              const SectionHeader('Device settings'),
               const SizedBox(height: 16),
 
-              Text(
-                'Connection info',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 8),
-              ConnectionInfoCard(
-                mtu: negotiatedMtu,
-                minPacketBytes: minPacketBytes,
-                maxPacketBytes: maxPacketBytes,
-              ),
-              const SizedBox(height: 16),
+              if (deviceId.isEmpty)
+                Card(
+                  child: ListTile(
+                    // The dim "nothing here" affordance: the theme's outline
+                    // role, as in EmptyPlaceholder — not a raw Material grey.
+                    leading: Icon(
+                      Icons.bluetooth_disabled,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                    title: const Text('No device connected'),
+                    subtitle: const Text(
+                      'Connect to a device to manage its settings',
+                    ),
+                    trailing: FilledButton.tonal(
+                      onPressed: widget.onGoToDevices,
+                      child: const Text('Connect'),
+                    ),
+                  ),
+                )
+              else ...[
+                // Device identity, read from the Device Information service at
+                // connect time. Read-only; unread fields (e.g. serial on web)
+                // render as dashes.
+                Text(
+                  'Device info',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 8),
+                DeviceInfoCard(info: deviceInfo),
+                const SizedBox(height: 16),
 
-              // The Settings-namespace device name. Keyed by device and
-              // stored value so the editor resets on connect/disconnect and
-              // after a save.
-              _DeviceNameEditor(
-                key: ValueKey('$deviceId/${storedName ?? ''}'),
-                storedName: storedName,
-              ),
-              const SizedBox(height: 16),
+                Text(
+                  'Connection info',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 8),
+                ConnectionInfoCard(
+                  mtu: negotiatedMtu,
+                  minPacketBytes: minPacketBytes,
+                  maxPacketBytes: maxPacketBytes,
+                ),
+                const SizedBox(height: 16),
 
-              // The connected device's load cell slots (the rig). Read from
-              // the device at connect time; edits go back via "Save to
-              // device".
-              Text('Load cells', style: Theme.of(context).textTheme.titleSmall),
-              const SizedBox(height: 8),
-              RigSlotsSection(rig: context.read<RigState>()),
-              const SizedBox(height: 16),
+                // The Settings-namespace device name. Keyed by device and
+                // stored value so the editor resets on connect/disconnect and
+                // after a save.
+                _DeviceNameEditor(
+                  key: ValueKey('$deviceId/${storedName ?? ''}'),
+                  storedName: storedName,
+                ),
+                const SizedBox(height: 16),
 
-              Card(
-                child: ListTile(
-                  title: const Text('Board calibration'),
-                  subtitle: Text(boardCalibrationStatusLine(boardCal)),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context).push<void>(
-                    MaterialPageRoute<void>(
-                      builder: (_) => CalibrationScreen(deviceId: deviceId),
+                // The connected device's load cell slots (the rig). Read from
+                // the device at connect time; edits go back via "Save to
+                // device".
+                Text(
+                  'Load cells',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 8),
+                RigSlotsSection(rig: context.read<RigState>()),
+                const SizedBox(height: 16),
+
+                Card(
+                  child: ListTile(
+                    title: const Text('Board calibration'),
+                    subtitle: Text(boardCalibrationStatusLine(boardCal)),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: () => Navigator.of(context).push<void>(
+                      MaterialPageRoute<void>(
+                        builder: (_) => CalibrationScreen(deviceId: deviceId),
+                      ),
                     ),
                   ),
                 ),
-              ),
+                const SizedBox(height: 16),
+              ],
+              const SizedBox(height: 8),
+
+              const SectionHeader('About'),
               const SizedBox(height: 16),
+              Builder(
+                builder: (context) {
+                  const buildMode = kDebugMode
+                      ? 'Debug'
+                      : (kProfileMode ? 'Profile' : 'Release');
+
+                  var targetInfo = 'Target: ${kIsWeb ? "Web" : "Native"}';
+                  if (kIsWeb) {
+                    targetInfo += ' (${dart2wasm ? "WASM" : "JS"})';
+                  }
+
+                  return Text(
+                    'Dynamite App v${appMeta.versionLabel}\n'
+                    'Build Mode: $buildMode\n'
+                    '$targetInfo',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  );
+                },
+              ),
             ],
-            const SizedBox(height: 8),
-
-            const SectionHeader('About'),
-            const SizedBox(height: 16),
-            Builder(
-              builder: (context) {
-                const buildMode = kDebugMode
-                    ? 'Debug'
-                    : (kProfileMode ? 'Profile' : 'Release');
-
-                var targetInfo = 'Target: ${kIsWeb ? "Web" : "Native"}';
-                if (kIsWeb) {
-                  targetInfo += ' (${dart2wasm ? "WASM" : "JS"})';
-                }
-
-                return Text(
-                  'Dynamite App v${appMeta.versionLabel}\n'
-                  'Build Mode: $buildMode\n'
-                  '$targetInfo',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-                );
-              },
-            ),
-          ],
+          ),
         ),
       ),
     );
