@@ -15,23 +15,9 @@ import '../models/board_calibration.dart';
 /// makes 1 kHz (matches the mock's ADC config readback, see [readValue]).
 const int _samplesPerPacket = 20;
 
-/// Compile-time dev toggle: run the app against the simulated BLE platform
-/// instead of the real radio. Flip to true only on a dev machine. Tests
-/// install the platform directly (see `installMockBle` helpers there) —
-/// this flag is the app entrypoint's toggle.
-const bool installMockBlePlatform = false;
-
 class MockBlePlatform extends UniversalBlePlatform {
   static MockBlePlatform? _instance;
   static MockBlePlatform get instance => _instance ??= MockBlePlatform._();
-
-  /// Install the mock platform when [installMockBlePlatform] is set;
-  /// otherwise leave the real platform in place. Called once from main().
-  static void installIfEnabled() {
-    if (installMockBlePlatform) {
-      UniversalBle.setInstance(MockBlePlatform.instance);
-    }
-  }
 
   static const netDelay = Duration(seconds: 1);
   static const hwDelay = Duration(milliseconds: 200);

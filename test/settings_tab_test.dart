@@ -28,9 +28,8 @@ import 'package:dynamite_app/services/rig_state.dart';
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    // Install the mock regardless of the dev toggle so BleLinkManager's
-    // unawaited availability query resolves without platform channels (same
-    // pattern as widget_test.dart).
+    // Install the mock so BleLinkManager's unawaited availability query
+    // resolves without platform channels (same pattern as widget_test.dart).
     UniversalBle.setInstance(MockBlePlatform.instance);
     MockBlePlatform.instance.dropEveryNPackets = 0;
   });

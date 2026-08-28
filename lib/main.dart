@@ -20,7 +20,6 @@ import 'services/feed_health_tracker.dart';
 // generation runs first thing in main(). No-op stub on native platforms.
 import 'services/hot_restart_cleanup_stub.dart'
     if (dart.library.js_interop) 'services/hot_restart_cleanup_web.dart';
-import 'services/mockble.dart';
 import 'services/recording_controller.dart';
 import 'services/rig_state.dart';
 import 'services/session_metadata.dart';
@@ -72,10 +71,6 @@ void main() async {
     version: packageInfo.version,
     buildNumber: packageInfo.buildNumber,
   );
-
-  // Mock-BLE dev builds: swap in the simulated platform before any BLE call
-  // (compile-time dev toggle in mockble.dart).
-  MockBlePlatform.installIfEnabled();
 
   final appEvents = AppEvents();
   final dataHub = DataHub();

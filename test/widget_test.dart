@@ -34,8 +34,8 @@ import 'package:dynamite_app/services/stream_reset_coordinator.dart';
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    // Install the mock regardless of the dev toggle so BleLinkManager's unawaited
-    // availability query resolves without platform channels.
+    // Install the mock so BleLinkManager's unawaited availability query
+    // resolves without platform channels.
     UniversalBle.setInstance(MockBlePlatform.instance);
     MockBlePlatform.instance.dropEveryNPackets = 0;
   });
