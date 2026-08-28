@@ -105,9 +105,10 @@ class SessionData implements GraphDataSource {
   /// Healthy sessions carry [SessionDamage.none].
   final SessionDamage damage;
 
-  /// Per-channel extremes, computed once on construction.
-  final List<double?> mins;
-  final List<double?> maxs;
+  /// Per-channel whole-session extremes, derived by the load-time ingest
+  /// (same [ChannelIngest] tracker as the live hub's stream-lifetime
+  /// peaks); null per channel on an empty session.
+  late final List<(double, double)?> _extremes;
 
   /// Per-channel bucket aggregates over [bucketSize]-sample windows of the
   /// raw values. Mirrors DataHub's live buckets (same [BucketAccumulator])
@@ -115,14 +116,14 @@ class SessionData implements GraphDataSource {
   /// real value, so buckets are always fully populated and need no
   /// missing-data handling.
   final int bucketSize = kBucketSize;
-  late final List<BucketAccumulator> valueBuckets;
+  late final List<BucketAccumulator> _valueBuckets;
 
   /// Per-channel bucket aggregates of the first-difference series
   /// (`diff[i] = raw[i] - raw[i-1]`), same bucket grid. Used by the
   /// derivative graph's bucket fast path; the gap/first-sample diff rule
   /// lives in [ingestDiff], applied through the same [ChannelIngest] the
   /// live hub uses.
-  late final List<BucketAccumulator> diffBuckets;
+  late final List<BucketAccumulator> _diffBuckets;
 
   SessionData({
     required this.channels,
@@ -135,40 +136,32 @@ class SessionData implements GraphDataSource {
     this.boardMeta,
     GapList? gaps,
   }) : gaps = gaps ?? GapList(),
-       mins = List.filled(channels.length, null),
-       maxs = List.filled(channels.length, null) {
+       _extremes = List.filled(channels.length, null) {
     final int numBuckets = (sampleCount == 0)
         ? 0
         : ((sampleCount - 1) ~/ bucketSize) + 1;
-    valueBuckets = List.generate(
+    _valueBuckets = List.generate(
       channels.length,
       (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
     );
-    diffBuckets = List.generate(
+    _diffBuckets = List.generate(
       channels.length,
       (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
     );
 
     for (int ch = 0; ch < channels.length; ch++) {
       if (sampleCount == 0) continue;
-      // int32-compared doubles: ±.infinity seeds are guaranteed to be
-      // displaced on the first sample, so null-readers never see them.
-      double mn = double.infinity;
-      double mx = double.negativeInfinity;
       final ingest = ChannelIngest(
-        valueBuckets: valueBuckets[ch],
-        diffBuckets: diffBuckets[ch],
+        valueBuckets: _valueBuckets[ch],
+        diffBuckets: _diffBuckets[ch],
         gaps: this.gaps,
       );
 
       for (int i = 0; i < sampleCount; i++) {
-        final v = channels[ch][i];
-        if (v < mn) mn = v.toDouble();
-        if (v > mx) mx = v.toDouble();
-        ingest.add(i, v, i > 0 ? channels[ch][i - 1] : 0);
+        ingest.add(i, channels[ch][i], i > 0 ? channels[ch][i - 1] : 0);
       }
-      mins[ch] = mn;
-      maxs[ch] = mx;
+      final ext = ingest.extremes; // non-null: sampleCount > 0 here
+      _extremes[ch] = (ext!.$1.toDouble(), ext.$2.toDouble());
     }
   }
 
@@ -180,10 +173,10 @@ class SessionData implements GraphDataSource {
   int get totalSamples => sampleCount;
 
   @override
-  int get bufferCapacity => sampleCount;
+  int get oldestSample => 0;
 
   @override
-  int get oldestSample => 0;
+  int rawAt(int channelIndex, int index) => channels[channelIndex][index];
 
   @override
   Listenable get repaint => kNeverRepaints;
@@ -209,15 +202,14 @@ class SessionData implements GraphDataSource {
   int get calibrationVersion => 0;
 
   @override
-  ChannelSeries channel(int channelIndex) => (
-    data: channels[channelIndex],
-    min: mins[channelIndex],
-    max: maxs[channelIndex],
-    tare: tares[channelIndex],
-    buckets: valueBuckets[channelIndex].series,
-  );
+  BucketSeries valueBucketsFor(int channelIndex) =>
+      _valueBuckets[channelIndex].series;
 
   @override
   BucketSeries diffBucketsFor(int channelIndex) =>
-      diffBuckets[channelIndex].series;
+      _diffBuckets[channelIndex].series;
+
+  @override
+  (double, double)? channelExtremes(int channelIndex) =>
+      _extremes[channelIndex];
 }

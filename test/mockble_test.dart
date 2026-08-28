@@ -72,9 +72,9 @@ void main() {
           // Spot-check decoded values against the synthetic waveform's frame 0:
           //   ch0 = sin(0)*4e6 = 0, ch2 = cos(0)*2.5e6 = 2500000,
           //   ch3 = (0 % 200 - 100) * 20000 = -2000000.
-          expect(hub.rawData[0][0], 0);
-          expect(hub.rawData[2][0], 2500000);
-          expect(hub.rawData[3][0], -2000000);
+          expect(hub.rawAt(0, 0), 0);
+          expect(hub.rawAt(2, 0), 2500000);
+          expect(hub.rawAt(3, 0), -2000000);
 
           teardown();
           expect(link.isStreaming, isFalse);

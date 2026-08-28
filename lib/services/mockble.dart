@@ -481,6 +481,25 @@ class MockBlePlatform extends UniversalBlePlatform {
     }
   }
 
+  @override
+  Future<Uint8List> readDescriptorValue(
+    String deviceId,
+    String service,
+    String characteristic,
+    String descriptor, {
+    final Duration? timeout,
+  }) => throw UnimplementedError('the mock device exposes no descriptors');
+
+  @override
+  Future<void> writeDescriptorValue(
+    String deviceId,
+    String service,
+    String characteristic,
+    String descriptor,
+    Uint8List value, {
+    final Duration? timeout,
+  }) => throw UnimplementedError('the mock device exposes no descriptors');
+
   /// The firmware KVS command processor (user_kvs.cpp) in miniature:
   /// `<CMD><FOLDER><DATA>` in, a frame of status byte + request echo +
   /// '=' + payload out (GET: the value; IDX: `key=typeHex`; SET/DEL: empty).

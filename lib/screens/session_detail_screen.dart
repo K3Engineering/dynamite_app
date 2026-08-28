@@ -207,9 +207,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 emphasized: true,
                 values: [
                   for (int ch = 0; ch < data.channels.length; ch++)
-                    data.maxs[ch] == null
-                        ? null
-                        : data.converterFor(ch).net(unit, data.maxs[ch]!),
+                    switch (data.channelExtremes(ch)?.$2) {
+                      final max? => data.converterFor(ch).net(unit, max),
+                      null => null,
+                    },
                 ],
               ),
               // The amount the session's frozen tare zeroed out (gross at

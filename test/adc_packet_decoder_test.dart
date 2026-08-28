@@ -69,12 +69,12 @@ void main() {
 
       decoder.onDataPacket(makePacket(0, sampleValue));
 
-      expect(hub.rawData[0][0], 10);
-      expect(hub.rawData[1][0], -10);
-      expect(hub.rawData[2][0], 0x7FFFFF);
-      expect(hub.rawData[3][0], -0x800000);
+      expect(hub.rawAt(0, 0), 10);
+      expect(hub.rawAt(1, 0), -10);
+      expect(hub.rawAt(2, 0), 0x7FFFFF);
+      expect(hub.rawAt(3, 0), -0x800000);
       // Every decoded sample in this packet is identical.
-      expect(hub.rawData[0][defaultPacketSamples - 1], 10);
+      expect(hub.rawAt(0, defaultPacketSamples - 1), 10);
     });
 
     test('consecutive packets with counter += one packet report no gap', () {
@@ -103,7 +103,7 @@ void main() {
       expect(hub.gaps.contains(39), isTrue);
       expect(hub.gaps.contains(40), isFalse);
       // Held gap samples keep the previous real value (channel 0 was 1).
-      expect(hub.rawData[0][20 % DataHub.maxDataSz], 1);
+      expect(hub.rawAt(0, 20), 1);
     });
 
     test('16-bit counter wraparound does not produce a spurious drop', () {
@@ -156,8 +156,8 @@ void main() {
       decoder.onDataPacket(makePacket(14, (s, c) => c + 1, samples: 14));
       expect(hub.totalSamples, 28);
       expect(hub.gaps.contains(14), isFalse);
-      expect(hub.rawData[0][0], 1);
-      expect(hub.rawData[3][13], 4);
+      expect(hub.rawAt(0, 0), 1);
+      expect(hub.rawAt(3, 13), 4);
     });
 
     test('packets over 20 samples decode — the protocol caps nothing', () {
@@ -165,7 +165,7 @@ void main() {
       decoder.onDataPacket(makePacket(30, (s, c) => c + 1, samples: 30));
       expect(hub.totalSamples, 60);
       expect(hub.gaps.contains(30), isFalse);
-      expect(hub.rawData[3][59], 4);
+      expect(hub.rawAt(3, 59), 4);
     });
 
     test('a header-only packet (counter, no samples) is malformed', () {

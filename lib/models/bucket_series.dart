@@ -70,6 +70,9 @@ class BucketAccumulator {
   /// overwritten lazily by subsequent [add]s).
   void reset() => _samples = 0;
 
+  /// Samples ingested so far (since construction/last [reset]).
+  int get samples => _samples;
+
   /// Immutable-shaped view for the renderers (the arrays are shared, not
   /// copied; [BucketSeries.samples] is a snapshot).
   BucketSeries get series => (
@@ -101,11 +104,10 @@ int ingestDiff({
 }
 
 /// Per-sample, per-channel ingest shared by the live hub (DataHub) and
-/// session loading (SessionData) so both always bucket identically: applies
-/// the gap/first-sample diff rule ([ingestDiff]) and feeds the value and
-/// diff accumulators together. Raw storage and extremes tracking stay with
-/// the caller — those genuinely differ (ring write vs pre-loaded array,
-/// int32 vs double extremes).
+/// session loading (SessionData) so both always derive identically: applies
+/// the gap/first-sample diff rule ([ingestDiff]), feeds the value and diff
+/// accumulators together, and tracks the whole-ingest extremes. Only raw
+/// storage stays with the caller (ring write vs pre-loaded array).
 class ChannelIngest {
   ChannelIngest({
     required this.valueBuckets,
@@ -116,6 +118,9 @@ class ChannelIngest {
   final BucketAccumulator valueBuckets;
   final BucketAccumulator diffBuckets;
   final GapList gaps;
+
+  int _min = 0;
+  int _max = 0;
 
   /// Ingest one sample. [prevValue] is the previous sample's raw value
   /// (ignored whenever the diff rule zeroes it — see [ingestDiff]).
@@ -130,7 +135,19 @@ class ChannelIngest {
         gaps: gaps,
       ),
     );
+    if (valueBuckets.samples == 1) {
+      _min = _max = value;
+    } else {
+      if (value < _min) _min = value;
+      if (value > _max) _max = value;
+    }
   }
+
+  /// Whole-ingest (min, max) of the raw values, null before the first
+  /// sample. Never shrinks — "everything ingested since the last [reset]",
+  /// which is both the live hub's stream-lifetime peak and a loaded
+  /// session's whole-session peak.
+  (int, int)? get extremes => valueBuckets.samples == 0 ? null : (_min, _max);
 
   /// Restart both accumulators (new stream / reload).
   void reset() {

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/hub_event.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
@@ -47,18 +48,21 @@ void main() {
   }
 
   group('peaks', () {
-    test('an untouched hub reports zero peak, not sentinel garbage', () {
+    test('an untouched hub has no peak', () {
       final hub = DataHub();
       for (int ch = 0; ch < channels; ch++) {
-        expect(hub.peakValue(ch, DisplayUnit.raw, start: 0, end: 0), 0);
+        expect(hub.peakValue(ch, DisplayUnit.raw, start: 0, end: 0), isNull);
       }
     });
 
-    test('cleared listeners fire on clear() only, not on sample appends', () {
+    test('cleared events fire on clear() only, not on sample appends', () {
       final hub = DataHub();
       var cleared = 0;
-      void listener() => cleared++;
-      hub.addClearedListener(listener);
+      void listener(HubEvent event) {
+        if (event is HubCleared) cleared++;
+      }
+
+      hub.addEventListener(listener);
 
       feed(hub, frameOf(7), 10);
       expect(cleared, 0);
@@ -66,7 +70,7 @@ void main() {
       hub.clear();
       expect(cleared, 1);
 
-      hub.removeClearedListener(listener);
+      hub.removeEventListener(listener);
       hub.clear();
       expect(cleared, 1);
     });
@@ -147,7 +151,7 @@ void main() {
       feed(hub, frameOf(42), 200);
       expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 200 + 5000), 42);
       // Entirely beyond the newest sample: no retained samples in view.
-      expect(hub.peakValue(0, DisplayUnit.raw, start: 5000, end: 9999), 0);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 5000, end: 9999), isNull);
     });
 
     test('windows reaching into evicted samples clamp after a ring wrap', () {
@@ -197,14 +201,14 @@ void main() {
       expect(hub.gaps.isEmpty, isTrue);
       expect(hub.taring, isFalse);
       expect(hub.tare[0], isNull);
-      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 0), 0);
-      expect(hub.valueBuckets[0].series.samples, 0);
-      expect(hub.diffBuckets[0].series.samples, 0);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 0), isNull);
+      expect(hub.valueBucketsFor(0).samples, 0);
+      expect(hub.diffBucketsFor(0).samples, 0);
 
       // New data starts a fresh timeline; the old extremes are gone.
       feed(hub, frameOf(-500), 10);
       expect(hub.totalSamples, 10);
-      expect(hub.rawData[0][0], -500);
+      expect(hub.rawAt(0, 0), -500);
       expect(
         hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples),
         -500,
@@ -250,8 +254,8 @@ void main() {
 
       // Every tare-window sample was buffered and counted.
       expect(hub.totalSamples, 100 + 1024);
-      expect(hub.rawData[0][100], 500); // first tare sample is in the ring
-      expect(hub.rawData[0][100 + 1023], 500);
+      expect(hub.rawAt(0, 100), 500); // first tare sample is in the ring
+      expect(hub.rawAt(0, 100 + 1023), 500);
       expect(hub.taring, isFalse);
       expect(hub.tare[0], 500);
       expect(hub.currentValue(0, DisplayUnit.raw), 0); // 500 - 500
@@ -260,7 +264,9 @@ void main() {
     test('recordings observe the samples appended during a tare', () {
       final hub = DataHub();
       final appended = <int>[];
-      hub.addSamplesAppendedListener((start, count) => appended.add(count));
+      hub.addEventListener((event) {
+        if (event is HubBatchAppended) appended.add(event.count);
+      });
 
       // Mimic the decoder's per-packet pattern.
       void packet(int value, int frames) {
@@ -295,7 +301,7 @@ void main() {
         expect(hub.gaps.contains(100), isTrue);
         expect(hub.gaps.contains(119), isTrue);
         expect(hub.gaps.contains(120), isFalse);
-        expect(hub.rawData[0][110], 1000); // held value inside the gap
+        expect(hub.rawAt(0, 110), 1000); // held value inside the gap
       },
     );
 

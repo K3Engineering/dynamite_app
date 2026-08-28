@@ -92,17 +92,10 @@ class GraphController extends ChangeNotifier {
     notifyListeners();
   }
 
-  (int start, int end) effectiveRange(
-    int totalSamples,
-    int oldestSample, {
-    int? bufferCapacity,
-  }) {
+  (int start, int end) effectiveRange(int totalSamples, int oldestSample) {
     switch (_viewport) {
       case GraphLive(:final span):
-        int s = span ?? math.max(minLiveSpan, totalSamples - oldestSample);
-        if (bufferCapacity != null && s > bufferCapacity) {
-          s = bufferCapacity;
-        }
+        final s = span ?? math.max(minLiveSpan, totalSamples - oldestSample);
         return (totalSamples - s, totalSamples);
       case GraphWindow(:final start, :final end):
         // Defensive: a parked window can outlive the data (e.g. the hub is
@@ -195,32 +188,14 @@ class GraphController extends ChangeNotifier {
   }
 
   /// Pan by a delta in samples (negative = left, positive = right).
-  void pan(
-    int deltaSamples,
-    int totalSamples,
-    int oldestSample,
-    int bufferCapacity,
-  ) {
-    final (s, e) = effectiveRange(
-      totalSamples,
-      oldestSample,
-      bufferCapacity: bufferCapacity,
-    );
+  void pan(int deltaSamples, int totalSamples, int oldestSample) {
+    final (s, e) = effectiveRange(totalSamples, oldestSample);
     applyWindow(s + deltaSamples, e - s, totalSamples, oldestSample);
   }
 
   /// Center the current window (span preserved) on [centerSample].
-  void centerOn(
-    int centerSample,
-    int totalSamples,
-    int oldestSample,
-    int bufferCapacity,
-  ) {
-    final (s, e) = effectiveRange(
-      totalSamples,
-      oldestSample,
-      bufferCapacity: bufferCapacity,
-    );
+  void centerOn(int centerSample, int totalSamples, int oldestSample) {
+    final (s, e) = effectiveRange(totalSamples, oldestSample);
     final span = e - s;
     applyWindow(centerSample - span ~/ 2, span, totalSamples, oldestSample);
   }
@@ -231,13 +206,8 @@ class GraphController extends ChangeNotifier {
     double focalFraction,
     int totalSamples,
     int oldestSample,
-    int bufferCapacity,
   ) {
-    final (s, e) = effectiveRange(
-      totalSamples,
-      oldestSample,
-      bufferCapacity: bufferCapacity,
-    );
+    final (s, e) = effectiveRange(totalSamples, oldestSample);
     final span = e - s;
     zoomTo(
       (span / factor).round(),
