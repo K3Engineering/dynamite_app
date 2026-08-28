@@ -106,9 +106,9 @@ class SessionData implements GraphDataSource {
   final SessionDamage damage;
 
   /// Per-channel whole-session extremes, derived by the load-time ingest
-  /// (same [ChannelIngest] tracker as the live hub's stream-lifetime peaks).
-  final List<double?> mins;
-  final List<double?> maxs;
+  /// (same [ChannelIngest] tracker as the live hub's stream-lifetime
+  /// peaks); null per channel on an empty session.
+  late final List<(double, double)?> _extremes;
 
   /// Per-channel bucket aggregates over [bucketSize]-sample windows of the
   /// raw values. Mirrors DataHub's live buckets (same [BucketAccumulator])
@@ -116,14 +116,14 @@ class SessionData implements GraphDataSource {
   /// real value, so buckets are always fully populated and need no
   /// missing-data handling.
   final int bucketSize = kBucketSize;
-  late final List<BucketAccumulator> valueBuckets;
+  late final List<BucketAccumulator> _valueBuckets;
 
   /// Per-channel bucket aggregates of the first-difference series
   /// (`diff[i] = raw[i] - raw[i-1]`), same bucket grid. Used by the
   /// derivative graph's bucket fast path; the gap/first-sample diff rule
   /// lives in [ingestDiff], applied through the same [ChannelIngest] the
   /// live hub uses.
-  late final List<BucketAccumulator> diffBuckets;
+  late final List<BucketAccumulator> _diffBuckets;
 
   SessionData({
     required this.channels,
@@ -136,16 +136,15 @@ class SessionData implements GraphDataSource {
     this.boardMeta,
     GapList? gaps,
   }) : gaps = gaps ?? GapList(),
-       mins = List.filled(channels.length, null),
-       maxs = List.filled(channels.length, null) {
+       _extremes = List.filled(channels.length, null) {
     final int numBuckets = (sampleCount == 0)
         ? 0
         : ((sampleCount - 1) ~/ bucketSize) + 1;
-    valueBuckets = List.generate(
+    _valueBuckets = List.generate(
       channels.length,
       (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
     );
-    diffBuckets = List.generate(
+    _diffBuckets = List.generate(
       channels.length,
       (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
     );
@@ -153,8 +152,8 @@ class SessionData implements GraphDataSource {
     for (int ch = 0; ch < channels.length; ch++) {
       if (sampleCount == 0) continue;
       final ingest = ChannelIngest(
-        valueBuckets: valueBuckets[ch],
-        diffBuckets: diffBuckets[ch],
+        valueBuckets: _valueBuckets[ch],
+        diffBuckets: _diffBuckets[ch],
         gaps: this.gaps,
       );
 
@@ -162,8 +161,7 @@ class SessionData implements GraphDataSource {
         ingest.add(i, channels[ch][i], i > 0 ? channels[ch][i - 1] : 0);
       }
       final ext = ingest.extremes; // non-null: sampleCount > 0 here
-      mins[ch] = ext!.$1.toDouble();
-      maxs[ch] = ext.$2.toDouble();
+      _extremes[ch] = (ext!.$1.toDouble(), ext.$2.toDouble());
     }
   }
 
@@ -173,10 +171,6 @@ class SessionData implements GraphDataSource {
 
   @override
   int get totalSamples => sampleCount;
-
-  /// The whole session is retained, so its retention bound is its length.
-  @override
-  int get bufferCapacity => sampleCount;
 
   @override
   int get oldestSample => 0;
@@ -208,14 +202,14 @@ class SessionData implements GraphDataSource {
   int get calibrationVersion => 0;
 
   @override
-  ChannelSeries channel(int channelIndex) => (
-    min: mins[channelIndex],
-    max: maxs[channelIndex],
-    tare: tares[channelIndex],
-    buckets: valueBuckets[channelIndex].series,
-  );
+  BucketSeries valueBucketsFor(int channelIndex) =>
+      _valueBuckets[channelIndex].series;
 
   @override
   BucketSeries diffBucketsFor(int channelIndex) =>
-      diffBuckets[channelIndex].series;
+      _diffBuckets[channelIndex].series;
+
+  @override
+  (double, double)? channelExtremes(int channelIndex) =>
+      _extremes[channelIndex];
 }

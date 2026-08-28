@@ -274,14 +274,11 @@ class RecordingController extends ChangeNotifier {
   /// of recording into a void ([stopSession]'s finalization re-detects the
   /// latched error and surfaces it).
   void _onHubEvent(HubEvent event) => switch (event) {
-    HubBatchAppended(:final startIdx, :final count) => _onBatchAppended(
-      startIdx,
-      count,
-    ),
+    final HubBatchAppended batch => _onBatchAppended(batch),
     HubCleared() => null,
   };
 
-  void _onBatchAppended(int startIdx, int count) {
+  void _onBatchAppended(HubBatchAppended batch) {
     final writer = _sessionWriter;
     if (writer == null) {
       return;
@@ -289,7 +286,9 @@ class RecordingController extends ChangeNotifier {
     if (writer.hasError) {
       unawaited(stopSession());
     } else {
-      unawaited(writer.appendData(_dataHub.snapshotRange(startIdx, count)));
+      unawaited(
+        writer.appendData(_dataHub.snapshotRange(batch.startIdx, batch.count)),
+      );
     }
   }
 

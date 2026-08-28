@@ -523,7 +523,6 @@ class LiveStats extends StatelessWidget {
           final (viewStart, viewEnd) = ctrl.effectiveRange(
             hub.totalSamples,
             hub.oldestSample,
-            bufferCapacity: hub.bufferCapacity,
           );
 
           return Column(

@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
 /// Unit tests for the [GraphController] viewport state machine. It is pure
@@ -28,11 +27,6 @@ void main() {
       expect(ctrl.effectiveRange(5000, 0), (3000, 5000));
       // Less data than the min span: window extends to a negative start.
       expect(ctrl.effectiveRange(1000, 0), (-1000, 1000));
-    });
-
-    test('bufferCapacity clamps the live span', () {
-      final ctrl = GraphController(minLiveSpan: 2000);
-      expect(ctrl.effectiveRange(1000, 0, bufferCapacity: 500), (500, 1000));
     });
   });
 
@@ -108,13 +102,13 @@ void main() {
       // <50-sample parked session makes maxSpan < 50: clamp(50, maxSpan)
       // would have inverted limits and thrown (regression test).
       final ctrl = GraphController();
-      ctrl.zoom(1.2, 0.5, 30, 0, 30);
+      ctrl.zoom(1.2, 0.5, 30, 0);
       expect(ctrl.effectiveRange(30, 0), (0, 30));
       // Zooming out is equally safe.
-      ctrl.zoom(1 / 1.2, 0.5, 30, 0, 30);
+      ctrl.zoom(1 / 1.2, 0.5, 30, 0);
       expect(ctrl.effectiveRange(30, 0), (0, 30));
       // And the span never exceeds the data once it grows.
-      ctrl.zoom(1.2, 0.5, 100, 0, 100);
+      ctrl.zoom(1.2, 0.5, 100, 0);
       final (s, e) = ctrl.effectiveRange(100, 0);
       expect(e - s, greaterThan(0));
       expect(e - s, lessThanOrEqualTo(100));
@@ -125,7 +119,7 @@ void main() {
     test('pan shifts the window by the delta', () {
       final ctrl = GraphController();
       ctrl.applyWindow(100, 200, 1000, 0);
-      ctrl.pan(50, 1000, 0, 600000);
+      ctrl.pan(50, 1000, 0);
       expect(ctrl.isLive, isFalse);
       expect(ctrl.effectiveRange(1000, 0), (150, 350));
     });
@@ -133,7 +127,7 @@ void main() {
     test('centerOn centers the current span on a sample', () {
       final ctrl = GraphController();
       ctrl.applyWindow(100, 200, 1000, 0); // span 200
-      ctrl.centerOn(500, 1000, 0, 600000);
+      ctrl.centerOn(500, 1000, 0);
       expect(ctrl.effectiveRange(1000, 0), (400, 600));
     });
   });
@@ -146,13 +140,13 @@ void main() {
   group('GraphController while under minLiveSpan', () {
     test('zooming in survives a recenter at the live edge', () {
       final ctrl = GraphController(minLiveSpan: 20000);
-      ctrl.zoom(1.2, 1.0, 5000, 0, 600000);
+      ctrl.zoom(1.2, 1.0, 5000, 0);
       expect(ctrl.isLive, isTrue);
       final before = ctrl.effectiveRange(5000, 0);
 
       // The tap centers on the middle of the history — right at the data
       // edge since the window overhangs it both ways.
-      ctrl.centerOn(2500, 5000, 0, 600000);
+      ctrl.centerOn(2500, 5000, 0);
 
       expect(ctrl.isLive, isTrue);
       expect(ctrl.effectiveRange(5000, 0), before);
@@ -160,7 +154,7 @@ void main() {
 
     test('the untouched default window stays locked to minLiveSpan', () {
       final ctrl = GraphController(minLiveSpan: 20000);
-      ctrl.centerOn(2500, 5000, 0, 600000);
+      ctrl.centerOn(2500, 5000, 0);
       expect(ctrl.isLive, isTrue);
       // Locked, not auto-expanding: at 25s of data it shows the trailing
       // 20s, not everything.
@@ -205,11 +199,7 @@ void main() {
 
       ctrl.goLive(totalSamples: 0, oldestSample: 0);
 
-      final (start, end) = ctrl.effectiveRange(
-        0,
-        0,
-        bufferCapacity: DataHub.maxDataSz,
-      );
+      final (start, end) = ctrl.effectiveRange(0, 0);
       expect(ctrl.isLive, isTrue);
       expect(end, 0);
       expect(start, -20000);

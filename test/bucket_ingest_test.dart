@@ -166,10 +166,10 @@ void main() {
 
       final int sessBuckets = ((n - 1) ~/ sess.bucketSize) + 1;
       for (int ch = 0; ch < channels; ch++) {
-        final hubVal = hub.valueBuckets[ch].series;
-        final hubDiff = hub.diffBuckets[ch].series;
-        final sessVal = sess.valueBuckets[ch].series;
-        final sessDiff = sess.diffBuckets[ch].series;
+        final hubVal = hub.valueBucketsFor(ch);
+        final hubDiff = hub.diffBucketsFor(ch);
+        final sessVal = sess.valueBucketsFor(ch);
+        final sessDiff = sess.diffBucketsFor(ch);
 
         expect(hubVal.samples, n);
         expect(sessVal.samples, n);
@@ -178,8 +178,11 @@ void main() {
         // n << hub capacity, so hub slot index == absolute bucket index.
         // Whole-range extremes mirror too: both sides derive them from the
         // same ChannelIngest tracker, so they can't drift.
-        expect(hub.channel(ch).min, sess.channel(ch).min, reason: 'ch $ch min');
-        expect(hub.channel(ch).max, sess.channel(ch).max, reason: 'ch $ch max');
+        expect(
+          hub.channelExtremes(ch),
+          sess.channelExtremes(ch),
+          reason: 'ch $ch',
+        );
 
         for (int b = 0; b < sessBuckets; b++) {
           expect(hubVal.mins[b], sessVal.mins[b], reason: 'ch $ch val min $b');
@@ -243,8 +246,7 @@ void main() {
       // Constant segments + suppressed gap-exit diff => every diff bucket is
       // exactly zero everywhere, despite the 100 -> 5000 jump.
       final int buckets = ((n - 1) ~/ 100) + 1;
-      for (final acc in [hub.diffBuckets[0], sess.diffBuckets[0]]) {
-        final s = acc.series;
+      for (final s in [hub.diffBucketsFor(0), sess.diffBucketsFor(0)]) {
         for (int b = 0; b < buckets; b++) {
           expect(s.mins[b], 0, reason: 'diff min bucket $b');
           expect(s.maxs[b], 0, reason: 'diff max bucket $b');

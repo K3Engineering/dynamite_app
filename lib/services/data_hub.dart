@@ -66,32 +66,32 @@ class DataHub extends ChangeNotifier
   );
 
   /// Per-channel bucket aggregates over [bucketSize]-sample windows of the
-  /// raw values. Used by the graph envelope renderers to downsample cheaply.
-  /// Gap samples hold the previous real value, so buckets are always fully
-  /// populated and need no missing-data handling.
-  final List<BucketAccumulator> valueBuckets = List.generate(
+  /// raw values, exposed as series via [valueBucketsFor]. Gap samples hold
+  /// the previous real value, so buckets are always fully populated and
+  /// need no missing-data handling.
+  final List<BucketAccumulator> _valueBuckets = List.generate(
     kAdcChannelCount,
     (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
     growable: false,
   );
 
   /// Per-channel bucket aggregates of the first-difference series
-  /// (`diff[j] = raw[j] - raw[j-1]`), same bucket grid as [valueBuckets].
-  /// Used by the derivative graph's bucket fast path; the gap/first-sample
-  /// diff rule lives in [ingestDiff].
-  final List<BucketAccumulator> diffBuckets = List.generate(
+  /// (`diff[j] = raw[j] - raw[j-1]`), same bucket grid as [_valueBuckets],
+  /// exposed via [diffBucketsFor]; the gap/first-sample diff rule lives in
+  /// [ingestDiff].
+  final List<BucketAccumulator> _diffBuckets = List.generate(
     kAdcChannelCount,
     (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
     growable: false,
   );
 
-  /// The shared per-sample ingester feeding [valueBuckets]/[diffBuckets]
+  /// The shared per-sample ingester feeding [_valueBuckets]/[_diffBuckets]
   /// and the stream-lifetime extremes (see [ChannelIngest]).
   late final List<ChannelIngest> _ingest = List.generate(
     kAdcChannelCount,
     (i) => ChannelIngest(
-      valueBuckets: valueBuckets[i],
-      diffBuckets: diffBuckets[i],
+      valueBuckets: _valueBuckets[i],
+      diffBuckets: _diffBuckets[i],
       gaps: gaps,
     ),
     growable: false,
@@ -507,9 +507,6 @@ class DataHub extends ChangeNotifier
   // -- GraphDataSource --------------------------------------------------------
 
   @override
-  int get bufferCapacity => maxDataSz;
-
-  @override
   int get oldestSample =>
       totalSamples > maxDataSz ? totalSamples - maxDataSz : 0;
 
@@ -546,19 +543,18 @@ class DataHub extends ChangeNotifier
   int get dataGeneration => _generation;
 
   @override
-  ChannelSeries channel(int channelIndex) {
-    final ext = _ingest[channelIndex].extremes;
-    return (
-      min: ext?.$1.toDouble(),
-      max: ext?.$2.toDouble(),
-      tare: tare[channelIndex],
-      buckets: valueBuckets[channelIndex].series,
-    );
-  }
+  BucketSeries valueBucketsFor(int channelIndex) =>
+      _valueBuckets[channelIndex].series;
 
   @override
   BucketSeries diffBucketsFor(int channelIndex) =>
-      diffBuckets[channelIndex].series;
+      _diffBuckets[channelIndex].series;
+
+  @override
+  (double, double)? channelExtremes(int channelIndex) {
+    final ext = _ingest[channelIndex].extremes;
+    return ext == null ? null : (ext.$1.toDouble(), ext.$2.toDouble());
+  }
 
   /// Whether the newest sample is a dropped one — i.e. the live readings the
   /// stats display are held values, not fresh data.
@@ -593,10 +589,10 @@ class DataHub extends ChangeNotifier
   /// Peak value for a given ADC channel in the specified unit: the max over
   /// the sample window [start, end), converted through the channel's
   /// calibration. The window is clamped to the retained data, so callers may
-  /// pass a graph window unclamped; a window holding no retained samples
-  /// reports 0, as does an empty stream. Exact and bucket-accelerated (see
+  /// pass a graph window unclamped. Exact and bucket-accelerated (see
   /// [GraphSeriesQueries.windowedRawExtremes]). Null when the unit is
-  /// unavailable for the channel.
+  /// unavailable for the channel, or when the clamped window holds no
+  /// sample (an empty stream, a window entirely outside the retained data).
   double? peakValue(
     int adcChannel,
     DisplayUnit unit, {
@@ -607,7 +603,7 @@ class DataHub extends ChangeNotifier
     final conv = converterFor(adcChannel).netMap(unit);
     if (conv == null) return null;
     final ext = windowedRawExtremes(adcChannel, start, end);
-    return ext == null ? 0 : conv(ext.$2);
+    return ext == null ? null : conv(ext.$2);
   }
 
   /// Get the instantaneous derivative (first-difference) for a channel in
@@ -618,9 +614,7 @@ class DataHub extends ChangeNotifier
 
     // A held value on either side would fabricate a flat or spiking
     // derivative; report 0 across gap edges instead.
-    if (gaps.contains(totalSamples - 1) || gaps.contains(totalSamples - 2)) {
-      return 0;
-    }
+    if (!diffDefinedAt(totalSamples - 1)) return 0;
 
     final conv = converterFor(adcChannel).netMap(unit);
     if (conv == null) return null;

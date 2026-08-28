@@ -48,10 +48,10 @@ void main() {
   }
 
   group('peaks', () {
-    test('an untouched hub reports zero peak, not sentinel garbage', () {
+    test('an untouched hub has no peak', () {
       final hub = DataHub();
       for (int ch = 0; ch < channels; ch++) {
-        expect(hub.peakValue(ch, DisplayUnit.raw, start: 0, end: 0), 0);
+        expect(hub.peakValue(ch, DisplayUnit.raw, start: 0, end: 0), isNull);
       }
     });
 
@@ -151,7 +151,7 @@ void main() {
       feed(hub, frameOf(42), 200);
       expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 200 + 5000), 42);
       // Entirely beyond the newest sample: no retained samples in view.
-      expect(hub.peakValue(0, DisplayUnit.raw, start: 5000, end: 9999), 0);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 5000, end: 9999), isNull);
     });
 
     test('windows reaching into evicted samples clamp after a ring wrap', () {
@@ -201,9 +201,9 @@ void main() {
       expect(hub.gaps.isEmpty, isTrue);
       expect(hub.taring, isFalse);
       expect(hub.tare[0], isNull);
-      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 0), 0);
-      expect(hub.valueBuckets[0].series.samples, 0);
-      expect(hub.diffBuckets[0].series.samples, 0);
+      expect(hub.peakValue(0, DisplayUnit.raw, start: 0, end: 0), isNull);
+      expect(hub.valueBucketsFor(0).samples, 0);
+      expect(hub.diffBucketsFor(0).samples, 0);
 
       // New data starts a fresh timeline; the old extremes are gone.
       feed(hub, frameOf(-500), 10);

@@ -79,7 +79,7 @@ void main() {
     recordedAt: '2026-07-29T14:05:32.000Z',
   );
 
-  group('SessionData.maxs', () {
+  group('SessionData.channelExtremes', () {
     SessionData makeSession(List<int> values) => SessionData(
       channels: [
         for (int ch = 0; ch < channels; ch++) Int32List.fromList(values),
@@ -91,15 +91,14 @@ void main() {
       ssnOrigin: 0,
     );
 
-    test('a never-positive channel reports its true (negative) peak', () {
+    test('a never-positive channel reports its true (negative) peaks', () {
       final sess = makeSession([-100, -300, -50, -200]);
-      expect(sess.maxs[0], -50);
+      expect(sess.channelExtremes(0), (-300.0, -50.0));
     });
 
     test('an empty session has no extremes', () {
       final sess = makeSession(const []);
-      expect(sess.maxs[0], isNull);
-      expect(sess.mins[0], isNull);
+      expect(sess.channelExtremes(0), isNull);
     });
   });
 

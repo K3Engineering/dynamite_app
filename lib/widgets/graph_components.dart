@@ -50,13 +50,7 @@ void _handleGraphPointerScroll(
   final focalFrac = ((event.localPosition.dx - _kGraphLeftSpace) / graphWidth)
       .clamp(0.0, 1.0);
   final zoomFactor = event.scrollDelta.dy < 0 ? 1.2 : 1 / 1.2;
-  ctrl.zoom(
-    zoomFactor,
-    focalFrac,
-    totalSamples,
-    data.oldestSample,
-    data.bufferCapacity,
-  );
+  ctrl.zoom(zoomFactor, focalFrac, totalSamples, data.oldestSample);
 }
 
 // ---------------------------------------------------------------------------
@@ -146,7 +140,6 @@ class _MinimapState extends State<_Minimap> {
       mapStart + (frac * mapSpan).round(),
       totalSamples,
       oldestSample,
-      widget.dataSource.bufferCapacity,
     );
   }
 
@@ -161,7 +154,6 @@ class _MinimapState extends State<_Minimap> {
       (d.delta.dx * samplesPerPixel).round(),
       totalSamples,
       oldestSample,
-      widget.dataSource.bufferCapacity,
     );
   }
 
@@ -266,13 +258,14 @@ class _MinimapPainter extends CustomPainter {
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
     for (final ch in activeIndices) {
-      final s = _data.channel(ch);
-      final conv = _data.converterFor(ch).netMap(unit);
+      final converter = _data.converterFor(ch);
+      final conv = converter.netMap(unit);
       if (conv == null) continue;
       // No data on this channel: the +/-10000 tare band alone matters.
-      final tare = s.tare ?? 0;
-      final lo = conv(math.min(s.min ?? tare, tare - 10000));
-      final hi = conv(math.max(s.max ?? tare, tare + 10000));
+      final tare = converter.tare ?? 0;
+      final ext = _data.channelExtremes(ch);
+      final lo = conv(math.min(ext?.$1 ?? tare, tare - 10000));
+      final hi = conv(math.max(ext?.$2 ?? tare, tare + 10000));
       if (lo < yMin) yMin = lo;
       if (hi > yMax) yMax = hi;
     }
@@ -293,7 +286,7 @@ class _MinimapPainter extends CustomPainter {
       color: _colorScheme.error,
     );
 
-    final tares = [for (final ch in activeIndices) _data.channel(ch).tare];
+    final tares = [for (final ch in activeIndices) _data.converterFor(ch).tare];
 
     // Segment-cached envelope data layer, shared with the main graphs. The
     // bucket-accelerated reduction keeps both segment bakes and direct gap
@@ -323,7 +316,6 @@ class _MinimapPainter extends CustomPainter {
     final (viewStart, viewEnd) = _ctrl.effectiveRange(
       totalSamples,
       oldestSample,
-      bufferCapacity: _data.bufferCapacity,
     );
     final double x1 = (viewStart - mapStart) * gw / mapSpan;
     final double x2 = (viewEnd - mapStart) * gw / mapSpan;
@@ -381,11 +373,7 @@ class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
     final total = widget.data.totalSamples;
     if (total == 0) return;
 
-    final (s, e) = widget.ctrl.effectiveRange(
-      total,
-      widget.data.oldestSample,
-      bufferCapacity: widget.data.bufferCapacity,
-    );
+    final (s, e) = widget.ctrl.effectiveRange(total, widget.data.oldestSample);
     _session = (
       focalX: details.localFocalPoint.dx,
       startSample: s,
@@ -572,7 +560,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       widget.ctrl.isLive ? 1.0 : 0.5,
       widget.data.totalSamples,
       widget.data.oldestSample,
-      widget.data.bufferCapacity,
     );
   }
 
@@ -804,7 +791,6 @@ class _SpanReadout extends StatelessWidget {
         final (start, end) = ctrl.effectiveRange(
           data.totalSamples,
           data.oldestSample,
-          bufferCapacity: data.bufferCapacity,
         );
         return Container(
           width: 60,
@@ -1108,14 +1094,14 @@ void _drawZeroBaseline(
   }
 }
 
-/// Draws a diagonal warning hatch pattern over the [GraphDataSource.gaps]
+/// Draws a diagonal warning hatch pattern over the [SampleStorage.gaps]
 /// ranges visible in the window (regions where packets were dropped).
 void _drawMissingDataHatching(
   Canvas canvas,
   Size graphSz, {
   required double viewStart,
   required double viewEnd,
-  required GraphDataSource data,
+  required SampleStorage data,
   required Color color,
 }) {
   final gaps = data.gaps;
@@ -1394,46 +1380,28 @@ void _drawChannelEnvelope(
   avg.flush();
 }
 
-/// Per-sample evaluator for [channel]'s tared value in [unit] (NaN marks a
-/// gap sample, breaking the polyline — see [GraphSeriesQueries.rawValueAt]).
-/// The exact-path counterpart of [_taredDisplayFromRaw]; used by the force
-/// graph and the minimap.
-double Function(int j) _taredDisplaySampleAt(
+/// The tared-force rendering recipe for one channel: the exact per-sample
+/// evaluator (gap samples NaN, breaking the polyline — see
+/// [SampleStorageQueries.rawValueAt]) plus its bucket acceleration. The
+/// [EnvelopeSeries.bucketed] invariants hold by construction: the bucket
+/// raw-to-display map and the per-sample evaluator are the same conversion
+/// (the map is monotone, so raw bucket extremes map exactly to display
+/// extremes; only the bucket MEAN passes through it with ppm-level error,
+/// invisible next to the envelope). Shared by the force graph and the
+/// minimap so both plot the identical series.
+EnvelopeSeries _taredEnvelopeSeries(
   GraphDataSource data,
   int channel,
   DisplayUnit unit,
 ) {
   // Non-null: the workspace plots only channels the unit can convert.
   final toUnit = data.converterFor(channel).netMap(unit)!;
-  return (j) => toUnit(data.rawValueAt(channel, j));
+  return EnvelopeSeries.bucketed(
+    sampleAt: (j) => toUnit(data.rawValueAt(channel, j)),
+    buckets: data.valueBucketsFor(channel),
+    rawToDisplay: toUnit,
+  );
 }
-
-/// Monotone raw-counts -> display-units map for [channel] (tare offset +
-/// per-channel calibration). Must agree with [_taredDisplaySampleAt] outside
-/// gaps; feeds the bucket fast path of [_drawChannelEnvelope]. The map is
-/// piecewise-linear and monotone, so bucket raw extremes map exactly to
-/// display extremes; the bucket raw MEAN maps through it with ppm-level
-/// error (invisible next to the envelope), the same tradeoff as before.
-double Function(double raw) _taredDisplayFromRaw(
-  GraphDataSource data,
-  int channel,
-  DisplayUnit unit,
-) {
-  return data.converterFor(channel).netMap(unit)!;
-}
-
-/// The tared-force rendering recipe for one channel (exact per-sample
-/// evaluator + bucket acceleration). Shared by the force graph and the
-/// minimap so both plot the identical series.
-EnvelopeSeries _taredEnvelopeSeries(
-  GraphDataSource data,
-  int channel,
-  DisplayUnit unit,
-) => EnvelopeSeries.bucketed(
-  sampleAt: _taredDisplaySampleAt(data, channel, unit),
-  buckets: data.channel(channel).buckets,
-  rawToDisplay: _taredDisplayFromRaw(data, channel, unit),
-);
 
 /// Fold the raw extremes of [channels] over `[start, end)` (already clamped
 /// to the source's usable range). [seriesFor] yields a channel's bucket
@@ -1691,7 +1659,6 @@ _GraphLayout? _setupGraphFrame(
   final (viewStart, viewEnd) = ctrl.effectiveRange(
     data.totalSamples,
     data.oldestSample,
-    bufferCapacity: data.bufferCapacity,
   );
   // A live-following window anchors its right edge to the fractional live
   // edge, so the trace scrolls continuously between packets; parked windows
@@ -1951,7 +1918,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
 
   @override
   List<double?> cacheKeyTares() =>
-      _activeChannels.map((ch) => _data.channel(ch).tare).toList();
+      _activeChannels.map((ch) => _data.converterFor(ch).tare).toList();
 
   @override
   EnvelopeSeries series(int channel) =>
@@ -1974,16 +1941,18 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
     final converters = <int, double Function(double)>{};
+    final tares = <int, double>{};
     for (final ch in _activeChannels) {
-      final conv = _data.converterFor(ch).netMap(unit);
+      final converter = _data.converterFor(ch);
+      final conv = converter.netMap(unit);
       if (conv == null) continue;
       converters[ch] = conv;
+      tares[ch] = converter.tare ?? 0;
       final ext = _data.windowedRawExtremes(ch, start, end);
       if (ext == null) continue;
       // Tare-subtracted raw extremes feed the noise floor below.
-      final tare = _data.channel(ch).tare ?? 0;
-      rawMin = math.min(rawMin, ext.$1 - tare);
-      rawMax = math.max(rawMax, ext.$2 - tare);
+      rawMin = math.min(rawMin, ext.$1 - tares[ch]!);
+      rawMax = math.max(rawMax, ext.$2 - tares[ch]!);
       yMin = math.min(yMin, conv(ext.$1));
       yMax = math.max(yMax, conv(ext.$2));
     }
@@ -2002,7 +1971,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       final lo = mid - noiseFloor / 2;
       final hi = mid + noiseFloor / 2;
       for (final MapEntry(key: ch, value: conv) in converters.entries) {
-        final tare = _data.channel(ch).tare ?? 0;
+        final tare = tares[ch]!;
         yMin = math.min(yMin, conv(lo + tare));
         yMax = math.max(yMax, conv(hi + tare));
       }
@@ -2083,8 +2052,8 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   @override
   int get firstSampleOffset => 1; // first difference needs sample j-1
 
-  /// Per-sample first difference in raw counts (gap-rule NaN lives in
-  /// [GraphSeriesQueries.rawDiffAt]).
+  /// Per-sample first difference in raw counts (gap-edge NaN lives in
+  /// [SampleStorageQueries.diffDefinedAt]).
   double Function(int j) _rawDiffAt(int channel) =>
       (j) => _data.rawDiffAt(channel, j);
 
@@ -2093,12 +2062,11 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   /// piecewise map; tare cancels). NaN marks gap edges, breaking the
   /// polyline.
   double Function(int j) _sampleAt(int channel) {
-    final gaps = _data.gaps;
     // Non-null: the workspace plots only convertible channels.
     final conv = _data.converterFor(channel).netMap(_unit)!;
     final rate = _data.sampleRate.toDouble();
     return (j) {
-      if (gaps.contains(j) || gaps.contains(j - 1)) return double.nan;
+      if (!_data.diffDefinedAt(j)) return double.nan;
       return (conv(_data.rawAt(channel, j).toDouble()) -
               conv(_data.rawAt(channel, j - 1).toDouble())) *
           rate;
@@ -2133,8 +2101,8 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
       viewStart.floor(),
       viewEnd.ceil(),
     );
-    // +1: the first difference at index 0 has no predecessor.
-    final from = math.max(startI, _data.oldestSample + 1);
+    // The first difference at index 0 has no predecessor.
+    final from = math.max(startI, _data.oldestSample + firstSampleOffset);
 
     void fold(double d) {
       if (first || d < dMin) dMin = d;
