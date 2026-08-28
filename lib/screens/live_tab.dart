@@ -26,7 +26,7 @@ import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 import '../widgets/rssi_indicator.dart';
 import '../widgets/snackbars.dart';
-import '../widgets/status_colors.dart';
+import '../status_colors.dart';
 
 // ---------------------------------------------------------------------------
 // LiveTab

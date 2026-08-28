@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/widgets/bt_icon.dart';
-import 'package:dynamite_app/widgets/status_colors.dart';
+import 'package:dynamite_app/status_colors.dart';
 
 /// Tests for the pure link and adapter/scan -> indicator mappings.
 void main() {

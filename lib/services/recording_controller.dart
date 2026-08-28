@@ -64,8 +64,9 @@ enum _RecordingState { idle, recording, stopping }
 /// merely "looks" idle.
 ///
 /// Dependencies are ports, not subsystems: the live store is [DataHub] (the
-/// data plane — same concrete-dependency status [FeedHealthTracker] gives
-/// it), stream liveness arrives through the [streamingChanges]/[streamingNow]
+/// data plane — starting a session snapshots tare, calibration and sample
+/// rate off it, more than the [FeedHealthSource] read port covers), stream
+/// liveness arrives through the [streamingChanges]/[streamingNow]
 /// port, and device metadata, packet-boundary resets and persistence are
 /// injected ([deviceMetadataSnapshot], [onSessionBoundary], [persistence]).
 /// The link-transition resets this controller used to own (hub clear on

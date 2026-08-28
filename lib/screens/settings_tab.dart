@@ -15,7 +15,7 @@ import '../services/data_hub.dart';
 import '../services/rig_state.dart';
 import '../services/calibration_text.dart';
 import '../widgets/info_cards.dart';
-import 'rig_slots_section.dart';
+import '../widgets/rig_slots_section.dart';
 import '../widgets/section_header.dart';
 import '../widgets/snackbars.dart';
 import '../widgets/wide_layout.dart';

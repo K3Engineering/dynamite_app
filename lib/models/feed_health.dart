@@ -34,6 +34,18 @@ enum FeedHealth {
       this == FeedHealth.silent;
 }
 
+/// The stream measurements [deriveFeedHealth] consumes, as a read port for
+/// sources that can answer them live (implemented by `DataHub`): a consumer
+/// polls this instead of holding the whole hub. [totalSamples] > 0 is the
+/// "ever flowed" truth; the timestamps mark the last decodable batch, the
+/// last malformed packet, and the current stream's start.
+abstract interface class FeedHealthSource {
+  int get totalSamples;
+  DateTime? get lastDataAt;
+  DateTime? get lastMalformedPacketAt;
+  DateTime? get streamStartedAt;
+}
+
 /// Classify the feed from stream measurements (the live source is DataHub;
 /// the values are passed rather than the hub so the classification stays a
 /// pure function). [streaming] is the link's "ADC feed subscribed" state;

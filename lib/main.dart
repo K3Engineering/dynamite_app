@@ -27,7 +27,7 @@ import 'services/session_storage.dart';
 import 'services/stream_reset_coordinator.dart';
 import 'services/wakelock_policy.dart';
 import 'screens/app_shell.dart';
-import 'widgets/status_colors.dart';
+import 'status_colors.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

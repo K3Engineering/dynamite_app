@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/feed_health.dart';
-import 'data_hub.dart';
 
 /// The shared 1 Hz feed-health derivation (see [deriveFeedHealth]), one
 /// owner for every surface that wants the live classification — the Devices
@@ -14,7 +13,7 @@ import 'data_hub.dart';
 /// produces no packets, so nothing else would refresh the classification.
 class FeedHealthTracker {
   FeedHealthTracker({
-    required DataHub hub,
+    required FeedHealthSource hub,
     required Listenable streamingChanges,
     required bool Function() streamingNow,
   }) : _hub = hub,
@@ -23,7 +22,10 @@ class FeedHealthTracker {
     _streamingChanges.addListener(_onStreamingChanged);
   }
 
-  final DataHub _hub;
+  /// The tracker's narrow read port onto the live store (main wires the hub
+  /// in, as [FeedHealthSource]): polled by the ticker, so it needs no notify
+  /// side — and it cannot reach the hub's command surface.
+  final FeedHealthSource _hub;
 
   /// Notifies when the link's streaming state may have changed; queried via
   /// [_streamingNow]. The tracker's narrow port onto the link layer — main

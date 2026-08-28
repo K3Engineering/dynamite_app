@@ -4,7 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import '../models/load_cell.dart';
 import '../services/rig_state.dart';
 import '../utils/format.dart';
-import '../widgets/snackbars.dart';
+import 'snackbars.dart';
 
 /// Quick-pick values for the slot editor: the common nameplate numbers,
 /// one tap away; anything else goes in the text field.

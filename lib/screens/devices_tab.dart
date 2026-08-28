@@ -14,7 +14,7 @@ import '../widgets/feed_health_indicator.dart';
 import '../widgets/rssi_indicator.dart';
 import '../widgets/section_header.dart';
 import '../widgets/snackbars.dart';
-import '../widgets/status_colors.dart';
+import '../status_colors.dart';
 import '../widgets/wide_layout.dart';
 
 class DevicesTab extends StatelessWidget {

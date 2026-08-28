@@ -3,7 +3,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../models/feed_health.dart';
 import 'feed_health_text.dart';
-import 'status_colors.dart';
+import '../status_colors.dart';
 
 /// The one-line feed-health readout ("Packets malformed…", "No data from
 /// device", "Stream stopped") the Devices tab renders under the connected

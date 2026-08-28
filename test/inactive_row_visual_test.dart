@@ -5,7 +5,7 @@ import 'package:dynamite_app/screens/devices_tab.dart'
     show InactiveRowMood, InactiveRowVisual, inactiveRowVisual;
 import 'package:dynamite_app/services/ble_link_manager.dart'
     show BleLinkManager;
-import 'package:dynamite_app/widgets/status_colors.dart' show StatusColors;
+import 'package:dynamite_app/status_colors.dart' show StatusColors;
 
 /// Tests for [inactiveRowVisual], the inactive device row's full presentation
 /// mapping (icon/colors/subtitle + the mood that drives stale-last ordering).

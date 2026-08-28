@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 
 import '../models/bt_scan.dart' show BtAvailability, BtLinkState;
-import 'status_colors.dart';
+import '../status_colors.dart';
 
 /// Everything a Bluetooth status readout displays; colors are supplied from
 /// the theme.

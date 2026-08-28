@@ -9,6 +9,7 @@ import '../models/channel_calibration.dart';
 import '../models/channel_converter.dart';
 import '../models/load_cell.dart';
 import '../models/display_unit.dart';
+import '../models/feed_health.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 import '../models/sample_slice.dart';
@@ -27,7 +28,8 @@ typedef SamplesAppendedListener = void Function(int startIdx, int count);
 ///
 /// Channel count is [kAdcChannelCount]; channel index == storage index ==
 /// display index.
-class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
+class DataHub extends ChangeNotifier
+    implements GraphDataSource, AdcSink, FeedHealthSource {
   /// Ring capacity in samples — ~10 min at the 1 kHz the device boots at.
   /// A capacity decision, NOT derived from the device rate ([sampleRateHz]):
   /// a faster stream simply covers less time in the same memory.
@@ -153,15 +155,18 @@ class DataHub extends ChangeNotifier implements GraphDataSource, AdcSink {
   int _calibrationVersion = 0;
 
   /// Wall-clock time of the most recent malformed (undecodable) ADC packet
-  /// the decoder dropped, and that packet's byte length. Read by
-  /// [deriveFeedHealth]; reset by [clear].
+  /// the decoder dropped, and that packet's byte length. Polled through
+  /// [FeedHealthSource]; reset by [clear].
+  @override
   DateTime? lastMalformedPacketAt;
   int? lastMalformedPacketLen;
 
   /// Wall-clock time the current stream's data began accumulating (set by
   /// [clear], which runs on every new device stream). A stream younger than
   /// the feed-health freshness window simply hasn't produced its first
-  /// packet yet — [deriveFeedHealth] reads that as "starting", not "silent".
+  /// packet yet — a [FeedHealthSource] reader reads that as "starting", not
+  /// "silent".
+  @override
   DateTime? streamStartedAt;
 
   /// Wall-clock time of the last completed packet batch ([commitBatch]), or
