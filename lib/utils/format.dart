@@ -1,4 +1,4 @@
-/// Shared display formatters for the session screens.
+/// Shared display formatters and cross-referenced copy.
 library;
 
 /// Menu label of the damaged-data export, the one source so the menu item,
