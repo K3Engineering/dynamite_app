@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import '../models/board_calibration.dart';
+import '../models/hub_event.dart';
 
 /// The decoded-ADC-feed destination consumed by `AdcPacketDecoder`;
 /// implemented by `DataHub`. The protocol decoder owns this contract so the
@@ -33,5 +34,6 @@ abstract interface class AdcSink {
 
   void updateBoardCalibration(BoardCalibration calibration);
 
-  void addClearedListener(void Function() listener);
+  /// Subscribe to the sink's lifecycle/data events (see `hub_event.dart`).
+  void addEventListener(void Function(HubEvent) listener);
 }

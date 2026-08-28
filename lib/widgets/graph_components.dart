@@ -1121,8 +1121,10 @@ void _drawMissingDataHatching(
   final gaps = data.gaps;
   if (gaps.isEmpty) return;
 
-  final sScanStart = math.max(viewStart.floor(), data.oldestSample);
-  final sScanEnd = math.min(viewEnd.ceil(), data.totalSamples);
+  final (sScanStart, sScanEnd) = data.clampToRetained(
+    viewStart.floor(),
+    viewEnd.ceil(),
+  );
   if (sScanStart >= sScanEnd) return;
 
   final viewSamples = viewEnd - viewStart;
@@ -1393,23 +1395,17 @@ void _drawChannelEnvelope(
 }
 
 /// Per-sample evaluator for [channel]'s tared value in [unit] (NaN marks a
-/// gap sample, breaking the polyline). The exact-path counterpart of
-/// [_taredDisplayFromRaw]; used by the force graph and the minimap.
+/// gap sample, breaking the polyline — see [GraphSeriesQueries.rawValueAt]).
+/// The exact-path counterpart of [_taredDisplayFromRaw]; used by the force
+/// graph and the minimap.
 double Function(int j) _taredDisplaySampleAt(
   GraphDataSource data,
   int channel,
   DisplayUnit unit,
 ) {
-  final s = data.channel(channel);
-  final line = s.data;
-  final bufferCap = data.bufferCapacity;
-  final gaps = data.gaps;
   // Non-null: the workspace plots only channels the unit can convert.
   final toUnit = data.converterFor(channel).netMap(unit)!;
-  return (j) {
-    if (gaps.contains(j)) return double.nan; // break the polyline
-    return toUnit(line[j % bufferCap].toDouble());
-  };
+  return (j) => toUnit(data.rawValueAt(channel, j));
 }
 
 /// Monotone raw-counts -> display-units map for [channel] (tare offset +
@@ -1563,8 +1559,6 @@ bool _paintEnvelopeDataLayer(
         cCanvas.clipPath(clip);
       }
       for (final ch in activeChannels) {
-        if (data.channel(ch).data.isEmpty) continue;
-
         _drawChannelEnvelope(
           cCanvas,
           color: getChannelColor(ch),
@@ -1966,15 +1960,14 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   @override
   YAxisRange computeYRange(double viewStart, double viewEnd) {
     // Data min/max across active channels in the visible window, converted
-    // per channel through its own calibration. [windowedExtremes] folds full
-    // buckets from the precomputed aggregates (exact for min/max of a
+    // per channel through its own calibration. [windowedRawExtremes] folds
+    // full buckets from the precomputed aggregates (exact for min/max of a
     // monotone map) and per-sample scans only the partial head/tail, so the
     // cost is O(window / bucketSize). The noise floor stays a raw-count
     // threshold, applied to the global tare-subtracted raw extremes.
-    final bufferCap = _data.bufferCapacity;
     final unit = _unit;
-    final start = math.max(viewStart.floor(), _data.oldestSample);
-    final end = math.min(viewEnd.ceil(), _data.totalSamples);
+    final start = viewStart.floor();
+    final end = viewEnd.ceil();
 
     double rawMin = double.infinity;
     double rawMax = double.negativeInfinity;
@@ -1982,20 +1975,13 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     double yMax = double.negativeInfinity;
     final converters = <int, double Function(double)>{};
     for (final ch in _activeChannels) {
-      final s = _data.channel(ch);
-      if (s.data.isEmpty) continue;
       final conv = _data.converterFor(ch).netMap(unit);
       if (conv == null) continue;
       converters[ch] = conv;
-      final ext = windowedExtremes(
-        s.buckets,
-        start,
-        end,
-        (i) => s.data[i % bufferCap].toDouble(),
-      );
+      final ext = _data.windowedRawExtremes(ch, start, end);
       if (ext == null) continue;
       // Tare-subtracted raw extremes feed the noise floor below.
-      final tare = s.tare ?? 0;
+      final tare = _data.channel(ch).tare ?? 0;
       rawMin = math.min(rawMin, ext.$1 - tare);
       rawMax = math.max(rawMax, ext.$2 - tare);
       yMin = math.min(yMin, conv(ext.$1));
@@ -2097,35 +2083,24 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   @override
   int get firstSampleOffset => 1; // first difference needs sample j-1
 
-  /// Per-sample first difference in raw counts. A held value on either side
-  /// of the difference would fabricate a flat or spiking derivative; NaN
-  /// marks gap edges instead, breaking the polyline.
-  double Function(int j) _rawDiffAt(int channel) {
-    final line = _data.channel(channel).data;
-    final bufferCap = _data.bufferCapacity;
-    final gaps = _data.gaps;
-    return (j) {
-      if (gaps.contains(j) || gaps.contains(j - 1)) return double.nan;
-      return (line[j % bufferCap] - line[(j - 1) % bufferCap]).toDouble();
-    };
-  }
+  /// Per-sample first difference in raw counts (gap-rule NaN lives in
+  /// [GraphSeriesQueries.rawDiffAt]).
+  double Function(int j) _rawDiffAt(int channel) =>
+      (j) => _data.rawDiffAt(channel, j);
 
   /// Per-sample first difference in display units per second: the channel's
   /// own converter differenced across adjacent samples (exact under the
   /// piecewise map; tare cancels). NaN marks gap edges, breaking the
   /// polyline.
   double Function(int j) _sampleAt(int channel) {
-    final s = _data.channel(channel);
-    final line = s.data;
-    final bufferCap = _data.bufferCapacity;
     final gaps = _data.gaps;
     // Non-null: the workspace plots only convertible channels.
     final conv = _data.converterFor(channel).netMap(_unit)!;
     final rate = _data.sampleRate.toDouble();
     return (j) {
       if (gaps.contains(j) || gaps.contains(j - 1)) return double.nan;
-      return (conv(line[j % bufferCap].toDouble()) -
-              conv(line[(j - 1) % bufferCap].toDouble())) *
+      return (conv(_data.rawAt(channel, j).toDouble()) -
+              conv(_data.rawAt(channel, j - 1).toDouble())) *
           rate;
     };
   }
@@ -2154,8 +2129,12 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     double dMin = 0;
     double dMax = 0;
     bool first = true;
-    final startI = math.max(viewStart.floor(), _data.oldestSample + 1);
-    final endI = math.min(viewEnd.ceil(), _data.totalSamples);
+    final (startI, endI) = _data.clampToRetained(
+      viewStart.floor(),
+      viewEnd.ceil(),
+    );
+    // +1: the first difference at index 0 has no predecessor.
+    final from = math.max(startI, _data.oldestSample + 1);
 
     void fold(double d) {
       if (first || d < dMin) dMin = d;
@@ -2165,8 +2144,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
 
     // Each channel folds via the bucket fast path through its own diff map
     // (monotone, so both bounds fold safely).
-    final ext = _foldChannelExtremes(_activeChannels, startI, endI, (ch) {
-      if (_data.channel(ch).data.isEmpty) return null;
+    final ext = _foldChannelExtremes(_activeChannels, from, endI, (ch) {
       return (_data.diffBucketsFor(ch), _rawDiffAt(ch));
     }, (raw, ch) => _diffDisplayFor(ch)(raw));
     if (ext != null) {

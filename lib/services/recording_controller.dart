@@ -10,6 +10,7 @@ import '../models/board_calibration.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/feed_health.dart';
+import '../models/hub_event.dart';
 
 /// Outcome of [RecordingController.startSession]. The outcomes are mutually
 /// exclusive, so they form a sealed type the caller switches exhaustively —
@@ -109,7 +110,7 @@ class RecordingController extends ChangeNotifier {
        _onSessionBoundary = onSessionBoundary,
        _persistence = persistence,
        _events = events {
-    _dataHub.addSamplesAppendedListener(_onSamplesAppended);
+    _dataHub.addEventListener(_onHubEvent);
     _streamingChanges.addListener(_onStreamingChanged);
   }
 
@@ -267,11 +268,20 @@ class RecordingController extends ChangeNotifier {
     return (sessionId: writer.sessionId, name: name, error: error);
   }
 
-  /// Slice of freshly decoded samples, straight from the decoder (via the
-  /// hub). Streams it to the writer; if the writer has latched a storage
-  /// failure, auto-stop instead of recording into a void ([stopSession]'s
-  /// finalization re-detects the latched error and surfaces it).
-  void _onSamplesAppended(int startIdx, int count) {
+  /// The controller only consumes [HubBatchAppended] (freshly decoded
+  /// samples, straight from the decoder via the hub): stream them to the
+  /// writer; if the writer has latched a storage failure, auto-stop instead
+  /// of recording into a void ([stopSession]'s finalization re-detects the
+  /// latched error and surfaces it).
+  void _onHubEvent(HubEvent event) => switch (event) {
+    HubBatchAppended(:final startIdx, :final count) => _onBatchAppended(
+      startIdx,
+      count,
+    ),
+    HubCleared() => null,
+  };
+
+  void _onBatchAppended(int startIdx, int count) {
     final writer = _sessionWriter;
     if (writer == null) {
       return;
@@ -297,7 +307,7 @@ class RecordingController extends ChangeNotifier {
   @override
   void dispose() {
     _streamingChanges.removeListener(_onStreamingChanged);
-    _dataHub.removeSamplesAppendedListener(_onSamplesAppended);
+    _dataHub.removeEventListener(_onHubEvent);
     super.dispose();
   }
 }

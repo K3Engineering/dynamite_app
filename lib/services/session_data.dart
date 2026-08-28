@@ -105,7 +105,8 @@ class SessionData implements GraphDataSource {
   /// Healthy sessions carry [SessionDamage.none].
   final SessionDamage damage;
 
-  /// Per-channel extremes, computed once on construction.
+  /// Per-channel whole-session extremes, derived by the load-time ingest
+  /// (same [ChannelIngest] tracker as the live hub's stream-lifetime peaks).
   final List<double?> mins;
   final List<double?> maxs;
 
@@ -151,10 +152,6 @@ class SessionData implements GraphDataSource {
 
     for (int ch = 0; ch < channels.length; ch++) {
       if (sampleCount == 0) continue;
-      // int32-compared doubles: ±.infinity seeds are guaranteed to be
-      // displaced on the first sample, so null-readers never see them.
-      double mn = double.infinity;
-      double mx = double.negativeInfinity;
       final ingest = ChannelIngest(
         valueBuckets: valueBuckets[ch],
         diffBuckets: diffBuckets[ch],
@@ -162,13 +159,11 @@ class SessionData implements GraphDataSource {
       );
 
       for (int i = 0; i < sampleCount; i++) {
-        final v = channels[ch][i];
-        if (v < mn) mn = v.toDouble();
-        if (v > mx) mx = v.toDouble();
-        ingest.add(i, v, i > 0 ? channels[ch][i - 1] : 0);
+        ingest.add(i, channels[ch][i], i > 0 ? channels[ch][i - 1] : 0);
       }
-      mins[ch] = mn;
-      maxs[ch] = mx;
+      final ext = ingest.extremes; // non-null: sampleCount > 0 here
+      mins[ch] = ext!.$1.toDouble();
+      maxs[ch] = ext.$2.toDouble();
     }
   }
 
@@ -179,11 +174,15 @@ class SessionData implements GraphDataSource {
   @override
   int get totalSamples => sampleCount;
 
+  /// The whole session is retained, so its retention bound is its length.
   @override
   int get bufferCapacity => sampleCount;
 
   @override
   int get oldestSample => 0;
+
+  @override
+  int rawAt(int channelIndex, int index) => channels[channelIndex][index];
 
   @override
   Listenable get repaint => kNeverRepaints;
@@ -210,7 +209,6 @@ class SessionData implements GraphDataSource {
 
   @override
   ChannelSeries channel(int channelIndex) => (
-    data: channels[channelIndex],
     min: mins[channelIndex],
     max: maxs[channelIndex],
     tare: tares[channelIndex],

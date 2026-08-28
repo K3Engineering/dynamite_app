@@ -15,6 +15,7 @@ import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/feed_health_tracker.dart';
 import '../models/feed_health.dart';
+import '../models/hub_event.dart';
 import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
@@ -64,9 +65,9 @@ class _LiveTabState extends State<LiveTab> {
     // singleton, so the identity check below only fires once.
     final hub = context.read<DataHub>();
     if (_hub != hub) {
-      _hub?.removeClearedListener(_onHubCleared);
+      _hub?.removeEventListener(_onHubEvent);
       _hub = hub;
-      hub.addClearedListener(_onHubCleared);
+      hub.addEventListener(_onHubEvent);
     }
   }
 
@@ -75,13 +76,13 @@ class _LiveTabState extends State<LiveTab> {
   /// fresh live edge. Without this, a user-panned (non-live) window survives
   /// the disconnect and [GraphController.effectiveRange] would clamp the
   /// stale window against a now-empty buffer (inverted clamp limits -> throw).
-  void _onHubCleared() {
-    _graphCtrl.reset();
+  void _onHubEvent(HubEvent event) {
+    if (event is HubCleared) _graphCtrl.reset();
   }
 
   @override
   void dispose() {
-    _hub?.removeClearedListener(_onHubCleared);
+    _hub?.removeEventListener(_onHubEvent);
     _showDerivative.dispose();
     _graphCtrl.dispose();
     super.dispose();

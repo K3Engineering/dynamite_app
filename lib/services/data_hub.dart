@@ -7,6 +7,7 @@ import '../models/bucket_series.dart';
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
 import '../models/channel_converter.dart';
+import '../models/hub_event.dart';
 import '../models/load_cell.dart';
 import '../models/display_unit.dart';
 import '../models/feed_health.dart';
@@ -14,11 +15,6 @@ import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 import '../models/sample_slice.dart';
 import 'adc_sink.dart';
-
-/// Invoked by [DataHub.commitBatch] with the exact slice of samples appended
-/// by the decoder for one packet ([startIdx] is the logical index of the
-/// first new sample).
-typedef SamplesAppendedListener = void Function(int startIdx, int count);
 
 /// Storage and derived statistics for the live ADC stream.
 ///
@@ -52,27 +48,18 @@ class DataHub extends ChangeNotifier
   /// link, before the feed subscription).
   void setSampleRate(int hz) => _sampleRateHz = hz;
 
-  /// "No sample seen yet" sentinels for [rawMax]/[rawMin]: int32 min/max, so
-  /// the first real sample always replaces them. Initializing to 0 instead
-  /// would bias the extremes toward zero (a never-positive channel would
-  /// report a peak of `0 - tare`). Exposed as null via [channel]; ADC values
-  /// are 24-bit, well inside int32.
-  static const int _noMaxYet = -0x80000000;
-  static const int _noMinYet = 0x7FFFFFFF;
-
   /// Per-channel tare offset in raw counts, or null = no offset. Null is
   /// first-class: zero counts is not a meaningful "untared" anchor (the
   /// board's physical zero is its dead-short reading, not zero counts), so
   /// the absent state must not be smuggled through a number.
   final List<double?> tare = List<double?>.filled(kAdcChannelCount, null);
-  final Float64List _runningTotal = Float64List(kAdcChannelCount);
-  final Int32List rawMax = Int32List(kAdcChannelCount);
-  final Int32List rawMin = Int32List(kAdcChannelCount);
 
   /// Latest raw value per channel (for live stats display).
   final Int32List _currentRaw = Int32List(kAdcChannelCount);
 
-  final List<Int32List> rawData = List.generate(
+  /// Per-channel raw storage, ring-addressed — read through [rawAt], never
+  /// indexed directly outside this class.
+  final List<Int32List> _rawData = List.generate(
     kAdcChannelCount,
     (_) => Int32List(maxDataSz),
     growable: false,
@@ -99,7 +86,7 @@ class DataHub extends ChangeNotifier
   );
 
   /// The shared per-sample ingester feeding [valueBuckets]/[diffBuckets]
-  /// (see [ChannelIngest]).
+  /// and the stream-lifetime extremes (see [ChannelIngest]).
   late final List<ChannelIngest> _ingest = List.generate(
     kAdcChannelCount,
     (i) => ChannelIngest(
@@ -109,13 +96,13 @@ class DataHub extends ChangeNotifier
     ),
     growable: false,
   );
-  int _tareCount = 0;
 
-  /// Window length of the in-progress tare (captured at request time, so a
-  /// config landing mid-tare can't change it) and the channel it will commit
-  /// to (null = all). Meaningless while idle.
-  int _tareTotal = 0;
-  int? _tareChannel;
+  /// The in-progress tare window: a marker recording how many REAL samples
+  /// its average spans and which channel it commits to (null = all); nothing
+  /// accumulates while it fills — completion scans the window back out of
+  /// the ring. Null = no tare in flight, so request/commit/cancel are all
+  /// simple marker writes.
+  _PendingTare? _pendingTare;
 
   @override
   int totalSamples = 0;
@@ -208,33 +195,26 @@ class DataHub extends ChangeNotifier
   @override
   final GapList gaps = GapList();
 
-  /// Observers notified by [commitBatch] with the exact slice of samples
-  /// appended by the decoder for one packet. This is how
-  /// [RecordingController] observes new data without the hub knowing anything
-  /// about recording. [ObserverList] (the same mechanism [ChangeNotifier]
-  /// uses) keeps removal-during-dispatch safe.
-  final ObserverList<SamplesAppendedListener> _samplesAppendedListeners =
-      ObserverList<SamplesAppendedListener>();
-
-  void addSamplesAppendedListener(SamplesAppendedListener listener) =>
-      _samplesAppendedListeners.add(listener);
-
-  void removeSamplesAppendedListener(SamplesAppendedListener listener) =>
-      _samplesAppendedListeners.remove(listener);
-
-  /// Observers notified once per [clear] — a new device stream just reset the
-  /// hub, so views must drop stale pan/zoom windows instead of clamping them
-  /// against an empty buffer. Lets observers react to resets explicitly
-  /// instead of mirroring [generation] and comparing on every notify.
-  final ObserverList<void Function()> _clearedListeners =
-      ObserverList<void Function()>();
+  /// Observers of the hub's event stream (see `hub_event.dart`):
+  /// [RecordingController] consumes [HubBatchAppended] (new data without the
+  /// hub knowing anything about recording); the packet decoder and live
+  /// views consume [HubCleared]. [ObserverList] (the same mechanism
+  /// [ChangeNotifier] uses) keeps removal-during-dispatch safe.
+  final ObserverList<void Function(HubEvent)> _eventListeners =
+      ObserverList<void Function(HubEvent)>();
 
   @override
-  void addClearedListener(void Function() listener) =>
-      _clearedListeners.add(listener);
+  void addEventListener(void Function(HubEvent) listener) =>
+      _eventListeners.add(listener);
 
-  void removeClearedListener(void Function() listener) =>
-      _clearedListeners.remove(listener);
+  void removeEventListener(void Function(HubEvent) listener) =>
+      _eventListeners.remove(listener);
+
+  void _emit(HubEvent event) {
+    for (final listener in _eventListeners) {
+      listener(event);
+    }
+  }
 
   DataHub() {
     clear();
@@ -251,9 +231,7 @@ class DataHub extends ChangeNotifier
   /// transition that triggers this reset. The disconnect side is handled by
   /// [clearBoardCalibration].
   void clear() {
-    _tareCount = 0;
-    _tareTotal = 0;
-    _tareChannel = null;
+    _pendingTare = null;
     totalSamples = 0;
     _generation++;
     lastMalformedPacketAt = null;
@@ -263,16 +241,11 @@ class DataHub extends ChangeNotifier
     packetAnchor = null;
     gaps.clear();
     for (int i = 0; i < kAdcChannelCount; ++i) {
-      rawMax[i] = _noMaxYet;
-      rawMin[i] = _noMinYet;
       tare[i] = null;
-      _runningTotal[i] = 0;
       _currentRaw[i] = 0;
       _ingest[i].reset();
     }
-    for (final listener in _clearedListeners) {
-      listener();
-    }
+    _emit(const HubCleared());
     notifyListeners();
   }
 
@@ -287,7 +260,7 @@ class DataHub extends ChangeNotifier
     lastMalformedPacketLen = length;
   }
 
-  bool get taring => (_tareCount > 0);
+  bool get taring => _pendingTare != null;
 
   /// Wall-clock deadline for an in-progress tare: a window that stops
   /// filling (device gone silent) would otherwise leave the hub "taring"
@@ -307,12 +280,8 @@ class DataHub extends ChangeNotifier
   /// back.
   void requestTare({int? channel}) {
     assert(channel == null || (channel >= 0 && channel < kAdcChannelCount));
-    _tareCount = _tareTotal = _sampleRateHz;
-    _tareChannel = channel;
+    _pendingTare = _PendingTare(_sampleRateHz, channel);
     _tareDeadline = DateTime.now().add(_tareTimeout);
-    for (int i = 0; i < kAdcChannelCount; ++i) {
-      _runningTotal[i] = 0;
-    }
     // Notify so observers of [taring] (the TARE button's "TARING" label)
     // flip on the tap rather than on the next packet's [commitBatch].
     notifyListeners();
@@ -322,14 +291,7 @@ class DataHub extends ChangeNotifier
   /// action (reset, manual set) cancels a pending window: letting it
   /// commit right after would silently re-zero or overwrite what the
   /// user just did.
-  void _cancelPendingTare() {
-    _tareCount = 0;
-    _tareTotal = 0;
-    _tareChannel = null;
-    for (int i = 0; i < kAdcChannelCount; ++i) {
-      _runningTotal[i] = 0;
-    }
-  }
+  void _cancelPendingTare() => _pendingTare = null;
 
   /// Drop tare offsets (back to gross display) for one [channel], or all
   /// channels when null. Cancels any in-progress tare (see
@@ -355,12 +317,38 @@ class DataHub extends ChangeNotifier
     notifyListeners();
   }
 
+  /// A window's worth of real samples has arrived: the mean of exactly those
+  /// [window.length] samples becomes the offset. Computed by scanning back
+  /// out of the ring, skipping gap (held) samples — nothing accumulated while
+  /// the window filled, so a drop mid-window contributes neither value nor
+  /// count to the average.
+  void _commitTare(_PendingTare window) {
+    final sums = Float64List(kAdcChannelCount);
+    int found = 0;
+    for (
+      int i = totalSamples - 1;
+      found < window.length; // ends at the request index at the latest
+      i--
+    ) {
+      if (gaps.contains(i)) continue; // held value: not a reading
+      for (int ch = 0; ch < kAdcChannelCount; ++ch) {
+        sums[ch] += rawAt(ch, i);
+      }
+      found++;
+    }
+    for (int ch = 0; ch < kAdcChannelCount; ++ch) {
+      if (window.channel == null || window.channel == ch) {
+        tare[ch] = sums[ch] / window.length;
+      }
+    }
+    _pendingTare = null;
+  }
+
   /// Append one decoded sample (one value per channel). Samples are always
   /// buffered and [totalSamples] always advances — including while a tare is
   /// in progress, so taring never warps the stream's timeline or punches an
-  /// unmarked hole in an ongoing recording. A tare only re-zeros the display
-  /// offset: while taring, each real frame is ADDITIONALLY accumulated into
-  /// the tare average.
+  /// unmarked hole in an ongoing recording; the tare window just counts the
+  /// real frames down to its commit (see [_commitTare]).
   @override
   void addSampleFrame(Int32List values) {
     assert(values.length >= kAdcChannelCount);
@@ -369,24 +357,12 @@ class DataHub extends ChangeNotifier
       _currentRaw[i] = val;
       // Always buffer data for live display.
       _addData(val, i);
-      if (taring) {
-        _addTare(val, i);
-      }
     }
     totalSamples++;
 
-    if (taring) {
-      _tareCount--;
-      if (!taring) {
-        for (int i = 0; i < _runningTotal.length; ++i) {
-          if (_tareChannel == null || _tareChannel == i) {
-            tare[i] = _runningTotal[i] / _tareTotal;
-          }
-          _runningTotal[i] = 0;
-        }
-        _tareChannel = null;
-        _tareTotal = 0;
-      }
+    final pending = _pendingTare;
+    if (pending != null && --pending.remaining == 0) {
+      _commitTare(pending);
     }
   }
 
@@ -418,15 +394,14 @@ class DataHub extends ChangeNotifier
   /// the ring, together with everything the session writer needs about the
   /// same span (gap ranges, the packet-counter anchor). This is the
   /// recording path's only read of the ring — [SampleSlice] is the whole
-  /// handoff, so the writer never indexes [rawData] itself.
+  /// handoff, so the writer never indexes [_rawData] itself.
   SampleSlice snapshotRange(int startIdx, int count) {
     return SampleSlice(
       startIndex: startIdx,
       channels: [
         for (int ch = 0; ch < kAdcChannelCount; ++ch)
           Int32List.fromList([
-            for (int s = 0; s < count; ++s)
-              rawData[ch][(startIdx + s) % maxDataSz],
+            for (int s = 0; s < count; ++s) rawAt(ch, startIdx + s),
           ]),
       ],
       gapRanges: gaps.rangesIn(startIdx, startIdx + count).toList(),
@@ -434,27 +409,20 @@ class DataHub extends ChangeNotifier
     );
   }
 
-  /// Close out one decoded packet: notify [SamplesAppendedListener]s of the
-  /// slice appended since [startIdx] (the caller snapshots [totalSamples]
-  /// before decoding) and notify listeners once per packet.
+  /// Close out one decoded packet: emit [HubBatchAppended] for the slice
+  /// appended since [startIdx] (the caller snapshots [totalSamples] before
+  /// decoding) and notify listeners once per packet.
   @override
   void commitBatch(int startIdx) {
     final int count = totalSamples - startIdx;
     if (count > 0) {
-      for (final listener in _samplesAppendedListeners) {
-        listener(startIdx, count);
-      }
+      _emit(HubBatchAppended(startIdx, count));
     }
     // Abandon a tare whose window stopped filling (device gone silent
     // mid-tare): the pre-tare offsets are still in effect — nothing was
     // zeroed up front — and the user can simply tare again.
     if (taring && DateTime.now().isAfter(_tareDeadline)) {
-      _tareCount = 0;
-      _tareTotal = 0;
-      _tareChannel = null;
-      for (int i = 0; i < kAdcChannelCount; ++i) {
-        _runningTotal[i] = 0;
-      }
+      _pendingTare = null;
     }
     lastDataAt = DateTime.now();
     gaps.pruneBefore(totalSamples - maxDataSz); // ring-wrap hygiene
@@ -549,6 +517,10 @@ class DataHub extends ChangeNotifier
   int get sampleRate => sampleRateHz;
 
   @override
+  int rawAt(int channelIndex, int index) =>
+      _rawData[channelIndex][index % maxDataSz];
+
+  @override
   ChannelConverter converterFor(int channelIndex) =>
       ChannelConverter(calibrationFor(channelIndex), tare[channelIndex]);
 
@@ -574,17 +546,15 @@ class DataHub extends ChangeNotifier
   int get dataGeneration => _generation;
 
   @override
-  ChannelSeries channel(int channelIndex) => (
-    data: rawData[channelIndex],
-    min: rawMin[channelIndex] == _noMinYet
-        ? null
-        : rawMin[channelIndex].toDouble(),
-    max: rawMax[channelIndex] == _noMaxYet
-        ? null
-        : rawMax[channelIndex].toDouble(),
-    tare: tare[channelIndex],
-    buckets: valueBuckets[channelIndex].series,
-  );
+  ChannelSeries channel(int channelIndex) {
+    final ext = _ingest[channelIndex].extremes;
+    return (
+      min: ext?.$1.toDouble(),
+      max: ext?.$2.toDouble(),
+      tare: tare[channelIndex],
+      buckets: valueBuckets[channelIndex].series,
+    );
+  }
 
   @override
   BucketSeries diffBucketsFor(int channelIndex) =>
@@ -625,7 +595,8 @@ class DataHub extends ChangeNotifier
   /// calibration. The window is clamped to the retained data, so callers may
   /// pass a graph window unclamped; a window holding no retained samples
   /// reports 0, as does an empty stream. Exact and bucket-accelerated (see
-  /// [windowedExtremes]). Null when the unit is unavailable for the channel.
+  /// [GraphSeriesQueries.windowedRawExtremes]). Null when the unit is
+  /// unavailable for the channel.
   double? peakValue(
     int adcChannel,
     DisplayUnit unit, {
@@ -633,15 +604,9 @@ class DataHub extends ChangeNotifier
     required int end,
   }) {
     assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
-    if (totalSamples == 0) return 0;
     final conv = converterFor(adcChannel).netMap(unit);
     if (conv == null) return null;
-    final ext = windowedExtremes(
-      valueBuckets[adcChannel].series,
-      math.max(start, oldestSample),
-      math.min(end, totalSamples),
-      (i) => rawData[adcChannel][i % maxDataSz].toDouble(),
-    );
+    final ext = windowedRawExtremes(adcChannel, start, end);
     return ext == null ? 0 : conv(ext.$2);
   }
 
@@ -660,29 +625,30 @@ class DataHub extends ChangeNotifier
     final conv = converterFor(adcChannel).netMap(unit);
     if (conv == null) return null;
 
-    final raw1 = rawData[adcChannel][(totalSamples - 1) % maxDataSz];
-    final raw2 = rawData[adcChannel][(totalSamples - 2) % maxDataSz];
-
     // Difference the converter output (not the raw diff): exact under the
     // piecewise map, and tare cancels. Scaled to units per second.
-    return (conv(raw1.toDouble()) - conv(raw2.toDouble())) * sampleRateHz;
-  }
-
-  void _addTare(int val, int idx) {
-    _runningTotal[idx] += val;
+    return (conv(rawAt(adcChannel, totalSamples - 1).toDouble()) -
+            conv(rawAt(adcChannel, totalSamples - 2).toDouble())) *
+        sampleRateHz;
   }
 
   void _addData(int val, int idx) {
     // The previous-value read is safe for totalSamples == 0 (Dart % is
     // non-negative) and ignored by the ingest diff rule there.
-    final int prev = rawData[idx][(totalSamples - 1) % maxDataSz];
-    rawData[idx][totalSamples % maxDataSz] = val;
-    if (val > rawMax[idx]) {
-      rawMax[idx] = val;
-    }
-    if (val < rawMin[idx]) {
-      rawMin[idx] = val;
-    }
+    final int prev = rawAt(idx, totalSamples - 1);
+    _rawData[idx][totalSamples % maxDataSz] = val;
     _ingest[idx].add(totalSamples, val, prev);
   }
+}
+
+/// The in-progress tare window (see `DataHub._pendingTare`): [remaining]
+/// counts real frames down to the commit; [length] is the window size the
+/// average spans (captured at request time, so a config landing mid-tare
+/// can't change it); [channel] is what it commits to (null = all).
+class _PendingTare {
+  _PendingTare(this.length, this.channel) : remaining = length;
+
+  final int length;
+  final int? channel;
+  int remaining;
 }

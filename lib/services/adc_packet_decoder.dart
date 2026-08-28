@@ -6,6 +6,7 @@ import 'adc_protocol.dart';
 import 'adc_sink.dart';
 import '../models/device_flash.dart';
 import '../models/device_profile.dart';
+import '../models/hub_event.dart';
 import '../utils/log.dart';
 
 /// Protocol layer: decodes the device's ADC-feed notification packets and the
@@ -26,7 +27,9 @@ class AdcPacketDecoder {
     // must not be diffed against the previous stream's counter. The sink's
     // cleared event IS the stream-boundary signal, so the decoder resets
     // itself rather than the link-change orchestrator doing it.
-    hub.addClearedListener(resetContinuity);
+    hub.addEventListener((event) {
+      if (event is HubCleared) resetContinuity();
+    });
   }
 
   final AdcSink hub;
@@ -95,9 +98,8 @@ class AdcPacketDecoder {
 
   /// Parse one BLE ADC-feed notification packet into the sink.
   ///
-  /// Data is always buffered for live display; recording observes the sink via
-  /// `DataHub.addSamplesAppendedListener` (notified from
-  /// [AdcSink.commitBatch]).
+  /// Data is always buffered for live display; recording observes the sink
+  /// via [HubBatchAppended] (emitted from [AdcSink.commitBatch]).
   void onDataPacket(Uint8List data) {
     final n = adcSamplesInPacket(data.length);
     if (n == null) {

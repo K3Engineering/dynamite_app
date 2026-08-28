@@ -96,6 +96,27 @@ void main() {
     });
   });
 
+  group('ChannelIngest extremes', () {
+    test('track the ingested values and null out on reset', () {
+      final ingest = ChannelIngest(
+        valueBuckets: BucketAccumulator(bucketSize: 10, numBuckets: 4),
+        diffBuckets: BucketAccumulator(bucketSize: 10, numBuckets: 4),
+        gaps: GapList(),
+      );
+      expect(ingest.extremes, isNull);
+
+      ingest.add(0, -40, 0);
+      ingest.add(1, 10, -40);
+      ingest.add(2, -7, 10);
+      expect(ingest.extremes, (-40, 10));
+
+      ingest.reset();
+      expect(ingest.extremes, isNull);
+      ingest.add(0, 3, 0);
+      expect(ingest.extremes, (3, 3));
+    });
+  });
+
   group('DataHub vs SessionData bucket mirror', () {
     test('same stream (with gaps) produces identical buckets', () {
       const int n = 12345;
@@ -155,6 +176,11 @@ void main() {
         expect(hubVal.bucketSize, sessVal.bucketSize);
 
         // n << hub capacity, so hub slot index == absolute bucket index.
+        // Whole-range extremes mirror too: both sides derive them from the
+        // same ChannelIngest tracker, so they can't drift.
+        expect(hub.channel(ch).min, sess.channel(ch).min, reason: 'ch $ch min');
+        expect(hub.channel(ch).max, sess.channel(ch).max, reason: 'ch $ch max');
+
         for (int b = 0; b < sessBuckets; b++) {
           expect(hubVal.mins[b], sessVal.mins[b], reason: 'ch $ch val min $b');
           expect(hubVal.maxs[b], sessVal.maxs[b], reason: 'ch $ch val max $b');
