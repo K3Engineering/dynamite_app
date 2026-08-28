@@ -209,7 +209,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 data: data,
                 ctrl: _graphCtrl,
                 unit: settings.displayUnit,
-                limitWarningsEnabled: settings.limitWarningsEnabled,
                 activeChannels: [
                   for (int i = 0; i < visibleChannels.length; i++)
                     if (visibleChannels[i]) i,
