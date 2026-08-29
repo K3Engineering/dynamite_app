@@ -53,6 +53,18 @@ class BenchController {
     } else {
       _line('OPFS sync access handle: FAILED — ${sah['reason']}');
     }
+    final asyncW = facts['asyncWritable'];
+    if (asyncW is Map) {
+      final w = asyncW.cast<String, Object?>();
+      if (w['ok'] == true) {
+        _line(
+          'OPFS async writable: OK — write 32KB ${_stat(w['write32k'])}, '
+          'close ${(w['closeMs'] as num).toStringAsFixed(2)}ms',
+        );
+      } else {
+        _line('OPFS async writable: FAILED — ${w['reason']}');
+      }
+    }
     final idb = (facts['idb'] as Map).cast<String, Object?>();
     if (idb['ok'] == true) {
       _line('IndexedDB: OK — put 1KB relaxed ${_stat(idb['put1kRelaxed'])}');
@@ -148,8 +160,27 @@ class BenchController {
       _line('aborted during ${spec.backend} ${spec.label}');
       rethrow;
     } catch (e) {
+      // A broken backend (e.g. old WebKit's sync-handle OPFS) fails its run
+      // loudly but must not kill the sweep — the remaining backends' rows are
+      // exactly the fallback data being collected.
+      final detail = '$e'.replaceAll('\n', ' | ');
       _line('RUN FAILED ${spec.backend} ${spec.label}: $e');
-      rethrow;
+      results.add(
+        BenchResult(
+          backend: spec.backend,
+          mode: spec is BlastSpec ? 'blast' : 'paced',
+          label: spec.label,
+          targetBps: spec.workload.bytesPerSec.toDouble(),
+          achievedBps: 0,
+          commits: 0,
+          p50Ms: 0,
+          p99Ms: 0,
+          maxMs: 0,
+          durableBytes: 0,
+          note: 'FAILED: $detail',
+        ),
+      );
+      return;
     }
     results.add(result);
     _line(result.toCsv());

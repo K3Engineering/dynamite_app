@@ -230,6 +230,7 @@ async function probe() {
   facts.opfsAvailable =
     !!(navigator.storage && typeof navigator.storage.getDirectory === 'function');
   facts.syncAccessHandle = await probeSyncAccessHandle();
+  facts.asyncWritable = await probeAsyncWritable();
   facts.idb = await probeIdb();
   if (navigator.storage) {
     try {
@@ -287,6 +288,50 @@ async function probeSyncAccessHandle() {
   } catch (e) {
     return { ok: false, reason: String(e) };
   }
+}
+
+// The async OPFS API (createWritable) is a separate capability from sync
+// access handles: early WebKit (iOS 15) ships an OPFS where the sync handle
+// throws InvalidStateError on use but the async stream may still work. Probe
+// it independently so those devices tell us whether ANY OPFS path exists.
+// Guarded by a timeout — on the era's buggy builds these calls can hang
+// instead of failing.
+async function probeAsyncWritable() {
+  if (!(navigator.storage && typeof navigator.storage.getDirectory === "function")) {
+    return { ok: false, reason: "navigator.storage.getDirectory missing" };
+  }
+  const name = "bench_probe_async.bin";
+  try {
+    return await withTimeout(async () => {
+      const root = await navigator.storage.getDirectory();
+      const fh = await root.getFileHandle(name, { create: true });
+      const w = await fh.createWritable();
+      const buf = new Uint8Array(32 * 1024);
+      makeFiller()(buf);
+      const writes = [];
+      for (let i = 0; i < 20; i++) {
+        const t = performance.now();
+        await w.write(buf);
+        writes.push(performance.now() - t);
+      }
+      const t = performance.now();
+      await w.close();
+      const closeMs = performance.now() - t;
+      await root.removeEntry(name);
+      return { ok: true, write32k: stat(writes), closeMs };
+    }, 5000);
+  } catch (e) {
+    return { ok: false, reason: String(e) };
+  }
+}
+
+function withTimeout(body, ms) {
+  return Promise.race([
+    body(),
+    sleep(ms).then(() => {
+      throw new Error(`timed out after ${ms}ms`);
+    }),
+  ]);
 }
 
 async function probeIdb() {
