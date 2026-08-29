@@ -11,6 +11,7 @@ import 'live_tab.dart';
 import 'sessions_tab.dart';
 import 'devices_tab.dart';
 import 'settings_tab.dart';
+import 'bench_tab.dart';
 
 /// Root scaffold holding the four tabs: a bottom `NavigationBar` on narrow
 /// screens, a side `NavigationRail` at [kWideLayoutWidth] and above.
@@ -44,6 +45,8 @@ class AppShellState extends State<AppShell> {
     _TabDef(icon: Icons.folder_open, label: 'Sessions'),
     _TabDef(icon: Icons.bluetooth, label: 'Devices'),
     _TabDef(icon: Icons.settings, label: 'Settings'),
+    // temp_test branch only: storage backend benchmark harness.
+    _TabDef(icon: Icons.speed, label: 'Bench'),
   ];
 
   @override
@@ -143,6 +146,7 @@ class AppShellState extends State<AppShell> {
                 const SessionsTab(),
                 DevicesTab(onGoToSettings: goToSettings),
                 SettingsTab(onGoToDevices: goToDevices),
+                const BenchTab(),
               ],
             ),
           ),

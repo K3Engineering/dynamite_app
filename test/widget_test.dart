@@ -103,11 +103,12 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
   }
 
-  testWidgets('AppShell renders a four-destination bottom nav', (tester) async {
+  testWidgets('AppShell renders a five-destination bottom nav', (tester) async {
     await pumpApp(tester);
 
     expect(find.byType(NavigationBar), findsOneWidget);
-    expect(find.byType(NavigationDestination), findsNWidgets(4));
+    // The 5th destination is the temp_test Bench tab.
+    expect(find.byType(NavigationDestination), findsNWidgets(5));
   });
 
   testWidgets('Live tab shows the connect prompt with no device linked', (
