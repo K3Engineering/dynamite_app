@@ -193,11 +193,13 @@ class BenchResult {
     label: j['label'] as String,
     targetBps: (j['targetBps'] as num).toDouble(),
     achievedBps: (j['achievedBps'] as num).toDouble(),
-    commits: j['commits'] as int,
+    // dart2wasm's dartify() maps every JS number to double; dart2js/VM keep
+    // integral values as int. Parse through num so both shapes work.
+    commits: (j['commits'] as num).toInt(),
     p50Ms: (j['p50Ms'] as num).toDouble(),
     p99Ms: (j['p99Ms'] as num).toDouble(),
     maxMs: (j['maxMs'] as num).toDouble(),
-    durableBytes: j['durableBytes'] as int,
+    durableBytes: (j['durableBytes'] as num).toInt(),
     note: j['note'] as String,
   );
 
