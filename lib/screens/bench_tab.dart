@@ -100,6 +100,15 @@ class _BenchTabState extends State<BenchTab> {
     );
   }
 
+  Future<void> _copyLog() async {
+    await Clipboard.setData(ClipboardData(text: _logField.text));
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Log copied')));
+    }
+  }
+
   Future<void> _copyResults() async {
     final controller = _controller!;
     await Clipboard.setData(ClipboardData(text: controller.resultsCsv()));
@@ -213,6 +222,11 @@ class _BenchTabState extends State<BenchTab> {
                   onPressed: _copyResults,
                   icon: const Icon(Icons.copy),
                   label: const Text('Copy results CSV'),
+                ),
+                OutlinedButton.icon(
+                  onPressed: _copyLog,
+                  icon: const Icon(Icons.content_copy),
+                  label: const Text('Copy log'),
                 ),
                 TextButton.icon(
                   onPressed: _busy ? null : _clearLog,
