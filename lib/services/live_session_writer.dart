@@ -1,18 +1,17 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 
-import 'database.dart';
+import '../models/board_calibration.dart';
+import '../models/channel_calibration.dart';
 import '../models/device_profile.dart';
 import '../models/gap_list.dart';
 import '../models/sample_slice.dart';
+import 'session_journal.dart';
+import 'session_store_backend.dart';
 
-/// The one home of the packed chunk format: interleaved int32 LE values
-/// `[ch0_s0, ch1_s0, ..., ch0_s1, ch1_s1, ...]`, [channelCount] values per
-/// sample frame. Live writes ([LiveSessionWriter.appendData]), session loads
-/// ([`SessionStorage.loadSession`]) and crash recovery's frame counting
-/// share this so the layout, endianness and frame math can't drift apart.
+/// The session-directory files' names are declared in
+/// session_store_backend.dart; this file is the codec's home.
 class SessionChunkCodec {
   const SessionChunkCodec(this.channelCount);
 
@@ -40,11 +39,11 @@ class SessionChunkCodec {
   int framesOf(Uint8List bytes) => bytes.lengthInBytes ~/ frameBytes;
 
   /// Pack [frames] samples as sample-major little-endian int32 bytes (the
-  /// chunk format [decode] reads back), pulling each value from [valueAt].
-  /// Real values only: [valueAt] returning anything outside the 24-bit ADC
-  /// range (the sentinel's territory included) is an encoder bug and
-  /// throws, so a misbehaving source can never fabricate a gap or smuggle
-  /// a reserved value into the data stream.
+  /// chunk format [decodeWithGaps] reads back), pulling each value from
+  /// [valueAt]. Real values only: [valueAt] returning anything outside the
+  /// 24-bit ADC range (the sentinel's territory included) is an encoder bug
+  /// and throws, so a misbehaving source can never fabricate a gap or
+  /// smuggle a reserved value into the data stream.
   Uint8List pack(int frames, int Function(int sample, int channel) valueAt) {
     final out = ByteData(frames * channelCount * 4);
     int offset = 0;
@@ -133,68 +132,54 @@ class SessionChunkCodec {
     }
     return (channels: channels, gaps: gaps);
   }
-
-  /// Invoke [visit] once per value, in packed order (sample-major).
-  void decode(
-    Uint8List bytes,
-    void Function(int sample, int channel, int raw) visit,
-  ) {
-    final data = ByteData.sublistView(bytes);
-    final frames = framesOf(bytes);
-    int offset = 0;
-    for (int s = 0; s < frames; s++) {
-      for (int ch = 0; ch < channelCount; ch++) {
-        visit(s, ch, data.getInt32(offset, Endian.little));
-        offset += 4;
-      }
-    }
-  }
 }
 
-/// The verified-prefix verdict over one session's chunks, ordered by chunk
-/// index: how many leading chunks form a contiguous (indices 0,1,2,…),
-/// frame-aligned run, and whether the walk stopped early at a missing index
-/// or a misaligned blob (see [verifyChunkIntegrity]).
-typedef ChunkIntegrity = ({
-  /// Whole frames in the verified run.
-  int prefixFrames,
-
-  /// Chunks in the verified run (its leading slice of the input).
-  int prefixChunks,
-
-  /// The walk stopped before the last chunk: a hole or a misaligned blob
-  /// ends the verifiable prefix. Everything from there on is unknowable
-  /// (a missing chunk's frame count — and thus every later sample's
-  /// position — cannot be reconstructed from the remaining data).
-  bool stoppedEarly,
+/// The [SessionMeta] fields snapshotted at recording start and carried by
+/// [LiveSessionWriter] until its first packet. ssnOrigin is the one journal
+/// field the writer can't snapshot at start — it latches at the first
+/// append, so the meta can only be stamped then (the journal's line 1 is
+/// written WITH the first data append, not at start).
+typedef SessionHeader = ({
+  String name,
+  int sampleRate,
+  int channelCount,
+  List<String> channelLabels,
+  List<double?> tares,
+  List<ChannelCalibration> calibration,
+  List<bool> visibleChannels,
+  String displayUnit,
+  Map<String, Object?> deviceInfo,
+  SessionBoardMeta? boardMeta,
+  String recordedAt,
 });
 
-/// Verify one session's ordered chunks against the write-side guarantees
-/// (consecutive indices from 0, whole-frame blobs). The verified prefix is
-/// the longest leading run satisfying both; anything beyond it is damaged
-/// data that read paths must neither splice nor silently drop (session
-/// views truncate to the prefix; the salvage export preserves the rest).
-ChunkIntegrity verifyChunkIntegrity(
-  SessionChunkCodec codec,
-  List<(int index, Uint8List data)> chunks,
-) {
-  int frames = 0, count = 0;
-  for (final (index, data) in chunks) {
-    if (index != count || data.lengthInBytes % codec.frameBytes != 0) {
-      return (prefixFrames: frames, prefixChunks: count, stoppedEarly: true);
-    }
-    frames += codec.framesOf(data);
-    count++;
-  }
-  return (prefixFrames: frames, prefixChunks: count, stoppedEarly: false);
-}
+/// The journal's line 1 out of [header] plus the latched [ssnOrigin] —
+/// recordedAt stays the recording-start clock even though the write happens
+/// at the first packet.
+SessionMeta sessionMetaFromHeader(SessionHeader header, int ssnOrigin) =>
+    SessionMeta(
+      name: header.name,
+      sampleRate: header.sampleRate,
+      channelCount: header.channelCount,
+      channelLabels: header.channelLabels,
+      tares: header.tares,
+      calibration: header.calibration,
+      visibleChannels: header.visibleChannels,
+      displayUnit: header.displayUnit,
+      deviceInfo: header.deviceInfo,
+      boardMeta: header.boardMeta,
+      recordedAt: header.recordedAt,
+      ssnOrigin: ssnOrigin,
+    );
 
-/// Streams recorded samples to the DB as they arrive, flushing in chunks so a
-/// session can outlive the in-memory ring buffer and survive a crash.
+/// Streams recorded samples to the session's data.raw as they arrive: one
+/// serialized write per accepted packet, flushed individually, so a session
+/// can outlive the in-memory ring buffer and a crash loses at most the
+/// in-flight packet.
 ///
-/// All DB writes are serialized through [_writeQueue] so concurrent (unawaited)
+/// All writes are serialized through [_writeQueue] so concurrent (unawaited)
 /// [appendData] calls and the finalizing [flush] cannot interleave or reorder
-/// chunks. The queue serializes ONLY the writes: each [SampleSlice] arrives
+/// packets. The queue serializes ONLY the writes: each [SampleSlice] arrives
 /// fully snapshotted at call time (see `DataHub.snapshotRange`), so a stalled
 /// queue never observes ring slots the producer has since overwritten. If
 /// storage falls a full ring behind, an error is latched (see [appendData])
@@ -204,28 +189,28 @@ class LiveSessionWriter {
   LiveSessionWriter(
     this.header, {
     required this.sourceRingCapacity,
-    @visibleForTesting
-    Future<int> Function(
-      int? sessionId,
-      int chunkIndex,
-      Uint8List data,
-      String gapsJson,
-    )?
-    chunkSink,
-  }) : _chunkSink = chunkSink;
+    required SessionSinkFactory sinkFactory,
+  }) : _sinkFactory = sinkFactory;
 
-  /// The session-row metadata snapshotted at recording start (see
-  /// [SessionHeader]), carried until the first chunk flush creates the row.
+  /// The journal-line-1 fields snapshotted at recording start (see
+  /// [SessionHeader]), carried until the first packet's write stamps them.
   final SessionHeader header;
 
-  /// The session row's id, latched from the first chunk flush's row-creation
-  /// transaction. Null until data exists — the row itself doesn't exist
-  /// before that either (no row without data).
-  int? get sessionId => _sessionId;
-  int? _sessionId;
+  /// The session id (the directory's name), latched from the first write's
+  /// created sink. Null until data exists — the directory itself doesn't
+  /// exist before that either (no artifact without data).
+  String? get sessionId => _sink?.id;
 
-  /// The rate persisted on the session row at recording start, kept here so
-  /// finalization math uses the same value the row carries.
+  /// data.raw's byte length from the last acked append, or null when no
+  /// append has ever succeeded. The finalize-time check compares this with
+  /// the accepted-frames claim.
+  int? get ackedDataLength => _ackedDataLength;
+  int? _ackedDataLength;
+
+  SessionDataSink? _sink;
+
+  /// The rate stamped in the journal at creation, kept here so finalization
+  /// math uses the same value.
   int get sampleRate => header.sampleRate;
 
   /// Capacity (samples) of the producer's ring — the backlog bound for the
@@ -238,29 +223,31 @@ class LiveSessionWriter {
   /// sink grows the count unboundedly — detecting that is the latch's job.
   int _unflushedSamples = 0;
 
-  int _chunkIndex = 0;
+  /// Frames the queue has accepted for writing (successful or not) — the
+  /// "accepted" side of the finalize check; the acked-length side is what's
+  /// actually on disk.
   int totalSamplesRecorded = 0;
 
-  /// Dropped-sample ranges accumulated across the recording, relative to the
-  /// session's first sample. Persisted to the session row on every chunk
-  /// flush (so a crash keeps the info up to the last flush) and once more in
-  /// full by `SessionStorage.finalizeSession`.
-  final GapList gaps = GapList();
+  /// Frames multiplied by the packed frame size — what [ackedDataLength]
+  /// must equal at finalize when every accepted packet landed.
+  int get expectedDataBytes =>
+      totalSamplesRecorded *
+      const SessionChunkCodec(kAdcChannelCount).frameBytes;
 
   /// Hub-absolute index of the session's first sample; latched on the first
-  /// [appendData] call and used to make [gaps] session-relative.
+  /// [appendData] call.
   int? _originIdx;
 
   /// Device sample-counter value at the session's first sample (the
   /// dynamite-csv `ssn_origin`), latched alongside [_originIdx] from the
   /// hub's packet-counter anchor (see `DataHub.notePacketCounter`) and
-  /// written into the session row when the first chunk flush creates it;
-  /// chunk bytes alone can't reconstruct it, so it must be held until then.
-  /// Sessions start on a packet boundary (the decoder's continuity reset at
-  /// recording start suppresses gap injection for the first recorded
-  /// packet), so the index difference below is zero in practice; the formula
-  /// keeps the latch correct even if that ever changes. Null until the first
-  /// append.
+  /// stamped into the journal when the first packet's write creates the
+  /// session — data bytes alone can't reconstruct it, so it must be held
+  /// until then. Sessions start on a packet boundary (the decoder's
+  /// continuity reset at recording start suppresses gap injection for the
+  /// first recorded packet), so the index difference below is zero in
+  /// practice; the formula keeps the latch correct even if that ever
+  /// changes. Null until the first append.
   int? get ssnOrigin => _ssnOrigin;
   int? _ssnOrigin;
 
@@ -268,36 +255,19 @@ class LiveSessionWriter {
   Object? writeError;
   bool get hasError => writeError != null;
 
-  final BytesBuilder _staging = BytesBuilder(copy: false);
-
-  /// Serializes all DB writes. Each enqueued op awaits the previous one.
+  /// Serializes all writes. Each enqueued op awaits the previous one.
   Future<void> _writeQueue = Future.value();
 
-  /// Test seam: when set, a flush's DB side effects go here instead of the
-  /// real database, so tests can stall and observe writes without opening
-  /// one. Null [sessionId] marks the first flush — the one that must return
-  /// the session row's id (the production sink creates the row; a test seam
-  /// may invent any id). Resolved lazily so constructing a writer never
-  /// touches the database singleton.
-  final Future<int> Function(
-    int? sessionId,
-    int chunkIndex,
-    Uint8List data,
-    String gapsJson,
-  )?
-  _chunkSink;
-
-  /// Flush whenever the staging buffer reaches ~this many bytes
-  /// (~1 s at 1 kHz, 4 ch, 4 B/value).
-  static const int _flushThreshold = 16384;
+  /// Opens the session on the first write (dir + journal + first append,
+  /// one flush) and hands back its sink. The production factory is the
+  /// store's `createDataSink`; recording tests stall/observe via their own.
+  final Future<SessionDataSink> Function(SessionMeta meta, Uint8List firstData)
+  _sinkFactory;
 
   /// Append a fully snapshotted slice of fresh samples (see
-  /// `DataHub.snapshotRange`). Returns when this slice has been buffered
-  /// (and flushed, if the threshold was crossed). Safe to call without
-  /// awaiting; calls are serialized.
+  /// `DataHub.snapshotRange`). Returns when this slice has been written and
+  /// flushed. Safe to call without awaiting; calls are serialized.
   Future<void> appendData(SampleSlice slice) {
-    // Capture this slice's gap ranges synchronously, rebased to
-    // session-relative indices.
     final int origin = _originIdx ??= slice.startIndex;
     if (_ssnOrigin == null) {
       // The decoder's packet-counter anchor is non-null at any append: a
@@ -307,120 +277,70 @@ class LiveSessionWriter {
       final anchor = slice.anchor!;
       _ssnOrigin = anchor.counter + (origin - anchor.hubIndex);
     }
-    for (final (s, e) in slice.gapRanges) {
-      gaps.append(s - origin, e - origin);
-    }
 
     final count = slice.sampleCount;
     _unflushedSamples += count;
     // Backpressure latch: once the accepted-but-unwritten backlog exceeds the
     // source ring's capacity, storage is a full ring behind the producer and
-    // the backlog only grows (~16 KB/s) into a possibly wedged sink. Latch
-    // an error so the session auto-stops loudly via the existing hasError
-    // path. Checked at accept time — it trips even if the write queue never
-    // runs again.
+    // the backlog only grows into a possibly wedged sink. Latch an error so
+    // the session auto-stops loudly via the existing hasError path. Checked
+    // at accept time — it trips even if the write queue never runs again.
     if (writeError == null && _unflushedSamples > sourceRingCapacity) {
       writeError = StateError(
         'Storage fell more than the ring capacity ($sourceRingCapacity '
         'samples) behind the live stream; aborting recording',
       );
       debugPrint(
-        'Session storage backpressure tripped (session $_sessionId): '
+        'Session storage backpressure tripped (session $sessionId): '
         '$writeError',
       );
     }
 
-    // Snapshot the sample slice before enqueueing.
+    // Pack real values first, then mark the slice's gap frames in-band.
     const codec = SessionChunkCodec(kAdcChannelCount);
     final bytes = codec.pack(count, (s, ch) => slice.channels[ch][s]);
+    final startIndex = slice.startIndex;
+    codec.fillGapSentinels(bytes, [
+      for (final (s, e) in slice.gapRanges) (s - startIndex, e - startIndex),
+    ]);
 
     return _enqueue(() async {
       try {
         if (writeError != null) return;
-
-        totalSamplesRecorded += codec.framesOf(bytes);
-
-        _staging.add(bytes);
-
-        if (_staging.length >= _flushThreshold) {
-          await _flushStaging();
+        totalSamplesRecorded += count;
+        final sink = _sink;
+        if (sink == null) {
+          // First packet: create dir + journal + this append in one go; the
+          // journal needs ssnOrigin, which is exactly why it can't precede the
+          // first append.
+          _sink = await _sinkFactory(
+            sessionMetaFromHeader(header, _ssnOrigin!),
+            bytes,
+          );
+          _ackedDataLength = bytes.lengthInBytes;
+        } else {
+          _ackedDataLength = await sink.append(bytes);
         }
+      } catch (e) {
+        // Latch the first failure; stop accumulating so we don't grow
+        // unbounded after the sink has gone away (e.g. disk full / web quota
+        // exceeded).
+        writeError ??= e;
+        debugPrint('Session write failed (session $sessionId): $e');
       } finally {
         _unflushedSamples -= count;
       }
     });
   }
 
-  /// Flush any buffered samples to a chunk. Serialized with appends.
-  Future<void> flush() => _enqueue(_flushStaging);
+  /// Wait for every queued append to land. Serialized with appends.
+  Future<void> flush() => _enqueue(() async {});
 
-  /// Performs the actual chunk write. Must run inside [_enqueue].
-  Future<void> _flushStaging() async {
-    if (_staging.isEmpty || writeError != null) return;
-    // takeBytes() clears the builder, so a concurrent append can't see it.
-    final dataToSave = _staging.takeBytes();
-    final chunkIdx = _chunkIndex++;
-    final gapsJson = gaps.toJson();
-    try {
-      // The sink runs for EVERY chunk — only the returned row id is latched
-      // once. `_sessionId ??= await sink(...)` would skip the write itself
-      // after the first chunk (this bug silently discarded all chunks > 0).
-      final id = await (_chunkSink ?? _defaultSink)(
-        _sessionId,
-        chunkIdx,
-        dataToSave,
-        gapsJson,
-      );
-      _sessionId ??= id;
-    } catch (e) {
-      // Latch the first failure; stop accumulating so we don't grow unbounded
-      // after the sink has gone away (e.g. disk full / web quota exceeded).
-      writeError ??= e;
-      debugPrint('Session chunk write failed (session $_sessionId): $e');
-    }
-  }
-
-  /// The production sink: the first flush creates the session row (header
-  /// metadata, the latched ssn origin, the gaps accrued so far) in the same
-  /// transaction as the chunk; later flushes append chunks and keep the
-  /// row's gap ranges current. Returns the session id for the latch.
-  ///
-  /// TODO(known-issue): bound these awaits with a timeout. A sink future
-  /// that never completes (e.g. a dead web drift worker that never rejects)
-  /// wedges the write queue: SessionStorage.finalizeSession's flush hangs
-  /// behind it, RecordingController.stopSession never returns, and the
-  /// latching failure is never surfaced (the record button sticks in the
-  /// stopping state). Timing out converts the hang into an ordinary latched
-  /// writeError, which the existing error path already handles end to end.
-  Future<int> _defaultSink(
-    int? sessionId,
-    int chunkIndex,
-    Uint8List data,
-    String gapsJson,
-  ) async {
-    if (sessionId == null) {
-      // Row creation must stay out of a concurrent recovery scan — see
-      // AppDatabase.crashRecoveryFence.
-      await AppDatabase.crashRecoveryFence;
-      // The ssn origin always precedes the first flush: appendData latches
-      // it synchronously before any chunk bytes can exist.
-      return AppDatabase.instance.createSessionWithFirstChunk(
-        header: header,
-        ssnOrigin: _ssnOrigin!,
-        gaps: gapsJson,
-        data: data,
-      );
-    }
-    // The chunk and its gap-range update must commit together — the row's
-    // ranges describe every chunk up to the latest, so a split pair would
-    // misread held values as data (see AppDatabase.appendChunkAndGaps).
-    await AppDatabase.instance.appendChunkAndGaps(
-      sessionId,
-      chunkIndex,
-      data,
-      gapsJson,
-    );
-    return sessionId;
+  /// Release the sink's open handle (at finalize/abort). Idempotent.
+  Future<void> closeSink() async {
+    final sink = _sink;
+    _sink = null;
+    await sink?.close();
   }
 
   /// Chain [op] after all previously enqueued writes and return its completion.
@@ -432,3 +352,8 @@ class LiveSessionWriter {
     return next;
   }
 }
+
+/// The first-write factory's input/output: the meta to stamp into journal
+/// line 1 plus the first packet's packed bytes, in; the open data sink out.
+typedef SessionSinkFactory =
+    Future<SessionDataSink> Function(SessionMeta meta, Uint8List firstData);

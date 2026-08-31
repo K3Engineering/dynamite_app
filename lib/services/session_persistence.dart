@@ -13,9 +13,9 @@ abstract interface class SessionPersistence {
   /// Construct the session's writer. Everything the live buffer would
   /// supply ([tare], [channelCalibration], [samplesPerSec],
   /// [sourceRingCapacity]) is snapshotted by the caller, so the storage side
-  /// never consults live state. Pure construction: no DB work happens until
-  /// the writer's first chunk flush creates the session row, so this can
-  /// never fail and never needs discarding.
+  /// never consults live state. Pure construction: no store work happens
+  /// until the writer's first packet creates the session directory, so this
+  /// can never fail and never needs discarding.
   LiveSessionWriter startSession({
     required List<double?> tare,
     required List<ChannelCalibration> channelCalibration,
@@ -29,10 +29,10 @@ abstract interface class SessionPersistence {
     required SessionBoardMeta? boardMeta,
   });
 
-  /// Flush any buffered samples, then record the writer's final sample count
-  /// and mark the session completed. Returns the writer's latched write
-  /// error (if any); non-null means the session may be truncated and the
-  /// caller should surface it. A session that received no data never got a
-  /// row, so there is nothing to finalize.
+  /// Drain the write queue, verify the persisted length against the
+  /// accepted-frames claim, and mark the session completed. Returns the
+  /// writer's latched write error (if any); non-null means the session may
+  /// be truncated and the caller should surface it. A session that received
+  /// no data never got a directory, so there is nothing to finalize.
   Future<Object?> finalizeSession({required LiveSessionWriter writer});
 }

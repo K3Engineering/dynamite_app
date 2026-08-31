@@ -14,7 +14,7 @@ import 'dialogs.dart';
 /// no further refresh.
 Future<void> renameSessionFlow(
   BuildContext context, {
-  required int sessionId,
+  required String sessionId,
   required String currentName,
   String title = 'Rename session',
 }) async {
@@ -33,7 +33,7 @@ Future<void> renameSessionFlow(
 /// callers can e.g. pop a detail screen).
 Future<bool> deleteSessionFlow(
   BuildContext context, {
-  required int sessionId,
+  required String sessionId,
   required String name,
 }) async {
   // An empty name would render as Delete ""? — fall back to the shared

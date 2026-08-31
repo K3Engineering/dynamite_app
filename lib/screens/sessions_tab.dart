@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 
+import '../models/damaged_session.dart';
 import '../models/session_summary.dart';
+import '../services/export_delivery.dart';
 import '../services/session_queries.dart';
 import '../services/storage_probe.dart';
 import '../utils/format.dart';
@@ -26,25 +28,27 @@ class _SessionsTabState extends State<SessionsTab> {
   /// (this tab rebuilds on each shell tab switch).
   late final Stream<List<SessionSummary>> _sessions = watchSessionSummaries();
 
-  /// Per-session chunk byte sizes, same created-once rule as [_sessions].
-  /// Also the capacity strip's refresh cue: everything that changes stored
-  /// bytes (deletes, recording finalization, live chunk writes) lands on the
-  /// chunk table this stream watches.
-  late final Stream<Map<int, int>> _sizes = watchSessionByteSizes();
+  /// Per-session data byte sizes, same created-once rule as [_sessions].
+  late final Stream<Map<String, int>> _sizes = watchSessionByteSizes();
+
+  /// Directories the store can't load as sessions, surface + affordances.
+  late final Stream<List<DamagedSession>> _damaged = watchDamagedSessions();
 
   /// The platform's storage facts for the capacity strip; null where probing
   /// is unsupported (desktop) or failed — the strip hides then.
   StorageCapacity? _capacity;
-  StreamSubscription<Map<int, int>>? _capacityCueSub;
+  StreamSubscription<void>? _capacityCueSub;
 
   @override
   void initState() {
     super.initState();
     unawaited(_refreshCapacity());
-    // Errors are swallowed: on hosts without platform channels the DB never
-    // opens, and the strip simply stays hidden (the smoke test pumps all
-    // tabs in exactly that situation).
-    _capacityCueSub = _sizes.listen(
+    // The liveness cue rides the recording's append acks (during a
+    // recording, sizes only exist in the store, not on the listing), plus
+    // every mutation. Errors are swallowed: on hosts without platform
+    // channels the store never opens, and the strip simply stays hidden
+    // (the smoke test pumps all tabs in exactly that situation).
+    _capacityCueSub = sessionByteChanges().listen(
       (_) => unawaited(_refreshCapacity()),
       onError: (_) {},
     );
@@ -57,9 +61,7 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   Future<void> _refreshCapacity() async {
-    final capacity = await fetchStorageCapacity(
-      usedBytes: sessionDatabaseFileBytes,
-    );
+    final capacity = await fetchStorageCapacity(usedBytes: sessionsUsedBytes);
     if (mounted) setState(() => _capacity = capacity);
   }
 
@@ -87,50 +89,87 @@ class _SessionsTabState extends State<SessionsTab> {
           if (_capacity case final capacity?)
             TabContentColumn(child: StorageCapacityStrip(capacity: capacity)),
           Expanded(
-            child: StreamBuilder<List<SessionSummary>>(
-              stream: _sessions,
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return EmptyPlaceholder(
-                    icon: Icons.error_outline,
-                    title: 'Error loading sessions',
-                    hint: '${snapshot.error}',
-                    color: Theme.of(context).colorScheme.error,
-                  );
-                }
+            child: StreamBuilder<List<DamagedSession>>(
+              stream: _damaged,
+              builder: (context, damagedSnapshot) {
+                final damaged = damagedSnapshot.data ?? [];
+                return StreamBuilder<List<SessionSummary>>(
+                  stream: _sessions,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return EmptyPlaceholder(
+                        icon: Icons.error_outline,
+                        title: 'Error loading sessions',
+                        hint: '${snapshot.error}',
+                        color: Theme.of(context).colorScheme.error,
+                      );
+                    }
 
-                if (snapshot.connectionState == ConnectionState.waiting &&
-                    !snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+                    if (snapshot.connectionState == ConnectionState.waiting &&
+                        !snapshot.hasData) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
 
-                final sessions = snapshot.data ?? [];
+                    final sessions = snapshot.data ?? [];
 
-                if (sessions.isEmpty) {
-                  return const EmptyPlaceholder(
-                    icon: Icons.folder_open,
-                    title: 'No recorded sessions yet',
-                    hint: 'Start a recording from the Live tab',
-                  );
-                }
+                    if (sessions.isEmpty && damaged.isEmpty) {
+                      return const EmptyPlaceholder(
+                        icon: Icons.folder_open,
+                        title: 'No recorded sessions yet',
+                        hint: 'Start a recording from the Live tab',
+                      );
+                    }
 
-                return StreamBuilder<Map<int, int>>(
-                  stream: _sizes,
-                  builder: (context, sizeSnapshot) {
-                    final sizes = sizeSnapshot.data ?? const <int, int>{};
-                    return LayoutBuilder(
-                      builder: (context, constraints) => ListView.builder(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: contentSideInset(constraints.maxWidth),
-                        ),
-                        itemCount: sessions.length,
-                        itemBuilder: (context, index) => _SessionCard(
-                          session: sessions[index],
-                          byteSize: sizes[sessions[index].id],
-                          onTap: () => _openDetail(sessions[index]),
-                          onDelete: () => _deleteSession(sessions[index]),
-                        ),
-                      ),
+                    return StreamBuilder<Map<String, int>>(
+                      stream: _sizes,
+                      builder: (context, sizeSnapshot) {
+                        final sizes =
+                            sizeSnapshot.data ?? const <String, int>{};
+                        return LayoutBuilder(
+                          builder: (context, constraints) => ListView.builder(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: contentSideInset(
+                                constraints.maxWidth,
+                              ),
+                            ),
+                            itemCount: damaged.length + sessions.length,
+                            itemBuilder: (context, index) =>
+                                index < damaged.length
+                                ? _DamagedCard(
+                                    damaged: damaged[index],
+                                    onExportSamples: damaged[index].hasData
+                                        ? () => _exportDamaged(
+                                            damaged[index],
+                                            data: true,
+                                          )
+                                        : null,
+                                    onExportMetadata: damaged[index].hasMeta
+                                        ? () => _exportDamaged(
+                                            damaged[index],
+                                            data: false,
+                                          )
+                                        : null,
+                                    onDelete: () => _deleteSession(
+                                      damaged[index].id,
+                                      damaged[index].id,
+                                    ),
+                                  )
+                                : _SessionCard(
+                                    session: sessions[index - damaged.length],
+                                    byteSize:
+                                        sizes[sessions[index - damaged.length]
+                                            .id],
+                                    onTap: () => _openDetail(
+                                      sessions[index - damaged.length],
+                                    ),
+                                    onDelete: () => _deleteSession(
+                                      sessions[index - damaged.length].id,
+                                      sessions[index - damaged.length].name,
+                                    ),
+                                  ),
+                          ),
+                        );
+                      },
                     );
                   },
                 );
@@ -150,13 +189,9 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  Future<void> _deleteSession(SessionSummary session) async {
+  Future<void> _deleteSession(String id, String name) async {
     try {
-      await deleteSessionFlow(
-        context,
-        sessionId: session.id,
-        name: session.name,
-      );
+      await deleteSessionFlow(context, sessionId: id, name: name);
     } catch (e) {
       if (mounted) {
         showErrorSnackBar(
@@ -164,6 +199,40 @@ class _SessionsTabState extends State<SessionsTab> {
           'Failed to delete session: $e',
         );
       }
+    }
+  }
+
+  /// Hand a damaged entry's surviving bytes to the user, verbatim, named
+  /// from the directory id — the only artifacts recovery can't fabricate.
+  Future<void> _exportDamaged(
+    DamagedSession damaged, {
+    required bool data,
+  }) async {
+    final fileName = '${damaged.id}.${data ? 'data.raw' : 'meta'}';
+    final dialogTitle = data ? 'Export samples (raw)' : 'Export metadata (raw)';
+    String? message;
+    Object? error;
+    try {
+      message = await downloadExport(
+        bytes: data
+            ? await damagedDataBytes(damaged.id)
+            : await damagedMetadataBytes(damaged.id),
+        fileName: fileName,
+        dialogTitle: dialogTitle,
+      );
+    } catch (e) {
+      error = e;
+    }
+    if (!mounted) return;
+    if (error != null) {
+      showErrorSnackBar(
+        ScaffoldMessenger.of(context),
+        '$dialogTitle failed: $error',
+      );
+    } else if (message != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 }
@@ -178,8 +247,8 @@ class _SessionCard extends StatelessWidget {
 
   final SessionSummary session;
 
-  /// Exact chunk payload bytes, null until the sizes stream lands. Null
-  /// simply omits the size from the subtitle.
+  /// Exact data bytes, null until the sizes stream lands. Null simply
+  /// omits the size from the subtitle.
   final int? byteSize;
   final VoidCallback onTap;
   final Future<void> Function() onDelete;
@@ -219,6 +288,82 @@ class _SessionCard extends StatelessWidget {
             '${session.channelCount} ch$sizeStr',
           ),
           trailing: const Icon(Icons.chevron_right),
+        ),
+      ),
+    );
+  }
+}
+
+/// The one damaged-entry surface: what the directory is, why the store
+/// can't load it, and the manual affordances its bytes still afford
+/// (raw exports whenever the file has any, delete behind confirmation).
+class _DamagedCard extends StatelessWidget {
+  const _DamagedCard({
+    required this.damaged,
+    required this.onExportSamples,
+    required this.onExportMetadata,
+    required this.onDelete,
+  });
+
+  final DamagedSession damaged;
+  final VoidCallback? onExportSamples;
+  final VoidCallback? onExportMetadata;
+  final Future<void> Function() onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.warning_amber,
+                  color: Theme.of(context).colorScheme.error,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Damaged session',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  tooltip: 'Delete',
+                  color: Theme.of(context).colorScheme.error,
+                  onPressed: () => unawaited(onDelete()),
+                ),
+              ],
+            ),
+            Text(
+              '${damaged.reason} · ${damaged.id}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                if (onExportSamples != null)
+                  TextButton(
+                    onPressed: onExportSamples,
+                    child: const Text('Export samples (raw)'),
+                  ),
+                if (onExportMetadata != null)
+                  TextButton(
+                    onPressed: onExportMetadata,
+                    child: const Text('Export metadata (raw)'),
+                  ),
+              ],
+            ),
+          ],
         ),
       ),
     );

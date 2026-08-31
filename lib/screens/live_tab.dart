@@ -165,7 +165,7 @@ class _LiveTabState extends State<LiveTab> {
     }
   }
 
-  Future<void> _showRenameDialog(int sessionId, String currentName) =>
+  Future<void> _showRenameDialog(String sessionId, String currentName) =>
       renameSessionFlow(
         context,
         sessionId: sessionId,

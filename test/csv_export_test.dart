@@ -48,7 +48,6 @@ void main() {
     List<double?>? tares,
     GapList? gaps,
     int ssnOrigin = 0,
-    SessionDamage damage = SessionDamage.none,
     SessionBoardMeta? boardMeta,
   }) => SessionData(
     channels: [for (final values in perChannel) Int32List.fromList(values)],
@@ -58,7 +57,6 @@ void main() {
     tares: tares ?? List.filled(channels, null),
     gaps: gaps,
     ssnOrigin: ssnOrigin,
-    damage: damage,
     boardMeta: boardMeta,
   );
 
@@ -142,6 +140,7 @@ void main() {
         'sample_rate_hz': 1000,
         'ssn_origin': 41230,
         'converted_unit': 'kgf',
+        'warnings': <dynamic>[],
         'device': {
           'name': null,
           'id': null,
@@ -284,23 +283,25 @@ void main() {
         'constants_detail': '',
         'provenance': {'exc': 'nominal'},
       });
-      expect(meta.containsKey('warnings'), isFalse);
+      // The format's storage-disclosure field: this store produces no
+      // damage shapes that survive loading, so it is always empty.
+      expect(meta['warnings'], isEmpty);
       // The human rendering reflects it too (nested one more under device).
       expect(csv, contains('#   cal:'));
       expect(csv, contains('#     cal_data_invalid: false'));
       expect(csv, contains("#       exc: 'nominal'"));
     });
 
-    test('a lost board meta degrades cal to null and discloses the damage', () {
+    test('a session recorded with no board meta exports cal as null', () {
       final data = makeSession([
         [1],
         [2],
-      ], damage: const SessionDamage(boardMetaLost: true));
+      ]);
 
       final meta = metadataOf(buildCsv(data, DisplayUnit.kgf));
 
       expect((meta['device'] as Map)['cal'], isNull);
-      expect(meta['warnings'], contains('session_board_meta_damaged'));
+      expect(meta['warnings'], isEmpty);
     });
 
     test(
@@ -338,7 +339,7 @@ void main() {
       },
     );
 
-    test('a null tare exports gross, not blanks: no offset is no damage', () {
+    test('a null tare exports gross, not blanks', () {
       final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
       final cals = [
         for (int ch = 0; ch < channels; ch++)
@@ -373,74 +374,9 @@ void main() {
         '${expected(2000, null)}',
       );
       final meta = metadataOf(csv);
-      expect(meta.containsKey('warnings'), isFalse);
+      expect(meta['warnings'], isEmpty);
       expect((meta['channels'] as List)[1]['tare_raw'], isNull);
     });
-
-    test(
-      'storage damage discloses itself and blanks what it cannot vouch for',
-      () {
-        final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
-        final cals = [
-          for (int ch = 0; ch < channels; ch++)
-            ChannelCalibration(
-              board: ChannelBoardCalibration(nominals: testNominals),
-              loadCell: cell,
-            ),
-        ];
-
-        // Damaged calibration: converted columns blank, its own code.
-        final calDamaged = makeSession([
-          [1000],
-          [2000],
-        ], damage: const SessionDamage(calibration: true));
-        final calMeta = metadataOf(buildCsv(calDamaged, DisplayUnit.kgf));
-        expect(calMeta['warnings'], contains('session_calibration_damaged'));
-        expect(
-          bodyOf(buildCsv(calDamaged, DisplayUnit.kgf))[1],
-          '0,1000,2000,,',
-        );
-
-        // Lost gaps: data rows are NOT blanked (positions unknown)…
-        final gapsLost = makeSession(
-          [
-            [10, 20],
-            [30, 40],
-          ],
-          calibrations: cals,
-          damage: const SessionDamage(gapsLost: true),
-        );
-        final gapsMeta = metadataOf(buildCsv(gapsLost, DisplayUnit.kgf));
-        expect(gapsMeta['warnings'], contains('session_gaps_lost'));
-        final gapsBody = bodyOf(buildCsv(gapsLost, DisplayUnit.kgf));
-        expect(gapsBody[2].split(',')[1], '20'); // row 1 exports raw values
-
-        // Truncation: the code names the cut; data is the session's prefix.
-        final truncated = makeSession(
-          [
-            [1, 2],
-            [3, 4],
-          ],
-          calibrations: cals,
-          damage: const SessionDamage(truncatedAt: 2),
-        );
-        final truncMeta = metadataOf(buildCsv(truncated, DisplayUnit.kgf));
-        expect(
-          truncMeta['warnings'],
-          contains('session_truncated_at_sample:2'),
-        );
-
-        // A healthy session emits no warnings field at all.
-        final healthy = makeSession([
-          [1],
-          [2],
-        ], calibrations: cals);
-        expect(
-          metadataOf(buildCsv(healthy, DisplayUnit.kgf)),
-          isNot(contains('warnings')),
-        );
-      },
-    );
 
     test('gap rows keep their ssn with every sample cell blank', () {
       final gaps = GapList()..append(1, 2); // half-open: only sample 1

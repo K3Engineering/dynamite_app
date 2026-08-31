@@ -116,8 +116,7 @@ void main() {
         (Map<String, dynamic> j) => j['channelCount'] = 0,
         (Map<String, dynamic> j) => j['channelLabels'] = ['a'],
         (Map<String, dynamic> j) => j['tares'] = [null, 'x', null, null],
-        (Map<String, dynamic> j) =>
-            j['calibration'] = <Map<String, dynamic>>[],
+        (Map<String, dynamic> j) => j['calibration'] = <Map<String, dynamic>>[],
         (Map<String, dynamic> j) => j['visibleChannels'] = [1, 2, 3, 4],
         (Map<String, dynamic> j) => j['displayUnit'] = '',
         (Map<String, dynamic> j) => j['deviceInfo'] = 'nope',

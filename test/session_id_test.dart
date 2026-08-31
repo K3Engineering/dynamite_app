@@ -43,4 +43,27 @@ void main() {
     final ids = {for (int i = 0; i < 100; i++) newSessionId(at: at)};
     expect(ids.length, 100);
   });
+
+  group('sessionIdCreatedAt', () {
+    test('round-trips the encoded wall clock', () {
+      final at = DateTime(2026, 8, 28, 14, 30, 12);
+      expect(sessionIdCreatedAt(newSessionId(at: at)), at);
+      expect(
+        sessionIdCreatedAt('2027-01-02T03-04-05-x7f2'),
+        DateTime(2027, 1, 2, 3, 4, 5),
+      );
+    });
+
+    test('throws on anything not exactly the id shape', () {
+      for (final bad in [
+        'junk',
+        '2026-08-28T14-30-12', // no suffix
+        '2026-08-28T14:30:12-zzzz', // colons
+        '2026-8-28T14-30-12-zzzz', // unpadded
+        '2026-08-28T14-30-12-ZZZ!', // outside the suffix alphabet
+      ]) {
+        expect(() => sessionIdCreatedAt(bad), throwsFormatException);
+      }
+    });
+  });
 }

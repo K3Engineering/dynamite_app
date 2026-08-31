@@ -1,76 +1,94 @@
-/// The screens' only database read/modify path for session rows: streams of
-/// [SessionSummary] plus the row-level actions (rename, notes, visibility,
-/// delete). The drift row type never leaves this file (and database.dart) —
-/// UI code works with [SessionSummary].
+/// The screens' only read/modify path for sessions: streams of
+/// [SessionSummary] and [DamagedSession] plus the session-level actions
+/// (rename, notes, visibility, delete, load). The store's file layout never
+/// leaves the service layer — UI code works with these models.
 library;
 
-import 'dart:convert';
+import 'dart:typed_data';
 
+import '../models/damaged_session.dart';
 import '../models/session_summary.dart';
-import 'database.dart';
-import 'session_metadata.dart';
+import 'session_data.dart';
+import 'session_journal.dart';
+import 'session_store.dart';
 
-/// All sessions, newest-first (same ordering as the DB stream), mapped to
-/// the UI model.
-Stream<List<SessionSummary>> watchSessionSummaries() => AppDatabase.instance
-    .watchAllSessions()
-    .map((rows) => [for (final row in rows) sessionSummaryFor(row)]);
+/// All finalized sessions, newest-first.
+Stream<List<SessionSummary>> watchSessionSummaries() =>
+    SessionStore.instance.watch(SessionStore.instance.listSessions);
 
-/// Per-session chunk byte sizes (the sessions list's size column and the
-/// capacity strip's refresh cue).
-Stream<Map<int, int>> watchSessionByteSizes() =>
-    AppDatabase.instance.watchSessionByteSizes();
+/// Per-session data.byte sizes (the sessions list's size column).
+Stream<Map<String, int>> watchSessionByteSizes() =>
+    SessionStore.instance.watch(SessionStore.instance.sessionByteSizes);
+
+/// Directories the store flags damaged (unreadable metadata, no data) —
+/// the list's damaged-entry component with its raw-export/delete
+/// affordances.
+Stream<List<DamagedSession>> watchDamagedSessions() =>
+    SessionStore.instance.watch(SessionStore.instance.listDamagedSessions);
 
 /// One session, reactively — name, notes, and per-session channel
 /// visibility surface here as edits land.
-Stream<SessionSummary?> watchSessionSummary(int id) => AppDatabase.instance
-    .watchSessionById(id)
-    .map((row) => row == null ? null : sessionSummaryFor(row));
+Stream<SessionSummary?> watchSessionSummary(String id) =>
+    SessionStore.instance.watch(() => SessionStore.instance.sessionSummary(id));
 
-/// Fetch a session by id (null when gone).
-Future<SessionSummary?> sessionSummaryById(int id) async {
-  final row = await AppDatabase.instance.sessionById(id);
-  return row == null ? null : sessionSummaryFor(row);
-}
+/// Fetch a session by id (null when gone or no longer loadable).
+Future<SessionSummary?> sessionSummaryById(String id) =>
+    SessionStore.instance.sessionSummary(id);
 
-/// The DB file's exact byte size — the capacity strip's used portion.
-Future<int> sessionDatabaseFileBytes() =>
-    AppDatabase.instance.databaseFileBytes();
+/// Total bytes under the sessions root — the native capacity strip's used
+/// portion.
+Future<int> sessionsUsedBytes() => SessionStore.instance.usedBytes();
 
-/// Map a drift row to the UI model. The JSON-column parse fallbacks match
-/// the columns' display-only contract (see [parseJsonColumn]).
-SessionSummary sessionSummaryFor(Session row) => SessionSummary(
-  id: row.id,
-  name: row.name,
-  notes: row.notes,
-  createdAt: row.createdAt,
-  durationMs: row.durationMs,
-  channelCount: row.channelCount,
-  sampleRate: row.sampleRate,
-  displayUnit: row.displayUnit,
-  deviceInfoJson: row.deviceInfoJson,
-  recordedAt: row.recordedAt,
-  channelLabels: parseJsonColumn(
-    row.channelLabels,
-    row.channelCount,
-    convert: (e) => e.toString(),
-    fallback: (i) => 'Ch ${i + 1}',
-  ),
-  visibleChannels: parseJsonColumn(
-    row.visibleChannels,
-    row.channelCount,
-    convert: (e) => e == true,
-    fallback: (_) => true,
-  ),
-);
+/// The byte-size pulse (append acks included) the capacity strip cues on.
+Stream<void> sessionByteChanges() => SessionStore.instance.byteChanges;
 
-Future<void> renameSession(int id, String name) =>
-    AppDatabase.instance.renameSession(id, name);
+/// Read a finalized session back for the detail view / CSV export. Throws
+/// on unreadable metadata or impossible frame shapes — the detail screen
+/// renders failures as an error state.
+Future<SessionData> loadSession(String id) =>
+    SessionStore.instance.loadSession(id);
 
-Future<void> setSessionNotes(int id, String notes) =>
-    AppDatabase.instance.setSessionNotes(id, notes);
+/// A damaged entry's data.raw verbatim (for hand recovery); throws when
+/// absent.
+Future<Uint8List> damagedDataBytes(String id) =>
+    SessionStore.instance.rawDataBytes(id);
 
-Future<void> setSessionVisibleChannels(int id, List<bool> visible) =>
-    AppDatabase.instance.setSessionVisibleChannels(id, jsonEncode(visible));
+/// A damaged entry's journal verbatim (for eyeball recovery of
+/// calibration/tares); throws when absent.
+Future<Uint8List> damagedMetadataBytes(String id) =>
+    SessionStore.instance.rawJournalBytes(id);
 
-Future<void> deleteSession(int id) => AppDatabase.instance.deleteSession(id);
+Future<void> renameSession(String id, String name) =>
+    SessionStore.instance.editSession(
+      id,
+      (current) => SessionEdit(
+        name: name,
+        notes: current.notes,
+        visibleChannels: current.visibleChannels,
+      ),
+    );
+
+Future<void> setSessionNotes(String id, String notes) =>
+    SessionStore.instance.editSession(
+      id,
+      (current) => SessionEdit(
+        name: current.name,
+        notes: notes,
+        visibleChannels: current.visibleChannels,
+      ),
+    );
+
+Future<void> setSessionVisibleChannels(String id, List<bool> visible) =>
+    SessionStore.instance.editSession(
+      id,
+      (current) => SessionEdit(
+        name: current.name,
+        notes: current.notes,
+        visibleChannels: visible,
+      ),
+    );
+
+/// Delete the session (finalized OR damaged): the only destructive
+/// operation in the store, always behind an explicit confirmation.
+Future<void> deleteSession(String id) =>
+    SessionStore.instance.deleteSession(id);

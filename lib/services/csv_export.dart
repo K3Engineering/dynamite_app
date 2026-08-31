@@ -50,8 +50,8 @@ extension DisplayUnitCsv on DisplayUnit {
 /// bytes, its sanitized name, and its MIME type. [unit] is the file's
 /// converted unit (the user's pick in the export flow — see
 /// csv-format-v1C.md). [sessionName]/[recordedAtIso]/[deviceInfoJson] are
-/// the session row's fields, passed flat so the export API doesn't take the
-/// drift row type. Delivery is the caller's job (export_delivery.dart).
+/// the session's fields, passed flat so the export API doesn't take store
+/// types. Delivery is the caller's job (export_delivery.dart).
 ({Uint8List bytes, String fileName, String mimeType}) buildSessionCsvArtifact({
   required String sessionName,
   required String recordedAtIso,
@@ -117,14 +117,10 @@ String buildSessionCsv(
   // Per-channel quartet-2 cell formatters, computed once from the session's
   // frozen calibration; each closure folds in the column's fixed-point
   // precision. Null is a force unit on a cell-less channel — an all-blank
-  // column (the file's '—'). Damaged calibration metadata blanks the whole
-  // converted quartet: its floor (uncalibrated channels) must never produce
-  // converted numbers that pose as net measurements (the raw quartet always
-  // exports).
-  final blankConverted = data.damage.calibration;
+  // column (the file's '—').
   final formatters = [
     for (int ch = 0; ch < n; ch++)
-      blankConverted ? null : _columnFormatter(unit, data.converterFor(ch)),
+      _columnFormatter(unit, data.converterFor(ch)),
   ];
 
   final metadata = _metadata(
@@ -217,12 +213,10 @@ Map<String, Object?> _metadata(
     'sample_rate_hz': data.sampleRate,
     'ssn_origin': ssnOrigin,
     'converted_unit': unit.csvSymbol,
-    // Storage-integrity damage disclosures (SessionDamage.warningCodes) —
-    // the file states its own defects; consumers MUST NOT silently trust a
-    // file carrying these. Optional per the spec's minor-revision rule:
-    // absent on healthy sessions.
-    if (data.damage.warningCodes.isNotEmpty)
-      'warnings': data.damage.warningCodes,
+    // Storage-integrity disclosures per the format spec; this store's only
+    // damage shapes (tail truncation, unreadable-at-list metadata) never
+    // survive into a loaded session, so the list is always empty.
+    'warnings': const <String>[],
     // The recording apparatus (frozen at recording start): identity from
     // the session row's deviceInfoJson (nulls for a session without
     // identity — web-recorded serial, unreadable DIS), the electrical
@@ -247,7 +241,7 @@ Map<String, Object?> _metadata(
       // Board-cal provenance (SessionBoardMeta.toJson): the cal.* document,
       // the board-state verdicts (cal_data_invalid, constants status), and
       // the per-constant provenance tags. Null for a session recorded with
-      // no board data resolved (or whose board-meta column was lost).
+      // no board data resolved.
       'cal': data.boardMeta?.toJson(),
     },
     'channels': [

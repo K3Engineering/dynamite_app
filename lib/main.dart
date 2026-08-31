@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:material_ui/material_ui.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
@@ -12,7 +11,6 @@ import 'services/adc_packet_decoder.dart';
 import 'services/app_events.dart';
 import 'services/ble_link_manager.dart';
 import 'services/data_hub.dart';
-import 'services/database.dart';
 import 'services/demo_device.dart';
 import 'services/feed_health_tracker.dart';
 // Debug-only hot-restart hook: on web, BLE notification listeners and timers
@@ -37,31 +35,13 @@ void main() async {
   // released for us to reconnect. Runs before session recovery is scheduled
   // so a recording interrupted by the restart is finalized by its pass.
   runPreviousHotRestartCleanup();
-  // Crash recovery is deferred to after the first frame: opening the web DB
-  // spawns drift_worker.js and fetches sqlite3.wasm, and first paint must
-  // not wait on either. The Sessions list needs no gating — it excludes
-  // incomplete rows by construction and simply gains the recovered ones
-  // when recovery lands. The fence keeps the live writer's row creation
-  // out of recovery's incomplete-session scan (see
-  // AppDatabase.crashRecoveryFence).
-  final recoveryFence = Completer<void>();
-  AppDatabase.crashRecoveryFence = recoveryFence.future;
+  // Crash recovery is deferred to after the first frame so first paint
+  // doesn't wait on the store's first open. The Sessions list needs no
+  // gating — it excludes incomplete dirs by construction and simply gains
+  // the recovered ones when recovery lands. Recovery is non-destructive
+  // (touch-final only) and races nothing it could harm, so no fence.
   WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(() async {
-      try {
-        await SessionStorage.recoverIncompleteSessions();
-      } catch (e) {
-        // The first DB open crashes here if web/sqlite3.wasm is stale.
-        if (kIsWeb) {
-          debugPrint('Double-check web/sqlite3.wasm against pubspec.lock.');
-        }
-        rethrow;
-      } finally {
-        // Release the writer even when recovery fails: a broken DB then
-        // fails loudly at the row-creation write instead.
-        recoveryFence.complete();
-      }
-    }());
+    unawaited(SessionStorage.recoverIncompleteSessions());
   });
   // Prefs are resolved here and injected into their owners, so their loads
   // are synchronous constructor work and can never race a user edit.
@@ -137,10 +117,6 @@ void main() async {
   // inside shutdownForHotRestart; the GATT disconnect completes async.
   registerHotRestartCleanup(() {
     unawaited(linkManager.shutdownForHotRestart());
-    // Close the DB too, so the next generation re-opens it and migrations
-    // run against the current schemaVersion — otherwise the old open
-    // connection survives the restart and a bumped schema never applies.
-    unawaited(AppDatabase.closeInstance());
   });
   // Layer 2 (web debug only): the engine view is disposed by
   // `ext.flutter.disassemble` BEFORE the new generation boots, so packets

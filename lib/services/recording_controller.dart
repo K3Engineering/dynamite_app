@@ -145,10 +145,10 @@ class RecordingController extends ChangeNotifier {
 
   /// Start a new recording session: construct the writer (via the
   /// persistence port) and latch it here. Synchronous end to end — the
-  /// storage layer does no DB work until the first chunk flush creates the
-  /// session row — so there is no async window in which the stream could
-  /// change out from under the snapshots the writer is built on, and no
-  /// discarded row to clean up if it did.
+  /// storage layer does no store work until the first packet creates the
+  /// session directory — so there is no async window in which the stream
+  /// could change out from under the snapshots the writer is built on, and
+  /// no discarded artifact to clean up if it did.
   ///
   /// [name] is the session's display name; null auto-names it from the wall
   /// clock (e.g. `2026-07-29 14:05:32` — see [autoSessionName]).
@@ -233,13 +233,14 @@ class RecordingController extends ChangeNotifier {
   /// and name (or nulls when called outside the recording state — the state
   /// machine refuses the no-op) and any write error the storage writer
   /// latched (non-null means the session may be truncated). The id is also
-  /// null when the session recorded nothing: with no first chunk there was
-  /// never a row, so "recorded nothing" saves nothing.
+  /// null when the session recorded nothing: with no first packet there was
+  /// never a session directory, so "recorded nothing" saves nothing.
   ///
   /// This is the single place a storage failure is surfaced to the user (as a
   /// [RecordingStorageError] on [AppEvents]); callers only use the returned
   /// error to branch (e.g. suppress the "Session saved" notice).
-  Future<({int? sessionId, String? name, Object? error})> stopSession() async {
+  Future<({String? sessionId, String? name, Object? error})>
+  stopSession() async {
     if (_state != _RecordingState.recording) {
       return (sessionId: null, name: null, error: null);
     }

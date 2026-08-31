@@ -39,3 +39,22 @@ String newSessionId({DateTime? at, Random? random}) {
   }
   return id.toString();
 }
+
+/// The local wall-clock instant encoded in [id] — the session's createdAt
+/// (sort instant and display timestamp). Strict: anything not exactly the
+/// [newSessionId] format throws [FormatException] (the caller's verdict
+/// that a foreign directory is squatting in the sessions root).
+DateTime sessionIdCreatedAt(String id) {
+  final match = RegExp(
+    r'^(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})-[a-z0-9]{4}$',
+  ).firstMatch(id);
+  if (match == null) throw FormatException('malformed session id: $id');
+  return DateTime(
+    int.parse(match[1]!),
+    int.parse(match[2]!),
+    int.parse(match[3]!),
+    int.parse(match[4]!),
+    int.parse(match[5]!),
+    int.parse(match[6]!),
+  );
+}
