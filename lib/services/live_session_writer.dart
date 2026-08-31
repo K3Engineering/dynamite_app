@@ -18,6 +18,21 @@ class SessionChunkCodec {
 
   final int channelCount;
 
+  /// The ADC is 24-bit: real sample values are confined to ±2^23, so int32
+  /// values outside that range are reserved territory by construction —
+  /// [gapSentinel] is its first occupant. Encode paths must never emit an
+  /// out-of-range real value, and nothing may read the reserved range as
+  /// ordinary data.
+  static const int maxAdcValue = (1 << 23) - 1;
+  static const int minAdcValue = -(1 << 23);
+
+  /// The dropped-samples marker: a frame whose every channel reads
+  /// [gapSentinel] is a gap. Held values are a representation, not a signal
+  /// property (a statically-loaded cell legitimately repeats identical real
+  /// values forever), so a gap must be marked in-band — runs of equal
+  /// frames can never be post-hoc diagnosed as one.
+  static const int gapSentinel = 0x7FFFFFFF;
+
   /// Byte length of one packed sample frame.
   int get frameBytes => channelCount * 4;
 
@@ -26,16 +41,97 @@ class SessionChunkCodec {
 
   /// Pack [frames] samples as sample-major little-endian int32 bytes (the
   /// chunk format [decode] reads back), pulling each value from [valueAt].
+  /// Real values only: [valueAt] returning anything outside the 24-bit ADC
+  /// range (the sentinel's territory included) is an encoder bug and
+  /// throws, so a misbehaving source can never fabricate a gap or smuggle
+  /// a reserved value into the data stream.
   Uint8List pack(int frames, int Function(int sample, int channel) valueAt) {
     final out = ByteData(frames * channelCount * 4);
     int offset = 0;
     for (int s = 0; s < frames; s++) {
       for (int ch = 0; ch < channelCount; ch++) {
-        out.setInt32(offset, valueAt(s, ch), Endian.little);
+        final raw = valueAt(s, ch);
+        if (raw < minAdcValue || raw > maxAdcValue) {
+          throw ArgumentError.value(
+            raw,
+            'valueAt',
+            'sample outside the 24-bit ADC range: encoder bug '
+                '(sample $s, channel $ch)',
+          );
+        }
+        out.setInt32(offset, raw, Endian.little);
         offset += 4;
       }
     }
     return out.buffer.asUint8List();
+  }
+
+  /// Bulk-mark the whole frames inside [gapRanges] (`[start, end)`,
+  /// relative to the start of [bytes]) with the gap sentinel on every
+  /// channel. The real (held) values were packed first; this overwrites
+  /// them so the byte stream self-describes its gaps. Ranges must lie
+  /// inside the buffer — an out-of-range range is a caller bug and throws.
+  void fillGapSentinels(Uint8List bytes, Iterable<(int, int)> gapRanges) {
+    final view = ByteData.sublistView(bytes);
+    final frames = framesOf(bytes);
+    for (final (start, end) in gapRanges) {
+      if (start < 0 || end > frames || end <= start) {
+        throw RangeError(
+          'gap range [$start, $end) does not fit $frames frames',
+        );
+      }
+      for (int s = start; s < end; s++) {
+        for (int ch = 0; ch < channelCount; ch++) {
+          view.setInt32(
+            (s * channelCount + ch) * 4,
+            gapSentinel,
+            Endian.little,
+          );
+        }
+      }
+    }
+  }
+
+  /// Decode [bytes] into per-channel arrays, turning sentinel frames into a
+  /// [GapList] and hold-filling the channel arrays with each channel's
+  /// previous real value (the held-value representation the graphs, stats
+  /// and exports already consume). A gap frame is sentinel on ALL channels;
+  /// a frame mixing sentinel and real values, or a sentinel first frame
+  /// (recording starts never open with a gap, so hold-fill has no
+  /// predecessor), is not a state the write path produces and throws.
+  ({List<Int32List> channels, GapList gaps}) decodeWithGaps(Uint8List bytes) {
+    final view = ByteData.sublistView(bytes);
+    final frames = framesOf(bytes);
+    final channels = List.generate(channelCount, (_) => Int32List(frames));
+    final gaps = GapList();
+    for (int s = 0; s < frames; s++) {
+      final base = s * channelCount * 4;
+      bool isGap = false;
+      for (int ch = 0; ch < channelCount; ch++) {
+        final raw = view.getInt32(base + ch * 4, Endian.little);
+        final hereGap = raw == gapSentinel;
+        if (ch > 0 && hereGap != isGap) {
+          throw StateError(
+            'frame $s mixes sentinel and real channel values — '
+            'the write path fills gap frames whole',
+          );
+        }
+        isGap = hereGap;
+        if (!isGap) channels[ch][s] = raw;
+      }
+      if (isGap) {
+        if (s == 0) {
+          throw StateError(
+            'frame 0 is a gap frame — a session never starts mid-gap',
+          );
+        }
+        gaps.append(s, s + 1);
+        for (int ch = 0; ch < channelCount; ch++) {
+          channels[ch][s] = channels[ch][s - 1];
+        }
+      }
+    }
+    return (channels: channels, gaps: gaps);
   }
 
   /// Invoke [visit] once per value, in packed order (sample-major).

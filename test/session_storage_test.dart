@@ -440,7 +440,12 @@ void main() {
       final values = [
         [1, 2, 3, 4],
         [-5, 6, -7, 8],
-        [0x7FFFFFFF, -0x80000000, 0, 123456],
+        [
+          SessionChunkCodec.maxAdcValue,
+          SessionChunkCodec.minAdcValue,
+          0,
+          123456,
+        ],
       ];
       final bytes = codec.pack(values.length, (s, ch) => values[s][ch]);
       expect(codec.framesOf(bytes), values.length);
