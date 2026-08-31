@@ -55,7 +55,7 @@ class IoSessionFilesBackend implements SessionFilesBackend {
     if (await dir.exists()) {
       throw StateError('session directory $id already exists');
     }
-    await dir.create();
+    await dir.create(recursive: true);
     final journal = await _journal(id).open(mode: FileMode.write);
     try {
       await journal.writeFrom(metaBytes);
@@ -80,7 +80,12 @@ class IoSessionFilesBackend implements SessionFilesBackend {
     if (!await rootDir.exists()) return const [];
     final ids = <String>[];
     await for (final entry in rootDir.list()) {
-      if (entry is Directory) ids.add(entry.uri.pathSegments.last);
+      // A Directory's URI ends in a separator, so the name is the segment
+      // before the trailing empty one.
+      if (entry is Directory) {
+        final segments = entry.uri.pathSegments;
+        ids.add(segments[segments.length - 2]);
+      }
     }
     return ids;
   }

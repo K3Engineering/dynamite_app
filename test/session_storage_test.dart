@@ -430,6 +430,10 @@ void main() {
         expect(loaded.channels[0][2100], 7);
         expect(loaded.channels[0][2119], 7);
         expect(loaded.channels[0][2120], 9);
+
+        // The crash simulation ends here: release the data handle the way a
+        // process death would, so the temp dir can be torn down.
+        await writer.closeSink();
       },
     );
   });

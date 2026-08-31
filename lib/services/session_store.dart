@@ -171,7 +171,8 @@ class SessionStore {
   }
 
   Future<List<String>> _sortedDirIds(SessionFilesBackend files) async {
-    final ids = await files.listDirIds();
+    // listDirIds doesn't promise a mutable list, so sort a copy.
+    final ids = List.of(await files.listDirIds());
     ids.sort((a, b) => b.compareTo(a));
     return ids;
   }

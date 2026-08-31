@@ -67,18 +67,23 @@ void main() {
     ssnOrigin: 0,
   );
 
-  Future<void> seedSession(String id, Uint8List data) async {
-    final sink = await backend.createSession(
-      id,
-      encodeSessionMeta(meta()),
-      data,
-    );
-    await sink.close();
-    await backend.touchFinal(id);
-  }
+  // Everything store-side is real dart:io, which the fake-async
+  // testWidgets event loop starves; runAsync hands it the real loop.
+  Future<void> seedSession(WidgetTester tester, String id, Uint8List data) =>
+      tester.runAsync(() async {
+        final sink = await backend.createSession(
+          id,
+          encodeSessionMeta(meta()),
+          data,
+        );
+        await sink.close();
+        await backend.touchFinal(id);
+      });
 
   Future<void> pumpDetail(WidgetTester tester, String sessionId) async {
-    final session = (await sessionSummaryById(sessionId))!;
+    final session = (await tester.runAsync(
+      () => sessionSummaryById(sessionId),
+    ))!;
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     await tester.pumpWidget(
@@ -91,6 +96,17 @@ void main() {
         child: MaterialApp(home: SessionDetailScreen(session: session)),
       ),
     );
+    // The screen's own load is real IO too, kicked off in initState where
+    // runAsync can't wrap it; hand it real ticks until the spinner clears
+    // (single-shot waits starve it: the load is several file round trips).
+    for (var i = 0; i < 100; i++) {
+      await tester.runAsync(
+        () => Future<void>.delayed(const Duration(milliseconds: 20)),
+      );
+      await tester.pump();
+      if (find.byType(CircularProgressIndicator).evaluate().isEmpty) break;
+    }
+    expect(find.byType(CircularProgressIndicator), findsNothing);
     await tester.pumpAndSettle();
   }
 
@@ -101,7 +117,7 @@ void main() {
 
   testWidgets('a healthy session renders its stats', (tester) async {
     const id = '2026-08-28T14-30-12-aaa0';
-    await seedSession(id, codec.pack(2, (s, ch) => s));
+    await seedSession(tester, id, codec.pack(2, (s, ch) => s));
 
     await pumpDetail(tester, id);
 
@@ -112,7 +128,13 @@ void main() {
 
     await tester.tap(find.byType(PopupMenuButton<String>));
     await tester.pumpAndSettle();
-    expect(find.text('Download CSV'), findsOneWidget);
+    expect(
+      find.ancestor(
+        of: find.text('Download CSV'),
+        matching: find.byType(PopupMenuItem<String>),
+      ),
+      findsOneWidget,
+    );
     expect(find.text('Delete'), findsOneWidget);
     await tester.tapAt(const Offset(10, 10));
     await tester.pumpAndSettle();
@@ -128,7 +150,7 @@ void main() {
     // A gap at frame 0 is a shape the write path never produces (the
     // decoder suppresses gap injection at recording start).
     codec.fillGapSentinels(data, [(0, 1)]);
-    await seedSession(id, data);
+    await seedSession(tester, id, data);
 
     await pumpDetail(tester, id);
 

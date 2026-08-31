@@ -198,8 +198,10 @@ class LiveSessionWriter {
 
   /// The session id (the directory's name), latched from the first write's
   /// created sink. Null until data exists — the directory itself doesn't
-  /// exist before that either (no artifact without data).
-  String? get sessionId => _sink?.id;
+  /// exist before that either (no artifact without data). Outlives the open
+  /// sink: [closeSink] releases the handle, not the session's identity.
+  String? get sessionId => _sessionId;
+  String? _sessionId;
 
   /// data.raw's byte length from the last acked append, or null when no
   /// append has ever succeeded. The finalize-time check compares this with
@@ -313,10 +315,12 @@ class LiveSessionWriter {
           // First packet: create dir + journal + this append in one go; the
           // journal needs ssnOrigin, which is exactly why it can't precede the
           // first append.
-          _sink = await _sinkFactory(
+          final created = await _sinkFactory(
             sessionMetaFromHeader(header, _ssnOrigin!),
             bytes,
           );
+          _sink = created;
+          _sessionId = created.id;
           _ackedDataLength = bytes.lengthInBytes;
         } else {
           _ackedDataLength = await sink.append(bytes);
