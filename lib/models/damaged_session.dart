@@ -1,10 +1,12 @@
-/// A session directory the store cannot load as a session: its journal's
-/// header line failed strict parse (the unrecoverable content — name,
-/// calibration, tares, ssnOrigin — lives there and nowhere else), its
-/// directory name isn't a session id, or the header landed without a single
-/// data frame. Never deleted or repaired by the store itself: the list
-/// surfaces it with affordances (raw exports of whatever bytes exist, a
-/// user-gesture delete) and that's the only way out.
+/// A session directory the store cannot vouch for: its journal's header
+/// line failed strict parse (the unrecoverable content — name, calibration,
+/// tares, ssnOrigin — lives there and nowhere else), its directory name
+/// isn't a session id, its data tears mid-frame, the header landed without
+/// a single data frame, or the recording was interrupted before its
+/// completion marker (a crash, a dead tab, or a finalize that latched a
+/// failure). Never deleted, repaired or promoted by the store itself: the
+/// list surfaces it with affordances (raw exports of whatever bytes exist,
+/// a user-gesture delete) and that's the only way out.
 class DamagedSession {
   const DamagedSession({
     required this.id,

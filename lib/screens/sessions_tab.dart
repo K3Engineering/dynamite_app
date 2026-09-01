@@ -187,7 +187,7 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   /// Hand a damaged entry's surviving bytes to the user, verbatim, named
-  /// from the directory id — the only artifacts recovery can't fabricate.
+  /// from the directory id.
   Future<void> _exportDamaged(
     DamagedSession damaged, {
     required bool data,

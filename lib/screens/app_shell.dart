@@ -78,12 +78,6 @@ class AppShellState extends State<AppShell> {
           'Recording stopped — storage error: $error',
           persist: true,
         );
-      case SessionStorageUnavailable(:final error):
-        showErrorSnackBar(
-          messenger,
-          'Session storage failed to start: $error',
-          persist: true,
-        );
       case RigEditsDiscarded():
         showErrorSnackBar(
           messenger,

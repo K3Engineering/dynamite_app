@@ -13,11 +13,12 @@ import 'session_id.dart';
 import 'session_journal.dart';
 import 'session_store_backend.dart';
 
-/// The per-session file store. Each finalized recording is a directory under
+/// The per-session file store. Each completed recording is a directory under
 /// the sessions root (see SessionFilesBackend for the layout and the
 /// tail-only damage model); the journal holds all metadata, data.raw holds
-/// all frames, and everything a listing or load needs is derived from the
-/// two — there is no stored state that could disagree with the files.
+/// all frames, and the completion marker is written only by a finalize that
+/// verified the persisted length against the accepted-frame count — nothing
+/// else ever writes it, so nothing can manufacture a complete session.
 class SessionStore {
   SessionStore._(Future<SessionFilesBackend> backend) : _backend = backend;
 
@@ -45,6 +46,14 @@ class SessionStore {
   );
   Future<void> _operationTail = Future.value();
   Future<void>? _initialCatalogLoad;
+
+  /// The session the store's own writer is currently recording, if any: set
+  /// by [createDataSink], cleared by [touchFinal] or [abortSession]. An
+  /// unmarked-but-valid directory classifies as an interrupted recording —
+  /// except while the live writer owns it, when it must stay invisible
+  /// (a healthy recording in progress is not an interruption). Set and read
+  /// only inside the operation queue, so it can never race a scan.
+  String? _liveSessionId;
 
   ValueListenable<SessionCatalogState> get catalog => _catalog;
 
@@ -237,7 +246,7 @@ class SessionStore {
     } catch (_) {
       // Both backends can tear here with dir + journal already on disk —
       // publish so the artifact lists as damaged now instead of first
-      // appearing at next startup's recovery. Best-effort: a publish that
+      // appearing at the next startup's scan. Best-effort: a publish that
       // also fails records the Failed catalog itself; the create error
       // below stays the one thrown to the caller.
       try {
@@ -245,54 +254,45 @@ class SessionStore {
       } catch (_) {}
       rethrow;
     }
-    // The fresh dir has no `final` marker, so the listing is unchanged by
-    // construction and no catalog load is forced; the finalization's delta
-    // loads it if needed. Only the byte totals grew.
+    // The store owns the dir from here until touchFinal/abortSession: while
+    // live it is invisible to listings (a recording in progress is not an
+    // interrupted one), so no catalog load is forced. Only the byte totals
+    // grew.
     _addBytes(metaBytes.length + firstData.length);
     _bumpBytes();
+    _liveSessionId = sink.id;
     return NotifyingSessionDataSink._(sink, firstData.length, (delta) {
       _addBytes(delta);
       _bumpBytes();
     });
   });
 
-  /// Mark the session completed: the zero-byte [sessionFinalFile] marker,
-  /// whose contentlessness is the point — counts derive from file lengths
-  /// at read time, so a premature or out-of-date marker means nothing.
+  /// Mark the session completed: the zero-byte [sessionFinalFile] marker is
+  /// the listing's entire complete-verdict, so it is written HERE ONLY —
+  /// finalizeSession calls this after its persisted-vs-accepted count check
+  /// passed with no error latched. A recording whose writes failed or whose
+  /// data didn't land gets [abortSession] instead and lists as interrupted;
+  /// nothing promotes an unmarked session afterwards.
   Future<void> touchFinal(String id) => _withCatalog((files) async {
-    await files.touchFinal(id);
+    try {
+      await files.touchFinal(id);
+    } finally {
+      // Marker or not, the recording is over: the dir's outcome is whatever
+      // the next scan reads off disk, not the store's ownership.
+      _liveSessionId = null;
+    }
     await _refreshCatalogEntry(files, id);
   });
 
-  /// Crash/aborted-record recovery: every directory that lacks `final`
-  /// but proves to be a real session (journal parses, at least one frame)
-  /// gets the marker touched. Creates at most one zero-byte file per dir
-  /// and never deletes, truncates or repairs anything — a startup function
-  /// can't tell a create-window tear from later corruption, so anything
-  /// suspicious simply stays for the listing's damaged verdict.
-  Future<void> recoverIncompleteSessions() => _enqueue((files) async {
-    _requireCatalogAvailable();
-    try {
-      for (final id in await files.listDirIds()) {
-        if (await files.isFinalized(id)) continue;
-        final journal = await _journalOrNull(files, id);
-        if (journal == null) continue;
-        final frames =
-            await files.dataByteLength(id) ~/
-            SessionChunkCodec(journal.meta.channelCount).frameBytes;
-        if (frames < 1) continue;
-        debugPrint('Recovering incomplete session: $id');
-        await files.touchFinal(id);
-      }
-      await _publishCatalog(files);
-    } catch (_) {
-      // Recovery is idempotent (marker touches only), so a failure mid-loop
-      // needs no rollback or retry of the loop itself: republish — the
-      // recovered-so-far set is on disk already, and whatever the loop
-      // missed is picked up by next startup's recovery. Only a publish
-      // that also fails poisons the catalog, from inside _publishCatalog.
-      await _publishCatalog(files);
-    }
+  /// The writer's finalize latched a failure (a mid-recording write error,
+  /// a sink-close failure, or a persisted length that disagrees with the
+  /// accepted-frame count): [id] gets NO marker. Drops the store's
+  /// in-flight ownership and splices the fresh verdict in, so the
+  /// interrupted recording lists immediately — the user who just saw the
+  /// stop-time error is exactly who would salvage it.
+  Future<void> abortSession(String id) => _withCatalog((files) async {
+    _liveSessionId = null;
+    await _refreshCatalogEntry(files, id);
   });
 
   // -- Listing and load ------------------------------------------------------
@@ -328,19 +328,6 @@ class SessionStore {
       ),
       byteTotal: byteTotal,
     );
-  }
-
-  Future<SessionJournal?> _journalOrNull(
-    SessionFilesBackend files,
-    String id,
-  ) async {
-    final bytes = await files.readJournal(id);
-    if (bytes == null) return null;
-    try {
-      return parseSessionJournal(bytes);
-    } on FormatException {
-      return null;
-    }
   }
 
   Future<_ListedEntry> _classify(SessionFilesBackend files, String id) async {
@@ -410,11 +397,22 @@ class SessionStore {
         byteTotal: byteTotal,
       );
     }
-    // A parseable, data-bearing dir without `final` is visible only to the
-    // recording tab writing it (or to the prescan before recovery's touch) —
-    // never to the listing.
+    // No completion marker: the store's own in-flight recording stays
+    // invisible (the live writer owns it); anything else is an interrupted
+    // recording — the app crashed, the tab died, or the finalize latched a
+    // failure. It lists as a damaged entry with raw salvage; nothing ever
+    // promotes it to complete afterwards.
     if (!await files.isFinalized(id)) {
-      return _UnlistedEntry(byteTotal: byteTotal);
+      if (id == _liveSessionId) return _UnlistedEntry(byteTotal: byteTotal);
+      return _DamagedEntry(
+        DamagedSession(
+          id: id,
+          hasData: true,
+          hasMeta: true,
+          reason: 'Recording interrupted before completion',
+        ),
+        byteTotal: byteTotal,
+      );
     }
     return _CompleteEntry(
       id: id,
@@ -534,8 +532,8 @@ class SessionStore {
 
   /// Delete the session directory. This is the ONLY destructive operation
   /// anywhere in the store, and it only ever runs on a user's explicit
-  /// confirmation — recovery and listing never delete. Only the layout's
-  /// three named files are destroyed (see SessionFilesBackend.delete).
+  /// confirmation. Only the layout's three named files are destroyed (see
+  /// SessionFilesBackend.delete).
   Future<void> deleteSession(String id) => _withCatalog((files) async {
     // Measure before deleting so the ledger subtracts what actually left
     // the disk, not a catalog value that could have drifted.
@@ -593,9 +591,9 @@ final class _DamagedEntry extends _ListedEntry {
   final DamagedSession damaged;
 }
 
-/// Parseable and data-bearing but not finalized: the recording tab's
-/// in-flight dir, invisible to every listing consumer (its bytes still
-/// count in the scan total).
+/// Parseable and data-bearing but unmarked, while the store's own writer
+/// still owns it: the in-flight recording's dir, invisible to every listing
+/// consumer (its bytes still count in the scan total).
 final class _UnlistedEntry extends _ListedEntry {
   const _UnlistedEntry({required super.byteTotal});
 }

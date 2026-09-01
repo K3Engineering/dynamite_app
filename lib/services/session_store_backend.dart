@@ -31,8 +31,9 @@ abstract interface class SessionDataSink {
 
 /// The primitives the per-session file layout needs, one seam behind which
 /// live the native (dart:io) and web (OPFS + sink worker) implementations.
-/// Everything semantic — journal parsing, damaged-entry verdicts, recovery —
-/// is store-side; implementations are transport-only and carry no rules.
+/// Everything semantic — journal parsing, damaged/interrupted verdicts, the
+/// completion marker's write discipline — is store-side; implementations
+/// are transport-only and carry no rules.
 abstract interface class SessionFilesBackend {
   /// Create the session directory [id] (which MUST NOT already exist — a
   /// collision is two recordings merged into one directory and throws), its

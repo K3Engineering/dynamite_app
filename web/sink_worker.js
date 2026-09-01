@@ -2,7 +2,7 @@
 // layout (<opfs>/sessions/<id>/{meta,data.raw,final}). Sync access handles
 // are worker-only APIs, and flush() returning inside a write op IS the
 // durability boundary — an ack means the bytes are durable. All semantics
-// (journal format, recovery, damaged verdicts, id rules) live in the Dart
+// (journal format, damaged/interrupted verdicts, id rules) live in the Dart
 // store; this worker moves bytes and nothing else, so the only error model
 // is "op threw" -> ok:false.
 //

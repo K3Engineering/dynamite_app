@@ -8,9 +8,9 @@ import 'session_persistence.dart';
 import 'session_store.dart';
 
 /// The recording-side face of the session store: writer construction at
-/// start, finalize at stop, and crash recovery at app start. Reads/edits/
-/// listings/loads flow through session_queries.dart instead — this class
-/// only owns the recording lifecycle.
+/// start, finalize-or-abort at stop. Reads/edits/listings/loads flow through
+/// session_queries.dart instead — this class only owns the recording
+/// lifecycle.
 class SessionStorage {
   /// Start a new streaming session. The returned [LiveSessionWriter] is fed
   /// sample slices via [LiveSessionWriter.appendData] as data arrives and is
@@ -76,18 +76,19 @@ class SessionStorage {
 
   /// Finalize a streaming session: drain the write queue, release the sink,
   /// verify the persisted length against the accepted-frames claim, and
-  /// write the completion marker.
+  /// write the completion marker — ONLY when every step above came back
+  /// clean. The marker is the catalog's entire complete-verdict, so a
+  /// finalize that latched any failure (a mid-recording write error, a
+  /// sink-close failure, or a count mismatch) must not write it: the
+  /// session lists as interrupted instead, salvageable forever — never
+  /// listed as a recording the store cannot vouch for.
   ///
   /// If no data ever reached storage, the directory was never created and
   /// there is nothing to finalize (recording nothing saves nothing).
   ///
   /// Returns the writer's latched write error, a sink-close failure, or a
   /// verification error (if any); when non-null, the caller should surface
-  /// it. Releasing the sink folds into the return value instead of
-  /// throwing: every byte was acked before close, so a cleanup failure must
-  /// not veto the completion marker below. (On web a latched transport
-  /// re-fails close by construction; on native a thrown close would leave a
-  /// valid session invisible until next startup's recovery.)
+  /// it. Releasing the sink folds into the return value instead of throwing.
   static Future<Object?> finalizeSession({
     required LiveSessionWriter writer,
   }) async {
@@ -113,19 +114,14 @@ class SessionStorage {
           '— the storage layer dropped samples',
         );
       }
-      // The marker is contentless and load derives everything from the
-      // files, so it goes down even on a mismatch — the session lists with
-      // its true persisted bytes, and the error above names the lie.
-      await SessionStore.instance.touchFinal(sessionId);
+      if (error == null) {
+        await SessionStore.instance.touchFinal(sessionId);
+      } else {
+        await SessionStore.instance.abortSession(sessionId);
+      }
     }
     return error;
   }
-
-  /// Recover any sessions left without a completion marker (e.g. the app
-  /// crashed mid-recording): non-destructive touch-`final` — see
-  /// [SessionStore.recoverIncompleteSessions].
-  static Future<void> recoverIncompleteSessions() =>
-      SessionStore.instance.recoverIncompleteSessions();
 }
 
 /// Adapts the [SessionStorage] statics to the [SessionPersistence] port

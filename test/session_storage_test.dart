@@ -21,9 +21,9 @@ import 'package:dynamite_app/services/session_store.dart';
 import 'package:dynamite_app/services/session_store_backend.dart';
 
 /// Storage-side session tests: the live writer (snapshot latch, backpressure,
-/// ssn origin), finalize's ack-length check, crash recovery, and the file
-/// store's listing/damage/edit verdicts. Every test runs against the real
-/// dart:io backend pointed at a temp sessions root.
+/// ssn origin), finalize's ack-length check and interrupted verdicts, and
+/// the file store's listing/damage/edit verdicts. Every test runs against
+/// the real dart:io backend pointed at a temp sessions root.
 void main() {
   const int channels = kAdcChannelCount;
 
@@ -332,44 +332,50 @@ void main() {
   /// The last append's ack length must back the writer's accepted-sample
   /// count at finalize: if writes were acknowledged but bytes never landed,
   /// pretending all is well would surface later as a truncated session.
-  /// finalizeSession must fail loud instead.
+  /// finalizeSession must fail loud instead — and leave no marker behind, so
+  /// the truncated session can never list as complete.
   group('finalizeSession consistency check', () {
-    test(
-      'a silently dropping sink makes finalizeSession return an error',
-      () async {
-        final hub = DataHub();
-        hub.notePacketCounter(0);
-        final frame = Int32List(channels);
-        const perAppend = 1100;
-        for (int i = 0; i < perAppend * 2; i++) {
-          hub.addSampleFrame(frame);
-        }
+    test('a silently dropping sink makes finalizeSession return an error and '
+        'leaves the session interrupted', () async {
+      final hub = DataHub();
+      hub.notePacketCounter(0);
+      final frame = Int32List(channels);
+      const perAppend = 1100;
+      for (int i = 0; i < perAppend * 2; i++) {
+        hub.addSampleFrame(frame);
+      }
 
-        // The first packet creates a real session through the store, but the
-        // sink acknowledges every later append without writing a byte.
-        final dropping = LiveSessionWriter(
-          testHeader(),
-          sourceRingCapacity: DataHub.maxDataSz,
-          sinkFactory: (meta, firstData) async {
-            final real = await store.createDataSink(
-              meta: meta,
-              firstData: firstData,
-            );
-            final fakeLength = firstData.lengthInBytes;
-            return _WrapSink(real, onAppend: (bytes) async => fakeLength);
-          },
-        );
-        await dropping.appendData(hub.snapshotRange(0, perAppend));
-        await dropping.appendData(hub.snapshotRange(perAppend, perAppend));
-        final error = await SessionStorage.finalizeSession(writer: dropping);
+      // The first packet creates a real session through the store, but the
+      // sink acknowledges every later append without writing a byte.
+      final dropping = LiveSessionWriter(
+        testHeader(),
+        sourceRingCapacity: DataHub.maxDataSz,
+        sinkFactory: (meta, firstData) async {
+          final real = await store.createDataSink(
+            meta: meta,
+            firstData: firstData,
+          );
+          final fakeLength = firstData.lengthInBytes;
+          return _WrapSink(real, onAppend: (bytes) async => fakeLength);
+        },
+      );
+      await dropping.appendData(hub.snapshotRange(0, perAppend));
+      await dropping.appendData(hub.snapshotRange(perAppend, perAppend));
+      final error = await SessionStorage.finalizeSession(writer: dropping);
 
-        expect(error, isA<StateError>());
-        expect(error.toString(), contains('storage layer dropped samples'));
-      },
-    );
+      expect(error, isA<StateError>());
+      expect(error.toString(), contains('storage layer dropped samples'));
+
+      // The error is transient (one toast at stop time); the interrupted
+      // verdict is permanent: no marker, no "complete" listing — ever.
+      final listed = await catalog();
+      expect(listed.sessions, isEmpty);
+      expect(listed.damaged.single.id, dropping.sessionId);
+      expect(listed.damaged.single.reason, contains('interrupted'));
+    });
 
     test('a throwing close folds into the returned error and the session '
-        'still finalizes', () async {
+        'lists as interrupted', () async {
       final hub = DataHub();
       hub.notePacketCounter(0);
       final frame = Int32List(channels);
@@ -401,11 +407,14 @@ void main() {
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
       final error = await SessionStorage.finalizeSession(writer: writer);
 
-      // Close is cleanup: its failure surfaces as the returned error, not a
-      // throw, and must not veto the completion marker — the session lists
-      // immediately instead of waiting for next startup's recovery.
+      // Any latched failure vetoes the marker, close included: the store
+      // cannot vouch for the session, so it lists as interrupted with its
+      // (fully written) bytes still salvageable via the raw exports.
       expect(error, same(closeBoom));
-      expect((await catalog()).sessions, hasLength(1));
+      final listed = await catalog();
+      expect(listed.sessions, isEmpty);
+      expect(listed.damaged.single.id, writer.sessionId);
+      expect(listed.damaged.single.reason, contains('interrupted'));
     });
 
     test('an intact multi-packet recording finalizes with no error', () async {
@@ -430,63 +439,71 @@ void main() {
     });
   });
 
-  group('crash recovery', () {
-    test(
-      'in-band gaps and the ssn origin survive recoverIncompleteSessions',
-      () async {
-        // A stream with a dropped range: 2100 real samples, a 20-sample gap,
-        // 100 more real samples.
-        final hub = DataHub();
-        final frame = Int32List(channels);
-        void pump(int count, int value) {
-          frame.fillRange(0, channels, value);
-          for (int i = 0; i < count; i++) {
-            hub.addSampleFrame(frame);
-          }
+  group('interrupted sessions', () {
+    test('a crashed recording lists as interrupted with salvageable bytes, '
+        'never promoted', () async {
+      // A stream with a dropped range: 2100 real samples, a 20-sample gap,
+      // 100 more real samples.
+      final hub = DataHub();
+      final frame = Int32List(channels);
+      void pump(int count, int value) {
+        frame.fillRange(0, channels, value);
+        for (int i = 0; i < count; i++) {
+          hub.addSampleFrame(frame);
         }
+      }
 
-        hub.notePacketCounter(41230);
-        pump(2100, 7);
-        hub.addDroppedFrames(20);
-        pump(100, 9);
+      hub.notePacketCounter(41230);
+      pump(2100, 7);
+      hub.addDroppedFrames(20);
+      pump(100, 9);
 
-        final writer = startFromHub(hub, name: 'crash me');
-        await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
+      final writer = startFromHub(hub, name: 'crash me');
+      await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
 
-        // Invisible before recovery: parseable and data-bearing, but no
-        // completion marker — the listing excludes it, not damaged either.
-        expect((await catalog()).sessions, isEmpty);
-        expect((await catalog()).damaged, isEmpty);
+      // While the store still owns the in-flight recording, the dir is
+      // invisible: not listed, not damaged.
+      expect((await catalog()).sessions, isEmpty);
+      expect((await catalog()).damaged, isEmpty);
 
-        // Simulate the crash: recover without finalizeSession ever running.
-        await SessionStorage.recoverIncompleteSessions();
+      // Simulate the crash: release the data handle the way a process
+      // death would (so teardown can delete the temp root), and a fresh
+      // store over the same root knows nothing of the in-flight recorder.
+      await writer.closeSink();
+      SessionStore.instance = store = SessionStore.over(
+        IoSessionFilesBackend('${tmp.path}/sessions'),
+      );
 
-        final summaries = (await catalog()).sessions;
-        expect(summaries, hasLength(1));
-        expect(summaries.single.id, writer.sessionId);
-        // Counts derive from the file, so the recovered session tells its
-        // own truth.
-        expect(
-          summaries.single.durationMs,
-          hub.totalSamples * 1000 ~/ hub.sampleRateHz,
-        );
+      // No finalize ever ran, so no marker ever got written: the
+      // recording lists as interrupted — permanently; nothing promotes it.
+      final listed = await catalog();
+      expect(listed.sessions, isEmpty);
+      expect(listed.damaged, hasLength(1));
+      expect(listed.damaged.single.id, writer.sessionId);
+      expect(listed.damaged.single.reason, contains('interrupted'));
+      expect(listed.damaged.single.hasData, isTrue);
+      expect(listed.damaged.single.hasMeta, isTrue);
 
-        final loaded = await store.loadSession(summaries.single.id);
-        expect(loaded.sampleCount, hub.totalSamples);
-        expect(loaded.gaps.contains(2100), isTrue);
-        expect(loaded.gaps.contains(2119), isTrue);
-        expect(loaded.gaps.contains(2120), isFalse);
-        expect(loaded.ssnOrigin, 41230);
-        // Held values across the gap: the last real frame's values.
-        expect(loaded.channels[0][2100], 7);
-        expect(loaded.channels[0][2119], 7);
-        expect(loaded.channels[0][2120], 9);
-
-        // The crash simulation ends here: release the data handle the way a
-        // process death would, so the temp dir can be torn down.
-        await writer.closeSink();
-      },
-    );
+      // The salvage exports hand the surviving bytes back verbatim, and
+      // they decode: in-band gaps and the ssn origin surface from the
+      // raw files themselves — hand-recovery goes through the codec, as
+      // it does for a technician exporting these bytes.
+      final journal = parseSessionJournal(
+        await store.rawJournalBytes(writer.sessionId!),
+      );
+      expect(journal.meta.ssnOrigin, 41230);
+      final decoded = const SessionChunkCodec(
+        kAdcChannelCount,
+      ).decodeWithGaps(await store.rawDataBytes(writer.sessionId!));
+      expect(decoded.channels.first.length, hub.totalSamples);
+      expect(decoded.gaps.contains(2100), isTrue);
+      expect(decoded.gaps.contains(2119), isTrue);
+      expect(decoded.gaps.contains(2120), isFalse);
+      // Held values across the gap: the last real frame's values.
+      expect(decoded.channels[0][2100], 7);
+      expect(decoded.channels[0][2119], 7);
+      expect(decoded.channels[0][2120], 9);
+    });
   });
 
   group('session calibration snapshot', () {
@@ -785,12 +802,33 @@ void main() {
       expect(store.catalog.value, isA<SessionCatalogFailed>());
     });
 
-    test('an in-flight session (no final) is invisible, not damaged', () async {
+    test('an unmarked session (no final) lists as interrupted', () async {
       await seedSession('2026-08-28T14-30-12-aaaa', finalized: false);
-      expect((await catalog()).sessions, isEmpty);
-      expect((await catalog()).damaged, isEmpty);
-      await store.recoverIncompleteSessions();
-      expect((await catalog()).sessions.single.name, 'test');
+      final listed = await catalog();
+      expect(listed.sessions, isEmpty);
+      expect(listed.damaged.single.id, '2026-08-28T14-30-12-aaaa');
+      expect(listed.damaged.single.reason, contains('interrupted'));
+    });
+
+    test('an in-flight session (live id) is invisible until aborted', () async {
+      // While the store's own writer owns the dir, a listing must not
+      // mistake the unmarked session for an interrupted one.
+      final sink = await store.createDataSink(
+        meta: testMeta(),
+        firstData: codec.pack(2, (s, ch) => 42),
+      );
+      final listed = await catalog();
+      expect(listed.sessions, isEmpty);
+      expect(listed.damaged, isEmpty);
+      await sink.close();
+
+      // A failed finalize aborts: the interrupted session splices into
+      // the published catalog immediately.
+      await store.abortSession(sink.id);
+      final aborted = readyCatalog();
+      expect(aborted.sessions, isEmpty);
+      expect(aborted.damaged.single.id, sink.id);
+      expect(aborted.damaged.single.reason, contains('interrupted'));
     });
 
     test('a torn header is a damaged entry with both raw exports', () async {
@@ -814,8 +852,9 @@ void main() {
       // The exports hand back the surviving bytes verbatim.
       expect(await store.rawDataBytes(damaged.single.id), data);
       expect(await store.rawJournalBytes(damaged.single.id), junk);
-      // Nothing repairs or deletes it automatically — recovery included.
-      await store.recoverIncompleteSessions();
+      // Nothing repairs, deletes or finalizes it automatically — a re-scan
+      // re-derives the same damaged verdict, marker or not.
+      await store.refreshCatalog();
       expect((await catalog()).damaged, hasLength(1));
       expect(await backend.isFinalized(damaged.single.id), isFalse);
     });
@@ -838,10 +877,10 @@ void main() {
         expect(damaged.single.reason, contains('never produced data'));
         expect(codec.framesOf(Uint8List(0)), 0);
 
-        // Recovery is for real sessions (journal parses AND at least one
-        // frame): the crash-at-create artifact gets no completion marker and
-        // stays a damaged entry, never quietly finalized into the list.
-        await store.recoverIncompleteSessions();
+        // The crash-at-create artifact is not the interrupted kind (no
+        // frames ever landed): it stays a damaged entry, never quietly
+        // finalized into the list.
+        await store.refreshCatalog();
         expect(await backend.isFinalized('2026-08-28T14-30-12-0dd0'), isFalse);
         expect((await catalog()).damaged, hasLength(1));
         expect((await catalog()).sessions, isEmpty);
@@ -864,7 +903,7 @@ void main() {
         );
 
         // The torn directory (journal, no data) lists as damaged
-        // immediately — next startup's recovery is not the first to see it,
+        // immediately — the next startup's scan is not the first to see it,
         // and the catalog did not stay Ready as if storage were fine.
         final damaged = readyCatalog().damaged;
         expect(damaged, hasLength(1));

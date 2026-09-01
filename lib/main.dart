@@ -41,8 +41,7 @@ void main() async {
   // Silence and tear down the previous hot-restart generation's BLE link
   // (web debug only) BEFORE anything else, so its stale notification stream
   // stops spamming the disposed engine view and its GATT connection is
-  // released for us to reconnect. Runs before session recovery is scheduled
-  // so a recording interrupted by the restart is finalized by its pass.
+  // released for us to reconnect.
   runPreviousHotRestartCleanup();
   // Primary-tab gate: everything below builds the running app, so it must
   // not happen until this tab holds the lock. A tab that lost stays on the
@@ -64,24 +63,10 @@ void main() async {
     releasePrimaryTabLock();
   });
   final appEvents = AppEvents();
-  // Crash recovery is deferred to after the first frame so first paint
-  // doesn't wait on the store's first open. It rides the store's
-  // operation queue, so it can never interleave with a UI-triggered
-  // load or mutation; the Sessions list needs no gating — it simply
-  // gains the recovered sessions when recovery's publish lands. A store
-  // that can't even be opened (e.g. the web probe's capability verdict)
-  // rethrows out of the first await; surface that as a startup toast
-  // instead of an unhandled async error — recording still refuses on
-  // its own loud path, and post-frame guarantees the shell is
-  // subscribed.
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(
-      SessionStorage.recoverIncompleteSessions().catchError((Object e) {
-        debugPrint('Session recovery failed: $e');
-        appEvents.emit(SessionStorageUnavailable(e));
-      }),
-    );
-  });
+  // Session storage installs lazily on first use and needs no startup pass:
+  // an interrupted-on-crash recording just lists as such (no recovery, no
+  // mutation — see the store's classification), and a store that can't even
+  // be opened fails loudly at the first op that touches it.
   // Prefs are resolved here and injected into their owners, so their loads
   // are synchronous constructor work and can never race a user edit.
   final prefs = await SharedPreferences.getInstance();

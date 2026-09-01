@@ -47,18 +47,6 @@ class RecordingStorageError extends AppEvent {
   final Object error;
 }
 
-/// The session store could not be opened at startup: on web, the browser
-/// failed the recording-capability probe (safe recording is impossible
-/// there); on native, the sessions root itself is unreachable. The store
-/// stays broken for the app's lifetime — every listing, read and recording
-/// fails the same way — so this is the one deliberate surfacing of that
-/// verdict. Emitted once from `main`'s recovery call.
-class SessionStorageUnavailable extends AppEvent {
-  const SessionStorageUnavailable(this.error);
-
-  final Object error;
-}
-
 /// The link ended with unsaved load cell edits in flight; they were
 /// discarded (unsaved rig edits die with the link — see `RigState`).
 class RigEditsDiscarded extends AppEvent {

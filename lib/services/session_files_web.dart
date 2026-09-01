@@ -10,8 +10,9 @@ import 'sink_worker_transport.dart';
 /// through `sink_worker.js`: sync access handles are worker-only APIs and the
 /// worker's flush() returning is the durability boundary, so every op is one
 /// request/ack pair there. The worker is transport-only — journal format,
-/// recovery, damaged verdicts and id rules all live in the store. This file
-/// is the js_interop adapter for [SinkWorkerTransport]'s pure-Dart plumbing.
+/// damaged/interrupted verdicts and id rules all live in the store. This
+/// file is the js_interop adapter for [SinkWorkerTransport]'s pure-Dart
+/// plumbing.
 
 /// The live transport, referenced at the one place workers are created so
 /// the hot-restart hook can kill the old generation's worker before the new
