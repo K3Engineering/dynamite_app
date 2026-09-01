@@ -63,14 +63,17 @@ extension on JSUint8Array {
   external JSArrayBuffer get buffer;
 }
 
+/// Object-literal constructor: a null nullable field is omitted from the
+/// wire object entirely, and the worker reads absent as unset.
 extension type _Req._(JSObject _) implements JSObject {
-  external _Req();
-  external set seq(int value);
-  external set op(String value);
-  external set id(String value);
-  external set intParam(int value);
-  external set bytes(JSAny? value);
-  external set bytes2(JSAny? value);
+  external _Req({
+    required int seq,
+    required String op,
+    String? id,
+    int? intParam,
+    JSUint8Array? bytes,
+    JSUint8Array? bytes2,
+  });
 }
 
 /// The JS worker behind [SinkWorkerTransport]: converts acks and requests
@@ -102,27 +105,23 @@ class _JsSinkWorkerHandle implements SinkWorkerHandle {
 
   @override
   void post(SinkWorkerRequest request) {
-    final req = _Req()
-      ..seq = request.seq
-      ..op = request.op;
-    final id = request.id;
-    if (id != null) req.id = id;
-    final intParam = request.intParam;
-    if (intParam != null) req.intParam = intParam;
-    final transfer = <JSAny>[];
-    final bytes = request.bytes;
-    if (bytes != null) {
-      final js = bytes.toJS;
-      req.bytes = js;
-      transfer.add(js.buffer);
-    }
-    final bytes2 = request.bytes2;
-    if (bytes2 != null) {
-      final js = bytes2.toJS;
-      req.bytes2 = js;
-      transfer.add(js.buffer);
-    }
-    _worker.postMessage(req, transfer.toJS);
+    final bytes = request.bytes?.toJS;
+    final bytes2 = request.bytes2?.toJS;
+    final transfer = <JSAny>[
+      if (bytes != null) bytes.buffer,
+      if (bytes2 != null) bytes2.buffer,
+    ];
+    _worker.postMessage(
+      _Req(
+        seq: request.seq,
+        op: request.op,
+        id: request.id,
+        intParam: request.intParam,
+        bytes: bytes,
+        bytes2: bytes2,
+      ),
+      transfer.toJS,
+    );
   }
 
   @override
