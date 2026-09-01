@@ -1,28 +1,20 @@
-/// The screens' only read/modify path for sessions: a catalog stream plus the
-/// session-level actions (rename, notes, visibility, delete, load). The
-/// store's file layout never leaves the service layer.
+/// The screens' only read/modify path for sessions: the catalog listenable
+/// plus the session-level actions (rename, notes, visibility, delete, load).
+/// The store's file layout never leaves the service layer.
 library;
 
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 import '../models/session_catalog.dart';
-import '../models/session_summary.dart';
 import 'session_data.dart';
 import 'session_journal.dart';
 import 'session_store.dart';
 
-/// Sessions, damaged entries, and byte sizes from one directory scan.
-Stream<SessionCatalog> watchSessionCatalog() =>
-    SessionStore.instance.watch(SessionStore.instance.sessionCatalog);
+ValueListenable<SessionCatalogState> sessionCatalogState() =>
+    SessionStore.instance.catalog;
 
-/// One session, reactively — name, notes, and per-session channel
-/// visibility surface here as edits land.
-Stream<SessionSummary?> watchSessionSummary(String id) =>
-    SessionStore.instance.watch(() => SessionStore.instance.sessionSummary(id));
-
-/// Fetch a session by id (null when gone or no longer loadable).
-Future<SessionSummary?> sessionSummaryById(String id) =>
-    SessionStore.instance.sessionSummary(id);
+Future<void> ensureSessionCatalogLoaded() =>
+    SessionStore.instance.ensureCatalogLoaded();
 
 /// Total bytes under the sessions root — the native capacity strip's used
 /// portion.
@@ -67,15 +59,8 @@ Future<void> setSessionNotes(String id, String notes) =>
       ),
     );
 
-Future<void> setSessionVisibleChannels(String id, List<bool> visible) =>
-    SessionStore.instance.editSession(
-      id,
-      (current) => SessionEdit(
-        name: current.name,
-        notes: current.notes,
-        visibleChannels: visible,
-      ),
-    );
+Future<void> toggleSessionVisibleChannel(String id, int index) =>
+    SessionStore.instance.toggleVisibleChannel(id, index);
 
 /// Delete the session (finalized OR damaged): the only destructive
 /// operation in the store, always behind an explicit confirmation.

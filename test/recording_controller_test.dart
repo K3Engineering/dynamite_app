@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/display_unit.dart';
+import 'package:dynamite_app/models/session_catalog.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/app_events.dart';
@@ -147,7 +148,9 @@ void main() {
 
       // The saved session carries the auto-generated name, and stop hands it
       // back directly — the caller never re-queries the store for it.
-      final saved = (await sessionSummaryById(stop.sessionId!))!;
+      final saved = _readyCatalog(
+        SessionStore.instance,
+      ).session(stop.sessionId!)!;
       expect(
         saved.name,
         matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$')),
@@ -288,7 +291,7 @@ void main() {
       // What the first packet wrote survives, final marker and all: the
       // session lists with its true persisted bytes, the error names the
       // lie.
-      final summaries = await SessionStore.instance.listSessions();
+      final summaries = _readyCatalog(SessionStore.instance).sessions;
       expect(summaries, hasLength(1));
       final loaded = await loadSession(summaries.single.id);
       expect(loaded.sampleCount, 10);
@@ -317,8 +320,15 @@ void main() {
 /// assertions' file-store equivalent).
 Future<int> loadSessionCount() async {
   final store = SessionStore.instance;
-  return (await store.listSessions()).length;
+  await store.ensureCatalogLoaded();
+  return _readyCatalog(store).sessions.length;
 }
+
+SessionCatalog _readyCatalog(SessionStore store) =>
+    switch (store.catalog.value) {
+      SessionCatalogReady(:final catalog) => catalog,
+      final state => throw StateError('Expected ready catalog, got $state'),
+    };
 
 /// An [IoSessionFilesBackend] whose data sinks throw on every append: the
 /// create (journal + first write) succeeds, then storage "dies".

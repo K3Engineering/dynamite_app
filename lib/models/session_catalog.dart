@@ -13,4 +13,32 @@ class SessionCatalog {
   final List<SessionSummary> sessions;
   final List<DamagedSession> damaged;
   final Map<String, int> byteSizes;
+
+  SessionSummary? session(String id) {
+    for (final session in sessions) {
+      if (session.id == id) return session;
+    }
+    return null;
+  }
+}
+
+sealed class SessionCatalogState {
+  const SessionCatalogState();
+}
+
+final class SessionCatalogLoading extends SessionCatalogState {
+  const SessionCatalogLoading();
+}
+
+final class SessionCatalogReady extends SessionCatalogState {
+  const SessionCatalogReady(this.catalog);
+
+  final SessionCatalog catalog;
+}
+
+final class SessionCatalogFailed extends SessionCatalogState {
+  const SessionCatalogFailed(this.error, this.stackTrace);
+
+  final Object error;
+  final StackTrace stackTrace;
 }

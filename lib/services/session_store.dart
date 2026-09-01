@@ -38,76 +38,142 @@ class SessionStore {
 
   final Future<SessionFilesBackend> _backend;
 
-  // -- Reactivity ------------------------------------------------------------
+  // -- Catalog and operation ordering ----------------------------------------
 
-  /// Bumped by anything that can change a listing (sink creation,
-  /// finalize, edits, deletes, recovery); watch streams re-read on bumps.
-  final StreamController<void> _changes = StreamController.broadcast();
+  final ValueNotifier<SessionCatalogState> _catalog = ValueNotifier(
+    const SessionCatalogLoading(),
+  );
+  Future<void> _operationTail = Future.value();
+  Future<void>? _initialCatalogLoad;
 
-  /// Byte-size revisions: every append ack plus every [_changes] bump. The
-  /// capacity strip's liveness rides the recording cadence through this.
+  ValueListenable<SessionCatalogState> get catalog => _catalog;
+
+  /// Byte-size revisions: every append ack plus every catalog publication.
+  /// The capacity strip's liveness rides the recording cadence through this.
   final StreamController<void> _bytes = StreamController.broadcast();
-
-  void _bump() {
-    if (!_changes.isClosed) _changes.add(null);
-    _bumpBytes();
-  }
 
   void _bumpBytes() {
     if (!_bytes.isClosed) _bytes.add(null);
   }
 
-  /// The set-change pulse watch streams re-list/re-read on.
-  Stream<void> get changes => _changes.stream;
-
   /// The byte-size pulse (append acks included) the capacity strip cues on.
   Stream<void> get byteChanges => _bytes.stream;
 
-  /// Emit [read]'s result now and re-emit after store mutations. The change
-  /// subscription is established before the first read, and mutations while
-  /// a read is active are coalesced into one follow-up read.
-  Stream<T> watch<T>(Future<T> Function() read) {
-    late final StreamController<T> controller;
-    StreamSubscription<void>? changesSub;
-    var dirty = true;
-    var reading = false;
-    var canceled = false;
-
-    Future<void> pump() async {
-      if (reading || canceled) return;
-      reading = true;
+  Future<T> _enqueue<T>(
+    Future<T> Function(SessionFilesBackend files) operation,
+  ) {
+    final result = Completer<T>();
+    _operationTail = _operationTail.then((_) async {
       try {
-        while (dirty && !canceled) {
-          dirty = false;
-          try {
-            final value = await read();
-            if (!canceled) controller.add(value);
-          } catch (error, stackTrace) {
-            canceled = true;
-            controller.addError(error, stackTrace);
-            await changesSub?.cancel();
-            await controller.close();
-          }
-        }
-      } finally {
-        reading = false;
+        result.complete(await operation(await _backend));
+      } catch (error, stackTrace) {
+        result.completeError(error, stackTrace);
       }
-    }
+    });
+    return result.future;
+  }
 
-    controller = StreamController<T>(
-      onListen: () {
-        changesSub = changes.listen((_) {
-          dirty = true;
-          unawaited(pump());
-        });
-        unawaited(pump());
-      },
-      onCancel: () async {
-        canceled = true;
-        await changesSub?.cancel();
-      },
+  void _requireCatalogAvailable() {
+    if (_catalog.value case SessionCatalogFailed(:final error)) {
+      throw StateError('Session catalog is unavailable: $error');
+    }
+  }
+
+  Future<void> ensureCatalogLoaded() {
+    _requireCatalogAvailable();
+    if (_catalog.value is SessionCatalogReady) return Future.value();
+    return _initialCatalogLoad ??= _enqueue(_publishCatalog);
+  }
+
+  @visibleForTesting
+  Future<void> refreshCatalogForTesting() => _enqueue(_publishCatalog);
+
+  Future<void> _loadCatalogIfNeeded(SessionFilesBackend files) async {
+    if (_catalog.value is SessionCatalogLoading) await _publishCatalog(files);
+    _requireCatalogAvailable();
+  }
+
+  /// Run [operation] on the serialized queue with the catalog guaranteed
+  /// loaded and available. Mutations apply their own delta to the published
+  /// catalog (see [_refreshCatalogEntry]); reads need nothing more.
+  Future<T> _withCatalog<T>(
+    Future<T> Function(SessionFilesBackend files) operation,
+  ) => _enqueue((files) async {
+    await _loadCatalogIfNeeded(files);
+    return operation(files);
+  });
+
+  /// Re-publish the in-memory catalog after a mutation whose effect is
+  /// known exactly. Callers run inside the operation queue, so the Ready
+  /// catalog can only have drifted from disk through our own deltas — no
+  /// re-scan needed.
+  void _publishDelta(SessionCatalog Function(SessionCatalog current) update) {
+    if (_catalog.value case SessionCatalogReady(:final catalog)) {
+      _catalog.value = SessionCatalogReady(update(catalog));
+      _bumpBytes();
+      return;
+    }
+    throw StateError('catalog delta requires a ready catalog');
+  }
+
+  /// Splice [id]'s freshly classified entry into the published catalog. The
+  /// classification is the only I/O (one session, not a full re-scan); a
+  /// failure is terminal for the catalog, same as a full publish failure.
+  Future<void> _refreshCatalogEntry(
+    SessionFilesBackend files,
+    String id,
+  ) async {
+    _ListedEntry entry;
+    try {
+      entry = await _classify(files, id);
+    } catch (error, stackTrace) {
+      _catalog.value = SessionCatalogFailed(error, stackTrace);
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+    _publishDelta((catalog) => _spliceEntry(catalog, id, entry));
+  }
+
+  /// [catalog] with [id]'s entry replaced by [entry]'s verdict (or removed),
+  /// keeping the id-descending order the full read produces.
+  SessionCatalog _spliceEntry(
+    SessionCatalog catalog,
+    String id,
+    _ListedEntry entry,
+  ) {
+    final sessions = [...catalog.sessions]..removeWhere((s) => s.id == id);
+    final damaged = [...catalog.damaged]..removeWhere((d) => d.id == id);
+    final byteSizes = {...catalog.byteSizes}..remove(id);
+    switch (entry) {
+      case final _CompleteEntry complete:
+        final insertAt = sessions.indexWhere((s) => s.id.compareTo(id) < 0);
+        sessions.insert(
+          insertAt < 0 ? sessions.length : insertAt,
+          _summaryFor(complete),
+        );
+        byteSizes[id] = complete.dataBytes;
+      case final _DamagedEntry damagedEntry:
+        final insertAt = damaged.indexWhere((d) => d.id.compareTo(id) < 0);
+        damaged.insert(
+          insertAt < 0 ? damaged.length : insertAt,
+          damagedEntry.damaged,
+        );
+      case _UnlistedEntry():
+    }
+    return SessionCatalog(
+      sessions: sessions,
+      damaged: damaged,
+      byteSizes: byteSizes,
     );
-    return controller.stream;
+  }
+
+  Future<void> _publishCatalog(SessionFilesBackend files) async {
+    try {
+      _catalog.value = SessionCatalogReady(await _readCatalog(files));
+      _bumpBytes();
+    } catch (error, stackTrace) {
+      _catalog.value = SessionCatalogFailed(error, stackTrace);
+      Error.throwWithStackTrace(error, stackTrace);
+    }
   }
 
   // -- Recording side --------------------------------------------------------
@@ -120,25 +186,25 @@ class SessionStore {
   Future<SessionDataSink> createDataSink({
     required SessionMeta meta,
     required Uint8List firstData,
-  }) async {
-    final files = await _backend;
-    final id = newSessionId();
+  }) => _withCatalog((files) async {
     final sink = await files.createSession(
-      id,
+      newSessionId(),
       encodeSessionMeta(meta),
       firstData,
     );
-    _bump();
+    // The fresh dir has no `final` marker, so the listing is unchanged by
+    // construction; only the byte totals grew.
+    _bumpBytes();
     return NotifyingSessionDataSink._(sink, _bumpBytes);
-  }
+  });
 
   /// Mark the session completed: the zero-byte [sessionFinalFile] marker,
   /// whose contentlessness is the point — counts derive from file lengths
   /// at read time, so a premature or out-of-date marker means nothing.
-  Future<void> touchFinal(String id) async {
-    await (await _backend).touchFinal(id);
-    _bump();
-  }
+  Future<void> touchFinal(String id) => _withCatalog((files) async {
+    await files.touchFinal(id);
+    await _refreshCatalogEntry(files, id);
+  });
 
   /// Crash/aborted-record recovery: every directory that lacks `final`
   /// but proves to be a real session (journal parses, at least one frame)
@@ -146,27 +212,30 @@ class SessionStore {
   /// and never deletes, truncates or repairs anything — a startup function
   /// can't tell a create-window tear from later corruption, so anything
   /// suspicious simply stays for the listing's damaged verdict.
-  Future<void> recoverIncompleteSessions() async {
-    final files = await _backend;
-    for (final id in await files.listDirIds()) {
-      if (await files.isFinalized(id)) continue;
-      final journal = await _journalOrNull(files, id);
-      if (journal == null) continue;
-      final frames =
-          await files.dataByteLength(id) ~/
-          SessionChunkCodec(journal.meta.channelCount).frameBytes;
-      if (frames < 1) continue;
-      debugPrint('Recovering incomplete session: $id');
-      await files.touchFinal(id);
-      _bump();
+  Future<void> recoverIncompleteSessions() => _enqueue((files) async {
+    _requireCatalogAvailable();
+    try {
+      for (final id in await files.listDirIds()) {
+        if (await files.isFinalized(id)) continue;
+        final journal = await _journalOrNull(files, id);
+        if (journal == null) continue;
+        final frames =
+            await files.dataByteLength(id) ~/
+            SessionChunkCodec(journal.meta.channelCount).frameBytes;
+        if (frames < 1) continue;
+        debugPrint('Recovering incomplete session: $id');
+        await files.touchFinal(id);
+      }
+      await _publishCatalog(files);
+    } catch (error, stackTrace) {
+      _catalog.value = SessionCatalogFailed(error, stackTrace);
+      Error.throwWithStackTrace(error, stackTrace);
     }
-  }
+  });
 
   // -- Listing and load ------------------------------------------------------
 
-  /// One coherent view of every directory for the Sessions tab.
-  Future<SessionCatalog> sessionCatalog() async {
-    final files = await _backend;
+  Future<SessionCatalog> _readCatalog(SessionFilesBackend files) async {
     final summaries = <SessionSummary>[];
     final damaged = <DamagedSession>[];
     final sizes = <String, int>{};
@@ -187,29 +256,6 @@ class SessionStore {
       byteSizes: sizes,
     );
   }
-
-  /// All finalized sessions, newest first (the id sorts chronologically,
-  /// so descending ids IS descending creation order, ties included).
-  Future<List<SessionSummary>> listSessions() async =>
-      (await sessionCatalog()).sessions;
-
-  /// One finalized session, or null when gone (deleted) or no longer
-  /// loadable (the listing would flag it damaged instead).
-  Future<SessionSummary?> sessionSummary(String id) async {
-    final files = await _backend;
-    final entry = await _classify(files, id);
-    return entry is _CompleteEntry ? _summaryFor(entry) : null;
-  }
-
-  /// Directories the store can never load as sessions (unreadable header,
-  /// malformed id, or header-without-data). Never persisted state — the
-  /// verdict is re-derived from the bytes on every call.
-  Future<List<DamagedSession>> listDamagedSessions() async =>
-      (await sessionCatalog()).damaged;
-
-  /// Per-session data.raw byte lengths (the sessions list's size column).
-  Future<Map<String, int>> sessionByteSizes() async =>
-      (await sessionCatalog()).byteSizes;
 
   Future<List<String>> _sortedDirIds(SessionFilesBackend files) async {
     // listDirIds doesn't promise a mutable list, so sort a copy.
@@ -311,8 +357,7 @@ class SessionStore {
   /// data.raw, sentinel runs becoming the [SessionData.gaps] hold-fills.
   /// A broken header or a frame shape the write path never produces
   /// throws (the detail view renders it as an error state).
-  Future<SessionData> loadSession(String id) async {
-    final files = await _backend;
+  Future<SessionData> loadSession(String id) => _withCatalog((files) async {
     final journalBytes = await files.readJournal(id);
     if (journalBytes == null) {
       throw StateError('loadSession: no journal for session $id');
@@ -334,27 +379,27 @@ class SessionStore {
       ssnOrigin: meta.ssnOrigin,
       boardMeta: meta.boardMeta,
     );
-  }
+  });
 
   /// data.raw's bytes verbatim, for the damaged entry's hand-recovery
   /// export. Throws StateError when absent — the affordance enabling it
   /// checked existence at list time, so a miss is a race, not a state.
-  Future<Uint8List> rawDataBytes(String id) async {
-    final bytes = await (await _backend).readData(id);
+  Future<Uint8List> rawDataBytes(String id) => _withCatalog((files) async {
+    final bytes = await files.readData(id);
     if (bytes == null || bytes.isEmpty) {
       throw StateError('no data bytes for session $id');
     }
     return bytes;
-  }
+  });
 
   /// The journal's bytes verbatim, for the damaged entry's metadata export.
-  Future<Uint8List> rawJournalBytes(String id) async {
-    final bytes = await (await _backend).readJournal(id);
+  Future<Uint8List> rawJournalBytes(String id) => _withCatalog((files) async {
+    final bytes = await files.readJournal(id);
     if (bytes == null || bytes.isEmpty) {
       throw StateError('no metadata bytes for session $id');
     }
     return bytes;
-  }
+  });
 
   // -- Edits and destructive ops ---------------------------------------------
 
@@ -366,8 +411,7 @@ class SessionStore {
   Future<void> editSession(
     String id,
     SessionEdit Function(SessionEdit current) update,
-  ) async {
-    final files = await _backend;
+  ) => _withCatalog((files) async {
     final journalBytes = await files.readJournal(id);
     if (journalBytes == null) {
       throw StateError('editSession: no journal for session $id');
@@ -376,21 +420,34 @@ class SessionStore {
     final edit = update(journal.effectiveEdit);
     await files.truncateJournal(id, journal.completeBytes);
     await files.appendJournal(id, encodeSessionEdit(edit));
-    _bump();
-  }
+    await _refreshCatalogEntry(files, id);
+  });
+
+  Future<void> toggleVisibleChannel(String id, int index) =>
+      editSession(id, (current) {
+        final visible = [...current.visibleChannels];
+        visible[index] = !visible[index];
+        return SessionEdit(
+          name: current.name,
+          notes: current.notes,
+          visibleChannels: visible,
+        );
+      });
 
   /// Delete the session directory. This is the ONLY destructive operation
   /// anywhere in the store, and it only ever runs on a user's explicit
   /// confirmation — recovery and listing never delete. Only the layout's
   /// three named files are destroyed (see SessionFilesBackend.delete).
-  Future<void> deleteSession(String id) async {
-    await (await _backend).delete(id);
-    _bump();
-  }
+  Future<void> deleteSession(String id) => _withCatalog((files) async {
+    await files.delete(id);
+    _publishDelta(
+      (catalog) => _spliceEntry(catalog, id, const _UnlistedEntry()),
+    );
+  });
 
   /// Total bytes of every session file — the native storage strip's "used"
   /// number (a directory walk never reports a high-water mark).
-  Future<int> usedBytes() => _backend.then((f) => f.totalBytes());
+  Future<int> usedBytes() => _withCatalog((files) => files.totalBytes());
 }
 
 sealed class _ListedEntry {

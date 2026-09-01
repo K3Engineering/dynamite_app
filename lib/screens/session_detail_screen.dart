@@ -1,9 +1,11 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_meta.dart';
+import '../models/session_catalog.dart';
 import '../services/app_settings.dart';
 import '../models/display_unit.dart';
 import '../models/session_summary.dart';
@@ -35,23 +37,22 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   final GraphController _graphCtrl = GraphController();
 
-  /// The session, reactively: name, notes, duration, and the per-session
-  /// channel-visibility set. Edits surface via this stream.
-  late final Stream<SessionSummary?> _sessionStream;
+  late final ValueListenable<SessionCatalogState> _catalog;
+
+  /// True from this route's delete confirmation through the pop, so the
+  /// catalog's removal delta does not flash the unavailable placeholder.
+  bool _deleting = false;
 
   @override
   void initState() {
     super.initState();
-    _sessionStream = watchSessionSummary(widget.session.id);
+    _catalog = sessionCatalogState();
+    unawaited(ensureSessionCatalogLoaded().catchError((_) {}));
     unawaited(_loadData());
   }
 
-  /// Persist a channel-visibility flip; the session stream drives the UI.
-  Future<void> _toggleChannel(SessionSummary session, int index) async {
-    final updated = [...session.visibleChannels];
-    updated[index] = !updated[index];
-    await setSessionVisibleChannels(session.id, updated);
-  }
+  Future<void> _toggleChannel(SessionSummary session, int index) =>
+      toggleSessionVisibleChannel(session.id, index);
 
   @override
   void dispose() {
@@ -74,71 +75,87 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
 
-    return StreamBuilder<SessionSummary?>(
-      stream: _sessionStream,
-      builder: (context, snapshot) {
-        // Until the stream's first emission — and after the session is
-        // deleted on the way out — fall back to the one this screen was
-        // pushed with.
-        final session = snapshot.data ?? widget.session;
-
-        return Scaffold(
-          appBar: AppBar(
-            title: Text(
-              session.name.isEmpty ? untitledSessionName : session.name,
-            ),
-            actions: [
-              PopupMenuButton<String>(
-                onSelected: (action) => _onMenuAction(action, session),
-                itemBuilder: (menuContext) => [
-                  const PopupMenuItem(value: 'rename', child: Text('Rename')),
-                  const PopupMenuItem(
-                    value: 'notes',
-                    child: Text('Edit notes'),
-                  ),
-                  const PopupMenuItem(
-                    value: 'download_csv',
-                    child: Text('Download CSV'),
-                  ),
-                  PopupMenuItem(
-                    value: 'share_csv',
-                    enabled: fileShareSupportedHere,
-                    child: Text(
-                      'Share CSV'
-                      '${fileShareSupportedHere ? '' : ' (not supported here)'}',
-                    ),
-                  ),
-                  PopupMenuItem(
-                    value: 'delete',
-                    // Destructive action: the theme's error role, as in the
-                    // confirm dialog's Delete button — not a raw red.
-                    child: Text(
-                      'Delete',
-                      style: TextStyle(
-                        color: Theme.of(menuContext).colorScheme.error,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          body: switch (_loadState) {
-            _Loading() => const Center(child: CircularProgressIndicator()),
-            // The same single-voice empty-state treatment as the Sessions
-            // tab: a failure gets the error color.
-            _Failed(:final error) => EmptyPlaceholder(
+    return ValueListenableBuilder<SessionCatalogState>(
+      valueListenable: _catalog,
+      builder: (context, state, _) {
+        return switch (state) {
+          SessionCatalogLoading() => _buildSession(settings, widget.session),
+          SessionCatalogFailed(:final error) => Scaffold(
+            appBar: AppBar(title: const Text('Session unavailable')),
+            body: EmptyPlaceholder(
               icon: Icons.error_outline,
-              title: 'Error loading session',
+              title: 'Error loading sessions',
               hint: '$error',
               color: Theme.of(context).colorScheme.error,
             ),
-            _Ready(:final data) => _buildContent(settings, session, data),
+          ),
+          SessionCatalogReady(:final catalog) => switch (catalog.session(
+            widget.session.id,
+          )) {
+            final session? => _buildSession(settings, session),
+            null when _deleting => _buildSession(settings, widget.session),
+            null => Scaffold(
+              appBar: AppBar(title: const Text('Session unavailable')),
+              body: const EmptyPlaceholder(
+                icon: Icons.folder_off,
+                title: 'Session unavailable',
+                hint: 'The session was deleted or is damaged',
+              ),
+            ),
           },
-        );
+        };
       },
     );
   }
+
+  Widget _buildSession(AppSettings settings, SessionSummary session) =>
+      Scaffold(
+        appBar: AppBar(
+          title: Text(
+            session.name.isEmpty ? untitledSessionName : session.name,
+          ),
+          actions: [
+            PopupMenuButton<String>(
+              onSelected: (action) => _onMenuAction(action, session),
+              itemBuilder: (menuContext) => [
+                const PopupMenuItem(value: 'rename', child: Text('Rename')),
+                const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
+                const PopupMenuItem(
+                  value: 'download_csv',
+                  child: Text('Download CSV'),
+                ),
+                PopupMenuItem(
+                  value: 'share_csv',
+                  enabled: fileShareSupportedHere,
+                  child: Text(
+                    'Share CSV'
+                    '${fileShareSupportedHere ? '' : ' (not supported here)'}',
+                  ),
+                ),
+                PopupMenuItem(
+                  value: 'delete',
+                  child: Text(
+                    'Delete',
+                    style: TextStyle(
+                      color: Theme.of(menuContext).colorScheme.error,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        body: switch (_loadState) {
+          _Loading() => const Center(child: CircularProgressIndicator()),
+          _Failed(:final error) => EmptyPlaceholder(
+            icon: Icons.error_outline,
+            title: 'Error loading session',
+            hint: '$error',
+            color: Theme.of(context).colorScheme.error,
+          ),
+          _Ready(:final data) => _buildContent(settings, session, data),
+        },
+      );
 
   Widget _buildContent(
     AppSettings settings,
@@ -330,13 +347,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   Future<void> _deleteAndPop(SessionSummary session) async {
-    if (await deleteSessionFlow(
-      context,
-      sessionId: session.id,
-      name: session.name,
-    )) {
-      if (mounted) Navigator.of(context).pop();
+    var deleted = false;
+    setState(() => _deleting = true);
+    try {
+      deleted = await deleteSessionFlow(
+        context,
+        sessionId: session.id,
+        name: session.name,
+      );
+    } finally {
+      if (mounted && !deleted) setState(() => _deleting = false);
     }
+    if (mounted && deleted) Navigator.of(context).pop();
   }
 
   Future<void> _downloadCsv(SessionSummary session, SessionData data) =>

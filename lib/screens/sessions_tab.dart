@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../models/damaged_session.dart';
@@ -24,24 +25,28 @@ class SessionsTab extends StatefulWidget {
 }
 
 class _SessionsTabState extends State<SessionsTab> {
-  late final Stream<SessionCatalog> _catalog = watchSessionCatalog();
+  late final ValueListenable<SessionCatalogState> _catalog =
+      sessionCatalogState();
 
   /// The platform's storage facts for the capacity strip; null where probing
   /// is unsupported (desktop) or failed — the strip hides then.
   StorageCapacity? _capacity;
   StreamSubscription<void>? _capacityCueSub;
+  bool _capacityDirty = false;
+  bool _refreshingCapacity = false;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_refreshCapacity());
+    unawaited(ensureSessionCatalogLoaded().catchError((_) {}));
+    _requestCapacityRefresh();
     // The liveness cue rides the recording's append acks (during a
     // recording, sizes only exist in the store, not on the listing), plus
     // every mutation. Errors are swallowed: on hosts without platform
     // channels the store never opens, and the strip simply stays hidden
     // (the smoke test pumps all tabs in exactly that situation).
     _capacityCueSub = sessionByteChanges().listen(
-      (_) => unawaited(_refreshCapacity()),
+      (_) => _requestCapacityRefresh(),
       onError: (_) {},
     );
   }
@@ -52,9 +57,24 @@ class _SessionsTabState extends State<SessionsTab> {
     super.dispose();
   }
 
+  void _requestCapacityRefresh() {
+    _capacityDirty = true;
+    if (!_refreshingCapacity) unawaited(_refreshCapacity());
+  }
+
   Future<void> _refreshCapacity() async {
-    final capacity = await fetchStorageCapacity(usedBytes: sessionsUsedBytes);
-    if (mounted) setState(() => _capacity = capacity);
+    _refreshingCapacity = true;
+    try {
+      while (_capacityDirty && mounted) {
+        _capacityDirty = false;
+        final capacity = await fetchStorageCapacity(
+          usedBytes: sessionsUsedBytes,
+        );
+        if (mounted) setState(() => _capacity = capacity);
+      }
+    } finally {
+      _refreshingCapacity = false;
+    }
   }
 
   @override
@@ -81,76 +101,66 @@ class _SessionsTabState extends State<SessionsTab> {
           if (_capacity case final capacity?)
             TabContentColumn(child: StorageCapacityStrip(capacity: capacity)),
           Expanded(
-            child: StreamBuilder<SessionCatalog>(
-              stream: _catalog,
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return EmptyPlaceholder(
-                    icon: Icons.error_outline,
-                    title: 'Error loading sessions',
-                    hint: '${snapshot.error}',
-                    color: Theme.of(context).colorScheme.error,
-                  );
-                }
-
-                if (snapshot.connectionState == ConnectionState.waiting &&
-                    !snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                final catalog = snapshot.data!;
-                final sessions = catalog.sessions;
-                final damaged = catalog.damaged;
-
-                if (sessions.isEmpty && damaged.isEmpty) {
-                  return const EmptyPlaceholder(
-                    icon: Icons.folder_open,
-                    title: 'No recorded sessions yet',
-                    hint: 'Start a recording from the Live tab',
-                  );
-                }
-
-                return LayoutBuilder(
-                  builder: (context, constraints) => ListView.builder(
-                    padding: EdgeInsets.symmetric(
-                      horizontal: contentSideInset(constraints.maxWidth),
-                    ),
-                    itemCount: damaged.length + sessions.length,
-                    itemBuilder: (context, index) => index < damaged.length
-                        ? _DamagedCard(
-                            damaged: damaged[index],
-                            onExportSamples: damaged[index].hasData
-                                ? () =>
-                                      _exportDamaged(damaged[index], data: true)
-                                : null,
-                            onExportMetadata: damaged[index].hasMeta
-                                ? () => _exportDamaged(
-                                    damaged[index],
-                                    data: false,
-                                  )
-                                : null,
-                            onDelete: () => _deleteSession(
-                              damaged[index].id,
-                              damaged[index].id,
-                            ),
-                          )
-                        : _SessionCard(
-                            session: sessions[index - damaged.length],
-                            byteSize: catalog
-                                .byteSizes[sessions[index - damaged.length].id],
-                            onTap: () =>
-                                _openDetail(sessions[index - damaged.length]),
-                            onDelete: () => _deleteSession(
-                              sessions[index - damaged.length].id,
-                              sessions[index - damaged.length].name,
-                            ),
-                          ),
-                  ),
-                );
+            child: ValueListenableBuilder<SessionCatalogState>(
+              valueListenable: _catalog,
+              builder: (context, state, _) => switch (state) {
+                SessionCatalogLoading() => const Center(
+                  child: CircularProgressIndicator(),
+                ),
+                SessionCatalogFailed(:final error) => EmptyPlaceholder(
+                  icon: Icons.error_outline,
+                  title: 'Error loading sessions',
+                  hint: '$error',
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                SessionCatalogReady(:final catalog) => _buildCatalog(catalog),
               },
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCatalog(SessionCatalog catalog) {
+    final sessions = catalog.sessions;
+    final damaged = catalog.damaged;
+    if (sessions.isEmpty && damaged.isEmpty) {
+      return const EmptyPlaceholder(
+        icon: Icons.folder_open,
+        title: 'No recorded sessions yet',
+        hint: 'Start a recording from the Live tab',
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) => ListView.builder(
+        padding: EdgeInsets.symmetric(
+          horizontal: contentSideInset(constraints.maxWidth),
+        ),
+        itemCount: damaged.length + sessions.length,
+        itemBuilder: (context, index) => index < damaged.length
+            ? _DamagedCard(
+                damaged: damaged[index],
+                onExportSamples: damaged[index].hasData
+                    ? () => _exportDamaged(damaged[index], data: true)
+                    : null,
+                onExportMetadata: damaged[index].hasMeta
+                    ? () => _exportDamaged(damaged[index], data: false)
+                    : null,
+                onDelete: () =>
+                    _deleteSession(damaged[index].id, damaged[index].id),
+              )
+            : _SessionCard(
+                session: sessions[index - damaged.length],
+                byteSize:
+                    catalog.byteSizes[sessions[index - damaged.length].id],
+                onTap: () => _openDetail(sessions[index - damaged.length]),
+                onDelete: () => _deleteSession(
+                  sessions[index - damaged.length].id,
+                  sessions[index - damaged.length].name,
+                ),
+              ),
       ),
     );
   }

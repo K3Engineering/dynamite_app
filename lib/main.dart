@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
@@ -36,6 +37,7 @@ import 'status_colors.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (kReleaseMode) ErrorWidget.builder = (_) => const _FatalErrorWidget();
   // Silence and tear down the previous hot-restart generation's BLE link
   // (web debug only) BEFORE anything else, so its stale notification stream
   // stops spamming the disposed engine view and its GATT connection is
@@ -53,14 +55,15 @@ void main() async {
   await acquirePrimaryTabLock();
   final appEvents = AppEvents();
   // Crash recovery is deferred to after the first frame so first paint
-  // doesn't wait on the store's first open. The Sessions list needs no
-  // gating — it excludes incomplete dirs by construction and simply gains
-  // the recovered ones when recovery lands. Recovery is non-destructive
-  // (touch-final only) and races nothing it could harm, so no fence. A
-  // store that can't even be constructed (e.g. the web probe's capability
-  // verdict) rethrows out of the first await; surface that as a startup
-  // toast instead of an unhandled async error — recording still refuses on
-  // its own loud path, and post-frame guarantees the shell is subscribed.
+  // doesn't wait on the store's first open. It rides the store's
+  // operation queue, so it can never interleave with a UI-triggered
+  // load or mutation; the Sessions list needs no gating — it simply
+  // gains the recovered sessions when recovery's publish lands. A store
+  // that can't even be opened (e.g. the web probe's capability verdict)
+  // rethrows out of the first await; surface that as a startup toast
+  // instead of an unhandled async error — recording still refuses on
+  // its own loud path, and post-frame guarantees the shell is
+  // subscribed.
   WidgetsBinding.instance.addPostFrameCallback((_) {
     unawaited(
       SessionStorage.recoverIncompleteSessions().catchError((Object e) {
@@ -176,6 +179,28 @@ void main() async {
         ChangeNotifierProvider.value(value: recording),
       ],
       child: const DynoApp(),
+    ),
+  );
+}
+
+class _FatalErrorWidget extends StatelessWidget {
+  const _FatalErrorWidget();
+
+  @override
+  Widget build(BuildContext context) => const ColoredBox(
+    color: Color(0xFF202124),
+    child: Directionality(
+      textDirection: TextDirection.ltr,
+      child: Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Application error\nRestart Dynamite',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFFFFFFFF), fontSize: 18),
+          ),
+        ),
+      ),
     ),
   );
 }

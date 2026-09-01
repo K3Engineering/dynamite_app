@@ -10,7 +10,7 @@ import 'package:dynamite_app/models/channel_converter.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
-import 'package:dynamite_app/models/session_summary.dart';
+import 'package:dynamite_app/models/session_catalog.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_data.dart';
@@ -104,6 +104,16 @@ void main() {
     recordedAt: '2026-07-29T14:05:32.000Z',
     ssnOrigin: 100,
   );
+
+  SessionCatalog readyCatalog() => switch (store.catalog.value) {
+    SessionCatalogReady(:final catalog) => catalog,
+    final state => throw StateError('Expected ready catalog, got $state'),
+  };
+
+  Future<SessionCatalog> catalog() async {
+    await store.refreshCatalogForTesting();
+    return readyCatalog();
+  }
 
   group('SessionData.channelExtremes', () {
     SessionData makeSession(List<int> values) => SessionData(
@@ -307,12 +317,12 @@ void main() {
 
       // No data yet, so no directory: the session is created by the writer's
       // first packet (no artifact without data).
-      expect(await store.listSessions(), isEmpty);
+      expect((await catalog()).sessions, isEmpty);
 
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
       await SessionStorage.finalizeSession(writer: writer);
 
-      final summary = (await store.sessionSummary(writer.sessionId!))!;
+      final summary = (await catalog()).session(writer.sessionId!)!;
       expect(summary.sampleRate, 1000);
       final loaded = await store.loadSession(summary.id);
       expect(loaded.ssnOrigin, 41230);
@@ -395,7 +405,7 @@ void main() {
       // throw, and must not veto the completion marker — the session lists
       // immediately instead of waiting for next startup's recovery.
       expect(error, same(closeBoom));
-      expect(await store.listSessions(), hasLength(1));
+      expect((await catalog()).sessions, hasLength(1));
     });
 
     test('an intact multi-packet recording finalizes with no error', () async {
@@ -415,7 +425,7 @@ void main() {
 
       final loaded = await store.loadSession(writer.sessionId!);
       expect(loaded.sampleCount, total);
-      final summaries = await store.listSessions();
+      final summaries = (await catalog()).sessions;
       expect(summaries, hasLength(1));
     });
   });
@@ -445,13 +455,13 @@ void main() {
 
         // Invisible before recovery: parseable and data-bearing, but no
         // completion marker — the listing excludes it, not damaged either.
-        expect(await store.listSessions(), isEmpty);
-        expect(await store.listDamagedSessions(), isEmpty);
+        expect((await catalog()).sessions, isEmpty);
+        expect((await catalog()).damaged, isEmpty);
 
         // Simulate the crash: recover without finalizeSession ever running.
         await SessionStorage.recoverIncompleteSessions();
 
-        final summaries = await store.listSessions();
+        final summaries = (await catalog()).sessions;
         expect(summaries, hasLength(1));
         expect(summaries.single.id, writer.sessionId);
         // Counts derive from the file, so the recovered session tells its
@@ -653,7 +663,7 @@ void main() {
       await seedSession('2026-08-28T14-30-12-zzzz'); // same-second tie
       await seedSession('2026-08-29T09-00-00-bbbb');
 
-      final summaries = await store.listSessions();
+      final summaries = (await catalog()).sessions;
       expect(summaries.map((s) => s.id), [
         '2026-08-29T09-00-00-bbbb',
         '2026-08-28T14-30-12-zzzz',
@@ -665,53 +675,79 @@ void main() {
       expect(summaries.first.channelLabels, ['a', 'b', 'c', 'd']);
       expect(summaries.first.deviceInfoJson, '{}');
 
-      final sizes = await store.sessionByteSizes();
+      final sizes = (await catalog()).byteSizes;
       expect(sizes['2026-08-29T09-00-00-bbbb'], 2 * kAdcChannelCount * 4);
     });
 
+    test('finalization publishes its catalog before completing', () async {
+      const id = '2026-08-29T09-00-00-race';
+      await catalog();
+      await seedSession(id, finalized: false);
+      expect(readyCatalog().session(id), isNull);
+
+      await store.touchFinal(id);
+
+      expect(readyCatalog().session(id), isNotNull);
+    });
+
     test(
-      'watch rereads when a mutation lands during its initial read',
+      'concurrent edits are serialized against the latest journal',
       () async {
-        const id = '2026-08-29T09-00-00-race';
-        final firstReadStarted = Completer<void>();
-        final releaseFirstRead = Completer<void>();
-        var reads = 0;
+        const id = '2026-08-29T09-00-00-edit';
+        await seedSession(id);
 
-        Future<List<SessionSummary>> read() async {
-          final sessions = await store.listSessions();
-          if (reads++ == 0) {
-            firstReadStarted.complete();
-            await releaseFirstRead.future;
-          }
-          return sessions;
-        }
+        await Future.wait([
+          store.editSession(
+            id,
+            (current) => SessionEdit(
+              name: 'renamed',
+              notes: current.notes,
+              visibleChannels: current.visibleChannels,
+            ),
+          ),
+          store.editSession(
+            id,
+            (current) => SessionEdit(
+              name: current.name,
+              notes: 'new notes',
+              visibleChannels: current.visibleChannels,
+            ),
+          ),
+        ]);
 
-        final iterator = StreamIterator(store.watch(read));
-        addTearDown(iterator.cancel);
-        final firstEvent = iterator.moveNext();
-        await firstReadStarted.future;
-
-        await seedSession(id, finalized: false);
-        await store.touchFinal(id);
-        releaseFirstRead.complete();
-
-        expect(await firstEvent, isTrue);
-        expect(iterator.current, isEmpty);
-        expect(
-          await iterator.moveNext().timeout(const Duration(seconds: 1)),
-          isTrue,
-        );
-        expect(iterator.current.single.id, id);
-        expect(reads, 2);
+        final current = readyCatalog();
+        expect(current.session(id)!.name, 'renamed');
+        expect(current.session(id)!.notes, 'new notes');
       },
     );
 
+    test('a catalog read failure is terminal', () async {
+      final failing = _FaultBackend(backend)..failListings = true;
+      SessionStore.instance = store = SessionStore.over(failing);
+
+      await expectLater(
+        store.ensureCatalogLoaded(),
+        throwsA(isA<StateError>()),
+      );
+      expect(store.catalog.value, isA<SessionCatalogFailed>());
+
+      failing.failListings = false;
+      await expectLater(
+        store.createDataSink(
+          meta: testMeta(),
+          firstData: codec.pack(1, (sample, channel) => 1),
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(await backend.listDirIds(), isEmpty);
+    });
+
     test('an in-flight session (no final) is invisible, not damaged', () async {
       await seedSession('2026-08-28T14-30-12-aaaa', finalized: false);
-      expect(await store.listSessions(), isEmpty);
-      expect(await store.listDamagedSessions(), isEmpty);
+      expect((await catalog()).sessions, isEmpty);
+      expect((await catalog()).damaged, isEmpty);
       await store.recoverIncompleteSessions();
-      expect((await store.listSessions()).single.name, 'test');
+      expect((await catalog()).sessions.single.name, 'test');
     });
 
     test('a torn header is a damaged entry with both raw exports', () async {
@@ -725,7 +761,7 @@ void main() {
       );
       await sink.close();
 
-      final damaged = await store.listDamagedSessions();
+      final damaged = (await catalog()).damaged;
       expect(damaged, hasLength(1));
       expect(damaged.single.id, '2026-08-28T14-30-12-dead');
       expect(damaged.single.hasData, isTrue);
@@ -737,7 +773,7 @@ void main() {
       expect(await store.rawJournalBytes(damaged.single.id), junk);
       // Nothing repairs or deletes it automatically — recovery included.
       await store.recoverIncompleteSessions();
-      expect(await store.listDamagedSessions(), hasLength(1));
+      expect((await catalog()).damaged, hasLength(1));
       expect(await backend.isFinalized(damaged.single.id), isFalse);
     });
 
@@ -752,7 +788,7 @@ void main() {
         );
         await sink.close();
 
-        final damaged = await store.listDamagedSessions();
+        final damaged = (await catalog()).damaged;
         expect(damaged, hasLength(1));
         expect(damaged.single.hasData, isFalse);
         expect(damaged.single.hasMeta, isTrue);
@@ -764,8 +800,8 @@ void main() {
         // stays a damaged entry, never quietly finalized into the list.
         await store.recoverIncompleteSessions();
         expect(await backend.isFinalized('2026-08-28T14-30-12-0dd0'), isFalse);
-        expect(await store.listDamagedSessions(), hasLength(1));
-        expect(await store.listSessions(), isEmpty);
+        expect((await catalog()).damaged, hasLength(1));
+        expect((await catalog()).sessions, isEmpty);
       },
     );
 
@@ -866,7 +902,7 @@ void main() {
       );
       await sink.close();
 
-      final damaged = await store.listDamagedSessions();
+      final damaged = (await catalog()).damaged;
       expect(damaged, hasLength(1));
       expect(damaged.single.id, 'junk');
       expect(damaged.single.reason, contains('malformed'));
@@ -906,7 +942,7 @@ void main() {
           ),
         );
         expect(
-          (await store.sessionSummary('2026-08-28T14-30-12-edit'))!.name,
+          (await catalog()).session('2026-08-28T14-30-12-edit')!.name,
           'renamed',
         );
 
@@ -916,7 +952,7 @@ void main() {
           Uint8List.fromList('{"name":"torn'.codeUnits),
         );
         expect(
-          (await store.sessionSummary('2026-08-28T14-30-12-edit'))!.name,
+          (await catalog()).session('2026-08-28T14-30-12-edit')!.name,
           'renamed',
         );
 
@@ -930,9 +966,7 @@ void main() {
             visibleChannels: current.visibleChannels,
           ),
         );
-        final summary = (await store.sessionSummary(
-          '2026-08-28T14-30-12-edit',
-        ))!;
+        final summary = (await catalog()).session('2026-08-28T14-30-12-edit')!;
         expect(summary.name, 'renamed');
         expect(summary.notes, 'after tear');
 
@@ -953,7 +987,7 @@ void main() {
       expect(used, greaterThan(2 * kAdcChannelCount * 4));
 
       await store.deleteSession('2026-08-28T14-30-12-del0');
-      expect(await store.listSessions(), isEmpty);
+      expect(readyCatalog().sessions, isEmpty);
       expect(await store.usedBytes(), 0);
     });
 
@@ -1043,4 +1077,53 @@ class _WrapSink implements SessionDataSink {
 
   @override
   Future<void> close() => onClose != null ? onClose!() : inner.close();
+}
+
+class _FaultBackend implements SessionFilesBackend {
+  _FaultBackend(this.inner);
+
+  final SessionFilesBackend inner;
+  bool failListings = false;
+
+  @override
+  Future<SessionDataSink> createSession(
+    String id,
+    Uint8List metaBytes,
+    Uint8List firstData,
+  ) => inner.createSession(id, metaBytes, firstData);
+
+  @override
+  Future<List<String>> listDirIds() {
+    if (failListings) throw StateError('listing failed');
+    return inner.listDirIds();
+  }
+
+  @override
+  Future<Uint8List?> readJournal(String id) => inner.readJournal(id);
+
+  @override
+  Future<Uint8List?> readData(String id) => inner.readData(id);
+
+  @override
+  Future<int> dataByteLength(String id) => inner.dataByteLength(id);
+
+  @override
+  Future<bool> isFinalized(String id) => inner.isFinalized(id);
+
+  @override
+  Future<void> touchFinal(String id) => inner.touchFinal(id);
+
+  @override
+  Future<void> truncateJournal(String id, int bytes) =>
+      inner.truncateJournal(id, bytes);
+
+  @override
+  Future<void> appendJournal(String id, Uint8List bytes) =>
+      inner.appendJournal(id, bytes);
+
+  @override
+  Future<void> delete(String id) => inner.delete(id);
+
+  @override
+  Future<int> totalBytes() => inner.totalBytes();
 }

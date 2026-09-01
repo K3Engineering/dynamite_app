@@ -8,12 +8,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
+import 'package:dynamite_app/models/session_catalog.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/screens/session_detail_screen.dart';
 import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_files_io.dart';
 import 'package:dynamite_app/services/session_journal.dart';
-import 'package:dynamite_app/services/session_queries.dart';
 import 'package:dynamite_app/services/session_store.dart';
 import 'package:dynamite_app/widgets/empty_placeholder.dart';
 
@@ -81,9 +81,11 @@ void main() {
       });
 
   Future<void> pumpDetail(WidgetTester tester, String sessionId) async {
-    final session = (await tester.runAsync(
-      () => sessionSummaryById(sessionId),
-    ))!;
+    await tester.runAsync(SessionStore.instance.refreshCatalogForTesting);
+    final session = switch (SessionStore.instance.catalog.value) {
+      SessionCatalogReady(:final catalog) => catalog.session(sessionId)!,
+      final state => throw StateError('Expected ready catalog, got $state'),
+    };
     SharedPreferences.setMockInitialValues({});
     final prefs = await SharedPreferences.getInstance();
     await tester.pumpWidget(
