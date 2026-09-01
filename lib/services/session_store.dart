@@ -56,6 +56,23 @@ class SessionStore {
     if (!_bytes.isClosed) _bytes.add(null);
   }
 
+  /// The byte ledger behind [usedBytes]: seeded by every catalog publish
+  /// (the scan already stats every directory, so it costs no extra I/O and
+  /// re-reads ground truth), and kept current between publishes by exact
+  /// deltas from the ops below. A directory walk per capacity-strip pulse
+  /// would scale with the session count forever; this ledger does one
+  /// walk-equivalent per publish and none per pulse.
+  int? _byteTotal;
+
+  /// Fold [delta] into the ledger. Deltas only apply once a publish has
+  /// seeded the ledger — a write that landed BEFORE the first seed is
+  /// already inside the seed's stat, so skipping the delta is correct,
+  /// not lossy.
+  void _addBytes(int delta) {
+    final total = _byteTotal;
+    if (total != null) _byteTotal = total + delta;
+  }
+
   /// The byte-size pulse (append acks included) the capacity strip cues on.
   Stream<void> get byteChanges => _bytes.stream;
 
@@ -73,25 +90,32 @@ class SessionStore {
     return result.future;
   }
 
+  StateError get _catalogUnavailable => switch (_catalog.value) {
+    SessionCatalogFailed(:final error) => StateError(
+      'Session catalog is unavailable: $error',
+    ),
+    _ => throw StateError('catalog is available'),
+  };
+
   void _requireCatalogAvailable() {
-    if (_catalog.value case SessionCatalogFailed(:final error)) {
-      throw StateError('Session catalog is unavailable: $error');
-    }
+    if (_catalog.value is SessionCatalogFailed) throw _catalogUnavailable;
   }
 
   Future<void> ensureCatalogLoaded() {
     // A failed future, not a sync throw: callers swallow it in a catchError
     // and let the Failed state render through the listenable, identically
     // to a publish failure landing after the call.
-    if (_catalog.value case SessionCatalogFailed(:final error)) {
-      return Future.error(StateError('Session catalog is unavailable: $error'));
+    if (_catalog.value is SessionCatalogFailed) {
+      return Future.error(_catalogUnavailable);
     }
     if (_catalog.value is SessionCatalogReady) return Future.value();
     return _initialCatalogLoad ??= _enqueue(_publishCatalog);
   }
 
-  @visibleForTesting
-  Future<void> refreshCatalogForTesting() => _enqueue(_publishCatalog);
+  /// Re-read every session directory and republish the catalog. The cache
+  /// is derived state, so a full re-read always supersedes the deltas —
+  /// this is also a Failed catalog's only way back.
+  Future<void> refreshCatalog() => _enqueue(_publishCatalog);
 
   Future<void> _loadCatalogIfNeeded(SessionFilesBackend files) async {
     if (_catalog.value is SessionCatalogLoading) await _publishCatalog(files);
@@ -122,8 +146,11 @@ class SessionStore {
   }
 
   /// Splice [id]'s freshly classified entry into the published catalog. The
-  /// classification is the only I/O (one session, not a full re-scan); a
-  /// failure is terminal for the catalog, same as a full publish failure.
+  /// classification is the only I/O (one session, not a full re-scan); if
+  /// it fails the fallback is a full publish — the catalog is derived
+  /// state, so a full re-read always re-establishes truth, no stale delta
+  /// can survive it. Only a failed re-read is terminal (same as every
+  /// other publish failure).
   Future<void> _refreshCatalogEntry(
     SessionFilesBackend files,
     String id,
@@ -131,15 +158,15 @@ class SessionStore {
     _ListedEntry entry;
     try {
       entry = await _classify(files, id);
-    } catch (error, stackTrace) {
-      _catalog.value = SessionCatalogFailed(error, stackTrace);
-      Error.throwWithStackTrace(error, stackTrace);
+    } catch (_) {
+      await _publishCatalog(files);
+      return;
     }
     _publishDelta((catalog) => _spliceEntry(catalog, id, entry));
   }
 
-  /// [catalog] with [id]'s entry replaced by [entry]'s verdict (or removed),
-  /// keeping the id-descending order the full read produces.
+  /// [catalog] with [id]'s entry replaced by [entry]'s verdict (or
+  /// removed); SessionCatalog's constructor owns the ordering.
   SessionCatalog _spliceEntry(
     SessionCatalog catalog,
     String id,
@@ -150,18 +177,10 @@ class SessionStore {
     final byteSizes = {...catalog.byteSizes}..remove(id);
     switch (entry) {
       case final _CompleteEntry complete:
-        final insertAt = sessions.indexWhere((s) => s.id.compareTo(id) < 0);
-        sessions.insert(
-          insertAt < 0 ? sessions.length : insertAt,
-          _summaryFor(complete),
-        );
+        sessions.add(_summaryFor(complete));
         byteSizes[id] = complete.dataBytes;
       case final _DamagedEntry damagedEntry:
-        final insertAt = damaged.indexWhere((d) => d.id.compareTo(id) < 0);
-        damaged.insert(
-          insertAt < 0 ? damaged.length : insertAt,
-          damagedEntry.damaged,
-        );
+        damaged.add(damagedEntry.damaged);
       case _UnlistedEntry():
     }
     return SessionCatalog(
@@ -173,11 +192,29 @@ class SessionStore {
 
   Future<void> _publishCatalog(SessionFilesBackend files) async {
     try {
-      _catalog.value = SessionCatalogReady(await _readCatalog(files));
+      final read = await _readCatalogDefended(files);
+      _catalog.value = SessionCatalogReady(read.catalog);
+      // Every publish re-seeds the byte ledger from the scan: the deltas
+      // that accumulate between publishes are superseded by ground truth.
+      _byteTotal = read.byteTotal;
       _bumpBytes();
     } catch (error, stackTrace) {
       _catalog.value = SessionCatalogFailed(error, stackTrace);
       Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  /// The catalog read, retried once inline: a one-shot backend failure
+  /// (a transient file lock on the native side is the realistic case)
+  /// must not brick the store, but a read that fails twice is a real
+  /// problem — report it and stop.
+  Future<({SessionCatalog catalog, int byteTotal})> _readCatalogDefended(
+    SessionFilesBackend files,
+  ) async {
+    try {
+      return await _readCatalog(files);
+    } catch (_) {
+      return _readCatalog(files);
     }
   }
 
@@ -193,16 +230,21 @@ class SessionStore {
     required Uint8List firstData,
   }) => _enqueue((files) async {
     _requireCatalogAvailable();
+    final metaBytes = encodeSessionMeta(meta);
     final sink = await files.createSession(
       newSessionId(),
-      encodeSessionMeta(meta),
+      metaBytes,
       firstData,
     );
     // The fresh dir has no `final` marker, so the listing is unchanged by
     // construction and no catalog load is forced; the finalization's delta
     // loads it if needed. Only the byte totals grew.
+    _addBytes(metaBytes.length + firstData.length);
     _bumpBytes();
-    return NotifyingSessionDataSink._(sink, _bumpBytes);
+    return NotifyingSessionDataSink._(sink, firstData.length, (delta) {
+      _addBytes(delta);
+      _bumpBytes();
+    });
   });
 
   /// Mark the session completed: the zero-byte [sessionFinalFile] marker,
@@ -234,20 +276,32 @@ class SessionStore {
         await files.touchFinal(id);
       }
       await _publishCatalog(files);
-    } catch (error, stackTrace) {
-      _catalog.value = SessionCatalogFailed(error, stackTrace);
-      Error.throwWithStackTrace(error, stackTrace);
+    } catch (_) {
+      // Recovery is idempotent (marker touches only), so a failure mid-loop
+      // needs no rollback or retry of the loop itself: republish — the
+      // recovered-so-far set is on disk already, and whatever the loop
+      // missed is picked up by next startup's recovery. Only a publish
+      // that also fails poisons the catalog, from inside _publishCatalog.
+      await _publishCatalog(files);
     }
   });
 
   // -- Listing and load ------------------------------------------------------
 
-  Future<SessionCatalog> _readCatalog(SessionFilesBackend files) async {
+  /// The full directory read: the catalog plus the sessions total byte
+  /// count the scan computes for free along the way (every classify
+  /// already stats data.raw and reads the journal; sum them instead of
+  /// walking the tree again for the capacity strip).
+  Future<({SessionCatalog catalog, int byteTotal})> _readCatalog(
+    SessionFilesBackend files,
+  ) async {
     final summaries = <SessionSummary>[];
     final damaged = <DamagedSession>[];
     final sizes = <String, int>{};
-    for (final id in await _sortedDirIds(files)) {
+    var byteTotal = 0;
+    for (final id in await files.listDirIds()) {
       final entry = await _classify(files, id);
+      byteTotal += entry.byteTotal;
       switch (entry) {
         case final _CompleteEntry complete:
           summaries.add(_summaryFor(complete));
@@ -257,18 +311,14 @@ class SessionStore {
         case _UnlistedEntry():
       }
     }
-    return SessionCatalog(
-      sessions: summaries,
-      damaged: damaged,
-      byteSizes: sizes,
+    return (
+      catalog: SessionCatalog(
+        sessions: summaries,
+        damaged: damaged,
+        byteSizes: sizes,
+      ),
+      byteTotal: byteTotal,
     );
-  }
-
-  Future<List<String>> _sortedDirIds(SessionFilesBackend files) async {
-    // listDirIds doesn't promise a mutable list, so sort a copy.
-    final ids = List.of(await files.listDirIds());
-    ids.sort((a, b) => b.compareTo(a));
-    return ids;
   }
 
   Future<SessionJournal?> _journalOrNull(
@@ -289,6 +339,9 @@ class SessionStore {
     final journalBytes = await files.readJournal(id);
     final hasData = dataBytes > 0;
     final hasMeta = journalBytes != null && journalBytes.isNotEmpty;
+    // The `final` marker is zero bytes by design, so data + journal IS the
+    // directory's byte total.
+    final byteTotal = dataBytes + (journalBytes?.length ?? 0);
 
     try {
       sessionIdCreatedAt(id);
@@ -300,6 +353,7 @@ class SessionStore {
           hasMeta: hasMeta,
           reason: 'Not a session this store wrote (malformed id)',
         ),
+        byteTotal: byteTotal,
       );
     }
 
@@ -315,6 +369,7 @@ class SessionStore {
           hasMeta: hasMeta,
           reason: 'Session metadata unreadable',
         ),
+        byteTotal: byteTotal,
       );
     }
 
@@ -330,13 +385,21 @@ class SessionStore {
           hasMeta: hasMeta,
           reason: 'Recording never produced data',
         ),
+        byteTotal: byteTotal,
       );
     }
     // A parseable, data-bearing dir without `final` is visible only to the
     // recording tab writing it (or to the prescan before recovery's touch) —
     // never to the listing.
-    if (!await files.isFinalized(id)) return const _UnlistedEntry();
-    return _CompleteEntry(id: id, journal: journal, dataBytes: dataBytes);
+    if (!await files.isFinalized(id)) {
+      return _UnlistedEntry(byteTotal: byteTotal);
+    }
+    return _CompleteEntry(
+      id: id,
+      journal: journal,
+      dataBytes: dataBytes,
+      byteTotal: byteTotal,
+    );
   }
 
   SessionSummary _summaryFor(_CompleteEntry entry) {
@@ -391,7 +454,10 @@ class SessionStore {
   /// data.raw's bytes verbatim, for the damaged entry's hand-recovery
   /// export. Throws StateError when absent — the affordance enabling it
   /// checked existence at list time, so a miss is a race, not a state.
-  Future<Uint8List> rawDataBytes(String id) => _withCatalog((files) async {
+  /// Raw reads are rescue hatches: they depend on one file being
+  /// readable, not on the catalog's health, and only ride the queue for
+  /// ordering against mutations of this id.
+  Future<Uint8List> rawDataBytes(String id) => _enqueue((files) async {
     final bytes = await files.readData(id);
     if (bytes == null || bytes.isEmpty) {
       throw StateError('no data bytes for session $id');
@@ -400,7 +466,7 @@ class SessionStore {
   });
 
   /// The journal's bytes verbatim, for the damaged entry's metadata export.
-  Future<Uint8List> rawJournalBytes(String id) => _withCatalog((files) async {
+  Future<Uint8List> rawJournalBytes(String id) => _enqueue((files) async {
     final bytes = await files.readJournal(id);
     if (bytes == null || bytes.isEmpty) {
       throw StateError('no metadata bytes for session $id');
@@ -425,8 +491,10 @@ class SessionStore {
     }
     final journal = parseSessionJournal(journalBytes);
     final edit = update(journal.effectiveEdit);
+    final append = encodeSessionEdit(edit);
     await files.truncateJournal(id, journal.completeBytes);
-    await files.appendJournal(id, encodeSessionEdit(edit));
+    await files.appendJournal(id, append);
+    _addBytes(journal.completeBytes + append.length - journalBytes.length);
     await _refreshCatalogEntry(files, id);
   });
 
@@ -446,19 +514,42 @@ class SessionStore {
   /// confirmation — recovery and listing never delete. Only the layout's
   /// three named files are destroyed (see SessionFilesBackend.delete).
   Future<void> deleteSession(String id) => _withCatalog((files) async {
+    // Measure before deleting so the ledger subtracts what actually left
+    // the disk, not a catalog value that could have drifted.
+    final dataBytes = await files.dataByteLength(id);
+    final journalBytes = (await files.readJournal(id))?.length ?? 0;
     await files.delete(id);
+    _addBytes(-(dataBytes + journalBytes));
     _publishDelta(
-      (catalog) => _spliceEntry(catalog, id, const _UnlistedEntry()),
+      (catalog) =>
+          _spliceEntry(catalog, id, const _UnlistedEntry(byteTotal: 0)),
     );
   });
 
   /// Total bytes of every session file — the native storage strip's "used"
-  /// number (a directory walk never reports a high-water mark).
-  Future<int> usedBytes() => _withCatalog((files) => files.totalBytes());
+  /// number. The byte ledger (see [_byteTotal]): seeded by the scan side
+  /// of every publish and adjusted by exact deltas between them, so this
+  /// is only trivially stale (a publish mid-recording stats at some point
+  /// in the append stream and the ack deltas close the gap). Stray files
+  /// the layout can't name don't count — the scan only sees session dirs.
+  Future<int> usedBytes() => _withCatalog((files) async {
+    final total = _byteTotal;
+    if (total == null) {
+      // _withCatalog guarantees a publish ran (catalog Ready seeds the
+      // ledger on the way through), so this is unreachable — fail loudly
+      // rather than paper over the invariant with null-coalescing.
+      throw StateError('usedBytes: catalog ready without a byte seed');
+    }
+    return total;
+  });
 }
 
 sealed class _ListedEntry {
-  const _ListedEntry();
+  const _ListedEntry({required this.byteTotal});
+
+  /// The directory's bytes as the classification scan found them (data +
+  /// journal; the `final` marker is zero bytes by design).
+  final int byteTotal;
 }
 
 final class _CompleteEntry extends _ListedEntry {
@@ -466,6 +557,7 @@ final class _CompleteEntry extends _ListedEntry {
     required this.id,
     required this.journal,
     required this.dataBytes,
+    required super.byteTotal,
   });
 
   final String id;
@@ -474,23 +566,28 @@ final class _CompleteEntry extends _ListedEntry {
 }
 
 final class _DamagedEntry extends _ListedEntry {
-  const _DamagedEntry(this.damaged);
+  const _DamagedEntry(this.damaged, {required super.byteTotal});
   final DamagedSession damaged;
 }
 
 /// Parseable and data-bearing but not finalized: the recording tab's
-/// in-flight dir, invisible to every listing consumer.
+/// in-flight dir, invisible to every listing consumer (its bytes still
+/// count in the scan total).
 final class _UnlistedEntry extends _ListedEntry {
-  const _UnlistedEntry();
+  const _UnlistedEntry({required super.byteTotal});
 }
 
-/// A [SessionDataSink] wrapper bumping the store's byte revisions on every
-/// acked append so the capacity strip tracks the recording.
+/// A [SessionDataSink] wrapper folding every acked append's growth into
+/// the store's byte ledger and bumping the byte revisions so the capacity
+/// strip tracks the recording. Deltas are ack-relative, so a publish's
+/// ledger re-seed (which re-stats data.raw) never double-counts them.
 class NotifyingSessionDataSink implements SessionDataSink {
-  const NotifyingSessionDataSink._(this.inner, this.onAppend);
+  NotifyingSessionDataSink._(this.inner, int ackedBytes, this.onAppend)
+    : _ackedBytes = ackedBytes;
 
   final SessionDataSink inner;
-  final void Function() onAppend;
+  final void Function(int delta) onAppend;
+  int _ackedBytes;
 
   @override
   String get id => inner.id;
@@ -498,7 +595,8 @@ class NotifyingSessionDataSink implements SessionDataSink {
   @override
   Future<int> append(Uint8List bytes) async {
     final length = await inner.append(bytes);
-    onAppend();
+    onAppend(length - _ackedBytes);
+    _ackedBytes = length;
     return length;
   }
 

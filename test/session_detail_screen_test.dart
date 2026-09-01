@@ -81,7 +81,7 @@ void main() {
       });
 
   Future<void> pumpDetail(WidgetTester tester, String sessionId) async {
-    await tester.runAsync(SessionStore.instance.refreshCatalogForTesting);
+    await tester.runAsync(SessionStore.instance.refreshCatalog);
     final session = switch (SessionStore.instance.catalog.value) {
       SessionCatalogReady(:final catalog) => catalog.session(sessionId)!,
       final state => throw StateError('Expected ready catalog, got $state'),

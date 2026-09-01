@@ -10,9 +10,9 @@ const int kRecordingBytesPerSecond = 16000;
 /// The two producers give the fields comparable-but-not-identical semantics:
 /// on web, [usedBytes] is the origin's usage and [availableBytes] is quota
 /// headroom (an optimistic ceiling — Chrome derives quota from total disk
-/// size, not free space); on native, [usedBytes] is the total of the
-/// sessions root's files and [availableBytes] is real free space on the
-/// volume.
+/// size, not free space); on native, [usedBytes] is the session store's
+/// byte ledger (scan-seeded, delta-maintained) and [availableBytes] is real
+/// free space on the volume.
 class StorageCapacity {
   const StorageCapacity({
     required this.usedBytes,

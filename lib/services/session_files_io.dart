@@ -142,17 +142,6 @@ class IoSessionFilesBackend implements SessionFilesBackend {
     }
     await _dir(id).delete();
   }
-
-  @override
-  Future<int> totalBytes() async {
-    final rootDir = Directory(root);
-    if (!await rootDir.exists()) return 0;
-    var total = 0;
-    await for (final entry in rootDir.list(recursive: true)) {
-      if (entry is File) total += await entry.length();
-    }
-    return total;
-  }
 }
 
 class _IoSessionDataSink implements SessionDataSink {

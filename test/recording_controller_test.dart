@@ -367,8 +367,6 @@ class _FailAppendBackend implements SessionFilesBackend {
       _inner.appendJournal(id, bytes);
   @override
   Future<void> delete(String id) => _inner.delete(id);
-  @override
-  Future<int> totalBytes() => _inner.totalBytes();
 }
 
 class _FailAppendSink implements SessionDataSink {

@@ -302,21 +302,6 @@ async function deleteSession(msg) {
   return null;
 }
 
-async function totalBytes() {
-  const sessions = await sessionsRoot(false);
-  return sessions ? await walkBytes(sessions) : 0;
-}
-
-async function walkBytes(dir) {
-  let total = 0;
-  for await (const entry of dir.values()) {
-    total += entry.kind === 'file'
-      ? (await entry.getFile()).size
-      : await walkBytes(entry);
-  }
-  return total;
-}
-
 // -- dispatch ---------------------------------------------------------------
 
 const ops = {
@@ -334,7 +319,6 @@ const ops = {
   truncateJournal,
   appendJournal,
   delete: deleteSession,
-  totalBytes,
 };
 
 // Ops whose return value goes out on the ack's byte channel (transferred)

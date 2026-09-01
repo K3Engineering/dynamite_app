@@ -75,8 +75,4 @@ abstract interface class SessionFilesBackend {
   /// skipped), then the now-empty directory — an entry the store didn't
   /// write, or the directory missing, makes the delete throw.
   Future<void> delete(String id);
-
-  /// Total bytes of everything under the sessions root (0 when absent) —
-  /// the native storage strip's "used" number.
-  Future<int> totalBytes();
 }

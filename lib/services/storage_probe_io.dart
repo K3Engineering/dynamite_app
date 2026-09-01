@@ -6,7 +6,7 @@ import '../models/storage_capacity.dart';
 
 /// Native producer for the storage strip (see `storage_capacity.dart`):
 /// real free space from disk_space_2, plus the app's used bytes supplied by
-/// the caller ([usedBytes] — a sessions-root directory walk; the probe
+/// the caller ([usedBytes] — the session store's byte ledger; the probe
 /// doesn't know where the sessions live). Android/iOS only — the plugin has
 /// no desktop
 /// implementations, so other platforms report null and the strip hides.

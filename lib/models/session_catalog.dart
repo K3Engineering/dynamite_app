@@ -1,25 +1,34 @@
 import 'damaged_session.dart';
 import 'session_summary.dart';
 
+/// One coherent view of every directory for the Sessions tab. The
+/// constructor owns the ordering — the id sorts chronologically, so
+/// descending ids IS descending creation order, ties included — and the
+/// lookup map; producers pass entries in any order.
 class SessionCatalog {
   SessionCatalog({
-    required List<SessionSummary> sessions,
-    required List<DamagedSession> damaged,
+    required Iterable<SessionSummary> sessions,
+    required Iterable<DamagedSession> damaged,
     required Map<String, int> byteSizes,
-  }) : sessions = List.unmodifiable(sessions),
-       damaged = List.unmodifiable(damaged),
-       byteSizes = Map.unmodifiable(byteSizes);
+  }) : sessions = List.unmodifiable(
+         [...sessions]..sort((a, b) => _desc(a.id, b.id)),
+       ),
+       damaged = List.unmodifiable(
+         [...damaged]..sort((a, b) => _desc(a.id, b.id)),
+       ),
+       byteSizes = Map.unmodifiable(byteSizes) {
+    _byId = {for (final session in this.sessions) session.id: session};
+  }
+
+  static int _desc(String a, String b) => b.compareTo(a);
 
   final List<SessionSummary> sessions;
   final List<DamagedSession> damaged;
   final Map<String, int> byteSizes;
 
-  SessionSummary? session(String id) {
-    for (final session in sessions) {
-      if (session.id == id) return session;
-    }
-    return null;
-  }
+  late final Map<String, SessionSummary> _byId;
+
+  SessionSummary? session(String id) => _byId[id];
 }
 
 sealed class SessionCatalogState {

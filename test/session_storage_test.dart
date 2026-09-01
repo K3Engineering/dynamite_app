@@ -111,7 +111,7 @@ void main() {
   };
 
   Future<SessionCatalog> catalog() async {
-    await store.refreshCatalogForTesting();
+    await store.refreshCatalog();
     return readyCatalog();
   }
 
@@ -742,6 +742,49 @@ void main() {
       expect(await backend.listDirIds(), isEmpty);
     });
 
+    test('a one-shot read failure is retried, not terminal', () async {
+      await seedSession('2026-08-29T09-00-00-once');
+      final failing = _FaultBackend(backend)..failNextListings = 1;
+      SessionStore.instance = store = SessionStore.over(failing);
+
+      await store.ensureCatalogLoaded();
+
+      expect(store.catalog.value, isA<SessionCatalogReady>());
+      expect(readyCatalog().session('2026-08-29T09-00-00-once'), isNotNull);
+    });
+
+    test('a classify failure on a delta falls back to a full rescan', () async {
+      const id = '2026-08-29T09-00-00-delt';
+      final failing = _FaultBackend(backend);
+      SessionStore.instance = store = SessionStore.over(failing);
+      await seedSession(id, finalized: false);
+      await store.ensureCatalogLoaded();
+
+      // The finalize lands on disk; its catalog-delta classification
+      // fails once. The full rescan re-derives the same verdict — the
+      // op completes and the session lists.
+      failing.failNextJournalReads = 1;
+      await store.touchFinal(id);
+
+      expect(store.catalog.value, isA<SessionCatalogReady>());
+      expect(readyCatalog().session(id), isNotNull);
+    });
+
+    test('a delta failure with a failing rescan is terminal', () async {
+      const id = '2026-08-29T09-00-00-term';
+      final failing = _FaultBackend(backend);
+      SessionStore.instance = store = SessionStore.over(failing);
+      await seedSession(id, finalized: false);
+      await store.ensureCatalogLoaded();
+
+      // Enough faults to survive the delta's classify AND the rescan's
+      // own retry: the catalog can only fail.
+      failing.failNextJournalReads = 10;
+      failing.failNextListings = 10;
+      await expectLater(store.touchFinal(id), throwsStateError);
+      expect(store.catalog.value, isA<SessionCatalogFailed>());
+    });
+
     test('an in-flight session (no final) is invisible, not damaged', () async {
       await seedSession('2026-08-28T14-30-12-aaaa', finalized: false);
       expect((await catalog()).sessions, isEmpty);
@@ -980,15 +1023,62 @@ void main() {
       },
     );
 
-    test('usedBytes walks the tree; delete removes the session', () async {
+    test('usedBytes seeds from the scan; delete removes the session', () async {
       expect(await store.usedBytes(), 0);
       await seedSession('2026-08-28T14-30-12-del0');
+      // The store never saw this write (seeded straight onto the backend),
+      // so only a publish — the ledger's re-seed — learns about it.
+      await store.refreshCatalog();
       final used = await store.usedBytes();
       expect(used, greaterThan(2 * kAdcChannelCount * 4));
 
       await store.deleteSession('2026-08-28T14-30-12-del0');
       expect(readyCatalog().sessions, isEmpty);
       expect(await store.usedBytes(), 0);
+    });
+
+    test('usedBytes folds in a recording without any re-scan', () async {
+      await store.ensureCatalogLoaded();
+      final metaBytes = encodeSessionMeta(testMeta());
+      final firstData = codec.pack(1, (s, ch) => 7);
+      final appended = codec.pack(3, (s, ch) => 9);
+
+      final before = await store.usedBytes();
+      final sink = await store.createDataSink(
+        meta: testMeta(),
+        firstData: firstData,
+      );
+      await sink.append(appended);
+      await sink.close();
+
+      expect(
+        await store.usedBytes(),
+        before + metaBytes.length + firstData.length + appended.length,
+      );
+    });
+
+    test('usedBytes tracks journal growth through edits', () async {
+      const id = '2026-08-28T14-30-12-grow';
+      await seedSession(id);
+      await store.refreshCatalog();
+      final before = await store.usedBytes();
+      final oldJournalBytes = (await backend.readJournal(id))!.length;
+
+      await store.editSession(
+        id,
+        (current) => SessionEdit(
+          name: 'a considerably longer name than the default',
+          notes: current.notes,
+          visibleChannels: current.visibleChannels,
+        ),
+      );
+
+      final newJournalBytes = (await backend.readJournal(id))!.length;
+      expect(newJournalBytes, greaterThan(oldJournalBytes));
+      expect(
+        await store.usedBytes(),
+        before + newJournalBytes - oldJournalBytes,
+      );
     });
 
     test('delete destroys only the layout\'s named files', () async {
@@ -1085,6 +1175,11 @@ class _FaultBackend implements SessionFilesBackend {
   final SessionFilesBackend inner;
   bool failListings = false;
 
+  /// One-shot faults: each throws on exactly that many subsequent calls,
+  /// then behaves (the transient-failure seam for the retry tests).
+  int failNextListings = 0;
+  int failNextJournalReads = 0;
+
   @override
   Future<SessionDataSink> createSession(
     String id,
@@ -1094,12 +1189,21 @@ class _FaultBackend implements SessionFilesBackend {
 
   @override
   Future<List<String>> listDirIds() {
-    if (failListings) throw StateError('listing failed');
+    if (failListings || failNextListings > 0) {
+      if (failNextListings > 0) failNextListings--;
+      throw StateError('listing failed');
+    }
     return inner.listDirIds();
   }
 
   @override
-  Future<Uint8List?> readJournal(String id) => inner.readJournal(id);
+  Future<Uint8List?> readJournal(String id) {
+    if (failNextJournalReads > 0) {
+      failNextJournalReads--;
+      throw StateError('journal read failed');
+    }
+    return inner.readJournal(id);
+  }
 
   @override
   Future<Uint8List?> readData(String id) => inner.readData(id);
@@ -1123,7 +1227,4 @@ class _FaultBackend implements SessionFilesBackend {
 
   @override
   Future<void> delete(String id) => inner.delete(id);
-
-  @override
-  Future<int> totalBytes() => inner.totalBytes();
 }

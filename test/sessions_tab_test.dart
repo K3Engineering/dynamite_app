@@ -96,7 +96,7 @@ void main() {
     const firstId = '2026-08-29T09-00-00-aaa1';
     const secondId = '2026-08-29T09-01-00-aaa2';
     await seedSession(tester, firstId, 'First session', notify: false);
-    await tester.runAsync(store.refreshCatalogForTesting);
+    await tester.runAsync(store.refreshCatalog);
 
     await tester.pumpWidget(
       const MaterialApp(home: Scaffold(body: SessionsTab())),

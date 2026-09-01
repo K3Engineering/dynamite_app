@@ -162,8 +162,8 @@ class _JsSinkWorkerHandle implements SinkWorkerHandle {
   }
 
   /// The ops' scalar result wire types: int (append's file length,
-  /// dataByteLength, totalBytes), bool (isFinalized), a string list
-  /// (listDirIds); null for the void ops.
+  /// dataByteLength), bool (isFinalized), a string list (listDirIds);
+  /// null for the void ops.
   static Object? _convertResult(JSAny? result) {
     if (result == null) return null;
     if (result.typeofEquals('number')) return (result as JSNumber).toDartInt;
@@ -241,10 +241,6 @@ class _WebSessionFilesBackend implements SessionFilesBackend {
 
   @override
   Future<void> delete(String id) => _transport.request('delete', id: id);
-
-  @override
-  Future<int> totalBytes() async =>
-      (await _transport.request('totalBytes')).intResult;
 }
 
 class _WebSessionDataSink implements SessionDataSink {
