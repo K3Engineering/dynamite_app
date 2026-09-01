@@ -10,3 +10,8 @@ import 'session_files_stub.dart'
 
 Future<SessionFilesBackend> createDefaultSessionFilesBackend() =>
     impl.createBackend();
+
+/// Debug-only hot-restart hook (web): kill the sink worker so its sync
+/// access handles release their exclusive locks before the next generation
+/// opens the same session files. No-op off web.
+void terminateSessionSinkWorker() => impl.terminateSinkWorker();

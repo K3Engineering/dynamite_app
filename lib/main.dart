@@ -20,6 +20,7 @@ import 'services/hot_restart_cleanup_stub.dart'
     if (dart.library.js_interop) 'services/hot_restart_cleanup_web.dart';
 import 'services/recording_controller.dart';
 import 'services/rig_state.dart';
+import 'services/session_files.dart';
 import 'services/session_metadata.dart';
 import 'services/session_storage.dart';
 import 'services/stream_reset_coordinator.dart';
@@ -114,9 +115,13 @@ void main() async {
 
   // Hand the NEXT hot-restart generation a way to tear this one down (web
   // debug only). Fire-and-forget: the callbacks are silenced synchronously
-  // inside shutdownForHotRestart; the GATT disconnect completes async.
+  // inside shutdownForHotRestart; the GATT disconnect completes async. The
+  // sink worker terminate is synchronous too — its sync access handles lock
+  // the session files, so they must die before the new generation's storage
+  // opens (only matters mid-recording).
   registerHotRestartCleanup(() {
     unawaited(linkManager.shutdownForHotRestart());
+    terminateSessionSinkWorker();
   });
   // Layer 2 (web debug only): the engine view is disposed by
   // `ext.flutter.disassemble` BEFORE the new generation boots, so packets

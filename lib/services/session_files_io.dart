@@ -32,6 +32,9 @@ Future<void> dropLegacySessionDatabase(String documentsPath) async {
   }
 }
 
+/// No sync handles on dart:io — the hot-restart terminate hook is web-only.
+void terminateSinkWorker() {}
+
 class IoSessionFilesBackend implements SessionFilesBackend {
   IoSessionFilesBackend(this.root);
 
