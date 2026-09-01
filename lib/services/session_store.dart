@@ -80,7 +80,12 @@ class SessionStore {
   }
 
   Future<void> ensureCatalogLoaded() {
-    _requireCatalogAvailable();
+    // A failed future, not a sync throw: callers swallow it in a catchError
+    // and let the Failed state render through the listenable, identically
+    // to a publish failure landing after the call.
+    if (_catalog.value case SessionCatalogFailed(:final error)) {
+      return Future.error(StateError('Session catalog is unavailable: $error'));
+    }
     if (_catalog.value is SessionCatalogReady) return Future.value();
     return _initialCatalogLoad ??= _enqueue(_publishCatalog);
   }
@@ -186,14 +191,16 @@ class SessionStore {
   Future<SessionDataSink> createDataSink({
     required SessionMeta meta,
     required Uint8List firstData,
-  }) => _withCatalog((files) async {
+  }) => _enqueue((files) async {
+    _requireCatalogAvailable();
     final sink = await files.createSession(
       newSessionId(),
       encodeSessionMeta(meta),
       firstData,
     );
     // The fresh dir has no `final` marker, so the listing is unchanged by
-    // construction; only the byte totals grew.
+    // construction and no catalog load is forced; the finalization's delta
+    // loads it if needed. Only the byte totals grew.
     _bumpBytes();
     return NotifyingSessionDataSink._(sink, _bumpBytes);
   });

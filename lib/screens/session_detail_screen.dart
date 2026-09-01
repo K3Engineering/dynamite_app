@@ -51,9 +51,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     unawaited(_loadData());
   }
 
-  Future<void> _toggleChannel(SessionSummary session, int index) =>
-      toggleSessionVisibleChannel(session.id, index);
-
   @override
   void dispose() {
     _graphCtrl.dispose();
@@ -81,7 +78,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         return switch (state) {
           SessionCatalogLoading() => _buildSession(settings, widget.session),
           SessionCatalogFailed(:final error) => Scaffold(
-            appBar: AppBar(title: const Text('Session unavailable')),
+            appBar: AppBar(title: const Text('Error loading sessions')),
             body: EmptyPlaceholder(
               icon: Icons.error_outline,
               title: 'Error loading sessions',
@@ -181,7 +178,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             labels: channelLabels,
             activeChannels: visibleChannels,
             onToggleChannel: (index) =>
-                unawaited(_toggleChannel(session, index)),
+                unawaited(toggleSessionVisibleChannel(session.id, index)),
             unit: unit,
             rows: [
               ChannelStatsRow(
