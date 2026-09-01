@@ -26,7 +26,7 @@ const FINAL_FILE = 'final';
 // assumes that.
 const openSinks = new Map();
 
-const MSG_EVENT = 'm' + 'e' + 'ss' + 'a' + 'ge';
+const MSG_EVENT = 'message';
 
 function isNotFound(e) {
   return e && e.name === 'NotFoundError';
@@ -211,9 +211,28 @@ async function readData(msg) {
   return dir ? await fileBytes(dir, DATA_FILE) : null;
 }
 
+// A stat, not a read: the listing calls this per session on every refresh
+// (including the recording tab's in-flight dir), so it must report the size
+// without materializing bytes — and a live dir's exclusive sync handle
+// comes from openSinks, since a second one would fail.
 async function dataByteLength(msg) {
-  const bytes = await readData(msg);
-  return bytes ? bytes.byteLength : 0;
+  const live = openSinks.get(msg.id);
+  if (live) return live.getSize();
+  const dir = await sessionDir(msg.id);
+  if (!dir) return 0;
+  let fh;
+  try {
+    fh = await dir.getFileHandle(DATA_FILE);
+  } catch (e) {
+    if (isNotFound(e)) return 0;
+    throw e;
+  }
+  const handle = await fh.createSyncAccessHandle();
+  try {
+    return handle.getSize();
+  } finally {
+    handle.close();
+  }
 }
 
 async function isFinalized(msg) {

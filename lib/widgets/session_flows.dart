@@ -1,7 +1,7 @@
 /// Session-level dialog flows shared by the Sessions tab, the session
 /// detail screen, and the Live tab's rename action. The generic prompts
-/// live in `widgets/dialogs.dart`; the database calls go through
-/// `services/session_queries.dart`, so the widget layer never sees the DB.
+/// live in `widgets/dialogs.dart`; the store calls go through
+/// `services/session_queries.dart`, so the widget layer never sees it.
 library;
 
 import 'package:material_ui/material_ui.dart';

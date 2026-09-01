@@ -1,17 +1,18 @@
 import 'dart:async';
 import 'dart:js_interop';
-
-import 'package:flutter/foundation.dart';
+import 'dart:typed_data';
 
 import 'session_store_backend.dart';
+import 'sink_worker_transport.dart';
 
 /// OPFS implementation of the file layout (see SessionFilesBackend), driven
 /// through `sink_worker.js`: sync access handles are worker-only APIs and the
 /// worker's flush() returning is the durability boundary, so every op is one
 /// request/ack pair there. The worker is transport-only — journal format,
-/// recovery, damaged verdicts and id rules all live in the store.
+/// recovery, damaged verdicts and id rules all live in the store. This file
+/// is the js_interop adapter for [SinkWorkerTransport]'s pure-Dart plumbing.
 Future<SessionFilesBackend> createBackend() async {
-  final transport = _SinkWorkerTransport.start('sink_worker.js');
+  final transport = SinkWorkerTransport(_JsSinkWorkerHandle('sink_worker.js'));
   // The startup probe runs from the worker because a page-side probe proves
   // nothing about the sync handles this store is built on. A browser that
   // can't pass it can't record — fail creation and let the failure surface
@@ -30,10 +31,8 @@ Future<SessionFilesBackend> createBackend() async {
   return _WebSessionFilesBackend(transport);
 }
 
-/// Debug-only hot-restart hook: a sync access handle holds an exclusive lock,
-/// so the old generation's worker must die before the new generation's worker
-/// touches the same session files (only relevant mid-recording).
-void terminateSinkWorker() => _SinkWorkerTransport._live?.terminate();
+/// Debug-only hot-restart hook: terminate the live worker.
+void terminateSinkWorker() => SinkWorkerTransport.terminateLive();
 
 @JS('Worker')
 extension type _Worker._(JSObject _) implements JSObject {
@@ -58,13 +57,6 @@ extension type _Ack._(JSObject _) implements JSObject {
   external JSArrayBuffer? get bytes;
 }
 
-const _msgEventName =
-    'm'
-    'e'
-    'ss'
-    'a'
-    'ge';
-
 /// Transfer lists take ArrayBuffers, not views; dart:js_interop doesn't
 /// expose the underlying buffer off the view, so declare it here.
 extension on JSUint8Array {
@@ -81,149 +73,105 @@ extension type _Req._(JSObject _) implements JSObject {
   external set bytes2(JSAny? value);
 }
 
-/// The page side of the sink worker: request/ack plumbing with one request
-/// in flight (the worker relies on that for op-level isolation), a coarse
-/// per-request timeout, and a single latched-fatal error model. Once latched
-/// (timeout, worker error event, worker failure to start) the transport is
-/// dead: the worker is terminated and every pending and future request fails
-/// with the same error — a wedged or dead sink never silently recovers.
-class _SinkWorkerTransport {
-  _SinkWorkerTransport._(this._worker);
+/// The JS worker behind [SinkWorkerTransport]: converts acks and requests
+/// across the interop boundary and nothing else.
+class _JsSinkWorkerHandle implements SinkWorkerHandle {
+  _JsSinkWorkerHandle(String scriptURL) : _worker = _Worker(scriptURL) {
+    void onJsMessage(JSObject event) {
+      final ack = _convertAck((event as _MessageEvent).data);
+      if (ack != null) _onMessage(ack);
+    }
 
-  factory _SinkWorkerTransport.start(String scriptURL) {
-    final worker = _Worker(scriptURL);
-    final transport = _SinkWorkerTransport._(worker);
-    _live = transport;
-    void onMessage(JSObject event) =>
-        transport._onMessage(event as _MessageEvent);
-    void onError(JSObject event) => transport._latch(
-      StateError('sink worker failed to start or died (error event)'),
-    );
-    worker.addEventListener(_msgEventName, onMessage.toJS);
-    worker.addEventListener('error', onError.toJS);
-    return transport;
+    void onJsError(JSObject _) => _onError();
+
+    _worker.addEventListener('message', onJsMessage.toJS);
+    _worker.addEventListener('error', onJsError.toJS);
   }
-
-  /// The live transport for [terminateSinkWorker]'s hot-restart hook.
-  static _SinkWorkerTransport? _live;
-
-  /// Coarse per-request ceiling, orders above any bench-observed commit time
-  /// at the ceiling workload: a trip means a wedged sink, never a slow one.
-  static const Duration _requestTimeout = Duration(seconds: 30);
 
   final _Worker _worker;
-  int _seq = 0;
-  final Map<int, Completer<_Ack>> _pending = {};
-  Future<void> _chain = Future.value();
-  Object? _fatal;
 
-  /// Serializes requests: the worker's protocol is one request in flight. A
-  /// failed request (latched errors included) does not poison the chain —
-  /// the chain itself never carries errors forward, [_fatal] does.
-  Future<_Ack> request(
-    String op, {
-    String? id,
-    int? intParam,
-    Uint8List? bytes,
-    Uint8List? bytes2,
-  }) {
-    final next = _chain.then((_) => _post(op, id, intParam, bytes, bytes2));
-    _chain = next.then((_) {}, onError: (_) {});
-    return next;
-  }
+  late void Function(SinkWorkerAck ack) _onMessage;
+  late void Function() _onError;
 
-  Future<_Ack> _post(
-    String op,
-    String? id,
-    int? intParam,
-    Uint8List? bytes,
-    Uint8List? bytes2,
-  ) {
-    final fatal = _fatal;
-    if (fatal != null) return Future.error(fatal);
-    final seq = _seq++;
-    final completer = Completer<_Ack>();
-    _pending[seq] = completer;
+  @override
+  set onMessage(void Function(SinkWorkerAck ack) listener) =>
+      _onMessage = listener;
+
+  @override
+  set onError(void Function() listener) => _onError = listener;
+
+  @override
+  void post(SinkWorkerRequest request) {
     final req = _Req()
-      ..seq = seq
-      ..op = op;
+      ..seq = request.seq
+      ..op = request.op;
+    final id = request.id;
     if (id != null) req.id = id;
+    final intParam = request.intParam;
     if (intParam != null) req.intParam = intParam;
-    // Byte payloads travel as transferables (zero-copy). Detaching the
-    // buffers is fine: the writer never re-reads handed-off bytes.
     final transfer = <JSAny>[];
+    final bytes = request.bytes;
     if (bytes != null) {
       final js = bytes.toJS;
       req.bytes = js;
       transfer.add(js.buffer);
     }
+    final bytes2 = request.bytes2;
     if (bytes2 != null) {
       final js = bytes2.toJS;
       req.bytes2 = js;
       transfer.add(js.buffer);
     }
-    final timer = Timer(
-      _requestTimeout,
-      () => _latch(StateError('sink worker request "$op" timed out')),
-    );
-    try {
-      _worker.postMessage(req, transfer.toJS);
-    } catch (e) {
-      _pending.remove(seq);
-      timer.cancel();
-      return Future.error(e);
-    }
-    return completer.future.whenComplete(timer.cancel);
+    _worker.postMessage(req, transfer.toJS);
   }
 
-  void _onMessage(_MessageEvent event) {
-    final data = event.data;
-    if (data == null) return;
+  @override
+  void terminate() => _worker.terminate();
+
+  static SinkWorkerAck? _convertAck(_Ack? data) {
+    if (data == null) return null;
     final seq = data.seq?.toDartInt;
-    final completer = seq == null ? null : _pending.remove(seq);
-    if (completer == null) return;
+    if (seq == null) return null;
     if (data.ok?.toDart ?? false) {
-      completer.complete(data);
-    } else {
-      completer.completeError(StateError('sink worker: ${data.error?.toDart}'));
+      return SinkWorkerAck.ok(
+        seq,
+        result: _convertResult(data.result),
+        bytes: data.bytes?.toDart.asUint8List(),
+      );
     }
+    return SinkWorkerAck.opError(seq, '${data.error?.toDart}');
   }
 
-  void _latch(Object error) {
-    _fatal ??= error;
-    terminate();
-    for (final completer in _pending.values) {
-      if (!completer.isCompleted) completer.completeError(error);
+  /// The ops' scalar result wire types: int (append's file length,
+  /// dataByteLength, totalBytes), bool (isFinalized), a string list
+  /// (listDirIds); null for the void ops.
+  static Object? _convertResult(JSAny? result) {
+    if (result == null) return null;
+    if (result.typeofEquals('number')) return (result as JSNumber).toDartInt;
+    if (result.typeofEquals('boolean')) return (result as JSBoolean).toDart;
+    if (result.typeofEquals('object')) {
+      return [
+        for (var i = 0, arr = result as JSArray; i < arr.length; i++)
+          (arr[i] as JSString).toDart,
+      ];
     }
-    _pending.clear();
-  }
-
-  void terminate() {
-    try {
-      if (_live == this) _live = null;
-      _worker.terminate();
-    } catch (_) {
-      debugPrint('Session sink worker terminate failed: $_fatal');
-    }
+    return null;
   }
 }
 
-extension on _Ack {
-  int get intResult => (result as JSNumber).toDartInt;
-  bool get boolResult => (result as JSBoolean).toDart;
-  List<String> get idListResult => [
-    for (var i = 0, arr = result as JSArray; i < arr.length; i++)
-      (arr[i] as JSString).toDart,
-  ];
+extension on SinkWorkerAck {
+  int get intResult => result as int;
+  bool get boolResult => result as bool;
+  List<String> get idListResult => result as List<String>;
 
   /// The transferred byte channel; null when the op found no file.
-  Uint8List? get byteResult => bytes?.toDart.asUint8List();
+  Uint8List? get byteResult => bytes;
 }
 
 class _WebSessionFilesBackend implements SessionFilesBackend {
   _WebSessionFilesBackend(this._transport);
 
-  final _SinkWorkerTransport _transport;
+  final SinkWorkerTransport _transport;
 
   @override
   Future<SessionDataSink> createSession(
@@ -286,7 +234,7 @@ class _WebSessionDataSink implements SessionDataSink {
   @override
   final String id;
 
-  final _SinkWorkerTransport _transport;
+  final SinkWorkerTransport _transport;
 
   /// One packet, appended and flushed in the worker; the ack's file length
   /// is the finalize-time count check's "persisted" side.

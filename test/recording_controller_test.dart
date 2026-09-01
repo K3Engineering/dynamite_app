@@ -15,6 +15,7 @@ import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/session_metadata.dart';
 import 'package:dynamite_app/services/session_storage.dart';
 import 'package:dynamite_app/services/session_store.dart';
+import 'package:dynamite_app/services/session_store_backend.dart';
 
 /// [RecordingController] owns the session lifecycle start to finish, as an
 /// explicit idle/recording/stopping machine: it latches the session's writer
@@ -239,6 +240,62 @@ void main() {
     },
   );
 
+  test(
+    'a storage failure mid-recording auto-stops and surfaces as an event',
+    () async {
+      // Real backend, but every post-create append throws: the writer latches
+      // the failure, and the controller's next batch must auto-stop instead
+      // of recording into the void.
+      SessionStore.instance = SessionStore.over(
+        _FailAppendBackend(IoSessionFilesBackend('${tmp.path}/sessions')),
+      );
+      final events = AppEvents();
+      final hub = DataHub();
+      final decoder = AdcPacketDecoder(hub);
+      final streaming = ValueNotifier<bool>(true);
+      final recording = RecordingController(
+        dataHub: hub,
+        streamingChanges: streaming,
+        streamingNow: () => streaming.value,
+        deviceMetadataSnapshot: () =>
+            toSessionDeviceMetadata(name: null, info: null),
+        onSessionBoundary: decoder.resetContinuity,
+        persistence: const StaticSessionPersistence(),
+        events: events,
+      );
+      hub.notePacketCounter(0);
+      addTearDown(recording.dispose);
+      final seen = <RecordingStorageError>[];
+      final sub = events.stream
+          .where((e) => e is RecordingStorageError)
+          .cast<RecordingStorageError>()
+          .listen(seen.add);
+      addTearDown(sub.cancel);
+
+      expect(start(recording), isA<StartSessionOk>());
+      // Keep feeding batches: the first creates the session intact, the
+      // second's append throws asynchronously inside the write queue, and a
+      // later batch then sees the latched error and auto-stops (bounded, in
+      // case the auto-stop never comes — the expect below names that bug).
+      for (var i = 0; i < 20 && recording.sessionInProgress; i++) {
+        feedFrames(hub, 10);
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+
+      expect(recording.sessionInProgress, isFalse);
+      expect(seen, hasLength(1));
+
+      // What the first packet wrote survives, final marker and all: the
+      // session lists with its true persisted bytes, the error names the
+      // lie.
+      final summaries = await SessionStore.instance.listSessions();
+      expect(summaries, hasLength(1));
+      final loaded = await loadSession(summaries.single.id);
+      expect(loaded.sampleCount, 10);
+      expect(loaded.channels[0][3], 1003);
+    },
+  );
+
   group('autoSessionName', () {
     test('ISO Y-M-D with 24h zero-padded H:MM:SS', () {
       expect(
@@ -261,4 +318,61 @@ void main() {
 Future<int> loadSessionCount() async {
   final store = SessionStore.instance;
   return (await store.listSessions()).length;
+}
+
+/// An [IoSessionFilesBackend] whose data sinks throw on every append: the
+/// create (journal + first write) succeeds, then storage "dies".
+class _FailAppendBackend implements SessionFilesBackend {
+  _FailAppendBackend(this._inner);
+
+  final IoSessionFilesBackend _inner;
+
+  @override
+  Future<SessionDataSink> createSession(
+    String id,
+    Uint8List metaBytes,
+    Uint8List firstData,
+  ) async {
+    final sink = await _inner.createSession(id, metaBytes, firstData);
+    return _FailAppendSink(id, sink);
+  }
+
+  @override
+  Future<List<String>> listDirIds() => _inner.listDirIds();
+  @override
+  Future<Uint8List?> readJournal(String id) => _inner.readJournal(id);
+  @override
+  Future<Uint8List?> readData(String id) => _inner.readData(id);
+  @override
+  Future<int> dataByteLength(String id) => _inner.dataByteLength(id);
+  @override
+  Future<bool> isFinalized(String id) => _inner.isFinalized(id);
+  @override
+  Future<void> touchFinal(String id) => _inner.touchFinal(id);
+  @override
+  Future<void> truncateJournal(String id, int bytes) =>
+      _inner.truncateJournal(id, bytes);
+  @override
+  Future<void> appendJournal(String id, Uint8List bytes) =>
+      _inner.appendJournal(id, bytes);
+  @override
+  Future<void> delete(String id) => _inner.delete(id);
+  @override
+  Future<int> totalBytes() => _inner.totalBytes();
+}
+
+class _FailAppendSink implements SessionDataSink {
+  _FailAppendSink(this.id, this._inner);
+
+  @override
+  final String id;
+
+  final SessionDataSink _inner;
+
+  @override
+  Future<int> append(Uint8List bytes) async =>
+      throw StateError('disk is on fire');
+
+  @override
+  Future<void> close() => _inner.close();
 }

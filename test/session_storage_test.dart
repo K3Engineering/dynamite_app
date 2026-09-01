@@ -680,6 +680,102 @@ void main() {
         expect(damaged.single.hasMeta, isTrue);
         expect(damaged.single.reason, contains('never produced data'));
         expect(codec.framesOf(Uint8List(0)), 0);
+
+        // Recovery is for real sessions (journal parses AND at least one
+        // frame): the crash-at-create artifact gets no completion marker and
+        // stays a damaged entry, never quietly finalized into the list.
+        await store.recoverIncompleteSessions();
+        expect(await backend.isFinalized('2026-08-28T14-30-12-0dd0'), isFalse);
+        expect(await store.listDamagedSessions(), hasLength(1));
+        expect(await store.listSessions(), isEmpty);
+      },
+    );
+
+    test(
+      'createSession refuses an id whose directory already exists',
+      () async {
+        await seedSession('2026-08-28T14-30-12-coll');
+        await expectLater(
+          backend.createSession(
+            '2026-08-28T14-30-12-coll',
+            encodeSessionMeta(testMeta()),
+            codec.pack(1, (s, ch) => 1),
+          ),
+          throwsStateError,
+        );
+      },
+    );
+
+    test(
+      'every append ack means the bytes are on disk (flush per packet)',
+      () async {
+        const id = '2026-08-28T14-30-12-flus';
+        final packet1 = codec.pack(3, (s, ch) => s * 10 + ch);
+        final packet2 = codec.pack(2, (s, ch) => 100 + s);
+        final sink = await backend.createSession(
+          id,
+          encodeSessionMeta(testMeta()),
+          packet1,
+        );
+        final dataFile = File('${tmp.path}/sessions/$id/data.raw');
+
+        // Reading the file off disk BEFORE close must already see packet 1:
+        // the ack's durability promise covers the in-process handle, and a
+        // crash the next instant loses at most the un-acked packet.
+        expect(await dataFile.readAsBytes(), packet1);
+        await sink.append(packet2);
+        expect(await dataFile.readAsBytes(), [...packet1, ...packet2]);
+        await sink.close();
+      },
+    );
+
+    test('a torn data.raw tail truncates to whole frames on load', () async {
+      const id = '2026-08-28T14-30-12-tail';
+      await seedSession(
+        id,
+        frames: const [
+          [3, 3, 3, 3],
+          [7, 7, 7, 7],
+        ],
+      );
+      // Crash mid-append: six stray bytes — not enough to complete a frame.
+      final handle = await File(
+        '${tmp.path}/sessions/$id/data.raw',
+      ).open(mode: FileMode.append);
+      await handle.writeFrom(Uint8List(6));
+      await handle.close();
+
+      final loaded = await store.loadSession(id);
+      expect(loaded.sampleCount, 2);
+      expect(loaded.channels[0], [3, 7]);
+      expect(loaded.gaps.contains(0), isFalse);
+    });
+
+    test(
+      'a frame-aligned zero-filled tail reads as data, not damage',
+      () async {
+        // The accepted crash shape: an append can leave complete, frame-aligned
+        // zero bytes at the tail, and detecting them is impossible without
+        // fabricating (all-zero channels are plausible real readings) — so the
+        // loader must return them as ordinary frames.
+        const id = '2026-08-28T14-30-12-zero';
+        await seedSession(
+          id,
+          frames: const [
+            [5, 5, 5, 5],
+            [6, 6, 6, 6],
+          ],
+        );
+        final handle = await File(
+          '${tmp.path}/sessions/$id/data.raw',
+        ).open(mode: FileMode.append);
+        await handle.writeFrom(Uint8List(codec.frameBytes));
+        await handle.close();
+
+        final loaded = await store.loadSession(id);
+        expect(loaded.sampleCount, 3);
+        expect(loaded.channels[0], [5, 6, 0]);
+        expect(loaded.gaps.contains(2), isFalse);
       },
     );
 
