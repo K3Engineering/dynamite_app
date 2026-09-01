@@ -11,8 +11,16 @@ import 'sink_worker_transport.dart';
 /// request/ack pair there. The worker is transport-only — journal format,
 /// recovery, damaged verdicts and id rules all live in the store. This file
 /// is the js_interop adapter for [SinkWorkerTransport]'s pure-Dart plumbing.
+
+/// The live transport, referenced at the one place workers are created so
+/// the hot-restart hook can kill the old generation's worker before the new
+/// one opens the same session files (a sync access handle is an exclusive
+/// lock).
+SinkWorkerTransport? _liveTransport;
+
 Future<SessionFilesBackend> createBackend() async {
   final transport = SinkWorkerTransport(_JsSinkWorkerHandle('sink_worker.js'));
+  _liveTransport = transport;
   // The startup probe runs from the worker because a page-side probe proves
   // nothing about the sync handles this store is built on. A browser that
   // can't pass it can't record — fail creation and let the failure surface
@@ -31,8 +39,12 @@ Future<SessionFilesBackend> createBackend() async {
   return _WebSessionFilesBackend(transport);
 }
 
-/// Debug-only hot-restart hook: terminate the live worker.
-void terminateSinkWorker() => SinkWorkerTransport.terminateLive();
+/// Debug-only hot-restart hook: terminate the live worker, if any.
+void terminateSinkWorker() {
+  final transport = _liveTransport;
+  _liveTransport = null;
+  transport?.terminate();
+}
 
 @JS('Worker')
 extension type _Worker._(JSObject _) implements JSObject {

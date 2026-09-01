@@ -46,14 +46,7 @@ void main() {
     transport = SinkWorkerTransport(handle);
   });
 
-  tearDown(() {
-    // Construction registers as the live transport; release it so the next
-    // test's construction isn't affected.
-    transport.terminate();
-  });
-
   SinkWorkerTransport newTransport({Duration? requestTimeout}) {
-    transport.terminate();
     handle = _FakeHandle();
     transport = SinkWorkerTransport(handle, requestTimeout: requestTimeout);
     return transport;
@@ -211,6 +204,25 @@ void main() {
       handle.ackOk(1);
       await second;
       expect(handle.terminates, 0);
+    },
+  );
+
+  test(
+    'terminate closes the transport: pending and future requests fail',
+    () async {
+      final pending = transport.request('append');
+      await pumpEventQueue();
+      transport.terminate();
+      await expectLater(pending, throwsA(isA<StateError>()));
+      await expectLater(
+        transport.request('append'),
+        throwsA(isA<StateError>()),
+      );
+      expect(handle.terminates, 1);
+
+      // A second terminate is a no-op on the already-latched transport.
+      transport.terminate();
+      expect(handle.terminates, 1);
     },
   );
 

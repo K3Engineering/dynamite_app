@@ -338,9 +338,10 @@ class SessionStore {
     _bump();
   }
 
-  /// Delete the session directory wholesale. This is the ONLY destructive
-  /// operation anywhere in the store, and it only ever runs on a user's
-  /// explicit confirmation — recovery and listing never delete.
+  /// Delete the session directory. This is the ONLY destructive operation
+  /// anywhere in the store, and it only ever runs on a user's explicit
+  /// confirmation — recovery and listing never delete. Only the layout's
+  /// three named files are destroyed (see SessionFilesBackend.delete).
   Future<void> deleteSession(String id) async {
     await (await _backend).delete(id);
     _bump();

@@ -278,15 +278,27 @@ async function appendJournal(msg) {
 
 // The store's only destructive op, only ever a user gesture on the page
 // side. A still-open sink goes first so no handle outlives its directory.
+// Only bytes this layout can name are destroyed: the three known files are
+// removed individually (absent ones skipped), then the now-empty directory
+// — a non-recursive removeEntry throws when anything unexpected still sits
+// in it, instead of destroying bytes the store never wrote.
 async function deleteSession(msg) {
   const handle = openSinks.get(msg.id);
   if (handle) {
     openSinks.delete(msg.id);
     handle.close();
   }
+  const dir = await sessionDir(msg.id);
+  if (!dir) throw new Error(`no session directory ${msg.id}`);
+  for (const name of [JOURNAL_FILE, DATA_FILE, FINAL_FILE]) {
+    try {
+      await dir.removeEntry(name);
+    } catch (e) {
+      if (!isNotFound(e)) throw e;
+    }
+  }
   const sessions = await sessionsRoot(false);
-  if (!sessions) throw new Error('no sessions root');
-  await sessions.removeEntry(msg.id, { recursive: true });
+  await sessions.removeEntry(msg.id);
   return null;
 }
 

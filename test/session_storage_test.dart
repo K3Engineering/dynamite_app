@@ -879,6 +879,37 @@ void main() {
       expect(await store.usedBytes(), 0);
     });
 
+    test('delete destroys only the layout\'s named files', () async {
+      // A crash-at-create dir (no final marker) deletes fine: absent named
+      // files are skipped deliberately.
+      const partial = '2026-08-28T14-30-12-part';
+      final sink = await backend.createSession(
+        partial,
+        encodeSessionMeta(testMeta()),
+        Uint8List(0),
+      );
+      await sink.close();
+      await store.deleteSession(partial);
+      expect(Directory('${tmp.path}/sessions/$partial').existsSync(), isFalse);
+
+      // An entry the store never wrote is never destroyed: the directory
+      // delete refuses loudly instead.
+      const id = '2026-08-28T14-30-12-keep';
+      await seedSession(id);
+      final intruder = File('${tmp.path}/sessions/$id/not-ours.txt')
+        ..writeAsStringSync('user content');
+      await expectLater(
+        store.deleteSession(id),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(intruder.existsSync(), isTrue);
+
+      // With the intruder gone, the same delete succeeds.
+      intruder.deleteSync();
+      await store.deleteSession(id);
+      expect(Directory('${tmp.path}/sessions/$id').existsSync(), isFalse);
+    });
+
     test('raw exports refuse what is not there', () async {
       const codec = SessionChunkCodec(kAdcChannelCount);
       final sink = await backend.createSession(

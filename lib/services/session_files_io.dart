@@ -136,7 +136,12 @@ class IoSessionFilesBackend implements SessionFilesBackend {
   }
 
   @override
-  Future<void> delete(String id) => _dir(id).delete(recursive: true);
+  Future<void> delete(String id) async {
+    for (final file in [_final(id), _data(id), _journal(id)]) {
+      if (await file.exists()) await file.delete();
+    }
+    await _dir(id).delete();
+  }
 
   @override
   Future<int> totalBytes() async {

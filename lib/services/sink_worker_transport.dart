@@ -1,6 +1,5 @@
 import 'dart:async';
-
-import 'package:flutter/foundation.dart';
+import 'dart:typed_data';
 
 /// The wire-facing half of the OPFS sink worker, narrow enough to fake in
 /// tests: dart:js_interop on the web build, a scripted double under the VM.
@@ -61,27 +60,16 @@ final class SinkWorkerAck {
 /// The page side of the sink worker: request/ack plumbing with one request
 /// in flight (the worker relies on that for op-level isolation), a coarse
 /// per-request timeout, and a single latched-fatal error model. Once latched
-/// (timeout, worker error event) the transport is dead: the worker is
+/// (timeout, worker error event, terminate) the transport is dead: the worker is
 /// terminated and every pending and future request fails with the same error
 /// — a wedged or dead sink never silently recovers.
 class SinkWorkerTransport {
   SinkWorkerTransport(this._handle, {Duration? requestTimeout})
     : _requestTimeout = requestTimeout ?? const Duration(seconds: 30) {
-    _live = this;
     _handle.onMessage = _onAck;
     _handle.onError = () =>
         _latch(StateError('sink worker failed to start or died (error event)'));
   }
-
-  /// The live transport for the hot-restart cleanup hook: the web build's
-  /// generation must terminate the old generation's worker before the new
-  /// one opens the same session files (a sync access handle is an exclusive
-  /// lock).
-  static SinkWorkerTransport? _live;
-
-  /// Terminate the live transport's worker, if any. No-op on native builds
-  /// and when no transport was ever started.
-  static void terminateLive() => _live?.terminate();
 
   final SinkWorkerHandle _handle;
   final Duration _requestTimeout;
@@ -156,19 +144,18 @@ class SinkWorkerTransport {
 
   void _latch(Object error) {
     _fatal ??= error;
-    terminate();
+    _handle.terminate();
     for (final completer in _pending.values) {
       if (!completer.isCompleted) completer.completeError(error);
     }
     _pending.clear();
   }
 
+  /// Kill the worker and close the transport: nothing it could still do can
+  /// ever be acked, so pending and future requests fail immediately instead
+  /// of hanging to the request timeout. Latch and the hot-restart hook are
+  /// the call sites; a latched transport stays latched.
   void terminate() {
-    try {
-      if (_live == this) _live = null;
-      _handle.terminate();
-    } catch (_) {
-      debugPrint('Session sink worker terminate failed: $_fatal');
-    }
+    if (_fatal == null) _latch(StateError('sink worker terminated'));
   }
 }
