@@ -18,6 +18,11 @@ import 'services/feed_health_tracker.dart';
 // generation runs first thing in main(). No-op stub on native platforms.
 import 'services/hot_restart_cleanup_stub.dart'
     if (dart.library.js_interop) 'services/hot_restart_cleanup_web.dart';
+// Primary-tab gate: on web exactly one browser tab runs the app; the others
+// sit on the waiting overlay until the browser hands the lock over (locks
+// auto-release on tab close/crash). Always-primary no-op on native.
+import 'services/primary_tab_lock_stub.dart'
+    if (dart.library.js_interop) 'services/primary_tab_lock_web.dart';
 import 'services/recording_controller.dart';
 import 'services/rig_state.dart';
 import 'services/session_files.dart';
@@ -25,6 +30,7 @@ import 'services/session_metadata.dart';
 import 'services/session_storage.dart';
 import 'services/stream_reset_coordinator.dart';
 import 'services/wakelock_policy.dart';
+import 'screens/another_tab_screen.dart';
 import 'screens/app_shell.dart';
 import 'status_colors.dart';
 
@@ -36,6 +42,15 @@ void main() async {
   // released for us to reconnect. Runs before session recovery is scheduled
   // so a recording interrupted by the restart is finalized by its pass.
   runPreviousHotRestartCleanup();
+  // Primary-tab gate: everything below builds the running app, so it must
+  // not happen until this tab holds the lock. A tab that lost stays on the
+  // waiting overlay with no services behind it (nothing to mutate means
+  // nothing to guard); when the primary tab dies, the browser's lock queue
+  // grants this tab and this same startup path runs. On native the await
+  // resolves immediately. The second runApp below replaces the overlay root
+  // with the real app.
+  runApp(const MaterialApp(title: 'Dynamite', home: AnotherTabScreen()));
+  await acquirePrimaryTabLock();
   final appEvents = AppEvents();
   // Crash recovery is deferred to after the first frame so first paint
   // doesn't wait on the store's first open. The Sessions list needs no
@@ -127,10 +142,14 @@ void main() async {
   // inside shutdownForHotRestart; the GATT disconnect completes async. The
   // sink worker terminate is synchronous too — its sync access handles lock
   // the session files, so they must die before the new generation's storage
-  // opens (only matters mid-recording).
+  // opens (only matters mid-recording). The primary-tab lock likewise goes
+  // back before the new generation re-requests it — re-requesting a lock
+  // this (dying) generation still holds or is queued for would block on
+  // itself.
   registerHotRestartCleanup(() {
     unawaited(linkManager.shutdownForHotRestart());
     terminateSessionSinkWorker();
+    releasePrimaryTabLock();
   });
   // Layer 2 (web debug only): the engine view is disposed by
   // `ext.flutter.disassemble` BEFORE the new generation boots, so packets
