@@ -357,6 +357,46 @@ void main() {
       },
     );
 
+    test('a throwing close folds into the returned error and the session '
+        'still finalizes', () async {
+      final hub = DataHub();
+      hub.notePacketCounter(0);
+      final frame = Int32List(channels);
+      for (int i = 0; i < 1100; i++) {
+        hub.addSampleFrame(frame);
+      }
+
+      final closeBoom = StateError('close failed');
+      final writer = LiveSessionWriter(
+        testHeader(),
+        sourceRingCapacity: DataHub.maxDataSz,
+        sinkFactory: (meta, firstData) async {
+          final real = await store.createDataSink(
+            meta: meta,
+            firstData: firstData,
+          );
+          return _WrapSink(
+            real,
+            onAppend: real.append,
+            // The handle still goes away (test teardown must delete the
+            // temp root); only the close's completion reports failure.
+            onClose: () async {
+              await real.close();
+              throw closeBoom;
+            },
+          );
+        },
+      );
+      await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
+      final error = await SessionStorage.finalizeSession(writer: writer);
+
+      // Close is cleanup: its failure surfaces as the returned error, not a
+      // throw, and must not veto the completion marker — the session lists
+      // immediately instead of waiting for next startup's recovery.
+      expect(error, same(closeBoom));
+      expect(await store.listSessions(), hasLength(1));
+    });
+
     test('an intact multi-packet recording finalizes with no error', () async {
       final hub = DataHub();
       hub.notePacketCounter(0);
@@ -948,12 +988,14 @@ class _CollectSink implements SessionDataSink {
   Future<void> close() async {}
 }
 
-/// Wraps a real sink, letting the test substitute the append ack.
+/// Wraps a real sink, letting the test substitute the append ack or the
+/// close.
 class _WrapSink implements SessionDataSink {
-  _WrapSink(this.inner, {required this.onAppend});
+  _WrapSink(this.inner, {required this.onAppend, this.onClose});
 
   final SessionDataSink inner;
   final Future<int> Function(Uint8List bytes) onAppend;
+  final Future<void> Function()? onClose;
 
   @override
   String get id => inner.id;
@@ -962,5 +1004,5 @@ class _WrapSink implements SessionDataSink {
   Future<int> append(Uint8List bytes) => onAppend(bytes);
 
   @override
-  Future<void> close() => inner.close();
+  Future<void> close() => onClose != null ? onClose!() : inner.close();
 }

@@ -36,13 +36,23 @@ void main() async {
   // released for us to reconnect. Runs before session recovery is scheduled
   // so a recording interrupted by the restart is finalized by its pass.
   runPreviousHotRestartCleanup();
+  final appEvents = AppEvents();
   // Crash recovery is deferred to after the first frame so first paint
   // doesn't wait on the store's first open. The Sessions list needs no
   // gating — it excludes incomplete dirs by construction and simply gains
   // the recovered ones when recovery lands. Recovery is non-destructive
-  // (touch-final only) and races nothing it could harm, so no fence.
+  // (touch-final only) and races nothing it could harm, so no fence. A
+  // store that can't even be constructed (e.g. the web probe's capability
+  // verdict) rethrows out of the first await; surface that as a startup
+  // toast instead of an unhandled async error — recording still refuses on
+  // its own loud path, and post-frame guarantees the shell is subscribed.
   WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(SessionStorage.recoverIncompleteSessions());
+    unawaited(
+      SessionStorage.recoverIncompleteSessions().catchError((Object e) {
+        debugPrint('Session recovery failed: $e');
+        appEvents.emit(SessionStorageUnavailable(e));
+      }),
+    );
   });
   // Prefs are resolved here and injected into their owners, so their loads
   // are synchronous constructor work and can never race a user edit.
@@ -53,7 +63,6 @@ void main() async {
     buildNumber: packageInfo.buildNumber,
   );
 
-  final appEvents = AppEvents();
   final dataHub = DataHub();
   final decoder = AdcPacketDecoder(dataHub);
   final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())

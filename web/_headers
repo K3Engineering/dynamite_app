@@ -1,4 +1,9 @@
 /*
   Cross-Origin-Embedder-Policy: require-corp
   Cross-Origin-Opener-Policy: same-origin
-  
+
+# The sink worker IS the storage protocol, and no service worker revs it
+# (the bootstrap ships none): a stale script against new page code must
+# never come from cache.
+/sink_worker.js
+  Cache-Control: no-cache

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:js_interop';
-import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 
 import 'session_store_backend.dart';
 import 'sink_worker_transport.dart';
@@ -34,8 +35,15 @@ Future<SessionFilesBackend> createBackend() async {
     );
   }
   // The replaced SQLite store's OPFS files are pre-release litter with no
-  // migration story; a failure leaves harmless waste, not a broken store.
-  await transport.request('dropLegacyDb');
+  // migration story. Best-effort, as the native drop already is: litter is
+  // harmless, so a sweep failure is reported but must never fail
+  // construction — a bare await here would brick the whole store for the
+  // app's lifetime, one op past a successful probe.
+  try {
+    await transport.request('dropLegacyDb');
+  } catch (e) {
+    debugPrint('Legacy session database drop failed: $e');
+  }
   return _WebSessionFilesBackend(transport);
 }
 

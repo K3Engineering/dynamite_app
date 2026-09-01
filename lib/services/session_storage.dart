@@ -81,15 +81,24 @@ class SessionStorage {
   /// If no data ever reached storage, the directory was never created and
   /// there is nothing to finalize (recording nothing saves nothing).
   ///
-  /// Returns the writer's latched write error or a verification error (if
-  /// any); when non-null, the caller should surface it.
+  /// Returns the writer's latched write error, a sink-close failure, or a
+  /// verification error (if any); when non-null, the caller should surface
+  /// it. Releasing the sink folds into the return value instead of
+  /// throwing: every byte was acked before close, so a cleanup failure must
+  /// not veto the completion marker below. (On web a latched transport
+  /// re-fails close by construction; on native a thrown close would leave a
+  /// valid session invisible until next startup's recovery.)
   static Future<Object?> finalizeSession({
     required LiveSessionWriter writer,
   }) async {
     await writer.flush();
     final sessionId = writer.sessionId;
-    await writer.closeSink();
     Object? error = writer.writeError;
+    try {
+      await writer.closeSink();
+    } catch (e) {
+      error ??= e;
+    }
     if (sessionId != null) {
       // Fail loud on an accepted-vs-persisted mismatch: the writer counted
       // every accepted packet's frames, so data.raw must hold exactly that
