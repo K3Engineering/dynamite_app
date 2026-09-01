@@ -909,6 +909,10 @@ void main() {
       expect(damaged.single.id, id);
       expect(damaged.single.reason, contains('mid-frame'));
       await expectLater(store.loadSession(id), throwsStateError);
+
+      // …but the salvage export still hands the surviving bytes back
+      // verbatim (torn tail included).
+      expect(await store.rawDataBytes(id), hasLength(2 * codec.frameBytes + 6));
     });
 
     test(
