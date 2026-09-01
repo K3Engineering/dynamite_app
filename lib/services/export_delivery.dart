@@ -1,5 +1,6 @@
 /// Handing exported files to the OS: the two delivery paths behind every
-/// export action (session CSV, calibration report, salvage data). Callers
+/// export action (session CSV, calibration report, raw damaged-session
+/// bytes). Callers
 /// build an artifact with the format modules (csv_export.dart,
 /// report_export.dart — bytes, filename, MIME type) and pass it here; the
 /// shared export filename rules live in export_names.dart.

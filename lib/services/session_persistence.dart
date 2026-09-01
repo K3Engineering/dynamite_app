@@ -8,7 +8,7 @@ import 'live_session_writer.dart';
 /// move as `AdcSink` for the decoder), so `RecordingController` never imports
 /// the storage layer's statics; `StaticSessionPersistence` in
 /// session_storage.dart adapts the real implementation and tests can double
-/// it without opening a database.
+/// it without opening the store.
 abstract interface class SessionPersistence {
   /// Construct the session's writer. Everything the live buffer would
   /// supply ([tare], [channelCalibration], [samplesPerSec],

@@ -98,7 +98,7 @@ extension DisplayUnitCsv on DisplayUnit {
 ///
 /// TODO(perf): the whole CSV is built in memory as one string — the format
 /// milestone will replace this with a chunked writer (see
-/// SessionStorage.loadSession's own materialization note).
+/// SessionStore.loadSession's own materialization note).
 String buildSessionCsv(
   SessionData data,
   DisplayUnit unit, {

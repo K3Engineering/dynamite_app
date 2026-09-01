@@ -53,7 +53,7 @@ final class StartSessionNoData extends StartSessionResult {
 /// every operation is refused unless the state matches. [stopping] covers
 /// the finalization's async window, so a recording can never be half-latched
 /// while another begins. (Starting has no async window: the storage layer
-/// does no DB work until data exists, so latching is synchronous.)
+/// does no store work until data exists, so latching is synchronous.)
 enum _RecordingState { idle, recording, stopping }
 
 /// Owns the recording session lifecycle start to finish; the UI only
@@ -127,7 +127,7 @@ class RecordingController extends ChangeNotifier {
   LiveSessionWriter? _sessionWriter;
 
   /// Display name of the in-progress session, latched by [startSession] so
-  /// [stopSession] can hand it back to the UI without a DB lookup.
+  /// [stopSession] can hand it back to the UI without a store lookup.
   String? _sessionName;
 
   /// True from the moment a start is committed until finalization completes
@@ -253,7 +253,7 @@ class RecordingController extends ChangeNotifier {
 
     // finalizeSession flushes through the writer's serialized queue, which
     // drains any in-flight (unawaited) appends first. A failure there (e.g.
-    // the DB itself is gone) is folded into the returned error rather than
+    // the sessions root itself is gone) is folded into the returned error rather than
     // thrown: stopSession also runs on unawaited auto-stop paths (link
     // drop, writer error), where a throw would be an unhandled async error.
     Object? error;
