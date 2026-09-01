@@ -1,30 +1,19 @@
-/// The screens' only read/modify path for sessions: streams of
-/// [SessionSummary] and [DamagedSession] plus the session-level actions
-/// (rename, notes, visibility, delete, load). The store's file layout never
-/// leaves the service layer — UI code works with these models.
+/// The screens' only read/modify path for sessions: a catalog stream plus the
+/// session-level actions (rename, notes, visibility, delete, load). The
+/// store's file layout never leaves the service layer.
 library;
 
 import 'dart:typed_data';
 
-import '../models/damaged_session.dart';
+import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
 import 'session_data.dart';
 import 'session_journal.dart';
 import 'session_store.dart';
 
-/// All finalized sessions, newest-first.
-Stream<List<SessionSummary>> watchSessionSummaries() =>
-    SessionStore.instance.watch(SessionStore.instance.listSessions);
-
-/// Per-session data.byte sizes (the sessions list's size column).
-Stream<Map<String, int>> watchSessionByteSizes() =>
-    SessionStore.instance.watch(SessionStore.instance.sessionByteSizes);
-
-/// Directories the store flags damaged (unreadable metadata, no data) —
-/// the list's damaged-entry component with its raw-export/delete
-/// affordances.
-Stream<List<DamagedSession>> watchDamagedSessions() =>
-    SessionStore.instance.watch(SessionStore.instance.listDamagedSessions);
+/// Sessions, damaged entries, and byte sizes from one directory scan.
+Stream<SessionCatalog> watchSessionCatalog() =>
+    SessionStore.instance.watch(SessionStore.instance.sessionCatalog);
 
 /// One session, reactively — name, notes, and per-session channel
 /// visibility surface here as edits land.

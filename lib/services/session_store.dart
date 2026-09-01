@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../models/damaged_session.dart';
+import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
 import 'live_session_writer.dart';
 import 'session_data.dart';
@@ -62,14 +63,51 @@ class SessionStore {
   /// The byte-size pulse (append acks included) the capacity strip cues on.
   Stream<void> get byteChanges => _bytes.stream;
 
-  /// Emit [read]'s result now and re-emit after every store mutation. A
-  /// bump mid-read re-reads, so a lost race re-emits (self-healing) rather
-  /// than showing a stale snapshot.
-  Stream<T> watch<T>(Future<T> Function() read) async* {
-    yield await read();
-    await for (final _ in changes) {
-      yield await read();
+  /// Emit [read]'s result now and re-emit after store mutations. The change
+  /// subscription is established before the first read, and mutations while
+  /// a read is active are coalesced into one follow-up read.
+  Stream<T> watch<T>(Future<T> Function() read) {
+    late final StreamController<T> controller;
+    StreamSubscription<void>? changesSub;
+    var dirty = true;
+    var reading = false;
+    var canceled = false;
+
+    Future<void> pump() async {
+      if (reading || canceled) return;
+      reading = true;
+      try {
+        while (dirty && !canceled) {
+          dirty = false;
+          try {
+            final value = await read();
+            if (!canceled) controller.add(value);
+          } catch (error, stackTrace) {
+            canceled = true;
+            controller.addError(error, stackTrace);
+            await changesSub?.cancel();
+            await controller.close();
+          }
+        }
+      } finally {
+        reading = false;
+      }
     }
+
+    controller = StreamController<T>(
+      onListen: () {
+        changesSub = changes.listen((_) {
+          dirty = true;
+          unawaited(pump());
+        });
+        unawaited(pump());
+      },
+      onCancel: () async {
+        canceled = true;
+        await changesSub?.cancel();
+      },
+    );
+    return controller.stream;
   }
 
   // -- Recording side --------------------------------------------------------
@@ -126,17 +164,34 @@ class SessionStore {
 
   // -- Listing and load ------------------------------------------------------
 
-  /// All finalized sessions, newest first (the id sorts chronologically,
-  /// so descending ids IS descending creation order, ties included).
-  Future<List<SessionSummary>> listSessions() async {
+  /// One coherent view of every directory for the Sessions tab.
+  Future<SessionCatalog> sessionCatalog() async {
     final files = await _backend;
     final summaries = <SessionSummary>[];
+    final damaged = <DamagedSession>[];
+    final sizes = <String, int>{};
     for (final id in await _sortedDirIds(files)) {
       final entry = await _classify(files, id);
-      if (entry is _CompleteEntry) summaries.add(_summaryFor(entry));
+      switch (entry) {
+        case final _CompleteEntry complete:
+          summaries.add(_summaryFor(complete));
+          sizes[id] = complete.dataBytes;
+        case final _DamagedEntry entry:
+          damaged.add(entry.damaged);
+        case _UnlistedEntry():
+      }
     }
-    return summaries;
+    return SessionCatalog(
+      sessions: summaries,
+      damaged: damaged,
+      byteSizes: sizes,
+    );
   }
+
+  /// All finalized sessions, newest first (the id sorts chronologically,
+  /// so descending ids IS descending creation order, ties included).
+  Future<List<SessionSummary>> listSessions() async =>
+      (await sessionCatalog()).sessions;
 
   /// One finalized session, or null when gone (deleted) or no longer
   /// loadable (the listing would flag it damaged instead).
@@ -149,26 +204,12 @@ class SessionStore {
   /// Directories the store can never load as sessions (unreadable header,
   /// malformed id, or header-without-data). Never persisted state — the
   /// verdict is re-derived from the bytes on every call.
-  Future<List<DamagedSession>> listDamagedSessions() async {
-    final files = await _backend;
-    final damaged = <DamagedSession>[];
-    for (final id in await _sortedDirIds(files)) {
-      final entry = await _classify(files, id);
-      if (entry is _DamagedEntry) damaged.add(entry.damaged);
-    }
-    return damaged;
-  }
+  Future<List<DamagedSession>> listDamagedSessions() async =>
+      (await sessionCatalog()).damaged;
 
   /// Per-session data.raw byte lengths (the sessions list's size column).
-  Future<Map<String, int>> sessionByteSizes() async {
-    final files = await _backend;
-    final sizes = <String, int>{};
-    for (final id in await _sortedDirIds(files)) {
-      final entry = await _classify(files, id);
-      if (entry is _CompleteEntry) sizes[id] = entry.dataBytes;
-    }
-    return sizes;
-  }
+  Future<Map<String, int>> sessionByteSizes() async =>
+      (await sessionCatalog()).byteSizes;
 
   Future<List<String>> _sortedDirIds(SessionFilesBackend files) async {
     // listDirIds doesn't promise a mutable list, so sort a copy.

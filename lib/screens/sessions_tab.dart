@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:material_ui/material_ui.dart';
 
 import '../models/damaged_session.dart';
+import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
 import '../services/export_delivery.dart';
 import '../services/session_queries.dart';
@@ -23,16 +24,7 @@ class SessionsTab extends StatefulWidget {
 }
 
 class _SessionsTabState extends State<SessionsTab> {
-  /// Created once: a fresh `watchSessionSummaries()` per build would make
-  /// the [StreamBuilder] unsubscribe and re-run the query on every rebuild
-  /// (this tab rebuilds on each shell tab switch).
-  late final Stream<List<SessionSummary>> _sessions = watchSessionSummaries();
-
-  /// Per-session data byte sizes, same created-once rule as [_sessions].
-  late final Stream<Map<String, int>> _sizes = watchSessionByteSizes();
-
-  /// Directories the store can't load as sessions, surface + affordances.
-  late final Stream<List<DamagedSession>> _damaged = watchDamagedSessions();
+  late final Stream<SessionCatalog> _catalog = watchSessionCatalog();
 
   /// The platform's storage facts for the capacity strip; null where probing
   /// is unsupported (desktop) or failed — the strip hides then.
@@ -89,89 +81,71 @@ class _SessionsTabState extends State<SessionsTab> {
           if (_capacity case final capacity?)
             TabContentColumn(child: StorageCapacityStrip(capacity: capacity)),
           Expanded(
-            child: StreamBuilder<List<DamagedSession>>(
-              stream: _damaged,
-              builder: (context, damagedSnapshot) {
-                final damaged = damagedSnapshot.data ?? [];
-                return StreamBuilder<List<SessionSummary>>(
-                  stream: _sessions,
-                  builder: (context, snapshot) {
-                    if (snapshot.hasError) {
-                      return EmptyPlaceholder(
-                        icon: Icons.error_outline,
-                        title: 'Error loading sessions',
-                        hint: '${snapshot.error}',
-                        color: Theme.of(context).colorScheme.error,
-                      );
-                    }
+            child: StreamBuilder<SessionCatalog>(
+              stream: _catalog,
+              builder: (context, snapshot) {
+                if (snapshot.hasError) {
+                  return EmptyPlaceholder(
+                    icon: Icons.error_outline,
+                    title: 'Error loading sessions',
+                    hint: '${snapshot.error}',
+                    color: Theme.of(context).colorScheme.error,
+                  );
+                }
 
-                    if (snapshot.connectionState == ConnectionState.waiting &&
-                        !snapshot.hasData) {
-                      return const Center(child: CircularProgressIndicator());
-                    }
+                if (snapshot.connectionState == ConnectionState.waiting &&
+                    !snapshot.hasData) {
+                  return const Center(child: CircularProgressIndicator());
+                }
 
-                    final sessions = snapshot.data ?? [];
+                final catalog = snapshot.data!;
+                final sessions = catalog.sessions;
+                final damaged = catalog.damaged;
 
-                    if (sessions.isEmpty && damaged.isEmpty) {
-                      return const EmptyPlaceholder(
-                        icon: Icons.folder_open,
-                        title: 'No recorded sessions yet',
-                        hint: 'Start a recording from the Live tab',
-                      );
-                    }
+                if (sessions.isEmpty && damaged.isEmpty) {
+                  return const EmptyPlaceholder(
+                    icon: Icons.folder_open,
+                    title: 'No recorded sessions yet',
+                    hint: 'Start a recording from the Live tab',
+                  );
+                }
 
-                    return StreamBuilder<Map<String, int>>(
-                      stream: _sizes,
-                      builder: (context, sizeSnapshot) {
-                        final sizes =
-                            sizeSnapshot.data ?? const <String, int>{};
-                        return LayoutBuilder(
-                          builder: (context, constraints) => ListView.builder(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: contentSideInset(
-                                constraints.maxWidth,
-                              ),
-                            ),
-                            itemCount: damaged.length + sessions.length,
-                            itemBuilder: (context, index) =>
-                                index < damaged.length
-                                ? _DamagedCard(
-                                    damaged: damaged[index],
-                                    onExportSamples: damaged[index].hasData
-                                        ? () => _exportDamaged(
-                                            damaged[index],
-                                            data: true,
-                                          )
-                                        : null,
-                                    onExportMetadata: damaged[index].hasMeta
-                                        ? () => _exportDamaged(
-                                            damaged[index],
-                                            data: false,
-                                          )
-                                        : null,
-                                    onDelete: () => _deleteSession(
-                                      damaged[index].id,
-                                      damaged[index].id,
-                                    ),
+                return LayoutBuilder(
+                  builder: (context, constraints) => ListView.builder(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: contentSideInset(constraints.maxWidth),
+                    ),
+                    itemCount: damaged.length + sessions.length,
+                    itemBuilder: (context, index) => index < damaged.length
+                        ? _DamagedCard(
+                            damaged: damaged[index],
+                            onExportSamples: damaged[index].hasData
+                                ? () =>
+                                      _exportDamaged(damaged[index], data: true)
+                                : null,
+                            onExportMetadata: damaged[index].hasMeta
+                                ? () => _exportDamaged(
+                                    damaged[index],
+                                    data: false,
                                   )
-                                : _SessionCard(
-                                    session: sessions[index - damaged.length],
-                                    byteSize:
-                                        sizes[sessions[index - damaged.length]
-                                            .id],
-                                    onTap: () => _openDetail(
-                                      sessions[index - damaged.length],
-                                    ),
-                                    onDelete: () => _deleteSession(
-                                      sessions[index - damaged.length].id,
-                                      sessions[index - damaged.length].name,
-                                    ),
-                                  ),
+                                : null,
+                            onDelete: () => _deleteSession(
+                              damaged[index].id,
+                              damaged[index].id,
+                            ),
+                          )
+                        : _SessionCard(
+                            session: sessions[index - damaged.length],
+                            byteSize: catalog
+                                .byteSizes[sessions[index - damaged.length].id],
+                            onTap: () =>
+                                _openDetail(sessions[index - damaged.length]),
+                            onDelete: () => _deleteSession(
+                              sessions[index - damaged.length].id,
+                              sessions[index - damaged.length].name,
+                            ),
                           ),
-                        );
-                      },
-                    );
-                  },
+                  ),
                 );
               },
             ),

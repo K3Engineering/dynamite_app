@@ -10,6 +10,7 @@ import 'package:dynamite_app/models/channel_converter.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
+import 'package:dynamite_app/models/session_summary.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_data.dart';
@@ -667,6 +668,43 @@ void main() {
       final sizes = await store.sessionByteSizes();
       expect(sizes['2026-08-29T09-00-00-bbbb'], 2 * kAdcChannelCount * 4);
     });
+
+    test(
+      'watch rereads when a mutation lands during its initial read',
+      () async {
+        const id = '2026-08-29T09-00-00-race';
+        final firstReadStarted = Completer<void>();
+        final releaseFirstRead = Completer<void>();
+        var reads = 0;
+
+        Future<List<SessionSummary>> read() async {
+          final sessions = await store.listSessions();
+          if (reads++ == 0) {
+            firstReadStarted.complete();
+            await releaseFirstRead.future;
+          }
+          return sessions;
+        }
+
+        final iterator = StreamIterator(store.watch(read));
+        addTearDown(iterator.cancel);
+        final firstEvent = iterator.moveNext();
+        await firstReadStarted.future;
+
+        await seedSession(id, finalized: false);
+        await store.touchFinal(id);
+        releaseFirstRead.complete();
+
+        expect(await firstEvent, isTrue);
+        expect(iterator.current, isEmpty);
+        expect(
+          await iterator.moveNext().timeout(const Duration(seconds: 1)),
+          isTrue,
+        );
+        expect(iterator.current.single.id, id);
+        expect(reads, 2);
+      },
+    );
 
     test('an in-flight session (no final) is invisible, not damaged', () async {
       await seedSession('2026-08-28T14-30-12-aaaa', finalized: false);
