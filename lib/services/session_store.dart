@@ -231,11 +231,20 @@ class SessionStore {
   }) => _enqueue((files) async {
     _requireCatalogAvailable();
     final metaBytes = encodeSessionMeta(meta);
-    final sink = await files.createSession(
-      newSessionId(),
-      metaBytes,
-      firstData,
-    );
+    final SessionDataSink sink;
+    try {
+      sink = await files.createSession(newSessionId(), metaBytes, firstData);
+    } catch (_) {
+      // Both backends can tear here with dir + journal already on disk —
+      // publish so the artifact lists as damaged now instead of first
+      // appearing at next startup's recovery. Best-effort: a publish that
+      // also fails records the Failed catalog itself; the create error
+      // below stays the one thrown to the caller.
+      try {
+        await _publishCatalog(files);
+      } catch (_) {}
+      rethrow;
+    }
     // The fresh dir has no `final` marker, so the listing is unchanged by
     // construction and no catalog load is forced; the finalization's delta
     // loads it if needed. Only the byte totals grew.

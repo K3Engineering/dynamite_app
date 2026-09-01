@@ -849,6 +849,32 @@ void main() {
     );
 
     test(
+      'a torn first-packet create is published as damaged, not hidden',
+      () async {
+        final failing = _FaultBackend(backend)..failCreateAfterJournal = true;
+        SessionStore.instance = store = SessionStore.over(failing);
+        await store.ensureCatalogLoaded();
+
+        await expectLater(
+          store.createDataSink(
+            meta: testMeta(),
+            firstData: codec.pack(1, (sample, channel) => 1),
+          ),
+          throwsStateError,
+        );
+
+        // The torn directory (journal, no data) lists as damaged
+        // immediately — next startup's recovery is not the first to see it,
+        // and the catalog did not stay Ready as if storage were fine.
+        final damaged = readyCatalog().damaged;
+        expect(damaged, hasLength(1));
+        expect(damaged.single.hasMeta, isTrue);
+        expect(damaged.single.hasData, isFalse);
+        expect(damaged.single.reason, contains('never produced data'));
+      },
+    );
+
+    test(
       'createSession refuses an id whose directory already exists',
       () async {
         await seedSession('2026-08-28T14-30-12-coll');
@@ -1191,12 +1217,24 @@ class _FaultBackend implements SessionFilesBackend {
   int failNextListings = 0;
   int failNextJournalReads = 0;
 
+  /// Emulates the native backend's torn-create window (dir + journal
+  /// landed, the first data append throws) for the publish-on-tear test.
+  bool failCreateAfterJournal = false;
+
   @override
   Future<SessionDataSink> createSession(
     String id,
     Uint8List metaBytes,
     Uint8List firstData,
-  ) => inner.createSession(id, metaBytes, firstData);
+  ) {
+    if (failCreateAfterJournal) {
+      final dir = Directory('${(inner as IoSessionFilesBackend).root}/$id')
+        ..createSync(recursive: true);
+      File('${dir.path}/$sessionJournalFile').writeAsBytesSync(metaBytes);
+      throw StateError('first append failed');
+    }
+    return inner.createSession(id, metaBytes, firstData);
+  }
 
   @override
   Future<List<String>> listDirIds() {

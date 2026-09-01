@@ -208,9 +208,21 @@ class RecordingController extends ChangeNotifier {
       },
     );
     _sessionName = sessionName;
+    // A storage failure latched mid-recording stops the session the moment
+    // it latches — not when a later batch would reveal it (a failed last
+    // packet under an idle feed has no later batch).
+    _sessionWriter!.onWriteError = (_) => _autoStopOnStorageError();
     _onSessionBoundary();
     _transitionTo(_RecordingState.recording);
     return const StartSessionOk();
+  }
+
+  /// Auto-stop on the writer's latched storage failure; the error itself is
+  /// surfaced out of [stopSession]'s single finalization path. Guarded to
+  /// the recording state: a failure latching while finalization is already
+  /// draining the write queue must not start a second stop.
+  void _autoStopOnStorageError() {
+    if (_state == _RecordingState.recording) unawaited(stopSession());
   }
 
   /// Default session name from the wall clock, e.g. `2026-07-29 14:05:32` —
@@ -271,9 +283,9 @@ class RecordingController extends ChangeNotifier {
 
   /// The controller only consumes [HubBatchAppended] (freshly decoded
   /// samples, straight from the decoder via the hub): stream them to the
-  /// writer; if the writer has latched a storage failure, auto-stop instead
-  /// of recording into a void ([stopSession]'s finalization re-detects the
-  /// latched error and surfaces it).
+  /// writer. A storage failure surfaces through the writer's
+  /// [LiveSessionWriter.onWriteError] callback the moment it latches, not
+  /// through this path.
   void _onHubEvent(HubEvent event) => switch (event) {
     final HubBatchAppended batch => _onBatchAppended(batch),
     HubCleared() => null,
@@ -284,13 +296,9 @@ class RecordingController extends ChangeNotifier {
     if (writer == null) {
       return;
     }
-    if (writer.hasError) {
-      unawaited(stopSession());
-    } else {
-      unawaited(
-        writer.appendData(_dataHub.snapshotRange(batch.startIdx, batch.count)),
-      );
-    }
+    unawaited(
+      writer.appendData(_dataHub.snapshotRange(batch.startIdx, batch.count)),
+    );
   }
 
   /// The controller's only link reaction: a recording whose stream dies is

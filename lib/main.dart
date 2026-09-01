@@ -53,6 +53,16 @@ void main() async {
   // with the real app.
   runApp(const MaterialApp(title: 'Dynamite', home: AnotherTabScreen()));
   await acquirePrimaryTabLock();
+  // Minimal hot-restart cleanup registered immediately (web debug): from
+  // here until the full teardown registration below replaces it, the only
+  // resources this generation can hold are the lock and the sink worker.
+  // Without this, a restart landing in the startup window would leave the
+  // never-settling lock request unaborted and dead-lock the next
+  // generation on the waiting overlay.
+  registerHotRestartCleanup(() {
+    terminateSessionSinkWorker();
+    releasePrimaryTabLock();
+  });
   final appEvents = AppEvents();
   // Crash recovery is deferred to after the first frame so first paint
   // doesn't wait on the store's first open. It rides the store's
@@ -141,7 +151,9 @@ void main() async {
   rigState.addListener(() => dataHub.updateLoadCells(rigState.channelCells));
 
   // Hand the NEXT hot-restart generation a way to tear this one down (web
-  // debug only). Fire-and-forget: the callbacks are silenced synchronously
+  // debug only). This full registration replaces the minimal one made
+  // right after the lock was acquired. Fire-and-forget: the callbacks are
+  // silenced synchronously
   // inside shutdownForHotRestart; the GATT disconnect completes async. The
   // sink worker terminate is synchronous too — its sync access handles lock
   // the session files, so they must die before the new generation's storage

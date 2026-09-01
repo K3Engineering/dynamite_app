@@ -247,8 +247,8 @@ void main() {
     'a storage failure mid-recording auto-stops and surfaces as an event',
     () async {
       // Real backend, but every post-create append throws: the writer latches
-      // the failure, and the controller's next batch must auto-stop instead
-      // of recording into the void.
+      // the failure, and its error callback must auto-stop the recording
+      // without waiting for another batch.
       SessionStore.instance = SessionStore.over(
         _FailAppendBackend(IoSessionFilesBackend('${tmp.path}/sessions')),
       );
@@ -276,12 +276,14 @@ void main() {
       addTearDown(sub.cancel);
 
       expect(start(recording), isA<StartSessionOk>());
-      // Keep feeding batches: the first creates the session intact, the
-      // second's append throws asynchronously inside the write queue, and a
-      // later batch then sees the latched error and auto-stops (bounded, in
-      // case the auto-stop never comes — the expect below names that bug).
+      // Two batches and no more: the first creates the session intact, the
+      // second's append throws asynchronously inside the write queue. No
+      // further data arrives — if the stop still depended on discovering
+      // the latched error at the next batch, sessionInProgress would stay
+      // true here (the waits below are only a bound for the async ladder).
+      feedFrames(hub, 10);
+      feedFrames(hub, 10);
       for (var i = 0; i < 20 && recording.sessionInProgress; i++) {
-        feedFrames(hub, 10);
         await Future<void>.delayed(const Duration(milliseconds: 50));
       }
 

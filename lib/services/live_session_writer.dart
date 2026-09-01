@@ -277,6 +277,21 @@ class LiveSessionWriter {
   Object? writeError;
   bool get hasError => writeError != null;
 
+  /// Called with the first failure the moment it latches (either latch
+  /// point below): recording's auto-stop rides this rather than polling
+  /// [hasError] on a later batch, so a failed last packet under an idle
+  /// feed can't leave a session "recording" into the void until manual
+  /// stop. Set by the recording controller right after construction.
+  void Function(Object error)? onWriteError;
+
+  /// Latch [error] as the first failure (a later failure keeps the first
+  /// as the cause) and notify [onWriteError] exactly once.
+  void _latchError(Object error) {
+    if (writeError != null) return;
+    writeError = error;
+    onWriteError?.call(error);
+  }
+
   /// Serializes all writes. Each enqueued op awaits the previous one.
   Future<void> _writeQueue = Future.value();
 
@@ -305,17 +320,17 @@ class LiveSessionWriter {
     // Backpressure latch: once the accepted-but-unwritten backlog exceeds the
     // source ring's capacity, storage is a full ring behind the producer and
     // the backlog only grows into a possibly wedged sink. Latch an error so
-    // the session auto-stops loudly via the existing hasError path. Checked
-    // at accept time — it trips even if the write queue never runs again.
+    // the session auto-stops loudly via [onWriteError]. Checked at accept
+    // time — it trips even if the write queue never runs again.
     if (writeError == null && _unflushedSamples > sourceRingCapacity) {
-      writeError = StateError(
+      final error = StateError(
         'Storage fell more than the ring capacity ($sourceRingCapacity '
         'samples) behind the live stream; aborting recording',
       );
       debugPrint(
-        'Session storage backpressure tripped (session $sessionId): '
-        '$writeError',
+        'Session storage backpressure tripped (session $sessionId): $error',
       );
+      _latchError(error);
     }
 
     // Pack real values first, then mark the slice's gap frames in-band.
@@ -349,8 +364,8 @@ class LiveSessionWriter {
         // Latch the first failure; stop accumulating so we don't grow
         // unbounded after the sink has gone away (e.g. disk full / web quota
         // exceeded).
-        writeError ??= e;
         debugPrint('Session write failed (session $sessionId): $e');
+        _latchError(e);
       } finally {
         _unflushedSamples -= count;
       }
