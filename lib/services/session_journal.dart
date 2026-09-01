@@ -7,9 +7,11 @@
 ///
 /// Append-only means damage is tail-only: a crash mid-write leaves a torn
 /// final line, which the reader drops by construction — a line without its
-/// terminating newline never parses, and a torn JSON document never
-/// decodes. A torn edit costs at most that one edit; line 1 failing to
-/// parse makes the session unreconstructable.
+/// terminating newline is never parsed at all. A torn edit costs at most
+/// that one edit; line 1 failing to parse makes the session
+/// unreconstructable. A COMPLETE line that fails to parse is persisted
+/// corruption, not a crash tear — the reader throws on it rather than
+/// silently keeping the preceding state.
 ///
 /// Line 1 schema (breaking changes bump `version`; additive changes add
 /// keys, which readers ignore):
@@ -318,9 +320,10 @@ Uint8List encodeSessionEdit(SessionEdit edit) =>
 
 /// Parse the journal bytes. Line 1 must be present, newline-terminated and
 /// strictly valid — anything else throws [FormatException] (the caller's
-/// damaged-session verdict). Later lines stop at the first unparseable one
-/// (a torn trailing line, or a residual segment after one): earlier content
-/// stands.
+/// damaged-session verdict). So must every COMPLETE later line: a
+/// newline-terminated line that fails to parse is persisted corruption
+/// (the write path appends whole lines only), never a crash tear. Only an
+/// unterminated trailing fragment is a legitimate tear and is dropped.
 SessionJournal parseSessionJournal(Uint8List bytes) {
   var offset = 0;
   SessionMeta? meta;
@@ -338,18 +341,13 @@ SessionJournal parseSessionJournal(Uint8List bytes) {
       meta = SessionMeta.fromJson(
         _object(utf8.decode(lineBytes), 'journal header'),
       );
-      completeBytes = offset;
-      continue;
-    }
-    try {
+    } else {
       edit = SessionEdit.fromJson(
         _object(utf8.decode(lineBytes), 'journal edit'),
         meta.channelCount,
       );
-      completeBytes = offset;
-    } on FormatException {
-      break; // torn tail: earlier lines stand
     }
+    completeBytes = offset;
   }
   if (meta == null) {
     throw const FormatException('journal: no complete header line');

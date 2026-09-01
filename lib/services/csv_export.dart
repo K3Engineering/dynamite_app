@@ -213,9 +213,9 @@ Map<String, Object?> _metadata(
     'sample_rate_hz': data.sampleRate,
     'ssn_origin': ssnOrigin,
     'converted_unit': unit.csvSymbol,
-    // Storage-integrity disclosures per the format spec; this store's only
-    // damage shapes (tail truncation, unreadable-at-list metadata) never
-    // survive into a loaded session, so the list is always empty.
+    // Storage-integrity disclosures per the format spec; this store's
+    // damage shapes (mid-frame-torn data, unreadable-at-list metadata)
+    // never survive into a loaded session, so the list is always empty.
     'warnings': const <String>[],
     // The recording apparatus (frozen at recording start): identity from
     // the session row's deviceInfoJson (nulls for a session without

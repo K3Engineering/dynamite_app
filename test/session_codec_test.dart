@@ -89,17 +89,28 @@ void main() {
       expect(codec.decodeWithGaps(bytes).gaps.toJson(), '[[1,4]]');
     });
 
-    test('trailing partial bytes are ignored', () {
+    test('trailing partial bytes throw — a torn tail is damage', () {
       final bytes = Uint8List.fromList([
         ...packFrames(frames.sublist(0, 2)),
         1,
         2,
         3,
       ]);
-      codec.fillGapSentinels(bytes, [(1, 2)]);
-      final decoded = codec.decodeWithGaps(bytes);
-      expect(decoded.channels[0].length, 2);
-      expect(decoded.gaps.toJson(), '[[1,2]]');
+      expect(() => codec.decodeWithGaps(bytes), throwsStateError);
+    });
+
+    test('a non-sentinel value outside the ADC range throws', () {
+      final bytes = packFrames(frames);
+      ByteData.sublistView(
+        bytes,
+      ).setInt32(8, SessionChunkCodec.maxAdcValue + 1, Endian.little);
+      expect(() => codec.decodeWithGaps(bytes), throwsStateError);
+
+      final bytes2 = packFrames(frames);
+      ByteData.sublistView(
+        bytes2,
+      ).setInt32(4, SessionChunkCodec.minAdcValue - 1, Endian.little);
+      expect(() => codec.decodeWithGaps(bytes2), throwsStateError);
     });
 
     test('a sentinel first frame throws — hold-fill has no predecessor', () {

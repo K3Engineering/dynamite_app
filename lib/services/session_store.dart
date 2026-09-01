@@ -373,8 +373,21 @@ class SessionStore {
       );
     }
 
-    final frames =
-        dataBytes ~/ SessionChunkCodec(journal.meta.channelCount).frameBytes;
+    final frameBytes = SessionChunkCodec(journal.meta.channelCount).frameBytes;
+    if (dataBytes % frameBytes != 0) {
+      // A write torn mid-frame: no prefix of this file is the recording,
+      // so the session is damaged rather than silently shortened.
+      return _DamagedEntry(
+        DamagedSession(
+          id: id,
+          hasData: hasData,
+          hasMeta: hasMeta,
+          reason: 'Sample data ends mid-frame',
+        ),
+        byteTotal: byteTotal,
+      );
+    }
+    final frames = dataBytes ~/ frameBytes;
     if (frames < 1) {
       // Crash-at-create artifact: the header line landed, the first data
       // append never did.
@@ -423,10 +436,11 @@ class SessionStore {
     );
   }
 
-  /// Read a session back: strict journal, frames = whole records in
-  /// data.raw, sentinel runs becoming the [SessionData.gaps] hold-fills.
-  /// A broken header or a frame shape the write path never produces
-  /// throws (the detail view renders it as an error state).
+  /// Read a session back: strict journal, whole frames from data.raw,
+  /// sentinel runs becoming the [SessionData.gaps] hold-fills. A broken
+  /// header, a byte count that doesn't divide into frames, or a frame
+  /// shape the write path never produces throws (the detail view renders
+  /// it as an error state).
   Future<SessionData> loadSession(String id) => _withCatalog((files) async {
     final journalBytes = await files.readJournal(id);
     if (journalBytes == null) {

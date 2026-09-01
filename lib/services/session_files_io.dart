@@ -137,6 +137,19 @@ class IoSessionFilesBackend implements SessionFilesBackend {
 
   @override
   Future<void> delete(String id) async {
+    // Refuse BEFORE destroying anything: an entry this layout never wrote
+    // means the directory isn't purely ours, so the delete fails with the
+    // session still whole — not after its files are already gone.
+    const known = {sessionJournalFile, sessionDataFile, sessionFinalFile};
+    await for (final entry in _dir(id).list()) {
+      final name = entry.uri.pathSegments.lastWhere((s) => s.isNotEmpty);
+      if (entry is! File || !known.contains(name)) {
+        throw FileSystemException(
+          'session directory $id holds an entry the layout never wrote',
+          entry.path,
+        );
+      }
+    }
     for (final file in [_final(id), _data(id), _journal(id)]) {
       if (await file.exists()) await file.delete();
     }

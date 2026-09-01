@@ -886,7 +886,7 @@ void main() {
       },
     );
 
-    test('a torn data.raw tail truncates to whole frames on load', () async {
+    test('a torn data.raw tail is damage, not a truncated load', () async {
       const id = '2026-08-28T14-30-12-tail';
       await seedSession(
         id,
@@ -902,10 +902,13 @@ void main() {
       await handle.writeFrom(Uint8List(6));
       await handle.close();
 
-      final loaded = await store.loadSession(id);
-      expect(loaded.sampleCount, 2);
-      expect(loaded.channels[0], [3, 7]);
-      expect(loaded.gaps.contains(0), isFalse);
+      // The session lists as damaged, never as a silently shortened
+      // healthy one, and it cannot be loaded or exported normally.
+      final damaged = (await catalog()).damaged;
+      expect(damaged, hasLength(1));
+      expect(damaged.single.id, id);
+      expect(damaged.single.reason, contains('mid-frame'));
+      await expectLater(store.loadSession(id), throwsStateError);
     });
 
     test(
@@ -1094,8 +1097,9 @@ void main() {
       await store.deleteSession(partial);
       expect(Directory('${tmp.path}/sessions/$partial').existsSync(), isFalse);
 
-      // An entry the store never wrote is never destroyed: the directory
-      // delete refuses loudly instead.
+      // An entry the store never wrote is never destroyed: the delete
+      // refuses loudly BEFORE touching anything, so the failed operation
+      // leaves the session intact, not half-destroyed.
       const id = '2026-08-28T14-30-12-keep';
       await seedSession(id);
       final intruder = File('${tmp.path}/sessions/$id/not-ours.txt')
@@ -1105,6 +1109,9 @@ void main() {
         throwsA(isA<FileSystemException>()),
       );
       expect(intruder.existsSync(), isTrue);
+      expect(File('${tmp.path}/sessions/$id/meta').existsSync(), isTrue);
+      expect(File('${tmp.path}/sessions/$id/data.raw').existsSync(), isTrue);
+      expect((await catalog()).session(id), isNotNull);
 
       // With the intruder gone, the same delete succeeds.
       intruder.deleteSync();

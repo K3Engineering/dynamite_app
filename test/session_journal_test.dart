@@ -190,15 +190,16 @@ void main() {
       );
     });
 
-    test('a torn middle edit stops parsing at itself', () {
+    test('a complete malformed edit line is corruption, not a tear', () {
+      // Newline-terminated garbage is persisted corruption: the write path
+      // appends whole lines, so a complete line that fails to parse must
+      // fail loudly instead of silently keeping the preceding edit.
       final bytes = concatBytes([
         encodeSessionMeta(meta),
         utf8.encode('garbage\n'),
         encodeSessionEdit(edit1),
       ]);
-      final journal = parseSessionJournal(bytes);
-      expect(journal.edit, isNull);
-      expect(journal.completeBytes, encodeSessionMeta(meta).length);
+      expect(() => parseSessionJournal(bytes), throwsFormatException);
     });
   });
 

@@ -35,7 +35,8 @@ class SessionChunkCodec {
   /// Byte length of one packed sample frame.
   int get frameBytes => channelCount * 4;
 
-  /// Whole sample frames in [bytes] (trailing partial bytes are ignored).
+  /// Whole sample frames in [bytes]. Callers decide what trailing partial
+  /// bytes mean; [decodeWithGaps] rejects them as a torn write.
   int framesOf(Uint8List bytes) => bytes.lengthInBytes ~/ frameBytes;
 
   /// Pack [frames] samples as sample-major little-endian int32 bytes (the
@@ -94,11 +95,21 @@ class SessionChunkCodec {
   /// Decode [bytes] into per-channel arrays, turning sentinel frames into a
   /// [GapList] and hold-filling the channel arrays with each channel's
   /// previous real value (the held-value representation the graphs, stats
-  /// and exports already consume). A gap frame is sentinel on ALL channels;
-  /// a frame mixing sentinel and real values, or a sentinel first frame
-  /// (recording starts never open with a gap, so hold-fill has no
-  /// predecessor), is not a state the write path produces and throws.
+  /// and exports already consume). [bytes] must be an exact multiple of
+  /// [frameBytes] — a torn tail is a corrupt recording, not a shorter one.
+  /// A gap frame is sentinel on ALL channels; a frame mixing sentinel and
+  /// real values, a sentinel first frame (recording starts never open with
+  /// a gap, so hold-fill has no predecessor), or a non-sentinel value
+  /// outside the 24-bit ADC range are states the write path never produces
+  /// and throw.
   ({List<Int32List> channels, GapList gaps}) decodeWithGaps(Uint8List bytes) {
+    if (bytes.lengthInBytes % frameBytes != 0) {
+      throw StateError(
+        '${bytes.lengthInBytes} data bytes do not divide into whole '
+        '$frameBytes-byte frames — a torn mid-frame write is damage, '
+        'not a shorter recording',
+      );
+    }
     final view = ByteData.sublistView(bytes);
     final frames = framesOf(bytes);
     final channels = List.generate(channelCount, (_) => Int32List(frames));
@@ -116,7 +127,16 @@ class SessionChunkCodec {
           );
         }
         isGap = hereGap;
-        if (!isGap) channels[ch][s] = raw;
+        if (!isGap) {
+          if (raw < minAdcValue || raw > maxAdcValue) {
+            throw StateError(
+              'frame $s channel $ch holds $raw, outside the 24-bit ADC '
+              'range — the encoder never emits one, so this is a corrupt '
+              'file, not a measurement',
+            );
+          }
+          channels[ch][s] = raw;
+        }
       }
       if (isGap) {
         if (s == 0) {

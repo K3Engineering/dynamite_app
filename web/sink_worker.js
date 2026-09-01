@@ -62,6 +62,18 @@ async function existingSessionDir(id) {
   return dir;
 }
 
+// FileSystemSyncAccessHandle.write() returns the bytes written and may
+// short-write. Every write here is a complete record (a packet, a journal
+// line) whose flush makes it durable and whose ack the page treats as
+// authoritative — a partial write acked as whole is silent corruption, so
+// a short write fails the op instead.
+function writeAll(handle, bytes, at) {
+  const written = handle.write(bytes, { at });
+  if (written !== bytes.byteLength) {
+    throw new Error(`short write: ${written} of ${bytes.byteLength} bytes`);
+  }
+}
+
 async function fileBytes(dir, name) {
   let fh;
   try {
@@ -81,7 +93,7 @@ async function appendFile(dir, name, bytes) {
   const fh = await dir.getFileHandle(name, { create: true });
   const handle = await fh.createSyncAccessHandle();
   try {
-    handle.write(bytes, { at: handle.getSize() });
+    writeAll(handle, bytes, handle.getSize());
     handle.flush();
   } finally {
     handle.close();
@@ -104,7 +116,7 @@ async function probe() {
     try {
       const out = new Uint8Array(1024);
       for (let i = 0; i < out.length; i++) out[i] = (i * 31 + 7) & 0xff;
-      handle.write(out, { at: 0 });
+      writeAll(handle, out, 0);
       handle.flush();
       const back = new Uint8Array(out.length);
       handle.read(back, { at: 0 });
@@ -155,7 +167,7 @@ async function createSession(msg) {
   const metaFh = await dir.getFileHandle(JOURNAL_FILE, { create: true });
   const meta = await metaFh.createSyncAccessHandle();
   try {
-    meta.write(msg.bytes, { at: 0 });
+    writeAll(meta, msg.bytes, 0);
     meta.flush();
   } finally {
     meta.close();
@@ -163,7 +175,7 @@ async function createSession(msg) {
   const dataFh = await dir.getFileHandle(DATA_FILE, { create: true });
   const data = await dataFh.createSyncAccessHandle();
   try {
-    data.write(msg.bytes2, { at: 0 });
+    writeAll(data, msg.bytes2, 0);
     data.flush();
   } catch (e) {
     data.close();
@@ -178,7 +190,7 @@ async function createSession(msg) {
 function appendData(msg) {
   const handle = openSinks.get(msg.id);
   if (!handle) throw new Error(`append on a closed or unknown sink: ${msg.id}`);
-  handle.write(msg.bytes, { at: handle.getSize() });
+  writeAll(handle, msg.bytes, handle.getSize());
   handle.flush();
   return handle.getSize();
 }
@@ -278,10 +290,10 @@ async function appendJournal(msg) {
 
 // The store's only destructive op, only ever a user gesture on the page
 // side. A still-open sink goes first so no handle outlives its directory.
-// Only bytes this layout can name are destroyed: the three known files are
-// removed individually (absent ones skipped), then the now-empty directory
-// — a non-recursive removeEntry throws when anything unexpected still sits
-// in it, instead of destroying bytes the store never wrote.
+// Only bytes this layout can name are destroyed: the directory's entries
+// are all verified to be the three known FILES before anything is removed
+// — an unexpected entry fails the op with the session still whole, not
+// after its files are already gone.
 async function deleteSession(msg) {
   const handle = openSinks.get(msg.id);
   if (handle) {
@@ -290,6 +302,17 @@ async function deleteSession(msg) {
   }
   const dir = await sessionDir(msg.id);
   if (!dir) throw new Error(`no session directory ${msg.id}`);
+  for await (const entry of dir.values()) {
+    if (
+      entry.kind !== 'file' ||
+      ![JOURNAL_FILE, DATA_FILE, FINAL_FILE].includes(entry.name)
+    ) {
+      throw new Error(
+        `session ${msg.id} holds an entry the layout never wrote: ` +
+          `${entry.kind} ${entry.name}`,
+      );
+    }
+  }
   for (const name of [JOURNAL_FILE, DATA_FILE, FINAL_FILE]) {
     try {
       await dir.removeEntry(name);

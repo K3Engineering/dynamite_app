@@ -5,8 +5,10 @@ import 'dart:typed_data';
 /// (append-only packed int32-LE frames, gap sentinels in-band) and
 /// [sessionFinalFile] (an empty marker — existence IS the completed bit).
 /// Two append-only files and one write-once marker; nothing is rewritten in
-/// place, so damage is tail-only: loaders truncate to complete records and a
-/// torn trailing journal line costs at most that one edit.
+/// place, so damage is tail-only: an unterminated trailing journal line
+/// costs at most that one edit, and a data.raw that doesn't divide into
+/// whole frames renders the session damaged instead of being silently
+/// shortened.
 const sessionJournalFile = 'meta';
 const sessionDataFile = 'data.raw';
 const sessionFinalFile = 'final';
