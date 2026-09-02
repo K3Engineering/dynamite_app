@@ -19,11 +19,6 @@ import 'services/feed_health_tracker.dart';
 // generation runs first thing in main(). No-op stub on native platforms.
 import 'services/hot_restart_cleanup_stub.dart'
     if (dart.library.js_interop) 'services/hot_restart_cleanup_web.dart';
-// Primary-tab gate: on web exactly one browser tab runs the app; the others
-// sit on the waiting overlay until the browser hands the lock over (locks
-// auto-release on tab close/crash). Always-primary no-op on native.
-import 'services/primary_tab_lock_stub.dart'
-    if (dart.library.js_interop) 'services/primary_tab_lock_web.dart';
 import 'services/recording_controller.dart';
 import 'services/rig_state.dart';
 import 'services/session_files.dart';
@@ -31,7 +26,6 @@ import 'services/session_metadata.dart';
 import 'services/session_storage.dart';
 import 'services/stream_reset_coordinator.dart';
 import 'services/wakelock_policy.dart';
-import 'screens/another_tab_screen.dart';
 import 'screens/app_shell.dart';
 import 'status_colors.dart';
 
@@ -43,25 +37,16 @@ void main() async {
   // stops spamming the disposed engine view and its GATT connection is
   // released for us to reconnect.
   runPreviousHotRestartCleanup();
-  // Primary-tab gate: everything below builds the running app, so it must
-  // not happen until this tab holds the lock. A tab that lost stays on the
-  // waiting overlay with no services behind it (nothing to mutate means
-  // nothing to guard); when the primary tab dies, the browser's lock queue
-  // grants this tab and this same startup path runs. On native the await
-  // resolves immediately. The second runApp below replaces the overlay root
-  // with the real app.
-  runApp(const MaterialApp(title: 'Dynamite', home: AnotherTabScreen()));
-  await acquirePrimaryTabLock();
+  // The web primary-tab gate lives in web/flutter_bootstrap.js: a losing
+  // tab never boots the engine, so main() only ever runs in the tab that
+  // holds the lock.
   // Minimal hot-restart cleanup registered immediately (web debug): from
   // here until the full teardown registration below replaces it, the only
-  // resources this generation can hold are the lock and the sink worker.
-  // Without this, a restart landing in the startup window would leave the
-  // never-settling lock request unaborted and dead-lock the next
-  // generation on the waiting overlay.
-  registerHotRestartCleanup(() {
-    terminateSessionSinkWorker();
-    releasePrimaryTabLock();
-  });
+  // resource this generation can hold is the sink worker. Without this, a
+  // restart landing in the startup window would leave the dying
+  // generation's sync access handles on the session files when the new
+  // generation's storage opens (only matters mid-recording).
+  registerHotRestartCleanup(terminateSessionSinkWorker);
   final appEvents = AppEvents();
   // Session storage installs lazily on first use and needs no startup pass:
   // an interrupted-on-crash recording just lists as such (no recovery, no
@@ -136,20 +121,15 @@ void main() async {
   rigState.addListener(() => dataHub.updateLoadCells(rigState.channelCells));
 
   // Hand the NEXT hot-restart generation a way to tear this one down (web
-  // debug only). This full registration replaces the minimal one made
-  // right after the lock was acquired. Fire-and-forget: the callbacks are
-  // silenced synchronously
+  // debug only). This full registration replaces the minimal one made at
+  // startup. Fire-and-forget: the callbacks are silenced synchronously
   // inside shutdownForHotRestart; the GATT disconnect completes async. The
   // sink worker terminate is synchronous too — its sync access handles lock
   // the session files, so they must die before the new generation's storage
-  // opens (only matters mid-recording). The primary-tab lock likewise goes
-  // back before the new generation re-requests it — re-requesting a lock
-  // this (dying) generation still holds or is queued for would block on
-  // itself.
+  // opens (only matters mid-recording).
   registerHotRestartCleanup(() {
     unawaited(linkManager.shutdownForHotRestart());
     terminateSessionSinkWorker();
-    releasePrimaryTabLock();
   });
   // Layer 2 (web debug only): the engine view is disposed by
   // `ext.flutter.disassemble` BEFORE the new generation boots, so packets
