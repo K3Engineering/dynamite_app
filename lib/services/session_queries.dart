@@ -16,8 +16,8 @@ ValueListenable<SessionCatalogState> sessionCatalogState() =>
 Future<void> ensureSessionCatalogLoaded() =>
     SessionStore.instance.ensureCatalogLoaded();
 
-/// Total bytes under the sessions root — the native capacity strip's used
-/// portion.
+/// Total bytes under the sessions root — the capacity strip's used
+/// portion, on both web and native.
 Future<int> sessionsUsedBytes() => SessionStore.instance.usedBytes();
 
 /// The byte-size pulse (append acks included) the capacity strip cues on.
