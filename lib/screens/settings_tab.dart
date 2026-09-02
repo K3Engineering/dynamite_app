@@ -133,19 +133,6 @@ class _SettingsTabState extends State<SettingsTab> {
               ),
               const SizedBox(height: 16),
 
-              // Limit warnings: the master switch. Disabling removes the 1.2 V
-              // rail chrome (forbidden-zone fill) from the chart — but not the
-              // at-the-rail clip icon in the numbers (a railed converter is data
-              // validity, not a warning preference).
-              SwitchListTile(
-                title: const Text('Limit warnings'),
-                subtitle: const Text('Clipped-range indication on the chart'),
-                value: settings.limitWarningsEnabled,
-                onChanged: settings.setLimitWarningsEnabled,
-                contentPadding: EdgeInsets.zero,
-              ),
-              const SizedBox(height: 8),
-
               // Wakelock
               SwitchListTile(
                 title: const Text('Keep screen awake'),

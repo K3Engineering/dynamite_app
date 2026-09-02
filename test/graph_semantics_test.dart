@@ -51,7 +51,6 @@ void main() {
           data: data,
           ctrl: GraphController(),
           unit: DisplayUnit.mVv,
-          limitWarningsEnabled: true,
           activeChannels: activeChannels,
           isLiveGraph: isLiveGraph,
           showDerivative: showDerivative,

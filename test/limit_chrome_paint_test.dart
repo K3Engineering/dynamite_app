@@ -59,7 +59,6 @@ void main() {
           data: hub,
           ctrl: ctrl,
           unit: DisplayUnit.mVv,
-          limitWarningsEnabled: true,
           activeChannels: [for (int i = 0; i < channels; i++) i],
         ),
       ),

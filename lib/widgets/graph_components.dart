@@ -454,10 +454,6 @@ class GraphWorkspace extends StatefulWidget {
   /// (see [DisplayUnit.effective]) in build.
   final DisplayUnit unit;
 
-  /// Master switch for the rail/forbidden-zone chrome (the app's
-  /// limit-warnings setting, handed in as a scalar).
-  final bool limitWarningsEnabled;
-
   /// Indices of the channels to plot. Kept per view (live tab, each session)
   /// rather than in the app settings, so each surface chooses its own set.
   final List<int> activeChannels;
@@ -469,7 +465,6 @@ class GraphWorkspace extends StatefulWidget {
     required this.data,
     required this.ctrl,
     required this.unit,
-    required this.limitWarningsEnabled,
     required this.activeChannels,
     this.showDerivative = false,
     this.isLiveGraph = true,
@@ -611,7 +606,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                       ctrl: widget.ctrl,
                       painter: _ForceGraphPainter(
                         widget.data,
-                        widget.limitWarningsEnabled,
                         widget.ctrl,
                         unit: unit,
                         activeChannels: drawableChannels,
@@ -634,7 +628,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                         ctrl: widget.ctrl,
                         painter: _DerivativeGraphPainter(
                           widget.data,
-                          widget.limitWarningsEnabled,
                           widget.ctrl,
                           unit: unit,
                           activeChannels: drawableChannels,
@@ -1689,7 +1682,6 @@ _GraphLayout? _setupGraphFrame(
 /// [yTickLabel] -- plus layout tweaks and cache-key extras.
 abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final GraphDataSource _data;
-  final bool _limitWarningsEnabled;
   final DisplayUnit _unit;
   final GraphController _ctrl;
 
@@ -1712,7 +1704,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   _TimeSeriesGraphPainter(
     this._data,
-    this._limitWarningsEnabled,
     this._ctrl, {
     required DisplayUnit unit,
     required List<int> activeChannels,
@@ -1889,15 +1880,14 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 }
 
 /// Force graph: each channel's tared value in the selected display unit.
-/// The limit chrome (rail bars) draws in [drawGutterChrome], in the right
-/// gutter under the axis labels.
+/// The limit chrome (rail and load-cell zone bars) draws in
+/// [drawGutterChrome], in the right gutter under the axis labels.
 class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   @override
   final bool showXLabels;
 
   _ForceGraphPainter(
     super.data,
-    super.limitWarningsEnabled,
     super.ctrl, {
     this.showXLabels = true,
     required super.unit,
@@ -1985,25 +1975,38 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     return _computeYRange(yMin, yMax, unit);
   }
 
-  /// Rail bars in the right gutter, gated on [_limitWarningsEnabled] (the
-  /// app's limit-warnings master switch). One fixed-width column per channel;
-  /// each bar runs from the plot edge to that channel's ADC rail, projected
-  /// through its own unit converter (post-tare). Clamping to the plot rect
-  /// collapses beyond-view rails to nothing.
+  /// Limit bars in the right gutter. One fixed-width column per channel; two
+  /// zones per polarity: the rail zone (saturated) spans from the ADC rail to
+  /// the plot edge, and for channels with a load cell the capacity zone
+  /// (subtle) spans from 100% of the cell's capacity to the rail. Values are
+  /// projected through the channel's own unit converter, net of tare: net is
+  /// 0 at the tare point, so ±capacity nets to ±sensitivity·span·scale via
+  /// the terminal-slope diff map (position-free, like every other diff
+  /// consumer — the piecewise-local error is ppm-scale). Clamping to the
+  /// plot rect collapses off-view and empty zones (a cell out-ranging the
+  /// ADC) to nothing.
   @override
   void drawGutterChrome(
     Canvas canvas,
     Size graphSz,
     double Function(double value) valueToY,
   ) {
-    if (!_limitWarningsEnabled) return;
-
-    final paint = Paint()..color = colorScheme.error.withAlpha(22);
+    final railPaint = Paint()..color = colorScheme.error.withAlpha(48);
+    final cellPaint = Paint()..color = colorScheme.error.withAlpha(22);
     const colW = _kGraphRightSpace / kAdcChannelCount;
 
     for (final ch in _activeChannels) {
-      final conv = _data.converterFor(ch).netMap(_unit);
+      final converter = _data.converterFor(ch);
+      final conv = converter.netMap(_unit);
       if (conv == null) continue;
+      final cell = converter.calibration.loadCell;
+      final diffConv = converter.diffMap(_unit);
+      final countsPerMvV = converter.calibration.board.sensitivityCountsPerMvV;
+      // Net display value at 100% cell capacity; null without a cell or a
+      // resolved board sensitivity to size it with.
+      final cellNet = cell != null && diffConv != null && countsPerMvV != null
+          ? diffConv(cell.sensitivityMvV * countsPerMvV)
+          : null;
       final left = graphSz.width + colW * ch;
       for (final positive in [true, false]) {
         final clipRaw = positive
@@ -2012,11 +2015,19 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
         final railY = valueToY(
           conv(clipRaw.toDouble()),
         ).clamp(0.0, graphSz.height).toDouble();
-        final bar = positive
+        final railBar = positive
             ? Rect.fromLTRB(left, 0.0, left + colW, railY)
             : Rect.fromLTRB(left, railY, left + colW, graphSz.height);
-        if (bar.height <= 0) continue;
-        canvas.drawRect(bar, paint);
+        if (railBar.height > 0) canvas.drawRect(railBar, railPaint);
+
+        if (cellNet == null) continue;
+        final cellY = valueToY(
+          positive ? cellNet : -cellNet,
+        ).clamp(0.0, graphSz.height).toDouble();
+        final cellBar = positive
+            ? Rect.fromLTRB(left, railY, left + colW, cellY)
+            : Rect.fromLTRB(left, cellY, left + colW, railY);
+        if (cellBar.height > 0) canvas.drawRect(cellBar, cellPaint);
       }
     }
   }
@@ -2034,7 +2045,6 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
 class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   _DerivativeGraphPainter(
     super.data,
-    super.limitWarningsEnabled,
     super.ctrl, {
     required super.unit,
     required super.activeChannels,

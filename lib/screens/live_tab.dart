@@ -269,7 +269,6 @@ class _LiveTabState extends State<LiveTab> {
       data: hub,
       ctrl: _graphCtrl,
       unit: settings.displayUnit,
-      limitWarningsEnabled: settings.limitWarningsEnabled,
       activeChannels: settings.activeChannelIndices,
       showDerivative: showDerivative,
     );
