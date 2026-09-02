@@ -75,13 +75,11 @@ class SessionStorage {
   }
 
   /// Finalize a streaming session: drain the write queue, release the sink,
-  /// verify the persisted length against the accepted-frames claim, and
-  /// write the completion marker — ONLY when every step above came back
-  /// clean. The marker is the catalog's entire complete-verdict, so a
-  /// finalize that latched any failure (a mid-recording write error, a
-  /// sink-close failure, or a count mismatch) must not write it: the
-  /// session lists as interrupted instead — fully loadable and exportable,
-  /// flagged forever, never listed as complete.
+  /// verify the persisted length against the accepted-frames claim, and —
+  /// ONLY when every step above came back clean — write the completion
+  /// marker (see SessionFilesBackend for the marker's write discipline). A
+  /// latched failure (a mid-recording write error, a sink-close failure, or
+  /// a count mismatch) leaves no marker: the session lists as interrupted.
   ///
   /// If no data ever reached storage, the directory was never created and
   /// there is nothing to finalize (recording nothing saves nothing).
@@ -93,6 +91,9 @@ class SessionStorage {
   static Future<Object?> finalizeSession({
     required LiveSessionWriter writer,
   }) async {
+    // TODO(known-issue): dart:io file ops have no timeout — a wedged
+    // flush() (an ailing disk) hangs finalize, and stopSession with it,
+    // forever. Web is covered by SinkWorkerTransport's per-request timeout.
     await writer.flush();
     final sessionId = writer.sessionId;
     Object? error = writer.writeError;

@@ -94,8 +94,7 @@ extension DisplayUnitCsv on DisplayUnit {
 /// [recordedAtIso] is the session row's frozen `recorded_at` string (the
 /// local wall clock with offset); `recorded_unix` is derived from it here,
 /// so the two fields can never disagree. [deviceInfo] is the session
-/// row's frozen device-identity block (see [toSessionDeviceMetadata]);
-/// null degrades to all-null placeholders rather than failing the export.
+/// row's frozen device-identity block (see [toSessionDeviceMetadata]).
 ///
 /// TODO(perf): the whole CSV is built in memory as one string — the format
 /// milestone will replace this with a chunked writer (see
@@ -105,7 +104,7 @@ String buildSessionCsv(
   DisplayUnit unit, {
   required String recordedAtIso,
   required String generator,
-  Map<String, Object?>? deviceInfo,
+  required Map<String, Object?> deviceInfo,
 
   /// The recording never completed (no finalize endorsement): every byte
   /// in the file is valid, but the tail may be missing. Emitted as the
@@ -117,7 +116,6 @@ String buildSessionCsv(
   // The writer recorded the true device counter at the session's first
   // sample when the row was created.
   final int ssnOrigin = data.ssnOrigin;
-  final device = deviceInfo ?? toSessionDeviceMetadata(name: null, info: null);
 
   // Per-channel quartet-2 cell formatters, computed once from the session's
   // frozen calibration; each closure folds in the column's fixed-point
@@ -134,7 +132,7 @@ String buildSessionCsv(
     ssnOrigin,
     recordedAtIso,
     generator,
-    device,
+    deviceInfo,
     n,
     interrupted,
   );

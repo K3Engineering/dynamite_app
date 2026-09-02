@@ -1,7 +1,9 @@
 /// Session ids (the session directory names) look like
 /// `2026-08-28T14-30-12-x7f2`: a fixed-width local wall-clock timestamp
 /// (colons replaced by dashes for path-safety) plus a short random suffix.
-/// Lexical order is chronological order. The suffix — not the timestamp —
+/// Lexical order is chronological order — except within a DST fallback
+/// hour, whose local wall-clock strings repeat (offset-free encoding). The
+/// suffix — not the timestamp —
 /// carries uniqueness: same-second creates and backward clock jumps would
 /// silently merge two sessions into one directory otherwise, and uniqueness
 /// must be a property of the format, not of how the app behaves.

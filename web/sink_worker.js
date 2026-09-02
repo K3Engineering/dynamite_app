@@ -209,13 +209,9 @@ async function readData(msg) {
   return dir ? await fileBytes(dir, DATA_FILE) : null;
 }
 
-// A stat, not a read: the listing calls this per session on every refresh
-// (including the recording tab's in-flight dir), so it must report the size
-// without materializing bytes — and a live dir's exclusive sync handle
-// comes from openSinks, since a second one would fail.
+// A stat, not a read: the listing calls this per session on every refresh,
+// so it must report the size without materializing bytes.
 async function dataByteLength(msg) {
-  const live = openSinks.get(msg.id);
-  if (live) return live.getSize();
   const dir = await sessionDir(msg.id);
   if (!dir) return 0;
   let fh;

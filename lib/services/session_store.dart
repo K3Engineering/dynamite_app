@@ -12,12 +12,10 @@ import 'session_id.dart';
 import 'session_journal.dart';
 import 'session_store_backend.dart';
 
-/// The per-session file store. Each completed recording is a directory under
-/// the sessions root (see SessionFilesBackend for the layout and the
-/// tail-only damage model); the journal holds all metadata, data.raw holds
-/// all frames, and the completion marker is written only by a finalize that
-/// verified the persisted length against the accepted-frame count — nothing
-/// else ever writes it, so nothing can manufacture a complete session.
+/// The per-session file store. See SessionFilesBackend for the file
+/// layout, the tail-only damage model, and the completion marker's write
+/// discipline; this class owns the catalog cache and the serialized
+/// operation queue on top of it.
 class SessionStore {
   SessionStore._(Future<SessionFilesBackend> backend) : _backend = backend;
 
@@ -66,15 +64,14 @@ class SessionStore {
   /// The capacity strip's liveness rides the recording cadence through this.
   final StreamController<void> _bytes = StreamController.broadcast();
 
-  void _bumpBytes() {
-    if (!_bytes.isClosed) _bytes.add(null);
-  }
+  void _bumpBytes() => _bytes.add(null);
 
   /// The live recording's bytes so far (journal line 1 plus acked data):
   /// the only used-bytes input outside the catalog, since the live dir
   /// never lists. Set by [createDataSink] and every append ack, cleared
   /// by [touchFinal]/[abortSession] (the session lists from then on, so
-  /// the catalog's own sizes take over).
+  /// the catalog's own sizes take over). The ack sets run off the
+  /// operation queue; a capacity-strip number needs no stronger ordering.
   int _liveBytes = 0;
 
   /// The byte-size pulse (append acks included) the capacity strip cues on.
@@ -253,12 +250,10 @@ class SessionStore {
     });
   });
 
-  /// Mark the session completed: the zero-byte [sessionFinalFile] marker is
-  /// the listing's entire complete-verdict, so it is written HERE ONLY —
-  /// finalizeSession calls this after its persisted-vs-accepted count check
-  /// passed with no error latched. A recording whose writes failed or whose
-  /// data didn't land gets [abortSession] instead and lists as interrupted;
-  /// nothing promotes an unmarked session afterwards.
+  /// Write the completion marker — the ONLY write of it anywhere (see
+  /// SessionFilesBackend for the marker's write discipline). finalizeSession
+  /// calls this after its persisted-vs-accepted count check passed with no
+  /// error latched; anything else gets [abortSession].
   Future<void> touchFinal(String id) => _withCatalog((files) async {
     try {
       await files.touchFinal(id);
@@ -275,8 +270,7 @@ class SessionStore {
   /// a sink-close failure, or a persisted length that disagrees with the
   /// accepted-frame count): [id] gets NO marker. Drops the store's
   /// in-flight ownership and splices the fresh verdict in, so the
-  /// interrupted recording lists immediately — the user who just saw the
-  /// stop-time error is exactly who would salvage it.
+  /// interrupted recording lists immediately.
   Future<void> abortSession(String id) => _withCatalog((files) async {
     _liveSessionId = null;
     _liveBytes = 0;
@@ -320,6 +314,10 @@ class SessionStore {
   }
 
   Future<_ListedEntry> _classify(SessionFilesBackend files, String id) async {
+    // The live recording's data.raw is being appended off this queue, so
+    // a stat can catch it mid-append (a partial frame reads as damage) —
+    // the live dir never lists, so short-circuit before any I/O.
+    if (id == _liveSessionId) return const _UnlistedEntry();
     final dataBytes = await files.dataByteLength(id);
     final journalBytes = await files.readJournal(id);
     final hasData = dataBytes > 0;
@@ -386,14 +384,12 @@ class SessionStore {
         byteTotal: byteTotal,
       );
     }
-    // No completion marker: the store's own in-flight recording stays
-    // invisible (the live writer owns it); anything else is an interrupted
-    // recording — the app crashed, the tab died, or the finalize latched a
-    // failure. Every integrity check above already passed, so it loads and
-    // exports like a complete session but lists flagged as interrupted;
-    // nothing ever promotes it to complete afterwards.
+    // No completion marker: an interrupted recording — the app crashed,
+    // the tab died, or the finalize latched a failure. Every integrity
+    // check above already passed, so it loads and exports like a complete
+    // session but lists flagged as interrupted; nothing ever promotes it
+    // to complete afterwards.
     if (!await files.isFinalized(id)) {
-      if (id == _liveSessionId) return const _UnlistedEntry();
       return _SessionEntry(
         id: id,
         journal: journal,

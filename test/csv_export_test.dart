@@ -11,6 +11,7 @@ import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/gap_list.dart';
 import 'package:dynamite_app/services/csv_export.dart';
 import 'package:dynamite_app/services/session_data.dart';
+import 'package:dynamite_app/services/session_metadata.dart';
 
 /// Tests for the pure CSV-building half of the export path (the plugin
 /// dispatch half is platform code and stays untested). The format reference
@@ -65,6 +66,7 @@ void main() {
     unit,
     recordedAtIso: recordedAtIso,
     generator: generator,
+    deviceInfo: toSessionDeviceMetadata(name: null, info: null),
   );
 
   /// The metadata line parsed as JSON (line index 1, `# ` prefix stripped).
@@ -194,6 +196,7 @@ void main() {
           DisplayUnit.kgf,
           recordedAtIso: recordedAtIso,
           generator: generator,
+          deviceInfo: toSessionDeviceMetadata(name: null, info: null),
           interrupted: true,
         ),
       );
