@@ -86,9 +86,10 @@ class SessionStorage {
   /// If no data ever reached storage, the directory was never created and
   /// there is nothing to finalize (recording nothing saves nothing).
   ///
-  /// Returns the writer's latched write error, a sink-close failure, or a
-  /// verification error (if any); when non-null, the caller should surface
-  /// it. Releasing the sink folds into the return value instead of throwing.
+  /// Returns the writer's latched write error, a sink-close failure, a
+  /// verification error, or a completion-marker write failure (if any);
+  /// when non-null, the caller should surface it. Releasing the sink and
+  /// writing the marker fold into the return value instead of throwing.
   static Future<Object?> finalizeSession({
     required LiveSessionWriter writer,
   }) async {
@@ -115,8 +116,19 @@ class SessionStorage {
         );
       }
       if (error == null) {
-        await SessionStore.instance.touchFinal(sessionId);
-      } else {
+        try {
+          await SessionStore.instance.touchFinal(sessionId);
+        } catch (e) {
+          // A marker write that failed leaves no marker, so the dir is by
+          // definition an interrupted session: fall through to the abort
+          // path, which splices that verdict into the catalog NOW. Without
+          // this the recording would stay invisible until the next
+          // startup's scan — hidden from exactly the user who saw the stop
+          // error and would salvage it.
+          error = e;
+        }
+      }
+      if (error != null) {
         await SessionStore.instance.abortSession(sessionId);
       }
     }

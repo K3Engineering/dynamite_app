@@ -18,7 +18,7 @@
 /// ```json
 /// {"version":1,"name":"...","sampleRate":1000,"channelCount":4,
 ///  "channelLabels":["Ch 1",...],"tares":[null,123.5,...],
-///  "calibration":[{...},...],"displayUnit":"kg","deviceInfo":{...},
+///  "calibration":[{...},...],"displayUnit":"kgf","deviceInfo":{...},
 ///  "boardMeta":{...} | null,"recordedAt":"2026-08-28T14:30:12.345+02:00",
 ///  "ssnOrigin":123456,"visibleChannels":[true,...]}
 /// ```
@@ -34,6 +34,7 @@ import 'dart:typed_data';
 
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
+import '../models/display_unit.dart';
 
 const int sessionJournalVersion = 1;
 
@@ -179,7 +180,12 @@ class SessionMeta {
     );
 
     final displayUnit = json['displayUnit'];
-    if (displayUnit is! String || displayUnit.isEmpty) {
+    // Must be a unit this build can name: an unrecognized string parse-
+    // -accepted here would later fall back to a default unit through
+    // DisplayUnit.fromName at export time — a silent rewrite of frozen
+    // provenance. Damaged is the verdict.
+    if (displayUnit is! String ||
+        DisplayUnit.values.every((u) => u.name != displayUnit)) {
       throw FormatException('journal header: bad displayUnit: $displayUnit');
     }
     final deviceInfo = json['deviceInfo'];
@@ -197,7 +203,10 @@ class SessionMeta {
                   ),
           );
     final recordedAt = json['recordedAt'];
-    if (recordedAt is! String || recordedAt.isEmpty) {
+    // The CSV export hands this string out as the recording's timestamp,
+    // so it must actually parse as ISO 8601; anything else would export
+    // garbage under a real session's name.
+    if (recordedAt is! String || DateTime.tryParse(recordedAt) == null) {
       throw FormatException('journal header: bad recordedAt: $recordedAt');
     }
     final ssnOrigin = json['ssnOrigin'];

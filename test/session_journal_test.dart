@@ -24,7 +24,7 @@ void main() {
       ChannelCalibration(board: ChannelBoardCalibration()),
       ChannelCalibration(board: ChannelBoardCalibration()),
     ],
-    displayUnit: 'kg',
+    displayUnit: 'kgf',
     deviceInfo: {'model': 'dyna-1', 'fw': '1.2.3'},
     boardMeta: const SessionBoardMeta(
       calDataInvalid: false,
@@ -80,10 +80,10 @@ void main() {
           ChannelCalibration(board: ChannelBoardCalibration()),
           ChannelCalibration(board: ChannelBoardCalibration()),
         ],
-        displayUnit: 'count',
+        displayUnit: 'mVv',
         deviceInfo: {},
         boardMeta: null,
-        recordedAt: 'x',
+        recordedAt: '2026-08-28T14:30:12.345Z',
         ssnOrigin: 0,
         visibleChannels: [true, true, true, true],
       );
@@ -119,8 +119,10 @@ void main() {
         (Map<String, dynamic> j) => j['calibration'] = <Map<String, dynamic>>[],
         (Map<String, dynamic> j) => j['visibleChannels'] = [1, 2, 3, 4],
         (Map<String, dynamic> j) => j['displayUnit'] = '',
+        (Map<String, dynamic> j) => j['displayUnit'] = 'kg', // not a unit
         (Map<String, dynamic> j) => j['deviceInfo'] = 'nope',
         (Map<String, dynamic> j) => j['recordedAt'] = '',
+        (Map<String, dynamic> j) => j['recordedAt'] = 'yesterday', // no ISO
         (Map<String, dynamic> j) => j['ssnOrigin'] = 1.5,
         (Map<String, dynamic> j) => j['boardMeta'] = 42,
       ]) {
@@ -217,10 +219,10 @@ void main() {
           ChannelCalibration(board: ChannelBoardCalibration()),
           ChannelCalibration(board: ChannelBoardCalibration()),
         ],
-        displayUnit: 'kg',
+        displayUnit: 'kgf',
         deviceInfo: {'note': 'mañana'},
         boardMeta: null,
-        recordedAt: 'x',
+        recordedAt: '2026-08-28T14:30:12.345Z',
         ssnOrigin: 1,
         visibleChannels: [true, true, true, true],
       );

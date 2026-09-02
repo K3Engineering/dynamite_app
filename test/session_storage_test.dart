@@ -417,6 +417,41 @@ void main() {
       expect(listed.damaged, isEmpty);
     });
 
+    test('a failing marker write folds into the returned error and the '
+        'session lists as interrupted immediately', () async {
+      final failing = _FaultBackend(
+        IoSessionFilesBackend('${tmp.path}/sessions'),
+      );
+      SessionStore.instance = store = SessionStore.over(failing);
+
+      final hub = DataHub();
+      hub.notePacketCounter(0);
+      final frame = Int32List(channels);
+      for (int i = 0; i < 1100; i++) {
+        hub.addSampleFrame(frame);
+      }
+      final writer = startFromHub(hub, name: 'marker fails');
+      await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
+
+      failing.failTouchFinal = true;
+      final error = await SessionStorage.finalizeSession(writer: writer);
+
+      // The marker error surfaces through the same returned-error channel
+      // as every other finalize failure (it must not throw), ...
+      expect(error, isA<StateError>());
+      expect(error.toString(), contains('marker write failed'));
+
+      // ... and with no marker the dir is by definition an interrupted
+      // session, spliced into the published catalog NOW. readyCatalog()
+      // reads the catalog as-is — no refresh — so this fails if finalize
+      // left the session hidden until the next startup's scan.
+      final listed = readyCatalog();
+      expect(listed.sessions, isEmpty);
+      expect(listed.interrupted.single.id, writer.sessionId);
+      expect(listed.damaged, isEmpty);
+      expect(await failing.isFinalized(writer.sessionId!), isFalse);
+    });
+
     test('an intact multi-packet recording finalizes with no error', () async {
       final hub = DataHub();
       hub.notePacketCounter(0);
@@ -1284,6 +1319,10 @@ class _FaultBackend implements SessionFilesBackend {
   /// landed, the first data append throws) for the publish-on-tear test.
   bool failCreateAfterJournal = false;
 
+  /// The completion-marker write fails (quota, a vanished worker): the
+  /// finalize-time interrupted-verdict test.
+  bool failTouchFinal = false;
+
   @override
   Future<SessionDataSink> createSession(
     String id,
@@ -1327,7 +1366,10 @@ class _FaultBackend implements SessionFilesBackend {
   Future<bool> isFinalized(String id) => inner.isFinalized(id);
 
   @override
-  Future<void> touchFinal(String id) => inner.touchFinal(id);
+  Future<void> touchFinal(String id) {
+    if (failTouchFinal) throw StateError('marker write failed');
+    return inner.touchFinal(id);
+  }
 
   @override
   Future<void> truncateJournal(String id, int bytes) =>
