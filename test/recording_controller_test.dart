@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -169,13 +168,14 @@ void main() {
       // The device identity block is frozen alongside (the CSV `device`
       // metadata). This harness's snapshot has no name/DIS read, so every
       // field is the null placeholder.
-      expect(
-        jsonDecode(saved.deviceInfoJson),
-        jsonDecode(
-          '{"name":null,"id":null,"model":null,"hardware_rev":null,'
-          '"firmware":null,"manufacturer":null}',
-        ),
-      );
+      expect(saved.deviceInfo, {
+        'name': null,
+        'id': null,
+        'model': null,
+        'hardware_rev': null,
+        'firmware': null,
+        'manufacturer': null,
+      });
       // Counts derive from the data, so the load is the truth.
       final loaded = await loadSession(stop.sessionId!);
       expect(loaded.sampleCount, 10);
@@ -294,11 +294,11 @@ void main() {
       // vouch for the session — no completion marker, no "complete" listing:
       // it lists as interrupted, and its bytes load through the normal path.
       final listed = _readyCatalog(SessionStore.instance);
-      expect(listed.sessions, isEmpty);
-      expect(listed.interrupted, hasLength(1));
+      expect(listed.sessions, hasLength(1));
+      expect(listed.sessions.single.interrupted, isTrue);
       expect(listed.damaged, isEmpty);
       final loaded = await SessionStore.instance.loadSession(
-        listed.interrupted.single.id,
+        listed.sessions.single.id,
       );
       expect(loaded.channels.first.length, 10);
       expect(loaded.channels[0][3], 1003);

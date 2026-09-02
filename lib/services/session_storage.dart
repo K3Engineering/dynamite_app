@@ -107,7 +107,9 @@ class SessionStorage {
       // many bytes after the last ack. A silent drop anywhere between
       // accepted slice and flushed file would otherwise leave the session
       // claiming samples that were never written.
-      final acked = writer.ackedDataLength ?? 0;
+      // Non-null by construction: sessionId and the acked length latch
+      // together on the first packet (see LiveSessionWriter).
+      final acked = writer.ackedDataLength!;
       final expected = writer.expectedDataBytes;
       if (acked != expected) {
         error ??= StateError(

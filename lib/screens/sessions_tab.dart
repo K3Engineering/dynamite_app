@@ -124,13 +124,7 @@ class _SessionsTabState extends State<SessionsTab> {
 
   Widget _buildCatalog(SessionCatalog catalog) {
     final damaged = catalog.damaged;
-    // One chronological list for both session kinds; interrupted entries
-    // carry their flag into the card and the detail screen.
-    final entries = [
-      for (final s in catalog.sessions) (session: s, interrupted: false),
-      for (final s in catalog.interrupted) (session: s, interrupted: true),
-    ]..sort((a, b) => b.session.id.compareTo(a.session.id));
-    if (entries.isEmpty && damaged.isEmpty) {
+    if (catalog.sessions.isEmpty && damaged.isEmpty) {
       return const EmptyPlaceholder(
         icon: Icons.folder_open,
         title: 'No recorded sessions yet',
@@ -143,45 +137,37 @@ class _SessionsTabState extends State<SessionsTab> {
         padding: EdgeInsets.symmetric(
           horizontal: contentSideInset(constraints.maxWidth),
         ),
-        itemCount: damaged.length + entries.length,
-        itemBuilder: (context, index) => index < damaged.length
-            ? _DamagedCard(
-                damaged: damaged[index],
-                onExportSamples: damaged[index].hasData
-                    ? () => _exportDamaged(damaged[index], data: true)
-                    : null,
-                onExportMetadata: damaged[index].hasMeta
-                    ? () => _exportDamaged(damaged[index], data: false)
-                    : null,
-                onDelete: () =>
-                    _deleteSession(damaged[index].id, damaged[index].id),
-              )
-            : _SessionCard(
-                session: entries[index - damaged.length].session,
-                byteSize: catalog
-                    .byteSizes[entries[index - damaged.length].session.id],
-                interrupted: entries[index - damaged.length].interrupted,
-                onTap: () => _openDetail(
-                  entries[index - damaged.length].session,
-                  interrupted: entries[index - damaged.length].interrupted,
-                ),
-                onDelete: () => _deleteSession(
-                  entries[index - damaged.length].session.id,
-                  entries[index - damaged.length].session.name,
-                ),
-              ),
+        itemCount: damaged.length + catalog.sessions.length,
+        itemBuilder: (context, index) {
+          if (index < damaged.length) {
+            return _DamagedCard(
+              damaged: damaged[index],
+              onExportSamples: damaged[index].hasData
+                  ? () => _exportDamaged(damaged[index], data: true)
+                  : null,
+              onExportMetadata: damaged[index].hasMeta
+                  ? () => _exportDamaged(damaged[index], data: false)
+                  : null,
+              onDelete: () =>
+                  _deleteSession(damaged[index].id, damaged[index].id),
+            );
+          }
+          final session = catalog.sessions[index - damaged.length];
+          return _SessionCard(
+            session: session,
+            byteSize: catalog.byteSizes[session.id],
+            onTap: () => _openDetail(session),
+            onDelete: () => _deleteSession(session.id, session.name),
+          );
+        },
       ),
     );
   }
 
-  Future<void> _openDetail(
-    SessionSummary session, {
-    bool interrupted = false,
-  }) async {
+  Future<void> _openDetail(SessionSummary session) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) =>
-            SessionDetailScreen(session: session, interrupted: interrupted),
+        builder: (_) => SessionDetailScreen(session: session),
       ),
     );
   }
@@ -238,20 +224,15 @@ class _SessionCard extends StatelessWidget {
   const _SessionCard({
     required this.session,
     required this.byteSize,
-    required this.interrupted,
     required this.onTap,
     required this.onDelete,
   });
 
   final SessionSummary session;
 
-  /// Exact data bytes, null until the sizes stream lands. Null simply
-  /// omits the size from the subtitle.
+  /// The directory's bytes as scanned, null until the sizes land. Null
+  /// simply omits the size from the subtitle.
   final int? byteSize;
-
-  /// The recording never completed (crash, dead tab, failed finalize):
-  /// loadable and exportable like any session, flagged forever.
-  final bool interrupted;
 
   final VoidCallback onTap;
   final Future<void> Function() onDelete;
@@ -279,7 +260,7 @@ class _SessionCard extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 8),
         child: ListTile(
           onTap: onTap,
-          leading: interrupted
+          leading: session.interrupted
               ? Icon(
                   Icons.warning_amber,
                   color: Theme.of(context).colorScheme.error,
@@ -293,7 +274,7 @@ class _SessionCard extends StatelessWidget {
           // the stored row-wide peak is a max over all channels and reads
           // inconsistent next to them.
           subtitle: Text(
-            '${interrupted ? 'Interrupted · ' : ''}'
+            '${session.interrupted ? 'Interrupted · ' : ''}'
             '${formatTimestamp(session.createdAt)} · $durationStr · '
             '${session.channelCount} ch$sizeStr',
           ),

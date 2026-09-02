@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
@@ -37,6 +36,12 @@ class SessionStore {
   factory SessionStore.over(SessionFilesBackend backend) =>
       SessionStore._(Future.value(backend));
 
+  /// Wrap a backend FUTURE — a rejecting one exercises the construction-
+  /// failure path the shared store can hit in production.
+  @visibleForTesting
+  factory SessionStore.overFuture(Future<SessionFilesBackend> backend) =>
+      SessionStore._(backend);
+
   final Future<SessionFilesBackend> _backend;
 
   // -- Catalog and operation ordering ----------------------------------------
@@ -65,22 +70,12 @@ class SessionStore {
     if (!_bytes.isClosed) _bytes.add(null);
   }
 
-  /// The byte ledger behind [usedBytes]: seeded by every catalog publish
-  /// (the scan already stats every directory, so it costs no extra I/O and
-  /// re-reads ground truth), and kept current between publishes by exact
-  /// deltas from the ops below. A directory walk per capacity-strip pulse
-  /// would scale with the session count forever; this ledger does one
-  /// walk-equivalent per publish and none per pulse.
-  int? _byteTotal;
-
-  /// Fold [delta] into the ledger. Deltas only apply once a publish has
-  /// seeded the ledger — a write that landed BEFORE the first seed is
-  /// already inside the seed's stat, so skipping the delta is correct,
-  /// not lossy.
-  void _addBytes(int delta) {
-    final total = _byteTotal;
-    if (total != null) _byteTotal = total + delta;
-  }
+  /// The live recording's bytes so far (journal line 1 plus acked data):
+  /// the only used-bytes input outside the catalog, since the live dir
+  /// never lists. Set by [createDataSink] and every append ack, cleared
+  /// by [touchFinal]/[abortSession] (the session lists from then on, so
+  /// the catalog's own sizes take over).
+  int _liveBytes = 0;
 
   /// The byte-size pulse (append acks included) the capacity strip cues on.
   Stream<void> get byteChanges => _bytes.stream;
@@ -90,8 +85,19 @@ class SessionStore {
   ) {
     final result = Completer<T>();
     _operationTail = _operationTail.then((_) async {
+      final SessionFilesBackend files;
       try {
-        result.complete(await operation(await _backend));
+        files = await _backend;
+      } catch (error, stackTrace) {
+        // Backend construction is terminal — a store that can't open its
+        // root can never do anything. The catalog (Loading until a publish
+        // lands) must say so instead of spinning forever.
+        _catalog.value = SessionCatalogFailed(error, stackTrace);
+        result.completeError(error, stackTrace);
+        return;
+      }
+      try {
+        result.complete(await operation(files));
       } catch (error, stackTrace) {
         result.completeError(error, stackTrace);
       }
@@ -182,26 +188,26 @@ class SessionStore {
     _ListedEntry entry,
   ) {
     final sessions = [...catalog.sessions]..removeWhere((s) => s.id == id);
-    final interrupted = [...catalog.interrupted]
-      ..removeWhere((s) => s.id == id);
     final damaged = [...catalog.damaged]..removeWhere((d) => d.id == id);
     final byteSizes = {...catalog.byteSizes}..remove(id);
     switch (entry) {
-      case final _CompleteEntry complete:
+      case final _SessionEntry session:
         sessions.add(
-          _summaryFor(complete.id, complete.journal, complete.dataBytes),
+          _summaryFor(
+            session.id,
+            session.journal,
+            session.dataBytes,
+            interrupted: session.interrupted,
+          ),
         );
-        byteSizes[id] = complete.dataBytes;
-      case final _InterruptedEntry cut:
-        interrupted.add(_summaryFor(cut.id, cut.journal, cut.dataBytes));
-        byteSizes[id] = cut.dataBytes;
+        byteSizes[id] = session.byteTotal;
       case final _DamagedEntry damagedEntry:
         damaged.add(damagedEntry.damaged);
+        byteSizes[id] = damagedEntry.byteTotal;
       case _UnlistedEntry():
     }
     return SessionCatalog(
       sessions: sessions,
-      interrupted: interrupted,
       damaged: damaged,
       byteSizes: byteSizes,
     );
@@ -209,29 +215,11 @@ class SessionStore {
 
   Future<void> _publishCatalog(SessionFilesBackend files) async {
     try {
-      final read = await _readCatalogDefended(files);
-      _catalog.value = SessionCatalogReady(read.catalog);
-      // Every publish re-seeds the byte ledger from the scan: the deltas
-      // that accumulate between publishes are superseded by ground truth.
-      _byteTotal = read.byteTotal;
+      _catalog.value = SessionCatalogReady(await _readCatalog(files));
       _bumpBytes();
     } catch (error, stackTrace) {
       _catalog.value = SessionCatalogFailed(error, stackTrace);
       Error.throwWithStackTrace(error, stackTrace);
-    }
-  }
-
-  /// The catalog read, retried once inline: a one-shot backend failure
-  /// (a transient file lock on the native side is the realistic case)
-  /// must not brick the store, but a read that fails twice is a real
-  /// problem — report it and stop.
-  Future<({SessionCatalog catalog, int byteTotal})> _readCatalogDefended(
-    SessionFilesBackend files,
-  ) async {
-    try {
-      return await _readCatalog(files);
-    } catch (_) {
-      return _readCatalog(files);
     }
   }
 
@@ -248,29 +236,19 @@ class SessionStore {
   }) => _enqueue((files) async {
     _requireCatalogAvailable();
     final metaBytes = encodeSessionMeta(meta);
-    final SessionDataSink sink;
-    try {
-      sink = await files.createSession(newSessionId(), metaBytes, firstData);
-    } catch (_) {
-      // Both backends can tear here with dir + journal already on disk —
-      // publish so the artifact lists as damaged now instead of first
-      // appearing at the next startup's scan. Best-effort: a publish that
-      // also fails records the Failed catalog itself; the create error
-      // below stays the one thrown to the caller.
-      try {
-        await _publishCatalog(files);
-      } catch (_) {}
-      rethrow;
-    }
+    final sink = await files.createSession(
+      newSessionId(),
+      metaBytes,
+      firstData,
+    );
     // The store owns the dir from here until touchFinal/abortSession: while
     // live it is invisible to listings (a recording in progress is not an
-    // interrupted one), so no catalog load is forced. Only the byte totals
-    // grew.
-    _addBytes(metaBytes.length + firstData.length);
+    // interrupted one), so no catalog load is forced.
+    _liveBytes = metaBytes.length + firstData.length;
     _bumpBytes();
     _liveSessionId = sink.id;
-    return NotifyingSessionDataSink._(sink, firstData.length, (delta) {
-      _addBytes(delta);
+    return NotifyingSessionDataSink._(sink, (ackedDataLength) {
+      _liveBytes = metaBytes.length + ackedDataLength;
       _bumpBytes();
     });
   });
@@ -286,8 +264,9 @@ class SessionStore {
       await files.touchFinal(id);
     } finally {
       // Marker or not, the recording is over: the dir's outcome is whatever
-      // the next scan reads off disk, not the store's ownership.
+      // the next catalog entry reads off disk, not the store's ownership.
       _liveSessionId = null;
+      _liveBytes = 0;
     }
     await _refreshCatalogEntry(files, id);
   });
@@ -300,48 +279,43 @@ class SessionStore {
   /// stop-time error is exactly who would salvage it.
   Future<void> abortSession(String id) => _withCatalog((files) async {
     _liveSessionId = null;
+    _liveBytes = 0;
     await _refreshCatalogEntry(files, id);
   });
 
   // -- Listing and load ------------------------------------------------------
 
-  /// The full directory read: the catalog plus the sessions total byte
-  /// count the scan computes for free along the way (every classify
-  /// already stats data.raw and reads the journal; sum them instead of
-  /// walking the tree again for the capacity strip).
-  Future<({SessionCatalog catalog, int byteTotal})> _readCatalog(
-    SessionFilesBackend files,
-  ) async {
-    final summaries = <SessionSummary>[];
-    final interrupted = <SessionSummary>[];
+  /// The full directory read. The per-directory sizes folded into the
+  /// catalog are free along the way (every classify already stats data.raw
+  /// and reads the journal), so the capacity strip never walks the tree
+  /// itself.
+  Future<SessionCatalog> _readCatalog(SessionFilesBackend files) async {
+    final sessions = <SessionSummary>[];
     final damaged = <DamagedSession>[];
     final sizes = <String, int>{};
-    var byteTotal = 0;
     for (final id in await files.listDirIds()) {
       final entry = await _classify(files, id);
-      byteTotal += entry.byteTotal;
       switch (entry) {
-        case final _CompleteEntry complete:
-          summaries.add(
-            _summaryFor(complete.id, complete.journal, complete.dataBytes),
+        case final _SessionEntry session:
+          sessions.add(
+            _summaryFor(
+              session.id,
+              session.journal,
+              session.dataBytes,
+              interrupted: session.interrupted,
+            ),
           );
-          sizes[id] = complete.dataBytes;
-        case final _InterruptedEntry cut:
-          interrupted.add(_summaryFor(cut.id, cut.journal, cut.dataBytes));
-          sizes[id] = cut.dataBytes;
+          sizes[id] = session.byteTotal;
         case final _DamagedEntry entry:
           damaged.add(entry.damaged);
+          sizes[id] = entry.byteTotal;
         case _UnlistedEntry():
       }
     }
-    return (
-      catalog: SessionCatalog(
-        sessions: summaries,
-        interrupted: interrupted,
-        damaged: damaged,
-        byteSizes: sizes,
-      ),
-      byteTotal: byteTotal,
+    return SessionCatalog(
+      sessions: sessions,
+      damaged: damaged,
+      byteSizes: sizes,
     );
   }
 
@@ -419,18 +393,20 @@ class SessionStore {
     // exports like a complete session but lists flagged as interrupted;
     // nothing ever promotes it to complete afterwards.
     if (!await files.isFinalized(id)) {
-      if (id == _liveSessionId) return _UnlistedEntry(byteTotal: byteTotal);
-      return _InterruptedEntry(
+      if (id == _liveSessionId) return const _UnlistedEntry();
+      return _SessionEntry(
         id: id,
         journal: journal,
         dataBytes: dataBytes,
+        interrupted: true,
         byteTotal: byteTotal,
       );
     }
-    return _CompleteEntry(
+    return _SessionEntry(
       id: id,
       journal: journal,
       dataBytes: dataBytes,
+      interrupted: false,
       byteTotal: byteTotal,
     );
   }
@@ -438,12 +414,12 @@ class SessionStore {
   SessionSummary _summaryFor(
     String id,
     SessionJournal journal,
-    int dataBytes,
-  ) {
+    int dataBytes, {
+    required bool interrupted,
+  }) {
     final meta = journal.meta;
     final edit = journal.effectiveEdit;
-    final frames =
-        dataBytes ~/ SessionChunkCodec(meta.channelCount).frameBytes;
+    final frames = dataBytes ~/ SessionChunkCodec(meta.channelCount).frameBytes;
     return SessionSummary(
       id: id,
       name: edit.name,
@@ -453,10 +429,11 @@ class SessionStore {
       channelCount: meta.channelCount,
       sampleRate: meta.sampleRate,
       displayUnit: meta.displayUnit,
-      deviceInfoJson: jsonEncode(meta.deviceInfo),
+      deviceInfo: meta.deviceInfo,
       recordedAt: meta.recordedAt,
       channelLabels: meta.channelLabels,
       visibleChannels: edit.visibleChannels,
+      interrupted: interrupted,
     );
   }
 
@@ -532,7 +509,6 @@ class SessionStore {
     final append = encodeSessionEdit(edit);
     await files.truncateJournal(id, journal.completeBytes);
     await files.appendJournal(id, append);
-    _addBytes(journal.completeBytes + append.length - journalBytes.length);
     await _refreshCatalogEntry(files, id);
   });
 
@@ -552,33 +528,23 @@ class SessionStore {
   /// confirmation. Only the layout's three named files are destroyed (see
   /// SessionFilesBackend.delete).
   Future<void> deleteSession(String id) => _withCatalog((files) async {
-    // Measure before deleting so the ledger subtracts what actually left
-    // the disk, not a catalog value that could have drifted.
-    final dataBytes = await files.dataByteLength(id);
-    final journalBytes = (await files.readJournal(id))?.length ?? 0;
     await files.delete(id);
-    _addBytes(-(dataBytes + journalBytes));
     _publishDelta(
-      (catalog) =>
-          _spliceEntry(catalog, id, const _UnlistedEntry(byteTotal: 0)),
+      (catalog) => _spliceEntry(catalog, id, const _UnlistedEntry()),
     );
   });
 
   /// Total bytes of every session file — the native storage strip's "used"
-  /// number. The byte ledger (see [_byteTotal]): seeded by the scan side
-  /// of every publish and adjusted by exact deltas between them, so this
-  /// is only trivially stale (a publish mid-recording stats at some point
-  /// in the append stream and the ack deltas close the gap). Stray files
-  /// the layout can't name don't count — the scan only sees session dirs.
+  /// number: the catalog's own sizes plus the live recording's acked bytes
+  /// (its dir never lists). Stray files the layout can't name don't count.
   Future<int> usedBytes() => _withCatalog((files) async {
-    final total = _byteTotal;
-    if (total == null) {
-      // _withCatalog guarantees a publish ran (catalog Ready seeds the
-      // ledger on the way through), so this is unreachable — fail loudly
-      // rather than paper over the invariant with null-coalescing.
-      throw StateError('usedBytes: catalog ready without a byte seed');
+    final state = _catalog.value;
+    if (state is! SessionCatalogReady) {
+      // _withCatalog guarantees availability, so this is unreachable —
+      // fail loudly rather than paper over the invariant with null-coalescing.
+      throw StateError('usedBytes: catalog not ready after load');
     }
-    return total;
+    return state.catalog.totalBytes + _liveBytes;
   });
 }
 
@@ -590,17 +556,23 @@ sealed class _ListedEntry {
   final int byteTotal;
 }
 
-final class _CompleteEntry extends _ListedEntry {
-  const _CompleteEntry({
+final class _SessionEntry extends _ListedEntry {
+  const _SessionEntry({
     required this.id,
     required this.journal,
     required this.dataBytes,
+    required this.interrupted,
     required super.byteTotal,
   });
 
   final String id;
   final SessionJournal journal;
   final int dataBytes;
+
+  /// Loadable but unvouched: strict journal, whole frames, at least one —
+  /// and no completion marker. Everything a complete session is, minus the
+  /// finalize's endorsement; the listing flags it permanently instead.
+  final bool interrupted;
 }
 
 final class _DamagedEntry extends _ListedEntry {
@@ -608,40 +580,23 @@ final class _DamagedEntry extends _ListedEntry {
   final DamagedSession damaged;
 }
 
-/// Loadable but unvouched: strict journal, whole frames, at least one —
-/// and no completion marker. Everything a [_CompleteEntry] is, minus the
-/// finalize's endorsement; the listing flags it permanently instead.
-final class _InterruptedEntry extends _ListedEntry {
-  const _InterruptedEntry({
-    required this.id,
-    required this.journal,
-    required this.dataBytes,
-    required super.byteTotal,
-  });
-
-  final String id;
-  final SessionJournal journal;
-  final int dataBytes;
-}
-
 /// Parseable and data-bearing but unmarked, while the store's own writer
 /// still owns it: the in-flight recording's dir, invisible to every listing
-/// consumer (its bytes still count in the scan total).
+/// consumer (its bytes come from the store's live total, not the catalog).
 final class _UnlistedEntry extends _ListedEntry {
-  const _UnlistedEntry({required super.byteTotal});
+  const _UnlistedEntry() : super(byteTotal: 0);
 }
 
-/// A [SessionDataSink] wrapper folding every acked append's growth into
-/// the store's byte ledger and bumping the byte revisions so the capacity
-/// strip tracks the recording. Deltas are ack-relative, so a publish's
-/// ledger re-seed (which re-stats data.raw) never double-counts them.
+/// A [SessionDataSink] wrapper reporting every ack's absolute data.raw
+/// length, so the store's live byte total tracks the recording and the
+/// capacity strip pulses on the recording cadence.
 class NotifyingSessionDataSink implements SessionDataSink {
-  NotifyingSessionDataSink._(this.inner, int ackedBytes, this.onAppend)
-    : _ackedBytes = ackedBytes;
+  NotifyingSessionDataSink._(this.inner, this.onAppend);
 
   final SessionDataSink inner;
-  final void Function(int delta) onAppend;
-  int _ackedBytes;
+
+  /// Called with the ack's absolute data.raw length after every append.
+  final void Function(int ackedDataLength) onAppend;
 
   @override
   String get id => inner.id;
@@ -649,8 +604,7 @@ class NotifyingSessionDataSink implements SessionDataSink {
   @override
   Future<int> append(Uint8List bytes) async {
     final length = await inner.append(bytes);
-    onAppend(length - _ackedBytes);
-    _ackedBytes = length;
+    onAppend(length);
     return length;
   }
 

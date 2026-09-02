@@ -23,19 +23,9 @@ import '../widgets/graph_components.dart';
 import '../widgets/snackbars.dart';
 
 class SessionDetailScreen extends StatefulWidget {
-  const SessionDetailScreen({
-    super.key,
-    required this.session,
-    this.interrupted = false,
-  });
+  const SessionDetailScreen({super.key, required this.session});
 
   final SessionSummary session;
-
-  /// The recording never completed (crash, dead tab, failed finalize):
-  /// the session renders like any other — everything on disk is valid —
-  /// but stays flagged (banner here, `interrupted: true` in CSV exports)
-  /// and nothing ever promotes it to complete.
-  final bool interrupted;
 
   @override
   State<SessionDetailScreen> createState() => _SessionDetailScreenState();
@@ -182,7 +172,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (widget.interrupted) const _InterruptedBanner(),
+          if (session.interrupted) const _InterruptedBanner(),
           // Channel header (same tappable table as the live view; toggles
           // this session's per-session channel visibility).
           ChannelStatsTable(
@@ -377,11 +367,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         final artifact = buildSessionCsvArtifact(
           sessionName: session.name,
           recordedAtIso: session.recordedAt,
-          deviceInfoJson: session.deviceInfoJson,
+          deviceInfo: session.deviceInfo,
           data: data,
           unit: unit,
           appMeta: appMeta,
-          interrupted: widget.interrupted,
+          interrupted: session.interrupted,
         );
         return downloadExport(
           bytes: artifact.bytes,
@@ -398,11 +388,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         final artifact = buildSessionCsvArtifact(
           sessionName: session.name,
           recordedAtIso: session.recordedAt,
-          deviceInfoJson: session.deviceInfoJson,
+          deviceInfo: session.deviceInfo,
           data: data,
           unit: unit,
           appMeta: appMeta,
-          interrupted: widget.interrupted,
+          interrupted: session.interrupted,
         );
         return shareExport(
           bytes: artifact.bytes,

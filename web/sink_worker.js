@@ -134,20 +134,6 @@ async function probe() {
   return null;
 }
 
-// Remove the replaced SQLite store's files if an upgrade left them behind:
-// pre-release dev data with no migration story. Best-effort per entry —
-// litter is harmless.
-async function dropLegacyDb() {
-  const root = await navigator.storage.getDirectory();
-  for await (const entry of root.values()) {
-    if (!entry.name.startsWith('dynamite_sessions')) continue;
-    try {
-      await root.removeEntry(entry.name, { recursive: true });
-    } catch (_) {}
-  }
-  return null;
-}
-
 // Create the session directory (which must NOT already exist — a collision
 // is two recordings silently merged otherwise), its journal (msg.bytes as
 // line 1) and data.raw (msg.bytes2) flushed, and keep data.raw's handle open
@@ -329,7 +315,6 @@ async function deleteSession(msg) {
 
 const ops = {
   probe,
-  dropLegacyDb,
   createSession,
   append: appendData,
   closeSink,

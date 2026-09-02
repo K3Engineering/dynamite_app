@@ -369,8 +369,8 @@ void main() {
       // The error is transient (one toast at stop time); the interrupted
       // verdict is permanent: no marker, no "complete" listing — ever.
       final listed = await catalog();
-      expect(listed.sessions, isEmpty);
-      expect(listed.interrupted.single.id, dropping.sessionId);
+      expect(listed.sessions.single.id, dropping.sessionId);
+      expect(listed.sessions.single.interrupted, isTrue);
       expect(listed.damaged, isEmpty);
     });
 
@@ -412,8 +412,8 @@ void main() {
       // (fully written) bytes loading and exporting like a complete one.
       expect(error, same(closeBoom));
       final listed = await catalog();
-      expect(listed.sessions, isEmpty);
-      expect(listed.interrupted.single.id, writer.sessionId);
+      expect(listed.sessions.single.id, writer.sessionId);
+      expect(listed.sessions.single.interrupted, isTrue);
       expect(listed.damaged, isEmpty);
     });
 
@@ -446,8 +446,8 @@ void main() {
       // reads the catalog as-is — no refresh — so this fails if finalize
       // left the session hidden until the next startup's scan.
       final listed = readyCatalog();
-      expect(listed.sessions, isEmpty);
-      expect(listed.interrupted.single.id, writer.sessionId);
+      expect(listed.sessions.single.id, writer.sessionId);
+      expect(listed.sessions.single.interrupted, isTrue);
       expect(listed.damaged, isEmpty);
       expect(await failing.isFinalized(writer.sessionId!), isFalse);
     });
@@ -497,9 +497,8 @@ void main() {
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
 
       // While the store still owns the in-flight recording, the dir is
-      // invisible: not listed, not interrupted, not damaged.
+      // invisible: not listed as a session, not damaged.
       expect((await catalog()).sessions, isEmpty);
-      expect((await catalog()).interrupted, isEmpty);
       expect((await catalog()).damaged, isEmpty);
 
       // Simulate the crash: release the data handle the way a process
@@ -513,9 +512,9 @@ void main() {
       // No finalize ever ran, so no marker ever got written: the
       // recording lists as interrupted — permanently; nothing promotes it.
       final listed = await catalog();
-      expect(listed.sessions, isEmpty);
       expect(listed.damaged, isEmpty);
-      expect(listed.interrupted.single.id, writer.sessionId);
+      expect(listed.sessions.single.id, writer.sessionId);
+      expect(listed.sessions.single.interrupted, isTrue);
 
       // It loads and decodes exactly like a complete session: in-band
       // gaps and the ssn origin surface through the normal load path.
@@ -533,7 +532,7 @@ void main() {
       // An interrupted session is never promoted: a re-scan re-derives the
       // same verdict, and no marker appears.
       await store.refreshCatalog();
-      expect((await catalog()).interrupted.single.id, writer.sessionId);
+      expect((await catalog()).sessions.single.interrupted, isTrue);
     });
   });
 
@@ -721,10 +720,14 @@ void main() {
       expect(summaries.first.durationMs, 2);
       expect(summaries.first.createdAt, DateTime(2026, 8, 29, 9, 0, 0));
       expect(summaries.first.channelLabels, ['a', 'b', 'c', 'd']);
-      expect(summaries.first.deviceInfoJson, '{}');
+      expect(summaries.first.deviceInfo, isEmpty);
+      expect(summaries.first.interrupted, isFalse);
 
       final sizes = (await catalog()).byteSizes;
-      expect(sizes['2026-08-29T09-00-00-bbbb'], 2 * kAdcChannelCount * 4);
+      expect(
+        sizes['2026-08-29T09-00-00-bbbb'],
+        2 * kAdcChannelCount * 4 + encodeSessionMeta(testMeta()).length,
+      );
     });
 
     test('finalization publishes its catalog before completing', () async {
@@ -790,15 +793,17 @@ void main() {
       expect(await backend.listDirIds(), isEmpty);
     });
 
-    test('a one-shot read failure is retried, not terminal', () async {
-      await seedSession('2026-08-29T09-00-00-once');
-      final failing = _FaultBackend(backend)..failNextListings = 1;
-      SessionStore.instance = store = SessionStore.over(failing);
+    test('a backend construction failure fails the catalog loudly', () async {
+      final backend = Completer<SessionFilesBackend>();
+      SessionStore.instance = store = SessionStore.overFuture(backend.future);
 
-      await store.ensureCatalogLoaded();
-
-      expect(store.catalog.value, isA<SessionCatalogReady>());
-      expect(readyCatalog().session('2026-08-29T09-00-00-once'), isNotNull);
+      // The listing surfaces the failure instead of spinning forever —
+      // the catalog is Loading until a publish lands, so construction is
+      // exactly where a store that can't even be opened gets reported.
+      final load = store.ensureCatalogLoaded();
+      backend.completeError(StateError('no documents dir'));
+      await expectLater(load, throwsA(isA<StateError>()));
+      expect(store.catalog.value, isA<SessionCatalogFailed>());
     });
 
     test('a classify failure on a delta falls back to a full rescan', () async {
@@ -825,10 +830,10 @@ void main() {
       await seedSession(id, finalized: false);
       await store.ensureCatalogLoaded();
 
-      // Enough faults to survive the delta's classify AND the rescan's
-      // own retry: the catalog can only fail.
-      failing.failNextJournalReads = 10;
-      failing.failNextListings = 10;
+      // Fail the delta's classify AND the fallback rescan: the catalog
+      // can only fail.
+      failing.failNextJournalReads = 1;
+      failing.failNextListings = 1;
       await expectLater(store.touchFinal(id), throwsStateError);
       expect(store.catalog.value, isA<SessionCatalogFailed>());
     });
@@ -836,17 +841,14 @@ void main() {
     test('an unmarked session (no final) lists as interrupted', () async {
       await seedSession('2026-08-28T14-30-12-aaaa', finalized: false);
       final listed = await catalog();
-      expect(listed.sessions, isEmpty);
-      expect(listed.interrupted.single.id, '2026-08-28T14-30-12-aaaa');
+      expect(listed.sessions.single.id, '2026-08-28T14-30-12-aaaa');
+      expect(listed.sessions.single.interrupted, isTrue);
       expect(listed.damaged, isEmpty);
     });
 
     test('edits on an interrupted session work and never promote it', () async {
       await seedSession('2026-08-28T14-30-12-eeee', finalized: false);
-      expect(
-        (await catalog()).interrupted.single.id,
-        '2026-08-28T14-30-12-eeee',
-      );
+      expect((await catalog()).sessions.single.interrupted, isTrue);
 
       await store.editSession(
         '2026-08-28T14-30-12-eeee',
@@ -859,9 +861,9 @@ void main() {
 
       // The rename lands in the summary; the verdict stays interrupted —
       // an edit line is not a completion marker.
-      final listed = await catalog();
-      expect(listed.sessions, isEmpty);
-      expect(listed.interrupted.single.name, 'saved from the crash');
+      final listed = await catalog().then((c) => c.sessions.single);
+      expect(listed.name, 'saved from the crash');
+      expect(listed.interrupted, isTrue);
       expect(await backend.isFinalized('2026-08-28T14-30-12-eeee'), isFalse);
 
       final loaded = await store.loadSession('2026-08-28T14-30-12-eeee');
@@ -877,7 +879,6 @@ void main() {
       );
       final listed = await catalog();
       expect(listed.sessions, isEmpty);
-      expect(listed.interrupted, isEmpty);
       expect(listed.damaged, isEmpty);
       await sink.close();
 
@@ -885,8 +886,8 @@ void main() {
       // the published catalog immediately.
       await store.abortSession(sink.id);
       final aborted = readyCatalog();
-      expect(aborted.sessions, isEmpty);
-      expect(aborted.interrupted.single.id, sink.id);
+      expect(aborted.sessions.single.id, sink.id);
+      expect(aborted.sessions.single.interrupted, isTrue);
       expect(aborted.damaged, isEmpty);
     });
 
@@ -947,7 +948,7 @@ void main() {
     );
 
     test(
-      'a torn first-packet create is published as damaged, not hidden',
+      'a torn first-packet create lists as damaged at the next scan',
       () async {
         final failing = _FaultBackend(backend)..failCreateAfterJournal = true;
         SessionStore.instance = store = SessionStore.over(failing);
@@ -961,9 +962,11 @@ void main() {
           throwsStateError,
         );
 
-        // The torn directory (journal, no data) lists as damaged
-        // immediately — the next startup's scan is not the first to see it,
-        // and the catalog did not stay Ready as if storage were fine.
+        // The failed create surfaces to the caller and nothing more: the
+        // torn directory (journal, no data) classifies as damaged on the
+        // next scan, not via a special error-path publish.
+        expect(readyCatalog().damaged, isEmpty);
+        await store.refreshCatalog();
         final damaged = readyCatalog().damaged;
         expect(damaged, hasLength(1));
         expect(damaged.single.hasMeta, isTrue);
@@ -1154,11 +1157,11 @@ void main() {
       },
     );
 
-    test('usedBytes seeds from the scan; delete removes the session', () async {
+    test('usedBytes comes from the catalog; delete removes it', () async {
       expect(await store.usedBytes(), 0);
       await seedSession('2026-08-28T14-30-12-del0');
       // The store never saw this write (seeded straight onto the backend),
-      // so only a publish — the ledger's re-seed — learns about it.
+      // so only a publish's scan learns about it.
       await store.refreshCatalog();
       final used = await store.usedBytes();
       expect(used, greaterThan(2 * kAdcChannelCount * 4));
@@ -1168,7 +1171,7 @@ void main() {
       expect(await store.usedBytes(), 0);
     });
 
-    test('usedBytes folds in a recording without any re-scan', () async {
+    test('usedBytes folds in the live recording before it lists', () async {
       await store.ensureCatalogLoaded();
       final metaBytes = encodeSessionMeta(testMeta());
       final firstData = codec.pack(1, (s, ch) => 7);

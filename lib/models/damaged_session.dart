@@ -4,7 +4,7 @@
 /// directory name isn't a session id, its data tears mid-frame, or the
 /// header landed without a single data frame. (An unmarked but fully
 /// loadable directory is NOT damage: that's an interrupted recording, a
-/// flagged session — see SessionCatalog.interrupted.) Never deleted,
+/// flagged session — see SessionSummary.interrupted.) Never deleted,
 /// repaired or promoted by the store itself: the list surfaces it with
 /// affordances (raw exports of whatever bytes exist, a user-gesture
 /// delete) and that's the only way out.

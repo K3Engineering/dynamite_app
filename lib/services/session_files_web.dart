@@ -35,16 +35,6 @@ Future<SessionFilesBackend> createBackend() async {
       "this browser's storage cannot safely record sessions (probe: $e)",
     );
   }
-  // The replaced SQLite store's OPFS files are pre-release litter with no
-  // migration story. Best-effort, as the native drop already is: litter is
-  // harmless, so a sweep failure is reported but must never fail
-  // construction — a bare await here would brick the whole store for the
-  // app's lifetime, one op past a successful probe.
-  try {
-    await transport.request('dropLegacyDb');
-  } catch (e) {
-    debugPrint('Legacy session database drop failed: $e');
-  }
   return _WebSessionFilesBackend(transport);
 }
 
@@ -126,8 +116,14 @@ class _JsSinkWorkerHandle implements SinkWorkerHandle {
 
   @override
   void post(SinkWorkerRequest request) {
-    final bytes = request.bytes?.toJS;
-    final bytes2 = request.bytes2?.toJS;
+    // Transfer detaches the ArrayBuffer, and under dart2js `toJS` is
+    // identity — transferring the caller's own buffer would zero the
+    // lengths read after the ack (the finalize-time count check).
+    // Copy first, transfer the copy.
+    JSUint8Array? copyOrNull(Uint8List? b) =>
+        b == null ? null : Uint8List.fromList(b).toJS;
+    final bytes = copyOrNull(request.bytes);
+    final bytes2 = copyOrNull(request.bytes2);
     final transfer = <JSAny>[
       if (bytes != null) bytes.buffer,
       if (bytes2 != null) bytes2.buffer,

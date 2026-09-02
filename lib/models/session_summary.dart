@@ -13,8 +13,9 @@ class SessionSummary {
     required this.channelCount,
     required this.sampleRate,
     required this.displayUnit,
-    required this.deviceInfoJson,
+    required this.deviceInfo,
     required this.recordedAt,
+    required this.interrupted,
     required List<String> channelLabels,
     required List<bool> visibleChannels,
   }) : channelLabels = List.unmodifiable(channelLabels),
@@ -38,9 +39,9 @@ class SessionSummary {
   /// The unit frozen at recording start (a `DisplayUnit.name`).
   final String displayUnit;
 
-  /// The frozen `device` metadata block, as JSON (see
-  /// `toSessionDeviceMetadata` in session_metadata.dart).
-  final String deviceInfoJson;
+  /// The frozen `device` metadata block (see `toSessionDeviceMetadata` in
+  /// session_metadata.dart).
+  final Map<String, Object?> deviceInfo;
 
   /// The frozen dynamite-csv `recorded_at` string (local wall clock with
   /// zone offset) — the export's human timestamp. [createdAt] is the
@@ -53,4 +54,9 @@ class SessionSummary {
   /// Per-channel graph/stat visibility, exactly [channelCount] entries;
   /// the recording-time default plus any post-recording edits.
   final List<bool> visibleChannels;
+
+  /// The recording never completed (crash, dead tab, failed finalize):
+  /// loadable and exportable like any session, flagged forever — nothing
+  /// ever promotes it afterwards.
+  final bool interrupted;
 }

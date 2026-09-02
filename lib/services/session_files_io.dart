@@ -10,26 +10,7 @@ import 'session_store_backend.dart';
 /// `documents/sessions/<id>/` holding `meta`, `data.raw`, `final`.
 Future<SessionFilesBackend> createBackend() async {
   final docs = await getApplicationDocumentsDirectory();
-  await dropLegacySessionDatabase(docs.path);
   return IoSessionFilesBackend('${docs.path}/sessions');
-}
-
-/// Drop the replaced SQLite session store if the upgrade left one behind:
-/// pre-release dev data, wiped by schema bumps already, so there is nothing
-/// to migrate. Best-effort — a file the platform still holds (Windows can
-/// lock fresh files) is harmless litter, not something startup should die
-/// over.
-Future<void> dropLegacySessionDatabase(String documentsPath) async {
-  try {
-    await for (final entry in Directory(documentsPath).list()) {
-      if (entry is File &&
-          entry.uri.pathSegments.last.startsWith('dynamite_sessions')) {
-        await entry.delete();
-      }
-    }
-  } catch (e) {
-    debugPrint('Legacy session database drop failed: $e');
-  }
 }
 
 /// No sync handles on dart:io — the hot-restart terminate hook is web-only.

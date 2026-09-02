@@ -92,7 +92,7 @@ void main() {
       final first = transport.request('probe');
       var secondRan = false;
       final second = transport
-          .request('dropLegacyDb')
+          .request('listDirIds')
           .then((_) => secondRan = true);
       await pumpEventQueue();
       expect(handle.posts.map((r) => r.op), ['probe']);
@@ -101,7 +101,7 @@ void main() {
       handle.ackOk(0);
       await first;
       await pumpEventQueue();
-      expect(handle.posts.map((r) => r.op), ['probe', 'dropLegacyDb']);
+      expect(handle.posts.map((r) => r.op), ['probe', 'listDirIds']);
       handle.ackOk(1);
       await second;
       expect(secondRan, isTrue);

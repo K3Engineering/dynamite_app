@@ -140,7 +140,6 @@ void main() {
         'sample_rate_hz': 1000,
         'ssn_origin': 41230,
         'converted_unit': 'kgf',
-        'warnings': <dynamic>[],
         'device': {
           'name': null,
           'id': null,
@@ -199,8 +198,6 @@ void main() {
         ),
       );
       expect(interruptedMeta['interrupted'], isTrue);
-      // Nothing else changes — the disclosure never masks anything.
-      expect(interruptedMeta['warnings'], isEmpty);
       expect(interruptedMeta['sample_rate_hz'], 1000);
     });
 
@@ -216,11 +213,14 @@ void main() {
           DisplayUnit.kgf,
           recordedAtIso: recordedAtIso,
           generator: generator,
-          deviceInfoJson:
-              '{"name":"DS A4CF1208F51E","id":"A4CF1208F51E",'
-              '"model":"Dynamite Sampler Pro Mk1","hardware_rev":"rev B",'
-              '"firmware":"v700P|v1.2.3",'
-              '"manufacturer":"K3 Engineering"}',
+          deviceInfo: const {
+            'name': 'DS A4CF1208F51E',
+            'id': 'A4CF1208F51E',
+            'model': 'Dynamite Sampler Pro Mk1',
+            'hardware_rev': 'rev B',
+            'firmware': 'v700P|v1.2.3',
+            'manufacturer': 'K3 Engineering',
+          },
         ),
       );
 
@@ -239,42 +239,6 @@ void main() {
         },
         'cal': null,
       });
-    });
-
-    test('a malformed device block degrades to null placeholders', () {
-      final data = makeSession([
-        [1],
-        [2],
-      ]);
-
-      // Bad JSON and wrong-typed values both degrade to nulls rather than
-      // failing the export (display-only metadata path).
-      for (final json in ['{not json', '{"name":42}']) {
-        final meta = metadataOf(
-          buildSessionCsv(
-            data,
-            DisplayUnit.kgf,
-            recordedAtIso: recordedAtIso,
-            generator: generator,
-            deviceInfoJson: json,
-          ),
-        );
-        expect(meta['device'], {
-          'name': null,
-          'id': null,
-          'model': null,
-          'hardware_rev': null,
-          'firmware': null,
-          'manufacturer': null,
-          'afe': {
-            'adc_ref_v': 1.2,
-            'front_end_gain': 101.0,
-            'adc_gain': [1, 1],
-            'excitation_v': 4.53,
-          },
-          'cal': null,
-        });
-      }
     });
 
     test('the board-cal provenance joins the device block as cal', () {
@@ -310,9 +274,6 @@ void main() {
         'constants_detail': '',
         'provenance': {'exc': 'nominal'},
       });
-      // The format's storage-disclosure field: this store produces no
-      // damage shapes that survive loading, so it is always empty.
-      expect(meta['warnings'], isEmpty);
       // The human rendering reflects it too (nested one more under device).
       expect(csv, contains('#   cal:'));
       expect(csv, contains('#     cal_data_invalid: false'));
@@ -328,7 +289,6 @@ void main() {
       final meta = metadataOf(buildCsv(data, DisplayUnit.kgf));
 
       expect((meta['device'] as Map)['cal'], isNull);
-      expect(meta['warnings'], isEmpty);
     });
 
     test(
@@ -401,7 +361,6 @@ void main() {
         '${expected(2000, null)}',
       );
       final meta = metadataOf(csv);
-      expect(meta['warnings'], isEmpty);
       expect((meta['channels'] as List)[1]['tare_raw'], isNull);
     });
 

@@ -8,38 +8,37 @@ import 'session_summary.dart';
 class SessionCatalog {
   SessionCatalog({
     required Iterable<SessionSummary> sessions,
-    required Iterable<SessionSummary> interrupted,
     required Iterable<DamagedSession> damaged,
     required Map<String, int> byteSizes,
   }) : sessions = List.unmodifiable(
          [...sessions]..sort((a, b) => _desc(a.id, b.id)),
        ),
-       interrupted = List.unmodifiable(
-         [...interrupted]..sort((a, b) => _desc(a.id, b.id)),
-       ),
        damaged = List.unmodifiable(
          [...damaged]..sort((a, b) => _desc(a.id, b.id)),
        ),
        byteSizes = Map.unmodifiable(byteSizes) {
-    _byId = {
-      for (final session in this.sessions) session.id: session,
-      for (final session in this.interrupted) session.id: session,
-    };
+    _byId = {for (final session in this.sessions) session.id: session};
   }
 
   static int _desc(String a, String b) => b.compareTo(a);
 
+  /// Every loadable recording, complete and interrupted alike (the flag
+  /// rides on the summary) in one chronological view.
   final List<SessionSummary> sessions;
 
-  /// Recordings the store can load (strict journal, whole frames) but
-  /// never vouched for: no completion marker, and nothing ever writes one
-  /// after the fact. Same summary shape as [sessions] — the list merges
-  /// both into one chronological view and the detail screen renders them
-  /// identically, flagged permanently.
-  final List<SessionSummary> interrupted;
-
   final List<DamagedSession> damaged;
+
+  /// Every listed directory's total bytes (journal + data — the `final`
+  /// marker is zero bytes by design) as the scan stat'd them. Sums to
+  /// [totalBytes]; the per-id value is the card's size display.
   final Map<String, int> byteSizes;
+
+  /// [byteSizes] summed — the sessions this catalog knows about, in bytes.
+  /// (The store adds its live recording's bytes on top.)
+  late final int totalBytes = byteSizes.values.fold(
+    0,
+    (sum, bytes) => sum + bytes,
+  );
 
   late final Map<String, SessionSummary> _byId;
 

@@ -49,13 +49,13 @@ extension DisplayUnitCsv on DisplayUnit {
 /// The session's recorded [data] as a deliverable CSV artifact: the file
 /// bytes, its sanitized name, and its MIME type. [unit] is the file's
 /// converted unit (the user's pick in the export flow — see
-/// csv-format-v1C.md). [sessionName]/[recordedAtIso]/[deviceInfoJson] are
+/// csv-format-v1C.md). [sessionName]/[recordedAtIso]/[deviceInfo] are
 /// the session's fields, passed flat so the export API doesn't take store
 /// types. Delivery is the caller's job (export_delivery.dart).
 ({Uint8List bytes, String fileName, String mimeType}) buildSessionCsvArtifact({
   required String sessionName,
   required String recordedAtIso,
-  required String deviceInfoJson,
+  required Map<String, Object?> deviceInfo,
   required SessionData data,
   required DisplayUnit unit,
   required AppMeta appMeta,
@@ -66,7 +66,7 @@ extension DisplayUnitCsv on DisplayUnit {
     unit,
     recordedAtIso: recordedAtIso,
     generator: appMeta.generator,
-    deviceInfoJson: deviceInfoJson,
+    deviceInfo: deviceInfo,
     interrupted: interrupted,
   );
   return (
@@ -93,10 +93,9 @@ extension DisplayUnitCsv on DisplayUnit {
 ///
 /// [recordedAtIso] is the session row's frozen `recorded_at` string (the
 /// local wall clock with offset); `recorded_unix` is derived from it here,
-/// so the two fields can never disagree. [deviceInfoJson] is the session
+/// so the two fields can never disagree. [deviceInfo] is the session
 /// row's frozen device-identity block (see [toSessionDeviceMetadata]);
-/// null or malformed degrades to all-null placeholders rather than failing
-/// the export.
+/// null degrades to all-null placeholders rather than failing the export.
 ///
 /// TODO(perf): the whole CSV is built in memory as one string — the format
 /// milestone will replace this with a chunked writer (see
@@ -106,7 +105,7 @@ String buildSessionCsv(
   DisplayUnit unit, {
   required String recordedAtIso,
   required String generator,
-  String? deviceInfoJson,
+  Map<String, Object?>? deviceInfo,
 
   /// The recording never completed (no finalize endorsement): every byte
   /// in the file is valid, but the tail may be missing. Emitted as the
@@ -118,9 +117,7 @@ String buildSessionCsv(
   // The writer recorded the true device counter at the session's first
   // sample when the row was created.
   final int ssnOrigin = data.ssnOrigin;
-  final device = deviceInfoJson == null
-      ? toSessionDeviceMetadata(name: null, info: null)
-      : fromSessionDeviceMetadata(deviceInfoJson);
+  final device = deviceInfo ?? toSessionDeviceMetadata(name: null, info: null);
 
   // Per-channel quartet-2 cell formatters, computed once from the session's
   // frozen calibration; each closure folds in the column's fixed-point
@@ -226,12 +223,8 @@ Map<String, Object?> _metadata(
     // Absent when false: the complete-session shape stays exactly the v1
     // schema, and readers tolerate the key appearing (additive change).
     if (interrupted) 'interrupted': true,
-    // Storage-integrity disclosures per the format spec; this store's
-    // damage shapes (mid-frame-torn data, unreadable-at-list metadata)
-    // never survive into a loaded session, so the list is always empty.
-    'warnings': const <String>[],
     // The recording apparatus (frozen at recording start): identity from
-    // the session row's deviceInfoJson (nulls for a session without
+    // the session row's deviceInfo (nulls for a session without
     // identity — web-recorded serial, unreadable DIS), the electrical
     // configuration in effect, and the board calibration's provenance.
     // Both afe and cal are descriptive traceability; the operative
