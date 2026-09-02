@@ -40,6 +40,12 @@
        the loader's fetch as two full downloads. -->
   <link rel="preload" href="main.dart.wasm" as="fetch" crossorigin>
 
+  <!-- The first text layout pulls this manifest-then-font chain serially
+       after engine init; preloading overlaps it with the wasm downloads.
+       as=fetch + crossorigin matches the engine's fetch() request. -->
+  <link rel="preload" href="assets/FontManifest.json" as="fetch" crossorigin>
+  <link rel="preload" href="assets/fonts/MaterialIcons-Regular.otf" as="fetch" crossorigin>
+
   <style>
     /* Splash colors mirror DynoApp's schemes: scaffold backgrounds.
        Accent is scheme.primary. */
