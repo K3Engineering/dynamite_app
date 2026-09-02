@@ -206,12 +206,12 @@ class RecordingController extends ChangeNotifier {
         final board? => SessionBoardMeta.fromBoard(board),
         null => null,
       },
+      // A storage failure latched mid-recording stops the session the
+      // moment it latches — not when a later batch would reveal it (a
+      // failed last packet under an idle feed has no later batch).
+      onWriteError: (_) => _autoStopOnStorageError(),
     );
     _sessionName = sessionName;
-    // A storage failure latched mid-recording stops the session the moment
-    // it latches — not when a later batch would reveal it (a failed last
-    // packet under an idle feed has no later batch).
-    _sessionWriter!.onWriteError = (_) => _autoStopOnStorageError();
     _onSessionBoundary();
     _transitionTo(_RecordingState.recording);
     return const StartSessionOk();

@@ -40,6 +40,7 @@ class SessionStorage {
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
     required SessionBoardMeta? boardMeta,
+    required void Function(Object error) onWriteError,
   }) {
     return LiveSessionWriter(
       (
@@ -67,6 +68,7 @@ class SessionStorage {
         recordedAt: iso8601WithOffset(DateTime.now()),
       ),
       sourceRingCapacity: sourceRingCapacity,
+      onWriteError: onWriteError,
       sinkFactory: (meta, firstData) => SessionStore.instance.createDataSink(
         meta: meta,
         firstData: firstData,
@@ -157,6 +159,7 @@ class StaticSessionPersistence implements SessionPersistence {
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
     required SessionBoardMeta? boardMeta,
+    required void Function(Object error) onWriteError,
   }) => SessionStorage.startSession(
     tare: tare,
     channelCalibration: channelCalibration,
@@ -168,6 +171,7 @@ class StaticSessionPersistence implements SessionPersistence {
     displayUnit: displayUnit,
     deviceMetadata: deviceMetadata,
     boardMeta: boardMeta,
+    onWriteError: onWriteError,
   );
 
   @override

@@ -39,10 +39,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   late final ValueListenable<SessionCatalogState> _catalog;
 
-  /// True from this route's delete confirmation through the pop, so the
-  /// catalog's removal delta does not flash the unavailable placeholder.
-  bool _deleting = false;
-
   @override
   void initState() {
     super.initState();
@@ -90,7 +86,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             widget.session.id,
           )) {
             final session? => _buildSession(settings, session),
-            null when _deleting => _buildSession(settings, widget.session),
             null => Scaffold(
               appBar: AppBar(title: const Text('Session unavailable')),
               body: const EmptyPlaceholder(
@@ -345,17 +340,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   Future<void> _deleteAndPop(SessionSummary session) async {
-    var deleted = false;
-    setState(() => _deleting = true);
-    try {
-      deleted = await deleteSessionFlow(
-        context,
-        sessionId: session.id,
-        name: session.name,
-      );
-    } finally {
-      if (mounted && !deleted) setState(() => _deleting = false);
-    }
+    final deleted = await deleteSessionFlow(
+      context,
+      sessionId: session.id,
+      name: session.name,
+    );
     if (mounted && deleted) Navigator.of(context).pop();
   }
 

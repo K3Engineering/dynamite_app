@@ -102,23 +102,21 @@ class SessionStore {
     return result.future;
   }
 
-  StateError get _catalogUnavailable => switch (_catalog.value) {
-    SessionCatalogFailed(:final error) => StateError(
-      'Session catalog is unavailable: $error',
-    ),
-    _ => throw StateError('catalog is available'),
-  };
+  StateError _catalogUnavailableError(Object error) =>
+      StateError('Session catalog is unavailable: $error');
 
   void _requireCatalogAvailable() {
-    if (_catalog.value is SessionCatalogFailed) throw _catalogUnavailable;
+    if (_catalog.value case SessionCatalogFailed(:final error)) {
+      throw _catalogUnavailableError(error);
+    }
   }
 
   Future<void> ensureCatalogLoaded() {
     // A failed future, not a sync throw: callers swallow it in a catchError
     // and let the Failed state render through the listenable, identically
     // to a publish failure landing after the call.
-    if (_catalog.value is SessionCatalogFailed) {
-      return Future.error(_catalogUnavailable);
+    if (_catalog.value case SessionCatalogFailed(:final error)) {
+      return Future.error(_catalogUnavailableError(error));
     }
     if (_catalog.value is SessionCatalogReady) return Future.value();
     return _initialCatalogLoad ??= _enqueue(_publishCatalog);
@@ -129,19 +127,28 @@ class SessionStore {
   /// this is also a Failed catalog's only way back.
   Future<void> refreshCatalog() => _enqueue(_publishCatalog);
 
-  Future<void> _loadCatalogIfNeeded(SessionFilesBackend files) async {
+  Future<SessionCatalog> _loadCatalogIfNeeded(SessionFilesBackend files) async {
     if (_catalog.value is SessionCatalogLoading) await _publishCatalog(files);
     _requireCatalogAvailable();
+    // A publish either leaves the catalog Ready or throws, and a pre-set
+    // Failed threw above — the remaining arm is unreachable.
+    return switch (_catalog.value) {
+      SessionCatalogReady(:final catalog) => catalog,
+      _ => throw StateError('catalog not ready after publish'),
+    };
   }
 
   /// Run [operation] on the serialized queue with the catalog guaranteed
-  /// loaded and available. Mutations apply their own delta to the published
-  /// catalog (see [_refreshCatalogEntry]); reads need nothing more.
+  /// loaded and available, handed to the operation as a value so downstream
+  /// availability is the parameter's type, not a re-check. Mutations apply
+  /// their own delta to the published catalog (see [_refreshCatalogEntry]);
+  /// reads need nothing more.
   Future<T> _withCatalog<T>(
-    Future<T> Function(SessionFilesBackend files) operation,
+    Future<T> Function(SessionFilesBackend files, SessionCatalog catalog)
+    operation,
   ) => _enqueue((files) async {
-    await _loadCatalogIfNeeded(files);
-    return operation(files);
+    final catalog = await _loadCatalogIfNeeded(files);
+    return operation(files, catalog);
   });
 
   /// Re-publish the in-memory catalog after a mutation whose effect is
@@ -254,7 +261,7 @@ class SessionStore {
   /// SessionFilesBackend for the marker's write discipline). finalizeSession
   /// calls this after its persisted-vs-accepted count check passed with no
   /// error latched; anything else gets [abortSession].
-  Future<void> touchFinal(String id) => _withCatalog((files) async {
+  Future<void> touchFinal(String id) => _withCatalog((files, _) async {
     try {
       await files.touchFinal(id);
     } finally {
@@ -271,7 +278,7 @@ class SessionStore {
   /// accepted-frame count): [id] gets NO marker. Drops the store's
   /// in-flight ownership and splices the fresh verdict in, so the
   /// interrupted recording lists immediately.
-  Future<void> abortSession(String id) => _withCatalog((files) async {
+  Future<void> abortSession(String id) => _withCatalog((files, _) async {
     _liveSessionId = null;
     _liveBytes = 0;
     await _refreshCatalogEntry(files, id);
@@ -438,7 +445,7 @@ class SessionStore {
   /// header, a byte count that doesn't divide into frames, or a frame
   /// shape the write path never produces throws (the detail view renders
   /// it as an error state).
-  Future<SessionData> loadSession(String id) => _withCatalog((files) async {
+  Future<SessionData> loadSession(String id) => _withCatalog((files, _) async {
     final journalBytes = await files.readJournal(id);
     if (journalBytes == null) {
       throw StateError('loadSession: no journal for session $id');
@@ -495,7 +502,7 @@ class SessionStore {
   Future<void> editSession(
     String id,
     SessionEdit Function(SessionEdit current) update,
-  ) => _withCatalog((files) async {
+  ) => _withCatalog((files, _) async {
     final journalBytes = await files.readJournal(id);
     if (journalBytes == null) {
       throw StateError('editSession: no journal for session $id');
@@ -523,7 +530,7 @@ class SessionStore {
   /// anywhere in the store, and it only ever runs on a user's explicit
   /// confirmation. Only the layout's three named files are destroyed (see
   /// SessionFilesBackend.delete).
-  Future<void> deleteSession(String id) => _withCatalog((files) async {
+  Future<void> deleteSession(String id) => _withCatalog((files, _) async {
     await files.delete(id);
     _publishDelta(
       (catalog) => _spliceEntry(catalog, id, const _UnlistedEntry()),
@@ -533,15 +540,8 @@ class SessionStore {
   /// Total bytes of every session file — the native storage strip's "used"
   /// number: the catalog's own sizes plus the live recording's acked bytes
   /// (its dir never lists). Stray files the layout can't name don't count.
-  Future<int> usedBytes() => _withCatalog((files) async {
-    final state = _catalog.value;
-    if (state is! SessionCatalogReady) {
-      // _withCatalog guarantees availability, so this is unreachable —
-      // fail loudly rather than paper over the invariant with null-coalescing.
-      throw StateError('usedBytes: catalog not ready after load');
-    }
-    return state.catalog.totalBytes + _liveBytes;
-  });
+  Future<int> usedBytes() =>
+      _withCatalog((_, catalog) async => catalog.totalBytes + _liveBytes);
 }
 
 sealed class _ListedEntry {

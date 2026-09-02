@@ -71,6 +71,7 @@ void main() {
         final board? => SessionBoardMeta.fromBoard(board),
         null => null,
       },
+      onWriteError: (_) {},
     );
   }
 
@@ -157,6 +158,7 @@ void main() {
       final writer = LiveSessionWriter(
         testHeader(),
         sourceRingCapacity: DataHub.maxDataSz,
+        onWriteError: (_) {},
         sinkFactory: (meta, firstData) async {
           stampedMeta = meta;
           saved.add(firstData);
@@ -211,6 +213,7 @@ void main() {
       final writer = LiveSessionWriter(
         testHeader(),
         sourceRingCapacity: ringCapacity,
+        onWriteError: (_) {},
         sinkFactory: (meta, firstData) async {
           sinkCalls++;
           if (!entered.isCompleted) entered.complete();
@@ -270,6 +273,7 @@ void main() {
         final writer = LiveSessionWriter(
           testHeader(),
           sourceRingCapacity: DataHub.maxDataSz,
+          onWriteError: (_) {},
           sinkFactory: (meta, firstData) async => _CollectSink('test-id'),
         );
         await writer.appendData(hub.snapshotRange(0, 50));
@@ -295,6 +299,7 @@ void main() {
         final writer = LiveSessionWriter(
           testHeader(),
           sourceRingCapacity: DataHub.maxDataSz,
+          onWriteError: (_) {},
           sinkFactory: (meta, firstData) async => _CollectSink('test-id'),
         );
         // The session starts at hub index 120: ssn_origin = 65530 + 20 —
@@ -350,6 +355,7 @@ void main() {
       final dropping = LiveSessionWriter(
         testHeader(),
         sourceRingCapacity: DataHub.maxDataSz,
+        onWriteError: (_) {},
         sinkFactory: (meta, firstData) async {
           final real = await store.createDataSink(
             meta: meta,
@@ -387,6 +393,7 @@ void main() {
       final writer = LiveSessionWriter(
         testHeader(),
         sourceRingCapacity: DataHub.maxDataSz,
+        onWriteError: (_) {},
         sinkFactory: (meta, firstData) async {
           final real = await store.createDataSink(
             meta: meta,

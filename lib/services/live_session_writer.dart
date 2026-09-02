@@ -209,6 +209,7 @@ class LiveSessionWriter {
   LiveSessionWriter(
     this.header, {
     required this.sourceRingCapacity,
+    required this.onWriteError,
     required SessionSinkFactory sinkFactory,
   }) : _sinkFactory = sinkFactory;
 
@@ -281,15 +282,15 @@ class LiveSessionWriter {
   /// point below): recording's auto-stop rides this rather than polling
   /// [hasError] on a later batch, so a failed last packet under an idle
   /// feed can't leave a session "recording" into the void until manual
-  /// stop. Set by the recording controller right after construction.
-  void Function(Object error)? onWriteError;
+  /// stop.
+  final void Function(Object error) onWriteError;
 
   /// Latch [error] as the first failure (a later failure keeps the first
   /// as the cause) and notify [onWriteError] exactly once.
   void _latchError(Object error) {
     if (writeError != null) return;
     writeError = error;
-    onWriteError?.call(error);
+    onWriteError.call(error);
   }
 
   /// Serializes all writes. Each enqueued op awaits the previous one.

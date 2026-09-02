@@ -15,7 +15,8 @@ abstract interface class SessionPersistence {
   /// [sourceRingCapacity]) is snapshotted by the caller, so the storage side
   /// never consults live state. Pure construction: no store work happens
   /// until the writer's first packet creates the session directory, so this
-  /// can never fail and never needs discarding.
+  /// can never fail and never needs discarding. [onWriteError] is the
+  /// writer's latched-error callback (see LiveSessionWriter.onWriteError).
   LiveSessionWriter startSession({
     required List<double?> tare,
     required List<ChannelCalibration> channelCalibration,
@@ -27,6 +28,7 @@ abstract interface class SessionPersistence {
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
     required SessionBoardMeta? boardMeta,
+    required void Function(Object error) onWriteError,
   });
 
   /// Drain the write queue, verify the persisted length against the
