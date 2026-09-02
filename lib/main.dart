@@ -298,7 +298,7 @@ class DynoApp extends StatelessWidget {
     }
 
     return MaterialApp(
-      title: 'Dynamite',
+      title: 'Dynamite Sampler App',
       themeMode: ThemeMode.system,
       theme: ThemeData(
         useMaterial3: true,
