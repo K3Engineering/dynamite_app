@@ -23,9 +23,9 @@ Future<int> sessionsUsedBytes() => SessionStore.instance.usedBytes();
 /// The byte-size pulse (append acks included) the capacity strip cues on.
 Stream<void> sessionByteChanges() => SessionStore.instance.byteChanges;
 
-/// Read a finalized session back for the detail view / CSV export. Throws
-/// on unreadable metadata or impossible frame shapes — the detail screen
-/// renders failures as an error state.
+/// Read a completed or interrupted session back for the detail view / CSV
+/// export. Throws on unreadable metadata or impossible frame shapes — the
+/// detail screen renders failures as an error state.
 Future<SessionData> loadSession(String id) =>
     SessionStore.instance.loadSession(id);
 

@@ -370,8 +370,8 @@ void main() {
       // verdict is permanent: no marker, no "complete" listing — ever.
       final listed = await catalog();
       expect(listed.sessions, isEmpty);
-      expect(listed.damaged.single.id, dropping.sessionId);
-      expect(listed.damaged.single.reason, contains('interrupted'));
+      expect(listed.interrupted.single.id, dropping.sessionId);
+      expect(listed.damaged, isEmpty);
     });
 
     test('a throwing close folds into the returned error and the session '
@@ -409,12 +409,12 @@ void main() {
 
       // Any latched failure vetoes the marker, close included: the store
       // cannot vouch for the session, so it lists as interrupted with its
-      // (fully written) bytes still salvageable via the raw exports.
+      // (fully written) bytes loading and exporting like a complete one.
       expect(error, same(closeBoom));
       final listed = await catalog();
       expect(listed.sessions, isEmpty);
-      expect(listed.damaged.single.id, writer.sessionId);
-      expect(listed.damaged.single.reason, contains('interrupted'));
+      expect(listed.interrupted.single.id, writer.sessionId);
+      expect(listed.damaged, isEmpty);
     });
 
     test('an intact multi-packet recording finalizes with no error', () async {
@@ -462,8 +462,9 @@ void main() {
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
 
       // While the store still owns the in-flight recording, the dir is
-      // invisible: not listed, not damaged.
+      // invisible: not listed, not interrupted, not damaged.
       expect((await catalog()).sessions, isEmpty);
+      expect((await catalog()).interrupted, isEmpty);
       expect((await catalog()).damaged, isEmpty);
 
       // Simulate the crash: release the data handle the way a process
@@ -478,31 +479,26 @@ void main() {
       // recording lists as interrupted — permanently; nothing promotes it.
       final listed = await catalog();
       expect(listed.sessions, isEmpty);
-      expect(listed.damaged, hasLength(1));
-      expect(listed.damaged.single.id, writer.sessionId);
-      expect(listed.damaged.single.reason, contains('interrupted'));
-      expect(listed.damaged.single.hasData, isTrue);
-      expect(listed.damaged.single.hasMeta, isTrue);
+      expect(listed.damaged, isEmpty);
+      expect(listed.interrupted.single.id, writer.sessionId);
 
-      // The salvage exports hand the surviving bytes back verbatim, and
-      // they decode: in-band gaps and the ssn origin surface from the
-      // raw files themselves — hand-recovery goes through the codec, as
-      // it does for a technician exporting these bytes.
-      final journal = parseSessionJournal(
-        await store.rawJournalBytes(writer.sessionId!),
-      );
-      expect(journal.meta.ssnOrigin, 41230);
-      final decoded = const SessionChunkCodec(
-        kAdcChannelCount,
-      ).decodeWithGaps(await store.rawDataBytes(writer.sessionId!));
-      expect(decoded.channels.first.length, hub.totalSamples);
-      expect(decoded.gaps.contains(2100), isTrue);
-      expect(decoded.gaps.contains(2119), isTrue);
-      expect(decoded.gaps.contains(2120), isFalse);
+      // It loads and decodes exactly like a complete session: in-band
+      // gaps and the ssn origin surface through the normal load path.
+      final loaded = await store.loadSession(writer.sessionId!);
+      expect(loaded.sampleCount, hub.totalSamples);
+      expect(loaded.ssnOrigin, 41230);
+      expect(loaded.gaps.contains(2100), isTrue);
+      expect(loaded.gaps.contains(2119), isTrue);
+      expect(loaded.gaps.contains(2120), isFalse);
       // Held values across the gap: the last real frame's values.
-      expect(decoded.channels[0][2100], 7);
-      expect(decoded.channels[0][2119], 7);
-      expect(decoded.channels[0][2120], 9);
+      expect(loaded.channels[0][2100], 7);
+      expect(loaded.channels[0][2119], 7);
+      expect(loaded.channels[0][2120], 9);
+
+      // An interrupted session is never promoted: a re-scan re-derives the
+      // same verdict, and no marker appears.
+      await store.refreshCatalog();
+      expect((await catalog()).interrupted.single.id, writer.sessionId);
     });
   });
 
@@ -806,8 +802,35 @@ void main() {
       await seedSession('2026-08-28T14-30-12-aaaa', finalized: false);
       final listed = await catalog();
       expect(listed.sessions, isEmpty);
-      expect(listed.damaged.single.id, '2026-08-28T14-30-12-aaaa');
-      expect(listed.damaged.single.reason, contains('interrupted'));
+      expect(listed.interrupted.single.id, '2026-08-28T14-30-12-aaaa');
+      expect(listed.damaged, isEmpty);
+    });
+
+    test('edits on an interrupted session work and never promote it', () async {
+      await seedSession('2026-08-28T14-30-12-eeee', finalized: false);
+      expect(
+        (await catalog()).interrupted.single.id,
+        '2026-08-28T14-30-12-eeee',
+      );
+
+      await store.editSession(
+        '2026-08-28T14-30-12-eeee',
+        (current) => SessionEdit(
+          name: 'saved from the crash',
+          notes: current.notes,
+          visibleChannels: current.visibleChannels,
+        ),
+      );
+
+      // The rename lands in the summary; the verdict stays interrupted —
+      // an edit line is not a completion marker.
+      final listed = await catalog();
+      expect(listed.sessions, isEmpty);
+      expect(listed.interrupted.single.name, 'saved from the crash');
+      expect(await backend.isFinalized('2026-08-28T14-30-12-eeee'), isFalse);
+
+      final loaded = await store.loadSession('2026-08-28T14-30-12-eeee');
+      expect(loaded.sampleCount, 2);
     });
 
     test('an in-flight session (live id) is invisible until aborted', () async {
@@ -819,6 +842,7 @@ void main() {
       );
       final listed = await catalog();
       expect(listed.sessions, isEmpty);
+      expect(listed.interrupted, isEmpty);
       expect(listed.damaged, isEmpty);
       await sink.close();
 
@@ -827,8 +851,8 @@ void main() {
       await store.abortSession(sink.id);
       final aborted = readyCatalog();
       expect(aborted.sessions, isEmpty);
-      expect(aborted.damaged.single.id, sink.id);
-      expect(aborted.damaged.single.reason, contains('interrupted'));
+      expect(aborted.interrupted.single.id, sink.id);
+      expect(aborted.damaged, isEmpty);
     });
 
     test('a torn header is a damaged entry with both raw exports', () async {

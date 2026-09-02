@@ -177,6 +177,33 @@ void main() {
       });
     });
 
+    test('the interrupted disclosure is additive: present only when set', () {
+      final data = makeSession([
+        [1],
+        [2],
+      ]);
+
+      // A complete session exports exactly the v1 schema — no key at all.
+      expect(
+        metadataOf(buildCsv(data, DisplayUnit.kgf)),
+        isNot(contains('interrupted')),
+      );
+
+      final interruptedMeta = metadataOf(
+        buildSessionCsv(
+          data,
+          DisplayUnit.kgf,
+          recordedAtIso: recordedAtIso,
+          generator: generator,
+          interrupted: true,
+        ),
+      );
+      expect(interruptedMeta['interrupted'], isTrue);
+      // Nothing else changes — the disclosure never masks anything.
+      expect(interruptedMeta['warnings'], isEmpty);
+      expect(interruptedMeta['sample_rate_hz'], 1000);
+    });
+
     test('metadata line carries the frozen device identity', () {
       final data = makeSession([
         [1],

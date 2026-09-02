@@ -182,18 +182,26 @@ class SessionStore {
     _ListedEntry entry,
   ) {
     final sessions = [...catalog.sessions]..removeWhere((s) => s.id == id);
+    final interrupted = [...catalog.interrupted]
+      ..removeWhere((s) => s.id == id);
     final damaged = [...catalog.damaged]..removeWhere((d) => d.id == id);
     final byteSizes = {...catalog.byteSizes}..remove(id);
     switch (entry) {
       case final _CompleteEntry complete:
-        sessions.add(_summaryFor(complete));
+        sessions.add(
+          _summaryFor(complete.id, complete.journal, complete.dataBytes),
+        );
         byteSizes[id] = complete.dataBytes;
+      case final _InterruptedEntry cut:
+        interrupted.add(_summaryFor(cut.id, cut.journal, cut.dataBytes));
+        byteSizes[id] = cut.dataBytes;
       case final _DamagedEntry damagedEntry:
         damaged.add(damagedEntry.damaged);
       case _UnlistedEntry():
     }
     return SessionCatalog(
       sessions: sessions,
+      interrupted: interrupted,
       damaged: damaged,
       byteSizes: byteSizes,
     );
@@ -305,6 +313,7 @@ class SessionStore {
     SessionFilesBackend files,
   ) async {
     final summaries = <SessionSummary>[];
+    final interrupted = <SessionSummary>[];
     final damaged = <DamagedSession>[];
     final sizes = <String, int>{};
     var byteTotal = 0;
@@ -313,8 +322,13 @@ class SessionStore {
       byteTotal += entry.byteTotal;
       switch (entry) {
         case final _CompleteEntry complete:
-          summaries.add(_summaryFor(complete));
+          summaries.add(
+            _summaryFor(complete.id, complete.journal, complete.dataBytes),
+          );
           sizes[id] = complete.dataBytes;
+        case final _InterruptedEntry cut:
+          interrupted.add(_summaryFor(cut.id, cut.journal, cut.dataBytes));
+          sizes[id] = cut.dataBytes;
         case final _DamagedEntry entry:
           damaged.add(entry.damaged);
         case _UnlistedEntry():
@@ -323,6 +337,7 @@ class SessionStore {
     return (
       catalog: SessionCatalog(
         sessions: summaries,
+        interrupted: interrupted,
         damaged: damaged,
         byteSizes: sizes,
       ),
@@ -400,17 +415,15 @@ class SessionStore {
     // No completion marker: the store's own in-flight recording stays
     // invisible (the live writer owns it); anything else is an interrupted
     // recording — the app crashed, the tab died, or the finalize latched a
-    // failure. It lists as a damaged entry with raw salvage; nothing ever
-    // promotes it to complete afterwards.
+    // failure. Every integrity check above already passed, so it loads and
+    // exports like a complete session but lists flagged as interrupted;
+    // nothing ever promotes it to complete afterwards.
     if (!await files.isFinalized(id)) {
       if (id == _liveSessionId) return _UnlistedEntry(byteTotal: byteTotal);
-      return _DamagedEntry(
-        DamagedSession(
-          id: id,
-          hasData: true,
-          hasMeta: true,
-          reason: 'Recording interrupted before completion',
-        ),
+      return _InterruptedEntry(
+        id: id,
+        journal: journal,
+        dataBytes: dataBytes,
         byteTotal: byteTotal,
       );
     }
@@ -422,16 +435,20 @@ class SessionStore {
     );
   }
 
-  SessionSummary _summaryFor(_CompleteEntry entry) {
-    final meta = entry.journal.meta;
-    final edit = entry.journal.effectiveEdit;
+  SessionSummary _summaryFor(
+    String id,
+    SessionJournal journal,
+    int dataBytes,
+  ) {
+    final meta = journal.meta;
+    final edit = journal.effectiveEdit;
     final frames =
-        entry.dataBytes ~/ SessionChunkCodec(meta.channelCount).frameBytes;
+        dataBytes ~/ SessionChunkCodec(meta.channelCount).frameBytes;
     return SessionSummary(
-      id: entry.id,
+      id: id,
       name: edit.name,
       notes: edit.notes,
-      createdAt: sessionIdCreatedAt(entry.id),
+      createdAt: sessionIdCreatedAt(id),
       durationMs: frames * 1000 ~/ meta.sampleRate,
       channelCount: meta.channelCount,
       sampleRate: meta.sampleRate,
@@ -589,6 +606,22 @@ final class _CompleteEntry extends _ListedEntry {
 final class _DamagedEntry extends _ListedEntry {
   const _DamagedEntry(this.damaged, {required super.byteTotal});
   final DamagedSession damaged;
+}
+
+/// Loadable but unvouched: strict journal, whole frames, at least one —
+/// and no completion marker. Everything a [_CompleteEntry] is, minus the
+/// finalize's endorsement; the listing flags it permanently instead.
+final class _InterruptedEntry extends _ListedEntry {
+  const _InterruptedEntry({
+    required this.id,
+    required this.journal,
+    required this.dataBytes,
+    required super.byteTotal,
+  });
+
+  final String id;
+  final SessionJournal journal;
+  final int dataBytes;
 }
 
 /// Parseable and data-bearing but unmarked, while the store's own writer

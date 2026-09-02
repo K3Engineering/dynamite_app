@@ -59,6 +59,7 @@ extension DisplayUnitCsv on DisplayUnit {
   required SessionData data,
   required DisplayUnit unit,
   required AppMeta appMeta,
+  bool interrupted = false,
 }) {
   final csv = buildSessionCsv(
     data,
@@ -66,6 +67,7 @@ extension DisplayUnitCsv on DisplayUnit {
     recordedAtIso: recordedAtIso,
     generator: appMeta.generator,
     deviceInfoJson: deviceInfoJson,
+    interrupted: interrupted,
   );
   return (
     bytes: Uint8List.fromList(utf8.encode(csv)),
@@ -105,6 +107,12 @@ String buildSessionCsv(
   required String recordedAtIso,
   required String generator,
   String? deviceInfoJson,
+
+  /// The recording never completed (no finalize endorsement): every byte
+  /// in the file is valid, but the tail may be missing. Emitted as the
+  /// additive metadata key `interrupted` (unknown-key tolerant per
+  /// csv-format-v1.md) — the file states its own provenance.
+  bool interrupted = false,
 }) {
   final int n = data.channels.length;
   // The writer recorded the true device counter at the session's first
@@ -131,6 +139,7 @@ String buildSessionCsv(
     generator,
     device,
     n,
+    interrupted,
   );
   final buf = StringBuffer()
     ..writeln('# dynamite-csv 1')
@@ -200,6 +209,7 @@ Map<String, Object?> _metadata(
   String generator,
   Map<String, Object?> device,
   int n,
+  bool interrupted,
 ) {
   return {
     'format': 'dynamite-csv',
@@ -213,6 +223,9 @@ Map<String, Object?> _metadata(
     'sample_rate_hz': data.sampleRate,
     'ssn_origin': ssnOrigin,
     'converted_unit': unit.csvSymbol,
+    // Absent when false: the complete-session shape stays exactly the v1
+    // schema, and readers tolerate the key appearing (additive change).
+    if (interrupted) 'interrupted': true,
     // Storage-integrity disclosures per the format spec; this store's
     // damage shapes (mid-frame-torn data, unreadable-at-list metadata)
     // never survive into a loaded session, so the list is always empty.

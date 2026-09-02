@@ -23,9 +23,19 @@ import '../widgets/graph_components.dart';
 import '../widgets/snackbars.dart';
 
 class SessionDetailScreen extends StatefulWidget {
-  const SessionDetailScreen({super.key, required this.session});
+  const SessionDetailScreen({
+    super.key,
+    required this.session,
+    this.interrupted = false,
+  });
 
   final SessionSummary session;
+
+  /// The recording never completed (crash, dead tab, failed finalize):
+  /// the session renders like any other — everything on disk is valid —
+  /// but stays flagged (banner here, `interrupted: true` in CSV exports)
+  /// and nothing ever promotes it to complete.
+  final bool interrupted;
 
   @override
   State<SessionDetailScreen> createState() => _SessionDetailScreenState();
@@ -172,6 +182,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (widget.interrupted) const _InterruptedBanner(),
           // Channel header (same tappable table as the live view; toggles
           // this session's per-session channel visibility).
           ChannelStatsTable(
@@ -370,6 +381,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           data: data,
           unit: unit,
           appMeta: appMeta,
+          interrupted: widget.interrupted,
         );
         return downloadExport(
           bytes: artifact.bytes,
@@ -390,6 +402,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           data: data,
           unit: unit,
           appMeta: appMeta,
+          interrupted: widget.interrupted,
         );
         return shareExport(
           bytes: artifact.bytes,
@@ -488,6 +501,35 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       top: global.dy,
       width: size.width,
       height: size.height,
+    );
+  }
+}
+
+/// The permanent disclosure strip for a session whose recording never
+/// completed (crash, dead tab, failed finalize): everything shown below
+/// it is valid, the tail may be missing.
+class _InterruptedBanner extends StatelessWidget {
+  const _InterruptedBanner();
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Container(
+      color: colors.errorContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber, size: 18, color: colors.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Recording was interrupted and did not stop cleanly — '
+              'data may be truncated',
+              style: TextStyle(color: colors.onErrorContainer),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

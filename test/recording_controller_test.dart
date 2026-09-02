@@ -10,7 +10,6 @@ import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_files_io.dart';
 import 'package:dynamite_app/services/session_queries.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
@@ -293,16 +292,16 @@ void main() {
 
       // What the first packet wrote survives on disk, but the store cannot
       // vouch for the session — no completion marker, no "complete" listing:
-      // it lists as interrupted with its bytes still salvageable raw.
+      // it lists as interrupted, and its bytes load through the normal path.
       final listed = _readyCatalog(SessionStore.instance);
       expect(listed.sessions, isEmpty);
-      expect(listed.damaged, hasLength(1));
-      expect(listed.damaged.single.reason, contains('interrupted'));
-      final decoded = const SessionChunkCodec(kAdcChannelCount).decodeWithGaps(
-        await SessionStore.instance.rawDataBytes(listed.damaged.single.id),
+      expect(listed.interrupted, hasLength(1));
+      expect(listed.damaged, isEmpty);
+      final loaded = await SessionStore.instance.loadSession(
+        listed.interrupted.single.id,
       );
-      expect(decoded.channels.first.length, 10);
-      expect(decoded.channels[0][3], 1003);
+      expect(loaded.channels.first.length, 10);
+      expect(loaded.channels[0][3], 1003);
     },
   );
 

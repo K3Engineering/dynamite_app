@@ -123,9 +123,14 @@ class _SessionsTabState extends State<SessionsTab> {
   }
 
   Widget _buildCatalog(SessionCatalog catalog) {
-    final sessions = catalog.sessions;
     final damaged = catalog.damaged;
-    if (sessions.isEmpty && damaged.isEmpty) {
+    // One chronological list for both session kinds; interrupted entries
+    // carry their flag into the card and the detail screen.
+    final entries = [
+      for (final s in catalog.sessions) (session: s, interrupted: false),
+      for (final s in catalog.interrupted) (session: s, interrupted: true),
+    ]..sort((a, b) => b.session.id.compareTo(a.session.id));
+    if (entries.isEmpty && damaged.isEmpty) {
       return const EmptyPlaceholder(
         icon: Icons.folder_open,
         title: 'No recorded sessions yet',
@@ -138,7 +143,7 @@ class _SessionsTabState extends State<SessionsTab> {
         padding: EdgeInsets.symmetric(
           horizontal: contentSideInset(constraints.maxWidth),
         ),
-        itemCount: damaged.length + sessions.length,
+        itemCount: damaged.length + entries.length,
         itemBuilder: (context, index) => index < damaged.length
             ? _DamagedCard(
                 damaged: damaged[index],
@@ -152,23 +157,31 @@ class _SessionsTabState extends State<SessionsTab> {
                     _deleteSession(damaged[index].id, damaged[index].id),
               )
             : _SessionCard(
-                session: sessions[index - damaged.length],
-                byteSize:
-                    catalog.byteSizes[sessions[index - damaged.length].id],
-                onTap: () => _openDetail(sessions[index - damaged.length]),
+                session: entries[index - damaged.length].session,
+                byteSize: catalog
+                    .byteSizes[entries[index - damaged.length].session.id],
+                interrupted: entries[index - damaged.length].interrupted,
+                onTap: () => _openDetail(
+                  entries[index - damaged.length].session,
+                  interrupted: entries[index - damaged.length].interrupted,
+                ),
                 onDelete: () => _deleteSession(
-                  sessions[index - damaged.length].id,
-                  sessions[index - damaged.length].name,
+                  entries[index - damaged.length].session.id,
+                  entries[index - damaged.length].session.name,
                 ),
               ),
       ),
     );
   }
 
-  Future<void> _openDetail(SessionSummary session) async {
+  Future<void> _openDetail(
+    SessionSummary session, {
+    bool interrupted = false,
+  }) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => SessionDetailScreen(session: session),
+        builder: (_) =>
+            SessionDetailScreen(session: session, interrupted: interrupted),
       ),
     );
   }
@@ -225,6 +238,7 @@ class _SessionCard extends StatelessWidget {
   const _SessionCard({
     required this.session,
     required this.byteSize,
+    required this.interrupted,
     required this.onTap,
     required this.onDelete,
   });
@@ -234,6 +248,11 @@ class _SessionCard extends StatelessWidget {
   /// Exact data bytes, null until the sizes stream lands. Null simply
   /// omits the size from the subtitle.
   final int? byteSize;
+
+  /// The recording never completed (crash, dead tab, failed finalize):
+  /// loadable and exportable like any session, flagged forever.
+  final bool interrupted;
+
   final VoidCallback onTap;
   final Future<void> Function() onDelete;
 
@@ -260,6 +279,12 @@ class _SessionCard extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 8),
         child: ListTile(
           onTap: onTap,
+          leading: interrupted
+              ? Icon(
+                  Icons.warning_amber,
+                  color: Theme.of(context).colorScheme.error,
+                )
+              : null,
           title: Text(
             session.name.isEmpty ? untitledSessionName : session.name,
             style: const TextStyle(fontWeight: FontWeight.w500),
@@ -268,6 +293,7 @@ class _SessionCard extends StatelessWidget {
           // the stored row-wide peak is a max over all channels and reads
           // inconsistent next to them.
           subtitle: Text(
+            '${interrupted ? 'Interrupted · ' : ''}'
             '${formatTimestamp(session.createdAt)} · $durationStr · '
             '${session.channelCount} ch$sizeStr',
           ),

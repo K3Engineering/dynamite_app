@@ -80,8 +80,8 @@ class SessionStorage {
   /// clean. The marker is the catalog's entire complete-verdict, so a
   /// finalize that latched any failure (a mid-recording write error, a
   /// sink-close failure, or a count mismatch) must not write it: the
-  /// session lists as interrupted instead, salvageable forever — never
-  /// listed as a recording the store cannot vouch for.
+  /// session lists as interrupted instead — fully loadable and exportable,
+  /// flagged forever, never listed as complete.
   ///
   /// If no data ever reached storage, the directory was never created and
   /// there is nothing to finalize (recording nothing saves nothing).
