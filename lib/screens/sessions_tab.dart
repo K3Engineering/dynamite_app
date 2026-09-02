@@ -1,8 +1,12 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../models/damaged_session.dart';
+import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
+import '../services/export_delivery.dart';
 import '../services/session_queries.dart';
 import '../services/storage_probe.dart';
 import '../utils/format.dart';
@@ -21,31 +25,28 @@ class SessionsTab extends StatefulWidget {
 }
 
 class _SessionsTabState extends State<SessionsTab> {
-  /// Created once: a fresh `watchSessionSummaries()` per build would make
-  /// the [StreamBuilder] unsubscribe and re-run the query on every rebuild
-  /// (this tab rebuilds on each shell tab switch).
-  late final Stream<List<SessionSummary>> _sessions = watchSessionSummaries();
-
-  /// Per-session chunk byte sizes, same created-once rule as [_sessions].
-  /// Also the capacity strip's refresh cue: everything that changes stored
-  /// bytes (deletes, recording finalization, live chunk writes) lands on the
-  /// chunk table this stream watches.
-  late final Stream<Map<int, int>> _sizes = watchSessionByteSizes();
+  late final ValueListenable<SessionCatalogState> _catalog =
+      sessionCatalogState();
 
   /// The platform's storage facts for the capacity strip; null where probing
   /// is unsupported (desktop) or failed — the strip hides then.
   StorageCapacity? _capacity;
-  StreamSubscription<Map<int, int>>? _capacityCueSub;
+  StreamSubscription<void>? _capacityCueSub;
+  bool _capacityDirty = false;
+  bool _refreshingCapacity = false;
 
   @override
   void initState() {
     super.initState();
-    unawaited(_refreshCapacity());
-    // Errors are swallowed: on hosts without platform channels the DB never
-    // opens, and the strip simply stays hidden (the smoke test pumps all
-    // tabs in exactly that situation).
-    _capacityCueSub = _sizes.listen(
-      (_) => unawaited(_refreshCapacity()),
+    unawaited(ensureSessionCatalogLoaded().catchError((_) {}));
+    _requestCapacityRefresh();
+    // The liveness cue rides the recording's append acks (during a
+    // recording, sizes only exist in the store, not on the listing), plus
+    // every mutation. Errors are swallowed: on hosts without platform
+    // channels the store never opens, and the strip simply stays hidden
+    // (the smoke test pumps all tabs in exactly that situation).
+    _capacityCueSub = sessionByteChanges().listen(
+      (_) => _requestCapacityRefresh(),
       onError: (_) {},
     );
   }
@@ -56,11 +57,24 @@ class _SessionsTabState extends State<SessionsTab> {
     super.dispose();
   }
 
+  void _requestCapacityRefresh() {
+    _capacityDirty = true;
+    if (!_refreshingCapacity) unawaited(_refreshCapacity());
+  }
+
   Future<void> _refreshCapacity() async {
-    final capacity = await fetchStorageCapacity(
-      usedBytes: sessionDatabaseFileBytes,
-    );
-    if (mounted) setState(() => _capacity = capacity);
+    _refreshingCapacity = true;
+    try {
+      while (_capacityDirty && mounted) {
+        _capacityDirty = false;
+        final capacity = await fetchStorageCapacity(
+          usedBytes: sessionsUsedBytes,
+        );
+        if (mounted) setState(() => _capacity = capacity);
+      }
+    } finally {
+      _refreshingCapacity = false;
+    }
   }
 
   @override
@@ -87,57 +101,65 @@ class _SessionsTabState extends State<SessionsTab> {
           if (_capacity case final capacity?)
             TabContentColumn(child: StorageCapacityStrip(capacity: capacity)),
           Expanded(
-            child: StreamBuilder<List<SessionSummary>>(
-              stream: _sessions,
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return EmptyPlaceholder(
-                    icon: Icons.error_outline,
-                    title: 'Error loading sessions',
-                    hint: '${snapshot.error}',
-                    color: Theme.of(context).colorScheme.error,
-                  );
-                }
-
-                if (snapshot.connectionState == ConnectionState.waiting &&
-                    !snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-
-                final sessions = snapshot.data ?? [];
-
-                if (sessions.isEmpty) {
-                  return const EmptyPlaceholder(
-                    icon: Icons.folder_open,
-                    title: 'No recorded sessions yet',
-                    hint: 'Start a recording from the Live tab',
-                  );
-                }
-
-                return StreamBuilder<Map<int, int>>(
-                  stream: _sizes,
-                  builder: (context, sizeSnapshot) {
-                    final sizes = sizeSnapshot.data ?? const <int, int>{};
-                    return LayoutBuilder(
-                      builder: (context, constraints) => ListView.builder(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: contentSideInset(constraints.maxWidth),
-                        ),
-                        itemCount: sessions.length,
-                        itemBuilder: (context, index) => _SessionCard(
-                          session: sessions[index],
-                          byteSize: sizes[sessions[index].id],
-                          onTap: () => _openDetail(sessions[index]),
-                          onDelete: () => _deleteSession(sessions[index]),
-                        ),
-                      ),
-                    );
-                  },
-                );
+            child: ValueListenableBuilder<SessionCatalogState>(
+              valueListenable: _catalog,
+              builder: (context, state, _) => switch (state) {
+                SessionCatalogLoading() => const Center(
+                  child: CircularProgressIndicator(),
+                ),
+                SessionCatalogFailed(:final error) => EmptyPlaceholder(
+                  icon: Icons.error_outline,
+                  title: 'Error loading sessions',
+                  hint: '$error',
+                  color: Theme.of(context).colorScheme.error,
+                ),
+                SessionCatalogReady(:final catalog) => _buildCatalog(catalog),
               },
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildCatalog(SessionCatalog catalog) {
+    final damaged = catalog.damaged;
+    if (catalog.sessions.isEmpty && damaged.isEmpty) {
+      return const EmptyPlaceholder(
+        icon: Icons.folder_open,
+        title: 'No recorded sessions yet',
+        hint: 'Start a recording from the Live tab',
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (context, constraints) => ListView.builder(
+        padding: EdgeInsets.symmetric(
+          horizontal: contentSideInset(constraints.maxWidth),
+        ),
+        itemCount: damaged.length + catalog.sessions.length,
+        itemBuilder: (context, index) {
+          if (index < damaged.length) {
+            return _DamagedCard(
+              damaged: damaged[index],
+              onExportSamples: damaged[index].hasData
+                  ? () => _exportDamaged(damaged[index], data: true)
+                  : null,
+              onExportMetadata: damaged[index].hasMeta
+                  ? () => _exportDamaged(damaged[index], data: false)
+                  : null,
+              onDelete: () =>
+                  _deleteSession(damaged[index].id, damaged[index].id),
+            );
+          }
+          final session = catalog.sessions[index - damaged.length];
+          return _SessionCard(
+            session: session,
+            byteSize: catalog.byteSizes[session.id],
+            onTap: () => _openDetail(session),
+            onDelete: () => _deleteSession(session.id, session.name),
+          );
+        },
       ),
     );
   }
@@ -150,13 +172,9 @@ class _SessionsTabState extends State<SessionsTab> {
     );
   }
 
-  Future<void> _deleteSession(SessionSummary session) async {
+  Future<void> _deleteSession(String id, String name) async {
     try {
-      await deleteSessionFlow(
-        context,
-        sessionId: session.id,
-        name: session.name,
-      );
+      await deleteSessionFlow(context, sessionId: id, name: name);
     } catch (e) {
       if (mounted) {
         showErrorSnackBar(
@@ -164,6 +182,40 @@ class _SessionsTabState extends State<SessionsTab> {
           'Failed to delete session: $e',
         );
       }
+    }
+  }
+
+  /// Hand a damaged entry's surviving bytes to the user, verbatim, named
+  /// from the directory id.
+  Future<void> _exportDamaged(
+    DamagedSession damaged, {
+    required bool data,
+  }) async {
+    final fileName = '${damaged.id}.${data ? 'data.raw' : 'meta'}';
+    final dialogTitle = data ? 'Export samples (raw)' : 'Export metadata (raw)';
+    String? message;
+    Object? error;
+    try {
+      message = await downloadExport(
+        bytes: data
+            ? await damagedDataBytes(damaged.id)
+            : await damagedMetadataBytes(damaged.id),
+        fileName: fileName,
+        dialogTitle: dialogTitle,
+      );
+    } catch (e) {
+      error = e;
+    }
+    if (!mounted) return;
+    if (error != null) {
+      showErrorSnackBar(
+        ScaffoldMessenger.of(context),
+        '$dialogTitle failed: $error',
+      );
+    } else if (message != null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 }
@@ -178,9 +230,10 @@ class _SessionCard extends StatelessWidget {
 
   final SessionSummary session;
 
-  /// Exact chunk payload bytes, null until the sizes stream lands. Null
+  /// The directory's bytes as scanned, null until the sizes land. Null
   /// simply omits the size from the subtitle.
   final int? byteSize;
+
   final VoidCallback onTap;
   final Future<void> Function() onDelete;
 
@@ -207,6 +260,12 @@ class _SessionCard extends StatelessWidget {
         margin: const EdgeInsets.only(bottom: 8),
         child: ListTile(
           onTap: onTap,
+          leading: session.interrupted
+              ? Icon(
+                  Icons.warning_amber,
+                  color: Theme.of(context).colorScheme.error,
+                )
+              : null,
           title: Text(
             session.name.isEmpty ? untitledSessionName : session.name,
             style: const TextStyle(fontWeight: FontWeight.w500),
@@ -215,10 +274,87 @@ class _SessionCard extends StatelessWidget {
           // the stored row-wide peak is a max over all channels and reads
           // inconsistent next to them.
           subtitle: Text(
+            '${session.interrupted ? 'Interrupted · ' : ''}'
             '${formatTimestamp(session.createdAt)} · $durationStr · '
             '${session.channelCount} ch$sizeStr',
           ),
           trailing: const Icon(Icons.chevron_right),
+        ),
+      ),
+    );
+  }
+}
+
+/// The one damaged-entry surface: what the directory is, why the store
+/// can't load it, and the manual affordances its bytes still afford
+/// (raw exports whenever the file has any, delete behind confirmation).
+class _DamagedCard extends StatelessWidget {
+  const _DamagedCard({
+    required this.damaged,
+    required this.onExportSamples,
+    required this.onExportMetadata,
+    required this.onDelete,
+  });
+
+  final DamagedSession damaged;
+  final VoidCallback? onExportSamples;
+  final VoidCallback? onExportMetadata;
+  final Future<void> Function() onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.warning_amber,
+                  color: Theme.of(context).colorScheme.error,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Damaged session',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w500,
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline),
+                  tooltip: 'Delete',
+                  color: Theme.of(context).colorScheme.error,
+                  onPressed: () => unawaited(onDelete()),
+                ),
+              ],
+            ),
+            Text(
+              '${damaged.reason} · ${damaged.id}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                if (onExportSamples != null)
+                  TextButton(
+                    onPressed: onExportSamples,
+                    child: const Text('Export samples (raw)'),
+                  ),
+                if (onExportMetadata != null)
+                  TextButton(
+                    onPressed: onExportMetadata,
+                    child: const Text('Export metadata (raw)'),
+                  ),
+              ],
+            ),
+          ],
         ),
       ),
     );

@@ -49,23 +49,25 @@ extension DisplayUnitCsv on DisplayUnit {
 /// The session's recorded [data] as a deliverable CSV artifact: the file
 /// bytes, its sanitized name, and its MIME type. [unit] is the file's
 /// converted unit (the user's pick in the export flow — see
-/// csv-format-v1C.md). [sessionName]/[recordedAtIso]/[deviceInfoJson] are
-/// the session row's fields, passed flat so the export API doesn't take the
-/// drift row type. Delivery is the caller's job (export_delivery.dart).
+/// csv-format-v1C.md). [sessionName]/[recordedAtIso]/[deviceInfo] are
+/// the session's fields, passed flat so the export API doesn't take store
+/// types. Delivery is the caller's job (export_delivery.dart).
 ({Uint8List bytes, String fileName, String mimeType}) buildSessionCsvArtifact({
   required String sessionName,
   required String recordedAtIso,
-  required String deviceInfoJson,
+  required Map<String, Object?> deviceInfo,
   required SessionData data,
   required DisplayUnit unit,
   required AppMeta appMeta,
+  bool interrupted = false,
 }) {
   final csv = buildSessionCsv(
     data,
     unit,
     recordedAtIso: recordedAtIso,
     generator: appMeta.generator,
-    deviceInfoJson: deviceInfoJson,
+    deviceInfo: deviceInfo,
+    interrupted: interrupted,
   );
   return (
     bytes: Uint8List.fromList(utf8.encode(csv)),
@@ -91,40 +93,37 @@ extension DisplayUnitCsv on DisplayUnit {
 ///
 /// [recordedAtIso] is the session row's frozen `recorded_at` string (the
 /// local wall clock with offset); `recorded_unix` is derived from it here,
-/// so the two fields can never disagree. [deviceInfoJson] is the session
-/// row's frozen device-identity block (see [toSessionDeviceMetadata]);
-/// null or malformed degrades to all-null placeholders rather than failing
-/// the export.
+/// so the two fields can never disagree. [deviceInfo] is the session
+/// row's frozen device-identity block (see [toSessionDeviceMetadata]).
 ///
 /// TODO(perf): the whole CSV is built in memory as one string — the format
 /// milestone will replace this with a chunked writer (see
-/// SessionStorage.loadSession's own materialization note).
+/// SessionStore.loadSession's own materialization note).
 String buildSessionCsv(
   SessionData data,
   DisplayUnit unit, {
   required String recordedAtIso,
   required String generator,
-  String? deviceInfoJson,
+  required Map<String, Object?> deviceInfo,
+
+  /// The recording never completed (no finalize endorsement): every byte
+  /// in the file is valid, but the tail may be missing. Emitted as the
+  /// additive metadata key `interrupted` (unknown-key tolerant per
+  /// csv-format-v1.md) — the file states its own provenance.
+  bool interrupted = false,
 }) {
   final int n = data.channels.length;
   // The writer recorded the true device counter at the session's first
   // sample when the row was created.
   final int ssnOrigin = data.ssnOrigin;
-  final device = deviceInfoJson == null
-      ? toSessionDeviceMetadata(name: null, info: null)
-      : fromSessionDeviceMetadata(deviceInfoJson);
 
   // Per-channel quartet-2 cell formatters, computed once from the session's
   // frozen calibration; each closure folds in the column's fixed-point
   // precision. Null is a force unit on a cell-less channel — an all-blank
-  // column (the file's '—'). Damaged calibration metadata blanks the whole
-  // converted quartet: its floor (uncalibrated channels) must never produce
-  // converted numbers that pose as net measurements (the raw quartet always
-  // exports).
-  final blankConverted = data.damage.calibration;
+  // column (the file's '—').
   final formatters = [
     for (int ch = 0; ch < n; ch++)
-      blankConverted ? null : _columnFormatter(unit, data.converterFor(ch)),
+      _columnFormatter(unit, data.converterFor(ch)),
   ];
 
   final metadata = _metadata(
@@ -133,8 +132,9 @@ String buildSessionCsv(
     ssnOrigin,
     recordedAtIso,
     generator,
-    device,
+    deviceInfo,
     n,
+    interrupted,
   );
   final buf = StringBuffer()
     ..writeln('# dynamite-csv 1')
@@ -204,6 +204,7 @@ Map<String, Object?> _metadata(
   String generator,
   Map<String, Object?> device,
   int n,
+  bool interrupted,
 ) {
   return {
     'format': 'dynamite-csv',
@@ -217,14 +218,11 @@ Map<String, Object?> _metadata(
     'sample_rate_hz': data.sampleRate,
     'ssn_origin': ssnOrigin,
     'converted_unit': unit.csvSymbol,
-    // Storage-integrity damage disclosures (SessionDamage.warningCodes) —
-    // the file states its own defects; consumers MUST NOT silently trust a
-    // file carrying these. Optional per the spec's minor-revision rule:
-    // absent on healthy sessions.
-    if (data.damage.warningCodes.isNotEmpty)
-      'warnings': data.damage.warningCodes,
+    // Absent when false: the complete-session shape stays exactly the v1
+    // schema, and readers tolerate the key appearing (additive change).
+    if (interrupted) 'interrupted': true,
     // The recording apparatus (frozen at recording start): identity from
-    // the session row's deviceInfoJson (nulls for a session without
+    // the session row's deviceInfo (nulls for a session without
     // identity — web-recorded serial, unreadable DIS), the electrical
     // configuration in effect, and the board calibration's provenance.
     // Both afe and cal are descriptive traceability; the operative
@@ -247,7 +245,7 @@ Map<String, Object?> _metadata(
       // Board-cal provenance (SessionBoardMeta.toJson): the cal.* document,
       // the board-state verdicts (cal_data_invalid, constants status), and
       // the per-constant provenance tags. Null for a session recorded with
-      // no board data resolved (or whose board-meta column was lost).
+      // no board data resolved.
       'cal': data.boardMeta?.toJson(),
     },
     'channels': [

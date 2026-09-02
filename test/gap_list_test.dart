@@ -106,20 +106,6 @@ void main() {
       expect(() => GapList.fromJson('{}'), throwsFormatException);
     });
 
-    test('clampedTo cuts ranges at the truncation point', () {
-      final g = GapList()
-        ..append(10, 20)
-        ..append(30, 60)
-        ..append(70, 80);
-      expect(g.clampedTo(50).rangesIn(0, 100).toList(), [(10, 20), (30, 50)]);
-      expect(g.clampedTo(0).isEmpty, isTrue);
-      expect(g.clampedTo(100).rangesIn(0, 100).toList(), [
-        (10, 20),
-        (30, 60),
-        (70, 80),
-      ]);
-    });
-
     test('fromJson accepts adjacent ranges (they merge on append)', () {
       expect(GapList.fromJson('[[10,20],[20,30]]').rangesIn(0, 100).toList(), [
         (10, 30),

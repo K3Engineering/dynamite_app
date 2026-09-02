@@ -108,16 +108,4 @@ class GapList {
     }
     return gaps;
   }
-
-  /// A copy with every range clamped to [0, end): ranges beyond are
-  /// dropped, a straddling range is cut short. Used when a session's data
-  /// is truncated to its verified prefix — gap ranges beyond the cut would
-  /// claim dropped samples the session no longer claims to contain.
-  GapList clampedTo(int end) {
-    final out = GapList();
-    for (final (s, e) in rangesIn(0, end)) {
-      out.append(s, e);
-    }
-    return out;
-  }
 }

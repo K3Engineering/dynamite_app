@@ -53,7 +53,7 @@ final class StartSessionNoData extends StartSessionResult {
 /// every operation is refused unless the state matches. [stopping] covers
 /// the finalization's async window, so a recording can never be half-latched
 /// while another begins. (Starting has no async window: the storage layer
-/// does no DB work until data exists, so latching is synchronous.)
+/// does no store work until data exists, so latching is synchronous.)
 enum _RecordingState { idle, recording, stopping }
 
 /// Owns the recording session lifecycle start to finish; the UI only
@@ -127,7 +127,7 @@ class RecordingController extends ChangeNotifier {
   LiveSessionWriter? _sessionWriter;
 
   /// Display name of the in-progress session, latched by [startSession] so
-  /// [stopSession] can hand it back to the UI without a DB lookup.
+  /// [stopSession] can hand it back to the UI without a store lookup.
   String? _sessionName;
 
   /// True from the moment a start is committed until finalization completes
@@ -145,10 +145,10 @@ class RecordingController extends ChangeNotifier {
 
   /// Start a new recording session: construct the writer (via the
   /// persistence port) and latch it here. Synchronous end to end — the
-  /// storage layer does no DB work until the first chunk flush creates the
-  /// session row — so there is no async window in which the stream could
-  /// change out from under the snapshots the writer is built on, and no
-  /// discarded row to clean up if it did.
+  /// storage layer does no store work until the first packet creates the
+  /// session directory — so there is no async window in which the stream
+  /// could change out from under the snapshots the writer is built on, and
+  /// no discarded artifact to clean up if it did.
   ///
   /// [name] is the session's display name; null auto-names it from the wall
   /// clock (e.g. `2026-07-29 14:05:32` — see [autoSessionName]).
@@ -206,11 +206,23 @@ class RecordingController extends ChangeNotifier {
         final board? => SessionBoardMeta.fromBoard(board),
         null => null,
       },
+      // A storage failure latched mid-recording stops the session the
+      // moment it latches — not when a later batch would reveal it (a
+      // failed last packet under an idle feed has no later batch).
+      onWriteError: (_) => _autoStopOnStorageError(),
     );
     _sessionName = sessionName;
     _onSessionBoundary();
     _transitionTo(_RecordingState.recording);
     return const StartSessionOk();
+  }
+
+  /// Auto-stop on the writer's latched storage failure; the error itself is
+  /// surfaced out of [stopSession]'s single finalization path. Guarded to
+  /// the recording state: a failure latching while finalization is already
+  /// draining the write queue must not start a second stop.
+  void _autoStopOnStorageError() {
+    if (_state == _RecordingState.recording) unawaited(stopSession());
   }
 
   /// Default session name from the wall clock, e.g. `2026-07-29 14:05:32` —
@@ -233,13 +245,14 @@ class RecordingController extends ChangeNotifier {
   /// and name (or nulls when called outside the recording state — the state
   /// machine refuses the no-op) and any write error the storage writer
   /// latched (non-null means the session may be truncated). The id is also
-  /// null when the session recorded nothing: with no first chunk there was
-  /// never a row, so "recorded nothing" saves nothing.
+  /// null when the session recorded nothing: with no first packet there was
+  /// never a session directory, so "recorded nothing" saves nothing.
   ///
   /// This is the single place a storage failure is surfaced to the user (as a
   /// [RecordingStorageError] on [AppEvents]); callers only use the returned
   /// error to branch (e.g. suppress the "Session saved" notice).
-  Future<({int? sessionId, String? name, Object? error})> stopSession() async {
+  Future<({String? sessionId, String? name, Object? error})>
+  stopSession() async {
     if (_state != _RecordingState.recording) {
       return (sessionId: null, name: null, error: null);
     }
@@ -252,7 +265,7 @@ class RecordingController extends ChangeNotifier {
 
     // finalizeSession flushes through the writer's serialized queue, which
     // drains any in-flight (unawaited) appends first. A failure there (e.g.
-    // the DB itself is gone) is folded into the returned error rather than
+    // the sessions root itself is gone) is folded into the returned error rather than
     // thrown: stopSession also runs on unawaited auto-stop paths (link
     // drop, writer error), where a throw would be an unhandled async error.
     Object? error;
@@ -270,9 +283,9 @@ class RecordingController extends ChangeNotifier {
 
   /// The controller only consumes [HubBatchAppended] (freshly decoded
   /// samples, straight from the decoder via the hub): stream them to the
-  /// writer; if the writer has latched a storage failure, auto-stop instead
-  /// of recording into a void ([stopSession]'s finalization re-detects the
-  /// latched error and surfaces it).
+  /// writer. A storage failure surfaces through the writer's
+  /// [LiveSessionWriter.onWriteError] callback the moment it latches, not
+  /// through this path.
   void _onHubEvent(HubEvent event) => switch (event) {
     final HubBatchAppended batch => _onBatchAppended(batch),
     HubCleared() => null,
@@ -283,13 +296,9 @@ class RecordingController extends ChangeNotifier {
     if (writer == null) {
       return;
     }
-    if (writer.hasError) {
-      unawaited(stopSession());
-    } else {
-      unawaited(
-        writer.appendData(_dataHub.snapshotRange(batch.startIdx, batch.count)),
-      );
-    }
+    unawaited(
+      writer.appendData(_dataHub.snapshotRange(batch.startIdx, batch.count)),
+    );
   }
 
   /// The controller's only link reaction: a recording whose stream dies is

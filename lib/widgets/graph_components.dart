@@ -567,9 +567,9 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final dpr = MediaQuery.devicePixelRatioOf(context);
-    // A playback session with damaged calibration floors its calibrations
-    // at load (raw-only channels), so availability needs no damage switch —
-    // it reads the conversion inputs alone.
+    // Conversion availability reads the playback session's frozen
+    // calibrations alone; a session with unusable metadata never reaches the
+    // detail view — its load fails loudly instead.
     final data = widget.data;
     final availability = resolveUnitAvailability(
       data.calibrationFor,

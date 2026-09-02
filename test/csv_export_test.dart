@@ -11,6 +11,7 @@ import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/gap_list.dart';
 import 'package:dynamite_app/services/csv_export.dart';
 import 'package:dynamite_app/services/session_data.dart';
+import 'package:dynamite_app/services/session_metadata.dart';
 
 /// Tests for the pure CSV-building half of the export path (the plugin
 /// dispatch half is platform code and stays untested). The format reference
@@ -48,7 +49,6 @@ void main() {
     List<double?>? tares,
     GapList? gaps,
     int ssnOrigin = 0,
-    SessionDamage damage = SessionDamage.none,
     SessionBoardMeta? boardMeta,
   }) => SessionData(
     channels: [for (final values in perChannel) Int32List.fromList(values)],
@@ -58,7 +58,6 @@ void main() {
     tares: tares ?? List.filled(channels, null),
     gaps: gaps,
     ssnOrigin: ssnOrigin,
-    damage: damage,
     boardMeta: boardMeta,
   );
 
@@ -67,6 +66,7 @@ void main() {
     unit,
     recordedAtIso: recordedAtIso,
     generator: generator,
+    deviceInfo: toSessionDeviceMetadata(name: null, info: null),
   );
 
   /// The metadata line parsed as JSON (line index 1, `# ` prefix stripped).
@@ -178,6 +178,32 @@ void main() {
       });
     });
 
+    test('the interrupted disclosure is additive: present only when set', () {
+      final data = makeSession([
+        [1],
+        [2],
+      ]);
+
+      // A complete session exports exactly the v1 schema — no key at all.
+      expect(
+        metadataOf(buildCsv(data, DisplayUnit.kgf)),
+        isNot(contains('interrupted')),
+      );
+
+      final interruptedMeta = metadataOf(
+        buildSessionCsv(
+          data,
+          DisplayUnit.kgf,
+          recordedAtIso: recordedAtIso,
+          generator: generator,
+          deviceInfo: toSessionDeviceMetadata(name: null, info: null),
+          interrupted: true,
+        ),
+      );
+      expect(interruptedMeta['interrupted'], isTrue);
+      expect(interruptedMeta['sample_rate_hz'], 1000);
+    });
+
     test('metadata line carries the frozen device identity', () {
       final data = makeSession([
         [1],
@@ -190,11 +216,14 @@ void main() {
           DisplayUnit.kgf,
           recordedAtIso: recordedAtIso,
           generator: generator,
-          deviceInfoJson:
-              '{"name":"DS A4CF1208F51E","id":"A4CF1208F51E",'
-              '"model":"Dynamite Sampler Pro Mk1","hardware_rev":"rev B",'
-              '"firmware":"v700P|v1.2.3",'
-              '"manufacturer":"K3 Engineering"}',
+          deviceInfo: const {
+            'name': 'DS A4CF1208F51E',
+            'id': 'A4CF1208F51E',
+            'model': 'Dynamite Sampler Pro Mk1',
+            'hardware_rev': 'rev B',
+            'firmware': 'v700P|v1.2.3',
+            'manufacturer': 'K3 Engineering',
+          },
         ),
       );
 
@@ -213,42 +242,6 @@ void main() {
         },
         'cal': null,
       });
-    });
-
-    test('a malformed device block degrades to null placeholders', () {
-      final data = makeSession([
-        [1],
-        [2],
-      ]);
-
-      // Bad JSON and wrong-typed values both degrade to nulls rather than
-      // failing the export (display-only metadata path).
-      for (final json in ['{not json', '{"name":42}']) {
-        final meta = metadataOf(
-          buildSessionCsv(
-            data,
-            DisplayUnit.kgf,
-            recordedAtIso: recordedAtIso,
-            generator: generator,
-            deviceInfoJson: json,
-          ),
-        );
-        expect(meta['device'], {
-          'name': null,
-          'id': null,
-          'model': null,
-          'hardware_rev': null,
-          'firmware': null,
-          'manufacturer': null,
-          'afe': {
-            'adc_ref_v': 1.2,
-            'front_end_gain': 101.0,
-            'adc_gain': [1, 1],
-            'excitation_v': 4.53,
-          },
-          'cal': null,
-        });
-      }
     });
 
     test('the board-cal provenance joins the device block as cal', () {
@@ -284,23 +277,21 @@ void main() {
         'constants_detail': '',
         'provenance': {'exc': 'nominal'},
       });
-      expect(meta.containsKey('warnings'), isFalse);
       // The human rendering reflects it too (nested one more under device).
       expect(csv, contains('#   cal:'));
       expect(csv, contains('#     cal_data_invalid: false'));
       expect(csv, contains("#       exc: 'nominal'"));
     });
 
-    test('a lost board meta degrades cal to null and discloses the damage', () {
+    test('a session recorded with no board meta exports cal as null', () {
       final data = makeSession([
         [1],
         [2],
-      ], damage: const SessionDamage(boardMetaLost: true));
+      ]);
 
       final meta = metadataOf(buildCsv(data, DisplayUnit.kgf));
 
       expect((meta['device'] as Map)['cal'], isNull);
-      expect(meta['warnings'], contains('session_board_meta_damaged'));
     });
 
     test(
@@ -338,7 +329,7 @@ void main() {
       },
     );
 
-    test('a null tare exports gross, not blanks: no offset is no damage', () {
+    test('a null tare exports gross, not blanks', () {
       final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
       final cals = [
         for (int ch = 0; ch < channels; ch++)
@@ -373,74 +364,8 @@ void main() {
         '${expected(2000, null)}',
       );
       final meta = metadataOf(csv);
-      expect(meta.containsKey('warnings'), isFalse);
       expect((meta['channels'] as List)[1]['tare_raw'], isNull);
     });
-
-    test(
-      'storage damage discloses itself and blanks what it cannot vouch for',
-      () {
-        final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
-        final cals = [
-          for (int ch = 0; ch < channels; ch++)
-            ChannelCalibration(
-              board: ChannelBoardCalibration(nominals: testNominals),
-              loadCell: cell,
-            ),
-        ];
-
-        // Damaged calibration: converted columns blank, its own code.
-        final calDamaged = makeSession([
-          [1000],
-          [2000],
-        ], damage: const SessionDamage(calibration: true));
-        final calMeta = metadataOf(buildCsv(calDamaged, DisplayUnit.kgf));
-        expect(calMeta['warnings'], contains('session_calibration_damaged'));
-        expect(
-          bodyOf(buildCsv(calDamaged, DisplayUnit.kgf))[1],
-          '0,1000,2000,,',
-        );
-
-        // Lost gaps: data rows are NOT blanked (positions unknown)…
-        final gapsLost = makeSession(
-          [
-            [10, 20],
-            [30, 40],
-          ],
-          calibrations: cals,
-          damage: const SessionDamage(gapsLost: true),
-        );
-        final gapsMeta = metadataOf(buildCsv(gapsLost, DisplayUnit.kgf));
-        expect(gapsMeta['warnings'], contains('session_gaps_lost'));
-        final gapsBody = bodyOf(buildCsv(gapsLost, DisplayUnit.kgf));
-        expect(gapsBody[2].split(',')[1], '20'); // row 1 exports raw values
-
-        // Truncation: the code names the cut; data is the session's prefix.
-        final truncated = makeSession(
-          [
-            [1, 2],
-            [3, 4],
-          ],
-          calibrations: cals,
-          damage: const SessionDamage(truncatedAt: 2),
-        );
-        final truncMeta = metadataOf(buildCsv(truncated, DisplayUnit.kgf));
-        expect(
-          truncMeta['warnings'],
-          contains('session_truncated_at_sample:2'),
-        );
-
-        // A healthy session emits no warnings field at all.
-        final healthy = makeSession([
-          [1],
-          [2],
-        ], calibrations: cals);
-        expect(
-          metadataOf(buildCsv(healthy, DisplayUnit.kgf)),
-          isNot(contains('warnings')),
-        );
-      },
-    );
 
     test('gap rows keep their ssn with every sample cell blank', () {
       final gaps = GapList()..append(1, 2); // half-open: only sample 1

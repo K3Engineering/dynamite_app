@@ -1,6 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:provider/provider.dart';
@@ -12,7 +12,6 @@ import 'services/adc_packet_decoder.dart';
 import 'services/app_events.dart';
 import 'services/ble_link_manager.dart';
 import 'services/data_hub.dart';
-import 'services/database.dart';
 import 'services/demo_device.dart';
 import 'services/feed_health_tracker.dart';
 // Debug-only hot-restart hook: on web, BLE notification listeners and timers
@@ -22,6 +21,7 @@ import 'services/hot_restart_cleanup_stub.dart'
     if (dart.library.js_interop) 'services/hot_restart_cleanup_web.dart';
 import 'services/recording_controller.dart';
 import 'services/rig_state.dart';
+import 'services/session_files.dart';
 import 'services/session_metadata.dart';
 import 'services/session_storage.dart';
 import 'services/stream_reset_coordinator.dart';
@@ -31,38 +31,27 @@ import 'status_colors.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (kReleaseMode) ErrorWidget.builder = (_) => const _FatalErrorWidget();
   // Silence and tear down the previous hot-restart generation's BLE link
   // (web debug only) BEFORE anything else, so its stale notification stream
   // stops spamming the disposed engine view and its GATT connection is
-  // released for us to reconnect. Runs before session recovery is scheduled
-  // so a recording interrupted by the restart is finalized by its pass.
+  // released for us to reconnect.
   runPreviousHotRestartCleanup();
-  // Crash recovery is deferred to after the first frame: opening the web DB
-  // spawns drift_worker.js and fetches sqlite3.wasm, and first paint must
-  // not wait on either. The Sessions list needs no gating — it excludes
-  // incomplete rows by construction and simply gains the recovered ones
-  // when recovery lands. The fence keeps the live writer's row creation
-  // out of recovery's incomplete-session scan (see
-  // AppDatabase.crashRecoveryFence).
-  final recoveryFence = Completer<void>();
-  AppDatabase.crashRecoveryFence = recoveryFence.future;
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    unawaited(() async {
-      try {
-        await SessionStorage.recoverIncompleteSessions();
-      } catch (e) {
-        // The first DB open crashes here if web/sqlite3.wasm is stale.
-        if (kIsWeb) {
-          debugPrint('Double-check web/sqlite3.wasm against pubspec.lock.');
-        }
-        rethrow;
-      } finally {
-        // Release the writer even when recovery fails: a broken DB then
-        // fails loudly at the row-creation write instead.
-        recoveryFence.complete();
-      }
-    }());
-  });
+  // The web primary-tab gate lives in web/flutter_bootstrap.js: a losing
+  // tab never boots the engine, so main() only ever runs in the tab that
+  // holds the lock.
+  // Minimal hot-restart cleanup registered immediately (web debug): from
+  // here until the full teardown registration below replaces it, the only
+  // resource this generation can hold is the sink worker. Without this, a
+  // restart landing in the startup window would leave the dying
+  // generation's sync access handles on the session files when the new
+  // generation's storage opens (only matters mid-recording).
+  registerHotRestartCleanup(terminateSessionSinkWorker);
+  final appEvents = AppEvents();
+  // Session storage installs lazily on first use and needs no startup pass:
+  // an interrupted-on-crash recording just lists as such (no recovery, no
+  // mutation — see the store's classification), and a store that can't even
+  // be opened fails loudly at the first op that touches it.
   // Prefs are resolved here and injected into their owners, so their loads
   // are synchronous constructor work and can never race a user edit.
   final prefs = await SharedPreferences.getInstance();
@@ -72,7 +61,6 @@ void main() async {
     buildNumber: packageInfo.buildNumber,
   );
 
-  final appEvents = AppEvents();
   final dataHub = DataHub();
   final decoder = AdcPacketDecoder(dataHub);
   final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
@@ -133,14 +121,15 @@ void main() async {
   rigState.addListener(() => dataHub.updateLoadCells(rigState.channelCells));
 
   // Hand the NEXT hot-restart generation a way to tear this one down (web
-  // debug only). Fire-and-forget: the callbacks are silenced synchronously
-  // inside shutdownForHotRestart; the GATT disconnect completes async.
+  // debug only). This full registration replaces the minimal one made at
+  // startup. Fire-and-forget: the callbacks are silenced synchronously
+  // inside shutdownForHotRestart; the GATT disconnect completes async. The
+  // sink worker terminate is synchronous too — its sync access handles lock
+  // the session files, so they must die before the new generation's storage
+  // opens (only matters mid-recording).
   registerHotRestartCleanup(() {
     unawaited(linkManager.shutdownForHotRestart());
-    // Close the DB too, so the next generation re-opens it and migrations
-    // run against the current schemaVersion — otherwise the old open
-    // connection survives the restart and a bumped schema never applies.
-    unawaited(AppDatabase.closeInstance());
+    terminateSessionSinkWorker();
   });
   // Layer 2 (web debug only): the engine view is disposed by
   // `ext.flutter.disassemble` BEFORE the new generation boots, so packets
@@ -167,6 +156,28 @@ void main() async {
         ChangeNotifierProvider.value(value: recording),
       ],
       child: const DynoApp(),
+    ),
+  );
+}
+
+class _FatalErrorWidget extends StatelessWidget {
+  const _FatalErrorWidget();
+
+  @override
+  Widget build(BuildContext context) => const ColoredBox(
+    color: Color(0xFF202124),
+    child: Directionality(
+      textDirection: TextDirection.ltr,
+      child: Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'Application error\nRestart Dynamite',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Color(0xFFFFFFFF), fontSize: 18),
+          ),
+        ),
+      ),
     ),
   );
 }

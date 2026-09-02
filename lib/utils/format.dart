@@ -1,10 +1,6 @@
 /// Shared display formatters and cross-referenced copy.
 library;
 
-/// Menu label of the damaged-data export, the one source so the menu item,
-/// the save-as dialog title, and every cross-reference in copy can't drift.
-const String salvageExportLabel = 'Export full raw data (damaged)';
-
 /// "1,040" — comma-grouped integer. Hand-rolled on purpose: the intl
 /// package is a heavier dep than one separator loop justifies.
 String formatThousands(int n) {

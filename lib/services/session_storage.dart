@@ -1,37 +1,29 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:math' as math;
-
-import 'package:flutter/foundation.dart';
-
-import '../models/device_profile.dart';
-import '../utils/format.dart';
-import 'database.dart';
-import 'live_session_writer.dart';
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
+import '../models/device_profile.dart';
 import '../models/display_unit.dart';
-import '../models/gap_list.dart';
-import 'session_data.dart';
+import '../utils/format.dart';
+import 'live_session_writer.dart';
 import 'session_persistence.dart';
+import 'session_store.dart';
 
-/// Each [SessionChunks] row holds a whole number of samples in the packed
-/// chunk format (see [SessionChunkCodec], its one home, in
-/// live_session_writer.dart). The owning [Sessions] row carries all metadata
-/// (channel count, sample rate, calibration, etc.).
+/// The recording-side face of the session store: writer construction at
+/// start, finalize-or-abort at stop. Reads/edits/listings/loads flow through
+/// session_queries.dart instead — this class only owns the recording
+/// lifecycle.
 class SessionStorage {
   /// Start a new streaming session. The returned [LiveSessionWriter] is fed
   /// sample slices via [LiveSessionWriter.appendData] as data arrives and is
   /// passed to [finalizeSession] when recording stops. Pure construction —
-  /// the session row is only created by the writer's first chunk flush, so
-  /// starting can never fail and never leaves a row behind without data.
+  /// the session directory is only created by the writer's first packet, so
+  /// starting can never fail and never leaves an artifact behind without
+  /// data.
   ///
   /// Note: every session stores all [kAdcChannelCount]; [channelLabels]
   /// and [visibleChannels] are retained for display only. [deviceMetadata] is
   /// the connected device's identity (see [toSessionDeviceMetadata]), frozen
-  /// for export. [boardMeta] is the board-level calibration provenance
-  /// (see [SessionBoardMeta]); null when no board data resolved, persisted
-  /// as a NULL column.
+  /// for export. [boardMeta] is the board-level calibration provenance; null
+  /// when no board data resolved.
   ///
   /// This is hub-agnostic by contract: the caller snapshots everything the
   /// live buffer would supply ([tare], [channelCalibration],
@@ -48,366 +40,110 @@ class SessionStorage {
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
     required SessionBoardMeta? boardMeta,
+    required void Function(Object error) onWriteError,
   }) {
-    // Snapshot the tare once and persist it with the session; playback
-    // converts through it, so a later re-tare can never rewrite history.
-    // Nulls (never tared) serialize as JSON null — a first-class state,
-    // not a floored number.
-    final tareSnapshot = List<double?>.of(tare);
-
-    return LiveSessionWriter((
-      name: name,
-      sampleRate: samplesPerSec,
-      // We always persist every ADC channel, so the stored channel count
-      // must match what the writer packs (and what loadSession reads back).
-      channelCount: kAdcChannelCount,
-      channelLabels: jsonEncode(channelLabels),
-      tares: jsonEncode(tareSnapshot.toList()),
-      // Snapshot the per-channel calibration in effect now; playback
-      // converts through it even if calibration changes later.
-      calibrationJson: jsonEncode([
-        for (int ch = 0; ch < kAdcChannelCount; ch++)
-          channelCalibration[ch].toJson(),
-      ]),
-      visibleChannels: jsonEncode(visibleChannels),
-      // Frozen as the CSV export's default converted unit
-      // (csv-format-v1.md's recording-time snapshot requirement).
-      displayUnit: displayUnit.name,
-      deviceInfoJson: jsonEncode(deviceMetadata),
-      boardMetaJson: boardMeta == null ? null : jsonEncode(boardMeta.toJson()),
-      // Frozen at recording start, NOT at row creation (which is the first
-      // chunk flush, later): the wall clock the CSV's recorded_at asserts.
-      recordedAt: iso8601WithOffset(DateTime.now()),
-    ), sourceRingCapacity: sourceRingCapacity);
-  }
-
-  /// Finalize a streaming session: flush any buffered samples, then record
-  /// the final sample count and mark the session completed.
-  ///
-  /// If no data ever reached storage, the session row was never created and
-  /// there is nothing to finalize (recording nothing saves nothing).
-  ///
-  /// Returns the writer's latched write error (if any). When non-null, the
-  /// session may be short/truncated; the caller should surface it.
-  static Future<Object?> finalizeSession({
-    required LiveSessionWriter writer,
-  }) async {
-    // TODO(known-issue): a sink future that never completes hangs this
-    // flush forever (see the TODO on LiveSessionWriter._defaultSink), and
-    // _completeSession's own write below has the same exposure if the DB
-    // dies mid-finalize. A coarse timeout here (or on the whole finalize
-    // in RecordingController.stopSession) would be the backstop; on
-    // timeout the row stays incomplete for recoverIncompleteSessions.
-    await writer.flush();
-
-    final sessionId = writer.sessionId;
-    if (sessionId != null) {
-      await _completeSession(
-        sessionId: sessionId,
-        sampleCount: writer.totalSamplesRecorded,
-        sampleRate: writer.sampleRate,
-        gapsJson: writer.gaps.toJson(),
-      );
-
-      // Fail loud on a count/persisted mismatch: the writer counted every
-      // accepted slice, so the chunk table must hold exactly that many frames.
-      // A silent drop anywhere between accepted slice and persisted row would
-      // otherwise leave the row claiming samples that were never written —
-      // surfaced only later as a truncated session.
-      final chunks = await AppDatabase.instance.sessionChunkRows(sessionId);
-      const codec = SessionChunkCodec(kAdcChannelCount);
-      final persisted = verifyChunkIntegrity(codec, [
-        for (final c in chunks) (c.chunkIndex, c.data),
-      ]).prefixFrames;
-      if (persisted != writer.totalSamplesRecorded) {
-        final message =
-            'Session $sessionId: persisted $persisted frames but counted '
-            '${writer.totalSamplesRecorded} — the storage layer dropped samples '
-            '(chunk rows: '
-            '${[for (final c in chunks) (c.chunkIndex, c.data.lengthInBytes)]})';
-        debugPrint(message);
-        return StateError(message);
-      }
-    }
-
-    return writer.writeError;
-  }
-
-  /// Write a finished (or recovered) session's final sample count and mark it
-  /// completed. Shared by [finalizeSession] and [recoverIncompleteSessions]
-  /// so both paths apply identical duration math.
-  static Future<void> _completeSession({
-    required int sessionId,
-    required int sampleCount,
-    required int sampleRate,
-    required String gapsJson,
-  }) {
-    return AppDatabase.instance.completeSession(
-      sessionId,
-      sampleCount: sampleCount,
-      durationMs: (sampleCount * 1000) ~/ sampleRate,
-      gaps: gapsJson,
-    );
-  }
-
-  /// Recovers any sessions left incomplete (e.g. the app crashed mid-recording)
-  /// by counting their persisted frames and marking them completed. A
-  /// production session row only exists alongside its first chunk (see
-  /// [AppDatabase.createSessionWithFirstChunk]), so "incomplete and
-  /// dataless" cannot occur.
-  ///
-  /// Chunk integrity is verified the same way [loadSession] does: a damaged
-  /// tail (missing index, misaligned blob) is NOT counted — the session
-  /// completes with its verified prefix and clamped gaps. The damaged
-  /// chunks stay on disk, so later loads re-flag the truncation and the
-  /// salvage export can recover them.
-  ///
-  /// TODO(known-issue): recovery completes with the verified prefix count,
-  /// so samples the live writer accepted but never flushed (a crash, or a
-  /// wedged stop that never finalized) vanish invisibly — the recovered
-  /// session loads clean, only shorter. Persisting the running accepted
-  /// count on the row with each appendChunkAndGaps update (it already
-  /// writes the gaps in that transaction) and keeping that count here
-  /// instead of the prefix count would let loadSession's min() clamp flag
-  /// the truncation instead.
-  static Future<void> recoverIncompleteSessions() async {
-    final incomplete = await AppDatabase.instance.incompleteSessions();
-
-    for (final session in incomplete) {
-      debugPrint('Recovering incomplete session: ${session.id}');
-
-      final chunks = await AppDatabase.instance.sessionChunkRows(session.id);
-
-      // The sample count comes from verified chunk byte lengths — recovery
-      // never decodes samples (and couldn't reconstruct gaps either; those
-      // stay as the live writer persisted them, clamped to the prefix).
-      final codec = SessionChunkCodec(session.channelCount);
-      final integrity = verifyChunkIntegrity(codec, [
-        for (final c in chunks) (c.chunkIndex, c.data),
-      ]);
-      if (integrity.stoppedEarly) {
-        debugPrint(
-          'Session ${session.id}: chunk integrity failed at sample '
-          '${integrity.prefixFrames}; completing the verified prefix',
-        );
-      }
-
-      // A corrupt gaps column is left untouched for loadSession to flag —
-      // recovery cannot repair it, only refrain from masking it.
-      String gapsJson = session.gaps;
-      try {
-        gapsJson = GapList.fromJson(
-          session.gaps,
-        ).clampedTo(integrity.prefixFrames).toJson();
-      } on FormatException {
-        debugPrint('Session ${session.id}: gaps column is corrupt');
-      }
-
-      await _completeSession(
-        sessionId: session.id,
-        sampleCount: integrity.prefixFrames,
-        // Recovery uses the rate persisted on the row (finalize uses the
-        // writer's, which is the same value from recording start) so a future
-        // configurable rate can't skew reconstructed durations.
-        sampleRate: session.sampleRate,
-        gapsJson: gapsJson,
-      );
-    }
-  }
-
-  /// Read a session's recorded data back from its chunks.
-  ///
-  /// TODO(perf): this materializes every chunk blob AND the full
-  /// deinterleaved channel arrays (~2x session size transiently — a 1-hour
-  /// session is ~58 MB of samples). If long sessions become common, stream
-  /// the deinterleave (and consider isolating the [SessionData] stats scan,
-  /// which currently runs eagerly on the UI thread below).
-  static Future<SessionData?> loadSession(int sessionId) async {
-    final row = await AppDatabase.instance.sessionById(sessionId);
-    if (row == null) {
-      throw StateError('loadSession: no session row with id $sessionId');
-    }
-    final session = row;
-    final chunks = await AppDatabase.instance.sessionChunkRows(session.id);
-
-    if (chunks.isEmpty) {
-      debugPrint('No chunks found for session: ${session.id}');
-      return null;
-    }
-
-    final channelCount = session.channelCount;
-    final codec = SessionChunkCodec(channelCount);
-    final integrity = verifyChunkIntegrity(codec, [
-      for (final c in chunks) (c.chunkIndex, c.data),
-    ]);
-
-    // No honest subset: the damage starts at the first frame, so no view
-    // shape can vouch for anything (the salvage export may still recover
-    // raw samples). Zero-frame chunks with a zero metadata count are NOT
-    // this case — they verify clean and load as an empty session.
-    if (integrity.stoppedEarly && integrity.prefixFrames == 0) {
-      throw StateError(
-        'Session $sessionId: chunk data damaged from the first chunk — '
-        'no verifiable data to display',
-      );
-    }
-
-    // The honest extent: disagreement between chunks and the metadata's
-    // sample count truncates to whichever claims less (both directions
-    // fabricate otherwise — overflow poses never-recorded samples as data,
-    // underflow splices).
-    final sampleCount = math.min(integrity.prefixFrames, session.sampleCount);
-    final truncatedAt = integrity.stoppedEarly
-        ? integrity.prefixFrames
-        : (integrity.prefixFrames != session.sampleCount ? sampleCount : null);
-    if (truncatedAt != null) {
-      debugPrint(
-        'Session $sessionId: chunk integrity damage — truncating to '
-        '$sampleCount verified samples',
-      );
-    }
-
-    final channels = List.generate(channelCount, (_) => Int32List(sampleCount));
-
-    int globalS = 0;
-    for (final c in chunks.take(integrity.prefixChunks)) {
-      codec.decode(c.data, (s, ch, raw) {
-        final g = globalS + s;
-        if (g < sampleCount) channels[ch][g] = raw;
-      });
-      globalS += codec.framesOf(c.data);
-      if (globalS >= sampleCount) break;
-    }
-
-    // Metadata columns parse strictly at this boundary: each damaged column
-    // floors to its honest degraded state and sets its flag — salvage per
-    // entry would fabricate values indistinguishable from legitimate
-    // recorded ones. Tares need no flag: their floor (null = no offset)
-    // is itself a first-class state that every viewer renders honestly.
-    List<double?> tares;
-    try {
-      tares = _parseTares(session.tares, channelCount);
-    } on FormatException catch (e) {
-      debugPrint('Session $sessionId: tares damaged ($e)');
-      tares = List<double?>.filled(channelCount, null);
-    }
-
-    var calibrationDamaged = false;
-    List<ChannelCalibration> calibrations;
-    try {
-      calibrations = _parseCalibrations(session.calibrationJson, channelCount);
-    } on FormatException catch (e) {
-      debugPrint('Session $sessionId: calibration damaged ($e)');
-      calibrationDamaged = true;
-      calibrations = [
-        for (int ch = 0; ch < channelCount; ch++)
-          ChannelCalibration(board: ChannelBoardCalibration()),
-      ];
-    }
-
-    var gapsLost = false;
-    GapList gaps;
-    try {
-      gaps = GapList.fromJson(session.gaps).clampedTo(sampleCount);
-    } on FormatException catch (e) {
-      debugPrint('Session $sessionId: gaps damaged ($e)');
-      gapsLost = true;
-      gaps = GapList();
-    }
-
-    // The board-meta column parses strictly like the measurement columns:
-    // NULL (a session recorded with no board data resolved) loads as an
-    // absent block; a malformed block floors to absent and flags damage —
-    // its verdicts are about the calibration chain itself.
-    var boardMetaLost = false;
-    SessionBoardMeta? boardMeta;
-    final boardMetaJson = session.boardMetaJson;
-    if (boardMetaJson != null) {
-      try {
-        final decoded = jsonDecode(boardMetaJson);
-        boardMeta = SessionBoardMeta.fromJson(
-          decoded is Map
-              ? Map<String, dynamic>.from(decoded)
-              : throw const FormatException('board meta must be an object'),
-        );
-      } on FormatException catch (e) {
-        debugPrint('Session $sessionId: board metadata damaged ($e)');
-        boardMetaLost = true;
-      }
-    }
-
-    return SessionData(
-      channels: channels,
-      sampleRate: session.sampleRate,
-      sampleCount: sampleCount,
-      calibrations: calibrations,
-      tares: tares,
-      gaps: gaps,
-      ssnOrigin: session.ssnOrigin,
-      boardMeta: boardMeta,
-      damage: SessionDamage(
-        calibration: calibrationDamaged,
-        gapsLost: gapsLost,
-        boardMetaLost: boardMetaLost,
-        truncatedAt: truncatedAt,
+    return LiveSessionWriter(
+      (
+        name: name,
+        sampleRate: samplesPerSec,
+        // We always persist every ADC channel, so the journal's channel
+        // count must match what the writer packs (and what loadSession reads
+        // back).
+        channelCount: kAdcChannelCount,
+        channelLabels: List.of(channelLabels),
+        // Snapshots: playback converts through these, so a later re-tare or
+        // recalibration can never rewrite history. Null tares (never tared)
+        // are a first-class value, not a floored number.
+        tares: List.of(tare),
+        calibration: List.of(channelCalibration),
+        visibleChannels: List.of(visibleChannels),
+        // Frozen as the CSV export's default converted unit (the CSV
+        // format's recording-time snapshot requirement).
+        displayUnit: displayUnit.name,
+        deviceInfo: Map.of(deviceMetadata),
+        boardMeta: boardMeta,
+        // Frozen at recording start, NOT at directory creation (which is
+        // the first packet's write, later): the wall clock the CSV's
+        // recorded_at asserts.
+        recordedAt: iso8601WithOffset(DateTime.now()),
+      ),
+      sourceRingCapacity: sourceRingCapacity,
+      onWriteError: onWriteError,
+      sinkFactory: (meta, firstData) => SessionStore.instance.createDataSink(
+        meta: meta,
+        firstData: firstData,
       ),
     );
   }
 
-  /// Parse the JSON-encoded per-channel tares stored on a [Session] row.
-  /// Entries are finite numbers or null (no offset); anything else is
-  /// [FormatException] (jsonDecode's own malformed-document exceptions
-  /// included). Legacy rows (written before null became a value) used 0
-  /// for never-tared, and an exactly-zero sampled tare is a measure-zero
-  /// coincidence against any real dead-short reading, so a numeric 0
-  /// parses to null here.
-  static List<double?> _parseTares(String json, int channelCount) {
-    final decoded = jsonDecode(json);
-    if (decoded is! List || decoded.length != channelCount) {
-      throw FormatException(
-        'tares must be a list of $channelCount numbers or nulls',
-      );
+  /// Finalize a streaming session: drain the write queue, release the sink,
+  /// verify the persisted length against the accepted-frames claim, and —
+  /// ONLY when every step above came back clean — write the completion
+  /// marker (see SessionFilesBackend for the marker's write discipline). A
+  /// latched failure (a mid-recording write error, a sink-close failure, or
+  /// a count mismatch) leaves no marker: the session lists as interrupted.
+  ///
+  /// If no data ever reached storage, the directory was never created and
+  /// there is nothing to finalize (recording nothing saves nothing).
+  ///
+  /// Returns the writer's latched write error, a sink-close failure, a
+  /// verification error, or a completion-marker write failure (if any);
+  /// when non-null, the caller should surface it. Releasing the sink and
+  /// writing the marker fold into the return value instead of throwing.
+  static Future<Object?> finalizeSession({
+    required LiveSessionWriter writer,
+  }) async {
+    // TODO(known-issue): dart:io file ops have no timeout — a wedged
+    // flush() (an ailing disk) hangs finalize, and stopSession with it,
+    // forever. Web is covered by SinkWorkerTransport's per-request timeout.
+    await writer.flush();
+    final sessionId = writer.sessionId;
+    Object? error = writer.writeError;
+    try {
+      await writer.closeSink();
+    } catch (e) {
+      error ??= e;
     }
-    return [
-      for (final e in decoded)
-        if (e == null)
-          null
-        else if (e is num && e.toDouble().isFinite)
-          e.toDouble() == 0 ? null : e.toDouble()
-        else
-          throw const FormatException('tare entries must be numbers or null'),
-    ];
-  }
-
-  /// Parse the JSON-encoded per-channel calibration snapshots stored on a
-  /// [Session] row. Strict — exactly [channelCount] well-formed entries
-  /// (see [ChannelCalibration.fromJson]), else [FormatException].
-  static List<ChannelCalibration> _parseCalibrations(
-    String json,
-    int channelCount,
-  ) {
-    final decoded = jsonDecode(json);
-    if (decoded is! List || decoded.length != channelCount) {
-      throw FormatException(
-        'calibration must be a list of $channelCount entries',
-      );
+    if (sessionId != null) {
+      // Fail loud on an accepted-vs-persisted mismatch: the writer counted
+      // every accepted packet's frames, so data.raw must hold exactly that
+      // many bytes after the last ack. A silent drop anywhere between
+      // accepted slice and flushed file would otherwise leave the session
+      // claiming samples that were never written.
+      // Non-null by construction: sessionId and the acked length latch
+      // together on the first packet (see LiveSessionWriter).
+      final acked = writer.ackedDataLength!;
+      final expected = writer.expectedDataBytes;
+      if (acked != expected) {
+        error ??= StateError(
+          'Session $sessionId: persisted $acked bytes but counted $expected '
+          '— the storage layer dropped samples',
+        );
+      }
+      if (error == null) {
+        try {
+          await SessionStore.instance.touchFinal(sessionId);
+        } catch (e) {
+          // A marker write that failed leaves no marker, so the dir is by
+          // definition an interrupted session: fall through to the abort
+          // path, which splices that verdict into the catalog NOW. Without
+          // this the recording would stay invisible until the next
+          // startup's scan — hidden from exactly the user who saw the stop
+          // error and would salvage it.
+          error = e;
+        }
+      }
+      if (error != null) {
+        await SessionStore.instance.abortSession(sessionId);
+      }
     }
-    return [
-      for (final e in decoded)
-        ChannelCalibration.fromJson(
-          e is Map
-              ? Map<String, dynamic>.from(e)
-              : throw const FormatException(
-                  'calibration entries must be objects',
-                ),
-        ),
-    ];
+    return error;
   }
 }
 
 /// Adapts the [SessionStorage] statics to the [SessionPersistence] port
-/// `RecordingController` consumes (main wires this in; recording tests can
-/// double the interface instead).
+/// `RecordingController` consumes (main wires this in; recording tests
+/// point the store singleton at a temp root instead).
 class StaticSessionPersistence implements SessionPersistence {
   const StaticSessionPersistence();
 
@@ -423,6 +159,7 @@ class StaticSessionPersistence implements SessionPersistence {
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
     required SessionBoardMeta? boardMeta,
+    required void Function(Object error) onWriteError,
   }) => SessionStorage.startSession(
     tare: tare,
     channelCalibration: channelCalibration,
@@ -434,6 +171,7 @@ class StaticSessionPersistence implements SessionPersistence {
     displayUnit: displayUnit,
     deviceMetadata: deviceMetadata,
     boardMeta: boardMeta,
+    onWriteError: onWriteError,
   );
 
   @override

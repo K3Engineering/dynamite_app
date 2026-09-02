@@ -26,11 +26,11 @@ import 'package:dynamite_app/services/stream_reset_coordinator.dart';
 /// mocked.
 ///
 /// AppShell uses an IndexedStack, so all four tabs mount at once. The Sessions
-/// tab will try to open the drift database; on the host there are no platform
-/// channels for path_provider/sqlite, so it surfaces as its in-tree "Error
-/// loading sessions" widget — which is fine, we never drive it. We use bounded
+/// tab will try to open the session store; on the host there is no platform
+/// channel for path_provider, so it surfaces as its in-tree "Error loading
+/// sessions" widget — which is fine, we never drive it. We use bounded
 /// [WidgetTester.pump] calls rather than pumpAndSettle so that pending real
-/// async (the drift connection future) can't stall the test.
+/// async (the store's root resolution) can't stall the test.
 void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
