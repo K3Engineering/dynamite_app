@@ -350,6 +350,11 @@ typedef InactiveRowVisual = ({
 /// Sized to fit "Disconnecting…".
 const double deviceActionButtonWidth = 136;
 
+/// Card width below which the active row moves its action buttons off the
+/// title line onto their own row: ~260px of fixed chrome (tile padding,
+/// leading, gaps, gear + Disconnect) leaves a ~220px text lane.
+const double _activeRowSingleRowWidth = 480;
+
 /// Map platform/liveness/failure state to the inactive row's full visual.
 ///
 /// A stale row ("hasn't been active for a while") is de-emphasized: the
@@ -592,99 +597,126 @@ class _ActiveDeviceRow extends StatelessWidget {
     final isConnecting = linkState == BtLinkState.connecting;
     final isDisconnecting = linkState == BtLinkState.disconnecting;
 
-    // Compresses horizontal metrics (leading width, title gap, icon size)
-    // to ensure text fits on small screens, while maintaining button alignment.
+    final actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.settings_outlined),
+          tooltip: 'Device settings',
+          // Compact (48→40): part of the text-lane width reclamation.
+          visualDensity: VisualDensity.compact,
+          onPressed: onGoToSettings,
+        ),
+        // Fixed width: same column/shape as the Scan and Connect buttons
+        // (see [deviceActionButtonWidth]).
+        SizedBox(
+          width: deviceActionButtonWidth,
+          child: OutlinedButton(
+            style: activeRowActionButtonStyle(onContainer: onContainer),
+            // Disabled while the disconnect is in flight so the button
+            // truthfully reflects the in-progress teardown.
+            onPressed: isDisconnecting ? null : onDisconnect,
+            child: Text(
+              isDisconnecting
+                  ? 'Disconnecting…'
+                  : isConnecting
+                  ? 'Cancel'
+                  : 'Disconnect',
+            ),
+          ),
+        ),
+      ],
+    );
+
     return Card(
       color: scheme.primaryContainer,
-      child: ListTile(
-        selected: true,
-        minLeadingWidth: 28,
-        horizontalTitleGap: 8,
-        leading: Stack(
-          alignment: Alignment.center,
-          children: [
-            Icon(icon ?? visual.icon, color: visual.color),
-            if (visual.showSpinner)
-              SizedBox(
-                width: 28,
-                height: 28,
-                // Spinners don't participate in tile theming; color it
-                // explicitly or it defaults to primary on the dark surface.
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  valueColor: AlwaysStoppedAnimation(onContainer),
-                ),
-              ),
-          ],
-        ),
-        title: Text(name),
-        // One flowing text, NOT a Row[Flexible(...), ...]: a Row squeezes
-        // the label into whatever width the RSSI leaves (near zero on a
-        // phone → one letter per line). A single Text.rich wraps at word
-        // boundaries — worst case "Connected •" / "▂ -58 dBm" on two tidy
-        // lines — and the WidgetSpan moves the RSSI block as a unit.
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text.rich(
-              TextSpan(
-                children: [
-                  TextSpan(text: visual.label),
-                  // The device model (DIS): null until the connect-time read
-                  // lands, in which case nothing renders.
-                  if (model != null) TextSpan(text: ' • $model'),
-                  // Live RSSI (native only): null until the first poll lands —
-                  // and forever on web — in which case nothing renders.
-                  if (connectedRssi != null) ...[
-                    const TextSpan(text: ' • '),
-                    WidgetSpan(
-                      alignment: PlaceholderAlignment.middle,
-                      child: RssiIndicator(
-                        rssi: connectedRssi,
-                        color: onContainer,
-                      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Wide: buttons ride in the tile's trailing, where the M3 end
+          // padding (24) + card margin (4) lands Disconnect on the
+          // Scan/Connect column. Narrow: the trailing would leave a
+          // phone-sized text lane near-zero width, so the buttons move to
+          // their own row below (24px right inset = the same column inside
+          // the card).
+          final wide = constraints.maxWidth >= _activeRowSingleRowWidth;
+          final tile = ListTile(
+            selected: true,
+            // Compressed horizontal metrics (leading width, title gap) so the
+            // text gets more of the tile width.
+            minLeadingWidth: 28,
+            horizontalTitleGap: 8,
+            leading: Stack(
+              alignment: Alignment.center,
+              children: [
+                Icon(icon ?? visual.icon, color: visual.color),
+                if (visual.showSpinner)
+                  SizedBox(
+                    width: 28,
+                    height: 28,
+                    // Spinners don't participate in tile theming; color it
+                    // explicitly or it defaults to primary on the dark surface.
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation(onContainer),
                     ),
-                  ],
-                ],
-              ),
+                  ),
+              ],
             ),
-            FeedHealthIndicator(
-              health: context.read<FeedHealthTracker>().health,
+            title: Text(name),
+            // One flowing text, NOT a Row[Flexible(...), ...]: a Row
+            // squeezes the label into whatever width the RSSI leaves (near
+            // zero on a phone → one letter per line). A single Text.rich
+            // wraps at word boundaries — worst case "Connected •" /
+            // "▂ -58 dBm" on two tidy lines — and the WidgetSpan moves the
+            // RSSI block as a unit.
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      TextSpan(text: visual.label),
+                      // The device model (DIS): null until the connect-time
+                      // read lands, in which case nothing renders.
+                      if (model != null) TextSpan(text: ' • $model'),
+                      // Live RSSI (native only): null until the first poll
+                      // lands — and forever on web — in which case nothing
+                      // renders.
+                      if (connectedRssi != null) ...[
+                        const TextSpan(text: ' • '),
+                        WidgetSpan(
+                          alignment: PlaceholderAlignment.middle,
+                          child: RssiIndicator(
+                            rssi: connectedRssi,
+                            color: onContainer,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                FeedHealthIndicator(
+                  health: context.read<FeedHealthTracker>().health,
+                ),
+              ],
             ),
-          ],
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              icon: const Icon(Icons.settings_outlined),
-              tooltip: 'Device settings',
-              // Compact (48→40): part of the subtitle-lane width reclamation
-              // above.
-              visualDensity: VisualDensity.compact,
-              onPressed: onGoToSettings,
-            ),
-            // Fixed width: same column/shape as the Scan and Connect buttons
-            // (see [deviceActionButtonWidth]).
-            SizedBox(
-              width: deviceActionButtonWidth,
-              child: OutlinedButton(
-                style: activeRowActionButtonStyle(onContainer: onContainer),
-                // Disabled while the disconnect is in flight so the button
-                // truthfully reflects the in-progress teardown.
-                onPressed: isDisconnecting ? null : onDisconnect,
-                child: Text(
-                  isDisconnecting
-                      ? 'Disconnecting…'
-                      : isConnecting
-                      ? 'Cancel'
-                      : 'Disconnect',
+            trailing: wide ? actions : null,
+          );
+          if (wide) return tile;
+          return Column(
+            children: [
+              tile,
+              Padding(
+                padding: const EdgeInsets.only(right: 24, bottom: 8),
+                child: Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: actions,
                 ),
               ),
-            ),
-          ],
-        ),
+            ],
+          );
+        },
       ),
     );
   }

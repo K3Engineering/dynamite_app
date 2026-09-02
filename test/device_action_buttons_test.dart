@@ -175,4 +175,31 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(seconds: 6));
   });
+
+  testWidgets('phone width: the buttons move below the title line and keep '
+      'the column', (tester) async {
+    tester.view.physicalSize = const Size(400, 700);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await pumpApp(tester);
+    await showDevicesTab(tester);
+    await tester.tap(connectButton());
+    await tester.pump();
+
+    expect(disconnectButton(), findsOneWidget);
+    final scan = tester.getRect(scanButton());
+    final disconnect = tester.getRect(disconnectButton());
+    expect(disconnect.width, deviceActionButtonWidth);
+    expect(disconnect.right, moreOrLessEquals(scan.right, epsilon: 0.01));
+
+    // Second row: below the device name, not beside it.
+    final name = tester.getRect(devicesTabDescendant(find.text('Demo Device')));
+    expect(disconnect.top, greaterThan(name.bottom));
+
+    await tester.tap(disconnectButton());
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+  });
 }
