@@ -350,6 +350,11 @@ typedef InactiveRowVisual = ({
 /// Sized to fit "Disconnecting…".
 const double deviceActionButtonWidth = 136;
 
+/// Card width below which the active row moves its action buttons off the
+/// title line onto their own row: ~260px of fixed chrome (tile padding,
+/// leading, gaps, gear + Disconnect) leaves a ~220px text lane.
+const double _activeRowSingleRowWidth = 480;
+
 /// Map platform/liveness/failure state to the inactive row's full visual.
 ///
 /// A stale row ("hasn't been active for a while") is de-emphasized: the
@@ -592,17 +597,52 @@ class _ActiveDeviceRow extends StatelessWidget {
     final isConnecting = linkState == BtLinkState.connecting;
     final isDisconnecting = linkState == BtLinkState.disconnecting;
 
-    // Two lines: text at full card width on top, the action buttons on
-    // their own row below. A ListTile trailing would leave the phone-sized
-    // text lane near-zero width beside gear + Disconnect.
+    final actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.settings_outlined),
+          tooltip: 'Device settings',
+          // Compact (48→40): part of the text-lane width reclamation.
+          visualDensity: VisualDensity.compact,
+          onPressed: onGoToSettings,
+        ),
+        // Fixed width: same column/shape as the Scan and Connect buttons
+        // (see [deviceActionButtonWidth]).
+        SizedBox(
+          width: deviceActionButtonWidth,
+          child: OutlinedButton(
+            style: activeRowActionButtonStyle(onContainer: onContainer),
+            // Disabled while the disconnect is in flight so the button
+            // truthfully reflects the in-progress teardown.
+            onPressed: isDisconnecting ? null : onDisconnect,
+            child: Text(
+              isDisconnecting
+                  ? 'Disconnecting…'
+                  : isConnecting
+                  ? 'Cancel'
+                  : 'Disconnect',
+            ),
+          ),
+        ),
+      ],
+    );
+
     return Card(
       color: scheme.primaryContainer,
-      child: Column(
-        children: [
-          ListTile(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Wide: buttons ride in the tile's trailing, where the M3 end
+          // padding (24) + card margin (4) lands Disconnect on the
+          // Scan/Connect column. Narrow: the trailing would leave a
+          // phone-sized text lane near-zero width, so the buttons move to
+          // their own row below (24px right inset = the same column inside
+          // the card).
+          final wide = constraints.maxWidth >= _activeRowSingleRowWidth;
+          final tile = ListTile(
             selected: true,
             // Compressed horizontal metrics (leading width, title gap) so the
-            // text gets the full tile width.
+            // text gets more of the tile width.
             minLeadingWidth: 28,
             horizontalTitleGap: 8,
             leading: Stack(
@@ -661,43 +701,22 @@ class _ActiveDeviceRow extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-          // Right inset matches the Scan/Connect button column (the scan
-          // row's 28 less the card's 4px margin) so Disconnect keeps the
-          // shared column with Scan and Connect.
-          Padding(
-            padding: const EdgeInsets.only(right: 24, bottom: 8),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.settings_outlined),
-                  tooltip: 'Device settings',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: onGoToSettings,
+            trailing: wide ? actions : null,
+          );
+          if (wide) return tile;
+          return Column(
+            children: [
+              tile,
+              Padding(
+                padding: const EdgeInsets.only(right: 24, bottom: 8),
+                child: Align(
+                  alignment: AlignmentDirectional.centerEnd,
+                  child: actions,
                 ),
-                // Fixed width: same column/shape as the Scan and Connect
-                // buttons (see [deviceActionButtonWidth]).
-                SizedBox(
-                  width: deviceActionButtonWidth,
-                  child: OutlinedButton(
-                    style: activeRowActionButtonStyle(onContainer: onContainer),
-                    // Disabled while the disconnect is in flight so the button
-                    // truthfully reflects the in-progress teardown.
-                    onPressed: isDisconnecting ? null : onDisconnect,
-                    child: Text(
-                      isDisconnecting
-                          ? 'Disconnecting…'
-                          : isConnecting
-                          ? 'Cancel'
-                          : 'Disconnect',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
+              ),
+            ],
+          );
+        },
       ),
     );
   }
