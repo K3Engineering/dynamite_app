@@ -45,6 +45,21 @@
        as=fetch + crossorigin matches the engine's fetch() request. -->
   <link rel="preload" href="assets/FontManifest.json" as="fetch" crossorigin>
   <link rel="preload" href="assets/fonts/MaterialIcons-Regular.otf" as="fetch" crossorigin>
+  <!-- Bundled text font (see pubspec): keeps the first text layout on-origin
+       instead of the engine's fonts.gstatic.com fallback. Also the splash's
+       own Roboto below. -->
+  <link rel="preload" href="assets/fonts/Roboto-Regular.woff2" as="font" type="font/woff2" crossorigin>
+
+  <!-- The splash renders before any Flutter font loads; this same file serves
+       both the splash and the engine (the preload covers both fetches). -->
+  <style>
+    @font-face {
+      font-family: 'Roboto';
+      src: url('assets/fonts/Roboto-Regular.woff2') format('woff2');
+      font-weight: 400;
+      font-style: normal;
+    }
+  </style>
 
   <style>
     /* Splash colors mirror DynoApp's schemes: scaffold backgrounds.
@@ -77,7 +92,7 @@
       flex-direction: column;
       background-color: var(--bg);
       color: var(--fg);
-      font-family: Roboto, system-ui, sans-serif;
+      font-family: Roboto, sans-serif;
     }
 
     #splash #center {
@@ -140,7 +155,7 @@
       text-align: center;
       background-color: var(--bg);
       color: var(--fg);
-      font-family: Roboto, system-ui, sans-serif;
+      font-family: Roboto, sans-serif;
     }
 
     #gate.show {
