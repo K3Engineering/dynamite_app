@@ -32,11 +32,8 @@ class WakelockPolicy {
 
   /// Last state pushed to the plugin, so [_sync] only crosses the platform
   /// channel on an actual edge (the streaming source notifies on every RSSI
-  /// poll; enabling repeatedly would be a pointless side effect). Starts at
-  /// the platform's boot state, no lock held: otherwise the constructor pass
-  /// "disables" an already-idle lock, which on web downloads the plugin's
-  /// no_sleep.js for nothing.
-  bool _applied = false;
+  /// poll; enabling repeatedly would be a pointless side effect).
+  bool? _applied;
 
   void _sync() {
     final target = _settings.wakelockEnabled && _streamingNow();

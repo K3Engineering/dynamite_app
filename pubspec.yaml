@@ -38,12 +38,9 @@ dependencies:
   # Free disk space for the Sessions tab's capacity strip (Android/iOS).
   disk_space_2: ^1.0.13
 
-  # TODO we don't use cupertino icons. They're not tree-shaken to zero
-  # because dead code elimination happens after icon tree shaking
-  # A grep over dart2js/dart2wasm output shows that we don't use them
-  # They are on the loading hot-path, and add ~1/2 second on "no cache, slow 4G" load test
+  # The following adds the Cupertino Icons font to your application.
+  # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-
   cross_file: ^0.3.4+2
   package_info_plus: ^10.1.0
   wakelock_plus: ^1.6.1
@@ -80,19 +77,6 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
-
-  # Bundle Roboto. With no text font in the manifest the engine's font fallback fetches
-  # Roboto from fonts.gstatic.com (fontFallbackBaseUrl), a cross-origin round
-  # trip on the critical path. Bundling joins it to FontManifest.json so it
-  # can be preloaded alongside MaterialIcons in web/index.html. Text fonts
-  # are NOT tree-shaken at build time (only icon fonts are), so this is the
-  # engine's own basic-Latin subset — the same file the fallback would fetch.
-  # TODO: we use a few different weights, they are synthesized algorithmically from this font
-  # Investigate whether it's worth it to fetch the other weights as well
-  fonts:
-    - family: Roboto
-      fonts:
-        - asset: fonts/Roboto-Regular.woff2
 
   # To add assets to your application, add an assets section, like this:
   # assets:

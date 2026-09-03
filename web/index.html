@@ -40,19 +40,6 @@
        the loader's fetch as two full downloads. -->
   <link rel="preload" href="main.dart.wasm" as="fetch" crossorigin>
 
-  <!-- The first text layout pulls this manifest-then-font chain serially
-       after engine init; preloading overlaps it with the wasm downloads.
-       as=fetch + crossorigin matches the engine's fetch() request. -->
-  <link rel="preload" href="assets/FontManifest.json" as="fetch" crossorigin>
-  <link rel="preload" href="assets/fonts/MaterialIcons-Regular.otf" as="fetch" crossorigin>
-  <!-- Bundled text font (see pubspec): keeps the first text layout on-origin
-       instead of the engine's fonts.gstatic.com fallback. Must be as=fetch,
-       not as=font: the engine loads manifest fonts with fetch(), and a
-       font-destination preload is never matched against that. The splash
-       deliberately does not use this font (a CSS @font-face would need a
-       second, as=font preload of the same file). -->
-  <link rel="preload" href="assets/fonts/Roboto-Regular.woff2" as="fetch" crossorigin>
-
   <style>
     /* Splash colors mirror DynoApp's schemes: scaffold backgrounds.
        Accent is scheme.primary. */
@@ -84,7 +71,7 @@
       flex-direction: column;
       background-color: var(--bg);
       color: var(--fg);
-      font-family: system-ui, sans-serif;
+      font-family: Roboto, system-ui, sans-serif;
     }
 
     #splash #center {
@@ -147,7 +134,7 @@
       text-align: center;
       background-color: var(--bg);
       color: var(--fg);
-      font-family: system-ui, sans-serif;
+      font-family: Roboto, system-ui, sans-serif;
     }
 
     #gate.show {

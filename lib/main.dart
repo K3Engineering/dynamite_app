@@ -54,12 +54,8 @@ void main() async {
   // be opened fails loudly at the first op that touches it.
   // Prefs are resolved here and injected into their owners, so their loads
   // are synchronous constructor work and can never race a user edit.
-  // Overlapped: on web the package info is an uncacheable version.json
-  // fetch, so awaiting it serially after prefs costs an extra round trip.
-  final (prefs, packageInfo) = await (
-    SharedPreferences.getInstance(),
-    PackageInfo.fromPlatform(),
-  ).wait;
+  final prefs = await SharedPreferences.getInstance();
+  final packageInfo = await PackageInfo.fromPlatform();
   final appMeta = AppMeta(
     version: packageInfo.version,
     buildNumber: packageInfo.buildNumber,
