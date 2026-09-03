@@ -7,6 +7,14 @@ function startEngine() {
   // stub, and the precaching worker it cleans up after was never shipped by
   // this app.
   _flutter.loader.load({
+    config: {
+      // The loader defaults to fetching the renderer (skwasm.js / skwasm.wasm)
+      // from gstatic.com because the build config carries an engine revision.
+      // The build already copies this exact revision into canvaskit/, so load
+      // it from here instead. Consumed by the loader itself, not forwarded to
+      // initializeEngine.
+      canvasKitBaseUrl: 'canvaskit',
+    },
     onEntrypointLoaded: async function (engineInitializer) {
       const status = document.getElementById('status');
       if (status) status.textContent = 'Initializing engine…';
