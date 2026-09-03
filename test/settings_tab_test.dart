@@ -15,6 +15,8 @@ import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_device.dart';
+import 'package:dynamite_app/services/firmware_catalog.dart';
+import 'package:dynamite_app/services/firmware_update_service.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 
@@ -61,6 +63,16 @@ void main() {
           ChangeNotifierProvider<DataHub>.value(value: hub),
           ChangeNotifierProvider<BleLinkManager>.value(value: link),
           ChangeNotifierProvider<RigState>.value(value: rig),
+          // The firmware card reads this; the harness's demo link is
+          // simulated, so the service never reaches the real catalog.
+          ChangeNotifierProvider<FirmwareUpdateService>.value(
+            value: FirmwareUpdateService(
+              prefs: prefs,
+              link: link,
+              events: events,
+              catalog: GithubReleaseCatalog(),
+            ),
+          ),
         ],
         child: MaterialApp(
           home: Scaffold(body: SettingsTab(onGoToDevices: () {})),

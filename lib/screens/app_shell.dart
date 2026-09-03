@@ -89,6 +89,20 @@ class AppShellState extends State<AppShell> {
           'Could not read calibration from $deviceName — '
           'nominal values in use.',
         );
+      case FirmwareUpdateAvailable(
+        :final deviceName,
+        :final targetTag,
+        :final installedDescribe,
+      ):
+        messenger.showSnackBar(
+          SnackBar(
+            content: Text(
+              'Firmware differs from release on $deviceName — '
+              'installed $installedDescribe, release $targetTag.',
+            ),
+            action: SnackBarAction(label: 'Settings', onPressed: goToSettings),
+          ),
+        );
     }
   }
 

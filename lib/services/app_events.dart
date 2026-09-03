@@ -61,6 +61,21 @@ class CalibrationUnreadable extends AppEvent {
   final String deviceName;
 }
 
+/// A release check found the device running different bits than its
+/// channel's target (a genuine difference — the offer rule is
+/// direction-agnostic, so this covers new arrivals and pulled releases).
+class FirmwareUpdateAvailable extends AppEvent {
+  const FirmwareUpdateAvailable({
+    required this.deviceName,
+    required this.installedDescribe,
+    required this.targetTag,
+  });
+
+  final String deviceName;
+  final String installedDescribe;
+  final String targetTag;
+}
+
 /// Fire-and-forget event bus for [AppEvent]s.
 ///
 /// App-lifetime singleton created in `main()` (never disposed) and handed to

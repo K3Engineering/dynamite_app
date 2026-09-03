@@ -12,6 +12,7 @@ import '../models/device_name.dart';
 import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
+import '../services/firmware_update_service.dart';
 import '../services/rig_state.dart';
 import '../services/calibration_text.dart';
 import '../widgets/info_cards.dart';
@@ -21,6 +22,7 @@ import '../widgets/section_header.dart';
 import '../widgets/snackbars.dart';
 import '../widgets/wide_layout.dart';
 import 'calibration_screen.dart';
+import 'firmware_update_screen.dart';
 
 class SettingsTab extends StatefulWidget {
   const SettingsTab({super.key, required this.onGoToDevices});
@@ -224,6 +226,11 @@ class _SettingsTabState extends State<SettingsTab> {
                   ),
                 ),
                 const SizedBox(height: 16),
+
+                // OTA entry point: the check itself lives with the service
+                // (auto-checked once per link); the card just summarizes.
+                _FirmwareCard(deviceId: deviceId),
+                const SizedBox(height: 16),
               ],
               const SizedBox(height: 8),
 
@@ -251,6 +258,45 @@ class _SettingsTabState extends State<SettingsTab> {
                 },
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The OTA firmware card: installed identity plus the channel target's
+/// state, pushing the full update screen.
+class _FirmwareCard extends StatelessWidget {
+  const _FirmwareCard({required this.deviceId});
+
+  final String deviceId;
+
+  @override
+  Widget build(BuildContext context) {
+    final service = context.watch<FirmwareUpdateService>();
+    final check = service.check;
+    final String subtitle;
+    if (service.checking && check == null) {
+      subtitle = 'Checking for releases…';
+    } else if (check == null) {
+      subtitle = 'Tap to check for updates';
+    } else {
+      final target = check.target;
+      subtitle = target == null
+          ? 'Installed: ${check.installedDescribe}'
+          : check.differsFromDevice
+          ? 'Installed: ${check.installedDescribe}\nRelease: ${target.tag}'
+          : 'Running the release (${check.installedDescribe})';
+    }
+    return Card(
+      child: ListTile(
+        title: const Text('Firmware update'),
+        subtitle: Text(subtitle),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.of(context).push<void>(
+          MaterialPageRoute<void>(
+            builder: (_) => FirmwareUpdateScreen(deviceId: deviceId),
           ),
         ),
       ),
