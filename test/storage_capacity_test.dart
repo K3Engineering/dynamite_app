@@ -4,17 +4,13 @@ import 'package:dynamite_app/models/storage_capacity.dart';
 
 /// Tests for [StorageCapacity]'s derived numbers (the conservative runway
 /// and the clamped bar fraction) and [userAgentMayAutoDelete]'s browser
-/// family detection — the pure logic behind the Sessions tab's capacity
+/// family detection — the pure logic behind the Sessions tab's storage
 /// strip.
 void main() {
   group('recordingRunway', () {
     test('applies the 0.9 safety factor at the worst-case write rate', () {
       const gb = 1024 * 1024 * 1024;
-      const c = StorageCapacity(
-        usedBytes: 0,
-        availableBytes: gb,
-        isPersistent: true,
-      );
+      const c = StorageCapacity(usedBytes: 0, availableBytes: gb);
       expect(
         c.recordingRunway.inSeconds,
         (gb * 0.9 / kRecordingBytesPerSecond).floor(),
@@ -22,40 +18,24 @@ void main() {
     });
 
     test('zero available is zero runway', () {
-      const c = StorageCapacity(
-        usedBytes: 1024,
-        availableBytes: 0,
-        isPersistent: true,
-      );
+      const c = StorageCapacity(usedBytes: 1024, availableBytes: 0);
       expect(c.recordingRunway, Duration.zero);
     });
   });
 
   group('usedFraction', () {
     test('zero total is empty, not a divide-by-zero', () {
-      const c = StorageCapacity(
-        usedBytes: 0,
-        availableBytes: 0,
-        isPersistent: false,
-      );
+      const c = StorageCapacity(usedBytes: 0, availableBytes: 0);
       expect(c.usedFraction, 0);
     });
 
-    test('clamps usage reported above quota (fuzzed web estimate)', () {
-      const c = StorageCapacity(
-        usedBytes: 200,
-        availableBytes: 0,
-        isPersistent: false,
-      );
+    test('clamps when the ledger reads above the total (stale free space)', () {
+      const c = StorageCapacity(usedBytes: 200, availableBytes: 0);
       expect(c.usedFraction, 1.0);
     });
 
     test('plain ratio otherwise', () {
-      const c = StorageCapacity(
-        usedBytes: 1,
-        availableBytes: 3,
-        isPersistent: true,
-      );
+      const c = StorageCapacity(usedBytes: 1, availableBytes: 3);
       expect(c.usedFraction, 0.25);
     });
   });

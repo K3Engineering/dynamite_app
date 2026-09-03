@@ -2,32 +2,39 @@
 /// device boots at (a planning estimate, not the stream's parsed rate).
 const int kRecordingBytesPerSecond = 16000;
 
-/// A platform's storage verdict for the Sessions tab's capacity strip: how
-/// much the app is using, how much more it can expect to write, and whether
-/// the platform guarantees the data survives (web best-effort storage can be
-/// evicted under pressure; native app storage cannot).
-///
-/// Both producers take [usedBytes] from the session store's byte ledger
-/// (scan-seeded, delta-maintained). [availableBytes] differs: on web it's
-/// quota headroom from navigator.storage.estimate() — an optimistic ceiling,
-/// since Chrome derives quota from total disk size, not free space (its
-/// usage half is unusable: Chrome's OPFS accounting drifts and renders the
-/// corrupted counter as ~4 GB, so the ledger replaces it); on native it's
-/// real free space on the volume.
-class StorageCapacity {
+/// What the platform storage probe found, rendered as the Sessions tab's
+/// storage strip. Native platforms measure real disk numbers →
+/// [StorageCapacity]. Browsers get [StorageEvictable]: their quantitative
+/// estimate is unreliable enough to show nothing (see
+/// `storage_probe_web.dart`), only the missing eviction guarantee is worth
+/// a warning.
+sealed class StorageState {
+  const StorageState();
+}
+
+/// The web storage verdict: this origin's storage is best-effort, so the
+/// browser may evict stored sessions under disk pressure. Persistent
+/// storage (and unsupported/failed probes) report null instead — no
+/// warning needed.
+class StorageEvictable extends StorageState {
+  const StorageEvictable();
+}
+
+/// The native storage verdict: how much the app is using and how much more
+/// it can expect to write. [usedBytes] comes from the session store's byte
+/// ledger (scan-seeded, delta-maintained); [availableBytes] is real free
+/// space on the volume.
+class StorageCapacity extends StorageState {
   const StorageCapacity({
     required this.usedBytes,
     required this.availableBytes,
-    required this.isPersistent,
   });
 
   final int usedBytes;
   final int availableBytes;
-  final bool isPersistent;
 
-  /// Bar fill for the strip: used over used+available (the origin's quota on
-  /// web, the app's share of remaining space on native). Clamped — the web
-  /// quota estimate is fuzzed, so usage can transiently read above quota.
+  /// Bar fill for the strip: used over used+available (the app's share of
+  /// remaining space on the volume).
   double get usedFraction {
     final total = usedBytes + availableBytes;
     if (total <= 0) return 0;
@@ -35,9 +42,8 @@ class StorageCapacity {
   }
 
   /// Conservative recording runway: what the user can expect to actually
-  /// get, with high probability. The safety factor covers quota fuzzing on
-  /// web and concurrent writers (a second browser tab, other apps on
-  /// native).
+  /// get, with high probability. The safety factor covers concurrent
+  /// writers (other apps on the volume).
   Duration get recordingRunway {
     final seconds = (availableBytes * _safetyFactor / kRecordingBytesPerSecond)
         .floor();

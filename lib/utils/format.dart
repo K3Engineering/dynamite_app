@@ -90,8 +90,7 @@ String formatRelativeAge(Duration age) {
 }
 
 /// "512 B", "84 MB", "8.4 GB" — 1024-based, one decimal below 10 units and
-/// none above: three significant digits are plenty for capacity display,
-/// and the web numbers behind this are fuzzed estimates anyway.
+/// none above: three significant digits are plenty for capacity display.
 String formatBytes(int bytes) {
   const units = ['B', 'kB', 'MB', 'GB', 'TB'];
   var value = bytes.toDouble();

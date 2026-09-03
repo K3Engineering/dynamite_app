@@ -28,9 +28,10 @@ class _SessionsTabState extends State<SessionsTab> {
   late final ValueListenable<SessionCatalogState> _catalog =
       sessionCatalogState();
 
-  /// The platform's storage facts for the capacity strip; null where probing
-  /// is unsupported (desktop) or failed — the strip hides then.
-  StorageCapacity? _capacity;
+  /// The platform's storage verdict for the strip; null where probing is
+  /// unsupported (desktop), failed, or there's nothing to warn about
+  /// (persistent web storage) — the strip hides then.
+  StorageState? _storageState;
   StreamSubscription<void>? _capacityCueSub;
   bool _capacityDirty = false;
   bool _refreshingCapacity = false;
@@ -67,10 +68,8 @@ class _SessionsTabState extends State<SessionsTab> {
     try {
       while (_capacityDirty && mounted) {
         _capacityDirty = false;
-        final capacity = await fetchStorageCapacity(
-          usedBytes: sessionsUsedBytes,
-        );
-        if (mounted) setState(() => _capacity = capacity);
+        final state = await fetchStorageState(usedBytes: sessionsUsedBytes);
+        if (mounted) setState(() => _storageState = state);
       }
     } finally {
       _refreshingCapacity = false;
@@ -98,8 +97,13 @@ class _SessionsTabState extends State<SessionsTab> {
           ),
           if (browserMayAutoDeleteSessions())
             const TabContentColumn(child: BrowserStorageWarning()),
-          if (_capacity case final capacity?)
-            TabContentColumn(child: StorageCapacityStrip(capacity: capacity)),
+          if (_storageState case final state?)
+            TabContentColumn(
+              child: switch (state) {
+                StorageCapacity() => StorageCapacityStrip(capacity: state),
+                StorageEvictable() => const StorageEvictionWarning(),
+              },
+            ),
           Expanded(
             child: ValueListenableBuilder<SessionCatalogState>(
               valueListenable: _catalog,
