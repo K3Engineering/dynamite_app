@@ -6,7 +6,7 @@ import 'package:dynamite_app/widgets/storage_capacity_strip.dart';
 
 /// Tests for the storage strip widgets' presentation: the native
 /// [StorageCapacityStrip]'s usage/runway line and the web
-/// [StorageEvictionWarning] card.
+/// [StorageEvictionWarning] line.
 void main() {
   const gb = 1024 * 1024 * 1024;
 
@@ -33,16 +33,15 @@ void main() {
     );
   });
 
-  testWidgets('eviction warning card', (tester) async {
+  testWidgets('eviction warning line', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(home: Scaffold(body: StorageEvictionWarning())),
     );
 
     expect(
       find.text(
-        'The browser may delete stored sessions when the device runs '
-        'low on storage. Export important sessions to CSV to keep '
-        'them safe.',
+        'The browser may delete stored sessions when the device runs low on '
+        'storage. Export important sessions to CSV to keep them safe.',
       ),
       findsOneWidget,
     );
