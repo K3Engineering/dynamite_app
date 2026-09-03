@@ -8,10 +8,10 @@ import '../models/storage_capacity.dart';
 /// real free space from disk_space_2, plus the app's used bytes supplied by
 /// the caller ([usedBytes] — the session store's byte ledger; the probe
 /// doesn't know where the sessions live). Android/iOS only — the plugin has
-/// no desktop
-/// implementations, so other platforms report null and the strip hides.
-/// Native app storage is never auto-evicted (isPersistent).
-Future<StorageCapacity?> fetchStorageCapacity({
+/// no desktop implementations, so other platforms report null and the strip
+/// hides. Native app storage is never auto-evicted, so no persistence probe
+/// exists here.
+Future<StorageState?> fetchStorageState({
   required Future<int> Function() usedBytes,
 }) async {
   if (!Platform.isAndroid && !Platform.isIOS) return null;
@@ -21,7 +21,6 @@ Future<StorageCapacity?> fetchStorageCapacity({
     return StorageCapacity(
       usedBytes: await usedBytes(),
       availableBytes: (freeMb * 1024 * 1024).round(),
-      isPersistent: true,
     );
   } catch (_) {
     return null;

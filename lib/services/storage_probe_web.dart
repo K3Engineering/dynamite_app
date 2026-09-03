@@ -1,14 +1,17 @@
 import 'dart:js_interop';
-import 'dart:math' as math;
 
 import '../models/storage_capacity.dart';
 
-/// Web producer for the storage strip (see `storage_capacity.dart`):
-/// navigator.storage.estimate() for quota, persisted() for the eviction
-/// guarantee, the caller's byte ledger for usage. navigator.storage exists
-/// only in secure contexts and estimate() can reject (storage disabled,
-/// opaque origin) — both report null so the strip hides instead of showing
-/// fiction.
+/// Web producer for the storage strip (see `storage_capacity.dart`). The
+/// browser's quantitative estimate is unusable — navigator.storage.estimate()
+/// reports quota as usage + 10 GiB (static anti-fingerprinting), untethered
+/// from free disk space, and Chrome's OPFS usage accounting itself drifts —
+/// so the only signal probed is persisted(): the eviction guarantee the
+/// strip's warning is keyed to.
+///
+/// navigator.storage exists only in secure contexts and persisted() can
+/// reject (storage disabled, opaque origin) — both report null, the strip
+/// hides instead of guessing.
 
 @JS('navigator')
 external _WebNavigator get _navigator;
@@ -19,34 +22,20 @@ extension type _WebNavigator(JSObject _) implements JSObject {
 }
 
 extension type _StorageManager(JSObject _) implements JSObject {
-  external JSPromise<_StorageEstimate> estimate();
   external JSPromise<JSBoolean> persisted();
 }
 
-extension type _StorageEstimate(JSObject _) implements JSObject {
-  external JSNumber get quota;
-}
-
-/// Usage comes from the caller's [usedBytes] ledger (the same one the
-/// native strip uses), never from estimate(): Chrome's OPFS accounting
-/// debits can drift negative (origin maintenance touches files the app
-/// never wrote), and the negative int64 renders through a uint32 lens as
-/// ~4 GB. estimate()'s quota half is unaffected by that.
-Future<StorageCapacity?> fetchStorageCapacity({
+/// Ignores [usedBytes]: web shows no capacity numbers, so the session-store
+/// ledger is unused here (the parameter keeps the signature shared with the
+/// native producer).
+Future<StorageState?> fetchStorageState({
   required Future<int> Function() usedBytes,
 }) async {
   final storage = _navigator.storage;
   if (storage == null) return null;
   try {
-    final estimate = await storage.estimate().toDart;
     final persisted = (await storage.persisted().toDart).toDart;
-    final used = await usedBytes();
-    final quota = estimate.quota.toDartDouble.round();
-    return StorageCapacity(
-      usedBytes: used,
-      availableBytes: math.max(0, quota - used),
-      isPersistent: persisted,
-    );
+    return persisted ? null : const StorageEvictable();
   } catch (_) {
     return null;
   }
