@@ -41,7 +41,8 @@ void main() {
     expect(
       find.text(
         'The browser may delete stored sessions when the device runs low on '
-        'storage. Export important sessions to CSV to keep them safe.',
+        'storage. Export important sessions to CSV to keep them safe. Install the native '
+        'app for permanent storage.',
       ),
       findsOneWidget,
     );

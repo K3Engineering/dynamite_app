@@ -59,8 +59,9 @@ class StorageEvictionWarning extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
       child: Text(
         'The browser may delete stored sessions when the device runs low on '
-        'storage. Export important sessions to CSV to keep them safe.',
-        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+        'storage. Export important sessions to CSV to keep them safe. Install the native '
+        'app for permanent storage.',
+        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
           color: Theme.of(context).colorScheme.error,
         ),
       ),
