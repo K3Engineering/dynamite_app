@@ -123,10 +123,7 @@ class FirmwareUpdateService extends ChangeNotifier {
     checkError = null;
     notifyListeners();
     try {
-      final target = await catalog.latestFor(
-        board: rev.board,
-        channel: _channel,
-      );
+      final target = await catalog.latestFor(channel: _channel);
       check = FirmwareCheck(
         board: rev.board,
         installedDescribe: rev.describe,

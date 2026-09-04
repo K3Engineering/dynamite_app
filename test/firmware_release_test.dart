@@ -54,14 +54,14 @@ void main() {
       String tag, {
       bool draft = false,
       bool prerelease = false,
-      List<String> assets = const ['dynamite-sampler_v700P_x.bin'],
+      List<String>? assets,
       int size = 1024,
     }) => GithubRelease(
       tag: tag,
       draft: draft,
       prerelease: prerelease,
       assets: [
-        for (final name in assets)
+        for (final name in assets ?? [firmwareImageName(tag)])
           GithubAsset(
             name: name,
             size: size,
@@ -70,82 +70,63 @@ void main() {
       ],
     );
 
-    test('stable picks the newest non-prerelease with a board asset', () {
-      final target = selectFirmwareTarget(
-        [
-          release('v0.4.0-beta.1', prerelease: true),
-          release('v0.3.1'),
-          release('v0.3.0'),
-        ],
-        board: 'v700P',
-        channel: FirmwareChannel.stable,
-      );
+    test('stable picks the newest non-prerelease with an image asset', () {
+      final target = selectFirmwareTarget([
+        release('v0.4.0-beta.1', prerelease: true),
+        release('v0.3.1'),
+        release('v0.3.0'),
+      ], channel: FirmwareChannel.stable);
       expect(target?.tag, 'v0.3.1');
     });
 
     test('beta includes prereleases and orders them below their release', () {
       expect(
-        selectFirmwareTarget(
-          [release('v0.4.0-beta.2', prerelease: true), release('v0.3.1')],
-          board: 'v700P',
-          channel: FirmwareChannel.beta,
-        )?.tag,
+        selectFirmwareTarget([
+          release('v0.4.0-beta.2', prerelease: true),
+          release('v0.3.1'),
+        ], channel: FirmwareChannel.beta)?.tag,
         'v0.4.0-beta.2',
       );
       expect(
-        selectFirmwareTarget(
-          [release('v0.4.0-beta.2', prerelease: true), release('v0.4.0')],
-          board: 'v700P',
-          channel: FirmwareChannel.beta,
-        )?.tag,
+        selectFirmwareTarget([
+          release('v0.4.0-beta.2', prerelease: true),
+          release('v0.4.0'),
+        ], channel: FirmwareChannel.beta)?.tag,
         'v0.4.0',
       );
     });
 
-    test('drafts, unparseable tags, and missing board assets are skipped', () {
-      final target = selectFirmwareTarget(
-        [
-          release('v9.9.9', draft: true),
-          release('nightly'),
-          release('v0.5.0', assets: ['dynamite-sampler_other_board.bin']),
-          release('v0.4.0'),
-        ],
-        board: 'v700P',
-        channel: FirmwareChannel.beta,
-      );
+    test('drafts, unparseable tags, and asset-less releases are skipped', () {
+      final target = selectFirmwareTarget([
+        release('v9.9.9', draft: true),
+        release('nightly'),
+        release('v0.5.0', assets: ['some_other_artifact.zip']),
+        release('v0.4.0'),
+      ], channel: FirmwareChannel.beta);
       expect(target?.tag, 'v0.4.0');
-      expect(target?.assetName, 'dynamite-sampler_v700P_x.bin');
+      expect(target?.assetName, 'dynamite-sampler-firmware_v0.4.0.bin');
     });
 
     test('returns null when nothing qualifies', () {
       expect(
-        selectFirmwareTarget(
-          [release('v0.4.0-beta.1', prerelease: true)],
-          board: 'v700P',
-          channel: FirmwareChannel.stable,
-        ),
+        selectFirmwareTarget([
+          release('v0.4.0-beta.1', prerelease: true),
+        ], channel: FirmwareChannel.stable),
         isNull,
       );
-      expect(
-        selectFirmwareTarget([], board: 'v700P', channel: FirmwareChannel.beta),
-        isNull,
-      );
+      expect(selectFirmwareTarget([], channel: FirmwareChannel.beta), isNull);
     });
 
     test('picks up the sha256 sidecar when present', () {
-      final target = selectFirmwareTarget(
-        [
-          release(
-            'v0.4.0',
-            assets: [
-              'dynamite-sampler_v700P_v0.4.0.bin',
-              'dynamite-sampler_v700P_v0.4.0.bin.sha256',
-            ],
-          ),
-        ],
-        board: 'v700P',
-        channel: FirmwareChannel.stable,
-      );
+      final target = selectFirmwareTarget([
+        release(
+          'v0.4.0',
+          assets: [
+            'dynamite-sampler-firmware_v0.4.0.bin',
+            'dynamite-sampler-firmware_v0.4.0.bin.sha256',
+          ],
+        ),
+      ], channel: FirmwareChannel.stable);
       expect(target?.sha256Url?.path, endsWith('.bin.sha256'));
     });
   });

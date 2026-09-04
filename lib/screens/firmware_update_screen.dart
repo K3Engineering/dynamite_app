@@ -8,7 +8,6 @@ import 'package:provider/provider.dart';
 import '../models/firmware_release.dart';
 import '../services/ble_link_manager.dart';
 import '../services/firmware_update_service.dart';
-import '../widgets/snackbars.dart';
 
 enum _Stage { overview, downloading, flashing, rebooting, done, failed }
 
@@ -117,25 +116,10 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     if (!mounted || file == null) return;
     final bytes = await file.readAsBytes();
     if (!mounted) return;
-    // From-file flashes have no release metadata; the board guard is the
-    // filename convention, checked only when it parses.
-    final nameMatch = RegExp(
-      r'^dynamite-sampler_(.+?)_.*\.bin$',
-    ).firstMatch(file.name);
-    final fileBoard = nameMatch?[1];
-    final deviceBoard = _updates.check?.board;
-    if (fileBoard != null && deviceBoard != null && fileBoard != deviceBoard) {
-      showErrorSnackBar(
-        ScaffoldMessenger.of(context),
-        'Refusing: "${file.name}" is for board "$fileBoard", '
-        'the connected device is a "$deviceBoard".',
-      );
-      return;
-    }
     final confirmed = await _confirmFlash(
       'Flash ${file.name}?',
-      '${bytes.length} bytes, board check: ${fileBoard ?? 'not in the file name'}. '
-          'The device reboots when done — keep the app open.',
+      '${bytes.length} bytes. The device reboots when done — keep the app '
+          'open.',
     );
     if (!confirmed || !mounted) return;
     await _flash(bytes, flashedTag: null);

@@ -82,25 +82,21 @@ class FirmwareVersion implements Comparable<FirmwareVersion> {
   String toString() => label;
 }
 
-/// The release a device should be running for its board and channel: one
-/// matching image asset of one GitHub release.
+/// The release a device should be running for its channel: one image asset
+/// of one GitHub release.
 class FirmwareRelease {
   const FirmwareRelease({
     required this.tag,
     required this.version,
-    required this.board,
     required this.assetName,
     required this.size,
     required this.downloadUrl,
     required this.sha256Url,
   });
 
-  /// The release tag as published, e.g. `v0.4.0-beta.1`.
+  /// The release tag as published, e.g. `0.4.0-beta.1`.
   final String tag;
   final FirmwareVersion version;
-
-  /// The board (firmware-rev prefix) this image is for.
-  final String board;
 
   final String assetName;
   final int size;
@@ -181,17 +177,22 @@ String _stripV(String s) {
   return next >= 0 && next <= 9 ? s.substring(1) : s;
 }
 
-/// Pick the release a [board] device on [channel] should run: the newest
-/// (semver-max) non-draft release — stable excludes prereleases — whose
-/// assets include this board's image (`dynamite-sampler_<board>_*.bin`).
-/// Null when nothing qualifies (no releases yet, or none for this board).
+/// The image asset a release publishes, per the firmware repo's release
+/// workflow. One build covers every board; a wrong-chip image is the
+/// device's own OTA validation's job to reject (esp_ota_end), not this
+/// name's.
+String firmwareImageName(String tag) => 'dynamite-sampler-firmware_$tag.bin';
+
+/// Pick the release a device on [channel] should run: the newest
+/// (semver-max) non-draft release — stable excludes prereleases — that
+/// carries its image asset. Null when nothing qualifies (no releases yet,
+/// or none with the asset attached yet).
 ///
 /// TODO(runbook): tags are the version contract — never publish a backport
 /// for an older line once a newer release exists; under the
 /// direction-agnostic offer rule that would downgrade-offer the fleet.
 FirmwareRelease? selectFirmwareTarget(
   List<GithubRelease> releases, {
-  required String board,
   required FirmwareChannel channel,
 }) {
   FirmwareRelease? best;
@@ -201,10 +202,10 @@ FirmwareRelease? selectFirmwareTarget(
     final version = FirmwareVersion.tryParse(release.tag);
     if (version == null) continue;
     if (best != null && best.version.compareTo(version) >= 0) continue;
-    final prefix = 'dynamite-sampler_${board}_';
+    final imageName = firmwareImageName(release.tag);
     GithubAsset? image;
     for (final asset in release.assets) {
-      if (asset.name.startsWith(prefix) && asset.name.endsWith('.bin')) {
+      if (asset.name == imageName) {
         image = asset;
         break;
       }
@@ -220,7 +221,6 @@ FirmwareRelease? selectFirmwareTarget(
     best = FirmwareRelease(
       tag: release.tag,
       version: version,
-      board: board,
       assetName: image.name,
       size: image.size,
       downloadUrl: image.url,
