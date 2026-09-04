@@ -102,9 +102,9 @@ class FirmwareRelease {
   final int size;
   final Uri downloadUrl;
 
-  /// The `.sha256` sidecar asset, when CI published one. Optional while the
-  /// release pipeline is being set up; downloads verify when present.
-  final Uri? sha256Url;
+  /// The `.sha256` sidecar asset. Release CI always publishes one; a release
+  /// without it is not a candidate (see [selectFirmwareTarget]).
+  final Uri sha256Url;
 }
 
 /// Minimal view of one GitHub release for selection — parsed from the API
@@ -181,12 +181,15 @@ String _stripV(String s) {
 /// workflow. One build covers every board; a wrong-chip image is the
 /// device's own OTA validation's job to reject (esp_ota_end), not this
 /// name's.
-String firmwareImageName(String tag) => 'dynamite-sampler-firmware_$tag.bin';
+String firmwareImageName(String tag) =>
+    'dynamite-sampler-firmware-release-$tag.bin';
 
 /// Pick the release a device on [channel] should run: the newest
 /// (semver-max) non-draft release — stable excludes prereleases — that
-/// carries its image asset. Null when nothing qualifies (no releases yet,
-/// or none with the asset attached yet).
+/// carries its image and `.sha256` checksum assets. Null when nothing
+/// qualifies (no releases yet, or none with both assets attached yet). A
+/// release missing its checksum is skipped like a release missing its
+/// image: never offered to a device.
 ///
 /// TODO(runbook): tags are the version contract — never publish a backport
 /// for an older line once a newer release exists; under the
@@ -211,20 +214,21 @@ FirmwareRelease? selectFirmwareTarget(
       }
     }
     if (image == null) continue;
-    Uri? sha256Url;
+    GithubAsset? sha256;
     for (final asset in release.assets) {
       if (asset.name == '${image.name}.sha256') {
-        sha256Url = asset.url;
+        sha256 = asset;
         break;
       }
     }
+    if (sha256 == null) continue;
     best = FirmwareRelease(
       tag: release.tag,
       version: version,
       assetName: image.name,
       size: image.size,
       downloadUrl: image.url,
-      sha256Url: sha256Url,
+      sha256Url: sha256.url,
     );
   }
   return best;

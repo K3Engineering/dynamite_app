@@ -61,7 +61,9 @@ void main() {
       draft: draft,
       prerelease: prerelease,
       assets: [
-        for (final name in assets ?? [firmwareImageName(tag)])
+        for (final name
+            in assets ??
+                [firmwareImageName(tag), '${firmwareImageName(tag)}.sha256'])
           GithubAsset(
             name: name,
             size: size,
@@ -104,7 +106,7 @@ void main() {
         release('v0.4.0'),
       ], channel: FirmwareChannel.beta);
       expect(target?.tag, 'v0.4.0');
-      expect(target?.assetName, 'dynamite-sampler-firmware_v0.4.0.bin');
+      expect(target?.assetName, 'dynamite-sampler-firmware-release-v0.4.0.bin');
     });
 
     test('returns null when nothing qualifies', () {
@@ -117,17 +119,13 @@ void main() {
       expect(selectFirmwareTarget([], channel: FirmwareChannel.beta), isNull);
     });
 
-    test('picks up the sha256 sidecar when present', () {
+    test('skips releases without the .sha256 sidecar', () {
       final target = selectFirmwareTarget([
-        release(
-          'v0.4.0',
-          assets: [
-            'dynamite-sampler-firmware_v0.4.0.bin',
-            'dynamite-sampler-firmware_v0.4.0.bin.sha256',
-          ],
-        ),
+        release('v0.5.0', assets: [firmwareImageName('v0.5.0')]),
+        release('v0.4.0'),
       ], channel: FirmwareChannel.stable);
-      expect(target?.sha256Url?.path, endsWith('.bin.sha256'));
+      expect(target?.tag, 'v0.4.0');
+      expect(target?.sha256Url.path, endsWith('.bin.sha256'));
     });
   });
 }

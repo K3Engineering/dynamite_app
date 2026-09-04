@@ -75,19 +75,14 @@ class GithubReleaseCatalog implements FirmwareCatalog {
         '${bytes.length} bytes, expected ${release.size}',
       );
     }
-    final shaUrl = release.sha256Url;
-    if (shaUrl != null) {
-      final shaRes = await _client.get(shaUrl);
-      if (shaRes.statusCode != 200) {
-        throw StateError(
-          'Checksum download failed (HTTP ${shaRes.statusCode})',
-        );
-      }
-      final digest = sha256.convert(bytes).toString();
-      final expected = shaRes.body.trim().split(RegExp(r'\s+')).first;
-      if (expected != digest) {
-        throw StateError('Image checksum mismatch for ${release.assetName}');
-      }
+    final shaRes = await _client.get(release.sha256Url);
+    if (shaRes.statusCode != 200) {
+      throw StateError('Checksum download failed (HTTP ${shaRes.statusCode})');
+    }
+    final digest = sha256.convert(bytes).toString();
+    final expected = shaRes.body.trim().split(RegExp(r'\s+')).first;
+    if (expected != digest) {
+      throw StateError('Image checksum mismatch for ${release.assetName}');
     }
     return bytes;
   }
