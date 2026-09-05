@@ -29,6 +29,12 @@ abstract interface class FirmwareCatalog {
 /// offer rule is direction-agnostic, so a backport flipping `/latest`
 /// backward would downgrade-offer every newer unit. List + semver-max has
 /// no such window.
+///
+/// Asset bytes are fetched through our own proxy, not `github.com`
+/// directly: GitHub serves release downloads without CORS headers, so a
+/// browser fetch of `browser_download_url` is blocked. The proxy mirrors
+/// the `github.com` path 1:1 and only accepts this repo's
+/// `/releases/download/` prefix. Every platform uses it — one path.
 class GithubReleaseCatalog implements FirmwareCatalog {
   GithubReleaseCatalog({http.Client? client})
     : _client = client ?? http.Client();
@@ -41,7 +47,21 @@ class GithubReleaseCatalog implements FirmwareCatalog {
     '/repos/$_owner/$_repo/releases',
   );
 
+  static const _assetProxyHost = 'gh-proxy.k3engineering.com';
+  static const _assetPathPrefix = '/$_owner/$_repo/releases/download/';
+
   final http.Client _client;
+
+  /// The proxy URL for a `browser_download_url`. Throws if the API hands us
+  /// a URL the proxy won't serve; better to stop here than get an opaque
+  /// 403 from the proxy.
+  static Uri _proxied(Uri assetUrl) {
+    if (assetUrl.host != 'github.com' ||
+        !assetUrl.path.startsWith(_assetPathPrefix)) {
+      throw StateError('Unexpected release asset URL: $assetUrl');
+    }
+    return assetUrl.replace(host: _assetProxyHost);
+  }
 
   @override
   Future<FirmwareRelease?> latestFor({required FirmwareChannel channel}) async {
@@ -61,7 +81,7 @@ class GithubReleaseCatalog implements FirmwareCatalog {
 
   @override
   Future<Uint8List> downloadImage(FirmwareRelease release) async {
-    final res = await _client.get(release.downloadUrl);
+    final res = await _client.get(_proxied(release.downloadUrl));
     if (res.statusCode != 200) {
       throw StateError(
         'Image download failed (HTTP ${res.statusCode}) for '
@@ -75,7 +95,7 @@ class GithubReleaseCatalog implements FirmwareCatalog {
         '${bytes.length} bytes, expected ${release.size}',
       );
     }
-    final shaRes = await _client.get(release.sha256Url);
+    final shaRes = await _client.get(_proxied(release.sha256Url));
     if (shaRes.statusCode != 200) {
       throw StateError('Checksum download failed (HTTP ${shaRes.statusCode})');
     }
