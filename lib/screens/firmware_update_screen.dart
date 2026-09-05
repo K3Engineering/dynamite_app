@@ -83,11 +83,12 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     });
   }
 
+  /// TODO double-check "several minutes"
   Future<void> _flashRelease(FirmwareRelease release) async {
     final confirmed = await _confirmFlash(
       'Flash ${release.tag} to this device?',
-      'The current link will be used. The data feed pauses during the '
-          'transfer and the device reboots when done — keep the app open.',
+      'Keep the app open during the flashing process. The process typically takes several minutes. '
+          'The device will reboot when done. Your settings will not be erased.',
     );
     if (!confirmed || !mounted) return;
     setState(() {
@@ -118,8 +119,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     if (!mounted) return;
     final confirmed = await _confirmFlash(
       'Flash ${file.name}?',
-      '${bytes.length} bytes. The device reboots when done — keep the app '
-          'open.',
+      '${bytes.length} bytes. Keep the app open. The device reboots when done. ',
     );
     if (!confirmed || !mounted) return;
     await _flash(bytes, flashedTag: null);
@@ -149,7 +149,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
   Future<void> _flash(Uint8List image, {required String? flashedTag}) async {
     setState(() {
       _stage = _Stage.flashing;
-      _headline = 'Flashing — do not disconnect…';
+      _headline = 'Flashing - do not disconnect…';
       _progress = 0;
     });
     _flashedTag = flashedTag;
@@ -167,8 +167,8 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       setState(() {
         _stage = _Stage.rebooting;
         _headline =
-            'Image accepted — the device is rebooting. Reconnect it from '
-            'the Devices tab to confirm the version.';
+            'Image accepted - the device is rebooting. Reconnect to it from '
+            'the Devices tab.';
       });
     } catch (e) {
       if (!mounted) return;
@@ -272,10 +272,10 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       ];
     }
     final step = switch (_stage) {
-      _Stage.downloading => 'Step 1 of 3',
+      _Stage.downloading => 'Step 1 of 3, downloading',
       _Stage.flashing =>
-        'Step 2 of 3 · ${(_progress * 100).toStringAsFixed(0)}%',
-      _Stage.rebooting => 'Step 3 of 3',
+        'Step 2 of 3, flashing · ${(_progress * 100).toStringAsFixed(0)}%',
+      _Stage.rebooting => 'Step 3 of 3, rebooting',
       _ => '',
     };
     return [
@@ -291,7 +291,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       const SizedBox(height: 12),
       Text(step, style: theme.textTheme.bodySmall, textAlign: TextAlign.center),
       Text(
-        'Going back is blocked while the flash runs.',
+        'Keep this page open while the firmware updates.',
         style: theme.textTheme.bodySmall,
         textAlign: TextAlign.center,
       ),
@@ -310,7 +310,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     if (target == null) return 'No release available for this board';
     return check.differsFromDevice
         ? '${check.installedDescribe}  →  ${target.tag}'
-        : '${check.installedDescribe} — up to date';
+        : '${check.installedDescribe} - up to date';
   }
 
   List<Widget> _buildOverview(
