@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' show min;
 
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
@@ -10,6 +11,7 @@ import 'bt_device_config.dart';
 import '../models/bt_scan.dart';
 import 'gatt_link_backend.dart';
 import 'kvs_client.dart';
+import 'ota_client.dart';
 import 'link_backend.dart';
 import 'rig_flash_transport.dart';
 import '../models/device_info.dart';
@@ -477,6 +479,15 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// hub.
   void Function(int sampleRateHz)? onSampleRate;
 
+  /// OTA control notifications, routed to the live [OtaClient] while a
+  /// flash session runs (see [runOta]); null outside sessions so stray OTA
+  /// frames are dropped like any other unexpected characteristic.
+  void Function(Uint8List data)? onOtaControlFrame;
+
+  /// True while the active link is the simulated demo device, which has no
+  /// OTA service. The update UI gates flash actions off this.
+  bool get linkIsSimulated => _link.isSimulated && _link.isLinkUp;
+
   /// One-shot user notices ([BleDisconnectTimeout], [BleConnectionFailed])
   /// go here; the shell shows them regardless of which tab is mounted.
   final AppEvents _events;
@@ -545,6 +556,60 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// failed envelope never wedges the ones queued behind it (an op queued
   /// behind a torn-down link fails loudly on the aborted KVS client).
   Future<void> _feedMaintenance = Future.value();
+
+  /// Run [body] as an OTA flash session against the live GATT link:
+  /// subscribe to the OTA control characteristic, build a wired [OtaClient]
+  /// for it, hold the feed paused for the whole body (firmware rejects any
+  /// OTA write while the ADC stream holds the device lock), then unwind —
+  /// unregister the frame handler, abort the client, drop the subscription.
+  /// The device reboots itself ~0.5 s after accepting an image; the
+  /// teardown then lands on the disconnect path, which is why the resume
+  /// and unsubscribe are both guarded on the link still being ours.
+  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) async {
+    final deviceId = _link.deviceId;
+    if (deviceId.isEmpty || _link.isSimulated) {
+      throw StateError('OTA requires a connected GATT device');
+    }
+    await UniversalBle.subscribeNotifications(
+      deviceId,
+      otaServiceId,
+      btChrOtaControl,
+    );
+    // Chunk cap mirrors the reference client (min(mtu - 3, 244)). Web never
+    // reports the negotiated MTU; the platforms in use negotiate 247, so
+    // fall through to the 247 -> 244 cap.
+    final mtu = _link.mtu;
+    final client = OtaClient(
+      chunkSize: mtu == null ? 244 : min(mtu - 3, 244),
+      writeControl: (bytes, {withoutResponse = false}) => UniversalBle.write(
+        deviceId,
+        otaServiceId,
+        btChrOtaControl,
+        bytes,
+        withoutResponse: withoutResponse,
+      ),
+      writeData: (bytes) =>
+          UniversalBle.write(deviceId, otaServiceId, btChrOtaData, bytes),
+    );
+    onOtaControlFrame = client.handleNotification;
+    try {
+      return await _withFeedPaused(() => body(client));
+    } finally {
+      onOtaControlFrame = null;
+      client.abort();
+      if (_link.isLinkUp && _link.deviceId == deviceId) {
+        try {
+          await UniversalBle.unsubscribe(
+            deviceId,
+            otaServiceId,
+            btChrOtaControl,
+          );
+        } catch (_) {
+          // Teardown hygiene only; the session already settled.
+        }
+      }
+    }
+  }
 
   /// Run [body] with the ADC feed subscription paused: firmware rejects KVS
   /// commands while the feed's subscription holds the device lock, so doc
@@ -797,9 +862,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
         scanFilter: ScanFilter(withServices: [btServiceId]),
         platformConfig: PlatformConfig(
           // Web Bluetooth gates GATT access per service: the sampler service
-          // comes from the picker filter, and the Device Information service
-          // (0x180A, read during post-connect setup) must be declared here.
-          web: WebOptions(optionalServices: [btServiceId, btSvcDeviceInfo]),
+          // comes from the picker filter; anything else discovered or
+          // touched over GATT must be declared here (Device Information,
+          // read during post-connect setup; OTA, touched by runOta).
+          web: WebOptions(
+            optionalServices: [btServiceId, btSvcDeviceInfo, otaServiceId],
+          ),
         ),
       );
     } catch (e) {
@@ -1541,6 +1609,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       _deliverAdcData(data);
     } else if (characteristicId == btChrKvs) {
       _backend?.handleKvsFrame(data);
+    } else if (characteristicId == btChrOtaControl) {
+      onOtaControlFrame?.call(data);
     } else {
       logTrace(
         () =>
@@ -1566,6 +1636,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     onAdcData = null;
     onCalibrationData = null;
     onSampleRate = null;
+    onOtaControlFrame = null;
     _backend?.dispose();
     _backend = null;
     _stopRssiPolling();

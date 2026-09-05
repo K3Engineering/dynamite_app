@@ -6,6 +6,14 @@ const btChrKvs = "10adce11-68a6-450b-9810-ca11b39fd283";
 // took at boot — the per-channel PGA gains come from its GAIN register.
 const btChrAdcConfig = "adcc0f19-2575-4502-9a48-0e99974eb34f";
 
+// OTA firmware update (see ble_ota.cpp): Control carries the session
+// handshake opcodes (write + single-byte status notifies), Data carries raw
+// image bytes (write only). UUIDs are the sample-copied firmware ones — the
+// firmware has a queued TODO to uniquify them; change in lockstep.
+const otaServiceId = "d6f1d96d-594c-4c53-b1c6-144a1dfde6d8";
+const btChrOtaControl = "7ad671aa-21c0-46a4-b722-270e3ae3d830";
+const btChrOtaData = "23408888-1f40-4cd8-9b89-ca8d45f8a5b0";
+
 // Bluetooth SIG Device Information service (0x180A) and its read-only string
 // characteristics — the static device identity, read once per link. Firmware
 // publishes all of them (see setupDeviceInfo() in ble_proc.cpp).

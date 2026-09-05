@@ -14,6 +14,8 @@ import 'services/ble_link_manager.dart';
 import 'services/data_hub.dart';
 import 'services/demo_device.dart';
 import 'services/feed_health_tracker.dart';
+import 'services/firmware_catalog.dart';
+import 'services/firmware_update_service.dart';
 // Debug-only hot-restart hook: on web, BLE notification listeners and timers
 // survive a hot restart, so each generation registers a cleanup that the next
 // generation runs first thing in main(). No-op stub on native platforms.
@@ -113,12 +115,24 @@ void main() async {
     events: appEvents,
   );
   final appSettings = AppSettings(prefs: prefs);
+  // Release checks + the once-per-link update banner; also carries the
+  // flash keep-awake hold for the wakelock policy below.
+  final firmwareUpdates = FirmwareUpdateService(
+    prefs: prefs,
+    link: linkManager,
+    events: appEvents,
+    catalog: GithubReleaseCatalog(),
+  );
   // Keep the screen awake while a device stream is live and the setting is
-  // on. Nothing reads this; it exists to react. Construction is the wiring.
+  // on — and unconditionally during an OTA flash (which unsubscribes the
+  // feed). Nothing reads this; it exists to react. Construction is the
+  // wiring.
   WakelockPolicy(
     settings: appSettings,
     streamingChanges: linkManager,
     streamingNow: () => linkManager.isStreaming,
+    holdChanges: firmwareUpdates.flashInProgress,
+    holdNow: () => firmwareUpdates.flashInProgress.value,
   );
   // Content-equal pushes are a no-op inside the hub.
   dataHub.updateLoadCells(rigState.channelCells);
@@ -158,6 +172,7 @@ void main() async {
         ChangeNotifierProvider.value(value: linkManager),
         ChangeNotifierProvider.value(value: rigState),
         ChangeNotifierProvider.value(value: recording),
+        ChangeNotifierProvider.value(value: firmwareUpdates),
       ],
       child: const DynoApp(),
     ),
