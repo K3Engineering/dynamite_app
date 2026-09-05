@@ -862,9 +862,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
         scanFilter: ScanFilter(withServices: [btServiceId]),
         platformConfig: PlatformConfig(
           // Web Bluetooth gates GATT access per service: the sampler service
-          // comes from the picker filter, and the Device Information service
-          // (0x180A, read during post-connect setup) must be declared here.
-          web: WebOptions(optionalServices: [btServiceId, btSvcDeviceInfo]),
+          // comes from the picker filter; anything else discovered or
+          // touched over GATT must be declared here (Device Information,
+          // read during post-connect setup; OTA, touched by runOta).
+          web: WebOptions(
+            optionalServices: [btServiceId, btSvcDeviceInfo, otaServiceId],
+          ),
         ),
       );
     } catch (e) {
