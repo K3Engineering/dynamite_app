@@ -8,10 +8,12 @@ import 'package:provider/provider.dart';
 import '../models/firmware_release.dart';
 import '../services/ble_link_manager.dart';
 import '../services/firmware_update_service.dart';
+import '../widgets/wide_layout.dart';
 
 enum _Stage { overview, downloading, flashing, rebooting, done, failed }
 
-/// The OTA update flow, pushed from the Settings tab's firmware card.
+/// The OTA update flow, pushed from the Settings tab's firmware card or
+/// deep-linked from the update-available snackbar.
 ///
 /// Offer rule (see `firmware_release.dart`): the device should run the
 /// channel's target release, whatever the direction — "differs" flashes it,
@@ -19,9 +21,7 @@ enum _Stage { overview, downloading, flashing, rebooting, done, failed }
 /// (download -> verify -> BLE transfer -> reboot -> verdict); the release
 /// check itself lives in [FirmwareUpdateService].
 class FirmwareUpdateScreen extends StatefulWidget {
-  const FirmwareUpdateScreen({super.key, required this.deviceId});
-
-  final String deviceId;
+  const FirmwareUpdateScreen({super.key});
 
   @override
   State<FirmwareUpdateScreen> createState() => _FirmwareUpdateScreenState();
@@ -190,17 +190,43 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     final linkUp = context.select<BleLinkManager, bool>(
       (l) => l.connectedDeviceId.isNotEmpty,
     );
+    final inProgress =
+        _busy || _stage == _Stage.done || _stage == _Stage.failed;
 
     return PopScope(
       canPop: !_busy,
       child: Scaffold(
         appBar: AppBar(title: const Text('Firmware update')),
         body: SafeArea(
-          child: ListView(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            children: _busy || _stage == _Stage.done || _stage == _Stage.failed
-                ? _buildProgress()
-                : _buildOverview(service, simulated: simulated, linkUp: linkUp),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final hPad = contentSideInset(constraints.maxWidth);
+              if (inProgress) {
+                // The flash page is a single moment of attention: centered
+                // and narrow rather than stretched across a desktop window.
+                return Center(
+                  child: SingleChildScrollView(
+                    padding: EdgeInsets.symmetric(
+                      horizontal: hPad,
+                      vertical: 24,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: _buildProgress(),
+                    ),
+                  ),
+                );
+              }
+              return ListView(
+                padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 16),
+                children: _buildOverview(
+                  service,
+                  simulated: simulated,
+                  linkUp: linkUp,
+                ),
+              );
+            },
           ),
         ),
       ),
@@ -208,10 +234,17 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
   }
 
   List<Widget> _buildProgress() {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     if (_stage == _Stage.done) {
       return [
-        Text(_result!, style: Theme.of(context).textTheme.titleMedium),
+        Icon(Icons.check_circle_outline, color: scheme.primary, size: 48),
+        const SizedBox(height: 16),
+        Text(
+          _result!,
+          style: theme.textTheme.titleMedium,
+          textAlign: TextAlign.center,
+        ),
         const SizedBox(height: 24),
         FilledButton(
           onPressed: () => Navigator.of(context).pop(),
@@ -221,9 +254,13 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     }
     if (_stage == _Stage.failed) {
       return [
-        Icon(Icons.error_outline, color: scheme.error, size: 40),
-        const SizedBox(height: 12),
-        Text(_error ?? 'Flash failed.', style: TextStyle(color: scheme.error)),
+        Icon(Icons.error_outline, color: scheme.error, size: 48),
+        const SizedBox(height: 16),
+        Text(
+          _error ?? 'Flash failed.',
+          style: TextStyle(color: scheme.error),
+          textAlign: TextAlign.center,
+        ),
         const SizedBox(height: 24),
         OutlinedButton(
           onPressed: () => setState(() {
@@ -234,20 +271,46 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         ),
       ];
     }
+    final step = switch (_stage) {
+      _Stage.downloading => 'Step 1 of 3',
+      _Stage.flashing =>
+        'Step 2 of 3 · ${(_progress * 100).toStringAsFixed(0)}%',
+      _Stage.rebooting => 'Step 3 of 3',
+      _ => '',
+    };
     return [
-      Text(_headline, style: Theme.of(context).textTheme.titleMedium),
-      const SizedBox(height: 16),
+      Text(
+        _headline,
+        style: theme.textTheme.titleMedium,
+        textAlign: TextAlign.center,
+      ),
+      const SizedBox(height: 24),
       LinearProgressIndicator(
         value: _stage == _Stage.flashing ? _progress : null,
       ),
       const SizedBox(height: 12),
+      Text(step, style: theme.textTheme.bodySmall, textAlign: TextAlign.center),
       Text(
-        _stage == _Stage.flashing
-            ? '${(_progress * 100).toStringAsFixed(0)}%'
-            : 'This takes a couple of minutes. Going back is blocked.',
-        style: Theme.of(context).textTheme.bodySmall,
+        'Going back is blocked while the flash runs.',
+        style: theme.textTheme.bodySmall,
+        textAlign: TextAlign.center,
       ),
     ];
+  }
+
+  /// The headline of the overview card: installed -> target, or the plain
+  /// state when there is no comparison to draw.
+  String _heroLine(FirmwareUpdateService service, {required bool linkUp}) {
+    final check = service.check;
+    if (service.checking && check == null) return 'Checking…';
+    if (check == null) {
+      return linkUp ? 'No release check yet' : 'No device connected';
+    }
+    final target = check.target;
+    if (target == null) return 'No release available for this board';
+    return check.differsFromDevice
+        ? '${check.installedDescribe}  →  ${target.tag}'
+        : '${check.installedDescribe} — up to date';
   }
 
   List<Widget> _buildOverview(
@@ -255,13 +318,14 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     required bool simulated,
     required bool linkUp,
   }) {
+    final theme = Theme.of(context);
     final check = service.check;
     final target = check?.target;
     final canFlash = linkUp && !simulated && !service.checking;
     final flashLabel = target == null
-        ? null
+        ? 'No release to flash'
         : check!.differsFromDevice
-        ? 'Flash ${target.tag}'
+        ? 'Update to ${target.tag}'
         : 'Reflash ${target.tag}';
 
     return [
@@ -271,19 +335,14 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Installed', style: Theme.of(context).textTheme.titleSmall),
-              const SizedBox(height: 4),
               Text(
-                check?.installedDescribe ?? '—',
-                style: Theme.of(context).textTheme.bodyMedium,
+                _heroLine(service, linkUp: linkUp),
+                style: theme.textTheme.titleLarge,
               ),
               if (check != null)
-                Text(
-                  'Board: ${check.board}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
+                Text('Board: ${check.board}', style: theme.textTheme.bodySmall),
               const SizedBox(height: 16),
-              Text('Channel', style: Theme.of(context).textTheme.titleSmall),
+              Text('Channel', style: theme.textTheme.titleSmall),
               const SizedBox(height: 8),
               SegmentedButton<FirmwareChannel>(
                 segments: [
@@ -296,20 +355,13 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
                     unawaited(service.setChannel(set.first)),
               ),
               const SizedBox(height: 16),
-              Text(
-                'Channel target',
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-              const SizedBox(height: 4),
-              if (service.checking)
+              if (service.checking && check != null)
                 const Text('Checking…')
               else if (service.checkError != null)
                 Text(
                   'Check failed: ${service.checkError}',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                )
-              else
-                Text(target?.tag ?? 'No release available for this board yet.'),
+                  style: TextStyle(color: theme.colorScheme.error),
+                ),
               const SizedBox(height: 8),
               OutlinedButton(
                 onPressed: service.checking || !linkUp
@@ -322,25 +374,40 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         ),
       ),
       const SizedBox(height: 16),
-      if (simulated)
-        const Text('Firmware update is unavailable for the demo device.'),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: FilledButton(
-          onPressed: canFlash && target != null
-              ? () => unawaited(_flashRelease(target))
-              : null,
-          child: Text(flashLabel ?? 'No release to flash'),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              FilledButton(
+                onPressed: canFlash && target != null
+                    ? () => unawaited(_flashRelease(target))
+                    : null,
+                child: Text(flashLabel),
+              ),
+              if (simulated)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Firmware update is unavailable for the demo device.',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
       const SizedBox(height: 24),
-      Text('Developer', style: Theme.of(context).textTheme.titleSmall),
+      Text('Developer', style: theme.textTheme.titleSmall),
       const SizedBox(height: 8),
-      Align(
-        alignment: Alignment.centerLeft,
-        child: OutlinedButton(
-          onPressed: canFlash ? () => unawaited(_flashFromFile()) : null,
-          child: const Text('Flash image from file…'),
+      Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: OutlinedButton(
+            onPressed: canFlash ? () => unawaited(_flashFromFile()) : null,
+            child: const Text('Flash image from file…'),
+          ),
         ),
       ),
     ];

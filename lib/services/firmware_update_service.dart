@@ -136,11 +136,7 @@ class FirmwareUpdateService extends ChangeNotifier {
         if (tag != _announcedTarget) {
           _announcedTarget = tag;
           _events.emit(
-            FirmwareUpdateAvailable(
-              deviceName: _link.connectedDeviceName,
-              installedDescribe: rev.describe,
-              targetTag: tag,
-            ),
+            FirmwareUpdateAvailable(deviceName: _link.connectedDeviceName),
           );
         }
       } else {

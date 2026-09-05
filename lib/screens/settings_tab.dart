@@ -229,7 +229,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
                 // OTA entry point: the check itself lives with the service
                 // (auto-checked once per link); the card just summarizes.
-                _FirmwareCard(deviceId: deviceId),
+                const _FirmwareCard(),
                 const SizedBox(height: 16),
               ],
               const SizedBox(height: 8),
@@ -265,12 +265,10 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 }
 
-/// The OTA firmware card: installed identity plus the channel target's
-/// state, pushing the full update screen.
+/// The OTA firmware card: a one-line status, pushing the update screen that
+/// shows the actual versions.
 class _FirmwareCard extends StatelessWidget {
-  const _FirmwareCard({required this.deviceId});
-
-  final String deviceId;
+  const _FirmwareCard();
 
   @override
   Widget build(BuildContext context) {
@@ -278,16 +276,15 @@ class _FirmwareCard extends StatelessWidget {
     final check = service.check;
     final String subtitle;
     if (service.checking && check == null) {
-      subtitle = 'Checking for releases…';
+      subtitle = 'Checking for updates…';
     } else if (check == null) {
       subtitle = 'Tap to check for updates';
+    } else if (check.target == null) {
+      subtitle = 'No release available';
+    } else if (check.differsFromDevice) {
+      subtitle = 'Update available';
     } else {
-      final target = check.target;
-      subtitle = target == null
-          ? 'Installed: ${check.installedDescribe}'
-          : check.differsFromDevice
-          ? 'Installed: ${check.installedDescribe}\nRelease: ${target.tag}'
-          : 'Running the release (${check.installedDescribe})';
+      subtitle = 'Up to date';
     }
     return Card(
       child: ListTile(
@@ -295,9 +292,7 @@ class _FirmwareCard extends StatelessWidget {
         subtitle: Text(subtitle),
         trailing: const Icon(Icons.chevron_right),
         onTap: () => Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) => FirmwareUpdateScreen(deviceId: deviceId),
-          ),
+          MaterialPageRoute<void>(builder: (_) => const FirmwareUpdateScreen()),
         ),
       ),
     );
