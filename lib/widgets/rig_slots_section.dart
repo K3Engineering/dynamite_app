@@ -77,8 +77,6 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
   Widget _buildContent(BuildContext context) {
     final rig = widget.rig;
     if (!rig.hasDeviceDoc) {
-      // The dim "nothing here" affordance: the theme's outline role, as in
-      // EmptyPlaceholder — not a raw Material grey.
       return Card(
         child: ListTile(
           leading: Icon(
@@ -317,13 +315,10 @@ class _ChannelGutter extends StatelessWidget {
   }
 }
 
-/// The always-present save-state bar. Dirty: errorContainer with content
-/// in the matching on-color so it stays readable — unsaved edits are the
-/// one resting state that loses user data (discarded on disconnect), so
-/// they earn the error tint the app's other resting states don't get.
-/// Clean: a quiet confirmation. One layout
-/// for both states — the buttons keep their space while hidden, so the bar
-/// (and the slot list below) never moves when the dirty state flips.
+/// The always-present save-state bar. Unsaved edits are discarded on
+/// disconnect, hence the error tint while dirty. One layout for both
+/// states — the buttons keep their space while hidden, so the bar (and the
+/// slot list below) never moves when the dirty state flips.
 class _StatusBar extends StatelessWidget {
   const _StatusBar({
     required this.dirty,
@@ -362,9 +357,8 @@ class _StatusBar extends StatelessWidget {
                 dirty
                     ? 'Changes not saved to device — readings in this app '
                           'already use them.'
-                    // Provenance, not a success claim: the clean state also
-                    // covers a revert and a stale-edit discard, where "saved"
-                    // would be a lie.
+                    // The clean state also covers a revert and a stale-edit
+                    // discard, so it can't claim "saved".
                     : 'Settings shown are read from the device.',
                 style: theme.textTheme.bodySmall?.copyWith(color: fg),
               ),

@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
@@ -65,8 +66,8 @@ void main() {
       expect(reparsed.board.factoryDate, flash.board.factoryDate);
       for (int i = 0; i < 4; ++i) {
         expect(
-          reparsed.board.channels[i].readings,
-          flash.board.channels[i].readings,
+          (reparsed.board.channels[i] as CalibratedChannelBoard).readings,
+          (flash.board.channels[i] as CalibratedChannelBoard).readings,
         );
       }
       for (int i = 0; i < kRigSlotCount; ++i) {

@@ -151,8 +151,6 @@ class _SettingsTabState extends State<SettingsTab> {
               if (deviceId.isEmpty)
                 Card(
                   child: ListTile(
-                    // The dim "nothing here" affordance: the theme's outline
-                    // role, as in EmptyPlaceholder — not a raw Material grey.
                     leading: Icon(
                       Icons.bluetooth_disabled,
                       color: Theme.of(context).colorScheme.outline,

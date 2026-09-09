@@ -20,14 +20,14 @@ void main() {
 
     test('SET/DEL refuse the Factory partition (read-only to the app)', () {
       // Board calibration belongs to factory tooling; the app reads it but
-      // must never write it — asserted at the frame-build choke point.
+      // must never write it — enforced at the frame-build choke point.
       expect(
         () => encodeKvsSet(kvsFolderFactory, 'ch0.raw', '1'),
-        throwsA(isA<AssertionError>()),
+        throwsArgumentError,
       );
       expect(
         () => encodeKvsDelete(kvsFolderFactory, 'ch0.raw'),
-        throwsA(isA<AssertionError>()),
+        throwsArgumentError,
       );
       // Reads and the writable folders are unaffected.
       expect(encodeKvsGet(kvsFolderFactory, 'ch0.raw'), isNotEmpty);
@@ -129,6 +129,15 @@ void main() {
         () => parseKvsResponse('GETFaa', frame('1GETF')),
         throwsFormatException,
       );
+    });
+
+    test('undecodable payload bytes are protocol errors, not U+FFFD', () {
+      // Payload bytes that aren't valid UTF-8 (here a lone 0xFF) pass every
+      // frame check but must fail outright: the protocol carries ASCII text,
+      // so this can only be corruption — decoding leniently would let a
+      // corrupted calibration read masquerade as an uncalibrated board.
+      final bytes = Uint8List.fromList([...utf8.encode('1GETFk='), 0xFF]);
+      expect(() => parseKvsResponse('GETFk', bytes), throwsFormatException);
     });
   });
 

@@ -182,7 +182,7 @@ enum DisplayUnit {
   }
 
   /// Format a [value] (already in this unit) with an explicit sign, without
-  /// the unit suffix. Ideal for constrained layouts.
+  /// the unit suffix.
   String formatValueOnly(double value) => _formatValue(value, '');
 
   /// Format a value (already in this unit) for display.

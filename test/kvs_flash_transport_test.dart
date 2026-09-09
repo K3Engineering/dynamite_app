@@ -66,7 +66,10 @@ void main() {
       );
       expect(flash.board.factoryDate, fixture.board.factoryDate);
       expect(flash.board.channels.every((c) => c.isFactoryCalibrated), isTrue);
-      expect(flash.board.channels[0].offsetCounts, closeTo(845.2, 1e-9));
+      expect(
+        (flash.board.channels[0] as CalibratedChannelBoard).offsetCounts,
+        closeTo(845.2, 1e-9),
+      );
       expect(flash.slots, fixture.slots);
     });
   });
@@ -136,12 +139,12 @@ void main() {
 
       // Dropping it from the document must NOT delete it: the app never
       // writes the Factory partition, not even DELs of unknown keys — the
-      // document-level diff's attempt trips the protocol-layer assertion.
+      // document-level diff's attempt trips the protocol-layer guard.
       final stripped = modified
           .split('\n')
           .where((l) => !l.startsWith('vendor.x'))
           .join('\n');
-      expect(write(transport, stripped, async), isA<AssertionError>());
+      expect(write(transport, stripped, async), isA<ArgumentError>());
       expect(mock.kvsStore[kvsFolderFactory]!['vendor.x'], '42');
     });
   });
@@ -169,12 +172,30 @@ void main() {
     });
   });
 
-  test('read failure returns null; write failure throws', () {
+  test('an empty KVS reads as an empty document (unprovisioned unit)', () {
     fakeAsync((async) {
       final (transport, _) = wire();
-      mock.failCalibrationRead = true;
+      mock.kvsStore.forEach((_, folder) => folder.clear());
 
-      expect(read(transport, async), isNull);
+      expect(read(transport, async), '');
+    });
+  });
+
+  test('read failure throws; write failure throws', () {
+    fakeAsync((async) {
+      final (transport, _) = wire();
+      mock.failKvsCommands = true;
+
+      Object? readError;
+      unawaited(
+        transport.readFlashDoc().then(
+          (_) {},
+          onError: (Object e) => readError = e,
+        ),
+      );
+      async.flushMicrotasks();
+      expect(readError, isA<StateError>());
+
       expect(
         write(transport, 'lc0.cap=100\nlc0.sens=2', async),
         isA<StateError>(),

@@ -48,9 +48,9 @@ void main() {
     tares: const [null, null, null, null],
     calibration: [
       for (int ch = 0; ch < channels; ch++)
-        ChannelCalibration(
-          board: ChannelBoardCalibration(
-            nominals: const ChannelNominals(
+        const ChannelCalibration(
+          board: NominalChannelBoard(
+            ChannelNominals(
               adcFsrV: 1.2,
               afeGain: 101,
               pgaGain: 1,

@@ -18,8 +18,6 @@ class CalibrationView extends StatelessWidget {
   Widget build(BuildContext context) {
     final board = this.board;
     if (board == null) {
-      // The dim "nothing here" affordance: the theme's outline role, as in
-      // EmptyPlaceholder — not a raw Material grey.
       return Card(
         child: ListTile(
           leading: Icon(
@@ -162,12 +160,7 @@ class _ChannelCalCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final calibrated = channel.isFactoryCalibrated;
-    // Both diagnostic series exist exactly for a calibrated channel (with
-    // the resolved nominal chain — see ChannelBoardCalibration's invariants),
-    // so the table is always 5 columns in the calibrated branch.
-    final errors = channel.measuredErrorsUvV;
-    final nonlinearities = channel.deviationsUvV;
+    final channel = this.channel;
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -176,19 +169,18 @@ class _ChannelCalCard extends StatelessWidget {
           children: [
             Text('CH ${index + 1}', style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
-            Text(
-              calibrated
-                  ? 'zero offset ${fmtUvV(channel.zeroOffsetUvV)} · '
-                        'gain ${fmtGain(channel.sensitivityVsNominal)} · '
-                        'end-point linearity ±${channel.maxDeviationUvV!.toStringAsFixed(3)} µV/V'
-                  : 'Nominal values (no factory data)',
-              style: theme.textTheme.bodySmall,
-            ),
-            if (calibrated) ...[
+            Text(switch (channel) {
+              final CalibratedChannelBoard c =>
+                'zero offset ${fmtUvV(c.zeroOffsetUvV)} · '
+                    'gain ${fmtGain(c.sensitivityVsNominal)} · '
+                    'end-point linearity ±${c.maxDeviationUvV.toStringAsFixed(3)} µV/V',
+              _ => 'Nominal values (no factory data)',
+            }, style: theme.textTheme.bodySmall),
+            if (channel case final CalibratedChannelBoard c) ...[
               const SizedBox(height: 12),
               Text('Nonlinearity', style: theme.textTheme.titleSmall),
               const SizedBox(height: 4),
-              CalDeviationPlot(deviationsUvV: nonlinearities!),
+              CalDeviationPlot(deviationsUvV: c.deviationsUvV),
               const SizedBox(height: 4),
               Text(
                 'Deviation from the end-point line through ±FS — gain and '
@@ -199,70 +191,74 @@ class _ChannelCalCard extends StatelessWidget {
               ),
             ],
             const SizedBox(height: 12),
-            _row(
-              'Source',
-              calibrated
-                  ? 'Factory'
-                  : channel.nominals != null
-                  ? 'Nominal fallback'
-                  : 'Unavailable (no board constants)',
-            ),
-            if (calibrated) ...[
-              _row('Zero offset', fmtUvV(channel.zeroOffsetUvV)),
+            _row('Source', switch (channel) {
+              CalibratedChannelBoard() => 'Factory',
+              NominalChannelBoard() => 'Nominal fallback',
+              RawOnlyChannelBoard() => 'Unavailable (no board constants)',
+            }),
+            if (channel case final CalibratedChannelBoard c) ...[
+              _row('Zero offset', fmtUvV(c.zeroOffsetUvV)),
               _row(
                 'Gain vs nominal',
-                '${fmtGain(channel.sensitivityVsNominal)} '
+                '${fmtGain(c.sensitivityVsNominal)} '
                     '(±FS cal points ÷ nominal chain)',
               ),
               _row(
                 'End-point linearity',
-                '±${channel.maxDeviationUvV!.toStringAsFixed(3)} µV/V '
+                '±${c.maxDeviationUvV.toStringAsFixed(3)} µV/V '
                     'max deviation',
               ),
               const SizedBox(height: 8),
-              Table(
-                columnWidths: const {
-                  0: FlexColumnWidth(),
-                  1: FlexColumnWidth(),
-                  2: FlexColumnWidth(),
-                  3: FlexColumnWidth(),
-                  4: FlexColumnWidth(),
-                },
-                children: [
-                  TableRow(
-                    children: [
-                      _th(context, 'Config'),
-                      _th(context, 'Setpoint'),
-                      _th(context, 'Reading'),
-                      _th(context, 'Error'),
-                      _th(context, 'Nonlinearity'),
-                    ],
-                  ),
-                  TableRow(
-                    children: [
-                      _unit(context, ''),
-                      _unit(context, 'mV/V'),
-                      _unit(context, 'counts'),
-                      _unit(context, 'µV/V'),
-                      _unit(context, 'µV/V'),
-                    ],
-                  ),
-                  for (int k = 0; k < kCalPointCount; k++)
-                    TableRow(
-                      children: [
-                        _td(calConfigLabels[k]),
-                        _td(channel.setpoints[k].toStringAsFixed(4)),
-                        _td(channel.readings![k].toStringAsFixed(1)),
-                        _td(fmtSignedUvV(errors![k])),
-                        _td(fmtSignedUvV(nonlinearities![k])),
-                      ],
-                    ),
-                ],
-              ),
+              _table(context, c),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  /// The per-config measured-error and nonlinearity table.
+  Table _table(BuildContext context, CalibratedChannelBoard cal) {
+    final errors = cal.measuredErrorsUvV;
+    final nonlinearities = cal.deviationsUvV;
+    return Table(
+      columnWidths: const {
+        0: FlexColumnWidth(),
+        1: FlexColumnWidth(),
+        2: FlexColumnWidth(),
+        3: FlexColumnWidth(),
+        4: FlexColumnWidth(),
+      },
+      children: [
+        TableRow(
+          children: [
+            _th(context, 'Config'),
+            _th(context, 'Setpoint'),
+            _th(context, 'Reading'),
+            _th(context, 'Error'),
+            _th(context, 'Nonlinearity'),
+          ],
+        ),
+        TableRow(
+          children: [
+            _unit(context, ''),
+            _unit(context, 'mV/V'),
+            _unit(context, 'counts'),
+            _unit(context, 'µV/V'),
+            _unit(context, 'µV/V'),
+          ],
+        ),
+        for (int k = 0; k < kCalPointCount; k++)
+          TableRow(
+            children: [
+              _td(calConfigLabels[k]),
+              _td(cal.setpoints[k].toStringAsFixed(4)),
+              _td(cal.readings[k].toStringAsFixed(1)),
+              _td(fmtSignedUvV(errors[k])),
+              _td(fmtSignedUvV(nonlinearities[k])),
+            ],
+          ),
+      ],
     );
   }
 }

@@ -43,7 +43,7 @@ void main() {
 
   List<ChannelCalibration> nominalCals() => [
     for (int ch = 0; ch < channels; ch++)
-      ChannelCalibration(board: ChannelBoardCalibration()),
+      const ChannelCalibration(board: RawOnlyChannelBoard()),
   ];
 
   /// startSession with the caller-side hub snapshots production now passes
@@ -564,7 +564,7 @@ void main() {
           BoardCalibration(
             channels: [
               for (int i = 0; i < channels; ++i)
-                ChannelBoardCalibration(
+                CalibratedChannelBoard(
                   resistors: nominalLadder,
                   readings: [
                     for (final d in sp)
@@ -636,8 +636,8 @@ void main() {
         BoardCalibration(
           channels: [
             for (int ch = 0; ch < channels; ch++)
-              ChannelBoardCalibration(
-                nominals: const ChannelNominals(
+              const NominalChannelBoard(
+                ChannelNominals(
                   adcFsrV: 1.2,
                   afeGain: 101,
                   pgaGain: 2,

@@ -31,7 +31,7 @@ class _FakeTransport implements RigFlashTransport {
   Future<void> writeFlashDoc(String doc) async {}
 
   @override
-  Future<String?> readFlashDoc() async => null;
+  Future<String> readFlashDoc() async => throw StateError('unused');
 }
 
 void main() {
@@ -130,9 +130,9 @@ void main() {
     // The old measured-error presentation is gone.
     expect(find.text('Measured error'), findsNothing);
     // Error column: as-found, nothing pinned — ch0's cells all appear.
-    final ch0 = board.channels[0];
+    final ch0 = board.channels[0] as CalibratedChannelBoard;
     String fmt(double v) => '${v > 0 ? '+' : ''}${v.toStringAsFixed(3)}';
-    for (final v in ch0.measuredErrorsUvV!) {
+    for (final v in ch0.measuredErrorsUvV) {
       expect(find.text(fmt(v)), findsWidgets, reason: 'error cell $v');
     }
     // Nonlinearity column: the end-point deviations.
@@ -146,7 +146,7 @@ void main() {
         reason: 'setpoint $k',
       );
       expect(
-        find.text(ch0.readings![k].toStringAsFixed(1)),
+        find.text(ch0.readings[k].toStringAsFixed(1)),
         findsWidgets,
         reason: 'reading $k',
       );
@@ -313,8 +313,8 @@ END
       expect(report, contains('(t1, t5)'));
       // Per-point lines carry both figures; the error column's zero row
       // is the offset through the nominal chain.
-      final ch0 = board.channels[0];
-      final e0 = ch0.measuredErrorsUvV![kCalIdxZero];
+      final ch0 = board.channels[0] as CalibratedChannelBoard;
+      final e0 = ch0.measuredErrorsUvV[kCalIdxZero];
       expect(
         report,
         contains('error ${e0 > 0 ? '+' : ''}${e0.toStringAsFixed(3)} µV/V'),

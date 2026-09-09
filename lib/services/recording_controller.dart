@@ -12,10 +12,7 @@ import '../models/display_unit.dart';
 import '../models/feed_health.dart';
 import '../models/hub_event.dart';
 
-/// Outcome of [RecordingController.startSession]. The outcomes are mutually
-/// exclusive, so they form a sealed type the caller switches exhaustively —
-/// unlike [RecordingController.stopSession]'s result, whose fields are
-/// independent of each other (a record).
+/// Outcome of [RecordingController.startSession].
 sealed class StartSessionResult {
   const StartSessionResult();
 }

@@ -264,48 +264,62 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 // Board calibration (per channel, from device flash)
 // ---------------------------------------------------------------------------
 
-/// Factory board calibration of one ADC channel: the characterized ladder
-/// resistors and the raw readings the device produced in each of the
-/// [kCalPointCount] differential configs.
+/// Board-side calibration data of one ADC channel, as a sealed three-state:
 ///
-/// Conversion is a piecewise-linear map through the five (raw, setpoint)
-/// points — it absorbs ADC offset, the combined AFE/ADC/excitation gain, and
-/// ADC nonlinearity between the cal points. A channel without factory data
-/// ([readings] == null) falls back to the nominal chain ([nominals]) — and
-/// with no resolved nominals it converts nothing at all: the board-data
-/// verdict ([BoardDataStatus]) has already decided such a board shows raw
-/// counts only, so [nominals] == null means "unavailable".
+/// - [CalibratedChannelBoard]: the characterized ladder resistors and the
+///   raw readings the device produced in each of the [kCalPointCount]
+///   differential configs, plus the resolved nominal chain. Conversion is a
+///   piecewise-linear map through the five (raw, setpoint) points — it
+///   absorbs ADC offset, the combined AFE/ADC/excitation gain, and ADC
+///   nonlinearity between the cal points.
+/// - [NominalChannelBoard]: no factory data; the resolved nominal chain is
+///   the map.
+/// - [RawOnlyChannelBoard]: the board constants never resolved (see
+///   [BoardDataStatus]) — the channel shows raw counts only; every
+///   conversion reports unavailable, guarded at the unit layer.
 ///
-/// Invariants (enforced by the parse paths, asserted here): the ladder and
-/// the readings are one datum — [resistors] is null exactly when [readings]
-/// is (never a characterized-rereading-over-nominal-ladder remix), and
-/// readings never exist without resolved [nominals] (cal keys are only
-/// parsed once the board constants resolved).
-class ChannelBoardCalibration {
-  ChannelBoardCalibration({
-    List<double>? resistors,
-    List<double>? readings,
-    this.nominals,
-  }) : assert(
-         (resistors == null) == (readings == null),
-         'ladder and readings are one datum',
-       ),
-       assert(
-         readings == null || nominals != null,
-         'no factory readings without board constants',
-       ),
-       resistors = resistors == null ? null : List.unmodifiable(resistors),
-       readings = readings == null ? null : List.unmodifiable(readings) {
-    final r = this.readings;
-    if (r != null) {
-      // Sort the five points ascending by raw reading for interpolation.
-      final order = [for (int k = 0; k < kCalPointCount; ++k) k]
-        ..sort((a, b) => r[a].compareTo(r[b]));
-      final sp = setpoints;
-      _sortedRaw = [for (final k in order) r[k]];
-      _sortedSetpoints = [for (final k in order) sp[k]];
-    }
-  }
+/// The ladder and the readings are one datum (never a
+/// characterized-rereading-over-nominal-ladder remix), and readings never
+/// exist without resolved nominals (the parse paths only consult cal keys
+/// once the board constants resolved); the measured members exist only on
+/// [CalibratedChannelBoard].
+sealed class ChannelBoardCalibration {
+  const ChannelBoardCalibration._();
+
+  /// The channel's resolved analog chain; null only on
+  /// [RawOnlyChannelBoard] — every conversion then reports unavailable
+  /// (raw counts only), guarded at the unit layer.
+  ChannelNominals? get nominals;
+
+  /// Whether the channel has factory calibration. Board-level calibration
+  /// is all-or-nothing: every channel is calibrated, or none is (see
+  /// BoardCalibration.fromKv).
+  bool get isFactoryCalibrated;
+
+  /// The excitation anchor expressing the ratiometric map as mV. This value
+  /// is the mV unit's entire uncertainty — the calibration is ratiometric,
+  /// so the calibrated units never touch it. Deliberately not
+  /// [ChannelNominals.excitationV]'s name: the nominal chain constant and
+  /// the mV anchor are two roles that happen to resolve to the same number.
+  /// Null on a raw-only channel (conversion reports unavailable anyway).
+  double? get displayExcitationV => nominals?.excitationV;
+
+  /// End-point sensitivity in counts per mV/V: measured on
+  /// [CalibratedChannelBoard] (the chord through the two outermost cal
+  /// points, which bracket a load cell's full-scale range — the slope of
+  /// the conversion map where one number must stand in for it), the nominal
+  /// chain's value on [NominalChannelBoard]. Null with no resolved board
+  /// constants — nothing converts then.
+  double? get sensitivityCountsPerMvV;
+
+  /// Map an absolute raw ADC reading to mV/V of excitation. Readings are
+  /// absolute (offset included): net values come from subtracting the map at
+  /// the tare point — see `ChannelConverter.netMap`.
+  double mvVFromRaw(double raw);
+
+  /// Inverse of [mvVFromRaw]: the raw reading mapping to [mvV] (manual
+  /// tare entry converts a typed display value back to counts).
+  double rawFromMvV(double mvV);
 
   /// Joint validity check for one channel's factory data, shared by the
   /// flash and session-snapshot parsers: the ladder ([kLadderResistorCount]
@@ -344,191 +358,19 @@ class ChannelBoardCalibration {
     return true;
   }
 
-  /// Characterized ladder resistors (6); null exactly when [readings] is.
-  final List<double>? resistors;
+  /// Session-snapshot serialization (recorded sessions carry the
+  /// calibration they were taken with, so playback converts identically
+  /// later). The resolved nominals ride along: replay must never re-resolve
+  /// anything.
+  Map<String, dynamic> toJson();
 
-  /// Factory-averaged raw counts per config, in [kCalPointCount] storage
-  /// order; null when the channel has no factory calibration.
-  final List<double>? readings;
-
-  /// The channel's resolved analog chain, or null when the device supplied
-  /// no usable board constants — every conversion then reports unavailable
-  /// (raw counts only), guarded at the unit layer.
-  final ChannelNominals? nominals;
-
-  bool get isFactoryCalibrated => readings != null;
-
-  /// The excitation anchor expressing the ratiometric map as mV. This value
-  /// is the mV unit's entire uncertainty — the calibration is ratiometric,
-  /// so the calibrated units never touch it. Deliberately not
-  /// [ChannelNominals.excitationV]'s name: the nominal chain constant and
-  /// the mV anchor are two roles that happen to resolve to the same number.
-  /// Null with no resolved nominals (conversion reports unavailable anyway).
-  double? get displayExcitationV => nominals?.excitationV;
-
-  /// Setpoints (mV/V) per config, derived from [resistors]. Cached: pure
-  /// function of the immutable [resistors], and per-sample conversion paths
-  /// reach it via [sensitivityCountsPerMvV]. Non-null [resistors] is
-  /// guaranteed on every path that touches this (all are [readings]-gated).
-  late final List<double> setpoints = ladderSetpointsMvV(resistors!);
-
-  late final List<double> _sortedRaw;
-  late final List<double> _sortedSetpoints;
-
-  /// Map an absolute raw ADC reading to mV/V of excitation via the piecewise
-  /// map. Out-of-range readings extend the outermost segment. Readings are
-  /// absolute (offset included): net values come from subtracting the map at
-  /// the tare point — see `ChannelConverter.netMap`.
-  ///
-  /// The nominal fallback requires [nominals]; callers guard it (the unit
-  /// layer reports unavailable instead), so a null here is a usage error.
-  double mvVFromRaw(double raw) {
-    final r = readings;
-    if (r == null) return raw / nominals!.countsPerMvV;
-    final xs = _sortedRaw;
-    final ys = _sortedSetpoints;
-    // Right endpoint of the segment containing raw, clamped to the outer
-    // segments: below/above the cal range extrapolates along them.
-    var i = 1;
-    while (i < xs.length - 1 && raw > xs[i]) {
-      ++i;
-    }
-    return ys[i - 1] +
-        (raw - xs[i - 1]) * (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
-  }
-
-  /// Inverse of [mvVFromRaw]: the raw reading mapping to [mvV] under the
-  /// piecewise map (manual tare entry converts a typed display value back
-  /// to counts). The map is monotone across a valid channel's span, so
-  /// inversion is the same segment lookup run against the setpoint axis;
-  /// out-of-range values extend the outermost segment, mirroring
-  /// [mvVFromRaw].
-  double rawFromMvV(double mvV) {
-    final r = readings;
-    if (r == null) return mvV * nominals!.countsPerMvV;
-    final xs = _sortedRaw;
-    final ys = _sortedSetpoints;
-    var i = 1;
-    while (i < ys.length - 1 && mvV > ys[i]) {
-      ++i;
-    }
-    return xs[i - 1] +
-        (mvV - ys[i - 1]) * (xs[i] - xs[i - 1]) / (ys[i] - ys[i - 1]);
-  }
-
-  // -- Diagnostics ----------------------------------------------------------
-
-  /// Board zero offset in counts: the dead-short (t3,t3) reading measures
-  /// the AFE+ADC input offset directly (no cell in the loop). 0 for an
-  /// uncalibrated channel.
-  double get offsetCounts => readings?[kCalIdxZero] ?? 0;
-
-  /// End-point sensitivity in counts per mV/V: the slope of the chord
-  /// through the two outermost cal points (which bracket a load cell's
-  /// full-scale range). The piecewise map converts values; this single
-  /// scalar is the chain's linear summary wherever one number must stand in
-  /// for the whole map (unit quanta, export precision, gain and zero-offset
-  /// diagnostics). Null with neither factory data nor nominals — nothing
-  /// converts then. Cached (see [setpoints]).
-  late final double? sensitivityCountsPerMvV = switch (readings) {
-    final r? =>
-      (r[kCalIdxPosFs] - r[kCalIdxNegFs]) /
-          (setpoints[kCalIdxPosFs] - setpoints[kCalIdxNegFs]),
-    null => nominals?.countsPerMvV,
-  };
-
-  /// Board zero offset in µV/V: the dead-short (t3,t3) reading expressed
-  /// through the measured sensitivity — measured counts ÷ measured
-  /// counts-per-mV/V, so the nominal chain (FSR, AFE gain, excitation) never
-  /// enters. This is the interface board's OWN input offset (AFE + ADC, no
-  /// cell in the loop) — NOT the load-cell certificate's "zero balance",
-  /// which is a property of the cell. Null without factory data.
-  ///
-  /// The measured-error table's zero row ([measuredErrorsUvV]) expresses
-  /// the same offset through the nominal chain instead; the two differ by
-  /// the gain factor — far below the calibration's uncertainty. Both are
-  /// displayed, deliberately: two conventions, no reconciliation text.
-  double? get zeroOffsetUvV {
-    if (readings == null) return null;
-    return offsetCounts / sensitivityCountsPerMvV! * 1000.0;
-  }
-
-  /// Gain error vs the nominal chain (1.0 = exactly nominal): the measured
-  /// end-point sensitivity relative to the nominal counts-per-mV/V. It
-  /// folds excitation, AFE gain, ADC reference and ladder tolerances into
-  /// one factor — the split is unknowable by design. The one diagnostic
-  /// that references the nominal chain. Null without factory data.
-  double? get sensitivityVsNominal {
-    if (readings == null) return null;
-    return sensitivityCountsPerMvV! / nominals!.countsPerMvV;
-  }
-
-  /// Measured error per cal point in µV/V, in [kCalPointCount] storage
-  /// order: the reading converted through the *nominal* chain minus the
-  /// ladder setpoint — the as-found error, what an uncorrected reading
-  /// would show. Offset, gain error and curvature all appear; the ±FS
-  /// entries are NOT zero (unlike [deviationsUvV], nothing here is pinned
-  /// by construction). Null without factory data.
-  List<double>? get measuredErrorsUvV {
-    final r = readings;
-    if (r == null) return null;
-    final n = nominals!;
-    final sp = setpoints;
-    return [
-      for (int k = 0; k < kCalPointCount; ++k)
-        (r[k] / n.countsPerMvV - sp[k]) * 1000.0,
-    ];
-  }
-
-  /// End-point nonlinearity per cal point in µV/V, in [kCalPointCount]
-  /// storage order: deviation from the end-point line (the chord through
-  /// the ±FS points), via the measured sensitivity — what the calibration
-  /// corrects beyond gain and offset. The ±FS entries are 0 by
-  /// construction; positive = the uncorrected device read high. Null without
-  /// factory data.
-  List<double>? get deviationsUvV {
-    final r = readings;
-    if (r == null) return null;
-    final sp = setpoints;
-    final s = sensitivityCountsPerMvV!;
-    final rPos = r[kCalIdxPosFs], rNeg = r[kCalIdxNegFs];
-    final spPos = sp[kCalIdxPosFs], spNeg = sp[kCalIdxNegFs];
-    return [
-      for (int k = 0; k < kCalPointCount; ++k)
-        (r[k] - (rNeg + (rPos - rNeg) * (sp[k] - spNeg) / (spPos - spNeg))) /
-            s *
-            1000.0,
-    ];
-  }
-
-  /// The headline linearity figure: max |deviation| over the cal points, in
-  /// µV/V. Null without factory data.
-  double? get maxDeviationUvV {
-    final d = deviationsUvV;
-    if (d == null) return null;
-    var m = 0.0;
-    for (final v in d) {
-      if (v.abs() > m) m = v.abs();
-    }
-    return m;
-  }
-
-  /// Session-snapshot serialization (recorded sessions carry the calibration
-  /// they were taken with, so playback converts identically later). The
-  /// resolved [nominals] ride along: replay must never re-resolve anything.
-  Map<String, dynamic> toJson() => {
-    'r': ?resistors,
-    'raw': ?readings,
-    'n': ?nominals?.toJson(),
-  };
-
-  /// Strict inverse of [toJson], honoring the class invariants: absent
+  /// Strict inverse of [toJson], honoring the variant structure: absent
   /// optional keys are legal (no factory data, or no resolved nominals),
   /// but present-but-malformed data throws [FormatException] — one half of
   /// the ladder/readings pair without the other, readings without resolved
   /// nominals, or values failing [channelDataIsValid]. Replay never
   /// substitutes guessed values; the caller decides the damage policy
-  /// (see SessionStorage.loadSession).
+  /// (the session catalog marks the session damaged).
   factory ChannelBoardCalibration.fromJson(Map<String, dynamic> json) {
     List<double>? numList(Object? v, int count, String key) {
       if (v == null) return null;
@@ -555,7 +397,9 @@ class ChannelBoardCalibration {
     final resistors = numList(json['r'], kLadderResistorCount, 'r');
     final readings = numList(json['raw'], kCalPointCount, 'raw');
     if (resistors == null && readings == null) {
-      return ChannelBoardCalibration(nominals: nominals);
+      return nominals == null
+          ? const RawOnlyChannelBoard()
+          : NominalChannelBoard(nominals);
     }
     // One half of the pair, or readings without a nominal chain, can only
     // be a damaged snapshot — never a partial instrument.
@@ -565,12 +409,222 @@ class ChannelBoardCalibration {
         !channelDataIsValid(resistors, readings)) {
       throw const FormatException('board calibration: invalid channel data');
     }
-    return ChannelBoardCalibration(
+    return CalibratedChannelBoard(
       resistors: resistors,
       readings: readings,
       nominals: nominals,
     );
   }
+}
+
+/// One channel's factory calibration: the characterized ladder resistors,
+/// the readings per config, and the resolved nominal chain — the only
+/// variant holding measured data; every measured member is non-null by
+/// construction.
+class CalibratedChannelBoard extends ChannelBoardCalibration {
+  CalibratedChannelBoard({
+    required List<double> resistors,
+    required List<double> readings,
+    required this.nominals,
+  }) : resistors = List.unmodifiable(resistors),
+       readings = List.unmodifiable(readings),
+       super._() {
+    // Sort the five points ascending by raw reading for interpolation.
+    final order = [for (int k = 0; k < kCalPointCount; ++k) k]
+      ..sort((a, b) => this.readings[a].compareTo(this.readings[b]));
+    final sp = setpoints;
+    _sortedRaw = [for (final k in order) this.readings[k]];
+    _sortedSetpoints = [for (final k in order) sp[k]];
+  }
+
+  /// Characterized ladder resistors ([kLadderResistorCount]).
+  final List<double> resistors;
+
+  /// Factory-averaged raw counts per config, in [kCalPointCount] storage
+  /// order.
+  final List<double> readings;
+
+  @override
+  final ChannelNominals nominals;
+
+  @override
+  bool get isFactoryCalibrated => true;
+
+  /// Setpoints (mV/V) per config, derived from [resistors]. Cached: pure
+  /// function of the immutable [resistors], and per-sample conversion paths
+  /// reach it via [sensitivityCountsPerMvV].
+  late final List<double> setpoints = ladderSetpointsMvV(resistors);
+
+  late final List<double> _sortedRaw;
+  late final List<double> _sortedSetpoints;
+
+  /// Map an absolute raw ADC reading to mV/V of excitation via the
+  /// piecewise map. Out-of-range readings extend the outermost segment.
+  @override
+  double mvVFromRaw(double raw) {
+    final xs = _sortedRaw;
+    final ys = _sortedSetpoints;
+    // Right endpoint of the segment containing raw, clamped to the outer
+    // segments: below/above the cal range extrapolates along them.
+    var i = 1;
+    while (i < xs.length - 1 && raw > xs[i]) {
+      ++i;
+    }
+    return ys[i - 1] +
+        (raw - xs[i - 1]) * (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
+  }
+
+  /// Inverse of [mvVFromRaw]: the segment lookup run against the setpoint
+  /// axis (the map is monotone across a valid channel's span); out-of-range
+  /// values extend the outermost segment, mirroring [mvVFromRaw].
+  @override
+  double rawFromMvV(double mvV) {
+    final xs = _sortedRaw;
+    final ys = _sortedSetpoints;
+    var i = 1;
+    while (i < ys.length - 1 && mvV > ys[i]) {
+      ++i;
+    }
+    return xs[i - 1] +
+        (mvV - ys[i - 1]) * (xs[i] - xs[i - 1]) / (ys[i] - ys[i - 1]);
+  }
+
+  // -- Diagnostics ----------------------------------------------------------
+
+  /// Board zero offset in counts: the dead-short (t3,t3) reading measures
+  /// the AFE+ADC input offset directly (no cell in the loop).
+  double get offsetCounts => readings[kCalIdxZero];
+
+  /// The measured end-point sensitivity: the slope of the chord through the
+  /// two outermost cal points. Cached (see [setpoints]).
+  @override
+  late final double sensitivityCountsPerMvV =
+      (readings[kCalIdxPosFs] - readings[kCalIdxNegFs]) /
+      (setpoints[kCalIdxPosFs] - setpoints[kCalIdxNegFs]);
+
+  /// Board zero offset in µV/V: the dead-short (t3,t3) reading expressed
+  /// through the measured sensitivity — measured counts ÷ measured
+  /// counts-per-mV/V, so the nominal chain (FSR, AFE gain, excitation) never
+  /// enters. This is the interface board's OWN input offset (AFE + ADC, no
+  /// cell in the loop) — NOT the load-cell certificate's "zero balance",
+  /// which is a property of the cell.
+  ///
+  /// The measured-error table's zero row ([measuredErrorsUvV]) expresses
+  /// the same offset through the nominal chain instead; the two differ by
+  /// the gain factor — far below the calibration's uncertainty.
+  double get zeroOffsetUvV => offsetCounts / sensitivityCountsPerMvV * 1000.0;
+
+  /// Gain error vs the nominal chain (1.0 = exactly nominal): the measured
+  /// end-point sensitivity relative to the nominal counts-per-mV/V. It
+  /// folds excitation, AFE gain, ADC reference and ladder tolerances into
+  /// one factor — the split is unknowable by design. The one diagnostic
+  /// that references the nominal chain.
+  double get sensitivityVsNominal =>
+      sensitivityCountsPerMvV / nominals.countsPerMvV;
+
+  /// Measured error per cal point in µV/V, in [kCalPointCount] storage
+  /// order: the reading converted through the *nominal* chain minus the
+  /// ladder setpoint — the as-found error, what an uncorrected reading
+  /// would show. Offset, gain error and curvature all appear; the ±FS
+  /// entries are NOT zero (unlike [deviationsUvV], nothing here is pinned
+  /// by construction).
+  List<double> get measuredErrorsUvV {
+    final sp = setpoints;
+    final s = nominals.countsPerMvV;
+    return [
+      for (int k = 0; k < kCalPointCount; ++k)
+        (readings[k] / s - sp[k]) * 1000.0,
+    ];
+  }
+
+  /// End-point nonlinearity per cal point in µV/V, in [kCalPointCount]
+  /// storage order: deviation from the end-point line (the chord through
+  /// the ±FS points), via the measured sensitivity — what the calibration
+  /// corrects beyond gain and offset. The ±FS entries are 0 by
+  /// construction; positive = the uncorrected device read high.
+  List<double> get deviationsUvV {
+    final sp = setpoints;
+    final s = sensitivityCountsPerMvV;
+    final rPos = readings[kCalIdxPosFs], rNeg = readings[kCalIdxNegFs];
+    final spPos = sp[kCalIdxPosFs], spNeg = sp[kCalIdxNegFs];
+    return [
+      for (int k = 0; k < kCalPointCount; ++k)
+        (readings[k] -
+                (rNeg + (rPos - rNeg) * (sp[k] - spNeg) / (spPos - spNeg))) /
+            s *
+            1000.0,
+    ];
+  }
+
+  /// The headline linearity figure: max |deviation| over the cal points,
+  /// in µV/V.
+  double get maxDeviationUvV {
+    var m = 0.0;
+    for (final v in deviationsUvV) {
+      if (v.abs() > m) m = v.abs();
+    }
+    return m;
+  }
+
+  @override
+  Map<String, dynamic> toJson() => {
+    'r': resistors,
+    'raw': readings,
+    'n': nominals.toJson(),
+  };
+}
+
+/// One channel with resolved board constants but no factory data: the
+/// nominal chain alone is the conversion map — no offset, gain, or
+/// nonlinearity correction.
+class NominalChannelBoard extends ChannelBoardCalibration {
+  const NominalChannelBoard(this.nominals) : super._();
+
+  @override
+  final ChannelNominals nominals;
+
+  @override
+  bool get isFactoryCalibrated => false;
+
+  @override
+  double get sensitivityCountsPerMvV => nominals.countsPerMvV;
+
+  @override
+  double mvVFromRaw(double raw) => raw / nominals.countsPerMvV;
+
+  @override
+  double rawFromMvV(double mvV) => mvV * nominals.countsPerMvV;
+
+  @override
+  Map<String, dynamic> toJson() => {'n': nominals.toJson()};
+}
+
+/// One channel with no resolved board constants ([BoardDataStatus] says
+/// why): nothing converts but raw counts. The mV/V maps throw — the unit
+/// layer reports unavailable instead of calling them, so a call here is a
+/// usage error.
+class RawOnlyChannelBoard extends ChannelBoardCalibration {
+  const RawOnlyChannelBoard() : super._();
+
+  @override
+  ChannelNominals? get nominals => null;
+
+  @override
+  bool get isFactoryCalibrated => false;
+
+  @override
+  double? get sensitivityCountsPerMvV => null;
+
+  @override
+  double mvVFromRaw(double raw) =>
+      throw StateError('raw-only channel: no board map to convert through');
+
+  @override
+  double rawFromMvV(double mvV) =>
+      throw StateError('raw-only channel: no board map to invert through');
+
+  @override
+  Map<String, dynamic> toJson() => const {};
 }
 
 /// Board calibration of the whole device: one [ChannelBoardCalibration] per
@@ -738,11 +792,15 @@ class BoardCalibration {
     return BoardCalibration(
       channels: [
         for (int i = 0; i < kAdcChannelCount; ++i)
-          ChannelBoardCalibration(
-            resistors: adoptCal ? calData[i]?.resistors : null,
-            readings: adoptCal ? calData[i]?.readings : null,
-            nominals: nominals?.forChannel(i),
-          ),
+          switch ((nominals, adoptCal ? calData[i] : null)) {
+            (null, _) => const RawOnlyChannelBoard(),
+            (final n?, null) => NominalChannelBoard(n.forChannel(i)),
+            (final n?, final data!) => CalibratedChannelBoard(
+              resistors: data.resistors,
+              readings: data.readings,
+              nominals: n.forChannel(i),
+            ),
+          },
       ],
       factoryDate: kv['cal.date'],
       calBoardId: kv['cal.board'],
@@ -843,8 +901,8 @@ class SessionBoardMeta {
 
   /// Strict inverse of [toJson]: absent optional keys are legal (`null`
   /// flash fields stay null), but present-but-malformed data throws
-  /// [FormatException] — the caller decides the damage policy (see
-  /// SessionStorage.loadSession). Unknown keys are ignored.
+  /// [FormatException] — the caller decides the damage policy (the session
+  /// catalog marks the session damaged). Unknown keys are ignored.
   factory SessionBoardMeta.fromJson(Map<String, dynamic> json) {
     String? str(String key) {
       final v = json[key];

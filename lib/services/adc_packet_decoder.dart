@@ -84,14 +84,14 @@ class AdcPacketDecoder {
   /// readback ([adcGains] — non-null: an unreadable config fails the
   /// connection upstream, so this layer never resolves constants without
   /// them). The board calibration feeds the sink; the full document (slots
-  /// included) goes to [onDeviceFlash]. Malformed or partial calibration
-  /// reads degrade to an uncalibrated board (nominal chain) and empty slots
-  /// — see `BoardCalibration.fromKv`.
+  /// included) goes to [onDeviceFlash]. Partial calibration reads degrade
+  /// to an uncalibrated board (nominal chain) and empty slots — see
+  /// `BoardCalibration.fromKv`. Undecodable bytes never reach here: the KVS
+  /// layer decodes strictly and a corrupt payload fails the connection
+  /// (see `parseKvsResponse`); [data] is a re-encoded Dart string, always
+  /// valid UTF-8.
   void onCalibrationPacket(Uint8List data, List<double> adcGains) {
-    final flash = DeviceFlash.parse(
-      utf8.decode(data, allowMalformed: true),
-      pgaGains: adcGains,
-    );
+    final flash = DeviceFlash.parse(utf8.decode(data), pgaGains: adcGains);
     hub.updateBoardCalibration(flash.board);
     onDeviceFlash?.call(flash);
   }

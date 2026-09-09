@@ -284,8 +284,7 @@ class _ClipStatusIconState extends State<_ClipStatusIcon> {
 }
 
 /// Shared tap-target wrapper for every channel cell (label, color bar, stat
-/// value): pointer cursor + opaque hit testing + the toggle callback, so the
-/// hit behavior can't drift between cell kinds.
+/// value): pointer cursor + opaque hit testing + the toggle callback.
 class _TappableChannelCell extends StatelessWidget {
   const _TappableChannelCell({required this.onTap, required this.child});
 

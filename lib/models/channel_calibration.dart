@@ -22,8 +22,8 @@ class ChannelCalibration {
 
   /// Strict inverse of [toJson]: an absent `cell` key is legal (electrical
   /// units only), but present-but-malformed entries throw
-  /// [FormatException] — the caller decides the damage policy (see
-  /// SessionStorage.loadSession).
+  /// [FormatException] — the caller decides the damage policy (the session
+  /// catalog marks the session damaged).
   factory ChannelCalibration.fromJson(Map<String, dynamic> json) {
     final b = json['board'];
     if (b is! Map) {

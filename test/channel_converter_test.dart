@@ -23,12 +23,12 @@ void main() {
   );
   const nominalLadder = <double>[10000, 10, 10, 10, 10, 10000];
   final sp = ladderSetpointsMvV(nominalLadder);
-  final board = ChannelBoardCalibration(
+  final board = CalibratedChannelBoard(
     resistors: nominalLadder,
     readings: [for (final d in sp) alpha + beta * d],
     nominals: testNominals,
   );
-  final nominalBoard = ChannelBoardCalibration(nominals: testNominals);
+  const nominalBoard = NominalChannelBoard(testNominals);
   final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
   final assigned = ChannelConverter(
     ChannelCalibration(board: board, loadCell: cell),
@@ -39,7 +39,6 @@ void main() {
   group('availability', () {
     test('electrical units convert without a cell; force units do not', () {
       for (final u in [DisplayUnit.mVv, DisplayUnit.mV, DisplayUnit.raw]) {
-        expect(bare.converts(u), isTrue, reason: u.symbol);
         expect(bare.netMap(u), isNotNull, reason: u.symbol);
         expect(bare.grossMap(u), isNotNull, reason: u.symbol);
         expect(bare.diffMap(u), isNotNull, reason: u.symbol);
@@ -51,25 +50,23 @@ void main() {
         DisplayUnit.kgf,
         DisplayUnit.n,
       ]) {
-        expect(bare.converts(u), isFalse, reason: u.symbol);
         expect(bare.netMap(u), isNull, reason: u.symbol);
         expect(bare.grossMap(u), isNull, reason: u.symbol);
         expect(bare.diffMap(u), isNull, reason: u.symbol);
         expect(bare.rawAtGross(u, 0), isNull, reason: u.symbol);
-        expect(assigned.converts(u), isTrue, reason: u.symbol);
+        expect(assigned.netMap(u), isNotNull, reason: u.symbol);
       }
     });
 
     test('no nominals: every unit but raw is unavailable', () {
-      final noData = ChannelConverter(
-        ChannelCalibration(board: ChannelBoardCalibration()),
+      const noData = ChannelConverter(
+        ChannelCalibration(board: RawOnlyChannelBoard()),
         100,
       );
       for (final u in DisplayUnit.values) {
         if (u == DisplayUnit.raw) {
-          expect(noData.converts(u), isTrue);
+          expect(noData.netMap(u), isNotNull);
         } else {
-          expect(noData.converts(u), isFalse, reason: u.symbol);
           expect(noData.netMap(u), isNull, reason: u.symbol);
         }
       }
@@ -88,7 +85,7 @@ void main() {
           tareRaw,
         );
         for (final u in DisplayUnit.values) {
-          if (!conv.converts(u)) continue;
+          if (conv.netMap(u) == null) continue;
           expect(conv.net(u, tareRaw), 0.0, reason: u.symbol);
         }
       }
@@ -105,7 +102,7 @@ void main() {
           tareRaw,
         );
         for (final u in DisplayUnit.values) {
-          if (!conv.converts(u)) continue;
+          if (conv.netMap(u) == null) continue;
           expect(conv.net(u, tareRaw), 0.0, reason: u.symbol);
         }
       }
@@ -124,15 +121,15 @@ void main() {
   group('net conversion', () {
     test('mV/V at a cal point is its setpoint minus the tare point', () {
       expect(
-        assigned.net(DisplayUnit.mVv, board.readings![0]),
+        assigned.net(DisplayUnit.mVv, board.readings[0]),
         closeTo(sp[0], 1e-9),
       );
     });
 
     test('raw is tare-subtracted counts', () {
       expect(
-        assigned.net(DisplayUnit.raw, board.readings![0]),
-        closeTo(board.readings![0] - alpha, 1e-9),
+        assigned.net(DisplayUnit.raw, board.readings[0]),
+        closeTo(board.readings[0] - alpha, 1e-9),
       );
     });
 
@@ -141,13 +138,13 @@ void main() {
       // map is ratiometric (exact at the cal points), so mV differs from
       // mV/V by exactly the anchor excitation.
       expect(
-        assigned.net(DisplayUnit.mV, board.readings![1]),
+        assigned.net(DisplayUnit.mV, board.readings[1]),
         closeTo(sp[1] * testNominals.excitationV, 1e-9),
       );
     });
 
     test('nominal mV matches the nominal chain multiplier', () {
-      final nominal = ChannelConverter(
+      const nominal = ChannelConverter(
         ChannelCalibration(board: nominalBoard),
         0,
       );
@@ -158,7 +155,7 @@ void main() {
     });
 
     test('kgf scales mV/V by capacity/sensitivity; kN by 9.80665e-3', () {
-      final rawValue = board.readings![0];
+      final rawValue = board.readings[0];
       final kgf = assigned.net(DisplayUnit.kgf, rawValue)!;
       expect(kgf, closeTo(sp[0] * 100, 1e-9)); // 200 kg / 2 mV/V
       expect(
@@ -172,7 +169,7 @@ void main() {
     test('gross differenced at the tare equals the net converter', () {
       final net = assigned.netMap(DisplayUnit.kgf)!;
       final gross = assigned.grossMap(DisplayUnit.kgf)!;
-      for (final rawValue in [alpha, ...board.readings!]) {
+      for (final rawValue in [alpha, ...board.readings]) {
         expect(gross(rawValue) - gross(alpha), closeTo(net(rawValue), 1e-9));
       }
     });
@@ -190,14 +187,14 @@ void main() {
 
     test('diff is counts over the end-point sensitivity', () {
       final diff = assigned.diffMap(DisplayUnit.mVv)!;
-      expect(diff(1000), closeTo(1000 / board.sensitivityCountsPerMvV!, 1e-15));
+      expect(diff(1000), closeTo(1000 / board.sensitivityCountsPerMvV, 1e-15));
     });
 
     test('kgf diff folds in the load cell', () {
       final diff = assigned.diffMap(DisplayUnit.kgf)!;
       expect(
         diff(1000),
-        closeTo(1000 / board.sensitivityCountsPerMvV! * 100, 1e-12),
+        closeTo(1000 / board.sensitivityCountsPerMvV * 100, 1e-12),
       );
     });
   });
@@ -205,7 +202,7 @@ void main() {
   group('gross inverse (manual tare entry)', () {
     test('round-trips through the piecewise board map', () {
       final gross = assigned.grossMap(DisplayUnit.mVv)!;
-      for (final rawValue in [alpha, ...board.readings!, -3e6]) {
+      for (final rawValue in [alpha, ...board.readings, -3e6]) {
         expect(
           assigned.rawAtGross(DisplayUnit.mVv, gross(rawValue)),
           closeTo(rawValue, 1e-6),
@@ -215,7 +212,7 @@ void main() {
     });
 
     test('folds in the load cell scale for force units', () {
-      final rawValue = board.readings![0];
+      final rawValue = board.readings[0];
       expect(
         assigned.rawAtGross(
           DisplayUnit.kgf,
@@ -226,7 +223,7 @@ void main() {
     });
 
     test('nominal chain round-trips', () {
-      final nominal = ChannelConverter(
+      const nominal = ChannelConverter(
         ChannelCalibration(board: nominalBoard),
         null,
       );

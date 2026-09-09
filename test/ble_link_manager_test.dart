@@ -790,18 +790,43 @@ void main() {
     });
   });
 
-  test('a failing calibration read does not prevent streaming', () {
+  test('a failing KVS channel fails the connection', () {
     fakeAsync((async) {
-      MockBlePlatform.instance.failCalibrationRead = true;
+      MockBlePlatform.instance.failKvsCommands = true;
       final (link, seen) = wire();
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
 
+      // A link whose KVS channel can't come up can't save rig slots or the
+      // device name — streaming on without it would be a half-usable link,
+      // so the connect fails (same verdict as an unreadable ADC config or
+      // a missing ADC feed).
+      expect(link.isStreaming, isFalse);
+      expect(seen, [isA<BleConnectionFailed>()]);
+
+      teardownLink(async, link);
+    });
+  });
+
+  test('an unprovisioned board (empty KVS) connects and streams', () {
+    fakeAsync((async) {
+      final mock = MockBlePlatform.instance;
+      mock.seedKvsFromDoc('');
+      final (link, seen) = wire();
+      String? servedDoc;
+      link.onCalibrationData = (bytes, _) => servedDoc = utf8.decode(bytes);
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+
+      // An EMPTY KVS is a working channel with no data, not a failure: the
+      // connect succeeds and the flash read serves an empty document, which
+      // the decoder turns into the "unit not provisioned" nominal-values
+      // mode (dev boards stay usable).
       expect(link.isStreaming, isTrue);
-      // The failed read surfaces as a "nominal values in use" notice (the
-      // app runs uncalibrated, but never silently).
-      expect(seen, [isA<CalibrationUnreadable>()]);
+      expect(servedDoc, '');
+      expect(seen, isEmpty);
 
       teardownLink(async, link);
     });

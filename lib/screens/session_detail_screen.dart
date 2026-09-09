@@ -483,9 +483,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 }
 
-/// The permanent disclosure strip for a session whose recording never
-/// completed (crash, dead tab, failed finalize): everything shown below
-/// it is valid, the tail may be missing.
+/// Disclosure strip for a session whose recording never completed (crash,
+/// dead tab, failed finalize): the tail may be missing.
 class _InterruptedBanner extends StatelessWidget {
   const _InterruptedBanner();
 

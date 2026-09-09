@@ -46,10 +46,6 @@ class ChannelConverter {
     return unit == DisplayUnit.mV ? excitationV : 1.0;
   }
 
-  /// Whether [unit] converts at all on this channel (raw always does).
-  bool converts(DisplayUnit unit) =>
-      unit == DisplayUnit.raw || _scalePerMvV(unit) != null;
-
   /// The absolute-raw -> display-unit map, net of tare (see the class doc).
   /// Monotone nondecreasing. A null tare means NO offset: the map itself
   /// (zero is the map's own mV/V zero point, not zero counts). Null when

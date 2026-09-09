@@ -87,13 +87,11 @@ class DeviceFlash {
     final adc = board.calAdcGains;
     if (adc != null) b.writeln('cal.adc=${adc.join(',')}');
     for (int i = 0; i < board.channels.length; ++i) {
-      final ch = board.channels[i];
       // Ladder and readings are one datum (see ChannelBoardCalibration):
       // both written for a calibrated channel, neither otherwise.
-      final r = ch.readings;
-      if (r != null) {
-        b.writeln('ch$i.r=${ch.resistors!.join(',')}');
-        b.writeln('ch$i.raw=${r.join(',')}');
+      if (board.channels[i] case final CalibratedChannelBoard ch) {
+        b.writeln('ch$i.r=${ch.resistors.join(',')}');
+        b.writeln('ch$i.raw=${ch.readings.join(',')}');
       }
     }
     for (final line in extraLines) {

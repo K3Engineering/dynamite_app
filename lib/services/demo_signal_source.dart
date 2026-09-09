@@ -7,8 +7,8 @@ import 'adc_protocol.dart';
 /// The demo feed's sample rate: 20 samples on the 20 ms timer.
 const int _samplesPerPacket = 20;
 
-/// Generates realistic demo-quality simulated signals roughly scaled to a
-/// typical load cell (±2²³ FS). Emits real 1 kHz ADC packets to a callback.
+/// Generates synthetic signals roughly scaled to a typical load cell
+/// (±2²³ FS), emitted as 1 kHz ADC packets to a callback.
 class DemoSignalSource {
   /// The demo feed's rate (Hz): the value [DemoDevice] declares as its
   /// sample rate (its analogue of the real device's config readback).

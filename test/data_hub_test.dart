@@ -27,7 +27,7 @@ void main() {
   BoardCalibration nominalBoard() => BoardCalibration(
     channels: [
       for (int i = 0; i < channels; ++i)
-        ChannelBoardCalibration(nominals: testNominals),
+        const NominalChannelBoard(testNominals),
     ],
   );
 
@@ -482,7 +482,7 @@ void main() {
       final board = BoardCalibration(
         channels: [
           for (int i = 0; i < channels; ++i)
-            ChannelBoardCalibration(
+            CalibratedChannelBoard(
               resistors: nominalLadder,
               readings: [
                 for (final d in sp) 500 + 0.5 * testNominals.countsPerMvV * d,
@@ -526,7 +526,7 @@ void main() {
       hub.updateBoardCalibration(
         BoardCalibration(
           channels: [
-            for (int i = 0; i < channels; ++i) ChannelBoardCalibration(),
+            for (int i = 0; i < channels; ++i) const RawOnlyChannelBoard(),
           ],
           constantsStatus: BoardDataStatus.unprovisioned,
         ),

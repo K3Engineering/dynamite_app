@@ -89,15 +89,14 @@ BtStatusVisual btAdapterScanVisual({
         // stops, so surface that rather than implying a scan is required —
         // but only while a Connect action actually exists (see
         // [hasConnectableDevices]): while a link is busy every Connect
-        // button is disabled and the active device row is the voice.
+        // button is disabled and the active device row shows the state.
         if (hasConnectableDevices) {
           return (Icons.bluetooth, connected, 'Tap a device to connect');
         }
         // Otherwise an empty label: with nothing found, the Devices tab's
-        // empty block is the single voice for "no devices, tap Scan"
-        // guidance; with a link busy, the active row speaks. Repeating
-        // either here would put the same instruction twice on screen.
-        // The indicator renders icon-only for an empty label.
+        // empty block already carries the "no devices, tap Scan" guidance;
+        // with a link busy, the active row does. The indicator renders
+        // icon-only for an empty label.
         return (Icons.bluetooth, connected, '');
       case BtAvailability.poweredOff:
         return (Icons.bluetooth_disabled, colors.outline, 'Bluetooth is off');
@@ -117,20 +116,19 @@ BtStatusVisual btAdapterScanVisual({
 }
 
 /// The Devices tab top indicator's presentation mode, resolved by
-/// [topIndicatorMode]. "Quiet when nominal": the indicator draws an icon
-/// only when the glyph carries real information — scan progress or an
-/// adapter failure (those glyphs are distinct from the device rows' BLE
-/// icons, so nothing reads as a duplicate) — and stays text-only or fully
-/// silent in powered-on nominal states, where a static Bluetooth glyph
-/// would read as a stale link-state icon next to the rows' stateful ones.
+/// [topIndicatorMode]. The indicator draws an icon only when the glyph
+/// carries information the device rows don't — scan progress or an adapter
+/// failure — and stays text-only or hidden in powered-on nominal states,
+/// where a static Bluetooth glyph would read as a stale link-state icon
+/// next to the rows' stateful ones.
 enum TopIndicatorMode {
-  /// Nothing renders: the tab's empty block is on screen and is the single
-  /// voice for the state (icon included).
+  /// Nothing renders: the tab's empty block is on screen and already shows
+  /// the state (icon included).
   quiet,
 
   /// Label only, no icon: powered-on nominal states ("Tap a device to
   /// connect"). An empty label renders nothing at all (e.g. a link is
-  /// busy — the active device row is the voice then).
+  /// busy — the active device row shows the state then).
   textOnly,
 
   /// Icon (with spinner while in flight) plus label: scanning, or an
@@ -139,29 +137,26 @@ enum TopIndicatorMode {
 }
 
 /// Resolve the top indicator's presentation mode from adapter/scan state
-/// and whether the tab's empty block is on screen. The empty block is the
-/// single voice for empty states, so whenever it shows the indicator goes
-/// fully quiet — its icon and label would duplicate the block's a hundred
-/// pixels above it. Adapter failures normally imply an empty device list
-/// (no scan is possible, and poweredOff clears the list), so their
-/// icon + label only survive the dedupe in the rare case of a stale
-/// populated list (e.g. permission revoked mid-session).
+/// and whether the tab's empty block is on screen. Whenever the empty block
+/// shows, the indicator goes quiet — its icon and label would duplicate the
+/// block's. Adapter failures normally imply an empty device list (no scan
+/// is possible, and poweredOff clears the list), so their icon + label only
+/// survive the dedupe in the rare case of a stale populated list (e.g.
+/// permission revoked mid-session).
 TopIndicatorMode topIndicatorMode({
   required BtAvailability availability,
   required bool isScanning,
   required bool emptyBlockVisible,
 }) {
-  // The empty block speaks (icon included); it can only show while not
-  // scanning, so this can't suppress the scan progress below.
+  // The empty block can only show while not scanning, so this can't
+  // suppress the scan progress below.
   if (emptyBlockVisible) return TopIndicatorMode.quiet;
-  // Scanning: progress is real information — spinner + label.
   if (isScanning) return TopIndicatorMode.iconAndLabel;
   // Adapter failures: distinct glyphs (off / permission / unsupported /
-  // startup) carry real information.
+  // startup).
   if (availability != BtAvailability.poweredOn) {
     return TopIndicatorMode.iconAndLabel;
   }
-  // Powered-on nominal: no icon.
   return TopIndicatorMode.textOnly;
 }
 

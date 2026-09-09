@@ -48,14 +48,14 @@ void main() {
     });
   });
 
-  group('ChannelBoardCalibration (factory data)', () {
+  group('CalibratedChannelBoard (factory data)', () {
     const alpha = 412.7;
     const beta = 3198500.0;
     final sp = ladderSetpointsMvV(nominalLadder);
     // A perfect affine device: raw = alpha + beta * setpoint.
     final affineReadings = [for (final d in sp) alpha + beta * d];
 
-    ChannelBoardCalibration affineChannel() => ChannelBoardCalibration(
+    CalibratedChannelBoard affineChannel() => CalibratedChannelBoard(
       resistors: nominalLadder,
       readings: affineReadings,
       nominals: testNominals,
@@ -113,21 +113,21 @@ void main() {
 
     test('end-point deviations vanish for an affine device, report a bow', () {
       final cal = affineChannel();
-      for (final d in cal.deviationsUvV!) {
+      for (final d in cal.deviationsUvV) {
         expect(d, closeTo(0, 1e-9));
       }
       final bowed = List<double>.of(affineReadings);
       bowed[1] += 100; // +mid reads 100 counts high
-      final bowedCal = ChannelBoardCalibration(
+      final bowedCal = CalibratedChannelBoard(
         resistors: nominalLadder,
         readings: bowed,
         nominals: testNominals,
       );
-      final deviations = bowedCal.deviationsUvV!;
+      final deviations = bowedCal.deviationsUvV;
       // The end-point chord is untouched by an interior bump, so only the
       // bowed point deviates: 100 counts expressed via the measured
       // sensitivity. The ±FS anchors are 0 by construction.
-      final s = bowedCal.sensitivityCountsPerMvV!;
+      final s = bowedCal.sensitivityCountsPerMvV;
       const expectedCounts = [0.0, 100.0, 0.0, 0.0, 0.0];
       for (int k = 0; k < kCalPointCount; ++k) {
         expect(
@@ -136,12 +136,11 @@ void main() {
           reason: 'deviation $k',
         );
       }
-      expect(ChannelBoardCalibration().deviationsUvV, isNull);
     });
 
     test('measured errors reference the nominal chain, nothing pinned', () {
       final cal = affineChannel();
-      final errors = cal.measuredErrorsUvV!;
+      final errors = cal.measuredErrorsUvV;
       for (int k = 0; k < kCalPointCount; ++k) {
         expect(
           errors[k],
@@ -156,16 +155,12 @@ void main() {
       // construction: the zero point carries the offset (alpha ≠ 0), the
       // ±FS points the gain error.
       expect(errors[kCalIdxZero], isNot(closeTo(0, 1e-9)));
-      // An uncalibrated channel has neither figure.
-      final bare = ChannelBoardCalibration(nominals: testNominals);
-      expect(bare.measuredErrorsUvV, isNull);
-      expect(bare.deviationsUvV, isNull);
     });
 
     test('piecewise map anchors bowed points; deviations report the bow', () {
       final bowed = List<double>.of(affineReadings);
       bowed[1] += 100; // +mid reads 100 counts high
-      final cal = ChannelBoardCalibration(
+      final cal = CalibratedChannelBoard(
         resistors: nominalLadder,
         readings: bowed,
         nominals: testNominals,
@@ -176,48 +171,42 @@ void main() {
       }
       // ...and the deviation at +mid is the bow via the measured
       // sensitivity; the other interior points sit on the chord.
-      final s = cal.sensitivityCountsPerMvV!;
-      expect(cal.deviationsUvV![1], closeTo(100 / s * 1000, 1e-9));
-      expect(cal.deviationsUvV![2], closeTo(0, 1e-9));
-      expect(cal.deviationsUvV![3], closeTo(0, 1e-9));
+      final s = cal.sensitivityCountsPerMvV;
+      expect(cal.deviationsUvV[1], closeTo(100 / s * 1000, 1e-9));
+      expect(cal.deviationsUvV[2], closeTo(0, 1e-9));
+      expect(cal.deviationsUvV[3], closeTo(0, 1e-9));
     });
   });
 
-  group('ChannelBoardCalibration (nominal fallback)', () {
+  group('NominalChannelBoard (nominal fallback)', () {
     test('follows the nominal chain with zero offset', () {
-      final cal = ChannelBoardCalibration(nominals: testNominals);
+      const cal = NominalChannelBoard(testNominals);
       expect(cal.isFactoryCalibrated, isFalse);
       expect(
         cal.mvVFromRaw(1000),
         closeTo(1000 / testNominals.countsPerMvV, 1e-18),
       );
       expect(cal.mvVFromRaw(0), 0.0);
-      expect(cal.offsetCounts, 0.0);
       expect(cal.sensitivityCountsPerMvV, testNominals.countsPerMvV);
-      // No factory data: the correction diagnostics don't exist (the nominal
-      // chain isn't a measurement, so there's nothing to report against it).
-      expect(cal.sensitivityVsNominal, isNull);
-      expect(cal.zeroOffsetUvV, isNull);
-      expect(cal.deviationsUvV, isNull);
-      expect(cal.measuredErrorsUvV, isNull);
+      // No factory data: the correction diagnostics exist only on the
+      // measured variant (the nominal chain isn't a measurement, so there's
+      // nothing to report against it).
+      expect(cal, isNot(isA<CalibratedChannelBoard>()));
     });
   });
 
-  group('ChannelBoardCalibration (no nominals)', () {
-    test('converts nothing: span and correction diagnostics are null', () {
-      final cal = ChannelBoardCalibration();
+  group('RawOnlyChannelBoard (no nominals)', () {
+    test('converts nothing: no nominals, no sensitivity', () {
+      const cal = RawOnlyChannelBoard();
       expect(cal.nominals, isNull);
       expect(cal.sensitivityCountsPerMvV, isNull);
-      expect(cal.sensitivityVsNominal, isNull);
-      expect(cal.zeroOffsetUvV, isNull);
-      expect(cal.deviationsUvV, isNull);
-      expect(cal.measuredErrorsUvV, isNull);
+      expect(() => cal.mvVFromRaw(1000), throwsStateError);
     });
 
     test('nominals survive the session-snapshot round trip', () {
-      final cal = ChannelBoardCalibration(nominals: testNominals);
+      const cal = NominalChannelBoard(testNominals);
       final loaded = ChannelBoardCalibration.fromJson(cal.toJson());
-      expect(loaded.nominals, isNotNull);
+      expect(loaded, isA<NominalChannelBoard>());
       expect(
         loaded.nominals!.countsPerMvV,
         closeTo(testNominals.countsPerMvV, 1e-12),
@@ -225,8 +214,9 @@ void main() {
       // A snapshot without nominals (an unprovisioned board) replays as
       // raw-only, never with guessed values.
       final bare = ChannelBoardCalibration.fromJson(
-        ChannelBoardCalibration().toJson(),
+        const RawOnlyChannelBoard().toJson(),
       );
+      expect(bare, isA<RawOnlyChannelBoard>());
       expect(bare.nominals, isNull);
     });
 
@@ -262,15 +252,16 @@ void main() {
     });
 
     test('a valid snapshot round-trips the full correction', () {
-      final cal = ChannelBoardCalibration(
+      final cal = CalibratedChannelBoard(
         resistors: nominalLadder,
         readings: [6.4e6, 3.2e6, 845.2, -3.2e6, -6.4e6],
         nominals: testNominals,
       );
       final loaded = ChannelBoardCalibration.fromJson(cal.toJson());
-      expect(loaded.isFactoryCalibrated, isTrue);
-      expect(loaded.readings, cal.readings);
-      expect(loaded.resistors, cal.resistors);
+      expect(loaded, isA<CalibratedChannelBoard>());
+      final restored = loaded as CalibratedChannelBoard;
+      expect(restored.readings, cal.readings);
+      expect(restored.resistors, cal.resistors);
     });
   });
 
@@ -341,12 +332,16 @@ END
       expect(board.factoryDate, '2026-07-20');
       expect(board.isFactoryCalibrated, isTrue);
       expect(board.calDataInvalid, isFalse);
-      expect(board.channels[0].resistors![0], closeTo(10000.8, 1e-9));
-      expect(board.channels[0].readings![2], closeTo(845.2, 1e-9));
-      expect(board.channels[3].readings![0], closeTo(6397822.1, 1e-9));
+      final ch0 = board.channels[0] as CalibratedChannelBoard;
+      expect(ch0.resistors[0], closeTo(10000.8, 1e-9));
+      expect(ch0.readings[2], closeTo(845.2, 1e-9));
+      expect(
+        (board.channels[3] as CalibratedChannelBoard).readings[0],
+        closeTo(6397822.1, 1e-9),
+      );
       // Custom resistors flow into setpoints: ch0's +FS point follows its
       // own resistor values, not the nominal ladder.
-      final sp0 = board.channels[0].setpoints[0];
+      final sp0 = ch0.setpoints[0];
       const r0 = <double>[10000.8, 10.0012, 9.9991, 10.0008, 10.0003, 9999.4];
       final expected =
           1000 *

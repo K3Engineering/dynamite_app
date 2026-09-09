@@ -7,9 +7,9 @@ import 'app_settings.dart';
 
 /// Keep-awake policy: the screen stays on while a device stream is live and
 /// the user's setting is on. Constructed once in main; listens through the
-/// same narrow stream-liveness port shape [StreamResetCoordinator] uses (a
-/// notify source plus a poll closure), so it never depends on the link
-/// layer's concrete type. Nothing reads this; it exists to react.
+/// same stream-liveness port shape [StreamResetCoordinator] uses (a notify
+/// source plus a poll closure), so it never depends on the link layer's
+/// concrete type.
 class WakelockPolicy {
   WakelockPolicy({
     required AppSettings settings,

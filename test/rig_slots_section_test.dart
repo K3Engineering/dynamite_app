@@ -31,7 +31,7 @@ class _FakeTransport implements RigFlashTransport {
   }
 
   @override
-  Future<String?> readFlashDoc() async => lastWrittenDoc;
+  Future<String> readFlashDoc() async => lastWrittenDoc!;
 }
 
 void main() {

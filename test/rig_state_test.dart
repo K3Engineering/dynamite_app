@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
@@ -42,7 +43,7 @@ class _FakeTransport implements RigFlashTransport {
 
   /// A faithful device serves back exactly what was last written.
   @override
-  Future<String?> readFlashDoc() async => readBackDoc ?? lastWrittenDoc;
+  Future<String> readFlashDoc() async => readBackDoc ?? lastWrittenDoc!;
 }
 
 void main() {
@@ -220,16 +221,16 @@ void main() {
       expect(written.slots.cellAt(3)?.name, 'New');
       // Board keys round-trip byte-identical in content.
       expect(
-        written.board.channels[0].readings,
-        fixture().board.channels[0].readings,
+        (written.board.channels[0] as CalibratedChannelBoard).readings,
+        (fixture().board.channels[0] as CalibratedChannelBoard).readings,
       );
       expect(written.board.factoryDate, '2026-07-20');
       // The commit keeps the read-time (PGA-resolved) board, not the
       // gain-less read-back's nominal one.
       expect(rig.boardCalibration, isNotNull);
       expect(
-        rig.boardCalibration!.channels[0].readings,
-        fixture().board.channels[0].readings,
+        (rig.boardCalibration!.channels[0] as CalibratedChannelBoard).readings,
+        (fixture().board.channels[0] as CalibratedChannelBoard).readings,
       );
     });
 

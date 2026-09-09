@@ -157,7 +157,7 @@ void main() {
         sampleCount: n,
         calibrations: [
           for (int ch = 0; ch < channels; ch++)
-            ChannelCalibration(board: ChannelBoardCalibration()),
+            const ChannelCalibration(board: RawOnlyChannelBoard()),
         ],
         tares: List.filled(channels, 0.0),
         ssnOrigin: 0,
@@ -236,7 +236,7 @@ void main() {
         sampleCount: n,
         calibrations: [
           for (int ch = 0; ch < channels; ch++)
-            ChannelCalibration(board: ChannelBoardCalibration()),
+            const ChannelCalibration(board: RawOnlyChannelBoard()),
         ],
         tares: List.filled(channels, 0.0),
         ssnOrigin: 0,
