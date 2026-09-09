@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../models/board_calibration.dart';
 import '../models/device_info.dart';
 import '../models/device_profile.dart';
 import 'demo_calibration.dart';
@@ -21,7 +22,9 @@ class DemoDevice implements SimulatedLink {
   String get displayName => 'Demo Device';
 
   /// The flash document, mutable so "Save to device" round-trips (a
-  /// reconnect serves whatever was last written).
+  /// reconnect serves whatever was last written). Writes hit the slot keys
+  /// only — mirroring the real transport, the demo's board half is
+  /// read-only to the app.
   String _flashDoc = demoBoardCalibrationDoc;
 
   @override
@@ -34,7 +37,12 @@ class DemoDevice implements SimulatedLink {
   String? get storedName => _storedName;
 
   @override
-  Future<void> writeFlashDoc(String doc) async => _flashDoc = doc;
+  Future<void> writeSlots(Map<String, String> lcKeys) async {
+    final kv = parseFlashKv(_flashDoc)
+      ..removeWhere((key, _) => key.startsWith('lc'))
+      ..addAll(lcKeys);
+    _flashDoc = [for (final e in kv.entries) '${e.key}=${e.value}'].join('\n');
+  }
 
   @override
   Future<String> readFlashDoc() async => _flashDoc;

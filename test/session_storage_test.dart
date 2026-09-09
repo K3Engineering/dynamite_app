@@ -42,8 +42,7 @@ void main() {
   });
 
   List<ChannelCalibration> nominalCals() => [
-    for (int ch = 0; ch < channels; ch++)
-      const ChannelCalibration(board: RawOnlyChannelBoard()),
+    for (int ch = 0; ch < channels; ch++) const ChannelCalibration(board: null),
   ];
 
   /// startSession with the caller-side hub snapshots production now passes
@@ -561,7 +560,7 @@ void main() {
         // Every channel measures at half the nominal span (calibration is
         // board-uniform — a mixed board is invalid flash, rejected at parse).
         hub.updateBoardCalibration(
-          BoardCalibration(
+          ProvisionedBoardCalibration(
             channels: [
               for (int i = 0; i < channels; ++i)
                 CalibratedChannelBoard(
@@ -573,6 +572,12 @@ void main() {
                   nominals: testNominals,
                 ),
             ],
+            nominals: BoardNominals(
+              adcFsrV: 1.2,
+              afeGain: 101,
+              excitationV: 4.53,
+              pgaGains: const [1, 1, 1, 1],
+            ),
           ),
         );
         hub.updateLoadCells([
@@ -595,14 +600,13 @@ void main() {
 
         // Board snapshot: ch0 at 0.5x nominal sensitivity.
         expect(
-          loaded.calibrationFor(0).board.sensitivityCountsPerMvV,
+          loaded.calibrationFor(0).board?.sensitivityCountsPerMvV,
           closeTo(0.5 * testNominals.countsPerMvV, 1e-3),
         );
-        expect(loaded.calibrationFor(0).board.isFactoryCalibrated, isTrue);
+        expect(loaded.calibrationFor(0).board?.isFactoryCalibrated, isTrue);
         // The resolved nominals rode along in the snapshot.
-        expect(loaded.calibrationFor(0).board.nominals, isNotNull);
         expect(
-          loaded.calibrationFor(0).board.nominals!.countsPerMvV,
+          loaded.calibrationFor(0).board?.nominals.countsPerMvV,
           closeTo(testNominals.countsPerMvV, 1e-12),
         );
         // Load cell snapshot round-trips with its exact sensitivity.
@@ -633,7 +637,7 @@ void main() {
         'session', () async {
       final hub = DataHub();
       hub.updateBoardCalibration(
-        BoardCalibration(
+        ProvisionedBoardCalibration(
           channels: [
             for (int ch = 0; ch < channels; ch++)
               const NominalChannelBoard(
@@ -667,11 +671,10 @@ void main() {
 
       final loaded = await store.loadSession(writer.sessionId!);
       final m = loaded.boardMeta!;
+      expect(m.provisioned, isTrue);
       expect(m.factoryDate, '2026-01-15');
       expect(m.calTool, 'calibrate.py v3');
-      expect(m.constantsStatus, BoardDataStatus.ok);
       expect(m.provenance, {'exc': 'nominal'});
-      expect(m.calDataInvalid, isFalse);
     });
   });
 

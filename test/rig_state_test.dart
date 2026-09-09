@@ -11,16 +11,23 @@ import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 
 /// Tests for [RigState]: flash reads, pending edits (which die with the
-/// link), save/revert, and history. Transport is a fake capturing the
-/// written document; SharedPreferences is mocked.
+/// link), save/revert, and history. Transport is a fake whose "device"
+/// applies slot writes to its stored document the way the real transport
+/// mutates User-folder keys; SharedPreferences is mocked.
 class _FakeTransport implements RigFlashTransport {
   String deviceId = 'dev1';
   String deviceName = 'Bench unit';
-  String? lastWrittenDoc;
+
+  /// What the "device" holds: seeded like the fixture hardware, mutated by
+  /// slot writes only (the board half is read-only to the app).
+  String deviceDoc = demoBoardCalibrationDoc;
+
+  /// The last slot-key map a save submitted.
+  Map<String, String>? lastWrittenSlots;
   bool failWrite = false;
 
-  /// Served on read-back instead of the last written doc, to simulate a
-  /// device that ignores or rewrites what it received.
+  /// Served on read-back instead of the device doc, to simulate a device
+  /// that ignores or rewrites what it received.
   String? readBackDoc;
 
   /// When set, the write completes only once this gate does — lets a test
@@ -34,16 +41,19 @@ class _FakeTransport implements RigFlashTransport {
   String get connectedDeviceName => deviceName;
 
   @override
-  Future<void> writeFlashDoc(String doc) async {
+  Future<void> writeSlots(Map<String, String> lcKeys) async {
     if (failWrite) throw StateError('write failed');
     final gate = writeGate;
     if (gate != null) await gate.future;
-    lastWrittenDoc = doc;
+    lastWrittenSlots = lcKeys;
+    final kv = parseFlashKv(deviceDoc)
+      ..removeWhere((key, _) => key.startsWith('lc'))
+      ..addAll(lcKeys);
+    deviceDoc = [for (final e in kv.entries) '${e.key}=${e.value}'].join('\n');
   }
 
-  /// A faithful device serves back exactly what was last written.
   @override
-  Future<String> readFlashDoc() async => readBackDoc ?? lastWrittenDoc!;
+  Future<String> readFlashDoc() async => readBackDoc ?? deviceDoc;
 }
 
 void main() {
@@ -202,7 +212,7 @@ void main() {
   });
 
   group('save to device', () {
-    test('writes edited slots with verbatim board keys', () async {
+    test('writes slot keys only; the board half is untouched', () async {
       final rig = await newRig();
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
@@ -214,23 +224,23 @@ void main() {
       expect(rig.hasPending, isFalse);
       expect(rig.channelTitles[3], 'New'); // saved state stays effective
 
-      final written = DeviceFlash.parse(
-        transport.lastWrittenDoc!,
-        pgaGains: const [1, 1, 1, 1],
-      );
-      expect(written.slots.cellAt(3)?.name, 'New');
-      // Board keys round-trip byte-identical in content.
+      // A save submits slot keys and nothing else — the board half can
+      // never be stamped (byte-level or otherwise) by the app.
+      final written = transport.lastWrittenSlots!;
+      expect(written.keys.every((k) => k.startsWith('lc')), isTrue);
+      expect(written['lc3.name'], 'New');
+      expect(written['lc3.cap'], '50');
+      expect(written['lc3.sens'], '1');
+      expect(parseFlashKv(transport.deviceDoc)['cal.date'], '2026-07-20');
+      // The commit keeps the read-time (PGA-resolved) board, not a
+      // re-parse of the gain-less read-back.
       expect(
-        (written.board.channels[0] as CalibratedChannelBoard).readings,
-        (fixture().board.channels[0] as CalibratedChannelBoard).readings,
-      );
-      expect(written.board.factoryDate, '2026-07-20');
-      // The commit keeps the read-time (PGA-resolved) board, not the
-      // gain-less read-back's nominal one.
-      expect(rig.boardCalibration, isNotNull);
-      expect(
-        (rig.boardCalibration!.channels[0] as CalibratedChannelBoard).readings,
-        (fixture().board.channels[0] as CalibratedChannelBoard).readings,
+        ((rig.boardCalibration as ProvisionedBoardCalibration).channels[0]
+                as CalibratedChannelBoard)
+            .readings,
+        ((fixture().board as ProvisionedBoardCalibration).channels[0]
+                as CalibratedChannelBoard)
+            .readings,
       );
     });
 
@@ -310,14 +320,10 @@ void main() {
       expect(rig.effectiveSlots.cellAt(4)?.name, 'Other');
     });
 
-    test('unknown flash keys ride through the save verbatim', () async {
+    test('unknown flash keys are untouched by a save', () async {
       final rig = await newRig();
-      const withExtras =
-          'K3CAL1\n'
-          'cal.date=2026-07-20\n'
-          'hw.rev=3\n'
-          'future.tooling=keep me\n'
-          'END\n';
+      const withExtras = 'hw.rev=3\nfuture.tooling=keep me';
+      transport.deviceDoc = withExtras;
       rig.onFlashRead(
         'dev1',
         'Bench unit',
@@ -329,8 +335,14 @@ void main() {
       );
 
       expect(await rig.saveToDevice(), isTrue);
-      expect(transport.lastWrittenDoc, contains('hw.rev=3'));
-      expect(transport.lastWrittenDoc, contains('future.tooling=keep me'));
+      // Unknown keys are never submitted — and never deleted, since the
+      // write only names slot keys.
+      expect(
+        transport.lastWrittenSlots!.keys.every((k) => k.startsWith('lc')),
+        isTrue,
+      );
+      expect(transport.deviceDoc, contains('hw.rev=3'));
+      expect(transport.deviceDoc, contains('future.tooling=keep me'));
     });
   });
 

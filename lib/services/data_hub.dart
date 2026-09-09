@@ -111,9 +111,9 @@ class DataHub extends ChangeNotifier
   /// by [AdcPacketDecoder.onCalibrationPacket]). Null until the first
   /// successful read of this run: "no device data" must be representable —
   /// defaulting to nominal values would let the UI present numbers no
-  /// hardware ever produced. Conversions require the resolved board
-  /// constants ([boardDataStatus]); without them every unit but raw reports
-  /// unavailable.
+  /// hardware ever produced. An [UnprovisionedBoardCalibration] here (and
+  /// null alike) means every unit but raw reports unavailable; a malformed
+  /// document never arrives (the parse throws and the connection fails).
   ///
   /// Identity-free: it describes the samples the hub holds, not the attached
   /// device (the settings page's calibration row shows the flash-document
@@ -121,16 +121,6 @@ class DataHub extends ChangeNotifier
   /// drops ([clearBoardCalibration]) — a dead stream has no constants.
   BoardCalibration? get boardCalibration => _boardCalibration;
   BoardCalibration? _boardCalibration;
-
-  /// The board-data verdict for the live UI's raw-only notice: the parsed
-  /// document's verdict, or [BoardDataStatus.unreadable] before any
-  /// successful read and after a link drop (a failed connect-time read never
-  /// delivers a document, so absence IS the unreadable verdict).
-  BoardDataStatus get boardDataStatus =>
-      _boardCalibration?.constantsStatus ?? BoardDataStatus.unreadable;
-
-  /// Human-readable reason behind [boardDataStatus] when not ok.
-  String get boardDataDetail => _boardCalibration?.constantsDetail ?? '';
 
   /// Load cell converting each channel (null = unassigned, electrical units
   /// only). Owned by `RigState` (device slots, including unsaved edits);
@@ -455,14 +445,17 @@ class DataHub extends ChangeNotifier
   }
 
   /// Content equality for cache invalidation: conversion inputs only.
-  /// factoryDate and the other cal metadata are display-only. Nominals are
-  /// conversion inputs — a nominals-only board must still replace a
-  /// constants-failed one (and vice versa).
+  /// factoryDate and the other cal metadata are display-only.
   static bool _sameBoardCalibration(BoardCalibration a, BoardCalibration b) {
-    if (a.constantsStatus != b.constantsStatus) return false;
-    for (int i = 0; i < a.channels.length; ++i) {
-      final x = a.channels[i];
-      final y = b.channels[i];
+    if (a is UnprovisionedBoardCalibration ||
+        b is UnprovisionedBoardCalibration) {
+      return a.runtimeType == b.runtimeType;
+    }
+    final pa = a as ProvisionedBoardCalibration;
+    final pb = b as ProvisionedBoardCalibration;
+    for (int i = 0; i < pa.channels.length; ++i) {
+      final x = pa.channels[i];
+      final y = pb.channels[i];
       if (x case final CalibratedChannelBoard xd) {
         if (y is! CalibratedChannelBoard) return false;
         if (!_sameList(xd.resistors, y.resistors)) return false;
@@ -483,9 +476,8 @@ class DataHub extends ChangeNotifier
     return true;
   }
 
-  static bool _sameNominals(ChannelNominals? a, ChannelNominals? b) {
+  static bool _sameNominals(ChannelNominals a, ChannelNominals b) {
     if (identical(a, b)) return true;
-    if (a == null || b == null) return false;
     return a.adcFsrV == b.adcFsrV &&
         a.afeGain == b.afeGain &&
         a.pgaGain == b.pgaGain &&
@@ -526,12 +518,13 @@ class DataHub extends ChangeNotifier
 
   @override
   ChannelCalibration calibrationFor(int channelIndex) => ChannelCalibration(
-    // A missing/never-read board leaves the channel with no calibration and
-    // no nominals: electrical and force units report unavailable and only
-    // raw counts convert — see [boardDataStatus].
-    board:
-        _boardCalibration?.channels[channelIndex] ??
-        const RawOnlyChannelBoard(),
+    // A missing/never-read document and an unprovisioned board alike leave
+    // the channel with no board map: electrical and force units report
+    // unavailable and only raw counts convert.
+    board: switch (_boardCalibration) {
+      final ProvisionedBoardCalibration b => b.channels[channelIndex],
+      _ => null,
+    },
     loadCell: _loadCells[channelIndex],
   );
 

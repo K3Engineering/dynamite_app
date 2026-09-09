@@ -92,13 +92,10 @@ void main() {
         async.elapse(const Duration(seconds: 4));
 
         expect(link.isStreaming, isTrue);
+        final board = hub.boardCalibration! as ProvisionedBoardCalibration;
+        expect(board.channels.every((c) => c.isFactoryCalibrated), isTrue);
         expect(
-          hub.boardCalibration!.channels.every((c) => c.isFactoryCalibrated),
-          isTrue,
-        );
-        expect(
-          (hub.boardCalibration!.channels[0] as CalibratedChannelBoard)
-              .offsetCounts,
+          (board.channels[0] as CalibratedChannelBoard).offsetCounts,
           closeTo(845.2, 1e-9),
         );
 
@@ -120,7 +117,7 @@ void main() {
         // turns into the unprovisioned verdict (raw counts only).
         expect(link.isStreaming, isTrue);
         expect(hub.totalSamples, greaterThan(0));
-        expect(hub.boardDataStatus, BoardDataStatus.unprovisioned);
+        expect(hub.boardCalibration, isA<UnprovisionedBoardCalibration>());
 
         teardown();
       });
@@ -138,20 +135,46 @@ void main() {
         unawaited(link.connectToDevice(deviceId));
         async.elapse(const Duration(seconds: 4));
 
-        // The board knows what it is (board constants resolve — the ok
-        // verdict, not the unprovisioned raw-only notice) but was never
-        // factory-calibrated: every channel is uncalibrated and converts
+        // The board knows what it is — constants resolved, a provisioned
+        // board — but was never factory-calibrated: every channel converts
         // through the nominal chain, so raw and mV/V work while force
         // units stay cell-gated.
         expect(link.isStreaming, isTrue);
-        final board = hub.boardCalibration!;
-        expect(board.constantsStatus, BoardDataStatus.ok);
+        final board = hub.boardCalibration! as ProvisionedBoardCalibration;
         expect(board.isFactoryCalibrated, isFalse);
-        expect(board.calDataInvalid, isFalse);
         expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
         expect(hub.currentValue(0, DisplayUnit.kN), isNull);
 
         teardown();
+      });
+    });
+
+    test('present-but-invalid flash content fails the connection', () {
+      fakeAsync((async) {
+        // A corrupt board half (partial constants) and a corrupt slot half
+        // (unparseable sens) alike: the parse is strict, so the connect-
+        // time read throws and the link never reaches streaming — a
+        // misprovisioned board is a provisioning errand, not an instrument
+        // degraded to nominal values and empty slots.
+        for (final doc in [
+          'adc_fsr=1.2,nominal\nexc=4.53,nominal', // afe_gain missing
+          'adc_fsr=1.2,nominal\nexc=soon\nafe_gain=101', // bad value
+          'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nlc0.cap=100\nlc0.sens=abc',
+        ]) {
+          MockBlePlatform.instance.seedKvsFromDoc(doc);
+          final (hub, link, teardown) = wire(async: async);
+
+          unawaited(link.connectToDevice(deviceId));
+          async.elapse(const Duration(seconds: 4));
+
+          expect(link.isStreaming, isFalse, reason: doc);
+          expect(hub.totalSamples, 0, reason: doc);
+          expect(hub.boardCalibration, isNull, reason: doc);
+
+          teardown();
+          async.elapse(const Duration(seconds: 4));
+        }
+        addTearDown(() => MockBlePlatform.instance.resetKnobs());
       });
     });
 

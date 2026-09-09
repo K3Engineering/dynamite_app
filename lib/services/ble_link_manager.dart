@@ -505,21 +505,20 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
   // -- RigFlashTransport ------------------------------------------------------
 
-  /// Write a serialized `DeviceFlash` document to the connected device.
-  /// Called only by `RigState.saveToDevice`, which has already composed the
-  /// full document (board keys round-tripping verbatim + edited slots). The
-  /// active link's backend applies it (see [LinkBackend.writeFlashDoc]).
+  /// Write the load-cell slot keys to the connected device (see
+  /// [RigFlashTransport.writeSlots]). Called only by `RigState.saveToDevice`;
+  /// the active link's backend applies them (see [LinkBackend.writeSlots]).
   @override
-  Future<void> writeFlashDoc(String doc) async {
+  Future<void> writeSlots(Map<String, String> lcKeys) async {
     final deviceId = _link.deviceId;
     if (deviceId.isEmpty) {
-      throw StateError('writeFlashDoc with no device connected');
+      throw StateError('writeSlots with no device connected');
     }
     final backend = _backend;
     if (backend == null) {
-      throw StateError('writeFlashDoc with no device channel on $deviceId');
+      throw StateError('writeSlots with no device channel on $deviceId');
     }
-    await backend.writeFlashDoc(doc);
+    await backend.writeSlots(lcKeys);
   }
 
   /// Read the flash document back from the connected device (save
@@ -1421,10 +1420,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// device name, so streaming on without it would be a half-usable link
   /// (same verdict as an unreadable ADC config or a missing ADC feed).
   /// An EMPTY KVS is not a failure: an unprovisioned unit reads cleanly as
-  /// an empty document and degrades to nominal values with the
-  /// unprovisioned notice. A superseded pass (the link was torn down
-  /// mid-setup, which also aborts the client) bails silently — the failure
-  /// belongs to a link that no longer exists.
+  /// an empty document (raw counts only, with the unprovisioned notice).
+  /// Present-but-invalid document CONTENT is a failure: the parse throws
+  /// (see `DeviceFlash.parse`) and fails the connection from the
+  /// [onCalibrationData] call below. A superseded pass (the link was torn
+  /// down mid-setup, which also aborts the client) bails silently — the
+  /// failure belongs to a link that no longer exists.
   Future<void> _setupKvs(_SetupToken token, String deviceId) async {
     final client = KvsClient(
       write: (bytes) =>

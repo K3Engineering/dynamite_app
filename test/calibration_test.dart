@@ -1,5 +1,4 @@
 import 'package:dynamite_app/models/board_calibration.dart';
-import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -195,29 +194,26 @@ void main() {
     });
   });
 
-  group('RawOnlyChannelBoard (no nominals)', () {
-    test('converts nothing: no nominals, no sensitivity', () {
-      const cal = RawOnlyChannelBoard();
-      expect(cal.nominals, isNull);
-      expect(cal.sensitivityCountsPerMvV, isNull);
-      expect(() => cal.mvVFromRaw(1000), throwsStateError);
-    });
-
+  group('ChannelBoardCalibration session snapshots', () {
     test('nominals survive the session-snapshot round trip', () {
       const cal = NominalChannelBoard(testNominals);
       final loaded = ChannelBoardCalibration.fromJson(cal.toJson());
       expect(loaded, isA<NominalChannelBoard>());
       expect(
-        loaded.nominals!.countsPerMvV,
+        loaded.nominals.countsPerMvV,
         closeTo(testNominals.countsPerMvV, 1e-12),
       );
-      // A snapshot without nominals (an unprovisioned board) replays as
-      // raw-only, never with guessed values.
-      final bare = ChannelBoardCalibration.fromJson(
-        const RawOnlyChannelBoard().toJson(),
+    });
+
+    test('a snapshot without nominals is damage (board-less channels store '
+        'a NULL board)', () {
+      // A session recorded on an unprovisioned board stores no board object
+      // at all (ChannelCalibration.board is null); a snapshot claiming
+      // channel maps without a nominal chain can only be damaged.
+      expect(
+        () => ChannelBoardCalibration.fromJson(const {}),
+        throwsFormatException,
       );
-      expect(bare, isA<RawOnlyChannelBoard>());
-      expect(bare.nominals, isNull);
     });
 
     test('snapshot readings without nominals are rejected as damaged', () {
@@ -268,46 +264,54 @@ void main() {
   group('resolveBoardConstants', () {
     const kv = {'adc_fsr': '1.2', 'exc': '4.53', 'afe_gain': '101'};
 
-    test('all keys plus gains resolve ok, with per-channel chains', () {
-      final r = resolveBoardConstants(kv, pgaGains: testGains);
-      expect(r.status, BoardDataStatus.ok);
-      expect(r.nominals, isNotNull);
-      expect(r.nominals!.forChannel(2).countsPerMvV, testNominals.countsPerMvV);
+    test('all keys plus gains resolve, with per-channel chains', () {
+      final n = resolveBoardConstants(kv, pgaGains: testGains)!;
+      expect(n.forChannel(2).countsPerMvV, testNominals.countsPerMvV);
     });
 
     test('provenance tags are stripped from values and kept', () {
-      final r = resolveBoardConstants({
+      final n = resolveBoardConstants({
         'adc_fsr': '1.2,nominal',
         'exc': '4.53,dummycal',
         'afe_gain': '101',
-      }, pgaGains: testGains);
-      expect(r.status, BoardDataStatus.ok);
-      expect(r.nominals!.excitationV, 4.53);
-      expect(r.nominals!.provenance['exc'], 'dummycal');
-      expect(r.nominals!.provenance.containsKey('afe_gain'), isFalse);
+      }, pgaGains: testGains)!;
+      expect(n.excitationV, 4.53);
+      expect(n.provenance['exc'], 'dummycal');
+      expect(n.provenance.containsKey('afe_gain'), isFalse);
     });
 
-    test('no keys at all is unprovisioned', () {
-      final r = resolveBoardConstants(const {}, pgaGains: testGains);
-      expect(r.status, BoardDataStatus.unprovisioned);
-      expect(r.nominals, isNull);
+    test('no keys at all is unprovisioned (null, not an error)', () {
+      expect(resolveBoardConstants(const {}, pgaGains: testGains), isNull);
     });
 
-    test('a missing or bad key is invalid, naming the culprit', () {
-      final missing = resolveBoardConstants({
-        'adc_fsr': '1.2',
-        'exc': '4.53',
-      }, pgaGains: testGains);
-      expect(missing.status, BoardDataStatus.invalid);
-      expect(missing.detail, contains('afe_gain'));
-
-      final bad = resolveBoardConstants({
-        'adc_fsr': '1.2',
-        'exc': 'soon',
-        'afe_gain': '101',
-      }, pgaGains: testGains);
-      expect(bad.status, BoardDataStatus.invalid);
-      expect(bad.detail, contains('exc'));
+    test('a missing or bad key throws, naming the culprit', () {
+      expect(
+        () => resolveBoardConstants({
+          'adc_fsr': '1.2',
+          'exc': '4.53',
+        }, pgaGains: testGains),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('afe_gain'),
+          ),
+        ),
+      );
+      expect(
+        () => resolveBoardConstants({
+          'adc_fsr': '1.2',
+          'exc': 'soon',
+          'afe_gain': '101',
+        }, pgaGains: testGains),
+        throwsA(
+          isA<FormatException>().having(
+            (e) => e.message,
+            'message',
+            contains('exc'),
+          ),
+        ),
+      );
     });
   });
 
@@ -328,10 +332,11 @@ END
 ''';
 
     test('full document parses every channel plus metadata', () {
-      final board = BoardCalibration.parse(doc, pgaGains: testGains);
+      final board =
+          BoardCalibration.parse(doc, pgaGains: testGains)
+              as ProvisionedBoardCalibration;
       expect(board.factoryDate, '2026-07-20');
       expect(board.isFactoryCalibrated, isTrue);
-      expect(board.calDataInvalid, isFalse);
       final ch0 = board.channels[0] as CalibratedChannelBoard;
       expect(ch0.resistors[0], closeTo(10000.8, 1e-9));
       expect(ch0.readings[2], closeTo(845.2, 1e-9));
@@ -351,40 +356,36 @@ END
     });
 
     test('board constants resolve into per-channel nominals', () {
-      final board = BoardCalibration.parse(
-        'adc_fsr=1.2,nominal\nexc=2.8,nominal\nafe_gain=1,nominal\n',
-        pgaGains: const [32, 32, 32, 32],
-      );
-      expect(board.constantsStatus, BoardDataStatus.ok);
-      final n = board.channels[0].nominals!;
+      final board =
+          BoardCalibration.parse(
+                'adc_fsr=1.2,nominal\nexc=2.8,nominal\nafe_gain=1,nominal\n',
+                pgaGains: const [32, 32, 32, 32],
+              )
+              as ProvisionedBoardCalibration;
+      final n = board.channels[0].nominals;
       expect(n.adcFsrV, 1.2);
       expect(n.afeGain, 1);
       expect(n.pgaGain, 32);
       expect(n.excitationV, 2.8);
-      expect(board.nominals!.provenance['exc'], 'nominal');
+      expect(board.nominals.provenance['exc'], 'nominal');
     });
 
-    test('no calibration keys at all is an uncalibrated board, no warning', () {
+    test('no board keys at all is an unprovisioned board — a legal state', () {
       for (final text in ['', 'not a calibration document', '===', 'x=y']) {
         final board = BoardCalibration.parse(text, pgaGains: testGains);
-        expect(board.isFactoryCalibrated, isFalse, reason: text);
-        expect(board.calDataInvalid, isFalse, reason: text);
+        expect(board, isA<UnprovisionedBoardCalibration>(), reason: text);
       }
     });
 
     test('a provisioned board without cal data adopts the nominal chain', () {
-      final board = BoardCalibration.parse(
-        testConstantKeys,
-        pgaGains: testGains,
-      );
-      expect(board.constantsStatus, BoardDataStatus.ok);
-      expect(board.nominals, isNotNull);
+      final board =
+          BoardCalibration.parse(testConstantKeys, pgaGains: testGains)
+              as ProvisionedBoardCalibration;
       expect(board.isFactoryCalibrated, isFalse);
-      expect(board.calDataInvalid, isFalse);
     });
   });
 
-  group('BoardCalibration.parse (all-or-nothing rejection)', () {
+  group('BoardCalibration.parse (present-but-invalid throws)', () {
     /// ch0 + ch3 fully valid; the others carry one defect each.
     const validCh0 =
         'ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4\n'
@@ -393,20 +394,20 @@ END
         'ch3.r=10000.4,10.0009,9.9996,10.0005,10.0002,10000.2\n'
         'ch3.raw=6397822.1,3199541.0,64.9,-3198066.4,-6397555.7\n';
 
-    void expectWholeBoardRejected(String doc, String reason) {
-      final board = BoardCalibration.parse(doc, pgaGains: testGains);
-      expect(board.isFactoryCalibrated, isFalse, reason: reason);
-      expect(board.calDataInvalid, isTrue, reason: reason);
-      // The valid channel's data is NOT adopted: a partial instrument is
-      // never presented.
-      for (final ch in board.channels) {
-        expect(ch.isFactoryCalibrated, isFalse, reason: '$reason (channel)');
-      }
+    void expectInvalid(String doc, String reason) {
+      // A document the app can't fully make sense of is not a degraded
+      // instrument: it throws, and the connect-time caller fails the
+      // connection.
+      expect(
+        () => BoardCalibration.parse(doc, pgaGains: testGains),
+        throwsFormatException,
+        reason: reason,
+      );
     }
 
     test('a malformed channel entry invalidates the whole board', () {
       // ch1: resistor list too short. ch2: readings too short.
-      expectWholeBoardRejected(
+      expectInvalid(
         '$testConstantKeys$validCh0$validCh3'
             'ch1.r=9999.2,9.9994,10.0006,10.0001,9.9997\n'
             'ch1.raw=6395113.8,3197911.4,-231.5,-3199688.2,-6399884.7\n'
@@ -420,7 +421,7 @@ END
       // ch1: beyond the ADC's 24-bit bipolar range. ch2: a sub-thousand-count
       // gap — interpolation would divide by ~zero (a real ladder spread is
       // millions of counts).
-      expectWholeBoardRejected(
+      expectInvalid(
         '$testConstantKeys$validCh0$validCh3'
             'ch1.r=9999.2,9.9994,10.0006,10.0001,9.9997,10000.6\n'
             'ch1.raw=9000000,3197911.4,-231.5,-3199688.2,-6399884.7\n'
@@ -431,7 +432,7 @@ END
     });
 
     test('duplicate readings are rejected as degenerate', () {
-      expectWholeBoardRejected(
+      expectInvalid(
         '$testConstantKeys'
             'ch0.raw=100,100,100,100,100\n'
             'ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4\n'
@@ -445,7 +446,7 @@ END
     });
 
     test('non-positive resistors invalidate the whole board', () {
-      expectWholeBoardRejected(
+      expectInvalid(
         '$testConstantKeys'
             'ch0.r=10000,10,10,0,10,10000\n'
             'ch0.raw=6399057.3,3200621.9,845.2,-3199374.1,-6397331.0\n',
@@ -456,26 +457,23 @@ END
     test('a partially-written calibration is invalid flash, not a mix', () {
       // Only ch0 calibrated: the factory calibrates all channels in one
       // document, so a missing channel can only be failed flash.
-      expectWholeBoardRejected(
-        '$testConstantKeys$validCh0',
-        'partial provisioning',
-      );
+      expectInvalid('$testConstantKeys$validCh0', 'partial provisioning');
     });
 
-    test('calibration keys are ignored when the constants never resolved', () {
-      // No board constants: the raw-only notice carries the board's state;
-      // the cal keys would convert nothing, so they parse as absent (and
-      // don't add a second warning).
-      final board = BoardCalibration.parse(validCh0, pgaGains: testGains);
-      expect(board.constantsStatus, BoardDataStatus.unprovisioned);
-      expect(board.isFactoryCalibrated, isFalse);
-      expect(board.calDataInvalid, isFalse);
+    test('calibration keys without the constant chain are orphaned data', () {
+      // No constants: the readings would convert nothing — a fragment of a
+      // bad provisioning, not an unprovisioned board (which is EMPTY).
+      expectInvalid(validCh0, 'calibration without constants');
     });
   });
 
   group('BoardCalibration cal metadata', () {
-    const doc = '''
+    const doc =
+        '''
 K3CAL1
+${'adc_fsr=1.2,nominal'}
+exc=4.53,nominal
+afe_gain=101,nominal
 cal.date=2026-08-08T01:35:40+00:00
 cal.board=calboard-fw 1.2.1
 cal.tool=board_calibration 1.0
@@ -485,8 +483,12 @@ cal.adc=1,1,1,1
 END
 ''';
 
+    ProvisionedBoardCalibration parse(String text) =>
+        BoardCalibration.parse(text, pgaGains: testGains)
+            as ProvisionedBoardCalibration;
+
     test('present keys parse; absent keys are null', () {
-      final board = BoardCalibration.parse(doc, pgaGains: testGains);
+      final board = parse(doc);
       expect(board.calBoardId, 'calboard-fw 1.2.1');
       expect(board.calTool, 'board_calibration 1.0');
       expect(board.calOrigin, 'factory');
@@ -495,10 +497,7 @@ END
       expect(board.calAdcGains, [1.0, 1.0, 1.0, 1.0]);
 
       // A document from before these keys existed parses them as absent.
-      final older = BoardCalibration.parse(
-        'cal.date=2026-07-20\n',
-        pgaGains: testGains,
-      );
+      final older = parse(testConstantKeys);
       expect(older.calBoardId, isNull);
       expect(older.calTool, isNull);
       expect(older.calOrigin, isNull);
@@ -506,56 +505,28 @@ END
       expect(older.calAdcGains, isNull);
     });
 
-    test('malformed values degrade to absent', () {
-      final board = BoardCalibration.parse(
-        'cal.temp=hot\ncal.adc=1,1\n',
-        pgaGains: testGains,
+    test('malformed numeric metadata is invalid, not absent', () {
+      expect(
+        () => parse('$testConstantKeys${'cal.temp=hot\ncal.adc=1,1\n'}'),
+        throwsFormatException,
       );
-      expect(board.calTempsC, isNull);
-      expect(board.calAdcGains, isNull);
     });
 
     test(
       'adcConfigDrifted compares cal-time gains to the runtime readback',
       () {
-        final body = '$testConstantKeys${doc.split('K3CAL1\n').last}';
-        final same = BoardCalibration.parse(body, pgaGains: const [1, 1, 1, 1]);
-        expect(same.adcConfigDrifted, isFalse);
-        final drifted = BoardCalibration.parse(
-          body,
-          pgaGains: const [32, 1, 1, 1],
-        );
-        expect(drifted.adcConfigDrifted, isTrue);
+        ProvisionedBoardCalibration gains(String text, List<double> pga) =>
+            BoardCalibration.parse(text, pgaGains: pga)
+                as ProvisionedBoardCalibration;
+        expect(gains(doc, const [1, 1, 1, 1]).adcConfigDrifted, isFalse);
+        expect(gains(doc, const [32, 1, 1, 1]).adcConfigDrifted, isTrue);
         // No cal.adc key: unknown, never a verdict.
         expect(
-          BoardCalibration.parse(
-            testConstantKeys,
-            pgaGains: testGains,
-          ).adcConfigDrifted,
+          gains(testConstantKeys, const [1, 1, 1, 1]).adcConfigDrifted,
           isNull,
         );
       },
     );
-
-    test('the cal metadata keys round-trip through serialize', () {
-      final flash = DeviceFlash.parse(doc, pgaGains: testGains);
-      final reparsed = DeviceFlash.parse(
-        flash.serialize(),
-        pgaGains: testGains,
-      );
-      expect(reparsed.board.factoryDate, flash.board.factoryDate);
-      expect(reparsed.board.calBoardId, flash.board.calBoardId);
-      expect(reparsed.board.calTool, flash.board.calTool);
-      expect(reparsed.board.calOrigin, flash.board.calOrigin);
-      expect(reparsed.board.calTempsC?.dut, flash.board.calTempsC?.dut);
-      expect(
-        reparsed.board.calTempsC?.calBoard,
-        flash.board.calTempsC?.calBoard,
-      );
-      expect(reparsed.board.calAdcGains, flash.board.calAdcGains);
-      // And none of them leak into the verbatim-courier extraLines.
-      expect(flash.extraLines, isEmpty);
-    });
   });
 
   group('LoadCellProfile', () {

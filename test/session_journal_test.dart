@@ -19,17 +19,15 @@ void main() {
     channelLabels: ['a', 'b', 'c', 'd'],
     tares: [null, 12.5, -3.25, null],
     calibration: [
-      ChannelCalibration(board: RawOnlyChannelBoard()),
-      ChannelCalibration(board: RawOnlyChannelBoard()),
-      ChannelCalibration(board: RawOnlyChannelBoard()),
-      ChannelCalibration(board: RawOnlyChannelBoard()),
+      ChannelCalibration(board: null),
+      ChannelCalibration(board: null),
+      ChannelCalibration(board: null),
+      ChannelCalibration(board: null),
     ],
     displayUnit: 'kgf',
     deviceInfo: {'model': 'dyna-1', 'fw': '1.2.3'},
     boardMeta: SessionBoardMeta(
-      calDataInvalid: false,
-      constantsStatus: BoardDataStatus.ok,
-      constantsDetail: '',
+      provisioned: true,
       provenance: {'adc_fsr': 'nominal'},
     ),
     recordedAt: '2026-08-28T14:30:12.345+02:00',
@@ -59,7 +57,7 @@ void main() {
       expect(journal.meta.displayUnit, meta.displayUnit);
       expect(journal.meta.deviceInfo, meta.deviceInfo);
       expect(journal.meta.boardMeta, isNotNull);
-      expect(journal.meta.boardMeta!.constantsStatus, BoardDataStatus.ok);
+      expect(journal.meta.boardMeta!.provisioned, isTrue);
       expect(journal.meta.recordedAt, meta.recordedAt);
       expect(journal.meta.ssnOrigin, meta.ssnOrigin);
       expect(journal.meta.visibleChannels, meta.visibleChannels);
@@ -75,10 +73,10 @@ void main() {
         channelLabels: ['a', 'b', 'c', 'd'],
         tares: [null, null, null, null],
         calibration: [
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
         ],
         displayUnit: 'mVv',
         deviceInfo: {},
@@ -214,10 +212,10 @@ void main() {
         channelLabels: ['a', 'b', 'c', 'd'],
         tares: [null, null, null, null],
         calibration: [
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
         ],
         displayUnit: 'kgf',
         deviceInfo: {'note': 'mañana'},

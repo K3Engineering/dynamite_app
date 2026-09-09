@@ -1,7 +1,5 @@
 import 'dart:typed_data';
 
-import '../models/board_calibration.dart';
-import '../models/device_flash.dart';
 import 'kvs_client.dart';
 import 'kvs_protocol.dart';
 import 'link_backend.dart';
@@ -27,8 +25,8 @@ class GattLinkBackend implements LinkBackend {
   final Future<T> Function<T>(Future<T> Function()) withFeedPaused;
 
   @override
-  Future<void> writeFlashDoc(String doc) =>
-      withFeedPaused(() => _transport.writeFlashDoc(doc));
+  Future<void> writeSlots(Map<String, String> lcKeys) =>
+      withFeedPaused(() => _transport.writeSlots(lcKeys));
 
   @override
   Future<String> readFlashDoc() => withFeedPaused(_transport.readFlashDoc);
@@ -52,21 +50,19 @@ class GattLinkBackend implements LinkBackend {
 }
 
 /// Document-level view of the device KVS: reassembles the `key=value` flash
-/// document ([DeviceFlash]) out of per-key reads, and writes documents back
-/// as per-key diffs against the last-read snapshot.
+/// document out of per-key reads, and writes load-cell slot keys back as
+/// per-key diffs against the last-read snapshot.
 ///
-/// This is the per-key engine behind `RigFlashTransport`'s whole-document
-/// contract: `RigState` and the decoder keep working on documents and never
-/// see the KVS command layer.
+/// This is the per-key engine behind `RigFlashTransport`'s slot contract:
+/// `RigState` and the decoder keep working on documents and slot maps and
+/// never see the KVS command layer.
 class KvsFlashTransport {
   KvsFlashTransport(this._client);
 
   final KvsClient _client;
 
-  /// The last-read document's keys and the folder each came from, so keys
-  /// the model doesn't know ([DeviceFlash.extraLines]) write back where
-  /// they were found.
-  final Map<String, String> _keyFolders = {};
+  /// The last-read document's keys. The write diff consults only slot keys:
+  /// the app never writes anything else (see [writeSlots]).
   Map<String, String> _snapshot = const {};
 
   /// Read every key from the Factory and User folders and reassemble the
@@ -79,7 +75,6 @@ class KvsFlashTransport {
   /// [parseFlashKv]'s last-wins.
   Future<String> readFlashDoc() async {
     final kv = <String, String>{};
-    final folders = <String, String>{};
     for (final folder in const [kvsFolderFactory, kvsFolderUser]) {
       final keys = await _client.listKeys(folder);
       for (final key in keys.keys) {
@@ -91,38 +86,41 @@ class KvsFlashTransport {
           throw StateError('KVS key "$key" vanished mid-read in $folder');
         }
         kv[key] = value;
-        folders[key] = folder;
       }
     }
-    _keyFolders
-      ..clear()
-      ..addAll(folders);
     _snapshot = kv;
     return [for (final e in kv.entries) '${e.key}=${e.value}'].join('\n');
   }
 
-  /// Write [doc] as a per-key diff against the last-read snapshot: SET the
-  /// new/changed keys, DEL the removed ones, leave untouched keys alone.
+  /// Write the load-cell slot keys [lcKeys] (`lc0.cap`, ...) as a per-key
+  /// diff against the last-read snapshot: SET the new/changed ones, DEL
+  /// slot keys the snapshot holds but [lcKeys] doesn't, leave everything
+  /// else — the board half, unknown keys — untouched. All writes go to the
+  /// User folder, where the slots live; the app never writes Factory.
   /// Throws when the device rejects any write — the caller keeps its
   /// pending edits. Without a prior read the snapshot is empty, so every
-  /// key is written.
-  Future<void> writeFlashDoc(String doc) async {
-    final kv = parseFlashKv(doc);
-    for (final e in kv.entries) {
+  /// key is written and nothing is deleted.
+  Future<void> writeSlots(Map<String, String> lcKeys) async {
+    for (final key in lcKeys.keys) {
+      if (!key.startsWith('lc')) {
+        throw ArgumentError.value(key, 'lcKeys', 'not a slot key');
+      }
+    }
+    for (final e in lcKeys.entries) {
       if (_snapshot[e.key] == e.value) continue;
-      if (!await _client.set(_folderFor(e.key), e.key, e.value)) {
+      if (!await _client.set(kvsFolderUser, e.key, e.value)) {
         throw StateError('KVS write rejected for ${e.key}');
       }
     }
     for (final key in _snapshot.keys) {
-      if (kv.containsKey(key)) continue;
-      if (!await _client.delete(_folderFor(key), key)) {
+      if (!key.startsWith('lc') || lcKeys.containsKey(key)) continue;
+      if (!await _client.delete(kvsFolderUser, key)) {
         throw StateError('KVS delete rejected for $key');
       }
     }
-    _keyFolders.removeWhere((key, _) => !kv.containsKey(key));
-    _snapshot = kv;
+    _snapshot = {..._snapshot, ...lcKeys}
+      ..removeWhere(
+        (key, _) => key.startsWith('lc') && !lcKeys.containsKey(key),
+      );
   }
-
-  String _folderFor(String key) => _keyFolders[key] ?? kvsFolderForKey(key);
 }

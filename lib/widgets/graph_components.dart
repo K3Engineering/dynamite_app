@@ -127,7 +127,7 @@ final class _ConvertedChannel {
       netMap: net,
       diffMap: diff,
       sensitivityCountsPerMvV:
-          converter.calibration.board.sensitivityCountsPerMvV,
+          converter.calibration.board?.sensitivityCountsPerMvV,
       loadCell: converter.calibration.loadCell,
     );
   }

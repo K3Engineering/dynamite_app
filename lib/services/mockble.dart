@@ -104,13 +104,15 @@ class MockBlePlatform extends UniversalBlePlatform {
   final List<String> gattOpLog = [];
 
   /// (Re)populate [kvsStore] from a `key=value` flash document, routing
-  /// keys to folders the way the app does (see [kvsFolderForKey]).
+  /// keys to folders the way the firmware layout does: slot keys in User,
+  /// everything else (board calibration, metadata) in Factory.
   void seedKvsFromDoc(String doc) {
     for (final folder in kvsStore.values) {
       folder.clear();
     }
     for (final e in parseFlashKv(doc).entries) {
-      kvsStore[kvsFolderForKey(e.key)]![e.key] = e.value;
+      final folder = e.key.startsWith('lc') ? kvsFolderUser : kvsFolderFactory;
+      kvsStore[folder]![e.key] = e.value;
     }
   }
 

@@ -20,7 +20,7 @@ const int adcCountsPerPolarity = 1 << 23;
 /// full-scale reference, AFE gain, the ADC's PGA gain, excitation voltage.
 /// Resolved from the device at connect time (flash keys + ADC register
 /// readback) — the app carries NO compiled defaults: a board without this
-/// data shows raw counts only (see [BoardDataStatus]).
+/// data shows raw counts only (see [UnprovisionedBoardCalibration]).
 class ChannelNominals {
   const ChannelNominals({
     required this.adcFsrV,
@@ -77,33 +77,6 @@ class ChannelNominals {
   }
 }
 
-/// The board-data verdict driving the raw-only degradation and its message.
-enum BoardDataStatus {
-  /// Constants resolved; electrical (and force) units convert.
-  ok,
-
-  /// No board constants in flash: the unit was never provisioned.
-  unprovisioned,
-
-  /// Some constants present but missing/malformed: a bad provisioning.
-  invalid,
-
-  /// The constants could not be read at all (transport failure).
-  unreadable,
-}
-
-/// User-facing phrases for the raw-only notice ("… — raw counts only").
-extension BoardDataStatusText on BoardDataStatus {
-  String notice(String detail) => switch (this) {
-    BoardDataStatus.ok => '',
-    BoardDataStatus.unprovisioned => 'no board data — unit not provisioned',
-    BoardDataStatus.invalid =>
-      'board data invalid${detail.isEmpty ? '' : ' ($detail)'}',
-    BoardDataStatus.unreadable =>
-      'board data not read${detail.isEmpty ? '' : ' ($detail)'}',
-  };
-}
-
 /// Board-level analog constants: the shared chain values, the per-channel
 /// PGA gains, and the provenance tags carried by the flash values
 /// (e.g. `"4.53,nominal"`).
@@ -135,47 +108,28 @@ class BoardNominals {
   );
 }
 
-/// The outcome of [resolveBoardConstants]: the chain on
-/// [BoardDataStatus.ok], else a status + human-readable detail for the
-/// raw-only notice.
-class BoardConstantsResolution {
-  const BoardConstantsResolution.ok(this.nominals)
-    : status = BoardDataStatus.ok,
-      detail = '';
-  const BoardConstantsResolution.failure(this.status, [this.detail = ''])
-    : nominals = null;
-
-  final BoardNominals? nominals;
-  final BoardDataStatus status;
-  final String detail;
-}
-
 /// Flash keys carrying the board constants (Factory namespace).
 const List<String> boardConstantKeys = ['adc_fsr', 'exc', 'afe_gain'];
 
 /// Resolve the board constants from a flash document's key=value map and the
 /// ADC's PGA readback ([pgaGains] — always present: an unreadable ADC config
-/// fails the connection upstream). All-or-nothing: every required value must
-/// be present and positive, else the whole chain degrades (the app never
-/// guesses a partial chain).
-BoardConstantsResolution resolveBoardConstants(
+/// fails the connection upstream). Null when the flash holds NONE of the
+/// constant keys: an unprovisioned board, a legal state (new or
+/// factory-reset units stream raw counts only). Throws [FormatException] on
+/// a partial or malformed set — the app never guesses a partial chain, and
+/// a bad provisioning fails the connection rather than running as a
+/// degraded instrument.
+BoardNominals? resolveBoardConstants(
   Map<String, String> kv, {
   required List<double> pgaGains,
 }) {
-  if (!boardConstantKeys.any(kv.containsKey)) {
-    return const BoardConstantsResolution.failure(
-      BoardDataStatus.unprovisioned,
-    );
-  }
+  if (!boardConstantKeys.any(kv.containsKey)) return null;
   final missing = [
     for (final k in boardConstantKeys)
       if (!kv.containsKey(k)) k,
   ];
   if (missing.isNotEmpty) {
-    return BoardConstantsResolution.failure(
-      BoardDataStatus.invalid,
-      'missing ${missing.join(', ')}',
-    );
+    throw FormatException('board constants: missing ${missing.join(', ')}');
   }
   final values = <String, double>{};
   final provenance = <String, String>{};
@@ -183,25 +137,20 @@ BoardConstantsResolution resolveBoardConstants(
     // Values may carry a provenance tag: "4.53,nominal".
     final parts = kv[key]!.split(',');
     final value = double.tryParse(parts.first.trim());
-    if (value == null || value <= 0) {
-      return BoardConstantsResolution.failure(
-        BoardDataStatus.invalid,
-        'bad $key: "${kv[key]}"',
-      );
+    if (value == null || !value.isFinite || value <= 0) {
+      throw FormatException('board constants: bad $key: "${kv[key]}"');
     }
     values[key] = value;
     if (parts.length > 1) {
       provenance[key] = parts.sublist(1).join(',').trim();
     }
   }
-  return BoardConstantsResolution.ok(
-    BoardNominals(
-      adcFsrV: values['adc_fsr']!,
-      excitationV: values['exc']!,
-      afeGain: values['afe_gain']!,
-      pgaGains: pgaGains,
-      provenance: provenance,
-    ),
+  return BoardNominals(
+    adcFsrV: values['adc_fsr']!,
+    excitationV: values['exc']!,
+    afeGain: values['afe_gain']!,
+    pgaGains: pgaGains,
+    provenance: provenance,
   );
 }
 
@@ -264,7 +213,7 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 // Board calibration (per channel, from device flash)
 // ---------------------------------------------------------------------------
 
-/// Board-side calibration data of one ADC channel, as a sealed three-state:
+/// Board-side calibration data of one ADC channel, as a sealed two-state:
 ///
 /// - [CalibratedChannelBoard]: the characterized ladder resistors and the
 ///   raw readings the device produced in each of the [kCalPointCount]
@@ -274,9 +223,10 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 ///   nonlinearity between the cal points.
 /// - [NominalChannelBoard]: no factory data; the resolved nominal chain is
 ///   the map.
-/// - [RawOnlyChannelBoard]: the board constants never resolved (see
-///   [BoardDataStatus]) — the channel shows raw counts only; every
-///   conversion reports unavailable, guarded at the unit layer.
+///
+/// Both variants convert. "No board data at all" (an unprovisioned unit,
+/// or no connect-time read yet) is NOT a variant here: it is a null
+/// `ChannelCalibration.board`, and raw counts are all that converts there.
 ///
 /// The ladder and the readings are one datum (never a
 /// characterized-rereading-over-nominal-ladder remix), and readings never
@@ -286,10 +236,8 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 sealed class ChannelBoardCalibration {
   const ChannelBoardCalibration._();
 
-  /// The channel's resolved analog chain; null only on
-  /// [RawOnlyChannelBoard] — every conversion then reports unavailable
-  /// (raw counts only), guarded at the unit layer.
-  ChannelNominals? get nominals;
+  /// The channel's resolved analog chain.
+  ChannelNominals get nominals;
 
   /// Whether the channel has factory calibration. Board-level calibration
   /// is all-or-nothing: every channel is calibrated, or none is (see
@@ -301,16 +249,14 @@ sealed class ChannelBoardCalibration {
   /// so the calibrated units never touch it. Deliberately not
   /// [ChannelNominals.excitationV]'s name: the nominal chain constant and
   /// the mV anchor are two roles that happen to resolve to the same number.
-  /// Null on a raw-only channel (conversion reports unavailable anyway).
-  double? get displayExcitationV => nominals?.excitationV;
+  double get displayExcitationV => nominals.excitationV;
 
   /// End-point sensitivity in counts per mV/V: measured on
   /// [CalibratedChannelBoard] (the chord through the two outermost cal
   /// points, which bracket a load cell's full-scale range — the slope of
   /// the conversion map where one number must stand in for it), the nominal
-  /// chain's value on [NominalChannelBoard]. Null with no resolved board
-  /// constants — nothing converts then.
-  double? get sensitivityCountsPerMvV;
+  /// chain's value on [NominalChannelBoard].
+  double get sensitivityCountsPerMvV;
 
   /// Map an absolute raw ADC reading to mV/V of excitation. Readings are
   /// absolute (offset included): net values come from subtracting the map at
@@ -364,13 +310,14 @@ sealed class ChannelBoardCalibration {
   /// anything.
   Map<String, dynamic> toJson();
 
-  /// Strict inverse of [toJson], honoring the variant structure: absent
-  /// optional keys are legal (no factory data, or no resolved nominals),
-  /// but present-but-malformed data throws [FormatException] — one half of
-  /// the ladder/readings pair without the other, readings without resolved
-  /// nominals, or values failing [channelDataIsValid]. Replay never
-  /// substitutes guessed values; the caller decides the damage policy
-  /// (the session catalog marks the session damaged).
+  /// Strict inverse of [toJson], honoring the variant structure: the
+  /// nominal chain is required (a session with no board data at all stores
+  /// a NULL board — see `ChannelCalibration.fromJson`), factory data is
+  /// optional, but present-but-malformed data throws [FormatException] —
+  /// one half of the ladder/readings pair without the other, or values
+  /// failing [channelDataIsValid]. Replay never substitutes guessed
+  /// values; the caller decides the damage policy (the session catalog
+  /// marks the session damaged).
   factory ChannelBoardCalibration.fromJson(Map<String, dynamic> json) {
     List<double>? numList(Object? v, int count, String key) {
       if (v == null) return null;
@@ -386,26 +333,20 @@ sealed class ChannelBoardCalibration {
     }
 
     final n = json['n'];
-    final nominals = n == null
-        ? null
-        : ChannelNominals.fromJson(
-            n is Map
-                ? Map<String, dynamic>.from(n)
-                : throw const FormatException('board calibration: bad n'),
-          );
+    if (n is! Map) {
+      throw const FormatException('board calibration: missing nominals');
+    }
+    final nominals = ChannelNominals.fromJson(Map<String, dynamic>.from(n));
 
     final resistors = numList(json['r'], kLadderResistorCount, 'r');
     final readings = numList(json['raw'], kCalPointCount, 'raw');
     if (resistors == null && readings == null) {
-      return nominals == null
-          ? const RawOnlyChannelBoard()
-          : NominalChannelBoard(nominals);
+      return NominalChannelBoard(nominals);
     }
-    // One half of the pair, or readings without a nominal chain, can only
-    // be a damaged snapshot — never a partial instrument.
+    // One half of the pair, or values failing the joint validity check,
+    // can only be a damaged snapshot — never a partial instrument.
     if (resistors == null ||
         readings == null ||
-        nominals == null ||
         !channelDataIsValid(resistors, readings)) {
       throw const FormatException('board calibration: invalid channel data');
     }
@@ -599,50 +540,144 @@ class NominalChannelBoard extends ChannelBoardCalibration {
   Map<String, dynamic> toJson() => {'n': nominals.toJson()};
 }
 
-/// One channel with no resolved board constants ([BoardDataStatus] says
-/// why): nothing converts but raw counts. The mV/V maps throw — the unit
-/// layer reports unavailable instead of calling them, so a call here is a
-/// usage error.
-class RawOnlyChannelBoard extends ChannelBoardCalibration {
-  const RawOnlyChannelBoard() : super._();
+/// The board half of the device flash document, sealed by provisioning:
+///
+/// - [ProvisionedBoardCalibration]: the analog-chain constants resolved —
+///   electrical (and, with load cells, force) units convert. Carries the
+///   resolved nominals, one [ChannelBoardCalibration] per ADC channel, and
+///   the `cal.*` provenance metadata.
+/// - [UnprovisionedBoardCalibration]: flash holds no board data at all —
+///   a new or factory-reset unit. The instrument streams raw counts only;
+///   there is nothing per-channel to know.
+///
+/// A middle state is NOT representable: partial or malformed board data
+/// throws at [fromKv] and the connect-time read fails the connection — a
+/// misprovisioned board is a provisioning errand, not a degraded
+/// instrument. A failed READ (transport) likewise fails the connection
+/// upstream, so no board object ever represents "couldn't read".
+sealed class BoardCalibration {
+  const BoardCalibration._();
 
-  @override
-  ChannelNominals? get nominals => null;
+  /// Parse the board-calibration keys of a `key=value` flash document
+  /// (throws like [fromKv]).
+  factory BoardCalibration.parse(
+    String text, {
+    required List<double> pgaGains,
+  }) => BoardCalibration.fromKv(parseFlashKv(text), pgaGains: pgaGains);
 
-  @override
-  bool get isFactoryCalibrated => false;
+  /// Build from an already-split key=value map (see [parseFlashKv]).
+  /// [pgaGains] is the ADC's GAIN-register readback (always present — the
+  /// config read fails the connection upstream); it completes the board
+  /// constants (see [resolveBoardConstants]).
+  ///
+  /// Throws [FormatException] on present-but-invalid board data: partial
+  /// or malformed constants, factory channel entries that fail validation,
+  /// only SOME channels carrying calibration (a factory always calibrates
+  /// all channels in one document — a partial set is corrupt flash, not a
+  /// mixed instrument), malformed numeric metadata, or orphaned board
+  /// keys on an otherwise unprovisioned unit. Absent data is legal:
+  /// no constant keys at all → [UnprovisionedBoardCalibration]; constants
+  /// without channel entries → nominal channels.
+  factory BoardCalibration.fromKv(
+    Map<String, String> kv, {
+    required List<double> pgaGains,
+  }) {
+    List<double>? parseList(String? value, int count, String key) {
+      if (value == null) return null;
+      final parts = value.split(',');
+      final parsed = [
+        for (final part in parts)
+          part.isEmpty ? null : double.tryParse(part.trim()),
+      ];
+      if (parsed.length != count ||
+          parsed.any((v) => v == null || !v.isFinite)) {
+        throw FormatException('board data: bad $key: "$value"');
+      }
+      return [for (final v in parsed) v!];
+    }
 
-  @override
-  double? get sensitivityCountsPerMvV => null;
+    final nominals = resolveBoardConstants(kv, pgaGains: pgaGains);
+    if (nominals == null) {
+      // Unprovisioned means empty of board data, not missing a few keys:
+      // an orphaned cal.*/ch* key without the constant chain is a
+      // fragment of a bad provisioning.
+      for (final key in kv.keys) {
+        if (key.startsWith('cal.') || key.startsWith('ch')) {
+          throw FormatException(
+            'board data: "$key" without the constant chain',
+          );
+        }
+      }
+      return const UnprovisionedBoardCalibration();
+    }
 
-  @override
-  double mvVFromRaw(double raw) =>
-      throw StateError('raw-only channel: no board map to convert through');
+    // Content-validated calibration per channel. Ladder and readings are
+    // one datum: a channel's entries validate together or the document
+    // is invalid — never a characterized-readings-over-nominal-ladder
+    // remix.
+    final calData = <({List<double> resistors, List<double> readings})?>[];
+    var sawAbsent = false;
+    var sawPresent = false;
+    for (int i = 0; i < kAdcChannelCount; ++i) {
+      final hasEntries = kv.containsKey('ch$i.r') || kv.containsKey('ch$i.raw');
+      if (!hasEntries) {
+        calData.add(null);
+        sawAbsent = true;
+        continue;
+      }
+      final resistors = parseList(kv['ch$i.r'], kLadderResistorCount, 'ch$i.r');
+      final readings = parseList(kv['ch$i.raw'], kCalPointCount, 'ch$i.raw');
+      if (resistors == null ||
+          readings == null ||
+          !ChannelBoardCalibration.channelDataIsValid(resistors, readings)) {
+        throw FormatException('board calibration: invalid channel data (ch$i)');
+      }
+      calData.add((resistors: resistors, readings: readings));
+      sawPresent = true;
+    }
+    if (sawPresent && sawAbsent) {
+      throw const FormatException(
+        'board calibration: only some channels calibrated',
+      );
+    }
 
-  @override
-  double rawFromMvV(double mvV) =>
-      throw StateError('raw-only channel: no board map to invert through');
-
-  @override
-  Map<String, dynamic> toJson() => const {};
+    final temps = parseList(kv['cal.temp'], 2, 'cal.temp');
+    return ProvisionedBoardCalibration(
+      channels: [
+        for (int i = 0; i < kAdcChannelCount; ++i)
+          switch (calData[i]) {
+            null => NominalChannelBoard(nominals.forChannel(i)),
+            final data => CalibratedChannelBoard(
+              resistors: data.resistors,
+              readings: data.readings,
+              nominals: nominals.forChannel(i),
+            ),
+          },
+      ],
+      nominals: nominals,
+      factoryDate: kv['cal.date'],
+      calBoardId: kv['cal.board'],
+      calTool: kv['cal.tool'],
+      calOrigin: kv['cal.origin'],
+      calTempsC: temps == null ? null : (dut: temps[0], calBoard: temps[1]),
+      calAdcGains: parseList(kv['cal.adc'], kAdcChannelCount, 'cal.adc'),
+    );
+  }
 }
 
-/// Board calibration of the whole device: one [ChannelBoardCalibration] per
-/// ADC channel, the resolved board constants ([nominals] + the verdict that
-/// produced them), plus optional factory metadata.
-class BoardCalibration {
-  BoardCalibration({
+/// A provisioned board: the resolved analog-chain constants, one
+/// [ChannelBoardCalibration] per ADC channel, and the optional factory
+/// provenance metadata.
+class ProvisionedBoardCalibration extends BoardCalibration {
+  ProvisionedBoardCalibration({
     required this.channels,
+    required this.nominals,
     this.factoryDate,
     this.calBoardId,
     this.calTool,
     this.calOrigin,
     this.calTempsC,
     this.calAdcGains,
-    this.nominals,
-    BoardDataStatus? constantsStatus,
-    this.constantsDetail = '',
-    this.calDataInvalid = false,
   }) : assert(channels.length == kAdcChannelCount),
        assert(
          channels.every((c) => c.isFactoryCalibrated) ||
@@ -650,18 +685,12 @@ class BoardCalibration {
          'calibration is uniform across channels — a mixed board is '
          'invalid flash, rejected at parse (see fromKv)',
        ),
-       constantsStatus =
-           constantsStatus ??
-           (nominals != null ? BoardDataStatus.ok : BoardDataStatus.unreadable);
+       super._();
 
   final List<ChannelBoardCalibration> channels;
 
-  /// Flash held calibration data the app refused to adopt: a channel's
-  /// entries were present but malformed, or only some channels carried
-  /// calibration. Such a board runs on the nominal chain like an
-  /// uncalibrated one — this flag is the only remaining trace (one warning
-  /// in the UI; the app does not diagnose what exactly is broken in flash).
-  final bool calDataInvalid;
+  /// The resolved board constants (see [resolveBoardConstants]).
+  final BoardNominals nominals;
 
   /// Factory calibration date string as written in flash (`cal.date`), if any.
   final String? factoryDate;
@@ -682,26 +711,14 @@ class BoardCalibration {
   /// Per-channel ADC PGA gains at calibration time (`cal.adc`), if recorded.
   final List<double>? calAdcGains;
 
-  /// The resolved board constants; null exactly when [constantsStatus] is
-  /// not [BoardDataStatus.ok].
-  final BoardNominals? nominals;
-
-  /// The board-data verdict: whether [nominals] resolved, and why not.
-  /// Drives the raw-only notice in the live UI and the unit availability
-  /// behind the Settings picker's disabled segments.
-  final BoardDataStatus constantsStatus;
-
-  /// Human-readable reason when [constantsStatus] is not ok
-  /// (e.g. "missing afe_gain").
-  final String constantsDetail;
-
   /// Whether the runtime PGA config differs from the one the calibration was
   /// taken at — a stale-calibration guard (PGA gains are the only ADC config
-  /// the runtime readback exposes). Null when either side is unknown.
+  /// the runtime readback exposes). Null when the calibration recorded no
+  /// gains (`cal.adc`).
   bool? get adcConfigDrifted {
     final atCal = calAdcGains;
-    final current = nominals?.pgaGains;
-    if (atCal == null || current == null) return null;
+    if (atCal == null) return null;
+    final current = nominals.pgaGains;
     if (atCal.length != current.length) return true;
     for (int i = 0; i < atCal.length; ++i) {
       if (atCal[i] != current[i]) return true;
@@ -710,191 +727,91 @@ class BoardCalibration {
   }
 
   /// Whether the board has factory calibration. Calibration is all-or-
-  /// nothing per board (see [fromKv]): every channel is calibrated, or none
-  /// is — a mixed board is never representable here.
+  /// nothing per board (see [BoardCalibration.fromKv]): every channel is
+  /// calibrated, or none is — a mixed board is never representable here.
   bool get isFactoryCalibrated => channels.every((c) => c.isFactoryCalibrated);
+}
 
-  /// Parse the board-calibration keys of a `key=value` flash document.
-  /// Slot (`lcN.*`) and other unknown keys are ignored. Never throws — see
-  /// [DeviceFlash.parse].
-  factory BoardCalibration.parse(
-    String text, {
-    required List<double> pgaGains,
-  }) => BoardCalibration.fromKv(parseFlashKv(text), pgaGains: pgaGains);
-
-  /// Build from an already-split key=value map (see [parseFlashKv]).
-  /// [pgaGains] is the ADC's GAIN-register readback (always present — see
-  /// [resolveBoardConstants]) — it resolves the board constants whose
-  /// verdict the result carries.
-  ///
-  /// Calibration is all-or-nothing at two levels. Channel: a channel's
-  /// ladder resistors and readings validate together or drop together —
-  /// never a characterized-readings-over-nominal-ladder remix. Board: every
-  /// channel must carry valid data or the whole board reads as uncalibrated
-  /// (a factory always calibrates all channels in one document; partial or
-  /// malformed data is invalid flash, not a mixed instrument), with
-  /// [calDataInvalid] set as the only trace. Calibration keys are only
-  /// consulted once the board constants resolved — factory readings without
-  /// a nominal chain convert nothing, so they parse as absent.
-  factory BoardCalibration.fromKv(
-    Map<String, String> kv, {
-    required List<double> pgaGains,
-  }) {
-    List<double>? parseList(String? value, int count) {
-      if (value == null) return null;
-      final parts = value.split(',').map((s) => double.tryParse(s.trim()));
-      if (parts.length != count || parts.any((v) => v == null)) return null;
-      return [for (final v in parts) v!];
-    }
-
-    /// `cal.temp` is a 2-list: (DUT board, cal board) °C.
-    ({double dut, double calBoard})? parseTemps(String? value) {
-      final pair = parseList(value, 2);
-      return pair == null ? null : (dut: pair[0], calBoard: pair[1]);
-    }
-
-    final constants = resolveBoardConstants(kv, pgaGains: pgaGains);
-    final nominals = constants.nominals;
-
-    // Content-validated calibration per channel, but only once the board
-    // constants resolved (readings never exist without nominals).
-    final calData = <({List<double> resistors, List<double> readings})?>[];
-    var sawAbsent = false;
-    var sawPresent = false;
-    var calDataInvalid = false;
-    if (nominals != null) {
-      for (int i = 0; i < kAdcChannelCount; ++i) {
-        final resistors = parseList(kv['ch$i.r'], kLadderResistorCount);
-        final readings = parseList(kv['ch$i.raw'], kCalPointCount);
-        final valid =
-            resistors != null &&
-            readings != null &&
-            ChannelBoardCalibration.channelDataIsValid(resistors, readings);
-        if (valid) {
-          calData.add((resistors: resistors, readings: readings));
-          sawPresent = true;
-        } else {
-          calData.add(null);
-          if (kv['ch$i.r'] != null || kv['ch$i.raw'] != null) {
-            sawPresent = true;
-            calDataInvalid = true;
-          } else {
-            sawAbsent = true;
-          }
-        }
-      }
-    }
-    // Partial flash (some channels calibrated, others absent entirely) is
-    // invalid data too, not a mixed instrument.
-    if (sawPresent && sawAbsent) calDataInvalid = true;
-    final adoptCal = sawPresent && !calDataInvalid;
-
-    return BoardCalibration(
-      channels: [
-        for (int i = 0; i < kAdcChannelCount; ++i)
-          switch ((nominals, adoptCal ? calData[i] : null)) {
-            (null, _) => const RawOnlyChannelBoard(),
-            (final n?, null) => NominalChannelBoard(n.forChannel(i)),
-            (final n?, final data!) => CalibratedChannelBoard(
-              resistors: data.resistors,
-              readings: data.readings,
-              nominals: n.forChannel(i),
-            ),
-          },
-      ],
-      factoryDate: kv['cal.date'],
-      calBoardId: kv['cal.board'],
-      calTool: kv['cal.tool'],
-      calOrigin: kv['cal.origin'],
-      calTempsC: parseTemps(kv['cal.temp']),
-      calAdcGains: parseList(kv['cal.adc'], kAdcChannelCount),
-      nominals: nominals,
-      constantsStatus: constants.status,
-      constantsDetail: constants.detail,
-      calDataInvalid: calDataInvalid,
-    );
-  }
+/// A board with no board data in flash at all: a new or factory-reset
+/// unit. Streams raw counts; electrical and force units report
+/// unavailable (see `resolveUnitAvailability`).
+class UnprovisionedBoardCalibration extends BoardCalibration {
+  const UnprovisionedBoardCalibration() : super._();
 }
 
 /// The board-level calibration facts a recorded session freezes next to its
 /// per-channel snapshot. [ChannelBoardCalibration.toJson] already carries the
 /// operative numbers (r/raw/n); this block carries what those numbers WERE —
-/// which calibration produced them (the `cal.*` provenance document) and
-/// under what board state (the constants verdict, [BoardCalibration.calDataInvalid]) —
-/// so a session recorded on a board with corrupt calibration flash reads
-/// differently from one recorded on a genuinely uncalibrated board.
+/// which calibration produced them (the `cal.*` provenance document) — so a
+/// session recorded on a factory-calibrated board reads differently from one
+/// recorded on nominal values or on an unprovisioned unit.
 class SessionBoardMeta {
   const SessionBoardMeta({
+    required this.provisioned,
     this.factoryDate,
     this.calBoardId,
     this.calTool,
     this.calOrigin,
     this.calTempsC,
     this.calAdcGains,
-    required this.calDataInvalid,
-    required this.constantsStatus,
-    required this.constantsDetail,
     required this.provenance,
   });
 
   /// Snapshot of a live [BoardCalibration]'s board-level state.
-  factory SessionBoardMeta.fromBoard(BoardCalibration board) =>
-      SessionBoardMeta(
-        factoryDate: board.factoryDate,
-        calBoardId: board.calBoardId,
-        calTool: board.calTool,
-        calOrigin: board.calOrigin,
-        calTempsC: board.calTempsC,
-        calAdcGains: board.calAdcGains,
-        calDataInvalid: board.calDataInvalid,
-        constantsStatus: board.constantsStatus,
-        constantsDetail: board.constantsDetail,
-        provenance: board.nominals?.provenance ?? const {},
-      );
+  factory SessionBoardMeta.fromBoard(BoardCalibration board) => switch (board) {
+    final ProvisionedBoardCalibration b => SessionBoardMeta(
+      provisioned: true,
+      factoryDate: b.factoryDate,
+      calBoardId: b.calBoardId,
+      calTool: b.calTool,
+      calOrigin: b.calOrigin,
+      calTempsC: b.calTempsC,
+      calAdcGains: b.calAdcGains,
+      provenance: b.nominals.provenance,
+    ),
+    UnprovisionedBoardCalibration() => const SessionBoardMeta(
+      provisioned: false,
+      provenance: {},
+    ),
+  };
 
-  /// See [BoardCalibration.factoryDate].
+  /// Whether the recording board was provisioned (had resolved board
+  /// constants). False freezes an unprovisioned unit's session: its
+  /// channels carry no board data (`ChannelCalibration.board` is null).
+  final bool provisioned;
+
+  /// See [ProvisionedBoardCalibration.factoryDate].
   final String? factoryDate;
 
-  /// See [BoardCalibration.calBoardId].
+  /// See [ProvisionedBoardCalibration.calBoardId].
   final String? calBoardId;
 
-  /// See [BoardCalibration.calTool].
+  /// See [ProvisionedBoardCalibration.calTool].
   final String? calTool;
 
-  /// See [BoardCalibration.calOrigin].
+  /// See [ProvisionedBoardCalibration.calOrigin].
   final String? calOrigin;
 
-  /// See [BoardCalibration.calTempsC].
+  /// See [ProvisionedBoardCalibration.calTempsC].
   final ({double dut, double calBoard})? calTempsC;
 
-  /// See [BoardCalibration.calAdcGains].
+  /// See [ProvisionedBoardCalibration.calAdcGains].
   final List<double>? calAdcGains;
 
-  /// See [BoardCalibration.calDataInvalid].
-  final bool calDataInvalid;
-
-  /// See [BoardCalibration.constantsStatus].
-  final BoardDataStatus constantsStatus;
-
-  /// See [BoardCalibration.constantsDetail].
-  final String constantsDetail;
-
   /// The flash-value provenance tags (`adc_fsr` -> `nominal`, ...); see
-  /// [BoardNominals.provenance]. Empty when the constants never resolved.
+  /// [BoardNominals.provenance]. Empty on an unprovisioned board.
   final Map<String, String> provenance;
 
   Map<String, dynamic> toJson() {
     final temps = calTempsC;
     return {
+      'provisioned': provisioned,
       'cal_date': ?factoryDate,
       'cal_board': ?calBoardId,
       'cal_tool': ?calTool,
       'cal_origin': ?calOrigin,
       'cal_temp': ?(temps == null ? null : [temps.dut, temps.calBoard]),
       'cal_adc': ?calAdcGains,
-      'cal_data_invalid': calDataInvalid,
-      'constants_status': constantsStatus.name,
-      'constants_detail': constantsDetail,
       'provenance': provenance,
     };
   }
@@ -927,20 +844,9 @@ class SessionBoardMeta {
       ];
     }
 
-    final statusName = json['constants_status'];
-    final status = statusName is String
-        ? BoardDataStatus.values.asNameMap()[statusName]
-        : null;
-    if (status == null) {
-      throw FormatException('board meta: bad constants_status: $statusName');
-    }
-    final detail = json['constants_detail'];
-    if (detail is! String) {
-      throw FormatException('board meta: bad constants_detail: $detail');
-    }
-    final invalid = json['cal_data_invalid'];
-    if (invalid is! bool) {
-      throw FormatException('board meta: bad cal_data_invalid: $invalid');
+    final provisioned = json['provisioned'];
+    if (provisioned is! bool) {
+      throw FormatException('board meta: bad provisioned: $provisioned');
     }
     final prov = json['provenance'];
     if (prov is! Map || prov.values.any((v) => v is! String)) {
@@ -948,15 +854,13 @@ class SessionBoardMeta {
     }
     final temps = numList('cal_temp', 2);
     return SessionBoardMeta(
+      provisioned: provisioned,
       factoryDate: str('cal_date'),
       calBoardId: str('cal_board'),
       calTool: str('cal_tool'),
       calOrigin: str('cal_origin'),
       calTempsC: temps == null ? null : (dut: temps[0], calBoard: temps[1]),
       calAdcGains: numList('cal_adc', kAdcChannelCount),
-      calDataInvalid: invalid,
-      constantsStatus: status,
-      constantsDetail: detail,
       provenance: {
         for (final MapEntry(key: k, value: v) in prov.entries)
           k as String: v as String,
@@ -967,9 +871,9 @@ class SessionBoardMeta {
 
 /// Split a `key=value` flash document into a map. Lines without `key=value`
 /// shape (version token, END marker, comments) are ignored, so the format
-/// can grow; values may contain `=` (split happens at the first one). The
-/// whole-document assembly (version token, END marker, verbatim unknown
-/// lines) lives in `device_flash.dart`.
+/// can grow; values may contain `=` (split happens at the first one).
+/// Parsing is line-local; [DeviceFlash] decides which recognized keys
+/// become model state and ignores the rest.
 Map<String, String> parseFlashKv(String text) {
   final kv = <String, String>{};
   for (final rawLine in text.split(RegExp(r'\r?\n'))) {

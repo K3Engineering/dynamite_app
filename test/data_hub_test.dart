@@ -23,12 +23,19 @@ void main() {
     excitationV: 4.53,
   );
 
-  /// A board whose channels all convert through the nominal chain.
-  BoardCalibration nominalBoard() => BoardCalibration(
+  /// A provisioned board whose channels all convert through the nominal
+  /// chain.
+  BoardCalibration nominalBoard() => ProvisionedBoardCalibration(
     channels: [
       for (int i = 0; i < channels; ++i)
         const NominalChannelBoard(testNominals),
     ],
+    nominals: BoardNominals(
+      adcFsrV: 1.2,
+      afeGain: 101,
+      excitationV: 4.53,
+      pgaGains: [1, 1, 1, 1],
+    ),
   );
 
   /// Nominal ladder values (test input; the model no longer substitutes
@@ -445,7 +452,7 @@ void main() {
       final hub = DataHub();
       feed(hub, frameOf(1000), 5);
 
-      expect(hub.boardDataStatus, BoardDataStatus.unreadable);
+      expect(hub.boardCalibration, isNull);
       expect(hub.currentValue(0, DisplayUnit.raw), isNotNull);
       expect(hub.currentValue(0, DisplayUnit.mVv), isNull);
       expect(hub.currentValue(0, DisplayUnit.mV), isNull);
@@ -479,7 +486,7 @@ void main() {
       // Every channel measures at half the nominal span (calibration is
       // board-uniform — a mixed calibrated/nominal board is invalid flash).
       final sp = ladderSetpointsMvV(nominalLadder);
-      final board = BoardCalibration(
+      final board = ProvisionedBoardCalibration(
         channels: [
           for (int i = 0; i < channels; ++i)
             CalibratedChannelBoard(
@@ -490,6 +497,12 @@ void main() {
               nominals: testNominals,
             ),
         ],
+        nominals: BoardNominals(
+          adcFsrV: 1.2,
+          afeGain: 101,
+          excitationV: 4.53,
+          pgaGains: [1, 1, 1, 1],
+        ),
       );
 
       hub.updateBoardCalibration(board);
@@ -523,17 +536,10 @@ void main() {
       expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
       final v1 = hub.calibrationVersion;
 
-      hub.updateBoardCalibration(
-        BoardCalibration(
-          channels: [
-            for (int i = 0; i < channels; ++i) const RawOnlyChannelBoard(),
-          ],
-          constantsStatus: BoardDataStatus.unprovisioned,
-        ),
-      );
+      hub.updateBoardCalibration(const UnprovisionedBoardCalibration());
       expect(hub.calibrationVersion, greaterThan(v1));
-      expect(hub.boardDataStatus, BoardDataStatus.unprovisioned);
-      expect(hub.calibrationFor(0).board.nominals, isNull);
+      expect(hub.boardCalibration, isA<UnprovisionedBoardCalibration>());
+      expect(hub.calibrationFor(0).board, isNull);
       expect(hub.currentValue(0, DisplayUnit.mVv), isNull);
     });
 
@@ -545,8 +551,8 @@ void main() {
 
       hub.clearBoardCalibration();
       expect(hub.calibrationVersion, greaterThan(v1));
-      expect(hub.boardDataStatus, BoardDataStatus.unreadable);
-      expect(hub.calibrationFor(0).board.nominals, isNull);
+      expect(hub.boardCalibration, isNull);
+      expect(hub.calibrationFor(0).board, isNull);
       expect(hub.currentValue(0, DisplayUnit.mVv), isNull);
 
       // A repeat clear is a no-op: no spurious cache invalidation.

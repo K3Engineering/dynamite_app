@@ -27,11 +27,17 @@ void main() {
 
   DataHub calibratedHub() => DataHub()
     ..updateBoardCalibration(
-      BoardCalibration(
+      ProvisionedBoardCalibration(
         channels: [
           for (int i = 0; i < channels; i++)
             const NominalChannelBoard(testNominals),
         ],
+        nominals: BoardNominals(
+          adcFsrV: 1.2,
+          afeGain: 101,
+          excitationV: 4.53,
+          pgaGains: const [1, 1, 1, 1],
+        ),
       ),
     );
 

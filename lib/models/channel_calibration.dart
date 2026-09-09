@@ -8,7 +8,10 @@ import 'load_cell.dart';
 class ChannelCalibration {
   const ChannelCalibration({required this.board, this.loadCell});
 
-  final ChannelBoardCalibration board;
+  /// The channel's board map; null when the board carries no data at all
+  /// (an unprovisioned unit, or no connect-time read yet) — only raw
+  /// counts convert then.
+  final ChannelBoardCalibration? board;
 
   /// Assigned load cell; null means "electrical units only" — force
   /// conversions report unavailable and the UI shows '—'.
@@ -16,22 +19,28 @@ class ChannelCalibration {
 
   /// Session-snapshot serialization.
   Map<String, dynamic> toJson() => {
-    'board': board.toJson(),
+    'board': board?.toJson(),
     'cell': ?loadCell?.toJson(),
   };
 
   /// Strict inverse of [toJson]: an absent `cell` key is legal (electrical
-  /// units only), but present-but-malformed entries throw
-  /// [FormatException] — the caller decides the damage policy (the session
-  /// catalog marks the session damaged).
+  /// units only) and a null `board` is legal (no board data — raw counts
+  /// only), but present-but-malformed entries throw [FormatException] —
+  /// the caller decides the damage policy (the session catalog marks the
+  /// session damaged).
   factory ChannelCalibration.fromJson(Map<String, dynamic> json) {
     final b = json['board'];
-    if (b is! Map) {
-      throw const FormatException('channel calibration: missing board');
-    }
     final c = json['cell'];
     return ChannelCalibration(
-      board: ChannelBoardCalibration.fromJson(Map<String, dynamic>.from(b)),
+      board: b == null
+          ? null
+          : ChannelBoardCalibration.fromJson(
+              b is Map
+                  ? Map<String, dynamic>.from(b)
+                  : throw const FormatException(
+                      'channel calibration: bad board',
+                    ),
+            ),
       loadCell: c == null
           ? null
           : LoadCellProfile.fromJson(

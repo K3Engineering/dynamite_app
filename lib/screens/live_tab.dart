@@ -578,12 +578,17 @@ class LiveStats extends StatelessWidget {
                 ),
               // The raw-only verdict: converted units show '—' above; say
               // why, once, in the same style as the load-cell hint.
-              if (hub.boardDataStatus != BoardDataStatus.ok)
+              if (switch (hub.boardCalibration) {
+                    null => 'board data not read',
+                    UnprovisionedBoardCalibration() =>
+                      'no board data — unit not provisioned',
+                    _ => null,
+                  }
+                  case final notice?)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Text(
-                    '— ${hub.boardDataStatus.notice(hub.boardDataDetail)}'
-                    ' — raw counts only',
+                    '— $notice — raw counts only',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: Theme.of(context).colorScheme.error,
                     ),

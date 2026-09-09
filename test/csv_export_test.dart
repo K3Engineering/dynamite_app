@@ -242,15 +242,13 @@ void main() {
 
     test('the board-cal provenance joins the device block as cal', () {
       const boardMeta = SessionBoardMeta(
+        provisioned: true,
         factoryDate: '2026-06-14',
         calBoardId: 'CB42 v1.0.3',
         calTool: 'calibrate v3.1',
         calOrigin: 'factory',
         calTempsC: (dut: 23.8, calBoard: 24.1),
         calAdcGains: [1, 1, 1, 1],
-        calDataInvalid: false,
-        constantsStatus: BoardDataStatus.ok,
-        constantsDetail: '',
         provenance: {'exc': 'nominal'},
       );
       final data = makeSession([
@@ -262,20 +260,18 @@ void main() {
       final meta = metadataOf(csv);
 
       expect((meta['device'] as Map)['cal'], {
+        'provisioned': true,
         'cal_date': '2026-06-14',
         'cal_board': 'CB42 v1.0.3',
         'cal_tool': 'calibrate v3.1',
         'cal_origin': 'factory',
         'cal_temp': [23.8, 24.1],
         'cal_adc': [1, 1, 1, 1],
-        'cal_data_invalid': false,
-        'constants_status': 'ok',
-        'constants_detail': '',
         'provenance': {'exc': 'nominal'},
       });
       // The human rendering reflects it too (nested one more under device).
       expect(csv, contains('#   cal:'));
-      expect(csv, contains('#     cal_data_invalid: false'));
+      expect(csv, contains('#     provisioned: true'));
       expect(csv, contains("#       exc: 'nominal'"));
     });
 
@@ -505,10 +501,8 @@ void main() {
         ],
         calibrations: cals,
         boardMeta: const SessionBoardMeta(
+          provisioned: true,
           factoryDate: '2026-06-14',
-          calDataInvalid: false,
-          constantsStatus: BoardDataStatus.ok,
-          constantsDetail: '',
           provenance: {},
         ),
       );

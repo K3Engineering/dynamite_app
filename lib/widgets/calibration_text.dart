@@ -67,25 +67,30 @@ String? calibrationAge(String? isoDate) {
 /// what the app holds (a failed connect-time read, a document without
 /// usable factory data) — never a verdict on the device.
 String boardCalibrationStatusLine(BoardCalibration? board) {
-  if (board == null) return 'Could not read calibration data';
-  if (!board.isFactoryCalibrated) {
-    return board.calDataInvalid
-        ? 'Calibration data in flash invalid'
-        : 'Missing factory calibration';
+  switch (board) {
+    case null:
+      return 'Could not read calibration data';
+    case UnprovisionedBoardCalibration():
+      return 'Missing factory calibration';
+    case final ProvisionedBoardCalibration b:
+      if (!b.isFactoryCalibrated) return 'Missing factory calibration';
+      final age = calibrationAge(b.factoryDate);
+      return [
+        'Calibrated',
+        ?b.factoryDate,
+        if (age != null) '($age)',
+      ].join(' ');
   }
-  final age = calibrationAge(board.factoryDate);
-  return [
-    'Calibrated',
-    ?board.factoryDate,
-    if (age != null) '($age)',
-  ].join(' ');
 }
 
 /// The plain-text calibration report (support-email / paste-anywhere
 /// artifact): mirrors the on-screen content, plus the 5-point tables.
 /// [deviceLabel] names the document's owner for a human reader — the device
 /// name when known, else the device id.
-String calibrationReport(BoardCalibration board, String deviceLabel) {
+String calibrationReport(
+  ProvisionedBoardCalibration board,
+  String deviceLabel,
+) {
   final b = StringBuffer('Dynamite Sampler — board calibration report\n');
   b.writeln('Device: $deviceLabel');
   if (board.factoryDate != null) b.writeln('Calibrated: ${board.factoryDate}');
@@ -98,13 +103,13 @@ String calibrationReport(BoardCalibration board, String deviceLabel) {
   ];
   if (provenance.isNotEmpty) b.writeln('Provenance: ${provenance.join(' · ')}');
   final n = board.nominals;
-  if (n != null) {
-    b.writeln(
-      'Chain: FSR ${n.adcFsrV} V · AFE ${n.afeGain}× '
-      '· PGA ${n.pgaGains.map((g) => '$g×').join('/')} · EXC ${n.excitationV} V',
-    );
-  }
-  b.writeln('Trust: $kTrustLineCalibrated');
+  b.writeln(
+    'Chain: FSR ${n.adcFsrV} V · AFE ${n.afeGain}× '
+    '· PGA ${n.pgaGains.map((g) => '$g×').join('/')} · EXC ${n.excitationV} V',
+  );
+  b.writeln(
+    'Trust: ${board.isFactoryCalibrated ? kTrustLineCalibrated : kTrustLineUncalibrated}',
+  );
   if (board.isFactoryCalibrated) {
     b.writeln('Correction: $kCorrectionApplied');
   }
@@ -123,11 +128,6 @@ String calibrationReport(BoardCalibration board, String deviceLabel) {
   );
   if (board.adcConfigDrifted == true) {
     b.writeln('WARNING: ADC gain configuration changed since calibration.');
-  }
-  if (board.calDataInvalid) {
-    b.writeln(
-      'WARNING: Calibration data in flash is invalid — nominal values in use.',
-    );
   }
   for (int i = 0; i < board.channels.length; ++i) {
     final ch = board.channels[i];

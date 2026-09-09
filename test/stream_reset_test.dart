@@ -104,12 +104,11 @@ void main() {
           pgaGains: const [32, 32, 32, 32],
         ),
       );
-      expect(hub.boardDataStatus, BoardDataStatus.ok);
+      expect(hub.boardCalibration, isA<ProvisionedBoardCalibration>());
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(seconds: 4));
       expect(hub.boardCalibration, isNull);
-      expect(hub.boardDataStatus, BoardDataStatus.unreadable);
 
       teardown();
     });

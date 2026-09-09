@@ -9,6 +9,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import '../models/app_meta.dart';
+import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
 import '../models/channel_converter.dart';
 import '../models/display_unit.dart';
@@ -230,22 +231,21 @@ Map<String, Object?> _metadata(
     'device': {
       ...device,
       'afe': {
-        'adc_ref_v': data.calibrationFor(0).board.nominals?.adcFsrV,
-        'front_end_gain': data.calibrationFor(0).board.nominals?.afeGain,
+        'adc_ref_v': data.calibrationFor(0).board?.nominals.adcFsrV,
+        'front_end_gain': data.calibrationFor(0).board?.nominals.afeGain,
         'adc_gain': [
           for (int ch = 0; ch < n; ch++)
-            data.calibrationFor(ch).board.nominals?.pgaGain,
+            data.calibrationFor(ch).board?.nominals.pgaGain,
         ],
         // The excitation the mV columns are scaled by (the mV anchor):
         // nominal until flash carries a characterized value — reproducing
         // an mV column outside the app needs exactly this number, and it
         // lives nowhere else in the file for a session without board_cal.
-        'excitation_v': data.calibrationFor(0).board.displayExcitationV,
+        'excitation_v': data.calibrationFor(0).board?.displayExcitationV,
       },
-      // Board-cal provenance (SessionBoardMeta.toJson): the cal.* document,
-      // the board-state verdicts (cal_data_invalid, constants status), and
-      // the per-constant provenance tags. Null for a session recorded with
-      // no board data resolved.
+      // Board-cal provenance (SessionBoardMeta.toJson): the cal.* document
+      // and the per-constant provenance tags. Null for a session recorded
+      // with no board data resolved.
       'cal': data.boardMeta?.toJson(),
     },
     'channels': [
@@ -341,7 +341,7 @@ Map<String, Object?> _channelMetadata(ChannelCalibration cal, double? tareRaw) {
             'sensitivity_mv_v': cell.sensitivityMvV,
           },
     'tare_raw': tareRaw,
-    'board_cal': board.isFactoryCalibrated ? board.toJson() : null,
+    'board_cal': board is CalibratedChannelBoard ? board.toJson() : null,
   };
 }
 

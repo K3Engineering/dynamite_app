@@ -17,21 +17,20 @@ const String kvsCmdDelete = 'DEL';
 const String kvsCmdIndex = 'IDX';
 
 /// Factory information, not factory-resettable: the board calibration.
-/// (`DynaPersistent` partition, `Factory` namespace.)
+/// (`DynaPersistent` partition, `Factory` namespace.) The app NEVER writes
+/// this folder — the board half of the flash document is read-only to it
+/// (factory tooling owns those keys): the only writes the app issues are
+/// slot keys in User and the device name in Settings, both with folder
+/// literals at their call sites.
 const String kvsFolderFactory = 'F';
 
-/// User information, not factory-resettable: the load cell data.
+/// User information, not factory-resettable: the load cell data — the one
+/// document half the app writes.
 /// (`DynaPersistent` partition, `User` namespace.)
 const String kvsFolderUser = 'U';
 
 /// Settings, factory-resettable: device name, gain.
 const String kvsFolderSettings = 'S';
-
-/// The folder a flash-document key lives in: load cell keys in User, board
-/// calibration and metadata in Factory. (Settings holds name/gain — never
-/// document keys.)
-String kvsFolderForKey(String key) =>
-    key.startsWith('lc') ? kvsFolderUser : kvsFolderFactory;
 
 /// The Settings-namespace key holding the user-assigned device name (value
 /// grammar: docs/flash-schema-v1.md — enforced by `isValidDeviceName` in
@@ -63,22 +62,7 @@ String encodeKvsGet(String folder, String key) {
   return '$kvsCmdGet$folder$key';
 }
 
-/// The app never writes the Factory partition (board calibration is
-/// read-only to it — factory tooling owns those keys). This is a core
-/// assumption the document-diff saver currently satisfies only implicitly,
-/// so every SET/DEL frame throws on it here at the choke point.
-void _checkWritableFolder(String folder) {
-  if (folder == kvsFolderFactory) {
-    throw ArgumentError.value(
-      folder,
-      'folder',
-      'the app never writes the Factory partition',
-    );
-  }
-}
-
 String encodeKvsSet(String folder, String key, String value) {
-  _checkWritableFolder(folder);
   _checkKey(key);
   if (value.isEmpty || value.length > kvsMaxValueLength) {
     throw ArgumentError.value(
@@ -91,7 +75,6 @@ String encodeKvsSet(String folder, String key, String value) {
 }
 
 String encodeKvsDelete(String folder, String key) {
-  _checkWritableFolder(folder);
   _checkKey(key);
   return '$kvsCmdDelete$folder$key';
 }

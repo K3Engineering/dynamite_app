@@ -1,4 +1,3 @@
-import 'board_calibration.dart';
 import 'channel_calibration.dart';
 import 'display_unit.dart';
 
@@ -28,16 +27,15 @@ class ChannelConverter {
   /// reading), so "untared" is null, never 0.
   final double? tare;
 
-  ChannelBoardCalibration get _board => calibration.board;
-
   /// The multiplier applied to net mV/V for [unit]: force units fold in
   /// the cell's kgf-per-mV/V, mV folds in the excitation anchor, mV/V is
-  /// unity. Null when the unit is unavailable on the channel: a force unit
-  /// with no load cell assigned, or ANY unit when the board's constants
-  /// never resolved (raw counts only). Raw never consults this.
+  /// unity. Null when the unit is unavailable on the channel: any converted
+  /// unit with no board data, or a force unit with no load cell assigned.
+  /// Raw never consults this.
   double? _scalePerMvV(DisplayUnit unit) {
-    final excitationV = _board.displayExcitationV;
-    if (excitationV == null) return null;
+    final board = calibration.board;
+    if (board == null) return null;
+    final excitationV = board.displayExcitationV;
     final f = unit.kgfFactor;
     if (f != null) {
       final cell = calibration.loadCell;
@@ -49,12 +47,13 @@ class ChannelConverter {
   /// The absolute-raw -> display-unit map, net of tare (see the class doc).
   /// Monotone nondecreasing. A null tare means NO offset: the map itself
   /// (zero is the map's own mV/V zero point, not zero counts). Null when
-  /// unavailable: a force unit on a channel with no assigned load cell.
+  /// unavailable: a force unit on a channel with no assigned load cell, or
+  /// any converted unit with no board data.
   double Function(double raw)? netMap(DisplayUnit unit) {
     if (unit == DisplayUnit.raw) return (raw) => raw - (tare ?? 0);
+    final board = calibration.board;
     final scale = _scalePerMvV(unit);
-    if (scale == null) return null;
-    final board = _board;
+    if (board == null || scale == null) return null;
     // The tare-side map value is loop-invariant; the closure runs per
     // sample on the hot paths (graph reduction, stats).
     final tareMvV = tare == null ? 0.0 : board.mvVFromRaw(tare!);
@@ -67,9 +66,9 @@ class ChannelConverter {
   /// exactly when [netMap] is.
   double Function(double raw)? grossMap(DisplayUnit unit) {
     if (unit == DisplayUnit.raw) return (raw) => raw;
+    final board = calibration.board;
     final scale = _scalePerMvV(unit);
-    if (scale == null) return null;
-    final board = _board;
+    if (board == null || scale == null) return null;
     return (raw) => board.mvVFromRaw(raw) * scale;
   }
 
@@ -90,9 +89,10 @@ class ChannelConverter {
   /// [netMap] is.
   double? countQuantum(DisplayUnit unit) {
     if (unit == DisplayUnit.raw) return 1.0;
+    final board = calibration.board;
     final scale = _scalePerMvV(unit);
-    final span = _board.sensitivityCountsPerMvV;
-    return scale == null || span == null ? null : scale / span;
+    if (board == null || scale == null) return null;
+    return scale / board.sensitivityCountsPerMvV;
   }
 
   /// One-shot [netMap] call.
@@ -117,8 +117,9 @@ class ChannelConverter {
   /// is.
   double? rawAtGross(DisplayUnit unit, double value) {
     if (unit == DisplayUnit.raw) return value;
+    final board = calibration.board;
     final scale = _scalePerMvV(unit);
-    if (scale == null) return null;
-    return _board.rawFromMvV(value / scale);
+    if (board == null || scale == null) return null;
+    return board.rawFromMvV(value / scale);
   }
 }

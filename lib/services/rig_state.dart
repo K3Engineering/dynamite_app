@@ -46,9 +46,8 @@ class RigState extends ChangeNotifier {
 
   /// The flash document as last read from the connected device (board +
   /// slots). Null before this connection's first successful read — and
-  /// save is IMPOSSIBLE without it: the board keys round-trip verbatim
-  /// through a save, so writing without a prior read would stamp nominal
-  /// board values over real factory data. Also null after
+  /// save is impossible without it: edits buffer from the read state, so
+  /// there is nothing to write until a read lands. Also null after
   /// [onLinkDropped]: the document is a claim about the device's current
   /// contents, which a dead link cannot back.
   DeviceFlash? _lastFlash;
@@ -170,10 +169,10 @@ class RigState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Write the edited slots to the device, alongside the board keys
-  /// exactly as read, then verify with a read-back. Returns false when
-  /// the write or the verification fails — pending edits are kept so the
-  /// user can retry or revert.
+  /// Write the edited slots to the device (slot keys only — the board
+  /// half is read-only to the app), then verify with a read-back.
+  /// Returns false when the write or the verification fails — pending
+  /// edits are kept so the user can retry or revert.
   Future<bool> saveToDevice() async {
     final edited = _pendingEdits;
     final flash = _lastFlash;
@@ -182,13 +181,8 @@ class RigState extends ChangeNotifier {
     // die with the link — so the document provably belongs to the device
     // this write goes to.
     assert(flash != null, 'pending edits imply a read flash document');
-    final doc = DeviceFlash(
-      board: flash!.board,
-      slots: edited,
-      extraLines: flash.extraLines,
-    ).serialize();
     try {
-      await _transport.writeFlashDoc(doc);
+      await _transport.writeSlots(edited.toKv());
     } catch (_) {
       return false;
     }
@@ -196,17 +190,14 @@ class RigState extends ChangeNotifier {
     // not a fact (firmware may reject, truncate or normalize the write).
     // Committing without checking would let app state diverge from the
     // device silently — and there is no change detection to catch it.
-    final String readBack;
+    // The slot parse is strict ([RigSlots.fromKv]): a mangled write-back
+    // reads as garbage there and fails the save like a failed read.
+    final RigSlots verified;
     try {
-      readBack = await _transport.readFlashDoc();
+      verified = RigSlots.fromKv(parseFlashKv(await _transport.readFlashDoc()));
     } catch (_) {
       return false;
     }
-    // Verify against the slot keys only — the write can't have changed
-    // board keys, so a board re-parse would add nothing while resolving
-    // constants to nominal (the read-back isn't accompanied by the ADC's
-    // PGA readback).
-    final verified = RigSlots.fromKv(parseFlashKv(readBack));
     if (!_sameCells(verified, edited)) return false;
     // Commit only if nothing moved under the in-flight write: a revert, a
     // fresh edit, or a link drop means the newer state wins. (The UI also
@@ -216,12 +207,8 @@ class RigState extends ChangeNotifier {
     }
     // The device provably holds these slots: adopt the read-back's slot
     // list (any normalization the device applied is reflected), keep the
-    // read-time board and extra lines.
-    _lastFlash = DeviceFlash(
-      board: flash.board,
-      slots: verified,
-      extraLines: flash.extraLines,
-    );
+    // read-time board.
+    _lastFlash = DeviceFlash(board: flash!.board, slots: verified);
     _pendingEdits = null;
     notifyListeners();
     return true;

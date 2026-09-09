@@ -10,6 +10,7 @@ import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
 import 'package:dynamite_app/models/bt_scan.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
@@ -38,6 +39,14 @@ import 'package:dynamite_app/services/mockble.dart';
 /// time, where a queued command's closure (created in a dead fake zone) never
 /// completes — wedging the queue for every later test.
 void main() {
+  /// The fixture rig's slot keys with cap replaced — the complete set a
+  /// save submits (writeSlots owns every lc key; a partial map would
+  /// delete the others).
+  Map<String, String> slotsWith({required String cap}) => DeviceFlash.parse(
+    demoBoardCalibrationDoc,
+    pgaGains: const [1, 1, 1, 1],
+  ).slots.toKv()..['lc0.cap'] = cap;
+
   // The mock device that advertises the ADC service (see _generateServices).
   const deviceId = '2';
 
@@ -821,9 +830,8 @@ void main() {
       async.elapse(const Duration(seconds: 4));
 
       // An EMPTY KVS is a working channel with no data, not a failure: the
-      // connect succeeds and the flash read serves an empty document, which
-      // the decoder turns into the "unit not provisioned" nominal-values
-      // mode (dev boards stay usable).
+      // connect succeeds and the flash read serves an empty document —
+      // the unprovisioned mode, raw counts only (dev boards stay usable).
       expect(link.isStreaming, isTrue);
       expect(servedDoc, '');
       expect(seen, isEmpty);
@@ -844,13 +852,11 @@ void main() {
       async.elapse(const Duration(seconds: 4));
       expect(link.isStreaming, isTrue);
 
-      final doc = demoBoardCalibrationDoc.replaceFirst(
-        'lc0.cap=200',
-        'lc0.cap=250',
-      );
       Object? error;
       unawaited(
-        link.writeFlashDoc(doc).then((_) {}, onError: (Object e) => error = e),
+        link
+            .writeSlots(slotsWith(cap: '250'))
+            .then((_) {}, onError: (Object e) => error = e),
       );
       async.elapse(const Duration(seconds: 1));
 
@@ -886,15 +892,11 @@ void main() {
       );
       MockBlePlatform.instance.gattOpLog.clear();
 
-      final doc = demoBoardCalibrationDoc.replaceFirst(
-        'lc0.cap=200',
-        'lc0.cap=250',
-      );
       Object? writeError;
       Object? nameError;
       unawaited(
         link
-            .writeFlashDoc(doc)
+            .writeSlots(slotsWith(cap: '250'))
             .then((_) {}, onError: (Object e) => writeError = e),
       );
       unawaited(
@@ -940,13 +942,11 @@ void main() {
       expect(link.isStreaming, isTrue);
 
       MockBlePlatform.instance.failFeedSubscribe = true;
-      final doc = demoBoardCalibrationDoc.replaceFirst(
-        'lc0.cap=200',
-        'lc0.cap=250',
-      );
       Object? error;
       unawaited(
-        link.writeFlashDoc(doc).then((_) {}, onError: (Object e) => error = e),
+        link
+            .writeSlots(slotsWith(cap: '250'))
+            .then((_) {}, onError: (Object e) => error = e),
       );
       async.elapse(const Duration(seconds: 1));
 

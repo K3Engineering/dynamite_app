@@ -206,7 +206,7 @@ class _FakeTransport implements RigFlashTransport {
   @override
   String get connectedDeviceName => 'Bench unit';
   @override
-  Future<void> writeFlashDoc(String doc) async {}
+  Future<void> writeSlots(Map<String, String> lcKeys) async {}
   @override
   Future<String> readFlashDoc() async => throw StateError('unused');
 }

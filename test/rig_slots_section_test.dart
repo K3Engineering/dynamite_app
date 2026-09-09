@@ -17,8 +17,6 @@ import 'package:dynamite_app/widgets/rig_slots_section.dart';
 /// section a real [RigState] (fake transport) with a flash doc already
 /// read. Save behavior itself is covered in rig_state_test.dart.
 class _FakeTransport implements RigFlashTransport {
-  String? lastWrittenDoc;
-
   @override
   String get connectedDeviceId => 'dev1';
 
@@ -26,12 +24,10 @@ class _FakeTransport implements RigFlashTransport {
   String get connectedDeviceName => 'Bench unit';
 
   @override
-  Future<void> writeFlashDoc(String doc) async {
-    lastWrittenDoc = doc;
-  }
+  Future<void> writeSlots(Map<String, String> lcKeys) async {}
 
   @override
-  Future<String> readFlashDoc() async => lastWrittenDoc!;
+  Future<String> readFlashDoc() async => throw StateError('unused');
 }
 
 void main() {

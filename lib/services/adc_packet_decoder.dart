@@ -79,16 +79,17 @@ class AdcPacketDecoder {
   void Function(DeviceFlash flash)? onDeviceFlash;
 
   /// Parse one flash document read: the `key=value` document the link layer
-  /// reassembled from the device KVS ([DeviceFlash.parse], tolerant of
-  /// missing keys), plus the ADC's per-channel PGA gains from the config
-  /// readback ([adcGains] — non-null: an unreadable config fails the
-  /// connection upstream, so this layer never resolves constants without
-  /// them). The board calibration feeds the sink; the full document (slots
-  /// included) goes to [onDeviceFlash]. Partial calibration reads degrade
-  /// to an uncalibrated board (nominal chain) and empty slots — see
-  /// `BoardCalibration.fromKv`. Undecodable bytes never reach here: the KVS
-  /// layer decodes strictly and a corrupt payload fails the connection
-  /// (see `parseKvsResponse`); [data] is a re-encoded Dart string, always
+  /// reassembled from the device KVS ([DeviceFlash.parse]), plus the ADC's
+  /// per-channel PGA gains from the config readback ([adcGains] — non-null:
+  /// an unreadable config fails the connection upstream, so this layer
+  /// never resolves constants without them). The board calibration feeds
+  /// the sink; the full document (slots included) goes to [onDeviceFlash].
+  /// The parse is strict: present-but-invalid content throws here, inside
+  /// the link's post-connect setup, and fails the connection like an
+  /// unreadable ADC config — an EMPTY document is legal (an unprovisioned
+  /// unit). Undecodable bytes never reach here: the KVS layer decodes
+  /// strictly and a corrupt payload fails the connection (see
+  /// `parseKvsResponse`); [data] is a re-encoded Dart string, always
   /// valid UTF-8.
   void onCalibrationPacket(Uint8List data, List<double> adcGains) {
     final flash = DeviceFlash.parse(utf8.decode(data), pgaGains: adcGains);

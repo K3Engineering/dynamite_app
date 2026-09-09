@@ -16,33 +16,46 @@ class CalibrationView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final board = this.board;
-    if (board == null) {
-      return Card(
-        child: ListTile(
-          leading: Icon(
-            Icons.phonelink_erase,
-            color: Theme.of(context).colorScheme.outline,
+    switch (board) {
+      case null:
+        return Card(
+          child: ListTile(
+            leading: Icon(
+              Icons.phonelink_erase,
+              color: Theme.of(context).colorScheme.outline,
+            ),
+            title: const Text('Could not read calibration data'),
+            subtitle: const Text(
+              'Calibration is read from the device at connect time — '
+              'reconnect to retry.',
+            ),
           ),
-          title: const Text('Could not read calibration data'),
-          subtitle: const Text(
-            'Calibration is read from the device at connect time — '
-            'reconnect to retry.',
+        );
+      case UnprovisionedBoardCalibration():
+        // A unit with no board data at all: nothing to show per channel.
+        return Card(
+          child: ListTile(
+            leading: Icon(
+              Icons.error_outline,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            title: const Text('no board data — unit not provisioned'),
+            subtitle: const Text('raw counts only.'),
           ),
-        ),
-      );
+        );
+      case final ProvisionedBoardCalibration board:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _BoardCard(board: board),
+            const SizedBox(height: 8),
+            for (int i = 0; i < board.channels.length; i++) ...[
+              _ChannelCalCard(index: i, channel: board.channels[i]),
+              const SizedBox(height: 8),
+            ],
+          ],
+        );
     }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _BoardCard(board: board),
-        const SizedBox(height: 8),
-        for (int i = 0; i < board.channels.length; i++) ...[
-          _ChannelCalCard(index: i, channel: board.channels[i]),
-          const SizedBox(height: 8),
-        ],
-      ],
-    );
   }
 }
 
@@ -51,7 +64,7 @@ class CalibrationView extends StatelessWidget {
 class _BoardCard extends StatelessWidget {
   const _BoardCard({required this.board});
 
-  final BoardCalibration board;
+  final ProvisionedBoardCalibration board;
 
   @override
   Widget build(BuildContext context) {
@@ -93,15 +106,6 @@ class _BoardCard extends StatelessWidget {
               const SizedBox(height: 4),
               Text(kCorrectionApplied, style: theme.textTheme.bodySmall),
             ],
-            if (board.calDataInvalid) ...[
-              const SizedBox(height: 4),
-              Text(
-                'Calibration data in flash is invalid — nominal values in use.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.error,
-                ),
-              ),
-            ],
             if (board.adcConfigDrifted == true) ...[
               const SizedBox(height: 4),
               Text(
@@ -122,23 +126,14 @@ class _BoardCard extends StatelessWidget {
               ),
             ],
             const Divider(height: 24),
-            if (nominals != null)
-              Text(
-                'Chain: FSR ${nominals.adcFsrV} V'
-                ' · AFE ${nominals.afeGain}×'
-                ' · PGA ${nominals.pgaGains.map((g) => '$g×').join('/')}'
-                ' · EXC ${nominals.excitationV} V'
-                '${nominals.provenance.isEmpty ? '' : ' (${nominals.provenance.values.toSet().join(', ')})'}',
-                style: theme.textTheme.bodySmall,
-              )
-            else
-              Text(
-                '${board.constantsStatus.notice(board.constantsDetail)}'
-                ' — raw counts only.',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.error,
-                ),
-              ),
+            Text(
+              'Chain: FSR ${nominals.adcFsrV} V'
+              ' · AFE ${nominals.afeGain}×'
+              ' · PGA ${nominals.pgaGains.map((g) => '$g×').join('/')}'
+              ' · EXC ${nominals.excitationV} V'
+              '${nominals.provenance.isEmpty ? '' : ' (${nominals.provenance.values.toSet().join(', ')})'}',
+              style: theme.textTheme.bodySmall,
+            ),
             const SizedBox(height: 8),
             Text(kCorrectionNote, style: theme.textTheme.bodySmall),
             const SizedBox(height: 4),
@@ -194,7 +189,6 @@ class _ChannelCalCard extends StatelessWidget {
             _row('Source', switch (channel) {
               CalibratedChannelBoard() => 'Factory',
               NominalChannelBoard() => 'Nominal fallback',
-              RawOnlyChannelBoard() => 'Unavailable (no board constants)',
             }),
             if (channel case final CalibratedChannelBoard c) ...[
               _row('Zero offset', fmtUvV(c.zeroOffsetUvV)),

@@ -11,9 +11,11 @@ import '../models/device_info.dart';
 /// never finishes connecting (see `BleLinkManager`), so a backend on an
 /// established link is always usable.
 abstract interface class LinkBackend {
-  /// Write a serialized `DeviceFlash` document.
+  /// Write the load-cell slot keys (`lc0.cap`, ...): the only keys the app
+  /// owns on the device. The backend SETs/DELs slot keys and leaves every
+  /// other key — the factory board half, unknown keys — untouched.
   /// Throws on failure — the caller keeps its pending edits.
-  Future<void> writeFlashDoc(String doc);
+  Future<void> writeSlots(Map<String, String> lcKeys);
 
   /// Read the flash document (connect-time load, save verification).
   /// Empty when the device holds no keys (an unprovisioned unit).
