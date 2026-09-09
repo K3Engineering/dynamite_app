@@ -237,8 +237,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// [_SetupToken]). Bumped on every connect request, disconnect request, and
   /// teardown via [_supersedeSetupPasses]; async setup code captures a token
   /// and re-checks it after each `await`, bailing out silently when
-  /// superseded. This is what stops the "furious clicking" races from
-  /// corrupting link state or spamming toasts.
+  /// superseded, so rapid connect/disconnect clicks can't corrupt link state
+  /// or spam toasts.
   int _setupEpoch = 0;
 
   /// Issue a cancellation token for a new setup pass over the current epoch.
@@ -551,8 +551,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// Run [body] with the ADC feed subscription paused: firmware rejects KVS
   /// commands while the feed's subscription holds the device lock, so doc
   /// writes (and the verifying re-read) briefly unsubscribe, then
-  /// resubscribe. The feed's counter jump on resume surfaces as an honest
-  /// gap via the decoder's continuity check. When the feed isn't active
+  /// resubscribe. The feed's counter jump on resume surfaces as a gap via
+  /// the decoder's continuity check. When the feed isn't active
   /// (mid setup) [body] just runs. Handed to the GATT backend, the only
   /// caller.
   Future<T> _withFeedPaused<T>(Future<T> Function() body) {
@@ -757,7 +757,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // shorten the window (no pre-commitment — the picker may be cancelled,
     // and only a successful pick is settle evidence; see
     // [_connectPickedWebDevice]). A mid-teardown device simply doesn't appear
-    // in the picker on web, so the scan is the honest answer on its own.
+    // in the picker on web.
     // Guard before any destructive clears: if we can't/shouldn't start a scan,
     // don't wipe the existing device list (which would leave the UI showing an
     // empty list with no picker having opened).
@@ -1054,16 +1054,15 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// discover services…") or time out via the command queue.
   Future<void> _runPostConnectSetup(_SetupToken token, String deviceId) async {
     _link.deviceId = deviceId;
-    _link.state = BtLinkState.connected; // "Setting up…" until subscribing.
+    _link.state = BtLinkState.connected;
 
     // Advertised names are optional; fall back to the id so the UI always
     // has something to show.
     final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
     _link.name = device?.name ?? deviceId;
 
-    // Reflect "Setting up…" in the UI immediately, BEFORE the awaited setup
-    // work below. Otherwise the label stays on "Connecting…" until discovery
-    // finishes (and never updates at all if discovery throws).
+    // Notify before the awaited setup work: discovery may throw, and the
+    // state change must land regardless.
     notifyListeners();
 
     try {
@@ -1174,8 +1173,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
   Future<void> connectToDemoDevice() async {
     final demo = _demo;
-    // Guarded structurally, not visibly: the demo row's Connect is always
-    // wired (see main), so a null [_demo] is a test-harness artifact.
+    // The demo row's Connect is always wired (see main), so a null [_demo]
+    // is a test-harness artifact.
     if (demo == null) {
       throw StateError('connectToDemoDevice with no simulated link wired');
     }
@@ -1328,13 +1327,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _link.state = BtLinkState.disconnecting;
     notifyListeners();
 
-    // Option B: lean on the package's own disconnect() instead of a parallel
-    // safety Timer. UniversalBle.disconnect() sets up a completer over its
-    // connection-event stream, applies [disconnectTimeout], and — even when the
-    // device is already gone — calls updateConnection(deviceId, false), which
-    // drives our [_onConnectionChange] handler. That handler is the single place
-    // the link is reset to idle, so on a clean disconnect we simply await here
-    // and the callback does the work.
+    // No parallel safety Timer: UniversalBle.disconnect() sets up a completer
+    // over its connection-event stream, applies [disconnectTimeout], and — even
+    // when the device is already gone — calls updateConnection(deviceId, false),
+    // which drives our [_onConnectionChange] handler. That handler is the single
+    // place the link is reset to idle, so on a clean disconnect we simply await
+    // here and the callback does the work.
     //
     // The returned future is opaque (disconnect() swallows its own errors), so
     // it can't tell us clean-vs-timeout. After it resolves we do one cheap

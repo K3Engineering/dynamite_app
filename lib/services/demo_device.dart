@@ -6,9 +6,8 @@ import 'demo_calibration.dart';
 import 'demo_signal_source.dart';
 import 'link_backend.dart';
 
-/// The simulated demo device: the nicest-possible hardware — a stable
-/// synthetic feed, factory calibration, and a fully working settings round
-/// trip through memory — for trying the app without physical hardware.
+/// The simulated demo device: a synthetic feed, factory calibration, and an
+/// in-memory settings round trip, for running the app without hardware.
 /// Implements the manager's link-backend contract directly (see
 /// [SimulatedLink]); constructed and wired by the composition root.
 class DemoDevice implements SimulatedLink {

@@ -577,8 +577,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     return ([]);
   }
 
-  /// Generate [count] deterministic multi-channel frames so the mock feed
-  /// looks like real data when no MockData.txt is present; amplitudes stay
+  /// Generate [count] deterministic multi-channel frames; amplitudes stay
   /// well inside the signed 24-bit range.
   static List<Uint8List> _generateSyntheticFrames(int count) {
     const amp0 = 4000000;

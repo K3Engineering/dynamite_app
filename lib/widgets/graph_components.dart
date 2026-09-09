@@ -1225,9 +1225,6 @@ void _drawMissingDataHatching(
 /// of the buffer so a continuous primitive (triangle strip or polyline) is not
 /// broken across flushes. [drawThreshold] is the minimum filled-float count
 /// required before a flush actually emits anything.
-///
-/// NOTE: this batching only exists for the web stack limit; with the current
-/// architecture it can eventually be removed once that limit is lifted/tested.
 class VertexBatcher {
   VertexBatcher({
     required this.preserveFloats,

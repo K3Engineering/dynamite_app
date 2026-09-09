@@ -18,8 +18,7 @@ const String kCorrectionNote =
     'Calibration measures and corrects the product of excitation, gain, '
     'reference, and ladder tolerances — their split is unknowable by design.';
 
-/// Board-wide, in the summary card: correction is not a view mode, it is
-/// the instrument.
+/// Board-wide, in the summary card.
 const String kCorrectionApplied =
     'The full 5-point correction is applied to the live view and saved data.';
 

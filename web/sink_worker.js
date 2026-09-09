@@ -270,8 +270,7 @@ async function appendJournal(msg) {
   return null;
 }
 
-// The store's only destructive op, only ever a user gesture on the page
-// side. A still-open sink goes first so no handle outlives its directory.
+// A still-open sink goes first so no handle outlives its directory.
 // Only bytes this layout can name are destroyed: the directory's entries
 // are all verified to be the three known FILES before anything is removed
 // — an unexpected entry fails the op with the session still whole, not

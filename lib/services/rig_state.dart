@@ -21,9 +21,8 @@ import 'rig_flash_transport.dart';
 ///   offers the cell as a one-tap pick instead of a re-type. History
 ///   informs new slots; it never feeds device state.
 ///
-/// Unsaved edits live die with a disconnect. Typed-in
-/// cell values survive in [history] (recorded at edit time),
-/// so a discard costs a few slot gestures, not the re-typing
+/// Unsaved edits die with a disconnect. Typed-in cell values survive in
+/// [history] (recorded at edit time).
 class RigState extends ChangeNotifier {
   /// [prefs] is injected (see `main`): the instance is available
   /// synchronously, so the history load happens right here in the
@@ -339,7 +338,6 @@ class RigHistoryEntry {
     'deviceName': deviceName,
   };
 
-  /// Tolerant of extra keys (older versions persisted an 'origin' field).
   factory RigHistoryEntry.fromJson(Map<String, dynamic> json) =>
       RigHistoryEntry(
         cell: LoadCellProfile.fromJson(

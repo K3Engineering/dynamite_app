@@ -274,9 +274,6 @@ class _SessionCard extends StatelessWidget {
             session.name.isEmpty ? untitledSessionName : session.name,
             style: const TextStyle(fontWeight: FontWeight.w500),
           ),
-          // No peak value here: peaks are per-channel (see the detail view);
-          // the stored row-wide peak is a max over all channels and reads
-          // inconsistent next to them.
           subtitle: Text(
             '${session.interrupted ? 'Interrupted · ' : ''}'
             '${formatTimestamp(session.createdAt)} · $durationStr · '

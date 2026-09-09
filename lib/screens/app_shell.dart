@@ -19,11 +19,9 @@ import 'settings_tab.dart';
 /// layer surface here as SnackBars, so delivery doesn't depend on which tab
 /// happens to be mounted or rebuilding.
 ///
-/// The tab-index side effect (the Devices-tab visibility poke) lives here
-/// because the IndexedStack keeps every tab mounted — tab-local
-/// initState/dispose never see visibility changes. The keep-awake policy is
-/// application-lifecycle, not navigation: it lives in
-/// services/wakelock_policy.dart, wired in main.
+/// The Devices-tab visibility poke lives here because the IndexedStack keeps
+/// every tab mounted — tab-local initState/dispose never see visibility
+/// changes.
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 

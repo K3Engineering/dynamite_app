@@ -86,15 +86,13 @@ void main() async {
   );
   // A link loss (of any flavor — the getter reads the same '' for all of
   // them) ends the rig session: the flash document and any unsaved edits
-  // die with the connection. A dirty discard is surfaced — losing edits
-  // silently is exactly the quiet failure this design rejects.
+  // die with the connection. A dirty discard is surfaced.
   linkManager.addListener(() {
     if (linkManager.connectedDeviceId.isNotEmpty) return;
     if (rigState.hasPending) appEvents.emit(const RigEditsDiscarded());
     rigState.onLinkDropped();
   });
   // New-stream clears and calibration forgetting on link transitions.
-  // Nothing reads this; it exists to react. Construction is the wiring.
   StreamResetCoordinator(
     hub: dataHub,
     streamingChanges: linkManager,
@@ -113,8 +111,6 @@ void main() async {
     events: appEvents,
   );
   final appSettings = AppSettings(prefs: prefs);
-  // Keep the screen awake while a device stream is live and the setting is
-  // on. Nothing reads this; it exists to react. Construction is the wiring.
   WakelockPolicy(
     settings: appSettings,
     streamingChanges: linkManager,
@@ -272,7 +268,7 @@ class DynoApp extends StatelessWidget {
     // switching control. Size/weight/spacing replicate the M3 defaults
     // (this theme property replaces the whole resolve, color included);
     // only the inactive color moves, from onSurfaceVariant to
-    // near-body-strength onSurface. Playground: 0.7–1.0.
+    // near-body-strength onSurface.
     NavigationBarThemeData navBarTheme(ColorScheme colors) {
       const inactiveAlpha = 0.8;
       return NavigationBarThemeData(

@@ -3,14 +3,9 @@ import 'package:material_ui/material_ui.dart';
 import '../models/storage_capacity.dart';
 import '../utils/format.dart';
 
-/// Warning for the Sessions tab shown on browsers that may delete stored
-/// sessions on their own schedule — in practice the WebKit family (Safari
-/// evicts after 7 days without interaction; Bluefy and the other iOS
-/// browsers are WKWebView shells with undocumented storage durability).
-/// Firefox is excluded: it only evicts under disk pressure, LRU-ordered.
-/// Permanent and non-dismissible — the risk is ongoing, and dismissal would
-/// be state to keep. The Sessions tab includes this only where
-/// `browserMayAutoDeleteSessions()` says the browser qualifies.
+/// Warning for the Sessions tab on browsers that may evict stored sessions
+/// on their own (see `browserMayAutoDeleteSessions`). Non-dismissible: the
+/// risk is ongoing, and dismissal would be state to keep.
 class BrowserStorageWarning extends StatelessWidget {
   const BrowserStorageWarning({super.key});
 

@@ -177,9 +177,8 @@ class DevicesTab extends StatelessWidget {
                     ),
             const SizedBox(height: 16),
 
-            // Demo devices section — simulated hardware, kept at the bottom so
-            // real BLE devices get top billing. Rendered through the same rows
-            // so it reflects connected state inline like a BLE row.
+            // Demo devices section — simulated hardware, rendered through the
+            // same rows so it reflects connected state inline like a BLE row.
             const SectionHeader('Demo devices'),
             const SizedBox(height: 8),
             if (bt.link.isSimulated && bt.link.state != BtLinkState.idle)
@@ -216,8 +215,8 @@ class DevicesTab extends StatelessWidget {
     );
   }
 
-  /// The big state-aware empty block: the single empty-state voice. Icon
-  /// and color come straight from [btAdapterScanVisual].
+  /// The state-aware empty block. Icon and color come straight from
+  /// [btAdapterScanVisual].
   Widget _buildEmptyBlock(BtStatusVisual visual, BtAvailability availability) {
     final (title, hint) = switch (availability) {
       BtAvailability.poweredOn => (
@@ -272,10 +271,7 @@ String connectFailureHint(
 
 /// The empty block's hint for [BtAvailability.unsupported], per platform.
 /// Web means the browser lacks Web Bluetooth (Firefox, Safari, every iOS
-/// browser). Native means the device itself reports no Bluetooth
-/// support — a baffling case with no clear recommendation, so the
-/// copy avoids "try" and neutrally names every supported
-/// surface. Copy lives here in the UI layer, like [connectFailureHint].
+/// browser). Native means the device itself reports no Bluetooth support.
 String unsupportedHint({required bool isWeb}) => isWeb
     ? "This browser can't use Bluetooth. Try Chrome or Edge on a computer, Chrome on Android, or the native Android/iOS app."
     : 'This device reports no Bluetooth support. The app is available for Android and iOS, as a web app in Chrome on Android, and in Chrome or Edge on a computer.';
@@ -533,11 +529,8 @@ class _InactiveDeviceRow extends StatelessWidget {
 /// The active row's Cancel/Disconnect button style. OutlinedButtons don't
 /// participate in tile theming; without the explicit foreground the label
 /// renders in primary on the primaryContainer surface — invisible. The
-/// outline takes the row's content color (the gear/title's onPrimaryContainer)
-/// so the button keeps a visible boundary on the tinted card and lines up
-/// with the filled buttons' shapes; outline and label both dim while teardown
-/// is in flight. The reduced horizontal padding (M3 default is 24) lets
-/// "Disconnecting…" fit [deviceActionButtonWidth].
+/// reduced horizontal padding (M3 default is 24) lets "Disconnecting…" fit
+/// [deviceActionButtonWidth].
 ButtonStyle activeRowActionButtonStyle({required Color onContainer}) =>
     OutlinedButton.styleFrom(
       foregroundColor: onContainer,
@@ -663,12 +656,10 @@ class _ActiveDeviceRow extends StatelessWidget {
               ],
             ),
             title: Text(name),
-            // One flowing text, NOT a Row[Flexible(...), ...]: a Row
-            // squeezes the label into whatever width the RSSI leaves (near
-            // zero on a phone → one letter per line). A single Text.rich
-            // wraps at word boundaries — worst case "Connected •" /
-            // "▂ -58 dBm" on two tidy lines — and the WidgetSpan moves the
-            // RSSI block as a unit.
+            // One flowing text, not a Row[Flexible(...), ...]: a Row squeezes
+            // the label into whatever width the RSSI leaves (near zero on a
+            // phone). A single Text.rich wraps at word boundaries and the
+            // WidgetSpan moves the RSSI block as a unit.
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,

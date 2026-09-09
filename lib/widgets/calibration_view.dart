@@ -18,8 +18,6 @@ class CalibrationView extends StatelessWidget {
   Widget build(BuildContext context) {
     final board = this.board;
     if (board == null) {
-      // The dim "nothing here" affordance: the theme's outline role, as in
-      // EmptyPlaceholder — not a raw Material grey.
       return Card(
         child: ListTile(
           leading: Icon(

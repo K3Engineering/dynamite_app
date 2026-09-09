@@ -17,23 +17,21 @@ enum BtLinkState {
 
   /// The GATT link is up but post-connect setup is still running the first of
   /// its three stages: MTU negotiation (native only) and service discovery.
-  /// NOT yet usable — no data is flowing. The UI shows "Setting up…" here.
+  /// Not yet usable — no data is flowing.
   connected,
 
   /// Post-connect setup's second stage: services are discovered; the board
   /// constants (device identity, the ADC's config/GAIN readback, and the
-  /// connect-time flash document read over KVS) are being read. Still NOT
-  /// usable. The UI shows "Reading board constants…" here. This stage gates
-  /// on the reads COMPLETING, never on their content: a board with missing
-  /// or invalid constants still advances (the live UI degrades to raw
-  /// counts there — refusing the link would hide even those).
+  /// connect-time flash document read over KVS) are being read. Still not
+  /// usable. An unreadable or unparseable ADC config, or a failed KVS
+  /// bring-up, tears the link down here (see `BleLinkManager._readAdcConfig`
+  /// and `_setupKvs`).
   readingConstants,
 
   /// Post-connect setup's third stage: the board constants are in and the
   /// ADC feed subscription (enabling notifications) is in progress. Still
-  /// NOT usable. The UI shows "Starting data stream…" here.
-  /// The link advances to [streaming] only once the subscription succeeds, or
-  /// is torn down on failure.
+  /// not usable. The link advances to [streaming] only once the subscription
+  /// succeeds, or is torn down on failure.
   subscribing,
 
   /// Fully set up: services discovered and the ADC feed subscription is active,

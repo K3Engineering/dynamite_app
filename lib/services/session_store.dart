@@ -61,7 +61,6 @@ class SessionStore {
   ValueListenable<SessionCatalogState> get catalog => _catalog;
 
   /// Byte-size revisions: every append ack plus every catalog publication.
-  /// The capacity strip's liveness rides the recording cadence through this.
   final StreamController<void> _bytes = StreamController.broadcast();
 
   void _bumpBytes() => _bytes.add(null);
@@ -74,7 +73,7 @@ class SessionStore {
   /// operation queue; a capacity-strip number needs no stronger ordering.
   int _liveBytes = 0;
 
-  /// The byte-size pulse (append acks included) the capacity strip cues on.
+  /// Every revision of [_bytes]; the capacity strip listens here.
   Stream<void> get byteChanges => _bytes.stream;
 
   Future<T> _enqueue<T>(
@@ -233,7 +232,7 @@ class SessionStore {
   /// creates dir + journal + first data append in one backend round trip
   /// and hands back the sink. Called by the live writer at its FIRST data
   /// write only — a no-data recording leaves no artifact. Append acks bump
-  /// [byteChanges] so the capacity strip tracks the recording live.
+  /// [byteChanges].
   Future<SessionDataSink> createDataSink({
     required SessionMeta meta,
     required Uint8List firstData,
@@ -526,10 +525,8 @@ class SessionStore {
         );
       });
 
-  /// Delete the session directory. This is the ONLY destructive operation
-  /// anywhere in the store, and it only ever runs on a user's explicit
-  /// confirmation. Only the layout's three named files are destroyed (see
-  /// SessionFilesBackend.delete).
+  /// Delete the session directory. Only the layout's three named files are
+  /// destroyed (see SessionFilesBackend.delete).
   Future<void> deleteSession(String id) => _withCatalog((files, _) async {
     await files.delete(id);
     _publishDelta(

@@ -81,8 +81,7 @@ class GapList {
   /// [FormatException] — a malformed document (including ranges that are
   /// empty, inverted, overlapping or out of order) violates the
   /// sorted-disjoint invariant [contains] binary-searches on, and silently
-  /// degrading to "no gaps" would fabricate continuity (the caller decides
-  /// the damage policy; see SessionStorage.loadSession). (Adjacent ranges
+  /// degrading to "no gaps" would fabricate continuity. (Adjacent ranges
   /// are valid and merge on [append].)
   factory GapList.fromJson(String json) {
     final gaps = GapList();

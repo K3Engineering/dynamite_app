@@ -325,12 +325,10 @@ String _yamlScalar(Object? value) {
 }
 
 /// One `channels[]` entry: the assigned load cell (null = none), the
-/// recording-time tare in raw counts (null = no offset — the channel
-/// recorded gross, or the stored tare failed integrity checks), and the
-/// factory board cal — null when the channel is uncalibrated (the honesty
-/// marker: converted values are nominal-referred). Calibration is
-/// board-uniform (all channels calibrated or none — see
-/// [BoardCalibration.fromKv]), so the markers agree.
+/// recording-time tare in raw counts (null = the channel recorded gross),
+/// and the factory board cal — null when the channel is uncalibrated, i.e.
+/// converted values are nominal-referred. Calibration is board-uniform (all
+/// channels calibrated or none — see [BoardCalibration.fromKv]).
 Map<String, Object?> _channelMetadata(ChannelCalibration cal, double? tareRaw) {
   final cell = cal.loadCell;
   final board = cal.board;

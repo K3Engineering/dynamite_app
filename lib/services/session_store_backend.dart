@@ -72,10 +72,9 @@ abstract interface class SessionFilesBackend {
   /// Append [bytes] (one encoded journal line) at the journal's EOF + flush.
   Future<void> appendJournal(String id, Uint8List bytes);
 
-  /// Delete the session directory. The only destructive operation in the
-  /// store; only ever driven by a user gesture. Only bytes this layout can
-  /// name are destroyed: the three known files go first (absent ones
-  /// skipped), then the now-empty directory — an entry the store didn't
-  /// write, or the directory missing, makes the delete throw.
+  /// Delete the session directory. Only bytes this layout can name are
+  /// destroyed: the three known files go first (absent ones skipped), then
+  /// the now-empty directory — an entry the store didn't write, or the
+  /// directory missing, makes the delete throw.
   Future<void> delete(String id);
 }

@@ -13,7 +13,7 @@ const double kContentMaxWidth = 800;
 /// scrollable itself stays full-width (so the scrollbar lives on the page
 /// edge and wheel events scroll from anywhere). Pass the scrollable's own
 /// constraint width — e.g. from a `LayoutBuilder`, since `MediaQuery`
-/// includes the navigation rail. Branch-free: `math.max`, not `if`.
+/// includes the navigation rail.
 double contentSideInset(double viewportWidth) =>
     math.max(16, (viewportWidth - kContentMaxWidth) / 2);
 

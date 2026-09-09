@@ -281,9 +281,8 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 /// The ladder and the readings are one datum (never a
 /// characterized-rereading-over-nominal-ladder remix), and readings never
 /// exist without resolved nominals (the parse paths only consult cal keys
-/// once the board constants resolved). The seal makes both facts
-/// structural: the half-present combinations cannot be constructed, so the
-/// measured members simply exist only on [CalibratedChannelBoard].
+/// once the board constants resolved); the measured members exist only on
+/// [CalibratedChannelBoard].
 sealed class ChannelBoardCalibration {
   const ChannelBoardCalibration._();
 
@@ -371,7 +370,7 @@ sealed class ChannelBoardCalibration {
   /// the ladder/readings pair without the other, readings without resolved
   /// nominals, or values failing [channelDataIsValid]. Replay never
   /// substitutes guessed values; the caller decides the damage policy
-  /// (see SessionStorage.loadSession).
+  /// (the session catalog marks the session damaged).
   factory ChannelBoardCalibration.fromJson(Map<String, dynamic> json) {
     List<double>? numList(Object? v, int count, String key) {
       if (v == null) return null;
@@ -512,8 +511,7 @@ class CalibratedChannelBoard extends ChannelBoardCalibration {
   ///
   /// The measured-error table's zero row ([measuredErrorsUvV]) expresses
   /// the same offset through the nominal chain instead; the two differ by
-  /// the gain factor — far below the calibration's uncertainty. Both are
-  /// displayed, deliberately: two conventions, no reconciliation text.
+  /// the gain factor — far below the calibration's uncertainty.
   double get zeroOffsetUvV => offsetCounts / sensitivityCountsPerMvV * 1000.0;
 
   /// Gain error vs the nominal chain (1.0 = exactly nominal): the measured
@@ -903,8 +901,8 @@ class SessionBoardMeta {
 
   /// Strict inverse of [toJson]: absent optional keys are legal (`null`
   /// flash fields stay null), but present-but-malformed data throws
-  /// [FormatException] — the caller decides the damage policy (see
-  /// SessionStorage.loadSession). Unknown keys are ignored.
+  /// [FormatException] — the caller decides the damage policy (the session
+  /// catalog marks the session damaged). Unknown keys are ignored.
   factory SessionBoardMeta.fromJson(Map<String, dynamic> json) {
     String? str(String key) {
       final v = json[key];

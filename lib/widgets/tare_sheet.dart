@@ -154,9 +154,7 @@ class _TareSheetState extends State<_TareSheet> {
 
   /// The drag-handle row: the dismiss pill centered (showModalBottomSheet's
   /// own showDragHandle can't host the close affordance) with the close
-  /// button at the row's right end. The height is pinned to the handle
-  /// zone, so the button's optical center is the pill's centerline by
-  /// construction, not by coincidence of widget sizes.
+  /// button at the row's right end.
   Widget _topBar() {
     return SizedBox(
       height: 24,

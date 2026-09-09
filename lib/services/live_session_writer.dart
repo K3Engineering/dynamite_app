@@ -266,11 +266,7 @@ class LiveSessionWriter {
   /// hub's packet-counter anchor (see `DataHub.notePacketCounter`) and
   /// stamped into the journal when the first packet's write creates the
   /// session — data bytes alone can't reconstruct it, so it must be held
-  /// until then. Sessions start on a packet boundary (the decoder's
-  /// continuity reset at recording start suppresses gap injection for the
-  /// first recorded packet), so the index difference below is zero in
-  /// practice; the formula keeps the latch correct even if that ever
-  /// changes. Null until the first append.
+  /// until then. Null until the first append.
   int? get ssnOrigin => _ssnOrigin;
   int? _ssnOrigin;
 

@@ -281,9 +281,7 @@ class _LiveTabState extends State<LiveTab> {
 
 /// A pure status readout of the link state: no actions (the prompt below
 /// owns the "Connect a device" CTA, and the Devices tab owns transitions in
-/// flight). Only the streaming state gets a tinted surface — a neutral strip
-/// means "resting or in transition", never an error (disconnected is the
-/// app's modal resting state, not a failure).
+/// flight).
 class LiveStatusBar extends StatelessWidget {
   final BtLinkState linkState;
   final String connectedDeviceName;
@@ -621,11 +619,8 @@ class DisconnectedPrompt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // A link transition is in flight: it can take seconds, and only the
-    // Devices tab controls it. No action here — a dead Connect button would
-    // only beg the question why it's dead. The precise stage label sits in
-    // the status bar right above; here the user gets the one thing they
-    // care about: it's coming, and to which device.
+    // A link transition is in flight; only the Devices tab controls it, so
+    // no action is offered here.
     if (linkState != BtLinkState.idle) {
       return EmptyPlaceholder(
         icon: Icons.bluetooth_searching,
@@ -726,9 +721,6 @@ class ActionButtons extends StatelessWidget {
                   : Theme.of(context).colorScheme.onPrimary,
             ),
           ),
-          // TARE and its options read as one control: the outlined ⋮
-          // segment hugs the button rather than floating as a third
-          // action in the row.
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [

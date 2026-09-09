@@ -62,7 +62,6 @@ Future<void> setSessionNotes(String id, String notes) =>
 Future<void> toggleSessionVisibleChannel(String id, int index) =>
     SessionStore.instance.toggleVisibleChannel(id, index);
 
-/// Delete the session (finalized OR damaged): the only destructive
-/// operation in the store, always behind an explicit confirmation.
+/// Delete the session (finalized or damaged).
 Future<void> deleteSession(String id) =>
     SessionStore.instance.deleteSession(id);
