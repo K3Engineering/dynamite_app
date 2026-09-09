@@ -63,19 +63,14 @@ class AppShellState extends State<AppShell> {
     switch (event) {
       case BleDisconnectTimeout(:final deviceName):
         showErrorSnackBar(messenger, '$deviceName didn\'t disconnect cleanly.');
-      case BleConnectionFailed(:final deviceName):
+      case BleConnectionFailed(:final deviceName, :final detail):
         showErrorSnackBar(
           messenger,
-          'Lost connection to $deviceName during setup.',
+          'Lost connection to $deviceName during setup'
+          '${detail == null ? '.' : ': $detail'}',
         );
       case BleConnectionLost(:final deviceName):
         showErrorSnackBar(messenger, 'Connection to $deviceName lost.');
-      case BleFlashInvalid(:final deviceName, :final detail):
-        showErrorSnackBar(
-          messenger,
-          '$deviceName has invalid flash data — maintenance mode is available in Settings ($detail).',
-          persist: true,
-        );
       case RecordingStorageError(:final error):
         showErrorSnackBar(
           messenger,

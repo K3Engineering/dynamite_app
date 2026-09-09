@@ -18,12 +18,16 @@ class BleDisconnectTimeout extends AppEvent {
 }
 
 /// A connection dropped or failed during post-connect setup (e.g. the device
-/// disappeared mid service-discovery).
+/// disappeared mid service-discovery, or its flash failed strict parsing).
 class BleConnectionFailed extends AppEvent {
-  const BleConnectionFailed(this.deviceName);
+  const BleConnectionFailed(this.deviceName, this.detail);
 
   /// The affected device's display name (or id).
   final String deviceName;
+
+  /// The setup failure as thrown (an invalid-flash FormatException, an
+  /// unreadable ADC config, ...), for the snackbar.
+  final String? detail;
 }
 
 /// The link dropped unexpectedly while it was up (setting up, starting the
@@ -36,18 +40,6 @@ class BleConnectionLost extends AppEvent {
 
   /// The affected device's display name (or id).
   final String deviceName;
-}
-
-/// The device KVS read cleanly but its known flash content failed strict
-/// parsing; the link was parked in maintenance mode for recovery.
-class BleFlashInvalid extends AppEvent {
-  const BleFlashInvalid(this.deviceName, this.detail);
-
-  /// The affected device's display name (or id).
-  final String deviceName;
-
-  /// The parse error (flash schema detail).
-  final Object detail;
 }
 
 /// A recording's storage writer latched a failure (e.g. disk full / web

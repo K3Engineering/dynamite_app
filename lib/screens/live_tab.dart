@@ -628,12 +628,8 @@ class DisconnectedPrompt extends StatelessWidget {
     // no action is offered here.
     if (linkState != BtLinkState.idle) {
       return EmptyPlaceholder(
-        icon: linkState == BtLinkState.maintenance
-            ? Icons.build_circle_outlined
-            : Icons.bluetooth_searching,
-        title: linkState == BtLinkState.maintenance
-            ? '$deviceName is in maintenance mode — see Settings'
-            : linkState == BtLinkState.disconnecting
+        icon: Icons.bluetooth_searching,
+        title: linkState == BtLinkState.disconnecting
             ? 'Disconnecting from $deviceName…'
             : 'Connecting to $deviceName…',
       );

@@ -29,9 +29,7 @@ void main() {
     for (final s in BtLinkState.values.where((s) => s != BtLinkState.idle)) {
       expect(
         linkVisual(s).showSpinner,
-        s == BtLinkState.streaming || s == BtLinkState.maintenance
-            ? isFalse
-            : isTrue,
+        s == BtLinkState.streaming ? isFalse : isTrue,
         reason: 'state $s',
       );
     }
@@ -44,8 +42,6 @@ void main() {
       'Reading board constants…',
     );
     expect(linkVisual(BtLinkState.subscribing).label, 'Starting data stream…');
-    expect(linkVisual(BtLinkState.maintenance).label, 'Maintenance mode');
-    expect(linkVisual(BtLinkState.maintenance).showSpinner, isFalse);
     expect(linkVisual(BtLinkState.connecting).label, 'Connecting…');
     expect(linkVisual(BtLinkState.connecting).color, status.linkActive);
     expect(linkVisual(BtLinkState.disconnecting).label, 'Disconnecting…');

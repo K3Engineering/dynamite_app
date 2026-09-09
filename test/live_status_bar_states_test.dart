@@ -121,9 +121,7 @@ void main() {
         await tester.pumpWidget(host(prompt(state, () {})));
         expect(
           find.text(
-            state == BtLinkState.maintenance
-                ? 'K3 is in maintenance mode — see Settings'
-                : state == BtLinkState.disconnecting
+            state == BtLinkState.disconnecting
                 ? 'Disconnecting from K3…'
                 : 'Connecting to K3…',
           ),

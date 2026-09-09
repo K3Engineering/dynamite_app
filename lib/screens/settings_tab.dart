@@ -1,8 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -59,9 +57,6 @@ class _SettingsTabState extends State<SettingsTab> {
     // The connect-time DIS identity read; null until it lands.
     final deviceInfo = context.select<BleLinkManager, DeviceInfo?>(
       (l) => l.connectedDeviceInfo,
-    );
-    final flashFault = context.select<BleLinkManager, FlashFault?>(
-      (l) => l.flashFault,
     );
     final negotiatedMtu = context.select<BleLinkManager, int?>(
       (l) => l.negotiatedMtu,
@@ -171,11 +166,6 @@ class _SettingsTabState extends State<SettingsTab> {
                   ),
                 )
               else ...[
-                if (flashFault != null) ...[
-                  _MaintenanceCard(fault: flashFault),
-                  const SizedBox(height: 16),
-                ],
-
                 // Device identity, read from the Device Information service at
                 // connect time. Read-only; unread fields (e.g. serial on web)
                 // render as dashes.
@@ -260,47 +250,6 @@ class _SettingsTabState extends State<SettingsTab> {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-}
-
-/// The recovery card for a healthy GATT/KVS link whose known flash content
-/// failed strict parsing.
-class _MaintenanceCard extends StatelessWidget {
-  const _MaintenanceCard({required this.fault});
-
-  final FlashFault fault;
-
-  Future<void> _copyRawKvs(BuildContext context) async {
-    final raw = const JsonEncoder.withIndent(
-      '  ',
-    ).convert(fault.snapshot.toJson());
-    await Clipboard.setData(ClipboardData(text: raw));
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Raw KVS copied')));
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: ListTile(
-        leading: Icon(
-          Icons.build_circle_outlined,
-          color: Theme.of(context).colorScheme.error,
-        ),
-        title: const Text('Maintenance mode'),
-        subtitle: Text(
-          'Device flash is unreadable: ${fault.error}\n'
-          'Measurement is disabled. Copy the raw KVS for recovery.',
-        ),
-        trailing: FilledButton.tonalIcon(
-          onPressed: () => _copyRawKvs(context),
-          icon: const Icon(Icons.copy),
-          label: const Text('Copy raw KVS'),
         ),
       ),
     );

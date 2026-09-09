@@ -840,7 +840,7 @@ void main() {
     });
   });
 
-  test('invalid known flash parks a healthy KVS link in maintenance', () {
+  test('invalid known flash fails the connection, detail included', () {
     fakeAsync((async) {
       MockBlePlatform.instance.seedKvsFromDoc(
         'adc_fsr=1.2\nexc=soon\nafe_gain=101\ncharging=enabled',
@@ -852,34 +852,29 @@ void main() {
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
 
-      expect(link.link.state, BtLinkState.maintenance);
+      // A board the app can't fully make sense of is a provisioning errand:
+      // the parse throws in post-connect setup, the link is torn down, and
+      // the ADC feed was never subscribed. The FormatException detail rides
+      // the failure event so the toast names the bad key.
       expect(link.isStreaming, isFalse);
-      expect(link.connectedDeviceId, deviceId);
-      expect(MockBlePlatform.instance.connectedDeviceId, deviceId);
-      expect(MockBlePlatform.instance.gattOpLog, isNot(contains('adc:sub')));
-      expect(link.flashFault!.snapshot.factory['charging'], 'enabled');
-      expect(link.flashFault!.error, isA<FormatException>());
-      expect(measurementDelivered, isFalse);
-      expect(seen, [isA<BleFlashInvalid>()]);
-
-      // The recovery link's KVS channel remains usable.
-      KvsSnapshot? readBack;
-      unawaited(link.readKvsSnapshot().then((s) => readBack = s));
-      async.flushMicrotasks();
-      expect(readBack!.factory['charging'], 'enabled');
-      expect(link.setDeviceName('Bench unit'), completion(isTrue));
-
-      teardownLink(async, link);
       expect(link.link.state, BtLinkState.idle);
-      expect(link.flashFault, isNull);
+      expect(MockBlePlatform.instance.gattOpLog, isNot(contains('adc:sub')));
+      expect(measurementDelivered, isFalse);
+      expect(seen, [
+        isA<BleConnectionFailed>().having(
+          (e) => e.detail,
+          'detail',
+          contains('bad exc'),
+        ),
+      ]);
 
-      // A repaired device re-enters the normal measurement path.
+      // A repaired device enters the normal measurement path.
       MockBlePlatform.instance.resetKnobs();
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
       expect(link.link.state, BtLinkState.streaming);
       expect(measurementDelivered, isTrue);
-      expect(seen.whereType<BleFlashInvalid>(), hasLength(1));
+      expect(seen.whereType<BleConnectionFailed>(), hasLength(1));
       teardownLink(async, link);
     });
   });

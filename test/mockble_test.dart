@@ -151,12 +151,12 @@ void main() {
       });
     });
 
-    test('present-but-invalid known flash parks the link in maintenance', () {
+    test('present-but-invalid known flash fails the connection', () {
       fakeAsync((async) {
         // A corrupt board half (partial constants) and a corrupt slot half
         // (unparseable sens) alike: the parse is strict, so the connect-time
-        // read throws and the link never reaches streaming — but the healthy
-        // KVS link remains up for recovery.
+        // read throws and the connect fails — no measurement state ever
+        // comes up on a document the app couldn't fully make sense of.
         for (final doc in [
           'adc_fsr=1.2,nominal\nexc=4.53,nominal', // afe_gain missing
           'adc_fsr=1.2,nominal\nexc=soon\nafe_gain=101', // bad value
@@ -168,11 +168,11 @@ void main() {
           unawaited(link.connectToDevice(deviceId));
           async.elapse(const Duration(seconds: 4));
 
-          expect(link.linkState, BtLinkState.maintenance, reason: doc);
+          expect(link.isStreaming, isFalse, reason: doc);
+          expect(link.linkState, BtLinkState.idle, reason: doc);
           expect(hub.totalSamples, 0, reason: doc);
           expect(hub.boardCalibration, isNull, reason: doc);
 
-          teardown();
           async.elapse(const Duration(seconds: 4));
         }
         addTearDown(() => MockBlePlatform.instance.resetKnobs());
@@ -191,7 +191,6 @@ void main() {
 
         expect(link.isStreaming, isTrue);
         expect(hub.boardCalibration, isA<ProvisionedBoardCalibration>());
-        expect(link.flashFault, isNull);
 
         teardown();
       });

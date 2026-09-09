@@ -7,7 +7,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/models/app_meta.dart';
-import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/models/display_unit.dart';
@@ -150,9 +149,7 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
   });
 
-  testWidgets('invalid flash renders the maintenance recovery card', (
-    tester,
-  ) async {
+  testWidgets('invalid flash fails the connection', (tester) async {
     tester.view.physicalSize = const Size(1200, 2400);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -164,12 +161,12 @@ void main() {
     unawaited(link.connectToDevice('2'));
     await tester.pump(const Duration(seconds: 4));
 
-    expect(link.linkState, BtLinkState.maintenance);
-    expect(find.text('Maintenance mode'), findsOneWidget);
-    expect(find.text('Copy raw KVS'), findsOneWidget);
-    expect(find.textContaining('bad exc'), findsOneWidget);
+    // A board the app can't fully make sense of is a provisioning errand:
+    // the connection fails (the detail goes to the toast) and the device
+    // sections don't render (no link up).
+    expect(link.isStreaming, isFalse);
+    expect(find.text('Board calibration'), findsNothing);
 
-    unawaited(link.disconnectSelectedDevice());
     await tester.pump(const Duration(seconds: 6));
   });
 

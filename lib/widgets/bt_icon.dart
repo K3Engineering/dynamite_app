@@ -24,7 +24,6 @@ String? btLinkStateLabel(BtLinkState state) => switch (state) {
   BtLinkState.connected => 'Setting up…',
   BtLinkState.readingConstants => 'Reading board constants…',
   BtLinkState.subscribing => 'Starting data stream…',
-  BtLinkState.maintenance => 'Maintenance mode',
   BtLinkState.connecting => 'Connecting…',
   BtLinkState.idle => null,
 };
@@ -47,16 +46,11 @@ BtStatusVisual btActiveLinkVisual({
   }
 
   final streaming = linkState == BtLinkState.streaming;
-  final maintenance = linkState == BtLinkState.maintenance;
   return (
-    icon: streaming
-        ? Icons.bluetooth_connected
-        : maintenance
-        ? Icons.build_circle_outlined
-        : Icons.bluetooth_searching,
+    icon: streaming ? Icons.bluetooth_connected : Icons.bluetooth_searching,
     color: streaming ? status.linkConnected : status.linkActive,
     label: label,
-    showSpinner: !streaming && !maintenance,
+    showSpinner: !streaming,
   );
 }
 
