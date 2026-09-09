@@ -463,16 +463,19 @@ class DataHub extends ChangeNotifier
     for (int i = 0; i < a.channels.length; ++i) {
       final x = a.channels[i];
       final y = b.channels[i];
+      if (x case final CalibratedChannelBoard xd) {
+        if (y is! CalibratedChannelBoard) return false;
+        if (!_sameList(xd.resistors, y.resistors)) return false;
+        if (!_sameList(xd.readings, y.readings)) return false;
+      } else if (y is CalibratedChannelBoard) {
+        return false;
+      }
       if (!_sameNominals(x.nominals, y.nominals)) return false;
-      if (!_sameList(x.resistors, y.resistors)) return false;
-      if (!_sameList(x.readings, y.readings)) return false;
     }
     return true;
   }
 
-  static bool _sameList(List<double>? a, List<double>? b) {
-    if ((a == null) != (b == null)) return false;
-    if (a == null || b == null) return true;
+  static bool _sameList(List<double> a, List<double> b) {
     if (a.length != b.length) return false;
     for (int k = 0; k < a.length; ++k) {
       if (a[k] != b[k]) return false;
@@ -527,7 +530,8 @@ class DataHub extends ChangeNotifier
     // no nominals: electrical and force units report unavailable and only
     // raw counts convert — see [boardDataStatus].
     board:
-        _boardCalibration?.channels[channelIndex] ?? ChannelBoardCalibration(),
+        _boardCalibration?.channels[channelIndex] ??
+        const RawOnlyChannelBoard(),
     loadCell: _loadCells[channelIndex],
   );
 

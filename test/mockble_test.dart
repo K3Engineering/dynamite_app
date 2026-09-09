@@ -97,7 +97,8 @@ void main() {
           isTrue,
         );
         expect(
-          hub.boardCalibration!.channels[0].offsetCounts,
+          (hub.boardCalibration!.channels[0] as CalibratedChannelBoard)
+              .offsetCounts,
           closeTo(845.2, 1e-9),
         );
 

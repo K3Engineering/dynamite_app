@@ -34,7 +34,7 @@ void main() {
       BoardCalibration(
         channels: [
           for (int i = 0; i < channels; i++)
-            ChannelBoardCalibration(nominals: testNominals),
+            const NominalChannelBoard(testNominals),
         ],
       ),
     );

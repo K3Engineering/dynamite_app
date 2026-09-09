@@ -107,7 +107,8 @@ void main() {
     test('carries the board-level facts', () {
       final board = BoardCalibration(
         channels: [
-          for (int i = 0; i < kAdcChannelCount; i++) ChannelBoardCalibration(),
+          for (int i = 0; i < kAdcChannelCount; i++)
+            const RawOnlyChannelBoard(),
         ],
         factoryDate: '2026-01-15',
         calTool: 'calibrate.py v3',
@@ -141,7 +142,8 @@ void main() {
         'empty provenance', () {
       final board = BoardCalibration(
         channels: [
-          for (int i = 0; i < kAdcChannelCount; i++) ChannelBoardCalibration(),
+          for (int i = 0; i < kAdcChannelCount; i++)
+            const RawOnlyChannelBoard(),
         ],
         constantsStatus: BoardDataStatus.unreadable,
       );

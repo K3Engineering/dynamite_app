@@ -133,27 +133,27 @@ String calibrationReport(BoardCalibration board, String deviceLabel) {
   for (int i = 0; i < board.channels.length; ++i) {
     final ch = board.channels[i];
     b.writeln();
-    if (!ch.isFactoryCalibrated) {
+    if (ch is! CalibratedChannelBoard) {
       b.writeln('CH ${i + 1}: nominal values (no factory data)');
       continue;
     }
     b.writeln(
       'CH ${i + 1}: zero offset ${fmtUvV(ch.zeroOffsetUvV)} · '
       'gain ${fmtGain(ch.sensitivityVsNominal)} vs nominal · '
-      'end-point linearity ±${ch.maxDeviationUvV!.toStringAsFixed(3)} µV/V',
+      'end-point linearity ±${ch.maxDeviationUvV.toStringAsFixed(3)} µV/V',
     );
     b.writeln(
-      '  sensitivity ${ch.sensitivityCountsPerMvV!.toStringAsFixed(0)} '
+      '  sensitivity ${ch.sensitivityCountsPerMvV.toStringAsFixed(0)} '
       'counts/(mV/V) · zero offset ${fmtCounts(ch.offsetCounts)} counts',
     );
     final errors = ch.measuredErrorsUvV;
-    final nonlinearities = ch.deviationsUvV!;
+    final nonlinearities = ch.deviationsUvV;
     for (int k = 0; k < kCalPointCount; ++k) {
       b.writeln(
         '  ${calConfigLabels[k]}  '
         '${ch.setpoints[k].toStringAsFixed(4)} mV/V  '
-        '${ch.readings![k].toStringAsFixed(1)} counts  '
-        '${errors != null ? 'error ${fmtSignedUvV(errors[k])} µV/V  ' : ''}'
+        '${ch.readings[k].toStringAsFixed(1)} counts  '
+        'error ${fmtSignedUvV(errors[k])} µV/V  '
         'nonlinearity ${fmtSignedUvV(nonlinearities[k])} µV/V',
       );
     }

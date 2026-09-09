@@ -66,7 +66,10 @@ void main() {
       );
       expect(flash.board.factoryDate, fixture.board.factoryDate);
       expect(flash.board.channels.every((c) => c.isFactoryCalibrated), isTrue);
-      expect(flash.board.channels[0].offsetCounts, closeTo(845.2, 1e-9));
+      expect(
+        (flash.board.channels[0] as CalibratedChannelBoard).offsetCounts,
+        closeTo(845.2, 1e-9),
+      );
       expect(flash.slots, fixture.slots);
     });
   });

@@ -12,21 +12,21 @@ import 'package:dynamite_app/services/session_journal.dart';
 /// shapes (torn meta, torn edits) and the byte offsets the append
 /// discipline needs.
 void main() {
-  final meta = SessionMeta(
+  const meta = SessionMeta(
     name: 'lift 1',
     sampleRate: 1000,
     channelCount: 4,
     channelLabels: ['a', 'b', 'c', 'd'],
     tares: [null, 12.5, -3.25, null],
     calibration: [
-      ChannelCalibration(board: ChannelBoardCalibration()),
-      ChannelCalibration(board: ChannelBoardCalibration()),
-      ChannelCalibration(board: ChannelBoardCalibration()),
-      ChannelCalibration(board: ChannelBoardCalibration()),
+      ChannelCalibration(board: RawOnlyChannelBoard()),
+      ChannelCalibration(board: RawOnlyChannelBoard()),
+      ChannelCalibration(board: RawOnlyChannelBoard()),
+      ChannelCalibration(board: RawOnlyChannelBoard()),
     ],
     displayUnit: 'kgf',
     deviceInfo: {'model': 'dyna-1', 'fw': '1.2.3'},
-    boardMeta: const SessionBoardMeta(
+    boardMeta: SessionBoardMeta(
       calDataInvalid: false,
       constantsStatus: BoardDataStatus.ok,
       constantsDetail: '',
@@ -68,17 +68,17 @@ void main() {
     });
 
     test('null boardMeta round-trips as null', () {
-      final bare = SessionMeta(
+      const bare = SessionMeta(
         name: '',
         sampleRate: 500,
         channelCount: 4,
         channelLabels: ['a', 'b', 'c', 'd'],
         tares: [null, null, null, null],
         calibration: [
-          ChannelCalibration(board: ChannelBoardCalibration()),
-          ChannelCalibration(board: ChannelBoardCalibration()),
-          ChannelCalibration(board: ChannelBoardCalibration()),
-          ChannelCalibration(board: ChannelBoardCalibration()),
+          ChannelCalibration(board: RawOnlyChannelBoard()),
+          ChannelCalibration(board: RawOnlyChannelBoard()),
+          ChannelCalibration(board: RawOnlyChannelBoard()),
+          ChannelCalibration(board: RawOnlyChannelBoard()),
         ],
         displayUnit: 'mVv',
         deviceInfo: {},
@@ -207,17 +207,17 @@ void main() {
 
   group('non-ASCII content', () {
     test('byte offsets stay correct with multi-byte UTF-8 in names/notes', () {
-      final foreignMeta = SessionMeta(
+      const foreignMeta = SessionMeta(
         name: 'Seßión ünïcode',
         sampleRate: 1000,
         channelCount: 4,
         channelLabels: ['a', 'b', 'c', 'd'],
         tares: [null, null, null, null],
         calibration: [
-          ChannelCalibration(board: ChannelBoardCalibration()),
-          ChannelCalibration(board: ChannelBoardCalibration()),
-          ChannelCalibration(board: ChannelBoardCalibration()),
-          ChannelCalibration(board: ChannelBoardCalibration()),
+          ChannelCalibration(board: RawOnlyChannelBoard()),
+          ChannelCalibration(board: RawOnlyChannelBoard()),
+          ChannelCalibration(board: RawOnlyChannelBoard()),
+          ChannelCalibration(board: RawOnlyChannelBoard()),
         ],
         displayUnit: 'kgf',
         deviceInfo: {'note': 'mañana'},

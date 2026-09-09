@@ -8,7 +8,7 @@ import 'package:material_ui/material_ui.dart';
 /// the correction absorbs beyond the affine part. Display order is the
 /// industry convention, −FS … +FS left-to-right; the input list is in
 /// [kCalPointCount] storage order (+FS … −FS). Pure presentation; the math
-/// lives in `ChannelBoardCalibration.deviationsUvV`.
+/// lives in `CalibratedChannelBoard.deviationsUvV`.
 class CalDeviationPlot extends StatelessWidget {
   const CalDeviationPlot({super.key, required this.deviationsUvV});
 

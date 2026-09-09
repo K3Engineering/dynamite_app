@@ -38,9 +38,7 @@ void main() {
 
   List<ChannelCalibration> nominalCals() => [
     for (int ch = 0; ch < channels; ch++)
-      ChannelCalibration(
-        board: ChannelBoardCalibration(nominals: testNominals),
-      ),
+      const ChannelCalibration(board: NominalChannelBoard(testNominals)),
   ];
 
   SessionData makeSession(
@@ -103,7 +101,7 @@ void main() {
     });
 
     test('metadata line carries the spec schema from the frozen session', () {
-      final boardCal = ChannelBoardCalibration(
+      final boardCal = CalibratedChannelBoard(
         resistors: const [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
         readings: const [6383553.0, 3192096.0, 120.0, -3191776.0, -6383313.0],
         nominals: testNominals,
@@ -117,9 +115,7 @@ void main() {
             sensitivityMvV: 2.007,
           ),
         ),
-        ChannelCalibration(
-          board: ChannelBoardCalibration(nominals: testNominals),
-        ),
+        const ChannelCalibration(board: NominalChannelBoard(testNominals)),
       ];
       final data = makeSession(
         [
@@ -300,12 +296,10 @@ void main() {
         final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
         final cals = [
           ChannelCalibration(
-            board: ChannelBoardCalibration(nominals: testNominals),
+            board: const NominalChannelBoard(testNominals),
             loadCell: cell,
           ),
-          ChannelCalibration(
-            board: ChannelBoardCalibration(nominals: testNominals),
-          ),
+          const ChannelCalibration(board: NominalChannelBoard(testNominals)),
         ];
         final data = makeSession(
           [
@@ -334,7 +328,7 @@ void main() {
       final cals = [
         for (int ch = 0; ch < channels; ch++)
           ChannelCalibration(
-            board: ChannelBoardCalibration(nominals: testNominals),
+            board: const NominalChannelBoard(testNominals),
             loadCell: cell,
           ),
       ];
@@ -485,7 +479,7 @@ void main() {
         'path: re-render and byte-compare without parsing YAML)', () {
       final cals = [
         ChannelCalibration(
-          board: ChannelBoardCalibration(
+          board: CalibratedChannelBoard(
             resistors: const [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
             readings: const [
               6383553.0,
@@ -502,9 +496,7 @@ void main() {
             sensitivityMvV: 2.007,
           ),
         ),
-        ChannelCalibration(
-          board: ChannelBoardCalibration(nominals: testNominals),
-        ),
+        const ChannelCalibration(board: NominalChannelBoard(testNominals)),
       ];
       final data = makeSession(
         [
@@ -538,7 +530,7 @@ void main() {
   group('column precision (spec worked example: 100 kg / 2 mV/V cell, '
       'nominal chain)', () {
     final cal = ChannelCalibration(
-      board: ChannelBoardCalibration(nominals: testNominals),
+      board: const NominalChannelBoard(testNominals),
       loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0),
     );
 
@@ -566,10 +558,8 @@ void main() {
         'column)', () {
       expect(
         DisplayUnit.kgf.exportDecimalsFor(
-          ChannelConverter(
-            ChannelCalibration(
-              board: ChannelBoardCalibration(nominals: testNominals),
-            ),
+          const ChannelConverter(
+            ChannelCalibration(board: NominalChannelBoard(testNominals)),
             null,
           ),
         ),

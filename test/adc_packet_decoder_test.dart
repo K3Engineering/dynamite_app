@@ -313,8 +313,14 @@ void main() {
       final board = hub.boardCalibration;
       expect(board, isNotNull);
       expect(board!.channels.every((c) => c.isFactoryCalibrated), isTrue);
-      expect(board.channels[0].offsetCounts, closeTo(845.2, 1e-9));
-      expect(board.channels[2].offsetCounts, closeTo(1502.8, 1e-9));
+      expect(
+        (board.channels[0] as CalibratedChannelBoard).offsetCounts,
+        closeTo(845.2, 1e-9),
+      );
+      expect(
+        (board.channels[2] as CalibratedChannelBoard).offsetCounts,
+        closeTo(1502.8, 1e-9),
+      );
       expect(board.factoryDate, '2026-07-20');
       // The demo doc carries board constants: the verdict is ok.
       expect(board.constantsStatus, BoardDataStatus.ok);
