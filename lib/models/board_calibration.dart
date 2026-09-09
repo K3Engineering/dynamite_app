@@ -111,6 +111,11 @@ class BoardNominals {
 /// Flash keys carrying the board constants (Factory namespace).
 const List<String> boardConstantKeys = ['adc_fsr', 'exc', 'afe_gain'];
 
+/// The exact per-channel calibration keys the schema owns.
+final Set<String> channelCalibrationKeys = Set.unmodifiable({
+  for (int i = 0; i < kAdcChannelCount; ++i) ...['ch$i.r', 'ch$i.raw'],
+});
+
 /// Resolve the board constants from a flash document's key=value map and the
 /// ADC's PGA readback ([pgaGains] — always present: an unreadable ADC config
 /// fails the connection upstream). Null when the flash holds NONE of the
@@ -574,10 +579,11 @@ sealed class BoardCalibration {
   /// or malformed constants, factory channel entries that fail validation,
   /// only SOME channels carrying calibration (a factory always calibrates
   /// all channels in one document — a partial set is corrupt flash, not a
-  /// mixed instrument), malformed numeric metadata, or orphaned board
-  /// keys on an otherwise unprovisioned unit. Absent data is legal:
-  /// no constant keys at all → [UnprovisionedBoardCalibration]; constants
-  /// without channel entries → nominal channels.
+  /// mixed instrument), malformed numeric metadata, or orphaned channel
+  /// ladder/readings on an otherwise unprovisioned unit. Absent data is
+  /// legal: no constant keys at all → [UnprovisionedBoardCalibration];
+  /// constants without channel entries → nominal channels. Unknown keys are
+  /// ignored.
   factory BoardCalibration.fromKv(
     Map<String, String> kv, {
     required List<double> pgaGains,
@@ -598,11 +604,11 @@ sealed class BoardCalibration {
 
     final nominals = resolveBoardConstants(kv, pgaGains: pgaGains);
     if (nominals == null) {
-      // Unprovisioned means empty of board data, not missing a few keys:
-      // an orphaned cal.*/ch* key without the constant chain is a
-      // fragment of a bad provisioning.
-      for (final key in kv.keys) {
-        if (key.startsWith('cal.') || key.startsWith('ch')) {
+      // Unprovisioned means no owned calibration data, not merely missing
+      // constants: exact channel entries without the constant chain are a
+      // fragment of a bad provisioning. Unknown keys are not board data.
+      for (final key in channelCalibrationKeys) {
+        if (kv.containsKey(key)) {
           throw FormatException(
             'board data: "$key" without the constant chain',
           );

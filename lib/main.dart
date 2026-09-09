@@ -106,6 +106,7 @@ void main() async {
       name: linkManager.connectedDeviceName,
       info: linkManager.connectedDeviceInfo,
     ),
+    deviceKvsSnapshot: () => rigState.kvsSnapshot,
     onSessionBoundary: decoder.resetContinuity,
     persistence: const StaticSessionPersistence(),
     events: appEvents,

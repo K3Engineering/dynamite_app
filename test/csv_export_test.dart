@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/channel_converter.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/gap_list.dart';
@@ -48,6 +49,7 @@ void main() {
     GapList? gaps,
     int ssnOrigin = 0,
     SessionBoardMeta? boardMeta,
+    KvsSnapshot? deviceKvs,
   }) => SessionData(
     channels: [for (final values in perChannel) Int32List.fromList(values)],
     sampleRate: sampleRate,
@@ -57,6 +59,7 @@ void main() {
     gaps: gaps,
     ssnOrigin: ssnOrigin,
     boardMeta: boardMeta,
+    deviceKvs: deviceKvs,
   );
 
   String buildCsv(SessionData data, DisplayUnit unit) => buildSessionCsv(
@@ -152,6 +155,7 @@ void main() {
             'excitation_v': 4.53,
           },
           'cal': null,
+          'kvs': null,
         },
         'channels': [
           {
@@ -237,6 +241,7 @@ void main() {
           'excitation_v': 4.53,
         },
         'cal': null,
+        'kvs': null,
       });
     });
 
@@ -273,6 +278,27 @@ void main() {
       expect(csv, contains('#   cal:'));
       expect(csv, contains('#     provisioned: true'));
       expect(csv, contains("#       exc: 'nominal'"));
+    });
+
+    test('the raw KVS snapshot joins the device block, deterministically', () {
+      final snapshot = KvsSnapshot(
+        factory: {'charging': 'enabled', 'adc_fsr': '1.2'},
+        user: {'lc0.sens': '2', 'lc0.cap': '200'},
+      );
+      final data = makeSession([
+        [1],
+        [2],
+      ], deviceKvs: snapshot);
+
+      final csv = buildCsv(data, DisplayUnit.kgf);
+      final kvs = (metadataOf(csv)['device'] as Map)['kvs'] as Map;
+
+      expect((kvs['factory'] as Map).keys, ['adc_fsr', 'charging']);
+      expect((kvs['user'] as Map).keys, ['lc0.cap', 'lc0.sens']);
+      expect(kvs, snapshot.toJson());
+      expect(csv, contains('#   kvs:'));
+      expect(csv, contains("#       charging: 'enabled'"));
+      expect(csv, contains("#       lc0.cap: '200'"));
     });
 
     test('a session recorded with no board meta exports cal as null', () {
@@ -467,6 +493,12 @@ void main() {
         () => yamlLinesForCsvMetadata({
           'bad': [<String, Object?>{}],
         }),
+        throwsArgumentError,
+      );
+      // A raw KVS string may be arbitrary: a line terminator must fail the
+      // export rather than corrupt the comment-prefixed metadata block.
+      expect(
+        () => yamlLinesForCsvMetadata({'bad': 'line\nbreak'}),
         throwsArgumentError,
       );
     });

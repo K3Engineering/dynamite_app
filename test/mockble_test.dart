@@ -6,11 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
+import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/mockble.dart';
 
 /// End-to-end (no hardware) test of the live data pipeline:
@@ -149,13 +151,12 @@ void main() {
       });
     });
 
-    test('present-but-invalid flash content fails the connection', () {
+    test('present-but-invalid known flash parks the link in maintenance', () {
       fakeAsync((async) {
         // A corrupt board half (partial constants) and a corrupt slot half
-        // (unparseable sens) alike: the parse is strict, so the connect-
-        // time read throws and the link never reaches streaming — a
-        // misprovisioned board is a provisioning errand, not an instrument
-        // degraded to nominal values and empty slots.
+        // (unparseable sens) alike: the parse is strict, so the connect-time
+        // read throws and the link never reaches streaming — but the healthy
+        // KVS link remains up for recovery.
         for (final doc in [
           'adc_fsr=1.2,nominal\nexc=4.53,nominal', // afe_gain missing
           'adc_fsr=1.2,nominal\nexc=soon\nafe_gain=101', // bad value
@@ -167,7 +168,7 @@ void main() {
           unawaited(link.connectToDevice(deviceId));
           async.elapse(const Duration(seconds: 4));
 
-          expect(link.isStreaming, isFalse, reason: doc);
+          expect(link.linkState, BtLinkState.maintenance, reason: doc);
           expect(hub.totalSamples, 0, reason: doc);
           expect(hub.boardCalibration, isNull, reason: doc);
 
@@ -175,6 +176,24 @@ void main() {
           async.elapse(const Duration(seconds: 4));
         }
         addTearDown(() => MockBlePlatform.instance.resetKnobs());
+      });
+    });
+
+    test('unknown future metadata keys are ignored', () {
+      fakeAsync((async) {
+        MockBlePlatform.instance.seedKvsFromDoc(
+          '$demoBoardCalibrationDoc\ncharging=enabled\n',
+        );
+        final (hub, link, teardown) = wire(async: async);
+
+        unawaited(link.connectToDevice(deviceId));
+        async.elapse(const Duration(seconds: 4));
+
+        expect(link.isStreaming, isTrue);
+        expect(hub.boardCalibration, isA<ProvisionedBoardCalibration>());
+        expect(link.flashFault, isNull);
+
+        teardown();
       });
     });
 

@@ -70,6 +70,12 @@ class AppShellState extends State<AppShell> {
         );
       case BleConnectionLost(:final deviceName):
         showErrorSnackBar(messenger, 'Connection to $deviceName lost.');
+      case BleFlashInvalid(:final deviceName, :final detail):
+        showErrorSnackBar(
+          messenger,
+          '$deviceName has invalid flash data — maintenance mode is available in Settings ($detail).',
+          persist: true,
+        );
       case RecordingStorageError(:final error):
         showErrorSnackBar(
           messenger,

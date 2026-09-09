@@ -10,6 +10,7 @@ import 'bt_device_config.dart';
 import 'demo_calibration.dart';
 import 'kvs_protocol.dart';
 import '../models/board_calibration.dart';
+import '../models/load_cell.dart';
 
 /// Samples per emitted feed packet: one packet every that many milliseconds
 /// makes 1 kHz (matches the mock's ADC config readback, see [readValue]).
@@ -111,7 +112,9 @@ class MockBlePlatform extends UniversalBlePlatform {
       folder.clear();
     }
     for (final e in parseFlashKv(doc).entries) {
-      final folder = e.key.startsWith('lc') ? kvsFolderUser : kvsFolderFactory;
+      final folder = rigSlotKeys.contains(e.key)
+          ? kvsFolderUser
+          : kvsFolderFactory;
       kvsStore[folder]![e.key] = e.value;
     }
   }

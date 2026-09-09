@@ -27,7 +27,7 @@ class _FakeTransport implements RigFlashTransport {
   Future<void> writeSlots(Map<String, String> lcKeys) async {}
 
   @override
-  Future<String> readFlashDoc() async => throw StateError('unused');
+  Future<KvsSnapshot> readKvsSnapshot() async => throw StateError('unused');
 }
 
 void main() {

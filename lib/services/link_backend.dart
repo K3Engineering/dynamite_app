@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../models/device_flash.dart';
 import '../models/device_info.dart';
 
 /// The device-side operations of the active link: the flash document round
@@ -17,10 +18,10 @@ abstract interface class LinkBackend {
   /// Throws on failure — the caller keeps its pending edits.
   Future<void> writeSlots(Map<String, String> lcKeys);
 
-  /// Read the flash document (connect-time load, save verification).
-  /// Empty when the device holds no keys (an unprovisioned unit).
+  /// Read the device KVS snapshot (connect-time load, save verification).
+  /// Empty folders when the device holds no keys (an unprovisioned unit).
   /// Throws on failure.
-  Future<String> readFlashDoc();
+  Future<KvsSnapshot> readKvsSnapshot();
 
   /// Persist the Settings-namespace device name (null clears it — the
   /// device reverts to its factory name). True when the device accepted
@@ -57,9 +58,9 @@ abstract interface class SimulatedLink extends LinkBackend {
   /// Information service in post-connect setup).
   DeviceInfo? get identity;
 
-  /// The flash document served at connect time. Reads after a "Save to
+  /// The KVS snapshot served at connect time. Reads after a "Save to
   /// device" round-trip return whatever was last written.
-  String get flashDoc;
+  KvsSnapshot get kvsSnapshot;
 
   /// Per-channel PGA gains served alongside the flash doc (the analogue
   /// of the GAIN-register readback on real links).

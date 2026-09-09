@@ -38,6 +38,18 @@ class BleConnectionLost extends AppEvent {
   final String deviceName;
 }
 
+/// The device KVS read cleanly but its known flash content failed strict
+/// parsing; the link was parked in maintenance mode for recovery.
+class BleFlashInvalid extends AppEvent {
+  const BleFlashInvalid(this.deviceName, this.detail);
+
+  /// The affected device's display name (or id).
+  final String deviceName;
+
+  /// The parse error (flash schema detail).
+  final Object detail;
+}
+
 /// A recording's storage writer latched a failure (e.g. disk full / web
 /// quota); the saved session may be truncated. Emitted from
 /// `RecordingController.stopSession` for both user-initiated and auto stops.

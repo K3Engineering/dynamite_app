@@ -14,6 +14,17 @@ import 'device_profile.dart';
 /// device. Constant for the first prototype.
 const int kRigSlotCount = 10;
 
+/// The exact load-cell-slot keys the app owns in the device's User
+/// namespace. Unknown `lc*`-shaped keys are ignored on read and left alone
+/// on write.
+final Set<String> rigSlotKeys = Set.unmodifiable({
+  for (int i = 0; i < kRigSlotCount; ++i) ...[
+    'lc$i.name',
+    'lc$i.cap',
+    'lc$i.sens',
+  ],
+});
+
 String rigSlotTitle(int i) =>
     i < kAdcChannelCount ? 'CH ${i + 1}' : 'Slot ${i + 1}';
 
@@ -131,8 +142,9 @@ class RigSlots {
     ]);
   }
 
-  /// The populated slots' `lcN.*` keys — the complete set of slot keys the
-  /// device should hold (a save SETs these and DELs any other `lc` key).
+  /// The populated slots' `lcN.*` keys — the complete set of schema slot
+  /// keys the device should hold (a save SETs these and DELs known slot keys
+  /// it doesn't; unknown `lc*` keys are not the app's data).
   /// Newlines in names are flattened (the doc is line-based); `=` in values
   /// is safe (parse splits at the first one). Integral values emit without
   /// a fraction (`200`, not `200.0`) so an unchanged rig diffs clean

@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/services/data_hub.dart';
@@ -208,5 +209,5 @@ class _FakeTransport implements RigFlashTransport {
   @override
   Future<void> writeSlots(Map<String, String> lcKeys) async {}
   @override
-  Future<String> readFlashDoc() async => throw StateError('unused');
+  Future<KvsSnapshot> readKvsSnapshot() async => throw StateError('unused');
 }

@@ -370,8 +370,17 @@ END
       expect(board.nominals.provenance['exc'], 'nominal');
     });
 
-    test('no board keys at all is an unprovisioned board — a legal state', () {
-      for (final text in ['', 'not a calibration document', '===', 'x=y']) {
+    test('no owned board keys is an unprovisioned board — a legal state', () {
+      for (final text in [
+        '',
+        'not a calibration document',
+        '===',
+        'x=y',
+        'charging=enabled',
+        'ch0.temp=24.1',
+        'cal.future=unknown',
+        'cal.date=2026-08-08',
+      ]) {
         final board = BoardCalibration.parse(text, pgaGains: testGains);
         expect(board, isA<UnprovisionedBoardCalibration>(), reason: text);
       }

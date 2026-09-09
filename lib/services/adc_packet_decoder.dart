@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 
 import 'adc_protocol.dart';
@@ -10,7 +8,7 @@ import '../models/hub_event.dart';
 import '../utils/log.dart';
 
 /// Protocol layer: decodes the device's ADC-feed notification packets and the
-/// calibration characteristic into [AdcSink] updates.
+/// connect-time KVS snapshot into [AdcSink] updates.
 ///
 /// Owns packet continuity: the 16-bit running sample counter, cross-checked
 /// against a monotonic clock of packet arrival times. The device samples
@@ -78,21 +76,19 @@ class AdcPacketDecoder {
   /// cell slots).
   void Function(DeviceFlash flash)? onDeviceFlash;
 
-  /// Parse one flash document read: the `key=value` document the link layer
-  /// reassembled from the device KVS ([DeviceFlash.parse]), plus the ADC's
-  /// per-channel PGA gains from the config readback ([adcGains] — non-null:
-  /// an unreadable config fails the connection upstream, so this layer
-  /// never resolves constants without them). The board calibration feeds
-  /// the sink; the full document (slots included) goes to [onDeviceFlash].
-  /// The parse is strict: present-but-invalid content throws here, inside
-  /// the link's post-connect setup, and fails the connection like an
-  /// unreadable ADC config — an EMPTY document is legal (an unprovisioned
-  /// unit). Undecodable bytes never reach here: the KVS layer decodes
-  /// strictly and a corrupt payload fails the connection (see
-  /// `parseKvsResponse`); [data] is a re-encoded Dart string, always
-  /// valid UTF-8.
-  void onCalibrationPacket(Uint8List data, List<double> adcGains) {
-    final flash = DeviceFlash.parse(utf8.decode(data), pgaGains: adcGains);
+  /// Parse one connect-time KVS snapshot, plus the ADC's per-channel PGA
+  /// gains from the config readback ([adcGains] — non-null: an unreadable
+  /// config fails the connection upstream, so this layer never resolves
+  /// constants without them). The board calibration feeds the sink; the full
+  /// flash (slots and raw provenance included) goes to [onDeviceFlash].
+  /// The parse is strict: present-but-invalid known content throws here,
+  /// inside the link's post-connect setup; the link parks in maintenance
+  /// mode rather than becoming an instrument (an EMPTY store is legal, an
+  /// unprovisioned unit). Wire corruption never reaches here: the KVS layer
+  /// decodes strictly and a corrupt payload fails the connection (see
+  /// `parseKvsResponse`).
+  void onCalibrationPacket(KvsSnapshot snapshot, List<double> adcGains) {
+    final flash = DeviceFlash.fromKvs(snapshot, pgaGains: adcGains);
     hub.updateBoardCalibration(flash.board);
     onDeviceFlash?.call(flash);
   }

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
@@ -9,6 +8,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
+import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
@@ -824,7 +824,8 @@ void main() {
       mock.seedKvsFromDoc('');
       final (link, seen) = wire();
       String? servedDoc;
-      link.onCalibrationData = (bytes, _) => servedDoc = utf8.decode(bytes);
+      link.onCalibrationData = (snapshot, _) =>
+          servedDoc = snapshot.toFlashDoc();
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -836,6 +837,53 @@ void main() {
       expect(servedDoc, '');
       expect(seen, isEmpty);
 
+      teardownLink(async, link);
+    });
+  });
+
+  test('invalid known flash parks a healthy KVS link in maintenance', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.seedKvsFromDoc(
+        'adc_fsr=1.2\nexc=soon\nafe_gain=101\ncharging=enabled',
+      );
+      final (link, seen) = wire();
+      var measurementDelivered = false;
+      link.onCalibrationData = (snapshot, gains) {
+        DeviceFlash.fromKvs(snapshot, pgaGains: gains);
+        measurementDelivered = true;
+      };
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+
+      expect(link.link.state, BtLinkState.maintenance);
+      expect(link.isStreaming, isFalse);
+      expect(link.connectedDeviceId, deviceId);
+      expect(MockBlePlatform.instance.connectedDeviceId, deviceId);
+      expect(MockBlePlatform.instance.gattOpLog, isNot(contains('adc:sub')));
+      expect(link.flashFault!.snapshot.factory['charging'], 'enabled');
+      expect(link.flashFault!.error, isA<FormatException>());
+      expect(measurementDelivered, isFalse);
+      expect(seen, [isA<BleFlashInvalid>()]);
+
+      // The recovery link's KVS channel remains usable.
+      KvsSnapshot? readBack;
+      unawaited(link.readKvsSnapshot().then((s) => readBack = s));
+      async.flushMicrotasks();
+      expect(readBack!.factory['charging'], 'enabled');
+      expect(link.setDeviceName('Bench unit'), completion(isTrue));
+
+      teardownLink(async, link);
+      expect(link.link.state, BtLinkState.idle);
+      expect(link.flashFault, isNull);
+
+      // A repaired device re-enters the normal measurement path.
+      MockBlePlatform.instance.resetKnobs();
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.link.state, BtLinkState.streaming);
+      expect(measurementDelivered, isTrue);
+      expect(seen.whereType<BleFlashInvalid>(), hasLength(1));
       teardownLink(async, link);
     });
   });
@@ -968,10 +1016,10 @@ void main() {
       final (link, seen) = wire();
       settleStartup(async);
       String? doc;
-      link.onCalibrationData = (data, gains) => doc = utf8.decode(data);
+      link.onCalibrationData = (snapshot, gains) => doc = snapshot.toFlashDoc();
 
       unawaited(link.connectToDemoDevice());
-      expect(doc, demoBoardCalibrationDoc);
+      expect(parseFlashKv(doc!), parseFlashKv(demoBoardCalibrationDoc));
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(milliseconds: 100));

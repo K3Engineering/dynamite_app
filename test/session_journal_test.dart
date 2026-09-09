@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/session_journal.dart';
 
 /// The session journal (session_journal.dart): a strict line-1 header, whole
@@ -98,6 +99,38 @@ void main() {
       f?.call(json);
       return json;
     }
+
+    test('deviceKvs is additive and strict when present', () {
+      final legacy = parseSessionJournal(
+        utf8.encode('${jsonEncode(metaJson((j) => j.remove('deviceKvs')))}\n'),
+      );
+      expect(legacy.meta.deviceKvs, isNull);
+
+      final snapshot = KvsSnapshot(
+        factory: {'charging': 'enabled'},
+        user: {'lc0.cap': '200'},
+      );
+      final journal = parseSessionJournal(
+        utf8.encode(
+          '${jsonEncode(metaJson((j) => j['deviceKvs'] = snapshot.toJson()))}\n',
+        ),
+      );
+      expect(journal.meta.deviceKvs!.factory, snapshot.factory);
+      expect(journal.meta.deviceKvs!.user, snapshot.user);
+
+      final bad = jsonEncode(
+        metaJson(
+          (j) => j['deviceKvs'] = {
+            'factory': <Object?>[],
+            'user': <String, String>{},
+          },
+        ),
+      );
+      expect(
+        () => parseSessionJournal(utf8.encode('$bad\n')),
+        throwsFormatException,
+      );
+    });
 
     test('rejects a different version', () {
       final bad = jsonEncode(metaJson((j) => j['version'] = 2));

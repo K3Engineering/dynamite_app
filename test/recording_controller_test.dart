@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/session_catalog.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
@@ -43,7 +44,9 @@ void main() {
     tmp.deleteSync(recursive: true);
   });
 
-  (RecordingController, DataHub, ValueNotifier<bool>) wire() {
+  (RecordingController, DataHub, ValueNotifier<bool>) wire({
+    KvsSnapshot? deviceKvs,
+  }) {
     final events = AppEvents();
     final hub = DataHub();
     final decoder = AdcPacketDecoder(hub);
@@ -54,6 +57,7 @@ void main() {
       streamingNow: () => streaming.value,
       deviceMetadataSnapshot: () =>
           toSessionDeviceMetadata(name: null, info: null),
+      deviceKvsSnapshot: () => deviceKvs,
       onSessionBoundary: decoder.resetContinuity,
       persistence: const StaticSessionPersistence(),
       events: events,
@@ -183,6 +187,22 @@ void main() {
     },
   );
 
+  test('the raw KVS snapshot freezes into the saved session', () async {
+    final snapshot = KvsSnapshot(
+      factory: {'charging': 'enabled', 'adc_fsr': '1.2'},
+      user: {'lc0.cap': '200'},
+    );
+    final (recording, hub, _) = wire(deviceKvs: snapshot);
+
+    expect(start(recording), isA<StartSessionOk>());
+    feedFrames(hub, 3);
+    final stop = await recording.stopSession();
+
+    final loaded = await loadSession(stop.sessionId!);
+    expect(loaded.deviceKvs!.factory, snapshot.factory);
+    expect(loaded.deviceKvs!.user, snapshot.user);
+  });
+
   test('a second start while recording is refused', () async {
     final (recording, _, _) = wire();
 
@@ -262,6 +282,7 @@ void main() {
         streamingNow: () => streaming.value,
         deviceMetadataSnapshot: () =>
             toSessionDeviceMetadata(name: null, info: null),
+        deviceKvsSnapshot: () => null,
         onSessionBoundary: decoder.resetContinuity,
         persistence: const StaticSessionPersistence(),
         events: events,

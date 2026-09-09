@@ -19,6 +19,7 @@
 /// {"version":1,"name":"...","sampleRate":1000,"channelCount":4,
 ///  "channelLabels":["Ch 1",...],"tares":[null,123.5,...],
 ///  "calibration":[{...},...],"displayUnit":"kgf","deviceInfo":{...},
+///  "deviceKvs":{"factory":{...},"user":{...}} | null,
 ///  "boardMeta":{...} | null,"recordedAt":"2026-08-28T14:30:12.345+02:00",
 ///  "ssnOrigin":123456,"visibleChannels":[true,...]}
 /// ```
@@ -34,6 +35,7 @@ import 'dart:typed_data';
 
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
+import '../models/device_flash.dart';
 import '../models/display_unit.dart';
 
 const int sessionJournalVersion = 1;
@@ -51,6 +53,7 @@ class SessionMeta {
     required this.calibration,
     required this.displayUnit,
     required this.deviceInfo,
+    this.deviceKvs,
     required this.boardMeta,
     required this.recordedAt,
     required this.ssnOrigin,
@@ -77,6 +80,10 @@ class SessionMeta {
   /// The connected device's identity at recording start (the dynamite-csv
   /// `device` metadata block), frozen so export never consults live state.
   final Map<String, Object?> deviceInfo;
+
+  /// The raw device KVS snapshot at recording start (artifact provenance).
+  /// Null for sessions recorded before this field existed.
+  final KvsSnapshot? deviceKvs;
 
   /// Board-level calibration provenance at recording start; null when no
   /// board data resolved.
@@ -105,6 +112,7 @@ class SessionMeta {
     'calibration': [for (final c in calibration) c.toJson()],
     'displayUnit': displayUnit,
     'deviceInfo': deviceInfo,
+    'deviceKvs': ?deviceKvs?.toJson(),
     'boardMeta': ?boardMeta?.toJson(),
     'recordedAt': recordedAt,
     'ssnOrigin': ssnOrigin,
@@ -192,6 +200,16 @@ class SessionMeta {
     if (deviceInfo is! Map) {
       throw FormatException('journal header: bad deviceInfo: $deviceInfo');
     }
+    final deviceKvsJson = json['deviceKvs'];
+    final deviceKvs = deviceKvsJson == null
+        ? null
+        : KvsSnapshot.fromJson(
+            deviceKvsJson is Map
+                ? Map<String, dynamic>.from(deviceKvsJson)
+                : throw const FormatException(
+                    'journal header: deviceKvs must be an object or null',
+                  ),
+          );
     final boardMetaJson = json['boardMeta'];
     final boardMeta = boardMetaJson == null
         ? null
@@ -223,6 +241,7 @@ class SessionMeta {
       calibration: List.unmodifiable(calibration),
       displayUnit: displayUnit,
       deviceInfo: Map.unmodifiable(deviceInfo),
+      deviceKvs: deviceKvs,
       boardMeta: boardMeta,
       recordedAt: recordedAt,
       ssnOrigin: ssnOrigin,

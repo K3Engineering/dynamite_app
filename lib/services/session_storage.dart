@@ -1,5 +1,6 @@
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
+import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import 'live_session_writer.dart';
@@ -59,6 +60,7 @@ class SessionStorage {
     required List<bool> visibleChannels,
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
+    required KvsSnapshot? deviceKvs,
     required SessionBoardMeta? boardMeta,
     required void Function(Object error) onWriteError,
   }) {
@@ -81,6 +83,7 @@ class SessionStorage {
         // format's recording-time snapshot requirement).
         displayUnit: displayUnit.name,
         deviceInfo: Map.of(deviceMetadata),
+        deviceKvs: deviceKvs,
         boardMeta: boardMeta,
         // Frozen at recording start, NOT at directory creation (which is
         // the first packet's write, later): the wall clock the CSV's
@@ -178,6 +181,7 @@ class StaticSessionPersistence implements SessionPersistence {
     required List<bool> visibleChannels,
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
+    required KvsSnapshot? deviceKvs,
     required SessionBoardMeta? boardMeta,
     required void Function(Object error) onWriteError,
   }) => SessionStorage.startSession(
@@ -190,6 +194,7 @@ class StaticSessionPersistence implements SessionPersistence {
     visibleChannels: visibleChannels,
     displayUnit: displayUnit,
     deviceMetadata: deviceMetadata,
+    deviceKvs: deviceKvs,
     boardMeta: boardMeta,
     onWriteError: onWriteError,
   );

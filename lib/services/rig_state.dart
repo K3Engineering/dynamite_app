@@ -82,6 +82,9 @@ class RigState extends ChangeNotifier {
   /// first successful read.
   BoardCalibration? get boardCalibration => _lastFlash?.board;
 
+  /// The raw KVS snapshot as last read (refreshed by a verified save).
+  KvsSnapshot? get kvsSnapshot => _lastFlash?.kvs;
+
   /// The connected device's display name, live off the link: history
   /// provenance and the calibration report's owner label.
   String get connectedDeviceName => _transport.connectedDeviceName;
@@ -192,9 +195,11 @@ class RigState extends ChangeNotifier {
     // device silently — and there is no change detection to catch it.
     // The slot parse is strict ([RigSlots.fromKv]): a mangled write-back
     // reads as garbage there and fails the save like a failed read.
+    final KvsSnapshot readBack;
     final RigSlots verified;
     try {
-      verified = RigSlots.fromKv(parseFlashKv(await _transport.readFlashDoc()));
+      readBack = await _transport.readKvsSnapshot();
+      verified = RigSlots.fromKv(readBack.merged);
     } catch (_) {
       return false;
     }
@@ -207,8 +212,12 @@ class RigState extends ChangeNotifier {
     }
     // The device provably holds these slots: adopt the read-back's slot
     // list (any normalization the device applied is reflected), keep the
-    // read-time board.
-    _lastFlash = DeviceFlash(board: flash!.board, slots: verified);
+    // read-time board, and refresh the frozen raw KVS provenance.
+    _lastFlash = DeviceFlash(
+      board: flash!.board,
+      slots: verified,
+      kvs: readBack,
+    );
     _pendingEdits = null;
     notifyListeners();
     return true;

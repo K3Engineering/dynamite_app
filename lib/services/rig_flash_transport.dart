@@ -1,9 +1,11 @@
 /// The piece of the BLE stack `RigState` needs: which device is connected,
 /// and a way to persist load-cell slots to it. Implemented by
 /// `BleLinkManager` (the demo device applies slot edits to its in-memory
-/// doc; real devices write per-key diffs over the device KVS — see
+/// store; real devices write per-key diffs over the device KVS — see
 /// `KvsFlashTransport.writeSlots`).
 library;
+
+import '../models/device_flash.dart';
 
 abstract interface class RigFlashTransport {
   /// Empty string when no device is connected.
@@ -19,7 +21,7 @@ abstract interface class RigFlashTransport {
   /// pending edits.
   Future<void> writeSlots(Map<String, String> lcKeys);
 
-  /// Read the flash document back from the connected device (save
+  /// Read the KVS snapshot back from the connected device (save
   /// verification). Throws on failure or when no device is connected.
-  Future<String> readFlashDoc();
+  Future<KvsSnapshot> readKvsSnapshot();
 }

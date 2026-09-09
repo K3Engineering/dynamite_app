@@ -1,9 +1,9 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/adc_protocol.dart';
@@ -307,7 +307,7 @@ void main() {
   group('AdcPacketDecoder calibration', () {
     test('a calibration document populates the hub board calibration', () {
       decoder.onCalibrationPacket(
-        Uint8List.fromList(utf8.encode(demoBoardCalibrationDoc)),
+        KvsSnapshot.fromFlashDoc(demoBoardCalibrationDoc),
         const [1, 1, 1, 1],
       );
       final board = hub.boardCalibration;
@@ -325,14 +325,10 @@ void main() {
       expect(provisioned.factoryDate, '2026-07-20');
     });
 
-    test('a garbage read throws, leaving the hub untouched', () {
-      // Not valid UTF-8, let alone a calibration document. Undecodable
-      // bytes fail loudly (as they do at the KVS layer upstream); they
-      // must never degrade a corrupted read into a plausible uncalibrated
-      // board.
+    test('invalid flash content throws, leaving the hub untouched', () {
       expect(
         () => decoder.onCalibrationPacket(
-          Uint8List.fromList(const [0x00, 0x9F, 0x92, 0x96, 0xFF]),
+          KvsSnapshot.fromFlashDoc('adc_fsr=1.2\nexc=4.53\nlc0.cap=100'),
           const [1, 1, 1, 1],
         ),
         throwsFormatException,

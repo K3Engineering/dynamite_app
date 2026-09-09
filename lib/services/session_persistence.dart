@@ -1,5 +1,6 @@
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
+import '../models/device_flash.dart';
 import '../models/display_unit.dart';
 import 'live_session_writer.dart';
 
@@ -27,6 +28,7 @@ abstract interface class SessionPersistence {
     required List<bool> visibleChannels,
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
+    required KvsSnapshot? deviceKvs,
     required SessionBoardMeta? boardMeta,
     required void Function(Object error) onWriteError,
   });

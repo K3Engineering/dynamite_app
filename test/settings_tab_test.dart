@@ -1,4 +1,4 @@
-import 'dart:convert';
+import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/models/app_meta.dart';
+import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/display_unit.dart';
@@ -43,8 +44,8 @@ void main() {
     // Wire the link's calibration read to the rig — the app's wiring goes
     // through the packet decoder; the test shortcuts the (separately
     // tested) parsing.
-    link.onCalibrationData = (data, gains) {
-      final flash = DeviceFlash.parse(utf8.decode(data), pgaGains: gains);
+    link.onCalibrationData = (snapshot, gains) {
+      final flash = DeviceFlash.fromKvs(snapshot, pgaGains: gains);
       hub.updateBoardCalibration(flash.board);
       rig.onFlashRead(link.connectedDeviceId, link.connectedDeviceName, flash);
       hub.updateLoadCells(rig.channelCells);
@@ -150,6 +151,29 @@ void main() {
     // drain the command-queue timeout (see device_action_buttons_test).
     await link.disconnectSelectedDevice();
     await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+  });
+
+  testWidgets('invalid flash renders the maintenance recovery card', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    MockBlePlatform.instance.seedKvsFromDoc(
+      'adc_fsr=1.2\nexc=soon\nafe_gain=101',
+    );
+    final link = await pump(tester);
+    unawaited(link.connectToDevice('2'));
+    await tester.pump(const Duration(seconds: 4));
+
+    expect(link.linkState, BtLinkState.maintenance);
+    expect(find.text('Maintenance mode'), findsOneWidget);
+    expect(find.text('Copy raw KVS'), findsOneWidget);
+    expect(find.textContaining('bad exc'), findsOneWidget);
+
+    unawaited(link.disconnectSelectedDevice());
     await tester.pump(const Duration(seconds: 6));
   });
 

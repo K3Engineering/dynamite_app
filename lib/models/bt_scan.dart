@@ -23,9 +23,10 @@ enum BtLinkState {
   /// Post-connect setup's second stage: services are discovered; the board
   /// constants (device identity, the ADC's config/GAIN readback, and the
   /// connect-time flash document read over KVS) are being read. Still not
-  /// usable. An unreadable or unparseable ADC config, a failed KVS bring-up,
-  /// or an invalid flash document (the parse is strict) tears the link down
-  /// here (see `BleLinkManager._readAdcConfig` and `_setupKvs`).
+  /// usable. An unreadable or unparseable ADC config or a failed KVS
+  /// bring-up tears the link down here; invalid known flash content parks
+  /// it in [maintenance] instead (see `BleLinkManager._readAdcConfig` and
+  /// `_setupKvs`).
   readingConstants,
 
   /// Post-connect setup's third stage: the board constants are in and the
@@ -33,6 +34,12 @@ enum BtLinkState {
   /// not usable. The link advances to [streaming] only once the subscription
   /// succeeds, or is torn down on failure.
   subscribing,
+
+  /// Terminal recovery state: the KVS snapshot read cleanly but its known
+  /// flash content failed strict parsing. The GATT/KVS link stays usable for
+  /// recovery; the ADC feed was never subscribed and no measurement state was
+  /// constructed.
+  maintenance,
 
   /// Fully set up: services discovered and the ADC feed subscription is active,
   /// so data is flowing. This is the single "usable / connected" state.

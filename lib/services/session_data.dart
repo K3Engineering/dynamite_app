@@ -4,6 +4,7 @@ import '../models/board_calibration.dart';
 import '../models/bucket_series.dart';
 import '../models/channel_calibration.dart';
 import '../models/channel_converter.dart';
+import '../models/device_flash.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 
@@ -25,6 +26,10 @@ class SessionData implements GraphDataSource {
   /// (see [SessionBoardMeta]). Null for sessions recorded with no board
   /// data resolved.
   final SessionBoardMeta? boardMeta;
+
+  /// The raw device KVS snapshot frozen at record start; null for sessions
+  /// recorded before this provenance field existed.
+  final KvsSnapshot? deviceKvs;
 
   /// Device sample-counter value at the session's first sample (the
   /// dynamite-csv `ssn_origin`), latched by the live writer from the first
@@ -68,6 +73,7 @@ class SessionData implements GraphDataSource {
     required this.tares,
     required this.ssnOrigin,
     this.boardMeta,
+    this.deviceKvs,
     GapList? gaps,
   }) : gaps = gaps ?? GapList(),
        _extremes = List.filled(channels.length, null) {

@@ -34,11 +34,11 @@ void main() {
 
   final mock = MockBlePlatform.instance;
 
-  String? read(KvsFlashTransport transport, FakeAsync async) {
-    String? doc;
-    unawaited(transport.readFlashDoc().then((d) => doc = d));
+  KvsSnapshot? read(KvsFlashTransport transport, FakeAsync async) {
+    KvsSnapshot? snapshot;
+    unawaited(transport.readKvsSnapshot().then((s) => snapshot = s));
     async.flushMicrotasks();
-    return doc;
+    return snapshot;
   }
 
   Object? writeSlots(
@@ -62,14 +62,16 @@ void main() {
     pgaGains: const [1, 1, 1, 1],
   ).slots.toKv();
 
-  test('readFlashDoc reassembles the seeded document', () {
+  test('readKvsSnapshot reads the seeded store folder-separated', () {
     fakeAsync((async) {
       final (transport, _) = wire();
-      final doc = read(transport, async);
+      final snapshot = read(transport, async);
 
-      expect(doc, isNotNull);
+      expect(snapshot, isNotNull);
+      expect(snapshot!.factory['adc_fsr'], '1.2,nominal');
+      expect(snapshot.user['lc0.cap'], '200');
       const gains = [1.0, 1.0, 1.0, 1.0];
-      final flash = DeviceFlash.parse(doc!, pgaGains: gains);
+      final flash = DeviceFlash.fromKvs(snapshot, pgaGains: gains);
       final fixture = DeviceFlash.parse(
         demoBoardCalibrationDoc,
         pgaGains: gains,
@@ -121,8 +123,8 @@ void main() {
         'SETUlc0.sens=1.9985',
         'SETUlc6.cap=50',
         'SETUlc6.sens=2',
-        'DELUlc4.name',
         'DELUlc4.cap',
+        'DELUlc4.name',
         'DELUlc4.sens',
       ]);
 
@@ -141,24 +143,46 @@ void main() {
   test('unknown keys are never touched; non-slot keys are refused', () {
     fakeAsync((async) {
       final (transport, _) = wire();
-      // A key the model doesn't know, planted in the Factory folder.
+      // Keys the model doesn't know, planted in both folders.
       mock.kvsStore[kvsFolderFactory]!['vendor.x'] = '42';
-      final doc = read(transport, async)!;
-      expect(doc, contains('vendor.x=42'));
+      mock.kvsStore[kvsFolderUser]!['lc3.tare'] = '123';
+      final snapshot = read(transport, async)!;
+      expect(snapshot.factory['vendor.x'], '42');
+      expect(snapshot.user['lc3.tare'], '123');
       mock.kvsCommandLog.clear();
 
-      // A slot write leaves the unknown key alone (slot writes only ever
-      // name lc* keys, and DELs are scoped to lc* snapshot keys).
+      // A slot write leaves the unknown keys alone (slot writes only ever
+      // name exact schema slot keys, and DELs are scoped to the same set).
       expect(writeSlots(transport, fixtureSlots(), async), isNull);
       expect(mock.kvsCommandLog, isEmpty);
       expect(mock.kvsStore[kvsFolderFactory]!['vendor.x'], '42');
+      expect(mock.kvsStore[kvsFolderUser]!['lc3.tare'], '123');
 
       // A non-slot key can never be submitted to the device through here.
       expect(
         writeSlots(transport, {'vendor.x': '43'}, async),
         isA<ArgumentError>(),
       );
+      expect(
+        writeSlots(transport, {'lcx.cap': '1'}, async),
+        isA<ArgumentError>(),
+      );
       expect(mock.kvsStore[kvsFolderFactory]!['vendor.x'], '42');
+      expect(mock.kvsStore[kvsFolderUser]!['lc3.tare'], '123');
+    });
+  });
+
+  test('clearing the rig deletes schema slot keys only', () {
+    fakeAsync((async) {
+      final (transport, _) = wire();
+      mock.kvsStore[kvsFolderUser]!['lc3.tare'] = '123';
+      read(transport, async);
+      mock.kvsCommandLog.clear();
+
+      expect(writeSlots(transport, const {}, async), isNull);
+      expect(mock.kvsStore[kvsFolderUser]!['lc3.tare'], '123');
+      expect(mock.kvsCommandLog.where((c) => c == 'DELUlc3.tare'), isEmpty);
+      expect(mock.kvsStore[kvsFolderUser]!.containsKey('lc0.cap'), isFalse);
     });
   });
 
@@ -183,7 +207,7 @@ void main() {
       // And a fresh read reassembles the same slots.
       final reread = read(KvsFlashTransport(client), async)!;
       expect(
-        DeviceFlash.parse(reread, pgaGains: const [1, 1, 1, 1]).slots,
+        DeviceFlash.fromKvs(reread, pgaGains: const [1, 1, 1, 1]).slots,
         DeviceFlash.parse(
           'lc0.name=Thrust cell\nlc0.cap=200\nlc0.sens=1.9993',
           pgaGains: const [1, 1, 1, 1],
@@ -197,7 +221,7 @@ void main() {
       final (transport, _) = wire();
       mock.kvsStore.forEach((_, folder) => folder.clear());
 
-      expect(read(transport, async), '');
+      expect(read(transport, async)!.toFlashDoc(), '');
     });
   });
 
@@ -208,7 +232,7 @@ void main() {
 
       Object? readError;
       unawaited(
-        transport.readFlashDoc().then(
+        transport.readKvsSnapshot().then(
           (_) {},
           onError: (Object e) => readError = e,
         ),

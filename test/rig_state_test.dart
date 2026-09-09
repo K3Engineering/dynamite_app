@@ -47,13 +47,14 @@ class _FakeTransport implements RigFlashTransport {
     if (gate != null) await gate.future;
     lastWrittenSlots = lcKeys;
     final kv = parseFlashKv(deviceDoc)
-      ..removeWhere((key, _) => key.startsWith('lc'))
+      ..removeWhere((key, _) => rigSlotKeys.contains(key))
       ..addAll(lcKeys);
     deviceDoc = [for (final e in kv.entries) '${e.key}=${e.value}'].join('\n');
   }
 
   @override
-  Future<String> readFlashDoc() async => readBackDoc ?? deviceDoc;
+  Future<KvsSnapshot> readKvsSnapshot() async =>
+      KvsSnapshot.fromFlashDoc(readBackDoc ?? deviceDoc);
 }
 
 void main() {
@@ -118,13 +119,16 @@ void main() {
 
         // No flash document read yet.
         expect(rig.boardCalibration, isNull);
+        expect(rig.kvsSnapshot, isNull);
 
         rig.onFlashRead('dev1', 'Bench unit', fixture());
         expect(rig.boardCalibration, isNotNull);
+        expect(rig.kvsSnapshot, isNotNull);
 
         // The document dies with the link.
         rig.onLinkDropped();
         expect(rig.boardCalibration, isNull);
+        expect(rig.kvsSnapshot, isNull);
       },
     );
 
@@ -227,11 +231,14 @@ void main() {
       // A save submits slot keys and nothing else — the board half can
       // never be stamped (byte-level or otherwise) by the app.
       final written = transport.lastWrittenSlots!;
-      expect(written.keys.every((k) => k.startsWith('lc')), isTrue);
+      expect(written.keys.every(rigSlotKeys.contains), isTrue);
       expect(written['lc3.name'], 'New');
       expect(written['lc3.cap'], '50');
       expect(written['lc3.sens'], '1');
       expect(parseFlashKv(transport.deviceDoc)['cal.date'], '2026-07-20');
+      // The verified read-back refreshes the raw KVS provenance.
+      expect(rig.kvsSnapshot!.user['lc3.name'], 'New');
+      expect(rig.kvsSnapshot!.factory['cal.date'], '2026-07-20');
       // The commit keeps the read-time (PGA-resolved) board, not a
       // re-parse of the gain-less read-back.
       expect(
@@ -256,6 +263,7 @@ void main() {
       expect(await rig.saveToDevice(), isFalse);
       expect(rig.hasPending, isTrue);
       expect(rig.channelTitles[3], 'New');
+      expect(rig.kvsSnapshot!.user.containsKey('lc3.cap'), isFalse);
     });
 
     test('a link drop mid-save fails the save', () async {

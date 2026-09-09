@@ -247,6 +247,10 @@ Map<String, Object?> _metadata(
       // and the per-constant provenance tags. Null for a session recorded
       // with no board data resolved.
       'cal': data.boardMeta?.toJson(),
+      // Raw store provenance frozen at recording start; descriptive only —
+      // the operative transfer function remains channels[].board_cal.
+      // Null for sessions recorded before this field existed.
+      'kvs': data.deviceKvs?.toJson(),
     },
     'channels': [
       for (int ch = 0; ch < n; ch++)
@@ -318,7 +322,12 @@ List<String> _yamlSequenceMapping(Map<dynamic, dynamic> mapping, int indent) {
 /// null as the YAML 1.2 core-schema spellings.
 String _yamlScalar(Object? value) {
   if (value == null) return 'null';
-  if (value is String) return "'${value.replaceAll("'", "''")}'";
+  if (value is String) {
+    if (value.contains(RegExp(r'[\x00-\x1F\x7F]'))) {
+      throw ArgumentError('no canonical YAML form for control characters');
+    }
+    return "'${value.replaceAll("'", "''")}'";
+  }
   if (value is bool) return '$value';
   if (value is num) return jsonEncode(value);
   throw ArgumentError('no canonical YAML form for ${value.runtimeType}');

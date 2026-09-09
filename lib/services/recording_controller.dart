@@ -7,6 +7,7 @@ import 'data_hub.dart';
 import 'live_session_writer.dart';
 import 'session_persistence.dart';
 import '../models/board_calibration.dart';
+import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/feed_health.dart';
@@ -92,6 +93,10 @@ class RecordingController extends ChangeNotifier {
     /// — csv-format-v1.md), frozen onto the session row at start.
     required Map<String, Object?> Function() deviceMetadataSnapshot,
 
+    /// Snapshot of the raw device KVS (the CSV `device.kvs` block), frozen
+    /// onto the session row at start.
+    required KvsSnapshot? Function() deviceKvsSnapshot,
+
     /// Marks a session boundary for packet continuity: the first packet of
     /// a session must not be diffed against a stale counter from across the
     /// boundary (the decoder's `resetContinuity`, wired in main).
@@ -104,6 +109,7 @@ class RecordingController extends ChangeNotifier {
        _streamingChanges = streamingChanges,
        _streamingNow = streamingNow,
        _deviceMetadataSnapshot = deviceMetadataSnapshot,
+       _deviceKvsSnapshot = deviceKvsSnapshot,
        _onSessionBoundary = onSessionBoundary,
        _persistence = persistence,
        _events = events {
@@ -115,6 +121,7 @@ class RecordingController extends ChangeNotifier {
   final Listenable _streamingChanges;
   final bool Function() _streamingNow;
   final Map<String, Object?> Function() _deviceMetadataSnapshot;
+  final KvsSnapshot? Function() _deviceKvsSnapshot;
   final void Function() _onSessionBoundary;
   final SessionPersistence _persistence;
   final AppEvents _events;
@@ -197,6 +204,7 @@ class RecordingController extends ChangeNotifier {
       visibleChannels: visibleChannels,
       displayUnit: displayUnit,
       deviceMetadata: _deviceMetadataSnapshot(),
+      deviceKvs: _deviceKvsSnapshot(),
       // Freeze the board-level calibration provenance alongside the
       // per-channel snapshot above; null when no board data resolved.
       boardMeta: switch (_dataHub.boardCalibration) {

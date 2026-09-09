@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import '../models/device_flash.dart';
+import '../models/load_cell.dart';
 import 'kvs_client.dart';
 import 'kvs_protocol.dart';
 import 'link_backend.dart';
@@ -29,7 +31,8 @@ class GattLinkBackend implements LinkBackend {
       withFeedPaused(() => _transport.writeSlots(lcKeys));
 
   @override
-  Future<String> readFlashDoc() => withFeedPaused(_transport.readFlashDoc);
+  Future<KvsSnapshot> readKvsSnapshot() =>
+      withFeedPaused(_transport.readKvsSnapshot);
 
   @override
   Future<bool> storeDeviceName(String? name) => withFeedPaused(
@@ -61,40 +64,38 @@ class KvsFlashTransport {
 
   final KvsClient _client;
 
-  /// The last-read document's keys. The write diff consults only slot keys:
-  /// the app never writes anything else (see [writeSlots]).
-  Map<String, String> _snapshot = const {};
+  /// The last-read store. The write diff consults only slot keys: the app
+  /// never writes anything else (see [writeSlots]).
+  KvsSnapshot _snapshot = KvsSnapshot(factory: const {}, user: const {});
 
-  /// Read every key from the Factory and User folders and reassemble the
-  /// document text (empty when the device holds no keys — an unprovisioned
-  /// unit). Throws on transport/protocol failure: a document that can't be
-  /// read completely is not the device state, so the connect-time caller
-  /// fails the connection and the save-time caller fails the save — no
-  /// partial snapshot ever diverges silently from the device. A key
-  /// duplicated across folders collapses to the User copy, mirroring
-  /// [parseFlashKv]'s last-wins.
-  Future<String> readFlashDoc() async {
-    final kv = <String, String>{};
+  /// Read every key from the Factory and User folders. Throws on
+  /// transport/protocol failure: a store that can't be read completely is
+  /// not the device state, so the connect-time caller fails the connection
+  /// and the save-time caller fails the save — no partial snapshot ever
+  /// diverges silently from the device.
+  Future<KvsSnapshot> readKvsSnapshot() async {
+    final factory = <String, String>{};
+    final user = <String, String>{};
     for (final folder in const [kvsFolderFactory, kvsFolderUser]) {
+      final target = folder == kvsFolderFactory ? factory : user;
       final keys = await _client.listKeys(folder);
       for (final key in keys.keys) {
         final value = await _client.get(folder, key);
         // A key that vanished between IDX and GET means another writer
-        // mutated the store mid-read — the reassembled document would not
-        // be a coherent snapshot, so abort loudly.
+        // mutated the store mid-read — the reassembled snapshot would not
+        // be coherent, so abort loudly.
         if (value == null) {
           throw StateError('KVS key "$key" vanished mid-read in $folder');
         }
-        kv[key] = value;
+        target[key] = value;
       }
     }
-    _snapshot = kv;
-    return [for (final e in kv.entries) '${e.key}=${e.value}'].join('\n');
+    return _snapshot = KvsSnapshot(factory: factory, user: user);
   }
 
-  /// Write the load-cell slot keys [lcKeys] (`lc0.cap`, ...) as a per-key
-  /// diff against the last-read snapshot: SET the new/changed ones, DEL
-  /// slot keys the snapshot holds but [lcKeys] doesn't, leave everything
+  /// Write the exact load-cell slot keys [lcKeys] (`lc0.cap`, ...) as a
+  /// per-key diff against the last-read snapshot: SET the new/changed ones,
+  /// DEL slot keys the snapshot holds but [lcKeys] doesn't, leave everything
   /// else — the board half, unknown keys — untouched. All writes go to the
   /// User folder, where the slots live; the app never writes Factory.
   /// Throws when the device rejects any write — the caller keeps its
@@ -102,25 +103,23 @@ class KvsFlashTransport {
   /// key is written and nothing is deleted.
   Future<void> writeSlots(Map<String, String> lcKeys) async {
     for (final key in lcKeys.keys) {
-      if (!key.startsWith('lc')) {
+      if (!rigSlotKeys.contains(key)) {
         throw ArgumentError.value(key, 'lcKeys', 'not a slot key');
       }
     }
+    final merged = _snapshot.merged;
     for (final e in lcKeys.entries) {
-      if (_snapshot[e.key] == e.value) continue;
+      if (merged[e.key] == e.value) continue;
       if (!await _client.set(kvsFolderUser, e.key, e.value)) {
         throw StateError('KVS write rejected for ${e.key}');
       }
     }
-    for (final key in _snapshot.keys) {
-      if (!key.startsWith('lc') || lcKeys.containsKey(key)) continue;
+    for (final key in _snapshot.user.keys) {
+      if (!rigSlotKeys.contains(key) || lcKeys.containsKey(key)) continue;
       if (!await _client.delete(kvsFolderUser, key)) {
         throw StateError('KVS delete rejected for $key');
       }
     }
-    _snapshot = {..._snapshot, ...lcKeys}
-      ..removeWhere(
-        (key, _) => key.startsWith('lc') && !lcKeys.containsKey(key),
-      );
+    _snapshot = _snapshot.withUserSlots(lcKeys);
   }
 }

@@ -66,6 +66,7 @@ void main() {
       visibleChannels: const [true, true, true, true],
       displayUnit: DisplayUnit.kgf,
       deviceMetadata: const {},
+      deviceKvs: null,
       boardMeta: switch (hub.boardCalibration) {
         final board? => SessionBoardMeta.fromBoard(board),
         null => null,
@@ -86,6 +87,7 @@ void main() {
     visibleChannels: const [true, true, true, true],
     displayUnit: 'kgf',
     deviceInfo: const {},
+    deviceKvs: null,
     boardMeta: null,
     recordedAt: '2026-07-29T14:05:32.000Z',
   );
