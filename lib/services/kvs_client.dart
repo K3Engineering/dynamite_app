@@ -11,10 +11,11 @@ import 'kvs_protocol.dart';
 /// are strictly serialized: [KvsClient] queues internally and matches each
 /// response to its request by the echoed text (see [parseKvsResponse]).
 ///
-/// A command whose response never arrives (the firmware drops commands
-/// silently while the device is locked) fails after [commandTimeout]. All
-/// pending and queued commands fail on [abort] (link teardown); the client
-/// is spent afterwards — a new link builds a new client.
+/// A command whose response never arrives fails after [commandTimeout] —
+/// the device answers every command ('B' busy while locked/streaming), so
+/// a timeout means the link is broken. All pending and queued commands
+/// fail on [abort] (link teardown); the client is spent afterwards — a new
+/// link builds a new client.
 class KvsClient {
   KvsClient({
     required this.write,
@@ -27,8 +28,8 @@ class KvsClient {
   final Future<void> Function(Uint8List bytes) write;
 
   /// Upper bound on one command's write + response round trip. Comfortably
-  /// below the BLE stack's own command timeout so a silently dropped
-  /// command fails fast enough for callers to react.
+  /// below the BLE stack's own command timeout so an unanswered command —
+  /// a broken link — fails fast enough for callers to react.
   final Duration commandTimeout;
 
   final ListQueue<_KvsCommand> _queue = ListQueue();
@@ -36,28 +37,39 @@ class KvsClient {
   bool _aborted = false;
 
   /// The value stored under [key], or null when the device answered "no
-  /// such key". Transport and protocol failures throw.
+  /// such key". Busy ('B') and device-error ('E') answers throw, as do
+  /// transport and protocol failures.
   Future<String?> get(String folder, String key) async {
     final response = await _execute(encodeKvsGet(folder, key));
-    return response.ok ? response.payload : null;
+    response.throwIfBusyOrError();
+    return response.status == KvsStatus.ok ? response.payload : null;
   }
 
-  /// True when the device accepted the write.
-  Future<bool> set(String folder, String key, String value) async =>
-      (await _execute(encodeKvsSet(folder, key, value))).ok;
+  /// True when the device accepted the write ('B'/'E' answers throw).
+  Future<bool> set(String folder, String key, String value) async {
+    final response = await _execute(encodeKvsSet(folder, key, value));
+    response.throwIfBusyOrError();
+    return response.status == KvsStatus.ok;
+  }
 
-  /// True when the key existed and was deleted.
-  Future<bool> delete(String folder, String key) async =>
-      (await _execute(encodeKvsDelete(folder, key))).ok;
+  /// True when the key existed and was deleted ('B'/'E' answers throw).
+  Future<bool> delete(String folder, String key) async {
+    final response = await _execute(encodeKvsDelete(folder, key));
+    response.throwIfBusyOrError();
+    return response.status == KvsStatus.ok;
+  }
 
   /// All keys in [folder] with their NVS value types, via IDX iteration
-  /// (which ends at the first index the device rejects). Iteration order is
-  /// the device's storage order — arbitrary, but stable within a snapshot.
+  /// (which ends at the first index the device rejects; a busy or error
+  /// answer throws — a truncated listing must not pass as complete).
+  /// Iteration order is the device's storage order — arbitrary, but stable
+  /// within a snapshot.
   Future<Map<String, int>> listKeys(String folder) async {
     final out = <String, int>{};
     for (var i = 0; ; ++i) {
       final response = await _execute(encodeKvsIndex(folder, i));
-      if (!response.ok) break;
+      response.throwIfBusyOrError();
+      if (response.status != KvsStatus.ok) break;
       final entry = parseKvsIndexPayload(response.payload);
       if (entry == null) {
         throw FormatException('malformed IDX payload: "${response.payload}"');

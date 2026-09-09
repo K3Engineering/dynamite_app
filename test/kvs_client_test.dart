@@ -39,7 +39,7 @@ void main() {
   }
 
   /// Put the mock into the firmware's locked state: KVS commands are
-  /// silently dropped while the ADC feed subscription is held.
+  /// answered 'B' (busy) while the ADC feed subscription is held.
   void lockDevice() {
     mock.kvsLockWhenStreaming = true;
     unawaited(
@@ -61,6 +61,12 @@ void main() {
         BleInputProperty.disabled,
       ),
     );
+  }
+
+  /// A dead link: KVS commands go unanswered, so they ride out the command
+  /// timeout.
+  void silenceDevice() {
+    mock.kvsDropCommands = true;
   }
 
   test('get returns the stored value; a missing key returns null', () {
@@ -158,10 +164,10 @@ void main() {
     });
   });
 
-  test('a silently dropped command times out; the queue recovers', () {
+  test('an unanswered command times out; the queue recovers', () {
     fakeAsync((async) {
       final client = wire();
-      lockDevice();
+      silenceDevice();
 
       final errors = <Object>[];
       track(client.get(kvsFolderFactory, 'ch0.r'), errors);
@@ -170,8 +176,29 @@ void main() {
       expect(errors, hasLength(1));
       expect(errors.single, isA<TimeoutException>());
 
-      // The timed-out command did not wedge the queue: after the device
-      // unlocks, a fresh command resolves normally.
+      // The timed-out command did not wedge the queue: once the link
+      // answers again, a fresh command resolves normally.
+      mock.kvsDropCommands = false;
+      String? value;
+      unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
+      async.flushMicrotasks();
+      expect(value, mock.kvsStore[kvsFolderFactory]!['ch0.r']);
+    });
+  });
+
+  test('a busy answer fails fast; unlocked, the command resolves', () {
+    fakeAsync((async) {
+      final client = wire();
+      lockDevice();
+
+      // No 3 s ride-out: the 'B' answer settles the command immediately.
+      final errors = <Object>[];
+      track(client.get(kvsFolderFactory, 'ch0.r'), errors);
+      async.flushMicrotasks();
+
+      expect(errors, hasLength(1));
+      expect(errors.single, isA<KvsBusyException>());
+
       unlockDevice();
       String? value;
       unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
@@ -180,10 +207,29 @@ void main() {
     });
   });
 
+  test('a device-error answer fails the command with KvsDeviceException', () {
+    fakeAsync((async) {
+      final client = wire();
+      // Hold the write window open so the 'E' frame can be injected.
+      mock.kvsCommandDelay = const Duration(seconds: 1);
+
+      final errors = <Object>[];
+      track(client.get(kvsFolderFactory, 'ch0.r'), errors);
+      async.flushMicrotasks();
+      client.handleNotification(Uint8List.fromList(utf8.encode('EGETFch0.r')));
+      async.flushMicrotasks();
+
+      expect(errors, hasLength(1));
+      expect(errors.single, isA<KvsDeviceException>());
+      // The mock's own late answer drops quietly.
+      async.elapse(const Duration(seconds: 2));
+    });
+  });
+
   test('abort fails pending and queued commands, then refuses new ones', () {
     fakeAsync((async) {
       final client = wire();
-      lockDevice();
+      silenceDevice();
 
       final errors = <Object>[];
       track(
@@ -220,14 +266,16 @@ void main() {
       async.flushMicrotasks();
 
       // None of these answers the live command: a shorter reject, a longer
-      // reject, a different key's success, and the prefix trap (the strict
-      // prefix's late success frame).
+      // reject, a different key's success, the prefix trap (the strict
+      // prefix's late success frame), and another command's busy/error.
       client.handleNotification(Uint8List.fromList(utf8.encode('0GETFch0')));
       client.handleNotification(Uint8List.fromList(utf8.encode('0GETFch0.rX')));
       client.handleNotification(
         Uint8List.fromList(utf8.encode('1GETFch1.r=9')),
       );
       client.handleNotification(Uint8List.fromList(utf8.encode('1GETFch0=9')));
+      client.handleNotification(Uint8List.fromList(utf8.encode('BGETFch1.r')));
+      client.handleNotification(Uint8List.fromList(utf8.encode('EGETFch1.r')));
       async.elapse(const Duration(seconds: 2));
 
       expect(value, mock.kvsStore[kvsFolderFactory]!['ch0.r']);
@@ -237,13 +285,16 @@ void main() {
   test("a timed-out command's late frame does not poison the next command", () {
     fakeAsync((async) {
       final client = wire();
-      lockDevice();
+      silenceDevice();
       final errors = <Object>[];
-      track(client.get(kvsFolderFactory, 'ch0'), errors); // dropped, times out
+      track(
+        client.get(kvsFolderFactory, 'ch0'),
+        errors,
+      ); // unanswered, times out
       async.elapse(const Duration(seconds: 4));
       expect(errors, hasLength(1));
 
-      unlockDevice();
+      mock.kvsDropCommands = false;
       mock.kvsCommandDelay = const Duration(seconds: 1);
       String? value;
       unawaited(client.get(kvsFolderFactory, 'ch0.r').then((v) => value = v));
@@ -305,7 +356,7 @@ void main() {
   test('frames arriving after abort are dropped without error', () {
     fakeAsync((async) {
       final client = wire();
-      lockDevice();
+      silenceDevice();
       final errors = <Object>[];
       track(client.get(kvsFolderFactory, 'ch0.r'), errors);
       async.flushMicrotasks();

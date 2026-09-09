@@ -3,9 +3,11 @@
 ///
 /// A command is written to the KVS characteristic as ASCII text:
 /// `<CMD><FOLDER><DATA>` — e.g. `GETFch0.raw`, `SETUlc0.cap=200`, `IDXF1a`.
-/// The device answers with a notification holding a status byte ('1' ok /
-/// '0' failed), the request echoed verbatim, then '=' and the payload:
-/// the value for GET, `key=typeHex` for IDX, empty for SET/DEL.
+/// The device answers with a notification holding a status byte (see
+/// [KvsStatus]), the request echoed verbatim, then — on success only —
+/// '=' and the payload: the value for GET, `key=typeHex` for IDX, empty
+/// for SET/DEL. Every command gets exactly one answer, so a command whose
+/// answer never arrives means the link is broken.
 library;
 
 import 'dart:convert';
@@ -99,16 +101,62 @@ String encodeKvsDelete(String folder, String key) {
 String encodeKvsIndex(String folder, int index) =>
     '$kvsCmdIndex$folder${index.toRadixString(16)}';
 
+/// The answer's status byte. 'B' is how the firmware device lock answers
+/// while the ADC feed streams (nothing is dropped silently); 'E' is a
+/// storage-layer failure on the device.
+enum KvsStatus {
+  /// '1' — success; the payload follows the echoed request and '='.
+  ok,
+
+  /// '0' — the request's fault: GET/DEL no such key, SET a malformed
+  /// frame, IDX past the last entry (this is how key iteration ends).
+  rejected,
+
+  /// 'B' — the device is locked (ADC feed streaming); the request was not
+  /// processed. Retrying, if at all, is the caller's policy.
+  busy,
+
+  /// 'E' — the device's storage layer failed. Never a missing key; a
+  /// mid-iteration error is not end-of-keys.
+  error,
+}
+
+/// The device answered 'B' (busy): locked while the ADC feed streams.
+class KvsBusyException implements Exception {
+  @override
+  String toString() => 'KVS busy: the device is locked (streaming)';
+}
+
+/// The device answered 'E': a storage-layer failure on the device.
+class KvsDeviceException implements Exception {
+  @override
+  String toString() => 'KVS device error (a storage-layer failure)';
+}
+
 /// One parsed KVS response (see [parseKvsResponse] for the frame layout).
 class KvsResponse {
-  const KvsResponse({required this.ok, required this.payload});
+  const KvsResponse({required this.status, required this.payload});
 
-  /// The status byte: true for '1' (command succeeded).
-  final bool ok;
+  /// The status byte the device answered with.
+  final KvsStatus status;
 
-  /// Everything after the echoed request and '='; '' for failed commands
+  /// Everything after the echoed request and '='; '' for non-ok answers
   /// and for commands without a payload (SET/DEL).
   final String payload;
+
+  /// [KvsStatus.busy] and [KvsStatus.error] answers are command failures,
+  /// not data — throw them. Ok and rejected answers settle normally.
+  void throwIfBusyOrError() {
+    switch (status) {
+      case KvsStatus.ok:
+      case KvsStatus.rejected:
+        break;
+      case KvsStatus.busy:
+        throw KvsBusyException();
+      case KvsStatus.error:
+        throw KvsDeviceException();
+    }
+  }
 }
 
 /// Parse the notification frame answering [request].
@@ -116,35 +164,37 @@ class KvsResponse {
 /// Returns null when the frame is a well-formed answer to some OTHER command
 /// — a stale frame whose own command already timed out; the caller drops it
 /// and the live command keeps awaiting its own reply. Throws
-/// [FormatException] on a garbled frame OR on payload bytes that aren't
-/// valid UTF-8 (calibration data is ASCII text; undecodable bytes passing
-/// the frame checks can only be firmware/wire corruption — replacing them
-/// with U+FFFD would let a corrupted read masquerade as an uncalibrated
-/// board). Either failure fails the live command: bytes the protocol can't
-/// decode mean the link can't be trusted.
+/// [FormatException] on a garbled frame (an unknown status byte included)
+/// OR on payload bytes that aren't valid UTF-8 (calibration data is ASCII
+/// text; undecodable bytes passing the frame checks can only be
+/// firmware/wire corruption — replacing them with U+FFFD would let a
+/// corrupted read masquerade as an uncalibrated board). Either failure
+/// fails the live command: bytes the protocol can't decode mean the link
+/// can't be trusted.
 KvsResponse? parseKvsResponse(String request, Uint8List frame) {
   final requestBytes = utf8.encode(request);
-  if (frame.isEmpty || (frame[0] != 0x30 && frame[0] != 0x31)) {
-    throw FormatException(
-      'KVS bad status byte: ${frame.isEmpty ? -1 : frame[0]}',
-    );
-  }
-  final success = frame[0] == 0x31; // '1'
+  final status = switch (frame.isEmpty ? -1 : frame[0]) {
+    0x31 => KvsStatus.ok, // '1'
+    0x30 => KvsStatus.rejected, // '0'
+    0x42 => KvsStatus.busy, // 'B'
+    0x45 => KvsStatus.error, // 'E'
+    final other => throw FormatException('KVS bad status byte: $other'),
+  };
   // Exact-echo match at the echo's fixed position: '<status><request>' for a
-  // failure, '<status><request>=<payload>' for a success. Prefix-free both
-  // ways: a stale '0GETFabcX' must not settle a pending GETFabc, nor a stale
-  // '0GETFabc' a pending GETFabcX.
+  // non-success answer, '<status><request>=<payload>' for a success.
+  // Prefix-free both ways: a stale '0GETFabcX' must not settle a pending
+  // GETFabc, nor a stale '0GETFabc' a pending GETFabcX.
   if (_bytesAt(frame, 1, requestBytes)) {
-    if (success &&
+    if (status == KvsStatus.ok &&
         frame.length > 1 + requestBytes.length &&
         frame[1 + requestBytes.length] == 0x3D /* = */ ) {
       return KvsResponse(
-        ok: true,
+        status: status,
         payload: utf8.decode(frame.sublist(1 + requestBytes.length + 1)),
       );
     }
-    if (!success && frame.length == 1 + requestBytes.length) {
-      return const KvsResponse(ok: false, payload: '');
+    if (status != KvsStatus.ok && frame.length == 1 + requestBytes.length) {
+      return KvsResponse(status: status, payload: '');
     }
   }
   // Not this command's answer: well-formed means stale (drop), anything else
@@ -155,13 +205,19 @@ KvsResponse? parseKvsResponse(String request, Uint8List frame) {
   return null;
 }
 
-/// Shaped like a KVS answer to SOME command: known command word, known
-/// folder letter, and (successes only) a payload separator — the firmware
-/// writes '=' even for an empty payload. Separates a stale frame (drop)
+/// Shaped like a KVS answer to SOME command: known status byte, known
+/// command word, known folder letter, and the payload separator exactly
+/// where the status demands it — successes carry '=' (even with an empty
+/// payload), the other statuses never do. Separates a stale frame (drop)
 /// from garbage on the wire (throw).
 bool _isWellFormedKvsFrame(Uint8List frame) {
   // <Status:1><Cmd:3><Folder:1><Data…>; the data may be empty on a rejection.
   if (frame.length < 5) return false;
+  final knownStatus =
+      frame[0] == 0x31 /* 1 */ ||
+      frame[0] == 0x30 /* 0 */ ||
+      frame[0] == 0x42 /* B */ ||
+      frame[0] == 0x45 /* E */;
   final knownCommand =
       _bytesAt(frame, 1, utf8.encode(kvsCmdGet)) ||
       _bytesAt(frame, 1, utf8.encode(kvsCmdSet)) ||
@@ -171,9 +227,9 @@ bool _isWellFormedKvsFrame(Uint8List frame) {
       frame[4] == 0x46 /* F */ ||
       frame[4] == 0x55 /* U */ ||
       frame[4] == 0x53 /* S */;
-  if (!(knownCommand && knownFolder)) return false;
-  if (frame[0] == 0x31 && frame.indexOf(0x3D /* = */, 5) < 0) return false;
-  return true;
+  if (!(knownStatus && knownCommand && knownFolder)) return false;
+  final hasSeparator = frame.indexOf(0x3D /* = */, 5) >= 0;
+  return (frame[0] == 0x31) == hasSeparator;
 }
 
 bool _bytesAt(Uint8List frame, int offset, List<int> bytes) {

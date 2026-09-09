@@ -893,9 +893,9 @@ void main() {
 
   test('a mid-session flash write pauses and resumes the ADC feed', () {
     fakeAsync((async) {
-      // With the firmware lock emulated, KVS commands only get answered
-      // while the feed is NOT subscribed — so a successful write proves the
-      // link manager unsubscribed around it.
+      // With the firmware lock emulated, KVS commands only succeed while
+      // the feed is NOT subscribed (busy answers otherwise) — so a
+      // successful write proves the link manager unsubscribed around it.
       MockBlePlatform.instance.kvsLockWhenStreaming = true;
       final (link, seen) = wire();
 
@@ -929,7 +929,7 @@ void main() {
     fakeAsync((async) {
       // The firmware lock emulated + slow KVS answers: without envelope
       // serialization, the write's resubscribe lands while the rename's
-      // command is still in flight and the lock silently drops it. The
+      // command is still in flight and the lock answers busy. The
       // command delay is set only once streaming so the connect-time flash
       // read (~70 KVS round-trips) stays fast.
       MockBlePlatform.instance.kvsLockWhenStreaming = true;
