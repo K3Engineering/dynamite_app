@@ -20,14 +20,14 @@ void main() {
 
     test('SET/DEL refuse the Factory partition (read-only to the app)', () {
       // Board calibration belongs to factory tooling; the app reads it but
-      // must never write it — asserted at the frame-build choke point.
+      // must never write it — enforced at the frame-build choke point.
       expect(
         () => encodeKvsSet(kvsFolderFactory, 'ch0.raw', '1'),
-        throwsA(isA<AssertionError>()),
+        throwsArgumentError,
       );
       expect(
         () => encodeKvsDelete(kvsFolderFactory, 'ch0.raw'),
-        throwsA(isA<AssertionError>()),
+        throwsArgumentError,
       );
       // Reads and the writable folders are unaffected.
       expect(encodeKvsGet(kvsFolderFactory, 'ch0.raw'), isNotEmpty);

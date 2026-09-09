@@ -66,12 +66,15 @@ String encodeKvsGet(String folder, String key) {
 /// The app never writes the Factory partition (board calibration is
 /// read-only to it — factory tooling owns those keys). This is a core
 /// assumption the document-diff saver currently satisfies only implicitly,
-/// so every SET/DEL frame asserts it here at the choke point.
+/// so every SET/DEL frame throws on it here at the choke point.
 void _checkWritableFolder(String folder) {
-  assert(
-    folder != kvsFolderFactory,
-    'the app never writes the Factory partition',
-  );
+  if (folder == kvsFolderFactory) {
+    throw ArgumentError.value(
+      folder,
+      'folder',
+      'the app never writes the Factory partition',
+    );
+  }
 }
 
 String encodeKvsSet(String folder, String key, String value) {

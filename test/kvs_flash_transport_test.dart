@@ -136,12 +136,12 @@ void main() {
 
       // Dropping it from the document must NOT delete it: the app never
       // writes the Factory partition, not even DELs of unknown keys — the
-      // document-level diff's attempt trips the protocol-layer assertion.
+      // document-level diff's attempt trips the protocol-layer guard.
       final stripped = modified
           .split('\n')
           .where((l) => !l.startsWith('vendor.x'))
           .join('\n');
-      expect(write(transport, stripped, async), isA<AssertionError>());
+      expect(write(transport, stripped, async), isA<ArgumentError>());
       expect(mock.kvsStore[kvsFolderFactory]!['vendor.x'], '42');
     });
   });
