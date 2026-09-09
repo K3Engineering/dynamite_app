@@ -67,8 +67,8 @@ class MockBlePlatform extends UniversalBlePlatform {
   bool badAdcConfig = false;
 
   /// When true, KVS commands throw (a transport-level failure — the app's
-  /// connect-time flash read then surfaces as "calibration unreadable").
-  bool failCalibrationRead = false;
+  /// connect-time flash read then fails the connection).
+  bool failKvsCommands = false;
 
   /// When true, KVS commands are silently dropped (no response) while the
   /// ADC feed subscription is active — the firmware device lock.
@@ -172,7 +172,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     dropEveryNPackets = 0;
     includeAdcService = true;
     badAdcConfig = false;
-    failCalibrationRead = false;
+    failKvsCommands = false;
     kvsLockWhenStreaming = false;
     failFeedSubscribe = false;
     kvsCommandDelay = Duration.zero;
@@ -457,7 +457,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     BleOutputProperty bleOutputProperty,
   ) async {
     if (characteristic == btChrKvs) {
-      if (failCalibrationRead) {
+      if (failKvsCommands) {
         throw StateError('Mock KVS command failure');
       }
       if (kvsCommandDelay > Duration.zero) {

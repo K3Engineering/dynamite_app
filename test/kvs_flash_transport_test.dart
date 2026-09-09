@@ -169,12 +169,30 @@ void main() {
     });
   });
 
-  test('read failure returns null; write failure throws', () {
+  test('an empty KVS reads as an empty document (unprovisioned unit)', () {
     fakeAsync((async) {
       final (transport, _) = wire();
-      mock.failCalibrationRead = true;
+      mock.kvsStore.forEach((_, folder) => folder.clear());
 
-      expect(read(transport, async), isNull);
+      expect(read(transport, async), '');
+    });
+  });
+
+  test('read failure throws; write failure throws', () {
+    fakeAsync((async) {
+      final (transport, _) = wire();
+      mock.failKvsCommands = true;
+
+      Object? readError;
+      unawaited(
+        transport.readFlashDoc().then(
+          (_) {},
+          onError: (Object e) => readError = e,
+        ),
+      );
+      async.flushMicrotasks();
+      expect(readError, isA<StateError>());
+
       expect(
         write(transport, 'lc0.cap=100\nlc0.sens=2', async),
         isA<StateError>(),

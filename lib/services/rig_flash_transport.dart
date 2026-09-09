@@ -16,6 +16,6 @@ abstract interface class RigFlashTransport {
   Future<void> writeFlashDoc(String doc);
 
   /// Read the flash document back from the connected device (save
-  /// verification). Null on failure or when no device is connected.
-  Future<String?> readFlashDoc();
+  /// verification). Throws on failure or when no device is connected.
+  Future<String> readFlashDoc();
 }

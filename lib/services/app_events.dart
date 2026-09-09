@@ -53,14 +53,6 @@ class RigEditsDiscarded extends AppEvent {
   const RigEditsDiscarded();
 }
 
-/// The device's calibration characteristic could not be read; the app runs
-/// on nominal values (no factory calibration) until a read succeeds.
-class CalibrationUnreadable extends AppEvent {
-  const CalibrationUnreadable(this.deviceName);
-
-  final String deviceName;
-}
-
 /// Fire-and-forget event bus for [AppEvent]s.
 ///
 /// App-lifetime singleton created in `main()` (never disposed) and handed to

@@ -38,7 +38,7 @@ class DemoDevice implements SimulatedLink {
   Future<void> writeFlashDoc(String doc) async => _flashDoc = doc;
 
   @override
-  Future<String?> readFlashDoc() async => _flashDoc;
+  Future<String> readFlashDoc() async => _flashDoc;
 
   @override
   Future<bool> storeDeviceName(String? name) async {

@@ -197,13 +197,12 @@ class RigState extends ChangeNotifier {
     // not a fact (firmware may reject, truncate or normalize the write).
     // Committing without checking would let app state diverge from the
     // device silently — and there is no change detection to catch it.
-    final String? readBack;
+    final String readBack;
     try {
       readBack = await _transport.readFlashDoc();
     } catch (_) {
       return false;
     }
-    if (readBack == null) return false;
     // Verify against the slot keys only — the write can't have changed
     // board keys, so a board re-parse would add nothing while resolving
     // constants to nominal (the read-back isn't accompanied by the ADC's

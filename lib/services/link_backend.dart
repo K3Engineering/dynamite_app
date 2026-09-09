@@ -7,17 +7,18 @@ import '../models/device_info.dart';
 /// KVS frame routing. Implemented by `GattLinkBackend` (a real link's KVS
 /// channel) and by the simulated demo device directly — the link manager
 /// delegates to whichever backs the active link rather than branching on
-/// which kind of link it is. Null while a link is up without a usable KVS
-/// channel (subscription failed during setup); the manager's null checks
-/// surface the same failures they always did.
+/// which kind of link it is. A real link whose KVS channel can't come up
+/// never finishes connecting (see `BleLinkManager`), so a backend on an
+/// established link is always usable.
 abstract interface class LinkBackend {
   /// Write a serialized `DeviceFlash` document.
   /// Throws on failure — the caller keeps its pending edits.
   Future<void> writeFlashDoc(String doc);
 
-  /// Read the flash document back (connect-time load, save verification).
+  /// Read the flash document (connect-time load, save verification).
+  /// Empty when the device holds no keys (an unprovisioned unit).
   /// Throws on failure.
-  Future<String?> readFlashDoc();
+  Future<String> readFlashDoc();
 
   /// Persist the Settings-namespace device name (null clears it — the
   /// device reverts to its factory name). True when the device accepted

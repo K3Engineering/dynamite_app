@@ -83,12 +83,6 @@ class AppShellState extends State<AppShell> {
           messenger,
           'Disconnected — unsaved load cell changes were discarded.',
         );
-      case CalibrationUnreadable(:final deviceName):
-        showErrorSnackBar(
-          messenger,
-          'Could not read calibration from $deviceName — '
-          'nominal values in use.',
-        );
     }
   }
 

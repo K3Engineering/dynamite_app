@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_ble/universal_ble.dart';
 
+import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
@@ -103,23 +105,71 @@ void main() {
       });
     });
 
-    test('a failed calibration read leaves the hub without board data '
-        '(nominal conversion fallback) and still streams', () {
+    test('an unprovisioned board (empty KVS) streams raw-only', () {
       fakeAsync((async) {
-        MockBlePlatform.instance.failCalibrationRead = true;
-        addTearDown(() => MockBlePlatform.instance.failCalibrationRead = false);
+        MockBlePlatform.instance.seedKvsFromDoc('');
+        addTearDown(() => MockBlePlatform.instance.resetKnobs());
         final (hub, link, teardown) = wire(async: async);
 
         unawaited(link.connectToDevice(deviceId));
         async.elapse(const Duration(seconds: 4));
 
-        // Best-effort by design: the stream must come up regardless.
+        // An EMPTY KVS is a working channel with no data, not a failure:
+        // dev boards with no provisioning stay usable. The empty document
+        // turns into the unprovisioned verdict (raw counts only).
         expect(link.isStreaming, isTrue);
         expect(hub.totalSamples, greaterThan(0));
-        // No board data at all — the model no longer fabricates nominal
-        // values; conversion falls back to the nominal chain per channel.
+        expect(hub.boardDataStatus, BoardDataStatus.unprovisioned);
+
+        teardown();
+      });
+    });
+
+    test('a partially provisioned board (constants, no calibration) streams '
+        'mV/V on the nominal chain', () {
+      fakeAsync((async) {
+        MockBlePlatform.instance.seedKvsFromDoc(
+          'adc_fsr=1.2,nominal\nexc=4.53,nominal\nafe_gain=101,nominal',
+        );
+        addTearDown(() => MockBlePlatform.instance.resetKnobs());
+        final (hub, link, teardown) = wire(async: async);
+
+        unawaited(link.connectToDevice(deviceId));
+        async.elapse(const Duration(seconds: 4));
+
+        // The board knows what it is (board constants resolve — the ok
+        // verdict, not the unprovisioned raw-only notice) but was never
+        // factory-calibrated: every channel is uncalibrated and converts
+        // through the nominal chain, so raw and mV/V work while force
+        // units stay cell-gated.
+        expect(link.isStreaming, isTrue);
+        final board = hub.boardCalibration!;
+        expect(board.constantsStatus, BoardDataStatus.ok);
+        expect(board.isFactoryCalibrated, isFalse);
+        expect(board.calDataInvalid, isFalse);
+        expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
+        expect(hub.currentValue(0, DisplayUnit.kN), isNull);
+
+        teardown();
+      });
+    });
+
+    test('a failing KVS channel fails the connection (no streaming, no '
+        'board data)', () {
+      fakeAsync((async) {
+        MockBlePlatform.instance.failKvsCommands = true;
+        addTearDown(() => MockBlePlatform.instance.resetKnobs());
+        final (hub, link, teardown) = wire(async: async);
+
+        unawaited(link.connectToDevice(deviceId));
+        async.elapse(const Duration(seconds: 4));
+
+        // A link without its KVS channel can't save rig slots or the device
+        // name — it never advances to streaming (same verdict as an
+        // unreadable ADC config), so the hub sees no samples at all.
+        expect(link.isStreaming, isFalse);
+        expect(hub.totalSamples, 0);
         expect(hub.boardCalibration, isNull);
-        expect(hub.calibrationFor(0).board.isFactoryCalibrated, isFalse);
 
         teardown();
       });

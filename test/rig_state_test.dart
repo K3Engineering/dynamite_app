@@ -42,7 +42,7 @@ class _FakeTransport implements RigFlashTransport {
 
   /// A faithful device serves back exactly what was last written.
   @override
-  Future<String?> readFlashDoc() async => readBackDoc ?? lastWrittenDoc;
+  Future<String> readFlashDoc() async => readBackDoc ?? lastWrittenDoc!;
 }
 
 void main() {

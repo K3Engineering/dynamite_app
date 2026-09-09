@@ -31,7 +31,7 @@ class GattLinkBackend implements LinkBackend {
       withFeedPaused(() => _transport.writeFlashDoc(doc));
 
   @override
-  Future<String?> readFlashDoc() => withFeedPaused(_transport.readFlashDoc);
+  Future<String> readFlashDoc() => withFeedPaused(_transport.readFlashDoc);
 
   @override
   Future<bool> storeDeviceName(String? name) => withFeedPaused(
@@ -70,26 +70,29 @@ class KvsFlashTransport {
   Map<String, String> _snapshot = const {};
 
   /// Read every key from the Factory and User folders and reassemble the
-  /// document text. Null on transport/protocol failure (the caller treats
-  /// the device as having no readable document — never a crash). A key
+  /// document text (empty when the device holds no keys — an unprovisioned
+  /// unit). Throws on transport/protocol failure: a document that can't be
+  /// read completely is not the device state, so the connect-time caller
+  /// fails the connection and the save-time caller fails the save — no
+  /// partial snapshot ever diverges silently from the device. A key
   /// duplicated across folders collapses to the User copy, mirroring
   /// [parseFlashKv]'s last-wins.
-  Future<String?> readFlashDoc() async {
+  Future<String> readFlashDoc() async {
     final kv = <String, String>{};
     final folders = <String, String>{};
-    try {
-      for (final folder in const [kvsFolderFactory, kvsFolderUser]) {
-        final keys = await _client.listKeys(folder);
-        for (final key in keys.keys) {
-          final value = await _client.get(folder, key);
-          // A key that vanished between IDX and GET is skipped, not fatal.
-          if (value == null) continue;
-          kv[key] = value;
-          folders[key] = folder;
+    for (final folder in const [kvsFolderFactory, kvsFolderUser]) {
+      final keys = await _client.listKeys(folder);
+      for (final key in keys.keys) {
+        final value = await _client.get(folder, key);
+        // A key that vanished between IDX and GET means another writer
+        // mutated the store mid-read — the reassembled document would not
+        // be a coherent snapshot, so abort loudly.
+        if (value == null) {
+          throw StateError('KVS key "$key" vanished mid-read in $folder');
         }
+        kv[key] = value;
+        folders[key] = folder;
       }
-    } catch (_) {
-      return null;
     }
     _keyFolders
       ..clear()

@@ -487,11 +487,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// [_demo]).
   final SimulatedLink? _demo;
 
-  /// The backend of the active link (null when no link is up, and for a
-  /// real link whose KVS channel never came up). For a GATT link this is
-  /// the per-link KVS channel, created in post-connect setup BEFORE the
-  /// ADC feed subscription, because firmware locks the KVS while the feed
-  /// holds the device lock.
+  /// The backend of the active link (null when no link is up). For a GATT
+  /// link this is the per-link KVS channel, created in post-connect setup
+  /// BEFORE the ADC feed subscription, because firmware locks the KVS
+  /// while the feed holds the device lock. A real link with a working KVS
+  /// channel is guaranteed: a channel that can't come up fails the
+  /// connection (see [_setupKvs]).
   LinkBackend? _backend;
 
   /// The ADC's decoded boot configuration as read back during the "Reading
@@ -522,19 +523,20 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   }
 
   /// Read the flash document back from the connected device (save
-  /// verification in `RigState.saveToDevice`). Null when nothing is
-  /// connected or the read fails — a failed verification must fail the save,
-  /// never crash it.
+  /// verification in `RigState.saveToDevice`). Throws when nothing is
+  /// connected or the read fails — a failed verification fails the save,
+  /// which the caller already surfaces.
   @override
-  Future<String?> readFlashDoc() async {
-    if (_link.deviceId.isEmpty) return null;
-    final backend = _backend;
-    if (backend == null) return null;
-    try {
-      return await backend.readFlashDoc();
-    } catch (_) {
-      return null;
+  Future<String> readFlashDoc() async {
+    final deviceId = _link.deviceId;
+    if (deviceId.isEmpty) {
+      throw StateError('readFlashDoc with no device connected');
     }
+    final backend = _backend;
+    if (backend == null) {
+      throw StateError('readFlashDoc with no device channel on $deviceId');
+    }
+    return backend.readFlashDoc();
   }
 
   /// The feed-maintenance chain. [KvsClient] serializes individual KVS
@@ -1414,29 +1416,24 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     throw StateError('ADC config characteristic unreadable on $deviceId');
   }
 
-  /// Bring up the KVS channel: subscribe to its notifications, then run the
-  /// connect-time flash document read. Best-effort by design — a failed
-  /// subscription or read must not fail the whole connection: the app runs
-  /// on nominal values and the user is notified. A superseded pass (the
-  /// link was torn down mid-setup, which also aborts the client) bails
-  /// silently — the failure belongs to a link that no longer exists.
+  /// Bring up the KVS channel: subscribe to its notifications, read the
+  /// stored device name, and run the connect-time flash document read.
+  /// Any failure throws and the caller fails the connection — a link
+  /// without a working KVS channel can't save load cell slots or the
+  /// device name, so streaming on without it would be a half-usable link
+  /// (same verdict as an unreadable ADC config or a missing ADC feed).
+  /// An EMPTY KVS is not a failure: an unprovisioned unit reads cleanly as
+  /// an empty document and degrades to nominal values with the
+  /// unprovisioned notice. A superseded pass (the link was torn down
+  /// mid-setup, which also aborts the client) bails silently — the failure
+  /// belongs to a link that no longer exists.
   Future<void> _setupKvs(_SetupToken token, String deviceId) async {
     final client = KvsClient(
       write: (bytes) =>
           UniversalBle.write(deviceId, btServiceId, btChrKvs, bytes),
     );
-    try {
-      await UniversalBle.subscribeNotifications(
-        deviceId,
-        btServiceId,
-        btChrKvs,
-      );
-    } catch (e) {
-      if (!token.isCurrent) return;
-      debugPrint('KVS subscription failed for $deviceId: $e');
-      _events.emit(CalibrationUnreadable(_link.displayName));
-      return;
-    }
+    await UniversalBle.subscribeNotifications(deviceId, btServiceId, btChrKvs);
+    if (!token.isCurrent) return;
     final backend = GattLinkBackend(
       client: client,
       withFeedPaused: _withFeedPaused,
@@ -1445,28 +1442,15 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // The stored name lands before the flash read: the rig's provenance
     // label is read off the link at doc delivery time (see
     // [connectedDeviceName]).
-    try {
-      final stored = await backend.readDeviceName();
-      if (!token.isCurrent) return;
-      _link.storedName = stored;
-      notifyListeners();
-    } catch (e) {
-      if (!token.isCurrent) return;
-      debugPrint('KVS device-name read failed for $deviceId: $e');
-    }
-    try {
-      final doc = await backend.readFlashDoc();
-      if (!token.isCurrent) return;
-      if (doc == null) throw StateError('KVS flash read failed');
-      onCalibrationData?.call(
-        Uint8List.fromList(utf8.encode(doc)),
-        _adcConfig!.pgaGains,
-      );
-    } catch (e) {
-      if (!token.isCurrent) return;
-      debugPrint('KVS flash read failed for $deviceId: $e');
-      _events.emit(CalibrationUnreadable(_link.displayName));
-    }
+    _link.storedName = await backend.readDeviceName();
+    notifyListeners();
+    if (!token.isCurrent) return;
+    final doc = await backend.readFlashDoc();
+    if (!token.isCurrent) return;
+    onCalibrationData?.call(
+      Uint8List.fromList(utf8.encode(doc)),
+      _adcConfig!.pgaGains,
+    );
   }
 
   /// Subscribe to the ADC feed characteristic of [service]. Returns true
