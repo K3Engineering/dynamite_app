@@ -22,6 +22,8 @@ final class GraphLive extends GraphViewport {
 }
 
 /// Parked on the fixed window [start, end) (absolute sample indices).
+/// A parked window must not outlive the data it points into: hub resets
+/// (a new stream erased the trace) drop it via [GraphController.reset].
 final class GraphWindow extends GraphViewport {
   const GraphWindow(this.start, this.end);
 
@@ -98,11 +100,13 @@ class GraphController extends ChangeNotifier {
         final s = span ?? math.max(minLiveSpan, totalSamples - oldestSample);
         return (totalSamples - s, totalSamples);
       case GraphWindow(:final start, :final end):
-        // Defensive: a parked window can outlive the data (e.g. the hub is
-        // cleared for a new stream while parked). Clamp the start first so
-        // the end clamp can never receive inverted limits and throw.
-        final s = math.min(math.max(start, 0), math.max(0, totalSamples - 1));
-        final e = math.min(math.max(end, s + 1), math.max(totalSamples, s + 1));
+        // Parked windows never outlive the data's right edge (see
+        // GraphWindow): if this fires, a consumer missed a hub reset. A
+        // negative start is legitimate (a sparse young buffer lets a
+        // window reach before sample 0).
+        assert(start < end && end <= totalSamples);
+        final s = start.clamp(0, totalSamples - 1);
+        final e = end.clamp(s + 1, totalSamples);
         return (s, e);
     }
   }

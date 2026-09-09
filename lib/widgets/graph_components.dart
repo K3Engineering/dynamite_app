@@ -251,29 +251,28 @@ class _MinimapPainter extends CustomPainter {
 
     // Y-range from the precomputed per-channel extremes (O(channels); the
     // minimap always spans the whole history, so the extremes ARE the window
-    // min/max). Each channel converts through its own calibration; a
-    // +/-10000-count window around each tare keeps the range non-degenerate
-    // on flat data. Channels the unit can't convert are skipped (the
-    // workspace already filters them, so this is belt-and-braces).
+    // min/max). Each channel converts through its own calibration; channels
+    // the unit can't convert are skipped (the workspace already filters
+    // them, so this is belt-and-braces).
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
     for (final ch in activeIndices) {
       final converter = _data.converterFor(ch);
       final conv = converter.netMap(unit);
       if (conv == null) continue;
-      // No data on this channel: the +/-10000 tare band alone matters.
+      // No data on this channel: the tare is all there is to show.
       final tare = converter.tare ?? 0;
       final ext = _data.channelExtremes(ch);
-      final lo = conv(math.min(ext?.$1 ?? tare, tare - 10000));
-      final hi = conv(math.max(ext?.$2 ?? tare, tare + 10000));
+      final lo = conv(ext != null ? math.min(ext.$1, tare) : tare);
+      final hi = conv(ext != null ? math.max(ext.$2, tare) : tare);
       if (lo < yMin) yMin = lo;
       if (hi > yMax) yMax = hi;
     }
-    if (!yMin.isFinite || !yMax.isFinite) {
-      // No convertible channel has data: arbitrary non-degenerate range.
-      yMin = -1;
-      yMax = 1;
-    }
+    // No convertible channel: nothing to paint.
+    if (!yMin.isFinite || !yMax.isFinite) return;
+    // Keep the range non-degenerate on flat data so the mapping can't
+    // divide by zero.
+    if (yMax <= yMin) yMax = yMin + 1;
 
     // Missing-data hatching, behind the data lines (same layering as the
     // main graphs).
@@ -1741,8 +1740,9 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// [EnvelopeSeries.bucketed] for the invariants it must satisfy).
   EnvelopeSeries series(int channel);
 
-  /// Y-axis range (display units) for the visible window.
-  YAxisRange computeYRange(double viewStart, double viewEnd);
+  /// Y-axis range (display units) for the visible window. Null when no
+  /// active channel is plottable in the window: the graph paints blank.
+  YAxisRange? computeYRange(double viewStart, double viewEnd);
 
   String yTickLabel(double tick, YAxisRange yRange);
 
@@ -1795,6 +1795,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     final oldestSample = _data.oldestSample;
 
     final yRange = computeYRange(viewStart, viewEnd);
+    if (yRange == null) return;
 
     // Canvas y grows downward, so the axis is flipped: yMax maps to 0.
     double valueToY(double val) {
@@ -1915,62 +1916,30 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       _taredEnvelopeSeries(_data, channel, _unit);
 
   @override
-  YAxisRange computeYRange(double viewStart, double viewEnd) {
+  YAxisRange? computeYRange(double viewStart, double viewEnd) {
     // Data min/max across active channels in the visible window, converted
     // per channel through its own calibration. [windowedRawExtremes] folds
     // full buckets from the precomputed aggregates (exact for min/max of a
     // monotone map) and per-sample scans only the partial head/tail, so the
-    // cost is O(window / bucketSize). The noise floor stays a raw-count
-    // threshold, applied to the global tare-subtracted raw extremes.
+    // cost is O(window / bucketSize). No minimum-range floor: the observed
+    // noise IS the floor of auto-zoom on real hardware, and exactly-flat
+    // synthetic data falls to [_computeYRange]'s degeneracy guard.
     final unit = _unit;
     final start = viewStart.floor();
     final end = viewEnd.ceil();
 
-    double rawMin = double.infinity;
-    double rawMax = double.negativeInfinity;
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
-    final converters = <int, double Function(double)>{};
-    final tares = <int, double>{};
     for (final ch in _activeChannels) {
-      final converter = _data.converterFor(ch);
-      final conv = converter.netMap(unit);
+      final conv = _data.converterFor(ch).netMap(unit);
       if (conv == null) continue;
-      converters[ch] = conv;
-      tares[ch] = converter.tare ?? 0;
       final ext = _data.windowedRawExtremes(ch, start, end);
       if (ext == null) continue;
-      // Tare-subtracted raw extremes feed the noise floor below.
-      rawMin = math.min(rawMin, ext.$1 - tares[ch]!);
-      rawMax = math.max(rawMax, ext.$2 - tares[ch]!);
       yMin = math.min(yMin, conv(ext.$1));
       yMax = math.max(yMax, conv(ext.$2));
     }
-    if (rawMin > rawMax) {
-      rawMin = 0;
-      rawMax = 0;
-    }
-
-    // Enforce a minimum visible range (noise floor) so the graph isn't
-    // degenerate: widen each channel's converted fold around the global
-    // tared-raw midpoint.
-    // TODO: size this per board model once the model specs are plumbed
-    const double noiseFloor = 10000; // raw counts
-    if (rawMax - rawMin < noiseFloor) {
-      final mid = (rawMax + rawMin) / 2;
-      final lo = mid - noiseFloor / 2;
-      final hi = mid + noiseFloor / 2;
-      for (final MapEntry(key: ch, value: conv) in converters.entries) {
-        final tare = tares[ch]!;
-        yMin = math.min(yMin, conv(lo + tare));
-        yMax = math.max(yMax, conv(hi + tare));
-      }
-    }
-    if (!yMin.isFinite || !yMax.isFinite) {
-      // No convertible channel has data: arbitrary non-degenerate range.
-      yMin = -1;
-      yMax = 1;
-    }
+    // No active channel is plottable in the window: paint blank.
+    if (!yMin.isFinite || !yMax.isFinite) return null;
 
     return _computeYRange(yMin, yMax, unit);
   }
@@ -2099,7 +2068,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   );
 
   @override
-  YAxisRange computeYRange(double viewStart, double viewEnd) {
+  YAxisRange? computeYRange(double viewStart, double viewEnd) {
     // Derivative min/max (display units) across the visible window.
     // [windowedExtremes] folds full buckets from the precomputed diff
     // aggregates (exact for min/max) and per-sample scans only the partial

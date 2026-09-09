@@ -178,19 +178,19 @@ void main() {
   });
 
   /// The viewport-side half of the per-stream reset: when a new device stream
-  /// clears the hub, the live tab snaps the controller back to live follow
-  /// via [GraphController.goLive]. [effectiveRange] is additionally
-  /// self-defensive against stale parked windows (it clamps rather than
-  /// throwing), so the goLive call is a UX nicety, not a crash guard.
+  /// clears the hub, the live tab snaps the controller back to live follow.
+  /// That reset is the ONLY guard: a parked window must not outlive the data,
+  /// and [effectiveRange] asserts the invariant rather than silently clamping
+  /// a violation.
   group('GraphController across a stream reset', () {
-    test('a stale panned window clamps instead of throwing', () {
+    test('a stale panned window violates the invariant loudly', () {
       // A window parked deep in history (set while the old stream had plenty
-      // of data) evaluated against a cleared hub: the start clamp runs first,
-      // so the end clamp can never receive inverted limits.
+      // of data) evaluated against a cleared hub: the assert fires. In
+      // release the clamp's inverted limits throw a RangeError instead.
       final ctrl = GraphController(minLiveSpan: 20000);
       ctrl.applyWindow(100000, 100000, 300000, 0); // user panned into history
-      expect(ctrl.effectiveRange(0, 0), (0, 1));
-      expect(ctrl.effectiveRange(50, 0), (49, 50));
+      expect(() => ctrl.effectiveRange(0, 0), throwsA(isA<AssertionError>()));
+      expect(() => ctrl.effectiveRange(50, 0), throwsA(isA<AssertionError>()));
     });
 
     test('goLive restores a safe live-follow range', () {
