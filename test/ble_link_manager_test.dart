@@ -55,18 +55,18 @@ void main() {
     MockBlePlatform.instance.resetKnobs();
   });
 
-  /// Builds a link manager with an [AppEvents] collector and the calibration
+  /// Builds a link manager with an [AppEvents] collector and the flash
   /// callback wired (the app always wires it; an unwired
-  /// [BleLinkManager.onCalibrationData] short-circuits the calibration read,
-  /// changing setup timing). Tests that observe the feed set
-  /// [BleLinkManager.onAdcData] directly.
+  /// [BleLinkManager.onDeviceFlash] short-circuits nothing — the parse runs
+  /// in post-connect setup either way, but wiring keeps the timing honest).
+  /// Tests that observe the feed set [BleLinkManager.onAdcData] directly.
   (BleLinkManager, List<AppEvent>) wire() {
     final events = AppEvents();
     final seen = <AppEvent>[];
     final sub = events.stream.listen(seen.add);
     addTearDown(() => unawaited(sub.cancel()));
     final link = BleLinkManager(events: events, demo: DemoDevice())
-      ..onCalibrationData = (_, _) {};
+      ..onDeviceFlash = (_) {};
     return (link, seen);
   }
 
@@ -824,8 +824,7 @@ void main() {
       mock.seedKvsFromDoc('');
       final (link, seen) = wire();
       String? servedDoc;
-      link.onCalibrationData = (snapshot, _) =>
-          servedDoc = snapshot.toFlashDoc();
+      link.onDeviceFlash = (flash) => servedDoc = flash.kvs.toFlashDoc();
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -848,10 +847,7 @@ void main() {
       );
       final (link, seen) = wire();
       var measurementDelivered = false;
-      link.onCalibrationData = (snapshot, gains) {
-        DeviceFlash.fromKvs(snapshot, pgaGains: gains);
-        measurementDelivered = true;
-      };
+      link.onDeviceFlash = (_) => measurementDelivered = true;
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -1016,7 +1012,7 @@ void main() {
       final (link, seen) = wire();
       settleStartup(async);
       String? doc;
-      link.onCalibrationData = (snapshot, gains) => doc = snapshot.toFlashDoc();
+      link.onDeviceFlash = (flash) => doc = flash.kvs.toFlashDoc();
 
       unawaited(link.connectToDemoDevice());
       expect(parseFlashKv(doc!), parseFlashKv(demoBoardCalibrationDoc));

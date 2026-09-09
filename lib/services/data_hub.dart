@@ -108,7 +108,7 @@ class DataHub extends ChangeNotifier
   int totalSamples = 0;
 
   /// Factory board calibration read from the device at connect time (parsed
-  /// by [AdcPacketDecoder.onCalibrationPacket]). Null until the first
+  /// by `BleLinkManager` in post-connect setup). Null until the first
   /// successful read of this run: "no device data" must be representable —
   /// defaulting to nominal values would let the UI present numbers no
   /// hardware ever produced. An [UnprovisionedBoardCalibration] here (and

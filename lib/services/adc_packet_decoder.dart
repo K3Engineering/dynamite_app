@@ -2,13 +2,12 @@ import 'package:flutter/foundation.dart';
 
 import 'adc_protocol.dart';
 import 'adc_sink.dart';
-import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../models/hub_event.dart';
 import '../utils/log.dart';
 
-/// Protocol layer: decodes the device's ADC-feed notification packets and the
-/// connect-time KVS snapshot into [AdcSink] updates.
+/// Protocol layer: decodes the device's ADC-feed notification packets into
+/// [AdcSink] updates.
 ///
 /// Owns packet continuity: the 16-bit running sample counter, cross-checked
 /// against a monotonic clock of packet arrival times. The device samples
@@ -70,27 +69,6 @@ class AdcPacketDecoder {
   void resetContinuity() {
     _prevSampleCount = -1;
     _prevRxUs = null;
-  }
-
-  /// Invoked with every successfully parsed flash document (board + load
-  /// cell slots).
-  void Function(DeviceFlash flash)? onDeviceFlash;
-
-  /// Parse one connect-time KVS snapshot, plus the ADC's per-channel PGA
-  /// gains from the config readback ([adcGains] — non-null: an unreadable
-  /// config fails the connection upstream, so this layer never resolves
-  /// constants without them). The board calibration feeds the sink; the full
-  /// flash (slots and raw provenance included) goes to [onDeviceFlash].
-  /// The parse is strict: present-but-invalid known content throws here,
-  /// inside the link's post-connect setup; the link parks in maintenance
-  /// mode rather than becoming an instrument (an EMPTY store is legal, an
-  /// unprovisioned unit). Wire corruption never reaches here: the KVS layer
-  /// decodes strictly and a corrupt payload fails the connection (see
-  /// `parseKvsResponse`).
-  void onCalibrationPacket(KvsSnapshot snapshot, List<double> adcGains) {
-    final flash = DeviceFlash.fromKvs(snapshot, pgaGains: adcGains);
-    hub.updateBoardCalibration(flash.board);
-    onDeviceFlash?.call(flash);
   }
 
   /// Parse one BLE ADC-feed notification packet into the sink.

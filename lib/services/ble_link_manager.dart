@@ -163,11 +163,10 @@ bool isWebPickerDismissal(Object e) {
 /// post-connect setup / disconnect, the web reconnect-settle embargo
 /// ([reconnectSettleDelay]), and live RSSI polling.
 ///
-/// This class owns *only* the link. It knows nothing about the wire protocol
-/// or recording: raw notification bytes and calibration reads are handed off
-/// via [onAdcData] / [onCalibrationData] (wired to [AdcPacketDecoder] at app
-/// startup), and recording observes this notifier's state changes (see
-/// [RecordingController]).
+/// This class owns *only* the link. It knows nothing about the recording:
+/// raw notification bytes and the parsed flash document are handed off via
+/// [onAdcData] / [onDeviceFlash] (wired at app startup), and recording
+/// observes this notifier's state changes (see [RecordingController]).
 ///
 /// MULTI-DEVICE ROADMAP: today exactly one link is tracked ([_link]), and
 /// [QueueType.perDevice] already isolates per-device command queues. To
@@ -478,10 +477,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// manager itself never interprets them.
   void Function(Uint8List data)? onAdcData;
 
-  /// The connect-time device KVS snapshot, plus the ADC's per-channel PGA
-  /// gains from the config readback. Wired to
-  /// [AdcPacketDecoder.onCalibrationPacket] at app startup.
-  void Function(KvsSnapshot snapshot, List<double> adcGains)? onCalibrationData;
+  /// The parsed connect-time flash document (board calibration, load cell
+  /// slots, raw KVS provenance), delivered once during post-connect setup.
+  /// Wired at app startup; the flash never reaches the app unparsed — see
+  /// [_setupKvs].
+  void Function(DeviceFlash flash)? onDeviceFlash;
 
   /// The stream's sample rate (Hz), delivered once per link before the feed
   /// starts (parsed from the ADC config readback on GATT links; the demo
@@ -511,8 +511,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// The ADC's decoded boot configuration as read back during the "Reading
   /// board constants…" stage (null until read; never null once a link
   /// reaches the flash read — an unreadable config fails the connection, see
-  /// [_readAdcConfig]). The gains are handed to the protocol layer with the
-  /// flash document (see [onCalibrationData]); the rate went out via
+  /// [_readAdcConfig]). Its per-channel PGA gains complete the board
+  /// constants at flash parse time (see [_setupKvs]); the rate went out via
   /// [onSampleRate] right after the read.
   AdcConfig? _adcConfig;
 
@@ -1218,11 +1218,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
     onSampleRate?.call(demo.sampleRateHz);
 
-    // The demo device is factory-calibrated: serve its KVS snapshot through
+    // The demo device is factory-calibrated: parse its KVS snapshot through
     // the same path a real device's calibration read would take. The store is
     // mutable so "Save to device" round-trips.
+    final DeviceFlash flash;
     try {
-      onCalibrationData?.call(demo.kvsSnapshot, demo.pgaGains);
+      flash = DeviceFlash.fromKvs(demo.kvsSnapshot, pgaGains: demo.pgaGains);
     } on FormatException catch (e) {
       _link.flashFault = (snapshot: demo.kvsSnapshot, error: e);
       _link.state = BtLinkState.maintenance;
@@ -1230,6 +1231,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       notifyListeners();
       return;
     }
+    onDeviceFlash?.call(flash);
 
     demo.startFeed(_deliverAdcData);
 
@@ -1447,8 +1449,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   }
 
   /// Bring up the KVS channel: subscribe to its notifications, read the
-  /// stored device name, run the connect-time KVS read, and hand it to the
-  /// strict flash parser. Returns false when the parser rejected the content:
+  /// stored device name, and run the connect-time KVS read. The snapshot is
+  /// parsed strictly right here ([DeviceFlash.fromKvs] with the ADC's PGA
+  /// gains completing the board constants — always present: an unreadable
+  /// config failed the connection upstream), so the failure policy for
+  /// present-but-invalid known content lives next to the read, in
+  /// post-connect setup. Returns false when the parse rejected the content:
   /// the channel itself is healthy, so the caller parks this link in
   /// maintenance instead of tearing it down. Every earlier setup/read
   /// failure throws and still fails the connection — a link without a
@@ -1474,14 +1480,16 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     if (!token.isCurrent) return false;
     final snapshot = await backend.readKvsSnapshot();
     if (!token.isCurrent) return false;
+    final DeviceFlash flash;
     try {
-      // The calibration callback's throw contract is flash-schema
-      // FormatExceptions only; KVS transport failures happened above.
-      onCalibrationData?.call(snapshot, _adcConfig!.pgaGains);
+      // The parse's throw contract is flash-schema FormatExceptions;
+      // KVS transport failures happened above.
+      flash = DeviceFlash.fromKvs(snapshot, pgaGains: _adcConfig!.pgaGains);
     } on FormatException catch (e) {
       _link.flashFault = (snapshot: snapshot, error: e);
       return false;
     }
+    onDeviceFlash?.call(flash);
     return true;
   }
 
@@ -1580,7 +1588,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// [notifyListeners] — the only listeners are the disposed widget tree.
   Future<void> shutdownForHotRestart() async {
     onAdcData = null;
-    onCalibrationData = null;
+    onDeviceFlash = null;
     onSampleRate = null;
     _backend?.dispose();
     _backend = null;

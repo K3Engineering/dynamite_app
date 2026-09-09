@@ -2,13 +2,10 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/models/board_calibration.dart';
-import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
 
 /// Default packet size for tests that don't care about it (the decoder
 /// accepts any count).
@@ -301,39 +298,6 @@ void main() {
 
       expect(hub.totalSamples, 2 * defaultPacketSamples);
       expect(hub.gaps.contains(defaultPacketSamples), isFalse);
-    });
-  });
-
-  group('AdcPacketDecoder calibration', () {
-    test('a calibration document populates the hub board calibration', () {
-      decoder.onCalibrationPacket(
-        KvsSnapshot.fromFlashDoc(demoBoardCalibrationDoc),
-        const [1, 1, 1, 1],
-      );
-      final board = hub.boardCalibration;
-      expect(board, isA<ProvisionedBoardCalibration>());
-      final provisioned = board! as ProvisionedBoardCalibration;
-      expect(provisioned.channels.every((c) => c.isFactoryCalibrated), isTrue);
-      expect(
-        (provisioned.channels[0] as CalibratedChannelBoard).offsetCounts,
-        closeTo(845.2, 1e-9),
-      );
-      expect(
-        (provisioned.channels[2] as CalibratedChannelBoard).offsetCounts,
-        closeTo(1502.8, 1e-9),
-      );
-      expect(provisioned.factoryDate, '2026-07-20');
-    });
-
-    test('invalid flash content throws, leaving the hub untouched', () {
-      expect(
-        () => decoder.onCalibrationPacket(
-          KvsSnapshot.fromFlashDoc('adc_fsr=1.2\nexc=4.53\nlc0.cap=100'),
-          const [1, 1, 1, 1],
-        ),
-        throwsFormatException,
-      );
-      expect(hub.boardCalibration, isNull);
     });
   });
 }

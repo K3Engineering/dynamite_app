@@ -9,10 +9,9 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/models/app_meta.dart';
 import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/services/app_settings.dart';
-import 'package:dynamite_app/models/device_flash.dart';
+import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/screens/settings_tab.dart';
-import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_device.dart';
@@ -41,11 +40,8 @@ void main() {
     final link = BleLinkManager(events: events, demo: DemoDevice());
     final hub = DataHub();
     final rig = RigState(transport: link, prefs: prefs);
-    // Wire the link's calibration read to the rig — the app's wiring goes
-    // through the packet decoder; the test shortcuts the (separately
-    // tested) parsing.
-    link.onCalibrationData = (snapshot, gains) {
-      final flash = DeviceFlash.fromKvs(snapshot, pgaGains: gains);
+    // Wire the link's flash read to the hub and rig, as main() does.
+    link.onDeviceFlash = (flash) {
       hub.updateBoardCalibration(flash.board);
       rig.onFlashRead(link.connectedDeviceId, link.connectedDeviceName, flash);
       hub.updateLoadCells(rig.channelCells);

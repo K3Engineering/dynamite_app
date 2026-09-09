@@ -97,15 +97,17 @@ void main() {
       final dataHub = DataHub();
       final decoder = AdcPacketDecoder(dataHub);
       final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
-        ..onAdcData = decoder.onDataPacket
-        ..onCalibrationData = decoder.onCalibrationPacket;
+        ..onAdcData = decoder.onDataPacket;
       final prefs = await SharedPreferences.getInstance();
       final rigState = RigState(transport: linkManager, prefs: prefs);
-      decoder.onDeviceFlash = (flash) => rigState.onFlashRead(
-        linkManager.connectedDeviceId,
-        linkManager.connectedDeviceName,
-        flash,
-      );
+      linkManager.onDeviceFlash = (flash) {
+        dataHub.updateBoardCalibration(flash.board);
+        rigState.onFlashRead(
+          linkManager.connectedDeviceId,
+          linkManager.connectedDeviceName,
+          flash,
+        );
+      };
       StreamResetCoordinator(
         hub: dataHub,
         streamingChanges: linkManager,
