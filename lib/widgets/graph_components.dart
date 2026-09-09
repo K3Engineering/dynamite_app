@@ -13,6 +13,7 @@ import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
+import '../models/load_cell.dart';
 import 'channel_palette.dart';
 import 'graph/graph_controller.dart';
 import 'graph/segmented_cache.dart';
@@ -84,6 +85,79 @@ int _blockSizeFor(double viewSamples, double graphW) {
 int joinBlockEnd(int end, int blockSize) => (end ~/ blockSize + 2) * blockSize;
 
 // ---------------------------------------------------------------------------
+// Unit-bound channels
+// ---------------------------------------------------------------------------
+
+/// One active channel bound to the view's display unit: the unit CONVERTS on
+/// it, so its display maps are materialized non-null here. This is the
+/// workspace's one unit-availability decision expressed as data — the
+/// painters never re-ask it.
+final class _ConvertedChannel {
+  const _ConvertedChannel._({
+    required this.channel,
+    required this.tare,
+    required this.netMap,
+    required this.diffMap,
+    required this.sensitivityCountsPerMvV,
+    required this.loadCell,
+  });
+
+  /// The unit-bound channel, or null when [unit] does not convert on it (a
+  /// force unit with no load cell assigned): the channel drops out of
+  /// plotting and the stats tables show '—' for it. Re-assigning a cell
+  /// rebuilds the workspace's list (and the painters' cache keys, which
+  /// contain the channel set).
+  static _ConvertedChannel? of(
+    GraphDataSource data,
+    int channel,
+    DisplayUnit unit,
+  ) {
+    final converter = data.converterFor(channel);
+    final net = converter.netMap(unit);
+    if (net == null) return null;
+    final diff = converter.diffMap(unit);
+    // The map family shares one availability gate (see ChannelConverter):
+    // diff is null exactly when net is. A divergence is a broken
+    // calibration-model invariant, not "unit unavailable".
+    assert(diff != null, 'net converts but diff does not (CH$channel, $unit)');
+    if (diff == null) return null;
+    return _ConvertedChannel._(
+      channel: channel,
+      tare: converter.tare,
+      netMap: net,
+      diffMap: diff,
+      sensitivityCountsPerMvV:
+          converter.calibration.board.sensitivityCountsPerMvV,
+      loadCell: converter.calibration.loadCell,
+    );
+  }
+
+  final int channel;
+
+  /// Tare offset in counts; null = untared (see [ChannelConverter.tare]).
+  final double? tare;
+
+  /// Absolute raw -> display value, net of tare (see
+  /// [ChannelConverter.netMap]).
+  final double Function(double raw) netMap;
+
+  /// Raw diff -> display diff, terminal-slope based (see
+  /// [ChannelConverter.diffMap]).
+  final double Function(double rawDiff) diffMap;
+
+  /// The channel's board sensitivity in counts per mV/V: rides along for the
+  /// force graph's limit chrome, which sizes the capacity zone with it.
+  /// Non-null whenever a converted unit is drawing (the maps rest on the
+  /// same resolved nominals); null only for raw on a nominal-less board,
+  /// which converts anyway (raw bypasses the board map).
+  final double? sensitivityCountsPerMvV;
+
+  /// The channel's assigned load cell; null when none (the gutter's
+  /// capacity zone skips such channels).
+  final LoadCellProfile? loadCell;
+}
+
+// ---------------------------------------------------------------------------
 // Minimap
 // ---------------------------------------------------------------------------
 
@@ -97,14 +171,15 @@ class _Minimap extends StatefulWidget {
   final DisplayUnit unit;
   final GraphController graphCtrl;
 
-  /// Indices of the channels to plot (per-view; see [GraphWorkspace]).
-  final List<int> activeChannels;
+  /// Channels to plot, bound to [unit] in the workspace (see
+  /// [_ConvertedChannel]).
+  final List<_ConvertedChannel> channels;
 
   const _Minimap({
     required this.dataSource,
     required this.unit,
     required this.graphCtrl,
-    required this.activeChannels,
+    required this.channels,
   });
 
   @override
@@ -183,7 +258,7 @@ class _MinimapState extends State<_Minimap> {
                   widget.dataSource,
                   widget.unit,
                   widget.graphCtrl,
-                  widget.activeChannels,
+                  widget.channels,
                   colorScheme,
                   dpr,
                   _cache,
@@ -203,7 +278,7 @@ class _MinimapPainter extends CustomPainter {
   final GraphDataSource _data;
   final DisplayUnit _unit;
   final GraphController _ctrl;
-  final List<int> _activeChannels;
+  final List<_ConvertedChannel> _channels;
   final ColorScheme _colorScheme;
   final double _dpr;
   final SegmentedGraphCache _cache;
@@ -218,7 +293,7 @@ class _MinimapPainter extends CustomPainter {
     this._data,
     this._unit,
     this._ctrl,
-    this._activeChannels,
+    this._channels,
     this._colorScheme,
     this._dpr,
     this._cache,
@@ -246,29 +321,24 @@ class _MinimapPainter extends CustomPainter {
     final mapSpan = _minimapSpan(totalSamples, oldestSample, _ctrl.minLiveSpan);
     final mapStart = totalSamples - mapSpan;
 
-    final activeIndices = _activeChannels;
+    final channels = _channels;
     final unit = _unit;
 
     // Y-range from the precomputed per-channel extremes (O(channels); the
     // minimap always spans the whole history, so the extremes ARE the window
-    // min/max). Each channel converts through its own calibration; channels
-    // the unit can't convert are skipped (the workspace already filters
-    // them, so this is belt-and-braces).
+    // min/max).
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
-    for (final ch in activeIndices) {
-      final converter = _data.converterFor(ch);
-      final conv = converter.netMap(unit);
-      if (conv == null) continue;
+    for (final bound in channels) {
       // No data on this channel: the tare is all there is to show.
-      final tare = converter.tare ?? 0;
-      final ext = _data.channelExtremes(ch);
-      final lo = conv(ext != null ? math.min(ext.$1, tare) : tare);
-      final hi = conv(ext != null ? math.max(ext.$2, tare) : tare);
+      final tare = bound.tare ?? 0;
+      final ext = _data.channelExtremes(bound.channel);
+      final lo = bound.netMap(ext != null ? math.min(ext.$1, tare) : tare);
+      final hi = bound.netMap(ext != null ? math.max(ext.$2, tare) : tare);
       if (lo < yMin) yMin = lo;
       if (hi > yMax) yMax = hi;
     }
-    // No convertible channel: nothing to paint.
+    // No plotted channel: nothing to paint.
     if (!yMin.isFinite || !yMax.isFinite) return;
     // Keep the range non-degenerate on flat data so the mapping can't
     // divide by zero.
@@ -285,8 +355,6 @@ class _MinimapPainter extends CustomPainter {
       color: _colorScheme.error,
     );
 
-    final tares = [for (final ch in activeIndices) _data.converterFor(ch).tare];
-
     // Segment-cached envelope data layer, shared with the main graphs. The
     // bucket-accelerated reduction keeps both segment bakes and direct gap
     // draws cheap even though every block spans many samples here.
@@ -294,8 +362,8 @@ class _MinimapPainter extends CustomPainter {
       canvas,
       cache: _cache,
       data: _data,
-      activeChannels: activeIndices,
-      tares: tares,
+      channels: channels,
+      tares: [for (final bound in channels) bound.tare],
       unit: unit,
       gw: gw,
       gh: gh,
@@ -305,7 +373,7 @@ class _MinimapPainter extends CustomPainter {
       yMin: yMin,
       yMax: yMax,
       firstUsableSample: oldestSample,
-      seriesFor: (ch) => _taredEnvelopeSeries(_data, ch, unit),
+      seriesFor: (bound) => _taredEnvelopeSeries(_data, bound),
       avgStrokeWidth: 1.0,
       avgAlpha: 180,
     );
@@ -570,13 +638,9 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       widget.activeChannels,
     );
     final unit = widget.unit.effective(availability);
-    // Channels the (effective) unit can't convert (a force unit with no
-    // load cell assigned) are excluded from plotting; the stats tables
-    // show '—' for them, and re-assigning a cell rebuilds this list (and
-    // the painters' cache keys, which contain the channel set).
-    final drawableChannels = [
+    final convertedChannels = [
       for (final ch in widget.activeChannels)
-        if (widget.data.converterFor(ch).converts(unit)) ch,
+        ?_ConvertedChannel.of(widget.data, ch, unit),
     ];
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -589,7 +653,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
           explicitChildNodes: true,
           label: _graphSemanticsLabel(
             live: widget.isLiveGraph,
-            channels: drawableChannels,
+            channels: [for (final bound in convertedChannels) bound.channel],
             unit: unit,
             hasDerivative: widget.showDerivative,
           ),
@@ -607,7 +671,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                         widget.data,
                         widget.ctrl,
                         unit: unit,
-                        activeChannels: drawableChannels,
+                        channels: convertedChannels,
                         showXLabels: !widget.showDerivative,
                         vsync: _vsync,
                         cache: _forceCache,
@@ -629,7 +693,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                           widget.data,
                           widget.ctrl,
                           unit: unit,
-                          activeChannels: drawableChannels,
+                          channels: convertedChannels,
                           vsync: _vsync,
                           cache: _derivCache ??= SegmentedGraphCache(),
                           colorScheme: colorScheme,
@@ -644,7 +708,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                     dataSource: widget.data,
                     unit: unit,
                     graphCtrl: widget.ctrl,
-                    activeChannels: drawableChannels,
+                    channels: convertedChannels,
                   ),
                 ],
               ),
@@ -1383,17 +1447,12 @@ void _drawChannelEnvelope(
 /// minimap so both plot the identical series.
 EnvelopeSeries _taredEnvelopeSeries(
   GraphDataSource data,
-  int channel,
-  DisplayUnit unit,
-) {
-  // Non-null: the workspace plots only channels the unit can convert.
-  final toUnit = data.converterFor(channel).netMap(unit)!;
-  return EnvelopeSeries.bucketed(
-    sampleAt: (j) => toUnit(data.rawValueAt(channel, j)),
-    buckets: data.valueBucketsFor(channel),
-    rawToDisplay: toUnit,
-  );
-}
+  _ConvertedChannel bound,
+) => EnvelopeSeries.bucketed(
+  sampleAt: (j) => bound.netMap(data.rawValueAt(bound.channel, j)),
+  buckets: data.valueBucketsFor(bound.channel),
+  rawToDisplay: bound.netMap,
+);
 
 /// Fold the raw extremes of [channels] over `[start, end)` (already clamped
 /// to the source's usable range). [seriesFor] yields a channel's bucket
@@ -1401,13 +1460,13 @@ EnvelopeSeries _taredEnvelopeSeries(
 /// [adjust] maps each folded bound per channel (tare offset, display scale).
 /// BOTH adjusted bounds feed each end of the range, so a negative display
 /// multiplier can't invert it. Returns null when no channel covers a sample.
-(double, double)? _foldChannelExtremes(
-  Iterable<int> channels,
+(double, double)? _foldChannelExtremes<T>(
+  Iterable<T> channels,
   int start,
   int end,
-  (BucketSeries buckets, double Function(int i) rawAt)? Function(int ch)
+  (BucketSeries buckets, double Function(int i) rawAt)? Function(T channel)
   seriesFor,
-  double Function(double raw, int ch) adjust,
+  double Function(double raw, T channel) adjust,
 ) {
   double? lo, hi;
   for (final ch in channels) {
@@ -1430,7 +1489,7 @@ EnvelopeSeries _taredEnvelopeSeries(
 /// [viewStart, viewStart + viewSpan) mapped to x in [0, gw): the pipeline
 /// shared by the force graph, derivative graph, and minimap. Handles the
 /// cache configuration (keying, pads, block sizing) and renders one
-/// min/avg/max envelope per active channel via [_drawChannelEnvelope].
+/// min/avg/max envelope per channel via [_drawChannelEnvelope].
 ///
 /// [seriesFor] returns the per-channel rendering recipe ([EnvelopeSeries]):
 /// the exact per-sample evaluator plus bucket acceleration for the block
@@ -1451,7 +1510,7 @@ bool _paintEnvelopeDataLayer(
   Canvas canvas, {
   required SegmentedGraphCache cache,
   required GraphDataSource data,
-  required List<int> activeChannels,
+  required List<_ConvertedChannel> channels,
   required List<double?> tares,
   required DisplayUnit unit,
   required double gw,
@@ -1462,7 +1521,7 @@ bool _paintEnvelopeDataLayer(
   required double yMin,
   required double yMax,
   required int firstUsableSample,
-  required EnvelopeSeries Function(int channel) seriesFor,
+  required EnvelopeSeries Function(_ConvertedChannel channel) seriesFor,
   double avgStrokeWidth = 1.5,
   int avgAlpha = 255,
   int envAlpha = 60,
@@ -1478,7 +1537,7 @@ bool _paintEnvelopeDataLayer(
     canvas,
     generation: data.dataGeneration,
     destructiveKey: [unit, data.calibrationVersion, ...tares],
-    remapKey: activeChannels,
+    remapKey: [for (final bound in channels) bound.channel],
     gw: gw,
     gh: gh,
     dpr: dpr,
@@ -1518,16 +1577,16 @@ bool _paintEnvelopeDataLayer(
         cCanvas.save();
         cCanvas.clipPath(clip);
       }
-      for (final ch in activeChannels) {
+      for (final bound in channels) {
         _drawChannelEnvelope(
           cCanvas,
-          color: getChannelColor(ch),
+          color: getChannelColor(bound.channel),
           graphW: gw,
           viewStart: start,
           viewSamples: viewSpan,
           totalSamples: limit,
           firstUsableSample: firstUsableSample,
-          series: seriesFor(ch),
+          series: seriesFor(bound),
           valueToY: valueToY,
           clipEnvelopeSamples: end,
           avgStrokeWidth: avgStrokeWidth,
@@ -1684,8 +1743,9 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final DisplayUnit _unit;
   final GraphController _ctrl;
 
-  /// Indices of the channels to plot (per-view; see [GraphWorkspace]).
-  final List<int> _activeChannels;
+  /// Channels to plot, bound to [_unit] in the workspace (see
+  /// [_ConvertedChannel]).
+  final List<_ConvertedChannel> _channels;
   final SegmentedGraphCache cache;
   final ColorScheme colorScheme;
 
@@ -1705,7 +1765,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     this._data,
     this._ctrl, {
     required DisplayUnit unit,
-    required List<int> activeChannels,
+    required List<_ConvertedChannel> channels,
     required Listenable vsync,
     required this.cache,
     required this.colorScheme,
@@ -1713,7 +1773,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     required this.labels,
     required this.bakePump,
   }) : _unit = unit,
-       _activeChannels = activeChannels,
+       _channels = channels,
        super(
          repaint: Listenable.merge([_data.repaint, _ctrl, bakePump, vsync]),
        );
@@ -1738,7 +1798,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// (value at an absolute sample index, in display units; NaN marks a
   /// missing sample) plus optional bucket acceleration (see
   /// [EnvelopeSeries.bucketed] for the invariants it must satisfy).
-  EnvelopeSeries series(int channel);
+  EnvelopeSeries series(_ConvertedChannel channel);
 
   /// Y-axis range (display units) for the visible window. Null when no
   /// active channel is plottable in the window: the graph paints blank.
@@ -1791,7 +1851,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     final viewEnd = layout.viewEnd;
     final viewSamples = layout.viewSamples;
 
-    final activeIndices = _activeChannels;
     final oldestSample = _data.oldestSample;
 
     final yRange = computeYRange(viewStart, viewEnd);
@@ -1860,7 +1919,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       canvas,
       cache: cache,
       data: _data,
-      activeChannels: activeIndices,
+      channels: _channels,
       tares: cacheKeyTares(),
       unit: _unit,
       gw: graphSz.width,
@@ -1892,7 +1951,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     super.ctrl, {
     this.showXLabels = true,
     required super.unit,
-    required super.activeChannels,
+    required super.channels,
     required super.vsync,
     required super.cache,
     required super.colorScheme,
@@ -1909,36 +1968,34 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
 
   @override
   List<double?> cacheKeyTares() =>
-      _activeChannels.map((ch) => _data.converterFor(ch).tare).toList();
+      _channels.map((bound) => bound.tare).toList();
 
   @override
-  EnvelopeSeries series(int channel) =>
-      _taredEnvelopeSeries(_data, channel, _unit);
+  EnvelopeSeries series(_ConvertedChannel channel) =>
+      _taredEnvelopeSeries(_data, channel);
 
   @override
   YAxisRange? computeYRange(double viewStart, double viewEnd) {
-    // Data min/max across active channels in the visible window, converted
-    // per channel through its own calibration. [windowedRawExtremes] folds
-    // full buckets from the precomputed aggregates (exact for min/max of a
-    // monotone map) and per-sample scans only the partial head/tail, so the
-    // cost is O(window / bucketSize). No minimum-range floor: the observed
-    // noise IS the floor of auto-zoom on real hardware, and exactly-flat
-    // synthetic data falls to [_computeYRange]'s degeneracy guard.
+    // Data min/max across the plotted channels in the visible window.
+    // [windowedRawExtremes] folds full buckets from the precomputed
+    // aggregates (exact for min/max of a monotone map) and per-sample scans
+    // only the partial head/tail, so the cost is O(window / bucketSize). No
+    // minimum-range floor: the observed noise IS the floor of auto-zoom on
+    // real hardware, and exactly-flat synthetic data falls to
+    // [_computeYRange]'s degeneracy guard.
     final unit = _unit;
     final start = viewStart.floor();
     final end = viewEnd.ceil();
 
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
-    for (final ch in _activeChannels) {
-      final conv = _data.converterFor(ch).netMap(unit);
-      if (conv == null) continue;
-      final ext = _data.windowedRawExtremes(ch, start, end);
+    for (final bound in _channels) {
+      final ext = _data.windowedRawExtremes(bound.channel, start, end);
       if (ext == null) continue;
-      yMin = math.min(yMin, conv(ext.$1));
-      yMax = math.max(yMax, conv(ext.$2));
+      yMin = math.min(yMin, bound.netMap(ext.$1));
+      yMax = math.max(yMax, bound.netMap(ext.$2));
     }
-    // No active channel is plottable in the window: paint blank.
+    // No plotted channel has data in the window: paint blank.
     if (!yMin.isFinite || !yMax.isFinite) return null;
 
     return _computeYRange(yMin, yMax, unit);
@@ -1964,25 +2021,22 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     final cellPaint = Paint()..color = colorScheme.error.withAlpha(22);
     const colW = _kGraphRightSpace / kAdcChannelCount;
 
-    for (final ch in _activeChannels) {
-      final converter = _data.converterFor(ch);
-      final conv = converter.netMap(_unit);
-      if (conv == null) continue;
-      final cell = converter.calibration.loadCell;
-      final diffConv = converter.diffMap(_unit);
-      final countsPerMvV = converter.calibration.board.sensitivityCountsPerMvV;
-      // Net display value at 100% cell capacity; null without a cell or a
-      // resolved board sensitivity to size it with.
-      final cellNet = cell != null && diffConv != null && countsPerMvV != null
-          ? diffConv(cell.sensitivityMvV * countsPerMvV)
+    for (final bound in _channels) {
+      final cell = bound.loadCell;
+      final span = bound.sensitivityCountsPerMvV;
+      // Net display value at 100% cell capacity; null without a cell, or a
+      // board sensitivity to size it with (a nominal-less board in raw
+      // units).
+      final cellNet = cell != null && span != null
+          ? bound.diffMap(cell.sensitivityMvV * span)
           : null;
-      final left = graphSz.width + colW * ch;
+      final left = graphSz.width + colW * bound.channel;
       for (final positive in [true, false]) {
         final clipRaw = positive
             ? ChannelLimits.clipRawPos
             : ChannelLimits.clipRawNeg;
         final railY = valueToY(
-          conv(clipRaw.toDouble()),
+          bound.netMap(clipRaw.toDouble()),
         ).clamp(0.0, graphSz.height).toDouble();
         final railBar = positive
             ? Rect.fromLTRB(left, 0.0, left + colW, railY)
@@ -2016,7 +2070,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     super.data,
     super.ctrl, {
     required super.unit,
-    required super.activeChannels,
+    required super.channels,
     required super.vsync,
     required super.cache,
     required super.colorScheme,
@@ -2037,33 +2091,32 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
       (j) => _data.rawDiffAt(channel, j);
 
   /// Per-sample first difference in display units per second: the channel's
-  /// own converter differenced across adjacent samples (exact under the
-  /// piecewise map; tare cancels). NaN marks gap edges, breaking the
-  /// polyline.
-  double Function(int j) _sampleAt(int channel) {
-    // Non-null: the workspace plots only convertible channels.
-    final conv = _data.converterFor(channel).netMap(_unit)!;
+  /// net map differenced across adjacent samples (exact under the piecewise
+  /// map; tare cancels). NaN marks gap edges, breaking the polyline.
+  double Function(int j) _sampleAt(_ConvertedChannel bound) {
+    final net = bound.netMap;
     final rate = _data.sampleRate.toDouble();
+    final ch = bound.channel;
     return (j) {
       if (!_data.diffDefinedAt(j)) return double.nan;
-      return (conv(_data.rawAt(channel, j).toDouble()) -
-              conv(_data.rawAt(channel, j - 1).toDouble())) *
+      return (net(_data.rawAt(ch, j).toDouble()) -
+              net(_data.rawAt(ch, j - 1).toDouble())) *
           rate;
     };
   }
 
   /// Raw-diff -> display-units-per-second map for the bucket fast path of
-  /// [channel] (terminal-slope based, see [ChannelConverter.diffMap]).
-  double Function(double rawDiff) _diffDisplayFor(int channel) {
-    final diffConv = _data.converterFor(channel).diffMap(_unit)!;
+  /// [bound] (terminal-slope based, see [ChannelConverter.diffMap]).
+  double Function(double rawDiff) _diffDisplayFor(_ConvertedChannel bound) {
+    final diffMap = bound.diffMap;
     final rate = _data.sampleRate.toDouble();
-    return (diff) => diffConv(diff) * rate;
+    return (diff) => diffMap(diff) * rate;
   }
 
   @override
-  EnvelopeSeries series(int channel) => EnvelopeSeries.bucketed(
+  EnvelopeSeries series(_ConvertedChannel channel) => EnvelopeSeries.bucketed(
     sampleAt: _sampleAt(channel),
-    buckets: _data.diffBucketsFor(channel),
+    buckets: _data.diffBucketsFor(channel.channel),
     rawToDisplay: _diffDisplayFor(channel),
   );
 
@@ -2091,9 +2144,9 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
 
     // Each channel folds via the bucket fast path through its own diff map
     // (monotone, so both bounds fold safely).
-    final ext = _foldChannelExtremes(_activeChannels, from, endI, (ch) {
-      return (_data.diffBucketsFor(ch), _rawDiffAt(ch));
-    }, (raw, ch) => _diffDisplayFor(ch)(raw));
+    final ext = _foldChannelExtremes(_channels, from, endI, (bound) {
+      return (_data.diffBucketsFor(bound.channel), _rawDiffAt(bound.channel));
+    }, (raw, bound) => _diffDisplayFor(bound)(raw));
     if (ext != null) {
       fold(ext.$1);
       fold(ext.$2);

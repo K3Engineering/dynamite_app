@@ -39,7 +39,6 @@ void main() {
   group('availability', () {
     test('electrical units convert without a cell; force units do not', () {
       for (final u in [DisplayUnit.mVv, DisplayUnit.mV, DisplayUnit.raw]) {
-        expect(bare.converts(u), isTrue, reason: u.symbol);
         expect(bare.netMap(u), isNotNull, reason: u.symbol);
         expect(bare.grossMap(u), isNotNull, reason: u.symbol);
         expect(bare.diffMap(u), isNotNull, reason: u.symbol);
@@ -51,12 +50,11 @@ void main() {
         DisplayUnit.kgf,
         DisplayUnit.n,
       ]) {
-        expect(bare.converts(u), isFalse, reason: u.symbol);
         expect(bare.netMap(u), isNull, reason: u.symbol);
         expect(bare.grossMap(u), isNull, reason: u.symbol);
         expect(bare.diffMap(u), isNull, reason: u.symbol);
         expect(bare.rawAtGross(u, 0), isNull, reason: u.symbol);
-        expect(assigned.converts(u), isTrue, reason: u.symbol);
+        expect(assigned.netMap(u), isNotNull, reason: u.symbol);
       }
     });
 
@@ -67,9 +65,8 @@ void main() {
       );
       for (final u in DisplayUnit.values) {
         if (u == DisplayUnit.raw) {
-          expect(noData.converts(u), isTrue);
+          expect(noData.netMap(u), isNotNull);
         } else {
-          expect(noData.converts(u), isFalse, reason: u.symbol);
           expect(noData.netMap(u), isNull, reason: u.symbol);
         }
       }
@@ -88,7 +85,7 @@ void main() {
           tareRaw,
         );
         for (final u in DisplayUnit.values) {
-          if (!conv.converts(u)) continue;
+          if (conv.netMap(u) == null) continue;
           expect(conv.net(u, tareRaw), 0.0, reason: u.symbol);
         }
       }
@@ -105,7 +102,7 @@ void main() {
           tareRaw,
         );
         for (final u in DisplayUnit.values) {
-          if (!conv.converts(u)) continue;
+          if (conv.netMap(u) == null) continue;
           expect(conv.net(u, tareRaw), 0.0, reason: u.symbol);
         }
       }
