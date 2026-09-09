@@ -28,18 +28,6 @@ const String kCorrectionApplied =
 const String kUvVToPpmNote =
     'For a 2 mV/V load cell, 1 µV/V = 500 ppm of rated output.';
 
-/// The headline linearity figure: max |deviation| over the cal points, in
-/// µV/V. Null without factory data.
-double? maxCalDeviation(ChannelBoardCalibration ch) {
-  final d = ch.deviationsUvV;
-  if (d == null) return null;
-  var m = 0.0;
-  for (final v in d) {
-    if (v.abs() > m) m = v.abs();
-  }
-  return m;
-}
-
 String fmtUvV(double? uvV) =>
     uvV == null ? '—' : '${uvV > 0 ? '+' : ''}${uvV.toStringAsFixed(3)} µV/V';
 
@@ -152,7 +140,7 @@ String calibrationReport(BoardCalibration board, String deviceLabel) {
     b.writeln(
       'CH ${i + 1}: zero offset ${fmtUvV(ch.zeroOffsetUvV)} · '
       'gain ${fmtGain(ch.sensitivityVsNominal)} vs nominal · '
-      'end-point linearity ±${maxCalDeviation(ch)!.toStringAsFixed(3)} µV/V',
+      'end-point linearity ±${ch.maxDeviationUvV!.toStringAsFixed(3)} µV/V',
     );
     b.writeln(
       '  sensitivity ${ch.sensitivityCountsPerMvV!.toStringAsFixed(0)} '

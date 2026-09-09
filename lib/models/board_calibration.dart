@@ -501,6 +501,18 @@ class ChannelBoardCalibration {
     ];
   }
 
+  /// The headline linearity figure: max |deviation| over the cal points, in
+  /// µV/V. Null without factory data.
+  double? get maxDeviationUvV {
+    final d = deviationsUvV;
+    if (d == null) return null;
+    var m = 0.0;
+    for (final v in d) {
+      if (v.abs() > m) m = v.abs();
+    }
+    return m;
+  }
+
   /// Session-snapshot serialization (recorded sessions carry the calibration
   /// they were taken with, so playback converts identically later). The
   /// resolved [nominals] ride along: replay must never re-resolve anything.

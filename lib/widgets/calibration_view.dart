@@ -180,7 +180,7 @@ class _ChannelCalCard extends StatelessWidget {
               calibrated
                   ? 'zero offset ${fmtUvV(channel.zeroOffsetUvV)} · '
                         'gain ${fmtGain(channel.sensitivityVsNominal)} · '
-                        'end-point linearity ±${maxCalDeviation(channel)!.toStringAsFixed(3)} µV/V'
+                        'end-point linearity ±${channel.maxDeviationUvV!.toStringAsFixed(3)} µV/V'
                   : 'Nominal values (no factory data)',
               style: theme.textTheme.bodySmall,
             ),
@@ -216,7 +216,7 @@ class _ChannelCalCard extends StatelessWidget {
               ),
               _row(
                 'End-point linearity',
-                '±${maxCalDeviation(channel)!.toStringAsFixed(3)} µV/V '
+                '±${channel.maxDeviationUvV!.toStringAsFixed(3)} µV/V '
                     'max deviation',
               ),
               const SizedBox(height: 8),
