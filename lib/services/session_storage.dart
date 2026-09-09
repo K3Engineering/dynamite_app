@@ -2,10 +2,30 @@ import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
-import '../utils/format.dart';
 import 'live_session_writer.dart';
 import 'session_persistence.dart';
 import 'session_store.dart';
+
+/// ISO 8601 with an explicit zone designator: `...Z` for UTC, the wall clock
+/// with its `±hh:mm` offset for local times. [DateTime.toIso8601String]
+/// leaves local times suffix-less (ambiguous against UTC); [timeZoneOffset]
+/// — the zone offset the OS tz database assigns to this instant, DST included
+/// — supplies the suffix. Frozen into the session row at recording start as
+/// the dynamite-csv `recorded_at` (csv-format-v1C.md).
+String _iso8601WithOffset(DateTime value) {
+  if (value.isUtc) return value.toIso8601String();
+  final offset = value.timeZoneOffset;
+  if (offset.inSeconds % 60 != 0) {
+    throw StateError(
+      'unrepresentable zone offset $offset for $value (±hh:mm only)',
+    );
+  }
+  final minutes = offset.inMinutes.abs();
+  final sign = offset.isNegative ? '-' : '+';
+  return '${value.toIso8601String()}$sign'
+      '${(minutes ~/ 60).toString().padLeft(2, '0')}:'
+      '${(minutes % 60).toString().padLeft(2, '0')}';
+}
 
 /// The recording-side face of the session store: writer construction at
 /// start, finalize-or-abort at stop. Reads/edits/listings/loads flow through
@@ -65,7 +85,7 @@ class SessionStorage {
         // Frozen at recording start, NOT at directory creation (which is
         // the first packet's write, later): the wall clock the CSV's
         // recorded_at asserts.
-        recordedAt: iso8601WithOffset(DateTime.now()),
+        recordedAt: _iso8601WithOffset(DateTime.now()),
       ),
       sourceRingCapacity: sourceRingCapacity,
       onWriteError: onWriteError,

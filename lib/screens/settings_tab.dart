@@ -13,7 +13,7 @@ import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/rig_state.dart';
-import '../services/calibration_text.dart';
+import '../widgets/calibration_text.dart';
 import '../widgets/info_cards.dart';
 import '../widgets/middle_click_autoscroll.dart';
 import '../widgets/rig_slots_section.dart';

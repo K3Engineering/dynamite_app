@@ -7,7 +7,7 @@ import '../services/export_delivery.dart';
 import '../services/report_export.dart';
 import '../services/share_capability.dart';
 import '../services/rig_state.dart';
-import '../services/calibration_text.dart';
+import '../widgets/calibration_text.dart';
 import '../widgets/calibration_view.dart';
 import '../widgets/snackbars.dart';
 

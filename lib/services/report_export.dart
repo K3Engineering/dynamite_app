@@ -1,5 +1,5 @@
 /// Calibration-report export: packaging the plain-text report (content
-/// built by services/calibration_text.dart) as a deliverable artifact.
+/// built by widgets/calibration_text.dart) as a deliverable artifact.
 /// Handing the file to the OS (save-as dialog, share sheet) is the caller's
 /// composition with export_delivery.dart — this module never touches
 /// platform UI.
