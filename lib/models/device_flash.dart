@@ -17,16 +17,37 @@ import 'load_cell.dart';
 // ---------------------------------------------------------------------------
 
 /// The device KVS as read: folder-separated raw key/value pairs, sorted by
-/// key. This is provenance only — conversions never consult it.
+/// key. The typed parse consumes each folder separately (Factory → board
+/// half, User → slots) — there is no cross-folder merge. Raw values are
+/// also session provenance (the CSV's `device.kvs`) — conversions never
+/// consult them.
 class KvsSnapshot {
   KvsSnapshot({
     required Map<String, String> factory,
     required Map<String, String> user,
   }) : factory = Map.unmodifiable(SplayTreeMap.of(factory)),
-       user = Map.unmodifiable(SplayTreeMap.of(user));
+       user = Map.unmodifiable(SplayTreeMap.of(user)) {
+    // Flash content must be representable in the export journal's canonical
+    // YAML — the single-quoted scalar form can't hold control characters.
+    // Catching them here keeps an exotic byte out of the app's state, not
+    // out of exports weeks later: they can only come from wire/firmware
+    // corruption (values the app writes are normalized at toKv).
+    for (final MapEntry(:key, :value) in [
+      ...factory.entries,
+      ...user.entries,
+    ]) {
+      if (key.contains(_controlChars) || value.contains(_controlChars)) {
+        throw FormatException('KVS snapshot: control character in "$key"');
+      }
+    }
+  }
 
-  /// A test/document convenience: routes the exact slot keys to User and
-  /// every other key to Factory, mirroring the firmware layout.
+  static final RegExp _controlChars = RegExp(r'[\x00-\x1F\x7F]');
+
+  /// Parse the legacy single-text flash form, routing the exact slot keys
+  /// to User and every other key to Factory, mirroring the firmware layout.
+  /// Used by fixtures (the demo device, test docs) — the wire form is the
+  /// folder-separated KVS itself.
   factory KvsSnapshot.fromFlashDoc(String text) {
     final factory = <String, String>{};
     final user = <String, String>{};
@@ -38,14 +59,6 @@ class KvsSnapshot {
 
   final Map<String, String> factory;
   final Map<String, String> user;
-
-  /// The merged key/value view used by the typed parse: Factory first, with
-  /// a User duplicate shadowing the Factory copy.
-  Map<String, String> get merged => {...factory, ...user};
-
-  /// The flash document text form for callers that still need text.
-  String toFlashDoc() =>
-      [for (final e in merged.entries) '${e.key}=${e.value}'].join('\n');
 
   /// Apply a complete slot-key save to the User folder.
   KvsSnapshot withUserSlots(Map<String, String> lcKeys) {
@@ -91,31 +104,26 @@ class DeviceFlash {
   /// The raw store the typed halves were parsed from (session provenance).
   final KvsSnapshot kvs;
 
-  /// Parse a whole flash document.
-  /// [pgaGains] is the ADC's GAIN-register readback for board-constant
-  /// resolution — always present: an unreadable ADC config fails the
-  /// connection upstream (see `BleLinkManager`).
-  ///
-  /// Throws [FormatException] on present-but-invalid known content (see
-  /// [BoardCalibration.fromKv] and [RigSlots.fromKv]): a document the app
-  /// can't fully make sense of parks the connection for recovery rather
-  /// than degrading into an instrument that hides corruption — and into a
-  /// save that would delete the corrupt-but-recoverable keys. An EMPTY
-  /// document is legal (an unprovisioned unit). Unknown keys are ignored:
-  /// they are not the app's data, and the app's writes never touch them.
+  /// Parse the legacy single-text flash form (fixtures — see
+  /// [KvsSnapshot.fromFlashDoc]). Throws like [fromKvs].
   factory DeviceFlash.parse(String text, {required List<double> pgaGains}) =>
       DeviceFlash.fromKvs(KvsSnapshot.fromFlashDoc(text), pgaGains: pgaGains);
 
-  /// Parse the typed board/slot halves out of a raw KVS snapshot.
+  /// Parse the typed board/slot halves out of a raw KVS snapshot. Each half
+  /// reads its own folder: the board half ([BoardCalibration.fromKv]) is
+  /// strict (Factory can have no write in flight — partial or malformed data
+  /// is corrupt flash); the slot half ([RigSlots.fromKv]) is lenient (the
+  /// app owns those keys: an unparseable slot reads as empty, the raw value
+  /// stays visible in [kvs], and the next save reconciles the device).
+  /// [pgaGains] is the ADC's GAIN-register readback for board-constant
+  /// resolution — always present: an unreadable ADC config fails the
+  /// connection upstream (see `BleLinkManager`).
   factory DeviceFlash.fromKvs(
     KvsSnapshot kvs, {
     required List<double> pgaGains,
-  }) {
-    final kv = kvs.merged;
-    return DeviceFlash(
-      board: BoardCalibration.fromKv(kv, pgaGains: pgaGains),
-      slots: RigSlots.fromKv(kv),
-      kvs: kvs,
-    );
-  }
+  }) => DeviceFlash(
+    board: BoardCalibration.fromKv(kvs.factory, pgaGains: pgaGains),
+    slots: RigSlots.fromKv(kvs.user),
+    kvs: kvs,
+  );
 }

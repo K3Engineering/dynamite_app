@@ -32,14 +32,10 @@ void main() {
     final hub = DataHub();
     hub.updateBoardCalibration(
       ProvisionedBoardCalibration(
-        channels: [
-          for (int i = 0; i < channels; i++)
-            const NominalChannelBoard(testNominals),
-        ],
         nominals: BoardNominals(
-          adcFsrV: 1.2,
-          afeGain: 101,
-          excitationV: 4.53,
+          adcFsrV: testNominals.adcFsrV,
+          afeGain: testNominals.afeGain,
+          excitationV: testNominals.excitationV,
           pgaGains: const [1, 1, 1, 1],
         ),
       ),

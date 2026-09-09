@@ -181,6 +181,14 @@ adc_fsr=1.2,nominal
 exc=4.53,nominal
 afe_gain=101,nominal
 cal.adc=32,32,32,32
+ch0.r=10000,10,10,10,10,10000
+ch0.raw=6000000,3000000,0,-3000000,-6000000
+ch1.r=10000,10,10,10,10,10000
+ch1.raw=6000000,3000000,0,-3000000,-6000000
+ch2.r=10000,10,10,10,10,10000
+ch2.raw=6000000,3000000,0,-3000000,-6000000
+ch3.r=10000,10,10,10,10,10000
+ch3.raw=6000000,3000000,0,-3000000,-6000000
 END
 ''';
     await pump(tester, flashDoc: staleDoc);
@@ -357,7 +365,6 @@ K3CAL1
 adc_fsr=1.2,nominal
 exc=4.53,nominal
 afe_gain=101,nominal
-cal.date=2026-07-20
 END
 ''';
       expect(

@@ -823,17 +823,18 @@ void main() {
       final mock = MockBlePlatform.instance;
       mock.seedKvsFromDoc('');
       final (link, seen) = wire();
-      String? servedDoc;
-      link.onDeviceFlash = (flash) => servedDoc = flash.kvs.toFlashDoc();
+      KvsSnapshot? servedSnapshot;
+      link.onDeviceFlash = (flash) => servedSnapshot = flash.kvs;
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
 
       // An EMPTY KVS is a working channel with no data, not a failure: the
-      // connect succeeds and the flash read serves an empty document —
+      // connect succeeds and the flash read serves an empty store —
       // the unprovisioned mode, raw counts only (dev boards stay usable).
       expect(link.isStreaming, isTrue);
-      expect(servedDoc, '');
+      expect(servedSnapshot!.factory, isEmpty);
+      expect(servedSnapshot!.user, isEmpty);
       expect(seen, isEmpty);
 
       teardownLink(async, link);
@@ -1006,11 +1007,17 @@ void main() {
     fakeAsync((async) {
       final (link, seen) = wire();
       settleStartup(async);
-      String? doc;
-      link.onDeviceFlash = (flash) => doc = flash.kvs.toFlashDoc();
+      DeviceFlash? served;
+      link.onDeviceFlash = (flash) => served = flash;
 
       unawaited(link.connectToDemoDevice());
-      expect(parseFlashKv(doc!), parseFlashKv(demoBoardCalibrationDoc));
+      final fixture = DeviceFlash.parse(
+        demoBoardCalibrationDoc,
+        pgaGains: const [1, 1, 1, 1],
+      );
+      expect(served!.kvs.factory, fixture.kvs.factory);
+      expect(served!.kvs.user, fixture.kvs.user);
+      expect(served!.board, isA<ProvisionedBoardCalibration>());
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(milliseconds: 100));

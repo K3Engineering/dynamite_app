@@ -26,15 +26,11 @@ void main() {
   /// A provisioned board whose channels all convert through the nominal
   /// chain.
   BoardCalibration nominalBoard() => ProvisionedBoardCalibration(
-    channels: [
-      for (int i = 0; i < channels; ++i)
-        const NominalChannelBoard(testNominals),
-    ],
     nominals: BoardNominals(
-      adcFsrV: 1.2,
-      afeGain: 101,
-      excitationV: 4.53,
-      pgaGains: [1, 1, 1, 1],
+      adcFsrV: testNominals.adcFsrV,
+      afeGain: testNominals.afeGain,
+      excitationV: testNominals.excitationV,
+      pgaGains: const [1, 1, 1, 1],
     ),
   );
 
@@ -487,21 +483,23 @@ void main() {
       // board-uniform — a mixed calibrated/nominal board is invalid flash).
       final sp = ladderSetpointsMvV(nominalLadder);
       final board = ProvisionedBoardCalibration(
-        channels: [
-          for (int i = 0; i < channels; ++i)
-            CalibratedChannelBoard(
-              resistors: nominalLadder,
-              readings: [
-                for (final d in sp) 500 + 0.5 * testNominals.countsPerMvV * d,
-              ],
-              nominals: testNominals,
-            ),
-        ],
         nominals: BoardNominals(
-          adcFsrV: 1.2,
-          afeGain: 101,
-          excitationV: 4.53,
-          pgaGains: [1, 1, 1, 1],
+          adcFsrV: testNominals.adcFsrV,
+          afeGain: testNominals.afeGain,
+          excitationV: testNominals.excitationV,
+          pgaGains: const [1, 1, 1, 1],
+        ),
+        calGroup: CalGroup(
+          date: '2026-01-01',
+          channelData: [
+            for (int i = 0; i < channels; ++i)
+              (
+                resistors: nominalLadder,
+                readings: [
+                  for (final d in sp) 500 + 0.5 * testNominals.countsPerMvV * d,
+                ],
+              ),
+          ],
         ),
       );
 

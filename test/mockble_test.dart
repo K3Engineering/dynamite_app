@@ -151,16 +151,15 @@ void main() {
       });
     });
 
-    test('present-but-invalid known flash fails the connection', () {
+    test('present-but-invalid Factory flash fails the connection', () {
       fakeAsync((async) {
-        // A corrupt board half (partial constants) and a corrupt slot half
-        // (unparseable sens) alike: the parse is strict, so the connect-time
+        // A corrupt board half: the parse is strict, so the connect-time
         // read throws and the connect fails — no measurement state ever
-        // comes up on a document the app couldn't fully make sense of.
+        // comes up on Factory data the app couldn't fully make sense of.
         for (final doc in [
           'adc_fsr=1.2,nominal\nexc=4.53,nominal', // afe_gain missing
           'adc_fsr=1.2,nominal\nexc=soon\nafe_gain=101', // bad value
-          'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nlc0.cap=100\nlc0.sens=abc',
+          'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nch0.r=1,2,3,4,5,6', // no cal.date
         ]) {
           MockBlePlatform.instance.seedKvsFromDoc(doc);
           final (hub, link, teardown) = wire(async: async);
@@ -176,6 +175,31 @@ void main() {
           async.elapse(const Duration(seconds: 4));
         }
         addTearDown(() => MockBlePlatform.instance.resetKnobs());
+      });
+    });
+
+    test('a degenerate slot reads as empty; the connection succeeds', () {
+      fakeAsync((async) {
+        // The app owns the slot keys, so an unparseable value is not
+        // corruption to abort for: the slot reads as empty (force units
+        // report unavailable), and a save reconciles the device.
+        MockBlePlatform.instance.seedKvsFromDoc(
+          'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nlc0.cap=100\nlc0.sens=abc',
+        );
+        addTearDown(() => MockBlePlatform.instance.resetKnobs());
+        final (hub, link, teardown) = wire(async: async);
+
+        unawaited(link.connectToDevice(deviceId));
+        async.elapse(const Duration(seconds: 4));
+
+        expect(link.isStreaming, isTrue);
+        expect(hub.boardCalibration, isA<ProvisionedBoardCalibration>());
+        // ch0 has no cell: force units report unavailable, electrical ones
+        // convert through the nominal chain.
+        expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
+        expect(hub.currentValue(0, DisplayUnit.kN), isNull);
+
+        teardown();
       });
     });
 

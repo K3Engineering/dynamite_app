@@ -93,17 +93,6 @@ void main() {
   group('SessionBoardMeta.fromBoard', () {
     test('carries a provisioned board\'s facts', () {
       final board = ProvisionedBoardCalibration(
-        channels: [
-          for (int i = 0; i < kAdcChannelCount; i++)
-            const NominalChannelBoard(
-              ChannelNominals(
-                adcFsrV: 1.2,
-                afeGain: 101,
-                pgaGain: 1,
-                excitationV: 4.53,
-              ),
-            ),
-        ],
         nominals: BoardNominals(
           adcFsrV: 1.2,
           afeGain: 101,
@@ -111,11 +100,20 @@ void main() {
           pgaGains: const [1, 1, 1, 1],
           provenance: const {'afe_gain': 'nominal'},
         ),
-        factoryDate: '2026-01-15',
-        calTool: 'calibrate.py v3',
-        calOrigin: 'field:jdoe',
-        calTempsC: (dut: 30.0, calBoard: 25.0),
-        calAdcGains: const [1, 1, 1, 1],
+        calGroup: CalGroup(
+          date: '2026-01-15',
+          tool: 'calibrate.py v3',
+          origin: 'field:jdoe',
+          tempsC: (dut: 30.0, calBoard: 25.0),
+          adcGains: const [1, 1, 1, 1],
+          channelData: [
+            for (int i = 0; i < kAdcChannelCount; i++)
+              (
+                resistors: const [10000, 10, 10, 10, 10, 10000],
+                readings: const [6000000, 3000000, 0, -3000000, -6000000],
+              ),
+          ],
+        ),
       );
       final meta = SessionBoardMeta.fromBoard(board);
       expect(meta.provisioned, isTrue);

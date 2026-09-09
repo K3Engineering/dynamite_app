@@ -19,9 +19,9 @@ const String kvsCmdIndex = 'IDX';
 /// Factory information, not factory-resettable: the board calibration.
 /// (`DynaPersistent` partition, `Factory` namespace.) The app NEVER writes
 /// this folder — the board half of the flash document is read-only to it
-/// (factory tooling owns those keys): the only writes the app issues are
-/// slot keys in User and the device name in Settings, both with folder
-/// literals at their call sites.
+/// (factory tooling owns those keys). Call sites pass folder literals, and
+/// [_checkWritableFolder] throws at the SET/DEL choke point so a future
+/// caller can't slip a Factory write past the design.
 const String kvsFolderFactory = 'F';
 
 /// User information, not factory-resettable: the load cell data — the one
@@ -62,7 +62,22 @@ String encodeKvsGet(String folder, String key) {
   return '$kvsCmdGet$folder$key';
 }
 
+/// The app never writes the Factory partition (see [kvsFolderFactory]).
+/// This is a core assumption the slot-key writer satisfies by construction,
+/// but the encoders are the choke point every write passes through, so the
+/// guard lives here.
+void _checkWritableFolder(String folder) {
+  if (folder == kvsFolderFactory) {
+    throw ArgumentError.value(
+      folder,
+      'folder',
+      'the app never writes the Factory partition',
+    );
+  }
+}
+
 String encodeKvsSet(String folder, String key, String value) {
+  _checkWritableFolder(folder);
   _checkKey(key);
   if (value.isEmpty || value.length > kvsMaxValueLength) {
     throw ArgumentError.value(
@@ -75,6 +90,7 @@ String encodeKvsSet(String folder, String key, String value) {
 }
 
 String encodeKvsDelete(String folder, String key) {
+  _checkWritableFolder(folder);
   _checkKey(key);
   return '$kvsCmdDelete$folder$key';
 }

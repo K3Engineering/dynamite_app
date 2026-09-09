@@ -107,14 +107,17 @@ class KvsFlashTransport {
         throw ArgumentError.value(key, 'lcKeys', 'not a slot key');
       }
     }
-    final merged = _snapshot.merged;
+    final user = _snapshot.user;
     for (final e in lcKeys.entries) {
-      if (merged[e.key] == e.value) continue;
+      if (user[e.key] == e.value) continue;
       if (!await _client.set(kvsFolderUser, e.key, e.value)) {
         throw StateError('KVS write rejected for ${e.key}');
       }
     }
-    for (final key in _snapshot.user.keys) {
+    // Reconcile: known slot keys the snapshot holds but the save doesn't
+    // are deleted (a cleared slot, an abandoned partial write, a value the
+    // lenient read refused to adopt — see RigSlots.fromKv).
+    for (final key in user.keys) {
       if (!rigSlotKeys.contains(key) || lcKeys.containsKey(key)) continue;
       if (!await _client.delete(kvsFolderUser, key)) {
         throw StateError('KVS delete rejected for $key');

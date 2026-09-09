@@ -108,37 +108,30 @@ class RigSlots {
   @override
   int get hashCode => Object.hashAll(slots);
 
-  /// Parse the `lcN.*` keys of a flash document. Absent keys mean an empty
-  /// slot; a slot with ANY key present must carry `cap` and `sens` as
-  /// positive finite numbers, else [FormatException] — a malformed
-  /// certificate value would poison every force conversion, and degrading
-  /// it to "empty" would let a later save delete the corrupt-but-recoverable
-  /// keys from the device. A malformed document fails the connect-time
-  /// read instead (see `DeviceFlash.parse`).
+  /// Parse the `lcN.*` keys (the User folder's slot document). A slot is
+  /// populated iff its `cap` and `sens` both parse to positive finite
+  /// numbers; anything else reads as an empty slot. Lenient by policy: the
+  /// app owns these keys, so it is entitled to repair a bad state — an
+  /// unparseable slot shows as empty (force units report unavailable, the
+  /// user sees it immediately) instead of bricking the connection, the raw
+  /// values stay visible in the retained KVS snapshot, and the next save
+  /// writes the correct keys (see `KvsFlashTransport.writeSlots`).
   factory RigSlots.fromKv(Map<String, String> kv) {
-    double req(String key) {
-      final raw = kv[key];
-      final d = raw == null ? null : double.tryParse(raw);
-      if (d == null || !d.isFinite || d <= 0) {
-        throw FormatException('rig slots: bad $key: $raw');
-      }
-      return d;
-    }
-
+    double? num(String? v) => v == null ? null : double.tryParse(v);
     return RigSlots([
       for (int i = 0; i < kRigSlotCount; ++i)
-        if (kv.containsKey('lc$i.cap') ||
-            kv.containsKey('lc$i.sens') ||
-            kv.containsKey('lc$i.name'))
-          RigSlot(
-            cell: LoadCellProfile(
-              name: kv['lc$i.name'] ?? '',
-              capacityKg: req('lc$i.cap'),
-              sensitivityMvV: req('lc$i.sens'),
+        switch ((num(kv['lc$i.cap']), num(kv['lc$i.sens']))) {
+          (final cap?, final sens?)
+              when cap.isFinite && sens.isFinite && cap > 0 && sens > 0 =>
+            RigSlot(
+              cell: LoadCellProfile(
+                name: kv['lc$i.name'] ?? '',
+                capacityKg: cap,
+                sensitivityMvV: sens,
+              ),
             ),
-          )
-        else
-          null,
+          _ => null,
+        },
     ]);
   }
 

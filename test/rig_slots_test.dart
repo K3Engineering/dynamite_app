@@ -98,10 +98,11 @@ void main() {
     });
   });
 
-  group('RigSlots strict parse', () {
-    test('a degenerate slot is invalid flash, not an empty slot', () {
-      // Each of these would once have degraded silently to "empty" — and a
-      // later save would have deleted the corrupt keys from the device.
+  group('RigSlots lenient parse', () {
+    test('a degenerate slot reads as empty, not as invalid flash', () {
+      // The app owns the slot keys, so a bad state reads as "no cell": force
+      // units report unavailable (visible), the raw values stay in the KVS
+      // snapshot, and a save reconciles the device (see RigSlots.fromKv).
       for (final kv in [
         const {'lc0.cap': '-5', 'lc0.sens': '2'}, // non-positive cap
         const {'lc0.cap': '100'}, // sens missing
@@ -109,8 +110,17 @@ void main() {
         const {'lc0.cap': 'NaN', 'lc0.sens': '2'}, // parses, not finite
         const {'lc0.name': 'orphaned name'}, // name without values
       ]) {
-        expect(() => RigSlots.fromKv(kv), throwsFormatException, reason: '$kv');
+        final slots = RigSlots.fromKv(kv);
+        expect(slots[0], isNull, reason: '$kv');
       }
+      // The neighbouring slots are unaffected.
+      final slots = RigSlots.fromKv({
+        'lc0.sens': 'abc',
+        'lc1.cap': '500',
+        'lc1.sens': '2',
+      });
+      expect(slots[0], isNull);
+      expect(slots.cellAt(1)?.capacityKg, 500);
     });
 
     test('withSwap exchanges two slots and nothing else', () {

@@ -216,12 +216,14 @@ void main() {
     });
   });
 
-  test('an empty KVS reads as an empty document (unprovisioned unit)', () {
+  test('an empty KVS reads as an empty store (unprovisioned unit)', () {
     fakeAsync((async) {
       final (transport, _) = wire();
       mock.kvsStore.forEach((_, folder) => folder.clear());
 
-      expect(read(transport, async)!.toFlashDoc(), '');
+      final snapshot = read(transport, async)!;
+      expect(snapshot.factory, isEmpty);
+      expect(snapshot.user, isEmpty);
     });
   });
 

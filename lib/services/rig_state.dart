@@ -193,13 +193,14 @@ class RigState extends ChangeNotifier {
     // not a fact (firmware may reject, truncate or normalize the write).
     // Committing without checking would let app state diverge from the
     // device silently — and there is no change detection to catch it.
-    // The slot parse is strict ([RigSlots.fromKv]): a mangled write-back
-    // reads as garbage there and fails the save like a failed read.
+    // The equality check below is the strict half: a mangled write-back
+    // parses (leniently) to slots that don't match the intended edit, so
+    // the save fails like a failed read.
     final KvsSnapshot readBack;
     final RigSlots verified;
     try {
       readBack = await _transport.readKvsSnapshot();
-      verified = RigSlots.fromKv(readBack.merged);
+      verified = RigSlots.fromKv(readBack.user);
     } catch (_) {
       return false;
     }

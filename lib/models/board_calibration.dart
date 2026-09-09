@@ -116,6 +116,18 @@ final Set<String> channelCalibrationKeys = Set.unmodifiable({
   for (int i = 0; i < kAdcChannelCount; ++i) ...['ch$i.r', 'ch$i.raw'],
 });
 
+/// The exact calibration-group keys the schema owns: the marker
+/// (`cal.date`), the provenance metadata, and the per-channel entries.
+final Set<String> calGroupKeys = Set.unmodifiable({
+  'cal.date',
+  'cal.board',
+  'cal.tool',
+  'cal.origin',
+  'cal.temp',
+  'cal.adc',
+  ...channelCalibrationKeys,
+});
+
 /// Resolve the board constants from a flash document's key=value map and the
 /// ADC's PGA readback ([pgaGains] — always present: an unreadable ADC config
 /// fails the connection upstream). Null when the flash holds NONE of the
@@ -545,6 +557,130 @@ class NominalChannelBoard extends ChannelBoardCalibration {
   Map<String, dynamic> toJson() => {'n': nominals.toJson()};
 }
 
+// ---------------------------------------------------------------------------
+// The calibration group (all channels + provenance, one document)
+// ---------------------------------------------------------------------------
+
+/// One complete calibration group: every channel's characterized ladder
+/// resistors and readings, plus the `cal.*` provenance metadata describing
+/// the run that produced them.
+///
+/// The group's PRESENCE marker is [date] (`cal.date`): a group with no date
+/// is no group. A write of the group sets its data keys first and the date
+/// last — a crash mid-write leaves data keys without a date, which the
+/// caller's policy classifies (the User folder, a future user
+/// recalibration: an abandoned write, ignored; the Factory folder can have
+/// no write in flight: corrupt flash, [FormatException] from
+/// `BoardCalibration.fromKv`). `cal.date` is ALWAYS written by the tool
+/// producing the group; a missing date never means "the date is unknown".
+class CalGroup {
+  CalGroup({
+    required this.date,
+    this.boardId,
+    this.tool,
+    this.origin,
+    this.tempsC,
+    this.adcGains,
+    required this.channelData,
+  }) : assert(channelData.length == kAdcChannelCount);
+
+  /// Calibration date string as written in flash (`cal.date`).
+  final String date;
+
+  /// Calibration board firmware id (`cal.board`), if any.
+  final String? boardId;
+
+  /// Calibration host script version (`cal.tool`), if any.
+  final String? tool;
+
+  /// Calibration origin tag (`cal.origin`: `factory`, or a field operator's
+  /// tag), if any.
+  final String? origin;
+
+  /// Temperatures at calibration in °C (`cal.temp`): DUT board, cal board.
+  final ({double dut, double calBoard})? tempsC;
+
+  /// Per-channel ADC PGA gains at calibration time (`cal.adc`), if recorded.
+  final List<double>? adcGains;
+
+  /// One ladder/readings pair per ADC channel: the channel's entries
+  /// validate together (see [ChannelBoardCalibration.channelDataIsValid]) —
+  /// never a characterized-readings-over-nominal-ladder remix.
+  final List<({List<double> resistors, List<double> readings})> channelData;
+}
+
+/// Parse the calibration keys [key] as a comma-separated list of exactly
+/// [count] finite numbers. Null when the key is absent. Throws
+/// [FormatException] on anything else.
+List<double>? _parseNumberList(String? value, int count, String key) {
+  if (value == null) return null;
+  final parts = value.split(',');
+  final parsed = [
+    for (final part in parts)
+      part.isEmpty ? null : double.tryParse(part.trim()),
+  ];
+  if (parsed.length != count || parsed.any((v) => v == null || !v.isFinite)) {
+    throw FormatException('calibration: bad $key: "$value"');
+  }
+  return [for (final v in parsed) v!];
+}
+
+/// Parse one calibration group out of a key/value map. Null when the map
+/// holds no `cal.date`: no calibration group (see [CalGroup] — the date is
+/// the group's presence marker, and group keys without it are the CALLER's
+/// policy domain, not checked here).
+///
+/// Throws [FormatException] on a present-but-invalid group: calibration is
+/// all-or-nothing — every channel's ladder/readings must be present and
+/// jointly valid (a factory always calibrates all channels in one document;
+/// a partial set is corrupt flash, not a mixed instrument), and the numeric
+/// metadata must be well-formed.
+CalGroup? parseCalGroup(Map<String, String> kv) {
+  final date = kv['cal.date'];
+  if (date == null) return null;
+  final channelData = <({List<double> resistors, List<double> readings})?>[];
+  var sawAbsent = false;
+  var sawPresent = false;
+  for (int i = 0; i < kAdcChannelCount; ++i) {
+    final hasEntries = kv.containsKey('ch$i.r') || kv.containsKey('ch$i.raw');
+    if (!hasEntries) {
+      channelData.add(null);
+      sawAbsent = true;
+      continue;
+    }
+    final resistors = _parseNumberList(
+      kv['ch$i.r'],
+      kLadderResistorCount,
+      'ch$i.r',
+    );
+    final readings = _parseNumberList(
+      kv['ch$i.raw'],
+      kCalPointCount,
+      'ch$i.raw',
+    );
+    if (resistors == null ||
+        readings == null ||
+        !ChannelBoardCalibration.channelDataIsValid(resistors, readings)) {
+      throw FormatException('calibration: invalid channel data (ch$i)');
+    }
+    channelData.add((resistors: resistors, readings: readings));
+    sawPresent = true;
+  }
+  if (sawAbsent || !sawPresent) {
+    throw const FormatException('calibration: only some channels calibrated');
+  }
+  final temps = _parseNumberList(kv['cal.temp'], 2, 'cal.temp');
+  return CalGroup(
+    date: date,
+    boardId: kv['cal.board'],
+    tool: kv['cal.tool'],
+    origin: kv['cal.origin'],
+    tempsC: temps == null ? null : (dut: temps[0], calBoard: temps[1]),
+    adcGains: _parseNumberList(kv['cal.adc'], kAdcChannelCount, 'cal.adc'),
+    channelData: [for (final d in channelData) d!],
+  );
+}
+
 /// The board half of the device flash document, sealed by provisioning:
 ///
 /// - [ProvisionedBoardCalibration]: the analog-chain constants resolved —
@@ -570,45 +706,34 @@ sealed class BoardCalibration {
     required List<double> pgaGains,
   }) => BoardCalibration.fromKv(parseFlashKv(text), pgaGains: pgaGains);
 
-  /// Build from an already-split key=value map (see [parseFlashKv]).
+  /// Parse the board half of a flash document from the FACTORY folder's
+  /// key/value map (the two folders are parsed separately — see
+  /// `DeviceFlash.fromKvs`; User-namespace keys never reach here).
   /// [pgaGains] is the ADC's GAIN-register readback (always present — the
   /// config read fails the connection upstream); it completes the board
   /// constants (see [resolveBoardConstants]).
   ///
   /// Throws [FormatException] on present-but-invalid board data: partial
-  /// or malformed constants, factory channel entries that fail validation,
-  /// only SOME channels carrying calibration (a factory always calibrates
-  /// all channels in one document — a partial set is corrupt flash, not a
-  /// mixed instrument), malformed numeric metadata, or orphaned channel
-  /// ladder/readings on an otherwise unprovisioned unit. Absent data is
-  /// legal: no constant keys at all → [UnprovisionedBoardCalibration];
-  /// constants without channel entries → nominal channels. Unknown keys are
-  /// ignored.
+  /// or malformed constants, orphaned calibration keys (channel entries or
+  /// `cal.*` metadata without the constant chain or without `cal.date` —
+  /// the Factory folder can have no write in flight, so partial data is
+  /// corrupt flash, not residue), or a calibration group [parseCalGroup]
+  /// rejects. Absent data is legal: no constant keys at all →
+  /// [UnprovisionedBoardCalibration]; constants without a cal group →
+  /// nominal channels. Unknown keys are ignored.
   factory BoardCalibration.fromKv(
     Map<String, String> kv, {
     required List<double> pgaGains,
   }) {
-    List<double>? parseList(String? value, int count, String key) {
-      if (value == null) return null;
-      final parts = value.split(',');
-      final parsed = [
-        for (final part in parts)
-          part.isEmpty ? null : double.tryParse(part.trim()),
-      ];
-      if (parsed.length != count ||
-          parsed.any((v) => v == null || !v.isFinite)) {
-        throw FormatException('board data: bad $key: "$value"');
-      }
-      return [for (final v in parsed) v!];
-    }
+    bool isCalKey(String key) => calGroupKeys.contains(key);
 
     final nominals = resolveBoardConstants(kv, pgaGains: pgaGains);
     if (nominals == null) {
       // Unprovisioned means no owned calibration data, not merely missing
-      // constants: exact channel entries without the constant chain are a
+      // constants: calibration keys without the constant chain are a
       // fragment of a bad provisioning. Unknown keys are not board data.
-      for (final key in channelCalibrationKeys) {
-        if (kv.containsKey(key)) {
+      for (final key in kv.keys) {
+        if (isCalKey(key)) {
           throw FormatException(
             'board data: "$key" without the constant chain',
           );
@@ -617,41 +742,29 @@ sealed class BoardCalibration {
       return const UnprovisionedBoardCalibration();
     }
 
-    // Content-validated calibration per channel. Ladder and readings are
-    // one datum: a channel's entries validate together or the document
-    // is invalid — never a characterized-readings-over-nominal-ladder
-    // remix.
-    final calData = <({List<double> resistors, List<double> readings})?>[];
-    var sawAbsent = false;
-    var sawPresent = false;
-    for (int i = 0; i < kAdcChannelCount; ++i) {
-      final hasEntries = kv.containsKey('ch$i.r') || kv.containsKey('ch$i.raw');
-      if (!hasEntries) {
-        calData.add(null);
-        sawAbsent = true;
-        continue;
+    final group = parseCalGroup(kv);
+    if (group == null) {
+      // No date marker: every calibration key must be absent outright.
+      for (final key in kv.keys) {
+        if (isCalKey(key)) {
+          throw FormatException(
+            'board calibration: "$key" without the cal.date marker',
+          );
+        }
       }
-      final resistors = parseList(kv['ch$i.r'], kLadderResistorCount, 'ch$i.r');
-      final readings = parseList(kv['ch$i.raw'], kCalPointCount, 'ch$i.raw');
-      if (resistors == null ||
-          readings == null ||
-          !ChannelBoardCalibration.channelDataIsValid(resistors, readings)) {
-        throw FormatException('board calibration: invalid channel data (ch$i)');
-      }
-      calData.add((resistors: resistors, readings: readings));
-      sawPresent = true;
     }
-    if (sawPresent && sawAbsent) {
-      throw const FormatException(
-        'board calibration: only some channels calibrated',
-      );
-    }
+    return ProvisionedBoardCalibration(nominals: nominals, calGroup: group);
+  }
+}
 
-    final temps = parseList(kv['cal.temp'], 2, 'cal.temp');
-    return ProvisionedBoardCalibration(
-      channels: [
+/// A provisioned board: the resolved analog-chain constants, one
+/// [ChannelBoardCalibration] per ADC channel, and the optional calibration
+/// group. No cal group → every channel converts through the nominal chain.
+class ProvisionedBoardCalibration extends BoardCalibration {
+  ProvisionedBoardCalibration({required this.nominals, this.calGroup})
+    : channels = [
         for (int i = 0; i < kAdcChannelCount; ++i)
-          switch (calData[i]) {
+          switch (calGroup?.channelData[i]) {
             null => NominalChannelBoard(nominals.forChannel(i)),
             final data => CalibratedChannelBoard(
               resistors: data.resistors,
@@ -660,62 +773,37 @@ sealed class BoardCalibration {
             ),
           },
       ],
-      nominals: nominals,
-      factoryDate: kv['cal.date'],
-      calBoardId: kv['cal.board'],
-      calTool: kv['cal.tool'],
-      calOrigin: kv['cal.origin'],
-      calTempsC: temps == null ? null : (dut: temps[0], calBoard: temps[1]),
-      calAdcGains: parseList(kv['cal.adc'], kAdcChannelCount, 'cal.adc'),
-    );
-  }
-}
-
-/// A provisioned board: the resolved analog-chain constants, one
-/// [ChannelBoardCalibration] per ADC channel, and the optional factory
-/// provenance metadata.
-class ProvisionedBoardCalibration extends BoardCalibration {
-  ProvisionedBoardCalibration({
-    required this.channels,
-    required this.nominals,
-    this.factoryDate,
-    this.calBoardId,
-    this.calTool,
-    this.calOrigin,
-    this.calTempsC,
-    this.calAdcGains,
-  }) : assert(channels.length == kAdcChannelCount),
-       assert(
-         channels.every((c) => c.isFactoryCalibrated) ||
-             channels.every((c) => !c.isFactoryCalibrated),
-         'calibration is uniform across channels — a mixed board is '
-         'invalid flash, rejected at parse (see fromKv)',
-       ),
-       super._();
-
-  final List<ChannelBoardCalibration> channels;
+      super._();
 
   /// The resolved board constants (see [resolveBoardConstants]).
   final BoardNominals nominals;
 
-  /// Factory calibration date string as written in flash (`cal.date`), if any.
-  final String? factoryDate;
+  /// The device's calibration group; null when flash holds constants but no
+  /// calibration (a provisioned-but-never-calibrated board).
+  final CalGroup? calGroup;
+
+  /// One channel map per ADC channel, derived from [nominals] and
+  /// [calGroup].
+  final List<ChannelBoardCalibration> channels;
+
+  /// Calibration date string as written in flash (`cal.date`), if calibrated.
+  String? get factoryDate => calGroup?.date;
 
   /// Calibration board firmware id (`cal.board`), if any.
-  final String? calBoardId;
+  String? get calBoardId => calGroup?.boardId;
 
   /// Calibration host script version (`cal.tool`), if any.
-  final String? calTool;
+  String? get calTool => calGroup?.tool;
 
   /// Calibration origin tag (`cal.origin`: `factory`, or a field operator's
   /// tag), if any.
-  final String? calOrigin;
+  String? get calOrigin => calGroup?.origin;
 
   /// Temperatures at calibration in °C (`cal.temp`): DUT board, cal board.
-  final ({double dut, double calBoard})? calTempsC;
+  ({double dut, double calBoard})? get calTempsC => calGroup?.tempsC;
 
   /// Per-channel ADC PGA gains at calibration time (`cal.adc`), if recorded.
-  final List<double>? calAdcGains;
+  List<double>? get calAdcGains => calGroup?.adcGains;
 
   /// Whether the runtime PGA config differs from the one the calibration was
   /// taken at — a stale-calibration guard (PGA gains are the only ADC config
@@ -732,10 +820,8 @@ class ProvisionedBoardCalibration extends BoardCalibration {
     return false;
   }
 
-  /// Whether the board has factory calibration. Calibration is all-or-
-  /// nothing per board (see [BoardCalibration.fromKv]): every channel is
-  /// calibrated, or none is — a mixed board is never representable here.
-  bool get isFactoryCalibrated => channels.every((c) => c.isFactoryCalibrated);
+  /// Whether the board holds a calibration group (see [CalGroup]).
+  bool get isFactoryCalibrated => calGroup != null;
 }
 
 /// A board with no board data in flash at all: a new or factory-reset

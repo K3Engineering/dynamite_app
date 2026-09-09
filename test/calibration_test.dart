@@ -379,7 +379,6 @@ END
         'charging=enabled',
         'ch0.temp=24.1',
         'cal.future=unknown',
-        'cal.date=2026-08-08',
       ]) {
         final board = BoardCalibration.parse(text, pgaGains: testGains);
         expect(board, isA<UnprovisionedBoardCalibration>(), reason: text);
@@ -471,16 +470,39 @@ END
 
     test('calibration keys without the constant chain are orphaned data', () {
       // No constants: the readings would convert nothing — a fragment of a
-      // bad provisioning, not an unprovisioned board (which is EMPTY).
+      // bad provisioning, not an unprovisioned board (which is EMPTY). The
+      // date marker is a calibration key too.
       expectInvalid(validCh0, 'calibration without constants');
+      expectInvalid('cal.date=2026-08-08', 'marker without constants');
+    });
+
+    test('channel data without the cal.date marker is orphaned data', () {
+      // The Factory folder can have no write in flight, so data keys with no
+      // marker are corrupt flash, not residue.
+      expectInvalid('$testConstantKeys$validCh0', 'no marker');
+      expectInvalid(
+        '$testConstantKeys${'cal.tool=board_calibration 1.0\n'}',
+        'metadata without marker',
+      );
     });
   });
 
   group('BoardCalibration cal metadata', () {
+    // All four channels must carry valid data wherever the cal.date marker
+    // is present (a group is whole or invalid).
+    const channelData =
+        'ch0.r=10000,10,10,10,10,10000\n'
+        'ch0.raw=6000000,3000000,0,-3000000,-6000000\n'
+        'ch1.r=10000,10,10,10,10,10000\n'
+        'ch1.raw=6000000,3000000,0,-3000000,-6000000\n'
+        'ch2.r=10000,10,10,10,10,10000\n'
+        'ch2.raw=6000000,3000000,0,-3000000,-6000000\n'
+        'ch3.r=10000,10,10,10,10,10000\n'
+        'ch3.raw=6000000,3000000,0,-3000000,-6000000\n';
     const doc =
         '''
 K3CAL1
-${'adc_fsr=1.2,nominal'}
+adc_fsr=1.2,nominal
 exc=4.53,nominal
 afe_gain=101,nominal
 cal.date=2026-08-08T01:35:40+00:00
@@ -489,7 +511,7 @@ cal.tool=board_calibration 1.0
 cal.origin=factory
 cal.temp=29.1,28.4
 cal.adc=1,1,1,1
-END
+$channelData${''}END
 ''';
 
     ProvisionedBoardCalibration parse(String text) =>
@@ -515,8 +537,13 @@ END
     });
 
     test('malformed numeric metadata is invalid, not absent', () {
+      // Marker and channel data present, so the only defect is the metadata
+      // itself.
       expect(
-        () => parse('$testConstantKeys${'cal.temp=hot\ncal.adc=1,1\n'}'),
+        () => parse(
+          '$testConstantKeys${'cal.date=2026-01-01\n'}$channelData'
+          '${'cal.temp=hot\ncal.adc=1,1\n'}',
+        ),
         throwsFormatException,
       );
     });

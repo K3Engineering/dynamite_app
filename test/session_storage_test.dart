@@ -563,22 +563,24 @@ void main() {
         // board-uniform — a mixed board is invalid flash, rejected at parse).
         hub.updateBoardCalibration(
           ProvisionedBoardCalibration(
-            channels: [
-              for (int i = 0; i < channels; ++i)
-                CalibratedChannelBoard(
-                  resistors: nominalLadder,
-                  readings: [
-                    for (final d in sp)
-                      500 + 0.5 * testNominals.countsPerMvV * d,
-                  ],
-                  nominals: testNominals,
-                ),
-            ],
             nominals: BoardNominals(
-              adcFsrV: 1.2,
-              afeGain: 101,
-              excitationV: 4.53,
+              adcFsrV: testNominals.adcFsrV,
+              afeGain: testNominals.afeGain,
+              excitationV: testNominals.excitationV,
               pgaGains: const [1, 1, 1, 1],
+            ),
+            calGroup: CalGroup(
+              date: '2026-01-01',
+              channelData: [
+                for (int i = 0; i < channels; ++i)
+                  (
+                    resistors: nominalLadder,
+                    readings: [
+                      for (final d in sp)
+                        500 + 0.5 * testNominals.countsPerMvV * d,
+                    ],
+                  ),
+              ],
             ),
           ),
         );
@@ -640,25 +642,23 @@ void main() {
       final hub = DataHub();
       hub.updateBoardCalibration(
         ProvisionedBoardCalibration(
-          channels: [
-            for (int ch = 0; ch < channels; ch++)
-              const NominalChannelBoard(
-                ChannelNominals(
-                  adcFsrV: 1.2,
-                  afeGain: 101,
-                  pgaGain: 2,
-                  excitationV: 4.53,
-                ),
-              ),
-          ],
-          factoryDate: '2026-01-15',
-          calTool: 'calibrate.py v3',
           nominals: BoardNominals(
             adcFsrV: 1.2,
             afeGain: 101,
             excitationV: 4.53,
             pgaGains: const [2, 2, 2, 2],
             provenance: const {'exc': 'nominal'},
+          ),
+          calGroup: CalGroup(
+            date: '2026-01-15',
+            tool: 'calibrate.py v3',
+            channelData: [
+              for (int i = 0; i < channels; ++i)
+                (
+                  resistors: const [10000, 10, 10, 10, 10, 10000],
+                  readings: const [6000000, 3000000, 0, -3000000, -6000000],
+                ),
+            ],
           ),
         ),
       );
