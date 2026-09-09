@@ -18,17 +18,28 @@ class WakelockPolicy {
     /// [streamingNow]. main wires the link manager in.
     required Listenable streamingChanges,
     required bool Function() streamingNow,
+
+    /// Optional unconditional hold (ignores the user's setting): the OTA
+    /// flash hold runs here, since a flash unsubscribes the feed and would
+    /// otherwise clear the streaming-based keep-awake mid-transfer.
+    Listenable? holdChanges,
+    bool Function()? holdNow,
   }) : _settings = settings,
        _streamingChanges = streamingChanges,
-       _streamingNow = streamingNow {
+       _streamingNow = streamingNow,
+       _holdChanges = holdChanges,
+       _holdNow = holdNow {
     _settings.addListener(_sync);
     _streamingChanges.addListener(_sync);
+    _holdChanges?.addListener(_sync);
     _sync();
   }
 
   final AppSettings _settings;
   final Listenable _streamingChanges;
   final bool Function() _streamingNow;
+  final Listenable? _holdChanges;
+  final bool Function()? _holdNow;
 
   /// Last state pushed to the plugin, so [_sync] only crosses the platform
   /// channel on an actual edge (the streaming source notifies on every RSSI
@@ -39,7 +50,9 @@ class WakelockPolicy {
   bool _applied = false;
 
   void _sync() {
-    final target = _settings.wakelockEnabled && _streamingNow();
+    final target =
+        (_settings.wakelockEnabled && _streamingNow()) ||
+        (_holdNow?.call() ?? false);
     if (target == _applied) return;
     _applied = target;
     unawaited(target ? WakelockPlus.enable() : WakelockPlus.disable());
@@ -48,5 +61,6 @@ class WakelockPolicy {
   void dispose() {
     _settings.removeListener(_sync);
     _streamingChanges.removeListener(_sync);
+    _holdChanges?.removeListener(_sync);
   }
 }
