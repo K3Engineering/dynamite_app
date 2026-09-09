@@ -6,7 +6,6 @@ import 'app_events.dart';
 import 'data_hub.dart';
 import 'live_session_writer.dart';
 import 'session_persistence.dart';
-import '../models/board_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
@@ -205,12 +204,6 @@ class RecordingController extends ChangeNotifier {
       displayUnit: displayUnit,
       deviceMetadata: _deviceMetadataSnapshot(),
       deviceKvs: _deviceKvsSnapshot(),
-      // Freeze the board-level calibration provenance alongside the
-      // per-channel snapshot above; null when no board data resolved.
-      boardMeta: switch (_dataHub.boardCalibration) {
-        final board? => SessionBoardMeta.fromBoard(board),
-        null => null,
-      },
       // A storage failure latched mid-recording stops the session the
       // moment it latches — not when a later batch would reveal it (a
       // failed last packet under an idle feed has no later batch).

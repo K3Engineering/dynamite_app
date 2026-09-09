@@ -243,10 +243,6 @@ Map<String, Object?> _metadata(
         // lives nowhere else in the file for a session without board_cal.
         'excitation_v': data.calibrationFor(0).board?.displayExcitationV,
       },
-      // Board-cal provenance (SessionBoardMeta.toJson): the cal.* document
-      // and the per-constant provenance tags. Null for a session recorded
-      // with no board data resolved.
-      'cal': data.boardMeta?.toJson(),
       // Raw store provenance frozen at recording start; descriptive only —
       // the operative transfer function remains channels[].board_cal.
       // Null for sessions recorded before this field existed.

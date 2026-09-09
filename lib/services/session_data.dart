@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 
-import '../models/board_calibration.dart';
 import '../models/bucket_series.dart';
 import '../models/channel_calibration.dart';
 import '../models/channel_converter.dart';
@@ -21,11 +20,6 @@ class SessionData implements GraphDataSource {
   /// Per-channel tare offsets in counts, frozen at record start; null =
   /// that channel was recording gross (never tared).
   final List<double?> tares;
-
-  /// The board-level calibration provenance frozen at record start
-  /// (see [SessionBoardMeta]). Null for sessions recorded with no board
-  /// data resolved.
-  final SessionBoardMeta? boardMeta;
 
   /// The raw device KVS snapshot frozen at record start; null for sessions
   /// recorded before this provenance field existed.
@@ -72,7 +66,6 @@ class SessionData implements GraphDataSource {
     required this.calibrations,
     required this.tares,
     required this.ssnOrigin,
-    this.boardMeta,
     this.deviceKvs,
     GapList? gaps,
   }) : gaps = gaps ?? GapList(),

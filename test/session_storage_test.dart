@@ -67,10 +67,6 @@ void main() {
       displayUnit: DisplayUnit.kgf,
       deviceMetadata: const {},
       deviceKvs: null,
-      boardMeta: switch (hub.boardCalibration) {
-        final board? => SessionBoardMeta.fromBoard(board),
-        null => null,
-      },
       onWriteError: (_) {},
     );
   }
@@ -88,7 +84,6 @@ void main() {
     displayUnit: 'kgf',
     deviceInfo: const {},
     deviceKvs: null,
-    boardMeta: null,
     recordedAt: '2026-07-29T14:05:32.000Z',
   );
 
@@ -102,7 +97,6 @@ void main() {
     visibleChannels: const [true, true, true, true],
     displayUnit: 'kgf',
     deviceInfo: const {},
-    boardMeta: null,
     recordedAt: '2026-07-29T14:05:32.000Z',
     ssnOrigin: 100,
   );
@@ -637,8 +631,8 @@ void main() {
       },
     );
 
-    test('the board meta is frozen at start and loads back with the '
-        'session', () async {
+    test('the calibration snapshot freezes a calibrated board at start and '
+        'loads back with the session', () async {
       final hub = DataHub();
       hub.updateBoardCalibration(
         ProvisionedBoardCalibration(
@@ -672,11 +666,10 @@ void main() {
       await SessionStorage.finalizeSession(writer: writer);
 
       final loaded = await store.loadSession(writer.sessionId!);
-      final m = loaded.boardMeta!;
-      expect(m.provisioned, isTrue);
-      expect(m.factoryDate, '2026-01-15');
-      expect(m.calTool, 'calibrate.py v3');
-      expect(m.provenance, {'exc': 'nominal'});
+      // The calibrated snapshot itself round-trips (channels carry the
+      // operative numbers); board-level provenance rides the raw KVS dump
+      // (device.kvs in the export) instead of a typed block.
+      expect(loaded.calibrationFor(0).board?.isFactoryCalibrated, isTrue);
     });
   });
 

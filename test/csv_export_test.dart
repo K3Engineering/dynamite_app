@@ -48,7 +48,6 @@ void main() {
     List<double?>? tares,
     GapList? gaps,
     int ssnOrigin = 0,
-    SessionBoardMeta? boardMeta,
     KvsSnapshot? deviceKvs,
   }) => SessionData(
     channels: [for (final values in perChannel) Int32List.fromList(values)],
@@ -58,7 +57,6 @@ void main() {
     tares: tares ?? List.filled(channels, null),
     gaps: gaps,
     ssnOrigin: ssnOrigin,
-    boardMeta: boardMeta,
     deviceKvs: deviceKvs,
   );
 
@@ -154,7 +152,6 @@ void main() {
             'adc_gain': [1, 1],
             'excitation_v': 4.53,
           },
-          'cal': null,
           'kvs': null,
         },
         'channels': [
@@ -240,44 +237,8 @@ void main() {
           'adc_gain': [1, 1],
           'excitation_v': 4.53,
         },
-        'cal': null,
         'kvs': null,
       });
-    });
-
-    test('the board-cal provenance joins the device block as cal', () {
-      const boardMeta = SessionBoardMeta(
-        provisioned: true,
-        factoryDate: '2026-06-14',
-        calBoardId: 'CB42 v1.0.3',
-        calTool: 'calibrate v3.1',
-        calOrigin: 'factory',
-        calTempsC: (dut: 23.8, calBoard: 24.1),
-        calAdcGains: [1, 1, 1, 1],
-        provenance: {'exc': 'nominal'},
-      );
-      final data = makeSession([
-        [1],
-        [2],
-      ], boardMeta: boardMeta);
-
-      final csv = buildCsv(data, DisplayUnit.kgf);
-      final meta = metadataOf(csv);
-
-      expect((meta['device'] as Map)['cal'], {
-        'provisioned': true,
-        'cal_date': '2026-06-14',
-        'cal_board': 'CB42 v1.0.3',
-        'cal_tool': 'calibrate v3.1',
-        'cal_origin': 'factory',
-        'cal_temp': [23.8, 24.1],
-        'cal_adc': [1, 1, 1, 1],
-        'provenance': {'exc': 'nominal'},
-      });
-      // The human rendering reflects it too (nested one more under device).
-      expect(csv, contains('#   cal:'));
-      expect(csv, contains('#     provisioned: true'));
-      expect(csv, contains("#       exc: 'nominal'"));
     });
 
     test('the raw KVS snapshot joins the device block, deterministically', () {
@@ -532,10 +493,9 @@ void main() {
           [2],
         ],
         calibrations: cals,
-        boardMeta: const SessionBoardMeta(
-          provisioned: true,
-          factoryDate: '2026-06-14',
-          provenance: {},
+        deviceKvs: KvsSnapshot(
+          factory: {'cal.date': '2026-06-14', 'charging': 'enabled'},
+          user: const {'lc0.cap': '100'},
         ),
       );
 

@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/device_profile.dart';
@@ -171,7 +170,6 @@ typedef SessionHeader = ({
   String displayUnit,
   Map<String, Object?> deviceInfo,
   KvsSnapshot? deviceKvs,
-  SessionBoardMeta? boardMeta,
   String recordedAt,
 });
 
@@ -190,7 +188,6 @@ SessionMeta sessionMetaFromHeader(SessionHeader header, int ssnOrigin) =>
       displayUnit: header.displayUnit,
       deviceInfo: header.deviceInfo,
       deviceKvs: header.deviceKvs,
-      boardMeta: header.boardMeta,
       recordedAt: header.recordedAt,
       ssnOrigin: ssnOrigin,
     );

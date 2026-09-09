@@ -1,4 +1,3 @@
-import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/device_profile.dart';
@@ -43,8 +42,8 @@ class SessionStorage {
   /// Note: every session stores all [kAdcChannelCount]; [channelLabels]
   /// and [visibleChannels] are retained for display only. [deviceMetadata] is
   /// the connected device's identity (see [toSessionDeviceMetadata]), frozen
-  /// for export. [boardMeta] is the board-level calibration provenance; null
-  /// when no board data resolved.
+  /// for export. [deviceKvs] is the raw device store at recording start
+  /// (export provenance); null when no device flash read had landed.
   ///
   /// This is hub-agnostic by contract: the caller snapshots everything the
   /// live buffer would supply ([tare], [channelCalibration],
@@ -61,7 +60,6 @@ class SessionStorage {
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
     required KvsSnapshot? deviceKvs,
-    required SessionBoardMeta? boardMeta,
     required void Function(Object error) onWriteError,
   }) {
     return LiveSessionWriter(
@@ -84,7 +82,6 @@ class SessionStorage {
         displayUnit: displayUnit.name,
         deviceInfo: Map.of(deviceMetadata),
         deviceKvs: deviceKvs,
-        boardMeta: boardMeta,
         // Frozen at recording start, NOT at directory creation (which is
         // the first packet's write, later): the wall clock the CSV's
         // recorded_at asserts.
@@ -182,7 +179,6 @@ class StaticSessionPersistence implements SessionPersistence {
     required DisplayUnit displayUnit,
     required Map<String, Object?> deviceMetadata,
     required KvsSnapshot? deviceKvs,
-    required SessionBoardMeta? boardMeta,
     required void Function(Object error) onWriteError,
   }) => SessionStorage.startSession(
     tare: tare,
@@ -195,7 +191,6 @@ class StaticSessionPersistence implements SessionPersistence {
     displayUnit: displayUnit,
     deviceMetadata: deviceMetadata,
     deviceKvs: deviceKvs,
-    boardMeta: boardMeta,
     onWriteError: onWriteError,
   );
 

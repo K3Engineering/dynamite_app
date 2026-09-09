@@ -464,7 +464,6 @@ class SessionStore {
       tares: meta.tares,
       gaps: decoded.gaps,
       ssnOrigin: meta.ssnOrigin,
-      boardMeta: meta.boardMeta,
       deviceKvs: meta.deviceKvs,
     );
   });
