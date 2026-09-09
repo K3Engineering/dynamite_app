@@ -117,8 +117,12 @@ class KvsResponse {
 /// Returns null when the frame is a well-formed answer to some OTHER command
 /// — a stale frame whose own command already timed out; the caller drops it
 /// and the live command keeps awaiting its own reply. Throws
-/// [FormatException] on a garbled frame, which fails the live command:
-/// garbage on the wire means the link can't be trusted.
+/// [FormatException] on a garbled frame OR on payload bytes that aren't
+/// valid UTF-8 (calibration data is ASCII text; undecodable bytes passing
+/// the frame checks can only be firmware/wire corruption — replacing them
+/// with U+FFFD would let a corrupted read masquerade as an uncalibrated
+/// board). Either failure fails the live command: bytes the protocol can't
+/// decode mean the link can't be trusted.
 KvsResponse? parseKvsResponse(String request, Uint8List frame) {
   final requestBytes = utf8.encode(request);
   if (frame.isEmpty || (frame[0] != 0x30 && frame[0] != 0x31)) {
@@ -137,10 +141,7 @@ KvsResponse? parseKvsResponse(String request, Uint8List frame) {
         frame[1 + requestBytes.length] == 0x3D /* = */ ) {
       return KvsResponse(
         ok: true,
-        payload: utf8.decode(
-          frame.sublist(1 + requestBytes.length + 1),
-          allowMalformed: true,
-        ),
+        payload: utf8.decode(frame.sublist(1 + requestBytes.length + 1)),
       );
     }
     if (!success && frame.length == 1 + requestBytes.length) {

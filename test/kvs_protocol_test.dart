@@ -130,6 +130,15 @@ void main() {
         throwsFormatException,
       );
     });
+
+    test('undecodable payload bytes are protocol errors, not U+FFFD', () {
+      // Payload bytes that aren't valid UTF-8 (here a lone 0xFF) pass every
+      // frame check but must fail outright: the protocol carries ASCII text,
+      // so this can only be corruption — decoding leniently would let a
+      // corrupted calibration read masquerade as an uncalibrated board.
+      final bytes = Uint8List.fromList([...utf8.encode('1GETFk='), 0xFF]);
+      expect(() => parseKvsResponse('GETFk', bytes), throwsFormatException);
+    });
   });
 
   group('IDX payload parsing', () {
