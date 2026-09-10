@@ -269,25 +269,27 @@ List<String> yamlLinesForCsvMetadata(Map<String, Object?> metadata) => [
 List<String> _yamlEntry(String key, Object? value, int indent) {
   final pad = ' ' * indent;
   if (value is Map) {
-    if (value.isEmpty) return ['$pad$key: {}'];
+    if (value.isEmpty) return ['$pad${_yamlKey(key)}: {}'];
     return [
-      '$pad$key:',
+      '$pad${_yamlKey(key)}:',
       for (final MapEntry(:key, :value) in value.entries)
         ..._yamlEntry(key as String, value, indent + 2),
     ];
   }
   if (value is List) {
-    if (value.isEmpty) return ['$pad$key: []'];
+    if (value.isEmpty) return ['$pad${_yamlKey(key)}: []'];
     if (value.every((e) => e is! Map)) {
-      return ['$pad$key: [${value.map(_yamlScalar).join(', ')}]'];
+      return [
+        '$pad${_yamlKey(key)}: [${value.map(_yamlScalar).join(', ')}]',
+      ];
     }
     return [
-      '$pad$key:',
+      '$pad${_yamlKey(key)}:',
       for (final item in value)
         ..._yamlSequenceMapping(item as Map, indent + 2),
     ];
   }
-  return ['$pad$key: ${_yamlScalar(value)}'];
+  return ['$pad${_yamlKey(key)}: ${_yamlScalar(value)}'];
 }
 
 /// One `- ` item of a mapping sequence: the indicator sits at the parent's
@@ -313,20 +315,61 @@ List<String> _yamlSequenceMapping(Map<dynamic, dynamic> mapping, int indent) {
   return lines;
 }
 
+/// Control characters are not representable in YAML's single-quoted scalar
+/// form; keys and values containing them switch to the double-quoted form.
+final RegExp _controlChars = RegExp(r'[\x00-\x1F\x7F]');
+
+/// A mapping key: emitted plain unless it contains a control character, where
+/// the double-quoted form is the only representable one. Flash keys are
+/// firmware-constrained identifiers, so the plain path is the norm.
+String _yamlKey(String key) =>
+    _controlChars.hasMatch(key) ? _yamlDoubleQuoted(key) : key;
+
 /// Scalar rendering per the canonical rules: strings single-quoted with `'`
-/// doubled; numbers exactly as JSON renders them (fixed-point); booleans and
-/// null as the YAML 1.2 core-schema spellings.
+/// doubled (or double-quoted with escapes when they carry a control
+/// character); numbers exactly as JSON renders them (fixed-point); booleans
+/// and null as the YAML 1.2 core-schema spellings.
 String _yamlScalar(Object? value) {
   if (value == null) return 'null';
   if (value is String) {
-    if (value.contains(RegExp(r'[\x00-\x1F\x7F]'))) {
-      throw ArgumentError('no canonical YAML form for control characters');
-    }
-    return "'${value.replaceAll("'", "''")}'";
+    return _controlChars.hasMatch(value)
+        ? _yamlDoubleQuoted(value)
+        : "'${value.replaceAll("'", "''")}'";
   }
   if (value is bool) return '$value';
   if (value is num) return jsonEncode(value);
   throw ArgumentError('no canonical YAML form for ${value.runtimeType}');
+}
+
+/// YAML double-quoted scalar, the only style that can carry control
+/// characters: `"` and `\` are escaped, and C0 controls plus DEL use their
+/// `\xNN` forms (with the common ones in mnemonic form).
+String _yamlDoubleQuoted(String s) {
+  final b = StringBuffer('"');
+  for (final c in s.runes) {
+    switch (c) {
+      case 0x22:
+        b.write(r'\"');
+      case 0x5C:
+        b.write(r'\\');
+      case 0x08:
+        b.write(r'\b');
+      case 0x09:
+        b.write(r'\t');
+      case 0x0A:
+        b.write(r'\n');
+      case 0x0D:
+        b.write(r'\r');
+      default:
+        if (c < 0x20 || c == 0x7F) {
+          b.write('\\x${c.toRadixString(16).padLeft(2, '0').toUpperCase()}');
+        } else {
+          b.writeCharCode(c);
+        }
+    }
+  }
+  b.write('"');
+  return b.toString();
 }
 
 /// One `channels[]` entry: the assigned load cell (null = none), the

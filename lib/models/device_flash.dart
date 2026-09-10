@@ -26,23 +26,7 @@ class KvsSnapshot {
     required Map<String, String> factory,
     required Map<String, String> user,
   }) : factory = Map.unmodifiable(SplayTreeMap.of(factory)),
-       user = Map.unmodifiable(SplayTreeMap.of(user)) {
-    // Flash content must be representable in the export journal's canonical
-    // YAML — the single-quoted scalar form can't hold control characters.
-    // Catching them here keeps an exotic byte out of the app's state, not
-    // out of exports weeks later: they can only come from wire/firmware
-    // corruption (values the app writes are normalized at toKv).
-    for (final MapEntry(:key, :value) in [
-      ...factory.entries,
-      ...user.entries,
-    ]) {
-      if (key.contains(_controlChars) || value.contains(_controlChars)) {
-        throw FormatException('KVS snapshot: control character in "$key"');
-      }
-    }
-  }
-
-  static final RegExp _controlChars = RegExp(r'[\x00-\x1F\x7F]');
+       user = Map.unmodifiable(SplayTreeMap.of(user));
 
   /// Parse the legacy single-text flash form, routing the exact slot keys
   /// to User and every other key to Factory, mirroring the firmware layout.

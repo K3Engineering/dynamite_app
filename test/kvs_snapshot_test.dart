@@ -13,22 +13,6 @@ void main() {
     expect(snapshot.user.keys, ['lc0.cap', 'z']);
   });
 
-  test('KvsSnapshot rejects control characters in keys and values', () {
-    for (final badCodeUnit in [0x00, 0x09, 0x0A, 0x1F, 0x7F]) {
-      final bad = String.fromCharCode(badCodeUnit);
-      expect(
-        () => KvsSnapshot(factory: {'a': '1$bad'}, user: const {}),
-        throwsFormatException,
-        reason: 'value 0x${badCodeUnit.toRadixString(16)}',
-      );
-      expect(
-        () => KvsSnapshot(factory: {'a$bad': '1'}, user: const {}),
-        throwsFormatException,
-        reason: 'key 0x${badCodeUnit.toRadixString(16)}',
-      );
-    }
-  });
-
   test('withUserSlots replaces schema slots and preserves unknown keys', () {
     final snapshot = KvsSnapshot(
       factory: {'adc_fsr': '1.2'},

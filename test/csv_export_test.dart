@@ -456,11 +456,15 @@ void main() {
         }),
         throwsArgumentError,
       );
-      // A raw KVS string may be arbitrary: a line terminator must fail the
-      // export rather than corrupt the comment-prefixed metadata block.
+    });
+
+    test('control characters render as double-quoted YAML escapes', () {
       expect(
-        () => yamlLinesForCsvMetadata({'bad': 'line\nbreak'}),
-        throwsArgumentError,
+        yamlLinesForCsvMetadata({
+          'v': 'a\tb\nc\u0000d\u007f',
+          'bad\u0001key': 'x',
+        }),
+        ['v: "a\\tb\\nc\\x00d\\x7F"', '"bad\\x01key": \'x\''],
       );
     });
 
