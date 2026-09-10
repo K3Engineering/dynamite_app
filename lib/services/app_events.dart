@@ -18,16 +18,16 @@ class BleDisconnectTimeout extends AppEvent {
 }
 
 /// A connection dropped or failed during post-connect setup (e.g. the device
-/// disappeared mid service-discovery, or its flash failed strict parsing).
+/// disappeared mid service-discovery, or the ADC config could not be read).
 class BleConnectionFailed extends AppEvent {
   const BleConnectionFailed(this.deviceName, this.detail);
 
   /// The affected device's display name (or id).
   final String deviceName;
 
-  /// The setup failure as thrown (an invalid-flash FormatException, an
-  /// unreadable ADC config, ...), for the snackbar.
-  final String? detail;
+  /// The setup failure as thrown (an unreadable ADC config, a failed KVS
+  /// bring-up, ...), for the snackbar.
+  final String detail;
 }
 
 /// The link dropped unexpectedly while it was up (setting up, starting the

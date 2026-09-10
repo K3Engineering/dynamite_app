@@ -151,11 +151,12 @@ void main() {
       });
     });
 
-    test('present-but-invalid Factory flash fails the connection', () {
+    test('present-but-invalid Factory flash parks the link in faulted', () {
       fakeAsync((async) {
-        // A corrupt board half: the parse is strict, so the connect-time
-        // read throws and the connect fails — no measurement state ever
-        // comes up on Factory data the app couldn't fully make sense of.
+        // A corrupt board half: the parse is strict, so the connect-time read
+        // parks the link — no measurement state comes up on Factory data the
+        // app couldn't fully make sense of, but the link stays up (faulted)
+        // so the user can see why and disconnect.
         for (final doc in [
           'adc_fsr=1.2,nominal\nexc=4.53,nominal', // afe_gain missing
           'adc_fsr=1.2,nominal\nexc=soon\nafe_gain=101', // bad value
@@ -168,11 +169,12 @@ void main() {
           async.elapse(const Duration(seconds: 4));
 
           expect(link.isStreaming, isFalse, reason: doc);
-          expect(link.linkState, BtLinkState.idle, reason: doc);
+          expect(link.linkState, BtLinkState.faulted, reason: doc);
+          expect(link.faultDetail, isNotNull, reason: doc);
           expect(hub.totalSamples, 0, reason: doc);
           expect(hub.boardCalibration, isNull, reason: doc);
 
-          async.elapse(const Duration(seconds: 4));
+          teardown();
         }
         addTearDown(() => MockBlePlatform.instance.resetKnobs());
       });

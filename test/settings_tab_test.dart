@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/models/app_meta.dart';
+import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/models/display_unit.dart';
@@ -149,7 +150,9 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
   });
 
-  testWidgets('invalid flash fails the connection', (tester) async {
+  testWidgets('invalid flash parks the link; the board row says so', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(1200, 2400);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
@@ -161,13 +164,23 @@ void main() {
     unawaited(link.connectToDevice('2'));
     await tester.pump(const Duration(seconds: 4));
 
-    // A board the app can't fully make sense of is a provisioning errand:
-    // the connection fails (the detail goes to the toast) and the device
-    // sections don't render (no link up).
+    // A board the app can't fully make sense of keeps the link up (faulted)
+    // rather than dropping it; the device sections render and the calibration
+    // row names the fault instead of the generic "could not read".
     expect(link.isStreaming, isFalse);
-    expect(find.text('Board calibration'), findsNothing);
+    expect(link.linkState, BtLinkState.faulted);
+    expect(find.text('Board calibration'), findsOneWidget);
+    expect(
+      find.text('Calibration data unreadable — contact support'),
+      findsOneWidget,
+    );
 
+    // Teardown: a GATT link's disconnect awaits the mock's platform timers, so
+    // drive it with pumps rather than awaiting it inside the test body.
+    unawaited(link.disconnectSelectedDevice());
+    await tester.pump();
     await tester.pump(const Duration(seconds: 6));
+    expect(link.linkState, BtLinkState.idle);
   });
 
   testWidgets('device name editor: save and clear round-trip', (tester) async {

@@ -841,7 +841,7 @@ void main() {
     });
   });
 
-  test('invalid known flash fails the connection, detail included', () {
+  test('invalid known flash parks the link in faulted, detail included', () {
     fakeAsync((async) {
       MockBlePlatform.instance.seedKvsFromDoc(
         'adc_fsr=1.2\nexc=soon\nafe_gain=101\ncharging=enabled',
@@ -853,21 +853,22 @@ void main() {
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
 
-      // A board the app can't fully make sense of is a provisioning errand:
-      // the parse throws in post-connect setup, the link is torn down, and
-      // the ADC feed was never subscribed. The FormatException detail rides
-      // the failure event so the toast names the bad key.
+      // A board the app can't fully make sense of is a provisioning errand,
+      // but the link stays up (faulted) so the user can see why and
+      // disconnect — the ADC feed was never subscribed and no measurement
+      // state was built. No connection-failed event; this is not a lost
+      // connection.
       expect(link.isStreaming, isFalse);
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.faulted);
+      expect(link.faultDetail, contains('bad exc'));
       expect(MockBlePlatform.instance.gattOpLog, isNot(contains('adc:sub')));
       expect(measurementDelivered, isFalse);
-      expect(seen, [
-        isA<BleConnectionFailed>().having(
-          (e) => e.detail,
-          'detail',
-          contains('bad exc'),
-        ),
-      ]);
+      expect(seen.whereType<BleConnectionFailed>(), isEmpty);
+
+      // Disconnect from the faulted state returns the link to idle.
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(seconds: 4));
+      expect(link.linkState, BtLinkState.idle);
 
       // A repaired device enters the normal measurement path.
       MockBlePlatform.instance.resetKnobs();
@@ -875,7 +876,7 @@ void main() {
       async.elapse(const Duration(seconds: 4));
       expect(link.link.state, BtLinkState.streaming);
       expect(measurementDelivered, isTrue);
-      expect(seen.whereType<BleConnectionFailed>(), hasLength(1));
+      expect(seen.whereType<BleConnectionFailed>(), isEmpty);
       teardownLink(async, link);
     });
   });

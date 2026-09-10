@@ -185,6 +185,9 @@ class _LiveTabState extends State<LiveTab> {
     final deviceName = context.select<BleLinkManager, String>(
       (l) => l.connectedDeviceName,
     );
+    final faultDetail = context.select<BleLinkManager, String?>(
+      (l) => l.faultDetail,
+    );
     final recording = context.watch<RecordingController>();
     // RigState notifies only on flash reads and slot edits (never per
     // packet), so watching it here is cheap.
@@ -240,6 +243,7 @@ class _LiveTabState extends State<LiveTab> {
               child: DisconnectedPrompt(
                 linkState: linkState,
                 deviceName: deviceName,
+                faultDetail: faultDetail,
                 onConnect: widget.onGoToDevices,
               ),
             ),
@@ -331,6 +335,7 @@ class LiveStatusBar extends StatelessWidget {
     if (linkState != BtLinkState.streaming) {
       // One line for both idle and in-flight states; the in-flight stage
       // wording comes from btLinkStateLabel, shared with the Devices tab.
+      final faulted = linkState == BtLinkState.faulted;
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -338,11 +343,13 @@ class LiveStatusBar extends StatelessWidget {
         child: Row(
           children: [
             Icon(
-              linkState == BtLinkState.idle
-                  ? Icons.bluetooth
-                  : Icons.bluetooth_searching,
+              switch (linkState) {
+                BtLinkState.idle => Icons.bluetooth,
+                BtLinkState.faulted => Icons.error_outline,
+                _ => Icons.bluetooth_searching,
+              },
               size: 18,
-              color: scheme.onSurfaceVariant,
+              color: faulted ? scheme.error : scheme.onSurfaceVariant,
             ),
             const SizedBox(width: 8),
             Text(
@@ -350,7 +357,7 @@ class LiveStatusBar extends StatelessWidget {
                   ? 'Not connected'
                   : btLinkStateLabel(linkState)!,
               style: TextStyle(
-                color: scheme.onSurfaceVariant,
+                color: faulted ? scheme.error : scheme.onSurfaceVariant,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -613,17 +620,35 @@ class DisconnectedPrompt extends StatelessWidget {
     super.key,
     required this.linkState,
     required this.deviceName,
+    this.faultDetail,
     required this.onConnect,
   }) : assert(linkState != BtLinkState.streaming);
 
   final BtLinkState linkState;
   final String deviceName;
 
+  /// The strict-parse failure message backing the [BtLinkState.faulted] panel.
+  final String? faultDetail;
+
   /// "Connect a device" action (idle only): jumps to the Devices tab.
   final VoidCallback onConnect;
 
   @override
   Widget build(BuildContext context) {
+    // The link is up but the device's flash content is unusable: a permanent
+    // fault panel (not a toast) with the only two things the user can do —
+    // read the reason and disconnect. Never a connect affordance.
+    if (linkState == BtLinkState.faulted) {
+      final detail = faultDetail;
+      return EmptyPlaceholder(
+        icon: Icons.error_outline,
+        color: Theme.of(context).colorScheme.error,
+        title: 'Device fault',
+        hint: 'This device\'s calibration data is unreadable. '
+            'Contact support.'
+            '${detail == null ? '' : '\n\n$detail'}',
+      );
+    }
     // A link transition is in flight; only the Devices tab controls it, so
     // no action is offered here.
     if (linkState != BtLinkState.idle) {
