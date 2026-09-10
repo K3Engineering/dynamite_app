@@ -156,37 +156,37 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
   });
 
-  testWidgets('invalid flash parks the link; the board row says so', (
+  testWidgets('invalid flash streams raw; the board row says unreadable', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1200, 2400);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
-    MockBlePlatform.instance.seedKvs(kvsFromDoc(
-      'adc_fsr=1.2\nexc=soon\nafe_gain=101',
-    ));
+    MockBlePlatform.instance.seedKvs(
+      kvsFromDoc('adc_fsr=1.2\nexc=soon\nafe_gain=101'),
+    );
     final link = await pump(tester);
     unawaited(link.connectToDevice('2'));
     await tester.pump(const Duration(seconds: 4));
 
-    // A board the app can't fully make sense of keeps the link up (faulted)
-    // rather than dropping it; the device sections render and the calibration
-    // row names the fault instead of the generic "could not read".
-    expect(link.isStreaming, isFalse);
-    expect(link.linkState, BtLinkState.faulted);
+    // A board the app can't fully make sense of still connects: it streams
+    // raw counts and the calibration row says the data is unreadable.
+    expect(link.isStreaming, isTrue);
+    expect(link.linkState, BtLinkState.streaming);
     expect(find.text('Board calibration'), findsOneWidget);
     expect(
       find.textContaining('Calibration data unreadable — contact support'),
       findsOneWidget,
     );
-    // No document to show: the row must not open the calibration page (which
-    // would render "Device disconnected").
+    // A document is held, so the row opens the page, which names the reason.
     final row = tester.widget<ListTile>(
       find.widgetWithText(ListTile, 'Board calibration'),
     );
-    expect(row.onTap, isNull);
-    expect(row.trailing, isNull);
+    expect(row.onTap, isNotNull);
+    await tester.tap(find.widgetWithText(ListTile, 'Board calibration'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('board constants: bad exc'), findsOneWidget);
 
     // Teardown: a GATT link's disconnect awaits the mock's platform timers, so
     // drive it with pumps rather than awaiting it inside the test body.

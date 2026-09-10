@@ -72,14 +72,11 @@ void main() {
       expect(snapshot.user['lc0.cap'], '200');
       const gains = [1.0, 1.0, 1.0, 1.0];
       final flash = DeviceFlash.fromKvs(snapshot, pgaGains: gains);
-      final fixture = flashFromDoc(
-        demoBoardCalibrationDoc,
-        pgaGains: gains,
-      );
+      final fixture = flashFromDoc(demoBoardCalibrationDoc, pgaGains: gains);
       final board = flash.board as ProvisionedBoardCalibration;
       final fixtureBoard = fixture.board as ProvisionedBoardCalibration;
       expect(board.calGroup!.date, fixtureBoard.calGroup!.date);
-      expect(board.channels.every((c) => c.isFactoryCalibrated), isTrue);
+      expect(board.channels.every((c) => c.isCalibrated), isTrue);
       expect(
         (board.channels[0] as CalibratedChannelBoard).offsetCounts,
         closeTo(845.2, 1e-9),

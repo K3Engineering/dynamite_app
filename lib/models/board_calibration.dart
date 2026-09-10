@@ -133,9 +133,10 @@ final Set<String> calGroupKeys = Set.unmodifiable({
 /// fails the connection upstream). Null when the flash holds NONE of the
 /// constant keys: an unprovisioned board, a legal state (new or
 /// factory-reset units stream raw counts only). Throws [FormatException] on
-/// a partial or malformed set — the app never guesses a partial chain, and a
-/// bad provisioning parks the link in a faulted state rather than running as
-/// a degraded instrument.
+/// a partial or malformed set — the app never guesses a partial chain. The
+/// caller ([DeviceFlash.fromKvs]) turns that throw into an
+/// [InvalidBoardCalibration], so a bad provisioning still streams raw counts
+/// with a warning rather than failing the connection.
 BoardNominals? resolveBoardConstants(
   Map<String, String> kv, {
   required List<double> pgaGains,
@@ -256,10 +257,10 @@ sealed class ChannelBoardCalibration {
   /// The channel's resolved analog chain.
   ChannelNominals get nominals;
 
-  /// Whether the channel has factory calibration. Board-level calibration
+  /// Whether the channel has a calibration group. Board-level calibration
   /// is all-or-nothing: every channel is calibrated, or none is (see
   /// BoardCalibration.fromKv).
-  bool get isFactoryCalibrated;
+  bool get isCalibrated;
 
   /// The excitation anchor expressing the ratiometric map as mV. This value
   /// is the mV unit's entire uncertainty — the calibration is ratiometric,
@@ -406,7 +407,7 @@ class CalibratedChannelBoard extends ChannelBoardCalibration {
   final ChannelNominals nominals;
 
   @override
-  bool get isFactoryCalibrated => true;
+  bool get isCalibrated => true;
 
   /// Setpoints (mV/V) per config, derived from [resistors]. Cached: pure
   /// function of the immutable [resistors], and per-sample conversion paths
@@ -542,7 +543,7 @@ class NominalChannelBoard extends ChannelBoardCalibration {
   final ChannelNominals nominals;
 
   @override
-  bool get isFactoryCalibrated => false;
+  bool get isCalibrated => false;
 
   @override
   double get sensitivityCountsPerMvV => nominals.countsPerMvV;
@@ -691,12 +692,13 @@ CalGroup? parseCalGroup(Map<String, String> kv) {
 /// - [UnprovisionedBoardCalibration]: flash holds no board data at all —
 ///   a new or factory-reset unit. The instrument streams raw counts only;
 ///   there is nothing per-channel to know.
+/// - [InvalidBoardCalibration]: flash holds board data the app refuses to
+///   adopt (partial/malformed constants or calibration). Like an
+///   unprovisioned board it streams raw counts only, but it carries the
+///   reason so the UI can tell the user their calibration is unreadable.
 ///
-/// A middle state is NOT representable: partial or malformed board data
-/// throws at [fromKv] and parks the link in a faulted state — a
-/// misprovisioned board is a provisioning errand, not a degraded
-/// instrument. A failed READ (transport) still fails the connection
-/// upstream, so no board object ever represents "couldn't read".
+/// A failed READ (transport) still fails the connection upstream, so no
+/// board object ever represents "couldn't read".
 sealed class BoardCalibration {
   const BoardCalibration._();
 
@@ -715,7 +717,8 @@ sealed class BoardCalibration {
   /// not something to ignore), or a calibration group [parseCalGroup]
   /// rejects. Absent data is legal: no constant keys at all →
   /// [UnprovisionedBoardCalibration]; constants without a cal group →
-  /// nominal channels. Unknown keys are ignored.
+  /// nominal channels. Unknown keys are ignored. [DeviceFlash.fromKvs]
+  /// converts this throw into an [InvalidBoardCalibration].
   factory BoardCalibration.fromKv(
     Map<String, String> kv, {
     required List<double> pgaGains,
@@ -790,7 +793,7 @@ class ProvisionedBoardCalibration extends BoardCalibration {
   }
 
   /// Whether the board holds a calibration group (see [CalGroup]).
-  bool get isFactoryCalibrated => calGroup != null;
+  bool get isCalibrated => calGroup != null;
 }
 
 /// A board with no board data in flash at all: a new or factory-reset
@@ -798,4 +801,16 @@ class ProvisionedBoardCalibration extends BoardCalibration {
 /// unavailable (see `resolveUnitAvailability`).
 class UnprovisionedBoardCalibration extends BoardCalibration {
   const UnprovisionedBoardCalibration() : super._();
+}
+
+/// A board whose flash held board data the app refused to adopt (see
+/// [BoardCalibration.fromKv]): partial or malformed constants, or a
+/// calibration group that failed validation. Streams raw counts like
+/// [UnprovisionedBoardCalibration]; [detail] names the offending key for the
+/// user-facing warning so they (or support) can see what is wrong.
+class InvalidBoardCalibration extends BoardCalibration {
+  const InvalidBoardCalibration(this.detail) : super._();
+
+  /// The parser's reason, e.g. `board constants: bad adc_fsr: "soon"`.
+  final String detail;
 }

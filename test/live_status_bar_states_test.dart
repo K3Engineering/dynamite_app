@@ -66,7 +66,6 @@ void main() {
         (BtLinkState.readingConstants, 'Reading board constants…'),
         (BtLinkState.subscribing, 'Starting data stream…'),
         (BtLinkState.disconnecting, 'Disconnecting…'),
-        (BtLinkState.faulted, 'Device fault'),
       ];
       for (final (state, label) in cases) {
         await tester.pumpWidget(host(bar(state)));
@@ -93,17 +92,28 @@ void main() {
     });
   });
 
+  group('BoardFaultBanner', () {
+    testWidgets('names the reason and the support path', (tester) async {
+      await tester.pumpWidget(
+        host(
+          const BoardFaultBanner(detail: 'board constants: bad exc: "soon"'),
+        ),
+      );
+      expect(
+        find.textContaining('Calibration data unreadable — contact support'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('board constants: bad exc'), findsOneWidget);
+    });
+  });
+
   group('DisconnectedPrompt', () {
-    DisconnectedPrompt prompt(
-      BtLinkState state,
-      VoidCallback onConnect, {
-      String? faultDetail,
-    }) => DisconnectedPrompt(
-      linkState: state,
-      deviceName: 'K3',
-      faultDetail: faultDetail,
-      onConnect: onConnect,
-    );
+    DisconnectedPrompt prompt(BtLinkState state, VoidCallback onConnect) =>
+        DisconnectedPrompt(
+          linkState: state,
+          deviceName: 'K3',
+          onConnect: onConnect,
+        );
 
     testWidgets('idle: title plus the single connect CTA', (tester) async {
       var tapped = false;
@@ -115,36 +125,12 @@ void main() {
       expect(tapped, isTrue);
     });
 
-    testWidgets('faulted: a permanent fault panel, nothing tappable', (
-      tester,
-    ) async {
-      await tester.pumpWidget(
-        host(
-          prompt(
-            BtLinkState.faulted,
-            () {},
-            faultDetail: 'board constants: bad exc: "soon"',
-          ),
-        ),
-      );
-      expect(find.text('Device fault'), findsOneWidget);
-      expect(find.textContaining('Contact support'), findsOneWidget);
-      expect(
-        find.textContaining('board constants: bad exc'),
-        findsOneWidget,
-      );
-      expect(find.byType(FilledButton), findsNothing);
-    });
-
     testWidgets('in-flight: names the device, shows nothing tappable', (
       tester,
     ) async {
       final states = {
         for (final s in BtLinkState.values)
-          if (s != BtLinkState.idle &&
-              s != BtLinkState.streaming &&
-              s != BtLinkState.faulted)
-            s,
+          if (s != BtLinkState.idle && s != BtLinkState.streaming) s,
       };
       for (final state in states) {
         await tester.pumpWidget(host(prompt(state, () {})));

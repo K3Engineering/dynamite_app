@@ -618,7 +618,7 @@ void main() {
           loaded.calibrationFor(0).board?.sensitivityCountsPerMvV,
           closeTo(0.5 * testNominals.countsPerMvV, 1e-3),
         );
-        expect(loaded.calibrationFor(0).board?.isFactoryCalibrated, isTrue);
+        expect(loaded.calibrationFor(0).board?.isCalibrated, isTrue);
         // The resolved nominals rode along in the snapshot.
         expect(
           loaded.calibrationFor(0).board?.nominals.countsPerMvV,
@@ -686,7 +686,7 @@ void main() {
       // The calibrated snapshot itself round-trips (channels carry the
       // operative numbers); board-level provenance rides the raw KVS dump
       // (device.kvs in the export) instead of a typed block.
-      expect(loaded.calibrationFor(0).board?.isFactoryCalibrated, isTrue);
+      expect(loaded.calibrationFor(0).board?.isCalibrated, isTrue);
     });
   });
 

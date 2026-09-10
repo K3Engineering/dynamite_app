@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'helpers/flash_docs.dart';
+import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 
 void main() {
@@ -50,5 +51,21 @@ void main() {
 
     expect(snapshot.factory, {'charging': 'enabled', 'lc.future': 'keep'});
     expect(snapshot.user, {'lc0.cap': '200', 'lc0.sens': '2'});
+  });
+
+  test('invalid Factory data becomes an invalid board, slots still parse', () {
+    final flash = DeviceFlash.fromKvs(
+      kvsFromDoc(
+        'adc_fsr=1.2\nexc=soon\nafe_gain=101\nlc0.cap=200\nlc0.sens=2',
+      ),
+      pgaGains: const [1, 1, 1, 1],
+    );
+
+    expect(flash.board, isA<InvalidBoardCalibration>());
+    expect(
+      (flash.board as InvalidBoardCalibration).detail,
+      contains('bad exc'),
+    );
+    expect(flash.slots.slots[0]?.cell.capacityKg, 200);
   });
 }

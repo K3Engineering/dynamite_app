@@ -76,19 +76,32 @@ class DeviceFlash {
 
   /// Parse the typed board/slot halves out of a raw KVS snapshot. Each half
   /// reads its own folder: the board half ([BoardCalibration.fromKv]) is
-  /// strict (Factory can have no write in flight — partial or malformed data
-  /// is corrupt flash); the slot half ([RigSlots.fromKv]) is lenient (the
-  /// app owns those keys: an unparseable slot reads as empty, the raw value
-  /// stays visible in [kvs], and the next save reconciles the device).
-  /// [pgaGains] is the ADC's GAIN-register readback for board-constant
-  /// resolution — always present: an unreadable ADC config fails the
-  /// connection upstream (see `BleLinkManager`).
+  /// strict, but its [FormatException] is caught here and becomes an
+  /// [InvalidBoardCalibration] — a misprovisioned board streams raw counts
+  /// with a warning instead of failing the connection. The slot half
+  /// ([RigSlots.fromKv]) is lenient (the app owns those keys: an unparseable
+  /// slot reads as empty, the raw value stays visible in [kvs], and the next
+  /// save reconciles the device). [pgaGains] is the ADC's GAIN-register
+  /// readback for board-constant resolution — always present: an unreadable
+  /// ADC config fails the connection upstream (see `BleLinkManager`).
   factory DeviceFlash.fromKvs(
     KvsSnapshot kvs, {
     required List<double> pgaGains,
-  }) => DeviceFlash(
-    board: BoardCalibration.fromKv(kvs.factory, pgaGains: pgaGains),
-    slots: RigSlots.fromKv(kvs.user),
-    kvs: kvs,
-  );
+  }) {
+    final BoardCalibration board;
+    try {
+      board = BoardCalibration.fromKv(kvs.factory, pgaGains: pgaGains);
+    } on FormatException catch (e) {
+      return DeviceFlash(
+        board: InvalidBoardCalibration(e.message),
+        slots: RigSlots.fromKv(kvs.user),
+        kvs: kvs,
+      );
+    }
+    return DeviceFlash(
+      board: board,
+      slots: RigSlots.fromKv(kvs.user),
+      kvs: kvs,
+    );
+  }
 }

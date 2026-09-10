@@ -72,11 +72,6 @@ class _SettingsTabState extends State<SettingsTab> {
     final boardCal = context.select<RigState, BoardCalibration?>(
       (r) => r.boardCalibration,
     );
-    // Set when the connect-time parse parked the link: the row then says so
-    // instead of the generic "could not read".
-    final faultDetail = context.select<BleLinkManager, String?>(
-      (l) => l.faultDetail,
-    );
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
     // Unit availability is derived from the hub (the samples-owner), not
     // RigState's per-device document copy: it gates what the connected
@@ -214,19 +209,13 @@ class _SettingsTabState extends State<SettingsTab> {
                 RigSlotsSection(rig: context.read<RigState>()),
                 const SizedBox(height: 16),
 
-                // Tappable only when there is a document to open. In the
-                // faulted state there is none: the row itself is the complete
-                // fault display (the calibration page has nothing to show),
-                // and opening it would need a second reader of the fault.
+                // Tappable whenever a board object is held — including an
+                // invalid one, whose calibration page carries the parse
+                // reason. Only a dropped link (null) has nothing to open.
                 Card(
                   child: ListTile(
                     title: const Text('Board calibration'),
-                    subtitle: Text(
-                      faultDetail != null
-                          ? 'Calibration data unreadable — contact support'
-                                '\n$faultDetail'
-                          : boardCalibrationStatusLine(boardCal),
-                    ),
+                    subtitle: Text(boardCalibrationStatusLine(boardCal)),
                     trailing: boardCal == null
                         ? null
                         : const Icon(Icons.chevron_right),

@@ -80,15 +80,13 @@ class DeviceLink {
 
   bool get isConnecting => state == BtLinkState.connecting;
 
-  /// The GATT link is up. True for the whole post-connect setup window, the
-  /// usable ([streaming]) state, and the terminal [faulted] state — use
-  /// [isStreaming] for "usable".
+  /// The GATT link is up. True for the whole post-connect setup window and
+  /// the usable ([streaming]) state — use [isStreaming] for "usable".
   bool get isLinkUp =>
       state == BtLinkState.connected ||
       state == BtLinkState.readingConstants ||
       state == BtLinkState.subscribing ||
-      state == BtLinkState.streaming ||
-      state == BtLinkState.faulted;
+      state == BtLinkState.streaming;
 
   /// The link's terminal "ready" state: link up AND the ADC feed subscribed.
   /// NOT proof of data flow — notifications can still be absent or
@@ -305,14 +303,11 @@ class BleLinkManager extends ChangeNotifier {
       _lastDisconnectErrors[deviceId];
 
   /// Per-device detail of the most recent post-connect setup failure, keyed
-  /// by device id. Covers both flavors of a failed setup: a transport/
-  /// protocol failure (the link is torn down) and a strict-parse failure
-  /// (the link parks in [BtLinkState.faulted]). Set in
-  /// [_runPostConnectSetup]'s catch and its faulted branch; cleared wholesale
-  /// when any new connect attempt begins (see [_beginConnect]). The Devices
-  /// tab shows it as the row hint, where it persists (unlike the toast) so it
-  /// can be read or screenshotted; [faultDetail] surfaces the same string on
-  /// the live fault panel while the link is parked.
+  /// by device id: a transport/protocol failure (the link is torn down). Set
+  /// in [_runPostConnectSetup]'s catch; cleared wholesale when any new connect
+  /// attempt begins (see [_beginConnect]). The Devices tab shows it as the
+  /// row hint, where it persists (unlike the toast) so it can be read or
+  /// screenshotted.
   final Map<String, String> _setupFailures = {};
 
   /// The setup failure detail for [deviceId], or null if none (or it was
@@ -368,12 +363,6 @@ class BleLinkManager extends ChangeNotifier {
   /// link" from "a link transition is in flight" (the Live tab's banner
   /// and connect prompt). For "usable", use [isStreaming].
   BtLinkState get linkState => _link.state;
-
-  /// The strict-parse failure message when the link is [BtLinkState.faulted],
-  /// null otherwise. Names the offending flash key for support.
-  String? get faultDetail => _link.state == BtLinkState.faulted
-      ? _setupFailures[_link.deviceId]
-      : null;
 
   /// A link is "busy" whenever it is mid-transition or active; device-row
   /// Connect buttons stay disabled until it returns to idle. This is what
@@ -1092,24 +1081,14 @@ class BleLinkManager extends ChangeNotifier {
           onSampleRate?.call(_adcConfig!.sampleRateHz);
           final snapshot = await _setupKvs(token, deviceId);
           if (snapshot == null || !token.isCurrent) return;
-          // The strict parse is the failure-policy boundary: invalid known
-          // flash content parks the link in [faulted] — the ADC feed is never
-          // subscribed, no measurement state is built, but the link stays up
-          // so the user can see why and disconnect. Transport/protocol
-          // failures still throw to the catch below and tear down.
-          final DeviceFlash flash;
-          try {
-            flash = DeviceFlash.fromKvs(
-              snapshot,
-              pgaGains: _adcConfig!.pgaGains,
-            );
-          } on FormatException catch (e) {
-            _link.state = BtLinkState.faulted;
-            _setupFailures[deviceId] = e.message;
-            _stampAlive(deviceId);
-            notifyListeners();
-            return;
-          }
+          // A strict parse failure is a value, not a link failure:
+          // `DeviceFlash.fromKvs` yields an `InvalidBoardCalibration` and the
+          // device streams raw counts with a warning. Transport/protocol
+          // failures still throw to the catch below and tear the link down.
+          final flash = DeviceFlash.fromKvs(
+            snapshot,
+            pgaGains: _adcConfig!.pgaGains,
+          );
           onDeviceFlash?.call(flash);
           // Constants in; the ADC feed subscription is the "Starting data
           // stream…" stage.

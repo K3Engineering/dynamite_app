@@ -111,10 +111,10 @@ class DataHub extends ChangeNotifier
   /// by `BleLinkManager` in post-connect setup). Null until the first
   /// successful read of this run: "no device data" must be representable —
   /// defaulting to nominal values would let the UI present numbers no
-  /// hardware ever produced. An [UnprovisionedBoardCalibration] here (and
-  /// null alike) means every unit but raw reports unavailable; a malformed
-  /// document never arrives — the parse parks the link in a faulted state
-  /// and no flash callback fires.
+  /// hardware ever produced. [UnprovisionedBoardCalibration] and
+  /// [InvalidBoardCalibration] alike mean every unit but raw reports
+  /// unavailable; the invalid variant additionally carries the reason for the
+  /// user-facing warning.
   ///
   /// Identity-free: it describes the samples the hub holds, not the attached
   /// device (the settings page's calibration row shows the flash-document
@@ -451,6 +451,8 @@ class DataHub extends ChangeNotifier
       switch ((a, b)) {
         (UnprovisionedBoardCalibration(), UnprovisionedBoardCalibration()) =>
           true,
+        (final InvalidBoardCalibration a, final InvalidBoardCalibration b) =>
+          a.detail == b.detail,
         (
           final ProvisionedBoardCalibration pa,
           final ProvisionedBoardCalibration pb,

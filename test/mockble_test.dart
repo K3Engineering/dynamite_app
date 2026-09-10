@@ -95,7 +95,7 @@ void main() {
 
         expect(link.isStreaming, isTrue);
         final board = hub.boardCalibration! as ProvisionedBoardCalibration;
-        expect(board.channels.every((c) => c.isFactoryCalibrated), isTrue);
+        expect(board.channels.every((c) => c.isCalibrated), isTrue);
         expect(
           (board.channels[0] as CalibratedChannelBoard).offsetCounts,
           closeTo(845.2, 1e-9),
@@ -128,9 +128,11 @@ void main() {
     test('a partially provisioned board (constants, no calibration) streams '
         'mV/V on the nominal chain', () {
       fakeAsync((async) {
-        MockBlePlatform.instance.seedKvs(kvsFromDoc(
-          'adc_fsr=1.2,nominal\nexc=4.53,nominal\nafe_gain=101,nominal',
-        ));
+        MockBlePlatform.instance.seedKvs(
+          kvsFromDoc(
+            'adc_fsr=1.2,nominal\nexc=4.53,nominal\nafe_gain=101,nominal',
+          ),
+        );
         addTearDown(() => MockBlePlatform.instance.resetKnobs());
         final (hub, link, teardown) = wire(async: async);
 
@@ -143,7 +145,7 @@ void main() {
         // units stay cell-gated.
         expect(link.isStreaming, isTrue);
         final board = hub.boardCalibration! as ProvisionedBoardCalibration;
-        expect(board.isFactoryCalibrated, isFalse);
+        expect(board.isCalibrated, isFalse);
         expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
         expect(hub.currentValue(0, DisplayUnit.kN), isNull);
 
@@ -151,12 +153,11 @@ void main() {
       });
     });
 
-    test('present-but-invalid Factory flash parks the link in faulted', () {
+    test('present-but-invalid Factory flash streams raw on an invalid board', () {
       fakeAsync((async) {
-        // A corrupt board half: the parse is strict, so the connect-time read
-        // parks the link — no measurement state comes up on Factory data the
-        // app couldn't fully make sense of, but the link stays up (faulted)
-        // so the user can see why and disconnect.
+        // A corrupt board half: the app refuses to adopt it, but the device
+        // still connects and streams raw counts with an invalid-board marker
+        // (the banner names the reason) — never a soft-brick.
         for (final doc in [
           'adc_fsr=1.2,nominal\nexc=4.53,nominal', // afe_gain missing
           'adc_fsr=1.2,nominal\nexc=soon\nafe_gain=101', // bad value
@@ -168,11 +169,14 @@ void main() {
           unawaited(link.connectToDevice(deviceId));
           async.elapse(const Duration(seconds: 4));
 
-          expect(link.isStreaming, isFalse, reason: doc);
-          expect(link.linkState, BtLinkState.faulted, reason: doc);
-          expect(link.faultDetail, isNotNull, reason: doc);
-          expect(hub.totalSamples, 0, reason: doc);
-          expect(hub.boardCalibration, isNull, reason: doc);
+          expect(link.isStreaming, isTrue, reason: doc);
+          expect(link.linkState, BtLinkState.streaming, reason: doc);
+          expect(
+            hub.boardCalibration,
+            isA<InvalidBoardCalibration>(),
+            reason: doc,
+          );
+          expect(hub.totalSamples, greaterThan(0), reason: doc);
 
           teardown();
         }
@@ -185,9 +189,11 @@ void main() {
         // The app owns the slot keys, so an unparseable value is not
         // corruption to abort for: the slot reads as empty (force units
         // report unavailable), and a save reconciles the device.
-        MockBlePlatform.instance.seedKvs(kvsFromDoc(
-          'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nlc0.cap=100\nlc0.sens=abc',
-        ));
+        MockBlePlatform.instance.seedKvs(
+          kvsFromDoc(
+            'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nlc0.cap=100\nlc0.sens=abc',
+          ),
+        );
         addTearDown(() => MockBlePlatform.instance.resetKnobs());
         final (hub, link, teardown) = wire(async: async);
 
@@ -207,9 +213,9 @@ void main() {
 
     test('unknown future metadata keys are ignored', () {
       fakeAsync((async) {
-        MockBlePlatform.instance.seedKvs(kvsFromDoc(
-          '$demoBoardCalibrationDoc\ncharging=enabled\n',
-        ));
+        MockBlePlatform.instance.seedKvs(
+          kvsFromDoc('$demoBoardCalibrationDoc\ncharging=enabled\n'),
+        );
         final (hub, link, teardown) = wire(async: async);
 
         unawaited(link.connectToDevice(deviceId));

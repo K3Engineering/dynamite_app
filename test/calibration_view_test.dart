@@ -37,10 +37,7 @@ void main() {
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        flashFromDoc(
-          flashDoc ?? demoBoardCalibrationDoc,
-          pgaGains: pgaGains,
-        ),
+        flashFromDoc(flashDoc ?? demoBoardCalibrationDoc, pgaGains: pgaGains),
       );
     }
     await tester.pumpWidget(
@@ -88,10 +85,7 @@ void main() {
     // carries the plot and the table (calibration is board-uniform — see
     // BoardCalibration.fromKv).
     final board =
-        boardFromDoc(
-              demoBoardCalibrationDoc,
-              pgaGains: const [1, 1, 1, 1],
-            )
+        boardFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1])
             as ProvisionedBoardCalibration;
     await pump(tester);
 
@@ -153,8 +147,21 @@ void main() {
     // as one card — there is nothing per-channel to show.
     await pump(tester, flashDoc: 'lc0.cap=100\nlc0.sens=2\n');
 
-    expect(find.text('no board data — unit not provisioned'), findsOneWidget);
+    expect(find.text('No board data — unit not provisioned'), findsOneWidget);
     expect(find.text('raw counts only.'), findsOneWidget);
+    expect(find.byType(CalDeviationPlot), findsNothing);
+  });
+
+  testWidgets('an invalid board shows the reason', (tester) async {
+    // Flash held board data the app refused to adopt: the card names the
+    // parser's reason (the device itself streams raw counts).
+    await pump(tester, flashDoc: 'adc_fsr=1.2\nexc=soon\nafe_gain=101\n');
+
+    expect(
+      find.text('Calibration data unreadable — contact support'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('bad exc'), findsOneWidget);
     expect(find.byType(CalDeviationPlot), findsNothing);
   });
 
@@ -200,10 +207,7 @@ END
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        flashFromDoc(
-          demoBoardCalibrationDoc,
-          pgaGains: const [1, 1, 1, 1],
-        ),
+        flashFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1]),
       );
     }
     await tester.pumpWidget(
@@ -240,10 +244,7 @@ END
 
     expect(find.text('Calibration report copied to clipboard'), findsOneWidget);
     final board =
-        boardFromDoc(
-              demoBoardCalibrationDoc,
-              pgaGains: const [1, 1, 1, 1],
-            )
+        boardFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1])
             as ProvisionedBoardCalibration;
     // The device label is the name the flash read carried, not the id.
     expect(copied, calibrationReport(board, 'Bench unit'));
@@ -257,23 +258,21 @@ END
     expect(find.text('Share'), findsOneWidget);
   });
 
-  testWidgets('page without a flash doc: disconnected card, no export buttons', (
-    tester,
-  ) async {
-    await pumpScreen(tester, withFlash: false);
+  testWidgets(
+    'page without a flash doc: disconnected card, no export buttons',
+    (tester) async {
+      await pumpScreen(tester, withFlash: false);
 
-    expect(find.text('Device disconnected'), findsOneWidget);
-    // Nothing to export without a document.
-    expect(find.byType(OutlinedButton), findsNothing);
-  });
+      expect(find.text('Device disconnected'), findsOneWidget);
+      // Nothing to export without a document.
+      expect(find.byType(OutlinedButton), findsNothing);
+    },
+  );
 
   group('calibrationReport', () {
     test('mirrors the screen content as plain text', () {
       final board =
-          boardFromDoc(
-                demoBoardCalibrationDoc,
-                pgaGains: const [1, 1, 1, 1],
-              )
+          boardFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1])
               as ProvisionedBoardCalibration;
       final report = calibrationReport(board, 'dev1');
 
@@ -316,8 +315,8 @@ END
             as ProvisionedBoardCalibration,
         'dev1',
       );
-      expect(report, contains('CH 1: nominal values (no factory data)'));
-      expect(report, contains('CH 4: nominal values (no factory data)'));
+      expect(report, contains('CH 1: nominal values (no calibration)'));
+      expect(report, contains('CH 4: nominal values (no calibration)'));
       // The trust line matches the board, mirroring the screen.
       expect(report, contains('nominal chain in use'));
       expect(report, isNot(contains('Correction:')));
@@ -345,7 +344,7 @@ END
       );
     });
 
-    test('board constants but no factory data: missing calibration', () {
+    test('board constants but no calibration data', () {
       const noCalDoc = '''
 K3CAL1
 adc_fsr=1.2,nominal
@@ -357,23 +356,20 @@ END
         boardCalibrationStatusLine(
           boardFromDoc(noCalDoc, pgaGains: const [1, 1, 1, 1]),
         ),
-        'Missing factory calibration',
+        'Not calibrated — nominal values in use',
       );
     });
 
-    test('an unprovisioned unit: missing calibration', () {
+    test('an unprovisioned unit: not calibrated', () {
       expect(
         boardCalibrationStatusLine(const UnprovisionedBoardCalibration()),
-        'Missing factory calibration',
+        'Not calibrated — nominal values in use',
       );
     });
 
     test('calibrated: the document\'s date and its age', () {
       final board =
-          boardFromDoc(
-                demoBoardCalibrationDoc,
-                pgaGains: const [1, 1, 1, 1],
-              )
+          boardFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1])
               as ProvisionedBoardCalibration;
       expect(
         boardCalibrationStatusLine(board),

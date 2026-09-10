@@ -612,6 +612,25 @@ void main() {
       expect(hub.calibrationVersion, greaterThan(v1));
     });
 
+    test('content-equal invalid boards do not bump the version', () {
+      final hub = DataHub()
+        ..updateBoardCalibration(const InvalidBoardCalibration('bad exc'));
+      final v1 = hub.calibrationVersion;
+
+      // Same reason, new instance: no cache invalidation.
+      hub.updateBoardCalibration(const InvalidBoardCalibration('bad exc'));
+      expect(hub.calibrationVersion, v1);
+
+      // A different reason bumps it.
+      hub.updateBoardCalibration(const InvalidBoardCalibration('bad adc_fsr'));
+      expect(hub.calibrationVersion, greaterThan(v1));
+
+      // So does a different variant with the same raw-only behavior.
+      final v2 = hub.calibrationVersion;
+      hub.updateBoardCalibration(const UnprovisionedBoardCalibration());
+      expect(hub.calibrationVersion, greaterThan(v2));
+    });
+
     test('content-equal load cell updates do not bump the version', () {
       final hub = DataHub();
       final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);

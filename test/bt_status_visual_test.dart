@@ -29,17 +29,13 @@ void main() {
     for (final s in BtLinkState.values.where((s) => s != BtLinkState.idle)) {
       expect(
         linkVisual(s).showSpinner,
-        (s == BtLinkState.streaming || s == BtLinkState.faulted)
-            ? isFalse
-            : isTrue,
+        s == BtLinkState.streaming ? isFalse : isTrue,
         reason: 'state $s',
       );
     }
 
     expect(linkVisual(BtLinkState.streaming).label, 'Connected');
     expect(linkVisual(BtLinkState.streaming).color, status.linkConnected);
-    expect(linkVisual(BtLinkState.faulted).label, 'Device fault');
-    expect(linkVisual(BtLinkState.faulted).color, status.linkFault);
     expect(linkVisual(BtLinkState.connected).label, 'Setting up…');
     expect(
       linkVisual(BtLinkState.readingConstants).label,

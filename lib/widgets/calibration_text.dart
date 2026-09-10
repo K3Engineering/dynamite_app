@@ -71,16 +71,14 @@ String boardCalibrationStatusLine(BoardCalibration? board) {
     case null:
       return 'Could not read calibration data';
     case UnprovisionedBoardCalibration():
-      return 'Missing factory calibration';
+      return 'Not calibrated — nominal values in use';
+    case InvalidBoardCalibration():
+      return 'Calibration data unreadable — contact support';
     case final ProvisionedBoardCalibration b:
       final group = b.calGroup;
-      if (group == null) return 'Missing factory calibration';
+      if (group == null) return 'Not calibrated — nominal values in use';
       final age = calibrationAge(group.date);
-      return [
-        'Calibrated',
-        group.date,
-        if (age != null) '($age)',
-      ].join(' ');
+      return ['Calibrated', group.date, if (age != null) '($age)'].join(' ');
   }
 }
 
@@ -114,9 +112,9 @@ String calibrationReport(
     '· PGA ${n.pgaGains.map((g) => '$g×').join('/')} · EXC ${n.excitationV} V',
   );
   b.writeln(
-    'Trust: ${board.isFactoryCalibrated ? kTrustLineCalibrated : kTrustLineUncalibrated}',
+    'Trust: ${board.isCalibrated ? kTrustLineCalibrated : kTrustLineUncalibrated}',
   );
-  if (board.isFactoryCalibrated) {
+  if (board.isCalibrated) {
     b.writeln('Correction: $kCorrectionApplied');
   }
   b.writeln('Note: $kUvVToPpmNote');
@@ -139,7 +137,7 @@ String calibrationReport(
     final ch = board.channels[i];
     b.writeln();
     if (ch is! CalibratedChannelBoard) {
-      b.writeln('CH ${i + 1}: nominal values (no factory data)');
+      b.writeln('CH ${i + 1}: nominal values (no calibration)');
       continue;
     }
     b.writeln(

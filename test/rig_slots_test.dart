@@ -17,7 +17,7 @@ void main() {
     final board = flash.board as ProvisionedBoardCalibration;
 
     test('board channels are factory-calibrated', () {
-      expect(board.channels.where((c) => c.isFactoryCalibrated), hasLength(4));
+      expect(board.channels.where((c) => c.isCalibrated), hasLength(4));
       expect(board.calGroup!.date, '2026-07-20');
     });
 

@@ -814,9 +814,8 @@ void main() {
       expect(link.isStreaming, isFalse);
       expect(seen, [isA<BleConnectionFailed>()]);
       // The exact reason is recorded for the Devices-tab row (the toast stays
-      // generic); a torn-down setup is a disconnect, so no faultDetail.
+      // generic); a torn-down setup is a disconnect.
       expect(link.setupFailureFor(deviceId), isNotNull);
-      expect(link.faultDetail, isNull);
 
       teardownLink(async, link);
     });
@@ -845,44 +844,42 @@ void main() {
     });
   });
 
-  test('invalid known flash parks the link in faulted, detail included', () {
+  test('invalid known flash streams raw with an invalid board', () {
     fakeAsync((async) {
-      MockBlePlatform.instance.seedKvs(kvsFromDoc(
-        'adc_fsr=1.2\nexc=soon\nafe_gain=101\ncharging=enabled',
-      ));
+      MockBlePlatform.instance.seedKvs(
+        kvsFromDoc('adc_fsr=1.2\nexc=soon\nafe_gain=101\ncharging=enabled'),
+      );
       final (link, seen) = wire();
-      var measurementDelivered = false;
-      link.onDeviceFlash = (_) => measurementDelivered = true;
+      DeviceFlash? delivered;
+      link.onDeviceFlash = (flash) => delivered = flash;
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
 
-      // A board the app can't fully make sense of is a provisioning errand,
-      // but the link stays up (faulted) so the user can see why and
-      // disconnect — the ADC feed was never subscribed and no measurement
-      // state was built. No connection-failed event; this is not a lost
-      // connection.
-      expect(link.isStreaming, isFalse);
-      expect(link.linkState, BtLinkState.faulted);
-      expect(link.faultDetail, contains('bad exc'));
-      // The same detail backs the Devices-tab row hint, which must outlive
-      // the fault panel (it survives the teardown below).
-      expect(link.setupFailureFor(deviceId), contains('bad exc'));
-      expect(MockBlePlatform.instance.gattOpLog, isNot(contains('adc:sub')));
-      expect(measurementDelivered, isFalse);
+      // A board the app can't fully make sense of streams raw counts with an
+      // invalid-board marker instead of failing the connection or parking the
+      // link: the ADC feed is subscribed, the flash callback fires, and the
+      // board carries the parser's reason for the UI warning.
+      expect(link.isStreaming, isTrue);
+      expect(delivered, isNotNull);
+      final board = delivered!.board;
+      expect(board, isA<InvalidBoardCalibration>());
+      expect((board as InvalidBoardCalibration).detail, contains('bad exc'));
+      expect(MockBlePlatform.instance.gattOpLog, contains('adc:sub'));
+      // Not a setup failure: the connection succeeded, so no row hint.
+      expect(link.setupFailureFor(deviceId), isNull);
       expect(seen.whereType<BleConnectionFailed>(), isEmpty);
 
-      // Disconnect from the faulted state returns the link to idle.
+      // A repaired device re-reads as a provisioned board.
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(seconds: 4));
       expect(link.linkState, BtLinkState.idle);
 
-      // A repaired device enters the normal measurement path.
       MockBlePlatform.instance.resetKnobs();
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
       expect(link.link.state, BtLinkState.streaming);
-      expect(measurementDelivered, isTrue);
+      expect(delivered!.board, isA<ProvisionedBoardCalibration>());
       expect(seen.whereType<BleConnectionFailed>(), isEmpty);
       teardownLink(async, link);
     });

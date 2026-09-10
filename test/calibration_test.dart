@@ -189,7 +189,7 @@ void main() {
   group('NominalChannelBoard (nominal fallback)', () {
     test('follows the nominal chain with zero offset', () {
       const cal = NominalChannelBoard(testNominals);
-      expect(cal.isFactoryCalibrated, isFalse);
+      expect(cal.isCalibrated, isFalse);
       expect(
         cal.mvVFromRaw(1000),
         closeTo(1000 / testNominals.countsPerMvV, 1e-18),
@@ -342,10 +342,9 @@ END
 
     test('full document parses every channel plus metadata', () {
       final board =
-          boardFromDoc(doc, pgaGains: testGains)
-              as ProvisionedBoardCalibration;
+          boardFromDoc(doc, pgaGains: testGains) as ProvisionedBoardCalibration;
       expect(board.calGroup!.date, '2026-07-20');
-      expect(board.isFactoryCalibrated, isTrue);
+      expect(board.isCalibrated, isTrue);
       final ch0 = board.channels[0] as CalibratedChannelBoard;
       expect(ch0.resistors[0], closeTo(10000.8, 1e-9));
       expect(ch0.readings[2], closeTo(845.2, 1e-9));
@@ -398,7 +397,7 @@ END
       final board =
           boardFromDoc(testConstantKeys, pgaGains: testGains)
               as ProvisionedBoardCalibration;
-      expect(board.isFactoryCalibrated, isFalse);
+      expect(board.isCalibrated, isFalse);
     });
   });
 
@@ -524,8 +523,7 @@ $channelData${''}END
 ''';
 
     ProvisionedBoardCalibration parse(String text) =>
-        boardFromDoc(text, pgaGains: testGains)
-            as ProvisionedBoardCalibration;
+        boardFromDoc(text, pgaGains: testGains) as ProvisionedBoardCalibration;
 
     test('present keys parse; absent keys are null', () {
       final board = parse(doc);
@@ -558,8 +556,7 @@ $channelData${''}END
       'adcConfigDrifted compares cal-time gains to the runtime readback',
       () {
         ProvisionedBoardCalibration gains(String text, List<double> pga) =>
-            boardFromDoc(text, pgaGains: pga)
-                as ProvisionedBoardCalibration;
+            boardFromDoc(text, pgaGains: pga) as ProvisionedBoardCalibration;
         expect(gains(doc, const [1, 1, 1, 1]).adcConfigDrifted, isFalse);
         expect(gains(doc, const [32, 1, 1, 1]).adcConfigDrifted, isTrue);
         // No cal.adc key: unknown, never a verdict.

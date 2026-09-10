@@ -25,7 +25,8 @@ enum BtLinkState {
   /// connect-time flash document read over KVS) are being read. Still not
   /// usable. An unreadable or unparseable ADC config or a failed KVS bring-up
   /// tears the link down here (see `BleLinkManager._readAdcConfig` and
-  /// `_setupKvs`); invalid known flash content parks the link in [faulted].
+  /// `_setupKvs`); invalid known flash content becomes an
+  /// `InvalidBoardCalibration` and the device streams raw counts.
   readingConstants,
 
   /// Post-connect setup's third stage: the board constants are in and the
@@ -37,13 +38,6 @@ enum BtLinkState {
   /// Fully set up: services discovered and the ADC feed subscription is active,
   /// so data is flowing. This is the single "usable / connected" state.
   streaming,
-
-  /// Terminal recovery state: the GATT/KVS link is up, but the connect-time
-  /// flash read parsed to invalid known content. The ADC feed was never
-  /// subscribed and no measurement state was constructed — the device is
-  /// unusable until it is recalibrated or replaced (see
-  /// `BleLinkManager.faultDetail`). Disconnect still works.
-  faulted,
 
   /// A `disconnect()` was requested; awaiting the connection callback (or the
   /// disconnect() timeout). Connect must stay blocked while in this state so we

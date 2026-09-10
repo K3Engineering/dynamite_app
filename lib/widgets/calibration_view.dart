@@ -39,8 +39,21 @@ class CalibrationView extends StatelessWidget {
               Icons.error_outline,
               color: Theme.of(context).colorScheme.error,
             ),
-            title: const Text('no board data — unit not provisioned'),
+            title: const Text('No board data — unit not provisioned'),
             subtitle: const Text('raw counts only.'),
+          ),
+        );
+      case InvalidBoardCalibration(:final detail):
+        // The flash held board data the app refused to adopt. The reason is
+        // the whole point of the card; the device streams raw counts.
+        return Card(
+          child: ListTile(
+            leading: Icon(
+              Icons.error_outline,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            title: const Text('Calibration data unreadable — contact support'),
+            subtitle: Text('$detail\n\nraw counts only.'),
           ),
         );
       case final ProvisionedBoardCalibration board:
@@ -75,7 +88,7 @@ class _BoardCard extends StatelessWidget {
 
     final String status;
     if (group == null) {
-      status = 'No factory calibration — nominal values in use';
+      status = 'No calibration — nominal values in use';
     } else {
       final parts = [group.date, if (age != null) '($age)'];
       status = 'Calibrated ${parts.join(' ')}'.trimRight();
@@ -170,7 +183,7 @@ class _ChannelCalCard extends StatelessWidget {
                 'zero offset ${fmtUvV(c.zeroOffsetUvV)} · '
                     'gain ${fmtGain(c.sensitivityVsNominal)} · '
                     'end-point linearity ±${c.maxDeviationUvV.toStringAsFixed(3)} µV/V',
-              _ => 'Nominal values (no factory data)',
+              _ => 'Nominal values (no calibration)',
             }, style: theme.textTheme.bodySmall),
             if (channel case final CalibratedChannelBoard c) ...[
               const SizedBox(height: 12),

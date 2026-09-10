@@ -79,8 +79,8 @@ class DevicesTab extends StatelessWidget {
           failureHint: switch (bt.connectFailureFor(d.deviceId)) {
             final kind? => connectFailureHint(kind, isWeb: kIsWeb),
             // No refused attempt on record: show why the last post-connect
-            // setup failed (faulted parse or teardown), else why the last
-            // link dropped when the platform gave a reason.
+            // setup failed (a transport/protocol teardown), else why the
+            // last link dropped when the platform gave a reason.
             null => switch (bt.setupFailureFor(d.deviceId)) {
               final detail? => 'Setup failed: $detail',
               null => switch (bt.lastDisconnectErrorFor(d.deviceId)) {

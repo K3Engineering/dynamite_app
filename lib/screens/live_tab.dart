@@ -185,9 +185,6 @@ class _LiveTabState extends State<LiveTab> {
     final deviceName = context.select<BleLinkManager, String>(
       (l) => l.connectedDeviceName,
     );
-    final faultDetail = context.select<BleLinkManager, String?>(
-      (l) => l.faultDetail,
-    );
     final recording = context.watch<RecordingController>();
     // RigState notifies only on flash reads and slot edits (never per
     // packet), so watching it here is cheap.
@@ -195,6 +192,14 @@ class _LiveTabState extends State<LiveTab> {
     // read (not watch): rebuilding this whole tab per packet would be a
     // lot of rebuilds — LiveStats/graph subscribe to the hub themselves.
     final hub = context.read<DataHub>();
+    // A board whose factory data failed a strict parse still streams raw
+    // counts; the banner names the reason (see `InvalidBoardCalibration`).
+    final invalidBoardDetail = context.select<DataHub, String?>(
+      (h) => switch (h.boardCalibration) {
+        InvalidBoardCalibration(:final detail) => detail,
+        _ => null,
+      },
+    );
 
     // The feed-health classification (banner, stats graying) comes from the
     // shared FeedHealthTracker: one derivation owner for this tab and the
@@ -212,6 +217,8 @@ class _LiveTabState extends State<LiveTab> {
               health: health,
             ),
           ),
+          if (invalidBoardDetail != null)
+            BoardFaultBanner(detail: invalidBoardDetail),
           if (streaming)
             Expanded(
               child: ValueListenableBuilder<bool>(
@@ -243,7 +250,6 @@ class _LiveTabState extends State<LiveTab> {
               child: DisconnectedPrompt(
                 linkState: linkState,
                 deviceName: deviceName,
-                faultDetail: faultDetail,
                 onConnect: widget.onGoToDevices,
               ),
             ),
@@ -335,7 +341,6 @@ class LiveStatusBar extends StatelessWidget {
     if (linkState != BtLinkState.streaming) {
       // One line for both idle and in-flight states; the in-flight stage
       // wording comes from btLinkStateLabel, shared with the Devices tab.
-      final faulted = linkState == BtLinkState.faulted;
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -343,13 +348,11 @@ class LiveStatusBar extends StatelessWidget {
         child: Row(
           children: [
             Icon(
-              switch (linkState) {
-                BtLinkState.idle => Icons.bluetooth,
-                BtLinkState.faulted => Icons.error_outline,
-                _ => Icons.bluetooth_searching,
-              },
+              linkState == BtLinkState.idle
+                  ? Icons.bluetooth
+                  : Icons.bluetooth_searching,
               size: 18,
-              color: faulted ? scheme.error : scheme.onSurfaceVariant,
+              color: scheme.onSurfaceVariant,
             ),
             const SizedBox(width: 8),
             Text(
@@ -357,7 +360,7 @@ class LiveStatusBar extends StatelessWidget {
                   ? 'Not connected'
                   : btLinkStateLabel(linkState)!,
               style: TextStyle(
-                color: faulted ? scheme.error : scheme.onSurfaceVariant,
+                color: scheme.onSurfaceVariant,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -589,6 +592,7 @@ class LiveStats extends StatelessWidget {
                     null => 'board data not read',
                     UnprovisionedBoardCalibration() =>
                       'no board data — unit not provisioned',
+                    InvalidBoardCalibration() => 'board data invalid',
                     _ => null,
                   }
                   case final notice?)
@@ -610,6 +614,43 @@ class LiveStats extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// BoardFaultBanner
+// ---------------------------------------------------------------------------
+
+/// The red banner shown while a connected board's factory calibration is
+/// unreadable: names the parser's reason and tells the user what to do. The
+/// device still streams raw counts underneath.
+class BoardFaultBanner extends StatelessWidget {
+  const BoardFaultBanner({super.key, required this.detail});
+
+  /// The parser's reason (see `InvalidBoardCalibration.detail`).
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      color: scheme.errorContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.error_outline, size: 18, color: scheme.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Calibration data unreadable — contact support.\n$detail',
+              style: TextStyle(color: scheme.onErrorContainer, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // DisconnectedPrompt
 // ---------------------------------------------------------------------------
 
@@ -620,35 +661,17 @@ class DisconnectedPrompt extends StatelessWidget {
     super.key,
     required this.linkState,
     required this.deviceName,
-    this.faultDetail,
     required this.onConnect,
   }) : assert(linkState != BtLinkState.streaming);
 
   final BtLinkState linkState;
   final String deviceName;
 
-  /// The strict-parse failure message backing the [BtLinkState.faulted] panel.
-  final String? faultDetail;
-
   /// "Connect a device" action (idle only): jumps to the Devices tab.
   final VoidCallback onConnect;
 
   @override
   Widget build(BuildContext context) {
-    // The link is up but the device's flash content is unusable: a permanent
-    // fault panel (not a toast) with the only two things the user can do —
-    // read the reason and disconnect. Never a connect affordance.
-    if (linkState == BtLinkState.faulted) {
-      final detail = faultDetail;
-      return EmptyPlaceholder(
-        icon: Icons.error_outline,
-        color: Theme.of(context).colorScheme.error,
-        title: 'Device fault',
-        hint: 'This device\'s calibration data is unreadable. '
-            'Contact support.'
-            '${detail == null ? '' : '\n\n$detail'}',
-      );
-    }
     // A link transition is in flight; only the Devices tab controls it, so
     // no action is offered here.
     if (linkState != BtLinkState.idle) {

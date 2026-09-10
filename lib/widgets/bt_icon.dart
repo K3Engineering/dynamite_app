@@ -21,7 +21,6 @@ typedef BtStatusVisual = ({
 String? btLinkStateLabel(BtLinkState state) => switch (state) {
   BtLinkState.disconnecting => 'Disconnecting…',
   BtLinkState.streaming => 'Connected',
-  BtLinkState.faulted => 'Device fault',
   BtLinkState.connected => 'Setting up…',
   BtLinkState.readingConstants => 'Reading board constants…',
   BtLinkState.subscribing => 'Starting data stream…',
@@ -47,20 +46,11 @@ BtStatusVisual btActiveLinkVisual({
   }
 
   final streaming = linkState == BtLinkState.streaming;
-  final faulted = linkState == BtLinkState.faulted;
   return (
-    icon: switch (linkState) {
-      BtLinkState.streaming => Icons.bluetooth_connected,
-      BtLinkState.faulted => Icons.error_outline,
-      _ => Icons.bluetooth_searching,
-    },
-    color: switch (linkState) {
-      BtLinkState.streaming => status.linkConnected,
-      BtLinkState.faulted => status.linkFault,
-      _ => status.linkActive,
-    },
+    icon: streaming ? Icons.bluetooth_connected : Icons.bluetooth_searching,
+    color: streaming ? status.linkConnected : status.linkActive,
     label: label,
-    showSpinner: !streaming && !faulted,
+    showSpinner: !streaming,
   );
 }
 
