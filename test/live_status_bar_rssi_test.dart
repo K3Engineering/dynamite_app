@@ -33,7 +33,12 @@ void main() {
   testWidgets('Live status bar shows polled RSSI left of the Hz label', (
     tester,
   ) async {
-    final link = BleLinkManager(events: AppEvents(), onDeviceFlash: (_) {});
+    final link = BleLinkManager(
+      events: AppEvents(),
+      onDeviceFlash: (_) {},
+      onAdcData: (_) {},
+      onSampleRate: (_) {},
+    );
 
     await tester.pumpWidget(
       ChangeNotifierProvider.value(

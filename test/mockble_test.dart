@@ -40,7 +40,9 @@ void main() {
     final link = BleLinkManager(
       events: events,
       onDeviceFlash: (flash) => hub.updateBoardCalibration(flash.board),
-    )..onAdcData = decoder.onDataPacket;
+      onAdcData: decoder.onDataPacket,
+      onSampleRate: (_) {},
+    );
 
     return (
       hub,

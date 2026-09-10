@@ -21,6 +21,7 @@ import 'services/hot_restart_cleanup_stub.dart'
     if (dart.library.js_interop) 'services/hot_restart_cleanup_web.dart';
 import 'services/recording_controller.dart';
 import 'services/rig_state.dart';
+import 'services/rig_link_guard.dart';
 import 'services/session_files.dart';
 import 'services/session_metadata.dart';
 import 'services/stream_reset_coordinator.dart';
@@ -74,34 +75,33 @@ void main() async {
   );
   // The device id/name are read off the link at delivery time (the read
   // only ever runs against the active link).
-  linkManager =
-      BleLinkManager(
-          events: appEvents,
-          demo: DemoDevice(),
-          onDeviceFlash: (flash) {
-            dataHub.updateBoardCalibration(flash.board);
-            rigState.onFlashRead(
-              linkManager.connectedDeviceId,
-              linkManager.connectedDeviceName,
-              flash,
-            );
-          },
-        )
-        ..onAdcData = decoder.onDataPacket
-        ..onSampleRate = dataHub.setSampleRate;
+  linkManager = BleLinkManager(
+    events: appEvents,
+    demo: DemoDevice(),
+    onAdcData: decoder.onDataPacket,
+    onSampleRate: dataHub.setSampleRate,
+    onDeviceFlash: (flash) {
+      dataHub.updateBoardCalibration(flash.board);
+      rigState.onFlashRead(
+        linkManager.connectedDeviceId,
+        linkManager.connectedDeviceName,
+        flash,
+      );
+    },
+  );
   final feedHealth = FeedHealthTracker(
     hub: dataHub,
     streamingChanges: linkManager,
     streamingNow: () => linkManager.isStreaming,
   );
-  // A link loss (of any flavor — the getter reads the same '' for all of
-  // them) ends the rig session: the flash document and any unsaved edits
-  // die with the connection. A dirty discard is surfaced.
-  linkManager.addListener(() {
-    if (linkManager.connectedDeviceId.isNotEmpty) return;
-    if (rigState.hasPending) appEvents.emit(const RigEditsDiscarded());
-    rigState.onLinkDropped();
-  });
+  // A link loss (of any flavor) ends the rig session: the flash document and
+  // any unsaved edits die with the connection. A dirty discard is surfaced.
+  RigLinkGuard(
+    rig: rigState,
+    events: appEvents,
+    linkChanges: linkManager,
+    linkUpNow: () => linkManager.isLinkUp,
+  );
   // New-stream clears and calibration forgetting on link transitions.
   StreamResetCoordinator(
     hub: dataHub,

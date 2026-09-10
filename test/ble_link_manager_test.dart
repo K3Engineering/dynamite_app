@@ -61,6 +61,8 @@ void main() {
   /// no-op; tests that inspect the delivered flash pass their own.
   (BleLinkManager, List<AppEvent>) wire({
     void Function(DeviceFlash flash)? onDeviceFlash,
+    void Function(Uint8List data)? onAdcData,
+    void Function(int sampleRateHz)? onSampleRate,
   }) {
     final events = AppEvents();
     final seen = <AppEvent>[];
@@ -70,6 +72,8 @@ void main() {
       events: events,
       demo: DemoDevice(),
       onDeviceFlash: onDeviceFlash ?? (_) {},
+      onAdcData: onAdcData ?? (_) {},
+      onSampleRate: onSampleRate ?? (_) {},
     );
     return (link, seen);
   }
@@ -98,9 +102,8 @@ void main() {
 
   test('connect reaches streaming and notifications flow to onAdcData', () {
     fakeAsync((async) {
-      final (link, seen) = wire();
       var received = 0;
-      link.onAdcData = (_) => received++;
+      final (link, seen) = wire(onAdcData: (_) => received++);
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -162,7 +165,7 @@ void main() {
       async.elapse(const Duration(seconds: 4));
 
       expect(link.isStreaming, isFalse);
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen.whereType<BleConnectionFailed>(), hasLength(1));
       expect(seen.whereType<BleConnectionLost>(), isEmpty);
       // The GATT link came up (connect succeeded) before setup failed — it
@@ -183,7 +186,7 @@ void main() {
       async.elapse(const Duration(seconds: 4));
 
       expect(link.isStreaming, isFalse);
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen.whereType<BleConnectionFailed>(), hasLength(1));
       expect(seen.whereType<BleConnectionLost>(), isEmpty);
       expect(MockBlePlatform.instance.disconnectCalls, contains(deviceId));
@@ -195,9 +198,8 @@ void main() {
   test('connect pushes the parsed sample rate before streaming (GATT and '
       'demo)', () {
     fakeAsync((async) {
-      final (link, _) = wire();
       final rates = <int>[];
-      link.onSampleRate = rates.add;
+      final (link, _) = wire(onSampleRate: rates.add);
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -225,7 +227,7 @@ void main() {
       unawaited(MockBlePlatform.instance.disconnect(deviceId));
       async.elapse(const Duration(milliseconds: 100));
 
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen.whereType<BleConnectionLost>(), hasLength(1));
       expect(seen.whereType<BleConnectionFailed>(), isEmpty);
 
@@ -247,7 +249,7 @@ void main() {
         // disconnectTimeout (2500 ms) + the availability-state query (200 ms).
         async.elapse(const Duration(seconds: 4));
 
-        expect(link.link.state, BtLinkState.idle);
+        expect(link.linkState, BtLinkState.idle);
         expect(seen.whereType<BleDisconnectTimeout>(), hasLength(1));
         // A user-requested disconnect is not an unexpected drop.
         expect(seen.whereType<BleConnectionLost>(), isEmpty);
@@ -265,12 +267,12 @@ void main() {
       // After 1 s the GATT link is up and post-connect setup (discovery) is
       // still running: the "Setting up…" window.
       async.elapse(const Duration(seconds: 1));
-      expect(link.link.state, BtLinkState.connected);
+      expect(link.linkState, BtLinkState.connected);
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(seconds: 4));
 
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(link.isStreaming, isFalse);
       // The superseded setup pass bails silently: no failure or drop notices.
       expect(seen, isEmpty);
@@ -290,12 +292,12 @@ void main() {
       // After 2.5 s the GATT link is up, discovery is done, and the KVS
       // flash read is still running: the "Reading board constants…" window.
       async.elapse(const Duration(milliseconds: 2500));
-      expect(link.link.state, BtLinkState.readingConstants);
+      expect(link.linkState, BtLinkState.readingConstants);
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(seconds: 4));
 
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(link.isStreaming, isFalse);
       // The superseded setup pass bails silently: no failure or drop
       // notices — in particular no spurious "calibration unreadable" from
@@ -336,7 +338,7 @@ void main() {
       // The catch path runs the common teardown: back to idle (VM tests are
       // non-web, so no reconnect embargo), no connection-lost notice for a link that
       // never came up.
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
 
       // An immediate retry must not be blocked by leftover busy/embargo state.
@@ -365,7 +367,7 @@ void main() {
       expect(error, isA<ConnectionException>());
       // The row marker is the user-facing channel for the failure (no toast).
       expect(link.connectFailureFor(deviceId), ConnectFailureKind.failed);
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
 
       // A new attempt supersedes the marker immediately (before it succeeds).
@@ -397,7 +399,7 @@ void main() {
 
       expect(error, isA<TimeoutException>());
       expect(link.connectFailureFor(deviceId), ConnectFailureKind.timeout);
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
 
       // The platform connect completes late; the unwanted-link guard must
@@ -431,7 +433,7 @@ void main() {
       expect(link.connectFailureFor(deviceId), ConnectFailureKind.failed);
       // Back to idle (VM tests are non-web, so no reconnect embargo either way) with
       // no notices and no GATT release: the platform reported the link down.
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
       expect(MockBlePlatform.instance.disconnectCalls, isEmpty);
 
@@ -458,7 +460,7 @@ void main() {
       MockBlePlatform.instance.updateConnection(deviceId, true);
       async.flushMicrotasks();
 
-      expect(link.link.state, BtLinkState.streaming);
+      expect(link.linkState, BtLinkState.streaming);
       expect(seen, isEmpty);
 
       teardownLink(async, link);
@@ -517,14 +519,14 @@ void main() {
       unawaited(link.connectToDevice(deviceId));
       // Mid-connect (the mock's connect takes 1 s): the attempt is in flight.
       async.elapse(const Duration(milliseconds: 500));
-      expect(link.link.state, BtLinkState.connecting);
+      expect(link.linkState, BtLinkState.connecting);
 
       unawaited(link.disconnectSelectedDevice());
       // The disconnect settles immediately; the mock's outstanding connect
       // completes (late) at 1 s and must be released by the guard.
       async.elapse(const Duration(seconds: 4));
 
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(link.isStreaming, isFalse);
       expect(MockBlePlatform.instance.connectedDeviceId, isNull);
       // A user-initiated cancel surfaces no failure/lost/timeout notices…
@@ -549,14 +551,14 @@ void main() {
         link.connectToDevice(deviceId).catchError((Object e) => error = e),
       );
       async.elapse(const Duration(milliseconds: 500));
-      expect(link.link.state, BtLinkState.connecting);
+      expect(link.linkState, BtLinkState.connecting);
 
       unawaited(link.disconnectSelectedDevice());
       // The mock's connect future throws at 1 s — after the cancel teardown.
       async.elapse(const Duration(seconds: 4));
 
       expect(error, isNull);
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
       // A cancelled attempt records no per-row failure marker either.
       expect(link.connectFailureFor(deviceId), isNull);
@@ -583,14 +585,14 @@ void main() {
       async.elapse(const Duration(seconds: 16));
 
       expect(error, isNotNull);
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
       expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
 
       // The platform connect completes late; the unwanted-link guard must
       // release it without adopting it.
       async.elapse(const Duration(seconds: 5));
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(link.isStreaming, isFalse);
       expect(MockBlePlatform.instance.connectedDeviceId, isNull);
       expect(seen, isEmpty);
@@ -631,7 +633,7 @@ void main() {
       MockBlePlatform.instance.updateConnection(deviceId, true);
       async.elapse(const Duration(seconds: 3));
 
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(link.isStreaming, isFalse);
       expect(MockBlePlatform.instance.disconnectCalls, contains(deviceId));
       expect(seen, isEmpty);
@@ -640,9 +642,8 @@ void main() {
 
   test('notifications from foreign sources are dropped', () {
     fakeAsync((async) {
-      final (link, _) = wire();
       var received = 0;
-      link.onAdcData = (_) => received++;
+      final (link, _) = wire(onAdcData: (_) => received++);
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -882,7 +883,7 @@ void main() {
       MockBlePlatform.instance.resetKnobs();
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
-      expect(link.link.state, BtLinkState.streaming);
+      expect(link.linkState, BtLinkState.streaming);
       expect(delivered!.board, isA<ProvisionedBoardCalibration>());
       expect(seen.whereType<BleConnectionFailed>(), isEmpty);
       teardownLink(async, link);
@@ -1003,7 +1004,7 @@ void main() {
       // marked streaming with a dead feed forever is not an option.
       expect(error, isA<StateError>());
       expect(link.isStreaming, isFalse);
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen, [isA<BleConnectionLost>()]);
       // The platform link was still up, so teardown released the GATT side.
       expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
@@ -1019,6 +1020,7 @@ void main() {
       settleStartup(async);
 
       unawaited(link.connectToDemoDevice());
+      async.elapse(const Duration(milliseconds: 100));
       final fixture = flashFromDoc(
         demoBoardCalibrationDoc,
         pgaGains: const [1, 1, 1, 1],
@@ -1035,24 +1037,23 @@ void main() {
 
   test('demo device streams and disconnects cleanly', () {
     fakeAsync((async) {
-      final (link, seen) = wire();
+      var received = 0;
+      final (link, seen) = wire(onAdcData: (_) => received++);
       // Drain the constructor's two availability queries (see [settleStartup])
       // — this test's own work is only ~200 ms of fake time, well under the
       // ~400 ms they need, and their pending timers would otherwise wedge the
       // shared 'global' queue bucket (availability + scan commands) for every
       // later test in the file.
       settleStartup(async);
-      var received = 0;
-      link.onAdcData = (_) => received++;
 
       unawaited(link.connectToDemoDevice());
-      expect(link.isStreaming, isTrue);
       async.elapse(const Duration(milliseconds: 100));
+      expect(link.isStreaming, isTrue);
       expect(received, greaterThan(0));
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(milliseconds: 100));
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
     });
   });
@@ -1067,7 +1068,7 @@ void main() {
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(seconds: 4));
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
 
       // The web reconnect-settle wait does not apply on native: an immediate
       // reconnect proceeds without delay.
@@ -1091,7 +1092,7 @@ void main() {
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(seconds: 4));
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
 
       // A late duplicate disconnect event arrives after the link is idle.
@@ -1101,7 +1102,7 @@ void main() {
       MockBlePlatform.instance.updateConnection(deviceId, false);
       async.flushMicrotasks();
 
-      expect(link.link.state, BtLinkState.idle);
+      expect(link.linkState, BtLinkState.idle);
       expect(notifies, 0);
       expect(seen, isEmpty);
     });
@@ -1183,7 +1184,7 @@ void main() {
         unawaited(link.disconnectSelectedDevice());
         async.elapse(const Duration(seconds: 4));
 
-        expect(link.link.state, BtLinkState.idle);
+        expect(link.linkState, BtLinkState.idle);
         // Strictly greater: the stamp moved from connect time to disconnect
         // time. Before the fix, a user-requested disconnect stamped nothing
         // (the callback sees `disconnecting`, not an active state), so a row
@@ -1202,7 +1203,7 @@ void main() {
         unawaited(link.disconnectSelectedDevice());
         async.elapse(const Duration(milliseconds: 100));
 
-        expect(link.link.state, BtLinkState.idle);
+        expect(link.linkState, BtLinkState.idle);
         expect(link.lastAliveMs('demo_device'), isNull);
       });
     });

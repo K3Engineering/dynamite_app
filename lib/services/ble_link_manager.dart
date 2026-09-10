@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
@@ -8,9 +7,8 @@ import 'app_events.dart';
 import 'adc_protocol.dart';
 import 'bt_device_config.dart';
 import '../models/bt_scan.dart';
-import 'gatt_link_backend.dart';
-import 'kvs_client.dart';
 import 'link_backend.dart';
+import 'link_transport.dart';
 import '../models/device_flash.dart';
 import '../models/device_info.dart';
 import '../models/device_name.dart';
@@ -32,80 +30,221 @@ enum ConnectFailureKind {
   timeout,
 }
 
-/// All per-device link state for a single BLE device. Everything logically
-/// per-device lives here rather than as loose fields on [BleLinkManager] —
-/// see the multi-device roadmap on [BleLinkManager].
-class DeviceLink {
-  DeviceLink({this.deviceId = ''});
-
-  /// Empty string means "no device" (the [BtLinkState.idle] sentinel).
-  String deviceId;
-
-  /// True when this link is simulated (the demo device) rather than a GATT
-  /// link: no RSSI polling, no reconnect embargo, no proof-of-life stamps,
-  /// and the BLE status readout reports idle while it occupies the slot.
-  bool isSimulated = false;
-  String name = '';
-  BtLinkState state = BtLinkState.idle;
-
-  /// The Settings-namespace device name read at connect time (null when
-  /// unset on the device, not yet read, or after reset). When present it
-  /// replaces the advertised name everywhere in the app.
-  String? storedName;
-
-  /// The display name: the stored name when set, else the advertised name
-  /// (or the device id when that's empty too).
-  String get displayName => storedName ?? (name.isEmpty ? deviceId : name);
-
-  /// Most recent live RSSI (dBm) for the connected device, polled while
-  /// connected. Null until the first successful read (and after reset). This is
-  /// the *connected* signal strength — distinct from the scan-time RSSI carried
-  /// on each discovered [DiscoveredDevice].
+/// Live feed telemetry for one link: the smallest/largest ADC notification
+/// sizes seen (bytes, malformed packets included) and the most recent RSSI.
+/// Holds nullable fields on purpose — each is unknown until its first
+/// reading — but lives inside [LinkInfo], so it exists only while the link
+/// does and can never mean "no device".
+class LinkTelemetry {
   int? rssi;
-
-  /// The device's static identity, read from the Device Information service
-  /// once during post-connect setup (see [BleLinkManager._readDeviceInfo]).
-  /// Null until the read completes, and after reset.
-  DeviceInfo? info;
-
-  /// ATT MTU returned by [UniversalBle.requestMtu] during post-connect
-  /// setup. Null until that call completes, after reset, and on paths that
-  /// never negotiate (web, simulated links).
-  int? mtu;
-
-  /// Smallest / largest ADC-feed notification size (bytes) delivered on
-  /// this link, including malformed packets. Null until the first packet.
   int? minAdcPacketBytes;
   int? maxAdcPacketBytes;
+}
 
-  bool get isConnecting => state == BtLinkState.connecting;
+/// The immutable connect-time facts of a usable (streaming) link: identity,
+/// the readback pieces post-connect setup collected, and the backend. The
+/// stored name is the one mutable fact (a device-name write updates it); live
+/// telemetry hangs off [telemetry].
+class LinkInfo {
+  LinkInfo({
+    required this.transport,
+    required this.advertisedName,
+    required this.storedName,
+    required this.info,
+    required this.mtu,
+    required this.adcConfig,
+    required this.telemetry,
+  });
+
+  final LinkTransport transport;
+  final String advertisedName;
+  String? storedName;
+  final DeviceInfo? info;
+  final int? mtu;
+  final AdcConfig adcConfig;
+  final LinkTelemetry telemetry;
+
+  String get deviceId => transport.deviceId;
+
+  String get displayName =>
+      storedName ?? (advertisedName.isEmpty ? deviceId : advertisedName);
+}
+
+/// The link state: exactly one of "no link", "a link is coming up", "a link
+/// is up and being set up", "a link is ready (streaming)", or "tearing down".
+/// This is the single source of "is there a device": no empty-string sentinel,
+/// no nullable backend, no separate idle flag to keep in sync.
+sealed class Link {
+  const Link();
+
+  String get deviceId;
+  LinkTransport? get transport;
+  LinkTelemetry? get telemetry => null;
+  String? get storedName => null;
+  DeviceInfo? get deviceInfo => null;
+  int? get mtu => null;
+  AdcConfig? get adcConfig => null;
+
+  /// The device-side backend, or null before it is brought up.
+  LinkBackend? get backend => transport?.backend;
 
   /// The GATT link is up. True for the whole post-connect setup window and
   /// the usable ([streaming]) state — use [isStreaming] for "usable".
-  bool get isLinkUp =>
-      state == BtLinkState.connected ||
-      state == BtLinkState.readingConstants ||
-      state == BtLinkState.subscribing ||
-      state == BtLinkState.streaming;
+  bool get isLinkUp;
 
   /// The link's terminal "ready" state: link up AND the ADC feed subscribed.
   /// NOT proof of data flow — notifications can still be absent or
   /// undecodable; the measured-traffic truth is deriveFeedHealth's.
-  bool get isStreaming => state == BtLinkState.streaming;
+  bool get isStreaming;
 
-  /// Reset back to the idle sentinel (used on disconnect).
-  void _reset() {
-    deviceId = '';
-    name = '';
-    state = BtLinkState.idle;
-    isSimulated = false;
-    storedName = null;
-    rssi = null;
-    info = null;
-    mtu = null;
-    minAdcPacketBytes = null;
-    maxAdcPacketBytes = null;
+  /// The lifecycle stage, for status readouts (see [BtLinkState]).
+  BtLinkState get state;
+
+  /// The display name: the stored name when set, else the advertised name (or
+  /// the device id when that's empty too). Empty when there is no link.
+  String get displayName {
+    final t = transport;
+    if (t == null) return '';
+    return storedName ?? (t.displayName.isEmpty ? t.deviceId : t.displayName);
   }
+}
+
+/// The idle sentinel: no device at all.
+final class NoLink extends Link {
+  const NoLink();
+
+  @override
+  String get deviceId => '';
+
+  @override
+  LinkTransport? get transport => null;
+
+  @override
+  bool get isLinkUp => false;
+
+  @override
+  bool get isStreaming => false;
+
+  @override
+  BtLinkState get state => BtLinkState.idle;
+}
+
+/// A `connect()` call is outstanding; the GATT link is not up yet.
+final class Connecting extends Link {
+  const Connecting(this.transport);
+
+  @override
+  final LinkTransport transport;
+
+  @override
+  String get deviceId => transport.deviceId;
+
+  @override
+  bool get isLinkUp => false;
+
+  @override
+  bool get isStreaming => false;
+
+  @override
+  BtLinkState get state => BtLinkState.connecting;
+}
+
+/// The GATT link is up and post-connect setup is running. The fields fill in
+/// as setup progresses, so they are mutable and nullable here — but this
+/// record exists only during the setup window, never as a resting state.
+final class SettingUp extends Link {
+  SettingUp(this.transport, this.phase);
+
+  @override
+  final LinkTransport transport;
+
+  @override
+  final LinkTelemetry telemetry = LinkTelemetry();
+
+  /// One of [BtLinkState.connected], [BtLinkState.readingConstants],
+  /// [BtLinkState.subscribing].
+  BtLinkState phase;
+
+  DeviceInfo? info;
+  @override
+  int? mtu;
+  @override
+  AdcConfig? adcConfig;
+  @override
+  String? storedName;
+
+  @override
+  String get deviceId => transport.deviceId;
+
+  @override
+  DeviceInfo? get deviceInfo => info;
+
+  @override
+  bool get isLinkUp => true;
+
+  @override
+  bool get isStreaming => false;
+
+  @override
+  BtLinkState get state => phase;
+}
+
+/// A fully set-up, usable link.
+final class Ready extends Link {
+  Ready(this.info);
+
+  final LinkInfo info;
+
+  @override
+  LinkTransport get transport => info.transport;
+
+  @override
+  String get deviceId => info.deviceId;
+
+  @override
+  LinkTelemetry get telemetry => info.telemetry;
+
+  @override
+  String? get storedName => info.storedName;
+
+  @override
+  DeviceInfo? get deviceInfo => info.info;
+
+  @override
+  int? get mtu => info.mtu;
+
+  @override
+  AdcConfig get adcConfig => info.adcConfig;
+
+  @override
+  bool get isLinkUp => true;
+
+  @override
+  bool get isStreaming => true;
+
+  @override
+  BtLinkState get state => BtLinkState.streaming;
+}
+
+/// A disconnect was requested; the link is waiting for the platform callback
+/// (or the disconnect timeout).
+final class Closing extends Link {
+  const Closing(this.transport);
+
+  @override
+  final LinkTransport transport;
+
+  @override
+  String get deviceId => transport.deviceId;
+
+  @override
+  bool get isLinkUp => false;
+
+  @override
+  bool get isStreaming => false;
+
+  @override
+  BtLinkState get state => BtLinkState.disconnecting;
 }
 
 /// Cancellation token for one async post-connect setup pass. Captured at pass
@@ -155,18 +294,20 @@ bool isWebPickerDismissal(Object e) {
 ///
 /// This class owns *only* the link. It knows nothing about the recording:
 /// raw notification bytes and the parsed flash document are handed off via
-/// [onAdcData] / [onDeviceFlash] (wired at app startup), and recording
-/// observes this notifier's state changes (see [RecordingController]).
+/// [onAdcData] / [onDeviceFlash] (constructor-injected at app startup), and
+/// recording observes this notifier's state changes (see
+/// [RecordingController]).
 ///
 /// MULTI-DEVICE ROADMAP: today exactly one link is tracked ([_link]), and
 /// [QueueType.perDevice] already isolates per-device command queues. To
 /// support N simultaneous devices, promote [_link] to a
-/// `Map<String /*deviceId*/, DeviceLink>`: [DeviceLink] holds every logically
-/// per-device field (state, name, rssi), so the migration is mechanical —
-/// per-device lookup in [_onConnectionChange] and [_onValueChange] (route by
-/// deviceId instead of dropping), per-device busy guards in [_beginConnect]
-/// and [disconnectSelectedDevice]. Adapter availability and scanning stay
-/// *global* (one radio) and do NOT move into [DeviceLink].
+/// `Map<String /*deviceId*/, Link>`: every logically per-device fact lives on
+/// the [Link] (_bt_scan.dart's [BtLinkState], [LinkInfo], telemetry), so the
+/// migration is mechanical — per-device lookup in [_onConnectionChange] and
+/// [_onValueChange] (route by deviceId instead of dropping), per-device busy
+/// guards in [_beginLink] and [disconnectSelectedDevice]. Adapter
+/// availability and scanning stay *global* (one radio) and do NOT move into
+/// [Link].
 class BleLinkManager extends ChangeNotifier {
   /// Upper bound we pass to [UniversalBle.disconnect] so a silent stack can't
   /// strand the UI on "Disconnecting…". The package's own `disconnect()` sets
@@ -266,11 +407,10 @@ class BleLinkManager extends ChangeNotifier {
   /// The single active device link (see the multi-device roadmap on the
   /// class). The getters below project it into the flat API the UI consumes
   /// today.
-  final DeviceLink _link = DeviceLink();
-  DeviceLink get link => _link;
+  Link _link = const NoLink();
 
   /// Per-device record of the most recent failed connect attempt, keyed by
-  /// device id. Set in [connectToDevice]'s catch (only for the attempt that
+  /// device id. Set in [_beginLink]'s catch (only for the attempt that
   /// actually surfaces the failure — an abandoned/cancelled attempt records
   /// nothing), cleared when any new connect attempt begins (see
   /// [_beginConnect]) or when a fresh scan result arrives for that device (a
@@ -350,13 +490,20 @@ class BleLinkManager extends ChangeNotifier {
   void _stampAlive(String deviceId) {
     if (deviceId.isEmpty) return;
     // Simulated links have no radio lifetime to attest.
-    if (_link.isSimulated && _link.deviceId == deviceId) return;
+    if (_link.transport?.isSimulated ?? false) return;
     _lastAliveMs[deviceId] = DateTime.now().millisecondsSinceEpoch;
   }
 
   /// The single "usable / connected" truth: link up AND the ADC feed is
   /// streaming. Every screen keys its connected UI off this.
   bool get isStreaming => _link.isStreaming;
+
+  /// Whether a GATT link is up (during setup or streaming). The "device
+  /// present" port consumers use to react to link transitions.
+  bool get isLinkUp => _link.isLinkUp;
+
+  /// Whether the active link is the simulated demo device (false when idle).
+  bool get isSimulated => _link.transport?.isSimulated ?? false;
 
   /// Lifecycle state of the active link ([BtLinkState.idle] when no link):
   /// the full progression for status readouts that must distinguish "no
@@ -380,9 +527,14 @@ class BleLinkManager extends ChangeNotifier {
   /// while streaming); empty otherwise.
   String get connectedDeviceId => _link.isLinkUp ? _link.deviceId : '';
 
+  /// Device id of the active link for the whole link lifecycle — including
+  /// `connecting` and `disconnecting`; empty only when idle. The Devices tab
+  /// uses it to find the active row while its state is still transitioning.
+  String get activeDeviceId => _link.deviceId;
+
   /// Name of the currently connected device: the Settings-stored name when
   /// the device has one, else the advertised name (or the device id when
-  /// that's empty).
+  /// that's empty). Empty with no link.
   String get connectedDeviceName => _link.displayName;
 
   /// The Settings-stored name of the connected device, or null when unset
@@ -395,7 +547,8 @@ class BleLinkManager extends ChangeNotifier {
   /// read once during post-connect setup; null with no link up or until the
   /// read completes. Per-field nulls cover individual read failures (and web,
   /// where the serial number characteristic is blocklisted).
-  DeviceInfo? get connectedDeviceInfo => _link.isLinkUp ? _link.info : null;
+  DeviceInfo? get connectedDeviceInfo =>
+      _link.isLinkUp ? _link.deviceInfo : null;
 
   /// ATT MTU negotiated at connect, or null with no link up, until the
   /// request completes, or on platforms/paths that never negotiate (web,
@@ -404,16 +557,22 @@ class BleLinkManager extends ChangeNotifier {
 
   /// Smallest ADC-feed notification (bytes) on the current link, or null
   /// until a packet arrives / once the link is down.
-  int? get minAdcPacketBytes => _link.isLinkUp ? _link.minAdcPacketBytes : null;
+  int? get minAdcPacketBytes =>
+      _link.isLinkUp ? _link.telemetry?.minAdcPacketBytes : null;
 
   /// Largest ADC-feed notification (bytes) on the current link, or null
   /// until a packet arrives / once the link is down.
-  int? get maxAdcPacketBytes => _link.isLinkUp ? _link.maxAdcPacketBytes : null;
+  int? get maxAdcPacketBytes =>
+      _link.isLinkUp ? _link.telemetry?.maxAdcPacketBytes : null;
 
   /// Live RSSI (dBm) of the connected device, or null when not streaming, not
   /// yet read, or unsupported on this platform. Polled every [rssiPollInterval]
   /// while streaming.
-  int? get connectedRssi => _link.isStreaming ? _link.rssi : null;
+  int? get connectedRssi => _link.isStreaming ? _link.telemetry?.rssi : null;
+
+  /// The device-side backend of the active link (slot writes and the
+  /// save-verification read), or null when no link is up.
+  LinkBackend? get backend => _link.backend;
 
   /// Whether the platform implements [UniversalBle.readRssi]. Web throws
   /// `notImplemented` for it; all native platforms (Android/Apple/Windows/Linux)
@@ -468,54 +627,34 @@ class BleLinkManager extends ChangeNotifier {
     }
   }
 
-  /// Raw ADC-feed notification bytes, exactly as received. Wired to the
-  /// protocol layer ([AdcPacketDecoder.onDataPacket]) at app startup; the link
-  /// manager itself never interprets them.
-  void Function(Uint8List data)? onAdcData;
+  /// Raw ADC-feed notification bytes, exactly as received. Constructor-injected
+  /// by the composition root (wired to the protocol layer's
+  /// `AdcPacketDecoder.onDataPacket`); the link manager itself never
+  /// interprets them. Reassigned to a no-op on hot restart so the stale
+  /// generation's feed stops synchronously (see [shutdownForHotRestart]).
+  void Function(Uint8List data) _onAdcData;
 
   /// The parsed connect-time flash document (board calibration, load cell
   /// slots, raw KVS provenance), delivered once during post-connect setup.
-  /// Injected at app startup; the flash never reaches the app unparsed ΓÇö see
-  /// [_setupKvs].
+  /// Injected at app startup; the flash never reaches the app unparsed — see
+  /// [_runPostConnectSetup].
   final void Function(DeviceFlash flash) onDeviceFlash;
 
   /// The stream's sample rate (Hz), delivered once per link before the feed
   /// starts (parsed from the ADC config readback on GATT links; the demo
   /// device declares its own). Wired to [DataHub.setSampleRate] at app
   /// startup — everything below the protocol layer reads the rate from the
-  /// hub.
-  void Function(int sampleRateHz)? onSampleRate;
+  /// hub. Reassigned to a no-op on hot restart.
+  void Function(int sampleRateHz) _onSampleRate;
 
   /// One-shot user notices ([BleDisconnectTimeout], [BleConnectionFailed])
   /// go here; the shell shows them regardless of which tab is mounted.
   final AppEvents _events;
 
-  /// The simulated link (see [SimulatedLink]), wired by the composition
-  /// root. Null only in tests that construct a bare manager; every simulated
-  /// connect path is then unreachable (no demo connect can begin without
-  /// [_demo]).
-  final SimulatedLink? _demo;
-
-  /// The backend of the active link (null when no link is up). For a GATT
-  /// link this is the per-link KVS channel, created in post-connect setup
-  /// BEFORE the ADC feed subscription, because firmware locks the KVS
-  /// while the feed holds the device lock. A real link with a working KVS
-  /// channel is guaranteed: a channel that can't come up fails the
-  /// connection (see [_setupKvs]).
-  LinkBackend? _backend;
-
-  /// The ADC's decoded boot configuration as read back during the "Reading
-  /// board constants…" stage (null until read; never null once a link
-  /// reaches the flash read — an unreadable config fails the connection, see
-  /// [_readAdcConfig]). Its per-channel PGA gains complete the board
-  /// constants at flash parse time (see [_setupKvs]); the rate went out via
-  /// [onSampleRate] right after the read.
-  AdcConfig? _adcConfig;
-
-  /// The backend of the active link (null when no link is up), for the
-  /// device operations `RigState` drives outside the link lifecycle (slot
-  /// writes and the save-verification read). See [_backend].
-  LinkBackend? get backend => _backend;
+  /// The simulated link, wired by the composition root. Null only in tests
+  /// that construct a bare manager; every simulated connect path is then
+  /// unreachable (no demo connect can begin without [_demo]).
+  final LinkTransport? _demo;
 
   /// The feed-maintenance chain. [KvsClient] serializes individual KVS
   /// commands, but nothing stops one envelope's resubscribe from landing
@@ -531,7 +670,7 @@ class BleLinkManager extends ChangeNotifier {
   /// writes (and the verifying re-read) briefly unsubscribe, then
   /// resubscribe. The feed's counter jump on resume surfaces as a gap via
   /// the decoder's continuity check. When the feed isn't active
-  /// (mid setup) [body] just runs. Handed to the GATT backend, the only
+  /// (mid setup) [body] just runs. Handed to the GATT transport, the only
   /// caller.
   Future<T> _withFeedPaused<T>(Future<T> Function() body) {
     final op = _feedMaintenance.then((_) => _feedPausedEnvelope(body));
@@ -539,7 +678,6 @@ class BleLinkManager extends ChangeNotifier {
     return op;
   }
 
-  /// TODO check if this is really needed
   /// Settle grace between pausing the feed and the envelope's first KVS
   /// command. The firmware releases its device lock inside the CCC-write
   /// callback, ahead of the unsubscribe's completion — but only when the
@@ -552,31 +690,26 @@ class BleLinkManager extends ChangeNotifier {
   /// resubscribe. Runs exclusively inside the [_feedMaintenance] chain, so
   /// subscribe/unsubscribe pairs of concurrent ops can never interleave.
   Future<T> _feedPausedEnvelope<T>(Future<T> Function() body) async {
-    final deviceId = _link.deviceId;
-    final pause = _link.isStreaming;
-    if (pause) {
-      await UniversalBle.unsubscribe(deviceId, btServiceId, btChrAdcFeedId);
-      await Future<void>.delayed(_feedPauseSettle);
-    }
+    final link = _link;
+    if (link is! Ready) return body();
+    final transport = link.info.transport;
+    await transport.unsubscribeFromAdcFeed();
+    await Future<void>.delayed(_feedPauseSettle);
     try {
       return await body();
     } finally {
       // Resume only if the same link is still up (a disconnect mid-write
       // already tore everything down).
-      if (pause && _link.isStreaming && _link.deviceId == deviceId) {
+      if (_link is Ready && identical(_link.transport, transport)) {
         try {
-          await UniversalBle.subscribeNotifications(
-            deviceId,
-            btServiceId,
-            btChrAdcFeedId,
-          );
+          await transport.subscribeToAdcFeed();
         } catch (_) {
           // Resume failed: the link would stay marked streaming with a dead
           // feed and no recovery path (nothing retries this subscription).
           // Tear it down — connect-time fails the same way when the feed
-          // can't be subscribed (see [_subscribeToAdcFeed]).
-          final name = _link.displayName;
-          _teardownLink(deviceId, releaseGatt: true);
+          // can't be subscribed (see [_runPostConnectSetup]).
+          final name = link.info.displayName;
+          _teardownLink(transport, releasePlatform: true);
           _events.emit(BleConnectionLost(name));
           notifyListeners();
           rethrow;
@@ -592,8 +725,8 @@ class BleLinkManager extends ChangeNotifier {
   /// stays put); throws on invalid input ([isValidDeviceName]) or missing
   /// link state. The display name updates only on device confirmation.
   Future<bool> setDeviceName(String name) async {
-    final deviceId = _link.deviceId;
-    if (deviceId.isEmpty) {
+    final link = _link;
+    if (link is! Ready) {
       throw StateError('setDeviceName with no device connected');
     }
     final trimmed = name.trim();
@@ -601,13 +734,9 @@ class BleLinkManager extends ChangeNotifier {
       throw ArgumentError.value(name, 'name', 'invalid device name');
     }
     final stored = trimmed.isEmpty ? null : trimmed;
-    final backend = _backend;
-    if (backend == null) {
-      throw StateError('setDeviceName with no device channel on $deviceId');
-    }
-    final ok = await backend.storeDeviceName(stored);
+    final ok = await link.transport.backend!.storeDeviceName(stored);
     if (ok) {
-      _link.storedName = stored;
+      link.info.storedName = stored;
       notifyListeners();
     }
     return ok;
@@ -616,8 +745,12 @@ class BleLinkManager extends ChangeNotifier {
   BleLinkManager({
     required AppEvents events,
     required this.onDeviceFlash,
-    SimulatedLink? demo,
+    required void Function(Uint8List data) onAdcData,
+    required void Function(int sampleRateHz) onSampleRate,
+    LinkTransport? demo,
   }) : _events = events,
+       _onAdcData = onAdcData,
+       _onSampleRate = onSampleRate,
        _demo = demo {
     // Run each device's BLE commands in its own queue. With the default
     // `global` queue, a command stuck against a half-torn-down device (common on
@@ -837,23 +970,23 @@ class BleLinkManager extends ChangeNotifier {
   /// Runs for the link's whole streaming lifetime rather than only while an
   /// RSSI-showing tab is on screen.
   /// Cancels any previous poller first. Reads are best-effort: a failed read
-  /// is swallowed silently and retried on the next tick
-  void _startRssiPolling(String deviceId) {
+  /// is swallowed silently and retried on the next tick.
+  void _startRssiPolling(LinkTransport transport) {
     _stopRssiPolling();
-    if (!_supportsRssi || _link.isSimulated) {
+    if (transport.isSimulated || !_supportsRssi) {
       return;
     }
     _rssiPollTimer = Timer.periodic(rssiPollInterval, (_) async {
       // Between ticks the link may have dropped or switched devices.
-      if (!_link.isStreaming || _link.deviceId != deviceId) {
+      if (!identical(_link.transport, transport) || !_link.isStreaming) {
         _stopRssiPolling();
         return;
       }
       try {
-        final int rssi = await UniversalBle.readRssi(deviceId);
+        final int rssi = await transport.readRssi();
         // Guard again: the link may have changed during the await.
-        if (_link.isStreaming && _link.deviceId == deviceId) {
-          _link.rssi = rssi;
+        if (identical(_link.transport, transport) && _link.isStreaming) {
+          _link.telemetry?.rssi = rssi;
           notifyListeners();
         }
       } catch (_) {
@@ -869,16 +1002,17 @@ class BleLinkManager extends ChangeNotifier {
 
   /// Common teardown for every path that ends a link (clean disconnect, failed
   /// post-connect setup, disconnect timeout, abandoned connect): stop RSSI
-  /// polling, supersede in-flight setup, and reset the link to idle. Recording
-  /// is NOT handled here — [RecordingController] observes this notifier and
-  /// stops its session when streaming ends.
+  /// polling, supersede in-flight setup, dispose the transport, and reset the
+  /// link to the idle sentinel. Recording is NOT handled here —
+  /// [RecordingController] observes this notifier and stops its session when
+  /// streaming ends.
   ///
-  /// [releaseGatt] must be true when the platform-level GATT link is (or may
+  /// [releasePlatform] must be true when the platform-level link is (or may
   /// still be) up: a failed post-connect setup, or an abandoned/timed-out
-  /// connect. It triggers a best-effort [UniversalBle.disconnect] so the
-  /// OS/browser connection can't leak. Local state is reset FIRST, so the
-  /// resulting disconnect callback arrives to an unwanted link and is ignored
-  /// by the guard in [_onConnectionChange].
+  /// connect. It triggers a best-effort platform disconnect so the OS/browser
+  /// connection can't leak. Local state is reset FIRST, so the resulting
+  /// disconnect callback arrives to an unwanted link and is ignored by the
+  /// guard in [_onConnectionChange].
   ///
   /// On web, tearing down a LIVE link also stamps the device's reconnect
   /// embargo (see [_reconnectNotBefore]): the link goes idle immediately, and
@@ -890,19 +1024,22 @@ class BleLinkManager extends ChangeNotifier {
   /// immediate retry for nothing). Native stacks and simulated links don't
   /// exhibit the race and stamp nothing either. Does NOT call
   /// [notifyListeners] — callers do.
-  void _teardownLink(String deviceId, {bool releaseGatt = false}) {
-    // Supersede any in-flight post-connect setup pass so it bails out instead of
-    // writing state for a link we're tearing down.
+  void _teardownLink(LinkTransport transport, {bool releasePlatform = false}) {
+    final previous = _link;
+    // Supersede any in-flight post-connect setup pass so it bails out instead
+    // of writing state for a link we're tearing down.
     _supersedeSetupPasses();
-    // The backend dies with the link: stop the feed / fail any pending
-    // command. A fresh link gets a fresh backend in post-connect setup.
-    _backend?.dispose();
-    _backend = null;
-    _adcConfig = null;
+    // The transport dies with the link: abort pending KVS commands / stop the
+    // demo feed. A fresh link gets a fresh transport.
+    transport.dispose();
     _stopRssiPolling();
 
-    if (kIsWeb && !_link.isSimulated && _link.state != BtLinkState.connecting) {
-      _reconnectNotBefore[deviceId] = DateTime.now().add(reconnectSettleDelay);
+    if (kIsWeb &&
+        !transport.isSimulated &&
+        previous.state != BtLinkState.connecting) {
+      _reconnectNotBefore[transport.deviceId] = DateTime.now().add(
+        reconnectSettleDelay,
+      );
       // See [_reconnectPoke]: decide nothing, only re-render at window end.
       _reconnectPoke?.cancel();
       _reconnectPoke = Timer(reconnectSettleDelay, () {
@@ -910,10 +1047,10 @@ class BleLinkManager extends ChangeNotifier {
         notifyListeners();
       });
     }
-    _link._reset();
+    _link = const NoLink();
 
-    if (releaseGatt) {
-      unawaited(_releaseGatt(deviceId));
+    if (releasePlatform) {
+      unawaited(transport.disconnect());
     }
   }
 
@@ -937,17 +1074,17 @@ class BleLinkManager extends ChangeNotifier {
     );
 
     // Unwanted-link guard: ignore any connection event that has no app-side
-    // owner — events for a different device than the active link, or events
-    // for OUR device arriving when no connect result is expected (idle —
-    // including inside a pending reconnect-settle window — or disconnecting).
-    // A platform-level connect can complete AFTER we gave up on it (connect
+    // owner — events for a different device than the active link, or connected
+    // events for OUR device arriving when no link is expected (idle —
+    // including inside a pending reconnect-settle window — or closing). A
+    // platform-level connect can complete AFTER we gave up on it (connect
     // timeout, user cancel); the GATT link is then live at the platform level
     // with nothing tracking it. Release such links so they can't leak, then
     // ignore the event.
     final bool isActiveDevice =
         _link.deviceId.isNotEmpty && _link.deviceId == deviceId;
     if (!isActiveDevice ||
-        (isConnected && !_link.isConnecting && !_link.isLinkUp)) {
+        (isConnected && _link is! Connecting && !_link.isLinkUp)) {
       if (isConnected) {
         debugPrint('Releasing unexpected GATT link for $deviceId');
         unawaited(_releaseGatt(deviceId));
@@ -960,29 +1097,24 @@ class BleLinkManager extends ChangeNotifier {
     }
 
     if (isConnected) {
-      // A duplicate/spurious connect event for a link that is already up
-      // (setting up, starting the stream, or streaming): the first event
-      // owns the setup pass — ignore this one rather than regressing the
-      // state and re-running discovery / re-subscribing the ADC feed.
-      if (_link.isLinkUp) return;
-      unawaited(_runPostConnectSetup(_setupTokenFor(deviceId), deviceId));
+      // The connect() continuation owns post-connect setup; a connected event
+      // for the active link is expected and needs no action here.
       return;
     }
 
     // A disconnect event while a connect attempt is in flight is how NATIVE
     // stacks report a REFUSED connect: universal_ble delivers the refusal to
     // this handler synchronously, THEN completes the connect() future with an
-    // error from that same event (see _connectionEventCompleter in
-    // universal_ble — its only error source besides the timeout is this event
-    // stream). Record the per-row failure marker here and tear down — still
-    // in `connecting`, so no reconnect embargo is stamped (no live link ever
-    // came up); the future's error then lands in connectToDevice's catch,
-    // which finds the link already idle and returns silently — exactly one
-    // marker for either failure flavor. A user-requested cancel transitions
-    // through `disconnecting` first, so it never records a marker here.
-    if (_link.isConnecting) {
+    // error from that same event. Record the per-row failure marker here and
+    // tear down — still in `connecting`, so no reconnect embargo is stamped
+    // (no live link ever came up); the future's error then lands in
+    // [_beginLink]'s catch, which finds the link already idle and returns
+    // silently — exactly one marker for either failure flavor. A
+    // user-requested cancel transitions through `disconnecting` first, so it
+    // never records a marker here.
+    if (_link is Connecting) {
       _connectFailures[deviceId] = ConnectFailureKind.failed;
-      _teardownLink(deviceId);
+      _teardownLink(_link.transport!);
       notifyListeners();
       return;
     }
@@ -991,13 +1123,14 @@ class BleLinkManager extends ChangeNotifier {
     // common teardown (the platform side is already down, so no GATT
     // release), which stamps the device's reconnect-settle embargo on web
     // before returning the link to the idle sentinel.
-    final String name = _link.displayName;
+    final Link link = _link;
+    final String name = link.displayName;
     // An unexpected drop while the link was up (setting up, starting the
     // stream, or streaming) gets a user notice. User-requested disconnects
     // arrive here in `disconnecting`, and post-connect setup failures already
     // emitted BleConnectionFailed before tearing down — so neither
     // double-reports.
-    final bool wasActive = _link.isLinkUp;
+    final bool wasActive = link.isLinkUp;
     // Proof of life ends at teardown: stamp it so the row's "last
     // seen/connected" age starts counting from now, not from the (possibly
     // much older) connect time. Only the UNEXPECTED drop is stamped here —
@@ -1014,15 +1147,16 @@ class BleLinkManager extends ChangeNotifier {
         _lastDisconnectErrors.remove(deviceId);
       }
     }
-    _teardownLink(deviceId);
+    _teardownLink(link.transport!);
     if (wasActive) {
       _events.emit(BleConnectionLost(name));
     }
     notifyListeners();
   }
 
-  /// Post-connect setup for a freshly-up GATT link: reflect "Setting up…",
-  /// then MTU (native) and service discovery, then "Starting data stream…"
+  /// Post-connect setup for a freshly-up link: reflect "Setting up…", then
+  /// MTU (native) and service discovery, then "Reading board constants…" for
+  /// the ADC config and connect-time flash read, then "Starting data stream…"
   /// for the ADC feed subscription that advances the link to the usable
   /// [BtLinkState.streaming] state.
   ///
@@ -1031,89 +1165,88 @@ class BleLinkManager extends ChangeNotifier {
   /// after every await the pass re-checks it and abandons silently — no state
   /// writes, no failure notice — when a newer attempt (or a teardown) moved
   /// on. If the device drops mid-setup (common when Chrome accepts a too-soon
-  /// reconnect then tears it down), the platform calls throw ("Cannot
+  /// reconnect then tears it down), the transport calls throw ("Cannot
   /// discover services…") or time out via the command queue.
-  Future<void> _runPostConnectSetup(_SetupToken token, String deviceId) async {
-    _link.deviceId = deviceId;
-    _link.state = BtLinkState.connected;
-
-    // Advertised names are optional; fall back to the id so the UI always
-    // has something to show.
-    final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
-    _link.name = device?.name ?? deviceId;
-
-    // Notify before the awaited setup work: discovery may throw, and the
-    // state change must land regardless.
+  Future<void> _runPostConnectSetup(
+    _SetupToken token,
+    LinkTransport transport,
+  ) async {
+    final String deviceId = transport.deviceId;
+    final setup = SettingUp(transport, BtLinkState.connected);
+    _link = setup;
     notifyListeners();
 
     try {
-      if (!kIsWeb) {
-        debugPrint('Requested MTU change');
-        final int mtu = await UniversalBle.requestMtu(deviceId, 247);
-        debugPrint('MTU set to: $mtu');
-        if (!token.isCurrent) return;
-        _link.mtu = mtu;
-        // TODO(perf): investigate requesting high-performance connection
-        // priority here for the 1 kHz ADC stream:
-        //   await UniversalBle.requestConnectionPriority(
-        //     deviceId, BleConnectionPriority.highPerformance);
-        // Android-only (BleCapabilities.supportsConnectionPriorityApi); throws
-        // notSupported elsewhere. Should run after MTU negotiation. Measure
-        // whether the tighter connection interval actually reduces dropped
-        // samples before enabling.
-      }
-      final discovered = await UniversalBle.discoverServices(deviceId);
+      setup.mtu = await transport.negotiateMtu();
       if (!token.isCurrent) return;
-      // Device identity (DIS): static strings read once per link, during the
-      // "Setting up…" stage. Independent of the sampler service below and
-      // never fatal — see [_readDeviceInfo].
-      await _readDeviceInfo(token, deviceId);
+
+      await transport.discoverServices();
       if (!token.isCurrent) return;
-      bool subscribed = false;
-      for (final srv in discovered) {
-        if (srv.uuid == btServiceId) {
-          // Discovery done; the board constants (ADC config readback + the
-          // connect-time flash read) are the "Reading board constants…"
-          // stage. The KVS channel comes up BEFORE the ADC feed
-          // subscription: firmware locks the KVS while the feed holds the
-          // device lock, so the flash read must happen first.
-          _link.state = BtLinkState.readingConstants;
-          notifyListeners();
-          _adcConfig = await _readAdcConfig(deviceId);
-          if (!token.isCurrent) return;
-          onSampleRate?.call(_adcConfig!.sampleRateHz);
-          final snapshot = await _setupKvs(token, deviceId);
-          if (snapshot == null || !token.isCurrent) return;
-          // A strict parse failure is a value, not a link failure:
-          // `DeviceFlash.fromKvs` yields an `InvalidBoardCalibration` and the
-          // device streams raw counts with a warning. Transport/protocol
-          // failures still throw to the catch below and tear the link down.
-          final flash = DeviceFlash.fromKvs(
-            snapshot,
-            pgaGains: _adcConfig!.pgaGains,
-          );
-          onDeviceFlash(flash);
-          // Constants in; the ADC feed subscription is the "Starting data
-          // stream…" stage.
-          _link.state = BtLinkState.subscribing;
-          notifyListeners();
-          subscribed = await _subscribeToAdcFeed(srv);
-          if (!token.isCurrent) return;
-          break;
-        }
+
+      // Device identity (DIS): static strings read once per link. Independent
+      // of the sampler channel below and never fatal.
+      setup.info = await transport.readDeviceInfo();
+      if (!token.isCurrent) return;
+
+      // Discovery done; the board constants (ADC config readback + the
+      // connect-time flash read) are the "Reading board constants…" stage.
+      // The KVS channel comes up BEFORE the ADC feed subscription: firmware
+      // locks the KVS while the feed holds the device lock, so the flash read
+      // must happen first.
+      setup.phase = BtLinkState.readingConstants;
+      notifyListeners();
+
+      final AdcConfig adcConfig = await transport.readAdcConfig();
+      if (!token.isCurrent) return;
+      setup.adcConfig = adcConfig;
+      _onSampleRate(adcConfig.sampleRateHz);
+
+      await transport.openBackend();
+      if (!token.isCurrent) return;
+      final backend = transport.backend;
+      if (backend == null) {
+        throw StateError('KVS channel unavailable on $deviceId');
       }
-      // A link without the ADC feed is unusable: fail the connection here
-      // (the catch below tears down and toasts) rather than advancing to
-      // "streaming" with no data flowing.
-      if (!subscribed) {
-        throw StateError('ADC feed characteristic not found on $deviceId');
-      }
-      // Setup complete: advance to the usable "streaming" state and begin live
-      // RSSI polling for the signal display.
-      _link.state = BtLinkState.streaming;
+      // The stored name lands before the flash read: the rig's provenance
+      // label is read off the link at doc delivery time (see
+      // [connectedDeviceName]).
+      setup.storedName = await backend.readDeviceName();
+      if (!token.isCurrent) return;
+      notifyListeners();
+
+      final snapshot = await backend.readKvsSnapshot();
+      if (!token.isCurrent) return;
+      // A strict parse failure is a value, not a link failure:
+      // `DeviceFlash.fromKvs` yields an `InvalidBoardCalibration` and the
+      // device streams raw counts with a warning. Transport/protocol
+      // failures still throw to the catch below and tear the link down.
+      final flash = DeviceFlash.fromKvs(snapshot, pgaGains: adcConfig.pgaGains);
+      onDeviceFlash(flash);
+
+      // Constants in; the ADC feed subscription is the "Starting data
+      // stream…" stage.
+      setup.phase = BtLinkState.subscribing;
+      notifyListeners();
+
+      await transport.subscribeToAdcFeed();
+      if (!token.isCurrent) return;
+
+      // Setup complete: adopt the link record and begin live RSSI polling for
+      // the signal display.
+      _link = Ready(
+        LinkInfo(
+          transport: transport,
+          advertisedName: transport.displayName,
+          storedName: setup.storedName,
+          info: setup.info,
+          mtu: setup.mtu,
+          adcConfig: adcConfig,
+          telemetry: setup.telemetry,
+        ),
+      );
       _stampAlive(deviceId);
       notifyListeners();
-      _startRssiPolling(deviceId);
+      _startRssiPolling(transport);
     } catch (e) {
       // A superseded pass failing is expected (the device was torn down or a
       // queued command was cancelled/timed out) — swallow it silently. Only a
@@ -1123,17 +1256,16 @@ class BleLinkManager extends ChangeNotifier {
         return;
       }
       debugPrint('Post-connect setup failed for $deviceId: $e');
-      final String name = _link.displayName;
       // The GATT link came up (connect succeeded) before setup failed —
       // that is a proof of life; stamp it before tearing down.
       _stampAlive(deviceId);
-      // The GATT link came up (connect succeeded) — release it so the
-      // platform can't hold a connection the app considers failed.
-      _teardownLink(deviceId, releaseGatt: true);
+      // Release the platform link so it can't hold a connection the app
+      // considers failed.
+      _teardownLink(transport, releasePlatform: true);
       // Exact reason for the Devices-tab row; the user-facing toast stays
       // generic (see AppShellState).
       _setupFailures[deviceId] = '$e';
-      _events.emit(BleConnectionFailed(name));
+      _events.emit(BleConnectionFailed(transport.displayName));
       notifyListeners();
     }
   }
@@ -1165,66 +1297,23 @@ class BleLinkManager extends ChangeNotifier {
     return true;
   }
 
-  Future<void> connectToDemoDevice() async {
-    final demo = _demo;
-    // The demo row's Connect is always wired (see main), so a null [_demo]
-    // is a test-harness artifact.
-    if (demo == null) {
-      throw StateError('connectToDemoDevice with no simulated link wired');
-    }
+  /// Drive one connect through the shared lifecycle: mark the link
+  /// connecting, stop any scan, bring the transport up, then run post-connect
+  /// setup. Real BLE and the demo differ only in their [LinkTransport].
+  Future<void> _beginLink(LinkTransport transport) async {
     if (!_beginConnect()) return;
-    _link.deviceId = demo.id;
-    _link.name = demo.displayName;
-    _link.isSimulated = true;
-    _link.storedName = demo.storedName;
-    // Simulated hardware has a simulated identity (real links read theirs
-    // from the Device Information service in post-connect setup).
-    _link.info = demo.identity;
-    _backend = demo;
-
-    onSampleRate?.call(demo.sampleRateHz);
-
-    // The demo device is factory-calibrated: parse its KVS snapshot through
-    // the same path a real device's calibration read would take. The store is
-    // mutable so "Save to device" round-trips. A malformed fixture is a
-    // programmer error (the demo is the happy path) and throws here — the
-    // tests that connect the demo are the guard.
-    final flash = DeviceFlash.fromKvs(
-      demo.kvsSnapshot,
-      pgaGains: demo.pgaGains,
-    );
-    _link.state = BtLinkState.streaming;
-    onDeviceFlash(flash);
-
-    demo.startFeed(_deliverAdcData);
-
+    _link = Connecting(transport);
     notifyListeners();
-    if (_isScanning) await _stopScan();
-  }
-
-  Future<void> connectToDevice(String deviceId) async {
-    if (!_beginConnect()) return;
-    _link.deviceId = deviceId;
-    _link.state = BtLinkState.connecting;
-    notifyListeners();
-
-    // The post-disconnect settle window is enforced by the
-    // [_reconnectNotBefore] embargo (see [_teardownLink]), which [linkBusy]
-    // consulted in [_beginConnect] above: by the time we get here the stack
-    // has already had time to finish GATT teardown. No inline sleep is needed.
 
     try {
       // Stop scanning before connecting (the package advises it). The busy
       // state is already written above, so this await can't reopen the
-      // Scan-tap race. Inside the try: a stopScan failure must not wedge the
-      // link in `connecting` — it fails the attempt like any other connect
-      // failure (teardown + per-row marker via the catch below).
+      // Scan-tap race. A stopScan failure must not wedge the link in
+      // `connecting` — it fails the attempt like any other connect failure.
       if (_isScanning) {
         await _stopScan();
       }
-      // connect() bypasses the package command queue and defaults to a 60 s
-      // timeout — pass ours explicitly (see [connectTimeout]).
-      await UniversalBle.connect(deviceId, timeout: connectTimeout);
+      await transport.connect();
     } catch (e) {
       // This attempt was abandoned while its future was outstanding (user
       // cancel, superseded by a newer one, or a refusal that already arrived
@@ -1233,30 +1322,56 @@ class BleLinkManager extends ChangeNotifier {
       // the teardown already ran, so fail quietly instead of running a second
       // teardown, recording a duplicate marker, or surfacing an error the
       // user asked for.
-      if (_link.deviceId != deviceId || !_link.isConnecting) {
+      if (_link is! Connecting || _link.deviceId != transport.deviceId) {
         return;
       }
-      // Connection result (success) arrives via _onConnectionChange; on a
-      // failed connect attempt that callback may never fire, so tear the link
-      // down here and let the caller surface the error. Go through the common
-      // [_teardownLink] (not a bare reset): it supersedes any lingering
-      // setup pass and releases the platform GATT link (a timed-out connect
-      // can still complete later — the guard in [_onConnectionChange] handles
-      // that callback). The link is still in `connecting` here, so the
-      // teardown stamps NO reconnect embargo: the attempt never had a live
-      // link to settle — the row must not flash a fake "waiting after
-      // disconnect" hint (a lie for e.g. Chrome's overnight-stale device
-      // handle, which rejects gatt.connect() outright).
-      //
       // Record the failure kind for the Devices tab's per-row marker — the
-      // user-facing channel for this failure (no toast).
-      _connectFailures[deviceId] = e is TimeoutException
+      // user-facing channel for this failure (no toast). Go through the
+      // common teardown (not a bare reset): it supersedes any lingering setup
+      // pass and releases the platform link (a timed-out connect can still
+      // complete later — the guard in [_onConnectionChange] handles that
+      // callback). The link is still in `connecting` here, so the teardown
+      // stamps NO reconnect embargo: the attempt never had a live link to
+      // settle.
+      _connectFailures[transport.deviceId] = e is TimeoutException
           ? ConnectFailureKind.timeout
           : ConnectFailureKind.failed;
-      _teardownLink(deviceId, releaseGatt: true);
+      _teardownLink(transport, releasePlatform: true);
       notifyListeners();
       rethrow;
     }
+
+    // A cancellation/refusal callback may have torn the attempt down during
+    // connect; only start setup for a link still connecting.
+    if (_link is! Connecting || _link.deviceId != transport.deviceId) {
+      return;
+    }
+    unawaited(
+      _runPostConnectSetup(_setupTokenFor(transport.deviceId), transport),
+    );
+  }
+
+  Future<void> connectToDemoDevice() async {
+    final demo = _demo;
+    // The demo row's Connect is always wired (see main), so a null [_demo]
+    // is a test-harness artifact.
+    if (demo == null) {
+      throw StateError('connectToDemoDevice with no simulated link wired');
+    }
+    demo.attachFeedSink(_deliverAdcData);
+    await _beginLink(demo);
+  }
+
+  Future<void> connectToDevice(String deviceId) async {
+    final device = _devices.where((d) => d.deviceId == deviceId).firstOrNull;
+    final transport = BleLinkTransport(
+      deviceId: deviceId,
+      displayName: device?.name ?? deviceId,
+      withFeedPaused: _withFeedPaused,
+      connectTimeout: connectTimeout,
+      disconnectTimeout: disconnectTimeout,
+    );
+    await _beginLink(transport);
   }
 
   /// Web only: connect to a device the user just picked in Chrome's
@@ -1288,26 +1403,19 @@ class BleLinkManager extends ChangeNotifier {
 
   Future<void> disconnectSelectedDevice() async {
     // Allow disconnecting whenever a link attempt is in flight or the GATT
-    // link is up — connecting (cancel a stuck/hung attempt), connected
-    // (cancel a stuck setup), or streaming. The teardown releases the
-    // platform side; a connect that completes after we gave up on it is
-    // caught by the unwanted-link guard in [_onConnectionChange].
-    if (!_link.isConnecting && !_link.isLinkUp) {
-      return;
-    }
-    final String deviceId = _link.deviceId;
-    final String deviceName = _link.displayName;
+    // link is up — connecting (cancel a stuck/hung attempt), setting up, or
+    // streaming. The teardown releases the platform side; a connect that
+    // completes after we gave up on it is caught by the unwanted-link guard
+    // in [_onConnectionChange].
+    final Link link = _link;
+    final LinkTransport? transport = link.transport;
+    if (transport == null) return;
+    if (link is! Connecting && !link.isLinkUp) return;
+    final String deviceId = transport.deviceId;
+    final String deviceName = link.displayName;
     // Supersede any in-flight post-connect setup pass immediately so it stops
     // mutating state while we tear the link down.
     _supersedeSetupPasses();
-
-    // A simulated link has no platform side: teardown stops its feed (via
-    // the backend) and returns it to idle immediately.
-    if (_link.isSimulated) {
-      _teardownLink(_link.deviceId);
-      notifyListeners();
-      return;
-    }
 
     // A live link being torn down on request is proof of life up to this
     // moment — stamp it so the row's "last seen/connected" age counts from
@@ -1318,169 +1426,55 @@ class BleLinkManager extends ChangeNotifier {
     // `disconnecting`, so its `wasActive` check is false. A cancelled
     // connect attempt (connecting, never up) stamps nothing: a refused
     // attempt proves nothing about the device being alive.
-    if (_link.isLinkUp) {
+    if (link.isLinkUp) {
       _stampAlive(deviceId);
     }
-    _link.state = BtLinkState.disconnecting;
+    _link = Closing(transport);
     notifyListeners();
 
-    // No parallel safety Timer: UniversalBle.disconnect() sets up a completer
-    // over its connection-event stream, applies [disconnectTimeout], and — even
-    // when the device is already gone — calls updateConnection(deviceId, false),
-    // which drives our [_onConnectionChange] handler. That handler is the single
-    // place the link is reset to idle, so on a clean disconnect we simply await
-    // here and the callback does the work.
-    //
-    // The returned future is opaque (disconnect() swallows its own errors), so
-    // it can't tell us clean-vs-timeout. After it resolves we do one cheap
-    // reconciliation: if the link is still stuck in `disconnecting` on this
-    // device, the callback never landed within the window — force it idle and
-    // surface the "didn't disconnect cleanly" notice ourselves.
-    await UniversalBle.disconnect(deviceId, timeout: disconnectTimeout);
-    await UniversalBle.getBluetoothAvailabilityState(); // fix for a bug in UBle
-
-    if (_link.deviceId == deviceId &&
-        _link.state == BtLinkState.disconnecting) {
-      debugPrint('Disconnect did not settle for $deviceId; forcing idle');
-      // No GATT release here: the disconnect above already went out to the
-      // platform; a late callback is handled by the unwanted-link guard.
-      _teardownLink(deviceId);
-      _events.emit(BleDisconnectTimeout(deviceName));
+    // The transport's disconnect applies [disconnectTimeout] and (for BLE)
+    // drives our [_onConnectionChange] handler, which is the single place the
+    // link is reset to idle. After it resolves, reconcile: if the link is
+    // still closing on this device, the platform never confirmed — force idle
+    // and surface the notice ourselves. A simulated transport settles
+    // immediately with no platform to confirm.
+    await transport.disconnect();
+    // Workaround for a universal_ble bug: its disconnect path can leave the
+    // availability stream stale without this extra query.
+    if (!transport.isSimulated) {
+      await UniversalBle.getBluetoothAvailabilityState();
+    }
+    if (_link is Closing && _link.deviceId == deviceId) {
+      // A simulated transport settles with no platform to confirm; that is
+      // expected, not a timeout.
+      if (!transport.isSimulated) {
+        debugPrint('Disconnect did not settle for $deviceId; forcing idle');
+      }
+      _teardownLink(transport);
+      if (!transport.isSimulated) {
+        _events.emit(BleDisconnectTimeout(deviceName));
+      }
       notifyListeners();
     }
-  }
-
-  /// Read the Device Information service (0x180A) identity strings once per
-  /// link, storing the result on the link as [DeviceInfo]. Best-effort per
-  /// characteristic: a failed read leaves that field null and never fails
-  /// the connection — the data is informational, not required for streaming.
-  /// The serial number characteristic (0x2A25) is on the Web Bluetooth GATT
-  /// blocklist, so it is skipped (left null) on web rather than read and
-  /// failed there every time.
-  Future<void> _readDeviceInfo(_SetupToken token, String deviceId) async {
-    Future<String?> readString(String chr) async {
-      // A superseded pass stops issuing new reads (one in flight at most).
-      if (!token.isCurrent) return null;
-      try {
-        return utf8.decode(
-          await UniversalBle.read(deviceId, btSvcDeviceInfo, chr),
-        );
-      } catch (e) {
-        debugPrint('DIS read of $chr failed for $deviceId: $e');
-        return null;
-      }
-    }
-
-    final info = DeviceInfo(
-      manufacturer: await readString(btChrDisManufacturer),
-      model: await readString(btChrDisModel),
-      serial: kIsWeb ? null : await readString(btChrDisSerial),
-      hardwareRev: await readString(btChrDisHardwareRev),
-      firmwareRev: await readString(btChrDisFirmwareRev),
-    );
-    if (!token.isCurrent) return;
-    _link.info = info;
-    debugPrint(
-      'Device info for $deviceId: model=${info.model}, '
-      'serial=${info.serial}, hw=${info.hardwareRev}, fw=${info.firmwareRev}, '
-      'mfr=${info.manufacturer}',
-    );
-  }
-
-  /// Read and parse the ADC config characteristic (the boot register
-  /// snapshot: per-channel PGA gains and the sample rate). One retry on
-  /// failure (a transient BLE hiccup is not a broken board); throws when both
-  /// attempts fail — the caller fails the connection: the stream's sample
-  /// timeline and the electrical conversions both derive from this read, so
-  /// a link without it is unusable (same verdict as a missing ADC feed).
-  Future<AdcConfig> _readAdcConfig(String deviceId) async {
-    for (var attempt = 0; attempt < 2; ++attempt) {
-      try {
-        final bytes = await UniversalBle.read(
-          deviceId,
-          btServiceId,
-          btChrAdcConfig,
-        );
-        final config = parseAdcConfig(bytes);
-        if (config != null) return config;
-        debugPrint('ADC config parse failed for $deviceId: ${bytes.length} B');
-      } catch (e) {
-        debugPrint('ADC config read failed for $deviceId (try $attempt): $e');
-      }
-    }
-    throw StateError('ADC config characteristic unreadable on $deviceId');
-  }
-
-  /// Bring up the KVS channel: subscribe to its notifications, read the
-  /// stored device name, and run the connect-time KVS read. Returns the raw
-  /// snapshot; the caller parses it strictly ([DeviceFlash.fromKvs]) and
-  /// owns the failure policy. Every earlier setup/read failure throws — a
-  /// link without a working KVS channel can't save load cell slots or the
-  /// device name. A superseded pass bails silently through the caller's token
-  /// check (returning null).
-  Future<KvsSnapshot?> _setupKvs(_SetupToken token, String deviceId) async {
-    final client = KvsClient(
-      write: (bytes) =>
-          UniversalBle.write(deviceId, btServiceId, btChrKvs, bytes),
-    );
-    await UniversalBle.subscribeNotifications(deviceId, btServiceId, btChrKvs);
-    if (!token.isCurrent) return null;
-    final backend = GattLinkBackend(
-      client: client,
-      withFeedPaused: _withFeedPaused,
-    );
-    _backend = backend;
-    // The stored name lands before the flash read: the rig's provenance
-    // label is read off the link at doc delivery time (see
-    // [connectedDeviceName]).
-    _link.storedName = await backend.readDeviceName();
-    notifyListeners();
-    if (!token.isCurrent) return null;
-    return backend.readKvsSnapshot();
-  }
-
-  /// Subscribe to the ADC feed characteristic of [service]. Returns true
-  /// when the subscription was made; false when no usable ADC feed
-  /// characteristic exists — the caller fails the connection in that case,
-  /// since a link without the feed is unusable.
-  Future<bool> _subscribeToAdcFeed(BleService service) async {
-    final String deviceId = _link.deviceId;
-    if (deviceId.isEmpty) {
-      return false;
-    }
-    for (final characteristic in service.characteristics) {
-      if (characteristic.uuid != btChrAdcFeedId ||
-          !characteristic.properties.contains(CharacteristicProperty.notify)) {
-        continue;
-      }
-      await UniversalBle.subscribeNotifications(
-        deviceId,
-        service.uuid,
-        characteristic.uuid,
-      );
-      // The link's transition to the usable [BtLinkState.streaming] state is
-      // driven by the caller ([_onConnectionChange]) once this returns and the
-      // generation guard confirms the pass wasn't superseded.
-      return true;
-    }
-    return false;
   }
 
   /// ADC-feed path shared by GATT notifications and the demo timer: record
-  /// the notification size, then hand the bytes to [onAdcData]. Notifies
+  /// the notification size, then hand the bytes to [_onAdcData]. Notifies
   /// only when min/max change so the connection-info card can update
   /// without a rebuild on every packet.
   void _deliverAdcData(Uint8List data) {
+    final telemetry = _link.telemetry;
+    if (telemetry == null) return;
     final n = data.length;
-    final prevMin = _link.minAdcPacketBytes;
-    final prevMax = _link.maxAdcPacketBytes;
-    if (prevMin == null || n < prevMin) _link.minAdcPacketBytes = n;
-    if (prevMax == null || n > prevMax) _link.maxAdcPacketBytes = n;
-    if (_link.minAdcPacketBytes != prevMin ||
-        _link.maxAdcPacketBytes != prevMax) {
+    final prevMin = telemetry.minAdcPacketBytes;
+    final prevMax = telemetry.maxAdcPacketBytes;
+    if (prevMin == null || n < prevMin) telemetry.minAdcPacketBytes = n;
+    if (prevMax == null || n > prevMax) telemetry.maxAdcPacketBytes = n;
+    if (telemetry.minAdcPacketBytes != prevMin ||
+        telemetry.maxAdcPacketBytes != prevMax) {
       notifyListeners();
     }
-    onAdcData?.call(data);
+    _onAdcData(data);
   }
 
   void _onValueChange(
@@ -1510,7 +1504,7 @@ class BleLinkManager extends ChangeNotifier {
     if (characteristicId == btChrAdcFeedId) {
       _deliverAdcData(data);
     } else if (characteristicId == btChrKvs) {
-      _backend?.handleKvsFrame(data);
+      _link.backend?.handleKvsFrame(data);
     } else {
       logTrace(
         () =>
@@ -1520,6 +1514,10 @@ class BleLinkManager extends ChangeNotifier {
     }
   }
 
+  static void _ignoreFeedData(Uint8List data) {}
+
+  static void _ignoreSampleRate(int sampleRateHz) {}
+
   /// Tear down this (now stale) generation's BLE link after a hot restart on
   /// web. Invoked by the NEXT generation's `main()` via the hot-restart
   /// cleanup hook (see `hot_restart_cleanup_web.dart`) — browser-side BLE
@@ -1527,20 +1525,20 @@ class BleLinkManager extends ChangeNotifier {
   /// this the old decoder/DataHub keep running and try to render into the
   /// disposed engine view.
   ///
-  /// Order matters: the per-packet data callbacks are nulled FIRST
+  /// Order matters: the per-packet data callbacks are silenced FIRST
   /// (synchronously) so the notifyListeners → scheduleFrame chain stops
-  /// immediately; the async GATT teardown then releases the browser-level
+  /// immediately; the async platform teardown then releases the browser-level
   /// connection so the new generation can find and reconnect the device.
-  /// [onDeviceFlash] is constructor-injected and not nulled here: it fires
+  /// [onDeviceFlash] is constructor-injected and not silenced here: it fires
   /// only from a post-connect setup pass, which [_supersedeSetupPasses]
   /// (below, before the first await) makes bail before reaching it.
   /// Deliberately does NOT call [notifyListeners] — the only listeners are
   /// the disposed widget tree.
   Future<void> shutdownForHotRestart() async {
-    onAdcData = null;
-    onSampleRate = null;
-    _backend?.dispose();
-    _backend = null;
+    _onAdcData = _ignoreFeedData;
+    _onSampleRate = _ignoreSampleRate;
+    final transport = _link.transport;
+    transport?.dispose();
     _stopRssiPolling();
     _freshnessPoke?.cancel();
     _freshnessPoke = null;
@@ -1555,11 +1553,8 @@ class BleLinkManager extends ChangeNotifier {
       if (_isScanning) {
         await UniversalBle.stopScan();
       }
-      if (_link.isLinkUp && !_link.isSimulated) {
-        await UniversalBle.disconnect(
-          _link.deviceId,
-          timeout: disconnectTimeout,
-        );
+      if (transport != null && !transport.isSimulated && _link.isLinkUp) {
+        await transport.disconnect();
       }
     } catch (_) {
       // Swallow: stale-generation teardown must never surface errors.

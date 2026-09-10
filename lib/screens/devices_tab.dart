@@ -59,7 +59,7 @@ class DevicesTab extends StatelessWidget {
     // streaming. The stale group is then ordered by recency (see
     // [compareStaleRowsByRecency]).
     final nowMs = DateTime.now().millisecondsSinceEpoch;
-    final activeId = bt.link.deviceId;
+    final activeId = bt.activeDeviceId;
     final visuals = <String, InactiveRowVisual>{
       for (final d in bt.devices)
         d.deviceId: inactiveRowVisual(
@@ -165,7 +165,7 @@ class DevicesTab extends StatelessWidget {
                   ? _ActiveDeviceRow(
                       name: device.name ?? 'Unknown device',
                       model: bt.connectedDeviceInfo?.model,
-                      linkState: bt.link.state,
+                      linkState: bt.linkState,
                       connectedRssi: bt.connectedRssi,
                       onDisconnect: bt.disconnectSelectedDevice,
                       onGoToSettings: onGoToSettings,
@@ -185,12 +185,12 @@ class DevicesTab extends StatelessWidget {
             // same rows so it reflects connected state inline like a BLE row.
             const SectionHeader('Demo devices'),
             const SizedBox(height: 8),
-            if (bt.link.isSimulated && bt.link.state != BtLinkState.idle)
+            if (bt.isSimulated && bt.linkState != BtLinkState.idle)
               _ActiveDeviceRow(
                 name: 'Demo Device',
                 icon: Icons.science,
                 model: bt.connectedDeviceInfo?.model,
-                linkState: bt.link.state,
+                linkState: bt.linkState,
                 connectedRssi: null,
                 onDisconnect: bt.disconnectSelectedDevice,
                 onGoToSettings: onGoToSettings,

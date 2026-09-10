@@ -1,7 +1,6 @@
 import 'dart:typed_data';
 
 import '../models/device_flash.dart';
-import '../models/device_info.dart';
 
 /// The device-side operations of the active link: the flash document round
 /// trip, the Settings-namespace device name, and KVS frame routing.
@@ -38,39 +37,4 @@ abstract interface class LinkBackend {
 
   /// The link is going away: stop the feed / abort in-flight commands.
   void dispose();
-}
-
-/// What the manager needs to bring up a simulated (non-BLE) link: a
-/// [LinkBackend] plus the pieces a real link collects as it comes up —
-/// identity, the connect-time flash document, PGA gains, and the ADC feed
-/// itself.
-abstract interface class SimulatedLink extends LinkBackend {
-  /// The synthetic device id (never a real BLE id).
-  String get id;
-
-  /// The display name before any stored name lands.
-  String get displayName;
-
-  /// The stored name as the connect should present it (null = unset).
-  String? get storedName;
-
-  /// The simulated identity (real links read theirs from the Device
-  /// Information service in post-connect setup).
-  DeviceInfo? get identity;
-
-  /// The KVS snapshot served at connect time. Reads after a "Save to
-  /// device" round-trip return whatever was last written.
-  KvsSnapshot get kvsSnapshot;
-
-  /// Per-channel PGA gains served alongside the flash doc (the analogue
-  /// of the GAIN-register readback on real links).
-  List<double> get pgaGains;
-
-  /// The simulated feed's sample rate (the analogue of the CLOCK-register
-  /// data rate parsed from the config readback on real links).
-  int get sampleRateHz;
-
-  /// Start the simulated ADC feed, delivered like GATT notifications.
-  /// The matching stop is [LinkBackend.dispose].
-  void startFeed(void Function(Uint8List) onData);
 }
