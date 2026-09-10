@@ -360,10 +360,10 @@ END
       );
     });
 
-    test('an unprovisioned unit: not calibrated', () {
+    test('an unprovisioned unit: raw counts only', () {
       expect(
         boardCalibrationStatusLine(const UnprovisionedBoardCalibration()),
-        'Not calibrated — nominal values in use',
+        'Not provisioned — raw counts only',
       );
     });
 

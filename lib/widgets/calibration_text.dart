@@ -71,7 +71,7 @@ String boardCalibrationStatusLine(BoardCalibration? board) {
     case null:
       return 'Could not read calibration data';
     case UnprovisionedBoardCalibration():
-      return 'Not calibrated — nominal values in use';
+      return 'Not provisioned — raw counts only';
     case InvalidBoardCalibration():
       return 'Calibration data unreadable — contact support';
     case final ProvisionedBoardCalibration b:

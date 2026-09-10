@@ -23,7 +23,7 @@ void main() {
   (BleLinkManager, VoidCallback) wire({required FakeAsync async}) {
     UniversalBle.setInstance(MockBlePlatform.instance);
     MockBlePlatform.instance.resetKnobs();
-    final link = BleLinkManager(events: AppEvents());
+    final link = BleLinkManager(events: AppEvents(), onDeviceFlash: (_) {});
     return (
       link,
       () {

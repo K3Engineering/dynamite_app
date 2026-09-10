@@ -37,9 +37,10 @@ void main() {
     final events = AppEvents();
     final hub = DataHub();
     final decoder = AdcPacketDecoder(hub);
-    final link = BleLinkManager(events: events)
-      ..onAdcData = decoder.onDataPacket
-      ..onDeviceFlash = (flash) => hub.updateBoardCalibration(flash.board);
+    final link = BleLinkManager(
+      events: events,
+      onDeviceFlash: (flash) => hub.updateBoardCalibration(flash.board),
+    )..onAdcData = decoder.onDataPacket;
 
     return (
       hub,

@@ -475,9 +475,9 @@ class BleLinkManager extends ChangeNotifier {
 
   /// The parsed connect-time flash document (board calibration, load cell
   /// slots, raw KVS provenance), delivered once during post-connect setup.
-  /// Wired at app startup; the flash never reaches the app unparsed — see
+  /// Injected at app startup; the flash never reaches the app unparsed ΓÇö see
   /// [_setupKvs].
-  void Function(DeviceFlash flash)? onDeviceFlash;
+  final void Function(DeviceFlash flash) onDeviceFlash;
 
   /// The stream's sample rate (Hz), delivered once per link before the feed
   /// starts (parsed from the ADC config readback on GATT links; the demo
@@ -613,9 +613,12 @@ class BleLinkManager extends ChangeNotifier {
     return ok;
   }
 
-  BleLinkManager({required AppEvents events, SimulatedLink? demo})
-    : _events = events,
-      _demo = demo {
+  BleLinkManager({
+    required AppEvents events,
+    required this.onDeviceFlash,
+    SimulatedLink? demo,
+  }) : _events = events,
+       _demo = demo {
     // Run each device's BLE commands in its own queue. With the default
     // `global` queue, a command stuck against a half-torn-down device (common on
     // web when the user rapidly connects/disconnects) blocks and serially times
@@ -1089,7 +1092,7 @@ class BleLinkManager extends ChangeNotifier {
             snapshot,
             pgaGains: _adcConfig!.pgaGains,
           );
-          onDeviceFlash?.call(flash);
+          onDeviceFlash(flash);
           // Constants in; the ADC feed subscription is the "Starting data
           // stream…" stage.
           _link.state = BtLinkState.subscribing;
@@ -1191,7 +1194,7 @@ class BleLinkManager extends ChangeNotifier {
       pgaGains: demo.pgaGains,
     );
     _link.state = BtLinkState.streaming;
-    onDeviceFlash?.call(flash);
+    onDeviceFlash(flash);
 
     demo.startFeed(_deliverAdcData);
 
@@ -1524,14 +1527,17 @@ class BleLinkManager extends ChangeNotifier {
   /// this the old decoder/DataHub keep running and try to render into the
   /// disposed engine view.
   ///
-  /// Order matters: the data callbacks are nulled FIRST (synchronously) so the
-  /// notifyListeners → scheduleFrame chain stops immediately; the async GATT
-  /// teardown then releases the browser-level connection so the new generation
-  /// can find and reconnect the device. Deliberately does NOT call
-  /// [notifyListeners] — the only listeners are the disposed widget tree.
+  /// Order matters: the per-packet data callbacks are nulled FIRST
+  /// (synchronously) so the notifyListeners → scheduleFrame chain stops
+  /// immediately; the async GATT teardown then releases the browser-level
+  /// connection so the new generation can find and reconnect the device.
+  /// [onDeviceFlash] is constructor-injected and not nulled here: it fires
+  /// only from a post-connect setup pass, which [_supersedeSetupPasses]
+  /// (below, before the first await) makes bail before reaching it.
+  /// Deliberately does NOT call [notifyListeners] — the only listeners are
+  /// the disposed widget tree.
   Future<void> shutdownForHotRestart() async {
     onAdcData = null;
-    onDeviceFlash = null;
     onSampleRate = null;
     _backend?.dispose();
     _backend = null;

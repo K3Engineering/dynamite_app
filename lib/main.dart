@@ -66,14 +66,7 @@ void main() async {
 
   final dataHub = DataHub();
   final decoder = AdcPacketDecoder(dataHub);
-  final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
-    ..onAdcData = decoder.onDataPacket
-    ..onSampleRate = dataHub.setSampleRate;
-  final feedHealth = FeedHealthTracker(
-    hub: dataHub,
-    streamingChanges: linkManager,
-    streamingNow: () => linkManager.isStreaming,
-  );
+  late final BleLinkManager linkManager;
   final rigState = RigState(
     backend: () => linkManager.backend,
     connectedDeviceName: () => linkManager.connectedDeviceName,
@@ -81,14 +74,26 @@ void main() async {
   );
   // The device id/name are read off the link at delivery time (the read
   // only ever runs against the active link).
-  linkManager.onDeviceFlash = (flash) {
-    dataHub.updateBoardCalibration(flash.board);
-    rigState.onFlashRead(
-      linkManager.connectedDeviceId,
-      linkManager.connectedDeviceName,
-      flash,
-    );
-  };
+  linkManager =
+      BleLinkManager(
+          events: appEvents,
+          demo: DemoDevice(),
+          onDeviceFlash: (flash) {
+            dataHub.updateBoardCalibration(flash.board);
+            rigState.onFlashRead(
+              linkManager.connectedDeviceId,
+              linkManager.connectedDeviceName,
+              flash,
+            );
+          },
+        )
+        ..onAdcData = decoder.onDataPacket
+        ..onSampleRate = dataHub.setSampleRate;
+  final feedHealth = FeedHealthTracker(
+    hub: dataHub,
+    streamingChanges: linkManager,
+    streamingNow: () => linkManager.isStreaming,
+  );
   // A link loss (of any flavor — the getter reads the same '' for all of
   // them) ends the rig session: the flash document and any unsaved edits
   // die with the connection. A dirty discard is surfaced.

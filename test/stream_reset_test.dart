@@ -31,9 +31,10 @@ void main() {
     final events = AppEvents();
     final hub = DataHub();
     final decoder = AdcPacketDecoder(hub);
-    final link = BleLinkManager(events: events)
-      ..onAdcData = decoder.onDataPacket
-      ..onDeviceFlash = (flash) => hub.updateBoardCalibration(flash.board);
+    final link = BleLinkManager(
+      events: events,
+      onDeviceFlash: (flash) => hub.updateBoardCalibration(flash.board),
+    )..onAdcData = decoder.onDataPacket;
     final reset = StreamResetCoordinator(
       hub: hub,
       streamingChanges: link,
@@ -99,10 +100,7 @@ void main() {
 
       // Stand in for the connect-time calibration read landing on the hub.
       hub.updateBoardCalibration(
-        boardFromDoc(
-          demoBoardCalibrationDoc,
-          pgaGains: const [32, 32, 32, 32],
-        ),
+        boardFromDoc(demoBoardCalibrationDoc, pgaGains: const [32, 32, 32, 32]),
       );
       expect(hub.boardCalibration, isA<ProvisionedBoardCalibration>());
 

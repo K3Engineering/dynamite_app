@@ -81,7 +81,7 @@ void main() {
       // past the mock's + the command queue's timeouts at the end.
       await tester.pumpWidget(
         ChangeNotifierProvider.value(
-          value: BleLinkManager(events: AppEvents())..onDeviceFlash = (_) {},
+          value: BleLinkManager(events: AppEvents(), onDeviceFlash: (_) {}),
           child: host(bar(BtLinkState.streaming)),
         ),
       );

@@ -587,9 +587,10 @@ class LiveStats extends StatelessWidget {
                   ),
                 ),
               // The raw-only verdict: converted units show '—' above; say
-              // why, once, in the same style as the load-cell hint.
+              // why, once, in the same style as the load-cell hint. A null
+              // board never occurs while streaming, so `_` covers it and the
+              // valid board alike.
               if (switch (hub.boardCalibration) {
-                    null => 'board data not read',
                     UnprovisionedBoardCalibration() =>
                       'no board data — unit not provisioned',
                     InvalidBoardCalibration() => 'board data invalid',

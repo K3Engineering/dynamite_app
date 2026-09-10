@@ -39,19 +39,27 @@ void main() {
   Future<BleLinkManager> pump(WidgetTester tester) async {
     final prefs = await SharedPreferences.getInstance();
     final events = AppEvents();
-    final link = BleLinkManager(events: events, demo: DemoDevice());
     final hub = DataHub();
+    late final BleLinkManager link;
     final rig = RigState(
       backend: () => link.backend,
       connectedDeviceName: () => link.connectedDeviceName,
       prefs: prefs,
     );
     // Wire the link's flash read to the hub and rig, as main() does.
-    link.onDeviceFlash = (flash) {
-      hub.updateBoardCalibration(flash.board);
-      rig.onFlashRead(link.connectedDeviceId, link.connectedDeviceName, flash);
-      hub.updateLoadCells(rig.channelCells);
-    };
+    link = BleLinkManager(
+      events: events,
+      demo: DemoDevice(),
+      onDeviceFlash: (flash) {
+        hub.updateBoardCalibration(flash.board);
+        rig.onFlashRead(
+          link.connectedDeviceId,
+          link.connectedDeviceName,
+          flash,
+        );
+        hub.updateLoadCells(rig.channelCells);
+      },
+    );
     await tester.pumpWidget(
       MultiProvider(
         providers: [

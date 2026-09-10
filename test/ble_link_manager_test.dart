@@ -56,17 +56,21 @@ void main() {
   });
 
   /// Builds a link manager with an [AppEvents] collector and the flash
-  /// callback wired (the app always wires it; an unwired
-  /// [BleLinkManager.onDeviceFlash] short-circuits nothing — the parse runs
-  /// in post-connect setup either way, but wiring keeps the timing honest).
-  /// Tests that observe the feed set [BleLinkManager.onAdcData] directly.
-  (BleLinkManager, List<AppEvent>) wire() {
+  /// callback wired (the app always wires it; tests that observe the feed set
+  /// [BleLinkManager.onAdcData] directly). [onDeviceFlash] defaults to a
+  /// no-op; tests that inspect the delivered flash pass their own.
+  (BleLinkManager, List<AppEvent>) wire({
+    void Function(DeviceFlash flash)? onDeviceFlash,
+  }) {
     final events = AppEvents();
     final seen = <AppEvent>[];
     final sub = events.stream.listen(seen.add);
     addTearDown(() => unawaited(sub.cancel()));
-    final link = BleLinkManager(events: events, demo: DemoDevice())
-      ..onDeviceFlash = (_) {};
+    final link = BleLinkManager(
+      events: events,
+      demo: DemoDevice(),
+      onDeviceFlash: onDeviceFlash ?? (_) {},
+    );
     return (link, seen);
   }
 
@@ -825,9 +829,10 @@ void main() {
     fakeAsync((async) {
       final mock = MockBlePlatform.instance;
       mock.seedKvs(kvsFromDoc(''));
-      final (link, seen) = wire();
       KvsSnapshot? servedSnapshot;
-      link.onDeviceFlash = (flash) => servedSnapshot = flash.kvs;
+      final (link, seen) = wire(
+        onDeviceFlash: (flash) => servedSnapshot = flash.kvs,
+      );
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -849,9 +854,8 @@ void main() {
       MockBlePlatform.instance.seedKvs(
         kvsFromDoc('adc_fsr=1.2\nexc=soon\nafe_gain=101\ncharging=enabled'),
       );
-      final (link, seen) = wire();
       DeviceFlash? delivered;
-      link.onDeviceFlash = (flash) => delivered = flash;
+      final (link, seen) = wire(onDeviceFlash: (flash) => delivered = flash);
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -1010,10 +1014,9 @@ void main() {
 
   test('demo device serves the fixture calibration document', () {
     fakeAsync((async) {
-      final (link, seen) = wire();
-      settleStartup(async);
       DeviceFlash? served;
-      link.onDeviceFlash = (flash) => served = flash;
+      final (link, seen) = wire(onDeviceFlash: (flash) => served = flash);
+      settleStartup(async);
 
       unawaited(link.connectToDemoDevice());
       final fixture = flashFromDoc(
