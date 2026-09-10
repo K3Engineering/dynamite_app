@@ -133,9 +133,9 @@ final Set<String> calGroupKeys = Set.unmodifiable({
 /// fails the connection upstream). Null when the flash holds NONE of the
 /// constant keys: an unprovisioned board, a legal state (new or
 /// factory-reset units stream raw counts only). Throws [FormatException] on
-/// a partial or malformed set — the app never guesses a partial chain, and
-/// a bad provisioning fails the connection rather than running as a
-/// degraded instrument.
+/// a partial or malformed set — the app never guesses a partial chain, and a
+/// bad provisioning parks the link in a faulted state rather than running as
+/// a degraded instrument.
 BoardNominals? resolveBoardConstants(
   Map<String, String> kv, {
   required List<double> pgaGains,
@@ -567,12 +567,13 @@ class NominalChannelBoard extends ChannelBoardCalibration {
 ///
 /// The group's PRESENCE marker is [date] (`cal.date`): a group with no date
 /// is no group. A write of the group sets its data keys first and the date
-/// last — a crash mid-write leaves data keys without a date, which the
-/// caller's policy classifies (the User folder, a future user
-/// recalibration: an abandoned write, ignored; the Factory folder can have
-/// no write in flight: corrupt flash, [FormatException] from
-/// `BoardCalibration.fromKv`). `cal.date` is ALWAYS written by the tool
-/// producing the group; a missing date never means "the date is unknown".
+/// last — a crash mid-write leaves data keys without a date. [parseCalGroup]
+/// reads that as "no group" (it only sees the marker); the caller decides
+/// what the residue means. [BoardCalibration.fromKv] treats it as corrupt
+/// flash ([FormatException]) in both folders: the date is ALWAYS written by
+/// the tool producing the group, so a missing date never means "the date is
+/// unknown", and silently ignoring it would hide an interrupted recalibration
+/// from the user who is expecting the new calibration to be in effect.
 class CalGroup {
   CalGroup({
     required this.date,
@@ -692,9 +693,9 @@ CalGroup? parseCalGroup(Map<String, String> kv) {
 ///   there is nothing per-channel to know.
 ///
 /// A middle state is NOT representable: partial or malformed board data
-/// throws at [fromKv] and the connect-time read fails the connection — a
+/// throws at [fromKv] and parks the link in a faulted state — a
 /// misprovisioned board is a provisioning errand, not a degraded
-/// instrument. A failed READ (transport) likewise fails the connection
+/// instrument. A failed READ (transport) still fails the connection
 /// upstream, so no board object ever represents "couldn't read".
 sealed class BoardCalibration {
   const BoardCalibration._();
@@ -708,9 +709,10 @@ sealed class BoardCalibration {
   ///
   /// Throws [FormatException] on present-but-invalid board data: partial
   /// or malformed constants, orphaned calibration keys (channel entries or
-  /// `cal.*` metadata without the constant chain or without `cal.date` —
-  /// the Factory folder can have no write in flight, so partial data is
-  /// corrupt flash, not residue), or a calibration group [parseCalGroup]
+  /// `cal.*` metadata without the constant chain or without `cal.date`, or
+  /// calibration keys with no constant chain at all — the tooling writes the
+  /// date last, so residue without it is an interrupted or corrupt write,
+  /// not something to ignore), or a calibration group [parseCalGroup]
   /// rejects. Absent data is legal: no constant keys at all →
   /// [UnprovisionedBoardCalibration]; constants without a cal group →
   /// nominal channels. Unknown keys are ignored.
@@ -718,33 +720,26 @@ sealed class BoardCalibration {
     Map<String, String> kv, {
     required List<double> pgaGains,
   }) {
-    bool isCalKey(String key) => calGroupKeys.contains(key);
-
     final nominals = resolveBoardConstants(kv, pgaGains: pgaGains);
     if (nominals == null) {
       // Unprovisioned means no owned calibration data, not merely missing
       // constants: calibration keys without the constant chain are a
       // fragment of a bad provisioning. Unknown keys are not board data.
-      for (final key in kv.keys) {
-        if (isCalKey(key)) {
-          throw FormatException(
-            'board data: "$key" without the constant chain',
-          );
-        }
+      if (kv.keys.any(calGroupKeys.contains)) {
+        throw const FormatException(
+          'board data: calibration keys without the constant chain '
+          '(run provision first)',
+        );
       }
       return const UnprovisionedBoardCalibration();
     }
 
     final group = parseCalGroup(kv);
-    if (group == null) {
+    if (group == null && kv.keys.any(calGroupKeys.contains)) {
       // No date marker: every calibration key must be absent outright.
-      for (final key in kv.keys) {
-        if (isCalKey(key)) {
-          throw FormatException(
-            'board calibration: "$key" without the cal.date marker',
-          );
-        }
-      }
+      throw const FormatException(
+        'board calibration: calibration keys without the cal.date marker',
+      );
     }
     return ProvisionedBoardCalibration(nominals: nominals, calGroup: group);
   }

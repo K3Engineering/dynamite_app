@@ -95,10 +95,6 @@ class DeviceLink {
   /// undecodable; the measured-traffic truth is deriveFeedHealth's.
   bool get isStreaming => state == BtLinkState.streaming;
 
-  /// Why the link parked in [BtLinkState.faulted] (the strict-parse failure
-  /// message), for the fault panel. Null in every other state.
-  String? faultDetail;
-
   /// Reset back to the idle sentinel (used on disconnect).
   void _reset() {
     deviceId = '';
@@ -106,7 +102,6 @@ class DeviceLink {
     state = BtLinkState.idle;
     isSimulated = false;
     storedName = null;
-    faultDetail = null;
     rssi = null;
     info = null;
     mtu = null;
@@ -309,6 +304,21 @@ class BleLinkManager extends ChangeNotifier {
   String? lastDisconnectErrorFor(String deviceId) =>
       _lastDisconnectErrors[deviceId];
 
+  /// Per-device detail of the most recent post-connect setup failure, keyed
+  /// by device id. Covers both flavors of a failed setup: a transport/
+  /// protocol failure (the link is torn down) and a strict-parse failure
+  /// (the link parks in [BtLinkState.faulted]). Set in
+  /// [_runPostConnectSetup]'s catch and its faulted branch; cleared wholesale
+  /// when any new connect attempt begins (see [_beginConnect]). The Devices
+  /// tab shows it as the row hint, where it persists (unlike the toast) so it
+  /// can be read or screenshotted; [faultDetail] surfaces the same string on
+  /// the live fault panel while the link is parked.
+  final Map<String, String> _setupFailures = {};
+
+  /// The setup failure detail for [deviceId], or null if none (or it was
+  /// cleared by a new attempt).
+  String? setupFailureFor(String deviceId) => _setupFailures[deviceId];
+
   /// Last "proof of life" per device id (ms since epoch): the most recent
   /// moment a GATT link to this device was provably up (see [_stampAlive]).
   /// Never stamped for failed/cancelled connects (a refused attempt proves
@@ -361,7 +371,9 @@ class BleLinkManager extends ChangeNotifier {
 
   /// The strict-parse failure message when the link is [BtLinkState.faulted],
   /// null otherwise. Names the offending flash key for support.
-  String? get faultDetail => _link.faultDetail;
+  String? get faultDetail => _link.state == BtLinkState.faulted
+      ? _setupFailures[_link.deviceId]
+      : null;
 
   /// A link is "busy" whenever it is mid-transition or active; device-row
   /// Connect buttons stay disabled until it returns to idle. This is what
@@ -1079,7 +1091,7 @@ class BleLinkManager extends ChangeNotifier {
           if (!token.isCurrent) return;
           onSampleRate?.call(_adcConfig!.sampleRateHz);
           final snapshot = await _setupKvs(token, deviceId);
-          if (!token.isCurrent) return;
+          if (snapshot == null || !token.isCurrent) return;
           // The strict parse is the failure-policy boundary: invalid known
           // flash content parks the link in [faulted] — the ADC feed is never
           // subscribed, no measurement state is built, but the link stays up
@@ -1088,12 +1100,12 @@ class BleLinkManager extends ChangeNotifier {
           final DeviceFlash flash;
           try {
             flash = DeviceFlash.fromKvs(
-              snapshot!,
+              snapshot,
               pgaGains: _adcConfig!.pgaGains,
             );
           } on FormatException catch (e) {
             _link.state = BtLinkState.faulted;
-            _link.faultDetail = e.message;
+            _setupFailures[deviceId] = e.message;
             _stampAlive(deviceId);
             notifyListeners();
             return;
@@ -1136,7 +1148,10 @@ class BleLinkManager extends ChangeNotifier {
       // The GATT link came up (connect succeeded) — release it so the
       // platform can't hold a connection the app considers failed.
       _teardownLink(deviceId, releaseGatt: true);
-      _events.emit(BleConnectionFailed(name, '$e'));
+      // Exact reason for the Devices-tab row; the user-facing toast stays
+      // generic (see AppShellState).
+      _setupFailures[deviceId] = '$e';
+      _events.emit(BleConnectionFailed(name));
       notifyListeners();
     }
   }
@@ -1163,6 +1178,7 @@ class BleLinkManager extends ChangeNotifier {
     // A new attempt supersedes every recorded failure marker.
     _connectFailures.clear();
     _lastDisconnectErrors.clear();
+    _setupFailures.clear();
     _supersedeSetupPasses();
     return true;
   }
@@ -1188,17 +1204,13 @@ class BleLinkManager extends ChangeNotifier {
 
     // The demo device is factory-calibrated: parse its KVS snapshot through
     // the same path a real device's calibration read would take. The store is
-    // mutable so "Save to device" round-trips.
-    final DeviceFlash flash;
-    try {
-      flash = DeviceFlash.fromKvs(demo.kvsSnapshot, pgaGains: demo.pgaGains);
-    } on FormatException catch (e) {
-      _link.state = BtLinkState.faulted;
-      _link.faultDetail = e.message;
-      notifyListeners();
-      if (_isScanning) await _stopScan();
-      return;
-    }
+    // mutable so "Save to device" round-trips. A malformed fixture is a
+    // programmer error (the demo is the happy path) and throws here — the
+    // tests that connect the demo are the guard.
+    final flash = DeviceFlash.fromKvs(
+      demo.kvsSnapshot,
+      pgaGains: demo.pgaGains,
+    );
     _link.state = BtLinkState.streaming;
     onDeviceFlash?.call(flash);
 

@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show debugPrint;
+
 import 'device_profile.dart';
 
 // ---------------------------------------------------------------------------
@@ -130,7 +132,11 @@ class RigSlots {
                 sensitivityMvV: sens,
               ),
             ),
-          _ => null,
+          // Absent (or name-only) slot: no owned value to complain about.
+          (null, null) => null,
+          // Present but unrepairable: read as empty, but name it so a dev
+          // can see the discarded value (the raw store keeps it visible too).
+          _ => _rejectedSlot(i, kv),
         },
     ]);
   }
@@ -155,6 +161,17 @@ class RigSlots {
         },
     };
   }
+}
+
+/// A slot whose `cap`/`sens` keys are present but unparseable (or not both
+/// positive finite): read as empty under the lenient User policy, with a
+/// developer-visible trace. See [RigSlots.fromKv].
+RigSlot? _rejectedSlot(int i, Map<String, String> kv) {
+  debugPrint(
+    'RigSlots: ignoring slot $i with malformed cap/sens '
+    '(cap=${kv['lc$i.cap']}, sens=${kv['lc$i.sens']})',
+  );
+  return null;
 }
 
 /// A load cell as the app knows it: capacity plus the exact sensitivity

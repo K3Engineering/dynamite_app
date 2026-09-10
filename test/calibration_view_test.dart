@@ -140,10 +140,10 @@ void main() {
     }
   });
 
-  testWidgets('no flash doc: placeholder card, no values', (tester) async {
+  testWidgets('no flash doc: disconnected card, no values', (tester) async {
     await pump(tester, withFlash: false);
 
-    expect(find.text('Could not read calibration data'), findsOneWidget);
+    expect(find.text('Device disconnected'), findsOneWidget);
     expect(find.textContaining('nominal values in use'), findsNothing);
     expect(find.text('CH 1'), findsNothing);
   });
@@ -257,12 +257,12 @@ END
     expect(find.text('Share'), findsOneWidget);
   });
 
-  testWidgets('page without a flash doc: placeholder, no export buttons', (
+  testWidgets('page without a flash doc: disconnected card, no export buttons', (
     tester,
   ) async {
     await pumpScreen(tester, withFlash: false);
 
-    expect(find.text('Could not read calibration data'), findsOneWidget);
+    expect(find.text('Device disconnected'), findsOneWidget);
     // Nothing to export without a document.
     expect(find.byType(OutlinedButton), findsNothing);
   });

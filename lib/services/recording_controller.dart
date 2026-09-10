@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'app_events.dart';
 import 'data_hub.dart';
 import 'live_session_writer.dart';
-import 'session_persistence.dart';
+import 'session_store.dart';
 import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
@@ -66,8 +66,9 @@ enum _RecordingState { idle, recording, stopping }
 /// data plane — starting a session snapshots tare, calibration and sample
 /// rate off it, more than the [FeedHealthSource] read port covers), stream
 /// liveness arrives through the [streamingChanges]/[streamingNow]
-/// port, and device metadata, packet-boundary resets and persistence are
-/// injected ([deviceMetadataSnapshot], [onSessionBoundary], [persistence]).
+/// port, and device metadata and packet-boundary resets are injected
+/// ([deviceMetadataSnapshot], [onSessionBoundary]). Persistence is the
+/// app-wide [SessionStore] singleton.
 /// The link-transition resets this controller used to own (hub clear on
 /// stream entry, calibration forget on drop) live in
 /// `StreamResetCoordinator`.
@@ -102,8 +103,6 @@ class RecordingController extends ChangeNotifier {
     /// boundary (the decoder's `resetContinuity`, wired in main).
     required void Function() onSessionBoundary,
 
-    /// The session persistence port (see [SessionPersistence]).
-    required SessionPersistence persistence,
     required AppEvents events,
   }) : _dataHub = dataHub,
        _streamingChanges = streamingChanges,
@@ -111,7 +110,6 @@ class RecordingController extends ChangeNotifier {
        _deviceMetadataSnapshot = deviceMetadataSnapshot,
        _deviceKvsSnapshot = deviceKvsSnapshot,
        _onSessionBoundary = onSessionBoundary,
-       _persistence = persistence,
        _events = events {
     _dataHub.addEventListener(_onHubEvent);
     _streamingChanges.addListener(_onStreamingChanged);
@@ -123,7 +121,6 @@ class RecordingController extends ChangeNotifier {
   final Map<String, Object?> Function() _deviceMetadataSnapshot;
   final KvsSnapshot? Function() _deviceKvsSnapshot;
   final void Function() _onSessionBoundary;
-  final SessionPersistence _persistence;
   final AppEvents _events;
 
   _RecordingState _state = _RecordingState.idle;
@@ -147,17 +144,16 @@ class RecordingController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Start a new recording session: construct the writer (via the
-  /// persistence port) and latch it here. Synchronous end to end — the
-  /// storage layer does no store work until the first packet creates the
-  /// session directory — so there is no async window in which the stream
-  /// could change out from under the snapshots the writer is built on, and
-  /// no discarded artifact to clean up if it did.
+  /// Start a new recording session: construct the writer and latch it here.
+  /// Synchronous end to end — the storage layer does no store work until the
+  /// first packet creates the session directory — so there is no async window
+  /// in which the stream could change out from under the snapshots the writer
+  /// is built on, and no discarded artifact to clean up if it did.
   ///
   /// [name] is the session's display name; null auto-names it from the wall
   /// clock (e.g. `2026-07-29 14:05:32` — see [autoSessionName]).
   /// [channelLabels] and [visibleChannels] are persisted for display only
-  /// (see [SessionPersistence.startSession]). [displayUnit] is frozen onto
+  /// (see [SessionStore.startSession]). [displayUnit] is frozen onto
   /// the session row as the CSV export's default converted unit. The connected
   /// device's identity is frozen alongside (the CSV `device` block).
   ///
@@ -211,7 +207,7 @@ class RecordingController extends ChangeNotifier {
       deviceKvs: _deviceKvsSnapshot(),
       recordedAt: iso8601WithOffset(DateTime.now()),
     );
-    _sessionWriter = _persistence.startSession(
+    _sessionWriter = SessionStore.instance.startSession(
       header,
       sourceRingCapacity: DataHub.maxDataSz,
       // A storage failure latched mid-recording stops the session the
@@ -278,7 +274,7 @@ class RecordingController extends ChangeNotifier {
     // drop, writer error), where a throw would be an unhandled async error.
     Object? error;
     try {
-      error = await _persistence.finalizeSession(writer: writer);
+      await SessionStore.instance.finalizeSession(writer: writer);
     } catch (e) {
       error = e;
     }

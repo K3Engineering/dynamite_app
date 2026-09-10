@@ -1,4 +1,5 @@
 import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'helpers/flash_docs.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,6 +25,13 @@ const testConstantKeys =
 const testGains = <double>[1, 1, 1, 1];
 
 void main() {
+  test('the demo fixture parses (the demo device is the happy path)', () {
+    expect(
+      () => DeviceFlash.fromKvs(demoKvs, pgaGains: testGains),
+      returnsNormally,
+    );
+  });
+
   group('ladderSetpointsMvV', () {
     test('nominal ladder produces symmetric datasheet setpoints', () {
       final sp = ladderSetpointsMvV(nominalLadder);

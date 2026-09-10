@@ -113,7 +113,8 @@ class DataHub extends ChangeNotifier
   /// defaulting to nominal values would let the UI present numbers no
   /// hardware ever produced. An [UnprovisionedBoardCalibration] here (and
   /// null alike) means every unit but raw reports unavailable; a malformed
-  /// document never arrives (the parse throws and the connection fails).
+  /// document never arrives — the parse parks the link in a faulted state
+  /// and no flash callback fires.
   ///
   /// Identity-free: it describes the samples the hub holds, not the attached
   /// device (the settings page's calibration row shows the flash-document
@@ -444,18 +445,27 @@ class DataHub extends ChangeNotifier
     notifyListeners();
   }
 
-  /// Content equality for cache invalidation: conversion inputs only.
-  /// factoryDate and the other cal metadata are display-only.
-  static bool _sameBoardCalibration(BoardCalibration a, BoardCalibration b) {
-    if (a is UnprovisionedBoardCalibration ||
-        b is UnprovisionedBoardCalibration) {
-      return a.runtimeType == b.runtimeType;
-    }
-    final pa = a as ProvisionedBoardCalibration;
-    final pb = b as ProvisionedBoardCalibration;
-    for (int i = 0; i < pa.channels.length; ++i) {
-      final x = pa.channels[i];
-      final y = pb.channels[i];
+  /// Content equality for cache invalidation: conversion inputs only
+  /// (cal metadata and the raw KVS provenance are display-only).
+  static bool _sameBoardCalibration(BoardCalibration a, BoardCalibration b) =>
+      switch ((a, b)) {
+        (UnprovisionedBoardCalibration(), UnprovisionedBoardCalibration()) =>
+          true,
+        (
+          final ProvisionedBoardCalibration pa,
+          final ProvisionedBoardCalibration pb,
+        ) =>
+          _sameChannels(pa.channels, pb.channels),
+        _ => false,
+      };
+
+  static bool _sameChannels(
+    List<ChannelBoardCalibration> a,
+    List<ChannelBoardCalibration> b,
+  ) {
+    for (int i = 0; i < a.length; ++i) {
+      final x = a[i];
+      final y = b[i];
       if (x case final CalibratedChannelBoard xd) {
         if (y is! CalibratedChannelBoard) return false;
         if (!_sameList(xd.resistors, y.resistors)) return false;

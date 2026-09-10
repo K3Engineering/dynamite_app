@@ -14,7 +14,6 @@ import 'package:dynamite_app/services/session_files_io.dart';
 import 'package:dynamite_app/services/session_queries.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/session_metadata.dart';
-import 'package:dynamite_app/services/session_storage.dart';
 import 'package:dynamite_app/services/session_store.dart';
 import 'package:dynamite_app/services/session_store_backend.dart';
 
@@ -59,7 +58,6 @@ void main() {
           toSessionDeviceMetadata(name: null, info: null),
       deviceKvsSnapshot: () => deviceKvs,
       onSessionBoundary: decoder.resetContinuity,
-      persistence: const StaticSessionPersistence(),
       events: events,
     );
     // In production a packet counter anchor precedes any samples (packets
@@ -284,7 +282,6 @@ void main() {
             toSessionDeviceMetadata(name: null, info: null),
         deviceKvsSnapshot: () => null,
         onSessionBoundary: decoder.resetContinuity,
-        persistence: const StaticSessionPersistence(),
         events: events,
       );
       hub.notePacketCounter(0);

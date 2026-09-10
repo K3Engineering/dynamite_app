@@ -63,8 +63,8 @@ class AppShellState extends State<AppShell> {
     switch (event) {
       case BleDisconnectTimeout(:final deviceName):
         showErrorSnackBar(messenger, '$deviceName didn\'t disconnect cleanly.');
-      case BleConnectionFailed(:final deviceName, :final detail):
-        showErrorSnackBar(messenger, "Couldn't set up $deviceName: $detail");
+      case BleConnectionFailed(:final deviceName):
+        showErrorSnackBar(messenger, "Couldn't set up $deviceName. Try again.");
       case BleConnectionLost(:final deviceName):
         showErrorSnackBar(messenger, 'Connection to $deviceName lost.');
       case RecordingStorageError(:final error):

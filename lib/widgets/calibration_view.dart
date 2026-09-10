@@ -10,8 +10,9 @@ import 'calibration_text.dart';
 class CalibrationView extends StatelessWidget {
   const CalibrationView({super.key, required this.board});
 
-  /// The board calibration to render; null shows the unreadable-data
-  /// placeholder.
+  /// The board calibration to render; null when the document is absent —
+  /// reachable only if the link drops while this page is open (the Settings
+  /// row that opens it is tappable only with a document in hand).
   final BoardCalibration? board;
 
   @override
@@ -24,10 +25,9 @@ class CalibrationView extends StatelessWidget {
               Icons.phonelink_erase,
               color: Theme.of(context).colorScheme.outline,
             ),
-            title: const Text('Could not read calibration data'),
+            title: const Text('Device disconnected'),
             subtitle: const Text(
-              'Calibration is read from the device at connect time — '
-              'reconnect to retry.',
+              'Calibration is read from the device while connected.',
             ),
           ),
         );

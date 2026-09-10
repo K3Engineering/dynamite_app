@@ -813,6 +813,10 @@ void main() {
       // a missing ADC feed).
       expect(link.isStreaming, isFalse);
       expect(seen, [isA<BleConnectionFailed>()]);
+      // The exact reason is recorded for the Devices-tab row (the toast stays
+      // generic); a torn-down setup is a disconnect, so no faultDetail.
+      expect(link.setupFailureFor(deviceId), isNotNull);
+      expect(link.faultDetail, isNull);
 
       teardownLink(async, link);
     });
@@ -861,6 +865,9 @@ void main() {
       expect(link.isStreaming, isFalse);
       expect(link.linkState, BtLinkState.faulted);
       expect(link.faultDetail, contains('bad exc'));
+      // The same detail backs the Devices-tab row hint, which must outlive
+      // the fault panel (it survives the teardown below).
+      expect(link.setupFailureFor(deviceId), contains('bad exc'));
       expect(MockBlePlatform.instance.gattOpLog, isNot(contains('adc:sub')));
       expect(measurementDelivered, isFalse);
       expect(seen.whereType<BleConnectionFailed>(), isEmpty);

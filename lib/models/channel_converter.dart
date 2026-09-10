@@ -1,3 +1,4 @@
+import 'board_calibration.dart';
 import 'channel_calibration.dart';
 import 'display_unit.dart';
 
@@ -27,6 +28,18 @@ class ChannelConverter {
   /// reading), so "untared" is null, never 0.
   final double? tare;
 
+  /// The board map and the unit's per-mV/V scale, or null when the unit is
+  /// unavailable on the channel. The one place the two are resolved
+  /// together; every converted path starts here and raw paths skip it.
+  ({ChannelBoardCalibration board, double scale})? _boardAndScale(
+    DisplayUnit unit,
+  ) {
+    final board = calibration.board;
+    if (board == null) return null;
+    final scale = _scalePerMvV(unit);
+    return scale == null ? null : (board: board, scale: scale);
+  }
+
   /// The multiplier applied to net mV/V for [unit]: force units fold in
   /// the cell's kgf-per-mV/V, mV folds in the excitation anchor, mV/V is
   /// unity. Null when the unit is unavailable on the channel: any converted
@@ -51,13 +64,13 @@ class ChannelConverter {
   /// any converted unit with no board data.
   double Function(double raw)? netMap(DisplayUnit unit) {
     if (unit == DisplayUnit.raw) return (raw) => raw - (tare ?? 0);
-    final board = calibration.board;
-    final scale = _scalePerMvV(unit);
-    if (board == null || scale == null) return null;
+    final resolved = _boardAndScale(unit);
+    if (resolved == null) return null;
+    final board = resolved.board;
     // The tare-side map value is loop-invariant; the closure runs per
     // sample on the hot paths (graph reduction, stats).
     final tareMvV = tare == null ? 0.0 : board.mvVFromRaw(tare!);
-    return (raw) => (board.mvVFromRaw(raw) - tareMvV) * scale;
+    return (raw) => (board.mvVFromRaw(raw) - tareMvV) * resolved.scale;
   }
 
   /// The absolute-raw -> display-unit map with no tare netting: the GROSS
@@ -66,10 +79,9 @@ class ChannelConverter {
   /// exactly when [netMap] is.
   double Function(double raw)? grossMap(DisplayUnit unit) {
     if (unit == DisplayUnit.raw) return (raw) => raw;
-    final board = calibration.board;
-    final scale = _scalePerMvV(unit);
-    if (board == null || scale == null) return null;
-    return (raw) => board.mvVFromRaw(raw) * scale;
+    final resolved = _boardAndScale(unit);
+    if (resolved == null) return null;
+    return (raw) => resolved.board.mvVFromRaw(raw) * resolved.scale;
   }
 
   /// The raw-diff -> display-unit map (no tare: offsets cancel in a
@@ -89,10 +101,9 @@ class ChannelConverter {
   /// [netMap] is.
   double? countQuantum(DisplayUnit unit) {
     if (unit == DisplayUnit.raw) return 1.0;
-    final board = calibration.board;
-    final scale = _scalePerMvV(unit);
-    if (board == null || scale == null) return null;
-    return scale / board.sensitivityCountsPerMvV;
+    final resolved = _boardAndScale(unit);
+    if (resolved == null) return null;
+    return resolved.scale / resolved.board.sensitivityCountsPerMvV;
   }
 
   /// One-shot [netMap] call.
@@ -117,9 +128,8 @@ class ChannelConverter {
   /// is.
   double? rawAtGross(DisplayUnit unit, double value) {
     if (unit == DisplayUnit.raw) return value;
-    final board = calibration.board;
-    final scale = _scalePerMvV(unit);
-    if (board == null || scale == null) return null;
-    return board.rawFromMvV(value / scale);
+    final resolved = _boardAndScale(unit);
+    if (resolved == null) return null;
+    return resolved.board.rawFromMvV(value / resolved.scale);
   }
 }

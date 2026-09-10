@@ -214,20 +214,30 @@ class _SettingsTabState extends State<SettingsTab> {
                 RigSlotsSection(rig: context.read<RigState>()),
                 const SizedBox(height: 16),
 
+                // Tappable only when there is a document to open. In the
+                // faulted state there is none: the row itself is the complete
+                // fault display (the calibration page has nothing to show),
+                // and opening it would need a second reader of the fault.
                 Card(
                   child: ListTile(
                     title: const Text('Board calibration'),
                     subtitle: Text(
                       faultDetail != null
                           ? 'Calibration data unreadable — contact support'
+                                '\n$faultDetail'
                           : boardCalibrationStatusLine(boardCal),
                     ),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.of(context).push<void>(
-                      MaterialPageRoute<void>(
-                        builder: (_) => CalibrationScreen(deviceId: deviceId),
-                      ),
-                    ),
+                    trailing: boardCal == null
+                        ? null
+                        : const Icon(Icons.chevron_right),
+                    onTap: boardCal == null
+                        ? null
+                        : () => Navigator.of(context).push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  CalibrationScreen(deviceId: deviceId),
+                            ),
+                          ),
                   ),
                 ),
                 const SizedBox(height: 16),

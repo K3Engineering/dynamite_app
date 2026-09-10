@@ -18,6 +18,22 @@ void main() {
       expect(encodeKvsIndex(kvsFolderFactory, 26), 'IDXF1a');
     });
 
+    test('SET/DEL refuse the Factory partition (read-only to the app)', () {
+      // Board calibration belongs to factory tooling; the app reads it but
+      // must never write it — enforced at the frame-build choke point.
+      expect(
+        () => encodeKvsSet(kvsFolderFactory, 'ch0.raw', '1'),
+        throwsArgumentError,
+      );
+      expect(
+        () => encodeKvsDelete(kvsFolderFactory, 'ch0.raw'),
+        throwsArgumentError,
+      );
+      // Reads and the writable folders are unaffected.
+      expect(encodeKvsGet(kvsFolderFactory, 'ch0.raw'), isNotEmpty);
+      expect(encodeKvsSet(kvsFolderSettings, 'device_name', 'x'), isNotEmpty);
+    });
+
     test('rejects keys/values beyond the firmware limits', () {
       expect(() => encodeKvsGet(kvsFolderFactory, ''), throwsArgumentError);
       expect(

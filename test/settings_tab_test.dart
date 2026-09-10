@@ -177,9 +177,16 @@ void main() {
     expect(link.linkState, BtLinkState.faulted);
     expect(find.text('Board calibration'), findsOneWidget);
     expect(
-      find.text('Calibration data unreadable — contact support'),
+      find.textContaining('Calibration data unreadable — contact support'),
       findsOneWidget,
     );
+    // No document to show: the row must not open the calibration page (which
+    // would render "Device disconnected").
+    final row = tester.widget<ListTile>(
+      find.widgetWithText(ListTile, 'Board calibration'),
+    );
+    expect(row.onTap, isNull);
+    expect(row.trailing, isNull);
 
     // Teardown: a GATT link's disconnect awaits the mock's platform timers, so
     // drive it with pumps rather than awaiting it inside the test body.

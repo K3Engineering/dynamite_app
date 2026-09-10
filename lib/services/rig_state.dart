@@ -190,7 +190,9 @@ class RigState extends ChangeNotifier {
     // this write goes to.
     assert(flash != null, 'pending edits imply a read flash document');
     final backend = _backend();
-    if (backend == null) return false;
+    if (backend == null) {
+      throw StateError('saveToDevice with pending edits but no live link');
+    }
     try {
       await backend.writeSlots(edited.toKv());
     } catch (_) {

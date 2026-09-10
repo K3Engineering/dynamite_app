@@ -23,7 +23,6 @@ import 'services/recording_controller.dart';
 import 'services/rig_state.dart';
 import 'services/session_files.dart';
 import 'services/session_metadata.dart';
-import 'services/session_storage.dart';
 import 'services/stream_reset_coordinator.dart';
 import 'services/wakelock_policy.dart';
 import 'screens/app_shell.dart';
@@ -114,7 +113,6 @@ void main() async {
     ),
     deviceKvsSnapshot: () => rigState.kvsSnapshot,
     onSessionBoundary: decoder.resetContinuity,
-    persistence: const StaticSessionPersistence(),
     events: appEvents,
   );
   final appSettings = AppSettings(prefs: prefs);

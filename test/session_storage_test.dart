@@ -16,7 +16,6 @@ import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_data.dart';
 import 'package:dynamite_app/services/session_files_io.dart';
 import 'package:dynamite_app/services/session_journal.dart';
-import 'package:dynamite_app/services/session_storage.dart';
 import 'package:dynamite_app/services/session_store.dart';
 import 'package:dynamite_app/services/session_store_backend.dart';
 
@@ -46,7 +45,7 @@ void main() {
   ];
 
   /// startSession with the caller-side hub snapshots production now passes
-  /// explicitly (see SessionStorage.startSession's hub-agnostic contract).
+  /// explicitly (see SessionStore.startSession's hub-agnostic contract).
   /// Establishes the packet counter anchor the writer requires (in production
   /// packets precede samples, so an anchor always precedes the first append);
   /// tests that assert specific anchor behavior set their own.
@@ -54,7 +53,7 @@ void main() {
     if (hub.packetAnchor == null) {
       hub.notePacketCounter(0);
     }
-    return SessionStorage.startSession(
+    return SessionStore.instance.startSession(
       (
         name: name,
         sampleRate: hub.sampleRateHz,
@@ -324,7 +323,7 @@ void main() {
       expect((await catalog()).sessions, isEmpty);
 
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
-      await SessionStorage.finalizeSession(writer: writer);
+      await SessionStore.instance.finalizeSession(writer: writer);
 
       final summary = (await catalog()).session(writer.sessionId!)!;
       expect(summary.sampleRate, 1000);
@@ -339,7 +338,7 @@ void main() {
   /// finalizeSession must fail loud instead — and leave no marker behind, so
   /// the truncated session can never list as complete.
   group('finalizeSession consistency check', () {
-    test('a silently dropping sink makes finalizeSession return an error and '
+    test('a silently dropping sink makes finalizeSession throw and '
         'leaves the session interrupted', () async {
       final hub = DataHub();
       hub.notePacketCounter(0);
@@ -366,10 +365,17 @@ void main() {
       );
       await dropping.appendData(hub.snapshotRange(0, perAppend));
       await dropping.appendData(hub.snapshotRange(perAppend, perAppend));
-      final error = await SessionStorage.finalizeSession(writer: dropping);
 
-      expect(error, isA<StateError>());
-      expect(error.toString(), contains('storage layer dropped samples'));
+      await expectLater(
+        () => SessionStore.instance.finalizeSession(writer: dropping),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.toString(),
+            'message',
+            contains('storage layer dropped samples'),
+          ),
+        ),
+      );
 
       // The error is transient (one toast at stop time); the interrupted
       // verdict is permanent: no marker, no "complete" listing — ever.
@@ -379,7 +385,7 @@ void main() {
       expect(listed.damaged, isEmpty);
     });
 
-    test('a throwing close folds into the returned error and the session '
+    test('a throwing close propagates and the session '
         'lists as interrupted', () async {
       final hub = DataHub();
       hub.notePacketCounter(0);
@@ -411,19 +417,21 @@ void main() {
         },
       );
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
-      final error = await SessionStorage.finalizeSession(writer: writer);
 
       // Any latched failure vetoes the marker, close included: the store
       // cannot vouch for the session, so it lists as interrupted with its
       // (fully written) bytes loading and exporting like a complete one.
-      expect(error, same(closeBoom));
+      await expectLater(
+        () => SessionStore.instance.finalizeSession(writer: writer),
+        throwsA(same(closeBoom)),
+      );
       final listed = await catalog();
       expect(listed.sessions.single.id, writer.sessionId);
       expect(listed.sessions.single.interrupted, isTrue);
       expect(listed.damaged, isEmpty);
     });
 
-    test('a failing marker write folds into the returned error and the '
+    test('a failing marker write propagates and the '
         'session lists as interrupted immediately', () async {
       final failing = _FaultBackend(
         IoSessionFilesBackend('${tmp.path}/sessions'),
@@ -440,12 +448,18 @@ void main() {
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
 
       failing.failTouchFinal = true;
-      final error = await SessionStorage.finalizeSession(writer: writer);
 
-      // The marker error surfaces through the same returned-error channel
-      // as every other finalize failure (it must not throw), ...
-      expect(error, isA<StateError>());
-      expect(error.toString(), contains('marker write failed'));
+      // The marker error propagates like every other finalize failure, ...
+      await expectLater(
+        () => SessionStore.instance.finalizeSession(writer: writer),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.toString(),
+            'message',
+            contains('marker write failed'),
+          ),
+        ),
+      );
 
       // ... and with no marker the dir is by definition an interrupted
       // session, spliced into the published catalog NOW. readyCatalog()
@@ -470,8 +484,7 @@ void main() {
       final writer = startFromHub(hub, name: 'ok');
       await writer.appendData(hub.snapshotRange(0, perAppend));
       await writer.appendData(hub.snapshotRange(perAppend, perAppend));
-      final error = await SessionStorage.finalizeSession(writer: writer);
-      expect(error, isNull);
+      await SessionStore.instance.finalizeSession(writer: writer);
 
       final loaded = await store.loadSession(writer.sessionId!);
       expect(loaded.sampleCount, total);
@@ -596,7 +609,7 @@ void main() {
 
         final writer = startFromHub(hub, name: 'cal');
         await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
-        await SessionStorage.finalizeSession(writer: writer);
+        await SessionStore.instance.finalizeSession(writer: writer);
 
         final loaded = await store.loadSession(writer.sessionId!);
 
@@ -667,7 +680,7 @@ void main() {
       }
       final writer = startFromHub(hub, name: 'meta');
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
-      await SessionStorage.finalizeSession(writer: writer);
+      await SessionStore.instance.finalizeSession(writer: writer);
 
       final loaded = await store.loadSession(writer.sessionId!);
       // The calibrated snapshot itself round-trips (channels carry the
