@@ -18,6 +18,8 @@ import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 
+import 'helpers/flash_docs.dart';
+
 /// Widget tests for the Settings tab's device gating: with no link up, the
 /// device-owned sections (load cell slots, board calibration) must not
 /// render — their values are read from the connected hardware, so without
@@ -161,9 +163,9 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
-    MockBlePlatform.instance.seedKvsFromDoc(
+    MockBlePlatform.instance.seedKvs(kvsFromDoc(
       'adc_fsr=1.2\nexc=soon\nafe_gain=101',
-    );
+    ));
     final link = await pump(tester);
     unawaited(link.connectToDevice('2'));
     await tester.pump(const Duration(seconds: 4));

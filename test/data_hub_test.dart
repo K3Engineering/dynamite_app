@@ -8,7 +8,7 @@ import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
+import 'helpers/flash_docs.dart';
 
 /// Unit tests for the hub's per-stream lifecycle (peaks, tare, reset). Uses
 /// [DisplayUnit.raw] throughout so forces equal tare-adjusted raw counts.
@@ -588,20 +588,20 @@ void main() {
     test('content-equal board calibration does not bump the version', () {
       final hub = DataHub();
       hub.updateBoardCalibration(
-        BoardCalibration.parse(demoBoardCalibrationDoc, pgaGains: demoGains),
+        boardFromDoc(demoBoardCalibrationDoc, pgaGains: demoGains),
       );
       final v1 = hub.calibrationVersion;
 
       // A reconnect re-reading the identical document (new instances, same
       // content) must not invalidate the graph caches.
       hub.updateBoardCalibration(
-        BoardCalibration.parse(demoBoardCalibrationDoc, pgaGains: demoGains),
+        boardFromDoc(demoBoardCalibrationDoc, pgaGains: demoGains),
       );
       expect(hub.calibrationVersion, v1);
 
       // A genuinely changed document bumps the version again.
       hub.updateBoardCalibration(
-        BoardCalibration.parse(
+        boardFromDoc(
           demoBoardCalibrationDoc.replaceFirst(
             'ch0.raw=6386310.2',
             'ch0.raw=6386310.3',

@@ -25,7 +25,7 @@ class DemoDevice implements SimulatedLink {
   /// reconnect serves whatever was last written). Writes hit the slot keys
   /// only — mirroring the real transport, the demo's board half is
   /// read-only to the app.
-  KvsSnapshot _kvs = KvsSnapshot.fromFlashDoc(demoBoardCalibrationDoc);
+  KvsSnapshot _kvs = demoKvs;
 
   @override
   KvsSnapshot get kvsSnapshot => _kvs;

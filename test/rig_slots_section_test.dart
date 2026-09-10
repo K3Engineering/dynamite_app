@@ -6,9 +6,8 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:dynamite_app/models/device_flash.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/rig_state.dart';
+import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/widgets/rig_slots_section.dart';
 
 /// Widget tests for the rig slot section: rows from the device flash doc,
@@ -31,7 +30,7 @@ void main() {
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        DeviceFlash.parse(
+        flashFromDoc(
           demoBoardCalibrationDoc,
           pgaGains: const [1, 1, 1, 1],
         ),

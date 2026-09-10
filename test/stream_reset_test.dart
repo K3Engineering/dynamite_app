@@ -10,8 +10,8 @@ import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/mockble.dart';
+import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/services/stream_reset_coordinator.dart';
 
 /// The hub must start fresh on every new device stream: connecting (even to
@@ -99,7 +99,7 @@ void main() {
 
       // Stand in for the connect-time calibration read landing on the hub.
       hub.updateBoardCalibration(
-        BoardCalibration.parse(
+        boardFromDoc(
           demoBoardCalibrationDoc,
           pgaGains: const [32, 32, 32, 32],
         ),

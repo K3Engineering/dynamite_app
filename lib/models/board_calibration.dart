@@ -699,13 +699,6 @@ CalGroup? parseCalGroup(Map<String, String> kv) {
 sealed class BoardCalibration {
   const BoardCalibration._();
 
-  /// Parse the board-calibration keys of a `key=value` flash document
-  /// (throws like [fromKv]).
-  factory BoardCalibration.parse(
-    String text, {
-    required List<double> pgaGains,
-  }) => BoardCalibration.fromKv(parseFlashKv(text), pgaGains: pgaGains);
-
   /// Parse the board half of a flash document from the FACTORY folder's
   /// key/value map (the two folders are parsed separately — see
   /// `DeviceFlash.fromKvs`; User-namespace keys never reach here).
@@ -810,21 +803,4 @@ class ProvisionedBoardCalibration extends BoardCalibration {
 /// unavailable (see `resolveUnitAvailability`).
 class UnprovisionedBoardCalibration extends BoardCalibration {
   const UnprovisionedBoardCalibration() : super._();
-}
-
-/// Split a `key=value` flash document into a map. Lines without `key=value`
-/// shape (version token, END marker, comments) are ignored, so the format
-/// can grow; values may contain `=` (split happens at the first one).
-/// Parsing is line-local; [DeviceFlash] decides which recognized keys
-/// become model state and ignores the rest.
-Map<String, String> parseFlashKv(String text) {
-  final kv = <String, String>{};
-  for (final rawLine in text.split(RegExp(r'\r?\n'))) {
-    final line = rawLine.trim();
-    if (line.isEmpty || line.startsWith('#')) continue;
-    final eq = line.indexOf('=');
-    if (eq <= 0) continue;
-    kv[line.substring(0, eq).trim()] = line.substring(eq + 1).trim();
-  }
-  return kv;
 }

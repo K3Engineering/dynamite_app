@@ -1,5 +1,6 @@
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/load_cell.dart';
+import 'helpers/flash_docs.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 /// Pro-like test chain, reproducing the app's former compiled constants
@@ -333,7 +334,7 @@ END
 
     test('full document parses every channel plus metadata', () {
       final board =
-          BoardCalibration.parse(doc, pgaGains: testGains)
+          boardFromDoc(doc, pgaGains: testGains)
               as ProvisionedBoardCalibration;
       expect(board.calGroup!.date, '2026-07-20');
       expect(board.isFactoryCalibrated, isTrue);
@@ -357,7 +358,7 @@ END
 
     test('board constants resolve into per-channel nominals', () {
       final board =
-          BoardCalibration.parse(
+          boardFromDoc(
                 'adc_fsr=1.2,nominal\nexc=2.8,nominal\nafe_gain=1,nominal\n',
                 pgaGains: const [32, 32, 32, 32],
               )
@@ -380,14 +381,14 @@ END
         'ch0.temp=24.1',
         'cal.future=unknown',
       ]) {
-        final board = BoardCalibration.parse(text, pgaGains: testGains);
+        final board = boardFromDoc(text, pgaGains: testGains);
         expect(board, isA<UnprovisionedBoardCalibration>(), reason: text);
       }
     });
 
     test('a provisioned board without cal data adopts the nominal chain', () {
       final board =
-          BoardCalibration.parse(testConstantKeys, pgaGains: testGains)
+          boardFromDoc(testConstantKeys, pgaGains: testGains)
               as ProvisionedBoardCalibration;
       expect(board.isFactoryCalibrated, isFalse);
     });
@@ -407,7 +408,7 @@ END
       // instrument: it throws, and the connect-time caller fails the
       // connection.
       expect(
-        () => BoardCalibration.parse(doc, pgaGains: testGains),
+        () => boardFromDoc(doc, pgaGains: testGains),
         throwsFormatException,
         reason: reason,
       );
@@ -515,7 +516,7 @@ $channelData${''}END
 ''';
 
     ProvisionedBoardCalibration parse(String text) =>
-        BoardCalibration.parse(text, pgaGains: testGains)
+        boardFromDoc(text, pgaGains: testGains)
             as ProvisionedBoardCalibration;
 
     test('present keys parse; absent keys are null', () {
@@ -549,7 +550,7 @@ $channelData${''}END
       'adcConfigDrifted compares cal-time gains to the runtime readback',
       () {
         ProvisionedBoardCalibration gains(String text, List<double> pga) =>
-            BoardCalibration.parse(text, pgaGains: pga)
+            boardFromDoc(text, pgaGains: pga)
                 as ProvisionedBoardCalibration;
         expect(gains(doc, const [1, 1, 1, 1]).adcConfigDrifted, isFalse);
         expect(gains(doc, const [32, 1, 1, 1]).adcConfigDrifted, isTrue);

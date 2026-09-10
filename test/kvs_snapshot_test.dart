@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 
 void main() {
@@ -43,7 +44,7 @@ void main() {
   });
 
   test('fromFlashDoc routes exact slot keys to User', () {
-    final snapshot = KvsSnapshot.fromFlashDoc(
+    final snapshot = kvsFromDoc(
       'charging=enabled\nlc0.cap=200\nlc0.sens=2\nlc.future=keep',
     );
 

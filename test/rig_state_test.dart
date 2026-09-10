@@ -7,8 +7,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/link_backend.dart';
+import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 
 /// Tests for [RigState]: flash reads, pending edits (which die with the
@@ -48,7 +48,7 @@ class _FakeBackend implements LinkBackend {
 
   @override
   Future<KvsSnapshot> readKvsSnapshot() async =>
-      KvsSnapshot.fromFlashDoc(readBackDoc ?? deviceDoc);
+      kvsFromDoc(readBackDoc ?? deviceDoc);
 
   @override
   Future<bool> storeDeviceName(String? name) async => true;
@@ -75,7 +75,7 @@ void main() {
   );
 
   DeviceFlash fixture() =>
-      DeviceFlash.parse(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1]);
+      flashFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1]);
 
   /// The fixture doc with a recalibrated CH1 cell (sensitivity re-entered).
   String recalibratedDoc() => demoBoardCalibrationDoc.replaceFirst(
@@ -145,7 +145,7 @@ void main() {
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        DeviceFlash.parse(recalibratedDoc(), pgaGains: const [1, 1, 1, 1]),
+        flashFromDoc(recalibratedDoc(), pgaGains: const [1, 1, 1, 1]),
       );
 
       expect(rig.channelCells[0]?.sensitivityMvV, closeTo(1.9985, 1e-12));
@@ -342,7 +342,7 @@ void main() {
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        DeviceFlash.parse(withExtras, pgaGains: const [1, 1, 1, 1]),
+        flashFromDoc(withExtras, pgaGains: const [1, 1, 1, 1]),
       );
       rig.setSlot(
         3,

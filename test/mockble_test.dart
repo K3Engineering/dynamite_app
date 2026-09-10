@@ -12,7 +12,7 @@ import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
+import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/services/mockble.dart';
 
 /// End-to-end (no hardware) test of the live data pipeline:
@@ -107,7 +107,7 @@ void main() {
 
     test('an unprovisioned board (empty KVS) streams raw-only', () {
       fakeAsync((async) {
-        MockBlePlatform.instance.seedKvsFromDoc('');
+        MockBlePlatform.instance.seedKvs(kvsFromDoc(''));
         addTearDown(() => MockBlePlatform.instance.resetKnobs());
         final (hub, link, teardown) = wire(async: async);
 
@@ -128,9 +128,9 @@ void main() {
     test('a partially provisioned board (constants, no calibration) streams '
         'mV/V on the nominal chain', () {
       fakeAsync((async) {
-        MockBlePlatform.instance.seedKvsFromDoc(
+        MockBlePlatform.instance.seedKvs(kvsFromDoc(
           'adc_fsr=1.2,nominal\nexc=4.53,nominal\nafe_gain=101,nominal',
-        );
+        ));
         addTearDown(() => MockBlePlatform.instance.resetKnobs());
         final (hub, link, teardown) = wire(async: async);
 
@@ -162,7 +162,7 @@ void main() {
           'adc_fsr=1.2,nominal\nexc=soon\nafe_gain=101', // bad value
           'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nch0.r=1,2,3,4,5,6', // no cal.date
         ]) {
-          MockBlePlatform.instance.seedKvsFromDoc(doc);
+          MockBlePlatform.instance.seedKvs(kvsFromDoc(doc));
           final (hub, link, teardown) = wire(async: async);
 
           unawaited(link.connectToDevice(deviceId));
@@ -185,9 +185,9 @@ void main() {
         // The app owns the slot keys, so an unparseable value is not
         // corruption to abort for: the slot reads as empty (force units
         // report unavailable), and a save reconciles the device.
-        MockBlePlatform.instance.seedKvsFromDoc(
+        MockBlePlatform.instance.seedKvs(kvsFromDoc(
           'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nlc0.cap=100\nlc0.sens=abc',
-        );
+        ));
         addTearDown(() => MockBlePlatform.instance.resetKnobs());
         final (hub, link, teardown) = wire(async: async);
 
@@ -207,9 +207,9 @@ void main() {
 
     test('unknown future metadata keys are ignored', () {
       fakeAsync((async) {
-        MockBlePlatform.instance.seedKvsFromDoc(
+        MockBlePlatform.instance.seedKvs(kvsFromDoc(
           '$demoBoardCalibrationDoc\ncharging=enabled\n',
-        );
+        ));
         final (hub, link, teardown) = wire(async: async);
 
         unawaited(link.connectToDevice(deviceId));

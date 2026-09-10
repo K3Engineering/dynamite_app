@@ -7,10 +7,10 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/kvs_client.dart';
 import 'package:dynamite_app/services/gatt_link_backend.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
+import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/services/mockble.dart';
 
 /// Tests for [KvsFlashTransport]: the document-level view over the per-key
@@ -57,7 +57,7 @@ void main() {
   }
 
   /// The fixture document's slot keys, exactly as a save would emit them.
-  Map<String, String> fixtureSlots() => DeviceFlash.parse(
+  Map<String, String> fixtureSlots() => flashFromDoc(
     demoBoardCalibrationDoc,
     pgaGains: const [1, 1, 1, 1],
   ).slots.toKv();
@@ -72,7 +72,7 @@ void main() {
       expect(snapshot.user['lc0.cap'], '200');
       const gains = [1.0, 1.0, 1.0, 1.0];
       final flash = DeviceFlash.fromKvs(snapshot, pgaGains: gains);
-      final fixture = DeviceFlash.parse(
+      final fixture = flashFromDoc(
         demoBoardCalibrationDoc,
         pgaGains: gains,
       );
@@ -208,7 +208,7 @@ void main() {
       final reread = read(KvsFlashTransport(client), async)!;
       expect(
         DeviceFlash.fromKvs(reread, pgaGains: const [1, 1, 1, 1]).slots,
-        DeviceFlash.parse(
+        flashFromDoc(
           'lc0.name=Thrust cell\nlc0.cap=200\nlc0.sens=1.9993',
           pgaGains: const [1, 1, 1, 1],
         ).slots,

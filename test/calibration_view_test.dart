@@ -5,13 +5,12 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
-import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/screens/calibration_screen.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/report_export.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/cal_deviation_plot.dart';
 import 'package:dynamite_app/widgets/calibration_text.dart';
+import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/widgets/calibration_view.dart';
 
 /// Widget tests for the factory calibration view (the board calibration
@@ -38,7 +37,7 @@ void main() {
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        DeviceFlash.parse(
+        flashFromDoc(
           flashDoc ?? demoBoardCalibrationDoc,
           pgaGains: pgaGains,
         ),
@@ -89,7 +88,7 @@ void main() {
     // carries the plot and the table (calibration is board-uniform — see
     // BoardCalibration.fromKv).
     final board =
-        BoardCalibration.parse(
+        boardFromDoc(
               demoBoardCalibrationDoc,
               pgaGains: const [1, 1, 1, 1],
             )
@@ -201,7 +200,7 @@ END
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        DeviceFlash.parse(
+        flashFromDoc(
           demoBoardCalibrationDoc,
           pgaGains: const [1, 1, 1, 1],
         ),
@@ -241,7 +240,7 @@ END
 
     expect(find.text('Calibration report copied to clipboard'), findsOneWidget);
     final board =
-        BoardCalibration.parse(
+        boardFromDoc(
               demoBoardCalibrationDoc,
               pgaGains: const [1, 1, 1, 1],
             )
@@ -271,7 +270,7 @@ END
   group('calibrationReport', () {
     test('mirrors the screen content as plain text', () {
       final board =
-          BoardCalibration.parse(
+          boardFromDoc(
                 demoBoardCalibrationDoc,
                 pgaGains: const [1, 1, 1, 1],
               )
@@ -313,7 +312,7 @@ afe_gain=101,nominal
 END
 ''';
       final report = calibrationReport(
-        BoardCalibration.parse(nominalDoc, pgaGains: const [1, 1, 1, 1])
+        boardFromDoc(nominalDoc, pgaGains: const [1, 1, 1, 1])
             as ProvisionedBoardCalibration,
         'dev1',
       );
@@ -356,7 +355,7 @@ END
 ''';
       expect(
         boardCalibrationStatusLine(
-          BoardCalibration.parse(noCalDoc, pgaGains: const [1, 1, 1, 1]),
+          boardFromDoc(noCalDoc, pgaGains: const [1, 1, 1, 1]),
         ),
         'Missing factory calibration',
       );
@@ -371,7 +370,7 @@ END
 
     test('calibrated: the document\'s date and its age', () {
       final board =
-          BoardCalibration.parse(
+          boardFromDoc(
                 demoBoardCalibrationDoc,
                 pgaGains: const [1, 1, 1, 1],
               )

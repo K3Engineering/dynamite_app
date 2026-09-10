@@ -3,14 +3,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
+import 'helpers/flash_docs.dart';
 
 /// Tests for the rig-slot model and the flash document parse
 /// ([DeviceFlash.parse] / [RigSlots.fromKv] / [RigSlots.toKv]), fed by the
 /// same fixture the demo and mock devices serve.
 void main() {
   group('DeviceFlash.parse (fixture doc)', () {
-    final flash = DeviceFlash.parse(
+    final flash = flashFromDoc(
       demoBoardCalibrationDoc,
       pgaGains: const [1, 1, 1, 1],
     );
@@ -52,7 +52,7 @@ void main() {
 
   group('RigSlots kv round-trip', () {
     test('toKv(fromKv(x)) reproduces the slots', () {
-      final flash = DeviceFlash.parse(
+      final flash = flashFromDoc(
         demoBoardCalibrationDoc,
         pgaGains: const [1, 1, 1, 1],
       );
@@ -91,7 +91,7 @@ void main() {
       const withExtras =
           'hw.rev=3\nfuture.tooling=keep me\n'
           'lc0.cap=100\nlc0.sens=2';
-      final flash = DeviceFlash.parse(withExtras, pgaGains: const [1, 1, 1, 1]);
+      final flash = flashFromDoc(withExtras, pgaGains: const [1, 1, 1, 1]);
       expect(flash.slots.cellAt(0)?.capacityKg, 100);
       expect(flash.board, isA<UnprovisionedBoardCalibration>());
       expect(flash.slots.toKv().keys.every((k) => k.startsWith('lc')), isTrue);

@@ -5,11 +5,10 @@ import 'load_cell.dart';
 
 // ---------------------------------------------------------------------------
 // The device flash document: the factory board calibration (read-only to
-// the app) plus the app-writable load cell slots, as the one `key=value`
-// document the device's KVS holds. The per-channel join of the two halves
+// the app) plus the app-writable load cell slots, as the folder-separated
+// KVS store the device holds. The per-channel join of the two halves
 // ([ChannelCalibration]) that the unit layer consumes lives in
-// channel_calibration.dart; the line parser itself ([parseFlashKv]) lives
-// with the board file, the document's original content.
+// channel_calibration.dart.
 //
 // The app OWNS the schema slot keys and only those: a save SETs/DELs the
 // exact `lcN.*` keys in the User namespace and never touches the board half
@@ -27,19 +26,6 @@ class KvsSnapshot {
     required Map<String, String> user,
   }) : factory = Map.unmodifiable(SplayTreeMap.of(factory)),
        user = Map.unmodifiable(SplayTreeMap.of(user));
-
-  /// Parse the legacy single-text flash form, routing the exact slot keys
-  /// to User and every other key to Factory, mirroring the firmware layout.
-  /// Used by fixtures (the demo device, test docs) — the wire form is the
-  /// folder-separated KVS itself.
-  factory KvsSnapshot.fromFlashDoc(String text) {
-    final factory = <String, String>{};
-    final user = <String, String>{};
-    for (final e in parseFlashKv(text).entries) {
-      (rigSlotKeys.contains(e.key) ? user : factory)[e.key] = e.value;
-    }
-    return KvsSnapshot(factory: factory, user: user);
-  }
 
   final Map<String, String> factory;
   final Map<String, String> user;
@@ -87,11 +73,6 @@ class DeviceFlash {
 
   /// The raw store the typed halves were parsed from (session provenance).
   final KvsSnapshot kvs;
-
-  /// Parse the legacy single-text flash form (fixtures — see
-  /// [KvsSnapshot.fromFlashDoc]). Throws like [fromKvs].
-  factory DeviceFlash.parse(String text, {required List<double> pgaGains}) =>
-      DeviceFlash.fromKvs(KvsSnapshot.fromFlashDoc(text), pgaGains: pgaGains);
 
   /// Parse the typed board/slot halves out of a raw KVS snapshot. Each half
   /// reads its own folder: the board half ([BoardCalibration.fromKv]) is

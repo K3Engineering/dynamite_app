@@ -11,9 +11,9 @@ import 'package:dynamite_app/services/bt_device_config.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/models/device_flash.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
+import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/services/mockble.dart';
 
 /// Tests for the [BleLinkManager] state machine against [MockBlePlatform],
@@ -42,7 +42,7 @@ void main() {
   /// The fixture rig's slot keys with cap replaced — the complete set a
   /// save submits (writeSlots owns every lc key; a partial map would
   /// delete the others).
-  Map<String, String> slotsWith({required String cap}) => DeviceFlash.parse(
+  Map<String, String> slotsWith({required String cap}) => flashFromDoc(
     demoBoardCalibrationDoc,
     pgaGains: const [1, 1, 1, 1],
   ).slots.toKv()..['lc0.cap'] = cap;
@@ -821,7 +821,7 @@ void main() {
   test('an unprovisioned board (empty KVS) connects and streams', () {
     fakeAsync((async) {
       final mock = MockBlePlatform.instance;
-      mock.seedKvsFromDoc('');
+      mock.seedKvs(kvsFromDoc(''));
       final (link, seen) = wire();
       KvsSnapshot? servedSnapshot;
       link.onDeviceFlash = (flash) => servedSnapshot = flash.kvs;
@@ -843,9 +843,9 @@ void main() {
 
   test('invalid known flash parks the link in faulted, detail included', () {
     fakeAsync((async) {
-      MockBlePlatform.instance.seedKvsFromDoc(
+      MockBlePlatform.instance.seedKvs(kvsFromDoc(
         'adc_fsr=1.2\nexc=soon\nafe_gain=101\ncharging=enabled',
-      );
+      ));
       final (link, seen) = wire();
       var measurementDelivered = false;
       link.onDeviceFlash = (_) => measurementDelivered = true;
@@ -1012,7 +1012,7 @@ void main() {
       link.onDeviceFlash = (flash) => served = flash;
 
       unawaited(link.connectToDemoDevice());
-      final fixture = DeviceFlash.parse(
+      final fixture = flashFromDoc(
         demoBoardCalibrationDoc,
         pgaGains: const [1, 1, 1, 1],
       );
