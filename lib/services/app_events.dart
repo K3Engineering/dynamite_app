@@ -18,7 +18,10 @@ class BleDisconnectTimeout extends AppEvent {
 }
 
 /// A connection dropped or failed during post-connect setup (e.g. the device
-/// disappeared mid service-discovery).
+/// disappeared mid service-discovery, or the ADC config could not be read).
+/// The exact failure reason is recorded on the link manager (see
+/// `BleLinkManager.setupFailureFor`) for the Devices-tab row; this event only
+/// names the device so the shell can show a short, user-facing toast.
 class BleConnectionFailed extends AppEvent {
   const BleConnectionFailed(this.deviceName);
 

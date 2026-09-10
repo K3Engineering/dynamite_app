@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart' show debugPrint;
+
 import 'device_profile.dart';
 
 // ---------------------------------------------------------------------------
@@ -13,6 +15,17 @@ import 'device_profile.dart';
 /// the channels (the plugged-in rig); the rest are spares carried on the
 /// device. Constant for the first prototype.
 const int kRigSlotCount = 10;
+
+/// The exact load-cell-slot keys the app owns in the device's User
+/// namespace. Unknown `lc*`-shaped keys are ignored on read and left alone
+/// on write.
+final Set<String> rigSlotKeys = Set.unmodifiable({
+  for (int i = 0; i < kRigSlotCount; ++i) ...[
+    'lc$i.name',
+    'lc$i.cap',
+    'lc$i.sens',
+  ],
+});
 
 String rigSlotTitle(int i) =>
     i < kAdcChannelCount ? 'CH ${i + 1}' : 'Slot ${i + 1}';
@@ -97,41 +110,68 @@ class RigSlots {
   @override
   int get hashCode => Object.hashAll(slots);
 
-  /// Parse the `lcN.*` keys of a flash document. A slot is populated iff its
-  /// `cap` and `sens` keys parse to positive numbers; anything else degrades
-  /// that one slot to empty.
+  /// Parse the `lcN.*` keys (the User folder's slot document). A slot is
+  /// populated iff its `cap` and `sens` both parse to positive finite
+  /// numbers; anything else reads as an empty slot. Lenient by policy: the
+  /// app owns these keys, so it is entitled to repair a bad state — an
+  /// unparseable slot shows as empty (force units report unavailable, the
+  /// user sees it immediately) instead of bricking the connection, the raw
+  /// values stay visible in the retained KVS snapshot, and the next save
+  /// writes the correct keys (see `KvsFlashTransport.writeSlots`).
   factory RigSlots.fromKv(Map<String, String> kv) {
     double? num(String? v) => v == null ? null : double.tryParse(v);
     return RigSlots([
       for (int i = 0; i < kRigSlotCount; ++i)
         switch ((num(kv['lc$i.cap']), num(kv['lc$i.sens']))) {
-          (final cap?, final sens?) when cap > 0 && sens > 0 => RigSlot(
-            cell: LoadCellProfile(
-              name: kv['lc$i.name'] ?? '',
-              capacityKg: cap,
-              sensitivityMvV: sens,
+          (final cap?, final sens?)
+              when cap.isFinite && sens.isFinite && cap > 0 && sens > 0 =>
+            RigSlot(
+              cell: LoadCellProfile(
+                name: kv['lc$i.name'] ?? '',
+                capacityKg: cap,
+                sensitivityMvV: sens,
+              ),
             ),
-          ),
-          _ => null,
+          // Absent (or name-only) slot: no owned value to complain about.
+          (null, null) => null,
+          // Present but unrepairable: read as empty, but name it so a dev
+          // can see the discarded value (the raw store keeps it visible too).
+          _ => _rejectedSlot(i, kv),
         },
     ]);
   }
 
-  /// Emit the populated slots' `lcN.*` lines (no trailing newline).
+  /// The populated slots' `lcN.*` keys — the complete set of schema slot
+  /// keys the device should hold (a save SETs these and DELs known slot keys
+  /// it doesn't; unknown `lc*` keys are not the app's data).
   /// Newlines in names are flattened (the doc is line-based); `=` in values
-  /// is safe (parse splits at the first one).
-  void serializeInto(StringBuffer b) {
-    for (int i = 0; i < kRigSlotCount; ++i) {
-      final s = slots[i];
-      if (s == null) continue;
-      final c = s.cell;
-      if (c.name.isNotEmpty) {
-        b.writeln('lc$i.name=${c.name.replaceAll(RegExp(r'\s+'), ' ')}');
-      }
-      b.writeln('lc$i.cap=${c.capacityKg}');
-      b.writeln('lc$i.sens=${c.sensitivityMvV}');
-    }
+  /// is safe (parse splits at the first one). Integral values emit without
+  /// a fraction (`200`, not `200.0`) so an unchanged rig diffs clean
+  /// against factory-written documents.
+  Map<String, String> toKv() {
+    String num(double v) =>
+        v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+    return {
+      for (int i = 0; i < kRigSlotCount; ++i)
+        if (slots[i] case final s?) ...{
+          if (s.cell.name.isNotEmpty)
+            'lc$i.name': s.cell.name.replaceAll(RegExp(r'\s+'), ' '),
+          'lc$i.cap': num(s.cell.capacityKg),
+          'lc$i.sens': num(s.cell.sensitivityMvV),
+        },
+    };
   }
+}
+
+/// A slot whose `cap`/`sens` keys are present but unparseable (or not both
+/// positive finite): read as empty under the lenient User policy, with a
+/// developer-visible trace. See [RigSlots.fromKv].
+RigSlot? _rejectedSlot(int i, Map<String, String> kv) {
+  debugPrint(
+    'RigSlots: ignoring slot $i with malformed cap/sens '
+    '(cap=${kv['lc$i.cap']}, sens=${kv['lc$i.sens']})',
+  );
+  return null;
 }
 
 /// A load cell as the app knows it: capacity plus the exact sensitivity

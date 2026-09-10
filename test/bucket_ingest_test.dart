@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/bucket_series.dart';
-import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/gap_list.dart';
 import 'package:dynamite_app/models/device_profile.dart';
@@ -157,7 +156,7 @@ void main() {
         sampleCount: n,
         calibrations: [
           for (int ch = 0; ch < channels; ch++)
-            const ChannelCalibration(board: RawOnlyChannelBoard()),
+            const ChannelCalibration(board: null),
         ],
         tares: List.filled(channels, 0.0),
         ssnOrigin: 0,
@@ -236,7 +235,7 @@ void main() {
         sampleCount: n,
         calibrations: [
           for (int ch = 0; ch < channels; ch++)
-            const ChannelCalibration(board: RawOnlyChannelBoard()),
+            const ChannelCalibration(board: null),
         ],
         tares: List.filled(channels, 0.0),
         ssnOrigin: 0,

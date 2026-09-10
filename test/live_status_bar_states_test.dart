@@ -81,8 +81,7 @@ void main() {
       // past the mock's + the command queue's timeouts at the end.
       await tester.pumpWidget(
         ChangeNotifierProvider.value(
-          value: BleLinkManager(events: AppEvents())
-            ..onCalibrationData = (_, _) {},
+          value: BleLinkManager(events: AppEvents(), onDeviceFlash: (_) {}),
           child: host(bar(BtLinkState.streaming)),
         ),
       );
@@ -90,6 +89,21 @@ void main() {
       expect(barColor(tester), scheme.primaryContainer);
       expect(find.text('Connected: K3'), findsOneWidget);
       await tester.pump(const Duration(seconds: 6));
+    });
+  });
+
+  group('BoardFaultBanner', () {
+    testWidgets('names the reason and the support path', (tester) async {
+      await tester.pumpWidget(
+        host(
+          const BoardFaultBanner(detail: 'board constants: bad exc: "soon"'),
+        ),
+      );
+      expect(
+        find.textContaining('Calibration data unreadable — contact support'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('board constants: bad exc'), findsOneWidget);
     });
   });
 

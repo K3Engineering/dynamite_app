@@ -3,24 +3,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
+import 'helpers/flash_docs.dart';
 
-/// Tests for the rig-slot model and the full flash document
-/// ([DeviceFlash] parse/serialize), fed by the same fixture the demo and
-/// mock devices serve.
+/// Tests for the rig-slot model and the flash document parse
+/// ([DeviceFlash.parse] / [RigSlots.fromKv] / [RigSlots.toKv]), fed by the
+/// same fixture the demo and mock devices serve.
 void main() {
   group('DeviceFlash.parse (fixture doc)', () {
-    final flash = DeviceFlash.parse(
+    final flash = flashFromDoc(
       demoBoardCalibrationDoc,
       pgaGains: const [1, 1, 1, 1],
     );
+    final board = flash.board as ProvisionedBoardCalibration;
 
     test('board channels are factory-calibrated', () {
-      expect(
-        flash.board.channels.where((c) => c.isFactoryCalibrated),
-        hasLength(4),
-      );
-      expect(flash.board.factoryDate, '2026-07-20');
+      expect(board.channels.where((c) => c.isCalibrated), hasLength(4));
+      expect(board.calGroup!.date, '2026-07-20');
     });
 
     test('slots parse with names and exact sensitivities', () {
@@ -52,51 +50,23 @@ void main() {
     });
   });
 
-  group('DeviceFlash round-trip', () {
-    test('serialize(parse(x)) preserves board keys and slots', () {
-      final flash = DeviceFlash.parse(
+  group('RigSlots kv round-trip', () {
+    test('toKv(fromKv(x)) reproduces the slots', () {
+      final flash = flashFromDoc(
         demoBoardCalibrationDoc,
         pgaGains: const [1, 1, 1, 1],
       );
-      final reparsed = DeviceFlash.parse(
-        flash.serialize(),
-        pgaGains: const [1, 1, 1, 1],
-      );
+      final kv = flash.slots.toKv();
+      // Integral values emit without a fraction: an unchanged rig diffs
+      // clean against the fixture's factory-written values.
+      expect(kv['lc0.cap'], '200');
+      expect(kv['lc0.sens'], '1.9993');
+      expect(kv['lc2.sens'], '2');
 
-      expect(reparsed.board.factoryDate, flash.board.factoryDate);
-      for (int i = 0; i < 4; ++i) {
-        expect(
-          (reparsed.board.channels[i] as CalibratedChannelBoard).readings,
-          (flash.board.channels[i] as CalibratedChannelBoard).readings,
-        );
-      }
+      final reparsed = RigSlots.fromKv(kv);
       for (int i = 0; i < kRigSlotCount; ++i) {
-        expect(reparsed.slots[i], flash.slots[i], reason: 'slot $i');
+        expect(reparsed[i], flash.slots[i], reason: 'slot $i');
       }
-    });
-
-    test('a board-only document yields empty slots', () {
-      // extraLines (the board-constant keys' courier) ride along, as in the
-      // real save path — without them the serialized document loses the
-      // constants and its calibration keys no longer resolve.
-      final parsed = DeviceFlash.parse(
-        demoBoardCalibrationDoc,
-        pgaGains: const [1, 1, 1, 1],
-      );
-      final boardOnly = DeviceFlash(
-        board: parsed.board,
-        slots: RigSlots.empty(),
-        extraLines: parsed.extraLines,
-      );
-      final reparsed = DeviceFlash.parse(
-        boardOnly.serialize(),
-        pgaGains: const [1, 1, 1, 1],
-      );
-      for (int i = 0; i < kRigSlotCount; ++i) {
-        expect(reparsed.slots[i], isNull, reason: 'slot $i');
-      }
-      // And the board keys survive untouched.
-      expect(reparsed.board.channels[0].isFactoryCalibrated, isTrue);
     });
 
     test('names flatten newlines and survive an equals sign', () {
@@ -110,82 +80,47 @@ void main() {
           ),
         ),
       );
-      final doc = DeviceFlash(
-        board: DeviceFlash.parse(
-          demoBoardCalibrationDoc,
-          pgaGains: const [1, 1, 1, 1],
-        ).board,
-        slots: slots,
-      ).serialize();
-      expect(doc.contains('lc0.name=a=b c'), isTrue);
-      expect(
-        DeviceFlash.parse(
-          doc,
-          pgaGains: const [1, 1, 1, 1],
-        ).slots.cellAt(0)?.name,
-        'a=b c',
-      );
+      final kv = slots.toKv();
+      expect(kv['lc0.name'], 'a=b c');
+      expect(RigSlots.fromKv(kv).cellAt(0)?.name, 'a=b c');
     });
 
-    test('unknown keys are preserved verbatim through parse + serialize', () {
+    test('unknown keys are ignored, never re-emitted', () {
+      // Keys the model doesn't know (another tool's metadata) parse away;
+      // the slots' kv map can only ever name slot keys.
       const withExtras =
-          'K3CAL1\n'
-          'cal.date=2026-07-20\n'
-          'hw.rev=3\n'
-          'future.tooling=keep me\n'
-          'ch4.raw=1,2,3,4,5\n' // a future 8-channel device's key
-          'lc0.cap=100\n'
-          'lc0.sens=2\n'
-          'END\n';
-      final flash = DeviceFlash.parse(withExtras, pgaGains: const [1, 1, 1, 1]);
-      expect(flash.extraLines, [
-        'hw.rev=3',
-        'future.tooling=keep me',
-        'ch4.raw=1,2,3,4,5',
-      ]);
-
-      final roundTripped = DeviceFlash.parse(
-        flash.serialize(),
-        pgaGains: const [1, 1, 1, 1],
-      );
-      expect(roundTripped.extraLines, flash.extraLines);
-      expect(roundTripped.slots.cellAt(0)?.capacityKg, 100);
-      expect(roundTripped.board.factoryDate, '2026-07-20');
-    });
-
-    test('a blank-flash board does not get nominal resistors stamped', () {
-      // No ch* keys in the source: serializing must not invent them —
-      // nominal values written as 'chN.r' would pose as characterization.
-      final flash = DeviceFlash.parse(
-        'K3CAL1\nlc0.cap=100\nlc0.sens=2\nEND\n',
-        pgaGains: const [1, 1, 1, 1],
-      );
-      final doc = flash.serialize();
-      expect(doc.contains('ch'), isFalse, reason: doc);
-
-      // Characterized values DO round-trip (the fixture's real board).
-      final realDoc = DeviceFlash.parse(
-        demoBoardCalibrationDoc,
-        pgaGains: const [1, 1, 1, 1],
-      ).serialize();
-      expect(realDoc.contains('ch0.r='), isTrue);
-      expect(realDoc.contains('ch3.raw='), isTrue);
+          'hw.rev=3\nfuture.tooling=keep me\n'
+          'lc0.cap=100\nlc0.sens=2';
+      final flash = flashFromDoc(withExtras, pgaGains: const [1, 1, 1, 1]);
+      expect(flash.slots.cellAt(0)?.capacityKg, 100);
+      expect(flash.board, isA<UnprovisionedBoardCalibration>());
+      expect(flash.slots.toKv().keys.every((k) => k.startsWith('lc')), isTrue);
     });
   });
 
-  group('RigSlots', () {
-    test('degenerate slots degrade to empty', () {
-      final slots = RigSlots.fromKv(const {
-        'lc0.cap': '-5', // non-positive: empty
-        'lc0.sens': '2',
-        'lc1.cap': '100',
-        // sens missing: empty
-        'lc2.cap': '100',
-        'lc2.sens': '2',
+  group('RigSlots lenient parse', () {
+    test('a degenerate slot reads as empty, not as invalid flash', () {
+      // The app owns the slot keys, so a bad state reads as "no cell": force
+      // units report unavailable (visible), the raw values stay in the KVS
+      // snapshot, and a save reconciles the device (see RigSlots.fromKv).
+      for (final kv in [
+        const {'lc0.cap': '-5', 'lc0.sens': '2'}, // non-positive cap
+        const {'lc0.cap': '100'}, // sens missing
+        const {'lc0.sens': 'abc'}, // unparseable sens
+        const {'lc0.cap': 'NaN', 'lc0.sens': '2'}, // parses, not finite
+        const {'lc0.name': 'orphaned name'}, // name without values
+      ]) {
+        final slots = RigSlots.fromKv(kv);
+        expect(slots[0], isNull, reason: '$kv');
+      }
+      // The neighbouring slots are unaffected.
+      final slots = RigSlots.fromKv({
+        'lc0.sens': 'abc',
+        'lc1.cap': '500',
+        'lc1.sens': '2',
       });
       expect(slots[0], isNull);
-      expect(slots[1], isNull);
-      expect(slots.cellAt(2)?.sensitivityMvV, 2);
+      expect(slots.cellAt(1)?.capacityKg, 500);
     });
 
     test('withSwap exchanges two slots and nothing else', () {

@@ -3,8 +3,8 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/session_journal.dart';
 
 /// The session journal (session_journal.dart): a strict line-1 header, whole
@@ -12,29 +12,27 @@ import 'package:dynamite_app/services/session_journal.dart';
 /// shapes (torn meta, torn edits) and the byte offsets the append
 /// discipline needs.
 void main() {
-  const meta = SessionMeta(
+  final meta = SessionMeta(
     name: 'lift 1',
     sampleRate: 1000,
     channelCount: 4,
-    channelLabels: ['a', 'b', 'c', 'd'],
-    tares: [null, 12.5, -3.25, null],
-    calibration: [
-      ChannelCalibration(board: RawOnlyChannelBoard()),
-      ChannelCalibration(board: RawOnlyChannelBoard()),
-      ChannelCalibration(board: RawOnlyChannelBoard()),
-      ChannelCalibration(board: RawOnlyChannelBoard()),
+    channelLabels: const ['a', 'b', 'c', 'd'],
+    tares: const [null, 12.5, -3.25, null],
+    calibration: const [
+      ChannelCalibration(board: null),
+      ChannelCalibration(board: null),
+      ChannelCalibration(board: null),
+      ChannelCalibration(board: null),
     ],
     displayUnit: 'kgf',
-    deviceInfo: {'model': 'dyna-1', 'fw': '1.2.3'},
-    boardMeta: SessionBoardMeta(
-      calDataInvalid: false,
-      constantsStatus: BoardDataStatus.ok,
-      constantsDetail: '',
-      provenance: {'adc_fsr': 'nominal'},
+    deviceInfo: const {'model': 'dyna-1', 'fw': '1.2.3'},
+    deviceKvs: KvsSnapshot(
+      factory: const {'adc_fsr': '1.2,nominal'},
+      user: const {'lc0.cap': '200'},
     ),
     recordedAt: '2026-08-28T14:30:12.345+02:00',
     ssnOrigin: 98765,
-    visibleChannels: [true, false, true, true],
+    visibleChannels: const [true, false, true, true],
   );
 
   const edit1 = SessionEdit(
@@ -58,8 +56,8 @@ void main() {
       expect(journal.meta.tares, meta.tares);
       expect(journal.meta.displayUnit, meta.displayUnit);
       expect(journal.meta.deviceInfo, meta.deviceInfo);
-      expect(journal.meta.boardMeta, isNotNull);
-      expect(journal.meta.boardMeta!.constantsStatus, BoardDataStatus.ok);
+      expect(journal.meta.deviceKvs!.factory, meta.deviceKvs!.factory);
+      expect(journal.meta.deviceKvs!.user, meta.deviceKvs!.user);
       expect(journal.meta.recordedAt, meta.recordedAt);
       expect(journal.meta.ssnOrigin, meta.ssnOrigin);
       expect(journal.meta.visibleChannels, meta.visibleChannels);
@@ -67,7 +65,7 @@ void main() {
       expect(journal.completeBytes, encodeSessionMeta(meta).length);
     });
 
-    test('null boardMeta round-trips as null', () {
+    test('null deviceKvs round-trips as null', () {
       const bare = SessionMeta(
         name: '',
         sampleRate: 500,
@@ -75,20 +73,19 @@ void main() {
         channelLabels: ['a', 'b', 'c', 'd'],
         tares: [null, null, null, null],
         calibration: [
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
         ],
         displayUnit: 'mVv',
         deviceInfo: {},
-        boardMeta: null,
         recordedAt: '2026-08-28T14:30:12.345Z',
         ssnOrigin: 0,
         visibleChannels: [true, true, true, true],
       );
       expect(
-        parseSessionJournal(encodeSessionMeta(bare)).meta.boardMeta,
+        parseSessionJournal(encodeSessionMeta(bare)).meta.deviceKvs,
         isNull,
       );
     });
@@ -100,6 +97,38 @@ void main() {
       f?.call(json);
       return json;
     }
+
+    test('deviceKvs is additive and strict when present', () {
+      final legacy = parseSessionJournal(
+        utf8.encode('${jsonEncode(metaJson((j) => j.remove('deviceKvs')))}\n'),
+      );
+      expect(legacy.meta.deviceKvs, isNull);
+
+      final snapshot = KvsSnapshot(
+        factory: {'charging': 'enabled'},
+        user: {'lc0.cap': '200'},
+      );
+      final journal = parseSessionJournal(
+        utf8.encode(
+          '${jsonEncode(metaJson((j) => j['deviceKvs'] = snapshot.toJson()))}\n',
+        ),
+      );
+      expect(journal.meta.deviceKvs!.factory, snapshot.factory);
+      expect(journal.meta.deviceKvs!.user, snapshot.user);
+
+      final bad = jsonEncode(
+        metaJson(
+          (j) => j['deviceKvs'] = {
+            'factory': <Object?>[],
+            'user': <String, String>{},
+          },
+        ),
+      );
+      expect(
+        () => parseSessionJournal(utf8.encode('$bad\n')),
+        throwsFormatException,
+      );
+    });
 
     test('rejects a different version', () {
       final bad = jsonEncode(metaJson((j) => j['version'] = 2));
@@ -124,7 +153,6 @@ void main() {
         (Map<String, dynamic> j) => j['recordedAt'] = '',
         (Map<String, dynamic> j) => j['recordedAt'] = 'yesterday', // no ISO
         (Map<String, dynamic> j) => j['ssnOrigin'] = 1.5,
-        (Map<String, dynamic> j) => j['boardMeta'] = 42,
       ]) {
         final bad = jsonEncode(metaJson(mutate));
         expect(
@@ -214,14 +242,13 @@ void main() {
         channelLabels: ['a', 'b', 'c', 'd'],
         tares: [null, null, null, null],
         calibration: [
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
-          ChannelCalibration(board: RawOnlyChannelBoard()),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
         ],
         displayUnit: 'kgf',
         deviceInfo: {'note': 'mañana'},
-        boardMeta: null,
         recordedAt: '2026-08-28T14:30:12.345Z',
         ssnOrigin: 1,
         visibleChannels: [true, true, true, true],

@@ -9,7 +9,6 @@ import 'package:dynamite_app/screens/live_tab.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/models/feed_health.dart';
-import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
@@ -37,7 +36,11 @@ void main() {
         home: Scaffold(
           body: LiveStats(
             settings: AppSettings(prefs: prefs),
-            rig: RigState(transport: _FakeTransport(), prefs: prefs),
+            rig: RigState(
+              backend: () => null,
+              connectedDeviceName: () => 'Bench unit',
+              prefs: prefs,
+            ),
             hub: hub,
             ctrl: ctrl,
             healthListenable: ValueNotifier<FeedHealth?>(null),
@@ -63,17 +66,4 @@ void main() {
     expect(find.text('+900'), findsNWidgets(kAdcChannelCount));
     expect(find.text('+700'), findsNWidgets(kAdcChannelCount));
   });
-}
-
-/// LiveStats reads only the rig's channel titles; the flash transport is
-/// never exercised.
-class _FakeTransport implements RigFlashTransport {
-  @override
-  String get connectedDeviceId => 'dev1';
-  @override
-  String get connectedDeviceName => 'Bench unit';
-  @override
-  Future<void> writeFlashDoc(String doc) async {}
-  @override
-  Future<String> readFlashDoc() async => throw StateError('unused');
 }

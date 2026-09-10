@@ -108,12 +108,13 @@ class DataHub extends ChangeNotifier
   int totalSamples = 0;
 
   /// Factory board calibration read from the device at connect time (parsed
-  /// by [AdcPacketDecoder.onCalibrationPacket]). Null until the first
+  /// by `BleLinkManager` in post-connect setup). Null until the first
   /// successful read of this run: "no device data" must be representable —
   /// defaulting to nominal values would let the UI present numbers no
-  /// hardware ever produced. Conversions require the resolved board
-  /// constants ([boardDataStatus]); without them every unit but raw reports
-  /// unavailable.
+  /// hardware ever produced. [UnprovisionedBoardCalibration] and
+  /// [InvalidBoardCalibration] alike mean every unit but raw reports
+  /// unavailable; the invalid variant additionally carries the reason for the
+  /// user-facing warning.
   ///
   /// Identity-free: it describes the samples the hub holds, not the attached
   /// device (the settings page's calibration row shows the flash-document
@@ -121,16 +122,6 @@ class DataHub extends ChangeNotifier
   /// drops ([clearBoardCalibration]) — a dead stream has no constants.
   BoardCalibration? get boardCalibration => _boardCalibration;
   BoardCalibration? _boardCalibration;
-
-  /// The board-data verdict for the live UI's raw-only notice: the parsed
-  /// document's verdict, or [BoardDataStatus.unreadable] before any
-  /// successful read and after a link drop (a failed connect-time read never
-  /// delivers a document, so absence IS the unreadable verdict).
-  BoardDataStatus get boardDataStatus =>
-      _boardCalibration?.constantsStatus ?? BoardDataStatus.unreadable;
-
-  /// Human-readable reason behind [boardDataStatus] when not ok.
-  String get boardDataDetail => _boardCalibration?.constantsDetail ?? '';
 
   /// Load cell converting each channel (null = unassigned, electrical units
   /// only). Owned by `RigState` (device slots, including unsaved edits);
@@ -454,15 +445,29 @@ class DataHub extends ChangeNotifier
     notifyListeners();
   }
 
-  /// Content equality for cache invalidation: conversion inputs only.
-  /// factoryDate and the other cal metadata are display-only. Nominals are
-  /// conversion inputs — a nominals-only board must still replace a
-  /// constants-failed one (and vice versa).
-  static bool _sameBoardCalibration(BoardCalibration a, BoardCalibration b) {
-    if (a.constantsStatus != b.constantsStatus) return false;
-    for (int i = 0; i < a.channels.length; ++i) {
-      final x = a.channels[i];
-      final y = b.channels[i];
+  /// Content equality for cache invalidation: conversion inputs only
+  /// (cal metadata and the raw KVS provenance are display-only).
+  static bool _sameBoardCalibration(BoardCalibration a, BoardCalibration b) =>
+      switch ((a, b)) {
+        (UnprovisionedBoardCalibration(), UnprovisionedBoardCalibration()) =>
+          true,
+        (final InvalidBoardCalibration a, final InvalidBoardCalibration b) =>
+          a.detail == b.detail,
+        (
+          final ProvisionedBoardCalibration pa,
+          final ProvisionedBoardCalibration pb,
+        ) =>
+          _sameChannels(pa.channels, pb.channels),
+        _ => false,
+      };
+
+  static bool _sameChannels(
+    List<ChannelBoardCalibration> a,
+    List<ChannelBoardCalibration> b,
+  ) {
+    for (int i = 0; i < a.length; ++i) {
+      final x = a[i];
+      final y = b[i];
       if (x case final CalibratedChannelBoard xd) {
         if (y is! CalibratedChannelBoard) return false;
         if (!_sameList(xd.resistors, y.resistors)) return false;
@@ -483,9 +488,8 @@ class DataHub extends ChangeNotifier
     return true;
   }
 
-  static bool _sameNominals(ChannelNominals? a, ChannelNominals? b) {
+  static bool _sameNominals(ChannelNominals a, ChannelNominals b) {
     if (identical(a, b)) return true;
-    if (a == null || b == null) return false;
     return a.adcFsrV == b.adcFsrV &&
         a.afeGain == b.afeGain &&
         a.pgaGain == b.pgaGain &&
@@ -526,12 +530,13 @@ class DataHub extends ChangeNotifier
 
   @override
   ChannelCalibration calibrationFor(int channelIndex) => ChannelCalibration(
-    // A missing/never-read board leaves the channel with no calibration and
-    // no nominals: electrical and force units report unavailable and only
-    // raw counts convert — see [boardDataStatus].
-    board:
-        _boardCalibration?.channels[channelIndex] ??
-        const RawOnlyChannelBoard(),
+    // A missing/never-read document and an unprovisioned board alike leave
+    // the channel with no board map: electrical and force units report
+    // unavailable and only raw counts convert.
+    board: switch (_boardCalibration) {
+      final ProvisionedBoardCalibration b => b.channels[channelIndex],
+      _ => null,
+    },
     loadCell: _loadCells[channelIndex],
   );
 

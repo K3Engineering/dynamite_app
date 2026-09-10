@@ -5,12 +5,13 @@ import 'package:flutter/foundation.dart';
 import 'app_events.dart';
 import 'data_hub.dart';
 import 'live_session_writer.dart';
-import 'session_persistence.dart';
-import '../models/board_calibration.dart';
+import 'session_store.dart';
+import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/feed_health.dart';
 import '../models/hub_event.dart';
+import '../utils/format.dart';
 
 /// Outcome of [RecordingController.startSession].
 sealed class StartSessionResult {
@@ -65,8 +66,9 @@ enum _RecordingState { idle, recording, stopping }
 /// data plane — starting a session snapshots tare, calibration and sample
 /// rate off it, more than the [FeedHealthSource] read port covers), stream
 /// liveness arrives through the [streamingChanges]/[streamingNow]
-/// port, and device metadata, packet-boundary resets and persistence are
-/// injected ([deviceMetadataSnapshot], [onSessionBoundary], [persistence]).
+/// port, and device metadata and packet-boundary resets are injected
+/// ([deviceMetadataSnapshot], [onSessionBoundary]). Persistence is the
+/// app-wide [SessionStore] singleton.
 /// The link-transition resets this controller used to own (hub clear on
 /// stream entry, calibration forget on drop) live in
 /// `StreamResetCoordinator`.
@@ -92,20 +94,22 @@ class RecordingController extends ChangeNotifier {
     /// — csv-format-v1.md), frozen onto the session row at start.
     required Map<String, Object?> Function() deviceMetadataSnapshot,
 
+    /// Snapshot of the raw device KVS (the CSV `device.kvs` block), frozen
+    /// onto the session row at start.
+    required KvsSnapshot? Function() deviceKvsSnapshot,
+
     /// Marks a session boundary for packet continuity: the first packet of
     /// a session must not be diffed against a stale counter from across the
     /// boundary (the decoder's `resetContinuity`, wired in main).
     required void Function() onSessionBoundary,
 
-    /// The session persistence port (see [SessionPersistence]).
-    required SessionPersistence persistence,
     required AppEvents events,
   }) : _dataHub = dataHub,
        _streamingChanges = streamingChanges,
        _streamingNow = streamingNow,
        _deviceMetadataSnapshot = deviceMetadataSnapshot,
+       _deviceKvsSnapshot = deviceKvsSnapshot,
        _onSessionBoundary = onSessionBoundary,
-       _persistence = persistence,
        _events = events {
     _dataHub.addEventListener(_onHubEvent);
     _streamingChanges.addListener(_onStreamingChanged);
@@ -115,8 +119,8 @@ class RecordingController extends ChangeNotifier {
   final Listenable _streamingChanges;
   final bool Function() _streamingNow;
   final Map<String, Object?> Function() _deviceMetadataSnapshot;
+  final KvsSnapshot? Function() _deviceKvsSnapshot;
   final void Function() _onSessionBoundary;
-  final SessionPersistence _persistence;
   final AppEvents _events;
 
   _RecordingState _state = _RecordingState.idle;
@@ -140,17 +144,16 @@ class RecordingController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Start a new recording session: construct the writer (via the
-  /// persistence port) and latch it here. Synchronous end to end — the
-  /// storage layer does no store work until the first packet creates the
-  /// session directory — so there is no async window in which the stream
-  /// could change out from under the snapshots the writer is built on, and
-  /// no discarded artifact to clean up if it did.
+  /// Start a new recording session: construct the writer and latch it here.
+  /// Synchronous end to end — the storage layer does no store work until the
+  /// first packet creates the session directory — so there is no async window
+  /// in which the stream could change out from under the snapshots the writer
+  /// is built on, and no discarded artifact to clean up if it did.
   ///
   /// [name] is the session's display name; null auto-names it from the wall
   /// clock (e.g. `2026-07-29 14:05:32` — see [autoSessionName]).
   /// [channelLabels] and [visibleChannels] are persisted for display only
-  /// (see [SessionPersistence.startSession]). [displayUnit] is frozen onto
+  /// (see [SessionStore.startSession]). [displayUnit] is frozen onto
   /// the session row as the CSV export's default converted unit. The connected
   /// device's identity is frozen alongside (the CSV `device` block).
   ///
@@ -182,27 +185,31 @@ class RecordingController extends ChangeNotifier {
     }
 
     final sessionName = name ?? autoSessionName(DateTime.now());
-    _sessionWriter = _persistence.startSession(
-      tare: _dataHub.tare,
-      // Snapshot the per-channel calibration in effect now; playback
-      // converts through it even if calibration changes later.
-      channelCalibration: [
+    // The whole journal header is snapshotted here, at recording start: the
+    // per-channel calibration in effect now (playback converts through it
+    // even if calibration changes later), the tare offsets, the display
+    // unit, the device identity, and the recording-start wall clock (NOT
+    // the first packet's, which is later — the CSV's recorded_at asserts
+    // this one).
+    final header = (
+      name: sessionName,
+      sampleRate: _dataHub.sampleRateHz,
+      channelCount: kAdcChannelCount,
+      channelLabels: List.of(channelLabels),
+      tares: List.of(_dataHub.tare),
+      calibration: [
         for (int ch = 0; ch < kAdcChannelCount; ch++)
           _dataHub.calibrationFor(ch),
       ],
-      samplesPerSec: _dataHub.sampleRateHz,
+      visibleChannels: List.of(visibleChannels),
+      displayUnit: displayUnit.name,
+      deviceInfo: Map.of(_deviceMetadataSnapshot()),
+      deviceKvs: _deviceKvsSnapshot(),
+      recordedAt: iso8601WithOffset(DateTime.now()),
+    );
+    _sessionWriter = SessionStore.instance.startSession(
+      header,
       sourceRingCapacity: DataHub.maxDataSz,
-      name: sessionName,
-      channelLabels: channelLabels,
-      visibleChannels: visibleChannels,
-      displayUnit: displayUnit,
-      deviceMetadata: _deviceMetadataSnapshot(),
-      // Freeze the board-level calibration provenance alongside the
-      // per-channel snapshot above; null when no board data resolved.
-      boardMeta: switch (_dataHub.boardCalibration) {
-        final board? => SessionBoardMeta.fromBoard(board),
-        null => null,
-      },
       // A storage failure latched mid-recording stops the session the
       // moment it latches — not when a later batch would reveal it (a
       // failed last packet under an idle feed has no later batch).
@@ -267,7 +274,7 @@ class RecordingController extends ChangeNotifier {
     // drop, writer error), where a throw would be an unhandled async error.
     Object? error;
     try {
-      error = await _persistence.finalizeSession(writer: writer);
+      await SessionStore.instance.finalizeSession(writer: writer);
     } catch (e) {
       error = e;
     }

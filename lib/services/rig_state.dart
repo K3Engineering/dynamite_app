@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/board_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/load_cell.dart';
-import 'rig_flash_transport.dart';
+import 'link_backend.dart';
 
 /// Owns the rig: the slot list read from the connected device, unsaved
 /// edits, and the cross-device cell history.
@@ -24,13 +24,17 @@ import 'rig_flash_transport.dart';
 /// Unsaved edits die with a disconnect. Typed-in cell values survive in
 /// [history] (recorded at edit time).
 class RigState extends ChangeNotifier {
-  /// [prefs] is injected (see `main`): the instance is available
-  /// synchronously, so the history load happens right here in the
-  /// constructor and can never race a later setter.
+  /// [backend] yields the active link's device operations (null when no link
+  /// is up); [connectedDeviceName] names it for history provenance; [prefs]
+  /// is injected (see `main`): the instance is available synchronously, so
+  /// the history load happens right here in the constructor and can never
+  /// race a later setter.
   RigState({
-    required RigFlashTransport transport,
+    required LinkBackend? Function() backend,
+    required String Function() connectedDeviceName,
     required SharedPreferences prefs,
-  }) : _transport = transport,
+  }) : _backend = backend,
+       _connectedDeviceName = connectedDeviceName,
        _prefs = prefs {
     _loadHistory();
   }
@@ -41,14 +45,14 @@ class RigState extends ChangeNotifier {
   /// scannable (least-recently-seen evicted).
   static const int historyCap = 50;
 
-  final RigFlashTransport _transport;
+  final LinkBackend? Function() _backend;
+  final String Function() _connectedDeviceName;
   final SharedPreferences _prefs;
 
   /// The flash document as last read from the connected device (board +
   /// slots). Null before this connection's first successful read — and
-  /// save is IMPOSSIBLE without it: the board keys round-trip verbatim
-  /// through a save, so writing without a prior read would stamp nominal
-  /// board values over real factory data. Also null after
+  /// save is impossible without it: edits buffer from the read state, so
+  /// there is nothing to write until a read lands. Also null after
   /// [onLinkDropped]: the document is a claim about the device's current
   /// contents, which a dead link cannot back.
   DeviceFlash? _lastFlash;
@@ -83,9 +87,12 @@ class RigState extends ChangeNotifier {
   /// first successful read.
   BoardCalibration? get boardCalibration => _lastFlash?.board;
 
+  /// The raw KVS snapshot as last read (refreshed by a verified save).
+  KvsSnapshot? get kvsSnapshot => _lastFlash?.kvs;
+
   /// The connected device's display name, live off the link: history
   /// provenance and the calibration report's owner label.
-  String get connectedDeviceName => _transport.connectedDeviceName;
+  String get connectedDeviceName => _connectedDeviceName();
 
   List<RigHistoryEntry> get history => List.unmodifiable(_history);
 
@@ -143,7 +150,7 @@ class RigState extends ChangeNotifier {
   /// immediately: typed-in values are exactly what "last seen" is for.
   void setSlot(int i, LoadCellProfile cell) {
     _pendingEdits = _editBuffer().withSlot(i, RigSlot(cell: cell));
-    _upsertHistory(cell, _transport.connectedDeviceName, DateTime.now());
+    _upsertHistory(cell, connectedDeviceName, DateTime.now());
     notifyListeners();
   }
 
@@ -170,10 +177,10 @@ class RigState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Write the edited slots to the device, alongside the board keys
-  /// exactly as read, then verify with a read-back. Returns false when
-  /// the write or the verification fails — pending edits are kept so the
-  /// user can retry or revert.
+  /// Write the edited slots to the device (slot keys only — the board
+  /// half is read-only to the app), then verify with a read-back.
+  /// Returns false when the write or the verification fails — pending
+  /// edits are kept so the user can retry or revert.
   Future<bool> saveToDevice() async {
     final edited = _pendingEdits;
     final flash = _lastFlash;
@@ -182,13 +189,12 @@ class RigState extends ChangeNotifier {
     // die with the link — so the document provably belongs to the device
     // this write goes to.
     assert(flash != null, 'pending edits imply a read flash document');
-    final doc = DeviceFlash(
-      board: flash!.board,
-      slots: edited,
-      extraLines: flash.extraLines,
-    ).serialize();
+    final backend = _backend();
+    if (backend == null) {
+      throw StateError('saveToDevice with pending edits but no live link');
+    }
     try {
-      await _transport.writeFlashDoc(doc);
+      await backend.writeSlots(edited.toKv());
     } catch (_) {
       return false;
     }
@@ -196,17 +202,17 @@ class RigState extends ChangeNotifier {
     // not a fact (firmware may reject, truncate or normalize the write).
     // Committing without checking would let app state diverge from the
     // device silently — and there is no change detection to catch it.
-    final String readBack;
+    // The equality check below is the strict half: a mangled write-back
+    // parses (leniently) to slots that don't match the intended edit, so
+    // the save fails like a failed read.
+    final KvsSnapshot readBack;
+    final RigSlots verified;
     try {
-      readBack = await _transport.readFlashDoc();
+      readBack = await backend.readKvsSnapshot();
+      verified = RigSlots.fromKv(readBack.user);
     } catch (_) {
       return false;
     }
-    // Verify against the slot keys only — the write can't have changed
-    // board keys, so a board re-parse would add nothing while resolving
-    // constants to nominal (the read-back isn't accompanied by the ADC's
-    // PGA readback).
-    final verified = RigSlots.fromKv(parseFlashKv(readBack));
     if (!_sameCells(verified, edited)) return false;
     // Commit only if nothing moved under the in-flight write: a revert, a
     // fresh edit, or a link drop means the newer state wins. (The UI also
@@ -216,11 +222,11 @@ class RigState extends ChangeNotifier {
     }
     // The device provably holds these slots: adopt the read-back's slot
     // list (any normalization the device applied is reflected), keep the
-    // read-time board and extra lines.
+    // read-time board, and refresh the frozen raw KVS provenance.
     _lastFlash = DeviceFlash(
-      board: flash.board,
+      board: flash!.board,
       slots: verified,
-      extraLines: flash.extraLines,
+      kvs: readBack,
     );
     _pendingEdits = null;
     notifyListeners();

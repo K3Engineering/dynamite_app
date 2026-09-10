@@ -11,7 +11,7 @@ import '../models/bt_scan.dart';
 import 'gatt_link_backend.dart';
 import 'kvs_client.dart';
 import 'link_backend.dart';
-import 'rig_flash_transport.dart';
+import '../models/device_flash.dart';
 import '../models/device_info.dart';
 import '../models/device_name.dart';
 import '../utils/log.dart';
@@ -153,11 +153,10 @@ bool isWebPickerDismissal(Object e) {
 /// post-connect setup / disconnect, the web reconnect-settle embargo
 /// ([reconnectSettleDelay]), and live RSSI polling.
 ///
-/// This class owns *only* the link. It knows nothing about the wire protocol
-/// or recording: raw notification bytes and calibration reads are handed off
-/// via [onAdcData] / [onCalibrationData] (wired to [AdcPacketDecoder] at app
-/// startup), and recording observes this notifier's state changes (see
-/// [RecordingController]).
+/// This class owns *only* the link. It knows nothing about the recording:
+/// raw notification bytes and the parsed flash document are handed off via
+/// [onAdcData] / [onDeviceFlash] (wired at app startup), and recording
+/// observes this notifier's state changes (see [RecordingController]).
 ///
 /// MULTI-DEVICE ROADMAP: today exactly one link is tracked ([_link]), and
 /// [QueueType.perDevice] already isolates per-device command queues. To
@@ -168,7 +167,7 @@ bool isWebPickerDismissal(Object e) {
 /// deviceId instead of dropping), per-device busy guards in [_beginConnect]
 /// and [disconnectSelectedDevice]. Adapter availability and scanning stay
 /// *global* (one radio) and do NOT move into [DeviceLink].
-class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
+class BleLinkManager extends ChangeNotifier {
   /// Upper bound we pass to [UniversalBle.disconnect] so a silent stack can't
   /// strand the UI on "Disconnecting…". The package's own `disconnect()` sets
   /// up a completer over its connection-event stream and applies this timeout
@@ -303,6 +302,18 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   String? lastDisconnectErrorFor(String deviceId) =>
       _lastDisconnectErrors[deviceId];
 
+  /// Per-device detail of the most recent post-connect setup failure, keyed
+  /// by device id: a transport/protocol failure (the link is torn down). Set
+  /// in [_runPostConnectSetup]'s catch; cleared wholesale when any new connect
+  /// attempt begins (see [_beginConnect]). The Devices tab shows it as the
+  /// row hint, where it persists (unlike the toast) so it can be read or
+  /// screenshotted.
+  final Map<String, String> _setupFailures = {};
+
+  /// The setup failure detail for [deviceId], or null if none (or it was
+  /// cleared by a new attempt).
+  String? setupFailureFor(String deviceId) => _setupFailures[deviceId];
+
   /// Last "proof of life" per device id (ms since epoch): the most recent
   /// moment a GATT link to this device was provably up (see [_stampAlive]).
   /// Never stamped for failed/cancelled connects (a refused attempt proves
@@ -367,13 +378,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
   /// Device id of the active link whenever the GATT link is up (during setup or
   /// while streaming); empty otherwise.
-  @override
   String get connectedDeviceId => _link.isLinkUp ? _link.deviceId : '';
 
   /// Name of the currently connected device: the Settings-stored name when
   /// the device has one, else the advertised name (or the device id when
   /// that's empty).
-  @override
   String get connectedDeviceName => _link.displayName;
 
   /// The Settings-stored name of the connected device, or null when unset
@@ -464,11 +473,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// manager itself never interprets them.
   void Function(Uint8List data)? onAdcData;
 
-  /// The flash document (board calibration + load cell slots), reassembled
-  /// from the device KVS once during post-connect setup, plus the ADC's
-  /// per-channel PGA gains from the config readback. Wired to
-  /// [AdcPacketDecoder.onCalibrationPacket] at app startup.
-  void Function(Uint8List data, List<double> adcGains)? onCalibrationData;
+  /// The parsed connect-time flash document (board calibration, load cell
+  /// slots, raw KVS provenance), delivered once during post-connect setup.
+  /// Injected at app startup; the flash never reaches the app unparsed ΓÇö see
+  /// [_setupKvs].
+  final void Function(DeviceFlash flash) onDeviceFlash;
 
   /// The stream's sample rate (Hz), delivered once per link before the feed
   /// starts (parsed from the ADC config readback on GATT links; the demo
@@ -498,46 +507,15 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// The ADC's decoded boot configuration as read back during the "Reading
   /// board constants…" stage (null until read; never null once a link
   /// reaches the flash read — an unreadable config fails the connection, see
-  /// [_readAdcConfig]). The gains are handed to the protocol layer with the
-  /// flash document (see [onCalibrationData]); the rate went out via
+  /// [_readAdcConfig]). Its per-channel PGA gains complete the board
+  /// constants at flash parse time (see [_setupKvs]); the rate went out via
   /// [onSampleRate] right after the read.
   AdcConfig? _adcConfig;
 
-  // -- RigFlashTransport ------------------------------------------------------
-
-  /// Write a serialized `DeviceFlash` document to the connected device.
-  /// Called only by `RigState.saveToDevice`, which has already composed the
-  /// full document (board keys round-tripping verbatim + edited slots). The
-  /// active link's backend applies it (see [LinkBackend.writeFlashDoc]).
-  @override
-  Future<void> writeFlashDoc(String doc) async {
-    final deviceId = _link.deviceId;
-    if (deviceId.isEmpty) {
-      throw StateError('writeFlashDoc with no device connected');
-    }
-    final backend = _backend;
-    if (backend == null) {
-      throw StateError('writeFlashDoc with no device channel on $deviceId');
-    }
-    await backend.writeFlashDoc(doc);
-  }
-
-  /// Read the flash document back from the connected device (save
-  /// verification in `RigState.saveToDevice`). Throws when nothing is
-  /// connected or the read fails — a failed verification fails the save,
-  /// which the caller already surfaces.
-  @override
-  Future<String> readFlashDoc() async {
-    final deviceId = _link.deviceId;
-    if (deviceId.isEmpty) {
-      throw StateError('readFlashDoc with no device connected');
-    }
-    final backend = _backend;
-    if (backend == null) {
-      throw StateError('readFlashDoc with no device channel on $deviceId');
-    }
-    return backend.readFlashDoc();
-  }
+  /// The backend of the active link (null when no link is up), for the
+  /// device operations `RigState` drives outside the link lifecycle (slot
+  /// writes and the save-verification read). See [_backend].
+  LinkBackend? get backend => _backend;
 
   /// The feed-maintenance chain. [KvsClient] serializes individual KVS
   /// commands, but nothing stops one envelope's resubscribe from landing
@@ -635,9 +613,12 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     return ok;
   }
 
-  BleLinkManager({required AppEvents events, SimulatedLink? demo})
-    : _events = events,
-      _demo = demo {
+  BleLinkManager({
+    required AppEvents events,
+    required this.onDeviceFlash,
+    SimulatedLink? demo,
+  }) : _events = events,
+       _demo = demo {
     // Run each device's BLE commands in its own queue. With the default
     // `global` queue, a command stuck against a half-torn-down device (common on
     // web when the user rapidly connects/disconnects) blocks and serially times
@@ -1101,8 +1082,17 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
           _adcConfig = await _readAdcConfig(deviceId);
           if (!token.isCurrent) return;
           onSampleRate?.call(_adcConfig!.sampleRateHz);
-          await _setupKvs(token, deviceId);
-          if (!token.isCurrent) return;
+          final snapshot = await _setupKvs(token, deviceId);
+          if (snapshot == null || !token.isCurrent) return;
+          // A strict parse failure is a value, not a link failure:
+          // `DeviceFlash.fromKvs` yields an `InvalidBoardCalibration` and the
+          // device streams raw counts with a warning. Transport/protocol
+          // failures still throw to the catch below and tear the link down.
+          final flash = DeviceFlash.fromKvs(
+            snapshot,
+            pgaGains: _adcConfig!.pgaGains,
+          );
+          onDeviceFlash(flash);
           // Constants in; the ADC feed subscription is the "Starting data
           // stream…" stage.
           _link.state = BtLinkState.subscribing;
@@ -1140,6 +1130,9 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
       // The GATT link came up (connect succeeded) — release it so the
       // platform can't hold a connection the app considers failed.
       _teardownLink(deviceId, releaseGatt: true);
+      // Exact reason for the Devices-tab row; the user-facing toast stays
+      // generic (see AppShellState).
+      _setupFailures[deviceId] = '$e';
       _events.emit(BleConnectionFailed(name));
       notifyListeners();
     }
@@ -1167,6 +1160,7 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // A new attempt supersedes every recorded failure marker.
     _connectFailures.clear();
     _lastDisconnectErrors.clear();
+    _setupFailures.clear();
     _supersedeSetupPasses();
     return true;
   }
@@ -1182,7 +1176,6 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     _link.deviceId = demo.id;
     _link.name = demo.displayName;
     _link.isSimulated = true;
-    _link.state = BtLinkState.streaming;
     _link.storedName = demo.storedName;
     // Simulated hardware has a simulated identity (real links read theirs
     // from the Device Information service in post-connect setup).
@@ -1191,13 +1184,17 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
     onSampleRate?.call(demo.sampleRateHz);
 
-    // The demo device is factory-calibrated: serve its flash doc through the
-    // same path a real device's calibration read would take. The doc is
-    // mutable so "Save to device" round-trips.
-    onCalibrationData?.call(
-      Uint8List.fromList(utf8.encode(demo.flashDoc)),
-      demo.pgaGains,
+    // The demo device is factory-calibrated: parse its KVS snapshot through
+    // the same path a real device's calibration read would take. The store is
+    // mutable so "Save to device" round-trips. A malformed fixture is a
+    // programmer error (the demo is the happy path) and throws here — the
+    // tests that connect the demo are the guard.
+    final flash = DeviceFlash.fromKvs(
+      demo.kvsSnapshot,
+      pgaGains: demo.pgaGains,
     );
+    _link.state = BtLinkState.streaming;
+    onDeviceFlash(flash);
 
     demo.startFeed(_deliverAdcData);
 
@@ -1415,23 +1412,19 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   }
 
   /// Bring up the KVS channel: subscribe to its notifications, read the
-  /// stored device name, and run the connect-time flash document read.
-  /// Any failure throws and the caller fails the connection — a link
-  /// without a working KVS channel can't save load cell slots or the
-  /// device name, so streaming on without it would be a half-usable link
-  /// (same verdict as an unreadable ADC config or a missing ADC feed).
-  /// An EMPTY KVS is not a failure: an unprovisioned unit reads cleanly as
-  /// an empty document and degrades to nominal values with the
-  /// unprovisioned notice. A superseded pass (the link was torn down
-  /// mid-setup, which also aborts the client) bails silently — the failure
-  /// belongs to a link that no longer exists.
-  Future<void> _setupKvs(_SetupToken token, String deviceId) async {
+  /// stored device name, and run the connect-time KVS read. Returns the raw
+  /// snapshot; the caller parses it strictly ([DeviceFlash.fromKvs]) and
+  /// owns the failure policy. Every earlier setup/read failure throws — a
+  /// link without a working KVS channel can't save load cell slots or the
+  /// device name. A superseded pass bails silently through the caller's token
+  /// check (returning null).
+  Future<KvsSnapshot?> _setupKvs(_SetupToken token, String deviceId) async {
     final client = KvsClient(
       write: (bytes) =>
           UniversalBle.write(deviceId, btServiceId, btChrKvs, bytes),
     );
     await UniversalBle.subscribeNotifications(deviceId, btServiceId, btChrKvs);
-    if (!token.isCurrent) return;
+    if (!token.isCurrent) return null;
     final backend = GattLinkBackend(
       client: client,
       withFeedPaused: _withFeedPaused,
@@ -1442,13 +1435,8 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
     // [connectedDeviceName]).
     _link.storedName = await backend.readDeviceName();
     notifyListeners();
-    if (!token.isCurrent) return;
-    final doc = await backend.readFlashDoc();
-    if (!token.isCurrent) return;
-    onCalibrationData?.call(
-      Uint8List.fromList(utf8.encode(doc)),
-      _adcConfig!.pgaGains,
-    );
+    if (!token.isCurrent) return null;
+    return backend.readKvsSnapshot();
   }
 
   /// Subscribe to the ADC feed characteristic of [service]. Returns true
@@ -1539,14 +1527,17 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// this the old decoder/DataHub keep running and try to render into the
   /// disposed engine view.
   ///
-  /// Order matters: the data callbacks are nulled FIRST (synchronously) so the
-  /// notifyListeners → scheduleFrame chain stops immediately; the async GATT
-  /// teardown then releases the browser-level connection so the new generation
-  /// can find and reconnect the device. Deliberately does NOT call
-  /// [notifyListeners] — the only listeners are the disposed widget tree.
+  /// Order matters: the per-packet data callbacks are nulled FIRST
+  /// (synchronously) so the notifyListeners → scheduleFrame chain stops
+  /// immediately; the async GATT teardown then releases the browser-level
+  /// connection so the new generation can find and reconnect the device.
+  /// [onDeviceFlash] is constructor-injected and not nulled here: it fires
+  /// only from a post-connect setup pass, which [_supersedeSetupPasses]
+  /// (below, before the first await) makes bail before reaching it.
+  /// Deliberately does NOT call [notifyListeners] — the only listeners are
+  /// the disposed widget tree.
   Future<void> shutdownForHotRestart() async {
     onAdcData = null;
-    onCalibrationData = null;
     onSampleRate = null;
     _backend?.dispose();
     _backend = null;

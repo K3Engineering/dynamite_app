@@ -59,10 +59,7 @@ void main() {
     });
 
     test('no nominals: every unit but raw is unavailable', () {
-      const noData = ChannelConverter(
-        ChannelCalibration(board: RawOnlyChannelBoard()),
-        100,
-      );
+      const noData = ChannelConverter(ChannelCalibration(board: null), 100);
       for (final u in DisplayUnit.values) {
         if (u == DisplayUnit.raw) {
           expect(noData.netMap(u), isNotNull);

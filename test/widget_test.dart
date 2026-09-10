@@ -17,7 +17,6 @@ import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/services/session_metadata.dart';
-import 'package:dynamite_app/services/session_storage.dart';
 import 'package:dynamite_app/services/stream_reset_coordinator.dart';
 
 /// Smoke test: pump the real app shell with the production object graph, but
@@ -44,16 +43,25 @@ void main() {
     final appEvents = AppEvents();
     final dataHub = DataHub();
     final decoder = AdcPacketDecoder(dataHub);
-    final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
-      ..onAdcData = decoder.onDataPacket
-      ..onCalibrationData = decoder.onCalibrationPacket;
     final prefs = await SharedPreferences.getInstance();
-    final rigState = RigState(transport: linkManager, prefs: prefs);
-    decoder.onDeviceFlash = (flash) => rigState.onFlashRead(
-      linkManager.connectedDeviceId,
-      linkManager.connectedDeviceName,
-      flash,
+    late final BleLinkManager linkManager;
+    final rigState = RigState(
+      backend: () => linkManager.backend,
+      connectedDeviceName: () => linkManager.connectedDeviceName,
+      prefs: prefs,
     );
+    linkManager = BleLinkManager(
+      events: appEvents,
+      demo: DemoDevice(),
+      onDeviceFlash: (flash) {
+        dataHub.updateBoardCalibration(flash.board);
+        rigState.onFlashRead(
+          linkManager.connectedDeviceId,
+          linkManager.connectedDeviceName,
+          flash,
+        );
+      },
+    )..onAdcData = decoder.onDataPacket;
     StreamResetCoordinator(
       hub: dataHub,
       streamingChanges: linkManager,
@@ -67,8 +75,8 @@ void main() {
         name: linkManager.connectedDeviceName,
         info: linkManager.connectedDeviceInfo,
       ),
+      deviceKvsSnapshot: () => rigState.kvsSnapshot,
       onSessionBoundary: decoder.resetContinuity,
-      persistence: const StaticSessionPersistence(),
       events: appEvents,
     );
     final feedHealth = FeedHealthTracker(

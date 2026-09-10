@@ -6,11 +6,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
+import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/services/mockble.dart';
 
 /// End-to-end (no hardware) test of the live data pipeline:
@@ -35,9 +37,10 @@ void main() {
     final events = AppEvents();
     final hub = DataHub();
     final decoder = AdcPacketDecoder(hub);
-    final link = BleLinkManager(events: events)
-      ..onAdcData = decoder.onDataPacket
-      ..onCalibrationData = decoder.onCalibrationPacket;
+    final link = BleLinkManager(
+      events: events,
+      onDeviceFlash: (flash) => hub.updateBoardCalibration(flash.board),
+    )..onAdcData = decoder.onDataPacket;
 
     return (
       hub,
@@ -92,13 +95,10 @@ void main() {
         async.elapse(const Duration(seconds: 4));
 
         expect(link.isStreaming, isTrue);
+        final board = hub.boardCalibration! as ProvisionedBoardCalibration;
+        expect(board.channels.every((c) => c.isCalibrated), isTrue);
         expect(
-          hub.boardCalibration!.channels.every((c) => c.isFactoryCalibrated),
-          isTrue,
-        );
-        expect(
-          (hub.boardCalibration!.channels[0] as CalibratedChannelBoard)
-              .offsetCounts,
+          (board.channels[0] as CalibratedChannelBoard).offsetCounts,
           closeTo(845.2, 1e-9),
         );
 
@@ -108,7 +108,7 @@ void main() {
 
     test('an unprovisioned board (empty KVS) streams raw-only', () {
       fakeAsync((async) {
-        MockBlePlatform.instance.seedKvsFromDoc('');
+        MockBlePlatform.instance.seedKvs(kvsFromDoc(''));
         addTearDown(() => MockBlePlatform.instance.resetKnobs());
         final (hub, link, teardown) = wire(async: async);
 
@@ -120,7 +120,7 @@ void main() {
         // turns into the unprovisioned verdict (raw counts only).
         expect(link.isStreaming, isTrue);
         expect(hub.totalSamples, greaterThan(0));
-        expect(hub.boardDataStatus, BoardDataStatus.unprovisioned);
+        expect(hub.boardCalibration, isA<UnprovisionedBoardCalibration>());
 
         teardown();
       });
@@ -129,8 +129,10 @@ void main() {
     test('a partially provisioned board (constants, no calibration) streams '
         'mV/V on the nominal chain', () {
       fakeAsync((async) {
-        MockBlePlatform.instance.seedKvsFromDoc(
-          'adc_fsr=1.2,nominal\nexc=4.53,nominal\nafe_gain=101,nominal',
+        MockBlePlatform.instance.seedKvs(
+          kvsFromDoc(
+            'adc_fsr=1.2,nominal\nexc=4.53,nominal\nafe_gain=101,nominal',
+          ),
         );
         addTearDown(() => MockBlePlatform.instance.resetKnobs());
         final (hub, link, teardown) = wire(async: async);
@@ -138,18 +140,90 @@ void main() {
         unawaited(link.connectToDevice(deviceId));
         async.elapse(const Duration(seconds: 4));
 
-        // The board knows what it is (board constants resolve — the ok
-        // verdict, not the unprovisioned raw-only notice) but was never
-        // factory-calibrated: every channel is uncalibrated and converts
+        // The board knows what it is — constants resolved, a provisioned
+        // board — but was never factory-calibrated: every channel converts
         // through the nominal chain, so raw and mV/V work while force
         // units stay cell-gated.
         expect(link.isStreaming, isTrue);
-        final board = hub.boardCalibration!;
-        expect(board.constantsStatus, BoardDataStatus.ok);
-        expect(board.isFactoryCalibrated, isFalse);
-        expect(board.calDataInvalid, isFalse);
+        final board = hub.boardCalibration! as ProvisionedBoardCalibration;
+        expect(board.isCalibrated, isFalse);
         expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
         expect(hub.currentValue(0, DisplayUnit.kN), isNull);
+
+        teardown();
+      });
+    });
+
+    test('present-but-invalid Factory flash streams raw on an invalid board', () {
+      fakeAsync((async) {
+        // A corrupt board half: the app refuses to adopt it, but the device
+        // still connects and streams raw counts with an invalid-board marker
+        // (the banner names the reason) — never a soft-brick.
+        for (final doc in [
+          'adc_fsr=1.2,nominal\nexc=4.53,nominal', // afe_gain missing
+          'adc_fsr=1.2,nominal\nexc=soon\nafe_gain=101', // bad value
+          'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nch0.r=1,2,3,4,5,6', // no cal.date
+        ]) {
+          MockBlePlatform.instance.seedKvs(kvsFromDoc(doc));
+          final (hub, link, teardown) = wire(async: async);
+
+          unawaited(link.connectToDevice(deviceId));
+          async.elapse(const Duration(seconds: 4));
+
+          expect(link.isStreaming, isTrue, reason: doc);
+          expect(link.linkState, BtLinkState.streaming, reason: doc);
+          expect(
+            hub.boardCalibration,
+            isA<InvalidBoardCalibration>(),
+            reason: doc,
+          );
+          expect(hub.totalSamples, greaterThan(0), reason: doc);
+
+          teardown();
+        }
+        addTearDown(() => MockBlePlatform.instance.resetKnobs());
+      });
+    });
+
+    test('a degenerate slot reads as empty; the connection succeeds', () {
+      fakeAsync((async) {
+        // The app owns the slot keys, so an unparseable value is not
+        // corruption to abort for: the slot reads as empty (force units
+        // report unavailable), and a save reconciles the device.
+        MockBlePlatform.instance.seedKvs(
+          kvsFromDoc(
+            'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nlc0.cap=100\nlc0.sens=abc',
+          ),
+        );
+        addTearDown(() => MockBlePlatform.instance.resetKnobs());
+        final (hub, link, teardown) = wire(async: async);
+
+        unawaited(link.connectToDevice(deviceId));
+        async.elapse(const Duration(seconds: 4));
+
+        expect(link.isStreaming, isTrue);
+        expect(hub.boardCalibration, isA<ProvisionedBoardCalibration>());
+        // ch0 has no cell: force units report unavailable, electrical ones
+        // convert through the nominal chain.
+        expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
+        expect(hub.currentValue(0, DisplayUnit.kN), isNull);
+
+        teardown();
+      });
+    });
+
+    test('unknown future metadata keys are ignored', () {
+      fakeAsync((async) {
+        MockBlePlatform.instance.seedKvs(
+          kvsFromDoc('$demoBoardCalibrationDoc\ncharging=enabled\n'),
+        );
+        final (hub, link, teardown) = wire(async: async);
+
+        unawaited(link.connectToDevice(deviceId));
+        async.elapse(const Duration(seconds: 4));
+
+        expect(link.isStreaming, isTrue);
+        expect(hub.boardCalibration, isA<ProvisionedBoardCalibration>());
 
         teardown();
       });

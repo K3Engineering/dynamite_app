@@ -23,9 +23,10 @@ enum BtLinkState {
   /// Post-connect setup's second stage: services are discovered; the board
   /// constants (device identity, the ADC's config/GAIN readback, and the
   /// connect-time flash document read over KVS) are being read. Still not
-  /// usable. An unreadable or unparseable ADC config, or a failed KVS
-  /// bring-up, tears the link down here (see `BleLinkManager._readAdcConfig`
-  /// and `_setupKvs`).
+  /// usable. An unreadable or unparseable ADC config or a failed KVS bring-up
+  /// tears the link down here (see `BleLinkManager._readAdcConfig` and
+  /// `_setupKvs`); invalid known flash content becomes an
+  /// `InvalidBoardCalibration` and the device streams raw counts.
   readingConstants,
 
   /// Post-connect setup's third stage: the board constants are in and the

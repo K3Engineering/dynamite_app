@@ -16,7 +16,6 @@ import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_data.dart';
 import 'package:dynamite_app/services/session_files_io.dart';
 import 'package:dynamite_app/services/session_journal.dart';
-import 'package:dynamite_app/services/session_storage.dart';
 import 'package:dynamite_app/services/session_store.dart';
 import 'package:dynamite_app/services/session_store_backend.dart';
 
@@ -42,12 +41,11 @@ void main() {
   });
 
   List<ChannelCalibration> nominalCals() => [
-    for (int ch = 0; ch < channels; ch++)
-      const ChannelCalibration(board: RawOnlyChannelBoard()),
+    for (int ch = 0; ch < channels; ch++) const ChannelCalibration(board: null),
   ];
 
   /// startSession with the caller-side hub snapshots production now passes
-  /// explicitly (see SessionStorage.startSession's hub-agnostic contract).
+  /// explicitly (see SessionStore.startSession's hub-agnostic contract).
   /// Establishes the packet counter anchor the writer requires (in production
   /// packets precede samples, so an anchor always precedes the first append);
   /// tests that assert specific anchor behavior set their own.
@@ -55,22 +53,23 @@ void main() {
     if (hub.packetAnchor == null) {
       hub.notePacketCounter(0);
     }
-    return SessionStorage.startSession(
-      tare: hub.tare,
-      channelCalibration: [
-        for (int ch = 0; ch < channels; ch++) hub.calibrationFor(ch),
-      ],
-      samplesPerSec: hub.sampleRateHz,
+    return SessionStore.instance.startSession(
+      (
+        name: name,
+        sampleRate: hub.sampleRateHz,
+        channelCount: channels,
+        channelLabels: const ['a', 'b', 'c', 'd'],
+        tares: List.of(hub.tare),
+        calibration: [
+          for (int ch = 0; ch < channels; ch++) hub.calibrationFor(ch),
+        ],
+        visibleChannels: const [true, true, true, true],
+        displayUnit: DisplayUnit.kgf.name,
+        deviceInfo: const {},
+        deviceKvs: null,
+        recordedAt: '2026-07-29T14:05:32.000Z',
+      ),
       sourceRingCapacity: DataHub.maxDataSz,
-      name: name,
-      channelLabels: const ['a', 'b', 'c', 'd'],
-      visibleChannels: const [true, true, true, true],
-      displayUnit: DisplayUnit.kgf,
-      deviceMetadata: const {},
-      boardMeta: switch (hub.boardCalibration) {
-        final board? => SessionBoardMeta.fromBoard(board),
-        null => null,
-      },
       onWriteError: (_) {},
     );
   }
@@ -87,7 +86,7 @@ void main() {
     visibleChannels: const [true, true, true, true],
     displayUnit: 'kgf',
     deviceInfo: const {},
-    boardMeta: null,
+    deviceKvs: null,
     recordedAt: '2026-07-29T14:05:32.000Z',
   );
 
@@ -101,7 +100,6 @@ void main() {
     visibleChannels: const [true, true, true, true],
     displayUnit: 'kgf',
     deviceInfo: const {},
-    boardMeta: null,
     recordedAt: '2026-07-29T14:05:32.000Z',
     ssnOrigin: 100,
   );
@@ -325,7 +323,7 @@ void main() {
       expect((await catalog()).sessions, isEmpty);
 
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
-      await SessionStorage.finalizeSession(writer: writer);
+      await SessionStore.instance.finalizeSession(writer: writer);
 
       final summary = (await catalog()).session(writer.sessionId!)!;
       expect(summary.sampleRate, 1000);
@@ -340,7 +338,7 @@ void main() {
   /// finalizeSession must fail loud instead — and leave no marker behind, so
   /// the truncated session can never list as complete.
   group('finalizeSession consistency check', () {
-    test('a silently dropping sink makes finalizeSession return an error and '
+    test('a silently dropping sink makes finalizeSession throw and '
         'leaves the session interrupted', () async {
       final hub = DataHub();
       hub.notePacketCounter(0);
@@ -367,10 +365,17 @@ void main() {
       );
       await dropping.appendData(hub.snapshotRange(0, perAppend));
       await dropping.appendData(hub.snapshotRange(perAppend, perAppend));
-      final error = await SessionStorage.finalizeSession(writer: dropping);
 
-      expect(error, isA<StateError>());
-      expect(error.toString(), contains('storage layer dropped samples'));
+      await expectLater(
+        () => SessionStore.instance.finalizeSession(writer: dropping),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.toString(),
+            'message',
+            contains('storage layer dropped samples'),
+          ),
+        ),
+      );
 
       // The error is transient (one toast at stop time); the interrupted
       // verdict is permanent: no marker, no "complete" listing — ever.
@@ -380,7 +385,7 @@ void main() {
       expect(listed.damaged, isEmpty);
     });
 
-    test('a throwing close folds into the returned error and the session '
+    test('a throwing close propagates and the session '
         'lists as interrupted', () async {
       final hub = DataHub();
       hub.notePacketCounter(0);
@@ -412,19 +417,21 @@ void main() {
         },
       );
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
-      final error = await SessionStorage.finalizeSession(writer: writer);
 
       // Any latched failure vetoes the marker, close included: the store
       // cannot vouch for the session, so it lists as interrupted with its
       // (fully written) bytes loading and exporting like a complete one.
-      expect(error, same(closeBoom));
+      await expectLater(
+        () => SessionStore.instance.finalizeSession(writer: writer),
+        throwsA(same(closeBoom)),
+      );
       final listed = await catalog();
       expect(listed.sessions.single.id, writer.sessionId);
       expect(listed.sessions.single.interrupted, isTrue);
       expect(listed.damaged, isEmpty);
     });
 
-    test('a failing marker write folds into the returned error and the '
+    test('a failing marker write propagates and the '
         'session lists as interrupted immediately', () async {
       final failing = _FaultBackend(
         IoSessionFilesBackend('${tmp.path}/sessions'),
@@ -441,12 +448,18 @@ void main() {
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
 
       failing.failTouchFinal = true;
-      final error = await SessionStorage.finalizeSession(writer: writer);
 
-      // The marker error surfaces through the same returned-error channel
-      // as every other finalize failure (it must not throw), ...
-      expect(error, isA<StateError>());
-      expect(error.toString(), contains('marker write failed'));
+      // The marker error propagates like every other finalize failure, ...
+      await expectLater(
+        () => SessionStore.instance.finalizeSession(writer: writer),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.toString(),
+            'message',
+            contains('marker write failed'),
+          ),
+        ),
+      );
 
       // ... and with no marker the dir is by definition an interrupted
       // session, spliced into the published catalog NOW. readyCatalog()
@@ -471,8 +484,7 @@ void main() {
       final writer = startFromHub(hub, name: 'ok');
       await writer.appendData(hub.snapshotRange(0, perAppend));
       await writer.appendData(hub.snapshotRange(perAppend, perAppend));
-      final error = await SessionStorage.finalizeSession(writer: writer);
-      expect(error, isNull);
+      await SessionStore.instance.finalizeSession(writer: writer);
 
       final loaded = await store.loadSession(writer.sessionId!);
       expect(loaded.sampleCount, total);
@@ -561,18 +573,26 @@ void main() {
         // Every channel measures at half the nominal span (calibration is
         // board-uniform — a mixed board is invalid flash, rejected at parse).
         hub.updateBoardCalibration(
-          BoardCalibration(
-            channels: [
-              for (int i = 0; i < channels; ++i)
-                CalibratedChannelBoard(
-                  resistors: nominalLadder,
-                  readings: [
-                    for (final d in sp)
-                      500 + 0.5 * testNominals.countsPerMvV * d,
-                  ],
-                  nominals: testNominals,
-                ),
-            ],
+          ProvisionedBoardCalibration(
+            nominals: BoardNominals(
+              adcFsrV: testNominals.adcFsrV,
+              afeGain: testNominals.afeGain,
+              excitationV: testNominals.excitationV,
+              pgaGains: const [1, 1, 1, 1],
+            ),
+            calGroup: CalGroup(
+              date: '2026-01-01',
+              channelData: [
+                for (int i = 0; i < channels; ++i)
+                  (
+                    resistors: nominalLadder,
+                    readings: [
+                      for (final d in sp)
+                        500 + 0.5 * testNominals.countsPerMvV * d,
+                    ],
+                  ),
+              ],
+            ),
           ),
         );
         hub.updateLoadCells([
@@ -589,20 +609,19 @@ void main() {
 
         final writer = startFromHub(hub, name: 'cal');
         await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
-        await SessionStorage.finalizeSession(writer: writer);
+        await SessionStore.instance.finalizeSession(writer: writer);
 
         final loaded = await store.loadSession(writer.sessionId!);
 
         // Board snapshot: ch0 at 0.5x nominal sensitivity.
         expect(
-          loaded.calibrationFor(0).board.sensitivityCountsPerMvV,
+          loaded.calibrationFor(0).board?.sensitivityCountsPerMvV,
           closeTo(0.5 * testNominals.countsPerMvV, 1e-3),
         );
-        expect(loaded.calibrationFor(0).board.isFactoryCalibrated, isTrue);
+        expect(loaded.calibrationFor(0).board?.isCalibrated, isTrue);
         // The resolved nominals rode along in the snapshot.
-        expect(loaded.calibrationFor(0).board.nominals, isNotNull);
         expect(
-          loaded.calibrationFor(0).board.nominals!.countsPerMvV,
+          loaded.calibrationFor(0).board?.nominals.countsPerMvV,
           closeTo(testNominals.countsPerMvV, 1e-12),
         );
         // Load cell snapshot round-trips with its exact sensitivity.
@@ -629,30 +648,28 @@ void main() {
       },
     );
 
-    test('the board meta is frozen at start and loads back with the '
-        'session', () async {
+    test('the calibration snapshot freezes a calibrated board at start and '
+        'loads back with the session', () async {
       final hub = DataHub();
       hub.updateBoardCalibration(
-        BoardCalibration(
-          channels: [
-            for (int ch = 0; ch < channels; ch++)
-              const NominalChannelBoard(
-                ChannelNominals(
-                  adcFsrV: 1.2,
-                  afeGain: 101,
-                  pgaGain: 2,
-                  excitationV: 4.53,
-                ),
-              ),
-          ],
-          factoryDate: '2026-01-15',
-          calTool: 'calibrate.py v3',
+        ProvisionedBoardCalibration(
           nominals: BoardNominals(
             adcFsrV: 1.2,
             afeGain: 101,
             excitationV: 4.53,
             pgaGains: const [2, 2, 2, 2],
             provenance: const {'exc': 'nominal'},
+          ),
+          calGroup: CalGroup(
+            date: '2026-01-15',
+            tool: 'calibrate.py v3',
+            channelData: [
+              for (int i = 0; i < channels; ++i)
+                (
+                  resistors: const [10000, 10, 10, 10, 10, 10000],
+                  readings: const [6000000, 3000000, 0, -3000000, -6000000],
+                ),
+            ],
           ),
         ),
       );
@@ -663,15 +680,13 @@ void main() {
       }
       final writer = startFromHub(hub, name: 'meta');
       await writer.appendData(hub.snapshotRange(0, hub.totalSamples));
-      await SessionStorage.finalizeSession(writer: writer);
+      await SessionStore.instance.finalizeSession(writer: writer);
 
       final loaded = await store.loadSession(writer.sessionId!);
-      final m = loaded.boardMeta!;
-      expect(m.factoryDate, '2026-01-15');
-      expect(m.calTool, 'calibrate.py v3');
-      expect(m.constantsStatus, BoardDataStatus.ok);
-      expect(m.provenance, {'exc': 'nominal'});
-      expect(m.calDataInvalid, isFalse);
+      // The calibrated snapshot itself round-trips (channels carry the
+      // operative numbers); board-level provenance rides the raw KVS dump
+      // (device.kvs in the export) instead of a typed block.
+      expect(loaded.calibrationFor(0).board?.isCalibrated, isTrue);
     });
   });
 

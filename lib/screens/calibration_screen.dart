@@ -32,7 +32,9 @@ class CalibrationScreen extends StatelessWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          if (board != null) ...[
+          // The report needs the chain and (nominal or measured) maps —
+          // an unprovisioned unit has nothing to report.
+          if (board is ProvisionedBoardCalibration) ...[
             _exportButtons(context, board, deviceName),
             const SizedBox(height: 16),
           ],
@@ -45,7 +47,7 @@ class CalibrationScreen extends StatelessWidget {
   /// The export row.
   Widget _exportButtons(
     BuildContext context,
-    BoardCalibration board,
+    ProvisionedBoardCalibration board,
     String deviceName,
   ) {
     // The report's owner label: the device name at flash-read time, falling

@@ -19,7 +19,8 @@
 /// {"version":1,"name":"...","sampleRate":1000,"channelCount":4,
 ///  "channelLabels":["Ch 1",...],"tares":[null,123.5,...],
 ///  "calibration":[{...},...],"displayUnit":"kgf","deviceInfo":{...},
-///  "boardMeta":{...} | null,"recordedAt":"2026-08-28T14:30:12.345+02:00",
+///  "deviceKvs":{"factory":{...},"user":{...}} | null,
+///  "recordedAt":"2026-08-28T14:30:12.345+02:00",
 ///  "ssnOrigin":123456,"visibleChannels":[true,...]}
 /// ```
 /// Edit-line schema (all three fields required — a snapshot, never a
@@ -32,8 +33,8 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
-import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
+import '../models/device_flash.dart';
 import '../models/display_unit.dart';
 
 const int sessionJournalVersion = 1;
@@ -51,7 +52,7 @@ class SessionMeta {
     required this.calibration,
     required this.displayUnit,
     required this.deviceInfo,
-    required this.boardMeta,
+    this.deviceKvs,
     required this.recordedAt,
     required this.ssnOrigin,
     required this.visibleChannels,
@@ -78,9 +79,10 @@ class SessionMeta {
   /// `device` metadata block), frozen so export never consults live state.
   final Map<String, Object?> deviceInfo;
 
-  /// Board-level calibration provenance at recording start; null when no
-  /// board data resolved.
-  final SessionBoardMeta? boardMeta;
+  /// The raw device KVS snapshot at recording start (artifact provenance —
+  /// the typed board facts it parses to are a verbatim subset of it).
+  /// Null for sessions recorded before this field existed.
+  final KvsSnapshot? deviceKvs;
 
   /// The local wall clock at recording start with its zone offset (the
   /// dynamite-csv `recorded_at`), stored verbatim — the offset is NOT
@@ -105,7 +107,7 @@ class SessionMeta {
     'calibration': [for (final c in calibration) c.toJson()],
     'displayUnit': displayUnit,
     'deviceInfo': deviceInfo,
-    'boardMeta': ?boardMeta?.toJson(),
+    'deviceKvs': ?deviceKvs?.toJson(),
     'recordedAt': recordedAt,
     'ssnOrigin': ssnOrigin,
     'visibleChannels': visibleChannels,
@@ -192,14 +194,14 @@ class SessionMeta {
     if (deviceInfo is! Map) {
       throw FormatException('journal header: bad deviceInfo: $deviceInfo');
     }
-    final boardMetaJson = json['boardMeta'];
-    final boardMeta = boardMetaJson == null
+    final deviceKvsJson = json['deviceKvs'];
+    final deviceKvs = deviceKvsJson == null
         ? null
-        : SessionBoardMeta.fromJson(
-            boardMetaJson is Map
-                ? Map<String, dynamic>.from(boardMetaJson)
+        : KvsSnapshot.fromJson(
+            deviceKvsJson is Map
+                ? Map<String, dynamic>.from(deviceKvsJson)
                 : throw const FormatException(
-                    'journal header: boardMeta must be an object or null',
+                    'journal header: deviceKvs must be an object or null',
                   ),
           );
     final recordedAt = json['recordedAt'];
@@ -223,7 +225,7 @@ class SessionMeta {
       calibration: List.unmodifiable(calibration),
       displayUnit: displayUnit,
       deviceInfo: Map.unmodifiable(deviceInfo),
-      boardMeta: boardMeta,
+      deviceKvs: deviceKvs,
       recordedAt: recordedAt,
       ssnOrigin: ssnOrigin,
       visibleChannels: List.unmodifiable(visibleChannels),

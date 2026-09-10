@@ -1,16 +1,13 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 
 import 'adc_protocol.dart';
 import 'adc_sink.dart';
-import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../models/hub_event.dart';
 import '../utils/log.dart';
 
-/// Protocol layer: decodes the device's ADC-feed notification packets and the
-/// calibration characteristic into [AdcSink] updates.
+/// Protocol layer: decodes the device's ADC-feed notification packets into
+/// [AdcSink] updates.
 ///
 /// Owns packet continuity: the 16-bit running sample counter, cross-checked
 /// against a monotonic clock of packet arrival times. The device samples
@@ -72,28 +69,6 @@ class AdcPacketDecoder {
   void resetContinuity() {
     _prevSampleCount = -1;
     _prevRxUs = null;
-  }
-
-  /// Invoked with every successfully parsed flash document (board + load
-  /// cell slots).
-  void Function(DeviceFlash flash)? onDeviceFlash;
-
-  /// Parse one flash document read: the `key=value` document the link layer
-  /// reassembled from the device KVS ([DeviceFlash.parse], tolerant of
-  /// missing keys), plus the ADC's per-channel PGA gains from the config
-  /// readback ([adcGains] — non-null: an unreadable config fails the
-  /// connection upstream, so this layer never resolves constants without
-  /// them). The board calibration feeds the sink; the full document (slots
-  /// included) goes to [onDeviceFlash]. Partial calibration reads degrade
-  /// to an uncalibrated board (nominal chain) and empty slots — see
-  /// `BoardCalibration.fromKv`. Undecodable bytes never reach here: the KVS
-  /// layer decodes strictly and a corrupt payload fails the connection
-  /// (see `parseKvsResponse`); [data] is a re-encoded Dart string, always
-  /// valid UTF-8.
-  void onCalibrationPacket(Uint8List data, List<double> adcGains) {
-    final flash = DeviceFlash.parse(utf8.decode(data), pgaGains: adcGains);
-    hub.updateBoardCalibration(flash.board);
-    onDeviceFlash?.call(flash);
   }
 
   /// Parse one BLE ADC-feed notification packet into the sink.

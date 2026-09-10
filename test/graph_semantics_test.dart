@@ -2,7 +2,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
-import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/graph_data_source.dart';
 import 'package:dynamite_app/services/data_hub.dart';
@@ -16,8 +15,6 @@ import 'package:dynamite_app/widgets/graph_components.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const channels = kAdcChannelCount;
-
   const testNominals = ChannelNominals(
     adcFsrV: 1.2,
     afeGain: 101,
@@ -27,11 +24,13 @@ void main() {
 
   DataHub calibratedHub() => DataHub()
     ..updateBoardCalibration(
-      BoardCalibration(
-        channels: [
-          for (int i = 0; i < channels; i++)
-            const NominalChannelBoard(testNominals),
-        ],
+      ProvisionedBoardCalibration(
+        nominals: BoardNominals(
+          adcFsrV: testNominals.adcFsrV,
+          afeGain: testNominals.afeGain,
+          excitationV: testNominals.excitationV,
+          pgaGains: const [1, 1, 1, 1],
+        ),
       ),
     );
 

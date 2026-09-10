@@ -23,7 +23,6 @@ import 'services/recording_controller.dart';
 import 'services/rig_state.dart';
 import 'services/session_files.dart';
 import 'services/session_metadata.dart';
-import 'services/session_storage.dart';
 import 'services/stream_reset_coordinator.dart';
 import 'services/wakelock_policy.dart';
 import 'screens/app_shell.dart';
@@ -67,22 +66,33 @@ void main() async {
 
   final dataHub = DataHub();
   final decoder = AdcPacketDecoder(dataHub);
-  final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
-    ..onAdcData = decoder.onDataPacket
-    ..onCalibrationData = decoder.onCalibrationPacket
-    ..onSampleRate = dataHub.setSampleRate;
+  late final BleLinkManager linkManager;
+  final rigState = RigState(
+    backend: () => linkManager.backend,
+    connectedDeviceName: () => linkManager.connectedDeviceName,
+    prefs: prefs,
+  );
+  // The device id/name are read off the link at delivery time (the read
+  // only ever runs against the active link).
+  linkManager =
+      BleLinkManager(
+          events: appEvents,
+          demo: DemoDevice(),
+          onDeviceFlash: (flash) {
+            dataHub.updateBoardCalibration(flash.board);
+            rigState.onFlashRead(
+              linkManager.connectedDeviceId,
+              linkManager.connectedDeviceName,
+              flash,
+            );
+          },
+        )
+        ..onAdcData = decoder.onDataPacket
+        ..onSampleRate = dataHub.setSampleRate;
   final feedHealth = FeedHealthTracker(
     hub: dataHub,
     streamingChanges: linkManager,
     streamingNow: () => linkManager.isStreaming,
-  );
-  final rigState = RigState(transport: linkManager, prefs: prefs);
-  // The device id/name are read off the link at delivery time (the read
-  // only ever runs against the active link).
-  decoder.onDeviceFlash = (flash) => rigState.onFlashRead(
-    linkManager.connectedDeviceId,
-    linkManager.connectedDeviceName,
-    flash,
   );
   // A link loss (of any flavor — the getter reads the same '' for all of
   // them) ends the rig session: the flash document and any unsaved edits
@@ -106,8 +116,8 @@ void main() async {
       name: linkManager.connectedDeviceName,
       info: linkManager.connectedDeviceInfo,
     ),
+    deviceKvsSnapshot: () => rigState.kvsSnapshot,
     onSessionBoundary: decoder.resetContinuity,
-    persistence: const StaticSessionPersistence(),
     events: appEvents,
   );
   final appSettings = AppSettings(prefs: prefs);

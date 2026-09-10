@@ -209,16 +209,24 @@ class _SettingsTabState extends State<SettingsTab> {
                 RigSlotsSection(rig: context.read<RigState>()),
                 const SizedBox(height: 16),
 
+                // Tappable whenever a board object is held — including an
+                // invalid one, whose calibration page carries the parse
+                // reason. Only a dropped link (null) has nothing to open.
                 Card(
                   child: ListTile(
                     title: const Text('Board calibration'),
                     subtitle: Text(boardCalibrationStatusLine(boardCal)),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: () => Navigator.of(context).push<void>(
-                      MaterialPageRoute<void>(
-                        builder: (_) => CalibrationScreen(deviceId: deviceId),
-                      ),
-                    ),
+                    trailing: boardCal == null
+                        ? null
+                        : const Icon(Icons.chevron_right),
+                    onTap: boardCal == null
+                        ? null
+                        : () => Navigator.of(context).push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) =>
+                                  CalibrationScreen(deviceId: deviceId),
+                            ),
+                          ),
                   ),
                 ),
                 const SizedBox(height: 16),

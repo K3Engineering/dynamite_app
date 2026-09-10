@@ -15,13 +15,13 @@ typedef AxisRung = ({double factor, String symbol});
 typedef UnitAvailability = ({bool boardHasNominals, bool anyActiveHasLoadCell});
 
 /// Resolve the unit availability for a view showing [activeChannels], given
-/// a per-channel calibration lookup. Board constants resolve all-or-nothing
-/// and are uniform across channels, so channel 0 stands in for the board.
+/// a per-channel calibration lookup. Board data resolves all-or-nothing per
+/// board (see `BoardCalibration`), so channel 0 stands in for the board.
 UnitAvailability resolveUnitAvailability(
   ChannelCalibration Function(int channel) calibrationFor,
   Iterable<int> activeChannels,
 ) => (
-  boardHasNominals: calibrationFor(0).board.nominals != null,
+  boardHasNominals: calibrationFor(0).board != null,
   anyActiveHasLoadCell: activeChannels.any(
     (ch) => calibrationFor(ch).loadCell != null,
   ),

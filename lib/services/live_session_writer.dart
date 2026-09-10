@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
+import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../models/gap_list.dart';
 import '../models/sample_slice.dart';
@@ -169,7 +169,7 @@ typedef SessionHeader = ({
   List<bool> visibleChannels,
   String displayUnit,
   Map<String, Object?> deviceInfo,
-  SessionBoardMeta? boardMeta,
+  KvsSnapshot? deviceKvs,
   String recordedAt,
 });
 
@@ -187,7 +187,7 @@ SessionMeta sessionMetaFromHeader(SessionHeader header, int ssnOrigin) =>
       visibleChannels: header.visibleChannels,
       displayUnit: header.displayUnit,
       deviceInfo: header.deviceInfo,
-      boardMeta: header.boardMeta,
+      deviceKvs: header.deviceKvs,
       recordedAt: header.recordedAt,
       ssnOrigin: ssnOrigin,
     );

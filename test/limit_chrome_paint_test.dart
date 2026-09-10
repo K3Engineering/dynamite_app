@@ -31,11 +31,13 @@ void main() {
   ) async {
     final hub = DataHub();
     hub.updateBoardCalibration(
-      BoardCalibration(
-        channels: [
-          for (int i = 0; i < channels; i++)
-            const NominalChannelBoard(testNominals),
-        ],
+      ProvisionedBoardCalibration(
+        nominals: BoardNominals(
+          adcFsrV: testNominals.adcFsrV,
+          afeGain: testNominals.afeGain,
+          excitationV: testNominals.excitationV,
+          pgaGains: const [1, 1, 1, 1],
+        ),
       ),
     );
     hub.updateLoadCells([

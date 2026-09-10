@@ -1,4 +1,4 @@
-import 'dart:convert';
+import 'dart:async';
 
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,16 +7,18 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/models/app_meta.dart';
+import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/services/app_settings.dart';
-import 'package:dynamite_app/models/device_flash.dart';
+import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/screens/settings_tab.dart';
-import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/mockble.dart';
 import 'package:dynamite_app/services/rig_state.dart';
+
+import 'helpers/flash_docs.dart';
 
 /// Widget tests for the Settings tab's device gating: with no link up, the
 /// device-owned sections (load cell slots, board calibration) must not
@@ -37,18 +39,27 @@ void main() {
   Future<BleLinkManager> pump(WidgetTester tester) async {
     final prefs = await SharedPreferences.getInstance();
     final events = AppEvents();
-    final link = BleLinkManager(events: events, demo: DemoDevice());
     final hub = DataHub();
-    final rig = RigState(transport: link, prefs: prefs);
-    // Wire the link's calibration read to the rig — the app's wiring goes
-    // through the packet decoder; the test shortcuts the (separately
-    // tested) parsing.
-    link.onCalibrationData = (data, gains) {
-      final flash = DeviceFlash.parse(utf8.decode(data), pgaGains: gains);
-      hub.updateBoardCalibration(flash.board);
-      rig.onFlashRead(link.connectedDeviceId, link.connectedDeviceName, flash);
-      hub.updateLoadCells(rig.channelCells);
-    };
+    late final BleLinkManager link;
+    final rig = RigState(
+      backend: () => link.backend,
+      connectedDeviceName: () => link.connectedDeviceName,
+      prefs: prefs,
+    );
+    // Wire the link's flash read to the hub and rig, as main() does.
+    link = BleLinkManager(
+      events: events,
+      demo: DemoDevice(),
+      onDeviceFlash: (flash) {
+        hub.updateBoardCalibration(flash.board);
+        rig.onFlashRead(
+          link.connectedDeviceId,
+          link.connectedDeviceName,
+          flash,
+        );
+        hub.updateLoadCells(rig.channelCells);
+      },
+    );
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -151,6 +162,46 @@ void main() {
     await link.disconnectSelectedDevice();
     await tester.pump();
     await tester.pump(const Duration(seconds: 6));
+  });
+
+  testWidgets('invalid flash streams raw; the board row says unreadable', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    MockBlePlatform.instance.seedKvs(
+      kvsFromDoc('adc_fsr=1.2\nexc=soon\nafe_gain=101'),
+    );
+    final link = await pump(tester);
+    unawaited(link.connectToDevice('2'));
+    await tester.pump(const Duration(seconds: 4));
+
+    // A board the app can't fully make sense of still connects: it streams
+    // raw counts and the calibration row says the data is unreadable.
+    expect(link.isStreaming, isTrue);
+    expect(link.linkState, BtLinkState.streaming);
+    expect(find.text('Board calibration'), findsOneWidget);
+    expect(
+      find.textContaining('Calibration data unreadable — contact support'),
+      findsOneWidget,
+    );
+    // A document is held, so the row opens the page, which names the reason.
+    final row = tester.widget<ListTile>(
+      find.widgetWithText(ListTile, 'Board calibration'),
+    );
+    expect(row.onTap, isNotNull);
+    await tester.tap(find.widgetWithText(ListTile, 'Board calibration'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('board constants: bad exc'), findsOneWidget);
+
+    // Teardown: a GATT link's disconnect awaits the mock's platform timers, so
+    // drive it with pumps rather than awaiting it inside the test body.
+    unawaited(link.disconnectSelectedDevice());
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+    expect(link.linkState, BtLinkState.idle);
   });
 
   testWidgets('device name editor: save and clear round-trip', (tester) async {

@@ -8,7 +8,7 @@ import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
+import 'helpers/flash_docs.dart';
 
 /// Unit tests for the hub's per-stream lifecycle (peaks, tare, reset). Uses
 /// [DisplayUnit.raw] throughout so forces equal tare-adjusted raw counts.
@@ -23,12 +23,15 @@ void main() {
     excitationV: 4.53,
   );
 
-  /// A board whose channels all convert through the nominal chain.
-  BoardCalibration nominalBoard() => BoardCalibration(
-    channels: [
-      for (int i = 0; i < channels; ++i)
-        const NominalChannelBoard(testNominals),
-    ],
+  /// A provisioned board whose channels all convert through the nominal
+  /// chain.
+  BoardCalibration nominalBoard() => ProvisionedBoardCalibration(
+    nominals: BoardNominals(
+      adcFsrV: testNominals.adcFsrV,
+      afeGain: testNominals.afeGain,
+      excitationV: testNominals.excitationV,
+      pgaGains: const [1, 1, 1, 1],
+    ),
   );
 
   /// Nominal ladder values (test input; the model no longer substitutes
@@ -445,7 +448,7 @@ void main() {
       final hub = DataHub();
       feed(hub, frameOf(1000), 5);
 
-      expect(hub.boardDataStatus, BoardDataStatus.unreadable);
+      expect(hub.boardCalibration, isNull);
       expect(hub.currentValue(0, DisplayUnit.raw), isNotNull);
       expect(hub.currentValue(0, DisplayUnit.mVv), isNull);
       expect(hub.currentValue(0, DisplayUnit.mV), isNull);
@@ -479,17 +482,25 @@ void main() {
       // Every channel measures at half the nominal span (calibration is
       // board-uniform — a mixed calibrated/nominal board is invalid flash).
       final sp = ladderSetpointsMvV(nominalLadder);
-      final board = BoardCalibration(
-        channels: [
-          for (int i = 0; i < channels; ++i)
-            CalibratedChannelBoard(
-              resistors: nominalLadder,
-              readings: [
-                for (final d in sp) 500 + 0.5 * testNominals.countsPerMvV * d,
-              ],
-              nominals: testNominals,
-            ),
-        ],
+      final board = ProvisionedBoardCalibration(
+        nominals: BoardNominals(
+          adcFsrV: testNominals.adcFsrV,
+          afeGain: testNominals.afeGain,
+          excitationV: testNominals.excitationV,
+          pgaGains: const [1, 1, 1, 1],
+        ),
+        calGroup: CalGroup(
+          date: '2026-01-01',
+          channelData: [
+            for (int i = 0; i < channels; ++i)
+              (
+                resistors: nominalLadder,
+                readings: [
+                  for (final d in sp) 500 + 0.5 * testNominals.countsPerMvV * d,
+                ],
+              ),
+          ],
+        ),
       );
 
       hub.updateBoardCalibration(board);
@@ -523,17 +534,10 @@ void main() {
       expect(hub.currentValue(0, DisplayUnit.mVv), isNotNull);
       final v1 = hub.calibrationVersion;
 
-      hub.updateBoardCalibration(
-        BoardCalibration(
-          channels: [
-            for (int i = 0; i < channels; ++i) const RawOnlyChannelBoard(),
-          ],
-          constantsStatus: BoardDataStatus.unprovisioned,
-        ),
-      );
+      hub.updateBoardCalibration(const UnprovisionedBoardCalibration());
       expect(hub.calibrationVersion, greaterThan(v1));
-      expect(hub.boardDataStatus, BoardDataStatus.unprovisioned);
-      expect(hub.calibrationFor(0).board.nominals, isNull);
+      expect(hub.boardCalibration, isA<UnprovisionedBoardCalibration>());
+      expect(hub.calibrationFor(0).board, isNull);
       expect(hub.currentValue(0, DisplayUnit.mVv), isNull);
     });
 
@@ -545,8 +549,8 @@ void main() {
 
       hub.clearBoardCalibration();
       expect(hub.calibrationVersion, greaterThan(v1));
-      expect(hub.boardDataStatus, BoardDataStatus.unreadable);
-      expect(hub.calibrationFor(0).board.nominals, isNull);
+      expect(hub.boardCalibration, isNull);
+      expect(hub.calibrationFor(0).board, isNull);
       expect(hub.currentValue(0, DisplayUnit.mVv), isNull);
 
       // A repeat clear is a no-op: no spurious cache invalidation.
@@ -584,20 +588,20 @@ void main() {
     test('content-equal board calibration does not bump the version', () {
       final hub = DataHub();
       hub.updateBoardCalibration(
-        BoardCalibration.parse(demoBoardCalibrationDoc, pgaGains: demoGains),
+        boardFromDoc(demoBoardCalibrationDoc, pgaGains: demoGains),
       );
       final v1 = hub.calibrationVersion;
 
       // A reconnect re-reading the identical document (new instances, same
       // content) must not invalidate the graph caches.
       hub.updateBoardCalibration(
-        BoardCalibration.parse(demoBoardCalibrationDoc, pgaGains: demoGains),
+        boardFromDoc(demoBoardCalibrationDoc, pgaGains: demoGains),
       );
       expect(hub.calibrationVersion, v1);
 
       // A genuinely changed document bumps the version again.
       hub.updateBoardCalibration(
-        BoardCalibration.parse(
+        boardFromDoc(
           demoBoardCalibrationDoc.replaceFirst(
             'ch0.raw=6386310.2',
             'ch0.raw=6386310.3',
@@ -606,6 +610,25 @@ void main() {
         ),
       );
       expect(hub.calibrationVersion, greaterThan(v1));
+    });
+
+    test('content-equal invalid boards do not bump the version', () {
+      final hub = DataHub()
+        ..updateBoardCalibration(const InvalidBoardCalibration('bad exc'));
+      final v1 = hub.calibrationVersion;
+
+      // Same reason, new instance: no cache invalidation.
+      hub.updateBoardCalibration(const InvalidBoardCalibration('bad exc'));
+      expect(hub.calibrationVersion, v1);
+
+      // A different reason bumps it.
+      hub.updateBoardCalibration(const InvalidBoardCalibration('bad adc_fsr'));
+      expect(hub.calibrationVersion, greaterThan(v1));
+
+      // So does a different variant with the same raw-only behavior.
+      final v2 = hub.calibrationVersion;
+      hub.updateBoardCalibration(const UnprovisionedBoardCalibration());
+      expect(hub.calibrationVersion, greaterThan(v2));
     });
 
     test('content-equal load cell updates do not bump the version', () {

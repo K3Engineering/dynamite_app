@@ -10,8 +10,8 @@ import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/mockble.dart';
+import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/services/stream_reset_coordinator.dart';
 
 /// The hub must start fresh on every new device stream: connecting (even to
@@ -31,9 +31,10 @@ void main() {
     final events = AppEvents();
     final hub = DataHub();
     final decoder = AdcPacketDecoder(hub);
-    final link = BleLinkManager(events: events)
-      ..onAdcData = decoder.onDataPacket
-      ..onCalibrationData = decoder.onCalibrationPacket;
+    final link = BleLinkManager(
+      events: events,
+      onDeviceFlash: (flash) => hub.updateBoardCalibration(flash.board),
+    )..onAdcData = decoder.onDataPacket;
     final reset = StreamResetCoordinator(
       hub: hub,
       streamingChanges: link,
@@ -99,17 +100,13 @@ void main() {
 
       // Stand in for the connect-time calibration read landing on the hub.
       hub.updateBoardCalibration(
-        BoardCalibration.parse(
-          demoBoardCalibrationDoc,
-          pgaGains: const [32, 32, 32, 32],
-        ),
+        boardFromDoc(demoBoardCalibrationDoc, pgaGains: const [32, 32, 32, 32]),
       );
-      expect(hub.boardDataStatus, BoardDataStatus.ok);
+      expect(hub.boardCalibration, isA<ProvisionedBoardCalibration>());
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(seconds: 4));
       expect(hub.boardCalibration, isNull);
-      expect(hub.boardDataStatus, BoardDataStatus.unreadable);
 
       teardown();
     });

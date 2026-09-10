@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../models/device_flash.dart';
 import '../models/device_info.dart';
 import '../models/device_profile.dart';
 import 'demo_calibration.dart';
@@ -20,24 +21,28 @@ class DemoDevice implements SimulatedLink {
   @override
   String get displayName => 'Demo Device';
 
-  /// The flash document, mutable so "Save to device" round-trips (a
-  /// reconnect serves whatever was last written).
-  String _flashDoc = demoBoardCalibrationDoc;
+  /// The flash snapshot, mutable so "Save to device" round-trips (a
+  /// reconnect serves whatever was last written). Writes hit the slot keys
+  /// only — mirroring the real transport, the demo's board half is
+  /// read-only to the app.
+  KvsSnapshot _kvs = demoKvs;
 
   @override
-  String get flashDoc => _flashDoc;
+  KvsSnapshot get kvsSnapshot => _kvs;
 
-  /// The demo's stored name — the same round-trip rationale as [_flashDoc].
+  /// The demo's stored name — the same round-trip rationale as [_kvs].
   String? _storedName;
 
   @override
   String? get storedName => _storedName;
 
   @override
-  Future<void> writeFlashDoc(String doc) async => _flashDoc = doc;
+  Future<void> writeSlots(Map<String, String> lcKeys) async {
+    _kvs = _kvs.withUserSlots(lcKeys);
+  }
 
   @override
-  Future<String> readFlashDoc() async => _flashDoc;
+  Future<KvsSnapshot> readKvsSnapshot() async => _kvs;
 
   @override
   Future<bool> storeDeviceName(String? name) async {

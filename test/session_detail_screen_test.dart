@@ -62,7 +62,6 @@ void main() {
     visibleChannels: const [true, true, true, true],
     displayUnit: 'kgf',
     deviceInfo: const {},
-    boardMeta: null,
     recordedAt: '2026-07-29T14:05:32.000Z',
     ssnOrigin: 0,
   );

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:fake_async/fake_async.dart';
@@ -9,10 +8,12 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
+import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/bt_scan.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
+import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/services/mockble.dart';
 
 /// Tests for the [BleLinkManager] state machine against [MockBlePlatform],
@@ -38,6 +39,14 @@ import 'package:dynamite_app/services/mockble.dart';
 /// time, where a queued command's closure (created in a dead fake zone) never
 /// completes — wedging the queue for every later test.
 void main() {
+  /// The fixture rig's slot keys with cap replaced — the complete set a
+  /// save submits (writeSlots owns every lc key; a partial map would
+  /// delete the others).
+  Map<String, String> slotsWith({required String cap}) => flashFromDoc(
+    demoBoardCalibrationDoc,
+    pgaGains: const [1, 1, 1, 1],
+  ).slots.toKv()..['lc0.cap'] = cap;
+
   // The mock device that advertises the ADC service (see _generateServices).
   const deviceId = '2';
 
@@ -46,18 +55,22 @@ void main() {
     MockBlePlatform.instance.resetKnobs();
   });
 
-  /// Builds a link manager with an [AppEvents] collector and the calibration
-  /// callback wired (the app always wires it; an unwired
-  /// [BleLinkManager.onCalibrationData] short-circuits the calibration read,
-  /// changing setup timing). Tests that observe the feed set
-  /// [BleLinkManager.onAdcData] directly.
-  (BleLinkManager, List<AppEvent>) wire() {
+  /// Builds a link manager with an [AppEvents] collector and the flash
+  /// callback wired (the app always wires it; tests that observe the feed set
+  /// [BleLinkManager.onAdcData] directly). [onDeviceFlash] defaults to a
+  /// no-op; tests that inspect the delivered flash pass their own.
+  (BleLinkManager, List<AppEvent>) wire({
+    void Function(DeviceFlash flash)? onDeviceFlash,
+  }) {
     final events = AppEvents();
     final seen = <AppEvent>[];
     final sub = events.stream.listen(seen.add);
     addTearDown(() => unawaited(sub.cancel()));
-    final link = BleLinkManager(events: events, demo: DemoDevice())
-      ..onCalibrationData = (_, _) {};
+    final link = BleLinkManager(
+      events: events,
+      demo: DemoDevice(),
+      onDeviceFlash: onDeviceFlash ?? (_) {},
+    );
     return (link, seen);
   }
 
@@ -804,6 +817,9 @@ void main() {
       // a missing ADC feed).
       expect(link.isStreaming, isFalse);
       expect(seen, [isA<BleConnectionFailed>()]);
+      // The exact reason is recorded for the Devices-tab row (the toast stays
+      // generic); a torn-down setup is a disconnect.
+      expect(link.setupFailureFor(deviceId), isNotNull);
 
       teardownLink(async, link);
     });
@@ -812,22 +828,63 @@ void main() {
   test('an unprovisioned board (empty KVS) connects and streams', () {
     fakeAsync((async) {
       final mock = MockBlePlatform.instance;
-      mock.seedKvsFromDoc('');
-      final (link, seen) = wire();
-      String? servedDoc;
-      link.onCalibrationData = (bytes, _) => servedDoc = utf8.decode(bytes);
+      mock.seedKvs(kvsFromDoc(''));
+      KvsSnapshot? servedSnapshot;
+      final (link, seen) = wire(
+        onDeviceFlash: (flash) => servedSnapshot = flash.kvs,
+      );
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
 
       // An EMPTY KVS is a working channel with no data, not a failure: the
-      // connect succeeds and the flash read serves an empty document, which
-      // the decoder turns into the "unit not provisioned" nominal-values
-      // mode (dev boards stay usable).
+      // connect succeeds and the flash read serves an empty store —
+      // the unprovisioned mode, raw counts only (dev boards stay usable).
       expect(link.isStreaming, isTrue);
-      expect(servedDoc, '');
+      expect(servedSnapshot!.factory, isEmpty);
+      expect(servedSnapshot!.user, isEmpty);
       expect(seen, isEmpty);
 
+      teardownLink(async, link);
+    });
+  });
+
+  test('invalid known flash streams raw with an invalid board', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.seedKvs(
+        kvsFromDoc('adc_fsr=1.2\nexc=soon\nafe_gain=101\ncharging=enabled'),
+      );
+      DeviceFlash? delivered;
+      final (link, seen) = wire(onDeviceFlash: (flash) => delivered = flash);
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+
+      // A board the app can't fully make sense of streams raw counts with an
+      // invalid-board marker instead of failing the connection or parking the
+      // link: the ADC feed is subscribed, the flash callback fires, and the
+      // board carries the parser's reason for the UI warning.
+      expect(link.isStreaming, isTrue);
+      expect(delivered, isNotNull);
+      final board = delivered!.board;
+      expect(board, isA<InvalidBoardCalibration>());
+      expect((board as InvalidBoardCalibration).detail, contains('bad exc'));
+      expect(MockBlePlatform.instance.gattOpLog, contains('adc:sub'));
+      // Not a setup failure: the connection succeeded, so no row hint.
+      expect(link.setupFailureFor(deviceId), isNull);
+      expect(seen.whereType<BleConnectionFailed>(), isEmpty);
+
+      // A repaired device re-reads as a provisioned board.
+      unawaited(link.disconnectSelectedDevice());
+      async.elapse(const Duration(seconds: 4));
+      expect(link.linkState, BtLinkState.idle);
+
+      MockBlePlatform.instance.resetKnobs();
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.link.state, BtLinkState.streaming);
+      expect(delivered!.board, isA<ProvisionedBoardCalibration>());
+      expect(seen.whereType<BleConnectionFailed>(), isEmpty);
       teardownLink(async, link);
     });
   });
@@ -844,13 +901,11 @@ void main() {
       async.elapse(const Duration(seconds: 4));
       expect(link.isStreaming, isTrue);
 
-      final doc = demoBoardCalibrationDoc.replaceFirst(
-        'lc0.cap=200',
-        'lc0.cap=250',
-      );
       Object? error;
       unawaited(
-        link.writeFlashDoc(doc).then((_) {}, onError: (Object e) => error = e),
+        link.backend!
+            .writeSlots(slotsWith(cap: '250'))
+            .then((_) {}, onError: (Object e) => error = e),
       );
       async.elapse(const Duration(seconds: 1));
 
@@ -886,15 +941,11 @@ void main() {
       );
       MockBlePlatform.instance.gattOpLog.clear();
 
-      final doc = demoBoardCalibrationDoc.replaceFirst(
-        'lc0.cap=200',
-        'lc0.cap=250',
-      );
       Object? writeError;
       Object? nameError;
       unawaited(
-        link
-            .writeFlashDoc(doc)
+        link.backend!
+            .writeSlots(slotsWith(cap: '250'))
             .then((_) {}, onError: (Object e) => writeError = e),
       );
       unawaited(
@@ -940,13 +991,11 @@ void main() {
       expect(link.isStreaming, isTrue);
 
       MockBlePlatform.instance.failFeedSubscribe = true;
-      final doc = demoBoardCalibrationDoc.replaceFirst(
-        'lc0.cap=200',
-        'lc0.cap=250',
-      );
       Object? error;
       unawaited(
-        link.writeFlashDoc(doc).then((_) {}, onError: (Object e) => error = e),
+        link.backend!
+            .writeSlots(slotsWith(cap: '250'))
+            .then((_) {}, onError: (Object e) => error = e),
       );
       async.elapse(const Duration(seconds: 1));
 
@@ -965,13 +1014,18 @@ void main() {
 
   test('demo device serves the fixture calibration document', () {
     fakeAsync((async) {
-      final (link, seen) = wire();
+      DeviceFlash? served;
+      final (link, seen) = wire(onDeviceFlash: (flash) => served = flash);
       settleStartup(async);
-      String? doc;
-      link.onCalibrationData = (data, gains) => doc = utf8.decode(data);
 
       unawaited(link.connectToDemoDevice());
-      expect(doc, demoBoardCalibrationDoc);
+      final fixture = flashFromDoc(
+        demoBoardCalibrationDoc,
+        pgaGains: const [1, 1, 1, 1],
+      );
+      expect(served!.kvs.factory, fixture.kvs.factory);
+      expect(served!.kvs.user, fixture.kvs.user);
+      expect(served!.board, isA<ProvisionedBoardCalibration>());
 
       unawaited(link.disconnectSelectedDevice());
       async.elapse(const Duration(milliseconds: 100));

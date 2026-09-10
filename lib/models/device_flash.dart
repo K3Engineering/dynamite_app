@@ -1,104 +1,107 @@
+import 'dart:collection';
+
 import 'board_calibration.dart';
-import 'device_profile.dart';
 import 'load_cell.dart';
 
 // ---------------------------------------------------------------------------
 // The device flash document: the factory board calibration (read-only to
-// the app) plus the app-writable load cell slots, assembled into the one
-// `key=value` document the calibration characteristic carries. The
-// per-channel join of the two halves ([ChannelCalibration]) that the unit
-// layer consumes lives in channel_calibration.dart; the line parser itself
-// ([parseFlashKv]) lives with the board file, the document's original
-// content.
+// the app) plus the app-writable load cell slots, as the folder-separated
+// KVS store the device holds. The per-channel join of the two halves
+// ([ChannelCalibration]) that the unit layer consumes lives in
+// channel_calibration.dart.
+//
+// The app OWNS the schema slot keys and only those: a save SETs/DELs the
+// exact `lcN.*` keys in the User namespace and never touches the board half
+// or any unknown key — see `KvsFlashTransport.writeSlots`.
 // ---------------------------------------------------------------------------
 
-/// Keys outside this set (a newer firmware's keys, another tool's metadata)
-/// are NOT ours — they are kept verbatim in [DeviceFlash.extraLines] so a
-/// save can't erase them.
-final Set<String> _knownFlashKeys = {
-  'cal.date',
-  'cal.board',
-  'cal.tool',
-  'cal.origin',
-  'cal.temp',
-  'cal.adc',
-  for (int i = 0; i < kAdcChannelCount; ++i) ...['ch$i.r', 'ch$i.raw'],
-  for (int i = 0; i < kRigSlotCount; ++i) ...[
-    'lc$i.name',
-    'lc$i.cap',
-    'lc$i.sens',
-  ],
-};
+/// The device KVS as read: folder-separated raw key/value pairs, sorted by
+/// key. The typed parse consumes each folder separately (Factory → board
+/// half, User → slots) — there is no cross-folder merge. Raw values are
+/// also session provenance (the CSV's `device.kvs`) — conversions never
+/// consult them.
+class KvsSnapshot {
+  KvsSnapshot({
+    required Map<String, String> factory,
+    required Map<String, String> user,
+  }) : factory = Map.unmodifiable(SplayTreeMap.of(factory)),
+       user = Map.unmodifiable(SplayTreeMap.of(user));
 
-/// The full device flash document: the factory board calibration (read-only
-/// to the app) plus the app-writable load cell slots. This is the unit the
-/// calibration characteristic reads and writes.
+  final Map<String, String> factory;
+  final Map<String, String> user;
+
+  /// Apply a complete slot-key save to the User folder.
+  KvsSnapshot withUserSlots(Map<String, String> lcKeys) {
+    final updated = Map<String, String>.of(user)
+      ..removeWhere((key, _) => rigSlotKeys.contains(key))
+      ..addAll(lcKeys);
+    return KvsSnapshot(factory: factory, user: updated);
+  }
+
+  Map<String, Object?> toJson() => {'factory': factory, 'user': user};
+
+  /// Strict inverse of [toJson]: every entry must be a string key/value.
+  factory KvsSnapshot.fromJson(Map<String, dynamic> json) {
+    Map<String, String> folder(String name) {
+      final value = json[name];
+      if (value is! Map) {
+        throw FormatException('KVS snapshot: bad $name folder');
+      }
+      final out = <String, String>{};
+      for (final e in value.entries) {
+        final key = e.key;
+        final v = e.value;
+        if (key is! String || v is! String) {
+          throw FormatException('KVS snapshot: bad $name entry');
+        }
+        out[key] = v;
+      }
+      return out;
+    }
+
+    return KvsSnapshot(factory: folder('factory'), user: folder('user'));
+  }
+}
+
+/// The device flash document: the factory board calibration (read-only to
+/// the app) plus the app-writable load cell slots.
 class DeviceFlash {
-  DeviceFlash({
-    required this.board,
-    required this.slots,
-    List<String>? extraLines,
-  }) : extraLines = List.unmodifiable(extraLines ?? const []);
+  DeviceFlash({required this.board, required this.slots, required this.kvs});
 
   final BoardCalibration board;
   final RigSlots slots;
 
-  /// Lines from the parsed document whose keys the model doesn't know, in
-  /// original order, re-emitted verbatim by [serialize]. The app is the
-  /// courier of the whole document, not just the keys it understands: a
-  /// save must never silently erase flash content written by newer firmware
-  /// or other tools.
-  final List<String> extraLines;
+  /// The raw store the typed halves were parsed from (session provenance).
+  final KvsSnapshot kvs;
 
-  /// Parse a whole flash document. Never throws: structural problems degrade
-  /// only the affected piece (a corrupt or partial calibration → uncalibrated
-  /// board, slot → empty). Unknown `key=value` lines are preserved in
-  /// [extraLines]. [pgaGains] is the ADC's GAIN-register readback for
-  /// board-constant resolution — always present: an unreadable ADC config
-  /// fails the connection upstream (see `BleLinkManager`).
-  factory DeviceFlash.parse(String text, {required List<double> pgaGains}) {
-    final kv = parseFlashKv(text);
+  /// Parse the typed board/slot halves out of a raw KVS snapshot. Each half
+  /// reads its own folder: the board half ([BoardCalibration.fromKv]) is
+  /// strict, but its [FormatException] is caught here and becomes an
+  /// [InvalidBoardCalibration] — a misprovisioned board streams raw counts
+  /// with a warning instead of failing the connection. The slot half
+  /// ([RigSlots.fromKv]) is lenient (the app owns those keys: an unparseable
+  /// slot reads as empty, the raw value stays visible in [kvs], and the next
+  /// save reconciles the device). [pgaGains] is the ADC's GAIN-register
+  /// readback for board-constant resolution — always present: an unreadable
+  /// ADC config fails the connection upstream (see `BleLinkManager`).
+  factory DeviceFlash.fromKvs(
+    KvsSnapshot kvs, {
+    required List<double> pgaGains,
+  }) {
+    final BoardCalibration board;
+    try {
+      board = BoardCalibration.fromKv(kvs.factory, pgaGains: pgaGains);
+    } on FormatException catch (e) {
+      return DeviceFlash(
+        board: InvalidBoardCalibration(e.message),
+        slots: RigSlots.fromKv(kvs.user),
+        kvs: kvs,
+      );
+    }
     return DeviceFlash(
-      board: BoardCalibration.fromKv(kv, pgaGains: pgaGains),
-      slots: RigSlots.fromKv(kv),
-      extraLines: [
-        for (final rawLine in text.split(RegExp(r'\r?\n')))
-          if (rawLine.trim().contains('='))
-            if (!_knownFlashKeys.contains(
-              rawLine.trim().substring(0, rawLine.trim().indexOf('=')).trim(),
-            ))
-              rawLine.trim(),
-      ],
+      board: board,
+      slots: RigSlots.fromKv(kvs.user),
+      kvs: kvs,
     );
-  }
-
-  /// Serialize the whole document. The app only ever writes with [slots] it
-  /// intends to persist and [board] exactly as read — board keys round-trip
-  /// verbatim (the app is not their owner, just their courier), and unknown
-  /// keys ride along in [extraLines].
-  String serialize() {
-    final b = StringBuffer('K3CAL1\n');
-    if (board.factoryDate != null) b.writeln('cal.date=${board.factoryDate}');
-    if (board.calBoardId != null) b.writeln('cal.board=${board.calBoardId}');
-    if (board.calTool != null) b.writeln('cal.tool=${board.calTool}');
-    if (board.calOrigin != null) b.writeln('cal.origin=${board.calOrigin}');
-    final temps = board.calTempsC;
-    if (temps != null) b.writeln('cal.temp=${temps.dut},${temps.calBoard}');
-    final adc = board.calAdcGains;
-    if (adc != null) b.writeln('cal.adc=${adc.join(',')}');
-    for (int i = 0; i < board.channels.length; ++i) {
-      // Ladder and readings are one datum (see ChannelBoardCalibration):
-      // both written for a calibrated channel, neither otherwise.
-      if (board.channels[i] case final CalibratedChannelBoard ch) {
-        b.writeln('ch$i.r=${ch.resistors.join(',')}');
-        b.writeln('ch$i.raw=${ch.readings.join(',')}');
-      }
-    }
-    for (final line in extraLines) {
-      b.writeln(line);
-    }
-    slots.serializeInto(b);
-    b.write('END');
-    return b.toString();
   }
 }

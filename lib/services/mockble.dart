@@ -9,7 +9,7 @@ import 'adc_protocol.dart';
 import 'bt_device_config.dart';
 import 'demo_calibration.dart';
 import 'kvs_protocol.dart';
-import '../models/board_calibration.dart';
+import '../models/device_flash.dart';
 
 /// Samples per emitted feed packet: one packet every that many milliseconds
 /// makes 1 kHz (matches the mock's ADC config readback, see [readValue]).
@@ -28,7 +28,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     _mockData
       ..clear()
       ..addAll(_generateSyntheticFrames(2000));
-    seedKvsFromDoc(demoBoardCalibrationDoc);
+    seedKvs(demoKvs);
   }
 
   Timer? _scanTimer;
@@ -85,9 +85,8 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// client's command timeout.
   Duration kvsCommandDelay = Duration.zero;
 
-  /// The mock device's KVS, per folder. Seeded from
-  /// [demoBoardCalibrationDoc]; writes mutate it, so reads serve whatever
-  /// was last written (like real flash).
+  /// The mock device's KVS, per folder. Seeded from [demoKvs]; writes
+  /// mutate it, so reads serve whatever was last written (like real flash).
   final Map<String, Map<String, String>> kvsStore = {
     kvsFolderFactory: {},
     kvsFolderUser: {},
@@ -103,15 +102,13 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// Lets tests assert feed-maintenance envelopes don't interleave.
   final List<String> gattOpLog = [];
 
-  /// (Re)populate [kvsStore] from a `key=value` flash document, routing
-  /// keys to folders the way the app does (see [kvsFolderForKey]).
-  void seedKvsFromDoc(String doc) {
+  /// (Re)populate [kvsStore] from [snapshot], its folders written verbatim.
+  void seedKvs(KvsSnapshot snapshot) {
     for (final folder in kvsStore.values) {
       folder.clear();
     }
-    for (final e in parseFlashKv(doc).entries) {
-      kvsStore[kvsFolderForKey(e.key)]![e.key] = e.value;
-    }
+    kvsStore[kvsFolderFactory]!.addAll(snapshot.factory);
+    kvsStore[kvsFolderUser]!.addAll(snapshot.user);
   }
 
   /// When true, [connect] throws (a refused/failed attempt: no link is
@@ -188,7 +185,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     readRssiCalls = 0;
     kvsCommandLog.clear();
     gattOpLog.clear();
-    seedKvsFromDoc(demoBoardCalibrationDoc);
+    seedKvs(demoKvs);
     _adcFeedSubscribed = false;
     _connectedDeviceId = null;
     _connectionState = BleConnectionState.disconnected;

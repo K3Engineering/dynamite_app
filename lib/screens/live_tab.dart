@@ -192,6 +192,14 @@ class _LiveTabState extends State<LiveTab> {
     // read (not watch): rebuilding this whole tab per packet would be a
     // lot of rebuilds — LiveStats/graph subscribe to the hub themselves.
     final hub = context.read<DataHub>();
+    // A board whose factory data failed a strict parse still streams raw
+    // counts; the banner names the reason (see `InvalidBoardCalibration`).
+    final invalidBoardDetail = context.select<DataHub, String?>(
+      (h) => switch (h.boardCalibration) {
+        InvalidBoardCalibration(:final detail) => detail,
+        _ => null,
+      },
+    );
 
     // The feed-health classification (banner, stats graying) comes from the
     // shared FeedHealthTracker: one derivation owner for this tab and the
@@ -209,6 +217,8 @@ class _LiveTabState extends State<LiveTab> {
               health: health,
             ),
           ),
+          if (invalidBoardDetail != null)
+            BoardFaultBanner(detail: invalidBoardDetail),
           if (streaming)
             Expanded(
               child: ValueListenableBuilder<bool>(
@@ -577,13 +587,20 @@ class LiveStats extends StatelessWidget {
                   ),
                 ),
               // The raw-only verdict: converted units show '—' above; say
-              // why, once, in the same style as the load-cell hint.
-              if (hub.boardDataStatus != BoardDataStatus.ok)
+              // why, once, in the same style as the load-cell hint. A null
+              // board never occurs while streaming, so `_` covers it and the
+              // valid board alike.
+              if (switch (hub.boardCalibration) {
+                    UnprovisionedBoardCalibration() =>
+                      'no board data — unit not provisioned',
+                    InvalidBoardCalibration() => 'board data invalid',
+                    _ => null,
+                  }
+                  case final notice?)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Text(
-                    '— ${hub.boardDataStatus.notice(hub.boardDataDetail)}'
-                    ' — raw counts only',
+                    '— $notice — raw counts only',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: Theme.of(context).colorScheme.error,
                     ),
@@ -592,6 +609,43 @@ class LiveStats extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// BoardFaultBanner
+// ---------------------------------------------------------------------------
+
+/// The red banner shown while a connected board's factory calibration is
+/// unreadable: names the parser's reason and tells the user what to do. The
+/// device still streams raw counts underneath.
+class BoardFaultBanner extends StatelessWidget {
+  const BoardFaultBanner({super.key, required this.detail});
+
+  /// The parser's reason (see `InvalidBoardCalibration.detail`).
+  final String detail;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      color: scheme.errorContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.error_outline, size: 18, color: scheme.onErrorContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Calibration data unreadable — contact support.\n$detail',
+              style: TextStyle(color: scheme.onErrorContainer, fontSize: 12),
+            ),
+          ),
+        ],
       ),
     );
   }

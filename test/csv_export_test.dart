@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/channel_converter.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/gap_list.dart';
@@ -47,7 +48,7 @@ void main() {
     List<double?>? tares,
     GapList? gaps,
     int ssnOrigin = 0,
-    SessionBoardMeta? boardMeta,
+    KvsSnapshot? deviceKvs,
   }) => SessionData(
     channels: [for (final values in perChannel) Int32List.fromList(values)],
     sampleRate: sampleRate,
@@ -56,7 +57,7 @@ void main() {
     tares: tares ?? List.filled(channels, null),
     gaps: gaps,
     ssnOrigin: ssnOrigin,
-    boardMeta: boardMeta,
+    deviceKvs: deviceKvs,
   );
 
   String buildCsv(SessionData data, DisplayUnit unit) => buildSessionCsv(
@@ -151,7 +152,7 @@ void main() {
             'adc_gain': [1, 1],
             'excitation_v': 4.53,
           },
-          'cal': null,
+          'kvs': null,
         },
         'channels': [
           {
@@ -236,47 +237,29 @@ void main() {
           'adc_gain': [1, 1],
           'excitation_v': 4.53,
         },
-        'cal': null,
+        'kvs': null,
       });
     });
 
-    test('the board-cal provenance joins the device block as cal', () {
-      const boardMeta = SessionBoardMeta(
-        factoryDate: '2026-06-14',
-        calBoardId: 'CB42 v1.0.3',
-        calTool: 'calibrate v3.1',
-        calOrigin: 'factory',
-        calTempsC: (dut: 23.8, calBoard: 24.1),
-        calAdcGains: [1, 1, 1, 1],
-        calDataInvalid: false,
-        constantsStatus: BoardDataStatus.ok,
-        constantsDetail: '',
-        provenance: {'exc': 'nominal'},
+    test('the raw KVS snapshot joins the device block, deterministically', () {
+      final snapshot = KvsSnapshot(
+        factory: {'charging': 'enabled', 'adc_fsr': '1.2'},
+        user: {'lc0.sens': '2', 'lc0.cap': '200'},
       );
       final data = makeSession([
         [1],
         [2],
-      ], boardMeta: boardMeta);
+      ], deviceKvs: snapshot);
 
       final csv = buildCsv(data, DisplayUnit.kgf);
-      final meta = metadataOf(csv);
+      final kvs = (metadataOf(csv)['device'] as Map)['kvs'] as Map;
 
-      expect((meta['device'] as Map)['cal'], {
-        'cal_date': '2026-06-14',
-        'cal_board': 'CB42 v1.0.3',
-        'cal_tool': 'calibrate v3.1',
-        'cal_origin': 'factory',
-        'cal_temp': [23.8, 24.1],
-        'cal_adc': [1, 1, 1, 1],
-        'cal_data_invalid': false,
-        'constants_status': 'ok',
-        'constants_detail': '',
-        'provenance': {'exc': 'nominal'},
-      });
-      // The human rendering reflects it too (nested one more under device).
-      expect(csv, contains('#   cal:'));
-      expect(csv, contains('#     cal_data_invalid: false'));
-      expect(csv, contains("#       exc: 'nominal'"));
+      expect((kvs['factory'] as Map).keys, ['adc_fsr', 'charging']);
+      expect((kvs['user'] as Map).keys, ['lc0.cap', 'lc0.sens']);
+      expect(kvs, snapshot.toJson());
+      expect(csv, contains('#   kvs:'));
+      expect(csv, contains("#       charging: 'enabled'"));
+      expect(csv, contains("#       lc0.cap: '200'"));
     });
 
     test('a session recorded with no board meta exports cal as null', () {
@@ -475,6 +458,16 @@ void main() {
       );
     });
 
+    test('control characters render as double-quoted YAML escapes', () {
+      expect(
+        yamlLinesForCsvMetadata({
+          'v': 'a\tb\nc\u0000d\u007f',
+          'bad\u0001key': 'x',
+        }),
+        ['v: "a\\tb\\nc\\x00d\\x7F"', '"bad\\x01key": \'x\''],
+      );
+    });
+
     test('the block re-renders byte-identically from line 2 (the validator '
         'path: re-render and byte-compare without parsing YAML)', () {
       final cals = [
@@ -504,12 +497,9 @@ void main() {
           [2],
         ],
         calibrations: cals,
-        boardMeta: const SessionBoardMeta(
-          factoryDate: '2026-06-14',
-          calDataInvalid: false,
-          constantsStatus: BoardDataStatus.ok,
-          constantsDetail: '',
-          provenance: {},
+        deviceKvs: KvsSnapshot(
+          factory: {'cal.date': '2026-06-14', 'charging': 'enabled'},
+          user: const {'lc0.cap': '100'},
         ),
       );
 

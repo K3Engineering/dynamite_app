@@ -17,21 +17,20 @@ const String kvsCmdDelete = 'DEL';
 const String kvsCmdIndex = 'IDX';
 
 /// Factory information, not factory-resettable: the board calibration.
-/// (`DynaPersistent` partition, `Factory` namespace.)
+/// (`DynaPersistent` partition, `Factory` namespace.) The app NEVER writes
+/// this folder — the board half of the flash document is read-only to it
+/// (factory tooling owns those keys). Call sites pass folder literals, and
+/// [_checkWritableFolder] throws at the SET/DEL choke point so a future
+/// caller can't slip a Factory write past the design.
 const String kvsFolderFactory = 'F';
 
-/// User information, not factory-resettable: the load cell data.
+/// User information, not factory-resettable: the load cell data — the one
+/// document half the app writes.
 /// (`DynaPersistent` partition, `User` namespace.)
 const String kvsFolderUser = 'U';
 
 /// Settings, factory-resettable: device name, gain.
 const String kvsFolderSettings = 'S';
-
-/// The folder a flash-document key lives in: load cell keys in User, board
-/// calibration and metadata in Factory. (Settings holds name/gain — never
-/// document keys.)
-String kvsFolderForKey(String key) =>
-    key.startsWith('lc') ? kvsFolderUser : kvsFolderFactory;
 
 /// The Settings-namespace key holding the user-assigned device name (value
 /// grammar: docs/flash-schema-v1.md — enforced by `isValidDeviceName` in
@@ -63,10 +62,10 @@ String encodeKvsGet(String folder, String key) {
   return '$kvsCmdGet$folder$key';
 }
 
-/// The app never writes the Factory partition (board calibration is
-/// read-only to it — factory tooling owns those keys). This is a core
-/// assumption the document-diff saver currently satisfies only implicitly,
-/// so every SET/DEL frame throws on it here at the choke point.
+/// The app never writes the Factory partition (see [kvsFolderFactory]).
+/// This is a core assumption the slot-key writer satisfies by construction,
+/// but the encoders are the choke point every write passes through, so the
+/// guard lives here.
 void _checkWritableFolder(String folder) {
   if (folder == kvsFolderFactory) {
     throw ArgumentError.value(

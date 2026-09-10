@@ -1,14 +1,11 @@
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/demo_calibration.dart';
 
 /// Default packet size for tests that don't care about it (the decoder
 /// accepts any count).
@@ -301,45 +298,6 @@ void main() {
 
       expect(hub.totalSamples, 2 * defaultPacketSamples);
       expect(hub.gaps.contains(defaultPacketSamples), isFalse);
-    });
-  });
-
-  group('AdcPacketDecoder calibration', () {
-    test('a calibration document populates the hub board calibration', () {
-      decoder.onCalibrationPacket(
-        Uint8List.fromList(utf8.encode(demoBoardCalibrationDoc)),
-        const [1, 1, 1, 1],
-      );
-      final board = hub.boardCalibration;
-      expect(board, isNotNull);
-      expect(board!.channels.every((c) => c.isFactoryCalibrated), isTrue);
-      expect(
-        (board.channels[0] as CalibratedChannelBoard).offsetCounts,
-        closeTo(845.2, 1e-9),
-      );
-      expect(
-        (board.channels[2] as CalibratedChannelBoard).offsetCounts,
-        closeTo(1502.8, 1e-9),
-      );
-      expect(board.factoryDate, '2026-07-20');
-      // The demo doc carries board constants: the verdict is ok.
-      expect(board.constantsStatus, BoardDataStatus.ok);
-      expect(board.channels[0].nominals, isNotNull);
-    });
-
-    test('a garbage read throws, leaving the hub untouched', () {
-      // Not valid UTF-8, let alone a calibration document. Undecodable
-      // bytes fail loudly (as they do at the KVS layer upstream); they
-      // must never degrade a corrupted read into a plausible uncalibrated
-      // board.
-      expect(
-        () => decoder.onCalibrationPacket(
-          Uint8List.fromList(const [0x00, 0x9F, 0x92, 0x96, 0xFF]),
-          const [1, 1, 1, 1],
-        ),
-        throwsFormatException,
-      );
-      expect(hub.boardCalibration, isNull);
     });
   });
 }
