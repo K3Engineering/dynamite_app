@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -7,15 +8,14 @@ import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
-import 'package:dynamite_app/services/rig_flash_transport.dart';
+import 'package:dynamite_app/services/link_backend.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 
 /// Tests for [RigState]: flash reads, pending edits (which die with the
-/// link), save/revert, and history. Transport is a fake whose "device"
+/// link), save/revert, and history. The backend is a fake whose "device"
 /// applies slot writes to its stored document the way the real transport
 /// mutates User-folder keys; SharedPreferences is mocked.
-class _FakeTransport implements RigFlashTransport {
-  String deviceId = 'dev1';
+class _FakeBackend implements LinkBackend {
   String deviceName = 'Bench unit';
 
   /// What the "device" holds: seeded like the fixture hardware, mutated by
@@ -35,12 +35,6 @@ class _FakeTransport implements RigFlashTransport {
   Completer<void>? writeGate;
 
   @override
-  String get connectedDeviceId => deviceId;
-
-  @override
-  String get connectedDeviceName => deviceName;
-
-  @override
   Future<void> writeSlots(Map<String, String> lcKeys) async {
     if (failWrite) throw StateError('write failed');
     final gate = writeGate;
@@ -55,15 +49,28 @@ class _FakeTransport implements RigFlashTransport {
   @override
   Future<KvsSnapshot> readKvsSnapshot() async =>
       KvsSnapshot.fromFlashDoc(readBackDoc ?? deviceDoc);
+
+  @override
+  Future<bool> storeDeviceName(String? name) async => true;
+
+  @override
+  Future<String?> readDeviceName() async => null;
+
+  @override
+  void handleKvsFrame(Uint8List data) {}
+
+  @override
+  void dispose() {}
 }
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late _FakeTransport transport;
+  late _FakeBackend transport;
 
   Future<RigState> newRig() async => RigState(
-    transport: transport,
+    backend: () => transport,
+    connectedDeviceName: () => transport.deviceName,
     prefs: await SharedPreferences.getInstance(),
   );
 
@@ -78,7 +85,7 @@ void main() {
 
   setUp(() {
     SharedPreferences.setMockInitialValues({});
-    transport = _FakeTransport();
+    transport = _FakeBackend();
   });
 
   group('flash reads', () {

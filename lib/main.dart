@@ -75,7 +75,11 @@ void main() async {
     streamingChanges: linkManager,
     streamingNow: () => linkManager.isStreaming,
   );
-  final rigState = RigState(transport: linkManager, prefs: prefs);
+  final rigState = RigState(
+    backend: () => linkManager.backend,
+    connectedDeviceName: () => linkManager.connectedDeviceName,
+    prefs: prefs,
+  );
   // The device id/name are read off the link at delivery time (the read
   // only ever runs against the active link).
   linkManager.onDeviceFlash = (flash) {

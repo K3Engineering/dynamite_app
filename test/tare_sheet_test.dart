@@ -4,11 +4,9 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/services/data_hub.dart';
-import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/tare_sheet.dart';
 
@@ -26,7 +24,11 @@ void main() {
   Future<DataHub> openSheet(WidgetTester tester) async {
     final prefs = await SharedPreferences.getInstance();
     final hub = DataHub();
-    final rig = RigState(transport: _FakeTransport(), prefs: prefs);
+    final rig = RigState(
+      backend: () => null,
+      connectedDeviceName: () => 'Bench unit',
+      prefs: prefs,
+    );
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -197,17 +199,4 @@ void main() {
     expect(find.text('Taring…'), findsNothing);
     expect(hub.tare[0], 700);
   });
-}
-
-/// The sheet reads only the rig's channel titles; the flash transport is
-/// never exercised.
-class _FakeTransport implements RigFlashTransport {
-  @override
-  String get connectedDeviceId => 'dev1';
-  @override
-  String get connectedDeviceName => 'Bench unit';
-  @override
-  Future<void> writeSlots(Map<String, String> lcKeys) async {}
-  @override
-  Future<KvsSnapshot> readKvsSnapshot() async => throw StateError('unused');
 }

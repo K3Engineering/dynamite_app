@@ -39,7 +39,11 @@ void main() {
     final events = AppEvents();
     final link = BleLinkManager(events: events, demo: DemoDevice());
     final hub = DataHub();
-    final rig = RigState(transport: link, prefs: prefs);
+    final rig = RigState(
+      backend: () => link.backend,
+      connectedDeviceName: () => link.connectedDeviceName,
+      prefs: prefs,
+    );
     // Wire the link's flash read to the hub and rig, as main() does.
     link.onDeviceFlash = (flash) {
       hub.updateBoardCalibration(flash.board);

@@ -11,7 +11,6 @@ import '../models/bt_scan.dart';
 import 'gatt_link_backend.dart';
 import 'kvs_client.dart';
 import 'link_backend.dart';
-import 'rig_flash_transport.dart';
 import '../models/device_flash.dart';
 import '../models/device_info.dart';
 import '../models/device_name.dart';
@@ -175,7 +174,7 @@ bool isWebPickerDismissal(Object e) {
 /// deviceId instead of dropping), per-device busy guards in [_beginConnect]
 /// and [disconnectSelectedDevice]. Adapter availability and scanning stay
 /// *global* (one radio) and do NOT move into [DeviceLink].
-class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
+class BleLinkManager extends ChangeNotifier {
   /// Upper bound we pass to [UniversalBle.disconnect] so a silent stack can't
   /// strand the UI on "Disconnecting…". The package's own `disconnect()` sets
   /// up a completer over its connection-event stream and applies this timeout
@@ -378,13 +377,11 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
 
   /// Device id of the active link whenever the GATT link is up (during setup or
   /// while streaming); empty otherwise.
-  @override
   String get connectedDeviceId => _link.isLinkUp ? _link.deviceId : '';
 
   /// Name of the currently connected device: the Settings-stored name when
   /// the device has one, else the advertised name (or the device id when
   /// that's empty).
-  @override
   String get connectedDeviceName => _link.displayName;
 
   /// The Settings-stored name of the connected device, or null when unset
@@ -514,40 +511,10 @@ class BleLinkManager extends ChangeNotifier implements RigFlashTransport {
   /// [onSampleRate] right after the read.
   AdcConfig? _adcConfig;
 
-  // -- RigFlashTransport ------------------------------------------------------
-
-  /// Write the load-cell slot keys to the connected device (see
-  /// [RigFlashTransport.writeSlots]). Called only by `RigState.saveToDevice`;
-  /// the active link's backend applies them (see [LinkBackend.writeSlots]).
-  @override
-  Future<void> writeSlots(Map<String, String> lcKeys) async {
-    final deviceId = _link.deviceId;
-    if (deviceId.isEmpty) {
-      throw StateError('writeSlots with no device connected');
-    }
-    final backend = _backend;
-    if (backend == null) {
-      throw StateError('writeSlots with no device channel on $deviceId');
-    }
-    await backend.writeSlots(lcKeys);
-  }
-
-  /// Read the KVS snapshot back from the connected device (save
-  /// verification in `RigState.saveToDevice`). Throws when nothing is
-  /// connected or the read fails — a failed verification fails the save,
-  /// which the caller already surfaces.
-  @override
-  Future<KvsSnapshot> readKvsSnapshot() async {
-    final deviceId = _link.deviceId;
-    if (deviceId.isEmpty) {
-      throw StateError('readKvsSnapshot with no device connected');
-    }
-    final backend = _backend;
-    if (backend == null) {
-      throw StateError('readKvsSnapshot with no device channel on $deviceId');
-    }
-    return backend.readKvsSnapshot();
-  }
+  /// The backend of the active link (null when no link is up), for the
+  /// device operations `RigState` drives outside the link lifecycle (slot
+  /// writes and the save-verification read). See [_backend].
+  LinkBackend? get backend => _backend;
 
   /// The feed-maintenance chain. [KvsClient] serializes individual KVS
   /// commands, but nothing stops one envelope's resubscribe from landing

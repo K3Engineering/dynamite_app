@@ -9,7 +9,6 @@ import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/screens/calibration_screen.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
 import 'package:dynamite_app/services/report_export.dart';
-import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/cal_deviation_plot.dart';
 import 'package:dynamite_app/widgets/calibration_text.dart';
@@ -19,21 +18,7 @@ import 'package:dynamite_app/widgets/calibration_view.dart';
 /// page's body). The view renders the board it's handed, so the harness
 /// is a [RigState] fed the fixture document (with the PGA readback the
 /// demo device reports, 1x on all channels), and the view gets
-/// [RigState.boardCalibration].
-class _FakeTransport implements RigFlashTransport {
-  @override
-  String get connectedDeviceId => 'dev1';
-
-  @override
-  String get connectedDeviceName => 'Bench unit';
-
-  @override
-  Future<void> writeSlots(Map<String, String> lcKeys) async {}
-
-  @override
-  Future<KvsSnapshot> readKvsSnapshot() async => throw StateError('unused');
-}
-
+/// [RigState.boardCalibration]. No save is exercised, so no backend.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -45,7 +30,8 @@ void main() {
   }) async {
     SharedPreferences.setMockInitialValues({});
     final rig = RigState(
-      transport: _FakeTransport(),
+      backend: () => null,
+      connectedDeviceName: () => 'Bench unit',
       prefs: await SharedPreferences.getInstance(),
     );
     if (withFlash) {
@@ -207,7 +193,8 @@ END
   }) async {
     SharedPreferences.setMockInitialValues({});
     final rig = RigState(
-      transport: _FakeTransport(),
+      backend: () => null,
+      connectedDeviceName: () => 'Bench unit',
       prefs: await SharedPreferences.getInstance(),
     );
     if (withFlash) {

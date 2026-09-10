@@ -895,7 +895,7 @@ void main() {
 
       Object? error;
       unawaited(
-        link
+        link.backend!
             .writeSlots(slotsWith(cap: '250'))
             .then((_) {}, onError: (Object e) => error = e),
       );
@@ -936,7 +936,7 @@ void main() {
       Object? writeError;
       Object? nameError;
       unawaited(
-        link
+        link.backend!
             .writeSlots(slotsWith(cap: '250'))
             .then((_) {}, onError: (Object e) => writeError = e),
       );
@@ -985,7 +985,7 @@ void main() {
       MockBlePlatform.instance.failFeedSubscribe = true;
       Object? error;
       unawaited(
-        link
+        link.backend!
             .writeSlots(slotsWith(cap: '250'))
             .then((_) {}, onError: (Object e) => error = e),
       );

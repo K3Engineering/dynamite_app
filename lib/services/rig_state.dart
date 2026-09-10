@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/board_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/load_cell.dart';
-import 'rig_flash_transport.dart';
+import 'link_backend.dart';
 
 /// Owns the rig: the slot list read from the connected device, unsaved
 /// edits, and the cross-device cell history.
@@ -24,13 +24,17 @@ import 'rig_flash_transport.dart';
 /// Unsaved edits die with a disconnect. Typed-in cell values survive in
 /// [history] (recorded at edit time).
 class RigState extends ChangeNotifier {
-  /// [prefs] is injected (see `main`): the instance is available
-  /// synchronously, so the history load happens right here in the
-  /// constructor and can never race a later setter.
+  /// [backend] yields the active link's device operations (null when no link
+  /// is up); [connectedDeviceName] names it for history provenance; [prefs]
+  /// is injected (see `main`): the instance is available synchronously, so
+  /// the history load happens right here in the constructor and can never
+  /// race a later setter.
   RigState({
-    required RigFlashTransport transport,
+    required LinkBackend? Function() backend,
+    required String Function() connectedDeviceName,
     required SharedPreferences prefs,
-  }) : _transport = transport,
+  }) : _backend = backend,
+       _connectedDeviceName = connectedDeviceName,
        _prefs = prefs {
     _loadHistory();
   }
@@ -41,7 +45,8 @@ class RigState extends ChangeNotifier {
   /// scannable (least-recently-seen evicted).
   static const int historyCap = 50;
 
-  final RigFlashTransport _transport;
+  final LinkBackend? Function() _backend;
+  final String Function() _connectedDeviceName;
   final SharedPreferences _prefs;
 
   /// The flash document as last read from the connected device (board +
@@ -87,7 +92,7 @@ class RigState extends ChangeNotifier {
 
   /// The connected device's display name, live off the link: history
   /// provenance and the calibration report's owner label.
-  String get connectedDeviceName => _transport.connectedDeviceName;
+  String get connectedDeviceName => _connectedDeviceName();
 
   List<RigHistoryEntry> get history => List.unmodifiable(_history);
 
@@ -145,7 +150,7 @@ class RigState extends ChangeNotifier {
   /// immediately: typed-in values are exactly what "last seen" is for.
   void setSlot(int i, LoadCellProfile cell) {
     _pendingEdits = _editBuffer().withSlot(i, RigSlot(cell: cell));
-    _upsertHistory(cell, _transport.connectedDeviceName, DateTime.now());
+    _upsertHistory(cell, connectedDeviceName, DateTime.now());
     notifyListeners();
   }
 
@@ -184,8 +189,10 @@ class RigState extends ChangeNotifier {
     // die with the link — so the document provably belongs to the device
     // this write goes to.
     assert(flash != null, 'pending edits imply a read flash document');
+    final backend = _backend();
+    if (backend == null) return false;
     try {
-      await _transport.writeSlots(edited.toKv());
+      await backend.writeSlots(edited.toKv());
     } catch (_) {
       return false;
     }
@@ -199,7 +206,7 @@ class RigState extends ChangeNotifier {
     final KvsSnapshot readBack;
     final RigSlots verified;
     try {
-      readBack = await _transport.readKvsSnapshot();
+      readBack = await backend.readKvsSnapshot();
       verified = RigSlots.fromKv(readBack.user);
     } catch (_) {
       return false;

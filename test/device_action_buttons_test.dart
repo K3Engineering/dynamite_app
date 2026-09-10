@@ -46,7 +46,11 @@ void main() {
     final linkManager = BleLinkManager(events: appEvents, demo: DemoDevice())
       ..onAdcData = decoder.onDataPacket;
     final prefs = await SharedPreferences.getInstance();
-    final rigState = RigState(transport: linkManager, prefs: prefs);
+    final rigState = RigState(
+      backend: () => linkManager.backend,
+      connectedDeviceName: () => linkManager.connectedDeviceName,
+      prefs: prefs,
+    );
     linkManager.onDeviceFlash = (flash) {
       dataHub.updateBoardCalibration(flash.board);
       rigState.onFlashRead(

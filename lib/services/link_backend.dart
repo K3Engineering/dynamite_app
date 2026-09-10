@@ -4,13 +4,13 @@ import '../models/device_flash.dart';
 import '../models/device_info.dart';
 
 /// The device-side operations of the active link: the flash document round
-/// trip (see `RigFlashTransport`), the Settings-namespace device name, and
-/// KVS frame routing. Implemented by `GattLinkBackend` (a real link's KVS
-/// channel) and by the simulated demo device directly — the link manager
-/// delegates to whichever backs the active link rather than branching on
-/// which kind of link it is. A real link whose KVS channel can't come up
-/// never finishes connecting (see `BleLinkManager`), so a backend on an
-/// established link is always usable.
+/// trip, the Settings-namespace device name, and KVS frame routing.
+/// Implemented by `GattLinkBackend` (a real link's KVS channel) and by the
+/// simulated demo device directly — the link manager delegates to whichever
+/// backs the active link rather than branching on which kind of link it is.
+/// A real link whose KVS channel can't come up never finishes connecting
+/// (see `BleLinkManager`), so a backend on an established link is always
+/// usable.
 abstract interface class LinkBackend {
   /// Write the load-cell slot keys (`lc0.cap`, ...): the only keys the app
   /// owns on the device. The backend SETs/DELs slot keys and leaves every

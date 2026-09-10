@@ -8,35 +8,21 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/demo_calibration.dart';
-import 'package:dynamite_app/services/rig_flash_transport.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/rig_slots_section.dart';
 
 /// Widget tests for the rig slot section: rows from the device flash doc,
 /// the add/edit dialogs, and the dirty banner. The harness hands the
-/// section a real [RigState] (fake transport) with a flash doc already
-/// read. Save behavior itself is covered in rig_state_test.dart.
-class _FakeTransport implements RigFlashTransport {
-  @override
-  String get connectedDeviceId => 'dev1';
-
-  @override
-  String get connectedDeviceName => 'Bench unit';
-
-  @override
-  Future<void> writeSlots(Map<String, String> lcKeys) async {}
-
-  @override
-  Future<KvsSnapshot> readKvsSnapshot() async => throw StateError('unused');
-}
-
+/// section a real [RigState] with a flash doc already read. Save behavior
+/// itself is covered in rig_state_test.dart, so the backend is absent here.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   Future<RigState> pump(WidgetTester tester, {bool withFlash = true}) async {
     SharedPreferences.setMockInitialValues({});
     final rig = RigState(
-      transport: _FakeTransport(),
+      backend: () => null,
+      connectedDeviceName: () => 'Bench unit',
       // The rig's prefs load is synchronous in the constructor, so reading
       // the flash right after construction is fine.
       prefs: await SharedPreferences.getInstance(),

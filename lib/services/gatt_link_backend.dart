@@ -56,9 +56,9 @@ class GattLinkBackend implements LinkBackend {
 /// document out of per-key reads, and writes load-cell slot keys back as
 /// per-key diffs against the last-read snapshot.
 ///
-/// This is the per-key engine behind `RigFlashTransport`'s slot contract:
-/// `RigState` and the decoder keep working on documents and slot maps and
-/// never see the KVS command layer.
+/// This is the per-key engine behind the slot contract: `RigState` and the
+/// decoder keep working on documents and slot maps and never see the KVS
+/// command layer.
 class KvsFlashTransport {
   KvsFlashTransport(this._client);
 
