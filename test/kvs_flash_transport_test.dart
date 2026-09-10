@@ -78,7 +78,7 @@ void main() {
       );
       final board = flash.board as ProvisionedBoardCalibration;
       final fixtureBoard = fixture.board as ProvisionedBoardCalibration;
-      expect(board.factoryDate, fixtureBoard.factoryDate);
+      expect(board.calGroup!.date, fixtureBoard.calGroup!.date);
       expect(board.channels.every((c) => c.isFactoryCalibrated), isTrue);
       expect(
         (board.channels[0] as CalibratedChannelBoard).offsetCounts,

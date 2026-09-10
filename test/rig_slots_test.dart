@@ -18,7 +18,7 @@ void main() {
 
     test('board channels are factory-calibrated', () {
       expect(board.channels.where((c) => c.isFactoryCalibrated), hasLength(4));
-      expect(board.factoryDate, '2026-07-20');
+      expect(board.calGroup!.date, '2026-07-20');
     });
 
     test('slots parse with names and exact sensitivities', () {

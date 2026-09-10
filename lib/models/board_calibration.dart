@@ -786,31 +786,12 @@ class ProvisionedBoardCalibration extends BoardCalibration {
   /// [calGroup].
   final List<ChannelBoardCalibration> channels;
 
-  /// Calibration date string as written in flash (`cal.date`), if calibrated.
-  String? get factoryDate => calGroup?.date;
-
-  /// Calibration board firmware id (`cal.board`), if any.
-  String? get calBoardId => calGroup?.boardId;
-
-  /// Calibration host script version (`cal.tool`), if any.
-  String? get calTool => calGroup?.tool;
-
-  /// Calibration origin tag (`cal.origin`: `factory`, or a field operator's
-  /// tag), if any.
-  String? get calOrigin => calGroup?.origin;
-
-  /// Temperatures at calibration in °C (`cal.temp`): DUT board, cal board.
-  ({double dut, double calBoard})? get calTempsC => calGroup?.tempsC;
-
-  /// Per-channel ADC PGA gains at calibration time (`cal.adc`), if recorded.
-  List<double>? get calAdcGains => calGroup?.adcGains;
-
   /// Whether the runtime PGA config differs from the one the calibration was
   /// taken at — a stale-calibration guard (PGA gains are the only ADC config
   /// the runtime readback exposes). Null when the calibration recorded no
   /// gains (`cal.adc`).
   bool? get adcConfigDrifted {
-    final atCal = calAdcGains;
+    final atCal = calGroup?.adcGains;
     if (atCal == null) return null;
     final current = nominals.pgaGains;
     if (atCal.length != current.length) return true;

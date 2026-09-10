@@ -73,11 +73,12 @@ String boardCalibrationStatusLine(BoardCalibration? board) {
     case UnprovisionedBoardCalibration():
       return 'Missing factory calibration';
     case final ProvisionedBoardCalibration b:
-      if (!b.isFactoryCalibrated) return 'Missing factory calibration';
-      final age = calibrationAge(b.factoryDate);
+      final group = b.calGroup;
+      if (group == null) return 'Missing factory calibration';
+      final age = calibrationAge(group.date);
       return [
         'Calibrated',
-        ?b.factoryDate,
+        group.date,
         if (age != null) '($age)',
       ].join(' ');
   }
@@ -93,15 +94,20 @@ String calibrationReport(
 ) {
   final b = StringBuffer('Dynamite Sampler — board calibration report\n');
   b.writeln('Device: $deviceLabel');
-  if (board.factoryDate != null) b.writeln('Calibrated: ${board.factoryDate}');
-  final provenance = [
-    ?board.calBoardId,
-    ?board.calTool,
-    ?board.calOrigin,
-    if (board.calTempsC case final t?)
-      '${t.dut}/${t.calBoard} °C (DUT/cal board)',
-  ];
-  if (provenance.isNotEmpty) b.writeln('Provenance: ${provenance.join(' · ')}');
+  final group = board.calGroup;
+  if (group != null) {
+    b.writeln('Calibrated: ${group.date}');
+    final provenance = [
+      ?group.boardId,
+      ?group.tool,
+      ?group.origin,
+      if (group.tempsC case final t?)
+        '${t.dut}/${t.calBoard} °C (DUT/cal board)',
+    ];
+    if (provenance.isNotEmpty) {
+      b.writeln('Provenance: ${provenance.join(' · ')}');
+    }
+  }
   final n = board.nominals;
   b.writeln(
     'Chain: FSR ${n.adcFsrV} V · AFE ${n.afeGain}× '

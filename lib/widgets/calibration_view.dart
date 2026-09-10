@@ -69,22 +69,23 @@ class _BoardCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final calibrated = board.isFactoryCalibrated;
-    final age = calibrationAge(board.factoryDate);
+    final group = board.calGroup;
+    final calibrated = group != null;
+    final age = calibrationAge(group?.date);
 
     final String status;
-    if (!calibrated) {
+    if (group == null) {
       status = 'No factory calibration — nominal values in use';
     } else {
-      final parts = [?board.factoryDate, if (age != null) '($age)'];
+      final parts = [group.date, if (age != null) '($age)'];
       status = 'Calibrated ${parts.join(' ')}'.trimRight();
     }
 
     final provenance = [
-      ?board.calBoardId,
-      ?board.calTool,
-      ?board.calOrigin,
-      if (board.calTempsC case final t?)
+      ?group?.boardId,
+      ?group?.tool,
+      ?group?.origin,
+      if (group?.tempsC case final t?)
         '${t.dut}/${t.calBoard} °C (DUT/cal board)',
     ];
 

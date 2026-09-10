@@ -335,7 +335,7 @@ END
       final board =
           BoardCalibration.parse(doc, pgaGains: testGains)
               as ProvisionedBoardCalibration;
-      expect(board.factoryDate, '2026-07-20');
+      expect(board.calGroup!.date, '2026-07-20');
       expect(board.isFactoryCalibrated, isTrue);
       final ch0 = board.channels[0] as CalibratedChannelBoard;
       expect(ch0.resistors[0], closeTo(10000.8, 1e-9));
@@ -520,20 +520,17 @@ $channelData${''}END
 
     test('present keys parse; absent keys are null', () {
       final board = parse(doc);
-      expect(board.calBoardId, 'calboard-fw 1.2.1');
-      expect(board.calTool, 'board_calibration 1.0');
-      expect(board.calOrigin, 'factory');
-      expect(board.calTempsC!.dut, closeTo(29.1, 1e-12));
-      expect(board.calTempsC!.calBoard, closeTo(28.4, 1e-12));
-      expect(board.calAdcGains, [1.0, 1.0, 1.0, 1.0]);
+      final group = board.calGroup!;
+      expect(group.boardId, 'calboard-fw 1.2.1');
+      expect(group.tool, 'board_calibration 1.0');
+      expect(group.origin, 'factory');
+      expect(group.tempsC!.dut, closeTo(29.1, 1e-12));
+      expect(group.tempsC!.calBoard, closeTo(28.4, 1e-12));
+      expect(group.adcGains, [1.0, 1.0, 1.0, 1.0]);
 
       // A document from before these keys existed parses them as absent.
       final older = parse(testConstantKeys);
-      expect(older.calBoardId, isNull);
-      expect(older.calTool, isNull);
-      expect(older.calOrigin, isNull);
-      expect(older.calTempsC, isNull);
-      expect(older.calAdcGains, isNull);
+      expect(older.calGroup, isNull);
     });
 
     test('malformed numeric metadata is invalid, not absent', () {
