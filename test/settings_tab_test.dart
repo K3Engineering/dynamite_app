@@ -50,6 +50,8 @@ void main() {
     link = BleLinkManager(
       events: events,
       demo: DemoDevice(),
+      onAdcData: (_) {},
+      onSampleRate: (_) {},
       onDeviceFlash: (flash) {
         hub.updateBoardCalibration(flash.board);
         rig.onFlashRead(

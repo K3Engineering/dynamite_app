@@ -61,7 +61,9 @@ void main() {
           flash,
         );
       },
-    )..onAdcData = decoder.onDataPacket;
+      onAdcData: decoder.onDataPacket,
+      onSampleRate: (_) {},
+    );
     StreamResetCoordinator(
       hub: dataHub,
       streamingChanges: linkManager,
