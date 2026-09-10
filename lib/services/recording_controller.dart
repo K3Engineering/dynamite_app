@@ -11,6 +11,7 @@ import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/feed_health.dart';
 import '../models/hub_event.dart';
+import '../utils/format.dart';
 
 /// Outcome of [RecordingController.startSession].
 sealed class StartSessionResult {
@@ -188,22 +189,31 @@ class RecordingController extends ChangeNotifier {
     }
 
     final sessionName = name ?? autoSessionName(DateTime.now());
-    _sessionWriter = _persistence.startSession(
-      tare: _dataHub.tare,
-      // Snapshot the per-channel calibration in effect now; playback
-      // converts through it even if calibration changes later.
-      channelCalibration: [
+    // The whole journal header is snapshotted here, at recording start: the
+    // per-channel calibration in effect now (playback converts through it
+    // even if calibration changes later), the tare offsets, the display
+    // unit, the device identity, and the recording-start wall clock (NOT
+    // the first packet's, which is later — the CSV's recorded_at asserts
+    // this one).
+    final header = (
+      name: sessionName,
+      sampleRate: _dataHub.sampleRateHz,
+      channelCount: kAdcChannelCount,
+      channelLabels: List.of(channelLabels),
+      tares: List.of(_dataHub.tare),
+      calibration: [
         for (int ch = 0; ch < kAdcChannelCount; ch++)
           _dataHub.calibrationFor(ch),
       ],
-      samplesPerSec: _dataHub.sampleRateHz,
-      sourceRingCapacity: DataHub.maxDataSz,
-      name: sessionName,
-      channelLabels: channelLabels,
-      visibleChannels: visibleChannels,
-      displayUnit: displayUnit,
-      deviceMetadata: _deviceMetadataSnapshot(),
+      visibleChannels: List.of(visibleChannels),
+      displayUnit: displayUnit.name,
+      deviceInfo: Map.of(_deviceMetadataSnapshot()),
       deviceKvs: _deviceKvsSnapshot(),
+      recordedAt: iso8601WithOffset(DateTime.now()),
+    );
+    _sessionWriter = _persistence.startSession(
+      header,
+      sourceRingCapacity: DataHub.maxDataSz,
       // A storage failure latched mid-recording stops the session the
       // moment it latches — not when a later batch would reveal it (a
       // failed last packet under an idle feed has no later batch).

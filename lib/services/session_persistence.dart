@@ -1,6 +1,3 @@
-import '../models/channel_calibration.dart';
-import '../models/device_flash.dart';
-import '../models/display_unit.dart';
 import 'live_session_writer.dart';
 
 /// Recording's port onto session persistence: exactly the two lifecycle
@@ -10,24 +7,15 @@ import 'live_session_writer.dart';
 /// session_storage.dart adapts the real implementation and tests can double
 /// it without opening the store.
 abstract interface class SessionPersistence {
-  /// Construct the session's writer. Everything the live buffer would
-  /// supply ([tare], [channelCalibration], [samplesPerSec],
-  /// [sourceRingCapacity]) is snapshotted by the caller, so the storage side
-  /// never consults live state. Pure construction: no store work happens
-  /// until the writer's first packet creates the session directory, so this
-  /// can never fail and never needs discarding. [onWriteError] is the
+  /// Construct the session's writer from the caller-snapshotted [header]
+  /// (every journal-line-1 field, frozen at recording start — the storage
+  /// side never consults live state). Pure construction: no store work
+  /// happens until the writer's first packet creates the session directory,
+  /// so this can never fail and never needs discarding. [onWriteError] is the
   /// writer's latched-error callback (see LiveSessionWriter.onWriteError).
-  LiveSessionWriter startSession({
-    required List<double?> tare,
-    required List<ChannelCalibration> channelCalibration,
-    required int samplesPerSec,
+  LiveSessionWriter startSession(
+    SessionHeader header, {
     required int sourceRingCapacity,
-    required String name,
-    required List<String> channelLabels,
-    required List<bool> visibleChannels,
-    required DisplayUnit displayUnit,
-    required Map<String, Object?> deviceMetadata,
-    required KvsSnapshot? deviceKvs,
     required void Function(Object error) onWriteError,
   });
 

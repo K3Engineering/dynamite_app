@@ -55,18 +55,22 @@ void main() {
       hub.notePacketCounter(0);
     }
     return SessionStorage.startSession(
-      tare: hub.tare,
-      channelCalibration: [
-        for (int ch = 0; ch < channels; ch++) hub.calibrationFor(ch),
-      ],
-      samplesPerSec: hub.sampleRateHz,
+      (
+        name: name,
+        sampleRate: hub.sampleRateHz,
+        channelCount: channels,
+        channelLabels: const ['a', 'b', 'c', 'd'],
+        tares: List.of(hub.tare),
+        calibration: [
+          for (int ch = 0; ch < channels; ch++) hub.calibrationFor(ch),
+        ],
+        visibleChannels: const [true, true, true, true],
+        displayUnit: DisplayUnit.kgf.name,
+        deviceInfo: const {},
+        deviceKvs: null,
+        recordedAt: '2026-07-29T14:05:32.000Z',
+      ),
       sourceRingCapacity: DataHub.maxDataSz,
-      name: name,
-      channelLabels: const ['a', 'b', 'c', 'd'],
-      visibleChannels: const [true, true, true, true],
-      displayUnit: DisplayUnit.kgf,
-      deviceMetadata: const {},
-      deviceKvs: null,
       onWriteError: (_) {},
     );
   }
