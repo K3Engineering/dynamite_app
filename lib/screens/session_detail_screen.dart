@@ -12,7 +12,7 @@ import '../models/session_summary.dart';
 import '../services/csv_export.dart';
 import '../services/export_delivery.dart';
 import '../services/session_data.dart';
-import '../services/session_queries.dart';
+import '../services/session_store.dart';
 import '../services/share_capability.dart';
 import '../utils/format.dart';
 import '../widgets/channel_stats_table.dart';
@@ -42,8 +42,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _catalog = sessionCatalogState();
-    unawaited(ensureSessionCatalogLoaded().catchError((_) {}));
+    _catalog = SessionStore.instance.catalog;
+    unawaited(SessionStore.instance.ensureCatalogLoaded().catchError((_) {}));
     unawaited(_loadData());
   }
 
@@ -55,7 +55,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   Future<void> _loadData() async {
     try {
-      final data = await loadSession(widget.session.id);
+      final data = await SessionStore.instance.loadSession(widget.session.id);
       if (!mounted) return;
       setState(() => _loadState = _Ready(data));
     } catch (e) {
@@ -168,8 +168,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           ChannelStatsTable(
             labels: channelLabels,
             activeChannels: visibleChannels,
-            onToggleChannel: (index) =>
-                unawaited(toggleSessionVisibleChannel(session.id, index)),
+            onToggleChannel: (index) => unawaited(
+              SessionStore.instance.toggleVisibleChannel(session.id, index),
+            ),
             unit: unit,
             rows: [
               ChannelStatsRow(
@@ -329,7 +330,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       maxLines: 5,
     );
     if (newNotes != null) {
-      await setSessionNotes(session.id, newNotes);
+      await SessionStore.instance.setSessionNotes(session.id, newNotes);
     }
   }
 
@@ -345,7 +346,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Future<void> _downloadCsv(SessionSummary session, SessionData data) =>
       _runCsvAction(() async {
         final appMeta = context.read<AppMeta>();
-        final unit = await _pickExportUnit(_recordedUnit(session));
+        final unit = await _pickExportUnit(session.displayUnit);
         if (unit == null) return null;
         final artifact = buildSessionCsvArtifact(
           sessionName: session.name,
@@ -366,7 +367,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   Future<void> _shareCsv(SessionSummary session, SessionData data) =>
       _runCsvAction(() async {
         final appMeta = context.read<AppMeta>();
-        final unit = await _pickExportUnit(_recordedUnit(session));
+        final unit = await _pickExportUnit(session.displayUnit);
         if (unit == null) return null;
         final artifact = buildSessionCsvArtifact(
           sessionName: session.name,
@@ -385,12 +386,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           anchor: _shareAnchor(),
         );
       });
-
-  /// The session's recorded display unit (frozen at recording start): the
-  /// export picker's preselection. An unrecognizable stored value falls
-  /// back to the platform default unit.
-  static DisplayUnit _recordedUnit(SessionSummary session) =>
-      DisplayUnit.fromName(session.displayUnit);
 
   /// Ask the user for the export's converted unit (csv-format-v1.md:
   /// one file, one unit, chosen by the user), preselected to [initial].

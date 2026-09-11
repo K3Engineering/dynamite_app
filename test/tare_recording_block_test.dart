@@ -18,6 +18,7 @@ void main() {
     WidgetTester tester, {
     required bool isRecording,
     required VoidCallback onTare,
+    DateTime? sessionStartTime,
   }) {
     return tester.pumpWidget(
       ChangeNotifierProvider<DataHub>.value(
@@ -26,6 +27,7 @@ void main() {
           home: Scaffold(
             body: ActionButtons(
               isRecording: isRecording,
+              sessionStartTime: sessionStartTime,
               onToggleRecord: () {},
               onTare: onTare,
               onTareSettings: () {},
@@ -52,5 +54,28 @@ void main() {
 
     await tester.tap(tareButton());
     expect(tared, isTrue);
+  });
+
+  testWidgets('the record button reads REC when idle, STOP when recording', (
+    tester,
+  ) async {
+    await pumpButtons(tester, isRecording: false, onTare: () {});
+    expect(find.text('REC'), findsOneWidget);
+
+    await pumpButtons(tester, isRecording: true, onTare: () {});
+    expect(find.text('STOP'), findsOneWidget);
+  });
+
+  testWidgets('with a start time the STOP label shows an elapsed clock', (
+    tester,
+  ) async {
+    await pumpButtons(
+      tester,
+      isRecording: true,
+      onTare: () {},
+      sessionStartTime: DateTime.now(),
+    );
+    expect(find.text('STOP 00:00'), findsOneWidget);
+    expect(find.text('STOP'), findsNothing);
   });
 }

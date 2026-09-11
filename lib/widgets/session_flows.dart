@@ -1,12 +1,12 @@
 /// Session-level dialog flows shared by the Sessions tab, the session
 /// detail screen, and the Live tab's rename action. The generic prompts
 /// live in `widgets/dialogs.dart`; the store calls go through
-/// `services/session_queries.dart`, so the widget layer never sees it.
+/// `services/session_store.dart`.
 library;
 
 import 'package:material_ui/material_ui.dart';
 
-import '../services/session_queries.dart';
+import '../services/session_store.dart';
 import '../utils/format.dart';
 import 'dialogs.dart';
 
@@ -25,7 +25,7 @@ Future<void> renameSessionFlow(
     initial: currentName,
   ))?.trim();
   if (newName != null && newName.isNotEmpty) {
-    await renameSession(sessionId, newName);
+    await SessionStore.instance.renameSession(sessionId, newName);
   }
 }
 
@@ -44,6 +44,6 @@ Future<bool> deleteSessionFlow(
   )) {
     return false;
   }
-  await deleteSession(sessionId);
+  await SessionStore.instance.deleteSession(sessionId);
   return true;
 }

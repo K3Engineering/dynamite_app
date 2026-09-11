@@ -16,6 +16,10 @@ import 'session_store_backend.dart';
 /// layout, the tail-only damage model, and the completion marker's write
 /// discipline; this class owns the catalog cache and the serialized
 /// operation queue on top of it.
+///
+/// Screens use the listing/edit/delete/load surface only; the recording-side
+/// operations ([startSession], [finalizeSession], [createDataSink]) are
+/// RecordingController's.
 class SessionStore {
   SessionStore._(Future<SessionFilesBackend> backend) : _backend = backend;
 
@@ -176,7 +180,8 @@ class SessionStore {
     _ListedEntry entry;
     try {
       entry = await _classify(files, id);
-    } catch (_) {
+    } catch (e) {
+      debugPrint('Classify failed for session $id, rescanning catalog: $e');
       await _publishCatalog(files);
       return;
     }
@@ -525,6 +530,26 @@ class SessionStore {
         );
       });
 
+  /// Rename the session, keeping its notes and visibility.
+  Future<void> renameSession(String id, String name) => editSession(
+    id,
+    (current) => SessionEdit(
+      name: name,
+      notes: current.notes,
+      visibleChannels: current.visibleChannels,
+    ),
+  );
+
+  /// Replace the session's notes, keeping its name and visibility.
+  Future<void> setSessionNotes(String id, String notes) => editSession(
+    id,
+    (current) => SessionEdit(
+      name: current.name,
+      notes: notes,
+      visibleChannels: current.visibleChannels,
+    ),
+  );
+
   /// Delete the session directory. Only the layout's three named files are
   /// destroyed (see SessionFilesBackend.delete).
   Future<void> deleteSession(String id) => _withCatalog((files, _) async {
@@ -577,38 +602,36 @@ class SessionStore {
     // flush() (an ailing disk) hangs finalize, and stopSession with it,
     // forever. Web is covered by SinkWorkerTransport's per-request timeout.
     await writer.flush();
-    final sessionId = writer.sessionId;
+    final run = writer.run;
     // The writer latches the first mid-recording write error; the cleanup
     // steps below fold in only if nothing latched yet.
     Object? error = writer.writeError;
     try {
       await writer.closeSink();
-      if (sessionId != null) {
+      if (run != null) {
         // Fail loud on an accepted-vs-persisted mismatch: the writer counted
         // every accepted packet's frames, so data.raw must hold exactly that
         // many bytes after the last ack. A silent drop anywhere between
         // accepted slice and flushed file would otherwise leave the session
         // claiming samples that were never written.
-        // Non-null by construction: sessionId and the acked length latch
-        // together on the first packet (see LiveSessionWriter).
-        final acked = writer.ackedDataLength!;
+        final acked = run.ackedLength;
         final expected = writer.expectedDataBytes;
         if (acked != expected) {
           throw StateError(
-            'Session $sessionId: persisted $acked bytes but counted $expected '
+            'Session ${run.id}: persisted $acked bytes but counted $expected '
             '— the storage layer dropped samples',
           );
         }
         if (error == null) {
-          await touchFinal(sessionId);
+          await touchFinal(run.id);
         }
       }
     } catch (e) {
       error ??= e;
     }
     if (error != null) {
-      if (sessionId != null) {
-        await abortSession(sessionId);
+      if (run != null) {
+        await abortSession(run.id);
       }
       throw error;
     }

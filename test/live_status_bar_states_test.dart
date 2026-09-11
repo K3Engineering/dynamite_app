@@ -95,6 +95,34 @@ void main() {
       expect(find.text('Connected: K3'), findsOneWidget);
       await tester.pump(const Duration(seconds: 6));
     });
+
+    testWidgets('a recording session shows a red dot in the strip', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        ChangeNotifierProvider.value(
+          value: BleLinkManager(
+            events: AppEvents(),
+            onDeviceFlash: (_) {},
+            onAdcData: (_) {},
+            onSampleRate: (_) {},
+          ),
+          child: host(
+            const LiveStatusBar(
+              linkState: BtLinkState.streaming,
+              connectedDeviceName: 'K3',
+              sampleRateHz: 1000,
+              recording: true,
+            ),
+          ),
+        ),
+      );
+      final scheme = schemeOf(tester, LiveStatusBar);
+      final dot = find.byIcon(Icons.circle);
+      expect(dot, findsOneWidget);
+      expect(tester.widget<Icon>(dot).color, scheme.error);
+      await tester.pump(const Duration(seconds: 6));
+    });
   });
 
   group('BoardFaultBanner', () {

@@ -26,8 +26,9 @@ class SampleSlice {
   final List<(int, int)> gapRanges;
 
   /// The packet-counter anchor at snapshot time (see
-  /// `DataHub.notePacketCounter`).
-  final ({int counter, int hubIndex})? anchor;
+  /// `DataHub.notePacketCounter`). Non-null because the recording path only
+  /// snapshots a flowing feed; [DataHub.snapshotRange] fails loud otherwise.
+  final ({int counter, int hubIndex}) anchor;
 
   int get sampleCount => channels.first.length;
 }

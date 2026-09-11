@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
+import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/screens/sessions_tab.dart';
 import 'package:dynamite_app/services/live_session_writer.dart';
 import 'package:dynamite_app/services/session_files_io.dart';
@@ -52,7 +53,7 @@ void main() {
         ),
     ],
     visibleChannels: const [true, true, true, true],
-    displayUnit: 'kgf',
+    displayUnit: DisplayUnit.kgf,
     deviceInfo: const {},
     recordedAt: '2026-07-29T14:05:32.000Z',
     ssnOrigin: 0,

@@ -71,9 +71,9 @@ class SessionMeta {
   /// [channelCount] entries).
   final List<ChannelCalibration> calibration;
 
-  /// The display unit at recording start (a `DisplayUnit.name`), frozen as
-  /// the CSV export's default converted unit.
-  final String displayUnit;
+  /// The display unit at recording start, frozen as the CSV export's default
+  /// converted unit.
+  final DisplayUnit displayUnit;
 
   /// The connected device's identity at recording start (the dynamite-csv
   /// `device` metadata block), frozen so export never consults live state.
@@ -105,7 +105,7 @@ class SessionMeta {
     'channelLabels': channelLabels,
     'tares': tares,
     'calibration': [for (final c in calibration) c.toJson()],
-    'displayUnit': displayUnit,
+    'displayUnit': displayUnit.name,
     'deviceInfo': deviceInfo,
     'deviceKvs': ?deviceKvs?.toJson(),
     'recordedAt': recordedAt,
@@ -181,14 +181,22 @@ class SessionMeta {
             ),
     );
 
-    final displayUnit = json['displayUnit'];
+    final displayUnitName = json['displayUnit'];
+    if (displayUnitName is! String) {
+      throw FormatException(
+        'journal header: bad displayUnit: $displayUnitName',
+      );
+    }
     // Must be a unit this build can name: an unrecognized string parse-
-    // -accepted here would later fall back to a default unit through
-    // DisplayUnit.fromName at export time — a silent rewrite of frozen
-    // provenance. Damaged is the verdict.
-    if (displayUnit is! String ||
-        DisplayUnit.values.every((u) => u.name != displayUnit)) {
-      throw FormatException('journal header: bad displayUnit: $displayUnit');
+    // accepted here would later fall back to a default unit — a silent
+    // rewrite of frozen provenance. Damaged is the verdict.
+    final DisplayUnit displayUnit;
+    try {
+      displayUnit = DisplayUnit.values.byName(displayUnitName);
+    } on ArgumentError {
+      throw FormatException(
+        'journal header: bad displayUnit: $displayUnitName',
+      );
     }
     final deviceInfo = json['deviceInfo'];
     if (deviceInfo is! Map) {

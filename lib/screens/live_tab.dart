@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -28,6 +29,7 @@ import '../widgets/graph_components.dart';
 import '../widgets/rssi_indicator.dart';
 import '../widgets/snackbars.dart';
 import '../status_colors.dart';
+import '../utils/format.dart';
 
 // ---------------------------------------------------------------------------
 // LiveTab
@@ -106,27 +108,33 @@ class _LiveTabState extends State<LiveTab> {
 
     if (recording.sessionInProgress) {
       final result = await recording.stopSession();
-      final sessionId = result.sessionId;
 
       if (!mounted) return;
 
-      // On a storage error stopSession already emitted a RecordingStorageError
-      // (surfaced by the shell), so only announce a cleanly saved session.
-      if (result.error == null && sessionId != null) {
-        final sessionName = result.name ?? 'Session';
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('Session saved'),
-            behavior: SnackBarBehavior.floating,
-            showCloseIcon: true,
-            persist: false,
-            action: SnackBarAction(
-              label: 'Name it',
-              onPressed: () => _showRenameDialog(sessionId, sessionName),
+      switch (result) {
+        // A storage error already emitted a RecordingStorageError (surfaced
+        // by the shell), and recording nothing saves nothing: only announce a
+        // cleanly saved session.
+        case StopSessionSaved(:final sessionId, :final name):
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('Session saved'),
+              behavior: SnackBarBehavior.floating,
+              showCloseIcon: true,
+              persist: false,
+              action: SnackBarAction(
+                label: 'Name it',
+                onPressed: () => _showRenameDialog(sessionId, name),
+              ),
+              duration: const Duration(seconds: 4),
             ),
-            duration: const Duration(seconds: 4),
-          ),
-        );
+          );
+        case StopSessionNothingRecorded() ||
+            StopSessionFailed() ||
+            StopSessionRefused():
+          // Refused is unreachable here: the toggle only calls stop while
+          // sessionInProgress. Nothing to announce.
+          break;
       }
     } else {
       final settings = context.read<AppSettings>();
@@ -218,6 +226,7 @@ class _LiveTabState extends State<LiveTab> {
               connectedDeviceName: deviceName,
               sampleRateHz: hub.sampleRateHz,
               health: health,
+              recording: recording.sessionInProgress,
             ),
           ),
           if (invalidBoardDetail != null)
@@ -265,6 +274,7 @@ class _LiveTabState extends State<LiveTab> {
           if (streaming)
             ActionButtons(
               isRecording: recording.sessionInProgress,
+              sessionStartTime: recording.sessionStartTime,
               onToggleRecord: _onToggleRecord,
               onTare: _onTare,
               onTareSettings: () => showTareSheet(
@@ -314,12 +324,16 @@ class LiveStatusBar extends StatelessWidget {
   /// presents as normal (also the case before the first health tick lands).
   final FeedHealth? health;
 
+  /// Whether a recording session is in progress (a red ● in the bar).
+  final bool recording;
+
   const LiveStatusBar({
     super.key,
     required this.linkState,
     required this.connectedDeviceName,
     required this.sampleRateHz,
     this.health,
+    this.recording = false,
   });
 
   void _showHealthDetails(BuildContext context, FeedHealth health) {
@@ -392,6 +406,10 @@ class LiveStatusBar extends StatelessWidget {
         color: scheme.primaryContainer,
         child: Row(
           children: [
+            if (recording) ...[
+              Icon(Icons.circle, size: 10, color: scheme.error),
+              const SizedBox(width: 8),
+            ],
             Icon(
               Icons.bluetooth_connected,
               size: 18,
@@ -747,6 +765,11 @@ class ViewToggles extends StatelessWidget {
 
 class ActionButtons extends StatelessWidget {
   final bool isRecording;
+
+  /// The in-progress recording's start instant, for the STOP elapsed readout;
+  /// null renders a plain STOP.
+  final DateTime? sessionStartTime;
+
   final VoidCallback onToggleRecord;
   final VoidCallback onTare;
 
@@ -760,6 +783,7 @@ class ActionButtons extends StatelessWidget {
     required this.onToggleRecord,
     required this.onTare,
     required this.onTareSettings,
+    this.sessionStartTime,
   });
 
   @override
@@ -767,6 +791,7 @@ class ActionButtons extends StatelessWidget {
     // Narrow select: rebuilds this row only on taring edges — the hub's
     // per-packet notifies re-run the selector without dirtying the widget.
     final taring = context.select<DataHub, bool>((h) => h.taring);
+    final startTime = sessionStartTime;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
@@ -775,7 +800,9 @@ class ActionButtons extends StatelessWidget {
           FilledButton.icon(
             onPressed: onToggleRecord,
             icon: Icon(isRecording ? Icons.stop : Icons.fiber_manual_record),
-            label: Text(isRecording ? 'STOP' : 'REC'),
+            label: isRecording && startTime != null
+                ? _RecordingElapsedText(startTime: startTime)
+                : Text(isRecording ? 'STOP' : 'REC'),
             style: FilledButton.styleFrom(
               backgroundColor: isRecording
                   ? Theme.of(context).colorScheme.error
@@ -805,4 +832,52 @@ class ActionButtons extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The STOP button's live `STOP mm:ss` label. Self-contained: a 1 s ticker
+/// drives a rebuild only when the whole second changes, so the button row
+/// never rebuilds per frame.
+class _RecordingElapsedText extends StatefulWidget {
+  const _RecordingElapsedText({required this.startTime});
+
+  final DateTime startTime;
+
+  @override
+  State<_RecordingElapsedText> createState() => _RecordingElapsedTextState();
+}
+
+class _RecordingElapsedTextState extends State<_RecordingElapsedText>
+    with SingleTickerProviderStateMixin {
+  late final Ticker _ticker;
+  Duration _elapsed = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _elapsed = DateTime.now().difference(widget.startTime);
+    _ticker = createTicker((_) {
+      final whole = Duration(
+        seconds: DateTime.now().difference(widget.startTime).inSeconds,
+      );
+      if (whole != _elapsed) setState(() => _elapsed = whole);
+    })..start();
+  }
+
+  @override
+  void didUpdateWidget(covariant _RecordingElapsedText oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.startTime != widget.startTime) {
+      _elapsed = DateTime.now().difference(widget.startTime);
+    }
+  }
+
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) =>
+      Text('STOP ${formatElapsedClock(_elapsed)}');
 }
