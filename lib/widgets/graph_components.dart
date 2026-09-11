@@ -330,11 +330,12 @@ class _MinimapPainter extends CustomPainter {
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
     for (final bound in channels) {
-      // No data on this channel: the tare is all there is to show.
-      final tare = bound.tare ?? 0;
+      // The channel's zero is anchored in display space: an untared channel
+      // reads zero at the map's own zero point, not at zero counts (see
+      // ChannelConverter). With no data the zero anchor is all there is.
       final ext = _data.channelExtremes(bound.channel);
-      final lo = bound.netMap(ext != null ? math.min(ext.$1, tare) : tare);
-      final hi = bound.netMap(ext != null ? math.max(ext.$2, tare) : tare);
+      final lo = ext == null ? 0.0 : math.min(bound.netMap(ext.$1), 0.0);
+      final hi = ext == null ? 0.0 : math.max(bound.netMap(ext.$2), 0.0);
       if (lo < yMin) yMin = lo;
       if (hi > yMax) yMax = hi;
     }
