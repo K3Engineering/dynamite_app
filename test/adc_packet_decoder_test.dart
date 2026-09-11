@@ -2,6 +2,9 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
+// TODO consolidate tests in fewer files for perf reasons (~0.8s compile/load
+// overhead per test file dominates CI; merge the protocol suites into one).
+
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/adc_protocol.dart';
