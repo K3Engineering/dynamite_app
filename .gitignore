@@ -9,8 +9,7 @@
 .history
 .svn/
 migrate_working_dir/
-
-.metadata
+.widget_preview/
 
 # IntelliJ related
 *.iml
@@ -24,6 +23,9 @@ migrate_working_dir/
 #.vscode/
 
 # Flutter/Dart/Pub related
+# Regenerated from the plugin set on every build
+**/flutter/generated_plugin_registrant.*
+**/flutter/generated_plugins.cmake
 **/doc/api/
 **/ios/Flutter/.last_build_id
 .dart_tool/

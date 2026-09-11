@@ -1,6 +1,20 @@
 name: CI
 
-on: [pull_request, workflow_dispatch]
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
+  push:
+    branches: [main]
+  schedule:
+    # weekly, catch toolchain rot
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  # PRs cancel their own stale runs; main cancels stale main runs; cron is
+  # its own group so merges don't cancel it.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   analyze_and_test:
@@ -18,22 +32,43 @@ jobs:
       - name: Run tests
         run: flutter test
 
-  build_android:
-    name: Build Android
-    needs: [analyze_and_test] # Only builds if tests pass
-    runs-on: ubuntu-latest
+  # Platform builds. Full set on push/schedule/dispatch. 
+  # On PRs, can select platforms by labels.
+  # Required status is only ever Analyze & Test.
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: [analyze_and_test]
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'build-all-platforms') ||
+      contains(github.event.pull_request.labels.*.name, matrix.label)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux,   os: ubuntu-latest,  label: desktop, cmd: "flutter build linux --release" }
+          - { platform: windows, os: windows-latest, label: desktop, cmd: "flutter build windows --release" }
+          - { platform: macos,   os: macos-latest,   label: desktop, cmd: "flutter build macos --release" }
+          - { platform: ios,     os: macos-latest,   label: ios,     cmd: "flutter build ios --release --no-codesign" }
+          - { platform: android, os: ubuntu-latest,  label: android, cmd: "flutter build apk --release --build-number=$GITHUB_RUN_NUMBER" }
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
+      - name: Install Linux build deps
+        if: matrix.platform == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev
       - run: flutter pub get
       - name: Decode upload keystore
+        if: matrix.platform == 'android'
         run: echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       - name: Write key.properties
+        if: matrix.platform == 'android'
         run: |
           echo "storePassword=$ANDROID_KEYSTORE_PASSWORD" >> android/key.properties
           echo "keyPassword=$ANDROID_KEYSTORE_PASSWORD" >> android/key.properties
@@ -41,9 +76,10 @@ jobs:
           echo "storeFile=upload-keystore.jks" >> android/key.properties
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      - name: Build APK
-        run: flutter build apk --build-number=$GITHUB_RUN_NUMBER
+      - name: Build ${{ matrix.platform }}
+        run: ${{ matrix.cmd }}
       - name: Upload APK
+        if: matrix.platform == 'android'
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
