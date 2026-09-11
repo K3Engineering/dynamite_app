@@ -5,6 +5,12 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+// Release signing config. Fails loudly if android/key.properties or the
+// keystore it points at is missing - every release build must be signed with
+// the same key, otherwise Android refuses in-place updates.
+def keystoreProperties = new Properties()
+keystoreProperties.load(new FileInputStream(rootProject.file("key.properties")))
+
 android {
     namespace = "com.k3engineering.dynamite_sampler_app"
     compileSdk = flutter.compileSdkVersion
@@ -30,11 +36,18 @@ android {
         versionName = flutter.versionName
     }
 
+    signingConfigs {
+        release {
+            keyAlias keystoreProperties["keyAlias"]
+            keyPassword keystoreProperties["keyPassword"]
+            storeFile rootProject.file(keystoreProperties["storeFile"])
+            storePassword keystoreProperties["storePassword"]
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.debug
+            signingConfig = signingConfigs.release
         }
     }
 }
