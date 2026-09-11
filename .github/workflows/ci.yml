@@ -32,26 +32,24 @@ jobs:
       - name: Run tests
         run: flutter test
 
-  # Platform builds. Full set on push/schedule/dispatch. 
-  # On PRs, can select platforms by labels.
-  # Required status is only ever Analyze & Test.
+  # Platform builds. Full set on push/schedule/dispatch.
+  # On PRs only when labeled "build-all-platforms". Required status is only ever Analyze & Test.
   build:
     name: Build ${{ matrix.platform }}
     needs: [analyze_and_test]
     if: >-
       github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'build-all-platforms') ||
-      contains(github.event.pull_request.labels.*.name, matrix.label)
+      contains(github.event.pull_request.labels.*.name, 'build-all-platforms')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { platform: linux,   os: ubuntu-latest,  label: desktop, cmd: "flutter build linux --release" }
-          - { platform: windows, os: windows-latest, label: desktop, cmd: "flutter build windows --release" }
-          - { platform: macos,   os: macos-latest,   label: desktop, cmd: "flutter build macos --release" }
-          - { platform: ios,     os: macos-latest,   label: ios,     cmd: "flutter build ios --release --no-codesign" }
-          - { platform: android, os: ubuntu-latest,  label: android, cmd: "flutter build apk --release --build-number=$GITHUB_RUN_NUMBER" }
+          - { platform: linux,   os: ubuntu-latest,  cmd: "flutter build linux --release" }
+          - { platform: windows, os: windows-latest, cmd: "flutter build windows --release" }
+          - { platform: macos,   os: macos-latest,   cmd: "flutter build macos --release" }
+          - { platform: ios,     os: macos-latest,   cmd: "flutter build ios --release --no-codesign" }
+          - { platform: android, os: ubuntu-latest,  cmd: "flutter build apk --release --build-number=$GITHUB_RUN_NUMBER" }
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
