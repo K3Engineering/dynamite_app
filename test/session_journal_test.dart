@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
+import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/session_journal.dart';
 
 /// The session journal (session_journal.dart): a strict line-1 header, whole
@@ -24,7 +25,7 @@ void main() {
       ChannelCalibration(board: null),
       ChannelCalibration(board: null),
     ],
-    displayUnit: 'kgf',
+    displayUnit: DisplayUnit.kgf,
     deviceInfo: const {'model': 'dyna-1', 'fw': '1.2.3'},
     deviceKvs: KvsSnapshot(
       factory: const {'adc_fsr': '1.2,nominal'},
@@ -78,7 +79,7 @@ void main() {
           ChannelCalibration(board: null),
           ChannelCalibration(board: null),
         ],
-        displayUnit: 'mVv',
+        displayUnit: DisplayUnit.mVv,
         deviceInfo: {},
         recordedAt: '2026-08-28T14:30:12.345Z',
         ssnOrigin: 0,
@@ -247,7 +248,7 @@ void main() {
           ChannelCalibration(board: null),
           ChannelCalibration(board: null),
         ],
-        displayUnit: 'kgf',
+        displayUnit: DisplayUnit.kgf,
         deviceInfo: {'note': 'mañana'},
         recordedAt: '2026-08-28T14:30:12.345Z',
         ssnOrigin: 1,

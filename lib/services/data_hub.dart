@@ -386,7 +386,19 @@ class DataHub extends ChangeNotifier
   /// same span (gap ranges, the packet-counter anchor). This is the
   /// recording path's only read of the ring — [SampleSlice] is the whole
   /// handoff, so the writer never indexes [_rawData] itself.
+  ///
+  /// Fails loud when no packet counter has been noted: a recording can only
+  /// latch on a flowing feed, so a null anchor here means the no-data-flow
+  /// guard was bypassed. Fabricating `0` would silently persist a wrong
+  /// origin.
   SampleSlice snapshotRange(int startIdx, int count) {
+    final anchor = packetAnchor;
+    if (anchor == null) {
+      throw StateError(
+        'snapshotRange without a packet anchor — no decodable data flowed '
+        '(the StartSessionNoData guard was bypassed)',
+      );
+    }
     return SampleSlice(
       startIndex: startIdx,
       channels: [
@@ -396,7 +408,7 @@ class DataHub extends ChangeNotifier
           ]),
       ],
       gapRanges: gaps.rangesIn(startIdx, startIdx + count).toList(),
-      anchor: packetAnchor,
+      anchor: anchor,
     );
   }
 

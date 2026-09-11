@@ -1,7 +1,9 @@
 /// One session as the UI sees it — immutable, detached from the store's
-/// file layout. Built by the session store (the screens' only read path is
-/// session_queries.dart); the screens never see journal bytes.
+/// file layout. Built by the session store; the screens never see journal
+/// bytes.
 library;
+
+import 'display_unit.dart';
 
 class SessionSummary {
   SessionSummary({
@@ -36,8 +38,8 @@ class SessionSummary {
   final int channelCount;
   final int sampleRate;
 
-  /// The unit frozen at recording start (a `DisplayUnit.name`).
-  final String displayUnit;
+  /// The unit frozen at recording start.
+  final DisplayUnit displayUnit;
 
   /// The frozen `device` metadata block (see `toSessionDeviceMetadata` in
   /// session_metadata.dart).

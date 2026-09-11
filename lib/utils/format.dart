@@ -47,6 +47,16 @@ String formatDuration(Duration d) {
   return '${d.inSeconds}s';
 }
 
+/// "01:23" below an hour, "1:02:03" above — the stopwatch voice for the
+/// recording elapsed readout: fixed-width and zero-padded so the label does
+/// not jitter as the digits tick.
+String formatElapsedClock(Duration d) {
+  final ss = (d.inSeconds % 60).toString().padLeft(2, '0');
+  final mm = (d.inMinutes % 60).toString().padLeft(2, '0');
+  final h = d.inHours;
+  return h > 0 ? '$h:$mm:$ss' : '$mm:$ss';
+}
+
 /// "2026-07-20" — ISO 8601, zero-padded. Numeric Y-M-D is the app's one date
 /// voice: culturally unambiguous (no D/M vs M/D confusion), fixed-width, and
 /// locale-neutral, so a future localization never has to touch it (unlike

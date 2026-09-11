@@ -11,7 +11,6 @@ import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/session_files_io.dart';
-import 'package:dynamite_app/services/session_queries.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/session_metadata.dart';
 import 'package:dynamite_app/services/session_store.dart';
@@ -144,19 +143,19 @@ void main() {
 
       final stop = await recording.stopSession();
       expect(recording.sessionInProgress, isFalse);
-      expect(stop.error, isNull);
-      expect(stop.sessionId, isNotNull);
+      expect(stop, isA<StopSessionSaved>());
+      final savedRun = stop as StopSessionSaved;
 
       // The saved session carries the auto-generated name, and stop hands it
       // back directly — the caller never re-queries the store for it.
       final saved = _readyCatalog(
         SessionStore.instance,
-      ).session(stop.sessionId!)!;
+      ).session(savedRun.sessionId)!;
       expect(
         saved.name,
         matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$')),
       );
-      expect(stop.name, saved.name);
+      expect(savedRun.name, saved.name);
       expect(saved.channelLabels, [
         'Load Cell 1',
         'Load Cell 2',
@@ -166,7 +165,7 @@ void main() {
       expect(saved.visibleChannels, [true, true, false, false]);
       // The display unit is frozen at recording start (the CSV export's
       // default converted unit).
-      expect(saved.displayUnit, 'kN');
+      expect(saved.displayUnit, DisplayUnit.kN);
       // The device identity block is frozen alongside (the CSV `device`
       // metadata). This harness's snapshot has no name/DIS read, so every
       // field is the null placeholder.
@@ -179,7 +178,9 @@ void main() {
         'manufacturer': null,
       });
       // Counts derive from the data, so the load is the truth.
-      final loaded = await loadSession(stop.sessionId!);
+      final loaded = await SessionStore.instance.loadSession(
+        savedRun.sessionId,
+      );
       expect(loaded.sampleCount, 10);
       expect(loaded.channels[0][3], 1003);
     },
@@ -195,8 +196,11 @@ void main() {
     expect(start(recording), isA<StartSessionOk>());
     feedFrames(hub, 3);
     final stop = await recording.stopSession();
+    expect(stop, isA<StopSessionSaved>());
 
-    final loaded = await loadSession(stop.sessionId!);
+    final loaded = await SessionStore.instance.loadSession(
+      (stop as StopSessionSaved).sessionId,
+    );
     expect(loaded.deviceKvs!.factory, snapshot.factory);
     expect(loaded.deviceKvs!.user, snapshot.user);
   });
@@ -211,8 +215,7 @@ void main() {
     // No frames ever arrived, so no directory ever existed: stopping
     // finalizes nothing (recorded nothing saves nothing).
     final stop = await recording.stopSession();
-    expect(stop.error, isNull);
-    expect(stop.sessionId, isNull);
+    expect(stop, isA<StopSessionNothingRecorded>());
     expect(await loadSessionCount(), 0);
   });
 
@@ -231,7 +234,7 @@ void main() {
 
     expect(second, isA<StartSessionBusy>());
     final stop = await stopping;
-    expect(stop.error, isNull);
+    expect(stop, isA<StopSessionSaved>());
     expect(recording.sessionInProgress, isFalse);
   });
 
@@ -256,8 +259,8 @@ void main() {
 
       final stop = await recording.stopSession();
       expect(recording.sessionInProgress, isFalse);
-      expect(stop.sessionId, isNull);
-      expect(stop.error, isNotNull);
+      expect(stop, isA<StopSessionFailed>());
+      expect((stop as StopSessionFailed).sessionId, isNull);
     },
   );
 

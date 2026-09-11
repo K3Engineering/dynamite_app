@@ -47,6 +47,44 @@ final class StartSessionNoData extends StartSessionResult {
   const StartSessionNoData();
 }
 
+/// Outcome of [RecordingController.stopSession].
+sealed class StopSessionResult {
+  const StopSessionResult();
+}
+
+/// Refused: no recording was in progress — the state machine's no-op guard.
+final class StopSessionRefused extends StopSessionResult {
+  const StopSessionRefused();
+}
+
+/// Finalized with no error, but nothing was ever recorded: with no first
+/// packet there was never a session directory, so there is nothing saved.
+final class StopSessionNothingRecorded extends StopSessionResult {
+  const StopSessionNothingRecorded(this.name);
+
+  /// The latched session name.
+  final String name;
+}
+
+/// Finalized cleanly to disk.
+final class StopSessionSaved extends StopSessionResult {
+  const StopSessionSaved(this.sessionId, this.name);
+
+  final String sessionId;
+  final String name;
+}
+
+/// Finalization failed (a latched write error or a finalize-step throw); the
+/// session may be truncated. [sessionId] is null when no data ever reached
+/// storage. The error is also emitted on [AppEvents] from [stopSession].
+final class StopSessionFailed extends StopSessionResult {
+  const StopSessionFailed(this.error, this.name, {this.sessionId});
+
+  final Object error;
+  final String name;
+  final String? sessionId;
+}
+
 /// The recording lifecycle, serialized: exactly one of these at a time, and
 /// every operation is refused unless the state matches. [stopping] covers
 /// the finalization's async window, so a recording can never be half-latched
@@ -131,6 +169,14 @@ class RecordingController extends ChangeNotifier {
   /// [stopSession] can hand it back to the UI without a store lookup.
   String? _sessionName;
 
+  /// The recording-start wall clock, latched by [startSession] for the live
+  /// elapsed readout; null when not recording.
+  DateTime? _sessionStartTime;
+
+  /// The in-progress recording's start instant for the UI's elapsed readout,
+  /// or null when not recording.
+  DateTime? get sessionStartTime => _sessionStartTime;
+
   /// True from the moment a start is committed until finalization completes
   /// — the stopping window included, so the UI's record toggle never sees a
   /// fake idle gap. Derived from the state machine, so it can never
@@ -184,7 +230,10 @@ class RecordingController extends ChangeNotifier {
       return const StartSessionNoData();
     }
 
-    final sessionName = name ?? autoSessionName(DateTime.now());
+    // One clock for the recording-start wall clock: the auto name, the CSV
+    // recordedAt, and the elapsed readout's zero all agree.
+    final startedAt = DateTime.now();
+    final sessionName = name ?? autoSessionName(startedAt);
     // The whole journal header is snapshotted here, at recording start: the
     // per-channel calibration in effect now (playback converts through it
     // even if calibration changes later), the tare offsets, the display
@@ -202,10 +251,10 @@ class RecordingController extends ChangeNotifier {
           _dataHub.calibrationFor(ch),
       ],
       visibleChannels: List.of(visibleChannels),
-      displayUnit: displayUnit.name,
+      displayUnit: displayUnit,
       deviceInfo: Map.of(_deviceMetadataSnapshot()),
       deviceKvs: _deviceKvsSnapshot(),
-      recordedAt: iso8601WithOffset(DateTime.now()),
+      recordedAt: iso8601WithOffset(startedAt),
     );
     _sessionWriter = SessionStore.instance.startSession(
       header,
@@ -216,6 +265,7 @@ class RecordingController extends ChangeNotifier {
       onWriteError: (_) => _autoStopOnStorageError(),
     );
     _sessionName = sessionName;
+    _sessionStartTime = startedAt;
     _onSessionBoundary();
     _transitionTo(_RecordingState.recording);
     return const StartSessionOk();
@@ -245,33 +295,30 @@ class RecordingController extends ChangeNotifier {
     return '${now.year}-$m-$d $h:$min:$s';
   }
 
-  /// Stop the current recording and finalize it. Returns the saved session id
-  /// and name (or nulls when called outside the recording state — the state
-  /// machine refuses the no-op) and any write error the storage writer
-  /// latched (non-null means the session may be truncated). The id is also
-  /// null when the session recorded nothing: with no first packet there was
-  /// never a session directory, so "recorded nothing" saves nothing.
+  /// Stop the current recording and finalize it. Returns whether the session
+  /// was saved, recorded nothing, or failed (see [StopSessionResult]); the
+  /// idle case is refused by the state machine.
   ///
   /// This is the single place a storage failure is surfaced to the user (as a
-  /// [RecordingStorageError] on [AppEvents]); callers only use the returned
-  /// error to branch (e.g. suppress the "Session saved" notice).
-  Future<({String? sessionId, String? name, Object? error})>
-  stopSession() async {
+  /// [RecordingStorageError] on [AppEvents]); callers branch on the result.
+  Future<StopSessionResult> stopSession() async {
     if (_state != _RecordingState.recording) {
-      return (sessionId: null, name: null, error: null);
+      return const StopSessionRefused();
     }
     final writer = _sessionWriter!;
-    final name = _sessionName;
+    final name = _sessionName!;
     _sessionWriter = null;
     _sessionName = null;
+    _sessionStartTime = null;
     _onSessionBoundary();
     _transitionTo(_RecordingState.stopping);
 
     // finalizeSession flushes through the writer's serialized queue, which
     // drains any in-flight (unawaited) appends first. A failure there (e.g.
-    // the sessions root itself is gone) is folded into the returned error rather than
-    // thrown: stopSession also runs on unawaited auto-stop paths (link
-    // drop, writer error), where a throw would be an unhandled async error.
+    // the sessions root itself is gone) is folded into the returned result
+    // rather than thrown: stopSession also runs on unawaited auto-stop paths
+    // (link drop, writer error), where a throw would be an unhandled async
+    // error.
     Object? error;
     try {
       await SessionStore.instance.finalizeSession(writer: writer);
@@ -282,7 +329,13 @@ class RecordingController extends ChangeNotifier {
       _events.emit(RecordingStorageError(error));
     }
     _transitionTo(_RecordingState.idle);
-    return (sessionId: writer.sessionId, name: name, error: error);
+    final sessionId = writer.sessionId;
+    if (error != null) {
+      return StopSessionFailed(error, name, sessionId: sessionId);
+    }
+    return sessionId == null
+        ? StopSessionNothingRecorded(name)
+        : StopSessionSaved(sessionId, name);
   }
 
   /// The controller only consumes [HubBatchAppended] (freshly decoded

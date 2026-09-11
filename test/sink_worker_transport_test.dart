@@ -14,6 +14,9 @@ class _FakeHandle implements SinkWorkerHandle {
   @override
   late void Function() onError;
 
+  @override
+  late void Function() onProtocolError;
+
   final List<SinkWorkerRequest> posts = [];
   int terminates = 0;
 
@@ -187,6 +190,24 @@ void main() {
     await pumpEventQueue();
     handle.onError();
     await expectLater(pending, throwsA(isA<StateError>()));
+    await expectLater(transport.request('append'), throwsA(isA<StateError>()));
+    expect(handle.terminates, 1);
+  });
+
+  test('an undecodable ack latches the transport immediately', () async {
+    final pending = transport.request('append');
+    await pumpEventQueue();
+    handle.onProtocolError();
+    await expectLater(
+      pending,
+      throwsA(
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('undecodable ack'),
+        ),
+      ),
+    );
     await expectLater(transport.request('append'), throwsA(isA<StateError>()));
     expect(handle.terminates, 1);
   });

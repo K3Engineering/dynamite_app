@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../models/channel_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/device_profile.dart';
+import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/sample_slice.dart';
 import 'session_journal.dart';
@@ -167,7 +168,7 @@ typedef SessionHeader = ({
   List<double?> tares,
   List<ChannelCalibration> calibration,
   List<bool> visibleChannels,
-  String displayUnit,
+  DisplayUnit displayUnit,
   Map<String, Object?> deviceInfo,
   KvsSnapshot? deviceKvs,
   String recordedAt,
@@ -191,6 +192,28 @@ SessionMeta sessionMetaFromHeader(SessionHeader header, int ssnOrigin) =>
       recordedAt: header.recordedAt,
       ssnOrigin: ssnOrigin,
     );
+
+/// The latched per-session run: created by the first packet's write (the one
+/// that also creates the session directory), it carries the session's
+/// identity and the persisted byte length for the rest of the writer's life.
+/// [LiveSessionWriter.closeSink] releases the handle but keeps the run, so
+/// finalization reads identity and length as one non-null value.
+final class SessionRun {
+  SessionRun(this.sink, this.id, this.ackedLength);
+
+  /// The open data sink handle.
+  final SessionDataSink sink;
+
+  /// The session id (the directory's name).
+  final String id;
+
+  /// data.raw's byte length from the last acked append.
+  int ackedLength;
+
+  /// Whether [LiveSessionWriter.closeSink] has released [sink] (the handle is
+  /// closed; the run record survives).
+  bool closed = false;
+}
 
 /// Streams recorded samples to the session's data.raw as they arrive: one
 /// serialized write per accepted packet, flushed individually, so a session
@@ -217,20 +240,27 @@ class LiveSessionWriter {
   /// [SessionHeader]), carried until the first packet's write stamps them.
   final SessionHeader header;
 
-  /// The session id (the directory's name), latched from the first write's
-  /// created sink. Null until data exists — the directory itself doesn't
-  /// exist before that either (no artifact without data). Outlives the open
-  /// sink: [closeSink] releases the handle, not the session's identity.
-  String? get sessionId => _sessionId;
-  String? _sessionId;
+  /// The latched run record: null until the first packet's write creates the
+  /// session directory, then non-null for the writer's lifetime (a closed
+  /// sink is marked, not unlatched).
+  SessionRun? get run => _run;
+  SessionRun? _run;
 
-  /// data.raw's byte length from the last acked append, or null when no
-  /// append has ever succeeded. The finalize-time check compares this with
-  /// the accepted-frames claim.
-  int? get ackedDataLength => _ackedDataLength;
-  int? _ackedDataLength;
+  /// The session id (the directory's name), null until data exists — the
+  /// directory itself doesn't exist before that either (no artifact without
+  /// data).
+  String? get sessionId => _run?.id;
 
-  SessionDataSink? _sink;
+  /// The session's origin pair, latched together on the first [appendData]
+  /// call: the hub-absolute index of the session's first sample plus the
+  /// device sample-counter value there (the dynamite-csv `ssn_origin`). Data
+  /// bytes alone can't reconstruct the counter side, so it is held here until
+  /// the first packet's write stamps it into the journal.
+  ({int originIdx, int ssnOrigin})? _origins;
+
+  /// The device sample-counter value at the session's first sample, or null
+  /// before the first append.
+  int? get ssnOrigin => _origins?.ssnOrigin;
 
   /// The rate stamped in the journal at creation, kept here so finalization
   /// math uses the same value.
@@ -247,28 +277,15 @@ class LiveSessionWriter {
   int _unflushedSamples = 0;
 
   /// Frames the queue has accepted for writing (successful or not) — the
-  /// "accepted" side of the finalize check; the acked-length side is what's
+  /// "accepted" side of the finalize check; the run's acked length is what's
   /// actually on disk.
   int totalSamplesRecorded = 0;
 
-  /// Frames multiplied by the packed frame size — what [ackedDataLength]
+  /// Frames multiplied by the packed frame size — what the run's acked length
   /// must equal at finalize when every accepted packet landed.
   int get expectedDataBytes =>
       totalSamplesRecorded *
       const SessionChunkCodec(kAdcChannelCount).frameBytes;
-
-  /// Hub-absolute index of the session's first sample; latched on the first
-  /// [appendData] call.
-  int? _originIdx;
-
-  /// Device sample-counter value at the session's first sample (the
-  /// dynamite-csv `ssn_origin`), latched alongside [_originIdx] from the
-  /// hub's packet-counter anchor (see `DataHub.notePacketCounter`) and
-  /// stamped into the journal when the first packet's write creates the
-  /// session — data bytes alone can't reconstruct it, so it must be held
-  /// until then. Null until the first append.
-  int? get ssnOrigin => _ssnOrigin;
-  int? _ssnOrigin;
 
   /// First write failure encountered, if any. Once set it stays set.
   Object? writeError;
@@ -302,15 +319,11 @@ class LiveSessionWriter {
   /// `DataHub.snapshotRange`). Returns when this slice has been written and
   /// flushed. Safe to call without awaiting; calls are serialized.
   Future<void> appendData(SampleSlice slice) {
-    final int origin = _originIdx ??= slice.startIndex;
-    if (_ssnOrigin == null) {
-      // The decoder's packet-counter anchor is non-null at any append: a
-      // recording can latch only on a flowing feed (StartSessionNoData), and
-      // a flowing feed has seen packets. Null here means the guard was
-      // bypassed — fabricating `0` would silently persist a wrong origin.
-      final anchor = slice.anchor!;
-      _ssnOrigin = anchor.counter + (origin - anchor.hubIndex);
-    }
+    final origins = _origins ??= (
+      originIdx: slice.startIndex,
+      ssnOrigin:
+          slice.anchor.counter + (slice.startIndex - slice.anchor.hubIndex),
+    );
 
     final count = slice.sampleCount;
     _unflushedSamples += count;
@@ -342,20 +355,18 @@ class LiveSessionWriter {
       try {
         if (writeError != null) return;
         totalSamplesRecorded += count;
-        final sink = _sink;
-        if (sink == null) {
+        final existing = _run;
+        if (existing == null) {
           // First packet: create dir + journal + this append in one go; the
           // journal needs ssnOrigin, which is exactly why it can't precede the
           // first append.
           final created = await _sinkFactory(
-            sessionMetaFromHeader(header, _ssnOrigin!),
+            sessionMetaFromHeader(header, origins.ssnOrigin),
             bytes,
           );
-          _sink = created;
-          _sessionId = created.id;
-          _ackedDataLength = bytes.lengthInBytes;
+          _run = SessionRun(created, created.id, bytes.lengthInBytes);
         } else {
-          _ackedDataLength = await sink.append(bytes);
+          existing.ackedLength = await existing.sink.append(bytes);
         }
       } catch (e) {
         // Latch the first failure; stop accumulating so we don't grow
@@ -372,11 +383,13 @@ class LiveSessionWriter {
   /// Wait for every queued append to land. Serialized with appends.
   Future<void> flush() => _enqueue(() async {});
 
-  /// Release the sink's open handle (at finalize/abort). Idempotent.
+  /// Release the sink's open handle (at finalize/abort). Idempotent: the run
+  /// record and its identity outlive the handle.
   Future<void> closeSink() async {
-    final sink = _sink;
-    _sink = null;
-    await sink?.close();
+    final run = _run;
+    if (run == null || run.closed) return;
+    run.closed = true;
+    await run.sink.close();
   }
 
   /// Chain [op] after all previously enqueued writes and return its completion.

@@ -7,7 +7,7 @@ import '../models/damaged_session.dart';
 import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
 import '../services/export_delivery.dart';
-import '../services/session_queries.dart';
+import '../services/session_store.dart';
 import '../services/storage_probe.dart';
 import '../utils/format.dart';
 import '../widgets/session_flows.dart';
@@ -26,7 +26,7 @@ class SessionsTab extends StatefulWidget {
 
 class _SessionsTabState extends State<SessionsTab> {
   late final ValueListenable<SessionCatalogState> _catalog =
-      sessionCatalogState();
+      SessionStore.instance.catalog;
 
   /// The platform's storage verdict for the strip; null where probing is
   /// unsupported (desktop), failed, or there's nothing to warn about
@@ -39,14 +39,14 @@ class _SessionsTabState extends State<SessionsTab> {
   @override
   void initState() {
     super.initState();
-    unawaited(ensureSessionCatalogLoaded().catchError((_) {}));
+    unawaited(SessionStore.instance.ensureCatalogLoaded().catchError((_) {}));
     _requestCapacityRefresh();
     // The liveness cue rides the recording's append acks (during a
     // recording, sizes only exist in the store, not on the listing), plus
     // every mutation. Errors are swallowed: on hosts without platform
     // channels the store never opens, and the strip simply stays hidden
     // (the smoke test pumps all tabs in exactly that situation).
-    _capacityCueSub = sessionByteChanges().listen(
+    _capacityCueSub = SessionStore.instance.byteChanges.listen(
       (_) => _requestCapacityRefresh(),
       onError: (_) {},
     );
@@ -68,7 +68,9 @@ class _SessionsTabState extends State<SessionsTab> {
     try {
       while (_capacityDirty && mounted) {
         _capacityDirty = false;
-        final state = await fetchStorageState(usedBytes: sessionsUsedBytes);
+        final state = await fetchStorageState(
+          usedBytes: SessionStore.instance.usedBytes,
+        );
         if (mounted) setState(() => _storageState = state);
       }
     } finally {
@@ -202,8 +204,8 @@ class _SessionsTabState extends State<SessionsTab> {
     try {
       message = await downloadExport(
         bytes: data
-            ? await damagedDataBytes(damaged.id)
-            : await damagedMetadataBytes(damaged.id),
+            ? await SessionStore.instance.rawDataBytes(damaged.id)
+            : await SessionStore.instance.rawJournalBytes(damaged.id),
         fileName: fileName,
         dialogTitle: dialogTitle,
       );

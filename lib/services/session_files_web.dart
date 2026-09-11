@@ -93,7 +93,11 @@ class _JsSinkWorkerHandle implements SinkWorkerHandle {
   _JsSinkWorkerHandle(String scriptURL) : _worker = _Worker(scriptURL) {
     void onJsMessage(JSObject event) {
       final ack = _convertAck((event as _MessageEvent).data);
-      if (ack != null) _onMessage(ack);
+      if (ack != null) {
+        _onMessage(ack);
+      } else {
+        _onProtocolError();
+      }
     }
 
     void onJsError(JSObject _) => _onError();
@@ -106,6 +110,7 @@ class _JsSinkWorkerHandle implements SinkWorkerHandle {
 
   late void Function(SinkWorkerAck ack) _onMessage;
   late void Function() _onError;
+  late void Function() _onProtocolError;
 
   @override
   set onMessage(void Function(SinkWorkerAck ack) listener) =>
@@ -113,6 +118,9 @@ class _JsSinkWorkerHandle implements SinkWorkerHandle {
 
   @override
   set onError(void Function() listener) => _onError = listener;
+
+  @override
+  set onProtocolError(void Function() listener) => _onProtocolError = listener;
 
   @override
   void post(SinkWorkerRequest request) {

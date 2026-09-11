@@ -11,6 +11,10 @@ abstract interface class SinkWorkerHandle {
   /// The worker's error event: the browser killed it or it never started.
   set onError(void Function() listener);
 
+  /// The worker posted something that did not decode as an ack — a
+  /// worker/protocol bug, distinct from [onError] (the worker dying).
+  set onProtocolError(void Function() listener);
+
   /// Hand [request] to the worker. Byte payloads travel as transferables on
   /// web (zero-copy); detaching is fine because the writer never re-reads
   /// handed-off bytes.
@@ -69,6 +73,9 @@ class SinkWorkerTransport {
     _handle.onMessage = _onAck;
     _handle.onError = () =>
         _latch(StateError('sink worker failed to start or died (error event)'));
+    _handle.onProtocolError = () => _latch(
+      StateError('sink worker sent an undecodable ack — worker/protocol bug'),
+    );
   }
 
   final SinkWorkerHandle _handle;
