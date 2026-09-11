@@ -30,17 +30,17 @@ jobs:
           cache: true
       - run: flutter pub get
       - name: Decode upload keystore
-        run: echo "$KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
+        run: echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
         env:
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
       - name: Write key.properties
         run: |
-          echo "storePassword=$KEYSTORE_PASSWORD" >> android/key.properties
-          echo "keyPassword=$KEYSTORE_PASSWORD" >> android/key.properties
+          echo "storePassword=$ANDROID_KEYSTORE_PASSWORD" >> android/key.properties
+          echo "keyPassword=$ANDROID_KEYSTORE_PASSWORD" >> android/key.properties
           echo "keyAlias=upload" >> android/key.properties
           echo "storeFile=upload-keystore.jks" >> android/key.properties
         env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       - name: Build APK
         run: flutter build apk --build-number=$GITHUB_RUN_NUMBER
       - name: Upload APK
