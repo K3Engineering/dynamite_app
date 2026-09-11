@@ -45,11 +45,16 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { platform: linux,   os: ubuntu-latest,  cmd: "flutter build linux --release" }
-          - { platform: windows, os: windows-latest, cmd: "flutter build windows --release" }
-          - { platform: macos,   os: macos-latest,   cmd: "flutter build macos --release" }
-          - { platform: ios,     os: macos-latest,   cmd: "flutter build ios --release --no-codesign" }
-          - { platform: android, os: ubuntu-latest,  cmd: "flutter build apk --release --build-number=$GITHUB_RUN_NUMBER" }
+          - { platform: linux,   os: ubuntu-latest,  cmd: "flutter build linux --release",
+              artifact: build/linux/x64/release/bundle }
+          - { platform: windows, os: windows-latest, cmd: "flutter build windows --release",
+              artifact: build/windows/x64/runner/Release }
+          - { platform: macos,   os: macos-latest,   cmd: "flutter build macos --release",
+              artifact: build/macos/Build/Products/Release/dynamite_app.app }
+          - { platform: ios,     os: macos-latest,   cmd: "flutter build ios --release --no-codesign",
+              artifact: build/ios/iphoneos/Runner.app }
+          - { platform: android, os: ubuntu-latest,  cmd: "flutter build apk --release --build-number=$GITHUB_RUN_NUMBER",
+              artifact: build/app/outputs/apk/release/app-release.apk }
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -76,9 +81,8 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       - name: Build ${{ matrix.platform }}
         run: ${{ matrix.cmd }}
-      - name: Upload APK
-        if: matrix.platform == 'android'
+      - name: Upload ${{ matrix.platform }} artifact
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
-          path: build/app/outputs/apk/release/app-release.apk
+          name: release-${{ matrix.platform }}
+          path: ${{ matrix.artifact }}
