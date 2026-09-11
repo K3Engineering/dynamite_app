@@ -138,12 +138,7 @@ class _LiveTabState extends State<LiveTab> {
         visibleChannels: settings.activeChannels,
         // Frozen as the CSV export's default converted unit — the unit
         // the instrument is actually drawing, not a disabled preference.
-        displayUnit: settings.displayUnit.effective(
-          resolveUnitAvailability(
-            hub.calibrationFor,
-            settings.activeChannelIndices,
-          ),
-        ),
+        displayUnit: settings.displayUnit.effective(hub.unitAvailability),
       );
 
       switch (result) {
@@ -176,6 +171,14 @@ class _LiveTabState extends State<LiveTab> {
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
+    // Availability changes only on calibration edges (board read, rig-slot
+    // edits), so this select rebuilds the tab there, not per packet. The
+    // effective unit is resolved once here and passed down; child widgets
+    // consume it rather than re-resolving.
+    final availability = context.select<DataHub, UnitAvailability>(
+      (h) => h.unitAvailability,
+    );
+    final unit = settings.displayUnit.effective(availability);
     // Narrow selects: the link manager notifies on every RSSI poll — only
     // link-state transitions and device-name changes may rebuild this tab.
     final linkState = context.select<BleLinkManager, BtLinkState>(
@@ -230,11 +233,17 @@ class _LiveTabState extends State<LiveTab> {
                       rig: rig,
                       hub: hub,
                       ctrl: _graphCtrl,
+                      unit: unit,
                       showDerivative: showDerivative,
                       healthListenable: healthListenable,
                     ),
                     Expanded(
-                      child: _buildGraphArea(settings, hub, showDerivative),
+                      child: _buildGraphArea(
+                        hub,
+                        unit,
+                        settings.activeChannelIndices,
+                        showDerivative,
+                      ),
                     ),
                     ViewToggles(
                       showDerivative: showDerivative,
@@ -263,6 +272,7 @@ class _LiveTabState extends State<LiveTab> {
                 hub: hub,
                 rig: rig,
                 settings: settings,
+                unit: unit,
               ),
             ),
         ],
@@ -271,15 +281,16 @@ class _LiveTabState extends State<LiveTab> {
   }
 
   Widget _buildGraphArea(
-    AppSettings settings,
     DataHub hub,
+    DisplayUnit unit,
+    List<int> activeChannels,
     bool showDerivative,
   ) {
     return GraphWorkspace(
       data: hub,
       ctrl: _graphCtrl,
-      unit: settings.displayUnit,
-      activeChannels: settings.activeChannelIndices,
+      unit: unit,
+      activeChannels: activeChannels,
       showDerivative: showDerivative,
     );
   }
@@ -472,6 +483,10 @@ class LiveStats extends StatelessWidget {
   /// Merged into the rebuild listenable — when the user parks a historical
   /// window, no packets arrive, so only [ctrl] drives the rebuild.
   final GraphController ctrl;
+
+  /// The unit the instrument draws in, already resolved against the hub's
+  /// availability by [LiveTab].
+  final DisplayUnit unit;
   final bool showDerivative;
 
   /// The feed-health classification (see [deriveFeedHealth]). When nothing
@@ -485,6 +500,7 @@ class LiveStats extends StatelessWidget {
     required this.rig,
     required this.hub,
     required this.ctrl,
+    required this.unit,
     this.showDerivative = false,
     required this.healthListenable,
   });
@@ -496,16 +512,10 @@ class LiveStats extends StatelessWidget {
       builder: (context, health, _) => ListenableBuilder(
         listenable: Listenable.merge([hub, ctrl]),
         builder: (context, _) {
-          final unit = settings.displayUnit.effective(
-            resolveUnitAvailability(
-              hub.calibrationFor,
-              settings.activeChannelIndices,
-            ),
-          );
-
           // A force view shows '—' for an active channel with no cell
-          // assigned; point at the fix once. When NO active channel has a
-          // cell the whole view bumps to mV/V — no '—' to explain.
+          // assigned; point at the fix once. This covers the case where the
+          // only cell-bearing channel is hidden: the view stays in force
+          // (availability ignores visibility) and every visible row reads '—'.
           final anyUnassigned =
               unit.isForce &&
               [

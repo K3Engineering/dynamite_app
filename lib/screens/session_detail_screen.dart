@@ -156,12 +156,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   ) {
     final visibleChannels = session.visibleChannels;
     final channelLabels = session.channelLabels;
-    final unit = settings.displayUnit.effective(
-      resolveUnitAvailability(data.calibrationFor, [
-        for (int i = 0; i < visibleChannels.length; i++)
-          if (visibleChannels[i]) i,
-      ]),
-    );
+    final unit = settings.displayUnit.effective(data.unitAvailability);
 
     return SingleChildScrollView(
       child: Column(
@@ -208,7 +203,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               child: GraphWorkspace(
                 data: data,
                 ctrl: _graphCtrl,
-                unit: settings.displayUnit,
+                unit: unit,
                 activeChannels: [
                   for (int i = 0; i < visibleChannels.length; i++)
                     if (visibleChannels[i]) i,

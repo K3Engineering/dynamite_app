@@ -517,8 +517,8 @@ class GraphWorkspace extends StatefulWidget {
   final GraphDataSource data;
   final GraphController ctrl;
 
-  /// The user's display-unit preference; resolved against this view's data
-  /// (see [DisplayUnit.effective]) in build.
+  /// The unit this view draws under, already resolved against the data
+  /// source's availability (see [DisplayUnit.effective]).
   final DisplayUnit unit;
 
   /// Indices of the channels to plot. Kept per view (live tab, each session)
@@ -629,15 +629,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
     final dpr = MediaQuery.devicePixelRatioOf(context);
-    // Conversion availability reads the playback session's frozen
-    // calibrations alone; a session with unusable metadata never reaches the
-    // detail view — its load fails loudly instead.
-    final data = widget.data;
-    final availability = resolveUnitAvailability(
-      data.calibrationFor,
-      widget.activeChannels,
-    );
-    final unit = widget.unit.effective(availability);
+    final unit = widget.unit;
     final convertedChannels = [
       for (final ch in widget.activeChannels)
         ?_ConvertedChannel.of(widget.data, ch, unit),

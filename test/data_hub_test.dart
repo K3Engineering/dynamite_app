@@ -562,26 +562,22 @@ void main() {
     test('unit availability reflects the board constants and the rig', () {
       final hub = DataHub();
       final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
-      expect(resolveUnitAvailability(hub.calibrationFor, [0, 1]), (
+      expect(hub.unitAvailability, (
         boardHasNominals: false,
-        anyActiveHasLoadCell: false,
+        anyChannelHasLoadCell: false,
       ));
 
       hub.updateBoardCalibration(nominalBoard());
-      expect(resolveUnitAvailability(hub.calibrationFor, [0, 1]), (
+      expect(hub.unitAvailability, (
         boardHasNominals: true,
-        anyActiveHasLoadCell: false,
+        anyChannelHasLoadCell: false,
       ));
 
-      // A cell counts only while its channel is among the shown ones.
+      // Visibility is not an input: a cell on any channel counts.
       hub.updateLoadCells([cell, null, null, null]);
-      expect(resolveUnitAvailability(hub.calibrationFor, [0]), (
+      expect(hub.unitAvailability, (
         boardHasNominals: true,
-        anyActiveHasLoadCell: true,
-      ));
-      expect(resolveUnitAvailability(hub.calibrationFor, [1]), (
-        boardHasNominals: true,
-        anyActiveHasLoadCell: false,
+        anyChannelHasLoadCell: true,
       ));
     });
 

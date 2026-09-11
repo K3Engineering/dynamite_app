@@ -4,6 +4,7 @@ import '../models/bucket_series.dart';
 import '../models/channel_calibration.dart';
 import '../models/channel_converter.dart';
 import '../models/device_flash.dart';
+import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 
@@ -125,6 +126,10 @@ class SessionData implements GraphDataSource {
   @override
   ChannelCalibration calibrationFor(int channelIndex) =>
       calibrations[channelIndex];
+
+  @override
+  UnitAvailability get unitAvailability =>
+      resolveUnitAvailability(calibrationFor);
 
   @override
   ChannelConverter converterFor(int channelIndex) =>

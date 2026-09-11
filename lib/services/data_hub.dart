@@ -541,6 +541,10 @@ class DataHub extends ChangeNotifier
   );
 
   @override
+  UnitAvailability get unitAvailability =>
+      resolveUnitAvailability(calibrationFor);
+
+  @override
   int get calibrationVersion => _calibrationVersion;
 
   @override

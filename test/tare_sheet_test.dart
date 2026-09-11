@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/device_profile.dart';
+import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/rig_state.dart';
@@ -39,6 +40,7 @@ void main() {
                 hub: hub,
                 rig: rig,
                 settings: AppSettings(prefs: prefs),
+                unit: DisplayUnit.raw,
               ),
               child: const Text('open'),
             ),
