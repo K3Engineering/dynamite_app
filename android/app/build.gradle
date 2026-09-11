@@ -14,7 +14,7 @@ keystoreProperties.load(new FileInputStream(rootProject.file("key.properties")))
 android {
     namespace = "com.k3engineering.dynamite_sampler_app"
     compileSdk = flutter.compileSdkVersion
-    ndkVersion = "27.3.13750724" // flutter.ndkVersion TODO: is hardcoding right here?
+    ndkVersion = flutter.ndkVersion
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
