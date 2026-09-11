@@ -29,8 +29,20 @@ jobs:
           channel: stable
           cache: true
       - run: flutter pub get
+      - name: Decode upload keystore
+        run: echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      - name: Write key.properties
+        run: |
+          echo "storePassword=$ANDROID_KEYSTORE_PASSWORD" >> android/key.properties
+          echo "keyPassword=$ANDROID_KEYSTORE_PASSWORD" >> android/key.properties
+          echo "keyAlias=upload" >> android/key.properties
+          echo "storeFile=upload-keystore.jks" >> android/key.properties
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       - name: Build APK
-        run: flutter build apk
+        run: flutter build apk --build-number=$GITHUB_RUN_NUMBER
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
