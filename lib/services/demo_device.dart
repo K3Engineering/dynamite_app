@@ -8,6 +8,7 @@ import 'demo_calibration.dart';
 import 'demo_signal_source.dart';
 import 'link_backend.dart';
 import 'link_transport.dart';
+import 'ota_client.dart';
 
 /// The simulated demo device: a synthetic feed, factory calibration, and an
 /// in-memory settings round trip, for running the app without hardware. It
@@ -98,6 +99,18 @@ class DemoDevice implements LinkTransport, LinkBackend {
   @override
   Future<int> readRssi() =>
       throw StateError('RSSI is not available on the demo device');
+
+  /// The demo has no GATT notification path; a routed frame here means the
+  /// manager's routing itself is broken.
+  @override
+  void handleOtaFrame(Uint8List data) =>
+      throw StateError('OTA frame routed to the demo device');
+
+  /// The demo has no OTA service. The flash UI is gated off it, so a session
+  /// here means the guard failed — fail loudly rather than fake a flash.
+  @override
+  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) =>
+      throw StateError('OTA is not available on the demo device');
 
   @override
   void attachFeedSink(void Function(Uint8List data) sink) => _sink = sink;

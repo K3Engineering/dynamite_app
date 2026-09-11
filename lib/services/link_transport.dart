@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' show min;
 
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
@@ -9,6 +10,7 @@ import 'bt_device_config.dart';
 import 'gatt_link_backend.dart';
 import 'kvs_client.dart';
 import 'link_backend.dart';
+import 'ota_client.dart';
 
 /// The platform-facing half of one link: everything [BleLinkManager] drives
 /// during connect, post-connect setup, and teardown — uniform across a real
@@ -67,6 +69,19 @@ abstract interface class LinkTransport {
   /// Read the live RSSI. Only called when ![isSimulated].
   Future<int> readRssi();
 
+  /// Route one OTA control notification to the live flash session's client.
+  /// Notifications only arrive during [runOta]; a frame delivered outside a
+  /// session is dropped like any other unexpected characteristic.
+  void handleOtaFrame(Uint8List data);
+
+  /// Run [body] as an OTA flash session: subscribe to the control
+  /// characteristic, hand [body] a wired [OtaClient], then unwind — drop the
+  /// frame route, abort the client, drop the subscription. The ADC feed stays
+  /// paused for the whole body (firmware rejects OTA writes while the
+  /// streaming subscription holds the device lock). Throws on a transport
+  /// with no OTA service (the demo).
+  Future<T> runOta<T>(Future<T> Function(OtaClient client) body);
+
   /// Provide the sink the simulated feed pushes packets into. GATT transports
   /// ignore it — notifications arrive through the platform callback.
   void attachFeedSink(void Function(Uint8List data) sink);
@@ -104,6 +119,9 @@ class BleLinkTransport implements LinkTransport {
   String? _feedCharacteristic;
   KvsClient? _client;
   GattLinkBackend? _backend;
+  int? _mtu;
+  OtaClient? _otaClient;
+  void Function(Uint8List data)? _onOtaFrame;
   bool _disposed = false;
 
   @override
@@ -128,7 +146,8 @@ class BleLinkTransport implements LinkTransport {
   @override
   Future<int?> negotiateMtu() async {
     if (kIsWeb) return null;
-    return UniversalBle.requestMtu(deviceId, 247);
+    _mtu = await UniversalBle.requestMtu(deviceId, 247);
+    return _mtu;
   }
 
   @override
@@ -225,6 +244,48 @@ class BleLinkTransport implements LinkTransport {
   Future<int> readRssi() => UniversalBle.readRssi(deviceId);
 
   @override
+  void handleOtaFrame(Uint8List data) => _onOtaFrame?.call(data);
+
+  @override
+  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) async {
+    await UniversalBle.subscribeNotifications(
+      deviceId,
+      otaServiceId,
+      btChrOtaControl,
+    );
+    // Chunk cap mirrors the reference client (min(mtu - 3, 244)). Web never
+    // reports the negotiated MTU; the platforms in use negotiate 247, so
+    // fall through to the 247 -> 244 cap.
+    final mtu = _mtu;
+    final client = OtaClient(
+      chunkSize: mtu == null ? 244 : min(mtu - 3, 244),
+      writeControl: (bytes, {withoutResponse = false}) => UniversalBle.write(
+        deviceId,
+        otaServiceId,
+        btChrOtaControl,
+        bytes,
+        withoutResponse: withoutResponse,
+      ),
+      writeData: (bytes) =>
+          UniversalBle.write(deviceId, otaServiceId, btChrOtaData, bytes),
+    );
+    _otaClient = client;
+    _onOtaFrame = client.handleNotification;
+    try {
+      return await withFeedPaused(() => body(client));
+    } finally {
+      _otaClient = null;
+      _onOtaFrame = null;
+      client.abort();
+      try {
+        await UniversalBle.unsubscribe(deviceId, otaServiceId, btChrOtaControl);
+      } catch (_) {
+        // Teardown hygiene only; the session already settled.
+      }
+    }
+  }
+
+  @override
   void attachFeedSink(void Function(Uint8List data) sink) {}
 
   @override
@@ -233,6 +294,9 @@ class BleLinkTransport implements LinkTransport {
     _client?.abort();
     _client = null;
     _backend = null;
+    _otaClient?.abort();
+    _otaClient = null;
+    _onOtaFrame = null;
   }
 }
 

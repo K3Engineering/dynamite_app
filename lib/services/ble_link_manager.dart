@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' show min;
 
 import 'package:flutter/foundation.dart';
 import 'package:universal_ble/universal_ble.dart';
@@ -649,11 +648,6 @@ class BleLinkManager extends ChangeNotifier {
   /// hub. Reassigned to a no-op on hot restart.
   void Function(int sampleRateHz) _onSampleRate;
 
-  /// OTA control notifications, routed to the live [OtaClient] while a
-  /// flash session runs (see [runOta]); null outside sessions so stray OTA
-  /// frames are dropped like any other unexpected characteristic.
-  void Function(Uint8List data)? onOtaControlFrame;
-
   /// True while the active link is the simulated demo device, which has no
   /// OTA service. The update UI gates flash actions off this.
   bool get linkIsSimulated => isSimulated && isLinkUp;
@@ -676,58 +670,17 @@ class BleLinkManager extends ChangeNotifier {
   /// behind a torn-down link fails loudly on the aborted KVS client).
   Future<void> _feedMaintenance = Future.value();
 
-  /// Run [body] as an OTA flash session against the live GATT link:
-  /// subscribe to the OTA control characteristic, build a wired [OtaClient]
-  /// for it, hold the feed paused for the whole body (firmware rejects any
-  /// OTA write while the ADC stream holds the device lock), then unwind —
-  /// unregister the frame handler, abort the client, drop the subscription.
-  /// The device reboots itself ~0.5 s after accepting an image; the
-  /// teardown then lands on the disconnect path, which is why the resume
-  /// and unsubscribe are both guarded on the link still being ours.
-  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) async {
-    final deviceId = _link.deviceId;
-    if (deviceId.isEmpty || isSimulated) {
-      throw StateError('OTA requires a connected GATT device');
+  /// Run [body] as an OTA flash session against the live link. The GATT
+  /// plumbing (control subscription, wired [OtaClient], feed pause, teardown)
+  /// lives on the transport ([LinkTransport.runOta]); this forwards so callers
+  /// stay link-shaped. Idle — no link — throws here; a transport without OTA
+  /// (the demo) throws there.
+  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) {
+    final transport = _link.transport;
+    if (transport == null) {
+      throw StateError('OTA requires a connected device');
     }
-    await UniversalBle.subscribeNotifications(
-      deviceId,
-      otaServiceId,
-      btChrOtaControl,
-    );
-    // Chunk cap mirrors the reference client (min(mtu - 3, 244)). Web never
-    // reports the negotiated MTU; the platforms in use negotiate 247, so
-    // fall through to the 247 -> 244 cap.
-    final mtu = _link.mtu;
-    final client = OtaClient(
-      chunkSize: mtu == null ? 244 : min(mtu - 3, 244),
-      writeControl: (bytes, {withoutResponse = false}) => UniversalBle.write(
-        deviceId,
-        otaServiceId,
-        btChrOtaControl,
-        bytes,
-        withoutResponse: withoutResponse,
-      ),
-      writeData: (bytes) =>
-          UniversalBle.write(deviceId, otaServiceId, btChrOtaData, bytes),
-    );
-    onOtaControlFrame = client.handleNotification;
-    try {
-      return await _withFeedPaused(() => body(client));
-    } finally {
-      onOtaControlFrame = null;
-      client.abort();
-      if (_link.isLinkUp && _link.deviceId == deviceId) {
-        try {
-          await UniversalBle.unsubscribe(
-            deviceId,
-            otaServiceId,
-            btChrOtaControl,
-          );
-        } catch (_) {
-          // Teardown hygiene only; the session already settled.
-        }
-      }
-    }
+    return transport.runOta(body);
   }
 
   /// Run [body] with the ADC feed subscription paused: firmware rejects KVS
@@ -1551,13 +1504,13 @@ class BleLinkManager extends ChangeNotifier {
     Uint8List data,
     int? timestamp,
   ) {
-    // The ADC feed and the KVS channel of the active link are the only
-    // subscriptions; drop anything else (a stale notification from a
-    // torn-down link, or a third characteristic subscribed in the future) so
-    // foreign bytes are never parsed. universal_ble normalizes
-    // characteristicId to lowercase before invoking this callback, and both
-    // ids are already lowercase, so an exact match is safe.
-    // Multi-device: route by deviceId instead of dropping.
+    // Three characteristics can carry notifications on a link: the ADC feed
+    // (while streaming), the KVS channel (for KVS frames), and — only during
+    // a flash session — the OTA control characteristic. Drop anything else
+    // (a stale notification from a torn-down link) so foreign bytes are never
+    // parsed. universal_ble normalizes characteristicId to lowercase before
+    // invoking this callback, and all ids are already lowercase, so an exact
+    // match is safe. Multi-device: route by deviceId instead of dropping.
     if (deviceId != _link.deviceId) {
       logTrace(
         () =>
@@ -1568,13 +1521,14 @@ class BleLinkManager extends ChangeNotifier {
       return;
     }
     // Feed packets go straight to the protocol layer, KVS frames to the KVS
-    // client; the link manager never interprets bytes itself.
+    // client, OTA control frames to the live flash session; the link manager
+    // never interprets bytes itself.
     if (characteristicId == btChrAdcFeedId) {
       _deliverAdcData(data);
     } else if (characteristicId == btChrKvs) {
       _link.backend?.handleKvsFrame(data);
     } else if (characteristicId == btChrOtaControl) {
-      onOtaControlFrame?.call(data);
+      _link.transport?.handleOtaFrame(data);
     } else {
       logTrace(
         () =>
@@ -1607,7 +1561,6 @@ class BleLinkManager extends ChangeNotifier {
   Future<void> shutdownForHotRestart() async {
     _onAdcData = _ignoreFeedData;
     _onSampleRate = _ignoreSampleRate;
-    onOtaControlFrame = null;
     final transport = _link.transport;
     transport?.dispose();
     _stopRssiPolling();
