@@ -24,6 +24,7 @@ Future<void> showTareSheet(
   required DataHub hub,
   required RigState rig,
   required AppSettings settings,
+  required DisplayUnit unit,
 }) {
   return showModalBottomSheet<void>(
     context: context,
@@ -31,7 +32,7 @@ Future<void> showTareSheet(
     isScrollControlled: true,
     builder: (ctx) => Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(ctx).bottom),
-      child: _TareSheet(hub: hub, rig: rig, settings: settings),
+      child: _TareSheet(hub: hub, rig: rig, settings: settings, unit: unit),
     ),
   );
 }
@@ -41,10 +42,15 @@ class _TareSheet extends StatefulWidget {
   final RigState rig;
   final AppSettings settings;
 
+  /// The unit the instrument draws in, already resolved against the hub's
+  /// availability by the caller.
+  final DisplayUnit unit;
+
   const _TareSheet({
     required this.hub,
     required this.rig,
     required this.settings,
+    required this.unit,
   });
 
   @override
@@ -113,12 +119,7 @@ class _TareSheetState extends State<_TareSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final unit = widget.settings.displayUnit.effective(
-      resolveUnitAvailability(
-        hub.calibrationFor,
-        widget.settings.activeChannelIndices,
-      ),
-    );
+    final unit = widget.unit;
     // The hub notifies per packet; the sheet rebuilds with it so a tare's
     // completion shows in place.
     return ListenableBuilder(

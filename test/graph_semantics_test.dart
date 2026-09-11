@@ -49,7 +49,7 @@ void main() {
         home: GraphWorkspace(
           data: data,
           ctrl: GraphController(),
-          unit: DisplayUnit.mVv,
+          unit: DisplayUnit.mVv.effective(data.unitAvailability),
           activeChannels: activeChannels,
           isLiveGraph: isLiveGraph,
           showDerivative: showDerivative,

@@ -10,15 +10,15 @@ void main() {
   group('effective', () {
     // The availability quadrants. (noBoard + cell) is meaningless — no
     // board constants resolve without a read — but the ladder must not care.
-    const noBoard = (boardHasNominals: false, anyActiveHasLoadCell: false);
-    const boardNoCell = (boardHasNominals: true, anyActiveHasLoadCell: false);
-    const boardAndCell = (boardHasNominals: true, anyActiveHasLoadCell: true);
+    const noBoard = (boardHasNominals: false, anyChannelHasLoadCell: false);
+    const boardNoCell = (boardHasNominals: true, anyChannelHasLoadCell: false);
+    const boardAndCell = (boardHasNominals: true, anyChannelHasLoadCell: true);
 
     test('no board constants is raw, for every preference', () {
       for (final u in DisplayUnit.values) {
         expect(u.effective(noBoard), DisplayUnit.raw, reason: u.symbol);
         expect(
-          u.effective((boardHasNominals: false, anyActiveHasLoadCell: true)),
+          u.effective((boardHasNominals: false, anyChannelHasLoadCell: true)),
           DisplayUnit.raw,
           reason: u.symbol,
         );

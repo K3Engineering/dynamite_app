@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'bucket_series.dart';
 import 'channel_calibration.dart';
 import 'channel_converter.dart';
+import 'display_unit.dart';
 import 'gap_list.dart';
 
 /// Raw sample storage behind the graph components: [totalSamples] and
@@ -99,6 +100,12 @@ abstract interface class ChannelConversion {
   /// calibration snapshots and metadata; CONVERSION goes through
   /// [converterFor].
   ChannelCalibration calibrationFor(int channelIndex);
+
+  /// The unit set this calibration converts right now (see
+  /// `resolveUnitAvailability`). Derived from [calibrationFor] alone — a
+  /// property of the data source, not of the view showing it, so hiding a
+  /// channel never changes what the instrument measures in.
+  UnitAvailability get unitAvailability;
 
   /// The channel's converter: its calibration bound to its current tare
   /// offset, so one lookup yields everything a consumer converts through.

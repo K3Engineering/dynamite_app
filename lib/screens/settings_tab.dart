@@ -77,10 +77,7 @@ class _SettingsTabState extends State<SettingsTab> {
     // RigState's per-device document copy: it gates what the connected
     // board can convert right now.
     final availability = context.select<DataHub, UnitAvailability>(
-      (h) => resolveUnitAvailability(
-        h.calibrationFor,
-        settings.activeChannelIndices,
-      ),
+      (h) => h.unitAvailability,
     );
     final unit = settings.displayUnit.effective(availability);
     final enabledUnits = {

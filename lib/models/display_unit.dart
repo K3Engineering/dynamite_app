@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'channel_calibration.dart';
+import 'device_profile.dart';
 
 /// One rung of a unit's SI-prefix axis ladder: [factor] base units equal one
 /// rung unit (1e-3 mV per µV, 1e3 kgf per tf); [symbol] is the axis-label
@@ -9,22 +10,27 @@ typedef AxisRung = ({double factor, String symbol});
 
 /// The unit set a data source can convert right now: whether the board's
 /// resolved constants exist (electrical and force units convert) and whether
-/// any shown channel has a load cell assigned (force units convert).
-/// Derived, never stored — the saved preference re-applies the moment
-/// availability returns, and there is no secondary state to sync.
-typedef UnitAvailability = ({bool boardHasNominals, bool anyActiveHasLoadCell});
+/// any channel carries a load cell (force units convert). Derived, never
+/// stored — the saved preference re-applies the moment availability returns,
+/// and there is no secondary state to sync.
+typedef UnitAvailability = ({
+  bool boardHasNominals,
+  bool anyChannelHasLoadCell,
+});
 
-/// Resolve the unit availability for a view showing [activeChannels], given
-/// a per-channel calibration lookup. Board data resolves all-or-nothing per
-/// board (see `BoardCalibration`), so channel 0 stands in for the board.
+/// Resolve the unit availability for the calibration set behind
+/// [calibrationFor]. Board data resolves all-or-nothing per board (see
+/// `BoardCalibration`), so channel 0 stands in for the board. Channel
+/// visibility is deliberately not an input: hiding the only cell-bearing
+/// channel must not change what the instrument measures in.
 UnitAvailability resolveUnitAvailability(
   ChannelCalibration Function(int channel) calibrationFor,
-  Iterable<int> activeChannels,
 ) => (
   boardHasNominals: calibrationFor(0).board != null,
-  anyActiveHasLoadCell: activeChannels.any(
-    (ch) => calibrationFor(ch).loadCell != null,
-  ),
+  anyChannelHasLoadCell: [
+    for (int i = 0; i < kAdcChannelCount; i++)
+      if (calibrationFor(i).loadCell != null) i,
+  ].isNotEmpty,
 );
 
 /// Supported force and electrical display units: presentation metadata
@@ -151,11 +157,11 @@ enum DisplayUnit {
 
   /// Whether this unit can convert under [availability]: raw always can;
   /// electrical units need board constants; force units also need a load
-  /// cell on a shown channel.
+  /// cell on some channel.
   bool isAvailable(UnitAvailability availability) {
     if (this == DisplayUnit.raw) return true;
     if (!availability.boardHasNominals) return false;
-    return !isForce || availability.anyActiveHasLoadCell;
+    return !isForce || availability.anyChannelHasLoadCell;
   }
 
   /// The unit the instrument actually draws under [availability]: this unit
