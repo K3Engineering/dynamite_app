@@ -87,11 +87,18 @@ class OtaClient {
     required Uint8List image,
     void Function(int sentBytes)? onProgress,
   }) async {
-    await writeControl(encodeOtaFileSize(image.length));
-    await _expectReply(otaReadyReply, 'accept the update size');
+    final ready = await _transact(
+      encodeOtaFileSize(image.length),
+      'accept the update size',
+    );
+    if (ready != otaReadyReply) {
+      throw OtaFlashException(_unexpected(ready, 'accept the update size'));
+    }
 
-    await writeControl(Uint8List.fromList(const [otaRequestOpcode]));
-    final request = await _reply('accept the update');
+    final request = await _transact(
+      Uint8List.fromList(const [otaRequestOpcode]),
+      'accept the update',
+    );
     if (request == otaRequestNak) {
       throw const OtaFlashException('The device declined to start.');
     }
@@ -109,11 +116,11 @@ class OtaClient {
     }
 
     // See class doc: DONE is sent without response on purpose.
-    await writeControl(
+    final done = await _transact(
       Uint8List.fromList(const [otaDoneOpcode]),
+      'finalize the update',
       withoutResponse: true,
     );
-    final done = await _reply('finalize the update');
     if (done == otaDoneNak) {
       throw const OtaFlashException(
         'The device rejected the image (integrity check failed).',
@@ -128,11 +135,22 @@ class OtaClient {
       'Unexpected reply 0x${got.toRadixString(16)} while waiting for the '
       'device to $what.';
 
-  Future<int> _reply(String what) async {
+  /// One handshake round trip. The wait is armed BEFORE the write goes out:
+  /// the device notifies inside its write handler, so the reply can reach
+  /// the host ahead of the write's completion, and a wait armed after the
+  /// write would race (and silently drop) the single, unretried reply. If
+  /// the write itself throws, the armed completer is abandoned — nothing
+  /// awaits it.
+  Future<int> _transact(
+    Uint8List bytes,
+    String what, {
+    bool withoutResponse = false,
+  }) async {
     if (_aborted) throw StateError('OTA session aborted');
     final waiting = Completer<Uint8List>();
     _waiting = waiting;
     try {
+      await writeControl(bytes, withoutResponse: withoutResponse);
       final data = await waiting.future.timeout(ackTimeout);
       if (data.isEmpty) {
         throw OtaFlashException(
@@ -144,13 +162,6 @@ class OtaClient {
       throw OtaFlashException('Timed out waiting for the device to $what.');
     } finally {
       _waiting = null;
-    }
-  }
-
-  Future<void> _expectReply(int expected, String what) async {
-    final got = await _reply(what);
-    if (got != expected) {
-      throw OtaFlashException(_unexpected(got, what));
     }
   }
 }

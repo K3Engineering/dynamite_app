@@ -100,6 +100,37 @@ void main() {
     });
   });
 
+  test('a reply sent inside the write (before it resolves) is not dropped', () {
+    fakeAsync((async) {
+      // The device notifies inside its write handler, so each reply can
+      // reach the host ahead of the write's completion — the live wait must
+      // already be armed when the bytes go out.
+      late OtaClient client;
+      client = OtaClient(
+        chunkSize: chunkSize,
+        ackTimeout: ackTimeout,
+        writeControl: (bytes, {withoutResponse = false}) {
+          final reply = bytes.length == 4
+              ? otaReadyReply
+              : (bytes.single == otaRequestOpcode ? otaRequestAck : otaDoneAck);
+          client.handleNotification(Uint8List.fromList([reply]));
+          return Future<void>.value();
+        },
+        writeData: (_) => Future<void>.value(),
+      );
+      final errors = <Object>[];
+      var settled = false;
+      track(
+        client.flash(image: Uint8List(250)).whenComplete(() => settled = true),
+        errors,
+      );
+      async.flushMicrotasks();
+
+      expect(settled, isTrue);
+      expect(errors, isEmpty);
+    });
+  });
+
   test('REQUEST NAK aborts before any data is written', () {
     fakeAsync((async) {
       final (client, writes) = wire();
