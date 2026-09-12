@@ -46,7 +46,7 @@ class LinkInfo {
   final LinkTransport transport;
   final String advertisedName;
   String? storedName;
-  final DeviceInfo? info;
+  final DeviceInfo info;
   final int? mtu;
   final AdcConfig adcConfig;
   final LinkTelemetry telemetry;
@@ -179,7 +179,7 @@ final class Ready extends Link {
   String? get storedName => info.storedName;
 
   @override
-  DeviceInfo? get deviceInfo => info.info;
+  DeviceInfo get deviceInfo => info.info;
 
   @override
   int? get mtu => info.mtu;
@@ -822,8 +822,9 @@ class BleLinkManager extends ChangeNotifier {
       await transport.discoverServices();
       if (!token.isCurrent) return;
 
-      setup.info = await transport.readDeviceInfo();
+      final deviceInfo = await transport.readDeviceInfo();
       if (!token.isCurrent) return;
+      setup.info = deviceInfo;
 
       // The KVS channel comes up BEFORE the ADC feed subscription: firmware
       // locks the KVS while the feed holds the device lock.
@@ -865,7 +866,7 @@ class BleLinkManager extends ChangeNotifier {
           transport: transport,
           advertisedName: transport.displayName,
           storedName: setup.storedName,
-          info: setup.info,
+          info: deviceInfo,
           mtu: setup.mtu,
           adcConfig: adcConfig,
           telemetry: setup.telemetry,

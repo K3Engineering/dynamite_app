@@ -116,7 +116,9 @@ void main() async {
     streamingNow: () => linkManager.isStreaming,
     deviceMetadataSnapshot: () => toSessionDeviceMetadata(
       name: linkManager.connectedDeviceName,
-      info: linkManager.connectedDeviceInfo,
+      // Non-null at session start: recording requires a streaming link, and
+      // streaming implies the connect-time DIS read succeeded.
+      info: linkManager.connectedDeviceInfo!,
     ),
     deviceKvsSnapshot: () => rigState.kvsSnapshot,
     onSessionBoundary: decoder.resetContinuity,

@@ -74,7 +74,7 @@ void main() {
       streamingNow: () => linkManager.isStreaming,
       deviceMetadataSnapshot: () => toSessionDeviceMetadata(
         name: linkManager.connectedDeviceName,
-        info: linkManager.connectedDeviceInfo,
+        info: linkManager.connectedDeviceInfo!,
       ),
       deviceKvsSnapshot: () => rigState.kvsSnapshot,
       onSessionBoundary: decoder.resetContinuity,

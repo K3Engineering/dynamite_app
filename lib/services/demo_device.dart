@@ -69,7 +69,7 @@ class DemoDevice implements LinkTransport, LinkBackend {
   Future<void> discoverServices() async {}
 
   @override
-  Future<DeviceInfo?> readDeviceInfo() async => identity;
+  Future<DeviceInfo> readDeviceInfo() async => identity;
 
   @override
   Future<AdcConfig> readAdcConfig() async =>

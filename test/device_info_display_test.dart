@@ -34,7 +34,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('DeviceInfoCard', () {
-    Future<void> pumpCard(WidgetTester tester, DeviceInfo? info) async {
+    Future<void> pumpCard(WidgetTester tester, DeviceInfo info) async {
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(body: DeviceInfoCard(info: info)),
@@ -62,14 +62,9 @@ void main() {
       expect(find.text('—'), findsNothing);
     });
 
-    testWidgets('nulls render as em dashes, never made-up values', (
+    testWidgets('only the web-blocklisted serial renders as an em dash', (
       tester,
     ) async {
-      // The read hasn't landed yet (or the device was just connected).
-      await pumpCard(tester, null);
-      expect(find.text('—'), findsNWidgets(5));
-
-      // The web case: only the serial is unreadable (0x2A25 blocklist).
       await pumpCard(
         tester,
         const DeviceInfo(
@@ -127,7 +122,7 @@ void main() {
         streamingNow: () => linkManager.isStreaming,
         deviceMetadataSnapshot: () => toSessionDeviceMetadata(
           name: linkManager.connectedDeviceName,
-          info: linkManager.connectedDeviceInfo,
+          info: linkManager.connectedDeviceInfo!,
         ),
         deviceKvsSnapshot: () => rigState.kvsSnapshot,
         onSessionBoundary: decoder.resetContinuity,

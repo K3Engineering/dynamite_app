@@ -43,6 +43,9 @@ class FeedHealthTracker {
     final streaming = _streamingNow();
     if (streaming == (_timer != null)) return;
     if (streaming) {
+      // Classify at once, not on the first tick: a null [health] then means
+      // exactly "not streaming" — never "streaming, not yet classified".
+      _tick();
       _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
     } else {
       _timer?.cancel();

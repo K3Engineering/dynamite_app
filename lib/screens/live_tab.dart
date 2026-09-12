@@ -321,7 +321,7 @@ class LiveStatusBar extends StatelessWidget {
   final int sampleRateHz;
 
   /// The measured feed-health classification (see [deriveFeedHealth]); null
-  /// presents as normal (also the case before the first health tick lands).
+  /// (not streaming) presents as normal.
   final FeedHealth? health;
 
   /// Whether a recording session is in progress (a red ● in the bar).

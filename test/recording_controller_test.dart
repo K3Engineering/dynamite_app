@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/device_flash.dart';
+import 'package:dynamite_app/models/device_info.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/session_catalog.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
@@ -29,6 +30,14 @@ import 'package:dynamite_app/services/session_store_backend.dart';
 /// is the real dart:io backend pointed at a temp sessions root — the
 /// lifecycle runs end-to-end through it.
 void main() {
+  const testIdentity = DeviceInfo(
+    manufacturer: 'K3 Engineering',
+    model: 'Dynamite Sampler Pro Mk1',
+    serial: 'A4CF1208F51E',
+    hardwareRev: 'v700P',
+    firmwareRev: 'v700P|v1.2.3',
+  );
+
   late Directory tmp;
 
   setUp(() {
@@ -54,7 +63,7 @@ void main() {
       streamingChanges: streaming,
       streamingNow: () => streaming.value,
       deviceMetadataSnapshot: () =>
-          toSessionDeviceMetadata(name: null, info: null),
+          toSessionDeviceMetadata(name: null, info: testIdentity),
       deviceKvsSnapshot: () => deviceKvs,
       onSessionBoundary: decoder.resetContinuity,
       events: events,
@@ -167,15 +176,15 @@ void main() {
       // default converted unit).
       expect(saved.displayUnit, DisplayUnit.kN);
       // The device identity block is frozen alongside (the CSV `device`
-      // metadata). This harness's snapshot has no name/DIS read, so every
-      // field is the null placeholder.
+      // metadata). This harness's snapshot has no name; the identity fields
+      // are the harness's fixture.
       expect(saved.deviceInfo, {
         'name': null,
-        'id': null,
-        'model': null,
-        'hardware_rev': null,
-        'firmware': null,
-        'manufacturer': null,
+        'id': 'A4CF1208F51E',
+        'model': 'Dynamite Sampler Pro Mk1',
+        'hardware_rev': 'v700P',
+        'firmware': 'v700P|v1.2.3',
+        'manufacturer': 'K3 Engineering',
       });
       // Counts derive from the data, so the load is the truth.
       final loaded = await SessionStore.instance.loadSession(
@@ -282,7 +291,7 @@ void main() {
         streamingChanges: streaming,
         streamingNow: () => streaming.value,
         deviceMetadataSnapshot: () =>
-            toSessionDeviceMetadata(name: null, info: null),
+            toSessionDeviceMetadata(name: null, info: testIdentity),
         deviceKvsSnapshot: () => null,
         onSessionBoundary: decoder.resetContinuity,
         events: events,

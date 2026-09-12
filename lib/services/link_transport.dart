@@ -46,9 +46,11 @@ abstract interface class LinkTransport {
   /// service or ADC feed characteristic is absent — an unusable link.
   Future<void> discoverServices();
 
-  /// Read the Device Information identity. Best-effort per field: a failed
-  /// read leaves that field null and never fails the connection.
-  Future<DeviceInfo?> readDeviceInfo();
+  /// Read the Device Information identity. Throws on failure — firmware
+  /// publishes every field, so an unreadable identity is a broken link
+  /// (the setup fails), never partial data. `serial` is null on web, where
+  /// 0x2A25 is GATT-blocklisted.
+  Future<DeviceInfo> readDeviceInfo();
 
   /// Read the ADC boot config. Throws when unreadable — the conversions and
   /// the sample timeline both derive from it.
@@ -168,17 +170,10 @@ class BleLinkTransport implements LinkTransport {
   }
 
   @override
-  Future<DeviceInfo?> readDeviceInfo() async {
-    Future<String?> readString(String characteristic) async {
-      try {
-        return utf8.decode(
-          await UniversalBle.read(deviceId, btSvcDeviceInfo, characteristic),
-        );
-      } catch (e) {
-        debugPrint('DIS read of $characteristic failed for $deviceId: $e');
-        return null;
-      }
-    }
+  Future<DeviceInfo> readDeviceInfo() => _retryOnce(() async {
+    Future<String> readString(String characteristic) async => utf8.decode(
+      await UniversalBle.read(deviceId, btSvcDeviceInfo, characteristic),
+    );
 
     return DeviceInfo(
       manufacturer: await readString(btChrDisManufacturer),
@@ -187,7 +182,7 @@ class BleLinkTransport implements LinkTransport {
       hardwareRev: await readString(btChrDisHardwareRev),
       firmwareRev: await readString(btChrDisFirmwareRev),
     );
-  }
+  });
 
   @override
   Future<AdcConfig> readAdcConfig() => _retryOnce(() async {
