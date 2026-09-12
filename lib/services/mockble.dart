@@ -9,6 +9,7 @@ import 'adc_protocol.dart';
 import 'bt_device_config.dart';
 import 'demo_calibration.dart';
 import 'kvs_protocol.dart';
+import 'ota_protocol.dart';
 import '../models/device_flash.dart';
 
 /// Samples per emitted feed packet: one packet every that many milliseconds
@@ -92,6 +93,13 @@ class MockBlePlatform extends UniversalBlePlatform {
     kvsFolderUser: {},
     kvsFolderSettings: {},
   };
+
+  /// Test knob: the OTA session request is answered with a NAK (the device
+  /// declining the update, e.g. its slot can't take the image).
+  bool refuseOtaStart = false;
+
+  /// Test spy: image bytes received on the OTA Data characteristic.
+  int otaDataBytes = 0;
 
   /// Test spy: every KVS command string received, in order. Lets tests
   /// assert write diffs are minimal and folder-routed.
@@ -183,6 +191,8 @@ class MockBlePlatform extends UniversalBlePlatform {
     slowConnect = false;
     disconnectCalls.clear();
     readRssiCalls = 0;
+    refuseOtaStart = false;
+    otaDataBytes = 0;
     kvsCommandLog.clear();
     gattOpLog.clear();
     seedKvs(demoKvs);
@@ -475,6 +485,28 @@ class MockBlePlatform extends UniversalBlePlatform {
         Uint8List.fromList(utf8.encode(response)),
         null,
       );
+    } else if (characteristic == btChrOtaControl) {
+      // The OTA control protocol (ble_ota.cpp) in miniature: a 4-byte write
+      // declares the image size; a 1-byte write is an opcode. The reply
+      // notification fires inside the write handler, like the firmware's.
+      final reply = value.length == 4
+          ? otaReadyReply
+          : switch (value[0]) {
+              otaRequestOpcode =>
+                refuseOtaStart ? otaRequestNak : otaRequestAck,
+              otaDoneOpcode => otaDoneAck,
+              _ => otaRequestNak,
+            };
+      updateCharacteristicValue(
+        deviceId,
+        btChrOtaControl,
+        Uint8List.fromList([reply]),
+        null,
+      );
+    } else if (characteristic == btChrOtaData) {
+      // Image chunks are consumed in the write handler (the ATT ack is the
+      // flow control); no reply.
+      otaDataBytes += value.length;
     }
   }
 
@@ -657,6 +689,13 @@ class MockBlePlatform extends UniversalBlePlatform {
         BleService(btSvcDeviceInfo, [
           for (final chr in _disValues.keys)
             BleCharacteristic(chr, [CharacteristicProperty.read], []),
+        ]),
+        BleService(otaServiceId, [
+          BleCharacteristic(btChrOtaControl, [
+            CharacteristicProperty.write,
+            CharacteristicProperty.notify,
+          ], []),
+          BleCharacteristic(btChrOtaData, [CharacteristicProperty.write], []),
         ]),
       ]);
     }

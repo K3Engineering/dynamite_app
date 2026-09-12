@@ -675,12 +675,27 @@ class BleLinkManager extends ChangeNotifier {
   /// lives on the transport ([LinkTransport.runOta]); this forwards so callers
   /// stay link-shaped. Idle — no link — throws here; a transport without OTA
   /// (the demo) throws there.
-  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) {
+  ///
+  /// A body that RETURNS had its image accepted — the device reboots into it
+  /// ~0.5 s later (see [OtaClient.flash]) — so the link is then ended via the
+  /// requested-disconnect path; the feed-pause envelope's resume, its default
+  /// epilogue, could only time out against the dying radio. A body that THROWS
+  /// keeps the link (nothing rebooted): the envelope resumes the feed and the
+  /// error reaches the caller.
+  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) async {
     final transport = _link.transport;
     if (transport == null) {
       throw StateError('OTA requires a connected device');
     }
-    return transport.runOta(body);
+    return transport.runOta((client) async {
+      final result = await body(client);
+      // The reboot may already have dropped the link on its own; end the
+      // session only while the live link is still the one that flashed.
+      if (identical(_link.transport, transport)) {
+        await disconnectSelectedDevice();
+      }
+      return result;
+    });
   }
 
   /// Run [body] with the ADC feed subscription paused: firmware rejects KVS
