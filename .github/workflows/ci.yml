@@ -21,7 +21,7 @@ jobs:
     name: Analyze & Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -57,7 +57,7 @@ jobs:
           - { platform: android, os: ubuntu-latest,  cmd: "flutter build apk --release --build-number=$GITHUB_RUN_NUMBER",
               artifact: build/app/outputs/apk/release/app-release.apk }
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -68,18 +68,8 @@ jobs:
       - run: flutter pub get
       # Gradle user home (wrapper dist + Maven deps + build cache). Without this
       # every run re-downloads ~1 GB of AGP/Kotlin/plugin jars before compiling.
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         if: matrix.platform == 'android'
-      # Incremental native builds. The native toolchain tracks staleness, so
-      # restoring a build dir from an older commit just skips unchanged work.
-      - uses: actions/cache@v4
-        if: matrix.platform == 'windows' || matrix.platform == 'macos'
-        with:
-          path: build/${{ matrix.platform }}
-          key: ${{ runner.os }}-native-build-${{ hashFiles('pubspec.lock') }}-${{ github.sha }}
-          restore-keys: |
-            ${{ runner.os }}-native-build-${{ hashFiles('pubspec.lock') }}-
-            ${{ runner.os }}-native-build-
       - name: Decode upload keystore
         if: matrix.platform == 'android'
         run: echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/upload-keystore.jks
@@ -97,7 +87,7 @@ jobs:
       - name: Build ${{ matrix.platform }}
         run: ${{ matrix.cmd }}
       - name: Upload ${{ matrix.platform }} artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-${{ matrix.platform }}
           path: ${{ matrix.artifact }}
