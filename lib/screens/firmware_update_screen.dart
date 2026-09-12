@@ -21,8 +21,9 @@ enum _Stage { overview, downloading, flashing, done, failed }
 /// (download -> transfer); the release check itself lives in
 /// [FirmwareUpdateService]. An accepted image ends the flow at the done
 /// banner: the device reboots on its own, so the page holds no modal state
-/// past the transfer, and the next connect's release check re-flags a flash
-/// that didn't take.
+/// past the transfer. The service carries the rest — a release flash that
+/// took is confirmed by the next check's [FirmwareFlashVerified] verdict,
+/// and one that didn't re-flags the update banner.
 class FirmwareUpdateScreen extends StatefulWidget {
   const FirmwareUpdateScreen({super.key});
 
@@ -73,7 +74,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       });
       return;
     }
-    await _flash(image);
+    await _flash(image, flashedTag: release.tag);
   }
 
   Future<void> _flashFromFile() async {
@@ -89,7 +90,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       '${bytes.length} bytes. Keep the app open. The device reboots when done. ',
     );
     if (!confirmed || !mounted) return;
-    await _flash(bytes);
+    await _flash(bytes, flashedTag: null);
   }
 
   Future<bool> _confirmFlash(String title, String body) async {
@@ -113,7 +114,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     return confirmed ?? false;
   }
 
-  Future<void> _flash(Uint8List image) async {
+  Future<void> _flash(Uint8List image, {required String? flashedTag}) async {
     setState(() {
       _stage = _Stage.flashing;
       _headline = 'Flashing - do not disconnect…';
@@ -130,6 +131,8 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         ),
       );
       if (!mounted) return;
+      final tag = flashedTag;
+      if (tag != null) _updates.noteFlashAccepted(tag);
       setState(() => _stage = _Stage.done);
     } catch (e) {
       if (!mounted) return;
