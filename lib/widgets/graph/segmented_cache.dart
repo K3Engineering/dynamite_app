@@ -9,13 +9,9 @@ import 'package:material_ui/material_ui.dart';
 // Image baking
 // ---------------------------------------------------------------------------
 
-/// Record [draw] and synchronously rasterize it into a [widthPx] x [heightPx]
+/// Record [draw] and rasterize it into a [widthPx] x [heightPx]
 /// physical-pixel [ui.Image]. The canvas is pre-scaled by [dpr] so [draw]
 /// works in logical pixels.
-///
-/// This is the only place a [ui.Picture] appears in this file: `toImageSync`
-/// requires one as an intermediate, so it is created and disposed here and
-/// only the image escapes.
 ui.Image _bakeImage(
   int widthPx,
   int heightPx,
@@ -36,59 +32,45 @@ ui.Image _bakeImage(
 // One caching mechanism shared by every plot surface (minimap, force graph,
 // derivative graph) in both viewing modes:
 //   * slide   -- a fixed-span window slides over the data: blits are pure
-//                translations and segments are reused as-is;
+//                translations;
 //   * squeeze -- the window spans the whole growing history: blits get a
-//                corrective affine transform (both axis mappings are affine)
-//                and segments are re-rendered on a rolling basis once they
-//                drift past [kMaxSegmentDrift].
+//                corrective affine transform (both axis mappings are affine).
 //
-// On web there is no engine raster cache: a cached ui.Picture is re-executed
-// by Skia every frame, so vector re-draws cost Dart AND raster time each
-// frame. Baking immutable sample ranges into GPU-resident ui.Images pays that
-// cost once; the steady-state per-frame cost is a handful of texture blits
-// plus the vector-drawn live-edge sliver.
+// Vector redrawing every frame caused low framerates.
+// Instead, we prefer higher FPS and smearing work (rebakes) across frames
+// (one segment per frame, see [kSegmentBakeBudget]). We also prefer no throttling,
+// as that just introduces jitter (low FPS once in a while)
+//  Web has no engine raster cache: a ui.Picture
+// re-executes on Skia every frame, so tiles are baked once into GPU
+// ui.Images. A segment that cannot blit
+// (see [SegmentedGraphCache._isBlittable]) draws nothing and refills only
+// via the sweep; genuinely uncovered ranges (live-edge sliver, pan/zoom
+// exposures) are the only full vector-draw paths.
 //
-// Full re-renders are avoided. All changes should prefer to smear the rebake
-// across multiple frames, and STALE content is never vector-redrawn: a
-// segment that cannot blit ([SegmentedGraphCache._isBlittable]) draws
-// NOTHING and refills only via the sweep (blank-then-refill, one segment
-// per frame). Never extend the redraw set -- the per-frame raster budget is
-// one segment of work, on web especially (no engine raster cache).
-// Genuinely uncovered ranges ARE vector-drawn whole and are the only
-// remaining full-redraw paths: the live-edge sliver, and bootstrap /
-// zoom-out / pan exposures where no tile exists at all (tolerated as
-// exploratory).
-//
-// Config changes split by kind. Pure drift -- plot height, dpr, channel
-// add/remove -- reuses old tiles (ghosts/shifts) while the rolling sweep
-// re-bakes them. Tares do NOT reuse: a tare shifts each channel by its own
-// display offset, and one tile composites every channel, so no single blit
-// correction can hold every trace -- tares ride the destructive key with
-// unit/calibration (never blitted once stale, blank per above).
-// The sweep re-bakes config-stale segments rightmost-first (freshest data
-// converges first, history backfills) at the usual [kSegmentBakeBudget] per
-// frame. On any config bump, segments outside the view are disposed so stale
+// Config changes split by kind. Plot height, dpr, channel add/remove are
+// pure drift: old tiles keep blitting (ghosts/shifts) while the sweep
+// re-bakes them rightmost-first (freshest data converges first). Tares ride
+// the destructive key with unit/calibration instead: one tile composites
+// every channel, so no single blit correction can hold per-channel shifts.
+// On any config bump, segments outside the view are disposed so stale
 // content cannot resurrect on a later pan.
 //
-// Quality invariant: a texture is only ever produced by a vector render --
-// never by resampling another texture -- so every on-screen pixel is at most
-// ONE bilinear resample away from a vector render, scaled by at most
-// ~kMaxSegmentDrift before a refresh re-sharpens it.
+// Quality invariant: a texture is only ever a vector render, never
+// resampled from another texture.
 //
-// Live-edge invariant: baked tiles always contain complete data. Segments
-// never end past a bake horizon ([SegmentedGraphCache.maintain]'s
-// bakeableSamples) that excludes the renderer's incomplete tail at the data
-// edge (the envelope layer's join block); that trailing span is vector-drawn
-// every frame instead. No tile can therefore go stale at its right seam as
-// samples arrive.
+// Live-edge invariant: segments never end past a bake horizon
+// ([SegmentedGraphCache.maintain]'s bakeableSamples) that excludes the
+// renderer's incomplete tail at the data edge; the tail vector-draws every
+// frame instead.
 // ---------------------------------------------------------------------------
 
 /// Target on-screen width (logical px) of one baked segment texture.
 const double kSegmentTargetPx = 200;
 
 /// Max relative scale drift (horizontal or vertical) a visible segment may
-/// accumulate before its rolling re-render. Bounds the resampling quality
-/// loss between bake and refresh.
+/// accumulate before its rolling re-render. 0.08 is an educated guess:
+/// unbounded drift visibly smears, but the acceptable range is wide; loose
+/// enough that the [kSegmentBakeBudget]-per-frame sweep keeps up.
 const double kMaxSegmentDrift = 0.08;
 
 /// Nominal baked line height (stroke + AA, logical px): the constant term
@@ -108,19 +90,18 @@ const double kMaxBlitLineFraction = 0.25;
 /// vectors every frame until they outgrow this.
 const double kSegmentGapBakePx = 40;
 
-/// Segment (re)bakes allowed per frame. Each costs time in UI-thread
-/// toImageSync; raising this shortens the fill-in after zooms/jumps at the
-/// price of larger per-frame spikes.
+/// Segment (re)bakes allowed per frame. Each is a UI-thread toImageSync;
+/// 1 prioritizes smearing rebakes across frames over quickly refilling
+/// after zooms/jumps (see the file header).
 const int kSegmentBakeBudget = 1;
 
 /// Cached segments more than this many target-widths outside the view are
-/// evicted; textures on the tall graphs are ~0.5-2MB each, so the cache
-/// cannot be unbounded.
+/// evicted; the cache cannot be unbounded (a tall-graph tile is on the
+/// order of a MB — estimate, not measured).
 const int kSegmentEvictionMargin = 8;
 
-/// Blit filter for segment textures. [FilterQuality.low] (bilinear) hides
-/// fractional-pixel offsets and the small drift scales; flip to
-/// [FilterQuality.none] to A/B sharpness.
+/// [FilterQuality.none] showed gaps and seams in testing; bilinear does
+/// not.
 const FilterQuality kSegmentFilterQuality = FilterQuality.low;
 
 /// Base padding (logical px) baked around a segment texture so AA stroke
@@ -154,9 +135,7 @@ typedef _BakeEnv = ({
 });
 
 /// One baked segment: an immutable vector render of samples [start, end)
-/// plus the mapping and config it was baked under. Never mutated and never
-/// re-blitted into another texture (so resampling loss cannot compound);
-/// replaced by a fresh vector render when stale.
+/// plus the mapping and config it was baked under.
 class GraphSegment {
   final ui.Image image;
 
@@ -215,16 +194,11 @@ class SegmentedGraphCache {
   /// vectors or left blank until a bake covers them.
   final List<GraphSegment> _segments = [];
 
-  /// Current bake config. Segments carry their own stamps: a destructiveKey
-  /// mismatch suppresses the blit (its pixels draw nothing until re-baked);
-  /// a remapKey/gh/dpr mismatch keeps blitting (best-effort ghost/shift) --
-  /// except past an extreme vertical stretch, where the blit smears and
-  /// [_isBlittable] suppresses it -- and marks the segment for the rolling
-  /// config sweep. gh and dpr are
-  /// deliberately NOT destructive: both are pure drift the blit affine
-  /// corrects for. [_generation] identifies the data stream itself; a change
-  /// clears everything (different data at the same absolute indices) -- the
-  /// only mass clear, and cheap since a fresh stream has little data.
+  /// Current bake config; segments carry their own stamps. A destructiveKey
+  /// mismatch suppresses the blit; a remapKey/gh/dpr mismatch keeps
+  /// blitting (ghost/shift) and is swept. gh/dpr are NOT destructive: the
+  /// blit affine corrects for both. [_generation] identifies the data
+  /// stream itself; a change clears everything.
   int _generation = -1;
   double _gh = -1;
   double _dpr = -1;
@@ -253,12 +227,10 @@ class SegmentedGraphCache {
   /// config change never costs more than one bake per call.
   ///
   /// [bakeableSamples] caps segment coverage: no bake ever ends past it.
-  /// Renderers pass the data edge minus the span their tail needs to be
-  /// final (the envelope layer's join block past a segment end: up to two
-  /// block sizes, see joinBlockEnd in graph_components.dart), so every baked
-  /// tile reduces only complete blocks -- see the live-edge invariant in the
-  /// file header. The trailing span past the horizon is never baked and
-  /// vector-draws every frame via [draw].
+  /// See the live-edge invariant in the file header; renderers pass the
+  /// data edge minus the span their tail needs to be final (the envelope
+  /// layer's join block past a segment end: up to two block sizes, see
+  /// joinBlockEnd in graph_components.dart).
   ///
   /// Returns true when a bake happened — rolling work may remain, so the
   /// owner should schedule another pass.
@@ -296,10 +268,9 @@ class SegmentedGraphCache {
     final int covStart = viewStart.floor();
     final int covEnd = viewEnd.ceil();
 
-    // Config bump: keep stale segments (they degrade per their key kind)
-    // but dispose any outside the view, so stale content -- e.g. a removed
-    // channel's ghost -- cannot resurrect on a later pan before the sweep
-    // reaches it. Disposed ranges simply vector-draw if panned back to.
+    // Config bump: dispose stale segments outside the view, so they cannot
+    // resurrect on a later pan before the sweep reaches them. Disposed
+    // ranges vector-draw if panned back to.
     if (!listEquals(destructiveKey, _destructiveKey) ||
         !listEquals(remapKey, _remapKey) ||
         (gh - _gh).abs() > 0.1 ||
@@ -330,7 +301,6 @@ class SegmentedGraphCache {
       render: render,
     );
 
-    // Evict segments far outside the view.
     final int margin = kSegmentEvictionMargin * targetSpan;
     _segments.removeWhere((s) {
       if (s.end >= covStart - margin && s.start <= covEnd + margin) {
@@ -351,9 +321,9 @@ class SegmentedGraphCache {
     return baked;
   }
 
-  /// Draw the window [viewStart, viewStart + viewSpan) mapped to x in
-  /// [0, gw): blit cached segments under their corrective affine transforms
-  /// and vector-draw the uncovered gaps.
+  /// Blit the cached segments for [viewStart, viewStart + viewSpan) mapped
+  /// to x in [0, gw), and vector-draw the uncovered gaps up to
+  /// [totalSamples].
   void draw(
     Canvas canvas, {
     required double gw,
@@ -382,15 +352,11 @@ class SegmentedGraphCache {
     );
   }
 
-  /// One [maintain] + [draw] pass for the window [viewStart, viewStart +
-  /// viewSpan) mapped to x in [0, gw). [totalSamples] is the data edge the
-  /// draw covers (see [draw]); [bakeableSamples] caps segment coverage (see
-  /// [maintain]).
+  /// One [maintain] + [draw] pass.
   ///
   /// Returns true when a bake happened this frame; the owner should then
-  /// schedule another frame so rolling bakes continue (one extra frame may
-  /// be scheduled after the final bake — static sources never fire repaint
-  /// on their own).
+  /// schedule another frame so rolling bakes continue (static sources never
+  /// fire repaint on their own).
   bool paint(
     Canvas canvas, {
     required int generation,
@@ -442,9 +408,7 @@ class SegmentedGraphCache {
 
   /// Uncovered sub-ranges of [viewStart, min(viewEnd, totalSamples)).
   /// Coverage is purely geometric: a segment counts as covered even when it
-  /// may not blit ([_isBlittable]), because unblittable content draws
-  /// NOTHING (see the raster budget in the file header) instead of
-  /// vector-redrawing its range.
+  /// may not blit (its pixels draw nothing — see the file header).
   List<(int, int)> _gaps(int viewStart, int viewEnd, int totalSamples) {
     final int domainEnd = math.min(viewEnd, totalSamples);
     final gaps = <(int, int)>[];
@@ -461,28 +425,20 @@ class SegmentedGraphCache {
   }
 
   /// Perform at most one segment (re)bake. Priority:
-  ///   1. the widest visible gap past [kSegmentGapBakePx] (live-edge sliver
-  ///      absorb, bootstrap fill, newly exposed pan/zoom territory);
-  ///   2. the rightmost visible segment baked under outdated config (the
-  ///      destructive/remap sweep: freshest data converges first, history
-  ///      backfills);
-  ///   3. the visible segment furthest past its drift/size thresholds
-  ///      (rolling refresh, merging undersized neighbors and splitting
-  ///      oversized ranges).
+  ///   1. the widest visible gap past [kSegmentGapBakePx];
+  ///   2. the rightmost visible segment baked under outdated config;
+  ///   3. the visible segment furthest past its drift/size thresholds.
   /// Returns whether a bake happened.
   bool _bakeOne(_BakeEnv env) =>
       _bakeWidestGap(env) ||
       _sweepConfigStaleSegment(env) ||
       _refreshStalestSegment(env);
 
-  /// Priority 1: bake the widest uncovered gap past the threshold (left
-  /// aligned, so a gap touching the data edge leaves the sub-threshold
-  /// sliver AT the edge -- the live-edge sliver the absorb below grows in
-  /// place). Right-to-left convergence after config bumps is the sweep's
-  /// job (priority 2), not this pass's. Left neighbors are absorbed while
-  /// the merged bake stays within one target width, so the live-edge
-  /// segment grows in place (one bake per sliver) instead of accumulating
-  /// sliver-wide strips.
+  /// Priority 1: bake the widest uncovered gap past the threshold, left
+  /// aligned so a gap touching the data edge leaves the sub-threshold
+  /// sliver at the edge. Left neighbors are absorbed while the merged bake
+  /// stays within one target width, so the live-edge segment grows in place
+  /// (one bake per sliver) instead of accumulating sliver-wide strips.
   bool _bakeWidestGap(_BakeEnv env) {
     (int, int)? bakeGap;
     double widestPx = kSegmentGapBakePx;
@@ -518,14 +474,10 @@ class SegmentedGraphCache {
   }
 
   /// Priority 2: refresh the RIGHTMOST visible segment whose bake config no
-  /// longer matches -- the smeared rebake after a config bump. Destructive
-  /// mismatches (unit, calibration, tares) are never blitted meanwhile
-  /// (their pixels draw nothing -- blank-then-refill); remap mismatches
-  /// (channels, gh, dpr) keep blitting as best-effort ghosts/shifts.
-  /// Right-to-left so the live edge converges first and history backfills.
+  /// longer matches (see the config taxonomy in the file header).
   ///
   /// A stale segment starting at or past the bake horizon is dropped, not
-  /// re-baked: its range falls to the per-frame vector draw (see
+  /// re-baked; its range falls to the per-frame vector draw (see
   /// [_refreshRange] for when the horizon can recede under an old segment).
   bool _sweepConfigStaleSegment(_BakeEnv env) {
     for (int i = _segments.length - 1; i >= 0; i--) {
@@ -548,9 +500,7 @@ class SegmentedGraphCache {
   /// line ([kBakedLinePx] at bake) within [kMaxBlitLineFraction] of the plot
   /// height. One-sided: shrinking only sharpens, but a large stretch -- e.g.
   /// the Y-range collapsing onto a quiet channel -- smears the tile's line
-  /// across the screen. Suppressed segments are kept (a range snap-back
-  /// makes them blittable again); the sweep/refresh passes re-bake them and
-  /// their pixels draw nothing meanwhile.
+  /// across the screen.
   bool _isBlittable(GraphSegment s, double yMin, double yMax, double gh) {
     if (!listEquals(s.destructiveKey, _destructiveKey)) return false;
     final double ys = (s.yMax - s.yMin) / (yMax - yMin) * (gh / s.gh);
@@ -566,8 +516,7 @@ class SegmentedGraphCache {
 
   /// Priority 3: refresh the visible segment furthest past its drift/size
   /// thresholds, merging undersized neighbors and splitting oversized ranges
-  /// (see [_refreshRange]). A stale segment starting at or past the bake
-  /// horizon is dropped instead (see [_sweepConfigStaleSegment]).
+  /// (see [_refreshRange]). Horizon handling as in [_sweepConfigStaleSegment].
   bool _refreshStalestSegment(_BakeEnv env) {
     // Score each visible segment; > 1.0 means past a threshold. Under
     // uniform squeeze all segments drift together, so picking the worst
@@ -609,11 +558,11 @@ class SegmentedGraphCache {
 
   /// The (re)bake range for refreshing segment [i], plus the inclusive last
   /// segment index it replaces: merge right neighbors while the result stays
-  /// under 1.5 targets (never merging across a gap); when still undersized,
-  /// extend into the oversized right neighbor (the overlap is clipped at
-  /// blit time in this segment's favor, and fully-covered neighbors are
-  /// replaced outright); when oversized, clamp to one target width (the
-  /// remainder becomes a gap that refills over the following frames).
+  /// under 1.5 targets (never across a gap); when still undersized, extend
+  /// into the oversized right neighbor (the overlap is clipped at blit time
+  /// in this segment's favor, and fully-covered neighbors are replaced
+  /// outright); when oversized, clamp to one target width (the remainder
+  /// becomes a gap that refills over the following frames).
   ///
   /// The end is clamped to the bake horizon, which can recede under an old
   /// segment ([SegmentedGraphCache.maintain] explains the horizon); a
@@ -624,17 +573,14 @@ class SegmentedGraphCache {
     final int newStart = s.start;
     int newEnd = s.end;
     int removeTo = i;
-    // Merge right neighbors while the result stays under 1.5 targets.
     while (removeTo + 1 < _segments.length) {
       final n = _segments[removeTo + 1];
-      if (n.start > newEnd) break; // never merge across a gap
+      if (n.start > newEnd) break;
       if ((n.end - newStart) * env.pps > 1.5 * kSegmentTargetPx) break;
       newEnd = math.max(newEnd, n.end);
       removeTo++;
     }
     if ((newEnd - newStart) * env.pps < kSegmentTargetPx / 2) {
-      // Still undersized (right neighbor too big to swallow whole): extend
-      // into it.
       newEnd = math.min(env.bakeable, newStart + env.targetSpan);
       while (removeTo + 1 < _segments.length &&
           _segments[removeTo + 1].end <= newEnd) {
@@ -642,15 +588,12 @@ class SegmentedGraphCache {
       }
     }
     if ((newEnd - newStart) * env.pps > 2 * kSegmentTargetPx) {
-      // Oversized: bake only the leading target-width range.
       newEnd = newStart + env.targetSpan;
     }
     newEnd = math.min(newEnd, env.bakeable);
     return (start: newStart, end: newEnd, removeTo: removeTo);
   }
 
-  /// Replace segments [from..to] (inclusive) with [seg], disposing the
-  /// replaced ones.
   void _splice(int from, int to, GraphSegment seg) {
     for (int k = from; k <= to; k++) {
       _segments[k].dispose();
@@ -660,7 +603,6 @@ class SegmentedGraphCache {
 
   /// Vector-render samples [start, end) into a fresh texture sized to the
   /// range's current on-screen width, so its blit starts at scale ~1.
-  /// Stamped with the cache's current config (see [GraphSegment]).
   GraphSegment _bake(int start, int end, _BakeEnv env) {
     final int texW = math.max(1, ((end - start) * env.pps).ceil());
     double contentW = texW.toDouble();
@@ -700,14 +642,6 @@ class SegmentedGraphCache {
   /// since the bake. Per-channel offsets (tares) are NOT corrected here:
   /// one tile composites every channel, so no single affine can hold
   /// per-channel shifts -- tares ride the destructive key instead.
-  ///
-  /// Unblittable segments ([_isBlittable]) are never blitted: a destructive
-  /// key mismatch is wrong in kind or place (a counts-shaped trace on a kg
-  /// axis, a pre-tare trace) and an extreme vertical stretch reads as a
-  /// screen-filling smear. Their pixels draw nothing until the sweep
-  /// re-bakes them -- blank, never vector-redrawn (see the raster budget in
-  /// the file header). Remap-stale segments (channels, gh, dpr) DO blit
-  /// -- outdated/shifted but approximately right -- until swept.
   void _blitSegments(
     Canvas canvas,
     double pps,
@@ -764,12 +698,7 @@ class SegmentedGraphCache {
     }
   }
 
-  /// Vector-render the uncovered visible ranges (live-edge sliver, freshly
-  /// exposed pan/zoom territory, bake backlog). Ranges covered by an
-  /// unblittable segment ([_isBlittable]) draw NOTHING: their pixels stay
-  /// blank until the sweep re-bakes them -- the deliberate
-  /// blank-then-refill that bounds per-frame raster work on config bumps
-  /// (see the file header).
+  /// Vector-render the uncovered visible ranges (see the file header).
   void _drawGaps(
     Canvas canvas,
     double pps,
@@ -807,12 +736,11 @@ class SegmentedGraphCache {
 // Bake pump (shared repaint driver for the rolling segment bake)
 // ---------------------------------------------------------------------------
 
-/// Extra repaint driver for the rolling segment bake: baking is rationed to
-/// [kSegmentBakeBudget] segments per frame, so when work remains a painter
-/// calls [schedule], which ticks [Listenable] listeners after the frame.
-/// Needed for static sources (loaded sessions) whose GraphDataSource repaint
-/// never fires; harmless for live ones. Owned and disposed by the host
-/// widget's State.
+/// Repaint driver for the rolling segment bake: baking is rationed to
+/// [kSegmentBakeBudget] per frame, so when work remains a painter calls
+/// [schedule], which ticks listeners after the frame. Needed for static
+/// sources (loaded sessions) whose GraphDataSource repaint never fires.
+/// Owned and disposed by the host widget's State.
 class BakePump implements Listenable {
   final ValueNotifier<int> _notifier = ValueNotifier<int>(0);
   bool _scheduled = false;
