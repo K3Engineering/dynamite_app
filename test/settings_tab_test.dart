@@ -22,12 +22,14 @@ import 'package:dynamite_app/services/rig_state.dart';
 
 import 'helpers/flash_docs.dart';
 
-/// Widget tests for the Settings tab's device gating: with no link up, the
-/// device-owned sections (load cell slots, board calibration) must not
-/// render — their values are read from the connected hardware, so without
-/// hardware they don't exist. The board-calibration row's connected state
-/// uses the demo link (brought up directly — [BleLinkManager.connectToDemoDevice]
-/// is synchronous); the remaining connected content is covered by its own
+/// Widget tests for the Settings tab's device gating. Device-owned sections
+/// (load cell slots, board calibration) render only for a streaming link —
+/// their values are read from the connected hardware, so without a ready
+/// device they don't exist. Idle shows the connect prompt; the states
+/// between (connecting, setting up, disconnecting) show a transition
+/// placeholder. The board-calibration row's connected state uses the demo
+/// link (brought up directly — [BleLinkManager.connectToDemoDevice] is
+/// synchronous); the remaining connected content is covered by its own
 /// widget tests.
 void main() {
   setUp(() {
@@ -119,6 +121,40 @@ void main() {
       const Offset(0, -300),
     );
     expect(find.text('No device connected'), findsOneWidget);
+  });
+
+  testWidgets('connecting: transition placeholder, not the device sections', (
+    tester,
+  ) async {
+    // A tall surface so the device section is on screen without scrolling.
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final link = await pump(tester);
+
+    // A GATT connect in flight: the link is `connecting`, its device-owned
+    // facts are not readable, so the settings UI must show the transition
+    // placeholder — not "No device connected" and not the device sections
+    // mounted against placeholder data (the misleading calibration-failure
+    // line and the "no slot data" card).
+    unawaited(link.connectToDevice('2'));
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(link.linkState, BtLinkState.connecting);
+    expect(find.text('Connecting…'), findsOneWidget);
+    expect(find.text('No device connected'), findsNothing);
+    expect(find.text('Board calibration'), findsNothing);
+    expect(find.text('Load cells'), findsNothing);
+    expect(find.text('Could not read calibration data'), findsNothing);
+    expect(find.byType(TextField), findsNothing);
+
+    // Teardown: cancel the in-flight attempt, then drain the mock's
+    // connect and command-queue timers.
+    unawaited(link.disconnectSelectedDevice());
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+    expect(link.linkState, BtLinkState.idle);
   });
 
   testWidgets('no board constants: only Raw is selectable', (tester) async {

@@ -18,9 +18,9 @@ const quickSensitivitiesMvV = <double>[1, 2, 3];
 /// Edits take effect in this app immediately; nothing reaches the device
 /// until "Save to device" (the flash doc is the rig's single truth —
 /// reads are automatic, writes are explicit). Both the document and
-/// unsaved edits die with the link, so a connected session is the only
-/// context this section ever renders: the parent mounts it only while a
-/// device is connected, and a mid-session drop clears the rig under it.
+/// unsaved edits die with the link, so a streaming session is the only
+/// context this section ever renders: the parent mounts it only while the
+/// link is streaming, and a mid-session drop clears the rig under it.
 class RigSlotsSection extends StatefulWidget {
   const RigSlotsSection({super.key, required this.rig});
 
@@ -76,26 +76,18 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
 
   Widget _buildContent(BuildContext context) {
     final rig = widget.rig;
+    // The parent mounts this section only for a streaming link, whose
+    // connect-time flash read always lands first (a failed read tears the
+    // link down instead) — a section without a document is a bug.
     if (!rig.hasDeviceDoc) {
-      return Card(
-        child: ListTile(
-          leading: Icon(
-            Icons.phonelink_erase,
-            color: Theme.of(context).colorScheme.outline,
-          ),
-          title: const Text('No slot data from the device'),
-          subtitle: const Text(
-            'Load cell slots are read from the device at connect time.',
-          ),
-        ),
-      );
+      throw StateError('RigSlotsSection mounted without a device document');
     }
     final slots = rig.effectiveSlots;
     final dirty = rig.hasPending;
 
     // Dirty implies connected: both the document and pending edits die
     // with the link (see RigState), and the parent unmounts this section
-    // once no device is connected.
+    // once the link stops streaming.
     final canSave = dirty && !_saving;
 
     return Column(

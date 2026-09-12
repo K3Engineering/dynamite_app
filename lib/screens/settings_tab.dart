@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 import '../models/app_meta.dart';
 import '../services/app_settings.dart';
 import '../models/board_calibration.dart';
+import '../models/bt_scan.dart';
 import '../models/device_info.dart';
 import '../models/device_name.dart';
 import '../models/display_unit.dart';
@@ -14,6 +15,7 @@ import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/firmware_update_service.dart';
 import '../services/rig_state.dart';
+import '../widgets/bt_icon.dart';
 import '../widgets/calibration_text.dart';
 import '../widgets/info_cards.dart';
 import '../widgets/middle_click_autoscroll.dart';
@@ -48,6 +50,12 @@ class _SettingsTabState extends State<SettingsTab> {
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
     final appMeta = context.read<AppMeta>();
+    // The link lifecycle drives which device section renders: idle is "no
+    // device", streaming is the fully-read device, and every state between
+    // (connecting, setting up, disconnecting) is a transition.
+    final linkState = context.select<BleLinkManager, BtLinkState>(
+      (l) => l.linkState,
+    );
     // Narrow selects: the link manager notifies on every RSSI poll; this
     // section only rebuilds on identity / connection-stat changes.
     final deviceId = context.select<BleLinkManager, String>(
@@ -69,8 +77,9 @@ class _SettingsTabState extends State<SettingsTab> {
     final maxPacketBytes = context.select<BleLinkManager, int?>(
       (l) => l.maxAdcPacketBytes,
     );
-    // The board-calibration row's one-line state; null until the
-    // connect-time read lands.
+    // The board-calibration row's one-line state. Non-null while the row is
+    // mounted: the flash document is delivered during post-connect setup,
+    // before the link reaches streaming.
     final boardCal = context.select<RigState, BoardCalibration?>(
       (r) => r.boardCalibration,
     );
@@ -147,7 +156,7 @@ class _SettingsTabState extends State<SettingsTab> {
               const SectionHeader('Device settings'),
               const SizedBox(height: 16),
 
-              if (deviceId.isEmpty)
+              if (linkState == BtLinkState.idle)
                 Card(
                   child: ListTile(
                     leading: Icon(
@@ -161,6 +170,24 @@ class _SettingsTabState extends State<SettingsTab> {
                     trailing: FilledButton.tonal(
                       onPressed: widget.onGoToDevices,
                       child: const Text('Connect'),
+                    ),
+                  ),
+                )
+              else if (linkState != BtLinkState.streaming)
+                // A link is coming up or going down: its device-owned facts
+                // (identity, name, flash document) are not readable yet, so
+                // the settings UI must not mount against placeholders. The
+                // stage wording is btLinkStateLabel's, shared with the Live
+                // and Devices tabs.
+                Card(
+                  child: ListTile(
+                    leading: Icon(
+                      Icons.bluetooth_searching,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
+                    title: Text(btLinkStateLabel(linkState)!),
+                    subtitle: const Text(
+                      'Device settings appear when the device is ready',
                     ),
                   ),
                 )
