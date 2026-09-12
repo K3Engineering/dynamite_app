@@ -30,10 +30,7 @@ void main() {
       rig.onFlashRead(
         'dev1',
         'Bench unit',
-        flashFromDoc(
-          demoBoardCalibrationDoc,
-          pgaGains: const [1, 1, 1, 1],
-        ),
+        flashFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1]),
       );
     }
     await tester.pumpWidget(
@@ -50,9 +47,9 @@ void main() {
   Finder inDialog(Finder matching) =>
       find.descendant(of: find.byType(AlertDialog), matching: matching);
 
-  testWidgets('no flash doc: placeholder card', (tester) async {
+  testWidgets('no flash doc: mounting the section is a bug', (tester) async {
     await pump(tester, withFlash: false);
-    expect(find.text('No slot data from the device'), findsOneWidget);
+    expect(tester.takeException(), isA<StateError>());
   });
 
   testWidgets('rows render the device slots with channel tags', (tester) async {
