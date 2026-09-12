@@ -94,15 +94,7 @@ class _BoardCard extends StatelessWidget {
       status = 'Calibrated ${parts.join(' ')}'.trimRight();
     }
 
-    final provenance = [
-      ?group?.boardId,
-      ?group?.tool,
-      ?group?.origin,
-      if (group?.tempsC case final t?)
-        '${t.dut}/${t.calBoard} °C (DUT/cal board)',
-    ];
-
-    final nominals = board.nominals;
+    final provenance = calProvenanceParts(group);
 
     return Card(
       child: Padding(
@@ -141,11 +133,7 @@ class _BoardCard extends StatelessWidget {
             ],
             const Divider(height: 24),
             Text(
-              'Chain: FSR ${nominals.adcFsrV} V'
-              ' · AFE ${nominals.afeGain}×'
-              ' · PGA ${nominals.pgaGains.map((g) => '$g×').join('/')}'
-              ' · EXC ${nominals.excitationV} V'
-              '${nominals.provenance.isEmpty ? '' : ' (${nominals.provenance.values.toSet().join(', ')})'}',
+              calChainLine(board.nominals),
               style: theme.textTheme.bodySmall,
             ),
             const SizedBox(height: 8),
@@ -179,10 +167,7 @@ class _ChannelCalCard extends StatelessWidget {
             Text('CH ${index + 1}', style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
             Text(switch (channel) {
-              final CalibratedChannelBoard c =>
-                'zero offset ${fmtUvV(c.zeroOffsetUvV)} · '
-                    'gain ${fmtGain(c.sensitivityVsNominal)} · '
-                    'end-point linearity ±${c.maxDeviationUvV.toStringAsFixed(3)} µV/V',
+              final CalibratedChannelBoard c => channelSummaryLine(c),
               _ => 'Nominal values (no calibration)',
             }, style: theme.textTheme.bodySmall),
             if (channel case final CalibratedChannelBoard c) ...[
@@ -227,8 +212,9 @@ class _ChannelCalCard extends StatelessWidget {
 
   /// The per-config measured-error and nonlinearity table.
   Table _table(BuildContext context, CalibratedChannelBoard cal) {
-    final errors = cal.measuredErrorsUvV;
-    final nonlinearities = cal.deviationsUvV;
+    final pointRows = [
+      for (int k = 0; k < kCalPointCount; k++) calPointRow(cal, k),
+    ];
     return Table(
       columnWidths: const {
         0: FlexColumnWidth(),
@@ -256,14 +242,14 @@ class _ChannelCalCard extends StatelessWidget {
             _unit(context, 'µV/V'),
           ],
         ),
-        for (int k = 0; k < kCalPointCount; k++)
+        for (final p in pointRows)
           TableRow(
             children: [
-              _td(calConfigLabels[k]),
-              _td(cal.setpoints[k].toStringAsFixed(4)),
-              _td(cal.readings[k].toStringAsFixed(1)),
-              _td(fmtSignedUvV(errors[k])),
-              _td(fmtSignedUvV(nonlinearities[k])),
+              _td(p.label),
+              _td(p.setpoint),
+              _td(p.reading),
+              _td(p.error),
+              _td(p.nonlinearity),
             ],
           ),
       ],
