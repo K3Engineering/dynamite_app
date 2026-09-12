@@ -64,25 +64,47 @@ void main() {
   group('response parsing', () {
     test('a successful GET carries the value as payload', () {
       final r = parseKvsResponse('GETFch0.raw', frame('1GETFch0.raw=1,2,3'))!;
-      expect(r.ok, isTrue);
+      expect(r.status, KvsStatus.ok);
       expect(r.payload, '1,2,3');
     });
 
     test('a successful SET carries an empty payload', () {
       final r = parseKvsResponse('SETFk=v', frame('1SETFk=v='))!;
-      expect(r.ok, isTrue);
+      expect(r.status, KvsStatus.ok);
       expect(r.payload, isEmpty);
     });
 
-    test('a failed command is status 0 with no payload', () {
+    test('a rejected command is status 0 with no payload', () {
       final r = parseKvsResponse('GETFmissing', frame('0GETFmissing'))!;
-      expect(r.ok, isFalse);
+      expect(r.status, KvsStatus.rejected);
       expect(r.payload, isEmpty);
+    });
+
+    test('busy and error answers parse with no payload', () {
+      // 'B': the firmware device lock while the ADC feed streams.
+      final busy = parseKvsResponse('SETFa=b', frame('BSETFa=b'))!;
+      expect(busy.status, KvsStatus.busy);
+      expect(busy.payload, isEmpty);
+      // 'E': a storage-layer failure on the device.
+      final error = parseKvsResponse('IDXFa', frame('EIDXFa'))!;
+      expect(error.status, KvsStatus.error);
+      expect(error.payload, isEmpty);
+    });
+
+    test('busy and error answers throw; ok and rejected settle', () {
+      final busy = parseKvsResponse('SETFa=b', frame('BSETFa=b'))!;
+      expect(busy.throwIfBusyOrError, throwsA(isA<KvsBusyException>()));
+      final error = parseKvsResponse('GETFa', frame('EGETFa'))!;
+      expect(error.throwIfBusyOrError, throwsA(isA<KvsDeviceException>()));
+      final ok = parseKvsResponse('GETFa', frame('1GETFa=v'))!;
+      expect(ok.throwIfBusyOrError, returnsNormally);
+      final rejected = parseKvsResponse('GETFa', frame('0GETFa'))!;
+      expect(rejected.throwIfBusyOrError, returnsNormally);
     });
 
     test('payloads may contain = (values, IDX entries)', () {
       final r = parseKvsResponse('IDXF0', frame('1IDXF0=ch0.raw=21'))!;
-      expect(r.ok, isTrue);
+      expect(r.status, KvsStatus.ok);
       expect(r.payload, 'ch0.raw=21');
     });
 
@@ -91,7 +113,7 @@ void main() {
         'SETUlc0.cap=200',
         frame('1SETUlc0.cap=200='),
       )!;
-      expect(r.ok, isTrue);
+      expect(r.status, KvsStatus.ok);
       expect(r.payload, isEmpty);
     });
 
@@ -106,6 +128,9 @@ void main() {
         // The prefix trap that killed live commands before: a longer request's
         // late success frame while its strict prefix is pending.
         expect(parseKvsResponse('GETFabc', frame('1GETFabcX=9')), isNull);
+        // Busy and error answers to other commands are stale too.
+        expect(parseKvsResponse('GETFaa', frame('BGETFbb')), isNull);
+        expect(parseKvsResponse('GETFaa', frame('EGETFbb')), isNull);
       },
     );
 
@@ -119,7 +144,7 @@ void main() {
         () => parseKvsResponse('GETFa', frame('1GETFa')),
         throwsFormatException,
       );
-      // A status byte that is neither '0' nor '1'.
+      // An unknown status byte.
       expect(
         () => parseKvsResponse('GETFa', frame('2GETFa=x')),
         throwsFormatException,
@@ -127,6 +152,15 @@ void main() {
       // Success frame with no separator anywhere.
       expect(
         () => parseKvsResponse('GETFaa', frame('1GETF')),
+        throwsFormatException,
+      );
+      // Non-success statuses never carry a payload.
+      expect(
+        () => parseKvsResponse('GETFaa', frame('BGETFbb=x')),
+        throwsFormatException,
+      );
+      expect(
+        () => parseKvsResponse('GETFaa', frame('EGETFbb=x')),
         throwsFormatException,
       );
     });

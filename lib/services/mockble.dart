@@ -71,9 +71,14 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// connect-time flash read then fails the connection).
   bool failKvsCommands = false;
 
-  /// When true, KVS commands are silently dropped (no response) while the
-  /// ADC feed subscription is active — the firmware device lock.
+  /// When true, KVS commands are answered 'B' (busy) while the ADC feed
+  /// subscription is active — the firmware device lock.
   bool kvsLockWhenStreaming = false;
+
+  /// When true, KVS commands get no answer at all (a dead link — the
+  /// client's command timeout then means what it means on real hardware:
+  /// the link is broken).
+  bool kvsDropCommands = false;
 
   /// When true, ENABLING the ADC feed subscription throws. Tests set this
   /// once the link is streaming so a feed-pause envelope's resubscribe
@@ -179,6 +184,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     badAdcConfig = false;
     failKvsCommands = false;
     kvsLockWhenStreaming = false;
+    kvsDropCommands = false;
     failFeedSubscribe = false;
     kvsCommandDelay = Duration.zero;
     failConnect = false;
@@ -470,13 +476,16 @@ class MockBlePlatform extends UniversalBlePlatform {
       if (kvsCommandDelay > Duration.zero) {
         await Future<void>.delayed(kvsCommandDelay);
       }
-      // The firmware device lock: while the ADC feed subscription holds the
-      // device, KVS commands are dropped WITHOUT a response.
-      if (kvsLockWhenStreaming && _adcFeedSubscribed) return;
+      // A dead link: the command goes unanswered.
+      if (kvsDropCommands) return;
       final request = utf8.decode(value, allowMalformed: true);
       kvsCommandLog.add(request);
       gattOpLog.add('kvs:$request');
-      final response = _executeKvsCommand(request);
+      // The firmware device lock: while the ADC feed subscription holds the
+      // device, KVS commands are answered busy — nothing is dropped silently.
+      final response = (kvsLockWhenStreaming && _adcFeedSubscribed)
+          ? 'B$request'
+          : _executeKvsCommand(request);
       // Firmware answers within the write handling: the response
       // notification is already there when the write completes.
       updateCharacteristicValue(
