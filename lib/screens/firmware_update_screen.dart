@@ -162,7 +162,12 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       child: Scaffold(
         appBar: AppBar(
           // A blocked pop that looks tappable reads as a dead button.
-          leading: _busy ? const BackButton(onPressed: null) : null,
+          // BackButton(onPressed: null) is not disabled — null means "use
+          // Navigator.maybePop", so the disabled state needs a plain
+          // IconButton.
+          leading: _busy
+              ? const IconButton(icon: BackButtonIcon(), onPressed: null)
+              : null,
           title: const Text('Firmware update'),
         ),
         body: SafeArea(
