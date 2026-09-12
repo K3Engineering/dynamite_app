@@ -250,7 +250,7 @@ class _TareSheetState extends State<_TareSheet> {
           const SizedBox(width: 12),
           SizedBox(
             width: 48,
-            child: IconButton.filledTonal(
+            child: IconButton.filled(
               tooltip: 'Tare this channel',
               onPressed: hub.taring ? null : () => hub.requestTare(channel: ch),
               icon: const Icon(Icons.exposure_zero, size: 20),
@@ -337,7 +337,7 @@ class _TareSheetState extends State<_TareSheet> {
               style: Theme.of(context).textTheme.labelSmall,
             ),
           ),
-        FilledButton.tonal(
+        FilledButton(
           onPressed: taring ? null : hub.requestTare,
           child: const Text('Tare all'),
         ),

@@ -167,7 +167,7 @@ class _SettingsTabState extends State<SettingsTab> {
                     subtitle: const Text(
                       'Connect to a device to manage its settings',
                     ),
-                    trailing: FilledButton.tonal(
+                    trailing: FilledButton(
                       onPressed: widget.onGoToDevices,
                       child: const Text('Connect'),
                     ),

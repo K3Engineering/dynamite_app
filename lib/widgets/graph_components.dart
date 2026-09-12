@@ -768,7 +768,7 @@ class _LiveButton extends StatelessWidget {
         return Positioned(
           right: 64,
           top: 8,
-          child: FilledButton.tonalIcon(
+          child: FilledButton.icon(
             onPressed: () => ctrl.goLive(
               totalSamples: data.totalSamples,
               oldestSample: data.oldestSample,

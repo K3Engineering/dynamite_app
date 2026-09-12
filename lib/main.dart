@@ -230,14 +230,15 @@ class DynoApp extends StatelessWidget {
       secondary: Color(0xFF455A64),
       // icon color of selected tab
       onSecondary: Colors.white,
-      // Tracks and selection fills that sit UNDER primary-colored content
-      // (progress-bar track, nav selection pill). Must stay distinct from
-      // primary — with the M2-era constructors an undeclared
-      // secondaryContainer collapses to secondary (= primary here), which
-      // left the determinate progress bar painting its fill over an
-      // identical full-width track: a permanently "full" bar.
-      secondaryContainer: Color(0xFFCFD8DC), // blueGrey 100
-      onSecondaryContainer: Color(0xFF455A64),
+      // This design has no separate tonal container: M3 widgets themed off
+      // this role (nav selection pills, selected chips/segments) keep the
+      // primary-family look. Declared explicitly (= secondary) rather than
+      // left to the light() constructor's identical fallback. Quiet tracks
+      // (progress bars) take their own color at the widget: a distinct
+      // secondaryContainer here breaks the determinate bar the other way —
+      // track identical to the fill, a permanently "full" bar.
+      secondaryContainer: Color(0xFF455A64),
+      onSecondaryContainer: Colors.white,
       tertiary: Color.fromARGB(255, 211, 47, 47),
       onTertiary: Colors.white,
       surface: Colors.white,
@@ -270,10 +271,9 @@ class DynoApp extends StatelessWidget {
       onPrimaryContainer: Colors.white,
       secondary: Color.fromARGB(255, 137, 178, 197),
       onSecondary: Colors.black,
-      // Same declaration as light; see the comment there. Dark slate track
-      // against the lighter-blue progress fill.
-      secondaryContainer: Color(0xFF37474F), // blueGrey 800
-      onSecondaryContainer: Color(0xFFCFD8DC), // blueGrey 100
+      // Same declaration as light (= secondary); see the comment there.
+      secondaryContainer: Color.fromARGB(255, 137, 178, 197),
+      onSecondaryContainer: Colors.black,
       tertiary: Color(0xFFEF5350),
       onTertiary: Colors.white,
       surface: Color(0xFF1E1E1E),

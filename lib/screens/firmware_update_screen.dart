@@ -266,8 +266,12 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         textAlign: TextAlign.center,
       ),
       const SizedBox(height: 24),
+      // explicit track: the scheme's secondaryContainer declares no
+      // separate tonal container (see main.dart), and the M3 default track
+      // reads that role — identical to the fill here.
       LinearProgressIndicator(
         value: _stage == _Stage.flashing ? _progress : null,
+        backgroundColor: theme.colorScheme.surfaceContainerHighest,
       ),
       const SizedBox(height: 12),
       Text(step, style: theme.textTheme.bodySmall, textAlign: TextAlign.center),

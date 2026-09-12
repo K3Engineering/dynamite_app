@@ -714,7 +714,7 @@ class DisconnectedPrompt extends StatelessWidget {
     return EmptyPlaceholder(
       icon: Icons.bluetooth,
       title: 'No device connected',
-      action: FilledButton.tonal(
+      action: FilledButton(
         onPressed: onConnect,
         child: const Text('Connect a device'),
       ),
