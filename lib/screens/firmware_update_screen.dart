@@ -25,7 +25,12 @@ enum _Stage { overview, downloading, flashing, done, failed }
 /// took is confirmed by the next check's [FirmwareFlashVerified] verdict,
 /// and one that didn't re-flags the update banner.
 class FirmwareUpdateScreen extends StatefulWidget {
-  const FirmwareUpdateScreen({super.key});
+  const FirmwareUpdateScreen({super.key, required this.onDone});
+
+  /// Where "Done" goes once the screen pops: the app shell's Devices-tab
+  /// jump. The device reboots into the flashed image, so the user re-finds
+  /// it in the device list.
+  final VoidCallback onDone;
 
   @override
   State<FirmwareUpdateScreen> createState() => _FirmwareUpdateScreenState();
@@ -221,7 +226,10 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         ),
         const SizedBox(height: 24),
         FilledButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: () {
+            Navigator.of(context).pop();
+            widget.onDone();
+          },
           child: const Text('Done'),
         ),
       ];
@@ -258,8 +266,12 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         textAlign: TextAlign.center,
       ),
       const SizedBox(height: 24),
+      // explicit track: the scheme's secondaryContainer declares no
+      // separate tonal container (see main.dart), and the M3 default track
+      // reads that role — identical to the fill here.
       LinearProgressIndicator(
         value: _stage == _Stage.flashing ? _progress : null,
+        backgroundColor: theme.colorScheme.surfaceContainerHighest,
       ),
       const SizedBox(height: 12),
       Text(step, style: theme.textTheme.bodySmall, textAlign: TextAlign.center),

@@ -167,7 +167,7 @@ class _SettingsTabState extends State<SettingsTab> {
                     subtitle: const Text(
                       'Connect to a device to manage its settings',
                     ),
-                    trailing: FilledButton.tonal(
+                    trailing: FilledButton(
                       onPressed: widget.onGoToDevices,
                       child: const Text('Connect'),
                     ),
@@ -259,7 +259,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
                 // OTA entry point: the check itself lives with the service
                 // (auto-checked once per link); the card just summarizes.
-                const _FirmwareCard(),
+                _FirmwareCard(onGoToDevices: widget.onGoToDevices),
                 const SizedBox(height: 16),
               ],
               const SizedBox(height: 8),
@@ -298,7 +298,11 @@ class _SettingsTabState extends State<SettingsTab> {
 /// The OTA firmware card: a one-line status, pushing the update screen that
 /// shows the actual versions.
 class _FirmwareCard extends StatelessWidget {
-  const _FirmwareCard();
+  const _FirmwareCard({required this.onGoToDevices});
+
+  /// Passed through to the update screen's "Done": after a successful flash
+  /// the device reboots, so the user lands on the device list.
+  final VoidCallback onGoToDevices;
 
   @override
   Widget build(BuildContext context) {
@@ -322,7 +326,9 @@ class _FirmwareCard extends StatelessWidget {
         subtitle: Text(subtitle),
         trailing: const Icon(Icons.chevron_right),
         onTap: () => Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(builder: (_) => const FirmwareUpdateScreen()),
+          MaterialPageRoute<void>(
+            builder: (_) => FirmwareUpdateScreen(onDone: onGoToDevices),
+          ),
         ),
       ),
     );

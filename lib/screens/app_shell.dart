@@ -114,7 +114,9 @@ class AppShellState extends State<AppShell> {
   /// screen, not the Settings tab holding its entry card.
   void _openFirmwareUpdate() {
     Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(builder: (_) => const FirmwareUpdateScreen()),
+      MaterialPageRoute<void>(
+        builder: (_) => FirmwareUpdateScreen(onDone: goToDevices),
+      ),
     );
   }
 

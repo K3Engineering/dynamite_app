@@ -142,7 +142,7 @@ class DevicesTab extends StatelessWidget {
                   const SizedBox(width: 12),
                   SizedBox(
                     width: deviceActionButtonWidth,
-                    child: FilledButton.tonal(
+                    child: FilledButton(
                       // TODO(ux): see BleLinkManager._startScan — starting a scan
                       // while streaming kills the active link (and any in-progress
                       // recording). Decide disable-vs-confirm.
