@@ -7,6 +7,7 @@ import 'app_events.dart';
 import 'adc_protocol.dart';
 import 'bt_device_config.dart';
 import '../models/bt_scan.dart';
+import 'ota_client.dart';
 import 'link_backend.dart';
 import 'link_transport.dart';
 import '../models/device_flash.dart';
@@ -647,6 +648,10 @@ class BleLinkManager extends ChangeNotifier {
   /// hub. Reassigned to a no-op on hot restart.
   void Function(int sampleRateHz) _onSampleRate;
 
+  /// True while the active link is the simulated demo device, which has no
+  /// OTA service. The update UI gates flash actions off this.
+  bool get linkIsSimulated => isSimulated && isLinkUp;
+
   /// One-shot user notices ([BleDisconnectTimeout], [BleConnectionFailed])
   /// go here; the shell shows them regardless of which tab is mounted.
   final AppEvents _events;
@@ -664,6 +669,19 @@ class BleLinkManager extends ChangeNotifier {
   /// failed envelope never wedges the ones queued behind it (an op queued
   /// behind a torn-down link fails loudly on the aborted KVS client).
   Future<void> _feedMaintenance = Future.value();
+
+  /// Run [body] as an OTA flash session against the live link. The GATT
+  /// plumbing (control subscription, wired [OtaClient], feed pause, teardown)
+  /// lives on the transport ([LinkTransport.runOta]); this forwards so callers
+  /// stay link-shaped. Idle — no link — throws here; a transport without OTA
+  /// (the demo) throws there.
+  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) {
+    final transport = _link.transport;
+    if (transport == null) {
+      throw StateError('OTA requires a connected device');
+    }
+    return transport.runOta(body);
+  }
 
   /// Run [body] with the ADC feed subscription paused: firmware rejects KVS
   /// commands while the feed's subscription holds the device lock, so doc
@@ -913,9 +931,12 @@ class BleLinkManager extends ChangeNotifier {
         scanFilter: ScanFilter(withServices: [btServiceId]),
         platformConfig: PlatformConfig(
           // Web Bluetooth gates GATT access per service: the sampler service
-          // comes from the picker filter, and the Device Information service
-          // (0x180A, read during post-connect setup) must be declared here.
-          web: WebOptions(optionalServices: [btServiceId, btSvcDeviceInfo]),
+          // comes from the picker filter; anything else discovered or
+          // touched over GATT must be declared here (Device Information,
+          // read during post-connect setup; OTA, touched by runOta).
+          web: WebOptions(
+            optionalServices: [btServiceId, btSvcDeviceInfo, otaServiceId],
+          ),
         ),
       );
     } catch (e) {
@@ -1483,13 +1504,13 @@ class BleLinkManager extends ChangeNotifier {
     Uint8List data,
     int? timestamp,
   ) {
-    // The ADC feed and the KVS channel of the active link are the only
-    // subscriptions; drop anything else (a stale notification from a
-    // torn-down link, or a third characteristic subscribed in the future) so
-    // foreign bytes are never parsed. universal_ble normalizes
-    // characteristicId to lowercase before invoking this callback, and both
-    // ids are already lowercase, so an exact match is safe.
-    // Multi-device: route by deviceId instead of dropping.
+    // Three characteristics can carry notifications on a link: the ADC feed
+    // (while streaming), the KVS channel (for KVS frames), and — only during
+    // a flash session — the OTA control characteristic. Drop anything else
+    // (a stale notification from a torn-down link) so foreign bytes are never
+    // parsed. universal_ble normalizes characteristicId to lowercase before
+    // invoking this callback, and all ids are already lowercase, so an exact
+    // match is safe. Multi-device: route by deviceId instead of dropping.
     if (deviceId != _link.deviceId) {
       logTrace(
         () =>
@@ -1500,11 +1521,14 @@ class BleLinkManager extends ChangeNotifier {
       return;
     }
     // Feed packets go straight to the protocol layer, KVS frames to the KVS
-    // client; the link manager never interprets bytes itself.
+    // client, OTA control frames to the live flash session; the link manager
+    // never interprets bytes itself.
     if (characteristicId == btChrAdcFeedId) {
       _deliverAdcData(data);
     } else if (characteristicId == btChrKvs) {
       _link.backend?.handleKvsFrame(data);
+    } else if (characteristicId == btChrOtaControl) {
+      _link.transport?.handleOtaFrame(data);
     } else {
       logTrace(
         () =>
