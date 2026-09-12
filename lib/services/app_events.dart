@@ -65,6 +65,17 @@ class FirmwareUpdateAvailable extends AppEvent {
   final String deviceName;
 }
 
+/// A flashed release's tag was confirmed on the device after its post-flash
+/// reboot (see [FirmwareUpdateService.noteFlashAccepted]). The mismatch
+/// direction needs no event of its own: that connect's release check
+/// re-raises [FirmwareUpdateAvailable].
+class FirmwareFlashVerified extends AppEvent {
+  const FirmwareFlashVerified(this.describe);
+
+  /// The firmware git-describe the device now reports.
+  final String describe;
+}
+
 /// Fire-and-forget event bus for [AppEvent]s.
 ///
 /// App-lifetime singleton created in `main()` (never disposed) and handed to

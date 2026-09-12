@@ -89,6 +89,10 @@ class AppShellState extends State<AppShell> {
             ),
           ),
         );
+      case FirmwareFlashVerified(:final describe):
+        messenger.showSnackBar(
+          SnackBar(content: Text('Update applied — now running $describe.')),
+        );
     }
   }
 

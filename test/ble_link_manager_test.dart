@@ -15,6 +15,7 @@ import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
 import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/services/mockble.dart';
+import 'package:dynamite_app/services/ota_client.dart';
 
 /// Tests for the [BleLinkManager] state machine against [MockBlePlatform],
 /// driven deterministically with [fakeAsync] (same harness as
@@ -1010,6 +1011,69 @@ void main() {
       expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
       // The link is connectable again immediately (native: no reconnect embargo).
       expect(link.linkBusy, isFalse);
+    });
+  });
+
+  test('a completed flash ends the link: no feed resume, no lost notice', () {
+    fakeAsync((async) {
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      MockBlePlatform.instance.gattOpLog.clear();
+      Object? error;
+      // 600 B: two full 244-byte chunks plus a 112-byte tail.
+      unawaited(
+        link
+            .runOta((client) => client.flash(image: Uint8List(600)))
+            .then((_) {}, onError: (Object e) => error = e),
+      );
+      async.elapse(const Duration(seconds: 4));
+
+      expect(error, isNull);
+      expect(MockBlePlatform.instance.otaDataBytes, 600);
+      // An accepted image reboots the device, so the session ends the link
+      // on its own initiative rather than resuming the feed into the dying
+      // radio: the pause unwound without a resubscribe, the platform side
+      // was released, and no connection-lost notice fired.
+      expect(link.linkState, BtLinkState.idle);
+      expect(MockBlePlatform.instance.gattOpLog, ['adc:unsub']);
+      expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
+      expect(seen, isEmpty);
+      expect(link.linkBusy, isFalse);
+    });
+  });
+
+  test('a refused flash keeps the link and resumes the feed', () {
+    fakeAsync((async) {
+      MockBlePlatform.instance.refuseOtaStart = true;
+      final (link, seen) = wire();
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(link.isStreaming, isTrue);
+
+      MockBlePlatform.instance.gattOpLog.clear();
+      Object? error;
+      unawaited(
+        link
+            .runOta((client) => client.flash(image: Uint8List(600)))
+            .then((_) {}, onError: (Object e) => error = e),
+      );
+      async.elapse(const Duration(seconds: 4));
+
+      // Nothing rebooted, so the flash error surfaces and the session's
+      // feed pause resumes as usual — the link stays up.
+      expect(error, isA<OtaFlashException>());
+      expect('$error', contains('declined to start'));
+      expect(MockBlePlatform.instance.otaDataBytes, 0);
+      expect(MockBlePlatform.instance.gattOpLog, ['adc:unsub', 'adc:sub']);
+      expect(link.isStreaming, isTrue);
+      expect(seen, isEmpty);
+
+      teardownLink(async, link);
     });
   });
 

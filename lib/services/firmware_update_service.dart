@@ -38,10 +38,11 @@ class FirmwareCheck {
 }
 
 /// Owns everything about release checks: the user's channel (persisted),
-/// the last check result, and the once-per-connect background check that
-/// raises the [FirmwareUpdateAvailable] banner. The flash orchestration
-/// itself belongs to the update screen; this service only answers "what
-/// should the device be running?".
+/// the last check result, the once-per-connect background check that raises
+/// the [FirmwareUpdateAvailable] banner, and the post-flash verdict (see
+/// [noteFlashAccepted]). The flash orchestration itself belongs to the
+/// update screen; this service only answers "what should the device be
+/// running?".
 ///
 /// Wiring matches the other reactive services: [link] is listened to from
 /// the constructor — construction is the wiring.
@@ -91,6 +92,22 @@ class FirmwareUpdateService extends ChangeNotifier {
   /// difference doesn't stack a second snackbar.
   String? _announcedTarget;
 
+  /// The release tag a just-completed flash claims to have installed, held
+  /// until the next successful check proves or disproves it (see
+  /// [noteFlashAccepted]).
+  String? _pendingFlashTag;
+
+  /// Record that the connected device accepted a flash of [tag] — set by
+  /// the update screen when its flash returns; the device reboots on its
+  /// own, so the verdict rides the next check (typically the auto-check on
+  /// the user's reconnect) instead of any screen staying open. The next
+  /// successful check emits [FirmwareFlashVerified] on a match and consumes
+  /// the pend either way: a mismatch is covered by the update-available
+  /// banner. A from-file flash records nothing — no identity to compare.
+  void noteFlashAccepted(String tag) {
+    _pendingFlashTag = tag;
+  }
+
   Future<void> setChannel(FirmwareChannel channel) async {
     if (channel == _channel) return;
     _channel = channel;
@@ -131,6 +148,12 @@ class FirmwareUpdateService extends ChangeNotifier {
         target: target,
         when: DateTime.now(),
       );
+      final pending = _pendingFlashTag;
+      _pendingFlashTag = null;
+      if (pending != null &&
+          describeMatchesTag(check!.installedDescribe, pending)) {
+        _events.emit(FirmwareFlashVerified(check!.installedDescribe));
+      }
       if (check!.differsFromDevice) {
         final tag = target!.tag;
         if (tag != _announcedTarget) {
