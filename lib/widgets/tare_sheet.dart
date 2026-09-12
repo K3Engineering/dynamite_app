@@ -304,15 +304,21 @@ class _TareSheetState extends State<_TareSheet> {
       );
     }
     final offset = hub.tareOffset(ch, unit);
-    return GestureDetector(
-      key: Key('tare-offset-$ch'),
-      behavior: HitTestBehavior.opaque,
-      onTap: () => _startEdit(ch, unit),
-      child: Text(
-        offset == null ? '—' : unit.formatValueOnly(offset),
-        textAlign: TextAlign.end,
-        style: valueStyle?.copyWith(
-          color: hub.taring ? Theme.of(context).colorScheme.outline : null,
+    return Semantics(
+      button: true,
+      enabled: !hub.taring,
+      label: 'Channel ${ch + 1} tare offset',
+      hint: 'Double-tap to edit',
+      child: GestureDetector(
+        key: Key('tare-offset-$ch'),
+        behavior: HitTestBehavior.opaque,
+        onTap: () => _startEdit(ch, unit),
+        child: Text(
+          offset == null ? '—' : unit.formatValueOnly(offset),
+          textAlign: TextAlign.end,
+          style: valueStyle?.copyWith(
+            color: hub.taring ? Theme.of(context).colorScheme.outline : null,
+          ),
         ),
       ),
     );

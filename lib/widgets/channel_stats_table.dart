@@ -141,6 +141,8 @@ class ChannelStatsTable extends StatelessWidget {
                           ),
                           Flexible(
                             child: _TappableChannelCell(
+                              channel: i,
+                              active: activeChannels[i],
                               onTap: () => onToggleChannel(i),
                               child: Text(
                                 labels[i],
@@ -169,6 +171,8 @@ class ChannelStatsTable extends StatelessWidget {
                   const SizedBox.shrink(),
                   for (int i = 0; i < channelCount; i++)
                     _TappableChannelCell(
+                      channel: i,
+                      active: activeChannels[i],
                       onTap: () => onToggleChannel(i),
                       child: Padding(
                         padding: const EdgeInsets.only(
@@ -195,6 +199,7 @@ class ChannelStatsTable extends StatelessWidget {
                     Text(row.label, style: headerStyle),
                     for (int i = 0; i < channelCount; i++)
                       _TableCellValue(
+                        channel: i,
                         value: row.values[i],
                         unit: unit,
                         isActive: activeChannels[i],
@@ -284,10 +289,20 @@ class _ClipStatusIconState extends State<_ClipStatusIcon> {
 }
 
 /// Shared tap-target wrapper for every channel cell (label, color bar, stat
-/// value): pointer cursor + opaque hit testing + the toggle callback.
+/// value): pointer cursor + opaque hit testing + the toggle callback. The
+/// button role, toggle state and channel name make the toggle reachable and
+/// intelligible to a screen reader; the child text merges into the label so
+/// live values stay spoken.
 class _TappableChannelCell extends StatelessWidget {
-  const _TappableChannelCell({required this.onTap, required this.child});
+  const _TappableChannelCell({
+    required this.channel,
+    required this.active,
+    required this.onTap,
+    required this.child,
+  });
 
+  final int channel;
+  final bool active;
   final VoidCallback onTap;
   final Widget child;
 
@@ -295,10 +310,15 @@ class _TappableChannelCell extends StatelessWidget {
   Widget build(BuildContext context) {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: child,
+      child: Semantics(
+        button: true,
+        toggled: active,
+        label: 'CH ${channel + 1}',
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: onTap,
+          child: child,
+        ),
       ),
     );
   }
@@ -306,6 +326,7 @@ class _TappableChannelCell extends StatelessWidget {
 
 class _TableCellValue extends StatelessWidget {
   const _TableCellValue({
+    required this.channel,
     required this.value,
     required this.unit,
     required this.isActive,
@@ -313,6 +334,8 @@ class _TableCellValue extends StatelessWidget {
     required this.textStyle,
     this.onTap,
   });
+
+  final int channel;
 
   /// The value in [unit] units, or null when the unit is unavailable for
   /// this channel (rendered '—').
@@ -336,6 +359,8 @@ class _TableCellValue extends StatelessWidget {
         : ((isStale || value == null) ? staleColor : null);
 
     return _TappableChannelCell(
+      channel: channel,
+      active: isActive,
       onTap: onTap ?? () {},
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 1, horizontal: 1),

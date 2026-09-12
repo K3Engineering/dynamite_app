@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart' show defaultTargetPlatform;
+import 'package:flutter/semantics.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../models/load_cell.dart';
@@ -242,23 +243,42 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
           };
         }
 
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 120),
-          height: _kRowHeight,
-          decoration: BoxDecoration(
-            color: highlighted
-                ? theme.colorScheme.primary.withValues(alpha: 0.08)
-                : null,
-            border: highlighted
-                ? Border.all(color: theme.colorScheme.primary, width: 1.5)
-                : null,
-          ),
-          // The tile gets its own Material: with the highlight decoration
-          // painting behind it, a bare ListTile can't paint its background
-          // or ink splashes (and trips a debug assert).
-          child: Opacity(
-            opacity: _dragIndex == i ? 0.35 : 1.0,
-            child: Material(type: MaterialType.transparency, child: tile),
+        final localizations = WidgetsLocalizations.of(context);
+        final semanticsActions = <CustomSemanticsAction, VoidCallback>{};
+        if (!_saving && i > 0) {
+          semanticsActions[CustomSemanticsAction(
+            label: localizations.reorderItemUp,
+          )] = () =>
+              rig.swapSlots(i, i - 1);
+        }
+        if (!_saving && i < kRigSlotCount - 1) {
+          semanticsActions[CustomSemanticsAction(
+            label: localizations.reorderItemDown,
+          )] = () =>
+              rig.swapSlots(i, i + 1);
+        }
+
+        return Semantics(
+          container: true,
+          customSemanticsActions: semanticsActions,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 120),
+            height: _kRowHeight,
+            decoration: BoxDecoration(
+              color: highlighted
+                  ? theme.colorScheme.primary.withValues(alpha: 0.08)
+                  : null,
+              border: highlighted
+                  ? Border.all(color: theme.colorScheme.primary, width: 1.5)
+                  : null,
+            ),
+            // The tile gets its own Material: with the highlight decoration
+            // painting behind it, a bare ListTile can't paint its background
+            // or ink splashes (and trips a debug assert).
+            child: Opacity(
+              opacity: _dragIndex == i ? 0.35 : 1.0,
+              child: Material(type: MaterialType.transparency, child: tile),
+            ),
           ),
         );
       },

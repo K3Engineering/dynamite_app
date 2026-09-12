@@ -398,7 +398,7 @@ class LiveStatusBar extends StatelessWidget {
     final warning = report
         ? Theme.of(context).extension<StatusColors>()!.onConnectedWarning
         : null;
-    return GestureDetector(
+    final bar = GestureDetector(
       onTap: report ? () => _showHealthDetails(context, health!) : null,
       child: Container(
         width: double.infinity,
@@ -454,6 +454,13 @@ class LiveStatusBar extends StatelessWidget {
           ],
         ),
       ),
+    );
+    if (!report) return bar;
+    return Semantics(
+      button: true,
+      label: 'Connection health',
+      hint: 'Double-tap for details',
+      child: bar,
     );
   }
 }
