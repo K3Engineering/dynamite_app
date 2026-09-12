@@ -321,7 +321,7 @@ class LiveStatusBar extends StatelessWidget {
   final int sampleRateHz;
 
   /// The measured feed-health classification (see [deriveFeedHealth]); null
-  /// presents as normal (also the case before the first health tick lands).
+  /// (not streaming) presents as normal.
   final FeedHealth? health;
 
   /// Whether a recording session is in progress (a red ● in the bar).
@@ -398,7 +398,7 @@ class LiveStatusBar extends StatelessWidget {
     final warning = report
         ? Theme.of(context).extension<StatusColors>()!.onConnectedWarning
         : null;
-    return GestureDetector(
+    final bar = GestureDetector(
       onTap: report ? () => _showHealthDetails(context, health!) : null,
       child: Container(
         width: double.infinity,
@@ -454,6 +454,13 @@ class LiveStatusBar extends StatelessWidget {
           ],
         ),
       ),
+    );
+    if (!report) return bar;
+    return Semantics(
+      button: true,
+      label: 'Connection health',
+      hint: 'Double-tap for details',
+      child: bar,
     );
   }
 }

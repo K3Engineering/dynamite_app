@@ -5,10 +5,9 @@ import '../utils/format.dart';
 /// detail dialog body. Kept out of the model layer: the enum and
 /// classification live in `models/feed_health.dart`; the copy lives here.
 extension FeedHealthPresentation on FeedHealth {
-  /// Worth surfacing to the user (a label, and details on tap). [starting]
-  /// and [flowing] present as normal instead.
-  bool get worthReporting =>
-      this != FeedHealth.starting && this != FeedHealth.flowing;
+  /// Worth surfacing to the user (a label, and details on tap). Defined as
+  /// [shortLabel]'s non-null case so the two can never disagree.
+  bool get worthReporting => shortLabel != null;
 
   /// One-line label for the status bar and the Devices row. Null for states
   /// with nothing to report.

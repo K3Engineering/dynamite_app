@@ -41,6 +41,47 @@ String fmtGain(double? fraction) => fraction == null
 String fmtCounts(double counts) =>
     '${counts >= 0 ? '+' : ''}${counts.toStringAsFixed(1)}';
 
+/// The calibration document's provenance as display fragments; the report
+/// and the board card both join them with ' · '.
+List<String> calProvenanceParts(CalGroup? group) => [
+  ?group?.boardId,
+  ?group?.tool,
+  ?group?.origin,
+  if (group?.tempsC case final t?) '${t.dut}/${t.calBoard} °C (DUT/cal board)',
+];
+
+/// The conversion chain, including where the nominal values were read from.
+String calChainLine(BoardNominals n) =>
+    'Chain: FSR ${n.adcFsrV} V · AFE ${n.afeGain}× '
+    '· PGA ${n.pgaGains.map((g) => '$g×').join('/')} · EXC ${n.excitationV} V'
+    '${n.provenance.isEmpty ? '' : ' (${n.provenance.values.toSet().join(', ')})'}';
+
+/// A channel's headline corrections — the report's CH header body and the
+/// channel card's summary line.
+String channelSummaryLine(CalibratedChannelBoard c) =>
+    'zero offset ${fmtUvV(c.zeroOffsetUvV)} · '
+    'gain ${fmtGain(c.sensitivityVsNominal)} vs nominal · '
+    'end-point linearity ±${c.maxDeviationUvV.toStringAsFixed(3)} µV/V';
+
+/// One 5-point table row: config label, setpoint, reading, measured error,
+/// nonlinearity. Units are omitted — the report appends them per cell, the
+/// view has a units header row.
+typedef CalPointRow = ({
+  String label,
+  String setpoint,
+  String reading,
+  String error,
+  String nonlinearity,
+});
+
+CalPointRow calPointRow(CalibratedChannelBoard c, int k) => (
+  label: calConfigLabels[k],
+  setpoint: c.setpoints[k].toStringAsFixed(4),
+  reading: c.readings[k].toStringAsFixed(1),
+  error: fmtSignedUvV(c.measuredErrorsUvV[k]),
+  nonlinearity: fmtSignedUvV(c.deviationsUvV[k]),
+);
+
 /// "3 weeks ago" from a `cal.date` string; null when the date is missing or
 /// unparseable.
 String? calibrationAge(String? isoDate) {
@@ -95,22 +136,12 @@ String calibrationReport(
   final group = board.calGroup;
   if (group != null) {
     b.writeln('Calibrated: ${group.date}');
-    final provenance = [
-      ?group.boardId,
-      ?group.tool,
-      ?group.origin,
-      if (group.tempsC case final t?)
-        '${t.dut}/${t.calBoard} °C (DUT/cal board)',
-    ];
+    final provenance = calProvenanceParts(group);
     if (provenance.isNotEmpty) {
       b.writeln('Provenance: ${provenance.join(' · ')}');
     }
   }
-  final n = board.nominals;
-  b.writeln(
-    'Chain: FSR ${n.adcFsrV} V · AFE ${n.afeGain}× '
-    '· PGA ${n.pgaGains.map((g) => '$g×').join('/')} · EXC ${n.excitationV} V',
-  );
+  b.writeln(calChainLine(board.nominals));
   b.writeln(
     'Trust: ${board.isCalibrated ? kTrustLineCalibrated : kTrustLineUncalibrated}',
   );
@@ -140,24 +171,16 @@ String calibrationReport(
       b.writeln('CH ${i + 1}: nominal values (no calibration)');
       continue;
     }
-    b.writeln(
-      'CH ${i + 1}: zero offset ${fmtUvV(ch.zeroOffsetUvV)} · '
-      'gain ${fmtGain(ch.sensitivityVsNominal)} vs nominal · '
-      'end-point linearity ±${ch.maxDeviationUvV.toStringAsFixed(3)} µV/V',
-    );
+    b.writeln('CH ${i + 1}: ${channelSummaryLine(ch)}');
     b.writeln(
       '  sensitivity ${ch.sensitivityCountsPerMvV.toStringAsFixed(0)} '
       'counts/(mV/V) · zero offset ${fmtCounts(ch.offsetCounts)} counts',
     );
-    final errors = ch.measuredErrorsUvV;
-    final nonlinearities = ch.deviationsUvV;
     for (int k = 0; k < kCalPointCount; ++k) {
+      final p = calPointRow(ch, k);
       b.writeln(
-        '  ${calConfigLabels[k]}  '
-        '${ch.setpoints[k].toStringAsFixed(4)} mV/V  '
-        '${ch.readings[k].toStringAsFixed(1)} counts  '
-        'error ${fmtSignedUvV(errors[k])} µV/V  '
-        'nonlinearity ${fmtSignedUvV(nonlinearities[k])} µV/V',
+        '  ${p.label}  ${p.setpoint} mV/V  ${p.reading} counts  '
+        'error ${p.error} µV/V  nonlinearity ${p.nonlinearity} µV/V',
       );
     }
   }

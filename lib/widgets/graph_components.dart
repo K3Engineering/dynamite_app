@@ -812,11 +812,13 @@ class _ZoomControls extends StatelessWidget {
           IconButton(
             icon: Icon(Icons.zoom_out, color: cs.onPrimary),
             onPressed: () => onZoom(1 / 1.2),
+            tooltip: 'Zoom out',
           ),
           _SpanReadout(data: data, ctrl: ctrl),
           IconButton(
             icon: Icon(Icons.zoom_in, color: cs.onPrimary),
             onPressed: () => onZoom(1.2),
+            tooltip: 'Zoom in',
           ),
         ],
       ),

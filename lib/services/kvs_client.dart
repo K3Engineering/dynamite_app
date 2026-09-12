@@ -71,9 +71,6 @@ class KvsClient {
       response.throwIfBusyOrError();
       if (response.status != KvsStatus.ok) break;
       final entry = parseKvsIndexPayload(response.payload);
-      if (entry == null) {
-        throw FormatException('malformed IDX payload: "${response.payload}"');
-      }
       out[entry.$1] = entry.$2;
     }
     return out;

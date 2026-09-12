@@ -123,9 +123,7 @@ class FirmwareUpdateService extends ChangeNotifier {
   Future<void> checkForUpdates({bool manual = false}) async {
     if (checking) return;
     final info = _link.connectedDeviceInfo;
-    final rev = info?.firmwareRev == null
-        ? null
-        : parseFirmwareRev(info!.firmwareRev!);
+    final rev = info == null ? null : parseFirmwareRev(info.firmwareRev);
     if (rev == null) {
       if (manual) {
         checkError = StateError(

@@ -178,15 +178,15 @@ void main() {
   group('IDX payload parsing', () {
     test('splits key and hex type at the last =', () {
       final e = parseKvsIndexPayload('ch0.raw=21');
-      expect(e?.$1, 'ch0.raw');
-      expect(e?.$2, 0x21);
+      expect(e.$1, 'ch0.raw');
+      expect(e.$2, 0x21);
     });
 
     test('rejects malformed payloads', () {
-      expect(parseKvsIndexPayload(''), isNull);
-      expect(parseKvsIndexPayload('=21'), isNull);
-      expect(parseKvsIndexPayload('key='), isNull);
-      expect(parseKvsIndexPayload('key=zz'), isNull);
+      expect(() => parseKvsIndexPayload(''), throwsFormatException);
+      expect(() => parseKvsIndexPayload('=21'), throwsFormatException);
+      expect(() => parseKvsIndexPayload('key='), throwsFormatException);
+      expect(() => parseKvsIndexPayload('key=zz'), throwsFormatException);
     });
   });
 }

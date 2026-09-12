@@ -64,7 +64,8 @@ class _SettingsTabState extends State<SettingsTab> {
     final storedName = context.select<BleLinkManager, String?>(
       (l) => l.connectedStoredDeviceName,
     );
-    // The connect-time DIS identity read; null until it lands.
+    // The connect-time DIS identity; non-null once the link is streaming
+    // (a failed read fails the connection instead).
     final deviceInfo = context.select<BleLinkManager, DeviceInfo?>(
       (l) => l.connectedDeviceInfo,
     );
@@ -193,14 +194,14 @@ class _SettingsTabState extends State<SettingsTab> {
                 )
               else ...[
                 // Device identity, read from the Device Information service at
-                // connect time. Read-only; unread fields (e.g. serial on web)
-                // render as dashes.
+                // connect time. Read-only; the serial renders as a dash on
+                // web, where it is blocklisted.
                 Text(
                   'Device info',
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 8),
-                DeviceInfoCard(info: deviceInfo),
+                DeviceInfoCard(info: deviceInfo!),
                 const SizedBox(height: 16),
 
                 Text(

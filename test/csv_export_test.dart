@@ -7,6 +7,7 @@ import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/channel_converter.dart';
 import 'package:dynamite_app/models/device_flash.dart';
+import 'package:dynamite_app/models/device_info.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/gap_list.dart';
@@ -28,6 +29,14 @@ void main() {
   const recordedAtIso = '2026-07-29T14:05:32.000Z';
   final recordedUnix =
       DateTime.parse(recordedAtIso).millisecondsSinceEpoch ~/ 1000;
+
+  const testIdentity = DeviceInfo(
+    manufacturer: 'K3 Engineering',
+    model: 'Dynamite Sampler Pro Mk1',
+    serial: 'A4CF1208F51E',
+    hardwareRev: 'v700P',
+    firmwareRev: 'v700P|v1.2.3',
+  );
 
   /// Pro-like test chain, reproducing the app's former compiled constants.
   const testNominals = ChannelNominals(
@@ -65,7 +74,7 @@ void main() {
     unit,
     recordedAtIso: recordedAtIso,
     generator: generator,
-    deviceInfo: toSessionDeviceMetadata(name: null, info: null),
+    deviceInfo: toSessionDeviceMetadata(name: null, info: testIdentity),
   );
 
   /// The metadata line parsed as JSON (line index 1, `# ` prefix stripped).
@@ -141,11 +150,11 @@ void main() {
         'converted_unit': 'kgf',
         'device': {
           'name': null,
-          'id': null,
-          'model': null,
-          'hardware_rev': null,
-          'firmware': null,
-          'manufacturer': null,
+          'id': 'A4CF1208F51E',
+          'model': 'Dynamite Sampler Pro Mk1',
+          'hardware_rev': 'v700P',
+          'firmware': 'v700P|v1.2.3',
+          'manufacturer': 'K3 Engineering',
           'afe': {
             'adc_ref_v': 1.2,
             'front_end_gain': 101.0,
@@ -193,7 +202,7 @@ void main() {
           DisplayUnit.kgf,
           recordedAtIso: recordedAtIso,
           generator: generator,
-          deviceInfo: toSessionDeviceMetadata(name: null, info: null),
+          deviceInfo: toSessionDeviceMetadata(name: null, info: testIdentity),
           interrupted: true,
         ),
       );

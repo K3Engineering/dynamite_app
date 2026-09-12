@@ -242,11 +242,14 @@ bool _bytesAt(Uint8List frame, int offset, List<int> bytes) {
 
 /// Parse an IDX payload (`key=typeHex`) into its entry. A key can never
 /// contain '=' (SET splits at the first one), so the type rides after the
-/// LAST '='. Returns null when the payload is malformed.
-(String key, int nvsType)? parseKvsIndexPayload(String payload) {
+/// LAST '='. Throws [FormatException] on a malformed payload.
+(String key, int nvsType) parseKvsIndexPayload(String payload) {
   final eq = payload.lastIndexOf('=');
-  if (eq <= 0 || eq == payload.length - 1) return null;
-  final type = int.tryParse(payload.substring(eq + 1), radix: 16);
-  if (type == null) return null;
+  final type = eq <= 0 || eq == payload.length - 1
+      ? null
+      : int.tryParse(payload.substring(eq + 1), radix: 16);
+  if (type == null) {
+    throw FormatException('malformed IDX payload: "$payload"');
+  }
   return (payload.substring(0, eq), type);
 }

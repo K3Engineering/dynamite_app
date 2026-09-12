@@ -4,28 +4,25 @@ import '../models/device_info.dart';
 
 /// The connected sampler's static identity, read from the BLE Device
 /// Information service (0x180A) once per link at connect time. Purely
-/// read-only. A null [info] (the connect-time read hasn't landed yet) or a
-/// null field (that read failed — the serial is always null on web, where
-/// 0x2A25 is blocklisted) renders as an em dash.
+/// read-only. The serial is always null on web (0x2A25 is blocklisted
+/// there) and renders as an em dash.
 class DeviceInfoCard extends StatelessWidget {
   const DeviceInfoCard({super.key, required this.info});
 
-  /// The connected device's identity, or null until the read completes.
-  final DeviceInfo? info;
+  final DeviceInfo info;
 
   @override
   Widget build(BuildContext context) {
-    final i = info;
     return Card(
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(
           children: [
-            _infoRow('Model', i?.model),
-            _infoRow('Hardware', i?.hardwareRev),
-            _infoRow('Firmware', i?.firmwareRev),
-            _infoRow('Serial', i?.serial),
-            _infoRow('Manufacturer', i?.manufacturer),
+            _infoRow('Model', info.model),
+            _infoRow('Hardware', info.hardwareRev),
+            _infoRow('Firmware', info.firmwareRev),
+            _infoRow('Serial', info.serial),
+            _infoRow('Manufacturer', info.manufacturer),
           ],
         ),
       ),

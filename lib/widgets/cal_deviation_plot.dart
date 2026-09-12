@@ -20,19 +20,31 @@ class CalDeviationPlot extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    return SizedBox(
-      height: 120,
-      width: double.infinity,
-      child: CustomPaint(
-        painter: _DeviationPainter(
-          deviationsUvV,
-          lineColor: scheme.primary,
-          axisColor: scheme.outlineVariant,
-          labelStyle:
-              theme.textTheme.labelSmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ) ??
-              TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+    var extreme = 0.0;
+    for (final d in deviationsUvV) {
+      if (d.abs() > extreme.abs()) extreme = d;
+    }
+    final label = extreme == 0
+        ? 'End-point nonlinearity plot, no measurable deviation'
+        : 'End-point nonlinearity plot, maximum deviation '
+              '${extreme > 0 ? '+' : ''}${extreme.toStringAsFixed(3)} µV/V';
+    return Semantics(
+      image: true,
+      label: label,
+      child: SizedBox(
+        height: 120,
+        width: double.infinity,
+        child: CustomPaint(
+          painter: _DeviationPainter(
+            deviationsUvV,
+            lineColor: scheme.primary,
+            axisColor: scheme.outlineVariant,
+            labelStyle:
+                theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ) ??
+                TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+          ),
         ),
       ),
     );
