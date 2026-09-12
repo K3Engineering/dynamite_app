@@ -486,17 +486,15 @@ class MockBlePlatform extends UniversalBlePlatform {
         null,
       );
     } else if (characteristic == btChrOtaControl) {
-      // The OTA control protocol (ble_ota.cpp) in miniature: a 4-byte write
-      // declares the image size; a 1-byte write is an opcode. The reply
-      // notification fires inside the write handler, like the firmware's.
-      final reply = value.length == 4
-          ? otaReadyReply
-          : switch (value[0]) {
-              otaRequestOpcode =>
-                refuseOtaStart ? otaRequestNak : otaRequestAck,
-              otaDoneOpcode => otaDoneAck,
-              _ => otaRequestNak,
-            };
+      // The OTA control protocol (ble_ota.cpp) in miniature, dispatching on
+      // the opcode byte: REQUEST carries the image size in a 5-byte write;
+      // DONE is a single byte. The reply notification fires inside the
+      // write handler, like the firmware's.
+      final reply = switch ((value[0], value.length)) {
+        (otaRequestOpcode, 5) => refuseOtaStart ? otaRequestNak : otaRequestAck,
+        (otaDoneOpcode, 1) => otaDoneAck,
+        _ => otaRequestNak,
+      };
       updateCharacteristicValue(
         deviceId,
         btChrOtaControl,

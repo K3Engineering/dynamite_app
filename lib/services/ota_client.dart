@@ -20,10 +20,10 @@ class OtaFlashException implements Exception {
 /// Single-session: one [flash] per instance, and the owning transport tears
 /// it down afterwards via [abort] (mirroring [KvsClient]'s per-link shape).
 ///
-/// The wire sequence: declared size -> [otaReadyReply] -> REQUEST ->
-/// ACK/NAK -> image bytes on the Data characteristic -> DONE -> ACK/NAK,
-/// after which the device restarts on its own (~0.5 s later). Two rules
-/// come from the reference client (firmware/ota_update.py):
+/// The wire sequence: REQUEST with the declared size -> ACK/NAK -> image
+/// bytes on the Data characteristic -> DONE -> ACK/NAK, after which the
+/// device restarts on its own (~0.5 s later). Two rules come from the
+/// reference client (firmware/ota_update.py):
 ///
 ///  * Data chunks MUST use write-with-response: the firmware applies each
 ///    chunk inside the write handler and the ATT ack is the flow control.
@@ -51,9 +51,9 @@ class OtaClient {
   /// (web) but negotiate 247 behind the scenes.
   final int chunkSize;
 
-  /// Upper bound on one Control round trip (accept-size, accept-update,
-  /// finalize). Generous: the finalize wait covers the device erasing the
-  /// rest of the slot and digest-checking a ~1 MB image.
+  /// Upper bound on one Control round trip (start, finalize). The start
+  /// wait covers pre-erasing the OTA slot; the finalize wait covers
+  /// digest-checking a ~1 MB image.
   final Duration ackTimeout;
 
   bool _aborted = false;
@@ -87,23 +87,15 @@ class OtaClient {
     required Uint8List image,
     void Function(int sentBytes)? onProgress,
   }) async {
-    final ready = await _transact(
-      encodeOtaFileSize(image.length),
-      'accept the update size',
-    );
-    if (ready != otaReadyReply) {
-      throw OtaFlashException(_unexpected(ready, 'accept the update size'));
-    }
-
     final request = await _transact(
-      Uint8List.fromList(const [otaRequestOpcode]),
-      'accept the update',
+      encodeOtaRequest(image.length),
+      'start the update',
     );
     if (request == otaRequestNak) {
       throw const OtaFlashException('The device declined to start.');
     }
     if (request != otaRequestAck) {
-      throw OtaFlashException(_unexpected(request, 'accept the update'));
+      throw OtaFlashException(_unexpected(request, 'start the update'));
     }
 
     for (var offset = 0; offset < image.length; offset += chunkSize) {

@@ -49,11 +49,9 @@ void main() {
     unawaited(f.then((_) {}, onError: (Object e) => errors.add(e)));
   }
 
-  /// Push [client] through the happy-path handshake: ready, request-ack,
-  /// done-ack. Flushes microtasks around each step so awaited writes land.
+  /// Push [client] through the happy-path handshake: request-ack, done-ack.
+  /// Flushes microtasks around each step so awaited writes land.
   void completeHandshake(FakeAsync async, OtaClient client) {
-    async.flushMicrotasks();
-    reply(client, otaReadyReply);
     async.flushMicrotasks();
     reply(client, otaRequestAck);
     // One flush drains the whole chunk loop (every write future completes
@@ -74,20 +72,18 @@ void main() {
 
       expect(errors, isEmpty);
       expect(writes.map((w) => w.endpoint).toList(), [
-        'control', // declared size
-        'control', // REQUEST
+        'control', // REQUEST with the declared size
         'data', 'data', 'data',
         'control', // DONE
       ]);
-      expect(writes[0].bytes, encodeOtaFileSize(image.length));
-      expect(writes[1].bytes.single, otaRequestOpcode);
-      expect(writes[1].withoutResponse, isFalse);
+      expect(writes[0].bytes, encodeOtaRequest(image.length));
+      expect(writes[0].withoutResponse, isFalse);
       // 250 bytes at 100-byte chunks: 100 + 100 + 50.
-      expect(writes.sublist(2, 5).map((w) => w.bytes.length), [100, 100, 50]);
-      expect(writes[2].bytes, image.sublist(0, 100));
-      expect(writes[4].bytes, image.sublist(200));
-      expect(writes[5].bytes.single, otaDoneOpcode);
-      expect(writes[5].withoutResponse, isTrue);
+      expect(writes.sublist(1, 4).map((w) => w.bytes.length), [100, 100, 50]);
+      expect(writes[1].bytes, image.sublist(0, 100));
+      expect(writes[3].bytes, image.sublist(200));
+      expect(writes[4].bytes.single, otaDoneOpcode);
+      expect(writes[4].withoutResponse, isTrue);
       // Every chunk write was with-response (flow control); none of the
       // data writes set the flag.
       expect(
@@ -110,9 +106,9 @@ void main() {
         chunkSize: chunkSize,
         ackTimeout: ackTimeout,
         writeControl: (bytes, {withoutResponse = false}) {
-          final reply = bytes.length == 4
-              ? otaReadyReply
-              : (bytes.single == otaRequestOpcode ? otaRequestAck : otaDoneAck);
+          final reply = bytes.first == otaRequestOpcode
+              ? otaRequestAck
+              : otaDoneAck;
           client.handleNotification(Uint8List.fromList([reply]));
           return Future<void>.value();
         },
@@ -137,8 +133,6 @@ void main() {
       final errors = <Object>[];
       track(client.flash(image: Uint8List(10)), errors);
       async.flushMicrotasks();
-      reply(client, otaReadyReply);
-      async.flushMicrotasks();
       reply(client, otaRequestNak);
       async.flushMicrotasks();
 
@@ -153,8 +147,6 @@ void main() {
       final (client, _) = wire();
       final errors = <Object>[];
       track(client.flash(image: Uint8List(10)), errors);
-      async.flushMicrotasks();
-      reply(client, otaReadyReply);
       async.flushMicrotasks();
       reply(client, otaRequestAck);
       async.flushMicrotasks();
@@ -172,8 +164,6 @@ void main() {
       final (client, _) = wire();
       final errors = <Object>[];
       track(client.flash(image: Uint8List(10)), errors);
-      async.flushMicrotasks();
-      reply(client, otaReadyReply);
       async.flushMicrotasks();
       // REQUEST is now outstanding and nothing answers.
       async.elapse(ackTimeout);
