@@ -10,7 +10,7 @@ import '../services/ble_link_manager.dart';
 import '../services/firmware_update_service.dart';
 import '../widgets/wide_layout.dart';
 
-enum _Stage { overview, downloading, flashing, rebooting, done, failed }
+enum _Stage { overview, downloading, flashing, done, failed }
 
 /// The OTA update flow, pushed from the Settings tab's firmware card or
 /// deep-linked from the update-available snackbar.
@@ -18,8 +18,11 @@ enum _Stage { overview, downloading, flashing, rebooting, done, failed }
 /// Offer rule (see `firmware_release.dart`): the device should run the
 /// channel's target release, whatever the direction — "differs" flashes it,
 /// including the same-tag reflash. The screen owns the flash stages
-/// (download -> verify -> BLE transfer -> reboot -> verdict); the release
-/// check itself lives in [FirmwareUpdateService].
+/// (download -> transfer); the release check itself lives in
+/// [FirmwareUpdateService]. An accepted image ends the flow at the done
+/// banner: the device reboots on its own, so the page holds no modal state
+/// past the transfer, and the next connect's release check re-flags a flash
+/// that didn't take.
 class FirmwareUpdateScreen extends StatefulWidget {
   const FirmwareUpdateScreen({super.key});
 
@@ -37,50 +40,14 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
   String _headline = '';
   String? _error;
 
-  /// The tag we just flashed, for the post-reboot verdict; null after a
-  /// from-file flash (no identity to compare, the verdict just reports).
-  String? _flashedTag;
-  String? _result;
-
-  bool get _busy =>
-      _stage == _Stage.downloading ||
-      _stage == _Stage.flashing ||
-      _stage == _Stage.rebooting;
+  bool get _busy => _stage == _Stage.downloading || _stage == _Stage.flashing;
 
   @override
   void initState() {
     super.initState();
-    _link.addListener(_onLinkChanged);
     if (_updates.check == null && !_updates.checking) {
       unawaited(_updates.checkForUpdates());
     }
-  }
-
-  @override
-  void dispose() {
-    _link.removeListener(_onLinkChanged);
-    super.dispose();
-  }
-
-  /// Post-reboot verdict: a fresh DIS identity read means the device came
-  /// back (the user re-connected it). Compare its describe to the tag we
-  /// flashed; a mismatch means the bootloader rolled back or the flash
-  /// never took effect.
-  void _onLinkChanged() {
-    if (_stage != _Stage.rebooting || !mounted) return;
-    final rev = _link.connectedDeviceInfo?.firmwareRev;
-    if (rev == null) return;
-    final parsed = parseFirmwareRev(rev);
-    if (parsed == null) return;
-    final expected = _flashedTag;
-    setState(() {
-      _stage = _Stage.done;
-      _result =
-          expected == null || describeMatchesTag(parsed.describe, expected)
-          ? 'Now running ${parsed.describe}.'
-          : 'The device still runs ${parsed.describe} — the update was '
-                'rolled back or never applied.';
-    });
   }
 
   /// TODO double-check "several minutes"
@@ -106,7 +73,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       });
       return;
     }
-    await _flash(image, flashedTag: release.tag);
+    await _flash(image);
   }
 
   Future<void> _flashFromFile() async {
@@ -122,7 +89,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       '${bytes.length} bytes. Keep the app open. The device reboots when done. ',
     );
     if (!confirmed || !mounted) return;
-    await _flash(bytes, flashedTag: null);
+    await _flash(bytes);
   }
 
   Future<bool> _confirmFlash(String title, String body) async {
@@ -146,13 +113,12 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     return confirmed ?? false;
   }
 
-  Future<void> _flash(Uint8List image, {required String? flashedTag}) async {
+  Future<void> _flash(Uint8List image) async {
     setState(() {
       _stage = _Stage.flashing;
       _headline = 'Flashing - do not disconnect…';
       _progress = 0;
     });
-    _flashedTag = flashedTag;
     _updates.flashInProgress.value = true;
     try {
       await _link.runOta(
@@ -164,12 +130,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         ),
       );
       if (!mounted) return;
-      setState(() {
-        _stage = _Stage.rebooting;
-        _headline =
-            'Image accepted - the device is rebooting. Reconnect to it from '
-            'the Devices tab.';
-      });
+      setState(() => _stage = _Stage.done);
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -196,7 +157,11 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     return PopScope(
       canPop: !_busy,
       child: Scaffold(
-        appBar: AppBar(title: const Text('Firmware update')),
+        appBar: AppBar(
+          // A blocked pop that looks tappable reads as a dead button.
+          leading: _busy ? const BackButton(onPressed: null) : null,
+          title: const Text('Firmware update'),
+        ),
         body: SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -241,7 +206,8 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         Icon(Icons.check_circle_outline, color: scheme.primary, size: 48),
         const SizedBox(height: 16),
         Text(
-          _result!,
+          'Image accepted — the device is rebooting. It should be back on '
+          'the Devices tab in a few seconds.',
           style: theme.textTheme.titleMedium,
           textAlign: TextAlign.center,
         ),
@@ -272,10 +238,9 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       ];
     }
     final step = switch (_stage) {
-      _Stage.downloading => 'Step 1 of 3, downloading',
+      _Stage.downloading => 'Step 1 of 2, downloading',
       _Stage.flashing =>
-        'Step 2 of 3, flashing · ${(_progress * 100).toStringAsFixed(0)}%',
-      _Stage.rebooting => 'Step 3 of 3, rebooting',
+        'Step 2 of 2, flashing · ${(_progress * 100).toStringAsFixed(0)}%',
       _ => '',
     };
     return [
@@ -291,7 +256,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       const SizedBox(height: 12),
       Text(step, style: theme.textTheme.bodySmall, textAlign: TextAlign.center),
       Text(
-        'Keep this page open while the firmware updates.',
+        'Keep this page open while the firmware transfers.',
         style: theme.textTheme.bodySmall,
         textAlign: TextAlign.center,
       ),
