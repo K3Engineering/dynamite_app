@@ -252,7 +252,8 @@ class BleLinkManager extends ChangeNotifier {
   static const Duration disconnectTimeout = Duration(milliseconds: 2500);
 
   /// connect() bypasses the package's command queue — [UniversalBle.timeout]
-  /// does NOT cover it — and defaults to 60 s.
+  /// does NOT cover it — and defaults to 60 s. A timed-out attempt may still
+  /// complete late; see the unwanted-link guard in [_onConnectionChange].
   static const Duration connectTimeout = Duration(seconds: 5);
 
   static const Duration rssiPollInterval = Duration(seconds: 2);
@@ -318,6 +319,7 @@ class BleLinkManager extends ChangeNotifier {
 
   int? lastAliveMs(String deviceId) {
     final stamp = _lastAliveMs[deviceId];
+    // Web scan results are picker picks, not adverts.
     if (kIsWeb) return stamp;
     final scanTs = _devices
         .where((d) => d.deviceId == deviceId)
@@ -448,6 +450,8 @@ class BleLinkManager extends ChangeNotifier {
   /// decoder's continuity check.
   Future<T> _withFeedPaused<T>(Future<T> Function() body) {
     final op = _feedMaintenance.then((_) => _feedPausedEnvelope(body));
+    // The caller gets the error through `op`; the chain copy must not
+    // re-throw or the next envelope never runs.
     _feedMaintenance = op.then<void>((_) {}, onError: (_) {});
     return op;
   }
@@ -456,7 +460,7 @@ class BleLinkManager extends ChangeNotifier {
   /// ahead of the unsubscribe's completion — but only when the platform
   /// actually ordered and awaited the descriptor write. A KVS write that
   /// lands while the lock still holds is dropped silently and costs a full
-  /// command timeout.
+  /// command timeout. 300 ms is a guess, not measured.
   static const Duration _feedPauseSettle = Duration(milliseconds: 300);
 
   Future<T> _feedPausedEnvelope<T>(Future<T> Function() body) async {
@@ -1020,9 +1024,6 @@ class BleLinkManager extends ChangeNotifier {
     Uint8List data,
     int? timestamp,
   ) {
-    // universal_ble normalizes characteristicId to lowercase before invoking
-    // this callback, and all ids are already lowercase, so an exact match is
-    // safe.
     if (deviceId != _link.deviceId) {
       logTrace(
         () =>
@@ -1032,6 +1033,9 @@ class BleLinkManager extends ChangeNotifier {
       );
       return;
     }
+    // universal_ble normalizes characteristicId to lowercase before invoking
+    // this callback, and all ids are already lowercase, so an exact match is
+    // safe.
     if (characteristicId == btChrAdcFeedId) {
       _deliverAdcData(data);
     } else if (characteristicId == btChrKvs) {
