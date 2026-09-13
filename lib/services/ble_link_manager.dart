@@ -299,6 +299,9 @@ class BleLinkManager extends ChangeNotifier {
   bool _isScanning = false;
   bool get isScanning => _isScanning;
 
+  /// Driven from the [_onConnectionChange] callback, not from
+  /// [UniversalBle.getConnectionState]: that is a one-shot query, so
+  /// tracking state through it would mean polling.
   Link _link = const NoLink();
 
   final Map<String, ConnectFailureKind> _connectFailures = {};
@@ -306,6 +309,10 @@ class BleLinkManager extends ChangeNotifier {
   ConnectFailureKind? connectFailureFor(String deviceId) =>
       _connectFailures[deviceId];
 
+  /// Unlike [_connectFailures], not cleared on re-discovery: a connect
+  /// failure's remedy is "rescan", so re-finding the device moots it; a drop
+  /// reason describes a past event and stays true however the device is
+  /// re-found. Both clear on the next connect attempt.
   final Map<String, String> _lastDisconnectErrors = {};
 
   String? lastDisconnectErrorFor(String deviceId) =>

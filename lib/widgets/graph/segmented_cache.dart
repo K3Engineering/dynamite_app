@@ -36,13 +36,12 @@ ui.Image _bakeImage(
 //   * squeeze -- the window spans the whole growing history: blits get a
 //                corrective affine transform (both axis mappings are affine).
 //
-// Vector redrawing every frame caused low framerates.
-// Instead, we prefer higher FPS and smearing work (rebakes) across frames
-// (one segment per frame, see [kSegmentBakeBudget]). We also prefer no throttling,
-// as that just introduces jitter (low FPS once in a while)
-//  Web has no engine raster cache: a ui.Picture
-// re-executes on Skia every frame, so tiles are baked once into GPU
-// ui.Images. A segment that cannot blit
+// Vector-redrawing the whole plot every frame caused low framerates.
+// Web has no engine raster cache: a ui.Picture re-executes on Skia every
+// frame. Immutable sample ranges are baked once into GPU ui.Images and
+// blitted; rebakes are smeared across frames at [kSegmentBakeBudget] per
+// frame. A steady frame rate is preferred over fast refill: a burst of
+// work in one frame shows up as a stutter. A segment that cannot blit
 // (see [SegmentedGraphCache._isBlittable]) draws nothing and refills only
 // via the sweep; genuinely uncovered ranges (live-edge sliver, pan/zoom
 // exposures) are the only full vector-draw paths.
@@ -96,8 +95,8 @@ const double kSegmentGapBakePx = 40;
 const int kSegmentBakeBudget = 1;
 
 /// Cached segments more than this many target-widths outside the view are
-/// evicted; the cache cannot be unbounded (a tall-graph tile is on the
-/// order of a MB — estimate, not measured).
+/// evicted; a tile is kSegmentTargetPx * dpr * plotHeight * dpr * 4 bytes
+/// (a few MB on a tall graph at dpr 2), so the cache cannot be unbounded.
 const int kSegmentEvictionMargin = 8;
 
 /// [FilterQuality.none] showed gaps and seams in testing; bilinear does
@@ -474,7 +473,7 @@ class SegmentedGraphCache {
   }
 
   /// Priority 2: refresh the RIGHTMOST visible segment whose bake config no
-  /// longer matches (see the config taxonomy in the file header).
+  /// longer matches (see "Config changes split by kind" in the file header).
   ///
   /// A stale segment starting at or past the bake horizon is dropped, not
   /// re-baked; its range falls to the per-frame vector draw (see
@@ -500,7 +499,8 @@ class SegmentedGraphCache {
   /// line ([kBakedLinePx] at bake) within [kMaxBlitLineFraction] of the plot
   /// height. One-sided: shrinking only sharpens, but a large stretch -- e.g.
   /// the Y-range collapsing onto a quiet channel -- smears the tile's line
-  /// across the screen.
+  /// across the screen. A suppressed segment is kept, not disposed: a
+  /// Y-range snap-back makes it blittable again.
   bool _isBlittable(GraphSegment s, double yMin, double yMax, double gh) {
     if (!listEquals(s.destructiveKey, _destructiveKey)) return false;
     final double ys = (s.yMax - s.yMin) / (yMax - yMin) * (gh / s.gh);
