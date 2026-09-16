@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yaml/yaml.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
@@ -14,6 +15,17 @@ import 'package:dynamite_app/models/gap_list.dart';
 import 'package:dynamite_app/services/csv_export.dart';
 import 'package:dynamite_app/services/session_data.dart';
 import 'package:dynamite_app/services/session_metadata.dart';
+
+/// A parsed YAML node tree as plain Dart maps/lists, for deep comparison
+/// against the metadata object (`loadYaml` yields `YamlMap`/`YamlList`,
+/// which don't value-compare against plain collections).
+Object? plainYaml(Object? node) {
+  if (node is YamlMap) {
+    return {for (final entry in node.entries) entry.key: plainYaml(entry.value)};
+  }
+  if (node is YamlList) return [for (final item in node) plainYaml(item)];
+  return node;
+}
 
 /// Tests for the pure CSV-building half of the export path (the plugin
 /// dispatch half is platform code and stays untested). The format reference
@@ -267,8 +279,8 @@ void main() {
       expect((kvs['user'] as Map).keys, ['lc0.cap', 'lc0.sens']);
       expect(kvs, snapshot.toJson());
       expect(csv, contains('#   kvs:'));
-      expect(csv, contains("#       charging: 'enabled'"));
-      expect(csv, contains("#       lc0.cap: '200'"));
+      expect(csv, contains('#       charging: "enabled"'));
+      expect(csv, contains('#       lc0.cap: "200"'));
     });
 
     test('a session recorded with no board meta exports cal as null', () {
@@ -406,79 +418,47 @@ void main() {
   });
 
   group('YAML comment block', () {
-    test('renders the closed schema canonically', () {
-      final lines = yamlLinesForCsvMetadata({
-        'str': "John's cell",
-        'num_i': 1,
-        'num_f': 2.007,
-        'truth': true,
-        'lying': false,
-        'absent': null,
-        'flow': [1, 4.53, 'x'],
-        'empty_list': <Object?>[],
-        'empty_map': <String, Object?>{},
-        'mapping': {'x': 1, 'y': null},
-        'sequence': [
-          {
-            'm': 'v1',
-            'n': [4.53],
-            'o': {'p': false},
-          },
-          {'m': null, 'n': <Object?>[], 'o': null},
-        ],
-      });
+    test(
+      'round-trips the metadata schema (strings, numbers, bools, null, '
+      'nested maps and sequences)',
+      () {
+        final metadata = <String, Object?>{
+          'str': "John's cell",
+          'num_i': 1,
+          'num_f': 2.007,
+          'truth': true,
+          'lying': false,
+          'absent': null,
+          'flow': [1, 4.53, 'x'],
+          'empty_list': <Object?>[],
+          'empty_map': <String, Object?>{},
+          'mapping': {'x': 1, 'y': null},
+          'multiline': 'line1\nline2',
+          'sequence': [
+            {
+              'm': 'v1',
+              'n': [4.53],
+              'o': {'p': false},
+            },
+            {'m': null, 'n': <Object?>[], 'o': null},
+          ],
+        };
 
-      expect(lines, [
-        "str: 'John''s cell'",
-        'num_i: 1',
-        'num_f: 2.007',
-        'truth: true',
-        'lying: false',
-        'absent: null',
-        "flow: [1, 4.53, 'x']",
-        'empty_list: []',
-        'empty_map: {}',
-        'mapping:',
-        '  x: 1',
-        '  y: null',
-        'sequence:',
-        "  - m: 'v1'",
-        '    n: [4.53]',
-        '    o:',
-        '      p: false',
-        '  - m: null',
-        '    n: []',
-        '    o: null',
-      ]);
-    });
+        final block = yamlLinesForCsvMetadata(metadata).join('\n');
+        expect(plainYaml(loadYaml(block)), metadata);
+      },
+    );
 
-    test('throws on values outside the closed schema', () {
+    test('rejects values outside the JSON-shaped schema', () {
       expect(
         () => yamlLinesForCsvMetadata({
           'bad': {'when': DateTime.utc(2026)},
         }),
         throwsArgumentError,
       );
-      expect(
-        () => yamlLinesForCsvMetadata({
-          'bad': [<String, Object?>{}],
-        }),
-        throwsArgumentError,
-      );
     });
 
-    test('control characters render as double-quoted YAML escapes', () {
-      expect(
-        yamlLinesForCsvMetadata({
-          'v': 'a\tb\nc\u0000d\u007f',
-          'bad\u0001key': 'x',
-        }),
-        ['v: "a\\tb\\nc\\x00d\\x7F"', '"bad\\x01key": \'x\''],
-      );
-    });
-
-    test('the block re-renders byte-identically from line 2 (the validator '
-        'path: re-render and byte-compare without parsing YAML)', () {
+    test('the block reloads to line 2\'s object (the two renderings agree)', () {
       final cals = [
         ChannelCalibration(
           board: CalibratedChannelBoard(
@@ -517,12 +497,14 @@ void main() {
       final commentLines = lines.takeWhile((l) => l.startsWith('#')).toList();
 
       final reparsed = jsonDecode(commentLines[1].substring(2));
-      final rerendered = yamlLinesForCsvMetadata(
-        reparsed as Map<String, dynamic>,
+      final reloaded = plainYaml(
+        loadYaml(
+          [
+            for (final line in commentLines.skip(2)) line.substring(2),
+          ].join('\n'),
+        ),
       );
-      expect(commentLines.sublist(2), [
-        for (final line in rerendered) '# $line',
-      ]);
+      expect(reloaded, reparsed);
     });
   });
 

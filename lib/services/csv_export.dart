@@ -8,6 +8,8 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:yaml_writer/yaml_writer.dart';
+
 import '../models/app_meta.dart';
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
@@ -253,120 +255,21 @@ Map<String, Object?> _metadata(
   };
 }
 
-/// The canonical YAML rendering of the metadata object: a deterministic
-/// function of the JSON object's
-/// emission order and values — derived documentation, re-derivable from
-/// line 2 by a validator without parsing YAML. The closed schema (maps,
-/// strings, numbers, booleans, null, scalar flow sequences, sequences of
-/// mappings) is a complete emitter; anything outside it throws.
-List<String> yamlLinesForCsvMetadata(Map<String, Object?> metadata) => [
-  for (final MapEntry(:key, :value) in metadata.entries)
-    ..._yamlEntry(key, value, 0),
-];
+/// The YAML writer for the metadata block. Rendering (quoting, indentation,
+/// number and string style) is the library's: the block is
+/// implementation-defined derived documentation (csv-format-v2.md §The two
+/// renderings), re-derivable from line 2, and nothing parses it back as a
+/// contract. [toEncodable] rejects anything outside the JSON-shaped schema
+/// the metadata is built from, so a stray platform object fails the export
+/// instead of emitting garbage.
+final YamlWriter _yamlWriter = YamlWriter(
+  toEncodable: (object) =>
+      throw ArgumentError('no YAML form for ${object.runtimeType}'),
+);
 
-List<String> _yamlEntry(String key, Object? value, int indent) {
-  final pad = ' ' * indent;
-  if (value is Map) {
-    if (value.isEmpty) return ['$pad${_yamlKey(key)}: {}'];
-    return [
-      '$pad${_yamlKey(key)}:',
-      for (final MapEntry(:key, :value) in value.entries)
-        ..._yamlEntry(key as String, value, indent + 2),
-    ];
-  }
-  if (value is List) {
-    if (value.isEmpty) return ['$pad${_yamlKey(key)}: []'];
-    if (value.every((e) => e is! Map)) {
-      return ['$pad${_yamlKey(key)}: [${value.map(_yamlScalar).join(', ')}]'];
-    }
-    return [
-      '$pad${_yamlKey(key)}:',
-      for (final item in value)
-        ..._yamlSequenceMapping(item as Map, indent + 2),
-    ];
-  }
-  return ['$pad${_yamlKey(key)}: ${_yamlScalar(value)}'];
-}
-
-/// One `- ` item of a mapping sequence: the indicator sits at the parent's
-/// child indent, the first key rides its line, subsequent keys align under
-/// it (children nest another two).
-List<String> _yamlSequenceMapping(Map<dynamic, dynamic> mapping, int indent) {
-  if (mapping.isEmpty) {
-    throw ArgumentError('empty mapping in a YAML sequence');
-  }
-  final pad = ' ' * indent;
-  final lines = <String>[];
-  var first = true;
-  for (final MapEntry(:key, :value) in mapping.entries) {
-    final sub = _yamlEntry(key as String, value, indent + 2);
-    if (first) {
-      lines.add('$pad- ${sub.first.trimLeft()}');
-      lines.addAll(sub.skip(1));
-      first = false;
-    } else {
-      lines.addAll(sub);
-    }
-  }
-  return lines;
-}
-
-/// Control characters are not representable in YAML's single-quoted scalar
-/// form; keys and values containing them switch to the double-quoted form.
-final RegExp _controlChars = RegExp(r'[\x00-\x1F\x7F]');
-
-/// A mapping key: emitted plain unless it contains a control character, where
-/// the double-quoted form is the only representable one. Flash keys are
-/// firmware-constrained identifiers, so the plain path is the norm.
-String _yamlKey(String key) =>
-    _controlChars.hasMatch(key) ? _yamlDoubleQuoted(key) : key;
-
-/// Scalar rendering per the canonical rules: strings single-quoted with `'`
-/// doubled (or double-quoted with escapes when they carry a control
-/// character); numbers exactly as JSON renders them (fixed-point); booleans
-/// and null as the YAML 1.2 core-schema spellings.
-String _yamlScalar(Object? value) {
-  if (value == null) return 'null';
-  if (value is String) {
-    return _controlChars.hasMatch(value)
-        ? _yamlDoubleQuoted(value)
-        : "'${value.replaceAll("'", "''")}'";
-  }
-  if (value is bool) return '$value';
-  if (value is num) return jsonEncode(value);
-  throw ArgumentError('no canonical YAML form for ${value.runtimeType}');
-}
-
-/// YAML double-quoted scalar, the only style that can carry control
-/// characters: `"` and `\` are escaped, and C0 controls plus DEL use their
-/// `\xNN` forms (with the common ones in mnemonic form).
-String _yamlDoubleQuoted(String s) {
-  final b = StringBuffer('"');
-  for (final c in s.runes) {
-    switch (c) {
-      case 0x22:
-        b.write(r'\"');
-      case 0x5C:
-        b.write(r'\\');
-      case 0x08:
-        b.write(r'\b');
-      case 0x09:
-        b.write(r'\t');
-      case 0x0A:
-        b.write(r'\n');
-      case 0x0D:
-        b.write(r'\r');
-      default:
-        if (c < 0x20 || c == 0x7F) {
-          b.write('\\x${c.toRadixString(16).padLeft(2, '0').toUpperCase()}');
-        } else {
-          b.writeCharCode(c);
-        }
-    }
-  }
-  b.write('"');
-  return b.toString();
-}
+/// The YAML rendering of the metadata object, as comment-block lines.
+List<String> yamlLinesForCsvMetadata(Map<String, Object?> metadata) =>
+    const LineSplitter().convert(_yamlWriter.write(metadata));
 
 /// One `channels[]` entry: the assigned load cell (null = none), the
 /// recording-time tare in raw counts (null = the channel recorded gross),
