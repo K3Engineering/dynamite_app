@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import '../utils/edge_watcher.dart';
 import 'data_hub.dart';
 
 /// Owns the hub resets tied to connection transitions, so recording doesn't
@@ -16,36 +17,29 @@ class StreamResetCoordinator {
     /// [streamingNow]. main wires the link manager in.
     required Listenable streamingChanges,
     required bool Function() streamingNow,
-  }) : _hub = hub,
-       _streamingChanges = streamingChanges,
-       _streamingNow = streamingNow {
-    _streamingChanges.addListener(_onStreamingChanged);
-  }
+  }) : _watcher = EdgeWatcher<bool>(
+         sources: [streamingChanges],
+         now: streamingNow,
+         // Seeded "not streaming": a tracker built mid-stream resets the hub
+         // on the first notification, like an explicit constructor clear.
+         seed: false,
+         effect: (streaming) {
+           if (streaming) {
+             // New device stream. Clear the previous stream's ring buffer,
+             // peaks, tare and gaps so two connections never splice into one
+             // trace; the decoder restarts continuity itself off the clear
+             // (see AdcPacketDecoder's constructor). Runs on stream entry
+             // (not on disconnect) so a recording being finalized after an
+             // unexpected drop can still flush the data it already
+             // snapshotted.
+             hub.clear();
+           } else {
+             hub.clearBoardCalibration();
+           }
+         },
+       );
 
-  final DataHub _hub;
-  final Listenable _streamingChanges;
-  final bool Function() _streamingNow;
+  final EdgeWatcher<bool> _watcher;
 
-  /// Liveness at the previous [_onStreamingChanged] notification, for edge
-  /// detection (the source may notify for other reasons, e.g. RSSI polls).
-  bool _wasStreaming = false;
-
-  void _onStreamingChanged() {
-    final streaming = _streamingNow();
-    if (streaming == _wasStreaming) return;
-    _wasStreaming = streaming;
-    if (streaming) {
-      // New device stream. Clear the previous stream's ring buffer, peaks,
-      // tare and gaps so two connections never splice into one trace; the
-      // decoder restarts continuity itself off the clear (see
-      // AdcPacketDecoder's constructor). Runs on stream entry (not on
-      // disconnect) so a recording being finalized after an unexpected drop
-      // can still flush the data it already snapshotted.
-      _hub.clear();
-    } else {
-      _hub.clearBoardCalibration();
-    }
-  }
-
-  void dispose() => _streamingChanges.removeListener(_onStreamingChanged);
+  void dispose() => _watcher.dispose();
 }
