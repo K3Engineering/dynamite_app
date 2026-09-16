@@ -24,11 +24,14 @@ class AppSettings extends ChangeNotifier {
     }
 
     _wakelockEnabled = _prefs.getBool(_keyWakelock) ?? false;
+
+    _showDebugLiveValues = _prefs.getBool(_keyDebugLiveValues) ?? false;
   }
 
   static const String _keyUnit = 'display_unit';
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
+  static const String _keyDebugLiveValues = 'debug_live_values';
 
   final SharedPreferences _prefs;
 
@@ -51,6 +54,10 @@ class AppSettings extends ChangeNotifier {
   bool _wakelockEnabled = false;
   bool get wakelockEnabled => _wakelockEnabled;
 
+  /// Whether the live view shows the debug-only "Noise" stat row.
+  bool _showDebugLiveValues = false;
+  bool get showDebugLiveValues => _showDebugLiveValues;
+
   Future<void> setDisplayUnit(DisplayUnit unit) async {
     _displayUnit = unit;
     notifyListeners();
@@ -70,5 +77,11 @@ class AppSettings extends ChangeNotifier {
     _wakelockEnabled = enabled;
     notifyListeners();
     await _prefs.setBool(_keyWakelock, enabled);
+  }
+
+  Future<void> setShowDebugLiveValues(bool enabled) async {
+    _showDebugLiveValues = enabled;
+    notifyListeners();
+    await _prefs.setBool(_keyDebugLiveValues, enabled);
   }
 }
