@@ -152,6 +152,17 @@ class _SettingsTabState extends State<SettingsTab> {
                 onChanged: settings.setWakelockEnabled,
                 contentPadding: EdgeInsets.zero,
               ),
+
+              // Debug values
+              SwitchListTile(
+                title: const Text('Show debug values in Live view'),
+                subtitle: const Text(
+                  'Adds a per-channel noise (RMS) row to the live view.',
+                ),
+                value: settings.showDebugLiveValues,
+                onChanged: settings.setShowDebugLiveValues,
+                contentPadding: EdgeInsets.zero,
+              ),
               const SizedBox(height: 24),
 
               const SectionHeader('Device settings'),

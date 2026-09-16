@@ -69,6 +69,32 @@ extension SampleStorageQueries on SampleStorage {
   double rawDiffAt(int ch, int j) => diffDefinedAt(j)
       ? (rawAt(ch, j) - rawAt(ch, j - 1)).toDouble()
       : double.nan;
+
+  /// Dispersion (standard deviation about the window's own mean) of the raw
+  /// values of channel [ch] over `[start, end)`, clamped to the retained
+  /// range. Gap samples are excluded — a held value is not a reading, so it
+  /// contributes neither signal nor noise. Null when the window holds no
+  /// real sample (empty stream, window outside retention, all-gap window).
+  double? windowedStdDev(int ch, int start, int end) {
+    final (s, e) = clampToRetained(start, end);
+    double sum = 0, sumSq = 0;
+    int count = 0;
+    for (int i = s; i < e; i++) {
+      final v = rawValueAt(ch, i);
+      if (v.isNaN) continue;
+      sum += v;
+      sumSq += v * v;
+      count++;
+    }
+    if (count == 0) return null;
+    // E[x²] - E[x]²; fp rounding can push a hair below zero.
+    return math.sqrt(
+      (sumSq / count - (sum / count) * (sum / count)).clamp(
+        0.0,
+        double.infinity,
+      ),
+    );
+  }
 }
 
 /// Per-channel derived aggregates over [SampleStorage]: the bucket

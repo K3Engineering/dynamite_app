@@ -12,6 +12,7 @@ import '../models/display_unit.dart';
 
 import '../models/bt_scan.dart';
 import '../models/device_profile.dart';
+import '../models/graph_data_source.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
 import '../services/feed_health_tracker.dart';
@@ -600,6 +601,30 @@ class LiveStats extends StatelessWidget {
                         hub.tareOffset(i, unit),
                     ],
                   ),
+                  if (settings.showDebugLiveValues) ...[
+                    ChannelStatsRow(
+                      label: 'Noise (4 s)',
+                      // Sigma about the trailing 4-second window's own mean,
+                      // in raw space; the sigma maps to display units through
+                      // the diff map (offsets cancel, so a tare is invisible
+                      // to this row). A real load step inside the window
+                      // reads as noise — this is a wiggle meter, not a
+                      // calibrated noise spec.
+                      values: [
+                        for (int i = 0; i < kAdcChannelCount; i++)
+                          switch (hub.windowedStdDev(
+                            i,
+                            hub.totalSamples - 4 * hub.sampleRateHz,
+                            hub.totalSamples,
+                          )) {
+                            final sigma? =>
+                              hub.converterFor(i).diffMap(unit)?.call(sigma),
+                            null => null,
+                          },
+                      ],
+                      stale: stale,
+                    ),
+                  ],
                   if (showDerivative)
                     ChannelStatsRow(
                       label: 'dF/dt',
