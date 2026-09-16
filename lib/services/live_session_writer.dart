@@ -8,6 +8,7 @@ import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/sample_slice.dart';
+import '../utils/future_chain.dart';
 import 'session_journal.dart';
 import 'session_store_backend.dart';
 
@@ -306,8 +307,8 @@ class LiveSessionWriter {
     onWriteError.call(error);
   }
 
-  /// Serializes all writes. Each enqueued op awaits the previous one.
-  Future<void> _writeQueue = Future.value();
+  /// Serializes all writes.
+  final FutureChain _writeQueue = FutureChain();
 
   /// Opens the session on the first write (dir + journal + first append,
   /// one flush) and hands back its sink. The production factory is the
@@ -351,7 +352,7 @@ class LiveSessionWriter {
       for (final (s, e) in slice.gapRanges) (s - startIndex, e - startIndex),
     ]);
 
-    return _enqueue(() async {
+    return _writeQueue.run(() async {
       try {
         if (writeError != null) return;
         totalSamplesRecorded += count;
@@ -381,7 +382,7 @@ class LiveSessionWriter {
   }
 
   /// Wait for every queued append to land. Serialized with appends.
-  Future<void> flush() => _enqueue(() async {});
+  Future<void> flush() => _writeQueue.run(() async {});
 
   /// Release the sink's open handle (at finalize/abort). Idempotent: the run
   /// record and its identity outlive the handle.
@@ -390,15 +391,6 @@ class LiveSessionWriter {
     if (run == null || run.closed) return;
     run.closed = true;
     await run.sink.close();
-  }
-
-  /// Chain [op] after all previously enqueued writes and return its completion.
-  Future<void> _enqueue(Future<void> Function() op) {
-    final next = _writeQueue.then((_) => op());
-    // Swallow errors on the queue itself so one failure doesn't poison the
-    // chain; real failures are latched in [writeError].
-    _writeQueue = next.catchError((_) {});
-    return next;
   }
 }
 

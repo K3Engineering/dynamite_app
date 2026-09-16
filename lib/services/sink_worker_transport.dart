@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import '../utils/future_chain.dart';
+
 /// The wire-facing half of the OPFS sink worker, narrow enough to fake in
 /// tests: dart:js_interop on the web build, a scripted double under the VM.
 abstract interface class SinkWorkerHandle {
@@ -82,26 +84,17 @@ class SinkWorkerTransport {
   final Duration _requestTimeout;
   int _seq = 0;
   final Map<int, Completer<SinkWorkerAck>> _pending = {};
-  Future<void> _chain = Future.value();
+  final FutureChain _chain = FutureChain();
   Object? _fatal;
 
-  /// Serializes requests: the worker's protocol is one request in flight. A
-  /// failed request (latched errors included) does not poison the chain —
-  /// the chain itself never carries errors forward, [_fatal] does.
+  /// Serializes requests: the worker's protocol is one request in flight.
   Future<SinkWorkerAck> request(
     String op, {
     String? id,
     int? intParam,
     Uint8List? bytes,
     Uint8List? bytes2,
-  }) {
-    final next = _chain.then((_) => _post(op, id, intParam, bytes, bytes2));
-    // void-typed so a failed request's onError (returning nothing) is a
-    // legal handler result: the chain swallows errors instead of carrying
-    // a poisoned future into every subsequent request.
-    _chain = next.then<void>((_) {}, onError: (_) {});
-    return next;
-  }
+  }) => _chain.run(() => _post(op, id, intParam, bytes, bytes2));
 
   Future<SinkWorkerAck> _post(
     String op,
