@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/feed_health.dart';
+import '../models/hub_event.dart';
 import '../utils/edge_watcher.dart';
 
 /// The shared 1 Hz feed-health derivation (see [deriveFeedHealth]), one
@@ -12,12 +13,17 @@ import '../utils/edge_watcher.dart';
 ///
 /// The ticker (not hub notifications) drives recompute: a silent feed
 /// produces no packets, so nothing else would refresh the classification.
+/// One exception: [HubCleared] forces a recompute — a new stream's reset
+/// just rewrote all the inputs, and waiting a tick would flash the
+/// previous stream's verdict at connect (the tracker and the reset
+/// coordinator both react to the same streaming edge, in either order).
 class FeedHealthTracker {
   FeedHealthTracker({
     required FeedHealthSource hub,
     required Listenable streamingChanges,
     required bool Function() streamingNow,
   }) : _hub = hub {
+    _hub.addEventListener(_onHubEvent);
     _watcher = EdgeWatcher<bool>(
       sources: [streamingChanges],
       now: streamingNow,
@@ -51,6 +57,12 @@ class FeedHealthTracker {
     }
   }
 
+  void _onHubEvent(HubEvent event) {
+    // Only HubCleared matters (see the class comment): batch appends are
+    // covered by lastDataAt on the next tick, at 1 Hz resolution.
+    if (event is HubCleared && _timer != null) _tick();
+  }
+
   void _tick() {
     final next = deriveFeedHealth(
       streaming: true,
@@ -69,6 +81,7 @@ class FeedHealthTracker {
     _timer?.cancel();
     _timer = null;
     _watcher.dispose();
+    _hub.removeEventListener(_onHubEvent);
     health.dispose();
   }
 }

@@ -5,6 +5,8 @@
 /// describes, and recovery needs no reset (the next evaluation flips it).
 library;
 
+import 'hub_event.dart';
+
 enum FeedHealth {
   /// The stream just started; its first packet is still due (within the
   /// freshness window of the stream's start stamp).
@@ -44,6 +46,14 @@ abstract interface class FeedHealthSource {
   DateTime? get lastDataAt;
   DateTime? get lastMalformedPacketAt;
   DateTime? get streamStartedAt;
+
+  /// Subscribe/unsubscribe to the source's lifecycle events (see
+  /// `hub_event.dart`). [HubCleared] rewrites every getter above back to
+  /// "stream just started", so a deriving consumer that polls on its own
+  /// schedule re-derives on this event rather than waiting a poll-cycle
+  /// with stale inputs.
+  void addEventListener(void Function(HubEvent) listener);
+  void removeEventListener(void Function(HubEvent) listener);
 }
 
 /// Classify the feed from stream measurements (the live source is DataHub;

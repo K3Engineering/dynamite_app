@@ -198,6 +198,7 @@ class DataHub extends ChangeNotifier
   void addEventListener(void Function(HubEvent) listener) =>
       _eventListeners.add(listener);
 
+  @override
   void removeEventListener(void Function(HubEvent) listener) =>
       _eventListeners.remove(listener);
 
