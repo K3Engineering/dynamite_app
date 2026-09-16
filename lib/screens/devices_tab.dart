@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 
 import '../models/bt_scan.dart';
 import '../services/ble_link_manager.dart';
+import '../services/demo_device.dart';
 import '../services/feed_health_tracker.dart';
 import '../utils/format.dart';
 import '../widgets/bt_icon.dart';
@@ -30,8 +31,9 @@ class DevicesTab extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
 
     // Top indicator reflects only adapter/scan state; per-device link state
-    // lives on the rows. We use raw linkBusy to withhold hints when ANY
-    // link is busy, ensuring Connect buttons are disabled.
+    // lives on the rows. linkBusy withholds hints while any link transition
+    // is in flight; the rows' Connect buttons gate per device via
+    // BleLinkManager.canConnectTo.
     final status = Theme.of(context).extension<StatusColors>()!;
     final visual = btAdapterScanVisual(
       availability: bt.bluetoothState,
@@ -173,7 +175,7 @@ class DevicesTab extends StatelessWidget {
                   : _InactiveDeviceRow(
                       name: device.name ?? 'Unknown device',
                       visual: visuals[device.deviceId]!,
-                      linkBusy: bt.linkBusy,
+                      canConnect: bt.canConnectTo(device.deviceId),
                       onConnect: () => _connectWithFeedback(
                         () => bt.connectToDevice(device.deviceId),
                         device.name ?? 'device',
@@ -209,7 +211,7 @@ class DevicesTab extends StatelessWidget {
                   cardColor: null,
                   titleColor: null,
                 ),
-                linkBusy: bt.linkBusy,
+                canConnect: bt.canConnectTo(demoDeviceId),
                 onConnect: () =>
                     _connectWithFeedback(bt.connectToDemoDevice, 'Demo Device'),
               ),
@@ -470,12 +472,12 @@ Future<void> _scanWithFeedback(BuildContext context, BleLinkManager bt) async {
 /// [InactiveRowVisual] (see [inactiveRowVisual]) — the widget is purely
 /// declarative over that record. The Connect button stays enabled across
 /// moods (a failure hint is retryable; stale means "maybe gone", not "don't
-/// try") and is disabled only while a link is busy.
+/// try") and is disabled only per [canConnect].
 class _InactiveDeviceRow extends StatelessWidget {
   const _InactiveDeviceRow({
     required this.name,
     required this.visual,
-    required this.linkBusy,
+    required this.canConnect,
     required this.onConnect,
   });
 
@@ -484,8 +486,10 @@ class _InactiveDeviceRow extends StatelessWidget {
   /// The precomputed presentation (mood, icon, colors, subtitle).
   final InactiveRowVisual visual;
 
-  /// Whether any link transition is in flight (disables the Connect button).
-  final bool linkBusy;
+  /// Whether this device's Connect button is enabled (from
+  /// [BleLinkManager.canConnectTo]): false while any link transition is in
+  /// flight, or while this device's reconnect-settle embargo runs.
+  final bool canConnect;
 
   final VoidCallback onConnect;
 
@@ -519,9 +523,7 @@ class _InactiveDeviceRow extends StatelessWidget {
         trailing: SizedBox(
           width: deviceActionButtonWidth,
           child: FilledButton(
-            // Disabled whenever a link is busy so we never issue a connect
-            // against a link that is still tearing down.
-            onPressed: linkBusy ? null : onConnect,
+            onPressed: canConnect ? onConnect : null,
             child: const Text('Connect'),
           ),
         ),

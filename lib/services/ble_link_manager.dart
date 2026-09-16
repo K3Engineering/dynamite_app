@@ -283,6 +283,14 @@ class BleLinkManager extends ChangeNotifier {
     return notBefore != null && notBefore.isAfter(DateTime.now());
   }
 
+  /// Whether [deviceId] can be connected right now: no link in flight and no
+  /// reconnect-settle embargo pending for it. Embargoes are per device, so a
+  /// pending one blocks only that device; simulated transports are never
+  /// stamped, so the demo device is never embargoed. Both the Devices tab's
+  /// Connect buttons and [_beginConnect] gate on this.
+  bool canConnectTo(String deviceId) =>
+      _link.state == BtLinkState.idle && !reconnectPendingFor(deviceId);
+
   Timer? _reconnectPoke;
 
   int _setupEpoch = 0;
@@ -353,9 +361,10 @@ class BleLinkManager extends ChangeNotifier {
 
   BtLinkState get linkState => _link.state;
 
-  bool get linkBusy =>
-      _link.state != BtLinkState.idle ||
-      _reconnectNotBefore.values.any((t) => t.isAfter(DateTime.now()));
+  /// A link transition is in flight. The per-device reconnect embargo is NOT
+  /// folded in — callers deciding whether a given device can be connected
+  /// must use [canConnectTo].
+  bool get linkBusy => _link.state != BtLinkState.idle;
 
   String get connectedDeviceId => _link.isLinkUp ? _link.deviceId : '';
 
@@ -905,8 +914,8 @@ class BleLinkManager extends ChangeNotifier {
   /// Kept synchronous so callers write their busy state in the same task —
   /// a Scan tap dispatched right after a Connect tap then sees `connecting`
   /// and bails (see [_startScan]).
-  bool _beginConnect() {
-    if (linkBusy) {
+  bool _beginConnect(String deviceId) {
+    if (!canConnectTo(deviceId)) {
       return false;
     }
     _connectFailures.clear();
@@ -917,7 +926,7 @@ class BleLinkManager extends ChangeNotifier {
   }
 
   Future<void> _beginLink(LinkTransport transport) async {
-    if (!_beginConnect()) return;
+    if (!_beginConnect(transport.deviceId)) return;
     _link = Connecting(transport);
     notifyListeners();
 
