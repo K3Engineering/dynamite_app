@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../models/damaged_session.dart';
 import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
+import '../utils/future_chain.dart';
 import 'live_session_writer.dart';
 import 'session_data.dart';
 import 'session_files.dart';
@@ -51,7 +52,7 @@ class SessionStore {
   final ValueNotifier<SessionCatalogState> _catalog = ValueNotifier(
     const SessionCatalogLoading(),
   );
-  Future<void> _operationTail = Future.value();
+  final FutureChain _opQueue = FutureChain();
   Future<void>? _initialCatalogLoad;
 
   /// The session the store's own writer is currently recording, if any: set
@@ -82,28 +83,19 @@ class SessionStore {
 
   Future<T> _enqueue<T>(
     Future<T> Function(SessionFilesBackend files) operation,
-  ) {
-    final result = Completer<T>();
-    _operationTail = _operationTail.then((_) async {
-      final SessionFilesBackend files;
-      try {
-        files = await _backend;
-      } catch (error, stackTrace) {
-        // Backend construction is terminal — a store that can't open its
-        // root can never do anything. The catalog (Loading until a publish
-        // lands) must say so instead of spinning forever.
-        _catalog.value = SessionCatalogFailed(error, stackTrace);
-        result.completeError(error, stackTrace);
-        return;
-      }
-      try {
-        result.complete(await operation(files));
-      } catch (error, stackTrace) {
-        result.completeError(error, stackTrace);
-      }
-    });
-    return result.future;
-  }
+  ) => _opQueue.run(() async {
+    final SessionFilesBackend files;
+    try {
+      files = await _backend;
+    } catch (error, stackTrace) {
+      // Backend construction is terminal — a store that can't open its
+      // root can never do anything. The catalog (Loading until a publish
+      // lands) must say so instead of spinning forever.
+      _catalog.value = SessionCatalogFailed(error, stackTrace);
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+    return operation(files);
+  });
 
   StateError _catalogUnavailableError(Object error) =>
       StateError('Session catalog is unavailable: $error');

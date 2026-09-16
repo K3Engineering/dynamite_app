@@ -13,6 +13,7 @@ import 'link_transport.dart';
 import '../models/device_flash.dart';
 import '../models/device_info.dart';
 import '../models/device_name.dart';
+import '../utils/future_chain.dart';
 import '../utils/log.dart';
 
 enum ConnectFailureKind {
@@ -429,7 +430,7 @@ class BleLinkManager extends ChangeNotifier {
   /// envelope's resubscribe from landing inside the NEXT envelope's command
   /// body — locking the device against its remaining commands. Envelopes
   /// chain here so each runs to completion before the next starts.
-  Future<void> _feedMaintenance = Future.value();
+  final FutureChain _feedMaintenance = FutureChain();
 
   /// Run [body] as an OTA flash session against the live link. A body that
   /// RETURNS had its image accepted — the device reboots into it ~0.5 s later
@@ -455,13 +456,8 @@ class BleLinkManager extends ChangeNotifier {
   /// device lock, so doc writes (and the verifying re-read) unsubscribe, run,
   /// resubscribe. The feed's counter jump on resume surfaces as a gap via the
   /// decoder's continuity check.
-  Future<T> _withFeedPaused<T>(Future<T> Function() body) {
-    final op = _feedMaintenance.then((_) => _feedPausedEnvelope(body));
-    // The caller gets the error through `op`; the chain copy must not
-    // re-throw or the next envelope never runs.
-    _feedMaintenance = op.then<void>((_) {}, onError: (_) {});
-    return op;
-  }
+  Future<T> _withFeedPaused<T>(Future<T> Function() body) =>
+      _feedMaintenance.run(() => _feedPausedEnvelope(body));
 
   /// The firmware releases its device lock inside the CCC-write callback,
   /// ahead of the unsubscribe's completion — but only when the platform
