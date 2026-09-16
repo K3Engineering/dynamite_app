@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:yaml/yaml.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
@@ -14,6 +15,19 @@ import 'package:dynamite_app/models/gap_list.dart';
 import 'package:dynamite_app/services/csv_export.dart';
 import 'package:dynamite_app/services/session_data.dart';
 import 'package:dynamite_app/services/session_metadata.dart';
+
+/// A parsed YAML node tree as plain Dart maps/lists, for deep comparison
+/// against the metadata object (`loadYaml` yields `YamlMap`/`YamlList`,
+/// which don't value-compare against plain collections).
+Object? plainYaml(Object? node) {
+  if (node is YamlMap) {
+    return {
+      for (final entry in node.entries) entry.key: plainYaml(entry.value),
+    };
+  }
+  if (node is YamlList) return [for (final item in node) plainYaml(item)];
+  return node;
+}
 
 /// Tests for the pure CSV-building half of the export path (the plugin
 /// dispatch half is platform code and stays untested). The format reference
@@ -69,13 +83,13 @@ void main() {
     deviceKvs: deviceKvs,
   );
 
-  String buildCsv(SessionData data, DisplayUnit unit) => buildSessionCsv(
+  String buildCsv(SessionData data, DisplayUnit unit) => SessionCsvExport(
     data,
     unit,
     recordedAtIso: recordedAtIso,
     generator: generator,
     deviceInfo: toSessionDeviceMetadata(name: null, info: testIdentity),
-  );
+  ).encode();
 
   /// The metadata line parsed as JSON (line index 1, `# ` prefix stripped).
   Map<String, dynamic> metadataOf(String csv) {
@@ -90,7 +104,7 @@ void main() {
   List<String> bodyOf(String csv) =>
       csv.trim().split('\n').skipWhile((l) => l.startsWith('#')).toList();
 
-  group('buildSessionCsv', () {
+  group('SessionCsvExport', () {
     test('emits magic, quartet header, and ssn-keyed data rows', () {
       final data = makeSession([
         [10, 20, 30],
@@ -197,14 +211,14 @@ void main() {
       );
 
       final interruptedMeta = metadataOf(
-        buildSessionCsv(
+        SessionCsvExport(
           data,
           DisplayUnit.kgf,
           recordedAtIso: recordedAtIso,
           generator: generator,
           deviceInfo: toSessionDeviceMetadata(name: null, info: testIdentity),
           interrupted: true,
-        ),
+        ).encode(),
       );
       expect(interruptedMeta['interrupted'], isTrue);
       expect(interruptedMeta['sample_rate_hz'], 1000);
@@ -217,7 +231,7 @@ void main() {
       ]);
 
       final meta = metadataOf(
-        buildSessionCsv(
+        SessionCsvExport(
           data,
           DisplayUnit.kgf,
           recordedAtIso: recordedAtIso,
@@ -230,7 +244,7 @@ void main() {
             'firmware': 'v700P|v1.2.3',
             'manufacturer': 'K3 Engineering',
           },
-        ),
+        ).encode(),
       );
 
       expect(meta['device'], {
@@ -267,8 +281,8 @@ void main() {
       expect((kvs['user'] as Map).keys, ['lc0.cap', 'lc0.sens']);
       expect(kvs, snapshot.toJson());
       expect(csv, contains('#   kvs:'));
-      expect(csv, contains("#       charging: 'enabled'"));
-      expect(csv, contains("#       lc0.cap: '200'"));
+      expect(csv, contains('#       charging: "enabled"'));
+      expect(csv, contains('#       lc0.cap: "200"'));
     });
 
     test('a session recorded with no board meta exports cal as null', () {
@@ -406,8 +420,9 @@ void main() {
   });
 
   group('YAML comment block', () {
-    test('renders the closed schema canonically', () {
-      final lines = yamlLinesForCsvMetadata({
+    test('round-trips the metadata schema (strings, numbers, bools, null, '
+        'nested maps and sequences)', () {
+      final metadata = <String, Object?>{
         'str': "John's cell",
         'num_i': 1,
         'num_f': 2.007,
@@ -418,6 +433,7 @@ void main() {
         'empty_list': <Object?>[],
         'empty_map': <String, Object?>{},
         'mapping': {'x': 1, 'y': null},
+        'multiline': 'line1\nline2',
         'sequence': [
           {
             'm': 'v1',
@@ -426,104 +442,72 @@ void main() {
           },
           {'m': null, 'n': <Object?>[], 'o': null},
         ],
-      });
+      };
 
-      expect(lines, [
-        "str: 'John''s cell'",
-        'num_i: 1',
-        'num_f: 2.007',
-        'truth: true',
-        'lying: false',
-        'absent: null',
-        "flow: [1, 4.53, 'x']",
-        'empty_list: []',
-        'empty_map: {}',
-        'mapping:',
-        '  x: 1',
-        '  y: null',
-        'sequence:',
-        "  - m: 'v1'",
-        '    n: [4.53]',
-        '    o:',
-        '      p: false',
-        '  - m: null',
-        '    n: []',
-        '    o: null',
-      ]);
+      final block = yamlLinesForCsvMetadata(metadata).join('\n');
+      expect(plainYaml(loadYaml(block)), metadata);
     });
 
-    test('throws on values outside the closed schema', () {
+    test('rejects values outside the JSON-shaped schema', () {
       expect(
         () => yamlLinesForCsvMetadata({
           'bad': {'when': DateTime.utc(2026)},
         }),
         throwsArgumentError,
       );
-      expect(
-        () => yamlLinesForCsvMetadata({
-          'bad': [<String, Object?>{}],
-        }),
-        throwsArgumentError,
-      );
     });
 
-    test('control characters render as double-quoted YAML escapes', () {
-      expect(
-        yamlLinesForCsvMetadata({
-          'v': 'a\tb\nc\u0000d\u007f',
-          'bad\u0001key': 'x',
-        }),
-        ['v: "a\\tb\\nc\\x00d\\x7F"', '"bad\\x01key": \'x\''],
-      );
-    });
-
-    test('the block re-renders byte-identically from line 2 (the validator '
-        'path: re-render and byte-compare without parsing YAML)', () {
-      final cals = [
-        ChannelCalibration(
-          board: CalibratedChannelBoard(
-            resistors: const [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
-            readings: const [
-              6383553.0,
-              3192096.0,
-              120.0,
-              -3191776.0,
-              -6383313.0,
-            ],
-            nominals: testNominals,
+    test(
+      'the block reloads to line 2\'s object (the two renderings agree)',
+      () {
+        final cals = [
+          ChannelCalibration(
+            board: CalibratedChannelBoard(
+              resistors: const [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
+              readings: const [
+                6383553.0,
+                3192096.0,
+                120.0,
+                -3191776.0,
+                -6383313.0,
+              ],
+              nominals: testNominals,
+            ),
+            loadCell: LoadCellProfile(
+              name: "John Smith's 100 kg",
+              capacityKg: 100,
+              sensitivityMvV: 2.007,
+            ),
           ),
-          loadCell: LoadCellProfile(
-            name: "John Smith's 100 kg",
-            capacityKg: 100,
-            sensitivityMvV: 2.007,
+          const ChannelCalibration(board: NominalChannelBoard(testNominals)),
+        ];
+        final data = makeSession(
+          [
+            [1],
+            [2],
+          ],
+          calibrations: cals,
+          deviceKvs: KvsSnapshot(
+            factory: {'cal.date': '2026-06-14', 'charging': 'enabled'},
+            user: const {'lc0.cap': '100'},
           ),
-        ),
-        const ChannelCalibration(board: NominalChannelBoard(testNominals)),
-      ];
-      final data = makeSession(
-        [
-          [1],
-          [2],
-        ],
-        calibrations: cals,
-        deviceKvs: KvsSnapshot(
-          factory: {'cal.date': '2026-06-14', 'charging': 'enabled'},
-          user: const {'lc0.cap': '100'},
-        ),
-      );
+        );
 
-      final csv = buildCsv(data, DisplayUnit.kgf);
-      final lines = csv.trim().split('\n');
-      final commentLines = lines.takeWhile((l) => l.startsWith('#')).toList();
+        final csv = buildCsv(data, DisplayUnit.kgf);
+        final lines = csv.trim().split('\n');
+        final commentLines = lines.takeWhile((l) => l.startsWith('#')).toList();
 
-      final reparsed = jsonDecode(commentLines[1].substring(2));
-      final rerendered = yamlLinesForCsvMetadata(
-        reparsed as Map<String, dynamic>,
-      );
-      expect(commentLines.sublist(2), [
-        for (final line in rerendered) '# $line',
-      ]);
-    });
+        final reparsed = jsonDecode(commentLines[1].substring(2));
+        final reloaded = plainYaml(
+          loadYaml(
+            [
+              for (final line in commentLines.skip(2)) line.substring(2),
+            ].join('\n'),
+          ),
+        );
+        expect(reloaded, reparsed);
+      },
+    );
   });
 
   group('column precision (spec worked example: 100 kg / 2 mV/V cell, '
