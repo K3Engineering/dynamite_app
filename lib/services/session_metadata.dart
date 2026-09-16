@@ -1,8 +1,7 @@
 import '../models/device_info.dart';
 
 /// The session-row `device` metadata block: the connected device's identity,
-/// frozen onto the session row at recording start (the CSV format's
-/// recording-time snapshot requirement — csv-format-v1.md). Built from
+/// frozen onto the session row at recording start. Built from
 /// the link's advertised/stored [name] (null when the device advertises
 /// none and none is stored) and the DIS identity [info]. Map order matches
 /// the CSV spec's emission order. `id` is the serial (the true hardware

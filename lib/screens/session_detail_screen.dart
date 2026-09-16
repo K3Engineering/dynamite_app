@@ -387,8 +387,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         );
       });
 
-  /// Ask the user for the export's converted unit (csv-format-v1.md:
-  /// one file, one unit, chosen by the user), preselected to [initial].
+  /// Ask the user for the export's converted unit (one file, one unit,
+  /// chosen by the user), preselected to [initial].
   /// Returns null when cancelled — the caller stays silent then.
   Future<DisplayUnit?> _pickExportUnit(DisplayUnit initial) {
     return showDialog<DisplayUnit>(

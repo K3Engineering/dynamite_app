@@ -17,7 +17,7 @@ import 'package:dynamite_app/services/session_metadata.dart';
 
 /// Tests for the pure CSV-building half of the export path (the plugin
 /// dispatch half is platform code and stays untested). The format reference
-/// is csv-format-v1C.md.
+/// is docs/csv-format-v2.md.
 void main() {
   const int channels = 2;
   const int sampleRate = 1000;
@@ -85,8 +85,8 @@ void main() {
   }
 
   /// The file's non-comment lines: index 0 is the header row, then one data
-  /// row per sample. This is the v1C consumer contract — data begins at the
-  /// first line not starting with `#`, never at a fixed line number.
+  /// row per sample. The consumer contract: data begins at the first line
+  /// not starting with `#`, never at a fixed line number.
   List<String> bodyOf(String csv) =>
       csv.trim().split('\n').skipWhile((l) => l.startsWith('#')).toList();
 
@@ -405,7 +405,7 @@ void main() {
     });
   });
 
-  group('YAML comment block (csv-format-v1C §The two renderings)', () {
+  group('YAML comment block', () {
     test('renders the closed schema canonically', () {
       final lines = yamlLinesForCsvMetadata({
         'str': "John's cell",
@@ -533,7 +533,8 @@ void main() {
       loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0),
     );
 
-    // csv-format-v1.md's table: decimals per unit for this setup.
+    // Decimals per unit for this setup (the precision table's worked
+    // example).
     final expected = {
       DisplayUnit.kgf: 6,
       DisplayUnit.n: 5,

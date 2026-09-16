@@ -161,8 +161,8 @@ class DataHub extends ChangeNotifier
   /// injection. Together they anchor the device sample counter to the hub
   /// timeline: sample i carries counter
   /// `anchor.counter + (i - anchor.hubIndex)` (past 0xFFFF, i.e. unwrapped).
-  /// The recording writer reads this once to latch a session's `ssn_origin`
-  /// (csv-format-v1.md); nothing else consumes it. One nullable record
+  /// The recording writer reads this once to latch a session's
+  /// `ssn_origin`; nothing else consumes it. One nullable record
   /// so the pair can never be half-set or half-reset.
   ({int counter, int hubIndex})? packetAnchor;
 

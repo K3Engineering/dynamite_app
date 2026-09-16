@@ -128,8 +128,8 @@ class RecordingController extends ChangeNotifier {
     required Listenable streamingChanges,
     required bool Function() streamingNow,
 
-    /// Snapshot of the connected device's identity (the CSV `device` block
-    /// — csv-format-v1.md), frozen onto the session row at start.
+    /// Snapshot of the connected device's identity (the CSV `device`
+    /// block), frozen onto the session row at start.
     required Map<String, Object?> Function() deviceMetadataSnapshot,
 
     /// Snapshot of the raw device KVS (the CSV `device.kvs` block), frozen

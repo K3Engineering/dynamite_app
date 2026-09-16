@@ -1,5 +1,5 @@
 /// CSV export of a recorded session: building the dynamite-csv file
-/// (csv-format-v1.md) as a deliverable artifact. Handing the file to
+/// (docs/csv-format-v2.md) as a deliverable artifact. Handing the file to
 /// the OS (save-as dialog, share sheet) is the caller's composition with
 /// export_delivery.dart — this module never touches platform UI.
 library;
@@ -17,9 +17,8 @@ import 'export_names.dart';
 import 'session_data.dart';
 import 'session_metadata.dart';
 
-/// The dynamite-csv file format's view of a display unit
-/// (csv-format-v1.md): the header/metadata symbol and the per-column
-/// fixed-point precision. Kept here, not on the enum — the file format is
+/// The dynamite-csv file format's view of a display unit: the
+/// header/metadata symbol and the per-column fixed-point precision. Kept here, not on the enum — the file format is
 /// this service's concern.
 extension DisplayUnitCsv on DisplayUnit {
   /// The unit's verbatim symbol in a dynamite-csv file: exactly as the
@@ -49,8 +48,8 @@ extension DisplayUnitCsv on DisplayUnit {
 
 /// The session's recorded [data] as a deliverable CSV artifact: the file
 /// bytes, its sanitized name, and its MIME type. [unit] is the file's
-/// converted unit (the user's pick in the export flow — see
-/// csv-format-v1C.md). [sessionName]/[recordedAtIso]/[deviceInfo] are
+/// converted unit (the user's pick in the export flow).
+/// [sessionName]/[recordedAtIso]/[deviceInfo] are
 /// the session's fields, passed flat so the export API doesn't take store
 /// types. Delivery is the caller's job (export_delivery.dart).
 ({Uint8List bytes, String fileName, String mimeType}) buildSessionCsvArtifact({
@@ -77,8 +76,8 @@ extension DisplayUnitCsv on DisplayUnit {
   );
 }
 
-/// Build the session's CSV in the dynamite-csv v1 format, v1C framing
-/// (csv-format-v1C.md): a `# dynamite-csv 1` magic line, a one-line
+/// Build the session's CSV in the dynamite-csv format: a
+/// `# dynamite-csv 1` magic line, a one-line
 /// metadata JSON carrying everything needed to reproduce the converted
 /// columns (frozen recording-time calibration, tares, sample rate, ssn
 /// origin, device identity + board-cal provenance), the same object
@@ -109,8 +108,8 @@ String buildSessionCsv(
 
   /// The recording never completed (no finalize endorsement): every byte
   /// in the file is valid, but the tail may be missing. Emitted as the
-  /// additive metadata key `interrupted` (unknown-key tolerant per
-  /// csv-format-v1.md) — the file states its own provenance.
+  /// additive metadata key `interrupted` (readers ignore unknown keys) —
+  /// the file states its own provenance.
   bool interrupted = false,
 }) {
   final int n = data.channels.length;
@@ -140,8 +139,8 @@ String buildSessionCsv(
   final buf = StringBuffer()
     ..writeln('# dynamite-csv 1')
     ..writeln('# ${jsonEncode(metadata)}');
-  // The human-glanceable rendering of the same object (csv-format-v1C.md
-  // §The two renderings): line 2 stays the only machine form.
+  // The human-glanceable rendering of the same object: line 2 stays the
+  // only machine form.
   for (final line in yamlLinesForCsvMetadata(metadata)) {
     buf.writeln('# $line');
   }
@@ -193,10 +192,9 @@ String Function(int raw)? _columnFormatter(
   return (raw) => convert(raw.toDouble()).toStringAsFixed(decimals);
 }
 
-/// The metadata line's JSON object (csv-format-v1C.md §Metadata schema):
-/// one compact object, all top-level fields required in v1, nullable
-/// subfields emitted as null. Map order here is the emission order (and
-/// matches the spec).
+/// The metadata line's JSON object: one compact object, all top-level
+/// fields required, nullable subfields emitted as null. Map order here is
+/// the emission order (and matches the spec).
 Map<String, Object?> _metadata(
   SessionData data,
   DisplayUnit unit,
@@ -255,8 +253,8 @@ Map<String, Object?> _metadata(
   };
 }
 
-/// The canonical YAML rendering of the metadata object (csv-format-v1C.md
-/// §The two renderings): a deterministic function of the JSON object's
+/// The canonical YAML rendering of the metadata object: a deterministic
+/// function of the JSON object's
 /// emission order and values — derived documentation, re-derivable from
 /// line 2 by a validator without parsing YAML. The closed schema (maps,
 /// strings, numbers, booleans, null, scalar flow sequences, sequences of
@@ -279,9 +277,7 @@ List<String> _yamlEntry(String key, Object? value, int indent) {
   if (value is List) {
     if (value.isEmpty) return ['$pad${_yamlKey(key)}: []'];
     if (value.every((e) => e is! Map)) {
-      return [
-        '$pad${_yamlKey(key)}: [${value.map(_yamlScalar).join(', ')}]',
-      ];
+      return ['$pad${_yamlKey(key)}: [${value.map(_yamlScalar).join(', ')}]'];
     }
     return [
       '$pad${_yamlKey(key)}:',

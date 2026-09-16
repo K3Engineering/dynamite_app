@@ -6,7 +6,7 @@ library;
 /// leaves local times suffix-less (ambiguous against UTC); [timeZoneOffset]
 /// — the zone offset the OS tz database assigns to this instant, DST included
 /// — supplies the suffix. Frozen into the session row at recording start as
-/// the dynamite-csv `recorded_at` (csv-format-v1C.md).
+/// the dynamite-csv `recorded_at`.
 String iso8601WithOffset(DateTime value) {
   if (value.isUtc) return value.toIso8601String();
   final offset = value.timeZoneOffset;
