@@ -3,6 +3,8 @@
 // contract with the firmware repo's CI. Network access lives in
 // `firmware_catalog.dart` — everything here is pure.
 
+import 'package:pub_semver/pub_semver.dart' as semver;
+
 /// Which release stream a device tracks. There is deliberately no
 /// "nightly": nightlies are covered by the from-file flash path.
 enum FirmwareChannel {
@@ -21,9 +23,9 @@ enum FirmwareChannel {
       values.asNameMap()[name] ?? FirmwareChannel.stable;
 }
 
-/// A semver-ish version parsed from a release tag (`v1.2.3`,
-/// `v1.2.3-beta.4`). The leading `v` is optional on parse and always
-/// rendered.
+/// A version parsed from a release tag (`v1.2.3`, `v1.2.3-beta.4`). The
+/// leading `v` is optional on parse and always rendered. Comparison is
+/// pub_semver precedence.
 class FirmwareVersion implements Comparable<FirmwareVersion> {
   const FirmwareVersion(this.major, this.minor, this.patch, [this.prerelease]);
 
@@ -34,49 +36,27 @@ class FirmwareVersion implements Comparable<FirmwareVersion> {
   /// The trailing prerelease (`beta.4`), or null for a release version.
   final String? prerelease;
 
-  static final _pattern = RegExp(
-    r'^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$',
-  );
-
   static FirmwareVersion? tryParse(String tag) {
-    final m = _pattern.firstMatch(tag.trim());
-    if (m == null) return null;
-    return FirmwareVersion(
-      int.parse(m[1]!),
-      int.parse(m[2]!),
-      int.parse(m[3]!),
-      m[4],
-    );
+    try {
+      final v = semver.Version.parse(_stripV(tag.trim()));
+      return FirmwareVersion(
+        v.major,
+        v.minor,
+        v.patch,
+        v.preRelease.isEmpty ? null : v.preRelease.join('.'),
+      );
+    } on FormatException {
+      return null;
+    }
   }
 
-  String get label =>
-      'v$major.$minor.$patch${prerelease == null ? '' : '-$prerelease'}';
+  semver.Version get _semver =>
+      semver.Version(major, minor, patch, pre: prerelease);
+
+  String get label => 'v$_semver';
 
   @override
-  int compareTo(FirmwareVersion other) {
-    var c = major.compareTo(other.major);
-    if (c != 0) return c;
-    c = minor.compareTo(other.minor);
-    if (c != 0) return c;
-    c = patch.compareTo(other.patch);
-    if (c != 0) return c;
-    // Standard semver: a release outranks any of its prereleases.
-    final pre = prerelease;
-    final otherPre = other.prerelease;
-    if (pre == null) return otherPre == null ? 0 : 1;
-    if (otherPre == null) return -1;
-    final segs = pre.split('.');
-    final otherSegs = otherPre.split('.');
-    for (var i = 0; i < segs.length && i < otherSegs.length; ++i) {
-      final a = int.tryParse(segs[i]);
-      final b = int.tryParse(otherSegs[i]);
-      c = a != null && b != null
-          ? a.compareTo(b)
-          : segs[i].compareTo(otherSegs[i]);
-      if (c != 0) return c;
-    }
-    return segs.length.compareTo(otherSegs.length);
-  }
+  int compareTo(FirmwareVersion other) => _semver.compareTo(other._semver);
 
   @override
   String toString() => label;
