@@ -419,6 +419,258 @@ void main() {
     });
   });
 
+  group('quartet 2 regenerates from quartet 1 + metadata', () {
+    DisplayUnit unitOf(String symbol) => switch (symbol) {
+      'raw' => DisplayUnit.raw,
+      'mV/V' => DisplayUnit.mVv,
+      'mV' => DisplayUnit.mV,
+      'kgf' => DisplayUnit.kgf,
+      'N' => DisplayUnit.n,
+      'kN' => DisplayUnit.kN,
+      'lbf' => DisplayUnit.lbf,
+      _ => throw ArgumentError('unknown unit: $symbol'),
+    };
+
+    /// Rebuild one channel's converted-cell formatter from the file's own
+    /// metadata — never from the export's input objects. Null = the unit is
+    /// unavailable on the channel (an all-blank column).
+    String Function(int raw)? formatterFromMetadata(
+      Map<String, dynamic> metadata,
+      int ch,
+      DisplayUnit unit,
+    ) {
+      final channel =
+          (metadata['channels'] as List)[ch] as Map<String, dynamic>;
+      final tare = (channel['tare_raw'] as num?)?.toDouble();
+      ChannelBoardCalibration? board;
+      final boardCal = channel['board_cal'];
+      if (boardCal != null) {
+        board = ChannelBoardCalibration.fromJson(
+          Map<String, dynamic>.from(boardCal as Map),
+        );
+      } else {
+        final afe =
+            (metadata['device'] as Map<String, dynamic>)['afe']
+                as Map<String, dynamic>;
+        final fsr = afe['adc_ref_v'];
+        if (fsr != null) {
+          board = NominalChannelBoard(
+            ChannelNominals(
+              adcFsrV: (fsr as num).toDouble(),
+              afeGain: (afe['front_end_gain'] as num).toDouble(),
+              pgaGain: ((afe['adc_gain'] as List)[ch] as num).toDouble(),
+              excitationV: (afe['excitation_v'] as num).toDouble(),
+            ),
+          );
+        }
+      }
+      LoadCellProfile? loadCell;
+      final cell = channel['load_cell'];
+      if (cell != null) {
+        final json = cell as Map<String, dynamic>;
+        // The file format's snake_case keys, not the session snapshot's.
+        loadCell = LoadCellProfile(
+          name: json['name'] as String? ?? '',
+          capacityKg: (json['capacity_kg'] as num).toDouble(),
+          sensitivityMvV: (json['sensitivity_mv_v'] as num).toDouble(),
+        );
+      }
+      final converter = ChannelConverter(
+        ChannelCalibration(board: board, loadCell: loadCell),
+        tare,
+      );
+      final map = converter.netMap(unit);
+      final decimals = unit.exportDecimalsFor(converter);
+      if (map == null || decimals == null) return null;
+      return (raw) => map(raw.toDouble()).toStringAsFixed(decimals);
+    }
+
+    /// Null when every converted cell equals its regeneration from the raw
+    /// columns plus the metadata line; a description of the first mismatch
+    /// otherwise. The file contract is the written text, so cells compare
+    /// as strings.
+    String? regenerationMismatch(String csv) {
+      final metadata = metadataOf(csv);
+      final unit = unitOf(metadata['converted_unit'] as String);
+      final body = bodyOf(csv);
+      final channelCount = (body.first.split(',').length - 1) ~/ 2;
+      final formatters = [
+        for (int ch = 0; ch < channelCount; ch++)
+          formatterFromMetadata(metadata, ch, unit),
+      ];
+      for (int r = 1; r < body.length; r++) {
+        final cells = body[r].split(',');
+        for (int ch = 0; ch < channelCount; ch++) {
+          final actual = cells[1 + channelCount + ch];
+          final rawCell = cells[1 + ch];
+          final format = formatters[ch];
+          final expected = (rawCell.isEmpty || format == null)
+              ? ''
+              : format(int.parse(rawCell));
+          if (actual != expected) {
+            return 'row $r ch$ch: converted cell "$actual" '
+                '!= regenerated "$expected"';
+          }
+        }
+      }
+      return null;
+    }
+
+    CalibratedChannelBoard calibratedBoard() => CalibratedChannelBoard(
+      resistors: const [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
+      readings: const [6383553.0, 3192096.0, 120.0, -3191776.0, -6383313.0],
+      nominals: testNominals,
+    );
+
+    test('every unit, nominal board, fractional tares, a gap row', () {
+      final data = makeSession(
+        [
+          [1000, -2000, 300000, 5],
+          [400000, 6, 7, 8],
+        ],
+        calibrations: [
+          for (int ch = 0; ch < channels; ch++)
+            ChannelCalibration(
+              board: const NominalChannelBoard(testNominals),
+              loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.007),
+            ),
+        ],
+        tares: const [100.25, -33.75],
+        gaps: GapList()..append(3, 4),
+      );
+      for (final unit in DisplayUnit.values) {
+        expect(
+          regenerationMismatch(buildCsv(data, unit)),
+          isNull,
+          reason: unit.symbol,
+        );
+      }
+    });
+
+    test('every unit, calibrated board', () {
+      final data = makeSession(
+        [
+          [6400000, -1000, 0],
+          [-6400000, 500, 42],
+        ],
+        calibrations: [
+          ChannelCalibration(
+            board: calibratedBoard(),
+            loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.007),
+          ),
+          ChannelCalibration(
+            board: calibratedBoard(),
+            loadCell: LoadCellProfile(capacityKg: 20, sensitivityMvV: 2.0),
+          ),
+        ],
+        tares: const [-12340.5, 55.0],
+      );
+      for (final unit in DisplayUnit.values) {
+        expect(
+          regenerationMismatch(buildCsv(data, unit)),
+          isNull,
+          reason: unit.symbol,
+        );
+      }
+    });
+
+    test('the all-blank column of a cell-less channel regenerates too', () {
+      final data = makeSession(
+        [
+          [1000],
+          [2000],
+        ],
+        calibrations: [
+          ChannelCalibration(
+            board: calibratedBoard(),
+            loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.007),
+          ),
+          ChannelCalibration(board: calibratedBoard()),
+        ],
+        tares: const [-12340.5, null],
+      );
+      expect(regenerationMismatch(buildCsv(data, DisplayUnit.kgf)), isNull);
+      final body = bodyOf(buildCsv(data, DisplayUnit.kgf));
+      expect(body[1].split(',').last, isEmpty);
+    });
+
+    test('a board-less session: converted units all-blank, raw populated', () {
+      final data = makeSession(
+        [
+          [10, -20],
+          [30, -40],
+        ],
+        calibrations: const [
+          ChannelCalibration(board: null),
+          ChannelCalibration(board: null),
+        ],
+        tares: const [10.5, null],
+      );
+      for (final unit in [
+        DisplayUnit.kgf,
+        DisplayUnit.mVv,
+        DisplayUnit.mV,
+        DisplayUnit.raw,
+      ]) {
+        expect(
+          regenerationMismatch(buildCsv(data, unit)),
+          isNull,
+          reason: unit.symbol,
+        );
+      }
+      expect(bodyOf(buildCsv(data, DisplayUnit.mVv))[1], '0,10,30,,');
+      expect(bodyOf(buildCsv(data, DisplayUnit.raw))[1], '0,10,30,-0.5,30.0');
+    });
+
+    test('tampered tares fail the check', () {
+      final data = makeSession(
+        [
+          [1000],
+          [2000],
+        ],
+        calibrations: [
+          ChannelCalibration(
+            board: calibratedBoard(),
+            loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.007),
+          ),
+          const ChannelCalibration(board: NominalChannelBoard(testNominals)),
+        ],
+        tares: const [-12340.5, null],
+      );
+      final csv = buildCsv(data, DisplayUnit.kgf);
+      final tampered = csv.replaceFirst(
+        '"tare_raw":-12340.5',
+        '"tare_raw":-12340.4',
+      );
+      expect(tampered, isNot(csv));
+      expect(regenerationMismatch(tampered), contains('regenerated'));
+    });
+
+    test('a blanked-out populated cell fails the check', () {
+      final data = makeSession(
+        [
+          [1000],
+          [2000],
+        ],
+        calibrations: [
+          ChannelCalibration(
+            board: calibratedBoard(),
+            loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.007),
+          ),
+          const ChannelCalibration(board: NominalChannelBoard(testNominals)),
+        ],
+        tares: const [-12340.5, null],
+      );
+      final lines = buildCsv(data, DisplayUnit.kgf).trim().split('\n');
+      final rowIndex = lines.indexWhere((l) => !l.startsWith('#')) + 1;
+      final cells = lines[rowIndex].split(',');
+      expect(cells[3], isNotEmpty);
+      cells[3] = '';
+      lines[rowIndex] = cells.join(',');
+      expect(regenerationMismatch(lines.join('\n')), contains('row 1 ch0'));
+    });
+  });
+
   group('YAML comment block', () {
     test('round-trips the metadata schema (strings, numbers, bools, null, '
         'nested maps and sequences)', () {
