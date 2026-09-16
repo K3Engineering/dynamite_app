@@ -12,6 +12,14 @@ import 'device_profile.dart';
 /// the sample format, not a conversion nominal.
 const int adcCountsPerPolarity = 1 << 23;
 
+/// The signed 24-bit rails: every real sample value lies in
+/// [adcMinValue]..[adcMaxValue], and values outside are the codec's reserved
+/// territory (see SessionChunkCodec's gap sentinel). The ONE definition of
+/// the converter's range — clip checks, the session codec, and synthetic
+/// feeds all derive from here.
+const int adcMaxValue = adcCountsPerPolarity - 1;
+const int adcMinValue = -adcCountsPerPolarity;
+
 // ---------------------------------------------------------------------------
 // Board constants (analog chain), resolved from the device
 // ---------------------------------------------------------------------------

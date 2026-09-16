@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import '../models/board_calibration.dart';
 import 'adc_protocol.dart';
 
 /// The demo feed's sample rate: 20 samples on the 20 ms timer.
@@ -73,22 +74,23 @@ class DemoSignalSource {
         // --- Channel 4: Quiet noise floor ---
         const double ch4Raw = 0.0;
 
-        // Add ±100 count gaussian noise floor to all channels
+        // Add ±100 count gaussian noise floor to all channels, clamped to
+        // the converter's rails.
         final int c1 = (ch1Raw + _gaussian() * 100).toInt().clamp(
-          -8388608,
-          8388607,
+          adcMinValue,
+          adcMaxValue,
         );
         final int c2 = (ch2Raw + _gaussian() * 100).toInt().clamp(
-          -8388608,
-          8388607,
+          adcMinValue,
+          adcMaxValue,
         );
         final int c3 = (ch3Raw + _gaussian() * 100).toInt().clamp(
-          -8388608,
-          8388607,
+          adcMinValue,
+          adcMaxValue,
         );
         final int c4 = (ch4Raw + _gaussian() * 100).toInt().clamp(
-          -8388608,
-          8388607,
+          adcMinValue,
+          adcMaxValue,
         );
 
         frames.add(encodeAdcFrame([c1, c2, c3, c4]));

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/device_profile.dart';
@@ -24,8 +25,8 @@ class SessionChunkCodec {
   /// [gapSentinel] is its first occupant. Encode paths must never emit an
   /// out-of-range real value, and nothing may read the reserved range as
   /// ordinary data.
-  static const int maxAdcValue = (1 << 23) - 1;
-  static const int minAdcValue = -(1 << 23);
+  static const int maxAdcValue = adcMaxValue;
+  static const int minAdcValue = adcMinValue;
 
   /// The dropped-samples marker: a frame whose every channel reads
   /// [gapSentinel] is a gap. Held values are a representation, not a signal

@@ -13,6 +13,7 @@ import 'link_transport.dart';
 import '../models/device_flash.dart';
 import '../models/device_info.dart';
 import '../models/device_name.dart';
+import '../utils/edge_watcher.dart';
 import '../utils/future_chain.dart';
 import '../utils/log.dart';
 
@@ -395,19 +396,20 @@ class BleLinkManager extends ChangeNotifier {
   void setDevicesTabVisible(bool visible) {
     if (_devicesTabVisible == visible) return;
     _devicesTabVisible = visible;
-    _syncFreshnessPoke();
+    // No notifyListeners here (view-only flag); poll the watcher directly.
+    _freshnessWatcher.check();
   }
 
   Timer? _freshnessPoke;
+  late final EdgeWatcher<bool> _freshnessWatcher;
 
-  void _syncFreshnessPoke() {
-    final shouldRun = _devicesTabVisible && _devices.isNotEmpty;
-    if (shouldRun && _freshnessPoke == null) {
+  void _onFreshnessEdge(bool running) {
+    if (running) {
       _freshnessPoke = Timer.periodic(
         const Duration(seconds: 1),
         (_) => notifyListeners(),
       );
-    } else if (!shouldRun) {
+    } else {
       _freshnessPoke?.cancel();
       _freshnessPoke = null;
     }
@@ -535,6 +537,16 @@ class BleLinkManager extends ChangeNotifier {
     UniversalBle.onConnectionParametersChange = _onConnectionParametersChange;
     UniversalBle.onValueChange = _onValueChange;
 
+    // Poll on every notify (the manager notifies for many reasons): the
+    // watcher starts the poke when the tab needs per-second freshness and
+    // stops it otherwise.
+    _freshnessWatcher = EdgeWatcher<bool>(
+      sources: [this],
+      now: () => _devicesTabVisible && _devices.isNotEmpty,
+      seed: false,
+      effect: _onFreshnessEdge,
+    );
+
     unawaited(_updateBluetoothState());
   }
 
@@ -583,7 +595,6 @@ class BleLinkManager extends ChangeNotifier {
     // A re-discovered device is a fresh platform handle.
     _connectFailures.remove(mapped.deviceId);
     notifyListeners();
-    _syncFreshnessPoke();
     // Web: the "scan" is Chrome's requestDevice() picker; the one result is
     // the device the user just picked.
     if (kIsWeb) {
@@ -598,7 +609,6 @@ class BleLinkManager extends ChangeNotifier {
       _devices.clear();
     }
     notifyListeners();
-    _syncFreshnessPoke();
   }
 
   Future<void> _stopScan() async {
@@ -1075,6 +1085,7 @@ class BleLinkManager extends ChangeNotifier {
     final transport = _link.transport;
     transport?.dispose();
     _stopRssiPolling();
+    _freshnessWatcher.dispose();
     _freshnessPoke?.cancel();
     _freshnessPoke = null;
     _reconnectPoke?.cancel();

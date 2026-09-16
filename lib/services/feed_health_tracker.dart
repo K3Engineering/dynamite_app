@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/feed_health.dart';
+import '../utils/edge_watcher.dart';
 
 /// The shared 1 Hz feed-health derivation (see [deriveFeedHealth]), one
 /// owner for every surface that wants the live classification — the Devices
@@ -16,10 +17,15 @@ class FeedHealthTracker {
     required FeedHealthSource hub,
     required Listenable streamingChanges,
     required bool Function() streamingNow,
-  }) : _hub = hub,
-       _streamingChanges = streamingChanges,
-       _streamingNow = streamingNow {
-    _streamingChanges.addListener(_onStreamingChanged);
+  }) : _hub = hub {
+    _watcher = EdgeWatcher<bool>(
+      sources: [streamingChanges],
+      now: streamingNow,
+      // Seeded "not streaming": a tracker built mid-stream starts the
+      // ticker on the first notification, as its old timer-null guard did.
+      seed: false,
+      effect: _onStreamingEdge,
+    );
   }
 
   /// The tracker's narrow read port onto the live store (main wires the hub
@@ -27,21 +33,12 @@ class FeedHealthTracker {
   /// side — and it cannot reach the hub's command surface.
   final FeedHealthSource _hub;
 
-  /// Notifies when the link's streaming state may have changed; queried via
-  /// [_streamingNow]. The tracker's narrow port onto the link layer — main
-  /// wires the link manager in, tests wire their own source.
-  final Listenable _streamingChanges;
-  final bool Function() _streamingNow;
+  late final EdgeWatcher<bool> _watcher;
 
   final ValueNotifier<FeedHealth?> health = ValueNotifier(null);
   Timer? _timer;
 
-  /// Start/stop the ticker on streaming edges. The source notifies for many
-  /// reasons (RSSI polls included); the edge guard keeps this a no-op unless
-  /// streaming actually flipped.
-  void _onStreamingChanged() {
-    final streaming = _streamingNow();
-    if (streaming == (_timer != null)) return;
+  void _onStreamingEdge(bool streaming) {
     if (streaming) {
       // Classify at once, not on the first tick: a null [health] then means
       // exactly "not streaming" — never "streaming, not yet classified".
@@ -71,7 +68,7 @@ class FeedHealthTracker {
   void dispose() {
     _timer?.cancel();
     _timer = null;
-    _streamingChanges.removeListener(_onStreamingChanged);
+    _watcher.dispose();
     health.dispose();
   }
 }
