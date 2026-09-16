@@ -21,7 +21,9 @@ import 'package:dynamite_app/services/session_metadata.dart';
 /// which don't value-compare against plain collections).
 Object? plainYaml(Object? node) {
   if (node is YamlMap) {
-    return {for (final entry in node.entries) entry.key: plainYaml(entry.value)};
+    return {
+      for (final entry in node.entries) entry.key: plainYaml(entry.value),
+    };
   }
   if (node is YamlList) return [for (final item in node) plainYaml(item)];
   return node;
@@ -81,13 +83,13 @@ void main() {
     deviceKvs: deviceKvs,
   );
 
-  String buildCsv(SessionData data, DisplayUnit unit) => buildSessionCsv(
+  String buildCsv(SessionData data, DisplayUnit unit) => SessionCsvExport(
     data,
     unit,
     recordedAtIso: recordedAtIso,
     generator: generator,
     deviceInfo: toSessionDeviceMetadata(name: null, info: testIdentity),
-  );
+  ).encode();
 
   /// The metadata line parsed as JSON (line index 1, `# ` prefix stripped).
   Map<String, dynamic> metadataOf(String csv) {
@@ -102,7 +104,7 @@ void main() {
   List<String> bodyOf(String csv) =>
       csv.trim().split('\n').skipWhile((l) => l.startsWith('#')).toList();
 
-  group('buildSessionCsv', () {
+  group('SessionCsvExport', () {
     test('emits magic, quartet header, and ssn-keyed data rows', () {
       final data = makeSession([
         [10, 20, 30],
@@ -209,14 +211,14 @@ void main() {
       );
 
       final interruptedMeta = metadataOf(
-        buildSessionCsv(
+        SessionCsvExport(
           data,
           DisplayUnit.kgf,
           recordedAtIso: recordedAtIso,
           generator: generator,
           deviceInfo: toSessionDeviceMetadata(name: null, info: testIdentity),
           interrupted: true,
-        ),
+        ).encode(),
       );
       expect(interruptedMeta['interrupted'], isTrue);
       expect(interruptedMeta['sample_rate_hz'], 1000);
@@ -229,7 +231,7 @@ void main() {
       ]);
 
       final meta = metadataOf(
-        buildSessionCsv(
+        SessionCsvExport(
           data,
           DisplayUnit.kgf,
           recordedAtIso: recordedAtIso,
@@ -242,7 +244,7 @@ void main() {
             'firmware': 'v700P|v1.2.3',
             'manufacturer': 'K3 Engineering',
           },
-        ),
+        ).encode(),
       );
 
       expect(meta['device'], {
@@ -418,36 +420,33 @@ void main() {
   });
 
   group('YAML comment block', () {
-    test(
-      'round-trips the metadata schema (strings, numbers, bools, null, '
-      'nested maps and sequences)',
-      () {
-        final metadata = <String, Object?>{
-          'str': "John's cell",
-          'num_i': 1,
-          'num_f': 2.007,
-          'truth': true,
-          'lying': false,
-          'absent': null,
-          'flow': [1, 4.53, 'x'],
-          'empty_list': <Object?>[],
-          'empty_map': <String, Object?>{},
-          'mapping': {'x': 1, 'y': null},
-          'multiline': 'line1\nline2',
-          'sequence': [
-            {
-              'm': 'v1',
-              'n': [4.53],
-              'o': {'p': false},
-            },
-            {'m': null, 'n': <Object?>[], 'o': null},
-          ],
-        };
+    test('round-trips the metadata schema (strings, numbers, bools, null, '
+        'nested maps and sequences)', () {
+      final metadata = <String, Object?>{
+        'str': "John's cell",
+        'num_i': 1,
+        'num_f': 2.007,
+        'truth': true,
+        'lying': false,
+        'absent': null,
+        'flow': [1, 4.53, 'x'],
+        'empty_list': <Object?>[],
+        'empty_map': <String, Object?>{},
+        'mapping': {'x': 1, 'y': null},
+        'multiline': 'line1\nline2',
+        'sequence': [
+          {
+            'm': 'v1',
+            'n': [4.53],
+            'o': {'p': false},
+          },
+          {'m': null, 'n': <Object?>[], 'o': null},
+        ],
+      };
 
-        final block = yamlLinesForCsvMetadata(metadata).join('\n');
-        expect(plainYaml(loadYaml(block)), metadata);
-      },
-    );
+      final block = yamlLinesForCsvMetadata(metadata).join('\n');
+      expect(plainYaml(loadYaml(block)), metadata);
+    });
 
     test('rejects values outside the JSON-shaped schema', () {
       expect(
@@ -458,54 +457,57 @@ void main() {
       );
     });
 
-    test('the block reloads to line 2\'s object (the two renderings agree)', () {
-      final cals = [
-        ChannelCalibration(
-          board: CalibratedChannelBoard(
-            resistors: const [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
-            readings: const [
-              6383553.0,
-              3192096.0,
-              120.0,
-              -3191776.0,
-              -6383313.0,
-            ],
-            nominals: testNominals,
+    test(
+      'the block reloads to line 2\'s object (the two renderings agree)',
+      () {
+        final cals = [
+          ChannelCalibration(
+            board: CalibratedChannelBoard(
+              resistors: const [10001.2, 9.98, 10.01, 10.02, 9.99, 9998.7],
+              readings: const [
+                6383553.0,
+                3192096.0,
+                120.0,
+                -3191776.0,
+                -6383313.0,
+              ],
+              nominals: testNominals,
+            ),
+            loadCell: LoadCellProfile(
+              name: "John Smith's 100 kg",
+              capacityKg: 100,
+              sensitivityMvV: 2.007,
+            ),
           ),
-          loadCell: LoadCellProfile(
-            name: "John Smith's 100 kg",
-            capacityKg: 100,
-            sensitivityMvV: 2.007,
-          ),
-        ),
-        const ChannelCalibration(board: NominalChannelBoard(testNominals)),
-      ];
-      final data = makeSession(
-        [
-          [1],
-          [2],
-        ],
-        calibrations: cals,
-        deviceKvs: KvsSnapshot(
-          factory: {'cal.date': '2026-06-14', 'charging': 'enabled'},
-          user: const {'lc0.cap': '100'},
-        ),
-      );
-
-      final csv = buildCsv(data, DisplayUnit.kgf);
-      final lines = csv.trim().split('\n');
-      final commentLines = lines.takeWhile((l) => l.startsWith('#')).toList();
-
-      final reparsed = jsonDecode(commentLines[1].substring(2));
-      final reloaded = plainYaml(
-        loadYaml(
+          const ChannelCalibration(board: NominalChannelBoard(testNominals)),
+        ];
+        final data = makeSession(
           [
-            for (final line in commentLines.skip(2)) line.substring(2),
-          ].join('\n'),
-        ),
-      );
-      expect(reloaded, reparsed);
-    });
+            [1],
+            [2],
+          ],
+          calibrations: cals,
+          deviceKvs: KvsSnapshot(
+            factory: {'cal.date': '2026-06-14', 'charging': 'enabled'},
+            user: const {'lc0.cap': '100'},
+          ),
+        );
+
+        final csv = buildCsv(data, DisplayUnit.kgf);
+        final lines = csv.trim().split('\n');
+        final commentLines = lines.takeWhile((l) => l.startsWith('#')).toList();
+
+        final reparsed = jsonDecode(commentLines[1].substring(2));
+        final reloaded = plainYaml(
+          loadYaml(
+            [
+              for (final line in commentLines.skip(2)) line.substring(2),
+            ].join('\n'),
+          ),
+        );
+        expect(reloaded, reparsed);
+      },
+    );
   });
 
   group('column precision (spec worked example: 100 kg / 2 mV/V cell, '
