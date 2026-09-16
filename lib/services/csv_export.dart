@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:csv/csv.dart';
 import 'package:yaml_writer/yaml_writer.dart';
 
 import '../models/app_meta.dart';
@@ -100,7 +101,8 @@ extension DisplayUnitCsv on DisplayUnit {
 ///
 /// TODO(perf): the whole CSV is built in memory as one string — the format
 /// milestone will replace this with a chunked writer (see
-/// SessionStore.loadSession's own materialization note).
+/// SessionStore.loadSession's own materialization note); rows then feed
+/// `_csv.encoder` as a stream one event at a time instead of collecting.
 String buildSessionCsv(
   SessionData data,
   DisplayUnit unit, {
@@ -147,36 +149,38 @@ String buildSessionCsv(
     buf.writeln('# $line');
   }
 
-  // Header: ssn, then the raw quartet, then the converted quartet. Header
-  // cells only ever contain [A-Za-z0-9_/], so no quoting is ever needed.
-  buf.write('ssn');
-  for (int ch = 0; ch < n; ch++) {
-    buf.write(',ch$ch');
-  }
-  for (int ch = 0; ch < n; ch++) {
-    buf.write(',ch${ch}_${unit.csvSymbol}');
-  }
-  buf.writeln();
-
+  // Rows: the header (ssn, then the raw quartet, then the converted
+  // quartet), then one row per sample. A blank cell is a null — a non-data
+  // row cell never carries a value.
+  final blankCells = List<Object?>.filled(2 * n, null);
+  final rows = <List<Object?>>[
+    [
+      'ssn',
+      for (int ch = 0; ch < n; ch++) 'ch$ch',
+      for (int ch = 0; ch < n; ch++) 'ch${ch}_${unit.csvSymbol}',
+    ],
+  ];
   for (int s = 0; s < data.sampleCount; s++) {
     // ssn is unwrapped and gap-inclusive by construction (dropped samples
     // are kept as blank rows), so it is a plain arithmetic progression.
-    buf.write('${ssnOrigin + s}');
+    final ssn = ssnOrigin + s;
     if (data.gaps.contains(s)) {
       // Dropped sample: the buffer holds a fabricated (held) value, so emit
       // blank cells rather than fake data — both quartets, every channel.
-      buf.write(',' * (2 * n));
+      rows.add([ssn, ...blankCells]);
     } else {
-      for (int ch = 0; ch < n; ch++) {
-        buf.write(',${data.channels[ch][s]}');
-      }
-      for (int ch = 0; ch < n; ch++) {
-        final format = formatters[ch];
-        buf.write(format == null ? ',' : ',${format(data.channels[ch][s])}');
-      }
+      rows.add([
+        ssn,
+        for (int ch = 0; ch < n; ch++) data.channels[ch][s],
+        for (int ch = 0; ch < n; ch++)
+          formatters[ch]?.call(data.channels[ch][s]),
+      ]);
     }
-    buf.writeln();
   }
+  // The encoder joins rows; the file's last line still ends with \n.
+  buf
+    ..write(_csv.encode(rows))
+    ..writeln();
   return buf.toString();
 }
 
@@ -254,6 +258,11 @@ Map<String, Object?> _metadata(
     ],
   };
 }
+
+/// The body-row encoder: `\n` endings, no BOM (the spec's conventions). Null
+/// fields encode blank — the gap rows' and unconvertible columns' empty
+/// cells.
+final Csv _csv = Csv(lineDelimiter: '\n');
 
 /// The YAML writer for the metadata block. Rendering (quoting, indentation,
 /// number and string style) is the library's: the block is
