@@ -10,6 +10,9 @@ import 'link_backend.dart';
 import 'link_transport.dart';
 import 'ota_client.dart';
 
+/// The demo's synthetic device id (a real link's is the platform's).
+const String demoDeviceId = 'demo_device';
+
 /// The simulated demo device: a synthetic feed, factory calibration, and an
 /// in-memory settings round trip, for running the app without hardware. It
 /// implements the link manager's [LinkTransport] contract directly — so the
@@ -17,7 +20,7 @@ import 'ota_client.dart';
 /// a real BLE link — plus [LinkBackend] for the slot and name round trips.
 class DemoDevice implements LinkTransport, LinkBackend {
   @override
-  String get deviceId => 'demo_device';
+  String get deviceId => demoDeviceId;
 
   @override
   String get displayName => 'Demo Device';
