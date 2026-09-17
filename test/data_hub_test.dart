@@ -417,6 +417,31 @@ void main() {
       },
     );
 
+    test(
+      'every offset mutation bumps tareVersion; a bare request does not',
+      () {
+        final hub = DataHub(); // constructor's clear() is the baseline bump
+        final v0 = hub.tareVersion;
+
+        hub.requestTare();
+        expect(hub.tareVersion, v0); // in-flight: no offset change yet
+        feed(hub, frameOf(1000), 1000); // commit
+        final v1 = hub.tareVersion;
+        expect(v1, greaterThan(v0));
+
+        hub.setTareOffset(0, 500);
+        final v2 = hub.tareVersion;
+        expect(v2, greaterThan(v1));
+
+        hub.resetTare();
+        final v3 = hub.tareVersion;
+        expect(v3, greaterThan(v2));
+
+        hub.clear();
+        expect(hub.tareVersion, greaterThan(v3));
+      },
+    );
+
     test('tareOffset reports the amount zeroed out in the unit', () {
       final hub = DataHub()..updateBoardCalibration(nominalBoard());
       expect(hub.tareOffset(0, DisplayUnit.raw), 0);

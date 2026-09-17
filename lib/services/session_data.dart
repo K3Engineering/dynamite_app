@@ -139,6 +139,10 @@ class SessionData implements GraphDataSource {
   @override
   int get calibrationVersion => 0;
 
+  /// Session tares are frozen at recording time; they never change.
+  @override
+  int get tareVersion => 0;
+
   @override
   BucketSeries valueBucketsFor(int channelIndex) =>
       _valueBuckets[channelIndex].series;
