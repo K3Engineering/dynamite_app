@@ -205,7 +205,7 @@ class DevicesTab extends StatelessWidget {
                 visual: (
                   mood: InactiveRowMood.normal,
                   icon: Icons.science,
-                  iconColor: Colors.teal,
+                  iconColor: Colors.brown[700]!,
                   subtitle: 'Simulated data — no hardware',
                   subtitleColor: null,
                   cardColor: null,

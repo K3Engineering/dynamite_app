@@ -24,7 +24,7 @@ import 'package:dynamite_app/services/stream_reset_coordinator.dart';
 /// row), Connect (inactive rows) and Cancel/Disconnect (active row) all share
 /// [deviceActionButtonWidth] and one right-edge column. The active row is a
 /// plain surface with a slate link-state badge; its outlined Disconnect takes
-/// the teal action accent, never the state color.
+/// the brown action accent, never the state color.
 ///
 /// Driven through the real app shell with the mock BLE platform installed
 /// (same harness as widget_test.dart). The demo device provides the active
@@ -171,11 +171,11 @@ void main() {
     expect(disconnect.right, moreOrLessEquals(scan.right, epsilon: 0.01));
 
     // The active row is a plain surface carrying a slate link-state badge;
-    // its Disconnect takes the teal action accent (the default OutlinedButton
+    // its Disconnect takes the brown action accent (the default OutlinedButton
     // ink), never the state color.
     expect(disconnectButton(), findsOneWidget);
     final scheme = Theme.of(tester.element(disconnectButton())).colorScheme;
-    expect(scheme.primary, const Color(0xFF00677F));
+    expect(scheme.primary, const Color(0xFF5D4037));
     expect(scheme.primaryContainer, const Color(0xFF455A64));
     expect(devicesTabDescendant(find.text('Connected')), findsOneWidget);
 

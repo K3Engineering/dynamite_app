@@ -221,14 +221,15 @@ class DynoApp extends StatelessWidget {
     // friends -> onSurface, inverseSurface -> onSurface), which used to theme
     // widgets with the wrong color (a white-on-white dark toast; dividers in
     // full onSurface). We try to declare every role the app reads explicitly.
-    // Design language: teal is the action accent — everything pressable
-    // (buttons, unselected tabs, off-state toggles, chips). Slate is the
-    // state color — selected tabs, the connected stripe, on-state toggles,
-    // status tokens. Red stays reserved for recording/destructive. The two
-    // roles never mix surfaces: teal never sits on slate.
+    // Design language: dark brown is the action accent — everything
+    // pressable (buttons, unselected tabs, off-state toggles, chips).
+    // Slate is the state color — selected tabs, the connected stripe,
+    // on-state toggles, status tokens. Red stays reserved for
+    // recording/destructive. The two roles never mix surfaces: brown
+    // never sits on slate.
     const lightScheme = ColorScheme.light(
       // Pressable: rec, tare, connect, save, unselected tabs, chips.
-      primary: Color(0xFF00677F),
+      primary: Color(0xFF5D4037),
       onPrimary: Colors.white,
       // Read-only state/status surfaces (connected stripe, status tokens).
       primaryContainer: Color(0xFF455A64),
@@ -270,8 +271,8 @@ class DynoApp extends StatelessWidget {
       inversePrimary: Color(0xFF89B2C5),
     );
     const darkScheme = ColorScheme.dark(
-      // Pressable accent; light teal so black text rides on the fill.
-      primary: Color(0xFF4DB6AC),
+      // Pressable accent; light brown so black text rides on the fill.
+      primary: Color(0xFFA1887F),
       onPrimary: Colors.black,
       // Same explicit pair as light. Note: white on this light-blue container
       // is mediocre contrast — kept to preserve the existing dark look.
