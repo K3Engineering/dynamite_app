@@ -393,9 +393,9 @@ class _MinimapPainter extends CustomPainter {
     if (x1 > 0) canvas.drawRect(Rect.fromLTWH(0, 0, x1, gh), dimPaint);
     if (x2 < gw) canvas.drawRect(Rect.fromLTWH(x2, 0, gw - x2, gh), dimPaint);
 
-    // Viewport border
+    // Viewport border (state chrome, not a control).
     final vpBorder = Paint()
-      ..color = _colorScheme.primary
+      ..color = _colorScheme.secondary
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     canvas.drawRect(Rect.fromLTRB(x1, 0, x2, gh), vpBorder);
@@ -1834,7 +1834,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       topSpace: topSpace,
       bottomSpace: showXLabels ? _kGraphBottomSpace : 4,
       minSamples: 1 + firstSampleOffset,
-      frameColor: colorScheme.primary.withAlpha(150),
+      frameColor: colorScheme.secondary.withAlpha(150),
     );
     if (layout == null) return;
 

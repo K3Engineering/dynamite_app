@@ -532,26 +532,6 @@ class _InactiveDeviceRow extends StatelessWidget {
   }
 }
 
-/// The active row's Cancel/Disconnect button style. OutlinedButtons don't
-/// participate in tile theming; without the explicit foreground the label
-/// renders in primary on the primaryContainer surface — invisible. The
-/// reduced horizontal padding (M3 default is 24) lets "Disconnecting…" fit
-/// [deviceActionButtonWidth].
-ButtonStyle activeRowActionButtonStyle({required Color onContainer}) =>
-    OutlinedButton.styleFrom(
-      foregroundColor: onContainer,
-      disabledForegroundColor: onContainer.withValues(alpha: 0.5),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-    ).copyWith(
-      side: WidgetStateProperty.resolveWith(
-        (states) => BorderSide(
-          color: states.contains(WidgetState.disabled)
-              ? onContainer.withValues(alpha: 0.5)
-              : onContainer,
-        ),
-      ),
-    );
-
 /// The active device row (shared by the BLE and Demo sections).
 class _ActiveDeviceRow extends StatelessWidget {
   const _ActiveDeviceRow({
@@ -592,7 +572,6 @@ class _ActiveDeviceRow extends StatelessWidget {
       status: Theme.of(context).extension<StatusColors>()!,
     );
     final scheme = Theme.of(context).colorScheme;
-    final onContainer = scheme.onPrimaryContainer;
     final isConnecting = linkState == BtLinkState.connecting;
     final isDisconnecting = linkState == BtLinkState.disconnecting;
 
@@ -611,7 +590,10 @@ class _ActiveDeviceRow extends StatelessWidget {
         SizedBox(
           width: deviceActionButtonWidth,
           child: OutlinedButton(
-            style: activeRowActionButtonStyle(onContainer: onContainer),
+            // Reduced padding (M3 default is 24) so "Disconnecting…" fits.
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
             // Disabled while the disconnect is in flight so the button
             // truthfully reflects the in-progress teardown.
             onPressed: isDisconnecting ? null : onDisconnect,
@@ -628,7 +610,6 @@ class _ActiveDeviceRow extends StatelessWidget {
     );
 
     return Card(
-      color: scheme.primaryContainer,
       child: LayoutBuilder(
         builder: (context, constraints) {
           // Wide: buttons ride in the tile's trailing, where the M3 end
@@ -639,7 +620,6 @@ class _ActiveDeviceRow extends StatelessWidget {
           // the card).
           final wide = constraints.maxWidth >= _activeRowSingleRowWidth;
           final tile = ListTile(
-            selected: true,
             // Compressed horizontal metrics (leading width, title gap) so the
             // text gets more of the tile width.
             minLeadingWidth: 28,
@@ -652,16 +632,20 @@ class _ActiveDeviceRow extends StatelessWidget {
                   SizedBox(
                     width: 28,
                     height: 28,
-                    // Spinners don't participate in tile theming; color it
-                    // explicitly or it defaults to primary on the dark surface.
                     child: CircularProgressIndicator(
                       strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation(onContainer),
+                      valueColor: AlwaysStoppedAnimation(scheme.onSurface),
                     ),
                   ),
               ],
             ),
-            title: Text(name),
+            title: Row(
+              children: [
+                Flexible(child: Text(name, overflow: TextOverflow.ellipsis)),
+                const SizedBox(width: 8),
+                Flexible(child: _LinkStateBadge(label: visual.label)),
+              ],
+            ),
             // One flowing text, not a Row[Flexible(...), ...]: a Row squeezes
             // the label into whatever width the RSSI leaves (near zero on a
             // phone). A single Text.rich wraps at word boundaries and the
@@ -670,29 +654,27 @@ class _ActiveDeviceRow extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text.rich(
-                  TextSpan(
-                    children: [
-                      TextSpan(text: visual.label),
-                      // The device model (DIS): null until the connect-time
-                      // read lands, in which case nothing renders.
-                      if (model != null) TextSpan(text: ' • $model'),
-                      // Live RSSI (native only): null until the first poll
-                      // lands — and forever on web — in which case nothing
-                      // renders.
-                      if (connectedRssi != null) ...[
-                        const TextSpan(text: ' • '),
-                        WidgetSpan(
-                          alignment: PlaceholderAlignment.middle,
-                          child: RssiIndicator(
-                            rssi: connectedRssi,
-                            color: onContainer,
+                // The device model (DIS) and live RSSI (native only): both
+                // null until their read lands, and RSSI forever on web, in
+                // which case nothing renders.
+                if (model != null || connectedRssi != null)
+                  Text.rich(
+                    TextSpan(
+                      children: [
+                        if (model != null) TextSpan(text: model),
+                        if (model != null && connectedRssi != null)
+                          const TextSpan(text: ' • '),
+                        if (connectedRssi != null)
+                          WidgetSpan(
+                            alignment: PlaceholderAlignment.middle,
+                            child: RssiIndicator(
+                              rssi: connectedRssi,
+                              color: scheme.onSurface,
+                            ),
                           ),
-                        ),
                       ],
-                    ],
+                    ),
                   ),
-                ),
                 FeedHealthIndicator(
                   health: context.read<FeedHealthTracker>().health,
                 ),
@@ -714,6 +696,35 @@ class _ActiveDeviceRow extends StatelessWidget {
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// The active row's link state as a slate status token — read-only state, so
+/// it takes the state color, never the action accent.
+class _LinkStateBadge extends StatelessWidget {
+  const _LinkStateBadge({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer,
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: scheme.onPrimaryContainer,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }

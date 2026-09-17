@@ -25,9 +25,9 @@ class RssiIndicator extends StatelessWidget {
   /// Latest polled RSSI (dBm); null hides the indicator entirely.
   final int? rssi;
 
-  /// Icon color. Pass explicitly on tinted surfaces (e.g. the connected
-  /// device row's primaryContainer), where the default IconTheme color is
-  /// wrong. Defaults to the ambient IconTheme color.
+  /// Icon color. Pass explicitly where the ambient IconTheme color would be
+  /// wrong (e.g. the slate connected stripe). Defaults to the ambient
+  /// IconTheme color.
   final Color? color;
 
   /// Icon edge (logical px); sized to sit inside a ListTile subtitle.

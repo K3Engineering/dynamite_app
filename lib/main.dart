@@ -221,11 +221,16 @@ class DynoApp extends StatelessWidget {
     // friends -> onSurface, inverseSurface -> onSurface), which used to theme
     // widgets with the wrong color (a white-on-white dark toast; dividers in
     // full onSurface). We try to declare every role the app reads explicitly.
+    // Design language: teal is the action accent — everything pressable
+    // (buttons, unselected tabs, off-state toggles, chips). Slate is the
+    // state color — selected tabs, the connected stripe, on-state toggles,
+    // status tokens. Red stays reserved for recording/destructive. The two
+    // roles never mix surfaces: teal never sits on slate.
     const lightScheme = ColorScheme.light(
-      // top "connected" bar, rec, tare buttons, button fonts
-      primary: Color(0xFF455A64),
+      // Pressable: rec, tare, connect, save, unselected tabs, chips.
+      primary: Color(0xFF00677F),
       onPrimary: Colors.white,
-      // Connected/highlighted surfaces (Live banner, active device row).
+      // Read-only state/status surfaces (connected stripe, status tokens).
       primaryContainer: Color(0xFF455A64),
       onPrimaryContainer: Colors.white,
       // active tab on the bottom
@@ -265,8 +270,9 @@ class DynoApp extends StatelessWidget {
       inversePrimary: Color(0xFF89B2C5),
     );
     const darkScheme = ColorScheme.dark(
-      primary: Color.fromARGB(255, 103, 155, 179),
-      onPrimary: Colors.white,
+      // Pressable accent; light teal so black text rides on the fill.
+      primary: Color(0xFF4DB6AC),
+      onPrimary: Colors.black,
       // Same explicit pair as light. Note: white on this light-blue container
       // is mediocre contrast — kept to preserve the existing dark look.
       primaryContainer: Color.fromARGB(255, 103, 155, 179),
@@ -295,48 +301,88 @@ class DynoApp extends StatelessWidget {
       inversePrimary: Color(0xFF89B2C5),
     );
 
-    // A selected ListTile is the app's highlighted/active row (the connected
-    // device on the Devices tab), sitting on a primaryContainer surface. The
-    // theme supplies the matching content color — title, subtitle, icons, and
-    // IconButtons are all themed by the selected tile — while the surface
-    // owner (the Card) supplies the background. selectedTileColor is
-    // deliberately NOT set here: painting surfaces is the Card's job.
-    ListTileThemeData selectedTileTheme(ColorScheme scheme) =>
-        ListTileThemeData(selectedColor: scheme.onPrimaryContainer);
+    // The navigation destinations are pressable until selected, so inactive
+    // destinations take the action accent and the selected one takes the
+    // state color (white on the slate indicator). Size/weight/spacing
+    // replicate the M3 defaults; this theme property replaces the whole
+    // resolve, color included.
+    NavigationBarThemeData navBarTheme(ColorScheme colors) =>
+        NavigationBarThemeData(
+          iconTheme: WidgetStateProperty.resolveWith(
+            (states) => IconThemeData(
+              size: 24,
+              color: states.contains(WidgetState.disabled)
+                  ? colors.onSurfaceVariant.withValues(alpha: 0.38)
+                  : states.contains(WidgetState.selected)
+                  ? colors.onSecondaryContainer
+                  : colors.primary,
+            ),
+          ),
+          labelTextStyle: WidgetStateProperty.resolveWith(
+            (states) => TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.5,
+              color: states.contains(WidgetState.disabled)
+                  ? colors.onSurfaceVariant.withValues(alpha: 0.38)
+                  : states.contains(WidgetState.selected)
+                  ? colors.onSurface
+                  : colors.primary,
+            ),
+          ),
+        );
 
-    // M3 styles the navigation bar's inactive destinations at
-    // onSurfaceVariant — footnote level, too quiet for the app's primary
-    // switching control. Size/weight/spacing replicate the M3 defaults
-    // (this theme property replaces the whole resolve, color included);
-    // only the inactive color moves, from onSurfaceVariant to
-    // near-body-strength onSurface.
-    NavigationBarThemeData navBarTheme(ColorScheme colors) {
-      const inactiveAlpha = 0.8;
-      return NavigationBarThemeData(
-        iconTheme: WidgetStateProperty.resolveWith(
-          (states) => IconThemeData(
-            size: 24,
-            color: states.contains(WidgetState.disabled)
-                ? colors.onSurfaceVariant.withValues(alpha: 0.38)
-                : states.contains(WidgetState.selected)
-                ? colors.onSecondaryContainer
-                : colors.onSurface.withValues(alpha: inactiveAlpha),
+    NavigationRailThemeData navRailTheme(ColorScheme colors) =>
+        NavigationRailThemeData(
+          indicatorColor: colors.secondaryContainer,
+          selectedIconTheme: IconThemeData(color: colors.onSecondaryContainer),
+          unselectedIconTheme: IconThemeData(color: colors.primary),
+          selectedLabelTextStyle: TextStyle(color: colors.onSurface),
+          unselectedLabelTextStyle: TextStyle(color: colors.primary),
+        );
+
+    // On-state toggles are state, not action: slate track, not the action
+    // accent the M3 defaults would draw off `primary`.
+    SwitchThemeData switchTheme(ColorScheme colors) => SwitchThemeData(
+      trackColor: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.selected)
+            ? colors.secondary
+            : colors.surfaceContainerHighest,
+      ),
+      thumbColor: WidgetStateProperty.resolveWith(
+        (states) => states.contains(WidgetState.selected)
+            ? colors.onSecondary
+            : colors.outline,
+      ),
+    );
+
+    // Unselected chips are pressable (action accent); selected chips are
+    // state (slate fill, matching the M3 secondaryContainer default).
+    ChipThemeData chipTheme(ColorScheme colors) => ChipThemeData(
+      selectedColor: colors.secondaryContainer,
+      labelStyle: TextStyle(color: colors.primary),
+      secondaryLabelStyle: TextStyle(color: colors.onSecondaryContainer),
+    );
+
+    // Same split as chips: the chosen segment is state, the others pressable.
+    SegmentedButtonThemeData segmentedTheme(ColorScheme colors) =>
+        SegmentedButtonThemeData(
+          style: ButtonStyle(
+            foregroundColor: WidgetStateProperty.resolveWith((states) {
+              if (states.contains(WidgetState.disabled)) {
+                return colors.onSurfaceVariant.withValues(alpha: 0.38);
+              }
+              return states.contains(WidgetState.selected)
+                  ? colors.onSecondaryContainer
+                  : colors.primary;
+            }),
+            backgroundColor: WidgetStateProperty.resolveWith(
+              (states) => states.contains(WidgetState.selected)
+                  ? colors.secondaryContainer
+                  : null,
+            ),
           ),
-        ),
-        labelTextStyle: WidgetStateProperty.resolveWith(
-          (states) => TextStyle(
-            fontSize: 12,
-            fontWeight: FontWeight.w500,
-            letterSpacing: 0.5,
-            color: states.contains(WidgetState.disabled)
-                ? colors.onSurfaceVariant.withValues(alpha: 0.38)
-                : states.contains(WidgetState.selected)
-                ? colors.onSurface
-                : colors.onSurface.withValues(alpha: inactiveAlpha),
-          ),
-        ),
-      );
-    }
+        );
 
     return MaterialApp(
       title: 'Dynamite Sampler App',
@@ -346,16 +392,22 @@ class DynoApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFFF8F9FA),
         extensions: const [StatusColors.light],
         colorScheme: lightScheme,
-        listTileTheme: selectedTileTheme(lightScheme),
         navigationBarTheme: navBarTheme(lightScheme),
+        navigationRailTheme: navRailTheme(lightScheme),
+        switchTheme: switchTheme(lightScheme),
+        chipTheme: chipTheme(lightScheme),
+        segmentedButtonTheme: segmentedTheme(lightScheme),
       ),
       darkTheme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFF121212),
         extensions: const [StatusColors.dark],
         colorScheme: darkScheme,
-        listTileTheme: selectedTileTheme(darkScheme),
         navigationBarTheme: navBarTheme(darkScheme),
+        navigationRailTheme: navRailTheme(darkScheme),
+        switchTheme: switchTheme(darkScheme),
+        chipTheme: chipTheme(darkScheme),
+        segmentedButtonTheme: segmentedTheme(darkScheme),
       ),
       home: const AppShell(),
     );
