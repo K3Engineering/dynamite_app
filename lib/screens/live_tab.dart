@@ -188,6 +188,9 @@ class _LiveTabState extends State<LiveTab> {
       (h) => h.unitAvailability,
     );
     final unit = settings.displayUnit.effective(availability);
+    // Rebind the graph's unit-bound display maps on tare edges: they bake
+    // the offsets in at bind time. The version itself is unused.
+    context.select<DataHub, int>((h) => h.tareVersion);
     // Narrow selects: the link manager notifies on every RSSI poll — only
     // link-state transitions and device-name changes may rebuild this tab.
     final linkState = context.select<BleLinkManager, BtLinkState>(

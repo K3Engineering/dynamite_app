@@ -132,6 +132,10 @@ class DataHub extends ChangeNotifier
   /// assignments); renderers mix it into their segment-cache keys.
   int _calibrationVersion = 0;
 
+  /// Bumped whenever a tare offset changes (window commit, reset, manual
+  /// set, stream reset). See `ChannelConversion.tareVersion`.
+  int _tareVersion = 0;
+
   /// Wall-clock time of the most recent malformed (undecodable) ADC packet
   /// the decoder dropped, and that packet's byte length. Polled through
   /// [FeedHealthSource]; reset by [clear].
@@ -237,6 +241,7 @@ class DataHub extends ChangeNotifier
       _currentRaw[i] = 0;
       _ingest[i].reset();
     }
+    _tareVersion++;
     _emit(const HubCleared());
     notifyListeners();
   }
@@ -294,6 +299,7 @@ class DataHub extends ChangeNotifier
     for (int i = 0; i < kAdcChannelCount; ++i) {
       if (channel == null || channel == i) tare[i] = null;
     }
+    _tareVersion++;
     notifyListeners();
   }
 
@@ -306,6 +312,7 @@ class DataHub extends ChangeNotifier
     assert(rawValue.isFinite);
     _cancelPendingTare();
     tare[channel] = rawValue;
+    _tareVersion++;
     notifyListeners();
   }
 
@@ -334,6 +341,7 @@ class DataHub extends ChangeNotifier
       }
     }
     _pendingTare = null;
+    _tareVersion++;
   }
 
   /// Append one decoded sample (one value per channel). Samples are always
@@ -559,6 +567,9 @@ class DataHub extends ChangeNotifier
 
   @override
   int get calibrationVersion => _calibrationVersion;
+
+  @override
+  int get tareVersion => _tareVersion;
 
   @override
   Listenable get repaint => this;

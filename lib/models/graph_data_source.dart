@@ -142,6 +142,12 @@ abstract interface class ChannelConversion {
   /// renderers can mix it into their segment-cache keys alongside
   /// [GraphDataSource.dataGeneration]. Static sources return a constant.
   int get calibrationVersion;
+
+  /// Monotonic identity of the tare set: bumped whenever an offset changes
+  /// (window commit, reset, manual set, stream reset). Unit-bound display
+  /// maps bake the tare in at bind time, so consumers rebind on this edge.
+  /// Static sources return a constant.
+  int get tareVersion;
 }
 
 /// Data interface required by the shared graph components (main graph,
