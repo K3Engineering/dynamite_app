@@ -796,6 +796,21 @@ class ViewToggles extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class ActionButtons extends StatelessWidget {
+  // Split-button seam: the stadium's pill curve (radius = half the button
+  // height) survives only on the outer corners; the seam is near-square.
+  static const _splitLeft = RoundedRectangleBorder(
+    borderRadius: BorderRadius.horizontal(
+      left: Radius.circular(20),
+      right: Radius.circular(4),
+    ),
+  );
+  static const _splitRight = RoundedRectangleBorder(
+    borderRadius: BorderRadius.horizontal(
+      left: Radius.circular(4),
+      right: Radius.circular(20),
+    ),
+  );
+
   final bool isRecording;
 
   /// The in-progress recording's start instant, for the STOP elapsed readout;
@@ -851,12 +866,16 @@ class ActionButtons extends StatelessWidget {
                 onPressed: isRecording ? null : onTare,
                 icon: const Icon(Icons.exposure_zero),
                 label: Text(taring ? 'TARING' : 'TARE'),
+                style: OutlinedButton.styleFrom(shape: _splitLeft),
               ),
               const SizedBox(width: 4),
-              IconButton.outlined(
-                tooltip: 'Tare options',
-                onPressed: isRecording ? null : onTareSettings,
-                icon: const Icon(Icons.tune),
+              Tooltip(
+                message: 'Tare options',
+                child: OutlinedButton(
+                  onPressed: isRecording ? null : onTareSettings,
+                  style: OutlinedButton.styleFrom(shape: _splitRight),
+                  child: const Icon(Icons.tune),
+                ),
               ),
             ],
           ),
