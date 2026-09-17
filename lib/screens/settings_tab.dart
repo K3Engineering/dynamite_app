@@ -157,7 +157,7 @@ class _SettingsTabState extends State<SettingsTab> {
               SwitchListTile(
                 title: const Text('Show debug values in Live view'),
                 subtitle: const Text(
-                  'Adds a per-channel noise (RMS) row to the live view.',
+                  'Adds a per-channel AC RMS row to the live view.',
                 ),
                 value: settings.showDebugLiveValues,
                 onChanged: settings.setShowDebugLiveValues,

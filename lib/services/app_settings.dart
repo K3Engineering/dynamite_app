@@ -54,7 +54,7 @@ class AppSettings extends ChangeNotifier {
   bool _wakelockEnabled = false;
   bool get wakelockEnabled => _wakelockEnabled;
 
-  /// Whether the live view shows the debug-only "Noise" stat row.
+  /// Whether the live view shows the debug-only "AC RMS" stat row.
   bool _showDebugLiveValues = false;
   bool get showDebugLiveValues => _showDebugLiveValues;
 

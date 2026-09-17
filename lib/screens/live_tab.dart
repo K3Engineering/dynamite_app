@@ -603,7 +603,7 @@ class LiveStats extends StatelessWidget {
                   ),
                   if (settings.showDebugLiveValues) ...[
                     ChannelStatsRow(
-                      label: 'Noise (4 s)',
+                      label: 'AC RMS (4 s)',
                       // Sigma about the trailing 4-second window's own mean,
                       // in raw space; the sigma maps to display units through
                       // the diff map (offsets cancel, so a tare is invisible
