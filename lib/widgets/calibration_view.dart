@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../models/board_calibration.dart';
+import '../models/load_cell.dart';
 import 'cal_deviation_plot.dart';
 import 'calibration_text.dart';
 
@@ -164,7 +165,7 @@ class _ChannelCalCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('CH ${index + 1}', style: theme.textTheme.titleSmall),
+            Text(rigSlotTitle(index), style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
             Text(switch (channel) {
               final CalibratedChannelBoard c => channelSummaryLine(c),

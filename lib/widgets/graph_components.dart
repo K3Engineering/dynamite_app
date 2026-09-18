@@ -873,7 +873,7 @@ String _graphSemanticsLabel({
   final kind = live ? 'Live' : 'Recorded';
   final chs = channels.isEmpty
       ? 'No channels plotted'
-      : 'Channels: ${channels.map((ch) => 'CH ${ch + 1}').join(', ')}';
+      : 'Channels: ${channels.map(rigSlotTitle).join(', ')}';
   final deriv = hasDerivative ? '. Rate-of-change graph below' : '';
   return '$kind force graph. $chs. Unit: ${unit.symbol}$deriv.';
 }

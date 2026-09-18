@@ -312,7 +312,7 @@ class _ChannelGutter extends StatelessWidget {
                 child: RotatedBox(
                   quarterTurns: 3,
                   child: Text(
-                    'CH ${i + 1}',
+                    rigSlotTitle(i),
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: theme.colorScheme.primary,
                       fontWeight: FontWeight.bold,

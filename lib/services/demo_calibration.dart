@@ -6,8 +6,8 @@ import '../models/device_flash.dart';
 /// Board values are plausible factory data — per-channel resistor
 /// characterizations within tolerance, and readings carrying realistic
 /// offset, gain error and slight nonlinearity. The slots describe a rig
-/// matching the demo signal source: named cells on CH1/CH2, an unnamed cell
-/// on CH3, CH4 empty (its channel is the quiet one), and a spare in slot 5 —
+/// matching the demo signal source: named cells on CH 0/CH 1, an unnamed cell
+/// on CH 2, CH 3 empty (its channel is the quiet one), and a spare in Slot 4 —
 /// so the calibration and slot UIs have something interesting to show
 /// without hardware. Physically self-consistent with the ladder math.
 final KvsSnapshot demoKvs = KvsSnapshot(
