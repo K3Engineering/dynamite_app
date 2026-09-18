@@ -70,7 +70,7 @@ void main() {
     expect(find.textContaining('24.6/24.1 °C'), findsOneWidget);
     // Per-channel correction summaries in µV/V (ch0 fixture values:
     // +0.264 µV/V zero offset, +0.02% gain, ±0.009 µV/V linearity).
-    expect(find.text('CH 1'), findsOneWidget);
+    expect(find.text('CH 0'), findsOneWidget);
     expect(find.textContaining('zero offset +0.264 µV/V'), findsOneWidget);
     expect(
       find.textContaining('end-point linearity ±0.009 µV/V'),
@@ -139,7 +139,7 @@ void main() {
 
     expect(find.text('Device disconnected'), findsOneWidget);
     expect(find.textContaining('nominal values in use'), findsNothing);
-    expect(find.text('CH 1'), findsNothing);
+    expect(find.text('CH 0'), findsNothing);
   });
 
   testWidgets('an unprovisioned unit shows the raw-only card', (tester) async {
@@ -286,7 +286,7 @@ END
       expect(report, contains('Definitions: Error = measured reading'));
       expect(report, contains('Uncertainty: ±0.5% of reading'));
       expect(report, contains('not a traceable calibration'));
-      expect(report, contains('CH 1: zero offset +0.264 µV/V'));
+      expect(report, contains('CH 0: zero offset +0.264 µV/V'));
       expect(report, contains('gain +0.02% vs nominal'));
       expect(report, contains('end-point linearity ±0.009 µV/V'));
       expect(report, contains('sensitivity'));
@@ -315,8 +315,8 @@ END
             as ProvisionedBoardCalibration,
         'dev1',
       );
-      expect(report, contains('CH 1: nominal values (no calibration)'));
-      expect(report, contains('CH 4: nominal values (no calibration)'));
+      expect(report, contains('CH 0: nominal values (no calibration)'));
+      expect(report, contains('CH 3: nominal values (no calibration)'));
       // The trust line matches the board, mirroring the screen.
       expect(report, contains('nominal chain in use'));
       expect(report, isNot(contains('Correction:')));

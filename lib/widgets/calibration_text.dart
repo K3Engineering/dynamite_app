@@ -1,4 +1,5 @@
 import '../models/board_calibration.dart';
+import '../models/load_cell.dart';
 
 // ---------------------------------------------------------------------------
 // The calibration feature's text.
@@ -168,10 +169,10 @@ String calibrationReport(
     final ch = board.channels[i];
     b.writeln();
     if (ch is! CalibratedChannelBoard) {
-      b.writeln('CH ${i + 1}: nominal values (no calibration)');
+      b.writeln('${rigSlotTitle(i)}: nominal values (no calibration)');
       continue;
     }
-    b.writeln('CH ${i + 1}: ${channelSummaryLine(ch)}');
+    b.writeln('${rigSlotTitle(i)}: ${channelSummaryLine(ch)}');
     b.writeln(
       '  sensitivity ${ch.sensitivityCountsPerMvV.toStringAsFixed(0)} '
       'counts/(mV/V) · zero offset ${fmtCounts(ch.offsetCounts)} counts',

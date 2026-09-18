@@ -61,7 +61,7 @@ void main() {
     await pumpGraph(data: calibratedHub(), activeChannels: const [0, 1]);
     expect(
       find.bySemanticsLabel(
-        'Live force graph. Channels: CH 1, CH 2. Unit: mV/V.',
+        'Live force graph. Channels: CH 0, CH 1. Unit: mV/V.',
       ),
       findsOneWidget,
     );
@@ -75,7 +75,7 @@ void main() {
     );
     expect(
       find.bySemanticsLabel(
-        'Recorded force graph. Channels: CH 1, CH 2. Unit: mV/V. '
+        'Recorded force graph. Channels: CH 0, CH 1. Unit: mV/V. '
         'Rate-of-change graph below.',
       ),
       findsOneWidget,
@@ -86,7 +86,7 @@ void main() {
     await pumpGraph(data: DataHub(), activeChannels: const [0, 1]);
     expect(
       find.bySemanticsLabel(
-        'Live force graph. Channels: CH 1, CH 2. Unit: Raw.',
+        'Live force graph. Channels: CH 0, CH 1. Unit: Raw.',
       ),
       findsOneWidget,
     );

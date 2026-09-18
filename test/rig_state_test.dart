@@ -77,7 +77,7 @@ void main() {
   DeviceFlash fixture() =>
       flashFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1]);
 
-  /// The fixture doc with a recalibrated CH1 cell (sensitivity re-entered).
+  /// The fixture doc with a recalibrated CH 0 cell (sensitivity re-entered).
   String recalibratedDoc() => demoBoardCalibrationDoc.replaceFirst(
     'lc0.sens=1.9993',
     'lc0.sens=1.9985',
@@ -97,8 +97,8 @@ void main() {
       expect(rig.channelTitles, [
         'Thrust cell',
         'Break jig',
-        'CH 3 · 100 kg · 2 mV/V',
-        'CH 4',
+        'CH 2 · 100 kg · 2 mV/V',
+        'CH 3',
       ]);
       expect(rig.channelCells[0]?.name, 'Thrust cell');
       expect(rig.hasPending, isFalse);
@@ -169,7 +169,7 @@ void main() {
 
         rig.revert();
         expect(rig.hasPending, isFalse);
-        expect(rig.channelTitles[3], 'CH 4');
+        expect(rig.channelTitles[3], 'CH 3');
       },
     );
 
@@ -179,15 +179,15 @@ void main() {
         final rig = await newRig();
         rig.onFlashRead('dev1', 'Bench unit', fixture());
 
-        // Drag the spare (slot 4) onto CH2 (slot 1): the two exchange.
+        // Drag the spare (slot 4) onto CH 1 (slot 1): the two exchange.
         rig.swapSlots(4, 1);
         expect(rig.channelTitles[1], 'Spare 50');
         expect(rig.effectiveSlots.cellAt(4)?.name, 'Break jig');
 
-        // Drag 'Spare 50' (now on CH2) onto the empty CH4: a move — the
+        // Drag 'Spare 50' (now on CH 1) onto the empty CH 3: a move — the
         // channel it left goes empty, the evicted 'Break jig' stays put.
         rig.swapSlots(1, 3);
-        expect(rig.channelTitles[1], 'CH 2');
+        expect(rig.channelTitles[1], 'CH 1');
         expect(rig.effectiveSlots[1], isNull);
         expect(rig.channelTitles[3], 'Spare 50');
         expect(rig.effectiveSlots.cellAt(4)?.name, 'Break jig');
@@ -209,7 +209,7 @@ void main() {
       rig.onLinkDropped();
       expect(rig.hasDeviceDoc, isFalse);
       expect(rig.hasPending, isFalse);
-      expect(rig.channelTitles[3], 'CH 4'); // no document: bare channels
+      expect(rig.channelTitles[3], 'CH 3'); // no document: bare channels
 
       // The typed-in cell was recorded in history at edit time, so
       // re-entering it after a reconnect is a pick, not a re-type.
@@ -218,7 +218,7 @@ void main() {
       // Reconnecting re-reads and starts clean.
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       expect(rig.hasPending, isFalse);
-      expect(rig.channelTitles[3], 'CH 4');
+      expect(rig.channelTitles[3], 'CH 3');
     });
   });
 

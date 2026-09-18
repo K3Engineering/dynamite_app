@@ -73,8 +73,8 @@ void main() {
     expect(find.text('(Raw)'), findsOneWidget);
     expect(find.text('Name'), findsOneWidget);
     expect(find.text('Tare offset'), findsOneWidget);
-    expect(find.text('CH 1'), findsOneWidget);
-    expect(find.text('CH 4'), findsOneWidget);
+    expect(find.text('CH 0'), findsOneWidget);
+    expect(find.text('CH 3'), findsOneWidget);
     expect(
       find.text('+0'),
       findsNWidgets(kAdcChannelCount),
@@ -95,7 +95,7 @@ void main() {
     expect(hub.taring, isFalse);
     expect(hub.tare[0], 1000);
     expect(hub.tare[1], isNull);
-    // The offset column: CH 1 zeroed out its gross reading, the rest are
+    // The offset column: CH 0 zeroed out its gross reading, the rest are
     // untared.
     expect(find.text('+1000'), findsOneWidget);
     expect(find.text('+0'), findsNWidgets(kAdcChannelCount - 1));

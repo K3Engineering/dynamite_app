@@ -28,9 +28,9 @@ void main() {
       expect(slots.cellAt(0)?.sensitivityMvV, closeTo(1.9993, 1e-12));
 
       expect(slots.cellAt(1)?.name, 'Break jig');
-      expect(slots.cellAt(2)?.name, ''); // unnamed cell on CH3
+      expect(slots.cellAt(2)?.name, ''); // unnamed cell on CH 2
       expect(slots.cellAt(2)?.capacityKg, 100);
-      expect(slots[3], isNull); // CH4 empty
+      expect(slots[3], isNull); // CH 3 empty
       expect(slots.cellAt(4)?.name, 'Spare 50'); // a spare
       for (int i = 5; i < kRigSlotCount; ++i) {
         expect(slots[i], isNull, reason: 'slot $i empty');
@@ -44,8 +44,8 @@ void main() {
       expect(flash.slots.channelTitles, [
         'Thrust cell',
         'Break jig',
-        'CH 3 · 100 kg · 2 mV/V',
-        'CH 4',
+        'CH 2 · 100 kg · 2 mV/V',
+        'CH 3',
       ]);
     });
   });

@@ -307,7 +307,7 @@ class _TareSheetState extends State<_TareSheet> {
     return Semantics(
       button: true,
       enabled: !hub.taring,
-      label: 'Channel ${ch + 1} tare offset',
+      label: 'Channel $ch tare offset',
       hint: 'Double-tap to edit',
       child: GestureDetector(
         key: Key('tare-offset-$ch'),

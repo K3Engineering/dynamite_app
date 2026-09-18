@@ -57,12 +57,12 @@ void main() {
 
     expect(find.text('Thrust cell'), findsOneWidget);
     expect(find.text('Break jig'), findsOneWidget);
-    // Unnamed CH3 cell: its title AND subtitle both render the values line.
+    // Unnamed CH 2 cell: its title AND subtitle both render the values line.
     expect(find.text('100 kg · 2 mV/V'), findsNWidgets(2));
     expect(find.text('Spare 50'), findsOneWidget); // the spare
     expect(find.text('Empty slot'), findsNWidgets(6));
     // The rotated tags on the four channel rows (in the static gutter).
-    for (int i = 1; i <= 4; ++i) {
+    for (int i = 0; i < 4; ++i) {
       expect(find.text('CH $i'), findsOneWidget);
     }
     // Nothing dirty yet: the status bar shows its clean state.
@@ -80,7 +80,7 @@ void main() {
 
     await tester.tap(find.text('Empty slot').first);
     await tester.pumpAndSettle();
-    expect(inDialog(find.text('Add load cell — CH 4')), findsOneWidget);
+    expect(inDialog(find.text('Add load cell — CH 3')), findsOneWidget);
     expect(inDialog(find.text('Last seen in this app')), findsOneWidget);
 
     // A history tap pre-fills the fields; the Save button commits.
@@ -127,7 +127,7 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     final rig = await pump(tester);
 
-    // Press in the middle of the 'Break jig' row (slot 1, CH2) — not on the
+    // Press in the middle of the 'Break jig' row (slot 1, CH 1) — not on the
     // grip icon — and drag three rows down onto 'Spare 50' (slot 4).
     final gesture = await tester.startGesture(
       tester.getCenter(find.text('Break jig')),
@@ -163,7 +163,7 @@ void main() {
     expect(rig.effectiveSlots.cellAt(1)?.name, 'Break jig');
     expect(rig.hasPending, isFalse);
 
-    // Tap-and-hold on 'Break jig' (slot 1, CH2), then drag three rows down
+    // Tap-and-hold on 'Break jig' (slot 1, CH 1), then drag three rows down
     // onto 'Spare 50' (slot 4).
     final gesture = await tester.startGesture(
       tester.getCenter(find.text('Break jig')),
@@ -183,7 +183,7 @@ void main() {
 
     await tester.tap(find.text('Break jig'));
     await tester.pumpAndSettle();
-    expect(inDialog(find.text('Edit load cell — CH 2')), findsOneWidget);
+    expect(inDialog(find.text('Edit load cell — CH 1')), findsOneWidget);
 
     await tester.enterText(
       inDialog(find.widgetWithText(TextField, 'Capacity (kg)')),
@@ -220,14 +220,14 @@ void main() {
     await tester.pumpAndSettle();
 
     // Fields and history in one dialog — no second window.
-    expect(inDialog(find.text('Add load cell — CH 4')), findsOneWidget);
+    expect(inDialog(find.text('Add load cell — CH 3')), findsOneWidget);
     expect(
       inDialog(find.widgetWithText(TextField, 'Capacity (kg)')),
       findsOneWidget,
     );
     expect(inDialog(find.text('Last seen in this app')), findsOneWidget);
     expect(find.text('Custom entry…'), findsNothing);
-    expect(find.text('New load cell — CH 4'), findsNothing);
+    expect(find.text('New load cell — CH 3'), findsNothing);
 
     FilledButton saveButton() => tester.widget<FilledButton>(
       inDialog(find.widgetWithText(FilledButton, 'Save')),

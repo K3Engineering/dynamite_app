@@ -27,8 +27,10 @@ final Set<String> rigSlotKeys = Set.unmodifiable({
   ],
 });
 
-String rigSlotTitle(int i) =>
-    i < kAdcChannelCount ? 'CH ${i + 1}' : 'Slot ${i + 1}';
+/// The canonical label for a slot/channel index. Zero-based, matching the
+/// physical labels on the device: the four channels are CH 0–CH 3, the
+/// spares Slot 4–Slot 9. The single source for every human-readable tag.
+String rigSlotTitle(int i) => i < kAdcChannelCount ? 'CH $i' : 'Slot $i';
 
 /// One populated device slot: the cell it holds.
 class RigSlot {
@@ -44,7 +46,7 @@ class RigSlot {
 }
 
 /// The device's ten load cell slots: identity is positional (slots 0–3 are
-/// CH1–CH4). Immutable; edits produce new instances. The slot list is the
+/// CH 0–CH 3). Immutable; edits produce new instances. The slot list is the
 /// device's self-contained description of the rig — any host reading flash
 /// can convert force from it alone.
 class RigSlots {

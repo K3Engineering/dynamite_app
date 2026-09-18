@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../models/display_unit.dart';
+import '../models/load_cell.dart';
 import 'channel_palette.dart';
 
 class ChannelStatsRow {
@@ -276,7 +277,7 @@ class _ClipStatusIconState extends State<_ClipStatusIcon> {
       onEnd: _onFadeEnd,
       child: Tooltip(
         message:
-            'CH ${widget.channel + 1} is at the ADC rail. The reading is clipping.',
+            '${rigSlotTitle(widget.channel)} is at the ADC rail. The reading is clipping.',
         triggerMode: TooltipTriggerMode.tap,
         child: Icon(
           Icons.warning_rounded,
@@ -313,7 +314,7 @@ class _TappableChannelCell extends StatelessWidget {
       child: Semantics(
         button: true,
         toggled: active,
-        label: 'CH ${channel + 1}',
+        label: rigSlotTitle(channel),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTap: onTap,
