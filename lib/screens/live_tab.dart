@@ -785,7 +785,7 @@ class ViewToggles extends StatelessWidget {
             onSelected: (_) => onToggleDerivative(),
             visualDensity: VisualDensity.compact,
             labelStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: showDerivative ? cs.onSecondaryContainer : null,
+              color: showDerivative ? cs.onSecondaryContainer : cs.primary,
             ),
           ),
         ],
