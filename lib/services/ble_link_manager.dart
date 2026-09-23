@@ -17,13 +17,15 @@ import '../utils/edge_watcher.dart';
 import '../utils/future_chain.dart';
 import '../utils/log.dart';
 
+/// Why a connect attempt failed; the Devices row renders the hint.
 enum ConnectFailureKind {
-  /// On web this is typically Chrome rejecting gatt.connect() on a stale
-  /// device handle (a row left over from an earlier session — universal_ble
-  /// wraps the NetworkError as UniversalBleErrorCode.unknownError); the fix
-  /// is a fresh Scan + pick, which mints a new handle.
+  /// Platform refused the connect. On web usually a stale device handle (a
+  /// row left from an earlier session; universal_ble wraps the NetworkError
+  /// as unknownError) — rescan + repick mints a fresh handle.
   failed,
 
+  /// Exceeded [BleLinkManager.connectTimeout]; the platform attempt may still
+  /// land late (see the unwanted-link guard in [_onConnectionChange]).
   timeout,
 }
 
@@ -247,6 +249,13 @@ bool isWebPickerDismissal(Object e) {
       (s.startsWith('BrowserError') && !s.contains('SecurityError'));
 }
 
+/// The BLE link state machine: adapter availability, scanning, connect /
+/// post-connect setup / disconnect, the web reconnect-settle embargo
+/// ([reconnectSettleDelay]), and live RSSI polling.
+///
+/// Owns only the link: feed bytes and the parsed flash leave through
+/// [_onAdcData]/[onDeviceFlash], and recording observes this notifier (see
+/// [RecordingController]).
 class BleLinkManager extends ChangeNotifier {
   /// universal_ble's disconnect() applies this timeout to its own completer
   /// over the connection-event stream, then drives [_onConnectionChange]
@@ -314,6 +323,8 @@ class BleLinkManager extends ChangeNotifier {
   /// tracking state through it would mean polling.
   Link _link = const NoLink();
 
+  /// Connect failures by device, shown as the row hint. Cleared when a new
+  /// attempt begins or a scan result re-finds the device (a fresh handle).
   final Map<String, ConnectFailureKind> _connectFailures = {};
 
   ConnectFailureKind? connectFailureFor(String deviceId) =>
@@ -328,10 +339,16 @@ class BleLinkManager extends ChangeNotifier {
   String? lastDisconnectErrorFor(String deviceId) =>
       _lastDisconnectErrors[deviceId];
 
+  /// Post-connect setup failures by device, shown as the row hint. Cleared
+  /// only when a new attempt begins (the failure describes the link, not a
+  /// re-findable handle).
   final Map<String, String> _setupFailures = {};
 
   String? setupFailureFor(String deviceId) => _setupFailures[deviceId];
 
+  /// Last proof-of-life per device (ms since epoch): a provably-up GATT link,
+  /// or on native the latest advert (see [lastAliveMs]). Simulated links never
+  /// stamp.
   final Map<String, int> _lastAliveMs = {};
 
   int? lastAliveMs(String deviceId) {

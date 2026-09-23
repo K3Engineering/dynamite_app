@@ -21,8 +21,7 @@ import '../widgets/wide_layout.dart';
 class DevicesTab extends StatelessWidget {
   const DevicesTab({super.key, required this.onGoToSettings});
 
-  /// The active device row's gear action: jumps to the Settings tab.
-  /// Supplied by the app shell, which owns the tab index.
+  /// The active row's gear action; the app shell owns the tab index.
   final VoidCallback onGoToSettings;
 
   @override
@@ -30,10 +29,8 @@ class DevicesTab extends StatelessWidget {
     final bt = context.watch<BleLinkManager>();
     final scheme = Theme.of(context).colorScheme;
 
-    // Top indicator reflects only adapter/scan state; per-device link state
-    // lives on the rows. linkBusy withholds hints while any link transition
-    // is in flight; the rows' Connect buttons gate per device via
-    // BleLinkManager.canConnectTo.
+    // The top indicator reflects adapter/scan state only; link state lives on
+    // the rows.
     final status = Theme.of(context).extension<StatusColors>()!;
     final visual = btAdapterScanVisual(
       availability: bt.bluetoothState,
@@ -44,45 +41,33 @@ class DevicesTab extends StatelessWidget {
     );
 
     final isEmpty = bt.devices.isEmpty;
-    // The big empty block is the empty-state voice for genuinely idle states
-    // (radio off / permission / no devices found) — not during a scan.
     final showEmptyBlock = isEmpty && !bt.isScanning;
 
-    // Top indicator modes: icon only for scan/failures, text-only for powered-on
-    // hints, and fully silent while the big empty block is visible.
     final indicatorMode = topIndicatorMode(
       availability: bt.bluetoothState,
       isScanning: bt.isScanning,
       emptyBlockVisible: showEmptyBlock,
     );
 
-    // Partition rows stably: fresh rows keep scan order, stale rows sink.
-    // Active rows are never marked stale since they don't refresh while
-    // streaming. The stale group is then ordered by recency (see
-    // [compareStaleRowsByRecency]).
+    // Partition rows stably: fresh keep scan order, stale sink and sort by
+    // recency. The active row is never stale.
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     final activeId = bt.activeDeviceId;
     final visuals = <String, InactiveRowVisual>{
       for (final d in bt.devices)
         d.deviceId: inactiveRowVisual(
           scanRssi: d.rssi,
-          // The advert receipt time — the freshness of the RSSI reading
-          // itself (null on web, where no advertisement data exists).
           scanTs: d.timestamp,
           lastAliveMs: bt.lastAliveMs(d.deviceId),
           nowMs: nowMs,
           supportsScanRssi: bt.supportsScanRssi,
-          // Transient beats history: while the reconnect embargo runs, the
-          // row explains why its Connect button is disabled instead of
-          // dwelling on the last outcome (it resurfaces at window end).
+          // Transient beats history: the reconnect embargo outranks the last
+          // outcome.
           reconnectHint: bt.reconnectPendingFor(d.deviceId)
               ? 'Waiting after disconnect…'
               : null,
           failureHint: switch (bt.connectFailureFor(d.deviceId)) {
             final kind? => connectFailureHint(kind, isWeb: kIsWeb),
-            // No refused attempt on record: show why the last post-connect
-            // setup failed (a transport/protocol teardown), else why the
-            // last link dropped when the platform gave a reason.
             null => switch (bt.setupFailureFor(d.deviceId)) {
               final detail? => 'Setup failed: $detail',
               null => switch (bt.lastDisconnectErrorFor(d.deviceId)) {
@@ -104,9 +89,6 @@ class DevicesTab extends StatelessWidget {
               : freshRows)
           .add(d);
     }
-    // Within the greyed group, most recently seen first — the "Last seen"
-    // ages then increase monotonically down the list, and a just-staled
-    // device (likely still of interest) leads it.
     staleRows.sort(
       (a, b) => compareStaleRowsByRecency(
         bt.lastAliveMs(a.deviceId),
@@ -125,12 +107,9 @@ class DevicesTab extends StatelessWidget {
             Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
             const SizedBox(height: 16),
 
-            // BLE devices section.
             const SectionHeader('BLE devices'),
             const SizedBox(height: 8),
 
-            // Padding aligns the status readout and Scan button with the M3 Card
-            // and ListTile contents below.
             Padding(
               padding: const EdgeInsets.only(left: 4, right: 28),
               child: Row(
@@ -159,9 +138,8 @@ class DevicesTab extends StatelessWidget {
 
             if (showEmptyBlock) _buildEmptyBlock(visual, bt.bluetoothState),
 
-            // The active link's row is found in the scan list. No current path
-            // clears the list while a link is up without tearing the link down,
-            // so the active row always exists.
+            // The active row is found in the scan list, which no path clears
+            // while a link is up.
             for (final device in [...freshRows, ...staleRows])
               device.deviceId == activeId
                   ? _ActiveDeviceRow(
@@ -183,8 +161,7 @@ class DevicesTab extends StatelessWidget {
                     ),
             const SizedBox(height: 16),
 
-            // Demo devices section — simulated hardware, rendered through the
-            // same rows so it reflects connected state inline like a BLE row.
+            // Demo devices section.
             const SectionHeader('Demo devices'),
             const SizedBox(height: 8),
             if (bt.isSimulated && bt.linkState != BtLinkState.idle)
@@ -200,8 +177,6 @@ class DevicesTab extends StatelessWidget {
             else
               _InactiveDeviceRow(
                 name: 'Demo Device',
-                // A fixed presentation: simulated hardware is never stale and
-                // never fails to connect.
                 visual: (
                   mood: InactiveRowMood.normal,
                   icon: Icons.science,
@@ -221,8 +196,7 @@ class DevicesTab extends StatelessWidget {
     );
   }
 
-  /// The state-aware empty block. Icon and color come straight from
-  /// [btAdapterScanVisual].
+  /// The state-aware empty block.
   Widget _buildEmptyBlock(BtStatusVisual visual, BtAvailability availability) {
     final (title, hint) = switch (availability) {
       BtAvailability.poweredOn => (
@@ -261,8 +235,7 @@ class DevicesTab extends StatelessWidget {
   }
 }
 
-/// Map a recorded connect-failure [kind] to the per-row hint shown on the
-/// Devices tab, including platform-specific web guidance (e.g., stale handles).
+/// Map a connect-failure [kind] to the per-row hint.
 String connectFailureHint(
   ConnectFailureKind kind, {
   required bool isWeb,
@@ -276,16 +249,12 @@ String connectFailureHint(
 };
 
 /// The empty block's hint for [BtAvailability.unsupported], per platform.
-/// Web means the browser lacks Web Bluetooth (Firefox, Safari, every iOS
-/// browser). Native means the device itself reports no Bluetooth support.
 String unsupportedHint({required bool isWeb}) => isWeb
     ? "This browser can't use Bluetooth. Try Chrome or Edge on a computer, Chrome on Android, or the native Android/iOS app."
     : 'This device reports no Bluetooth support. The app is available for Android and iOS, as a web app in Chrome on Android, and in Chrome or Edge on a computer.';
 
-/// Resolves the "liveness" subtitle for inactive BLE rows:
-/// * No data: RSSI fallback if supported.
-/// * Fresh: RSSI if advert is recent, otherwise "Last seen" age.
-/// * Stale: "Last seen" age (hides stale RSSI).
+/// The liveness subtitle for inactive BLE rows (RSSI when fresh, else "Last
+/// seen" age).
 ({String text, bool stale})? bleRowSubtitle({
   required int? scanRssi,
   required int? scanTs,
@@ -311,33 +280,20 @@ String unsupportedHint({required bool isWeb}) => isWeb
       stale: false,
     );
   }
-  // One label on both platforms: on web "seen" can only mean a connection
-  // stamp (no adverts exist there), and "Last connected" read wrong for a
-  // stamp taken at disconnect time.
+  // One label on both platforms; "Last connected" read wrong for a stamp taken
+  // at disconnect time.
   return (text: 'Last seen ${formatRelativeAge(age)}', stale: stale);
 }
 
-/// Comparator for the stale (greyed) row group: most recently seen first, so
-/// a just-staled device leads the group and long-gone ones sink — the rows'
-/// "Last seen" ages then increase monotonically down the list. [aAliveMs] and
-/// [bAliveMs] are the rows' [BleLinkManager.lastAliveMs] values; a null stamp
-/// (defensive — a stale row always has one, see [bleRowSubtitle]) sorts
-/// oldest, i.e. sinks to the end of the group.
+/// Stale rows: most recently seen first. A null stamp (defensive) sinks.
 int compareStaleRowsByRecency(int? aAliveMs, int? bAliveMs) =>
     (bAliveMs ?? 0).compareTo(aAliveMs ?? 0);
 
-/// The inactive device row's presentation state, resolved by
-/// [inactiveRowVisual]. Priority: the reconnect-settle window outranks a
-/// recorded connect failure (transient beats history), which outranks
-/// staleness (actionable beats maybe-gone), which outranks the normal look.
-/// The mood also drives the Devices tab's row ordering (stale sinks last,
-/// then ordered by recency — see [compareStaleRowsByRecency]).
+/// The inactive row's presentation state. Priority: reconnect window >
+/// failure > staleness > normal.
 enum InactiveRowMood { normal, stale, failed }
 
-/// Everything an inactive device row displays, resolved from platform,
-/// liveness, and failure state by [inactiveRowVisual] (a pure function — the
-/// mapping is unit-tested; colors are supplied from the theme). Null colors
-/// mean "theme default for that slot".
+/// An inactive row's resolved visual; null colors mean "theme default".
 typedef InactiveRowVisual = ({
   InactiveRowMood mood,
   IconData icon,
@@ -348,20 +304,15 @@ typedef InactiveRowVisual = ({
   Color? titleColor,
 });
 
-/// Shared width for action buttons to maintain vertical alignment.
-/// Sized to fit "Disconnecting…".
+/// Shared action-button width, sized to fit "Disconnecting…".
 const double deviceActionButtonWidth = 136;
 
-/// Card width below which the active row moves its action buttons off the
-/// title line onto their own row: ~260px of fixed chrome (tile padding,
-/// leading, gaps, gear + Disconnect) leaves a ~220px text lane.
+/// Card width below which the active row moves its buttons onto their own row.
+/// Approximate: the tile's fixed chrome (edge padding, leading + gaps, the gear
+/// and the fixed-width Disconnect) sums to ~260px, leaving ~220px for the name.
 const double _activeRowSingleRowWidth = 480;
 
-/// Map platform/liveness/failure state to the inactive row's full visual.
-///
-/// A stale row ("hasn't been active for a while") is de-emphasized: the
-/// foreground dims to disabled emphasis and the card gets a subtle blend.
-/// The Connect button stays enabled.
+/// Map platform/liveness/failure state to the inactive row's visual.
 InactiveRowVisual inactiveRowVisual({
   required int? scanRssi,
   required int? scanTs,
@@ -373,10 +324,8 @@ InactiveRowVisual inactiveRowVisual({
   required StatusColors status,
   required ColorScheme colors,
 }) {
-  // Web only (a reconnect-limited row exists there): a just-disconnected
-  // device whose stack isn't ready for a reconnect yet. NOT an error —
-  // linkActive signals "in flight", and the mood stays normal so the row
-  // keeps the fresh-group ordering an actually-stale row would lose.
+  // Web only: a just-disconnected device not ready to reconnect. Not an error,
+  // and the mood stays normal so it keeps fresh-group ordering.
   if (reconnectHint != null) {
     return (
       mood: InactiveRowMood.normal,
@@ -414,8 +363,6 @@ InactiveRowVisual inactiveRowVisual({
       iconColor: dim,
       subtitle: freshness.text,
       subtitleColor: dim,
-      // A small grey nudge in both modes: darkens the card in light mode,
-      // lightens it in dark mode.
       cardColor: colors.surfaceContainerHighest,
       titleColor: dim,
     );
@@ -431,12 +378,8 @@ InactiveRowVisual inactiveRowVisual({
   );
 }
 
-/// Run a connect attempt. A failure is surfaced by the manager as a per-row
-/// marker (see [BleLinkManager.connectFailureFor]) — deliberately NOT a
-/// snackbar, so rapid retries can't queue a stack of toasts — so this only
-/// logs the underlying detail (timeout vs GATT error vs stale web handle are
-/// wildly different diagnoses). Connect buttons are already disabled while a
-/// link is busy, so this only handles the rejected attempt itself.
+/// Run a connect attempt; failures surface as a per-row marker, so this only
+/// logs the detail.
 Future<void> _connectWithFeedback(
   Future<void> Function() connect,
   String deviceName,
@@ -448,11 +391,8 @@ Future<void> _connectWithFeedback(
   }
 }
 
-/// Run a scan toggle, surfacing a genuine start failure (a native radio
-/// error, or a non-dismissal web error) as a snackbar — the scan analogue of
-/// [_connectWithFeedback]. Web picker dismissals are swallowed by the manager
-/// (see [BleLinkManager._startScan]), so a cancelled chooser has nothing to
-/// report here.
+/// Run a scan toggle, surfacing a genuine start failure as a snackbar. Web
+/// picker dismissals are already swallowed by the manager.
 Future<void> _scanWithFeedback(BuildContext context, BleLinkManager bt) async {
   try {
     await bt.toggleScan();
@@ -467,12 +407,9 @@ Future<void> _scanWithFeedback(BuildContext context, BleLinkManager bt) async {
   }
 }
 
-/// An inactive device row (shared by the BLE and Demo sections): a plain
-/// card with a Connect button. The presentation arrives precomputed as an
-/// [InactiveRowVisual] (see [inactiveRowVisual]) — the widget is purely
-/// declarative over that record. The Connect button stays enabled across
-/// moods (a failure hint is retryable; stale means "maybe gone", not "don't
-/// try") and is disabled only per [canConnect].
+/// An inactive device row, declarative over a precomputed [InactiveRowVisual].
+/// The Connect button stays enabled across moods and is disabled only per
+/// [canConnect].
 class _InactiveDeviceRow extends StatelessWidget {
   const _InactiveDeviceRow({
     required this.name,
@@ -483,12 +420,9 @@ class _InactiveDeviceRow extends StatelessWidget {
 
   final String name;
 
-  /// The precomputed presentation (mood, icon, colors, subtitle).
   final InactiveRowVisual visual;
 
-  /// Whether this device's Connect button is enabled (from
-  /// [BleLinkManager.canConnectTo]): false while any link transition is in
-  /// flight, or while this device's reconnect-settle embargo runs.
+  /// From [BleLinkManager.canConnectTo].
   final bool canConnect;
 
   final VoidCallback onConnect;
@@ -502,13 +436,10 @@ class _InactiveDeviceRow extends StatelessWidget {
         leading: Icon(visual.icon, color: visual.iconColor),
         title: Text(
           name,
-          // Merges over the tile's title style, overriding only color.
           style: visual.titleColor == null
               ? null
               : TextStyle(color: visual.titleColor),
         ),
-        // Null subtitle (web, where no RSSI reading can exist): the row
-        // renders title-only rather than a permanent placeholder.
         subtitle: subtitle == null
             ? null
             : Text(
@@ -532,11 +463,8 @@ class _InactiveDeviceRow extends StatelessWidget {
   }
 }
 
-/// The active row's Cancel/Disconnect button style. OutlinedButtons don't
-/// participate in tile theming; without the explicit foreground the label
-/// renders in primary on the primaryContainer surface — invisible. The
-/// reduced horizontal padding (M3 default is 24) lets "Disconnecting…" fit
-/// [deviceActionButtonWidth].
+/// The active row's Cancel/Disconnect style: OutlinedButtons don't inherit the
+/// tile's themed foreground, so declare it; reduced padding fits the label.
 ButtonStyle activeRowActionButtonStyle({required Color onContainer}) =>
     OutlinedButton.styleFrom(
       foregroundColor: onContainer,
@@ -552,7 +480,7 @@ ButtonStyle activeRowActionButtonStyle({required Color onContainer}) =>
       ),
     );
 
-/// The active device row (shared by the BLE and Demo sections).
+/// The active device row.
 class _ActiveDeviceRow extends StatelessWidget {
   const _ActiveDeviceRow({
     required this.name,
@@ -566,23 +494,20 @@ class _ActiveDeviceRow extends StatelessWidget {
 
   final String name;
 
-  /// Leading icon override (e.g. the demo device's science beaker). When
-  /// null, the state-driven Bluetooth icon from [btActiveLinkVisual] is used.
+  /// Leading icon override; null uses the state-driven Bluetooth icon.
   final IconData? icon;
 
-  /// The device model from the connect-time Device Information read (e.g.
-  /// "Dynamite Sampler Pro Mk1"). Null until the read lands; the subtitle
-  /// then omits it rather than showing a placeholder.
+  /// The device model from the connect-time DIS read; null until it lands.
   final String? model;
 
   final BtLinkState linkState;
 
-  /// Live polled RSSI for the connected device; null until first read.
+  /// Live RSSI; null until the first read.
   final int? connectedRssi;
 
   final VoidCallback onDisconnect;
 
-  /// The gear button: jumps to the Settings tab.
+  /// The gear button's action.
   final VoidCallback onGoToSettings;
 
   @override
@@ -602,18 +527,13 @@ class _ActiveDeviceRow extends StatelessWidget {
         IconButton(
           icon: const Icon(Icons.settings_outlined),
           tooltip: 'Device settings',
-          // Compact (48→40): part of the text-lane width reclamation.
           visualDensity: VisualDensity.compact,
           onPressed: onGoToSettings,
         ),
-        // Fixed width: same column/shape as the Scan and Connect buttons
-        // (see [deviceActionButtonWidth]).
         SizedBox(
           width: deviceActionButtonWidth,
           child: OutlinedButton(
             style: activeRowActionButtonStyle(onContainer: onContainer),
-            // Disabled while the disconnect is in flight so the button
-            // truthfully reflects the in-progress teardown.
             onPressed: isDisconnecting ? null : onDisconnect,
             child: Text(
               isDisconnecting
@@ -631,17 +551,11 @@ class _ActiveDeviceRow extends StatelessWidget {
       color: scheme.primaryContainer,
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // Wide: buttons ride in the tile's trailing, where the M3 end
-          // padding (24) + card margin (4) lands Disconnect on the
-          // Scan/Connect column. Narrow: the trailing would leave a
-          // phone-sized text lane near-zero width, so the buttons move to
-          // their own row below (24px right inset = the same column inside
-          // the card).
+          // Wide: buttons ride in the tile's trailing. Narrow: the trailing
+          // would leave no text lane, so they move to their own row.
           final wide = constraints.maxWidth >= _activeRowSingleRowWidth;
           final tile = ListTile(
             selected: true,
-            // Compressed horizontal metrics (leading width, title gap) so the
-            // text gets more of the tile width.
             minLeadingWidth: 28,
             horizontalTitleGap: 8,
             leading: Stack(
@@ -662,10 +576,8 @@ class _ActiveDeviceRow extends StatelessWidget {
               ],
             ),
             title: Text(name),
-            // One flowing text, not a Row[Flexible(...), ...]: a Row squeezes
-            // the label into whatever width the RSSI leaves (near zero on a
-            // phone). A single Text.rich wraps at word boundaries and the
-            // WidgetSpan moves the RSSI block as a unit.
+            // One Text.rich so the label wraps at word boundaries; a Row would
+            // squeeze it to near-zero width on a phone.
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
@@ -674,12 +586,7 @@ class _ActiveDeviceRow extends StatelessWidget {
                   TextSpan(
                     children: [
                       TextSpan(text: visual.label),
-                      // The device model (DIS): null until the connect-time
-                      // read lands, in which case nothing renders.
                       if (model != null) TextSpan(text: ' • $model'),
-                      // Live RSSI (native only): null until the first poll
-                      // lands — and forever on web — in which case nothing
-                      // renders.
                       if (connectedRssi != null) ...[
                         const TextSpan(text: ' • '),
                         WidgetSpan(

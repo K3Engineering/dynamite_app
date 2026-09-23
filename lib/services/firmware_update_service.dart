@@ -37,15 +37,12 @@ class FirmwareCheck {
       target != null && !describeMatchesTag(installedDescribe, target!.tag);
 }
 
-/// Owns everything about release checks: the user's channel (persisted),
-/// the last check result, the once-per-connect background check that raises
-/// the [FirmwareUpdateAvailable] banner, and the post-flash verdict (see
-/// [noteFlashAccepted]). The flash orchestration itself belongs to the
-/// update screen; this service only answers "what should the device be
-/// running?".
-///
-/// Wiring matches the other reactive services: [link] is listened to from
-/// the constructor — construction is the wiring.
+/// Owns everything about release checks: the user's channel (persisted), the
+/// last check result, the once-per-connect background check that raises the
+/// [FirmwareUpdateAvailable] banner, and the post-flash verdict (see
+/// [noteFlashAccepted]). The flash itself belongs to the update screen; this
+/// only answers "what should the device be running?". [link] is listened to
+/// from the constructor — construction is the wiring.
 class FirmwareUpdateService extends ChangeNotifier {
   FirmwareUpdateService({
     required SharedPreferences prefs,
@@ -97,13 +94,12 @@ class FirmwareUpdateService extends ChangeNotifier {
   /// [noteFlashAccepted]).
   String? _pendingFlashTag;
 
-  /// Record that the connected device accepted a flash of [tag] — set by
-  /// the update screen when its flash returns; the device reboots on its
-  /// own, so the verdict rides the next check (typically the auto-check on
-  /// the user's reconnect) instead of any screen staying open. The next
-  /// successful check emits [FirmwareFlashVerified] on a match and consumes
-  /// the pend either way: a mismatch is covered by the update-available
-  /// banner. A from-file flash records nothing — no identity to compare.
+  /// Record that the device accepted a flash of [tag], set by the update screen
+  /// when its flash returns. The device reboots on its own, so the verdict
+  /// rides the next check (typically the reconnect's auto-check) rather than a
+  /// screen staying open: a match emits [FirmwareFlashVerified] and the pend is
+  /// consumed either way (a mismatch raises the update-available banner). A
+  /// from-file flash records nothing — no identity to compare.
   void noteFlashAccepted(String tag) {
     _pendingFlashTag = tag;
   }

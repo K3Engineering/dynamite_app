@@ -16,9 +16,8 @@ import 'services/demo_device.dart';
 import 'services/feed_health_tracker.dart';
 import 'services/firmware_catalog.dart';
 import 'services/firmware_update_service.dart';
-// Debug-only hot-restart hook: on web, BLE notification listeners and timers
-// survive a hot restart, so each generation registers a cleanup that the next
-// generation runs first thing in main(). No-op stub on native platforms.
+// Debug-only hot-restart hook: web BLE listeners and timers survive a hot
+// restart, so each generation registers a cleanup the next one runs first.
 import 'services/hot_restart_cleanup_stub.dart'
     if (dart.library.js_interop) 'services/hot_restart_cleanup_web.dart';
 import 'services/recording_controller.dart';
@@ -34,26 +33,20 @@ import 'status_colors.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   if (kReleaseMode) ErrorWidget.builder = (_) => const _FatalErrorWidget();
-  // Silence and tear down the previous hot-restart generation's BLE link
-  // (web debug only) BEFORE anything else, so its stale notification stream
-  // stops spamming the disposed engine view and its GATT connection is
-  // released for us to reconnect.
+  // Tear down the previous hot-restart generation's BLE link first, so its
+  // stale notifications stop and its GATT connection is released.
   runPreviousHotRestartCleanup();
   // The web primary-tab gate lives in web/flutter_bootstrap.js: a losing
   // tab never boots the engine, so main() only ever runs in the tab that
   // holds the lock.
-  // Minimal hot-restart cleanup registered immediately (web debug): from
-  // here until the full teardown registration below replaces it, the only
-  // resource this generation can hold is the sink worker. Without this, a
-  // restart landing in the startup window would leave the dying
-  // generation's sync access handles on the session files when the new
-  // generation's storage opens (only matters mid-recording).
+  // Minimal cleanup registered now, replaced by the full teardown below: a
+  // restart in the startup window would otherwise leave the dying generation's
+  // session-file handles open.
   registerHotRestartCleanup(terminateSessionSinkWorker);
   final appEvents = AppEvents();
-  // Session storage installs lazily on first use and needs no startup pass:
-  // an interrupted-on-crash recording just lists as such (no recovery, no
-  // mutation — see the store's classification), and a store that can't even
-  // be opened fails loudly at the first op that touches it.
+  // Session storage installs lazily: an interrupted-on-crash recording just
+  // lists as such (no recovery pass), and a store that can't open fails loudly
+  // at the first op that touches it.
   // Prefs are resolved here and injected into their owners, so their loads
   // are synchronous constructor work and can never race a user edit.
   // Overlapped: on web the package info is an uncacheable version.json
@@ -75,8 +68,7 @@ void main() async {
     connectedDeviceName: () => linkManager.connectedDeviceName,
     prefs: prefs,
   );
-  // The device id/name are read off the link at delivery time (the read
-  // only ever runs against the active link).
+  // Read off the link at delivery time, against the active link.
   linkManager = BleLinkManager(
     events: appEvents,
     demo: DemoDevice(),
@@ -96,8 +88,7 @@ void main() async {
     streamingChanges: linkManager,
     streamingNow: () => linkManager.isStreaming,
   );
-  // A link loss (of any flavor) ends the rig session: the flash document and
-  // any unsaved edits die with the connection. A dirty discard is surfaced.
+  // A link loss ends the rig session; a dirty discard is surfaced.
   RigLinkGuard(
     rig: rigState,
     events: appEvents,
@@ -125,18 +116,15 @@ void main() async {
     events: appEvents,
   );
   final appSettings = AppSettings(prefs: prefs);
-  // Release checks + the once-per-link update banner; also carries the
-  // flash keep-awake hold for the wakelock policy below.
+  // Release checks + once-per-link update banner; holds the flash wake lock.
   final firmwareUpdates = FirmwareUpdateService(
     prefs: prefs,
     link: linkManager,
     events: appEvents,
     catalog: GithubReleaseCatalog(),
   );
-  // Keep the screen awake while a device stream is live and the setting is
-  // on — and unconditionally during an OTA flash (which unsubscribes the
-  // feed). Nothing reads this; it exists to react. Construction is the
-  // wiring.
+  // Keep the screen awake while streaming (setting-gated) and during an OTA
+  // flash. Nothing reads this; construction is the wiring.
   WakelockPolicy(
     settings: appSettings,
     streamingChanges: linkManager,
@@ -148,22 +136,16 @@ void main() async {
   dataHub.updateLoadCells(rigState.channelCells);
   rigState.addListener(() => dataHub.updateLoadCells(rigState.channelCells));
 
-  // Hand the NEXT hot-restart generation a way to tear this one down (web
-  // debug only). This full registration replaces the minimal one made at
-  // startup. Fire-and-forget: the callbacks are silenced synchronously
-  // inside shutdownForHotRestart; the GATT disconnect completes async. The
-  // sink worker terminate is synchronous too — its sync access handles lock
-  // the session files, so they must die before the new generation's storage
-  // opens (only matters mid-recording).
+  // The full teardown for the NEXT generation, replacing the minimal one above.
+  // Fire-and-forget: callbacks are silenced synchronously, the GATT disconnect
+  // completes async. The sink-worker terminate must precede the new storage
+  // opening.
   registerHotRestartCleanup(() {
     unawaited(linkManager.shutdownForHotRestart());
     terminateSessionSinkWorker();
   });
-  // Layer 2 (web debug only): the engine view is disposed by
-  // `ext.flutter.disassemble` BEFORE the new generation boots, so packets
-  // arriving during module reload would spam "disposed EngineFlutterView"
-  // assertions. The filter catches the first one in THIS (soon-to-be-stale)
-  // generation, silences the feed immediately, and swallows the spam.
+  // The engine view is disposed before the new generation boots; the filter
+  // silences the feed on the first "disposed EngineFlutterView" assertion.
   installHotRestartErrorFilter(() {
     unawaited(linkManager.shutdownForHotRestart());
   });
@@ -173,9 +155,8 @@ void main() async {
       providers: [
         ChangeNotifierProvider.value(value: appSettings),
         Provider.value(value: appMeta),
-        // App-lifetime singletons created above (never disposed — the app
-        // root never unmounts), provided individually so each screen depends
-        // only on the layer it actually uses.
+        // App-lifetime singletons, provided individually so each screen depends
+        // only on the layer it uses.
         Provider.value(value: appEvents),
         Provider.value(value: feedHealth),
         ChangeNotifierProvider.value(value: dataHub),
@@ -216,11 +197,8 @@ class DynoApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // The M2-era ColorScheme.light()/.dark() constructors fall undeclared
-    // M3 roles back to base roles (surfaceContainer* -> surface, outline and
-    // friends -> onSurface, inverseSurface -> onSurface), which used to theme
-    // widgets with the wrong color (a white-on-white dark toast; dividers in
-    // full onSurface). We try to declare every role the app reads explicitly.
+    // ColorScheme.light()/.dark() fall undeclared M3 roles back to base roles,
+    // theming some widgets wrong; declare every role the app reads.
     const lightScheme = ColorScheme.light(
       // top "connected" bar, rec, tare buttons, button fonts
       primary: Color(0xFF455A64),
@@ -232,13 +210,9 @@ class DynoApp extends StatelessWidget {
       secondary: Color(0xFF455A64),
       // icon color of selected tab
       onSecondary: Colors.white,
-      // This design has no separate tonal container: M3 widgets themed off
-      // this role (nav selection pills, selected chips/segments) keep the
-      // primary-family look. Declared explicitly (= secondary) rather than
-      // left to the light() constructor's identical fallback. Quiet tracks
-      // (progress bars) take their own color at the widget: a distinct
-      // secondaryContainer here breaks the determinate bar the other way —
-      // track identical to the fill, a permanently "full" bar.
+      // Kept primary-family for M3 widgets themed off this role. A distinct
+      // secondaryContainer would make determinate progress tracks match their
+      // fill.
       secondaryContainer: Color(0xFF455A64),
       onSecondaryContainer: Colors.white,
       tertiary: Color.fromARGB(255, 211, 47, 47),
@@ -267,8 +241,8 @@ class DynoApp extends StatelessWidget {
     const darkScheme = ColorScheme.dark(
       primary: Color.fromARGB(255, 103, 155, 179),
       onPrimary: Colors.white,
-      // Same explicit pair as light. Note: white on this light-blue container
-      // is mediocre contrast — kept to preserve the existing dark look.
+      // White on this container is mediocre contrast; kept for the existing
+      // dark look.
       primaryContainer: Color.fromARGB(255, 103, 155, 179),
       onPrimaryContainer: Colors.white,
       secondary: Color.fromARGB(255, 137, 178, 197),
@@ -295,21 +269,15 @@ class DynoApp extends StatelessWidget {
       inversePrimary: Color(0xFF89B2C5),
     );
 
-    // A selected ListTile is the app's highlighted/active row (the connected
-    // device on the Devices tab), sitting on a primaryContainer surface. The
-    // theme supplies the matching content color — title, subtitle, icons, and
-    // IconButtons are all themed by the selected tile — while the surface
-    // owner (the Card) supplies the background. selectedTileColor is
-    // deliberately NOT set here: painting surfaces is the Card's job.
+    // A selected ListTile supplies the matching content color; the surface
+    // owner (the Card) supplies the background, so selectedTileColor is not set
+    // here.
     ListTileThemeData selectedTileTheme(ColorScheme scheme) =>
         ListTileThemeData(selectedColor: scheme.onPrimaryContainer);
 
-    // M3 styles the navigation bar's inactive destinations at
-    // onSurfaceVariant — footnote level, too quiet for the app's primary
-    // switching control. Size/weight/spacing replicate the M3 defaults
-    // (this theme property replaces the whole resolve, color included);
-    // only the inactive color moves, from onSurfaceVariant to
-    // near-body-strength onSurface.
+    // M3's inactive nav color is too quiet; only that moves, to onSurface.
+    // Sizes replicate the M3 defaults (this property replaces the whole
+    // resolve).
     NavigationBarThemeData navBarTheme(ColorScheme colors) {
       const inactiveAlpha = 0.8;
       return NavigationBarThemeData(

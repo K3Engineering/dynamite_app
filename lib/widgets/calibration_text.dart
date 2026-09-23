@@ -5,9 +5,7 @@ import '../models/load_cell.dart';
 // The calibration feature's text.
 // ---------------------------------------------------------------------------
 
-/// The product's trust statement for the calibrated units — a product claim,
-/// not per-device data (see the flash schema: the device carries the
-/// corrections, the app carries what they add up to).
+/// The product's trust statement for the calibrated units.
 const String kTrustLineCalibrated =
     'mV/V and force: ±0.5% of reading · mV: nominal chain (~1%)';
 const String kTrustLineUncalibrated =
@@ -104,10 +102,7 @@ String? calibrationAge(String? isoDate) {
   return years == 1 ? '1 year ago' : '$years years ago';
 }
 
-/// The Settings row's one-line board-calibration state. Facts only: when
-/// calibrated, the flash document's own date; the other states describe
-/// what the app holds (a failed connect-time read, a document without
-/// usable factory data) — never a verdict on the device.
+/// The Settings row's one-line board-calibration state.
 String boardCalibrationStatusLine(BoardCalibration? board) {
   switch (board) {
     case null:
@@ -124,10 +119,8 @@ String boardCalibrationStatusLine(BoardCalibration? board) {
   }
 }
 
-/// The plain-text calibration report (support-email / paste-anywhere
-/// artifact): mirrors the on-screen content, plus the 5-point tables.
-/// [deviceLabel] names the document's owner for a human reader — the device
-/// name when known, else the device id.
+/// The plain-text calibration report. [deviceLabel] names the owner (device
+/// name when known, else the device id).
 String calibrationReport(
   ProvisionedBoardCalibration board,
   String deviceLabel,

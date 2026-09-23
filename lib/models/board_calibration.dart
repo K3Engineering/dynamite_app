@@ -1,22 +1,16 @@
 import 'device_profile.dart';
 
 // ---------------------------------------------------------------------------
-// Interface-board calibration: the analog-chain constants, the factory
-// ladder calibration, and the flash document's board half. Everything here
-// is a property of the BOARD (ADC, AFE, excitation, cal ladder) — load cell
-// profiles and rig slots live in `load_cell.dart`, and the vocabulary stays
-// separate: a board has a zero OFFSET, a cell has a zero BALANCE.
+// Interface-board calibration: the analog-chain constants, the factory ladder
+// calibration, and the flash document's board half. A board has a zero offset,
+// a cell a zero balance; load cells live in `load_cell.dart`.
 // ---------------------------------------------------------------------------
 
-/// ADC counts per polarity (24-bit bipolar: 2^23 per side). Protocol-level:
-/// the sample format, not a conversion nominal.
+/// ADC counts per polarity (24-bit bipolar: 2^23 per side).
 const int adcCountsPerPolarity = 1 << 23;
 
-/// The signed 24-bit rails: every real sample value lies in
-/// [adcMinValue]..[adcMaxValue], and values outside are the codec's reserved
-/// territory (see SessionChunkCodec's gap sentinel). The ONE definition of
-/// the converter's range — clip checks, the session codec, and synthetic
-/// feeds all derive from here.
+/// The signed 24-bit rails; values outside are reserved by the session codec
+/// as its gap sentinel.
 const int adcMaxValue = adcCountsPerPolarity - 1;
 const int adcMinValue = -adcCountsPerPolarity;
 
@@ -24,11 +18,9 @@ const int adcMinValue = -adcCountsPerPolarity;
 // Board constants (analog chain), resolved from the device
 // ---------------------------------------------------------------------------
 
-/// The analog-chain constants converting one channel's raw counts: ADC
-/// full-scale reference, AFE gain, the ADC's PGA gain, excitation voltage.
-/// Resolved from the device at connect time (flash keys + ADC register
-/// readback) — the app carries NO compiled defaults: a board without this
-/// data shows raw counts only (see [UnprovisionedBoardCalibration]).
+/// The analog-chain constants converting one channel's raw counts, resolved
+/// from the device at connect time. A board without this data shows raw counts
+/// only (see [UnprovisionedBoardCalibration]).
 class ChannelNominals {
   const ChannelNominals({
     required this.adcFsrV,
@@ -64,9 +56,7 @@ class ChannelNominals {
   };
 
   /// Strict inverse of [toJson]: every field must be present, finite and
-  /// positive, else [FormatException] — a partial chain is never guessed.
-  /// Session-snapshot callers catch at their boundary (damage policy lives
-  /// there, not here).
+  /// positive, else [FormatException].
   factory ChannelNominals.fromJson(Map<String, dynamic> json) {
     double pos(Object? v, String key) {
       final d = v is num ? v.toDouble() : double.nan;
@@ -85,9 +75,8 @@ class ChannelNominals {
   }
 }
 
-/// Board-level analog constants: the shared chain values, the per-channel
-/// PGA gains, and the provenance tags carried by the flash values
-/// (e.g. `"4.53,nominal"`).
+/// Board-level analog constants: shared chain values, per-channel PGA gains,
+/// and the provenance tags on the flash values.
 class BoardNominals {
   BoardNominals({
     required this.adcFsrV,
@@ -137,14 +126,11 @@ final Set<String> calGroupKeys = Set.unmodifiable({
 });
 
 /// Resolve the board constants from a flash document's key=value map and the
-/// ADC's PGA readback ([pgaGains] — always present: an unreadable ADC config
-/// fails the connection upstream). Null when the flash holds NONE of the
-/// constant keys: an unprovisioned board, a legal state (new or
-/// factory-reset units stream raw counts only). Throws [FormatException] on
-/// a partial or malformed set — the app never guesses a partial chain. The
-/// caller ([DeviceFlash.fromKvs]) turns that throw into an
-/// [InvalidBoardCalibration], so a bad provisioning still streams raw counts
-/// with a warning rather than failing the connection.
+/// ADC's PGA readback. Null when the flash holds none of the constant keys (an
+/// unprovisioned board, which streams raw counts only). Throws
+/// [FormatException] on a partial or malformed set; [DeviceFlash.fromKvs]
+/// turns that into an [InvalidBoardCalibration], so bad provisioning still
+/// streams raw counts rather than failing the connection.
 BoardNominals? resolveBoardConstants(
   Map<String, String> kv, {
   required List<double> pgaGains,
@@ -184,8 +170,8 @@ BoardNominals? resolveBoardConstants(
 // Calibration ladder
 // ---------------------------------------------------------------------------
 
-/// Resistors per calibration ladder: [top 10k, four 10R, bottom 10k], in
-/// signal order from EXC+ to GND. Taps sit between them: t1 after the top
+/// Resistors per calibration ladder: top 10k, four 10R in series, bottom 10k,
+/// in signal order from EXC+ to GND. Taps sit between them: t1 after the top
 /// 10k, t5 before the bottom 10k.
 const int kLadderResistorCount = 6;
 
@@ -240,69 +226,44 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 // ---------------------------------------------------------------------------
 
 /// Board-side calibration data of one ADC channel, as a sealed two-state:
-///
-/// - [CalibratedChannelBoard]: the characterized ladder resistors and the
-///   raw readings the device produced in each of the [kCalPointCount]
-///   differential configs, plus the resolved nominal chain. Conversion is a
-///   piecewise-linear map through the five (raw, setpoint) points — it
-///   absorbs ADC offset, the combined AFE/ADC/excitation gain, and ADC
-///   nonlinearity between the cal points.
-/// - [NominalChannelBoard]: no factory data; the resolved nominal chain is
-///   the map.
-///
-/// Both variants convert. "No board data at all" (an unprovisioned unit,
-/// or no connect-time read yet) is NOT a variant here: it is a null
-/// `ChannelCalibration.board`, and raw counts are all that converts there.
-///
-/// The ladder and the readings are one datum (never a
-/// characterized-rereading-over-nominal-ladder remix), and readings never
-/// exist without resolved nominals (the parse paths only consult cal keys
-/// once the board constants resolved); the measured members exist only on
-/// [CalibratedChannelBoard].
+/// [CalibratedChannelBoard] carries factory data (a piecewise-linear map
+/// through the five (raw, setpoint) points), [NominalChannelBoard] the nominal
+/// chain alone. Both convert; "no board data at all" is a null
+/// `ChannelCalibration.board`, where only raw counts convert.
 sealed class ChannelBoardCalibration {
   const ChannelBoardCalibration._();
 
   /// The channel's resolved analog chain.
   ChannelNominals get nominals;
 
-  /// Whether the channel has a calibration group. Board-level calibration
-  /// is all-or-nothing: every channel is calibrated, or none is (see
-  /// BoardCalibration.fromKv).
+  /// Whether the channel has a calibration group. Board-level calibration is
+  /// all-or-nothing (see [BoardCalibration.fromKv]).
   bool get isCalibrated;
 
-  /// The excitation anchor expressing the ratiometric map as mV. This value
-  /// is the mV unit's entire uncertainty — the calibration is ratiometric,
-  /// so the calibrated units never touch it. Deliberately not
-  /// [ChannelNominals.excitationV]'s name: the nominal chain constant and
-  /// the mV anchor are two roles that happen to resolve to the same number.
+  /// The excitation anchor for the mV unit. The calibration is ratiometric, so
+  /// only mV depends on it; a distinct role from
+  /// [ChannelNominals.excitationV], even though it resolves to the same value.
   double get displayExcitationV => nominals.excitationV;
 
-  /// End-point sensitivity in counts per mV/V: measured on
-  /// [CalibratedChannelBoard] (the chord through the two outermost cal
-  /// points, which bracket a load cell's full-scale range — the slope of
-  /// the conversion map where one number must stand in for it), the nominal
-  /// chain's value on [NominalChannelBoard].
+  /// End-point sensitivity in counts per mV/V: the chord through the two
+  /// outermost cal points on [CalibratedChannelBoard], the nominal chain's
+  /// value on [NominalChannelBoard].
   double get sensitivityCountsPerMvV;
 
-  /// Map an absolute raw ADC reading to mV/V of excitation. Readings are
-  /// absolute (offset included): net values come from subtracting the map at
-  /// the tare point — see `ChannelConverter.netMap`.
+  /// Map an absolute raw ADC reading (offset included) to mV/V of excitation.
   double mvVFromRaw(double raw);
 
-  /// Inverse of [mvVFromRaw]: the raw reading mapping to [mvV] (manual
-  /// tare entry converts a typed display value back to counts).
+  /// Inverse of [mvVFromRaw].
   double rawFromMvV(double mvV);
 
   /// Joint validity check for one channel's factory data, shared by the
-  /// flash and session-snapshot parsers: the ladder ([kLadderResistorCount]
-  /// positive values — a real ladder resistor is ~10k/~10 ohms, and a zero
-  /// or negative value produces nonsense setpoints or a NaN ladder total)
-  /// and the readings ([kCalPointCount] finite values inside the ADC's
-  /// bipolar range, at least 1000 counts apart — a real ladder spread is
-  /// millions of counts, so a sub-thousand gap can only be corrupt flash,
-  /// and exact duplicates would divide by zero during interpolation). Both
-  /// null = "no factory data" is NOT valid here; callers check presence
-  /// before calling.
+  /// flash and session-snapshot parsers: [kLadderResistorCount] positive
+  /// resistors (a zero or negative value gives nonsense setpoints or a NaN
+  /// ladder total) and [kCalPointCount] finite readings inside the ADC's
+  /// bipolar range, at least 1000 counts apart (a duplicate or near-zero gap
+  /// is corrupt flash; exact duplicates would divide by zero during
+  /// interpolation). Both null = "no factory data" is NOT valid here;
+  /// callers check presence before calling.
   static bool channelDataIsValid(
     List<double> resistors,
     List<double> readings,
@@ -330,20 +291,14 @@ sealed class ChannelBoardCalibration {
     return true;
   }
 
-  /// Session-snapshot serialization (recorded sessions carry the
-  /// calibration they were taken with, so playback converts identically
-  /// later). The resolved nominals ride along: replay must never re-resolve
-  /// anything.
+  /// Session-snapshot serialization. The resolved nominals ride along so
+  /// replay never re-resolves anything.
   Map<String, dynamic> toJson();
 
-  /// Strict inverse of [toJson], honoring the variant structure: the
-  /// nominal chain is required (a session with no board data at all stores
-  /// a NULL board — see `ChannelCalibration.fromJson`), factory data is
-  /// optional, but present-but-malformed data throws [FormatException] —
-  /// one half of the ladder/readings pair without the other, or values
-  /// failing [channelDataIsValid]. Replay never substitutes guessed
-  /// values; the caller decides the damage policy (the session catalog
-  /// marks the session damaged).
+  /// Strict inverse of [toJson]: nominals are required (a session with no
+  /// board data stores a null board), factory data optional, but
+  /// present-but-malformed throws [FormatException]. Replay never substitutes
+  /// guessed values.
   factory ChannelBoardCalibration.fromJson(Map<String, dynamic> json) {
     List<double>? numList(Object? v, int count, String key) {
       if (v == null) return null;
@@ -441,9 +396,9 @@ class CalibratedChannelBoard extends ChannelBoardCalibration {
         (raw - xs[i - 1]) * (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
   }
 
-  /// Inverse of [mvVFromRaw]: the segment lookup run against the setpoint
-  /// axis (the map is monotone across a valid channel's span); out-of-range
-  /// values extend the outermost segment, mirroring [mvVFromRaw].
+  /// Inverse of [mvVFromRaw]: the segment lookup runs on the setpoint axis
+  /// (monotone across a valid channel's span); out-of-range extends the outer
+  /// segment.
   @override
   double rawFromMvV(double mvV) {
     final xs = _sortedRaw;
@@ -458,43 +413,31 @@ class CalibratedChannelBoard extends ChannelBoardCalibration {
 
   // -- Diagnostics ----------------------------------------------------------
 
-  /// Board zero offset in counts: the dead-short (t3,t3) reading measures
-  /// the AFE+ADC input offset directly (no cell in the loop).
+  /// Dead-short (t3,t3) reading: the AFE+ADC input offset, no cell in the
+  /// loop.
   double get offsetCounts => readings[kCalIdxZero];
 
-  /// The measured end-point sensitivity: the slope of the chord through the
-  /// two outermost cal points. Cached (see [setpoints]).
+  /// The chord through the two outermost cal points. Cached.
   @override
   late final double sensitivityCountsPerMvV =
       (readings[kCalIdxPosFs] - readings[kCalIdxNegFs]) /
       (setpoints[kCalIdxPosFs] - setpoints[kCalIdxNegFs]);
 
-  /// Board zero offset in µV/V: the dead-short (t3,t3) reading expressed
-  /// through the measured sensitivity — measured counts ÷ measured
-  /// counts-per-mV/V, so the nominal chain (FSR, AFE gain, excitation) never
-  /// enters. This is the interface board's OWN input offset (AFE + ADC, no
-  /// cell in the loop) — NOT the load-cell certificate's "zero balance",
-  /// which is a property of the cell.
-  ///
-  /// The measured-error table's zero row ([measuredErrorsUvV]) expresses
-  /// the same offset through the nominal chain instead; the two differ by
-  /// the gain factor — far below the calibration's uncertainty.
+  /// Board zero offset in µV/V: the dead-short reading expressed through the
+  /// measured sensitivity, so the nominal chain never enters. Not the load
+  /// cell's certificate "zero balance".
   double get zeroOffsetUvV => offsetCounts / sensitivityCountsPerMvV * 1000.0;
 
-  /// Gain error vs the nominal chain (1.0 = exactly nominal): the measured
-  /// end-point sensitivity relative to the nominal counts-per-mV/V. It
-  /// folds excitation, AFE gain, ADC reference and ladder tolerances into
-  /// one factor — the split is unknowable by design. The one diagnostic
-  /// that references the nominal chain.
+  /// Gain error vs the nominal chain (1.0 = exactly nominal): the only
+  /// diagnostic that references the nominal chain, folding excitation, AFE
+  /// gain, ADC reference and ladder tolerances into one factor whose split is
+  /// unknowable.
   double get sensitivityVsNominal =>
       sensitivityCountsPerMvV / nominals.countsPerMvV;
 
-  /// Measured error per cal point in µV/V, in [kCalPointCount] storage
-  /// order: the reading converted through the *nominal* chain minus the
-  /// ladder setpoint — the as-found error, what an uncorrected reading
-  /// would show. Offset, gain error and curvature all appear; the ±FS
-  /// entries are NOT zero (unlike [deviationsUvV], nothing here is pinned
-  /// by construction).
+  /// As-found error per cal point in µV/V (storage order): the reading through
+  /// the nominal chain minus the setpoint. Offset, gain and curvature all
+  /// appear; no entry is pinned to zero.
   List<double> get measuredErrorsUvV {
     final sp = setpoints;
     final s = nominals.countsPerMvV;
@@ -504,10 +447,8 @@ class CalibratedChannelBoard extends ChannelBoardCalibration {
     ];
   }
 
-  /// End-point nonlinearity per cal point in µV/V, in [kCalPointCount]
-  /// storage order: deviation from the end-point line (the chord through
-  /// the ±FS points), via the measured sensitivity — what the calibration
-  /// corrects beyond gain and offset. The ±FS entries are 0 by
+  /// End-point nonlinearity per cal point in µV/V (storage order): deviation
+  /// from the ±FS chord via the measured sensitivity. The ±FS entries are 0 by
   /// construction; positive = the uncorrected device read high.
   List<double> get deviationsUvV {
     final sp = setpoints;
@@ -541,9 +482,8 @@ class CalibratedChannelBoard extends ChannelBoardCalibration {
   };
 }
 
-/// One channel with resolved board constants but no factory data: the
-/// nominal chain alone is the conversion map — no offset, gain, or
-/// nonlinearity correction.
+/// A channel with resolved nominals but no factory data: the nominal chain is
+/// the map.
 class NominalChannelBoard extends ChannelBoardCalibration {
   const NominalChannelBoard(this.nominals) : super._();
 
@@ -570,19 +510,15 @@ class NominalChannelBoard extends ChannelBoardCalibration {
 // The calibration group (all channels + provenance, one document)
 // ---------------------------------------------------------------------------
 
-/// One complete calibration group: every channel's characterized ladder
-/// resistors and readings, plus the `cal.*` provenance metadata describing
-/// the run that produced them.
+/// One complete calibration group: every channel's ladder data plus the
+/// `cal.*` provenance metadata.
 ///
-/// The group's PRESENCE marker is [date] (`cal.date`): a group with no date
-/// is no group. A write of the group sets its data keys first and the date
-/// last — a crash mid-write leaves data keys without a date. [parseCalGroup]
-/// reads that as "no group" (it only sees the marker); the caller decides
-/// what the residue means. [BoardCalibration.fromKv] treats it as corrupt
-/// flash ([FormatException]) in both folders: the date is ALWAYS written by
-/// the tool producing the group, so a missing date never means "the date is
-/// unknown", and silently ignoring it would hide an interrupted recalibration
-/// from the user who is expecting the new calibration to be in effect.
+/// Its presence marker is [date] (`cal.date`), written last, so a crash
+/// mid-write leaves data keys without a date. [parseCalGroup] reads that as "no
+/// group"; [BoardCalibration.fromKv] treats orphaned keys as corrupt flash — the
+/// tool always writes the date, so its absence means an interrupted
+/// recalibration, which must not be ignored while the user expects the new
+/// calibration to be in effect.
 class CalGroup {
   CalGroup({
     required this.date,
@@ -613,9 +549,7 @@ class CalGroup {
   /// Per-channel ADC PGA gains at calibration time (`cal.adc`), if recorded.
   final List<double>? adcGains;
 
-  /// One ladder/readings pair per ADC channel: the channel's entries
-  /// validate together (see [ChannelBoardCalibration.channelDataIsValid]) —
-  /// never a characterized-readings-over-nominal-ladder remix.
+  /// One ladder/readings pair per ADC channel; the two validate together.
   final List<({List<double> resistors, List<double> readings})> channelData;
 }
 
@@ -635,16 +569,11 @@ List<double>? _parseNumberList(String? value, int count, String key) {
   return [for (final v in parsed) v!];
 }
 
-/// Parse one calibration group out of a key/value map. Null when the map
-/// holds no `cal.date`: no calibration group (see [CalGroup] — the date is
-/// the group's presence marker, and group keys without it are the CALLER's
-/// policy domain, not checked here).
-///
-/// Throws [FormatException] on a present-but-invalid group: calibration is
-/// all-or-nothing — every channel's ladder/readings must be present and
-/// jointly valid (a factory always calibrates all channels in one document;
-/// a partial set is corrupt flash, not a mixed instrument), and the numeric
-/// metadata must be well-formed.
+/// Parse one calibration group out of a key/value map. Null when the map holds
+/// no `cal.date` (the presence marker; orphaned group keys are the caller's
+/// policy). Throws [FormatException] on a present-but-invalid group:
+/// calibration is all-or-nothing, so every channel's ladder/readings must be
+/// present and jointly valid.
 CalGroup? parseCalGroup(Map<String, String> kv) {
   final date = kv['cal.date'];
   if (date == null) return null;
@@ -692,50 +621,32 @@ CalGroup? parseCalGroup(Map<String, String> kv) {
 }
 
 /// The board half of the device flash document, sealed by provisioning:
+/// [ProvisionedBoardCalibration] (constants resolved),
+/// [UnprovisionedBoardCalibration] (no board data — raw counts only), or
+/// [InvalidBoardCalibration] (data the app refuses to adopt; carries the
+/// reason).
 ///
-/// - [ProvisionedBoardCalibration]: the analog-chain constants resolved —
-///   electrical (and, with load cells, force) units convert. Carries the
-///   resolved nominals, one [ChannelBoardCalibration] per ADC channel, and
-///   the `cal.*` provenance metadata.
-/// - [UnprovisionedBoardCalibration]: flash holds no board data at all —
-///   a new or factory-reset unit. The instrument streams raw counts only;
-///   there is nothing per-channel to know.
-/// - [InvalidBoardCalibration]: flash holds board data the app refuses to
-///   adopt (partial/malformed constants or calibration). Like an
-///   unprovisioned board it streams raw counts only, but it carries the
-///   reason so the UI can tell the user their calibration is unreadable.
-///
-/// A failed READ (transport) still fails the connection upstream, so no
-/// board object ever represents "couldn't read".
+/// A failed READ (transport) fails the connection upstream, so no board object
+/// represents "couldn't read".
 sealed class BoardCalibration {
   const BoardCalibration._();
 
-  /// Parse the board half of a flash document from the FACTORY folder's
-  /// key/value map (the two folders are parsed separately — see
-  /// `DeviceFlash.fromKvs`; User-namespace keys never reach here).
-  /// [pgaGains] is the ADC's GAIN-register readback (always present — the
-  /// config read fails the connection upstream); it completes the board
-  /// constants (see [resolveBoardConstants]).
+  /// Parse the board half of a flash document from the FACTORY key/value map.
+  /// [pgaGains] completes the board constants (see [resolveBoardConstants]).
   ///
   /// Throws [FormatException] on present-but-invalid board data: partial
-  /// or malformed constants, orphaned calibration keys (channel entries or
-  /// `cal.*` metadata without the constant chain or without `cal.date`, or
-  /// calibration keys with no constant chain at all — the tooling writes the
-  /// date last, so residue without it is an interrupted or corrupt write,
-  /// not something to ignore), or a calibration group [parseCalGroup]
-  /// rejects. Absent data is legal: no constant keys at all →
-  /// [UnprovisionedBoardCalibration]; constants without a cal group →
-  /// nominal channels. Unknown keys are ignored. [DeviceFlash.fromKvs]
-  /// converts this throw into an [InvalidBoardCalibration].
+  /// constants, orphaned calibration keys, or a rejected cal group. Absent data
+  /// is legal (unprovisioned → raw counts; constants without a cal group →
+  /// nominal channels). Unknown keys are ignored. [DeviceFlash.fromKvs] turns
+  /// this into an [InvalidBoardCalibration].
   factory BoardCalibration.fromKv(
     Map<String, String> kv, {
     required List<double> pgaGains,
   }) {
     final nominals = resolveBoardConstants(kv, pgaGains: pgaGains);
     if (nominals == null) {
-      // Unprovisioned means no owned calibration data, not merely missing
-      // constants: calibration keys without the constant chain are a
-      // fragment of a bad provisioning. Unknown keys are not board data.
+      // Calibration keys without the constant chain are a bad-provisioning
+      // fragment, not "unprovisioned".
       if (kv.keys.any(calGroupKeys.contains)) {
         throw const FormatException(
           'board data: calibration keys without the constant chain '
@@ -747,7 +658,7 @@ sealed class BoardCalibration {
 
     final group = parseCalGroup(kv);
     if (group == null && kv.keys.any(calGroupKeys.contains)) {
-      // No date marker: every calibration key must be absent outright.
+      // No date marker, so every calibration key must be absent outright.
       throw const FormatException(
         'board calibration: calibration keys without the cal.date marker',
       );
@@ -756,9 +667,8 @@ sealed class BoardCalibration {
   }
 }
 
-/// A provisioned board: the resolved analog-chain constants, one
-/// [ChannelBoardCalibration] per ADC channel, and the optional calibration
-/// group. No cal group → every channel converts through the nominal chain.
+/// A board with resolved constants; no cal group means every channel uses the
+/// nominal chain.
 class ProvisionedBoardCalibration extends BoardCalibration {
   ProvisionedBoardCalibration({required this.nominals, this.calGroup})
     : channels = [
@@ -777,18 +687,14 @@ class ProvisionedBoardCalibration extends BoardCalibration {
   /// The resolved board constants (see [resolveBoardConstants]).
   final BoardNominals nominals;
 
-  /// The device's calibration group; null when flash holds constants but no
-  /// calibration (a provisioned-but-never-calibrated board).
+  /// Null when flash holds constants but no calibration.
   final CalGroup? calGroup;
 
-  /// One channel map per ADC channel, derived from [nominals] and
-  /// [calGroup].
+  /// One map per ADC channel, derived from [nominals] and [calGroup].
   final List<ChannelBoardCalibration> channels;
 
-  /// Whether the runtime PGA config differs from the one the calibration was
-  /// taken at — a stale-calibration guard (PGA gains are the only ADC config
-  /// the runtime readback exposes). Null when the calibration recorded no
-  /// gains (`cal.adc`).
+  /// True when the runtime PGA config differs from the calibration's — a
+  /// stale-calibration guard. Null when the calibration recorded no gains.
   bool? get adcConfigDrifted {
     final atCal = calGroup?.adcGains;
     if (atCal == null) return null;
@@ -804,18 +710,15 @@ class ProvisionedBoardCalibration extends BoardCalibration {
   bool get isCalibrated => calGroup != null;
 }
 
-/// A board with no board data in flash at all: a new or factory-reset
-/// unit. Streams raw counts; electrical and force units report
-/// unavailable (see `resolveUnitAvailability`).
+/// A board with no board data in flash: a new or factory-reset unit. Streams
+/// raw counts only.
 class UnprovisionedBoardCalibration extends BoardCalibration {
   const UnprovisionedBoardCalibration() : super._();
 }
 
-/// A board whose flash held board data the app refused to adopt (see
-/// [BoardCalibration.fromKv]): partial or malformed constants, or a
-/// calibration group that failed validation. Streams raw counts like
-/// [UnprovisionedBoardCalibration]; [detail] names the offending key for the
-/// user-facing warning so they (or support) can see what is wrong.
+/// A board whose flash data the app refused to adopt (see
+/// [BoardCalibration.fromKv]); streams raw counts like
+/// [UnprovisionedBoardCalibration]. [detail] names the offending key.
 class InvalidBoardCalibration extends BoardCalibration {
   const InvalidBoardCalibration(this.detail) : super._();
 

@@ -1,8 +1,5 @@
-/// Measured health of the ADC feed: not "subscribed" (the link state's
-/// meaning) but "bytes are actually arriving and decodable". Derived live
-/// from stream measurements by [deriveFeedHealth] — nothing is stored or
-/// latched, so the classification can never disagree with the traffic it
-/// describes, and recovery needs no reset (the next evaluation flips it).
+/// Measured health of the ADC feed: whether bytes are actually arriving and
+/// decodable, derived live by [deriveFeedHealth]. Nothing is stored or latched.
 library;
 
 import 'hub_event.dart';
@@ -28,40 +25,32 @@ enum FeedHealth {
   /// No decodable packet ever, and nothing at all is arriving.
   silent;
 
-  /// Nothing decodable is arriving right now: the live UI grays its readings
-  /// and the rate label reads "no data"; recording refuses to start here.
+  /// Nothing decodable is arriving; the live UI grays out and recording refuses
+  /// to start.
   bool get noDataFlowing =>
       this == FeedHealth.stopped ||
       this == FeedHealth.blocked ||
       this == FeedHealth.silent;
 }
 
-/// The stream measurements [deriveFeedHealth] consumes, as a read port for
-/// sources that can answer them live (implemented by `DataHub`): a consumer
-/// polls this instead of holding the whole hub. [totalSamples] > 0 is the
-/// "ever flowed" truth; the timestamps mark the last decodable batch, the
-/// last malformed packet, and the current stream's start.
+/// The stream measurements [deriveFeedHealth] consumes, as a read port
+/// implemented by `DataHub`. [totalSamples] > 0 means "ever flowed".
 abstract interface class FeedHealthSource {
   int get totalSamples;
   DateTime? get lastDataAt;
   DateTime? get lastMalformedPacketAt;
   DateTime? get streamStartedAt;
 
-  /// Subscribe/unsubscribe to the source's lifecycle events (see
-  /// `hub_event.dart`). [HubCleared] rewrites every getter above back to
-  /// "stream just started", so a deriving consumer that polls on its own
-  /// schedule re-derives on this event rather than waiting a poll-cycle
-  /// with stale inputs.
+  /// Subscribe/unsubscribe to lifecycle events. [HubCleared] rewrites every
+  /// getter above back to "stream just started".
   void addEventListener(void Function(HubEvent) listener);
   void removeEventListener(void Function(HubEvent) listener);
 }
 
-/// Classify the feed from stream measurements (the live source is DataHub;
-/// the values are passed rather than the hub so the classification stays a
-/// pure function). [streaming] is the link's "ADC feed subscribed" state;
-/// the health is undefined otherwise, so the function returns null.
-/// [staleAfter] is the freshness window: packets normally arrive at 50 Hz,
-/// so 2 s without one is never a scheduling hiccup.
+/// Classify the feed from stream measurements (passed rather than the hub to
+/// keep this pure). Null when [streaming] is false. [staleAfter] is the
+/// freshness window: at 50 Hz, 2 s without a packet is never a scheduling
+/// hiccup.
 FeedHealth? deriveFeedHealth({
   required bool streaming,
   required int totalSamples,

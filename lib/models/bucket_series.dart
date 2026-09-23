@@ -6,24 +6,19 @@ import 'gap_list.dart';
 // ---------------------------------------------------------------------------
 // Bucket aggregates
 //
-// The single home of the per-bucket min/max/sum machinery shared by the live
-// ingest (DataHub), session loading (SessionData), and the graph renderers'
-// bucket-accelerated block reductions (reduceBlockBuckets / foldBucketRange).
+// Per-bucket min/max/sum machinery shared by live ingest, session loading, and
+// the graph renderers' block reductions.
 // ---------------------------------------------------------------------------
 
-/// The one bucket-grid resolution shared by live (DataHub) and session
-/// (SessionData) ingest; every consumer of [BucketSeries] relies on both
-/// sides using the same grid, so it is defined exactly once here.
+/// The bucket-grid resolution, shared by live and session ingest and relied on
+/// by every [BucketSeries] consumer.
 const int kBucketSize = 100;
 
-/// Min/max/sum aggregates over fixed [bucketSize]-sample windows of some
-/// integer series (raw values or first differences). Addressed by absolute
-/// bucket index `b = sampleIndex ~/ bucketSize`, stored at `b % mins.length`;
-/// [samples] is the total number of samples ingested, so slots are only
-/// trustworthy for the most recent `mins.length` bucket indices (older ones
-/// have been overwritten by the ring wrap -- see [reduceBlockBuckets]).
-/// Gap samples hold the previous real value (diff 0), so buckets are always
-/// fully populated and carry no missing-data state.
+/// Min/max/sum aggregates over fixed [bucketSize]-sample windows of an integer
+/// series (raw values or first differences), addressed by absolute bucket index
+/// stored at `b % mins.length`. Slots are only trustworthy for the most recent
+/// `mins.length` buckets (older ones are overwritten by the ring wrap). Gap
+/// samples hold the previous value (diff 0), so there is no missing-data state.
 typedef BucketSeries = ({
   int bucketSize,
   Int32List mins,
@@ -32,10 +27,8 @@ typedef BucketSeries = ({
   int samples,
 });
 
-/// Mutable accumulator behind a [BucketSeries]: owns the ring of bucket
-/// aggregates and the reset-or-fold ingest step. The single implementation
-/// used by both the live hub and session loading, so the two can never
-/// bucket differently.
+/// Mutable accumulator behind a [BucketSeries]: the ring of buckets and the
+/// ingest step, shared by live and session loading so both bucket identically.
 class BucketAccumulator {
   BucketAccumulator({required this.bucketSize, required int numBuckets})
     : mins = Int32List(numBuckets),
@@ -66,15 +59,13 @@ class BucketAccumulator {
     _samples = sampleIndex + 1;
   }
 
-  /// Restart ingest from sample 0 (the aggregates themselves are
-  /// overwritten lazily by subsequent [add]s).
+  /// Restart ingest from sample 0; aggregates are overwritten by later [add]s.
   void reset() => _samples = 0;
 
   /// Samples ingested so far (since construction/last [reset]).
   int get samples => _samples;
 
-  /// Immutable-shaped view for the renderers (the arrays are shared, not
-  /// copied; [BucketSeries.samples] is a snapshot).
+  /// View for the renderers; the arrays are shared, not copied.
   BucketSeries get series => (
     bucketSize: bucketSize,
     mins: mins,
@@ -84,13 +75,10 @@ class BucketAccumulator {
   );
 }
 
-/// The first-difference value to ingest for [sampleIndex]: 0 for the very
-/// first sample, inside gaps (held - held = 0 naturally), and for the first
-/// real sample after a gap -- that jump happened over the gap's whole
-/// duration, so recording it as a one-sample diff would fabricate a spike.
-/// The derivative graph's exact path suppresses the same samples with NaN
-/// (see DerivativeGraphPainter.sampleAt); this is the single home of the
-/// ingest-side rule, shared by DataHub and SessionData.
+/// The first-difference value to ingest for [sampleIndex]: 0 for the very first
+/// sample, inside gaps, and for the first real sample after a gap (its jump
+/// spans the gap, so a one-sample diff would fabricate a spike). The derivative
+/// graph's exact path suppresses the same samples with NaN.
 ///
 /// [prevValue] is ignored (may be any value) when the result is 0 by rule.
 int ingestDiff({
@@ -103,11 +91,9 @@ int ingestDiff({
   return value - prevValue;
 }
 
-/// Per-sample, per-channel ingest shared by the live hub (DataHub) and
-/// session loading (SessionData) so both always derive identically: applies
-/// the gap/first-sample diff rule ([ingestDiff]), feeds the value and diff
-/// accumulators together, and tracks the whole-ingest extremes. Only raw
-/// storage stays with the caller (ring write vs pre-loaded array).
+/// Per-sample ingest shared by live and session loading: applies the
+/// [ingestDiff] rule, feeds the value and diff accumulators, and tracks
+/// whole-ingest extremes. Raw storage stays with the caller.
 class ChannelIngest {
   ChannelIngest({
     required this.valueBuckets,
@@ -180,14 +166,13 @@ class EnvelopeSeries {
   /// INVARIANTS (unenforceable here, checked by tests):
   ///  * [buckets] must aggregate the SAME series [sampleAt] evaluates (raw
   ///    values for the force graph, first differences for the derivative --
-  ///    diff extremes cannot be reconstructed from raw-value buckets, hence
-  ///    the dedicated ingest-time diff buckets).
-  ///  * [rawToDisplay] must agree with [sampleAt] (`sampleAt(j) ==
-  ///    rawToDisplay(raw sample j)` outside gaps) and be monotone
-  ///    nondecreasing, so bucket extremes map exactly to display extremes.
-  ///    It need NOT be affine: the calibrated board's map is piecewise, so
-  ///    the bucket mean passes through it with ppm-level error -- confined
-  ///    to the average trace, invisible next to the envelope width.
+  ///    diff extremes can't come from raw-value buckets, hence the dedicated
+  ///    ingest-time diff buckets).
+  ///  * [rawToDisplay] must agree with [sampleAt] outside gaps and be monotone
+  ///    nondecreasing, so bucket extremes map exactly to display extremes. It
+  ///    need NOT be affine: the bucket mean is off only by the board's
+  ///    nonlinearity (ppm-level, from the board map), confined to the average
+  ///    trace and invisible next to the envelope width.
   EnvelopeSeries.bucketed({
     required this.sampleAt,
     required this.buckets,
@@ -232,38 +217,18 @@ BlockReduction reduceBlockExact(
   return (min: min, max: max, sum: sum, count: count);
 }
 
-/// Bucket-accelerated reduction of `[from, to)` for a bucketed
-/// [EnvelopeSeries]; the counterpart of [reduceBlockExact] used when a block
-/// spans many samples.
+/// Bucket-accelerated reduction of `[from, to)`; the counterpart of
+/// [reduceBlockExact] used when a block spans many samples.
 ///
-/// ## ACCURACY TRADEOFF (partial block/bucket boundaries)
+/// Approximate only in buckets straddling a block edge (at most one per edge):
+/// min/max take the full bucket (conservative — an extreme is never dropped,
+/// only shifted a block), and a partial bucket's sum assumes its mean is
+/// uniform. Gap samples hold values, so boundary blocks bias toward the
+/// pre-gap value; renderers clip gap x-ranges anyway.
 ///
-/// The result is approximate in two ways, both confined to buckets that
-/// straddle a block edge (at most one bucket per edge):
-///
-///  1. min/max: a boundary bucket contributes its FULL bucket min/max even
-///     when the block covers only part of it, so the envelope can be up to
-///     one bucket too wide at block edges -- conservative (an extreme is
-///     never dropped, only shown one block early/late).
-///  2. sum: a partially covered bucket contributes `bucketMean * covered`,
-///     i.e. its mean is assumed uniform across the bucket. (For the newest,
-///     partially FILLED bucket the mean is taken over the samples actually
-///     written, so a block covering the whole written portion is exact.)
-///
-/// Gap samples: the buckets contain held values (diff 0), so blocks
-/// overlapping a gap edge are biased toward the pre-gap value, whereas
-/// [reduceBlockExact] excludes gap samples via NaN. Renderers clip all data
-/// ink out of gap x-ranges, so the difference is confined to the clipped-in
-/// area around gap edges.
-///
-/// ## Ring-wrap safety
-///
-/// Bucket slots are only trustworthy for the most recent `numBuckets` bucket
-/// indices; the slot of the single bucket straddling the oldest retained
-/// sample is overwritten by the live edge once the ring wraps. That head
-/// portion is detected via [BucketSeries.samples] and reduced exactly
-/// through [EnvelopeSeries.sampleAt] instead, so stale aggregates are never
-/// read and no sample is silently dropped.
+/// Ring-wrap safety: slots are trustworthy only for the most recent
+/// `numBuckets` buckets, so the straddling head bucket is detected via
+/// [BucketSeries.samples] and reduced exactly through [EnvelopeSeries.sampleAt].
 BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
   final buckets = series.buckets;
   final rawToDisplay = series.rawToDisplay;
@@ -336,7 +301,8 @@ BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
     merge((
       min: mn,
       max: mx,
-      // Affine rawToDisplay: sum(f(x_i)) == n * f(sum(x_i) / n).
+      // Assumes rawToDisplay is affine: sum(f(x_i)) == n * f(mean x). The
+      // piecewise board map breaks this by its nonlinearity, ppm-level.
       sum: rawCount * rawToDisplay(rawSum / rawCount),
       count: rawCount,
     ));
@@ -346,22 +312,11 @@ BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
   return (min: min, max: max, sum: sum, count: count);
 }
 
-/// Fold the EXACT min/max of a bucket series over the sample window
-/// `[start, end)`: buckets fully inside the window are folded from the
-/// precomputed aggregates via [foldBucket] (which also receives the bucket's
-/// sample range); the partial head/tail portions are handed to [scanExact],
-/// so the cost is O(window / bucketSize + bucketSize). Windows spanning
-/// fewer than two buckets fall back to a single [scanExact] (aggregates
-/// would not help).
-///
-/// Unlike [reduceBlockBuckets] this is exact, and it cannot read an aliased
-/// slot: a bucket fully inside `[start, end)` -- with the window clamped to
-/// the retained sample range, as renderers always do -- is always among the
-/// most recent `numBuckets` bucket indices.
-///
-/// The callbacks fire in ascending sample order (head scan, then buckets,
-/// then tail scan), so a caller can stream ordered state (e.g. an open
-/// interval) through the fold.
+/// Fold the EXACT min/max of [buckets] over `[start, end)`: buckets fully
+/// inside the window are folded via [foldBucket], the partial head/tail via
+/// [scanExact], so the cost is O(window / bucketSize + bucketSize). Unlike
+/// [reduceBlockBuckets] it cannot read an aliased slot. Callbacks fire in
+/// ascending sample order.
 void foldBucketRange(
   BucketSeries buckets,
   int start,
@@ -387,16 +342,10 @@ void foldBucketRange(
   scanExact(bLastEx * bs, end);
 }
 
-/// Exact (min, max) of a series over the sample window `[start, end)`, or
-/// null when the window yields no value: buckets fully inside the window
-/// contribute their precomputed aggregates (via [foldBucketRange]); the
-/// partial head/tail portions are scanned per-sample through [sampleAt]
-/// (NaN = skip, e.g. gap-edge samples of a first-difference series).
-///
-/// [sampleAt] must evaluate the SAME series [buckets] aggregates and in the
-/// same (raw) space, so bucket bounds and scanned samples fold together.
-/// Display maps (tare offset, unit scale) are applied by the caller to the
-/// two returned bounds only.
+/// Exact (min, max) of a series over `[start, end)`, or null when the window
+/// yields no value. [sampleAt] must evaluate the SAME series (and raw space)
+/// [buckets] aggregates. Display maps are applied by the caller to the two
+/// returned bounds.
 (double, double)? windowedExtremes(
   BucketSeries buckets,
   int start,

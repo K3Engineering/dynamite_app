@@ -1,12 +1,10 @@
-// Release metadata for OTA firmware updates: the version-compare and
-// channel rules, the device-identity parse, and the release-selection
-// contract with the firmware repo's CI. Network access lives in
-// `firmware_catalog.dart` — everything here is pure.
+// Release metadata for OTA firmware updates: version compare, channel rules,
+// and release selection. Network access lives in `firmware_catalog.dart`.
 
 import 'package:pub_semver/pub_semver.dart' as semver;
 
-/// Which release stream a device tracks. There is deliberately no
-/// "nightly": nightlies are covered by the from-file flash path.
+/// Which release stream a device tracks. No "nightly": nightlies use the
+/// from-file flash path.
 enum FirmwareChannel {
   /// Published releases only.
   stable,
@@ -24,8 +22,7 @@ enum FirmwareChannel {
 }
 
 /// A version parsed from a release tag (`v1.2.3`, `v1.2.3-beta.4`). The
-/// leading `v` is optional on parse and always rendered. Comparison is
-/// pub_semver precedence.
+/// leading `v` is optional on parse, always rendered.
 class FirmwareVersion implements Comparable<FirmwareVersion> {
   const FirmwareVersion(this.major, this.minor, this.patch, [this.prerelease]);
 
@@ -62,8 +59,7 @@ class FirmwareVersion implements Comparable<FirmwareVersion> {
   String toString() => label;
 }
 
-/// The release a device should be running for its channel: one image asset
-/// of one GitHub release.
+/// The release a device should be running for its channel.
 class FirmwareRelease {
   const FirmwareRelease({
     required this.tag,
@@ -82,13 +78,11 @@ class FirmwareRelease {
   final int size;
   final Uri downloadUrl;
 
-  /// The `.sha256` sidecar asset. Release CI always publishes one; a release
-  /// without it is not a candidate (see [selectFirmwareTarget]).
+  /// The `.sha256` sidecar asset; a release without one is not a candidate.
   final Uri sha256Url;
 }
 
-/// Minimal view of one GitHub release for selection — parsed from the API
-/// by the catalog, constructed directly in tests.
+/// Minimal view of one GitHub release for selection.
 class GithubRelease {
   const GithubRelease({
     required this.tag,
@@ -143,11 +137,8 @@ class GithubAsset {
 }
 
 /// Whether the device is already running the bits of release [tag]. The
-/// identity key is the git-describe string — CI builds check out the tag
-/// with a clean tree, so a release flashed properly describes exactly as
-/// the tag (`v0.2.0`). This comparison is direction-agnostic by design:
-/// "matches the channel target" is the only thing the update flow offers or
-/// doesn't.
+/// git-describe string matches the tag for a properly flashed release. The
+/// comparison is direction-agnostic: only "matches the channel target" matters.
 bool describeMatchesTag(String describe, String tag) =>
     _stripV(describe.trim()) == _stripV(tag.trim());
 
@@ -157,19 +148,14 @@ String _stripV(String s) {
   return next >= 0 && next <= 9 ? s.substring(1) : s;
 }
 
-/// The image asset a release publishes, per the firmware repo's release
-/// workflow. One build covers every board; a wrong-chip image is the
-/// device's own OTA validation's job to reject (esp_ota_end), not this
-/// name's.
+/// The image asset name a release publishes. A wrong-chip image is the
+/// device's own OTA validation's job to reject, not this name's.
 String firmwareImageName(String tag) =>
     'dynamite-sampler-firmware-release-$tag.bin';
 
-/// Pick the release a device on [channel] should run: the newest
-/// (semver-max) non-draft release — stable excludes prereleases — that
-/// carries its image and `.sha256` checksum assets. Null when nothing
-/// qualifies (no releases yet, or none with both assets attached yet). A
-/// release missing its checksum is skipped like a release missing its
-/// image: never offered to a device.
+/// Pick the release a device on [channel] should run: the semver-newest
+/// non-draft release (stable excludes prereleases) carrying both its image and
+/// `.sha256` assets. Null when nothing qualifies.
 ///
 /// TODO(runbook): tags are the version contract — never publish a backport
 /// for an older line once a newer release exists; under the

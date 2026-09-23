@@ -6,15 +6,13 @@ import 'kvs_client.dart';
 import 'kvs_protocol.dart';
 import 'link_backend.dart';
 
-/// The GATT link's device-side backend: the per-link KVS channel, with the
-/// firmware-lock workaround applied to flash-doc and name operations —
-/// firmware answers KVS commands busy ('B') while the ADC feed subscription
-/// holds the device lock, so those operations pause the feed via
-/// [withFeedPaused] (the resume guard lives with the feed-owner that
-/// supplies the closure).
-///
-/// The pause applies only while streaming; the connect-time flash read runs
-/// before the feed subscription, so it passes through unchanged.
+/// The GATT link's device-side backend: the per-link KVS channel with the
+/// firmware-lock workaround — firmware answers KVS commands busy ('B') while
+/// the ADC feed subscription holds the device lock, so doc/name operations
+/// pause the feed via [withFeedPaused] (the resume guard lives with the
+/// feed-owner that supplies the closure). The pause applies only while
+/// streaming; the connect-time flash read runs before the feed subscription and
+/// passes through.
 class GattLinkBackend implements LinkBackend {
   GattLinkBackend({required KvsClient client, required this.withFeedPaused})
     : _client = client,

@@ -196,7 +196,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             ],
           ),
 
-          // Graph
           SizedBox(
             height: 332,
             child: Padding(
@@ -217,7 +216,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
           const Divider(height: 24),
 
-          // Stats
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
@@ -243,7 +241,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             ),
           ),
 
-          // Notes
           if (session.notes.isNotEmpty) ...[
             const Divider(height: 24),
             Padding(

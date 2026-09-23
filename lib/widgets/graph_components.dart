@@ -18,8 +18,6 @@ import 'channel_palette.dart';
 import 'graph/graph_controller.dart';
 import 'graph/segmented_cache.dart';
 
-// The segment cache engine and the viewport controller live in their own
-// files; re-exported so screens/tests import one place.
 export 'graph/graph_controller.dart';
 export 'graph/segmented_cache.dart';
 
@@ -88,10 +86,8 @@ int joinBlockEnd(int end, int blockSize) => (end ~/ blockSize + 2) * blockSize;
 // Unit-bound channels
 // ---------------------------------------------------------------------------
 
-/// One active channel bound to the view's display unit: the unit CONVERTS on
-/// it, so its display maps are materialized non-null here. This is the
-/// workspace's one unit-availability decision expressed as data — the
-/// painters never re-ask it.
+/// One active channel bound to the view's display unit. Its display maps are
+/// materialized non-null here, so painters never re-ask availability.
 final class _ConvertedChannel {
   const _ConvertedChannel._({
     required this.channel,
@@ -102,11 +98,8 @@ final class _ConvertedChannel {
     required this.loadCell,
   });
 
-  /// The unit-bound channel, or null when [unit] does not convert on it (a
-  /// force unit with no load cell assigned): the channel drops out of
-  /// plotting and the stats tables show '—' for it. Re-assigning a cell
-  /// rebuilds the workspace's list (and the painters' cache keys, which
-  /// contain the channel set).
+  /// Null when [unit] does not convert on the channel (a force unit with no
+  /// load cell assigned).
   static _ConvertedChannel? of(
     GraphDataSource data,
     int channel,
@@ -116,9 +109,8 @@ final class _ConvertedChannel {
     final net = converter.netMap(unit);
     if (net == null) return null;
     final diff = converter.diffMap(unit);
-    // The map family shares one availability gate (see ChannelConverter):
-    // diff is null exactly when net is. A divergence is a broken
-    // calibration-model invariant, not "unit unavailable".
+    // diff is null exactly when net is (see ChannelConverter); a divergence
+    // is a broken calibration-model invariant, not an unavailable unit.
     assert(diff != null, 'net converts but diff does not (CH$channel, $unit)');
     if (diff == null) return null;
     return _ConvertedChannel._(
@@ -134,26 +126,21 @@ final class _ConvertedChannel {
 
   final int channel;
 
-  /// Tare offset in counts; null = untared (see [ChannelConverter.tare]).
+  /// Tare offset in counts; null = untared ([ChannelConverter.tare]).
   final double? tare;
 
-  /// Absolute raw -> display value, net of tare (see
-  /// [ChannelConverter.netMap]).
+  /// Raw -> display value, net of tare ([ChannelConverter.netMap]).
   final double Function(double raw) netMap;
 
-  /// Raw diff -> display diff, terminal-slope based (see
-  /// [ChannelConverter.diffMap]).
+  /// Raw diff -> display diff, terminal-slope based ([ChannelConverter.diffMap]).
   final double Function(double rawDiff) diffMap;
 
-  /// The channel's board sensitivity in counts per mV/V: rides along for the
-  /// force graph's limit chrome, which sizes the capacity zone with it.
-  /// Non-null whenever a converted unit is drawing (the maps rest on the
-  /// same resolved nominals); null only for raw on a nominal-less board,
-  /// which converts anyway (raw bypasses the board map).
+  /// Board sensitivity, used to size the force graph gutter's capacity zone.
+  /// Null only for raw on a nominal-less board (raw bypasses the board map and
+  /// still converts).
   final double? sensitivityCountsPerMvV;
 
-  /// The channel's assigned load cell; null when none (the gutter's
-  /// capacity zone skips such channels).
+  /// Null when no cell is assigned.
   final LoadCellProfile? loadCell;
 }
 
@@ -310,7 +297,6 @@ class _MinimapPainter extends CustomPainter {
 
     if (gw <= 0 || gh <= 0) return;
 
-    // Background
     final bgPaint = Paint()..color = _colorScheme.surface;
     canvas.drawRect(Rect.fromLTWH(0, 0, gw, gh), bgPaint);
 
@@ -324,29 +310,24 @@ class _MinimapPainter extends CustomPainter {
     final channels = _channels;
     final unit = _unit;
 
-    // Y-range from the precomputed per-channel extremes (O(channels); the
-    // minimap always spans the whole history, so the extremes ARE the window
-    // min/max).
+    // O(channels): the minimap spans all history, so the per-channel extremes
+    // ARE the window extremes.
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
     for (final bound in channels) {
-      // The channel's zero is anchored in display space: an untared channel
-      // reads zero at the map's own zero point, not at zero counts (see
-      // ChannelConverter). With no data the zero anchor is all there is.
+      // Zero is a display-space anchor, so include it even when the data does
+      // not cross it.
       final ext = _data.channelExtremes(bound.channel);
       final lo = ext == null ? 0.0 : math.min(bound.netMap(ext.$1), 0.0);
       final hi = ext == null ? 0.0 : math.max(bound.netMap(ext.$2), 0.0);
       if (lo < yMin) yMin = lo;
       if (hi > yMax) yMax = hi;
     }
-    // No plotted channel: nothing to paint.
     if (!yMin.isFinite || !yMax.isFinite) return;
-    // Keep the range non-degenerate on flat data so the mapping can't
-    // divide by zero.
+    // Non-degenerate on flat data (the mapping divides by the span).
     if (yMax <= yMin) yMax = yMin + 1;
 
-    // Missing-data hatching, behind the data lines (same layering as the
-    // main graphs).
+    // Hatching sits behind the data lines, like the main graphs.
     _drawMissingDataHatching(
       canvas,
       Size(gw, gh),
@@ -356,9 +337,7 @@ class _MinimapPainter extends CustomPainter {
       color: _colorScheme.error,
     );
 
-    // Segment-cached envelope data layer, shared with the main graphs. The
-    // bucket-accelerated reduction keeps both segment bakes and direct gap
-    // draws cheap even though every block spans many samples here.
+    // Shared envelope data layer (see [_paintEnvelopeDataLayer]).
     final workRemains = _paintEnvelopeDataLayer(
       canvas,
       cache: _cache,
@@ -380,7 +359,6 @@ class _MinimapPainter extends CustomPainter {
     );
     if (workRemains) _bakePump.schedule();
 
-    // Viewport highlight
     final (viewStart, viewEnd) = _ctrl.effectiveRange(
       totalSamples,
       oldestSample,
@@ -388,12 +366,10 @@ class _MinimapPainter extends CustomPainter {
     final double x1 = (viewStart - mapStart) * gw / mapSpan;
     final double x2 = (viewEnd - mapStart) * gw / mapSpan;
 
-    // Dim areas outside viewport
     final dimPaint = Paint()..color = _colorScheme.onSurface.withAlpha(60);
     if (x1 > 0) canvas.drawRect(Rect.fromLTWH(0, 0, x1, gh), dimPaint);
     if (x2 < gw) canvas.drawRect(Rect.fromLTWH(x2, 0, gw - x2, gh), dimPaint);
 
-    // Viewport border
     final vpBorder = Paint()
       ..color = _colorScheme.primary
       ..style = PaintingStyle.stroke
@@ -401,12 +377,10 @@ class _MinimapPainter extends CustomPainter {
     canvas.drawRect(Rect.fromLTRB(x1, 0, x2, gh), vpBorder);
   }
 
+  // Repaints are driven by the repaint listenable; the painter is rebuilt only
+  // on a widget rebuild, so an unconditional true is cheaper than a field diff.
   @override
   bool shouldRepaint(covariant _MinimapPainter oldDelegate) => true;
-  // Repaints are driven by the repaint listenable (data + controller); a
-  // painter is only replaced on a widget rebuild, which is rare enough that
-  // one unconditional repaint beats keeping a field-by-field comparison in
-  // sync with paint().
 }
 
 // ---------------------------------------------------------------------------
@@ -429,12 +403,8 @@ class _InteractiveGraphArea extends StatefulWidget {
 }
 
 class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
-  /// One in-flight scale (pan/pinch) gesture. Everything is captured together
-  /// at gesture start, so a single nullable session — instead of one nullable
-  /// per field — makes partial gesture states unrepresentable. [focalX] is
-  /// the gesture-start focal point (both pan origin and pinch anchor);
-  /// [startSample]/[span] are the gesture-start window; [wasLive] is whether
-  /// the viewport followed the live edge at gesture start.
+  /// The in-flight pan/pinch gesture's captured-at-start state, or null. One
+  /// record, so partial gesture states are unrepresentable.
   ({double focalX, int startSample, int span, bool wasLive})? _session;
 
   void _onScaleStart(ScaleStartDetails details) {
@@ -458,10 +428,9 @@ class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
     final oldestSample = widget.data.oldestSample;
 
     if (details.scale != 1.0) {
-      // Pinch zoom, anchored to the gesture-start window so tracking stays
-      // stable while totalSamples grows. The focal fraction is measured from
-      // the plot area's left edge (same convention as wheel zoom), not from
-      // the widget's left padding.
+      // Anchored to the gesture-start window so tracking stays stable while
+      // totalSamples grows. The focal fraction is measured from the plot's
+      // left edge, like wheel zoom.
       widget.ctrl.zoomTo(
         (session.span / details.scale).round(),
         ((session.focalX - _kGraphLeftSpace) / graphWidth).clamp(0.0, 1.0),
@@ -472,8 +441,6 @@ class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
         oldestSample: oldestSample,
       );
     } else {
-      // Pan by the horizontal drag distance, relative to the gesture-start
-      // window.
       final dx = details.localFocalPoint.dx - session.focalX;
       final deltaSamples = -(dx * session.span / graphWidth).round();
       widget.ctrl.applyWindow(
@@ -518,12 +485,11 @@ class GraphWorkspace extends StatefulWidget {
   final GraphDataSource data;
   final GraphController ctrl;
 
-  /// The unit this view draws under, already resolved against the data
-  /// source's availability (see [DisplayUnit.effective]).
+  /// Resolved against the data source's availability
+  /// (see [DisplayUnit.effective]).
   final DisplayUnit unit;
 
-  /// Indices of the channels to plot. Kept per view (live tab, each session)
-  /// rather than in the app settings, so each surface chooses its own set.
+  /// Indices of the channels to plot.
   final List<int> activeChannels;
   final bool showDerivative;
   final bool isLiveGraph;
@@ -546,15 +512,12 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     with SingleTickerProviderStateMixin {
   final SegmentedGraphCache _forceCache = SegmentedGraphCache();
 
-  /// Allocated on first use: session playback (showDerivative: false
-  /// forever) never pays for it.
   SegmentedGraphCache? _derivCache;
   final BakePump _bakePump = BakePump();
   final _LabelCache _labelCache = _LabelCache();
 
-  /// Vsync driver for smooth live-edge scrolling: while the view follows
-  /// the live edge with a fresh stream, the ticker bumps [_vsync] every
-  /// frame; the graph painters merge it into their repaint listenable.
+  /// Vsync driver for smooth live-edge scrolling; the painters merge [_vsync]
+  /// into their repaint listenable.
   late final Ticker _ticker;
   final ValueNotifier<int> _vsync = ValueNotifier(0);
 
@@ -582,21 +545,17 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     }
   }
 
-  /// The ticker runs only while following the live edge with a fresh
-  /// stream: a parked view has no motion, and a stalled device freezes the
-  /// scroll anyway (the live edge is lead-capped). The next packet's
-  /// commitBatch (data.repaint) restarts it after a stall.
+  /// Runs only while following the live edge on a fresh stream; the next
+  /// packet's repaint restarts it after a stall.
   void _syncTicker() {
     final DateTime? last = widget.data.lastDataAt;
     final bool fresh =
         last != null &&
         DateTime.now().difference(last).inMilliseconds < _kTickerStallMs;
     final bool shouldTick = widget.ctrl.isLive && fresh;
-    // Guard on isActive, not isTicking: start() throws on isActive, and a
-    // started ticker is active for the whole window until its first frame
-    // fires. isTicking is false in that window, so a second _syncTicker call
-    // landing there (web delivers BLE batches as in-frame microtasks) would
-    // start() twice. isActive stays true throughout, so the guard holds.
+    // isActive, not isTicking: start() throws on isActive, and a started
+    // ticker is active before its first frame, so isTicking can't guard a
+    // double start() (web delivers batches as in-frame microtasks).
     if (shouldTick == _ticker.isActive) return;
     shouldTick ? _ticker.start() : _ticker.stop();
   }
@@ -637,10 +596,8 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     ];
     return LayoutBuilder(
       builder: (context, constraints) {
-        // The graph body is raw canvas — nothing in the Column exposes
-        // semantics of its own. explicitChildNodes keeps descendants (zoom
-        // buttons, span readout, gesture actions) as their own nodes instead
-        // of merging them into this label.
+        // The canvas exposes no semantics of its own; explicitChildNodes keeps
+        // the controls as their own nodes rather than merging into this label.
         return Semantics(
           container: true,
           explicitChildNodes: true,
@@ -654,7 +611,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             children: [
               Column(
                 children: [
-                  // Main force graph
                   Expanded(
                     flex: widget.showDerivative ? 6 : 10,
                     child: _GraphPane(
@@ -675,7 +631,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                       ),
                     ),
                   ),
-                  // Derivative graph (when enabled)
                   if (widget.showDerivative)
                     Expanded(
                       flex: 4,
@@ -696,7 +651,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                         ),
                       ),
                     ),
-                  // Minimap
                   _Minimap(
                     dataSource: widget.data,
                     unit: unit,
@@ -705,10 +659,8 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                   ),
                 ],
               ),
-              // LIVE button (appears when not following live edge)
               if (widget.isLiveGraph)
                 _LiveButton(data: widget.data, ctrl: widget.ctrl),
-              // Zoom controls
               Positioned(
                 right: _kGraphRightSpace + 16,
                 bottom: 72,
@@ -749,8 +701,7 @@ class _GraphPane extends StatelessWidget {
   }
 }
 
-/// The "return to live edge" button, visible only when the user has panned
-/// away from a live graph's edge.
+/// Return to the live edge of a live graph.
 class _LiveButton extends StatelessWidget {
   const _LiveButton({required this.data, required this.ctrl});
 
@@ -787,7 +738,7 @@ class _LiveButton extends StatelessWidget {
   }
 }
 
-/// Zoom in/out buttons with the current window-span readout between them.
+/// Zoom controls with the span readout between them.
 class _ZoomControls extends StatelessWidget {
   const _ZoomControls({
     required this.data,
@@ -826,8 +777,7 @@ class _ZoomControls extends StatelessWidget {
   }
 }
 
-/// The current zoom-window span ("800 ms", "4.2 s", "2:05"), updating with
-/// both viewport moves and live-edge growth.
+/// The current zoom-window span (e.g. "800 ms", "4.2 s", "2:05").
 class _SpanReadout extends StatelessWidget {
   const _SpanReadout({required this.data, required this.ctrl});
 
@@ -860,10 +810,8 @@ class _SpanReadout extends StatelessWidget {
   }
 }
 
-/// Screen-reader summary of the painted graph. Deliberately structural —
-/// no current values or window span, which churn per packet and would
-/// re-announce constantly while the node is focused. Live readings are
-/// spoken from the stats table instead.
+/// Screen-reader summary of the graph: structural only, since values churn
+/// per packet. The stats table speaks live readings.
 String _graphSemanticsLabel({
   required bool live,
   required List<int> channels,
@@ -889,8 +837,7 @@ String _formatSpan(double spanSec) {
 
 typedef _ScaleConfigItem = ({int limit, int delta});
 
-/// Clock-nice major tick steps for >= 1s spans (only consulted there, so the
-/// smallest limit is the first one a span >= 1 can match).
+/// Clock-nice major tick steps for spans >= 1 s.
 const List<_ScaleConfigItem> _xScaleConfig = [
   (limit: 5, delta: 1),
   (limit: 10, delta: 2),
@@ -922,11 +869,9 @@ String _fmtTick(double sec, int decimals) {
 // Axis label paragraph cache
 // ---------------------------------------------------------------------------
 
-/// Bounded cache of laid-out axis-label paragraphs. Owned by a graph host
-/// [State] (which disposes it), NOT by a painter: painters are recreated on
-/// every widget rebuild, so a painter-owned cache would be dropped constantly.
-/// Clear-on-overflow: the per-frame working set is only a few dozen labels,
-/// so a clear just rebuilds the visible ones on the next paint.
+/// Bounded cache of laid-out axis-label paragraphs. Owned by a host [State]:
+/// painters are recreated on rebuild, so a painter-owned cache would drop
+/// constantly. Clears on overflow and rebuilds the visible labels next paint.
 class _LabelCache {
   static const int _limit = 512;
 
@@ -962,12 +907,9 @@ class _LabelCache {
 }
 
 // ---------------------------------------------------------------------------
-// Compute nice Y-axis range for data that spans [dataMin, dataMax] in [unit]'s
-// base display units. Ticks and the snapped range stay in the base unit (so
-// the data pipeline and segment cache never see a rescale); only the LABELS
-// render through the unit's SI-prefix rung ([YAxisRange.rung], picked from the
-// snapped range's magnitude) with [YAxisRange.decimals] digits, so windows at
-// the noise floor read in nV/gf/mN instead of long decimals.
+// Nice Y-axis ranges. Ticks and the snapped range stay in base display units
+// so the data pipeline and segment cache never see a rescale; only the labels
+// render through the unit's SI-prefix rung.
 // ---------------------------------------------------------------------------
 
 typedef YAxisRange = ({
@@ -983,9 +925,8 @@ typedef YAxisRange = ({
 });
 
 YAxisRange _computeYRange(double dataMin, double dataMax, DisplayUnit unit) {
-  // Guard the exactly-degenerate span (a no-data derivative fold). Any
-  // nonzero span passes through without a magnitude floor: the rung, not a
-  // unit-domain minimum span, keeps tiny-window labels readable.
+  // Guard only the exactly-degenerate span (a no-data derivative fold): the
+  // SI-prefix rung keeps tiny-window labels readable, so there's no floor.
   if (dataMax <= dataMin) dataMax = dataMin + 1.0;
 
   // 1/2/5 tick delta aiming for ~5 ticks, at whatever decade the span lands.
@@ -1306,34 +1247,18 @@ class VertexBatcher {
   return (avg: avg, env: env);
 }
 
-/// Render one channel as a min/avg/max envelope across [graphW] pixel columns.
+/// Render one channel as a min/avg/max envelope across [graphW] pixel columns:
+/// each block's samples are reduced to min/avg/max and projected with
+/// [valueToY]; the envelope is filled at low alpha, the average stroked on top.
 ///
-/// For each block the samples mapped to it are reduced to min/avg/max, then
-/// projected with [valueToY]. The shaded envelope is filled at low alpha and
-/// the average is stroked on top.
+/// Blocks are anchored to absolute sample indices, so the geometry lands on the
+/// same pixels regardless of scroll and the segment cache can bake it once. A
+/// bucketed [series] switches to [reduceBlockBuckets] when a block spans >= 2
+/// buckets (see its doc for the accuracy and ring-wrap details).
 ///
-/// Blocks are anchored to absolute sample indices so the geometry lands on
-/// the same pixels regardless of scroll, which is what makes it segment-
-/// cacheable.
-///
-/// ## Block reduction: exact vs bucket-accelerated
-///
-/// By default each block is reduced by evaluating [EnvelopeSeries.sampleAt]
-/// per sample ([reduceBlockExact]) -- exact, but O(samples) per bake, which
-/// is too slow when a zoomed-out block spans thousands of samples. A series
-/// built with [EnvelopeSeries.bucketed] switches to [reduceBlockBuckets]
-/// whenever `blockSize >= 2 * bucketSize`; see its doc for the ACCURACY
-/// TRADEOFF at partial bucket boundaries and the ring-wrap handling.
-///
-/// Gap handling: [_paintEnvelopeDataLayer] clips all data ink out of the gap
-/// x-ranges, so neither reduction path draws inside a gap. Within the
-/// remaining (clipped-in) area the paths still differ slightly at gap edges:
-/// the exact path excludes gap samples via NaN, while the buckets contain
-/// held values, biasing the fast path's boundary blocks toward the pre-gap
-/// value.
-///
-/// Vertices are flushed in <=4096-float chunks to stay within the web
-/// (Skwasm/Emscripten) stack-allocation limit.
+/// Gap ink is clipped by [_paintEnvelopeDataLayer]; the exact and bucket paths
+/// differ only at gap edges. Vertices flush in <=4096-float chunks to stay
+/// within the web stack-allocation limit.
 void _drawChannelEnvelope(
   Canvas canvas, {
   required Color color,
@@ -1358,15 +1283,12 @@ void _drawChannelEnvelope(
 
   final int blockSize = _blockSizeFor(viewSamples, graphW);
 
-  // Bucket acceleration only pays off (and only stays accurate, see the
-  // ACCURACY TRADEOFF on reduceBlockBuckets) once a block spans at least
-  // two buckets.
+  // Buckets pay off (and stay accurate) once a block spans >= 2 buckets.
   final buckets = series.buckets;
   final bool useBuckets = blockSize >= 2 * buckets.bucketSize;
 
-  // Blocks are anchored to absolute sample 0 (sStart = k * blockSize), NOT to
-  // viewStart. This is what lets a block fall on the same pixels regardless of
-  // scroll, so the SegmentedGraphCache can bake it once and reuse it.
+  // Anchored to absolute sample 0, not viewStart, so caching stays
+  // scroll-invariant.
   final int startBlock = (math.max(viewStart, firstUsableSample) / blockSize)
       .floor();
   final int endBlock = (totalSamples / blockSize).ceil();
@@ -1380,9 +1302,7 @@ void _drawChannelEnvelope(
 
     final int drawStart = math.max(sStart, firstUsableSample);
     if (drawStart >= sEnd) continue;
-    // sEnd - drawStart in [1, blockSize]; the full-blockSize case is the common
-    // one, but do NOT assert it: the trailing block and a block clipped by
-    // firstUsableSample are both legitimately shorter.
+    // Short only at the trailing block or a firstUsableSample clip.
     assert(sEnd - drawStart >= 1 && sEnd - drawStart <= blockSize);
 
     final BlockReduction r = useBuckets
@@ -1390,9 +1310,8 @@ void _drawChannelEnvelope(
         : reduceBlockExact(series.sampleAt, drawStart, sEnd);
 
     if (r.count == 0) {
-      // Entire block is dropped samples. Break the polyline: flush whatever
-      // accumulated, then drop the preserved tail so the next valid block
-      // starts a fresh primitive instead of bridging the gap.
+      // Break the polyline at a fully-dropped block: flush, then reset so the
+      // next valid block starts a fresh primitive instead of bridging the gap.
       env.flush();
       env.reset();
       avg.flush();
@@ -1404,9 +1323,7 @@ void _drawChannelEnvelope(
     final minY = valueToY(r.min);
     final maxY = valueToY(r.max);
 
-    // Absolute X (in this canvas's local space): a baked segment passes its
-    // own start as viewStart, so xPos is segment-local and the segment slides
-    // as a whole.
+    // Segment-local x: a baked segment passes its own start as viewStart.
     final double xPos = (sStart - viewStart) * graphW / viewSamples;
     final double nextXPos = (sEnd - viewStart) * graphW / viewSamples;
 
@@ -1434,9 +1351,9 @@ void _drawChannelEnvelope(
 /// [EnvelopeSeries.bucketed] invariants hold by construction: the bucket
 /// raw-to-display map and the per-sample evaluator are the same conversion
 /// (the map is monotone, so raw bucket extremes map exactly to display
-/// extremes; only the bucket MEAN passes through it with ppm-level error,
-/// invisible next to the envelope). Shared by the force graph and the
-/// minimap so both plot the identical series.
+/// extremes; only the bucket MEAN is off, by the board's nonlinearity).
+/// Shared by the force graph and the minimap so both plot the identical
+/// series.
 EnvelopeSeries _taredEnvelopeSeries(
   GraphDataSource data,
   _ConvertedChannel bound,
@@ -1479,25 +1396,16 @@ EnvelopeSeries _taredEnvelopeSeries(
 
 /// Paint the segment-cached envelope data layer for the window
 /// [viewStart, viewStart + viewSpan) mapped to x in [0, gw): the pipeline
-/// shared by the force graph, derivative graph, and minimap. Handles the
-/// cache configuration (keying, pads, block sizing) and renders one
-/// min/avg/max envelope per channel via [_drawChannelEnvelope].
+/// shared by the force graph, derivative graph, and minimap.
 ///
-/// [seriesFor] returns the per-channel rendering recipe ([EnvelopeSeries]):
-/// the exact per-sample evaluator plus bucket acceleration for the block
-/// reduction (see [reduceBlockBuckets] for the accuracy tradeoff).
+/// [seriesFor] returns the per-channel rendering recipe. Cache keying: the
+/// display [unit], calibration version, and [tares] are destructive (never
+/// blitted once stale); the channel list is the remap key (stale segments keep
+/// blitting as ghosts while swept); a data-generation change clears the cache.
+/// See the staleness model on [SegmentedGraphCache].
 ///
-/// Cache keying (see the staleness model on [SegmentedGraphCache]): the
-/// display [unit], the source's calibration version, and [tares] form the
-/// destructive key (a change makes baked content wrong in kind or place:
-/// never blitted, blank until swept; a tare shifts each channel by its own
-/// offset and one tile composites every channel, so blit reuse cannot hold
-/// it). The channel list is the remap key (a change leaves stale segments
-/// blittable as ghosts while swept); the source's data generation clears
-/// the cache outright.
-///
-/// Returns true when bake work remains; the owner should then schedule
-/// another frame.
+/// Returns true when bake work remains; the owner should schedule another
+/// frame.
 bool _paintEnvelopeDataLayer(
   Canvas canvas, {
   required SegmentedGraphCache cache,
@@ -1538,32 +1446,21 @@ bool _paintEnvelopeDataLayer(
     yMin: yMin,
     yMax: yMax,
     totalSamples: totalSamples,
-    // A bake's join block past the segment end is complete only once it
-    // lies fully behind the data edge -- up to two block sizes (see
-    // [joinBlockEnd]). The span past the horizon vector-draws every frame.
+    // Bakes stop two blocks behind the data edge so their join block is
+    // complete (see [joinBlockEnd]).
     bakeableSamples: math.max(0, totalSamples - 2 * blockSize),
-    // The recorded polyline overshoots a segment's edges by up to one
-    // block (the join to the neighbor), and one block can be many px when
-    // zoomed in past 1 sample/px -- the horizontal pad must cover it.
+    // One block of overshoot can be many px when zoomed past 1 sample/px.
     hPad: math.max(kSegmentImagePad, blockPx + 2),
     vPad: kSegmentImagePad,
     render: (cCanvas, start, end, texW) {
-      // The polyline overshoots the segment end into the first block past
-      // it (the join block) so the line reaches the seam with the
-      // neighbor's slope. The join block is reduced over its FULL natural
-      // range: truncating it at the segment end lands the join vertex at a
-      // different (partial-data) average than the neighbor's full reduction
-      // of the same block, which reads as a vertical step at the seam. The
-      // envelope fill is clipped at the seam so the alpha fills of adjacent
-      // segments never double-blend.
+      // The polyline overshoots the segment end into its join block so the
+      // line reaches the seam with the neighbor's slope; that block is reduced
+      // over its FULL range so the join vertex matches the neighbor's.
       final int limit = math.min(joinBlockEnd(end, blockSize), totalSamples);
 
-      // No data ink inside gaps: clip out their x-ranges so neither the
-      // exact path's boundary blocks nor the bucket path's held-value line
-      // can draw where no data exists (the hatching, drawn by the graph
-      // chrome outside this layer, is the only marker there). Safe to apply
-      // at bake time: gaps are append-only at the live edge, so the gap set
-      // inside an already-baked segment can never change.
+      // Clip data ink out of gap x-ranges (the hatching drawn by the chrome is
+      // the only marker there). Safe at bake time: gaps are append-only, so a
+      // baked segment's gap set cannot change.
       final clip = _gapClipPath(data.gaps, start, limit, gw / viewSpan);
       if (clip != null) {
         cCanvas.save();
@@ -1587,17 +1484,14 @@ bool _paintEnvelopeDataLayer(
         );
       }
       if (clip != null) cCanvas.restore();
-      // _drawChannelEnvelope maps sample s to (s - start) * gw / viewSpan.
       return (end - start) * gw / viewSpan;
     },
   );
 }
 
-/// Everything-except-gaps clip for the sample window [start, end) under the
-/// mapping `x = (s - start) * pxPerSample`, or null when no gap overlaps the
-/// window (the common case; callers skip save/clip/restore entirely). Built
-/// as one huge rect with even-odd gap holes; gap ranges are disjoint, so
-/// even-odd punches each exactly once.
+/// Everything-except-gaps clip for [start, end) under x = (s - start) *
+/// pxPerSample, or null when no gap overlaps (the common case). One huge rect
+/// with even-odd gap holes; ranges are disjoint.
 Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
   if (gaps.isEmpty) return null;
   const double big = 1e9; // covers any pad/overdraw around the plot area
@@ -1622,22 +1516,16 @@ Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
 // Windowed time-series graph painters (force, derivative)
 // ---------------------------------------------------------------------------
 
-/// How far the smooth-scrolling live edge may run past the newest received
-/// sample: one packet period (20 samples at 1 kHz). Capped there so arrival
-/// jitter reads as a brief freeze instead of a backward lurch, and a silent
-/// device stops the scroll after one period.
+/// Lead past the newest sample: one packet period, so arrival jitter reads as
+/// a brief freeze rather than a backward lurch.
 const double _kLiveEdgeLeadMs = 20;
 
-/// The lead is additionally capped at this fraction of the visible span:
-/// a full packet of lead is negligible in a wide window, but at a span of
-/// a few packets it detaches the trace end from the plot's right edge.
-/// Below 20ms/[_kLiveEdgeLeadSpanFraction] of span (400ms at 5%) the scroll
-/// degrades to packet-quantized jumps smaller than the lead was.
+/// Also cap the lead at this fraction of the visible span, so at narrow spans
+/// a full packet of lead can't detach the trace end from the plot's right edge.
 const double _kLiveEdgeLeadSpanFraction = 0.05;
 
-/// How stale the stream may get before the smooth-scroll ticker stops: well
-/// past the worst normal inter-packet gap (~20ms plus BLE jitter), so the
-/// ticker never churns mid-stream, but a silent device stops the repaints.
+/// Stop the smooth-scroll ticker once the stream is this stale: past the worst
+/// normal inter-packet gap, so it never churns mid-stream.
 const int _kTickerStallMs = 100;
 
 /// The live-follow window's right edge in fractional samples: the newest
@@ -1703,9 +1591,8 @@ _GraphLayout? _setupGraphFrame(
     data.totalSamples,
     data.oldestSample,
   );
-  // A live-following window anchors its right edge to the fractional live
-  // edge, so the trace scrolls continuously between packets; parked windows
-  // stay on their exact integer range.
+  // A live view anchors its right edge to the fractional live edge so the
+  // trace scrolls between packets; parked windows stay on their integer range.
   double viewStartF = viewStart.toDouble();
   double viewEndF = viewEnd.toDouble();
   if (ctrl.isLive) {
@@ -1798,10 +1685,8 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   String yTickLabel(double tick, YAxisRange yRange);
 
-  /// Per-channel tares mixed into the segment-cache destructive key; return
-  /// them when the series depends on them. (The derivative omits its tares
-  /// because the difference cancels them: including them would invalidate
-  /// and smear-rebake the whole view on every tare for no visible change.)
+  /// Per-channel tares mixed into the segment-cache destructive key. The
+  /// derivative returns none: a difference cancels them.
   List<double?> cacheKeyTares() => const [];
 
   /// Optional chrome drawn after the axes, before the data lines. [yRange]
@@ -1968,13 +1853,9 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
 
   @override
   YAxisRange? computeYRange(double viewStart, double viewEnd) {
-    // Data min/max across the plotted channels in the visible window.
-    // [windowedRawExtremes] folds full buckets from the precomputed
-    // aggregates (exact for min/max of a monotone map) and per-sample scans
-    // only the partial head/tail, so the cost is O(window / bucketSize). No
-    // minimum-range floor: the observed noise IS the floor of auto-zoom on
-    // real hardware, and exactly-flat synthetic data falls to
-    // [_computeYRange]'s degeneracy guard.
+    // [windowedRawExtremes] folds full buckets and scans only the partial
+    // head/tail: O(window / bucketSize). No minimum-range floor; flat data
+    // hits the degeneracy guard in [_computeYRange].
     final unit = _unit;
     final start = viewStart.floor();
     final end = viewEnd.ceil();
@@ -1993,16 +1874,11 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     return _computeYRange(yMin, yMax, unit);
   }
 
-  /// Limit bars in the right gutter. One fixed-width column per channel; two
-  /// zones per polarity: the rail zone (saturated) spans from the ADC rail to
-  /// the plot edge, and for channels with a load cell the capacity zone
-  /// (subtle) spans from 100% of the cell's capacity to the rail. Values are
-  /// projected through the channel's own unit converter, net of tare: net is
-  /// 0 at the tare point, so ±capacity nets to ±sensitivity·span·scale via
-  /// the terminal-slope diff map (position-free, like every other diff
-  /// consumer — the piecewise-local error is ppm-scale). Clamping to the
-  /// plot rect collapses off-view and empty zones (a cell out-ranging the
-  /// ADC) to nothing.
+  /// Limit bars in the right gutter: one column per channel, a rail zone from
+  /// the ADC rail to the plot edge and (with a load cell) a capacity zone from
+  /// 100% capacity to the rail. Projected through the unit converter net of
+  /// tare (see [ChannelConverter.diffMap]); clamping to the plot rect
+  /// collapses off-view and empty zones.
   @override
   void drawGutterChrome(
     Canvas canvas,
@@ -2016,9 +1892,8 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     for (final bound in _channels) {
       final cell = bound.loadCell;
       final span = bound.sensitivityCountsPerMvV;
-      // Net display value at 100% cell capacity; null without a cell, or a
-      // board sensitivity to size it with (a nominal-less board in raw
-      // units).
+      // Net display value at 100% cell capacity; null without a cell or the
+      // board sensitivity to size it.
       final cellNet = cell != null && span != null
           ? bound.diffMap(cell.sensitivityMvV * span)
           : null;
@@ -2114,10 +1989,8 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
 
   @override
   YAxisRange? computeYRange(double viewStart, double viewEnd) {
-    // Derivative min/max (display units) across the visible window.
-    // [windowedExtremes] folds full buckets from the precomputed diff
-    // aggregates (exact for min/max) and per-sample scans only the partial
-    // head/tail, so the cost is O(window / bucketSize).
+    // [windowedExtremes] folds full buckets and scans only the partial
+    // head/tail: O(window / bucketSize).
     double dMin = 0;
     double dMax = 0;
     bool first = true;
@@ -2160,7 +2033,6 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     double viewStart,
     double viewEnd,
   ) {
-    // "dF/dt" label in top-left
     final dLabel = labels.prepare(
       'dF/dt (${yRange.rung.symbol}/s)',
       color: colorScheme.onSurface.withAlpha(150),

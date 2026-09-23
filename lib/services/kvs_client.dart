@@ -6,64 +6,56 @@ import 'package:flutter/foundation.dart';
 
 import 'kvs_protocol.dart';
 
-/// Request/response client for the device's key-value store. The firmware
-/// answers each command write with exactly one notification, so commands
-/// are strictly serialized: [KvsClient] queues internally and matches each
-/// response to its request by the echoed text (see [parseKvsResponse]).
-///
-/// A command whose response never arrives fails after [commandTimeout] —
-/// the device answers every command ('B' busy while locked/streaming), so
-/// a timeout means the link is broken. All pending and queued commands
-/// fail on [abort] (link teardown); the client is spent afterwards — a new
-/// link builds a new client.
+/// Request/response client for the device's KVS. The firmware answers each
+/// command write with exactly one notification, so commands are serialized and
+/// matched by echoed text (see [parseKvsResponse]). A missing answer fails
+/// after [commandTimeout] — the device answers every command ('B' while
+/// locked/streaming), so a timeout means the link is broken. [abort] fails all
+/// pending work; the client is spent afterwards (a new link builds a new one).
 class KvsClient {
   KvsClient({
     required this.write,
     this.commandTimeout = const Duration(seconds: 3),
   });
 
-  /// The transport for one command frame: a write to the link's KVS
-  /// characteristic, supplied by the link manager (which owns the platform
-  /// BLE call).
+  /// One command frame: a write to the link's KVS characteristic, supplied by
+  /// the link manager (which owns the platform BLE call).
   final Future<void> Function(Uint8List bytes) write;
 
-  /// Upper bound on one command's write + response round trip. Comfortably
-  /// below the BLE stack's own command timeout so an unanswered command —
-  /// a broken link — fails fast enough for callers to react.
+  /// Upper bound on one command's write + response round trip; below the BLE
+  /// stack's own timeout so an unanswered command fails while callers can react.
   final Duration commandTimeout;
 
   final ListQueue<_KvsCommand> _queue = ListQueue();
   _KvsCommand? _current;
   bool _aborted = false;
 
-  /// The value stored under [key], or null when the device answered "no
-  /// such key". Busy ('B') and device-error ('E') answers throw, as do
-  /// transport and protocol failures.
+  /// The value under [key], or null when the device has no such key. 'B'/'E'
+  /// answers throw, as do transport and protocol failures.
   Future<String?> get(String folder, String key) async {
     final response = await _execute(encodeKvsGet(folder, key));
     response.throwIfBusyOrError();
     return response.status == KvsStatus.ok ? response.payload : null;
   }
 
-  /// True when the device accepted the write ('B'/'E' answers throw).
+  /// True when the device accepted the write; 'B'/'E' answers throw.
   Future<bool> set(String folder, String key, String value) async {
     final response = await _execute(encodeKvsSet(folder, key, value));
     response.throwIfBusyOrError();
     return response.status == KvsStatus.ok;
   }
 
-  /// True when the key existed and was deleted ('B'/'E' answers throw).
+  /// True when the key existed and was deleted; 'B'/'E' answers throw.
   Future<bool> delete(String folder, String key) async {
     final response = await _execute(encodeKvsDelete(folder, key));
     response.throwIfBusyOrError();
     return response.status == KvsStatus.ok;
   }
 
-  /// All keys in [folder] with their NVS value types, via IDX iteration
-  /// (which ends at the first index the device rejects; a busy or error
-  /// answer throws — a truncated listing must not pass as complete).
-  /// Iteration order is the device's storage order — arbitrary, but stable
-  /// within a snapshot.
+  /// All keys in [folder] with their NVS value types, via IDX iteration. Ends
+  /// at the first index the device rejects; a busy/error answer throws (a
+  /// truncated listing must not pass as complete). Order is the device's
+  /// storage order — arbitrary but stable within a snapshot.
   Future<Map<String, int>> listKeys(String folder) async {
     final out = <String, int>{};
     for (var i = 0; ; ++i) {
@@ -76,13 +68,12 @@ class KvsClient {
     return out;
   }
 
-  /// Entry point for KVS notifications (routed here by the link manager).
-  /// A frame can only settle the live command; everything else is dropped:
-  /// frames with no command live, duplicates (the firmware notifies before
-  /// the ATT write response, so a frame can land while the write is still
-  /// awaited), and stale answers to other — already timed-out — commands
-  /// ([parseKvsResponse] returns null for those, throws only for garbage,
-  /// which fails the live command).
+  /// Entry point for KVS notifications (routed here by the link manager). A
+  /// frame can only settle the live command; with no command live, a duplicate
+  /// (the firmware notifies before the ATT write ack, so a frame can land while
+  /// the write is still awaited), or a stale answer it is dropped —
+  /// [parseKvsResponse] returns null for stale and throws only for garbage,
+  /// which fails the live command.
   void handleNotification(Uint8List data) {
     final current = _current;
     if (current == null || current.completer.isCompleted) return;
@@ -153,8 +144,8 @@ class _KvsCommand {
 
   final String request;
 
-  /// Completed by [KvsClient.handleNotification] with the parsed frame, or
-  /// by [_pump]/[KvsClient.abort] with the failure — it's the future the
-  /// caller awaits, so completion ordering needs no second channel.
+  /// The future the caller awaits: completed by [KvsClient.handleNotification]
+  /// or failed by [_pump]/[KvsClient.abort], so ordering needs no second
+  /// channel.
   final Completer<KvsResponse> completer = Completer();
 }

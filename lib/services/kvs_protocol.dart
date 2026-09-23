@@ -1,13 +1,7 @@
-/// Wire framing for the device's key-value store (KVS) protocol, mirroring
-/// `dynamite_sampler_api.h` / `user_kvs.cpp` in the firmware.
-///
-/// A command is written to the KVS characteristic as ASCII text:
-/// `<CMD><FOLDER><DATA>` — e.g. `GETFch0.raw`, `SETUlc0.cap=200`, `IDXF1a`.
-/// The device answers with a notification holding a status byte (see
-/// [KvsStatus]), the request echoed verbatim, then — on success only —
-/// '=' and the payload: the value for GET, `key=typeHex` for IDX, empty
-/// for SET/DEL. Every command gets exactly one answer, so a command whose
-/// answer never arrives means the link is broken.
+/// Wire framing for the device's key-value store (KVS) protocol, mirroring the
+/// firmware. A command is written as ASCII `<CMD><FOLDER><DATA>`; the device
+/// answers with a status byte, the request echoed, and — on success only — '='
+/// and the payload. Every command gets exactly one answer.
 library;
 
 import 'dart:convert';
@@ -18,17 +12,12 @@ const String kvsCmdSet = 'SET';
 const String kvsCmdDelete = 'DEL';
 const String kvsCmdIndex = 'IDX';
 
-/// Factory information, not factory-resettable: the board calibration.
-/// (`DynaPersistent` partition, `Factory` namespace.) The app NEVER writes
-/// this folder — the board half of the flash document is read-only to it
-/// (factory tooling owns those keys). Call sites pass folder literals, and
-/// [_checkWritableFolder] throws at the SET/DEL choke point so a future
-/// caller can't slip a Factory write past the design.
+/// Factory information, not factory-resettable: the board calibration. The app
+/// NEVER writes this folder; [_checkWritableFolder] enforces it at the SET/DEL
+/// choke point.
 const String kvsFolderFactory = 'F';
 
-/// User information, not factory-resettable: the load cell data — the one
-/// document half the app writes.
-/// (`DynaPersistent` partition, `User` namespace.)
+/// User information: the load cell data, the one half the app writes.
 const String kvsFolderUser = 'U';
 
 /// Settings, factory-resettable: device name, gain.
@@ -64,10 +53,8 @@ String encodeKvsGet(String folder, String key) {
   return '$kvsCmdGet$folder$key';
 }
 
-/// The app never writes the Factory partition (see [kvsFolderFactory]).
-/// This is a core assumption the slot-key writer satisfies by construction,
-/// but the encoders are the choke point every write passes through, so the
-/// guard lives here.
+/// The app never writes the Factory partition; encoders are the choke point
+/// every write passes through.
 void _checkWritableFolder(String folder) {
   if (folder == kvsFolderFactory) {
     throw ArgumentError.value(
@@ -101,9 +88,7 @@ String encodeKvsDelete(String folder, String key) {
 String encodeKvsIndex(String folder, int index) =>
     '$kvsCmdIndex$folder${index.toRadixString(16)}';
 
-/// The answer's status byte. 'B' is how the firmware device lock answers
-/// while the ADC feed streams (nothing is dropped silently); 'E' is a
-/// storage-layer failure on the device.
+/// The answer's status byte.
 enum KvsStatus {
   /// '1' — success; the payload follows the echoed request and '='.
   ok,
@@ -121,13 +106,13 @@ enum KvsStatus {
   error,
 }
 
-/// The device answered 'B' (busy): locked while the ADC feed streams.
+/// The device answered 'B' (busy, streaming).
 class KvsBusyException implements Exception {
   @override
   String toString() => 'KVS busy: the device is locked (streaming)';
 }
 
-/// The device answered 'E': a storage-layer failure on the device.
+/// The device answered 'E' (storage-layer failure).
 class KvsDeviceException implements Exception {
   @override
   String toString() => 'KVS device error (a storage-layer failure)';
@@ -144,8 +129,7 @@ class KvsResponse {
   /// and for commands without a payload (SET/DEL).
   final String payload;
 
-  /// [KvsStatus.busy] and [KvsStatus.error] answers are command failures,
-  /// not data — throw them. Ok and rejected answers settle normally.
+  /// Throws on [KvsStatus.busy] and [KvsStatus.error]; ok and rejected settle.
   void throwIfBusyOrError() {
     switch (status) {
       case KvsStatus.ok:
@@ -159,18 +143,10 @@ class KvsResponse {
   }
 }
 
-/// Parse the notification frame answering [request].
-///
-/// Returns null when the frame is a well-formed answer to some OTHER command
-/// — a stale frame whose own command already timed out; the caller drops it
-/// and the live command keeps awaiting its own reply. Throws
-/// [FormatException] on a garbled frame (an unknown status byte included)
-/// OR on payload bytes that aren't valid UTF-8 (calibration data is ASCII
-/// text; undecodable bytes passing the frame checks can only be
-/// firmware/wire corruption — replacing them with U+FFFD would let a
-/// corrupted read masquerade as an uncalibrated board). Either failure
-/// fails the live command: bytes the protocol can't decode mean the link
-/// can't be trusted.
+/// Parse the frame answering [request]. Null when it is a well-formed answer to
+/// some OTHER command (stale; drop it). Throws [FormatException] on a garbled
+/// frame or non-UTF-8 payload — undecodable bytes mean the link can't be
+/// trusted.
 KvsResponse? parseKvsResponse(String request, Uint8List frame) {
   final requestBytes = utf8.encode(request);
   final status = switch (frame.isEmpty ? -1 : frame[0]) {
@@ -180,10 +156,8 @@ KvsResponse? parseKvsResponse(String request, Uint8List frame) {
     0x45 => KvsStatus.error, // 'E'
     final other => throw FormatException('KVS bad status byte: $other'),
   };
-  // Exact-echo match at the echo's fixed position: '<status><request>' for a
-  // non-success answer, '<status><request>=<payload>' for a success.
-  // Prefix-free both ways: a stale '0GETFabcX' must not settle a pending
-  // GETFabc, nor a stale '0GETFabc' a pending GETFabcX.
+  // Exact-echo match, prefix-free both ways so a stale answer to a longer or
+  // shorter command can't settle this pending one.
   if (_bytesAt(frame, 1, requestBytes)) {
     if (status == KvsStatus.ok &&
         frame.length > 1 + requestBytes.length &&
@@ -205,10 +179,7 @@ KvsResponse? parseKvsResponse(String request, Uint8List frame) {
   return null;
 }
 
-/// Shaped like a KVS answer to SOME command: known status byte, known
-/// command word, known folder letter, and the payload separator exactly
-/// where the status demands it — successes carry '=' (even with an empty
-/// payload), the other statuses never do. Separates a stale frame (drop)
+/// Shaped like a KVS answer to SOME command: separates a stale frame (drop)
 /// from garbage on the wire (throw).
 bool _isWellFormedKvsFrame(Uint8List frame) {
   // <Status:1><Cmd:3><Folder:1><Data…>; the data may be empty on a rejection.

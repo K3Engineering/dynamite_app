@@ -1,20 +1,14 @@
-/// The per-session metadata journal: an append-only file of newline-
-/// terminated JSON objects. Line 1 is the session's identity (written once,
-/// at the first data packet — name, calibration, tares, ssnOrigin live here
-/// and nowhere else); every later line is a whole snapshot of the mutable
-/// display state (post-recording rename/notes/visibleChannels), and the
+/// Per-session metadata journal: append-only, newline-terminated JSON objects.
+/// Line 1 is the session's identity (written once, at the first data packet);
+/// every later line is a whole snapshot of the mutable display state, and the
 /// LAST complete one wins.
 ///
-/// Append-only means damage is tail-only: a crash mid-write leaves a torn
-/// final line, which the reader drops by construction — a line without its
-/// terminating newline is never parsed at all. A torn edit costs at most
-/// that one edit; line 1 failing to parse makes the session
-/// unreconstructable. A COMPLETE line that fails to parse is persisted
-/// corruption, not a crash tear — the reader throws on it rather than
-/// silently keeping the preceding state.
+/// Reads are tail-safe: a line without its terminating newline is never parsed,
+/// so a crash tear drops the final line. A complete line that fails to parse is
+/// corruption and throws.
 ///
-/// Line 1 schema (breaking changes bump `version`; additive changes add
-/// keys, which readers ignore):
+/// Line 1 schema (`version` bumps on breaking changes; readers ignore unknown
+/// keys):
 /// ```json
 /// {"version":1,"name":"...","sampleRate":1000,"channelCount":4,
 ///  "channelLabels":["Ch 1",...],"tares":[null,123.5,...],
@@ -23,8 +17,7 @@
 ///  "recordedAt":"2026-08-28T14:30:12.345+02:00",
 ///  "ssnOrigin":123456,"visibleChannels":[true,...]}
 /// ```
-/// Edit-line schema (all three fields required — a snapshot, never a
-/// delta, so there is no field-granularity merge):
+/// Edit-line schema (a snapshot, all three fields required, never a delta):
 /// ```json
 /// {"name":"...","notes":"...","visibleChannels":[true,...]}
 /// ```
@@ -39,9 +32,8 @@ import '../models/display_unit.dart';
 
 const int sessionJournalVersion = 1;
 
-/// Line 1 of the journal: the session header, frozen at recording start.
-/// Playback converts through these snapshots, so later recalibration or
-/// re-taring can never rewrite history.
+/// Line 1 of the journal: the session header, frozen at recording start, so
+/// later recalibration or re-taring can't rewrite history.
 class SessionMeta {
   const SessionMeta({
     required this.name,
@@ -63,38 +55,32 @@ class SessionMeta {
   final int channelCount;
   final List<String> channelLabels;
 
-  /// Per-channel tare offsets in counts, frozen at record start; null =
-  /// that channel was recording gross (never tared).
+  /// Per-channel tare offsets in counts; null = that channel was untared.
   final List<double?> tares;
 
-  /// Per-channel calibration in effect at recording time (must be exactly
-  /// [channelCount] entries).
+  /// Per-channel calibration at recording time (exactly [channelCount]
+  /// entries).
   final List<ChannelCalibration> calibration;
 
-  /// The display unit at recording start, frozen as the CSV export's default
-  /// converted unit.
+  /// The CSV export's default converted unit.
   final DisplayUnit displayUnit;
 
-  /// The connected device's identity at recording start (the dynamite-csv
-  /// `device` metadata block), frozen so export never consults live state.
+  /// The device identity at recording start (the CSV `device` block).
   final Map<String, Object?> deviceInfo;
 
-  /// The raw device KVS snapshot at recording start (artifact provenance —
-  /// the typed board facts it parses to are a verbatim subset of it).
-  /// Null for sessions recorded before this field existed.
+  /// The raw device KVS at recording start. Null on older sessions.
   final KvsSnapshot? deviceKvs;
 
-  /// The local wall clock at recording start with its zone offset (the
-  /// dynamite-csv `recorded_at`), stored verbatim — the offset is NOT
-  /// derivable after the fact.
+  /// Local wall clock at recording start with its zone offset (the CSV
+  /// `recorded_at`).
   final String recordedAt;
 
-  /// Device sample-counter value at the session's first sample (the
-  /// dynamite-csv `ssn_origin`).
+  /// Device sample-counter value at the session's first sample (the CSV
+  /// `ssn_origin`).
   final int ssnOrigin;
 
-  /// Initial per-session channel visibility: the live view's selection at
-  /// recording time. Post-recording edits ride in [SessionEdit].
+  /// Initial per-session channel visibility; post-recording edits ride in
+  /// [SessionEdit].
   final List<bool> visibleChannels;
 
   Map<String, dynamic> toJson() => {
@@ -113,11 +99,9 @@ class SessionMeta {
     'visibleChannels': visibleChannels,
   };
 
-  /// Strict inverse of [toJson]: anything not exactly the schema above
-  /// (wrong types, wrong list lengths against [channelCount], a version
-  /// other than [sessionJournalVersion]) throws [FormatException] — the
-  /// session is unreconstructable from anything less. Unknown keys are
-  /// ignored (additive schema changes), a wrong version is not.
+  /// Strict inverse of [toJson]: wrong types, wrong list lengths against
+  /// [channelCount], or a wrong version throw [FormatException]. Unknown keys
+  /// are ignored (additive schema changes), a wrong version is not.
   factory SessionMeta.fromJson(Map<String, dynamic> json) {
     final version = json['version'];
     if (version is! int || version != sessionJournalVersion) {
@@ -241,10 +225,8 @@ class SessionMeta {
   }
 }
 
-/// One whole snapshot of the mutable display state, as appended by a
-/// post-recording user edit. The last complete edit line in the journal is
-/// the state; line 1's [SessionMeta.name]/[SessionMeta.visibleChannels] are
-/// the recording-time defaults when no edit line survives.
+/// A whole snapshot of the mutable display state, appended by a post-recording
+/// edit; the last complete one wins.
 class SessionEdit {
   const SessionEdit({
     required this.name,
@@ -256,8 +238,8 @@ class SessionEdit {
   final String notes;
   final List<bool> visibleChannels;
 
-  /// The state to display: this edit when present, else the meta's
-  /// recording-time values with empty notes.
+  /// The state to show when no edit line survives: the meta's recording-time
+  /// values, with empty notes.
   factory SessionEdit.initial(SessionMeta meta) => SessionEdit(
     name: meta.name,
     notes: '',
@@ -270,9 +252,8 @@ class SessionEdit {
     'visibleChannels': visibleChannels,
   };
 
-  /// Strict against [channelCount] (from line 1): a snapshot naming a
-  /// different channel layout than the session's data is not an edit of
-  /// THIS session. Unknown keys are ignored.
+  /// Strict against [channelCount]: a different channel layout is not an edit
+  /// of this session. Unknown keys are ignored.
   factory SessionEdit.fromJson(Map<String, dynamic> json, int channelCount) {
     final name = json['name'];
     if (name is! String) {
@@ -314,18 +295,16 @@ class SessionJournal {
   /// Line 1, strictly validated.
   final SessionMeta meta;
 
-  /// The last complete edit line, or null when none survived (the torn
-  /// tail takes at most the latest edit).
+  /// The last complete edit line, or null when none survived.
   final SessionEdit? edit;
 
   /// The state to display: [edit] when present, else the meta's
   /// recording-time values with empty notes.
   SessionEdit get effectiveEdit => edit ?? SessionEdit.initial(meta);
 
-  /// Byte offset in the source just past the last complete, parseable
-  /// line. Everything at/after it is a torn tail (possibly absent); the
-  /// append discipline truncates the file here before writing a new edit
-  /// line, so a new line never lands behind unreadable bytes.
+  /// Byte offset just past the last complete line; everything after is a torn
+  /// tail. The write path truncates the file here before appending an edit, so
+  /// a new line never lands behind unreadable bytes.
   final int completeBytes;
 }
 
@@ -337,12 +316,9 @@ Uint8List encodeSessionMeta(SessionMeta meta) =>
 Uint8List encodeSessionEdit(SessionEdit edit) =>
     utf8.encode('${jsonEncode(edit.toJson())}\n');
 
-/// Parse the journal bytes. Line 1 must be present, newline-terminated and
-/// strictly valid — anything else throws [FormatException] (the caller's
-/// damaged-session verdict). So must every COMPLETE later line: a
-/// newline-terminated line that fails to parse is persisted corruption
-/// (the write path appends whole lines only), never a crash tear. Only an
-/// unterminated trailing fragment is a legitimate tear and is dropped.
+/// Parse the journal bytes. Line 1 and every complete later line must parse —
+/// anything else throws [FormatException] (the caller's damaged verdict). Only
+/// an unterminated trailing fragment is a legitimate crash tear and is dropped.
 SessionJournal parseSessionJournal(Uint8List bytes) {
   var offset = 0;
   SessionMeta? meta;
@@ -354,9 +330,7 @@ SessionJournal parseSessionJournal(Uint8List bytes) {
     final lineBytes = Uint8List.sublistView(bytes, offset, nl);
     offset = nl + 1;
     if (meta == null) {
-      // Line 1 is the session's identity: any failure here (bad UTF-8, bad
-      // JSON, bad schema) propagates as the caller's damaged-session
-      // verdict.
+      // Line 1 is the session's identity; any failure is the damaged verdict.
       meta = SessionMeta.fromJson(
         _object(utf8.decode(lineBytes), 'journal header'),
       );

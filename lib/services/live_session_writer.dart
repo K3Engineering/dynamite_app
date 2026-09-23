@@ -13,26 +13,20 @@ import '../utils/future_chain.dart';
 import 'session_journal.dart';
 import 'session_store_backend.dart';
 
-/// The session-directory files' names are declared in
-/// session_store_backend.dart; this file is the codec's home.
+/// The codec for a session directory's data.raw.
 class SessionChunkCodec {
   const SessionChunkCodec(this.channelCount);
 
   final int channelCount;
 
-  /// The ADC is 24-bit: real sample values are confined to ±2^23, so int32
-  /// values outside that range are reserved territory by construction —
-  /// [gapSentinel] is its first occupant. Encode paths must never emit an
-  /// out-of-range real value, and nothing may read the reserved range as
-  /// ordinary data.
+  /// The 24-bit ADC range; int32 values outside it are reserved (see
+  /// [gapSentinel]).
   static const int maxAdcValue = adcMaxValue;
   static const int minAdcValue = adcMinValue;
 
-  /// The dropped-samples marker: a frame whose every channel reads
-  /// [gapSentinel] is a gap. Held values are a representation, not a signal
-  /// property (a statically-loaded cell legitimately repeats identical real
-  /// values forever), so a gap must be marked in-band — runs of equal
-  /// frames can never be post-hoc diagnosed as one.
+  /// The dropped-samples marker: a frame whose every channel reads it is a gap.
+  /// A gap must be marked in-band because a loaded cell can legitimately repeat
+  /// identical real values forever.
   static const int gapSentinel = 0x7FFFFFFF;
 
   /// Byte length of one packed sample frame.
@@ -42,12 +36,8 @@ class SessionChunkCodec {
   /// bytes mean; [decodeWithGaps] rejects them as a torn write.
   int framesOf(Uint8List bytes) => bytes.lengthInBytes ~/ frameBytes;
 
-  /// Pack [frames] samples as sample-major little-endian int32 bytes (the
-  /// chunk format [decodeWithGaps] reads back), pulling each value from
-  /// [valueAt]. Real values only: [valueAt] returning anything outside the
-  /// 24-bit ADC range (the sentinel's territory included) is an encoder bug
-  /// and throws, so a misbehaving source can never fabricate a gap or
-  /// smuggle a reserved value into the data stream.
+  /// Pack [frames] samples as sample-major little-endian int32. [valueAt]
+  /// returning anything outside the 24-bit range is an encoder bug and throws.
   Uint8List pack(int frames, int Function(int sample, int channel) valueAt) {
     final out = ByteData(frames * channelCount * 4);
     int offset = 0;
@@ -69,11 +59,8 @@ class SessionChunkCodec {
     return out.buffer.asUint8List();
   }
 
-  /// Bulk-mark the whole frames inside [gapRanges] (`[start, end)`,
-  /// relative to the start of [bytes]) with the gap sentinel on every
-  /// channel. The real (held) values were packed first; this overwrites
-  /// them so the byte stream self-describes its gaps. Ranges must lie
-  /// inside the buffer — an out-of-range range is a caller bug and throws.
+  /// Overwrite the sentinel on every channel of the whole frames in
+  /// [gapRanges]. Ranges outside the buffer throw.
   void fillGapSentinels(Uint8List bytes, Iterable<(int, int)> gapRanges) {
     final view = ByteData.sublistView(bytes);
     final frames = framesOf(bytes);
@@ -96,15 +83,9 @@ class SessionChunkCodec {
   }
 
   /// Decode [bytes] into per-channel arrays, turning sentinel frames into a
-  /// [GapList] and hold-filling the channel arrays with each channel's
-  /// previous real value (the held-value representation the graphs, stats
-  /// and exports already consume). [bytes] must be an exact multiple of
-  /// [frameBytes] — a torn tail is a corrupt recording, not a shorter one.
-  /// A gap frame is sentinel on ALL channels; a frame mixing sentinel and
-  /// real values, a sentinel first frame (recording starts never open with
-  /// a gap, so hold-fill has no predecessor), or a non-sentinel value
-  /// outside the 24-bit ADC range are states the write path never produces
-  /// and throw.
+  /// [GapList] and hold-filling with the previous real value. [bytes] must
+  /// divide into whole frames; a mixed/sentinel-first/out-of-range frame throws
+  /// (states the write path never produces).
   ({List<Int32List> channels, GapList gaps}) decodeWithGaps(Uint8List bytes) {
     if (bytes.lengthInBytes % frameBytes != 0) {
       throw StateError(
@@ -157,11 +138,9 @@ class SessionChunkCodec {
   }
 }
 
-/// The [SessionMeta] fields snapshotted at recording start and carried by
-/// [LiveSessionWriter] until its first packet. ssnOrigin is the one journal
-/// field the writer can't snapshot at start — it latches at the first
-/// append, so the meta can only be stamped then (the journal's line 1 is
-/// written WITH the first data append, not at start).
+/// The [SessionMeta] fields snapshotted at recording start. ssnOrigin is the
+/// one field that can only latch at the first append, so the journal's line 1
+/// is written with the first data append.
 typedef SessionHeader = ({
   String name,
   int sampleRate,
@@ -176,9 +155,7 @@ typedef SessionHeader = ({
   String recordedAt,
 });
 
-/// The journal's line 1 out of [header] plus the latched [ssnOrigin] —
-/// recordedAt stays the recording-start clock even though the write happens
-/// at the first packet.
+/// The journal's line 1 from [header] plus the latched [ssnOrigin].
 SessionMeta sessionMetaFromHeader(SessionHeader header, int ssnOrigin) =>
     SessionMeta(
       name: header.name,
@@ -195,11 +172,9 @@ SessionMeta sessionMetaFromHeader(SessionHeader header, int ssnOrigin) =>
       ssnOrigin: ssnOrigin,
     );
 
-/// The latched per-session run: created by the first packet's write (the one
-/// that also creates the session directory), it carries the session's
-/// identity and the persisted byte length for the rest of the writer's life.
-/// [LiveSessionWriter.closeSink] releases the handle but keeps the run, so
-/// finalization reads identity and length as one non-null value.
+/// The latched per-session run, created by the first packet's write; carries the
+/// session's identity and persisted length. [LiveSessionWriter.closeSink]
+/// releases the handle but keeps the run.
 final class SessionRun {
   SessionRun(this.sink, this.id, this.ackedLength);
 
@@ -212,24 +187,16 @@ final class SessionRun {
   /// data.raw's byte length from the last acked append.
   int ackedLength;
 
-  /// Whether [LiveSessionWriter.closeSink] has released [sink] (the handle is
-  /// closed; the run record survives).
+  /// Whether [LiveSessionWriter.closeSink] released [sink].
   bool closed = false;
 }
 
 /// Streams recorded samples to the session's data.raw as they arrive: one
-/// serialized write per accepted packet, flushed individually, so a session
-/// can outlive the in-memory ring buffer and a crash loses at most the
-/// in-flight packet.
-///
-/// All writes are serialized through [_writeQueue] so concurrent (unawaited)
-/// [appendData] calls and the finalizing [flush] cannot interleave or reorder
-/// packets. The queue serializes ONLY the writes: each [SampleSlice] arrives
-/// fully snapshotted at call time (see `DataHub.snapshotRange`), so a stalled
-/// queue never observes ring slots the producer has since overwritten. If
-/// storage falls a full ring behind, an error is latched (see [appendData])
-/// so the backlog — and its memory — stops growing and the failure is
-/// surfaced instead of recording into the void.
+/// serialized write per accepted packet, so a session can outlive the ring and
+/// a crash loses at most the in-flight packet. Writes are serialized through
+/// [_writeQueue]; each [SampleSlice] is snapshotted at call time, so a stalled
+/// queue never sees overwritten ring slots. If storage falls a full ring
+/// behind, an error latches (see [appendData]).
 class LiveSessionWriter {
   LiveSessionWriter(
     this.header, {
@@ -238,53 +205,41 @@ class LiveSessionWriter {
     required SessionSinkFactory sinkFactory,
   }) : _sinkFactory = sinkFactory;
 
-  /// The journal-line-1 fields snapshotted at recording start (see
-  /// [SessionHeader]), carried until the first packet's write stamps them.
+  /// The journal-line-1 fields, carried until the first packet's write.
   final SessionHeader header;
 
-  /// The latched run record: null until the first packet's write creates the
-  /// session directory, then non-null for the writer's lifetime (a closed
-  /// sink is marked, not unlatched).
+  /// Null until the first packet's write creates the directory; then non-null
+  /// for the writer's lifetime.
   SessionRun? get run => _run;
   SessionRun? _run;
 
-  /// The session id (the directory's name), null until data exists — the
-  /// directory itself doesn't exist before that either (no artifact without
-  /// data).
+  /// The session id, null until data exists (no artifact without data).
   String? get sessionId => _run?.id;
 
-  /// The session's origin pair, latched together on the first [appendData]
-  /// call: the hub-absolute index of the session's first sample plus the
-  /// device sample-counter value there (the dynamite-csv `ssn_origin`). Data
-  /// bytes alone can't reconstruct the counter side, so it is held here until
-  /// the first packet's write stamps it into the journal.
+  /// The session's origin pair, latched together on the first [appendData]: the
+  /// hub-absolute index of the first sample plus the device counter there.
   ({int originIdx, int ssnOrigin})? _origins;
 
-  /// The device sample-counter value at the session's first sample, or null
-  /// before the first append.
+  /// The device counter at the session's first sample; null before the first
+  /// append.
   int? get ssnOrigin => _origins?.ssnOrigin;
 
-  /// The rate stamped in the journal at creation, kept here so finalization
-  /// math uses the same value.
+  /// The rate stamped in the journal.
   int get sampleRate => header.sampleRate;
 
-  /// Capacity (samples) of the producer's ring — the backlog bound for the
-  /// backpressure latch in [appendData]. Supplied by the caller (the hub's
-  /// `maxDataSz`); not read from the hub here.
+  /// Capacity of the producer's ring, the backlog bound for the backpressure
+  /// latch in [appendData].
   final int sourceRingCapacity;
 
-  /// Samples accepted by [appendData] but not yet written by the serialized
-  /// queue. Decrementing happens in the queued op's finally, so a wedged
-  /// sink grows the count unboundedly — detecting that is the latch's job.
+  /// Samples accepted by [appendData] but not yet written; the backpressure
+  /// latch watches this.
   int _unflushedSamples = 0;
 
-  /// Frames the queue has accepted for writing (successful or not) — the
-  /// "accepted" side of the finalize check; the run's acked length is what's
-  /// actually on disk.
+  /// Frames accepted for writing (the finalize check's "accepted" side).
   int totalSamplesRecorded = 0;
 
-  /// Frames multiplied by the packed frame size — what the run's acked length
-  /// must equal at finalize when every accepted packet landed.
+  /// Accepted frames × frame size; the run's acked length must equal this at
+  /// finalize.
   int get expectedDataBytes =>
       totalSamplesRecorded *
       const SessionChunkCodec(kAdcChannelCount).frameBytes;
@@ -293,15 +248,11 @@ class LiveSessionWriter {
   Object? writeError;
   bool get hasError => writeError != null;
 
-  /// Called with the first failure the moment it latches (either latch
-  /// point below): recording's auto-stop rides this rather than polling
-  /// [hasError] on a later batch, so a failed last packet under an idle
-  /// feed can't leave a session "recording" into the void until manual
-  /// stop.
+  /// Called with the first failure the moment it latches, so recording's
+  /// auto-stop doesn't wait for a later batch (or manual stop).
   final void Function(Object error) onWriteError;
 
-  /// Latch [error] as the first failure (a later failure keeps the first
-  /// as the cause) and notify [onWriteError] exactly once.
+  /// Latch [error] as the first failure and notify [onWriteError] once.
   void _latchError(Object error) {
     if (writeError != null) return;
     writeError = error;
@@ -311,15 +262,12 @@ class LiveSessionWriter {
   /// Serializes all writes.
   final FutureChain _writeQueue = FutureChain();
 
-  /// Opens the session on the first write (dir + journal + first append,
-  /// one flush) and hands back its sink. The production factory is the
-  /// store's `createDataSink`; recording tests stall/observe via their own.
+  /// Opens the session on the first write and hands back its sink.
   final Future<SessionDataSink> Function(SessionMeta meta, Uint8List firstData)
   _sinkFactory;
 
-  /// Append a fully snapshotted slice of fresh samples (see
-  /// `DataHub.snapshotRange`). Returns when this slice has been written and
-  /// flushed. Safe to call without awaiting; calls are serialized.
+  /// Append a fully snapshotted slice; returns when it has been written and
+  /// flushed. Safe to call without awaiting (calls are serialized).
   Future<void> appendData(SampleSlice slice) {
     final origins = _origins ??= (
       originIdx: slice.startIndex,
@@ -329,11 +277,9 @@ class LiveSessionWriter {
 
     final count = slice.sampleCount;
     _unflushedSamples += count;
-    // Backpressure latch: once the accepted-but-unwritten backlog exceeds the
-    // source ring's capacity, storage is a full ring behind the producer and
-    // the backlog only grows into a possibly wedged sink. Latch an error so
-    // the session auto-stops loudly via [onWriteError]. Checked at accept
-    // time — it trips even if the write queue never runs again.
+    // Backpressure latch: an accepted-but-unwritten backlog over the ring
+    // capacity means storage is a full ring behind; latch so the session
+    // auto-stops. Checked at accept time.
     if (writeError == null && _unflushedSamples > sourceRingCapacity) {
       final error = StateError(
         'Storage fell more than the ring capacity ($sourceRingCapacity '
@@ -359,9 +305,8 @@ class LiveSessionWriter {
         totalSamplesRecorded += count;
         final existing = _run;
         if (existing == null) {
-          // First packet: create dir + journal + this append in one go; the
-          // journal needs ssnOrigin, which is exactly why it can't precede the
-          // first append.
+          // First packet: dir + journal + append in one go; the journal needs
+          // ssnOrigin, so it can't precede the append.
           final created = await _sinkFactory(
             sessionMetaFromHeader(header, origins.ssnOrigin),
             bytes,
@@ -371,9 +316,7 @@ class LiveSessionWriter {
           existing.ackedLength = await existing.sink.append(bytes);
         }
       } catch (e) {
-        // Latch the first failure; stop accumulating so we don't grow
-        // unbounded after the sink has gone away (e.g. disk full / web quota
-        // exceeded).
+        // Latch the first failure and stop accumulating.
         debugPrint('Session write failed (session $sessionId): $e');
         _latchError(e);
       } finally {
@@ -385,8 +328,7 @@ class LiveSessionWriter {
   /// Wait for every queued append to land. Serialized with appends.
   Future<void> flush() => _writeQueue.run(() async {});
 
-  /// Release the sink's open handle (at finalize/abort). Idempotent: the run
-  /// record and its identity outlive the handle.
+  /// Release the sink's handle. Idempotent; the run record outlives it.
   Future<void> closeSink() async {
     final run = _run;
     if (run == null || run.closed) return;
@@ -395,7 +337,6 @@ class LiveSessionWriter {
   }
 }
 
-/// The first-write factory's input/output: the meta to stamp into journal
-/// line 1 plus the first packet's packed bytes, in; the open data sink out.
+/// The first write's factory: meta + first packet in, open sink out.
 typedef SessionSinkFactory =
     Future<SessionDataSink> Function(SessionMeta meta, Uint8List firstData);

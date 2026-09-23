@@ -6,24 +6,17 @@ import '../models/device_profile.dart';
 import '../models/hub_event.dart';
 import '../utils/log.dart';
 
-/// Protocol layer: decodes the device's ADC-feed notification packets into
-/// [AdcSink] updates.
+/// Decodes the device's ADC-feed notification packets into [AdcSink] updates.
 ///
 /// Owns packet continuity: the 16-bit running sample counter, cross-checked
-/// against a monotonic clock of packet arrival times. The device samples
-/// continuously, so elapsed time and the counter must agree within slack —
-/// the clock de-quantizes the counter's ~65.5 s wrap (a loss of an exact
-/// wrap multiple would read as continuity on the counter alone). When counter
-/// and clock disagree beyond the slack (a firmware counter bug — a reboot
-/// drops the link instead), the clock is the authority. Detected loss is
-/// reported to the sink via [AdcSink.addDroppedFrames].
+/// against a monotonic clock of arrival times. The clock de-quantizes the
+/// counter's ~65.5 s wrap; beyond slack the clock is the authority. Loss is
+/// reported via [AdcSink.addDroppedFrames].
 class AdcPacketDecoder {
   AdcPacketDecoder(this.hub, {Duration Function()? now})
     : _now = now ?? (() => _clock.elapsed) {
-    // A sink clear means a NEW device stream just took over; its first packet
-    // must not be diffed against the previous stream's counter. The sink's
-    // cleared event IS the stream-boundary signal, so the decoder resets
-    // itself rather than the link-change orchestrator doing it.
+    // A sink clear means a new device stream: reset so its first packet isn't
+    // diffed against the previous stream's counter.
     hub.addEventListener((event) {
       if (event is HubCleared) resetContinuity();
     });
@@ -31,9 +24,8 @@ class AdcPacketDecoder {
 
   final AdcSink hub;
 
-  /// Monotonic clock for the counter cross-check (site-managed time would
-  /// invite NTP-slew false positives). Injectable via the constructor for
-  /// tests.
+  /// Monotonic clock for the cross-check (site-managed time invites NTP-slew
+  /// false positives); injectable for tests.
   static final Stopwatch _clock = Stopwatch()..start();
   final Duration Function() _now;
 
@@ -49,23 +41,17 @@ class AdcPacketDecoder {
   /// Wrap modulus of the wire sample counter: ~65.5 s at 1 kHz.
   static const int _counterModulus = 0x10000;
 
-  /// Slack allowed between the counter delta and elapsed time, in SECONDS of
-  /// samples. Fat on purpose: BLE delivery batches under isolate jank, so
-  /// back-to-back delivered packets routinely disagree by dozens of packet
-  /// intervals. This only needs to stay far below half a wrap period
-  /// (~32.7 s at 1 kHz) for the wrap de-quantization in [onDataPacket] to be
-  /// exact arithmetic.
+  /// Slack between the counter delta and elapsed time, in seconds of samples.
+  /// BLE delivery batches under jank, so back-to-back packets routinely
+  /// disagree by dozens of intervals; must stay far below half a wrap (~32.7 s).
   static const int _clockToleranceSec = 3;
 
   /// Reusable frame buffer (one value per channel) passed to
   /// [AdcSink.addSampleFrame], which copies out of it synchronously.
   final Int32List _frame = Int32List(kAdcChannelCount);
 
-  /// Forget the last seen packet counter so the next packet is not diffed
-  /// against a stale value (which would report spurious dropped samples).
-  /// Self-invoked on a new device stream (via the hub's cleared listeners,
-  /// see the constructor); `RecordingController` requests it at session
-  /// boundaries through the session-boundary callback main wires here.
+  /// Forget the last counter so the next packet isn't diffed against a stale
+  /// value. Self-invoked on a new stream; also requested at session boundaries.
   void resetContinuity() {
     _prevSampleCount = -1;
     _prevRxUs = null;
@@ -90,10 +76,8 @@ class AdcPacketDecoder {
     final int count = data[0] + (data[1] << 8);
     if (_prevSampleCount != -1) {
       final int diff = (count - _prevSampleCount) & 0xFFFF;
-      // Samples the clock says elapsed since the previous packet. Measured
-      // between delivered packets, so the loss can live anywhere along the
-      // path (radio, OS buffer, firmware queue) as long as the device's
-      // counter honestly counted the produced samples.
+      // Samples the clock says elapsed since the previous packet (measured
+      // between deliveries, so loss can be anywhere along the path).
       final int elapsedSamples =
           ((rxUs - _prevRxUs!) * rate + 500000) ~/ 1000000;
       // De-quantize the counter's wrap: a gap of g samples shows as
@@ -103,9 +87,8 @@ class AdcPacketDecoder {
       int wraps = ((elapsedSamples - diff) / _counterModulus).round();
       if (wraps < 0) wraps = 0;
       final int gap = diff + wraps * _counterModulus;
-      // Within slack the counter is consistent with the clock — report its
-      // (wrap-resolved) gap. Beyond it the counter is lying (firmware bug);
-      // the monotonic clock is the authority.
+      // Within slack, report the counter's wrap-resolved gap; beyond it the
+      // clock is the authority.
       final int loss = (elapsedSamples - gap).abs() <= _clockToleranceSec * rate
           ? gap
           : elapsedSamples;
@@ -118,9 +101,8 @@ class AdcPacketDecoder {
     _prevSampleCount = (count + n) & 0xFFFF;
     _prevRxUs = rxUs;
 
-    // Anchor the packet's counter to the sink timeline (after gap injection,
-    // so totalSamples is this packet's first-sample index). The recording
-    // writer derives the session's ssn_origin from this pairing.
+    // Anchor the counter to the sink timeline (after gap injection). The
+    // writer derives ssn_origin from this pairing.
     hub.notePacketCounter(count);
 
     for (

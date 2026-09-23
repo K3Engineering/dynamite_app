@@ -4,9 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'ota_protocol.dart';
 
-/// A flash session failure with plain-language copy for the UI. Covers
-/// device-level refusals (NAKs), protocol surprises, and reply timeouts —
-/// transport writes throw whatever UniversalBle throws.
+/// A flash session failure with plain-language copy for the UI.
 class OtaFlashException implements Exception {
   const OtaFlashException(this.message);
 
@@ -46,30 +44,25 @@ class OtaClient {
   /// Write one image chunk to the Data characteristic (with-response).
   final Future<void> Function(Uint8List bytes) writeData;
 
-  /// Image chunk size: min(negotiated MTU - 3, 244), like the reference
-  /// client. The 244 cap also fits platforms that never report an MTU
-  /// (web) but negotiate 247 behind the scenes.
+  /// Image chunk size: min(MTU - 3, 244); the cap fits platforms that don't
+  /// report an MTU (web) but negotiate 247.
   final int chunkSize;
 
-  /// Upper bound on one Control round trip (start, finalize). The start
-  /// wait covers pre-erasing the OTA slot; the finalize wait covers
-  /// digest-checking a ~1 MB image.
+  /// Upper bound on one Control round trip (start covers erasing the slot,
+  /// finalize covers digest-checking the image).
   final Duration ackTimeout;
 
   bool _aborted = false;
   Completer<Uint8List>? _waiting;
 
-  /// Entry point for Control notifications (routed here by the link
-  /// manager). A notification settles only the live wait; the device sends
-  /// exactly one reply per handshake step and none during Data writes.
+  /// Entry point for Control notifications. Settles only the live wait.
   void handleNotification(Uint8List data) {
     final waiting = _waiting;
     if (waiting == null || waiting.isCompleted) return;
     waiting.complete(data);
   }
 
-  /// Fail the live wait, if any. Called at session teardown; the client is
-  /// spent afterwards.
+  /// Fail the live wait, if any.
   void abort() {
     _aborted = true;
     final waiting = _waiting;
@@ -107,7 +100,7 @@ class OtaClient {
       onProgress?.call(end > image.length ? image.length : end);
     }
 
-    // See class doc: DONE is sent without response on purpose.
+    // DONE is sent without response (see class doc).
     final done = await _transact(
       Uint8List.fromList(const [otaDoneOpcode]),
       'finalize the update',
@@ -127,12 +120,9 @@ class OtaClient {
       'Unexpected reply 0x${got.toRadixString(16)} while waiting for the '
       'device to $what.';
 
-  /// One handshake round trip. The wait is armed BEFORE the write goes out:
-  /// the device notifies inside its write handler, so the reply can reach
-  /// the host ahead of the write's completion, and a wait armed after the
-  /// write would race (and silently drop) the single, unretried reply. If
-  /// the write itself throws, the armed completer is abandoned — nothing
-  /// awaits it.
+  /// One handshake round trip. The wait is armed BEFORE the write goes out: the
+  /// device notifies inside its write handler, so the reply can race the
+  /// write's completion and a later-armed wait would drop it.
   Future<int> _transact(
     Uint8List bytes,
     String what, {

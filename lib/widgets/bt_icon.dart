@@ -54,15 +54,12 @@ BtStatusVisual btActiveLinkVisual({
   );
 }
 
-/// Map adapter/scan state to the Devices tab top indicator visual. Scan state
-/// outranks adapter status. Link-state presentation lives in
-/// [btActiveLinkVisual].
+/// Map adapter/scan state to the top indicator visual; a scan outranks adapter
+/// status. Link-state presentation lives in [btActiveLinkVisual].
 ///
-/// [hasConnectableDevices] is the caller-resolved truth condition for the
-/// "Tap a device to connect" hint: devices are discovered AND no link is
-/// busy. A busy link — including the demo device, which occupies the single
-/// link slot and so gets BLE connects refused — disables every Connect
-/// button on screen, so the hint must not be emitted then.
+/// [hasConnectableDevices] is the caller's truth for the "Tap a device to
+/// connect" hint: a busy link — including the demo, which occupies the single
+/// link slot — disables every Connect button, so the hint is omitted then.
 BtStatusVisual btAdapterScanVisual({
   required BtAvailability availability,
   required bool isScanning,
@@ -136,13 +133,10 @@ enum TopIndicatorMode {
   iconAndLabel,
 }
 
-/// Resolve the top indicator's presentation mode from adapter/scan state
-/// and whether the tab's empty block is on screen. Whenever the empty block
-/// shows, the indicator goes quiet — its icon and label would duplicate the
-/// block's. Adapter failures normally imply an empty device list (no scan
-/// is possible, and poweredOff clears the list), so their icon + label only
-/// survive the dedupe in the rare case of a stale populated list (e.g.
-/// permission revoked mid-session).
+/// Resolve the top indicator's presentation mode. It goes quiet whenever the
+/// empty block is on screen (the block already carries the icon and label), and
+/// draws icon + label only for scanning or an adapter failure; otherwise
+/// text-only.
 TopIndicatorMode topIndicatorMode({
   required BtAvailability availability,
   required bool isScanning,

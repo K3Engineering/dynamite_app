@@ -99,7 +99,6 @@ class DemoSignalSource {
       }
 
       onData(encodeAdcPacket(counter: _counter, frames: frames));
-      // Bump counter by _samplesPerPacket (20) to maintain continuity
       _counter = (_counter + _samplesPerPacket) & 0xFFFF;
     });
   }

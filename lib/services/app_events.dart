@@ -17,11 +17,9 @@ class BleDisconnectTimeout extends AppEvent {
   final String deviceName;
 }
 
-/// A connection dropped or failed during post-connect setup (e.g. the device
-/// disappeared mid service-discovery, or the ADC config could not be read).
-/// The exact failure reason is recorded on the link manager (see
-/// `BleLinkManager.setupFailureFor`) for the Devices-tab row; this event only
-/// names the device so the shell can show a short, user-facing toast.
+/// A connection dropped or failed during post-connect setup. The exact reason
+/// is on the link manager (see `BleLinkManager.setupFailureFor`) for the row;
+/// this event only names the device for a short toast.
 class BleConnectionFailed extends AppEvent {
   const BleConnectionFailed(this.deviceName);
 
@@ -29,10 +27,9 @@ class BleConnectionFailed extends AppEvent {
   final String deviceName;
 }
 
-/// The link dropped unexpectedly while it was up (setting up, starting the
-/// data stream, or streaming) — i.e. NOT a user-requested disconnect and not
-/// a post-connect setup failure (those surface as [BleConnectionFailed]). A
-/// recording in progress is finalized by `RecordingController` when this
+/// The link dropped unexpectedly while up (setting up, starting the stream, or
+/// streaming) — not a user disconnect and not a setup failure (those are
+/// [BleConnectionFailed]). A recording in progress is finalized when this
 /// happens.
 class BleConnectionLost extends AppEvent {
   const BleConnectionLost(this.deviceName);
@@ -76,12 +73,9 @@ class FirmwareFlashVerified extends AppEvent {
   final String describe;
 }
 
-/// Fire-and-forget event bus for [AppEvent]s.
-///
-/// App-lifetime singleton created in `main()` (never disposed) and handed to
-/// producers by constructor. Broadcast so a remounted shell can re-subscribe;
-/// events emitted while nobody listens are dropped, which is fine — nothing
-/// emits before the first frame.
+/// Fire-and-forget event bus for [AppEvent]s. App-lifetime singleton created in
+/// `main()`; broadcast so a remounted shell can re-subscribe. Events emitted
+/// with no listener are dropped (nothing emits before the first frame).
 class AppEvents {
   final StreamController<AppEvent> _controller =
       StreamController<AppEvent>.broadcast();

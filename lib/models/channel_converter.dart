@@ -85,9 +85,11 @@ class ChannelConverter {
   }
 
   /// The raw-diff -> display-unit map (no tare: offsets cancel in a
-  /// difference). Uses the channel's terminal slope: the piecewise-local
-  /// slope differs by ppm, and the derivative graph's bucket fast path
-  /// needs a position-free map. Null exactly when [netMap] is.
+  /// difference). Uses the channel's terminal slope so the map is
+  /// position-free (the derivative graph's bucket fast path needs that); the
+  /// local slope differs from the terminal chord only by the board's
+  /// nonlinearity (ppm-level); the gain is a constant that cancels. Null
+  /// exactly when [netMap] is.
   double Function(double rawDiff)? diffMap(DisplayUnit unit) {
     final perCount = countQuantum(unit);
     if (perCount == null) return null;

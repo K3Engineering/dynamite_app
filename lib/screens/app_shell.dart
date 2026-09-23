@@ -16,13 +16,10 @@ import 'settings_tab.dart';
 /// Root scaffold holding the four tabs: a bottom `NavigationBar` on narrow
 /// screens, a side `NavigationRail` at [kWideLayoutWidth] and above.
 ///
-/// Also the single consumer of [AppEvents]: one-shot notices from the service
-/// layer surface here as SnackBars, so delivery doesn't depend on which tab
-/// happens to be mounted or rebuilding.
-///
-/// The Devices-tab visibility poke lives here because the IndexedStack keeps
-/// every tab mounted — tab-local initState/dispose never see visibility
-/// changes.
+/// The single consumer of [AppEvents]: one-shot service notices surface here as
+/// SnackBars, independent of which tab is mounted. The Devices-tab visibility
+/// poke lives here because the IndexedStack keeps every tab mounted, so a tab's
+/// own initState/dispose never sees visibility changes.
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 
