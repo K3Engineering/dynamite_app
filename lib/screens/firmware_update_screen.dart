@@ -49,7 +49,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
   @override
   void initState() {
     super.initState();
-    if (_updates.check == null && !_updates.checking) {
+    if (_updates.checkState is CheckNeverRan) {
       unawaited(_updates.checkForUpdates());
     }
   }
@@ -284,16 +284,20 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
   /// The headline of the overview card: installed -> target, or the plain
   /// state when there is no comparison to draw.
   String _heroLine(FirmwareUpdateService service, {required bool linkUp}) {
-    final check = service.check;
-    if (service.checking && check == null) return 'Checking…';
-    if (check == null) {
-      return linkUp ? 'No release check yet' : 'No device connected';
+    switch (service.checkState) {
+      case CheckNeverRan():
+        return linkUp ? 'No release check yet' : 'No device connected';
+      case CheckRunning():
+        return 'Checking…';
+      case CheckFailed():
+        return 'Could not check for updates';
+      case CheckOk(:final result):
+        final target = result.target;
+        if (target == null) return 'No release available for this board';
+        return result.differsFromDevice
+            ? '${result.installedDescribe}  →  ${target.tag}'
+            : '${result.installedDescribe} - up to date';
     }
-    final target = check.target;
-    if (target == null) return 'No release available for this board';
-    return check.differsFromDevice
-        ? '${check.installedDescribe}  →  ${target.tag}'
-        : '${check.installedDescribe} - up to date';
   }
 
   List<Widget> _buildOverview(
@@ -302,9 +306,11 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     required bool linkUp,
   }) {
     final theme = Theme.of(context);
-    final check = service.check;
+    final state = service.checkState;
+    final check = state is CheckOk ? state.result : null;
     final target = check?.target;
-    final canFlash = linkUp && !simulated && !service.checking;
+    final running = state is CheckRunning;
+    final canFlash = linkUp && !simulated && !running;
     final flashLabel = target == null
         ? 'No release to flash'
         : check!.differsFromDevice
@@ -334,22 +340,21 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
                 ],
                 selected: {service.channel},
                 showSelectedIcon: false,
-                onSelectionChanged: (set) =>
-                    unawaited(service.setChannel(set.first)),
+                onSelectionChanged: running
+                    ? null
+                    : (set) => unawaited(service.setChannel(set.first)),
               ),
               const SizedBox(height: 16),
-              if (service.checking && check != null)
-                const Text('Checking…')
-              else if (service.checkError != null)
+              if (state is CheckFailed)
                 Text(
-                  'Check failed: ${service.checkError}',
+                  'Check failed: ${state.error}',
                   style: TextStyle(color: theme.colorScheme.error),
                 ),
               const SizedBox(height: 8),
               OutlinedButton(
-                onPressed: service.checking || !linkUp
+                onPressed: running || !linkUp
                     ? null
-                    : () => unawaited(service.checkForUpdates(manual: true)),
+                    : () => unawaited(service.checkForUpdates()),
                 child: const Text('Check now'),
               ),
             ],
