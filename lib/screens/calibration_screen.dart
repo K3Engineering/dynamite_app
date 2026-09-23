@@ -58,10 +58,10 @@ class CalibrationScreen extends StatelessWidget {
       children: [
         Expanded(
           child: OutlinedButton.icon(
-            onPressed: () => _runExport(context, () async {
+            onPressed: () => runExportAction(context, () async {
               await Clipboard.setData(ClipboardData(text: report));
               return 'Calibration report copied to clipboard';
-            }),
+            }, errorTitle: 'Report export'),
             icon: const Icon(Icons.copy),
             label: const Text('Copy'),
           ),
@@ -69,7 +69,7 @@ class CalibrationScreen extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: OutlinedButton.icon(
-            onPressed: () => _runExport(context, () {
+            onPressed: () => runExportAction(context, () {
               final artifact = calibrationReportArtifact(
                 report,
                 deviceLabel: label,
@@ -79,7 +79,7 @@ class CalibrationScreen extends StatelessWidget {
                 fileName: artifact.fileName,
                 dialogTitle: 'Download calibration report',
               );
-            }),
+            }, errorTitle: 'Report export'),
             icon: const Icon(Icons.download),
             label: const Text('Download'),
           ),
@@ -88,7 +88,7 @@ class CalibrationScreen extends StatelessWidget {
         Expanded(
           child: OutlinedButton.icon(
             onPressed: fileShareSupportedHere
-                ? () => _runExport(context, () {
+                ? () => runExportAction(context, () {
                     final artifact = calibrationReportArtifact(
                       report,
                       deviceLabel: label,
@@ -100,7 +100,7 @@ class CalibrationScreen extends StatelessWidget {
                       dialogTitle: 'Share calibration report',
                       anchor: _shareAnchor(context),
                     );
-                  })
+                  }, errorTitle: 'Report export')
                 : null,
             icon: const Icon(Icons.share),
             label: const Text('Share'),
@@ -108,32 +108,6 @@ class CalibrationScreen extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  /// Run one export action and surface its outcome as a snackbar; a null
-  /// message means the user cancelled, so nothing shows.
-  Future<void> _runExport(
-    BuildContext context,
-    Future<String?> Function() action,
-  ) async {
-    String? message;
-    Object? error;
-    try {
-      message = await action();
-    } catch (e) {
-      error = e;
-    }
-    if (!context.mounted) return;
-    if (error != null) {
-      showErrorSnackBar(
-        ScaffoldMessenger.of(context),
-        'Report export failed: $error',
-      );
-    } else if (message != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    }
   }
 
   /// Anchor rect for the iPad share popover (the whole screen).

@@ -56,20 +56,14 @@ class _TareSheet extends StatefulWidget {
 }
 
 class _TareSheetState extends State<_TareSheet> {
-  /// Channel whose tare offset is being typed, or null when no edit is
-  /// open. The controller/focus live across the hub's per-packet
-  /// rebuilds; only one edit exists at a time.
-  int? _editingChannel;
-  TextEditingController? _editController;
-  FocusNode? _editFocus;
-  String? _editError;
+  /// The open offset edit, or null when idle. Only one edit exists at a time.
+  _EditSession? _edit;
 
   DataHub get hub => widget.hub;
 
   @override
   void dispose() {
-    _editController?.dispose();
-    _editFocus?.dispose();
+    _edit?.dispose();
     super.dispose();
   }
 
@@ -84,35 +78,32 @@ class _TareSheetState extends State<_TareSheet> {
     // Focus comes from the field's autofocus once it mounts.
     final controller = TextEditingController(text: text)
       ..selection = TextSelection(baseOffset: 0, extentOffset: text.length);
-    final focus = FocusNode();
+    final edit = _EditSession(ch, controller, FocusNode());
     setState(() {
-      _cancelEdit();
-      _editingChannel = ch;
-      _editController = controller;
-      _editFocus = focus;
+      _closeEdit();
+      _edit = edit;
     });
   }
 
   /// Discard the open edit. Called from setState contexts only.
-  void _cancelEdit() {
-    _editController?.dispose();
-    _editFocus?.dispose();
-    _editController = null;
-    _editFocus = null;
-    _editingChannel = null;
-    _editError = null;
+  void _closeEdit() {
+    _edit?.dispose();
+    _edit = null;
   }
 
   void _submitEdit(DisplayUnit unit) {
-    final ch = _editingChannel;
-    if (ch == null) return;
-    final value = double.tryParse(_editController!.text);
+    final edit = _edit;
+    if (edit == null) return;
+    final value = double.tryParse(edit.controller.text);
     if (value == null || !value.isFinite) {
-      setState(() => _editError = 'Enter a number');
+      setState(() => edit.error = 'Enter a number');
       return;
     }
-    hub.setTareOffset(ch, hub.converterFor(ch).rawAtGross(unit, value)!);
-    setState(_cancelEdit);
+    hub.setTareOffset(
+      edit.channel,
+      hub.converterFor(edit.channel).rawAtGross(unit, value)!,
+    );
+    setState(_closeEdit);
   }
 
   @override
@@ -281,11 +272,12 @@ class _TareSheetState extends State<_TareSheet> {
   /// and refuses to open while a sampled tare fills its window — the
   /// coming commit owns the value.
   Widget _tareOffsetCell(int ch, DisplayUnit unit, TextStyle? valueStyle) {
-    if (_editingChannel == ch) {
+    final edit = _edit;
+    if (edit != null && edit.channel == ch) {
       return TextField(
         autofocus: true,
-        controller: _editController,
-        focusNode: _editFocus,
+        controller: edit.controller,
+        focusNode: edit.focus,
         keyboardType: const TextInputType.numberWithOptions(
           signed: true,
           decimal: true,
@@ -294,11 +286,11 @@ class _TareSheetState extends State<_TareSheet> {
         style: valueStyle,
         decoration: InputDecoration(
           isDense: true,
-          errorText: _editError,
+          errorText: edit.error,
           contentPadding: const EdgeInsets.symmetric(vertical: 4),
         ),
         onSubmitted: (_) => _submitEdit(unit),
-        onTapOutside: (_) => setState(_cancelEdit),
+        onTapOutside: (_) => setState(_closeEdit),
       );
     }
     final offset = hub.tareOffset(ch, unit);
@@ -347,5 +339,22 @@ class _TareSheetState extends State<_TareSheet> {
         ),
       ],
     );
+  }
+}
+
+/// One open offset edit: the channel being typed and the field's
+/// controller/focus (kept alive across the hub's per-packet rebuilds), plus
+/// the parse error from the last submit attempt.
+class _EditSession {
+  _EditSession(this.channel, this.controller, this.focus);
+
+  final int channel;
+  final TextEditingController controller;
+  final FocusNode focus;
+  String? error;
+
+  void dispose() {
+    controller.dispose();
+    focus.dispose();
   }
 }

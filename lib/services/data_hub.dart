@@ -211,7 +211,6 @@ class DataHub extends ChangeNotifier
   /// leave the hub "taring" forever. 5x the 1 s window (see [requestTare]);
   /// checked in [commitBatch].
   static const Duration _tareTimeout = Duration(seconds: 5);
-  DateTime _tareDeadline = DateTime.fromMillisecondsSinceEpoch(0);
 
   /// Request a tare (zeros readings using the next second of real samples) for
   /// one [channel] or all. One second at any rate: the downsampler flattens
@@ -219,8 +218,11 @@ class DataHub extends ChangeNotifier
   /// in-progress one; previous offsets stay in effect while the window fills.
   void requestTare({int? channel}) {
     assert(channel == null || (channel >= 0 && channel < kAdcChannelCount));
-    _pendingTare = _PendingTare(_sampleRateHz, channel);
-    _tareDeadline = DateTime.now().add(_tareTimeout);
+    _pendingTare = _PendingTare(
+      _sampleRateHz,
+      channel,
+      DateTime.now().add(_tareTimeout),
+    );
     // Notify so [taring] observers flip on the tap, not the next batch.
     notifyListeners();
   }
@@ -350,7 +352,8 @@ class DataHub extends ChangeNotifier
     }
     // Abandon a tare whose window stopped filling; the pre-tare offsets are
     // still in effect and the user can retry.
-    if (taring && DateTime.now().isAfter(_tareDeadline)) {
+    final pending = _pendingTare;
+    if (pending != null && DateTime.now().isAfter(pending.deadline)) {
       _pendingTare = null;
     }
     lastDataAt = DateTime.now();
@@ -572,11 +575,13 @@ class DataHub extends ChangeNotifier
 }
 
 /// The in-progress tare window: [remaining] counts real frames down to the
-/// commit; [length] is the window size, captured at request time.
+/// commit; [length] is the window size, captured at request time. [deadline]
+/// abandons the window if it stops filling (see [DataHub.commitBatch]).
 class _PendingTare {
-  _PendingTare(this.length, this.channel) : remaining = length;
+  _PendingTare(this.length, this.channel, this.deadline) : remaining = length;
 
   final int length;
   final int? channel;
+  final DateTime deadline;
   int remaining;
 }
