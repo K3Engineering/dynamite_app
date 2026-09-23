@@ -66,15 +66,14 @@ class DevicesTab extends StatelessWidget {
           reconnectHint: bt.reconnectPendingFor(d.deviceId)
               ? 'Waiting after disconnect…'
               : null,
-          failureHint: switch (bt.connectFailureFor(d.deviceId)) {
-            final kind? => connectFailureHint(kind, isWeb: kIsWeb),
-            null => switch (bt.setupFailureFor(d.deviceId)) {
-              final detail? => 'Setup failed: $detail',
-              null => switch (bt.lastDisconnectErrorFor(d.deviceId)) {
-                final err? => 'Disconnected: $err',
-                null => null,
-              },
-            },
+          failureHint: switch (bt.outcomeFor(d.deviceId)) {
+            ConnectRefused(:final kind) => connectFailureHint(
+              kind,
+              isWeb: kIsWeb,
+            ),
+            SetupFailed(:final detail) => 'Setup failed: $detail',
+            Disconnected(:final error) => 'Disconnected: $error',
+            null => null,
           },
           status: status,
           colors: scheme,

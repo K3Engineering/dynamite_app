@@ -18,7 +18,7 @@ class BleDisconnectTimeout extends AppEvent {
 }
 
 /// A connection dropped or failed during post-connect setup. The exact reason
-/// is on the link manager (see `BleLinkManager.setupFailureFor`) for the row;
+/// is on the link manager (see `BleLinkManager.outcomeFor`) for the row;
 /// this event only names the device for a short toast.
 class BleConnectionFailed extends AppEvent {
   const BleConnectionFailed(this.deviceName);

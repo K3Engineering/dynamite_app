@@ -29,6 +29,31 @@ enum ConnectFailureKind {
   timeout,
 }
 
+/// The latest connect result for a device, shown as the row hint. At most one
+/// per device: a connect attempt clears it, and before the next attempt only
+/// one of the three can be recorded.
+sealed class DeviceOutcome {
+  const DeviceOutcome();
+}
+
+final class ConnectRefused extends DeviceOutcome {
+  const ConnectRefused(this.kind);
+
+  final ConnectFailureKind kind;
+}
+
+final class SetupFailed extends DeviceOutcome {
+  const SetupFailed(this.detail);
+
+  final String detail;
+}
+
+final class Disconnected extends DeviceOutcome {
+  const Disconnected(this.error);
+
+  final String error;
+}
+
 /// Packet sizes count malformed packets too.
 class LinkTelemetry {
   int? rssi;
@@ -323,28 +348,13 @@ class BleLinkManager extends ChangeNotifier {
   /// tracking state through it would mean polling.
   Link _link = const NoLink();
 
-  /// Connect failures by device, shown as the row hint. Cleared when a new
-  /// attempt begins or a scan result re-finds the device (a fresh handle).
-  final Map<String, ConnectFailureKind> _connectFailures = {};
+  /// Last connect result by device, shown as the row hint. Cleared when a new
+  /// attempt begins. A [ConnectRefused] also clears when a scan re-finds the
+  /// device (a fresh handle moots it); [SetupFailed]/[Disconnected] describe
+  /// the link and survive a re-find.
+  final Map<String, DeviceOutcome> _outcomes = {};
 
-  ConnectFailureKind? connectFailureFor(String deviceId) =>
-      _connectFailures[deviceId];
-
-  /// Unlike [_connectFailures], not cleared on re-discovery: a connect
-  /// failure's remedy is "rescan", so re-finding the device moots it; a drop
-  /// reason describes a past event and stays true however the device is
-  /// re-found. Both clear on the next connect attempt.
-  final Map<String, String> _lastDisconnectErrors = {};
-
-  String? lastDisconnectErrorFor(String deviceId) =>
-      _lastDisconnectErrors[deviceId];
-
-  /// Post-connect setup failures by device, shown as the row hint. Cleared
-  /// only when a new attempt begins (the failure describes the link, not a
-  /// re-findable handle).
-  final Map<String, String> _setupFailures = {};
-
-  String? setupFailureFor(String deviceId) => _setupFailures[deviceId];
+  DeviceOutcome? outcomeFor(String deviceId) => _outcomes[deviceId];
 
   /// Last proof-of-life per device (ms since epoch): a provably-up GATT link,
   /// or on native the latest advert (see [lastAliveMs]). Simulated links never
@@ -619,7 +629,9 @@ class BleLinkManager extends ChangeNotifier {
       _devices.add(mapped);
     }
     // A re-discovered device is a fresh platform handle.
-    _connectFailures.remove(mapped.deviceId);
+    if (_outcomes[mapped.deviceId] is ConnectRefused) {
+      _outcomes.remove(mapped.deviceId);
+    }
     notifyListeners();
     // Web: the "scan" is Chrome's requestDevice() picker; the one result is
     // the device the user just picked.
@@ -819,7 +831,7 @@ class BleLinkManager extends ChangeNotifier {
     // lands in [_beginLink]'s catch, which finds the link already idle and
     // returns silently.
     if (_link is Connecting) {
-      _connectFailures[deviceId] = ConnectFailureKind.failed;
+      _outcomes[deviceId] = const ConnectRefused(ConnectFailureKind.failed);
       _teardownLink(_link.transport!);
       notifyListeners();
       return;
@@ -833,9 +845,9 @@ class BleLinkManager extends ChangeNotifier {
     if (wasActive) {
       _stampAlive(deviceId);
       if (err != null && err.isNotEmpty) {
-        _lastDisconnectErrors[deviceId] = err;
+        _outcomes[deviceId] = Disconnected(err);
       } else {
-        _lastDisconnectErrors.remove(deviceId);
+        _outcomes.remove(deviceId);
       }
     }
     _teardownLink(link.transport!);
@@ -922,7 +934,7 @@ class BleLinkManager extends ChangeNotifier {
       debugPrint('Post-connect setup failed for $deviceId: $e');
       _stampAlive(deviceId);
       _teardownLink(transport, releasePlatform: true);
-      _setupFailures[deviceId] = '$e';
+      _outcomes[deviceId] = SetupFailed('$e');
       _events.emit(BleConnectionFailed(transport.displayName));
       notifyListeners();
     }
@@ -935,9 +947,7 @@ class BleLinkManager extends ChangeNotifier {
     if (!canConnectTo(deviceId)) {
       return false;
     }
-    _connectFailures.clear();
-    _lastDisconnectErrors.clear();
-    _setupFailures.clear();
+    _outcomes.clear();
     _supersedeSetupPasses();
     return true;
   }
@@ -959,9 +969,11 @@ class BleLinkManager extends ChangeNotifier {
       if (_link is! Connecting || _link.deviceId != transport.deviceId) {
         return;
       }
-      _connectFailures[transport.deviceId] = e is TimeoutException
-          ? ConnectFailureKind.timeout
-          : ConnectFailureKind.failed;
+      _outcomes[transport.deviceId] = ConnectRefused(
+        e is TimeoutException
+            ? ConnectFailureKind.timeout
+            : ConnectFailureKind.failed,
+      );
       _teardownLink(transport, releasePlatform: true);
       notifyListeners();
       rethrow;

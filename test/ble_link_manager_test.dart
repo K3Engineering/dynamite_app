@@ -367,7 +367,10 @@ void main() {
 
       expect(error, isA<ConnectionException>());
       // The row marker is the user-facing channel for the failure (no toast).
-      expect(link.connectFailureFor(deviceId), ConnectFailureKind.failed);
+      expect(
+        (link.outcomeFor(deviceId) as ConnectRefused).kind,
+        ConnectFailureKind.failed,
+      );
       expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
 
@@ -375,7 +378,7 @@ void main() {
       MockBlePlatform.instance.failConnect = false;
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(milliseconds: 100));
-      expect(link.connectFailureFor(deviceId), isNull);
+      expect(link.outcomeFor(deviceId), isNull);
 
       async.elapse(const Duration(seconds: 4));
       expect(link.isStreaming, isTrue);
@@ -399,7 +402,10 @@ void main() {
       async.elapse(const Duration(seconds: 16));
 
       expect(error, isA<TimeoutException>());
-      expect(link.connectFailureFor(deviceId), ConnectFailureKind.timeout);
+      expect(
+        (link.outcomeFor(deviceId) as ConnectRefused).kind,
+        ConnectFailureKind.timeout,
+      );
       expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
 
@@ -431,7 +437,10 @@ void main() {
       async.elapse(const Duration(seconds: 2));
 
       expect(error, isNull);
-      expect(link.connectFailureFor(deviceId), ConnectFailureKind.failed);
+      expect(
+        (link.outcomeFor(deviceId) as ConnectRefused).kind,
+        ConnectFailureKind.failed,
+      );
       // Back to idle (VM tests are non-web, so no reconnect embargo either way) with
       // no notices and no GATT release: the platform reported the link down.
       expect(link.linkState, BtLinkState.idle);
@@ -562,7 +571,7 @@ void main() {
       expect(link.linkState, BtLinkState.idle);
       expect(seen, isEmpty);
       // A cancelled attempt records no per-row failure marker either.
-      expect(link.connectFailureFor(deviceId), isNull);
+      expect(link.outcomeFor(deviceId), isNull);
       // The cancel's disconnect is the only platform teardown; the late
       // failure hit the abandoned-attempt guard and returned silently.
       expect(MockBlePlatform.instance.disconnectCalls, [deviceId]);
@@ -821,7 +830,7 @@ void main() {
       expect(seen, [isA<BleConnectionFailed>()]);
       // The exact reason is recorded for the Devices-tab row (the toast stays
       // generic); a torn-down setup is a disconnect.
-      expect(link.setupFailureFor(deviceId), isNotNull);
+      expect(link.outcomeFor(deviceId), isA<SetupFailed>());
 
       teardownLink(async, link);
     });
@@ -873,7 +882,7 @@ void main() {
       expect((board as InvalidBoardCalibration).detail, contains('bad exc'));
       expect(MockBlePlatform.instance.gattOpLog, contains('adc:sub'));
       // Not a setup failure: the connection succeeded, so no row hint.
-      expect(link.setupFailureFor(deviceId), isNull);
+      expect(link.outcomeFor(deviceId), isNull);
       expect(seen.whereType<BleConnectionFailed>(), isEmpty);
 
       // A repaired device re-reads as a provisioned board.
