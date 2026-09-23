@@ -88,7 +88,7 @@ class ChannelConverter {
   /// difference). Uses the channel's terminal slope so the map is
   /// position-free (the derivative graph's bucket fast path needs that); the
   /// local slope differs from the terminal chord only by the board's
-  /// nonlinearity — tens of ppm, gain being a constant that cancels. Null
+  /// nonlinearity (ppm-level); the gain is a constant that cancels. Null
   /// exactly when [netMap] is.
   double Function(double rawDiff)? diffMap(DisplayUnit unit) {
     final perCount = countQuantum(unit);

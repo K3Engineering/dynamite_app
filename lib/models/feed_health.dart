@@ -49,7 +49,8 @@ abstract interface class FeedHealthSource {
 
 /// Classify the feed from stream measurements (passed rather than the hub to
 /// keep this pure). Null when [streaming] is false. [staleAfter] is the
-/// freshness window (packets normally arrive at 50 Hz).
+/// freshness window: at 50 Hz, 2 s without a packet is never a scheduling
+/// hiccup.
 FeedHealth? deriveFeedHealth({
   required bool streaming,
   required int totalSamples,

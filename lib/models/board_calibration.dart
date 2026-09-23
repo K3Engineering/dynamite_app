@@ -170,9 +170,9 @@ BoardNominals? resolveBoardConstants(
 // Calibration ladder
 // ---------------------------------------------------------------------------
 
-/// Resistors per calibration ladder: a top and a bottom resistor with four
-/// in series between them, in signal order from EXC+ to GND. Taps sit
-/// between them: t1 after the top resistor, t5 before the bottom.
+/// Resistors per calibration ladder: top 10k, four 10R in series, bottom 10k,
+/// in signal order from EXC+ to GND. Taps sit between them: t1 after the top
+/// 10k, t5 before the bottom 10k.
 const int kLadderResistorCount = 6;
 
 /// Differential configurations measured at factory calibration, in storage
@@ -515,7 +515,10 @@ class NominalChannelBoard extends ChannelBoardCalibration {
 ///
 /// Its presence marker is [date] (`cal.date`), written last, so a crash
 /// mid-write leaves data keys without a date. [parseCalGroup] reads that as "no
-/// group"; [BoardCalibration.fromKv] treats orphaned keys as corrupt flash.
+/// group"; [BoardCalibration.fromKv] treats orphaned keys as corrupt flash — the
+/// tool always writes the date, so its absence means an interrupted
+/// recalibration, which must not be ignored while the user expects the new
+/// calibration to be in effect.
 class CalGroup {
   CalGroup({
     required this.date,

@@ -93,8 +93,9 @@ class DataHub extends ChangeNotifier
   int totalSamples = 0;
 
   /// Factory board calibration read at connect time; null until the first
-  /// successful read. Identity-free: it describes the samples the hub holds,
-  /// not the attached device. Cleared when the link drops.
+  /// successful read — never a nominal default, which would let the UI present
+  /// numbers no hardware produced. Identity-free: it describes the samples the
+  /// hub holds, not the attached device. Cleared when the link drops.
   BoardCalibration? get boardCalibration => _boardCalibration;
   BoardCalibration? _boardCalibration;
 

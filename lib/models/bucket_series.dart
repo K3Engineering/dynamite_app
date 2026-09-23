@@ -171,8 +171,8 @@ class EnvelopeSeries {
   ///  * [rawToDisplay] must agree with [sampleAt] outside gaps and be monotone
   ///    nondecreasing, so bucket extremes map exactly to display extremes. It
   ///    need NOT be affine: the bucket mean is off only by the board's
-  ///    nonlinearity (tens of ppm), confined to the average trace and invisible
-  ///    next to the envelope width.
+  ///    nonlinearity (ppm-level, from the board map), confined to the average
+  ///    trace and invisible next to the envelope width.
   EnvelopeSeries.bucketed({
     required this.sampleAt,
     required this.buckets,
@@ -302,7 +302,7 @@ BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
       min: mn,
       max: mx,
       // Assumes rawToDisplay is affine: sum(f(x_i)) == n * f(mean x). The
-      // piecewise board map breaks this by its nonlinearity, tens of ppm.
+      // piecewise board map breaks this by its nonlinearity, ppm-level.
       sum: rawCount * rawToDisplay(rawSum / rawCount),
       count: rawCount,
     ));

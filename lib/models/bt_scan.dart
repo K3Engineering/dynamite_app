@@ -1,7 +1,8 @@
 /// App-level Bluetooth link/scan/adapter types.
 library;
 
-/// Lifecycle of a single device's BLE link.
+/// Lifecycle of a single device's BLE link. Per-device by design, though today
+/// only one link is tracked at a time (see [BleLinkManager]).
 enum BtLinkState {
   /// No connection to this device; it may or may not be in the discovered list.
   idle,
@@ -27,6 +28,8 @@ enum BtLinkState {
   streaming,
 
   /// A `disconnect()` was requested; awaiting the callback or its timeout.
+  /// Connect stays blocked in this state so one can never be issued against a
+  /// half-torn-down link.
   disconnecting,
 }
 

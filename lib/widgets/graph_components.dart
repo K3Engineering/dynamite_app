@@ -126,10 +126,13 @@ final class _ConvertedChannel {
 
   final int channel;
 
+  /// Tare offset in counts; null = untared ([ChannelConverter.tare]).
   final double? tare;
 
+  /// Raw -> display value, net of tare ([ChannelConverter.netMap]).
   final double Function(double raw) netMap;
 
+  /// Raw diff -> display diff, terminal-slope based ([ChannelConverter.diffMap]).
   final double Function(double rawDiff) diffMap;
 
   /// Board sensitivity, used to size the force graph gutter's capacity zone.
@@ -922,7 +925,8 @@ typedef YAxisRange = ({
 });
 
 YAxisRange _computeYRange(double dataMin, double dataMax, DisplayUnit unit) {
-  // Guard the exactly-degenerate span (a no-data derivative fold).
+  // Guard only the exactly-degenerate span (a no-data derivative fold): the
+  // SI-prefix rung keeps tiny-window labels readable, so there's no floor.
   if (dataMax <= dataMin) dataMax = dataMin + 1.0;
 
   // 1/2/5 tick delta aiming for ~5 ticks, at whatever decade the span lands.

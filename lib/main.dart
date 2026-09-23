@@ -44,7 +44,9 @@ void main() async {
   // session-file handles open.
   registerHotRestartCleanup(terminateSessionSinkWorker);
   final appEvents = AppEvents();
-  // Session storage installs lazily; no startup pass needed.
+  // Session storage installs lazily: an interrupted-on-crash recording just
+  // lists as such (no recovery pass), and a store that can't open fails loudly
+  // at the first op that touches it.
   // Prefs are resolved here and injected into their owners, so their loads
   // are synchronous constructor work and can never race a user edit.
   // Overlapped: on web the package info is an uncacheable version.json

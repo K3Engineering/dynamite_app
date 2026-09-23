@@ -308,6 +308,8 @@ typedef InactiveRowVisual = ({
 const double deviceActionButtonWidth = 136;
 
 /// Card width below which the active row moves its buttons onto their own row.
+/// Approximate: the tile's fixed chrome (edge padding, leading + gaps, the gear
+/// and the fixed-width Disconnect) sums to ~260px, leaving ~220px for the name.
 const double _activeRowSingleRowWidth = 480;
 
 /// Map platform/liveness/failure state to the inactive row's visual.
