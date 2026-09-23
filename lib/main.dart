@@ -67,6 +67,7 @@ void main() async {
     backend: () => linkManager.backend,
     connectedDeviceName: () => linkManager.connectedDeviceName,
     prefs: prefs,
+    events: appEvents,
   );
   // Read off the link at delivery time, against the active link.
   linkManager = BleLinkManager(
@@ -91,7 +92,6 @@ void main() async {
   // A link loss ends the rig session; a dirty discard is surfaced.
   RigLinkGuard(
     rig: rigState,
-    events: appEvents,
     linkChanges: linkManager,
     linkUpNow: () => linkManager.isLinkUp,
   );

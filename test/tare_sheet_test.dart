@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/models/display_unit.dart';
+import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/rig_state.dart';
@@ -29,6 +30,7 @@ void main() {
       backend: () => null,
       connectedDeviceName: () => 'Bench unit',
       prefs: prefs,
+      events: AppEvents(),
     );
     await tester.pumpWidget(
       MaterialApp(

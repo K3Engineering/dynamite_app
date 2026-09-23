@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/screens/calibration_screen.dart';
+import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/report_export.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/cal_deviation_plot.dart';
@@ -32,6 +33,7 @@ void main() {
       backend: () => null,
       connectedDeviceName: () => 'Bench unit',
       prefs: await SharedPreferences.getInstance(),
+      events: AppEvents(),
     );
     if (withFlash) {
       rig.onFlashRead(
@@ -202,6 +204,7 @@ END
       backend: () => null,
       connectedDeviceName: () => 'Bench unit',
       prefs: await SharedPreferences.getInstance(),
+      events: AppEvents(),
     );
     if (withFlash) {
       rig.onFlashRead(

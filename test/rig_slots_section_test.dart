@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/widgets/rig_slots_section.dart';
@@ -25,6 +26,7 @@ void main() {
       // The rig's prefs load is synchronous in the constructor, so reading
       // the flash right after construction is fine.
       prefs: await SharedPreferences.getInstance(),
+      events: AppEvents(),
     );
     if (withFlash) {
       rig.onFlashRead(

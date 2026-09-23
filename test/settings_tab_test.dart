@@ -49,6 +49,7 @@ void main() {
       backend: () => link.backend,
       connectedDeviceName: () => link.connectedDeviceName,
       prefs: prefs,
+      events: events,
     );
     // Wire the link's flash read to the hub and rig, as main() does.
     link = BleLinkManager(

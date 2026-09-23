@@ -47,8 +47,9 @@ class RecordingStorageError extends AppEvent {
   final Object error;
 }
 
-/// The link ended with unsaved load cell edits in flight; they were
-/// discarded (unsaved rig edits die with the link — see `RigState`).
+/// Unsaved load cell edits were discarded: the link ended with edits in
+/// flight, or a flash document replaced the one they were seeded from (see
+/// `RigState.onFlashRead`).
 class RigEditsDiscarded extends AppEvent {
   const RigEditsDiscarded();
 }

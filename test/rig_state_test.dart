@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
+import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/link_backend.dart';
 import 'helpers/flash_docs.dart';
 import 'package:dynamite_app/services/rig_state.dart';
@@ -67,11 +68,13 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late _FakeBackend transport;
+  late AppEvents events;
 
   Future<RigState> newRig() async => RigState(
     backend: () => transport,
     connectedDeviceName: () => transport.deviceName,
     prefs: await SharedPreferences.getInstance(),
+    events: events,
   );
 
   DeviceFlash fixture() =>
@@ -86,6 +89,7 @@ void main() {
   setUp(() {
     SharedPreferences.setMockInitialValues({});
     transport = _FakeBackend();
+    events = AppEvents();
   });
 
   group('flash reads', () {
@@ -150,6 +154,37 @@ void main() {
 
       expect(rig.channelCells[0]?.sensitivityMvV, closeTo(1.9985, 1e-12));
     });
+
+    test('a second read mid-connection discards edits seeded from the replaced '
+        'document', () async {
+      final rig = await newRig();
+      rig.onFlashRead('dev1', 'Bench unit', fixture());
+      rig.setSlot(
+        3,
+        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+      );
+      expect(rig.hasPending, isTrue);
+
+      // Dev/test trips the assert; the discard runs first (it is the
+      // release path), so afterwards check the settled state and the event.
+      final discarded = events.stream.firstWhere((e) => e is RigEditsDiscarded);
+      expect(
+        () => rig.onFlashRead(
+          'dev1',
+          'Bench unit',
+          flashFromDoc(recalibratedDoc(), pgaGains: const [1, 1, 1, 1]),
+        ),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(await discarded, isA<RigEditsDiscarded>());
+
+      // The replaced buffer is gone, NOT rebased onto the new document:
+      // the dirty 'New' slot would otherwise be saved to a document it was
+      // never diffed against.
+      expect(rig.hasPending, isFalse);
+      expect(rig.channelTitles[3], 'CH 3');
+      expect(rig.channelCells[0]?.sensitivityMvV, closeTo(1.9985, 1e-12));
+    });
   });
 
   group('pending edits', () {
@@ -206,10 +241,12 @@ void main() {
         LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
       );
 
+      final discarded = events.stream.firstWhere((e) => e is RigEditsDiscarded);
       rig.onLinkDropped();
       expect(rig.hasDeviceDoc, isFalse);
       expect(rig.hasPending, isFalse);
       expect(rig.channelTitles[3], 'CH 3'); // no document: bare channels
+      expect(await discarded, isA<RigEditsDiscarded>());
 
       // The typed-in cell was recorded in history at edit time, so
       // re-entering it after a reconnect is a pick, not a re-type.
@@ -383,6 +420,11 @@ void main() {
         );
         rig.setSlot(3, typed);
         expect(rig.history, hasLength(5));
+
+        // The typed cell is already in history, so the edits can go away:
+        // re-reading while dirty would trip the read-while-dirty path (see
+        // 'a second read mid-connection discards pending edits').
+        rig.revert();
 
         // Re-reads re-stamp every fixture cell with one shared `now`. The
         // tie group must keep its original slot order, deterministically,
