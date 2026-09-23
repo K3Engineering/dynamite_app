@@ -78,9 +78,39 @@ final class StopSessionFailed extends StopSessionResult {
 }
 
 /// The recording lifecycle: exactly one state at a time, and every operation
-/// is refused unless the state matches. [stopping] covers finalization's async
-/// window so a recording can't be half-latched while another begins.
-enum _RecordingState { idle, recording, stopping }
+/// is refused unless the state matches. [_Stopping] covers finalization's
+/// async window so a recording can't be half-latched while another begins.
+/// The session payload exists only in [_Recording], so it can't be read or
+/// left dangling outside that state.
+sealed class _RecordingLifecycle {
+  const _RecordingLifecycle();
+}
+
+final class _Idle extends _RecordingLifecycle {
+  const _Idle();
+}
+
+final class _Recording extends _RecordingLifecycle {
+  const _Recording({
+    required this.writer,
+    required this.name,
+    required this.startedAt,
+  });
+
+  final LiveSessionWriter writer;
+
+  /// Display name, latched at start so [stopSession] can hand it back without
+  /// a store lookup.
+  final String name;
+
+  /// Recording-start wall clock for the live elapsed readout.
+  final DateTime startedAt;
+}
+
+/// Finalization's async window; the payload lives in [stopSession]'s local.
+final class _Stopping extends _RecordingLifecycle {
+  const _Stopping();
+}
 
 /// Owns the recording session lifecycle start to finish.
 ///
@@ -131,24 +161,19 @@ class RecordingController extends ChangeNotifier {
   final void Function() _onSessionBoundary;
   final AppEvents _events;
 
-  _RecordingState _state = _RecordingState.idle;
+  _RecordingLifecycle _lifecycle = const _Idle();
 
-  LiveSessionWriter? _sessionWriter;
-
-  /// The in-progress session's display name, latched at start.
-  String? _sessionName;
-
-  /// Recording-start wall clock; null when not recording.
-  DateTime? _sessionStartTime;
-
-  DateTime? get sessionStartTime => _sessionStartTime;
+  DateTime? get sessionStartTime => switch (_lifecycle) {
+    final _Recording r => r.startedAt,
+    _ => null,
+  };
 
   /// True from a committed start until finalization completes, the stopping
   /// window included.
-  bool get sessionInProgress => _state != _RecordingState.idle;
+  bool get sessionInProgress => _lifecycle is! _Idle;
 
-  void _transitionTo(_RecordingState next) {
-    _state = next;
+  void _set(_RecordingLifecycle next) {
+    _lifecycle = next;
     notifyListeners();
   }
 
@@ -171,7 +196,7 @@ class RecordingController extends ChangeNotifier {
     required DisplayUnit displayUnit,
   }) {
     assert(_streamingNow());
-    if (_state != _RecordingState.idle) return const StartSessionBusy();
+    if (_lifecycle is! _Idle) return const StartSessionBusy();
     if (_dataHub.taring) return const StartSessionTareInProgress();
     if (deriveFeedHealth(
           streaming: _streamingNow(),
@@ -205,17 +230,15 @@ class RecordingController extends ChangeNotifier {
       deviceKvs: _deviceKvsSnapshot(),
       recordedAt: iso8601WithOffset(startedAt),
     );
-    _sessionWriter = SessionStore.instance.startSession(
+    final writer = SessionStore.instance.startSession(
       header,
       sourceRingCapacity: DataHub.maxDataSz,
       // A latched storage failure stops the session the moment it latches, not
       // when a later batch would reveal it.
       onWriteError: (_) => _autoStopOnStorageError(),
     );
-    _sessionName = sessionName;
-    _sessionStartTime = startedAt;
     _onSessionBoundary();
-    _transitionTo(_RecordingState.recording);
+    _set(_Recording(writer: writer, name: sessionName, startedAt: startedAt));
     return const StartSessionOk();
   }
 
@@ -223,7 +246,7 @@ class RecordingController extends ChangeNotifier {
   /// recording state: a failure latching while finalization already drains the
   /// write queue must not start a second stop.
   void _autoStopOnStorageError() {
-    if (_state == _RecordingState.recording) unawaited(stopSession());
+    if (_lifecycle is _Recording) unawaited(stopSession());
   }
 
   /// Default session name from the wall clock, e.g. `2026-07-29 14:05:32`.
@@ -244,16 +267,14 @@ class RecordingController extends ChangeNotifier {
   /// The single place a storage failure is surfaced to the user (as a
   /// [RecordingStorageError] on [AppEvents]).
   Future<StopSessionResult> stopSession() async {
-    if (_state != _RecordingState.recording) {
+    final current = _lifecycle;
+    if (current is! _Recording) {
       return const StopSessionRefused();
     }
-    final writer = _sessionWriter!;
-    final name = _sessionName!;
-    _sessionWriter = null;
-    _sessionName = null;
-    _sessionStartTime = null;
+    final writer = current.writer;
+    final name = current.name;
     _onSessionBoundary();
-    _transitionTo(_RecordingState.stopping);
+    _set(const _Stopping());
 
     // finalizeSession flushes through the writer's serialized queue, draining
     // any in-flight appends first. Its failure is folded into the result, not
@@ -268,7 +289,7 @@ class RecordingController extends ChangeNotifier {
     if (error != null) {
       _events.emit(RecordingStorageError(error));
     }
-    _transitionTo(_RecordingState.idle);
+    _set(const _Idle());
     final sessionId = writer.sessionId;
     if (error != null) {
       return StopSessionFailed(error, name, sessionId: sessionId);
@@ -287,12 +308,14 @@ class RecordingController extends ChangeNotifier {
   };
 
   void _onBatchAppended(HubBatchAppended batch) {
-    final writer = _sessionWriter;
-    if (writer == null) {
+    final lifecycle = _lifecycle;
+    if (lifecycle is! _Recording) {
       return;
     }
     unawaited(
-      writer.appendData(_dataHub.snapshotRange(batch.startIdx, batch.count)),
+      lifecycle.writer.appendData(
+        _dataHub.snapshotRange(batch.startIdx, batch.count),
+      ),
     );
   }
 
@@ -300,7 +323,7 @@ class RecordingController extends ChangeNotifier {
   /// finalized. Stream resets on connection transitions are
   /// `StreamResetCoordinator`'s job.
   void _onStreamingChanged() {
-    if (_state == _RecordingState.recording && !_streamingNow()) {
+    if (_lifecycle is _Recording && !_streamingNow()) {
       unawaited(stopSession());
     }
   }
