@@ -29,8 +29,7 @@ import 'firmware_update_screen.dart';
 class SettingsTab extends StatefulWidget {
   const SettingsTab({super.key, required this.onGoToDevices});
 
-  /// The "Connect" action shown while no device is linked: jumps to the
-  /// Devices tab. Supplied by the app shell, which owns the tab index.
+  /// The "Connect" action shown while no device is linked.
   final VoidCallback onGoToDevices;
 
   @override
@@ -50,22 +49,16 @@ class _SettingsTabState extends State<SettingsTab> {
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
     final appMeta = context.read<AppMeta>();
-    // The link lifecycle drives which device section renders: idle is "no
-    // device", streaming is the fully-read device, and every state between
-    // (connecting, setting up, disconnecting) is a transition.
     final linkState = context.select<BleLinkManager, BtLinkState>(
       (l) => l.linkState,
     );
-    // Narrow selects: the link manager notifies on every RSSI poll; this
-    // section only rebuilds on identity / connection-stat changes.
+    // Narrow selects: the link manager notifies per RSSI poll.
     final deviceId = context.select<BleLinkManager, String>(
       (l) => l.connectedDeviceId,
     );
     final storedName = context.select<BleLinkManager, String?>(
       (l) => l.connectedStoredDeviceName,
     );
-    // The connect-time DIS identity; non-null once the link is streaming
-    // (a failed read fails the connection instead).
     final deviceInfo = context.select<BleLinkManager, DeviceInfo?>(
       (l) => l.connectedDeviceInfo,
     );
@@ -78,16 +71,10 @@ class _SettingsTabState extends State<SettingsTab> {
     final maxPacketBytes = context.select<BleLinkManager, int?>(
       (l) => l.maxAdcPacketBytes,
     );
-    // The board-calibration row's one-line state. Non-null while the row is
-    // mounted: the flash document is delivered during post-connect setup,
-    // before the link reaches streaming.
     final boardCal = context.select<RigState, BoardCalibration?>(
       (r) => r.boardCalibration,
     );
     const bool dart2wasm = bool.fromEnvironment('dart.tool.dart2wasm');
-    // Unit availability is derived from the hub (the samples-owner), not
-    // RigState's per-device document copy: it gates what the connected
-    // board can convert right now.
     final availability = context.select<DataHub, UnitAvailability>(
       (h) => h.unitAvailability,
     );
@@ -142,7 +129,6 @@ class _SettingsTabState extends State<SettingsTab> {
               ),
               const SizedBox(height: 16),
 
-              // Wakelock
               SwitchListTile(
                 title: const Text('Keep screen awake'),
                 subtitle: const Text(
@@ -153,7 +139,6 @@ class _SettingsTabState extends State<SettingsTab> {
                 contentPadding: EdgeInsets.zero,
               ),
 
-              // Debug values
               SwitchListTile(
                 title: const Text('Show debug values in Live view'),
                 subtitle: const Text(
@@ -186,11 +171,8 @@ class _SettingsTabState extends State<SettingsTab> {
                   ),
                 )
               else if (linkState != BtLinkState.streaming)
-                // A link is coming up or going down: its device-owned facts
-                // (identity, name, flash document) are not readable yet, so
-                // the settings UI must not mount against placeholders. The
-                // stage wording is btLinkStateLabel's, shared with the Live
-                // and Devices tabs.
+                // A link in transition: device-owned facts aren't readable
+                // yet, so don't mount against placeholders.
                 Card(
                   child: ListTile(
                     leading: Icon(
@@ -204,9 +186,6 @@ class _SettingsTabState extends State<SettingsTab> {
                   ),
                 )
               else ...[
-                // Device identity, read from the Device Information service at
-                // connect time. Read-only; the serial renders as a dash on
-                // web, where it is blocklisted.
                 Text(
                   'Device info',
                   style: Theme.of(context).textTheme.titleSmall,
@@ -227,18 +206,14 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
                 const SizedBox(height: 16),
 
-                // The Settings-namespace device name. Keyed by device and
-                // stored value so the editor resets on connect/disconnect and
-                // after a save.
+                // Keyed by device and stored value so the editor resets on
+                // connect and save.
                 _DeviceNameEditor(
                   key: ValueKey('$deviceId/${storedName ?? ''}'),
                   storedName: storedName,
                 ),
                 const SizedBox(height: 16),
 
-                // The connected device's load cell slots (the rig). Read from
-                // the device at connect time; edits go back via "Save to
-                // device".
                 Text(
                   'Load cells',
                   style: Theme.of(context).textTheme.titleSmall,
@@ -247,9 +222,7 @@ class _SettingsTabState extends State<SettingsTab> {
                 RigSlotsSection(rig: context.read<RigState>()),
                 const SizedBox(height: 16),
 
-                // Tappable whenever a board object is held — including an
-                // invalid one, whose calibration page carries the parse
-                // reason. Only a dropped link (null) has nothing to open.
+                // Tappable whenever a board object is held, invalid included.
                 Card(
                   child: ListTile(
                     title: const Text('Board calibration'),
@@ -269,8 +242,6 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
                 const SizedBox(height: 16),
 
-                // OTA entry point: the check itself lives with the service
-                // (auto-checked once per link); the card just summarizes.
                 _FirmwareCard(onGoToDevices: widget.onGoToDevices),
                 const SizedBox(height: 16),
               ],
@@ -307,13 +278,11 @@ class _SettingsTabState extends State<SettingsTab> {
   }
 }
 
-/// The OTA firmware card: a one-line status, pushing the update screen that
-/// shows the actual versions.
+/// The OTA firmware card.
 class _FirmwareCard extends StatelessWidget {
   const _FirmwareCard({required this.onGoToDevices});
 
-  /// Passed through to the update screen's "Done": after a successful flash
-  /// the device reboots, so the user lands on the device list.
+  /// Passed through to the update screen's "Done".
   final VoidCallback onGoToDevices;
 
   @override
@@ -347,10 +316,8 @@ class _FirmwareCard extends StatelessWidget {
   }
 }
 
-/// The device-name editor: the Settings-namespace name with an explicit
-/// save (device edits are deliberate, not fire-on-change, and failures
-/// surface as snackbars). Empty input clears the stored name — the device
-/// reverts to its factory name.
+/// The device-name editor: an explicit save (not fire-on-change). Empty input
+/// reverts the device to its factory name.
 class _DeviceNameEditor extends StatefulWidget {
   const _DeviceNameEditor({super.key, required this.storedName});
 
@@ -420,7 +387,6 @@ class _DeviceNameEditorState extends State<_DeviceNameEditor> {
                 : null,
           ),
         ),
-        // Same never-moving layout as the rig save bar.
         Visibility(
           visible: dirty,
           maintainSize: true,
@@ -452,8 +418,7 @@ class _DeviceNameEditorState extends State<_DeviceNameEditor> {
   }
 }
 
-/// One row of the display-units picker: a label above a segmented button
-/// covering one unit family (force or electrical).
+/// One unit family's row in the display-units picker.
 class _UnitGroup extends StatelessWidget {
   const _UnitGroup({
     required this.label,
@@ -465,8 +430,7 @@ class _UnitGroup extends StatelessWidget {
   final String label;
   final List<DisplayUnit> units;
 
-  /// The unit the instrument draws (the effective preference); lives in one
-  /// of the two groups, the other shows an empty selection.
+  /// The effective unit; the other group shows an empty selection.
   final DisplayUnit selected;
 
   /// The units the board/rig can convert right now.
@@ -491,8 +455,6 @@ class _UnitGroup extends StatelessWidget {
           ],
           selected: {if (units.contains(selected)) selected},
           emptySelectionAllowed: true,
-          // The default selected checkmark steals width from the labels
-          // and makes the segments wrap on narrow (mobile) screens.
           showSelectedIcon: false,
           onSelectionChanged: (set) {
             if (set.isEmpty) return;

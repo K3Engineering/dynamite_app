@@ -8,21 +8,16 @@ import 'device_profile.dart';
 /// suffix for values expressed in the rung unit.
 typedef AxisRung = ({double factor, String symbol});
 
-/// The unit set a data source can convert right now: whether the board's
-/// resolved constants exist (electrical and force units convert) and whether
-/// any channel carries a load cell (force units convert). Derived, never
-/// stored — the saved preference re-applies the moment availability returns,
-/// and there is no secondary state to sync.
+/// Whether the board's resolved constants exist and any channel carries a load
+/// cell — i.e. which units a data source can convert right now.
 typedef UnitAvailability = ({
   bool boardHasNominals,
   bool anyChannelHasLoadCell,
 });
 
-/// Resolve the unit availability for the calibration set behind
-/// [calibrationFor]. Board data resolves all-or-nothing per board (see
-/// `BoardCalibration`), so channel 0 stands in for the board. Channel
-/// visibility is deliberately not an input: hiding the only cell-bearing
-/// channel must not change what the instrument measures in.
+/// Resolve availability for the calibration set behind [calibrationFor]. Board
+/// data is all-or-nothing per board, so channel 0 stands in for it. Channel
+/// visibility is not an input.
 UnitAvailability resolveUnitAvailability(
   ChannelCalibration Function(int channel) calibrationFor,
 ) => (
@@ -33,12 +28,8 @@ UnitAvailability resolveUnitAvailability(
   ].isNotEmpty,
 );
 
-/// Supported force and electrical display units: presentation metadata
-/// (symbol, axis ladder, force factor, formatting). Conversion itself is
-/// calibration-side — see `ChannelConverter`, which binds a channel's
-/// [ChannelCalibration] to its tare offset. Force units are unavailable
-/// for channels without an assigned load cell; the UI shows '—' there.
-/// Without board constants only raw converts.
+/// Supported force and electrical display units: presentation metadata only;
+/// conversion is calibration-side (see `ChannelConverter`).
 enum DisplayUnit {
   kN(
     'kN',
@@ -111,19 +102,13 @@ enum DisplayUnit {
   /// units, which convert through the board calibration alone.
   final double? kgfFactor;
 
-  /// SI-prefix ladder for graph axis labels, coarsest-first. Only the rungs
-  /// a window can plausibly need: descending toward the noise floor, plus
-  /// the audience's named larger units (tf, kN). Magnitudes beyond the
-  /// coarsest rung just grow digits ("5000 kgf"); magnitudes below the
-  /// finest clamp to it.
+  /// SI-prefix ladder for axis labels, coarsest-first (the rungs a window can
+  /// plausibly need). Magnitudes beyond the coarsest just grow digits; below
+  /// the finest clamp to it.
   final List<AxisRung> axisLadder;
 
-  /// The axis-label rung for a window whose largest label magnitude is
-  /// [maxMagnitude] in this unit: the coarsest ladder rung keeping scaled
-  /// magnitudes >= 1, so tick labels stay in a 1..1000 band. Sub-rung
-  /// magnitudes (and zero) fall through to the finest rung. Axis labels are
-  /// drawn per frame (never baked into segment textures), so a rung flip as
-  /// the window breathes costs a relabel only.
+  /// The coarsest rung keeping scaled magnitudes >= 1, so labels stay in a
+  /// 1..1000 band; sub-rung magnitudes and zero fall to the finest rung.
   AxisRung axisRung(double maxMagnitude) {
     for (final rung in axisLadder) {
       if (maxMagnitude / rung.factor >= 1) return rung;
@@ -131,12 +116,8 @@ enum DisplayUnit {
     return axisLadder.last;
   }
 
-  /// Decimals for axis tick labels with tick step [tickStep] (already in
-  /// rung units): exactly enough digits to resolve the 1/2/5 x 10^k step
-  /// (ticks are integer multiples of the step, so its least significant
-  /// digit is all they ever print). The nudge keeps an exact power-of-ten
-  /// step from gaining a spurious decimal to floating-point error in the
-  /// log.
+  /// Decimals needed to resolve the 1/2/5 x 10^k tick step [tickStep] (in rung
+  /// units); the nudge absorbs floating-point error in the log.
   static int axisDecimalsFor(double tickStep) =>
       math.max(0, -(math.log(tickStep) / math.ln10 + 1e-9).floor());
 
@@ -151,23 +132,19 @@ enum DisplayUnit {
     orElse: () => fallback,
   );
 
-  /// Force units need an assigned load cell; electrical units only need the
-  /// board calibration. Drives the Settings picker's grouping.
+  /// True for the force units (which fold in the load cell).
   bool get isForce => kgfFactor != null;
 
-  /// Whether this unit can convert under [availability]: raw always can;
-  /// electrical units need board constants; force units also need a load
-  /// cell on some channel.
+  /// Raw always; electrical units need board constants; force units also need
+  /// a load cell on some channel.
   bool isAvailable(UnitAvailability availability) {
     if (this == DisplayUnit.raw) return true;
     if (!availability.boardHasNominals) return false;
     return !isForce || availability.anyChannelHasLoadCell;
   }
 
-  /// The unit the instrument actually draws under [availability]: this unit
-  /// when available, else the first available rung down the ladder. The
-  /// preference is not written; the saved unit re-applies as soon as it is
-  /// available again.
+  /// This unit when available under [availability], else the first available
+  /// fallback. The saved preference is not written.
   DisplayUnit effective(UnitAvailability availability) => [
     this,
     DisplayUnit.mVv,
@@ -187,10 +164,9 @@ enum DisplayUnit {
     return suffix.isEmpty ? '$sign$numStr' : '$sign$numStr $suffix';
   }
 
-  /// Format a [value] (already in this unit) with an explicit sign, without
-  /// the unit suffix.
+  /// Like [format], without the unit suffix.
   String formatValueOnly(double value) => _formatValue(value, '');
 
-  /// Format a value (already in this unit) for display.
+  /// Format [value] (already in this unit) with the unit symbol.
   String format(double value) => _formatValue(value, symbol);
 }

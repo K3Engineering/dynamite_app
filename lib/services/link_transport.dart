@@ -13,12 +13,10 @@ import 'link_backend.dart';
 import 'ota_client.dart';
 
 /// The platform-facing half of one link: everything [BleLinkManager] drives
-/// during connect, post-connect setup, and teardown — uniform across a real
-/// BLE link ([BleLinkTransport]) and the simulated demo device
-/// (`DemoDevice`). The manager's state machine never branches on which kind of
-/// link it is: behavioural differences (RSSI, lifetime attestation, platform
-/// release) are declared here as [isSimulated], read at the few points where
-/// they genuinely differ.
+/// during connect, post-connect setup, and teardown — one shape for a real BLE
+/// link ([BleLinkTransport]) and the simulated demo device (`DemoDevice`). The
+/// manager never branches on which kind: the differences (RSSI, lifetime
+/// attestation, platform release) are declared as [isSimulated].
 abstract interface class LinkTransport {
   /// The platform device id (a synthetic constant for the demo).
   String get deviceId;
@@ -26,9 +24,9 @@ abstract interface class LinkTransport {
   /// The advertised/human name, before any stored name lands.
   String get displayName;
 
-  /// False only for the simulated demo device: it has no radio, so it attests
-  /// no lifetime ("last seen" proves nothing), has no RSSI, needs no
-  /// platform-level GATT release, and (on web) no reconnect-settle embargo.
+  /// False only for the simulated demo device (no radio): it attests no
+  /// lifetime, has no RSSI, needs no platform-level GATT release, and (on web)
+  /// no reconnect-settle embargo.
   bool get isSimulated;
 
   /// Bring the platform link up. Completes once the GATT link is usable;
@@ -72,16 +70,15 @@ abstract interface class LinkTransport {
   Future<int> readRssi();
 
   /// Route one OTA control notification to the live flash session's client.
-  /// Notifications only arrive during [runOta]; a frame delivered outside a
-  /// session is dropped like any other unexpected characteristic.
+  /// Frames only arrive during [runOta]; anything else drops like any
+  /// unexpected characteristic.
   void handleOtaFrame(Uint8List data);
 
   /// Run [body] as an OTA flash session: subscribe to the control
-  /// characteristic, hand [body] a wired [OtaClient], then unwind — drop the
-  /// frame route, abort the client, drop the subscription. The ADC feed stays
-  /// paused for the whole body (firmware rejects OTA writes while the
-  /// streaming subscription holds the device lock). Throws on a transport
-  /// with no OTA service (the demo).
+  /// characteristic, hand [body] a wired [OtaClient], then unwind. The ADC feed
+  /// stays paused throughout (firmware rejects OTA writes while the streaming
+  /// subscription holds the device lock). Throws on a transport with no OTA
+  /// service (the demo).
   Future<T> runOta<T>(Future<T> Function(OtaClient client) body);
 
   /// Provide the sink the simulated feed pushes packets into. GATT transports

@@ -39,8 +39,7 @@ import '../utils/format.dart';
 class LiveTab extends StatefulWidget {
   const LiveTab({super.key, required this.onGoToDevices});
 
-  /// Jump to the Devices tab (the idle prompt's "Connect a device" action).
-  /// Supplied by the app shell, which owns the tab index.
+  /// The idle prompt's "Connect a device" action; the shell owns the tab index.
   final VoidCallback onGoToDevices;
 
   @override
@@ -48,24 +47,21 @@ class LiveTab extends StatefulWidget {
 }
 
 class _LiveTabState extends State<LiveTab> {
-  // Live window floor: 20 s in samples at the 1 kHz the device boots at (a
-  // UI anchor, like the hub's ring capacity — not read from the device).
+  // Live window floor: 20 s at 1 kHz (a UI anchor, not read from the device).
   final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * 1000);
 
-  /// dF/dt row + derivative graph visibility. A notifier (not setState) so
-  /// toggling rebuilds only the stats/graph/toggles cluster, not the tab.
+  /// dF/dt row + derivative graph visibility; a notifier so toggling doesn't
+  /// rebuild the tab.
   final ValueNotifier<bool> _showDerivative = ValueNotifier(false);
 
-  /// App-lifetime hub, captured (identity-guarded) in
-  /// [didChangeDependencies] for listener registration only.
+  /// App-lifetime hub, captured for listener registration only.
   DataHub? _hub;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // read (not watch): the hub notifies on every decoded packet, which must
-    // NOT retrigger didChangeDependencies/build. The hub is an app-lifetime
-    // singleton, so the identity check below only fires once.
+    // read (not watch): the hub notifies per packet, which must not rebuild
+    // this. App-lifetime singleton, so the identity check fires once.
     final hub = context.read<DataHub>();
     if (_hub != hub) {
       _hub?.removeEventListener(_onHubEvent);
@@ -74,11 +70,8 @@ class _LiveTabState extends State<LiveTab> {
     }
   }
 
-  /// A hub reset (a new device stream, see `StreamResetCoordinator`) means the
-  /// previous trace is gone: drop any stale pan/zoom window and follow the
-  /// fresh live edge. Without this, a user-panned (non-live) window survives
-  /// the disconnect and [GraphController.effectiveRange] would clamp the
-  /// stale window against a now-empty buffer (inverted clamp limits -> throw).
+  /// A hub reset means the previous trace is gone: reset the viewport so a
+  /// stale pan/zoom window can't be clamped against an empty buffer.
   void _onHubEvent(HubEvent event) {
     if (event is HubCleared) _graphCtrl.reset();
   }
@@ -92,8 +85,7 @@ class _LiveTabState extends State<LiveTab> {
   }
 
   void _onTare() {
-    // A session freezes its tares at record start, so re-zeroing mid-recording
-    // would desync the live display from the export. Refuse loudly.
+    // A session freezes tares at record start; refuse re-zeroing mid-recording.
     if (context.read<RecordingController>().sessionInProgress) {
       showErrorSnackBar(
         ScaffoldMessenger.of(context),
@@ -113,9 +105,8 @@ class _LiveTabState extends State<LiveTab> {
       if (!mounted) return;
 
       switch (result) {
-        // A storage error already emitted a RecordingStorageError (surfaced
-        // by the shell), and recording nothing saves nothing: only announce a
-        // cleanly saved session.
+        // Only a cleanly saved session is announced; errors surface via the
+        // shell.
         case StopSessionSaved(:final sessionId, :final name):
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -133,27 +124,22 @@ class _LiveTabState extends State<LiveTab> {
         case StopSessionNothingRecorded() ||
             StopSessionFailed() ||
             StopSessionRefused():
-          // Refused is unreachable here: the toggle only calls stop while
-          // sessionInProgress. Nothing to announce.
+          // Refused is unreachable here (the toggle only stops while in
+          // progress).
           break;
       }
     } else {
       final settings = context.read<AppSettings>();
       final hub = context.read<DataHub>();
       final result = recording.startSession(
-        // Row titles are the rig's cell names (or 'CH n'), snapshotted into
-        // the session at record time.
         channelLabels: context.read<RigState>().channelTitles,
         visibleChannels: settings.activeChannels,
-        // Frozen as the CSV export's default converted unit — the unit
-        // the instrument is actually drawing, not a disabled preference.
+        // The unit the instrument is drawing, as the export's default.
         displayUnit: settings.displayUnit.effective(hub.unitAvailability),
       );
 
       switch (result) {
         case StartSessionOk() || StartSessionBusy():
-          // Recording (or another lifecycle op is in flight, which the
-          // button state prevents). No announcement on start.
           break;
         case StartSessionTareInProgress():
           showErrorSnackBar(
@@ -180,19 +166,14 @@ class _LiveTabState extends State<LiveTab> {
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<AppSettings>();
-    // Availability changes only on calibration edges (board read, rig-slot
-    // edits), so this select rebuilds the tab there, not per packet. The
-    // effective unit is resolved once here and passed down; child widgets
-    // consume it rather than re-resolving.
+    // Availability changes only on calibration edges, so this select is cheap.
     final availability = context.select<DataHub, UnitAvailability>(
       (h) => h.unitAvailability,
     );
     final unit = settings.displayUnit.effective(availability);
-    // Rebind the graph's unit-bound display maps on tare edges: they bake
-    // the offsets in at bind time. The version itself is unused.
+    // Rebind on tare edges: the display maps bake offsets in at bind time.
     context.select<DataHub, int>((h) => h.tareVersion);
-    // Narrow selects: the link manager notifies on every RSSI poll — only
-    // link-state transitions and device-name changes may rebuild this tab.
+    // Narrow selects: the link manager notifies per RSSI poll.
     final linkState = context.select<BleLinkManager, BtLinkState>(
       (l) => l.linkState,
     );
@@ -201,14 +182,9 @@ class _LiveTabState extends State<LiveTab> {
       (l) => l.connectedDeviceName,
     );
     final recording = context.watch<RecordingController>();
-    // RigState notifies only on flash reads and slot edits (never per
-    // packet), so watching it here is cheap.
     final rig = context.watch<RigState>();
-    // read (not watch): rebuilding this whole tab per packet would be a
-    // lot of rebuilds — LiveStats/graph subscribe to the hub themselves.
+    // read (not watch): LiveStats/graph subscribe to the hub themselves.
     final hub = context.read<DataHub>();
-    // A board whose factory data failed a strict parse still streams raw
-    // counts; the banner names the reason (see `InvalidBoardCalibration`).
     final invalidBoardDetail = context.select<DataHub, String?>(
       (h) => switch (h.boardCalibration) {
         InvalidBoardCalibration(:final detail) => detail,
@@ -216,9 +192,6 @@ class _LiveTabState extends State<LiveTab> {
       },
     );
 
-    // The feed-health classification (banner, stats graying) comes from the
-    // shared FeedHealthTracker: one derivation owner for this tab and the
-    // Devices tab's row chip.
     final healthListenable = context.read<FeedHealthTracker>().health;
     return SafeArea(
       child: Column(
@@ -314,21 +287,18 @@ class _LiveTabState extends State<LiveTab> {
 // LiveStatusBar
 // ---------------------------------------------------------------------------
 
-/// A pure status readout of the link state: no actions (the prompt below
-/// owns the "Connect a device" CTA, and the Devices tab owns transitions in
-/// flight).
+/// A pure status readout of the link state.
 class LiveStatusBar extends StatelessWidget {
   final BtLinkState linkState;
   final String connectedDeviceName;
 
-  /// The stream's sample rate for the Hz readout next to the RSSI indicator.
+  /// The stream's sample rate.
   final int sampleRateHz;
 
-  /// The measured feed-health classification (see [deriveFeedHealth]); null
-  /// (not streaming) presents as normal.
+  /// The feed-health classification; null (not streaming) presents as normal.
   final FeedHealth? health;
 
-  /// Whether a recording session is in progress (a red ● in the bar).
+  /// Whether a recording session is in progress.
   final bool recording;
 
   const LiveStatusBar({
@@ -368,8 +338,6 @@ class LiveStatusBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     if (linkState != BtLinkState.streaming) {
-      // One line for both idle and in-flight states; the in-flight stage
-      // wording comes from btLinkStateLabel, shared with the Devices tab.
       return Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -473,10 +441,8 @@ class LiveStatusBar extends StatelessWidget {
 // _ConnectedRssiIndicator
 // ---------------------------------------------------------------------------
 
-/// The connected device's live signal strength in the status bar, sitting
-/// left of the sample-rate label. A narrow select on
-/// [BleLinkManager.connectedRssi] so the poll's notify rebuilds only this
-/// indicator.
+/// The connected device's live signal strength; a narrow select so RSSI polls
+/// rebuild only this indicator.
 class _ConnectedRssiIndicator extends StatelessWidget {
   const _ConnectedRssiIndicator();
 
@@ -508,19 +474,15 @@ class LiveStats extends StatelessWidget {
   final RigState rig;
   final DataHub hub;
 
-  /// The graph viewport: the Peak row reports the max over this window.
-  /// Merged into the rebuild listenable — when the user parks a historical
-  /// window, no packets arrive, so only [ctrl] drives the rebuild.
+  /// The graph viewport; the Peak row reports the max over this window.
   final GraphController ctrl;
 
-  /// The unit the instrument draws in, already resolved against the hub's
-  /// availability by [LiveTab].
+  /// The unit the instrument draws in, resolved by [LiveTab].
   final DisplayUnit unit;
   final bool showDerivative;
 
-  /// The feed-health classification (see [deriveFeedHealth]). When nothing
-  /// decodable is arriving (stream stopped/blocked/silent), values gray out
-  /// like a gap: the newest "reading" is just the last one seen.
+  /// The feed-health classification; when nothing decodable arrives, values
+  /// gray out like a gap.
   final ValueListenable<FeedHealth?> healthListenable;
 
   const LiveStats({
@@ -541,10 +503,8 @@ class LiveStats extends StatelessWidget {
       builder: (context, health, _) => ListenableBuilder(
         listenable: Listenable.merge([hub, ctrl]),
         builder: (context, _) {
-          // A force view shows '—' for an active channel with no cell
-          // assigned; point at the fix once. This covers the case where the
-          // only cell-bearing channel is hidden: the view stays in force
-          // (availability ignores visibility) and every visible row reads '—'.
+          // A force view shows '—' for an active channel with no cell; point at
+          // the fix once.
           final anyUnassigned =
               unit.isForce &&
               [
@@ -554,9 +514,7 @@ class LiveStats extends StatelessWidget {
                     i,
               ].isNotEmpty;
 
-          // During a live gap (dropped packets) the hub reports held values;
-          // gray them out so they read as stale rather than fresh readings.
-          // Same when nothing decodable is arriving at all.
+          // A live gap or no data flowing grays values out as stale.
           final stale = hub.liveEdgeIsGap || (health?.noDataFlowing ?? false);
 
           final hasData = hub.totalSamples > 0;
@@ -565,7 +523,6 @@ class LiveStats extends StatelessWidget {
               hasData && ChannelLimits.isClipped(hub.currentRawFor(i)),
           ];
 
-          // The Peak row's window = the graph's viewport.
           final (viewStart, viewEnd) = ctrl.effectiveRange(
             hub.totalSamples,
             hub.oldestSample,
@@ -607,12 +564,9 @@ class LiveStats extends StatelessWidget {
                   if (settings.showDebugLiveValues) ...[
                     ChannelStatsRow(
                       label: 'AC RMS (4 s)',
-                      // Sigma about the trailing 4-second window's own mean,
-                      // in raw space; the sigma maps to display units through
-                      // the diff map (offsets cancel, so a tare is invisible
-                      // to this row). A real load step inside the window
-                      // reads as noise — this is a wiggle meter, not a
-                      // calibrated noise spec.
+                      // Sigma about the trailing 4-second mean, in raw space,
+                      // through the diff map. A real load step in the window
+                      // reads as noise: a wiggle meter, not a spec.
                       values: [
                         for (int i = 0; i < kAdcChannelCount; i++)
                           switch (hub.windowedStdDev(
@@ -649,10 +603,7 @@ class LiveStats extends StatelessWidget {
                     ),
                   ),
                 ),
-              // The raw-only verdict: converted units show '—' above; say
-              // why, once, in the same style as the load-cell hint. A null
-              // board never occurs while streaming, so `_` covers it and the
-              // valid board alike.
+              // Say why converted units show '—', once.
               if (switch (hub.boardCalibration) {
                     UnprovisionedBoardCalibration() =>
                       'no board data — unit not provisioned',
@@ -681,13 +632,12 @@ class LiveStats extends StatelessWidget {
 // BoardFaultBanner
 // ---------------------------------------------------------------------------
 
-/// The red banner shown while a connected board's factory calibration is
-/// unreadable: names the parser's reason and tells the user what to do. The
-/// device still streams raw counts underneath.
+/// Banner for an unreadable board calibration; the device streams raw counts
+/// underneath.
 class BoardFaultBanner extends StatelessWidget {
   const BoardFaultBanner({super.key, required this.detail});
 
-  /// The parser's reason (see `InvalidBoardCalibration.detail`).
+  /// The parser's reason.
   final String detail;
 
   @override
@@ -719,8 +669,6 @@ class BoardFaultBanner extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class DisconnectedPrompt extends StatelessWidget {
-  // Only ever shown while not streaming (the tab shows the live content
-  // instead) — a streaming state here would render "Connecting to …".
   const DisconnectedPrompt({
     super.key,
     required this.linkState,
@@ -731,13 +679,11 @@ class DisconnectedPrompt extends StatelessWidget {
   final BtLinkState linkState;
   final String deviceName;
 
-  /// "Connect a device" action (idle only): jumps to the Devices tab.
+  /// "Connect a device" action (idle only).
   final VoidCallback onConnect;
 
   @override
   Widget build(BuildContext context) {
-    // A link transition is in flight; only the Devices tab controls it, so
-    // no action is offered here.
     if (linkState != BtLinkState.idle) {
       return EmptyPlaceholder(
         icon: Icons.bluetooth_searching,
@@ -799,8 +745,6 @@ class ViewToggles extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class ActionButtons extends StatelessWidget {
-  // Split-button seam: the stadium's pill curve (radius = half the button
-  // height) survives only on the outer corners; the seam is near-square.
   static const _splitLeft = RoundedRectangleBorder(
     borderRadius: BorderRadius.horizontal(
       left: Radius.circular(20),
@@ -816,15 +760,14 @@ class ActionButtons extends StatelessWidget {
 
   final bool isRecording;
 
-  /// The in-progress recording's start instant, for the STOP elapsed readout;
-  /// null renders a plain STOP.
+  /// The recording's start instant for the STOP readout; null renders plain
+  /// STOP.
   final DateTime? sessionStartTime;
 
   final VoidCallback onToggleRecord;
   final VoidCallback onTare;
 
-  /// Opens the per-channel tare sheet; disabled alongside TARE while
-  /// recording (same reason — a session's tares are frozen at record start).
+  /// Opens the per-channel tare sheet; disabled while recording like TARE.
   final VoidCallback onTareSettings;
 
   const ActionButtons({
@@ -838,8 +781,6 @@ class ActionButtons extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Narrow select: rebuilds this row only on taring edges — the hub's
-    // per-packet notifies re-run the selector without dirtying the widget.
     final taring = context.select<DataHub, bool>((h) => h.taring);
     final startTime = sessionStartTime;
     return Padding(
@@ -888,9 +829,8 @@ class ActionButtons extends StatelessWidget {
   }
 }
 
-/// The STOP button's live `STOP mm:ss` label. Self-contained: a 1 s ticker
-/// drives a rebuild only when the whole second changes, so the button row
-/// never rebuilds per frame.
+/// The STOP button's live `STOP mm:ss` label; rebuilds only when the whole
+/// second changes.
 class _RecordingElapsedText extends StatefulWidget {
   const _RecordingElapsedText({required this.startTime});
 

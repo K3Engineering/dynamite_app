@@ -1,12 +1,9 @@
 /// Shared display formatters and cross-referenced copy.
 library;
 
-/// ISO 8601 with an explicit zone designator: `...Z` for UTC, the wall clock
-/// with its `±hh:mm` offset for local times. [DateTime.toIso8601String]
-/// leaves local times suffix-less (ambiguous against UTC); [timeZoneOffset]
-/// — the zone offset the OS tz database assigns to this instant, DST included
-/// — supplies the suffix. Frozen into the session row at recording start as
-/// the dynamite-csv `recorded_at`.
+/// ISO 8601 with an explicit zone designator: `...Z` for UTC, `±hh:mm` for
+/// local times (which [DateTime.toIso8601String] leaves suffix-less). Frozen
+/// into the session row as the CSV `recorded_at`.
 String iso8601WithOffset(DateTime value) {
   if (value.isUtc) return value.toIso8601String();
   final offset = value.timeZoneOffset;
@@ -22,8 +19,7 @@ String iso8601WithOffset(DateTime value) {
       '${(minutes % 60).toString().padLeft(2, '0')}';
 }
 
-/// "1,040" — comma-grouped integer. Hand-rolled on purpose: the intl
-/// package is a heavier dep than one separator loop justifies.
+/// "1,040" — comma-grouped integer, hand-rolled to avoid the intl dep.
 String formatThousands(int n) {
   final digits = n.abs().toString();
   final buf = StringBuffer(n < 0 ? '-' : '');
@@ -47,9 +43,8 @@ String formatDuration(Duration d) {
   return '${d.inSeconds}s';
 }
 
-/// "01:23" below an hour, "1:02:03" above — the stopwatch voice for the
-/// recording elapsed readout: fixed-width and zero-padded so the label does
-/// not jitter as the digits tick.
+/// "01:23" below an hour, "1:02:03" above; fixed-width so the label doesn't
+/// jitter as digits tick.
 String formatElapsedClock(Duration d) {
   final ss = (d.inSeconds % 60).toString().padLeft(2, '0');
   final mm = (d.inMinutes % 60).toString().padLeft(2, '0');
@@ -57,34 +52,25 @@ String formatElapsedClock(Duration d) {
   return h > 0 ? '$h:$mm:$ss' : '$mm:$ss';
 }
 
-/// "2026-07-20" — ISO 8601, zero-padded. Numeric Y-M-D is the app's one date
-/// voice: culturally unambiguous (no D/M vs M/D confusion), fixed-width, and
-/// locale-neutral, so a future localization never has to touch it (unlike
-/// month names, which would need translation).
+/// "2026-07-20" — ISO 8601, zero-padded; the app's one date voice.
 String formatDate(DateTime dt) {
   final m = dt.month.toString().padLeft(2, '0');
   final d = dt.day.toString().padLeft(2, '0');
   return '${dt.year}-$m-$d';
 }
 
-/// "2026-07-20 14:05" — [formatDate] plus the 24h zero-padded wall-clock
-/// time (minutes precision; seconds are noise at these call sites).
+/// [formatDate] plus the 24h zero-padded wall-clock time (minute precision).
 String formatTimestamp(DateTime dt) {
   final h = dt.hour.toString().padLeft(2, '0');
   final min = dt.minute.toString().padLeft(2, '0');
   return '${formatDate(dt)} $h:$min';
 }
 
-/// Display title for a session with an empty name (reachable only via
-/// out-of-band DB edits — rename refuses empty input and auto-names are
-/// never empty). One shared string so the list, detail and delete-confirm
-/// copy can't drift.
+/// Display title for a session with an empty name. One shared string so the
+/// list, detail, and delete-confirm copy can't drift.
 const String untitledSessionName = 'Untitled session';
 
 /// Coarse relative age for the Devices tab's "Last seen/connected" lines.
-/// The coarse buckets keep the displayed age stable for seconds or minutes
-/// at a time — a live-ticking count-up would be distracting for no
-/// information gain.
 String formatRelativeAge(Duration age) {
   final s = age.inSeconds;
   if (s < 5) return 'just now';
@@ -99,8 +85,7 @@ String formatRelativeAge(Duration age) {
   return '>1 hour ago';
 }
 
-/// "512 B", "84 MB", "8.4 GB" — 1024-based, one decimal below 10 units and
-/// none above: three significant digits are plenty for capacity display.
+/// "512 B", "84 MB", "8.4 GB"; 1024-based, one decimal below 10.
 String formatBytes(int bytes) {
   const units = ['B', 'kB', 'MB', 'GB', 'TB'];
   var value = bytes.toDouble();
@@ -116,10 +101,8 @@ String formatBytes(int bytes) {
   return '$rounded ${units[unit]}';
 }
 
-/// Conservative recording runway, floored to a coarse bucket so the
-/// displayed number is always a minimum the user can expect ("≈ 11 h" means
-/// at least 11 h): whole days at 2+, whole hours at 2+, 5-minute steps
-/// below that, and a bare "< 15 min" at the floor.
+/// Conservative recording runway, floored to a coarse bucket so the displayed
+/// number is always a minimum ("≈ 11 h" means at least 11 h).
 String formatRunway(Duration runway) {
   if (runway.inDays >= 2) return '≈ ${runway.inDays} d';
   if (runway.inHours >= 2) return '≈ ${runway.inHours} h';

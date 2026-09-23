@@ -6,9 +6,7 @@ import 'package:flutter/foundation.dart';
 // Graph viewport controller (shared between force graph, derivative, minimap)
 // ---------------------------------------------------------------------------
 
-/// Viewport state of a [GraphController]: either following the live (right)
-/// edge or parked on a fixed window. Kept as a union so the two states can't
-/// mix (e.g. a stale window start silently carried while live).
+/// Viewport state: following the live edge, or parked on a fixed window.
 sealed class GraphViewport {
   const GraphViewport();
 }
@@ -21,9 +19,8 @@ final class GraphLive extends GraphViewport {
   final int? span;
 }
 
-/// Parked on the fixed window [start, end) (absolute sample indices).
-/// A parked window must not outlive the data it points into: hub resets
-/// (a new stream erased the trace) drop it via [GraphController.reset].
+/// Parked on the fixed window [start, end) (absolute sample indices). Hub
+/// resets drop it via [GraphController.reset].
 final class GraphWindow extends GraphViewport {
   const GraphWindow(this.start, this.end);
 
@@ -39,7 +36,7 @@ class GraphController extends ChangeNotifier {
 
   GraphViewport _viewport;
 
-  /// Whether we're following the live edge (auto-scroll with new data).
+  /// Whether following the live edge.
   bool get isLive => _viewport is GraphLive;
 
   /// Restore the initial state (a fresh stream erased the data: any pan/zoom
@@ -73,10 +70,8 @@ class GraphController extends ChangeNotifier {
           if (currentSpan <
               math.max(totalSamples - oldestSample, minLiveSpan)) {
             // Zoomed in from the default view: lock to it. Compared against
-            // the default live span, not the data on hand: early in a
-            // stream the two differ (e.g. a 17s window over 5s of data), and
-            // the data comparison would misread that zoom as the "zoomed
-            // out" cases below.
+            // the default live span, not the data on hand, which early in a
+            // stream differs.
             lockedSpan = currentSpan;
           } else if (currentSpan > minLiveSpan) {
             // They zoomed out to see all available data (beyond minLiveSpan);
@@ -100,10 +95,8 @@ class GraphController extends ChangeNotifier {
         final s = span ?? math.max(minLiveSpan, totalSamples - oldestSample);
         return (totalSamples - s, totalSamples);
       case GraphWindow(:final start, :final end):
-        // Parked windows never outlive the data's right edge (see
-        // GraphWindow): if this fires, a consumer missed a hub reset. A
-        // negative start is legitimate (a sparse young buffer lets a
-        // window reach before sample 0).
+        // Parked windows never outlive the data's right edge; a negative start
+        // is legitimate for a sparse young buffer.
         assert(start < end && end <= totalSamples);
         final s = start.clamp(0, totalSamples - 1);
         final e = end.clamp(s + 1, totalSamples);
@@ -114,8 +107,8 @@ class GraphController extends ChangeNotifier {
   /// Apply the window [newStart, newStart + span), clamped to the available
   /// data. Snaps to live mode when the window reaches the right edge.
   ///
-  /// This is the single funnel for every window-moving interaction (pan,
-  /// minimap tap/drag, gesture pan); [zoomTo] handles the zooming ones.
+  /// The single funnel for every window-moving interaction (pan, minimap
+  /// tap/drag, pinch).
   void applyWindow(int newStart, int span, int totalSamples, int oldestSample) {
     int newEnd = newStart + span;
     final minStart = math.min(oldestSample, totalSamples - span);
@@ -153,9 +146,8 @@ class GraphController extends ChangeNotifier {
     required int oldestSample,
   }) {
     final maxSpan = math.max(totalSamples - oldestSample, minLiveSpan);
-    // Minimum ~50 samples visible (50ms at 1kHz) -- or the whole dataset when
-    // less than that exists (a parked session of <50 samples): clamp(50, ...)
-    // would invert the limits and throw there.
+    // Min ~50 samples visible, or the whole dataset when smaller (clamp would
+    // invert and throw otherwise).
     final minSpan = math.min(50, maxSpan);
     final span = newSpan.clamp(minSpan, maxSpan);
 

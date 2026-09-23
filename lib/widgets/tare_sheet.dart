@@ -6,19 +6,17 @@ import '../services/data_hub.dart';
 import '../services/rig_state.dart';
 import 'channel_palette.dart';
 
-/// Per-channel tare control panel as a modal bottom sheet: each active
-/// channel's tare offset (in the current display unit), with TARE/RESET
-/// per channel and ALL variants in the footer. Actions act on the hub
-/// directly and the sheet stays open, so the new offset is visible where
-/// it was requested.
+/// Per-channel tare panel as a modal bottom sheet: each active channel's offset
+/// in the current display unit, with TARE/RESET per channel and ALL in the
+/// footer. Actions hit the hub directly and the sheet stays open, so the new
+/// offset shows where it was requested.
 ///
-/// A tare offset cell doubles as manual entry: tap it to type the gross
-/// point where zero sits — absolute, replacing the current offset
-/// (`DataHub.setTareOffset`). Editing is unavailable while a sampled tare
-/// fills its window.
+/// An offset cell doubles as manual entry: tap to type the gross point where
+/// zero sits — absolute, replacing the current offset
+/// ([DataHub.setTareOffset]); blocked while a sampled tare fills its window.
 ///
-/// An untared channel reads 0 — "no offset" is a first-class state (null
-/// counts storage), so the column needs no special "untared" rendering.
+/// "Untared" is a first-class null (not zero counts), so an untared channel
+/// reads 0 with no special rendering.
 Future<void> showTareSheet(
   BuildContext context, {
   required DataHub hub,

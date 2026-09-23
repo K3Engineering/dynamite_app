@@ -1,21 +1,8 @@
 /// Handing exported files to the OS: the two delivery paths behind every
-/// export action (session CSV, calibration report, raw damaged-session
-/// bytes). Callers
-/// build an artifact with the format modules (csv_export.dart,
-/// report_export.dart — bytes, filename, MIME type) and pass it here; the
-/// shared export filename rules live in export_names.dart.
-///
-/// Two delivery paths, two plugins (no single package does both well):
-/// - [downloadExport] — file_picker's `saveFile`: a save-as dialog on
-///   Android/iOS/macOS/Windows/Linux, a browser download on web.
-/// - [shareExport] — share_plus's share sheet ("Save to Files" on iOS, the
-///   Web Share API with download fallback on web). File sharing is
-///   unsupported on Linux — see `fileShareSupportedHere` in
-///   share_capability.dart.
-///
-/// Note the whole file crosses the platform channel as in-memory bytes
-/// (file_picker's only API); a chunked writer is planned with the CSV format
-/// milestone.
+/// export action. Two plugins (no single package does both well):
+/// [downloadExport] (file_picker save-as / browser download) and [shareExport]
+/// (share_plus share sheet). The whole file crosses the platform channel as
+/// in-memory bytes.
 library;
 
 import 'dart:ui' show Rect;
@@ -53,13 +40,9 @@ Future<String?> downloadExport({
   return savedTo == null ? null : 'Saved to $savedTo';
 }
 
-/// Share the export via the platform share sheet. [anchor] positions the
-/// iPad popover; ignored elsewhere.
-///
-/// Returns a user-facing result message, or null when the user dismissed the
-/// sheet. The share sheet doesn't say where the file went (or what the user
-/// did with it), so the message can't either. Errors are thrown for the
-/// caller to surface.
+/// Share the export via the platform share sheet. [anchor] positions the iPad
+/// popover. Returns a user-facing message, or null when dismissed. Errors are
+/// thrown for the caller to surface.
 Future<String?> shareExport({
   required Uint8List bytes,
   required String fileName,

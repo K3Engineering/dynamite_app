@@ -13,14 +13,10 @@ import 'session_id.dart';
 import 'session_journal.dart';
 import 'session_store_backend.dart';
 
-/// The per-session file store. See SessionFilesBackend for the file
-/// layout, the tail-only damage model, and the completion marker's write
-/// discipline; this class owns the catalog cache and the serialized
-/// operation queue on top of it.
-///
-/// Screens use the listing/edit/delete/load surface only; the recording-side
-/// operations ([startSession], [finalizeSession], [createDataSink]) are
-/// RecordingController's.
+/// The per-session file store: the catalog cache and serialized operation
+/// queue over [SessionFilesBackend] (which owns the file layout and damage
+/// model). Recording-side operations ([startSession], [finalizeSession],
+/// [createDataSink]) are RecordingController's.
 class SessionStore {
   SessionStore._(Future<SessionFilesBackend> backend) : _backend = backend;
 
@@ -39,8 +35,8 @@ class SessionStore {
   factory SessionStore.over(SessionFilesBackend backend) =>
       SessionStore._(Future.value(backend));
 
-  /// Wrap a backend FUTURE — a rejecting one exercises the construction-
-  /// failure path the shared store can hit in production.
+  /// Wrap a backend future (a rejecting one exercises the construction-failure
+  /// path).
   @visibleForTesting
   factory SessionStore.overFuture(Future<SessionFilesBackend> backend) =>
       SessionStore._(backend);
@@ -55,12 +51,8 @@ class SessionStore {
   final FutureChain _opQueue = FutureChain();
   Future<void>? _initialCatalogLoad;
 
-  /// The session the store's own writer is currently recording, if any: set
-  /// by [createDataSink], cleared by [touchFinal] or [abortSession]. An
-  /// unmarked-but-valid directory classifies as an interrupted recording —
-  /// except while the live writer owns it, when it must stay invisible
-  /// (a healthy recording in progress is not an interruption). Set and read
-  /// only inside the operation queue, so it can never race a scan.
+  /// The session the store's own writer is recording, if any. Set and read only
+  /// inside the operation queue, so it can't race a scan.
   String? _liveSessionId;
 
   ValueListenable<SessionCatalogState> get catalog => _catalog;
@@ -70,12 +62,8 @@ class SessionStore {
 
   void _bumpBytes() => _bytes.add(null);
 
-  /// The live recording's bytes so far (journal line 1 plus acked data):
-  /// the only used-bytes input outside the catalog, since the live dir
-  /// never lists. Set by [createDataSink] and every append ack, cleared
-  /// by [touchFinal]/[abortSession] (the session lists from then on, so
-  /// the catalog's own sizes take over). The ack sets run off the
-  /// operation queue; a capacity-strip number needs no stronger ordering.
+  /// The live recording's bytes so far (journal + acked data): the only
+  /// used-bytes input outside the catalog, since the live dir never lists.
   int _liveBytes = 0;
 
   /// Every revision of [_bytes]; the capacity strip listens here.
@@ -88,9 +76,8 @@ class SessionStore {
     try {
       files = await _backend;
     } catch (error, stackTrace) {
-      // Backend construction is terminal — a store that can't open its
-      // root can never do anything. The catalog (Loading until a publish
-      // lands) must say so instead of spinning forever.
+      // Backend construction is terminal; surface it as a Failed catalog
+      // instead of spinning on Loading forever.
       _catalog.value = SessionCatalogFailed(error, stackTrace);
       Error.throwWithStackTrace(error, stackTrace);
     }
@@ -107,9 +94,7 @@ class SessionStore {
   }
 
   Future<void> ensureCatalogLoaded() {
-    // A failed future, not a sync throw: callers swallow it in a catchError
-    // and let the Failed state render through the listenable, identically
-    // to a publish failure landing after the call.
+    // A failed future, not a sync throw, so callers can catch it uniformly.
     if (_catalog.value case SessionCatalogFailed(:final error)) {
       return Future.error(_catalogUnavailableError(error));
     }
@@ -117,16 +102,14 @@ class SessionStore {
     return _initialCatalogLoad ??= _enqueue(_publishCatalog);
   }
 
-  /// Re-read every session directory and republish the catalog. The cache
-  /// is derived state, so a full re-read always supersedes the deltas —
-  /// this is also a Failed catalog's only way back.
+  /// Re-read every session directory and republish. Also a Failed catalog's
+  /// only way back.
   Future<void> refreshCatalog() => _enqueue(_publishCatalog);
 
   Future<SessionCatalog> _loadCatalogIfNeeded(SessionFilesBackend files) async {
     if (_catalog.value is SessionCatalogLoading) await _publishCatalog(files);
     _requireCatalogAvailable();
-    // A publish either leaves the catalog Ready or throws, and a pre-set
-    // Failed threw above — the remaining arm is unreachable.
+    // A publish leaves the catalog Ready or throws; Failed threw above.
     return switch (_catalog.value) {
       SessionCatalogReady(:final catalog) => catalog,
       _ => throw StateError('catalog not ready after publish'),
@@ -146,10 +129,8 @@ class SessionStore {
     return operation(files, catalog);
   });
 
-  /// Re-publish the in-memory catalog after a mutation whose effect is
-  /// known exactly. Callers run inside the operation queue, so the Ready
-  /// catalog can only have drifted from disk through our own deltas — no
-  /// re-scan needed.
+  /// Re-publish after a mutation whose effect is known exactly; callers run in
+  /// the operation queue, so no re-scan is needed.
   void _publishDelta(SessionCatalog Function(SessionCatalog current) update) {
     if (_catalog.value case SessionCatalogReady(:final catalog)) {
       _catalog.value = SessionCatalogReady(update(catalog));
@@ -159,12 +140,8 @@ class SessionStore {
     throw StateError('catalog delta requires a ready catalog');
   }
 
-  /// Splice [id]'s freshly classified entry into the published catalog. The
-  /// classification is the only I/O (one session, not a full re-scan); if
-  /// it fails the fallback is a full publish — the catalog is derived
-  /// state, so a full re-read always re-establishes truth, no stale delta
-  /// can survive it. Only a failed re-read is terminal (same as every
-  /// other publish failure).
+  /// Splice [id]'s freshly classified entry into the catalog. Only one
+  /// session's I/O; on failure it falls back to a full publish.
   Future<void> _refreshCatalogEntry(
     SessionFilesBackend files,
     String id,
@@ -225,11 +202,9 @@ class SessionStore {
 
   // -- Recording side --------------------------------------------------------
 
-  /// Open a new session directory for its first packet: mints the id,
-  /// creates dir + journal + first data append in one backend round trip
-  /// and hands back the sink. Called by the live writer at its FIRST data
-  /// write only — a no-data recording leaves no artifact. Append acks bump
-  /// [byteChanges].
+  /// Open a new session directory for its first packet: id, dir, journal, and
+  /// first data append in one round trip. Called by the writer at its FIRST
+  /// write only; a no-data recording leaves no artifact.
   Future<SessionDataSink> createDataSink({
     required SessionMeta meta,
     required Uint8List firstData,
@@ -241,9 +216,8 @@ class SessionStore {
       metaBytes,
       firstData,
     );
-    // The store owns the dir from here until touchFinal/abortSession: while
-    // live it is invisible to listings (a recording in progress is not an
-    // interrupted one), so no catalog load is forced.
+    // The store owns the dir until touchFinal/abortSession; while live it is
+    // invisible to listings, so no catalog load is forced.
     _liveBytes = metaBytes.length + firstData.length;
     _bumpBytes();
     _liveSessionId = sink.id;
@@ -253,10 +227,9 @@ class SessionStore {
     });
   });
 
-  /// Write the completion marker — the ONLY write of it anywhere (see
-  /// SessionFilesBackend for the marker's write discipline). finalizeSession
-  /// calls this after its persisted-vs-accepted count check passed with no
-  /// error latched; anything else gets [abortSession].
+  /// Write the completion marker (the only write of it anywhere).
+  /// finalizeSession calls this after its count check passed; anything else
+  /// gets [abortSession].
   Future<void> touchFinal(String id) => _withCatalog((files, _) async {
     try {
       await files.touchFinal(id);
@@ -269,11 +242,8 @@ class SessionStore {
     await _refreshCatalogEntry(files, id);
   });
 
-  /// The writer's finalize latched a failure (a mid-recording write error,
-  /// a sink-close failure, or a persisted length that disagrees with the
-  /// accepted-frame count): [id] gets NO marker. Drops the store's
-  /// in-flight ownership and splices the fresh verdict in, so the
-  /// interrupted recording lists immediately.
+  /// The writer latched a failure: [id] gets no marker. Drops ownership and
+  /// splices the fresh (interrupted) verdict in.
   Future<void> abortSession(String id) => _withCatalog((files, _) async {
     _liveSessionId = null;
     _liveBytes = 0;
@@ -282,10 +252,7 @@ class SessionStore {
 
   // -- Listing and load ------------------------------------------------------
 
-  /// The full directory read. The per-directory sizes folded into the
-  /// catalog are free along the way (every classify already stats data.raw
-  /// and reads the journal), so the capacity strip never walks the tree
-  /// itself.
+  /// The full directory read; per-directory sizes fall out of the classify.
   Future<SessionCatalog> _readCatalog(SessionFilesBackend files) async {
     final sessions = <SessionSummary>[];
     final damaged = <DamagedSession>[];
@@ -317,16 +284,14 @@ class SessionStore {
   }
 
   Future<_ListedEntry> _classify(SessionFilesBackend files, String id) async {
-    // The live recording's data.raw is being appended off this queue, so
-    // a stat can catch it mid-append (a partial frame reads as damage) —
-    // the live dir never lists, so short-circuit before any I/O.
+    // The live dir is being appended off this queue; short-circuit before any
+    // I/O so a mid-append stat can't read as damage.
     if (id == _liveSessionId) return const _UnlistedEntry();
     final dataBytes = await files.dataByteLength(id);
     final journalBytes = await files.readJournal(id);
     final hasData = dataBytes > 0;
     final hasMeta = journalBytes != null && journalBytes.isNotEmpty;
-    // The `final` marker is zero bytes by design, so data + journal IS the
-    // directory's byte total.
+    // The `final` marker is zero bytes, so data + journal is the byte total.
     final byteTotal = dataBytes + (journalBytes?.length ?? 0);
 
     try {
@@ -387,11 +352,8 @@ class SessionStore {
         byteTotal: byteTotal,
       );
     }
-    // No completion marker: an interrupted recording — the app crashed,
-    // the tab died, or the finalize latched a failure. Every integrity
-    // check above already passed, so it loads and exports like a complete
-    // session but lists flagged as interrupted; nothing ever promotes it
-    // to complete afterwards.
+    // No completion marker: an interrupted recording. It loads and exports
+    // like a complete session but lists as interrupted, and is never promoted.
     if (!await files.isFinalized(id)) {
       return _SessionEntry(
         id: id,
@@ -436,11 +398,8 @@ class SessionStore {
     );
   }
 
-  /// Read a session back: strict journal, whole frames from data.raw,
-  /// sentinel runs becoming the [SessionData.gaps] hold-fills. A broken
-  /// header, a byte count that doesn't divide into frames, or a frame
-  /// shape the write path never produces throws (the detail view renders
-  /// it as an error state).
+  /// Read a session back: strict journal, whole frames from data.raw, sentinel
+  /// runs becoming [SessionData.gaps]. Anything malformed throws.
   Future<SessionData> loadSession(String id) => _withCatalog((files, _) async {
     final journalBytes = await files.readJournal(id);
     if (journalBytes == null) {
@@ -465,12 +424,8 @@ class SessionStore {
     );
   });
 
-  /// data.raw's bytes verbatim, for the damaged entry's hand-recovery
-  /// export. Throws StateError when absent — the affordance enabling it
-  /// checked existence at list time, so a miss is a race, not a state.
-  /// Raw reads are rescue hatches: they depend on one file being
-  /// readable, not on the catalog's health, and only ride the queue for
-  /// ordering against mutations of this id.
+  /// data.raw's bytes verbatim, for the damaged entry's hand-recovery export.
+  /// Throws when absent. Rides the queue only for ordering against mutations.
   Future<Uint8List> rawDataBytes(String id) => _enqueue((files) async {
     final bytes = await files.readData(id);
     if (bytes == null || bytes.isEmpty) {
@@ -490,10 +445,8 @@ class SessionStore {
 
   // -- Edits and destructive ops ---------------------------------------------
 
-  /// Apply [update] to the session's effective display state and append
-  /// the result as one whole-snapshot edit line (last complete line wins).
-  /// Discipline: truncate to the last complete line first — usually a
-  /// no-op, correct after a crash — so a new line never lands behind torn
+  /// Append one whole-snapshot edit line (last complete wins), truncating to
+  /// the last complete line first so the new line never lands behind torn
   /// bytes.
   Future<void> editSession(
     String id,
@@ -522,7 +475,6 @@ class SessionStore {
         );
       });
 
-  /// Rename the session, keeping its notes and visibility.
   Future<void> renameSession(String id, String name) => editSession(
     id,
     (current) => SessionEdit(
@@ -532,7 +484,6 @@ class SessionStore {
     ),
   );
 
-  /// Replace the session's notes, keeping its name and visibility.
   Future<void> setSessionNotes(String id, String notes) => editSession(
     id,
     (current) => SessionEdit(
@@ -542,8 +493,7 @@ class SessionStore {
     ),
   );
 
-  /// Delete the session directory. Only the layout's three named files are
-  /// destroyed (see SessionFilesBackend.delete).
+  /// Delete the session directory.
   Future<void> deleteSession(String id) => _withCatalog((files, _) async {
     await files.delete(id);
     _publishDelta(
@@ -553,16 +503,10 @@ class SessionStore {
 
   // -- Recording lifecycle ---------------------------------------------------
 
-  /// Start a new streaming session from the caller-snapshotted [header]
-  /// (every journal-line-1 field, including the recording-start clock). The
-  /// returned [LiveSessionWriter] is fed sample slices via
-  /// [LiveSessionWriter.appendData] as data arrives and is passed to
-  /// [finalizeSession] when recording stops. Pure construction — the session
-  /// directory is only created by the writer's first packet, so starting can
-  /// never fail and never leaves an artifact behind without data.
-  ///
-  /// Hub-agnostic by contract: the caller snapshots everything the live
-  /// buffer would supply, so this layer never imports the hub.
+  /// Start a streaming session from the caller-snapshotted [header]. Pure
+  /// construction: the directory is only created by the writer's first packet,
+  /// so this never fails and never leaves a data-less artifact. The caller
+  /// snapshots everything, so this layer never imports the hub.
   LiveSessionWriter startSession(
     SessionHeader header, {
     required int sourceRingCapacity,
@@ -578,34 +522,25 @@ class SessionStore {
   }
 
   /// Finalize a streaming session: drain the write queue, release the sink,
-  /// verify the persisted length against the accepted-frames claim, and —
-  /// ONLY when every step above came back clean — write the completion
-  /// marker (see SessionFilesBackend for the marker's write discipline).
-  ///
-  /// Throws on the first failure (the writer's latched write error, a
-  /// sink-close failure, a count mismatch, or a completion-marker write
-  /// failure); the caller surfaces it. A failure leaves no marker: the
-  /// session lists as interrupted.
-  ///
-  /// If no data ever reached storage, the directory was never created and
-  /// there is nothing to finalize (recording nothing saves nothing).
+  /// verify the persisted length against the accepted-frames claim, and write
+  /// the completion marker only if every step was clean. Throws on the first
+  /// failure; the caller surfaces it, and a failure leaves no marker (the
+  /// session lists as interrupted). If no data ever reached storage, there is
+  /// nothing to finalize.
   Future<void> finalizeSession({required LiveSessionWriter writer}) async {
     // TODO(known-issue): dart:io file ops have no timeout — a wedged
     // flush() (an ailing disk) hangs finalize, and stopSession with it,
     // forever. Web is covered by SinkWorkerTransport's per-request timeout.
     await writer.flush();
     final run = writer.run;
-    // The writer latches the first mid-recording write error; the cleanup
-    // steps below fold in only if nothing latched yet.
+    // The writer latches the first write error; cleanup folds in only if none
+    // latched yet.
     Object? error = writer.writeError;
     try {
       await writer.closeSink();
       if (run != null) {
-        // Fail loud on an accepted-vs-persisted mismatch: the writer counted
-        // every accepted packet's frames, so data.raw must hold exactly that
-        // many bytes after the last ack. A silent drop anywhere between
-        // accepted slice and flushed file would otherwise leave the session
-        // claiming samples that were never written.
+        // Fail loud on an accepted-vs-persisted mismatch: data.raw must hold
+        // exactly the frames the writer counted after the last ack.
         final acked = run.ackedLength;
         final expected = writer.expectedDataBytes;
         if (acked != expected) {
@@ -629,9 +564,8 @@ class SessionStore {
     }
   }
 
-  /// Total bytes of every session file — the native storage strip's "used"
-  /// number: the catalog's own sizes plus the live recording's acked bytes
-  /// (its dir never lists). Stray files the layout can't name don't count.
+  /// Total bytes of every session file: the catalog's sizes plus the live
+  /// recording's acked bytes. Stray files don't count.
   Future<int> usedBytes() =>
       _withCatalog((_, catalog) async => catalog.totalBytes + _liveBytes);
 }
@@ -639,8 +573,7 @@ class SessionStore {
 sealed class _ListedEntry {
   const _ListedEntry({required this.byteTotal});
 
-  /// The directory's bytes as the classification scan found them (data +
-  /// journal; the `final` marker is zero bytes by design).
+  /// The directory's bytes as the scan found them (data + journal).
   final int byteTotal;
 }
 
@@ -657,9 +590,8 @@ final class _SessionEntry extends _ListedEntry {
   final SessionJournal journal;
   final int dataBytes;
 
-  /// Loadable but unvouched: strict journal, whole frames, at least one —
-  /// and no completion marker. Everything a complete session is, minus the
-  /// finalize's endorsement; the listing flags it permanently instead.
+  /// Loadable but unvouched: no completion marker. The listing flags it
+  /// permanently.
   final bool interrupted;
 }
 
@@ -668,16 +600,14 @@ final class _DamagedEntry extends _ListedEntry {
   final DamagedSession damaged;
 }
 
-/// Parseable and data-bearing but unmarked, while the store's own writer
-/// still owns it: the in-flight recording's dir, invisible to every listing
-/// consumer (its bytes come from the store's live total, not the catalog).
+/// The store's in-flight recording dir, invisible to listings (its bytes come
+/// from the store's live total).
 final class _UnlistedEntry extends _ListedEntry {
   const _UnlistedEntry() : super(byteTotal: 0);
 }
 
-/// A [SessionDataSink] wrapper reporting every ack's absolute data.raw
-/// length, so the store's live byte total tracks the recording and the
-/// capacity strip pulses on the recording cadence.
+/// A [SessionDataSink] wrapper reporting every ack's absolute data.raw length,
+/// so the store's live byte total tracks the recording.
 class NotifyingSessionDataSink implements SessionDataSink {
   NotifyingSessionDataSink._(this.inner, this.onAppend);
 

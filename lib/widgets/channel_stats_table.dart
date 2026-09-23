@@ -12,24 +12,21 @@ class ChannelStatsRow {
     this.stale = false,
   });
 
-  /// Row label shown in the leading column ('Live', 'Peak', ...).
+  /// Row label shown in the leading column.
   final String label;
 
-  /// One value per channel, in [ChannelStatsTable.unit] units. A null value
-  /// means the unit is unavailable for that channel (a force unit with no
-  /// load cell assigned) and renders as '—'.
+  /// One value per channel, in [ChannelStatsTable.unit] units; null means the
+  /// unit is unavailable (renders '—').
   final List<double?> values;
 
-  /// Primary-reading styling (larger, bold) — e.g. the live value row.
+  /// Primary-reading styling (larger, bold).
   final bool emphasized;
 
-  /// Dim the values: the reading is stale (e.g. a live data gap).
+  /// Dim the values (a stale reading).
   final bool stale;
 }
 
-/// Tappable per-channel header shared by the live view and the session
-/// detail view; the owner decides what the toggle means (live-tab setting,
-/// per-session visibility, ...).
+/// Tappable per-channel header; the owner decides what the toggle means.
 class ChannelStatsTable extends StatelessWidget {
   ChannelStatsTable({
     super.key,
@@ -56,8 +53,7 @@ class ChannelStatsTable extends StatelessWidget {
 
   final List<String> labels;
 
-  /// Whether each channel is currently enabled. Inactive channels show
-  /// '--' and are dimmed.
+  /// Whether each channel is enabled; inactive ones show '--' and are dimmed.
   final List<bool> activeChannels;
 
   /// Called with the channel index when any of its cells is tapped.
@@ -69,7 +65,7 @@ class ChannelStatsTable extends StatelessWidget {
   /// Stat rows below the channel header.
   final List<ChannelStatsRow> rows;
 
-  /// Per-channel ADC-rail flag. Null = no status display (session playback).
+  /// Per-channel ADC-rail flag; null = no status display.
   final List<bool>? clipped;
 
   static Widget? _statusIcon({
@@ -88,8 +84,6 @@ class ChannelStatsTable extends StatelessWidget {
     final headerStyle = Theme.of(
       context,
     ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold);
-    // Tabular figures keep the numeric columns aligned using the platform's
-    // default font — no bundled font assets and no runtime font fetch.
     const tabularFigures = [FontFeature.tabularFigures()];
     final monoStyle = Theme.of(
       context,
@@ -111,9 +105,6 @@ class ChannelStatsTable extends StatelessWidget {
             },
             defaultVerticalAlignment: TableCellVerticalAlignment.middle,
             children: [
-              // -----------------------------------------------------------
-              // Channel Labels
-              // -----------------------------------------------------------
               TableRow(
                 children: [
                   const SizedBox.shrink(), // Empty top-left corner
@@ -127,10 +118,8 @@ class ChannelStatsTable extends StatelessWidget {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          // Fixed-width status slot: the label never
-                          // reflows when an icon appears or changes.
-                          // Outside the channel toggle so a tap shows
-                          // the tooltip instead of hiding the channel.
+                          // Fixed-width slot so the label never reflows;
+                          // outside the toggle so a tap shows the tooltip.
                           SizedBox(
                             width: 20,
                             height: 16,
@@ -164,9 +153,6 @@ class ChannelStatsTable extends StatelessWidget {
                     ),
                 ],
               ),
-              // -----------------------------------------------------------
-              // Horizontal Colored Lines
-              // -----------------------------------------------------------
               TableRow(
                 children: [
                   const SizedBox.shrink(),
@@ -191,9 +177,6 @@ class ChannelStatsTable extends StatelessWidget {
                     ),
                 ],
               ),
-              // -----------------------------------------------------------
-              // Stat rows
-              // -----------------------------------------------------------
               for (final row in rows)
                 TableRow(
                   children: [
@@ -212,8 +195,6 @@ class ChannelStatsTable extends StatelessWidget {
                 ),
             ],
           ),
-          // Unit overlay, anchored to the top-left corner, sitting just
-          // below the channel labels and above the first stat row.
           Positioned(
             top: 13,
             left: 0,
@@ -225,16 +206,13 @@ class ChannelStatsTable extends StatelessWidget {
   }
 }
 
-/// ADC-rail warning icon with an asymmetric fade: it snaps on at the first
-/// clipped sample and fades out over [_fadeOut] once the rail clears, so a
-/// rail hovering at the clip point reads as a steady icon instead of
-/// popping at the sample rate. When the fade finishes the subtree is
-/// unmounted — an opacity-zero tooltip trigger still answers pointer hits,
-/// so leaving it in the tree would be a live invisible hotspot.
+/// ADC-rail warning icon: snaps on at the first clipped sample and fades out
+/// once clear, so a hovering rail reads as steady. The subtree unmounts when
+/// faded (an opacity-zero tooltip trigger would still answer pointer hits).
 class _ClipStatusIcon extends StatefulWidget {
   const _ClipStatusIcon({required this.clipped, required this.channel});
 
-  /// Instantaneous rail flag; rebuilt at the packet rate.
+  /// Instantaneous rail flag.
   final bool clipped;
   final int channel;
 
@@ -246,8 +224,8 @@ class _ClipStatusIcon extends StatefulWidget {
 
 class _ClipStatusIconState extends State<_ClipStatusIcon> {
   /// Whether the icon is fully faded and unmounted. A never-clipped channel
-  /// mounts nothing; the initial zero-opacity build never animates, so
-  /// [AnimatedOpacity.onEnd] alone could not be relied upon to get here.
+  /// mounts nothing, and the initial zero-opacity build never animates, so
+  /// [AnimatedOpacity.onEnd] alone can't be relied on.
   bool _gone = true;
 
   @override
@@ -289,11 +267,8 @@ class _ClipStatusIconState extends State<_ClipStatusIcon> {
   }
 }
 
-/// Shared tap-target wrapper for every channel cell (label, color bar, stat
-/// value): pointer cursor + opaque hit testing + the toggle callback. The
-/// button role, toggle state and channel name make the toggle reachable and
-/// intelligible to a screen reader; the child text merges into the label so
-/// live values stay spoken.
+/// Tap-target wrapper for a channel cell: pointer cursor, opaque hit testing,
+/// the toggle callback, and screen-reader semantics.
 class _TappableChannelCell extends StatelessWidget {
   const _TappableChannelCell({
     required this.channel,
@@ -338,8 +313,7 @@ class _TableCellValue extends StatelessWidget {
 
   final int channel;
 
-  /// The value in [unit] units, or null when the unit is unavailable for
-  /// this channel (rendered '—').
+  /// The value in [unit] units; null when unavailable (rendered '—').
   final double? value;
   final DisplayUnit unit;
   final bool isActive;

@@ -12,18 +12,16 @@ import '../widgets/wide_layout.dart';
 
 enum _Stage { overview, downloading, flashing, done, failed }
 
-/// The OTA update flow, pushed from the Settings tab's firmware card or
-/// deep-linked from the update-available snackbar.
+/// The OTA update flow, pushed from the Settings firmware card or the
+/// update-available snackbar.
 ///
 /// Offer rule (see `firmware_release.dart`): the device should run the
-/// channel's target release, whatever the direction — "differs" flashes it,
-/// including the same-tag reflash. The screen owns the flash stages
-/// (download -> transfer); the release check itself lives in
-/// [FirmwareUpdateService]. An accepted image ends the flow at the done
-/// banner: the device reboots on its own, so the page holds no modal state
-/// past the transfer. The service carries the rest — a release flash that
-/// took is confirmed by the next check's [FirmwareFlashVerified] verdict,
-/// and one that didn't re-flags the update banner.
+/// channel's target whatever the direction — "differs" flashes it, same-tag
+/// included. This screen owns the flash stages (download -> transfer); the
+/// check lives in [FirmwareUpdateService]. An accepted image ends at the done
+/// banner (the device reboots on its own, so no modal state past the transfer);
+/// a taken flash is confirmed by the next check's [FirmwareFlashVerified], one
+/// that didn't re-flags the banner.
 class FirmwareUpdateScreen extends StatefulWidget {
   const FirmwareUpdateScreen({super.key, required this.onDone});
 

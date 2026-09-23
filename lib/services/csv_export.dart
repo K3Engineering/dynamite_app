@@ -1,7 +1,5 @@
-/// CSV export of a recorded session: building the dynamite-csv file
-/// (docs/csv-format-v2.md) as a deliverable artifact. Handing the file to
-/// the OS (save-as dialog, share sheet) is the caller's composition with
-/// export_delivery.dart — this module never touches platform UI.
+/// CSV export of a recorded session: builds the dynamite-csv file
+/// (docs/csv-format-v2.md). Handing it to the OS is export_delivery.dart's job.
 library;
 
 import 'dart:convert';
@@ -18,11 +16,9 @@ import '../models/channel_converter.dart';
 import '../models/display_unit.dart';
 import 'export_names.dart';
 import 'session_data.dart';
-import 'session_metadata.dart';
 
-/// The dynamite-csv file format's view of a display unit: the
-/// header/metadata symbol and the per-column fixed-point precision. Kept here, not on the enum — the file format is
-/// this service's concern.
+/// The dynamite-csv format's view of a display unit: the symbol and per-column
+/// fixed-point precision.
 extension DisplayUnitCsv on DisplayUnit {
   /// The unit's verbatim symbol in a dynamite-csv file: exactly as the
   /// firmware certificates write it — lowercase `raw`, `mV/V` with the
@@ -31,12 +27,8 @@ extension DisplayUnitCsv on DisplayUnit {
   /// is capitalized).
   String get csvSymbol => this == DisplayUnit.raw ? 'raw' : symbol;
 
-  /// Fixed-point decimals for this unit on the channel behind [conv] in a
-  /// dynamite-csv file: one guard digit beyond the value of 1 ADC count in
-  /// this unit (`ceil(1 − log10(quantum))`, clamped to 0..10), computed
-  /// from the recorded board cal's sensitivity. Null exactly when the unit
-  /// can't convert on the channel (a force unit with no load cell — the
-  /// file column is all-blank, so no precision is needed).
+  /// Fixed-point decimals for this unit on the channel behind [conv]: one guard
+  /// digit beyond the value of 1 ADC count. Null when the unit can't convert.
   int? exportDecimalsFor(ChannelConverter conv) {
     final quantum = conv.countQuantum(this)?.abs();
     if (quantum == null) return null;
@@ -79,31 +71,19 @@ extension DisplayUnitCsv on DisplayUnit {
   );
 }
 
-/// One export column's frozen per-channel facts: the recording-time
-/// calibration (the metadata's afe block and channels[]), the frozen tare,
-/// and the quartet-2 cell formatter — null exactly when the unit is
-/// unavailable on the channel (a force unit with no load cell — the file's
-/// all-blank column).
+/// One export column's frozen facts: the recording-time calibration, the frozen
+/// tare, and the quartet-2 formatter (null when the unit is unavailable).
 typedef _Column = ({
   ChannelCalibration cal,
   double? tare,
   String Function(int raw)? format,
 });
 
-/// One session's export in the dynamite-csv format: the recorded [data]
-/// frozen together with the export-time context ([unit], provenance
-/// strings) — everything the metadata block and the body grid are rendered
-/// from, in one place. The file is: a `# dynamite-csv 1` magic line, a
-/// one-line metadata JSON carrying everything needed to reproduce the
-/// converted columns (frozen recording-time calibration, tares, sample
-/// rate, ssn origin, device identity + board-cal provenance), the same
-/// object re-rendered as glanceable YAML comment lines, then the grid of
-/// raw + converted columns (`ssn, ch0..chN-1, ch0_<unit>..chN-1_<unit>`).
-///
-/// Dropped (gap) samples keep their `ssn` row with every sample cell
-/// blank. Values are fixed-point with per-column precision
-/// ([DisplayUnit.exportDecimalsFor]); conventions are `\n` endings, no BOM,
-/// dot decimals — see the spec (docs/csv-format-v2.md).
+/// One session's export in the dynamite-csv format: the recorded [data] frozen
+/// with the export-time context ([unit], provenance strings). The file is a
+/// magic line, a metadata JSON line, the same metadata re-rendered as YAML
+/// comments, then the grid of raw + converted columns. Gap rows keep their
+/// `ssn` with blank sample cells.
 ///
 /// TODO(perf): [rows] materializes the whole grid in memory — the format
 /// milestone will replace it with a `sync*` generator feeding
@@ -119,36 +99,28 @@ class SessionCsvExport {
     this.interrupted = false,
   });
 
-  /// The recorded session to export.
   final SessionData data;
 
-  /// The file's single converted unit (quartet 2), chosen by the user in
-  /// the export flow; a channel that can't reach it (a force unit with no
-  /// load cell assigned) gets an all-blank column.
+  /// The file's single converted unit; an unconvertible channel gets a blank
+  /// column.
   final DisplayUnit unit;
 
-  /// The session row's frozen `recorded_at` string (the local wall clock
-  /// with offset); `recorded_unix` derives from it here, so the two fields
-  /// can never disagree.
+  /// The session's frozen `recorded_at`; `recorded_unix` derives from it here.
   final String recordedAtIso;
 
-  /// The app version stamp for the metadata's `generator`.
+  /// The app version stamp.
   final String generator;
 
-  /// The session row's frozen device-identity block (see
-  /// [toSessionDeviceMetadata]).
+  /// The session's frozen device-identity block.
   final Map<String, Object?> deviceInfo;
 
-  /// The recording never completed (no finalize endorsement): every byte
-  /// in the file is valid, but the tail may be missing. Emitted as the
-  /// additive metadata key `interrupted` (readers ignore unknown keys) —
-  /// the file states its own provenance.
+  /// The recording never completed; emitted as the additive metadata key
+  /// `interrupted`. Every byte is valid, but the tail may be missing.
   final bool interrupted;
 
   int get _n => data.channels.length;
 
-  /// Per-column frozen facts, derived once; every consumer below reads
-  /// from here.
+  /// Per-column frozen facts, derived once.
   late final List<_Column> _columns = [
     for (int ch = 0; ch < _n; ch++)
       (
@@ -158,30 +130,23 @@ class SessionCsvExport {
       ),
   ];
 
-  /// The metadata line's JSON object: one compact object, all top-level
-  /// fields required, nullable subfields emitted as null. Map order here is
-  /// the emission order (and matches the spec).
+  /// The metadata line's JSON object; map order is the emission order.
   late final Map<String, Object?> metadata = {
     'format': 'dynamite-csv',
     'version': 1,
     'generator': generator,
-    // The human-glanceable timestamp; machines use recorded_unix, which is
-    // derived from the stored string here so the two cannot disagree.
+    // Machines use recorded_unix, derived here so the two can't disagree.
     'recorded_at': recordedAtIso,
     'recorded_unix':
         DateTime.parse(recordedAtIso).millisecondsSinceEpoch ~/ 1000,
     'sample_rate_hz': data.sampleRate,
     'ssn_origin': data.ssnOrigin,
     'converted_unit': unit.csvSymbol,
-    // Absent when false: the complete-session shape stays exactly the v1
-    // schema, and readers tolerate the key appearing (additive change).
+    // Absent when false, so the complete-session shape stays the v1 schema.
     if (interrupted) 'interrupted': true,
-    // The recording apparatus (frozen at recording start): identity from
-    // the session row's deviceInfo (nulls for a session without
-    // identity — web-recorded serial, unreadable DIS), the electrical
-    // configuration in effect, and the board calibration's provenance.
-    // Both afe and cal are descriptive traceability; the operative
-    // transfer function is each channel's board_cal.
+    // The recording apparatus: identity, electrical configuration, and board-cal
+    // provenance. Descriptive traceability; each channel's board_cal is the
+    // operative transfer function.
     'device': {
       ...deviceInfo,
       'afe': {
@@ -190,23 +155,18 @@ class SessionCsvExport {
         'adc_gain': [
           for (final col in _columns) col.cal.board?.nominals.pgaGain,
         ],
-        // The excitation the mV columns are scaled by (the mV anchor):
-        // nominal until flash carries a characterized value — reproducing
-        // an mV column outside the app needs exactly this number, and it
-        // lives nowhere else in the file for a session without board_cal.
+        // The excitation the mV columns are scaled by; the only place it
+        // appears for a session without board_cal.
         'excitation_v': _columns[0].cal.board?.displayExcitationV,
       },
-      // Raw store provenance frozen at recording start; descriptive only —
-      // the operative transfer function remains channels[].board_cal.
-      // Null for sessions recorded before this field existed.
+      // Raw store provenance; descriptive only. Null on older sessions.
       'kvs': data.deviceKvs?.toJson(),
     },
     'channels': [for (final col in _columns) _channelMetadata(col)],
   };
 
-  /// The body grid: the header row (ssn, then the raw quartet, then the
-  /// converted quartet), then one row per sample. Null cells encode blank —
-  /// gap rows and unconvertible (all-blank) columns.
+  /// The body grid: a header row then one row per sample; null cells encode
+  /// blank (gap rows and unconvertible columns).
   List<List<Object?>> get rows {
     final rows = <List<Object?>>[
       [
@@ -216,10 +176,9 @@ class SessionCsvExport {
       ],
     ];
     for (int s = 0; s < data.sampleCount; s++) {
-      // ssn is unwrapped and gap-inclusive by construction (dropped samples
-      // are kept as blank rows), so it is a plain arithmetic progression.
-      // A gap row blanks both quartets: the buffer holds a fabricated
-      // (held) value there, not data.
+      // ssn is unwrapped and gap-inclusive, so it's a plain arithmetic
+      // progression. A gap row blanks both quartets: the buffer holds a held,
+      // not real, value.
       final isGap = data.gaps.contains(s);
       rows.add([
         data.ssnOrigin + s,
@@ -249,10 +208,8 @@ class SessionCsvExport {
   }
 }
 
-/// The quartet-2 cell formatter for one channel: [unit]'s converter folded
-/// with the column's fixed-point decimals ([DisplayUnit.exportDecimalsFor]).
-/// Null exactly when the unit is unavailable on the channel (a force unit
-/// with no load cell — the file's all-blank column).
+/// The quartet-2 cell formatter for one channel: the converter folded with the
+/// column's fixed-point decimals. Null when the unit is unavailable.
 String Function(int raw)? _columnFormatter(
   DisplayUnit unit,
   ChannelConverter conv,
@@ -263,18 +220,12 @@ String Function(int raw)? _columnFormatter(
   return (raw) => convert(raw.toDouble()).toStringAsFixed(decimals);
 }
 
-/// The body-row encoder: `\n` endings, no BOM (the spec's conventions). Null
-/// fields encode blank — the gap rows' and unconvertible columns' empty
-/// cells.
+/// The body-row encoder: `\n` endings, no BOM. Null fields encode blank.
 final Csv _csv = Csv(lineDelimiter: '\n');
 
-/// The YAML writer for the metadata block. Rendering (quoting, indentation,
-/// number and string style) is the library's: the block is
-/// implementation-defined derived documentation (csv-format-v2.md §The two
-/// renderings), re-derivable from line 2, and nothing parses it back as a
-/// contract. [toEncodable] rejects anything outside the JSON-shaped schema
-/// the metadata is built from, so a stray platform object fails the export
-/// instead of emitting garbage.
+/// The YAML writer for the metadata block. The comment block is
+/// implementation-defined and re-derivable from line 2; [toEncodable] rejects
+/// anything outside the JSON-shaped schema.
 final YamlWriter _yamlWriter = YamlWriter(
   toEncodable: (object) =>
       throw ArgumentError('no YAML form for ${object.runtimeType}'),
@@ -284,11 +235,9 @@ final YamlWriter _yamlWriter = YamlWriter(
 List<String> yamlLinesForCsvMetadata(Map<String, Object?> metadata) =>
     const LineSplitter().convert(_yamlWriter.write(metadata));
 
-/// One `channels[]` entry: the assigned load cell (null = none), the
-/// recording-time tare in raw counts (null = the channel recorded gross),
-/// and the factory board cal — null when the channel is uncalibrated, i.e.
-/// converted values are nominal-referred. Calibration is board-uniform (all
-/// channels calibrated or none — see [BoardCalibration.fromKv]).
+/// One `channels[]` entry: the load cell (null = none), the tare in raw counts
+/// (null = gross), and the board cal (null when uncalibrated). Calibration is
+/// board-uniform.
 Map<String, Object?> _channelMetadata(_Column col) {
   final cell = col.cal.loadCell;
   final board = col.cal.board;

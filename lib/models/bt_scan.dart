@@ -1,13 +1,7 @@
-/// App-level Bluetooth link/scan/adapter types. [BleLinkManager] maps
-/// universal_ble's `BleDevice`/`AvailabilityState` into these at its
-/// boundary, so nothing outside the service layer names the plugin's types —
-/// and widgets that only need the enums don't pull in the manager.
+/// App-level Bluetooth link/scan/adapter types.
 library;
 
 /// Lifecycle of a single device's BLE link.
-///
-/// This is intentionally a *per-device* concept even though, today, the app
-/// only tracks one link at a time (see [BleLinkManager]).
 enum BtLinkState {
   /// No connection to this device; it may or may not be in the discovered list.
   idle,
@@ -15,38 +9,28 @@ enum BtLinkState {
   /// A `connect()` call is outstanding; not yet usable.
   connecting,
 
-  /// The GATT link is up but post-connect setup is still running the first of
-  /// its three stages: MTU negotiation (native only) and service discovery.
-  /// Not yet usable — no data is flowing.
+  /// GATT link up; post-connect setup is running MTU negotiation (native only)
+  /// and service discovery. Not yet usable.
   connected,
 
-  /// Post-connect setup's second stage: services are discovered; the board
-  /// constants (device identity, the ADC's config/GAIN readback, and the
-  /// connect-time flash document read over KVS) are being read. Still not
-  /// usable. An unreadable or unparseable ADC config or a failed KVS bring-up
-  /// tears the link down here (see `BleLinkManager._readAdcConfig` and
-  /// `_setupKvs`); invalid known flash content becomes an
+  /// Post-connect setup reading board constants (device identity, ADC config/
+  /// GAIN, and the flash document). An unreadable ADC config or failed KVS
+  /// bring-up tears the link down; invalid known flash content becomes an
   /// `InvalidBoardCalibration` and the device streams raw counts.
   readingConstants,
 
-  /// Post-connect setup's third stage: the board constants are in and the
-  /// ADC feed subscription (enabling notifications) is in progress. Still
-  /// not usable. The link advances to [streaming] only once the subscription
-  /// succeeds, or is torn down on failure.
+  /// Post-connect setup subscribing to the ADC feed. Advances to [streaming]
+  /// once the subscription succeeds, or is torn down on failure.
   subscribing,
 
-  /// Fully set up: services discovered and the ADC feed subscription is active,
-  /// so data is flowing. This is the single "usable / connected" state.
+  /// Fully set up and usable: the ADC feed subscription is active.
   streaming,
 
-  /// A `disconnect()` was requested; awaiting the connection callback (or the
-  /// disconnect() timeout). Connect must stay blocked while in this state so we
-  /// never issue a connect against a half-torn-down link.
+  /// A `disconnect()` was requested; awaiting the callback or its timeout.
   disconnecting,
 }
 
-/// Adapter availability. One-to-one with universal_ble's `AvailabilityState`
-/// (same names; the manager converts with `BtAvailability.values.byName`).
+/// Adapter availability, one-to-one with universal_ble's `AvailabilityState`.
 enum BtAvailability {
   poweredOn,
   poweredOff,
@@ -56,8 +40,7 @@ enum BtAvailability {
   unauthorized,
 }
 
-/// A scanned device as the app knows it: identity, display name, and the
-/// freshest advert's RSSI and receipt time.
+/// A scanned device: identity, name, and the freshest advert's RSSI and time.
 class DiscoveredDevice {
   const DiscoveredDevice({
     required this.deviceId,
@@ -72,11 +55,10 @@ class DiscoveredDevice {
   /// often omit it — it may only ride in the SCAN_RSP).
   final String? name;
 
-  /// Signal strength of the freshest advert (dBm); null on web, where scan
-  /// results carry no advert data.
+  /// RSSI (dBm) of the freshest advert; null on web.
   final int? rssi;
 
-  /// Advert receipt time (ms since epoch): the freshness of [rssi]. Null on
-  /// web, where no advertisement data exists.
+  /// Advert receipt time (ms since epoch), the freshness of [rssi]; null on
+  /// web.
   final int? timestamp;
 }

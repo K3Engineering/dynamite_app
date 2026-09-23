@@ -12,16 +12,14 @@ import 'snackbars.dart';
 const quickCapacitiesKg = <double>[50, 100, 200, 500];
 const quickSensitivitiesMvV = <double>[1, 2, 3];
 
-/// The device's ten load cell slots: the first four ARE the channels, the
-/// rest are spares carried on the device. Assignment is a swap — drag a
-/// cell onto another slot and the two exchange contents.
+/// The device's ten load cell slots: the first four ARE the channels, the rest
+/// spares carried on the device. Assignment is a swap — drag a cell onto
+/// another slot and the two exchange contents.
 ///
-/// Edits take effect in this app immediately; nothing reaches the device
-/// until "Save to device" (the flash doc is the rig's single truth —
-/// reads are automatic, writes are explicit). Both the document and
-/// unsaved edits die with the link, so a streaming session is the only
-/// context this section ever renders: the parent mounts it only while the
-/// link is streaming, and a mid-session drop clears the rig under it.
+/// Edits take effect in this app immediately; nothing reaches the device until
+/// "Save to device" (the flash doc is the rig's truth: reads are automatic,
+/// writes explicit). Document and unsaved edits die with the link, so the
+/// parent mounts this only while streaming.
 class RigSlotsSection extends StatefulWidget {
   const RigSlotsSection({super.key, required this.rig});
 
@@ -142,23 +140,19 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     );
   }
 
-  /// One slot row: a drop target for swaps, fixed height so the channel
-  /// gutter aligns. The drag is vertical-only:
-  /// [Draggable.axis] pins the feedback — a full-width replica of the row
-  /// — to the row's X for the whole drag, so it slides straight up and
-  /// down the list instead of following the pointer sideways.
+  /// One slot row: a drop target for swaps, fixed height so the channel gutter
+  /// aligns. `.axis` pins the drag feedback — a full-width replica of the row —
+  /// to the row's X, so it slides straight up/down rather than following the
+  /// pointer sideways.
   ///
-  /// The whole row is the drag source; how a drag starts depends on the
-  /// platform. Touch platforms require a tap-and-hold so a swipe still
-  /// scrolls; desktops start dragging on mouse-down (the recognizer claims
-  /// the gesture only past the 1 px precise-pointer slop, so taps still
-  /// open the editor). On web the reported platform is the browser's OS,
-  /// which puts phone browsers (Android Chrome, Bluefy on iOS) on the
-  /// tap-and-hold path.
+  /// How a drag starts is platform-dependent: touch requires tap-and-hold (so a
+  /// swipe still scrolls); desktops start on mouse-down past the precise-pointer
+  /// slop, so taps still open the editor. Web reports the browser's OS, putting
+  /// phone browsers on the tap-and-hold path.
   ///
-  /// All edit affordances (tap, drag start, drop) close while a save is in
-  /// flight: an edit landing mid-write would mutate the pending session the
-  /// save already snapshotted (see RigState.saveToDevice's state guard).
+  /// All edit affordances close while a save is in flight: an edit landing
+  /// mid-write would mutate the pending edits the save already snapshotted (see
+  /// [RigState.saveToDevice]).
   Widget _slotTile(
     BuildContext context,
     RigState rig,

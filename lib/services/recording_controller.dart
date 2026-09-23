@@ -23,26 +23,20 @@ final class StartSessionOk extends StartSessionResult {
   const StartSessionOk();
 }
 
-/// Refused: another lifecycle operation is already in flight (a session is
-/// recording, or a stop is finalizing) — one outstanding operation at a time.
-/// The UI prevents this by toggling on [RecordingController.sessionInProgress];
-/// reaching it means a second tap landed inside the previous operation's
-/// async window.
+/// Refused: another lifecycle operation is already in flight (one outstanding
+/// operation at a time).
 final class StartSessionBusy extends StartSessionResult {
   const StartSessionBusy();
 }
 
 /// Refused: a tare is still averaging, so recording now would freeze the
-/// pre-tare offsets (re-taring is refused for the session's lifetime).
-/// Transient — retry once the tare completes.
+/// pre-tare offsets for the session's lifetime. Transient.
 final class StartSessionTareInProgress extends StartSessionResult {
   const StartSessionTareInProgress();
 }
 
-/// Refused: the link is streaming but no decodable data is flowing — the
-/// feed is silent, delivers only malformed packets, or has stalled (see
-/// [deriveFeedHealth]) — so the session would record nothing. Transient —
-/// retry once data flows.
+/// Refused: no decodable data is flowing (see [deriveFeedHealth]), so the
+/// session would record nothing. Transient.
 final class StartSessionNoData extends StartSessionResult {
   const StartSessionNoData();
 }
@@ -52,17 +46,16 @@ sealed class StopSessionResult {
   const StopSessionResult();
 }
 
-/// Refused: no recording was in progress — the state machine's no-op guard.
+/// Refused: no recording was in progress.
 final class StopSessionRefused extends StopSessionResult {
   const StopSessionRefused();
 }
 
-/// Finalized with no error, but nothing was ever recorded: with no first
-/// packet there was never a session directory, so there is nothing saved.
+/// Finalized cleanly, but nothing was ever recorded (no session directory was
+/// created).
 final class StopSessionNothingRecorded extends StopSessionResult {
   const StopSessionNothingRecorded(this.name);
 
-  /// The latched session name.
   final String name;
 }
 
@@ -75,8 +68,7 @@ final class StopSessionSaved extends StopSessionResult {
 }
 
 /// Finalization failed (a latched write error or a finalize-step throw); the
-/// session may be truncated. [sessionId] is null when no data ever reached
-/// storage. The error is also emitted on [AppEvents] from [stopSession].
+/// session may be truncated. [sessionId] is null when no data reached storage.
 final class StopSessionFailed extends StopSessionResult {
   const StopSessionFailed(this.error, this.name, {this.sessionId});
 
@@ -85,60 +77,38 @@ final class StopSessionFailed extends StopSessionResult {
   final String? sessionId;
 }
 
-/// The recording lifecycle, serialized: exactly one of these at a time, and
-/// every operation is refused unless the state matches. [stopping] covers
-/// the finalization's async window, so a recording can never be half-latched
-/// while another begins. (Starting has no async window: the storage layer
-/// does no store work until data exists, so latching is synchronous.)
+/// The recording lifecycle: exactly one state at a time, and every operation
+/// is refused unless the state matches. [stopping] covers finalization's async
+/// window so a recording can't be half-latched while another begins.
 enum _RecordingState { idle, recording, stopping }
 
-/// Owns the recording session lifecycle start to finish; the UI only
-/// toggles and reports outcomes.
+/// Owns the recording session lifecycle start to finish.
 ///
-/// The lifecycle is the [_RecordingState] machine above: [startSession] may
-/// run only from idle, [stopSession] only from recording, and the async gaps
-/// in each are covered states rather than windows where the controller
-/// merely "looks" idle.
+/// Dependencies are injected ports: [DataHub] for the data plane,
+/// [streamingChanges]/[streamingNow] for liveness, metadata and
+/// packet-boundary snapshots, and [SessionStore] for persistence.
+/// Link-transition resets live in `StreamResetCoordinator`.
 ///
-/// Dependencies are ports, not subsystems: the live store is [DataHub] (the
-/// data plane — starting a session snapshots tare, calibration and sample
-/// rate off it, more than the [FeedHealthSource] read port covers), stream
-/// liveness arrives through the [streamingChanges]/[streamingNow]
-/// port, and device metadata and packet-boundary resets are injected
-/// ([deviceMetadataSnapshot], [onSessionBoundary]). Persistence is the
-/// app-wide [SessionStore] singleton.
-/// The link-transition resets this controller used to own (hub clear on
-/// stream entry, calibration forget on drop) live in
-/// `StreamResetCoordinator`.
-///
-/// Failures are reported two ways, by audience: [startSession] refuses or
-/// fails in response to the user who just tapped record, so its outcomes are
-/// returned for a local snackbar; a storage failure latching mid-recording is
-/// surfaced as a [RecordingStorageError] on [AppEvents] (emitted from
-/// [stopSession], the single finalization path), since the tab that started
-/// the session may no longer be mounted.
+/// Failures are reported by audience: [startSession] returns its outcome for a
+/// local snackbar; a mid-recording storage failure is emitted as a
+/// [RecordingStorageError] on [AppEvents] from [stopSession].
 class RecordingController extends ChangeNotifier {
   RecordingController({
     required DataHub dataHub,
 
-    /// Stream liveness, as a notify source plus a poll closure (the same
-    /// port shape [FeedHealthTracker] uses); main wires the link manager
-    /// in. The controller's only link reaction is auto-stop: a recording
-    /// whose stream dies is finalized.
+    /// Stream liveness source; a recording whose stream dies is auto-stopped.
+    /// Same port shape as [FeedHealthTracker].
     required Listenable streamingChanges,
     required bool Function() streamingNow,
 
-    /// Snapshot of the connected device's identity (the CSV `device`
-    /// block), frozen onto the session row at start.
+    /// The connected device's identity, frozen onto the session at start.
     required Map<String, Object?> Function() deviceMetadataSnapshot,
 
-    /// Snapshot of the raw device KVS (the CSV `device.kvs` block), frozen
-    /// onto the session row at start.
+    /// The raw device KVS, frozen onto the session at start.
     required KvsSnapshot? Function() deviceKvsSnapshot,
 
-    /// Marks a session boundary for packet continuity: the first packet of
-    /// a session must not be diffed against a stale counter from across the
-    /// boundary (the decoder's `resetContinuity`, wired in main).
+    /// Marks a session boundary for packet continuity (the decoder's
+    /// `resetContinuity`).
     required void Function() onSessionBoundary,
 
     required AppEvents events,
@@ -165,46 +135,35 @@ class RecordingController extends ChangeNotifier {
 
   LiveSessionWriter? _sessionWriter;
 
-  /// Display name of the in-progress session, latched by [startSession] so
-  /// [stopSession] can hand it back to the UI without a store lookup.
+  /// The in-progress session's display name, latched at start.
   String? _sessionName;
 
-  /// The recording-start wall clock, latched by [startSession] for the live
-  /// elapsed readout; null when not recording.
+  /// Recording-start wall clock; null when not recording.
   DateTime? _sessionStartTime;
 
-  /// The in-progress recording's start instant for the UI's elapsed readout,
-  /// or null when not recording.
   DateTime? get sessionStartTime => _sessionStartTime;
 
-  /// True from the moment a start is committed until finalization completes
-  /// — the stopping window included, so the UI's record toggle never sees a
-  /// fake idle gap. Derived from the state machine, so it can never
-  /// disagree with the lifecycle it describes.
+  /// True from a committed start until finalization completes, the stopping
+  /// window included.
   bool get sessionInProgress => _state != _RecordingState.idle;
 
-  /// Every transition notifies: [sessionInProgress] covers the stopping
-  /// window, not just the latched recording.
   void _transitionTo(_RecordingState next) {
     _state = next;
     notifyListeners();
   }
 
-  /// Start a new recording session: construct the writer and latch it here.
-  /// Synchronous end to end — the storage layer does no store work until the
-  /// first packet creates the session directory — so there is no async window
-  /// in which the stream could change out from under the snapshots the writer
-  /// is built on, and no discarded artifact to clean up if it did.
+  /// Start a recording session: construct the writer and latch it here.
+  /// Synchronous end to end (the storage layer does no work until the first
+  /// packet creates the directory), so the stream can't change under the
+  /// snapshots the writer is built on.
   ///
-  /// [name] is the session's display name; null auto-names it from the wall
-  /// clock (e.g. `2026-07-29 14:05:32` — see [autoSessionName]).
-  /// [channelLabels] and [visibleChannels] are persisted for display only
-  /// (see [SessionStore.startSession]). [displayUnit] is frozen onto
-  /// the session row as the CSV export's default converted unit. The connected
-  /// device's identity is frozen alongside (the CSV `device` block).
+  /// [name] null auto-names from the wall clock (see [autoSessionName]).
+  /// [channelLabels] and [visibleChannels] are persisted for display only.
+  /// [displayUnit] is the CSV export's default converted unit. The connected
+  /// device's identity is frozen alongside.
   ///
-  /// Outcomes are returned, not thrown, so the caller (the live tab's record
-  /// button) can snackbar them locally.
+  /// Outcomes are returned, not thrown, so the caller can snackbar them
+  /// locally.
   StartSessionResult startSession({
     String? name,
     required List<String> channelLabels,
@@ -213,12 +172,7 @@ class RecordingController extends ChangeNotifier {
   }) {
     assert(_streamingNow());
     if (_state != _RecordingState.idle) return const StartSessionBusy();
-    // A tare is still averaging; recording now would freeze the pre-tare
-    // offsets for the session's lifetime.
     if (_dataHub.taring) return const StartSessionTareInProgress();
-    // Refuse to latch an empty session onto a feed that delivers nothing
-    // decodable (a stream that never produced data, produces only malformed
-    // packets, or has gone silent).
     if (deriveFeedHealth(
           streaming: _streamingNow(),
           totalSamples: _dataHub.totalSamples,
@@ -230,16 +184,11 @@ class RecordingController extends ChangeNotifier {
       return const StartSessionNoData();
     }
 
-    // One clock for the recording-start wall clock: the auto name, the CSV
-    // recordedAt, and the elapsed readout's zero all agree.
+    // One clock for the auto name, the CSV recordedAt, and the elapsed
+    // readout's zero.
     final startedAt = DateTime.now();
     final sessionName = name ?? autoSessionName(startedAt);
-    // The whole journal header is snapshotted here, at recording start: the
-    // per-channel calibration in effect now (playback converts through it
-    // even if calibration changes later), the tare offsets, the display
-    // unit, the device identity, and the recording-start wall clock (NOT
-    // the first packet's, which is later — the CSV's recorded_at asserts
-    // this one).
+    // The journal header is snapshotted here, at recording start.
     final header = (
       name: sessionName,
       sampleRate: _dataHub.sampleRateHz,
@@ -259,9 +208,8 @@ class RecordingController extends ChangeNotifier {
     _sessionWriter = SessionStore.instance.startSession(
       header,
       sourceRingCapacity: DataHub.maxDataSz,
-      // A storage failure latched mid-recording stops the session the
-      // moment it latches — not when a later batch would reveal it (a
-      // failed last packet under an idle feed has no later batch).
+      // A latched storage failure stops the session the moment it latches, not
+      // when a later batch would reveal it.
       onWriteError: (_) => _autoStopOnStorageError(),
     );
     _sessionName = sessionName;
@@ -271,20 +219,15 @@ class RecordingController extends ChangeNotifier {
     return const StartSessionOk();
   }
 
-  /// Auto-stop on the writer's latched storage failure; the error itself is
-  /// surfaced out of [stopSession]'s single finalization path. Guarded to
-  /// the recording state: a failure latching while finalization is already
-  /// draining the write queue must not start a second stop.
+  /// Auto-stop on the writer's latched storage failure. Guarded to the
+  /// recording state: a failure latching while finalization already drains the
+  /// write queue must not start a second stop.
   void _autoStopOnStorageError() {
     if (_state == _RecordingState.recording) unawaited(stopSession());
   }
 
-  /// Default session name from the wall clock, e.g. `2026-07-29 14:05:32` —
-  /// the same ISO Y-M-D voice as [formatDate] (utils/format.dart), 24h and
-  /// zero-padded. Seconds included so two sessions started within the same
-  /// minute don't collide, and the zero-padding keeps the derived CSV
-  /// filename (`2026-07-29 14-05-32.csv`) sorting chronologically in a file
-  /// browser.
+  /// Default session name from the wall clock, e.g. `2026-07-29 14:05:32`.
+  /// Zero-padded so derived CSV filenames sort chronologically.
   @visibleForTesting
   static String autoSessionName(DateTime now) {
     final m = now.month.toString().padLeft(2, '0');
@@ -296,11 +239,10 @@ class RecordingController extends ChangeNotifier {
   }
 
   /// Stop the current recording and finalize it. Returns whether the session
-  /// was saved, recorded nothing, or failed (see [StopSessionResult]); the
-  /// idle case is refused by the state machine.
+  /// was saved, recorded nothing, or failed (see [StopSessionResult]).
   ///
-  /// This is the single place a storage failure is surfaced to the user (as a
-  /// [RecordingStorageError] on [AppEvents]); callers branch on the result.
+  /// The single place a storage failure is surfaced to the user (as a
+  /// [RecordingStorageError] on [AppEvents]).
   Future<StopSessionResult> stopSession() async {
     if (_state != _RecordingState.recording) {
       return const StopSessionRefused();
@@ -313,12 +255,10 @@ class RecordingController extends ChangeNotifier {
     _onSessionBoundary();
     _transitionTo(_RecordingState.stopping);
 
-    // finalizeSession flushes through the writer's serialized queue, which
-    // drains any in-flight (unawaited) appends first. A failure there (e.g.
-    // the sessions root itself is gone) is folded into the returned result
-    // rather than thrown: stopSession also runs on unawaited auto-stop paths
-    // (link drop, writer error), where a throw would be an unhandled async
-    // error.
+    // finalizeSession flushes through the writer's serialized queue, draining
+    // any in-flight appends first. Its failure is folded into the result, not
+    // thrown: stopSession also runs on unawaited auto-stop paths, where a
+    // throw would be an unhandled async error.
     Object? error;
     try {
       await SessionStore.instance.finalizeSession(writer: writer);
@@ -338,11 +278,9 @@ class RecordingController extends ChangeNotifier {
         : StopSessionSaved(sessionId, name);
   }
 
-  /// The controller only consumes [HubBatchAppended] (freshly decoded
-  /// samples, straight from the decoder via the hub): stream them to the
-  /// writer. A storage failure surfaces through the writer's
-  /// [LiveSessionWriter.onWriteError] callback the moment it latches, not
-  /// through this path.
+  /// Streams freshly decoded [HubBatchAppended] samples to the writer. A
+  /// storage failure surfaces through the writer's onWriteError callback, not
+  /// here.
   void _onHubEvent(HubEvent event) => switch (event) {
     final HubBatchAppended batch => _onBatchAppended(batch),
     HubCleared() => null,
@@ -359,9 +297,7 @@ class RecordingController extends ChangeNotifier {
   }
 
   /// The controller's only link reaction: a recording whose stream dies is
-  /// finalized. (A start in flight aborts itself via [startSession]'s
-  /// post-await checks; a finalization in flight reads only snapshots it
-  /// already took.) Stream resets on connection transitions are
+  /// finalized. Stream resets on connection transitions are
   /// `StreamResetCoordinator`'s job.
   void _onStreamingChanged() {
     if (_state == _RecordingState.recording && !_streamingNow()) {

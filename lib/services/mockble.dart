@@ -12,8 +12,8 @@ import 'kvs_protocol.dart';
 import 'ota_protocol.dart';
 import '../models/device_flash.dart';
 
-/// Samples per emitted feed packet: one packet every that many milliseconds
-/// makes 1 kHz (matches the mock's ADC config readback, see [readValue]).
+/// Samples per emitted feed packet (20 ms at 1 kHz, matching the mock's ADC
+/// config readback).
 const int _samplesPerPacket = 20;
 
 class MockBlePlatform extends UniversalBlePlatform {
@@ -24,8 +24,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   static const hwDelay = Duration(milliseconds: 200);
 
   MockBlePlatform._() {
-    // Always have a synthetic feed available synchronously so [connect] never
-    // blocks on file I/O (which would stall under a fake-async test clock).
+    // Synthetic feed built synchronously so [connect] never blocks on file I/O.
     _mockData
       ..clear()
       ..addAll(_generateSyntheticFrames(2000));
@@ -37,9 +36,8 @@ class MockBlePlatform extends UniversalBlePlatform {
   String? _connectedDeviceId;
   BleConnectionState _connectionState = BleConnectionState.disconnected;
 
-  /// Whether the client currently holds the ADC feed subscription. With
-  /// [kvsLockWhenStreaming], KVS commands are dropped while this is true —
-  /// the firmware device lock.
+  /// Whether the client holds the ADC feed subscription (see
+  /// [kvsLockWhenStreaming]).
   bool _adcFeedSubscribed = false;
 
   final List<Uint8List> _mockData = [];
@@ -49,46 +47,32 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// Number of generated packets (emitted or dropped) since the feed started.
   int _generatedPacketCount = 0;
 
-  /// When > 0, every [dropEveryNPackets]-th packet is *not* delivered to the
-  /// client (its sample counter is still consumed), so the running sample
-  /// counter jumps and [AdcPacketDecoder] reports the dropped range to
-  /// [DataHub.gaps]. 0 disables induced drops (the default). The very first
-  /// packet is always delivered so the decoder can establish continuity.
+  /// When > 0, every Nth packet is not delivered (its counter still advances),
+  /// so [AdcPacketDecoder] reports a gap. The first packet is always delivered.
   int dropEveryNPackets = 0;
 
   /// Test knobs ---------------------------------------------------------------
 
-  /// When false, [discoverServices] reports a GATT table WITHOUT the ADC feed
-  /// service, so post-connect setup cannot subscribe to the feed.
+  /// When false, the GATT table omits the ADC feed service.
   bool includeAdcService = true;
 
-  /// When true, the ADC config characteristic serves garbage, so its read
-  /// never parses — the app's connect-time config read (mandatory) fails the
-  /// connection.
+  /// When true, the ADC config read serves garbage, failing the connection.
   bool badAdcConfig = false;
 
-  /// When true, KVS commands throw (a transport-level failure — the app's
-  /// connect-time flash read then fails the connection).
+  /// When true, KVS commands throw, failing the connect-time flash read.
   bool failKvsCommands = false;
 
-  /// When true, KVS commands are answered 'B' (busy) while the ADC feed
-  /// subscription is active — the firmware device lock.
+  /// When true, KVS commands answer 'B' (busy) while the feed is subscribed.
   bool kvsLockWhenStreaming = false;
 
-  /// When true, KVS commands get no answer at all (a dead link — the
-  /// client's command timeout then means what it means on real hardware:
-  /// the link is broken).
+  /// When true, KVS commands get no answer (exercises the client timeout).
   bool kvsDropCommands = false;
 
-  /// When true, ENABLING the ADC feed subscription throws. Tests set this
-  /// once the link is streaming so a feed-pause envelope's resubscribe
-  /// fails (the connect-time subscription would fail with it set).
+  /// When true, enabling the ADC feed subscription throws. Set after streaming
+  /// to fail only a feed-pause resubscribe.
   bool failFeedSubscribe = false;
 
-  /// How long a KVS command takes to answer (default zero — instant). A
-  /// non-zero delay lets tests hold the link in the "Starting data
-  /// stream…" window (the connect-time flash read) or exercise the KVS
-  /// client's command timeout.
+  /// How long a KVS command takes to answer (default instant).
   Duration kvsCommandDelay = Duration.zero;
 
   /// The mock device's KVS, per folder. Seeded from [demoKvs]; writes
@@ -99,20 +83,17 @@ class MockBlePlatform extends UniversalBlePlatform {
     kvsFolderSettings: {},
   };
 
-  /// Test knob: the OTA session request is answered with a NAK (the device
-  /// declining the update, e.g. its slot can't take the image).
+  /// Test knob: the OTA request is answered with a NAK.
   bool refuseOtaStart = false;
 
   /// Test spy: image bytes received on the OTA Data characteristic.
   int otaDataBytes = 0;
 
-  /// Test spy: every KVS command string received, in order. Lets tests
-  /// assert write diffs are minimal and folder-routed.
+  /// Test spy: every KVS command received, in order.
   final List<String> kvsCommandLog = [];
 
-  /// Test spy: GATT ops in device-observed order — `adc:sub`/`adc:unsub`
-  /// for the feed subscription and `kvs:<request>` for each KVS command.
-  /// Lets tests assert feed-maintenance envelopes don't interleave.
+  /// Test spy: GATT ops in device-observed order (`adc:sub`/`adc:unsub`,
+  /// `kvs:<request>`).
   final List<String> gattOpLog = [];
 
   /// (Re)populate [kvsStore] from [snapshot], its folders written verbatim.
@@ -124,60 +105,45 @@ class MockBlePlatform extends UniversalBlePlatform {
     kvsStore[kvsFolderUser]!.addAll(snapshot.user);
   }
 
-  /// When true, [connect] throws (a refused/failed attempt: no link is
-  /// established and no connection-change callback fires — the WEB flavor,
-  /// where gatt.connect() itself rejects).
+  /// When true, [connect] throws and no connection-change callback fires (the
+  /// web flavor).
   bool failConnect = false;
 
-  /// When true, [connect] fails the way NATIVE stacks report a refused GATT
-  /// connect: the platform call itself succeeds, then the refusal arrives via
-  /// the connection-change callback (deviceId, false, error) — which is also
-  /// what errors the client's connect() future (universal_ble completes its
-  /// completer from that same event stream, AFTER the client's
-  /// onConnectionChange handler has run).
+  /// When true, [connect] succeeds then fails via the connection-change callback
+  /// (the native refusal flavor).
   bool failConnectViaCallback = false;
 
-  /// When true, [startScan] throws instead of starting the result feed (a
-  /// refused scan start, e.g. a radio error).
+  /// When true, [startScan] throws.
   bool failScan = false;
 
-  /// When false, the adapter reports poweredOff and [enableBluetooth] is the
-  /// way back (it flips this to true) — the radio-off recovery path.
+  /// When false, the adapter reports poweredOff; [enableBluetooth] flips it.
   bool isEnabled = true;
 
-  /// When true, [enableBluetooth] leaves the radio off and returns false —
-  /// the user dismissing the system enable dialog.
+  /// When true, [enableBluetooth] returns false and leaves the radio off.
   bool refuseEnable = false;
 
   /// Test spy: how many [requestPermissions] calls arrived.
   int requestPermissionsCalls = 0;
 
-  /// When true, [disconnect] never fires the connection-change callback, so
-  /// the client's disconnect-timeout reconciliation path is what tears the
-  /// link down.
+  /// When true, [disconnect] never fires the callback (exercises the client's
+  /// disconnect timeout).
   bool hangDisconnect = false;
 
-  /// When true, [connect] takes [slowConnectDelay] instead of [netDelay] —
-  /// far longer than the client's connect timeout, so the attempt is torn
-  /// down before the platform link comes up. The late success still fires
-  /// its connection-change callback afterwards (the "connect completed after
-  /// the client gave up" race).
+  /// When true, [connect] takes [slowConnectDelay] (past the client's connect
+  /// timeout); the late success still fires its callback afterwards.
   bool slowConnect = false;
   static const slowConnectDelay = Duration(seconds: 20);
 
-  /// Test spy: every deviceId passed to [disconnect], in order. Lets tests
-  /// assert that leaked/unwanted GATT links were released.
+  /// Test spy: every deviceId passed to [disconnect], in order.
   final List<String> disconnectCalls = [];
 
-  /// Test spy: how many [readRssi] calls arrived (e.g. to assert no RSSI
-  /// polling runs against the demo device).
+  /// Test spy: how many [readRssi] calls arrived.
   int readRssiCalls = 0;
 
   /// The device the mock currently considers linked (test assertions only).
   String? get connectedDeviceId => _connectedDeviceId;
 
-  /// Reset every knob to its default and silently sever any leftover link
-  /// (no callbacks), so the singleton is clean for the next test.
+  /// Reset every knob to default and silently sever any leftover link.
   void resetKnobs() {
     dropEveryNPackets = 0;
     includeAdcService = true;
@@ -267,10 +233,8 @@ class MockBlePlatform extends UniversalBlePlatform {
         }
       }
     }
-    // Real platforms stamp every scan result with its receipt time, and the
-    // manager's "last seen" freshness (BleLinkManager.lastAliveMs) relies on
-    // it — re-stamp on each emission so mock devices age/refresh like real
-    // advertisements instead of carrying a stale (or null) timestamp.
+    // Re-stamp each emission with its receipt time, like real adverts, so the
+    // manager's "last seen" freshness works.
     void emit(BleDevice d) {
       d.timestamp = DateTime.now().millisecondsSinceEpoch;
       updateScanResult(d);
@@ -320,18 +284,14 @@ class MockBlePlatform extends UniversalBlePlatform {
     _connectionState = BleConnectionState.connecting;
     await Future<void>.delayed(slowConnect ? slowConnectDelay : netDelay);
     if (failConnect) {
-      // A refused/failed attempt: no link, and no connection-change callback
-      // — the client's connect() catch path is what tears its state down.
+      // No link and no callback; the client's connect() catch path tears down.
       _connectedDeviceId = null;
       _connectionState = BleConnectionState.disconnected;
       throw StateError('Mock connect failure');
     }
     if (failConnectViaCallback) {
-      // The native refusal flavor: the platform call itself succeeds; the
-      // refusal arrives via the connection-change callback — which is ALSO
-      // what errors the client's connect() future (universal_ble completes
-      // its completer from this same event stream, after the client's
-      // onConnectionChange handler has run synchronously).
+      // The native refusal flavor: the callback both reports the failure and
+      // errors the client's connect() future.
       _connectedDeviceId = null;
       _connectionState = BleConnectionState.disconnected;
       updateConnection(deviceId, false, 'Mock connect refusal');
@@ -345,8 +305,8 @@ class MockBlePlatform extends UniversalBlePlatform {
   Future<void> disconnect(String deviceId) async {
     disconnectCalls.add(deviceId);
     if (hangDisconnect) {
-      // Never fire the connection-change callback: the link stays "connected"
-      // here and the client's disconnect-timeout reconciliation tears it down.
+      // No callback: the client's disconnect-timeout reconciliation tears it
+      // down.
       return;
     }
     _connectionState = BleConnectionState.disconnected;
@@ -360,7 +320,6 @@ class MockBlePlatform extends UniversalBlePlatform {
     await Future<void>.delayed(netDelay);
     final services = _generateServices(deviceId);
     if (!includeAdcService) {
-      // A device whose GATT table lacks the ADC feed service.
       return [
         for (final s in services)
           if (s.uuid != btServiceId) s,
@@ -381,10 +340,7 @@ class MockBlePlatform extends UniversalBlePlatform {
         bleInputProperty == BleInputProperty.notification) {
       throw StateError('Mock feed subscribe failure');
     }
-    // Only the ADC feed characteristic drives the packet timer (and the
-    // device-lock state); the KVS characteristic is request/response — its
-    // notifications are answers to writes, fired from [writeValue]. An
-    // empty characteristic is the disconnect path's blanket stop.
+    // Only the ADC feed drives the packet timer; KVS is request/response.
     if (characteristic.isNotEmpty && characteristic != btChrAdcFeedId) {
       return;
     }
@@ -392,9 +348,8 @@ class MockBlePlatform extends UniversalBlePlatform {
     if (characteristic == btChrAdcFeedId) {
       gattOpLog.add(_adcFeedSubscribed ? 'adc:sub' : 'adc:unsub');
     }
-    // The feed is reset on every (re)subscription: continuity counter and the
-    // synthetic-data cursor both restart from zero so reconnects behave like a
-    // fresh device, and an induced-drop run can be repeated deterministically.
+    // Reset the feed on every (re)subscription so reconnects and drop runs are
+    // deterministic.
     _notificationTimer?.cancel();
     _notificationTimer = null;
     _packetCount = 0;
@@ -402,14 +357,10 @@ class MockBlePlatform extends UniversalBlePlatform {
     _generatedPacketCount = 0;
 
     if (BleInputProperty.notification == bleInputProperty) {
-      // One packet every [_samplesPerPacket] ms => 1000 samples/sec (matches
-      // the mock's ADC config readback), with [_samplesPerPacket] samples
-      // per packet.
       const dataInterval = Duration(milliseconds: _samplesPerPacket);
       _notificationTimer = Timer.periodic(dataInterval, (_) {
         final int thisCounter = _packetCount;
-        // Always advance the running counter by a full packet, whether or not
-        // we deliver this packet, so a dropped packet produces a real gap.
+        // Advance the counter even when dropping, so a drop produces a real gap.
         _packetCount = (_packetCount + _samplesPerPacket) & 0xFFFF;
 
         final bool drop =
@@ -440,18 +391,15 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic, {
     final Duration? timeout,
   }) async {
-    // The Device Information strings are static — served synchronously, like
-    // KVS answers, so the fake-async connect stays at ~2 s in tests.
+    // Static strings, served synchronously, like KVS answers.
     final String? disValue = _disValues[characteristic];
     if (service == btSvcDeviceInfo && disValue != null) {
       return Uint8List.fromList(utf8.encode(disValue));
     }
     if (characteristic == btChrAdcConfig) {
       if (badAdcConfig) return Uint8List(3);
-      // The ADC config snapshot: struct version 1; CLOCK = 0x0F14 (all four
-      // channels enabled, OSR = 4096 → 1000 SPS at the 8.192 MHz clock,
-      // matching the feed timer above); GAIN = 0x0000 (PGA 1x on all four
-      // channels — the mock is Pro-like).
+      // ADC config: version 1; CLOCK 0x0F14 (four channels, OSR 4096 → 1000 SPS,
+      // matching the feed timer); GAIN 0x0000 (PGA 1x, Pro-like).
       return Uint8List(11)
         ..[0] = 1
         ..[8] = 0x0F
@@ -481,13 +429,11 @@ class MockBlePlatform extends UniversalBlePlatform {
       final request = utf8.decode(value, allowMalformed: true);
       kvsCommandLog.add(request);
       gattOpLog.add('kvs:$request');
-      // The firmware device lock: while the ADC feed subscription holds the
-      // device, KVS commands are answered busy — nothing is dropped silently.
+      // Firmware device lock: while the feed is subscribed, KVS answers busy.
       final response = (kvsLockWhenStreaming && _adcFeedSubscribed)
           ? 'B$request'
           : _executeKvsCommand(request);
-      // Firmware answers within the write handling: the response
-      // notification is already there when the write completes.
+      // The response arrives within the write handler.
       updateCharacteristicValue(
         deviceId,
         btChrKvs,
@@ -495,10 +441,8 @@ class MockBlePlatform extends UniversalBlePlatform {
         null,
       );
     } else if (characteristic == btChrOtaControl) {
-      // The OTA control protocol (ble_ota.cpp) in miniature, dispatching on
-      // the opcode byte: REQUEST carries the image size in a 5-byte write;
-      // DONE is a single byte. The reply notification fires inside the
-      // write handler, like the firmware's.
+      // The OTA control protocol in miniature: REQUEST is a 5-byte write, DONE
+      // one byte; the reply fires inside the write handler.
       final reply = switch ((value[0], value.length)) {
         (otaRequestOpcode, 5) => refuseOtaStart ? otaRequestNak : otaRequestAck,
         (otaDoneOpcode, 1) => otaDoneAck,
@@ -511,8 +455,7 @@ class MockBlePlatform extends UniversalBlePlatform {
         null,
       );
     } else if (characteristic == btChrOtaData) {
-      // Image chunks are consumed in the write handler (the ATT ack is the
-      // flow control); no reply.
+      // Chunks are consumed in the write handler; no reply.
       otaDataBytes += value.length;
     }
   }
@@ -536,9 +479,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     final Duration? timeout,
   }) => throw UnimplementedError('the mock device exposes no descriptors');
 
-  /// The firmware KVS command processor (user_kvs.cpp) in miniature:
-  /// `<CMD><FOLDER><DATA>` in, a frame of status byte + request echo +
-  /// '=' + payload out (GET: the value; IDX: `key=typeHex`; SET/DEL: empty).
+  /// The firmware KVS command processor in miniature.
   String _executeKvsCommand(String request) {
     String reply(bool ok, [String payload = '']) =>
         ok ? '1$request=$payload' : '0$request';
@@ -613,8 +554,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     return ([]);
   }
 
-  /// Generate [count] deterministic multi-channel frames; amplitudes stay
-  /// well inside the signed 24-bit range.
+  /// Generate [count] deterministic frames, well inside the 24-bit range.
   static List<Uint8List> _generateSyntheticFrames(int count) {
     const amp0 = 4000000;
     const amp1 = 3000000;
@@ -678,8 +618,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     ]);
   }
 
-  /// The mock sampler's Device Information service (0x180A) contents,
-  /// mirroring what firmware's setupDeviceInfo() publishes.
+  /// The mock sampler's Device Information service (0x180A) contents.
   static const Map<String, String> _disValues = {
     btChrDisManufacturer: 'K3 Engineering',
     btChrDisModel: 'Dynamite Sampler Pro Mk1',

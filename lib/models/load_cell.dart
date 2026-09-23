@@ -4,16 +4,12 @@ import 'device_profile.dart';
 
 // ---------------------------------------------------------------------------
 // Load cells: certificate profiles and the device's rig slots (app-writable
-// flash namespace). Everything here is a property of a CELL (or a slot
-// holding one): capacity and certificate sensitivity — never an ADC count.
-// The interface board's factory calibration lives in board_calibration.dart,
-// and the vocabulary stays separate: a cell has a zero BALANCE (a
-// certificate property this app does not store), a board has a zero OFFSET.
+// flash). A cell has a zero BALANCE, a board a zero OFFSET; the board's factory
+// calibration lives in board_calibration.dart.
 // ---------------------------------------------------------------------------
 
-/// Number of load cell slots on a device. The first [kAdcChannelCount] slots are
-/// the channels (the plugged-in rig); the rest are spares carried on the
-/// device. Constant for the first prototype.
+/// Number of load cell slots: the first [kAdcChannelCount] are the channels,
+/// the rest spares.
 const int kRigSlotCount = 10;
 
 /// The exact load-cell-slot keys the app owns in the device's User
@@ -27,9 +23,8 @@ final Set<String> rigSlotKeys = Set.unmodifiable({
   ],
 });
 
-/// The canonical label for a slot/channel index. Zero-based, matching the
-/// physical labels on the device: the four channels are CH 0–CH 3, the
-/// spares Slot 4–Slot 9. The single source for every human-readable tag.
+/// The canonical label for a slot/channel index; zero-based, matching the
+/// device's physical labels.
 String rigSlotTitle(int i) => i < kAdcChannelCount ? 'CH $i' : 'Slot $i';
 
 /// One populated device slot: the cell it holds.
@@ -45,10 +40,7 @@ class RigSlot {
   int get hashCode => cell.hashCode;
 }
 
-/// The device's ten load cell slots: identity is positional (slots 0–3 are
-/// CH 0–CH 3). Immutable; edits produce new instances. The slot list is the
-/// device's self-contained description of the rig — any host reading flash
-/// can convert force from it alone.
+/// The device's load cell slots; identity is positional. Immutable.
 class RigSlots {
   RigSlots(List<RigSlot?> slots)
     : slots = List.unmodifiable(
@@ -70,12 +62,9 @@ class RigSlots {
     for (int i = 0; i < kAdcChannelCount; ++i) cellAt(i),
   ];
 
-  /// Channel row titles: the cell's name when the user set one, the
-  /// channel-anchored spec line for an unnamed cell, or the bare channel
-  /// name when no cell is assigned. The anchor keeps an unnamed cell
-  /// readable in channel-bound contexts (stats table, tare sheet, session
-  /// labels); the settings' slot list renders [LoadCellProfile.title]
-  /// directly and never sees this composition.
+  /// Channel row titles: the cell's name, else its spec line anchored to the
+  /// channel, else the bare channel name. (The settings slot list renders
+  /// [LoadCellProfile.title] directly instead.)
   List<String> get channelTitles => [
     for (int i = 0; i < kAdcChannelCount; ++i)
       switch (cellAt(i)) {
@@ -89,8 +78,7 @@ class RigSlots {
     for (int k = 0; k < kRigSlotCount; ++k) k == i ? slot : slots[k],
   ]);
 
-  /// Swap the contents of slots [a] and [b] (the drag gesture): dragging a
-  /// cell onto another slot exchanges them — nothing else moves.
+  /// Swap the contents of slots [a] and [b].
   RigSlots withSwap(int a, int b) => RigSlots([
     for (int k = 0; k < kRigSlotCount; ++k)
       k == a
@@ -113,13 +101,8 @@ class RigSlots {
   int get hashCode => Object.hashAll(slots);
 
   /// Parse the `lcN.*` keys (the User folder's slot document). A slot is
-  /// populated iff its `cap` and `sens` both parse to positive finite
-  /// numbers; anything else reads as an empty slot. Lenient by policy: the
-  /// app owns these keys, so it is entitled to repair a bad state — an
-  /// unparseable slot shows as empty (force units report unavailable, the
-  /// user sees it immediately) instead of bricking the connection, the raw
-  /// values stay visible in the retained KVS snapshot, and the next save
-  /// writes the correct keys (see `KvsFlashTransport.writeSlots`).
+  /// populated iff `cap` and `sens` parse to positive finite numbers; anything
+  /// else reads as empty (lenient: the app owns these keys and can repair them).
   factory RigSlots.fromKv(Map<String, String> kv) {
     double? num(String? v) => v == null ? null : double.tryParse(v);
     return RigSlots([
@@ -136,20 +119,17 @@ class RigSlots {
             ),
           // Absent (or name-only) slot: no owned value to complain about.
           (null, null) => null,
-          // Present but unrepairable: read as empty, but name it so a dev
-          // can see the discarded value (the raw store keeps it visible too).
+          // Present but unrepairable: read as empty, with a dev-visible trace.
           _ => _rejectedSlot(i, kv),
         },
     ]);
   }
 
-  /// The populated slots' `lcN.*` keys — the complete set of schema slot
-  /// keys the device should hold (a save SETs these and DELs known slot keys
-  /// it doesn't; unknown `lc*` keys are not the app's data).
-  /// Newlines in names are flattened (the doc is line-based); `=` in values
-  /// is safe (parse splits at the first one). Integral values emit without
-  /// a fraction (`200`, not `200.0`) so an unchanged rig diffs clean
-  /// against factory-written documents.
+  /// The populated slots' `lcN.*` keys — the full set the device should hold
+  /// (a save SETs these and DELs known slot keys it doesn't). The document is
+  /// line-based, so newlines in names are flattened; `=` in values is safe
+  /// (parsing splits at the first one). Integral values emit without a fraction
+  /// so an unchanged rig diffs clean.
   Map<String, String> toKv() {
     String num(double v) =>
         v == v.roundToDouble() ? v.toInt().toString() : v.toString();
@@ -165,9 +145,8 @@ class RigSlots {
   }
 }
 
-/// A slot whose `cap`/`sens` keys are present but unparseable (or not both
-/// positive finite): read as empty under the lenient User policy, with a
-/// developer-visible trace. See [RigSlots.fromKv].
+/// A slot whose `cap`/`sens` are present but unparseable: read as empty, with
+/// a developer-visible trace.
 RigSlot? _rejectedSlot(int i, Map<String, String> kv) {
   debugPrint(
     'RigSlots: ignoring slot $i with malformed cap/sens '
@@ -176,11 +155,8 @@ RigSlot? _rejectedSlot(int i, Map<String, String> kv) {
   return null;
 }
 
-/// A load cell as the app knows it: capacity plus the exact sensitivity
-/// from its calibration certificate — e.g. 2.007 mV/V at full scale, not
-/// the nominal "2 mV/V class" number. Profiles are pure values: identity
-/// comes from WHERE a profile sits (a device slot, a history entry), not
-/// from an id.
+/// A load cell: capacity plus the exact certificate sensitivity (e.g. 2.007
+/// mV/V, not a nominal class). Identity is positional, not an id.
 class LoadCellProfile {
   LoadCellProfile({
     this.name = '',
@@ -203,8 +179,7 @@ class LoadCellProfile {
       ? name
       : '${_trim(capacityKg)} kg · ${_trim(sensitivityMvV)} mV/V';
 
-  /// The values line, e.g. `100 kg · 2.007 mV/V`. Shown wherever the cell's
-  /// numbers matter next to its name.
+  /// The values line, e.g. `100 kg · 2.007 mV/V`.
   String get valuesLine =>
       '${_trim(capacityKg)} kg · ${_trim(sensitivityMvV)} mV/V';
 
@@ -237,11 +212,9 @@ class LoadCellProfile {
     'sensitivityMvV': sensitivityMvV,
   };
 
-  /// Strict parse: capacity and sensitivity must be positive finite
-  /// numbers (a malformed certificate value would poison every force
-  /// conversion), else [FormatException]. Unknown keys are ignored, so the
-  /// format can grow. The caller decides the damage policy (rig history
-  /// drops the entry; session snapshots flag the whole column).
+  /// Strict parse: capacity and sensitivity must be positive finite, else
+  /// [FormatException]. Unknown keys are ignored. The caller decides the damage
+  /// policy.
   factory LoadCellProfile.fromJson(Map<String, dynamic> json) {
     double req(Object? v, String key) {
       final d = v is num ? v.toDouble() : double.nan;

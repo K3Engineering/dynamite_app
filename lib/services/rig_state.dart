@@ -9,26 +9,12 @@ import '../models/device_flash.dart';
 import '../models/load_cell.dart';
 import 'link_backend.dart';
 
-/// Owns the rig: the slot list read from the connected device, unsaved
-/// edits, and the cross-device cell history.
-///
-/// The model is deliberately low-state, built around two use cases:
-///
-/// * Several people share one device: rig data should travel with the
-///   hardware - a new person in a lab gets all the saved LC data.
-/// * One person moves a load cell between devices: [history] remembers
-///   every cell this app has met, so setting up the receiving device
-///   offers the cell as a one-tap pick instead of a re-type. History
-///   informs new slots; it never feeds device state.
-///
-/// Unsaved edits die with a disconnect. Typed-in cell values survive in
-/// [history] (recorded at edit time).
+/// Owns the rig: the slot list read from the connected device, unsaved edits,
+/// and the cross-device cell history. Unsaved edits die with a disconnect;
+/// typed-in cell values survive in [history].
 class RigState extends ChangeNotifier {
-  /// [backend] yields the active link's device operations (null when no link
-  /// is up); [connectedDeviceName] names it for history provenance; [prefs]
-  /// is injected (see `main`): the instance is available synchronously, so
-  /// the history load happens right here in the constructor and can never
-  /// race a later setter.
+  /// [backend] yields the active link's device operations; [prefs] is injected
+  /// so history loads synchronously in the constructor.
   RigState({
     required LinkBackend? Function() backend,
     required String Function() connectedDeviceName,
@@ -41,33 +27,26 @@ class RigState extends ChangeNotifier {
 
   static const String _keyHistory = 'rig_history';
 
-  /// History is a suggestion list, not an archive — cap it so it stays
-  /// scannable (least-recently-seen evicted).
+  /// History is a suggestion list, not an archive; least-recently-seen evicted.
   static const int historyCap = 50;
 
   final LinkBackend? Function() _backend;
   final String Function() _connectedDeviceName;
   final SharedPreferences _prefs;
 
-  /// The flash document as last read from the connected device (board +
-  /// slots). Null before this connection's first successful read — and
-  /// save is impossible without it: edits buffer from the read state, so
-  /// there is nothing to write until a read lands. Also null after
-  /// [onLinkDropped]: the document is a claim about the device's current
-  /// contents, which a dead link cannot back.
+  /// The flash document as last read from the connected device; null before the
+  /// first read and after [onLinkDropped]. Edits buffer from this, so save is
+  /// impossible without it.
   DeviceFlash? _lastFlash;
 
-  /// Unsaved slot edits — what the app's readings already use. Null when
-  /// clean. Dies with the link ([onLinkDropped]); nothing reaches the
-  /// device until [saveToDevice].
+  /// Unsaved slot edits; null when clean. Die with the link.
   RigSlots? _pendingEdits;
 
   List<RigHistoryEntry> _history = [];
 
   // -- Reads -----------------------------------------------------------------
 
-  /// The slot list driving the UI and conversions: pending edits when
-  /// dirty, else the device's flash state (empty before the first read).
+  /// Pending edits when dirty, else the device's flash state.
   RigSlots get effectiveSlots =>
       _pendingEdits ?? _lastFlash?.slots ?? RigSlots.empty();
 
@@ -79,39 +58,32 @@ class RigState extends ChangeNotifier {
 
   bool get hasPending => _pendingEdits != null;
 
-  /// Whether this connection has delivered its flash document. The slot
-  /// UI and saves are gated on this (see [_lastFlash]).
+  /// Whether this connection has delivered its flash document.
   bool get hasDeviceDoc => _lastFlash != null;
 
-  /// The board half of the flash document; null before this connection's
-  /// first successful read.
+  /// The board half of the flash document.
   BoardCalibration? get boardCalibration => _lastFlash?.board;
 
   /// The raw KVS snapshot as last read (refreshed by a verified save).
   KvsSnapshot? get kvsSnapshot => _lastFlash?.kvs;
 
-  /// The connected device's display name, live off the link: history
-  /// provenance and the calibration report's owner label.
+  /// The connected device's display name, live off the link.
   String get connectedDeviceName => _connectedDeviceName();
 
   List<RigHistoryEntry> get history => List.unmodifiable(_history);
 
   // -- Connection events ------------------------------------------------------
 
-  /// A flash document just arrived from device [deviceId] (named
-  /// [deviceName]): adopt it as the rig truth and record every populated
-  /// slot in the cell history. Fires once per connect; nothing from the
-  /// previous connection is around to reconcile — the link's death
-  /// cleared it ([onLinkDropped]).
+  /// A flash document arrived from device [deviceId]: adopt it and record every
+  /// populated slot in the cell history. Fires once per connect.
   void onFlashRead(String deviceId, String deviceName, DeviceFlash flash) {
-    // Delivery is token-gated to a live link upstream (BleLinkManager),
-    // so the document always arrives with its owning device's identity.
+    // Delivery is token-gated to a live link upstream, so the document always
+    // carries its device's identity.
     assert(deviceId.isNotEmpty, 'a flash read belongs to an identified device');
 
     _lastFlash = flash;
 
-    // History: every populated slot on the device was "seen" now. One
-    // persist for the batch, not one per cell.
+    // Every populated slot was seen now; one persist for the batch.
     final now = DateTime.now();
     var seenAny = false;
     for (int i = 0; i < kRigSlotCount; ++i) {
@@ -126,9 +98,8 @@ class RigState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The link went away (user disconnect, drop, teardown — one event as
-  /// far as the rig is concerned): the flash document and any unsaved
-  /// edits die with the connection.
+  /// The link went away: the flash document and any unsaved edits die with the
+  /// connection.
   void onLinkDropped() {
     if (_lastFlash == null && _pendingEdits == null) return;
     _lastFlash = null;
@@ -146,24 +117,22 @@ class RigState extends ChangeNotifier {
     return _pendingEdits ??= flash!.slots;
   }
 
-  /// Place [cell] into slot [i] (add or edit). Recorded in history
-  /// immediately: typed-in values are exactly what "last seen" is for.
+  /// Place [cell] into slot [i]; recorded in history immediately.
   void setSlot(int i, LoadCellProfile cell) {
     _pendingEdits = _editBuffer().withSlot(i, RigSlot(cell: cell));
     _upsertHistory(cell, connectedDeviceName, DateTime.now());
     notifyListeners();
   }
 
-  /// Empty slot [i]. Not recorded in history (contrast [setSlot]): an
-  /// emptied slot is not a reusable "last seen" value.
+  /// Empty slot [i]; not recorded in history (unlike [setSlot]).
   void clearSlot(int i) {
     _pendingEdits = _editBuffer().withSlot(i, null);
     notifyListeners();
   }
 
-  /// Insert-style reorder is deliberately NOT offered: the drag gesture is a
-  /// swap — dragging a cell onto another slot exchanges their contents, so
-  /// the list never shifts under the user's finger.
+  /// Swap the contents of slots [a] and [b] (the drag gesture). Insert-style
+  /// reorder is not offered: a swap never shifts the list under the user's
+  /// finger.
   void swapSlots(int a, int b) {
     if (a == b) return;
     _pendingEdits = _editBuffer().withSwap(a, b);
@@ -177,17 +146,13 @@ class RigState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Write the edited slots to the device (slot keys only — the board
-  /// half is read-only to the app), then verify with a read-back.
-  /// Returns false when the write or the verification fails — pending
-  /// edits are kept so the user can retry or revert.
+  /// Write the edited slots to the device, then verify with a read-back. False
+  /// on failure; pending edits are kept so the user can retry or revert.
   Future<bool> saveToDevice() async {
     final edited = _pendingEdits;
     final flash = _lastFlash;
     if (edited == null) return true;
-    // Pending edits imply a read document (see [_editBuffer]), and both
-    // die with the link — so the document provably belongs to the device
-    // this write goes to.
+    // Pending edits imply a read document, and both die with the link.
     assert(flash != null, 'pending edits imply a read flash document');
     final backend = _backend();
     if (backend == null) {
@@ -198,13 +163,9 @@ class RigState extends ChangeNotifier {
     } catch (_) {
       return false;
     }
-    // Verify: "the device holds exactly what we wrote" is an assumption,
-    // not a fact (firmware may reject, truncate or normalize the write).
-    // Committing without checking would let app state diverge from the
-    // device silently — and there is no change detection to catch it.
-    // The equality check below is the strict half: a mangled write-back
-    // parses (leniently) to slots that don't match the intended edit, so
-    // the save fails like a failed read.
+    // Verify: firmware may reject, truncate, or normalize the write, and there
+    // is no change detection. The equality check below catches a mangled
+    // read-back.
     final KvsSnapshot readBack;
     final RigSlots verified;
     try {
@@ -214,15 +175,12 @@ class RigState extends ChangeNotifier {
       return false;
     }
     if (!_sameCells(verified, edited)) return false;
-    // Commit only if nothing moved under the in-flight write: a revert, a
-    // fresh edit, or a link drop means the newer state wins. (The UI also
-    // blocks edits while saving; this is the model-side guard.)
+    // Commit only if nothing moved under the in-flight write.
     if (!identical(_pendingEdits, edited) || !identical(_lastFlash, flash)) {
       return false;
     }
-    // The device provably holds these slots: adopt the read-back's slot
-    // list (any normalization the device applied is reflected), keep the
-    // read-time board, and refresh the frozen raw KVS provenance.
+    // Adopt the read-back's slots (with any normalization), the read-time
+    // board, and the fresh KVS.
     _lastFlash = DeviceFlash(
       board: flash!.board,
       slots: verified,
@@ -233,8 +191,7 @@ class RigState extends ChangeNotifier {
     return true;
   }
 
-  /// The save verification's equality: the read-back may differ textually
-  /// (key order, formatting), so compare the cells slot by slot.
+  /// Compare cells slot by slot (the read-back may differ textually).
   static bool _sameCells(RigSlots a, RigSlots b) {
     for (int i = 0; i < kRigSlotCount; ++i) {
       if (a.cellAt(i) != b.cellAt(i)) return false;
@@ -244,13 +201,9 @@ class RigState extends ChangeNotifier {
 
   // -- History persistence ------------------------------------------------------
 
-  /// Newest-first ordering for [_history], made STABLE: Dart's List.sort is
-  /// not, and ties on lastSeen are the common case — a flash read stamps
-  /// every populated slot with the same `now` (see [onFlashRead]) — so an
-  /// unstable sort could permute equally-recent entries on every upsert,
-  /// churning the "Last seen in this app" picker's order. Decorate with the
-  /// current index and tie-break on it, preserving first-seen order among
-  /// ties.
+  /// Newest-first, stable: Dart's sort is not, and ties on lastSeen are common
+  /// (a flash read stamps every slot with the same now), so tie-break on the
+  /// original index to keep first-seen order.
   void _sortHistory() {
     final decorated = [
       for (var i = 0; i < _history.length; ++i) (i, _history[i]),
@@ -304,7 +257,7 @@ class RigState extends ChangeNotifier {
     }
   }
 
-  /// One malformed entry drops just that entry, not the whole history.
+  /// A malformed entry drops just itself, not the whole history.
   static RigHistoryEntry? _tryParseHistoryEntry(Object? e) {
     try {
       return RigHistoryEntry.fromJson(Map<String, dynamic>.from(e as Map));
@@ -314,17 +267,9 @@ class RigState extends ChangeNotifier {
   }
 }
 
-/// A "last seen values" entry: a cell this app has met (on a device flash
-/// read, or typed in by the user), offered as a quick pick when filling an
-/// empty slot. This is the mechanism for moving a cell from one device to
-/// another: it was seen on the source device, and the receiving device's
-/// slot editor offers it back.
-///
-/// Purely advisory app memory — the device is the rig's truth; history
-/// never feeds device state. Identity is the profile VALUE (see
-/// [LoadCellProfile.==]), so two physically distinct cells with identical
-/// name/capacity/sensitivity are one entry — acceptable for a suggestion
-/// list.
+/// A "last seen" cell, offered as a quick pick when filling a slot. Advisory
+/// app memory only; the device is the rig's truth. Identity is the profile
+/// value, so two physically distinct identical cells are one entry.
 class RigHistoryEntry {
   RigHistoryEntry({
     required this.cell,
@@ -335,7 +280,7 @@ class RigHistoryEntry {
   final LoadCellProfile cell;
   DateTime lastSeen;
 
-  /// Device the entry was last seen on (or added on), for display.
+  /// Device the entry was last seen on, for display.
   String deviceName;
 
   Map<String, dynamic> toJson() => {

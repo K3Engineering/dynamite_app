@@ -1,14 +1,11 @@
 import 'dart:typed_data';
 
-/// One session directory's files: [sessionJournalFile] (append-only JSONL:
-/// line 1 the header, later lines display-state snapshots), [sessionDataFile]
-/// (append-only packed int32-LE frames, gap sentinels in-band) and
-/// [sessionFinalFile] (an empty marker — existence IS the completed bit).
-/// Two append-only files and one write-once marker; nothing is rewritten in
-/// place, so damage is tail-only: an unterminated trailing journal line
-/// costs at most that one edit, and a data.raw that doesn't divide into
-/// whole frames renders the session damaged instead of being silently
-/// shortened.
+/// One session directory: [sessionJournalFile] (append-only JSONL, line 1 the
+/// header then display-state snapshots), [sessionDataFile] (append-only packed
+/// int32-LE frames, gap sentinels in-band), and [sessionFinalFile] (empty
+/// marker; existence is the completed bit). Nothing is rewritten in place, so
+/// damage is tail-only: a torn journal line costs one edit, and a data.raw that
+/// doesn't divide into whole frames renders the session damaged.
 const sessionJournalFile = 'meta';
 const sessionDataFile = 'data.raw';
 const sessionFinalFile = 'final';
@@ -29,11 +26,10 @@ abstract interface class SessionDataSink {
   Future<void> close();
 }
 
-/// The primitives the per-session file layout needs, one seam behind which
-/// live the native (dart:io) and web (OPFS + sink worker) implementations.
-/// Everything semantic — journal parsing, damaged/interrupted verdicts, the
-/// completion marker's write discipline — is store-side; implementations
-/// are transport-only and carry no rules.
+/// The primitives the session file layout needs, one seam over the native
+/// (dart:io) and web (OPFS + sink worker) implementations. All semantics —
+/// journal parsing, damaged/interrupted verdicts, the completion marker — are
+/// store-side; implementations are transport-only and carry no rules.
 abstract interface class SessionFilesBackend {
   /// Create the session directory [id] (which MUST NOT already exist — a
   /// collision is two recordings merged into one directory and throws), its

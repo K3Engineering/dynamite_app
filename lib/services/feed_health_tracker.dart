@@ -6,17 +6,16 @@ import '../models/feed_health.dart';
 import '../models/hub_event.dart';
 import '../utils/edge_watcher.dart';
 
-/// The shared 1 Hz feed-health derivation (see [deriveFeedHealth]), one
-/// owner for every surface that wants the live classification — the Devices
-/// row's chip and the Live tab's banner/stats. [health] is null when the
-/// link is not streaming (no live trace to assess), changing edge-only.
+/// The shared 1 Hz feed-health derivation (see [deriveFeedHealth]): one owner
+/// for every surface wanting the live classification (the Devices row's chip,
+/// the Live tab's banner/stats). [health] is null when not streaming and
+/// changes edge-only.
 ///
-/// The ticker (not hub notifications) drives recompute: a silent feed
-/// produces no packets, so nothing else would refresh the classification.
-/// One exception: [HubCleared] forces a recompute — a new stream's reset
-/// just rewrote all the inputs, and waiting a tick would flash the
-/// previous stream's verdict at connect (the tracker and the reset
-/// coordinator both react to the same streaming edge, in either order).
+/// The ticker drives recompute — a silent feed produces no packets, so nothing
+/// else would refresh it. [HubCleared] forces one too: a new stream reset all
+/// the inputs, and waiting a tick would flash the old stream's verdict at
+/// connect (the tracker and the reset coordinator react to the same edge,
+/// either order).
 class FeedHealthTracker {
   FeedHealthTracker({
     required FeedHealthSource hub,
@@ -34,9 +33,9 @@ class FeedHealthTracker {
     );
   }
 
-  /// The tracker's narrow read port onto the live store (main wires the hub
-  /// in, as [FeedHealthSource]): polled by the ticker, so it needs no notify
-  /// side — and it cannot reach the hub's command surface.
+  /// The tracker's narrow read port onto the hub (main wires it in as
+  /// [FeedHealthSource]): polled, so it needs no notify side, and it can't
+  /// reach the hub's command surface.
   final FeedHealthSource _hub;
 
   late final EdgeWatcher<bool> _watcher;
