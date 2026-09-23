@@ -30,6 +30,17 @@ class _FixedCatalog implements FirmwareCatalog {
       throw UnimplementedError('tests never download');
 }
 
+/// A catalog whose check always fails (fetch trouble).
+class _ErrorCatalog implements FirmwareCatalog {
+  @override
+  Future<FirmwareRelease?> latestFor({required FirmwareChannel channel}) =>
+      throw StateError('fetch failed');
+
+  @override
+  Future<Uint8List> downloadImage(FirmwareRelease release) =>
+      throw UnimplementedError('tests never download');
+}
+
 FirmwareRelease _release(String tag) => FirmwareRelease(
   tag: tag,
   version: FirmwareVersion.tryParse(tag) ?? const FirmwareVersion(0, 0, 1),
@@ -97,7 +108,7 @@ void main() {
       async.elapse(const Duration(seconds: 4));
       // The connect's auto-check ran and the device matches the target:
       // nothing to say.
-      expect(service.check, isNotNull);
+      expect(service.checkState, isA<CheckOk>());
       expect(seen, isEmpty);
 
       service.noteFlashAccepted('mock-1.0.0');
@@ -137,6 +148,25 @@ void main() {
       async.elapse(const Duration(seconds: 4));
       expect(seen.whereType<FirmwareFlashVerified>(), isEmpty);
       expect(seen.whereType<FirmwareUpdateAvailable>(), hasLength(2));
+
+      disconnectElapse(async, link);
+    });
+  });
+
+  test('a failed re-check erases the previous result', () {
+    fakeAsync((async) {
+      final (link, service, seen) = wire(async);
+      service.catalog = _FixedCatalog(_release('mock-1.0.0'));
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(service.checkState, isA<CheckOk>());
+
+      service.catalog = _ErrorCatalog();
+      unawaited(service.checkForUpdates());
+      async.flushMicrotasks();
+      expect(service.checkState, isA<CheckFailed>());
+      expect(seen, isEmpty);
 
       disconnectElapse(async, link);
     });

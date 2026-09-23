@@ -10,7 +10,45 @@ import '../services/ble_link_manager.dart';
 import '../services/firmware_update_service.dart';
 import '../widgets/wide_layout.dart';
 
-enum _Stage { overview, downloading, flashing, done, failed }
+/// The update flow's page state. Each payload stage carries the data its
+/// page renders, so there is no "failed with no error" or "flashing with a
+/// stale progress" state.
+sealed class _Stage {
+  const _Stage();
+}
+
+/// Pick-a-release view; also where the failure page's Back button returns.
+final class _Overview extends _Stage {
+  const _Overview();
+}
+
+/// Image download in flight; [headline] names the asset so the page reads
+/// "Downloading foo.bin…".
+final class _Downloading extends _Stage {
+  const _Downloading(this.headline);
+
+  final String headline;
+}
+
+/// Transfer to the device in flight. [progress] mutates in place; the
+/// progress callback re-reads it via setState.
+final class _Flashing extends _Stage {
+  _Flashing();
+
+  double progress = 0;
+}
+
+/// Image accepted; the device reboots on its own.
+final class _Done extends _Stage {
+  const _Done();
+}
+
+/// Flash failed; [error] is the thrown error, shown verbatim.
+final class _Failed extends _Stage {
+  const _Failed(this.error);
+
+  final String error;
+}
 
 /// The OTA update flow, pushed from the Settings firmware card or the
 /// update-available snackbar.
@@ -39,17 +77,14 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
   late final FirmwareUpdateService _updates = context
       .read<FirmwareUpdateService>();
 
-  _Stage _stage = _Stage.overview;
-  double _progress = 0;
-  String _headline = '';
-  String? _error;
+  _Stage _stage = const _Overview();
 
-  bool get _busy => _stage == _Stage.downloading || _stage == _Stage.flashing;
+  bool get _busy => _stage is _Downloading || _stage is _Flashing;
 
   @override
   void initState() {
     super.initState();
-    if (_updates.check == null && !_updates.checking) {
+    if (_updates.checkState is CheckNeverRan) {
       unawaited(_updates.checkForUpdates());
     }
   }
@@ -63,17 +98,14 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     );
     if (!confirmed || !mounted) return;
     setState(() {
-      _stage = _Stage.downloading;
-      _headline = 'Downloading ${release.assetName}…';
-      _progress = 0;
+      _stage = _Downloading('Downloading ${release.assetName}…');
     });
     Uint8List image;
     try {
       image = await _updates.catalog.downloadImage(release);
     } catch (e) {
       setState(() {
-        _stage = _Stage.failed;
-        _error = '$e';
+        _stage = _Failed('$e');
       });
       return;
     }
@@ -118,10 +150,9 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
   }
 
   Future<void> _flash(Uint8List image, {required String? flashedTag}) async {
+    final flashing = _Flashing();
     setState(() {
-      _stage = _Stage.flashing;
-      _headline = 'Flashing - do not disconnect…';
-      _progress = 0;
+      _stage = flashing;
     });
     _updates.flashInProgress.value = true;
     try {
@@ -129,19 +160,20 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         (client) => client.flash(
           image: image,
           onProgress: (sent) {
-            if (mounted) setState(() => _progress = sent / image.length);
+            if (mounted) {
+              setState(() => flashing.progress = sent / image.length);
+            }
           },
         ),
       );
       if (!mounted) return;
       final tag = flashedTag;
       if (tag != null) _updates.noteFlashAccepted(tag);
-      setState(() => _stage = _Stage.done);
+      setState(() => _stage = const _Done());
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        _stage = _Stage.failed;
-        _error = '$e';
+        _stage = _Failed('$e');
       });
     } finally {
       _updates.flashInProgress.value = false;
@@ -157,8 +189,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     final linkUp = context.select<BleLinkManager, bool>(
       (l) => l.connectedDeviceId.isNotEmpty,
     );
-    final inProgress =
-        _busy || _stage == _Stage.done || _stage == _Stage.failed;
+    final inProgress = _stage is! _Overview;
 
     return PopScope(
       canPop: !_busy,
@@ -209,57 +240,66 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     );
   }
 
+  /// The in-progress page for the current stage (only called off the
+  /// overview page).
   List<Widget> _buildProgress() {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    if (_stage == _Stage.done) {
-      return [
-        Icon(Icons.check_circle_outline, color: scheme.primary, size: 48),
-        const SizedBox(height: 16),
-        Text(
-          'Image accepted — the device is rebooting. It should be back on '
-          'the Devices tab in a few seconds.',
-          style: theme.textTheme.titleMedium,
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 24),
-        FilledButton(
-          onPressed: () {
-            Navigator.of(context).pop();
-            widget.onDone();
-          },
-          child: const Text('Done'),
-        ),
-      ];
+    switch (_stage) {
+      case _Done():
+        return [
+          Icon(Icons.check_circle_outline, color: scheme.primary, size: 48),
+          const SizedBox(height: 16),
+          Text(
+            'Image accepted — the device is rebooting. It should be back on '
+            'the Devices tab in a few seconds.',
+            style: theme.textTheme.titleMedium,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              widget.onDone();
+            },
+            child: const Text('Done'),
+          ),
+        ];
+      case _Failed(:final error):
+        return [
+          Icon(Icons.error_outline, color: scheme.error, size: 48),
+          const SizedBox(height: 16),
+          Text(
+            error,
+            style: TextStyle(color: scheme.error),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          OutlinedButton(
+            onPressed: () => setState(() => _stage = const _Overview()),
+            child: const Text('Back'),
+          ),
+        ];
+      case _Downloading(:final headline):
+        return _transferPage(headline, 'Step 1 of 2, downloading', null);
+      case _Flashing(:final progress):
+        return _transferPage(
+          'Flashing - do not disconnect…',
+          'Step 2 of 2, flashing · ${(progress * 100).toStringAsFixed(0)}%',
+          progress,
+        );
+      case _Overview():
+        throw StateError('overviews never reach the progress page');
     }
-    if (_stage == _Stage.failed) {
-      return [
-        Icon(Icons.error_outline, color: scheme.error, size: 48),
-        const SizedBox(height: 16),
-        Text(
-          _error ?? 'Flash failed.',
-          style: TextStyle(color: scheme.error),
-          textAlign: TextAlign.center,
-        ),
-        const SizedBox(height: 24),
-        OutlinedButton(
-          onPressed: () => setState(() {
-            _stage = _Stage.overview;
-            _error = null;
-          }),
-          child: const Text('Back'),
-        ),
-      ];
-    }
-    final step = switch (_stage) {
-      _Stage.downloading => 'Step 1 of 2, downloading',
-      _Stage.flashing =>
-        'Step 2 of 2, flashing · ${(_progress * 100).toStringAsFixed(0)}%',
-      _ => '',
-    };
+  }
+
+  /// The transfer page shared by [_Downloading] and [_Flashing]: headline,
+  /// progress bar ([value] null = indeterminate), step caption.
+  List<Widget> _transferPage(String headline, String step, double? value) {
+    final theme = Theme.of(context);
     return [
       Text(
-        _headline,
+        headline,
         style: theme.textTheme.titleMedium,
         textAlign: TextAlign.center,
       ),
@@ -268,7 +308,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       // separate tonal container (see main.dart), and the M3 default track
       // reads that role — identical to the fill here.
       LinearProgressIndicator(
-        value: _stage == _Stage.flashing ? _progress : null,
+        value: value,
         backgroundColor: theme.colorScheme.surfaceContainerHighest,
       ),
       const SizedBox(height: 12),
@@ -284,16 +324,20 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
   /// The headline of the overview card: installed -> target, or the plain
   /// state when there is no comparison to draw.
   String _heroLine(FirmwareUpdateService service, {required bool linkUp}) {
-    final check = service.check;
-    if (service.checking && check == null) return 'Checking…';
-    if (check == null) {
-      return linkUp ? 'No release check yet' : 'No device connected';
+    switch (service.checkState) {
+      case CheckNeverRan():
+        return linkUp ? 'No release check yet' : 'No device connected';
+      case CheckRunning():
+        return 'Checking…';
+      case CheckFailed():
+        return 'Could not check for updates';
+      case CheckOk(:final result):
+        final target = result.target;
+        if (target == null) return 'No release available for this board';
+        return result.differsFromDevice
+            ? '${result.installedDescribe}  →  ${target.tag}'
+            : '${result.installedDescribe} - up to date';
     }
-    final target = check.target;
-    if (target == null) return 'No release available for this board';
-    return check.differsFromDevice
-        ? '${check.installedDescribe}  →  ${target.tag}'
-        : '${check.installedDescribe} - up to date';
   }
 
   List<Widget> _buildOverview(
@@ -302,9 +346,11 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     required bool linkUp,
   }) {
     final theme = Theme.of(context);
-    final check = service.check;
+    final state = service.checkState;
+    final check = state is CheckOk ? state.result : null;
     final target = check?.target;
-    final canFlash = linkUp && !simulated && !service.checking;
+    final running = state is CheckRunning;
+    final canFlash = linkUp && !simulated && !running;
     final flashLabel = target == null
         ? 'No release to flash'
         : check!.differsFromDevice
@@ -334,22 +380,21 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
                 ],
                 selected: {service.channel},
                 showSelectedIcon: false,
-                onSelectionChanged: (set) =>
-                    unawaited(service.setChannel(set.first)),
+                onSelectionChanged: running
+                    ? null
+                    : (set) => unawaited(service.setChannel(set.first)),
               ),
               const SizedBox(height: 16),
-              if (service.checking && check != null)
-                const Text('Checking…')
-              else if (service.checkError != null)
+              if (state is CheckFailed)
                 Text(
-                  'Check failed: ${service.checkError}',
+                  'Check failed: ${state.error}',
                   style: TextStyle(color: theme.colorScheme.error),
                 ),
               const SizedBox(height: 8),
               OutlinedButton(
-                onPressed: service.checking || !linkUp
+                onPressed: running || !linkUp
                     ? null
-                    : () => unawaited(service.checkForUpdates(manual: true)),
+                    : () => unawaited(service.checkForUpdates()),
                 child: const Text('Check now'),
               ),
             ],

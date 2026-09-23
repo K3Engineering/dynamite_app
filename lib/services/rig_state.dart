@@ -7,11 +7,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/board_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/load_cell.dart';
+import 'app_events.dart';
 import 'link_backend.dart';
 
 /// Owns the rig: the slot list read from the connected device, unsaved edits,
-/// and the cross-device cell history. Unsaved edits die with a disconnect;
-/// typed-in cell values survive in [history].
+/// and the cross-device cell history. Unsaved edits die with a disconnect or
+/// a replaced document; typed-in cell values survive in [history].
 class RigState extends ChangeNotifier {
   /// [backend] yields the active link's device operations; [prefs] is injected
   /// so history loads synchronously in the constructor.
@@ -19,9 +20,11 @@ class RigState extends ChangeNotifier {
     required LinkBackend? Function() backend,
     required String Function() connectedDeviceName,
     required SharedPreferences prefs,
+    required AppEvents events,
   }) : _backend = backend,
        _connectedDeviceName = connectedDeviceName,
-       _prefs = prefs {
+       _prefs = prefs,
+       _events = events {
     _loadHistory();
   }
 
@@ -33,22 +36,21 @@ class RigState extends ChangeNotifier {
   final LinkBackend? Function() _backend;
   final String Function() _connectedDeviceName;
   final SharedPreferences _prefs;
+  final AppEvents _events;
 
-  /// The flash document as last read from the connected device; null before the
-  /// first read and after [onLinkDropped]. Edits buffer from this, so save is
-  /// impossible without it.
-  DeviceFlash? _lastFlash;
-
-  /// Unsaved slot edits; null when clean. Die with the link.
-  RigSlots? _pendingEdits;
+  /// The rig's document state (see [_DocState]).
+  _DocState _doc = const _NoDoc();
 
   List<RigHistoryEntry> _history = [];
 
   // -- Reads -----------------------------------------------------------------
 
   /// Pending edits when dirty, else the device's flash state.
-  RigSlots get effectiveSlots =>
-      _pendingEdits ?? _lastFlash?.slots ?? RigSlots.empty();
+  RigSlots get effectiveSlots => switch (_doc) {
+    _NoDoc() => RigSlots.empty(),
+    _Clean(:final flash) => flash.slots,
+    _Dirty(:final slots) => slots,
+  };
 
   /// Cells converting the four channels (slots 0–3 of [effectiveSlots]).
   List<LoadCellProfile?> get channelCells => effectiveSlots.channelCells;
@@ -56,16 +58,16 @@ class RigState extends ChangeNotifier {
   /// Live-view row titles: cell title or bare 'CH n'.
   List<String> get channelTitles => effectiveSlots.channelTitles;
 
-  bool get hasPending => _pendingEdits != null;
+  bool get hasPending => _doc is _Dirty;
 
   /// Whether this connection has delivered its flash document.
-  bool get hasDeviceDoc => _lastFlash != null;
+  bool get hasDeviceDoc => _doc.flash != null;
 
   /// The board half of the flash document.
-  BoardCalibration? get boardCalibration => _lastFlash?.board;
+  BoardCalibration? get boardCalibration => _doc.flash?.board;
 
   /// The raw KVS snapshot as last read (refreshed by a verified save).
-  KvsSnapshot? get kvsSnapshot => _lastFlash?.kvs;
+  KvsSnapshot? get kvsSnapshot => _doc.flash?.kvs;
 
   /// The connected device's display name, live off the link.
   String get connectedDeviceName => _connectedDeviceName();
@@ -75,13 +77,27 @@ class RigState extends ChangeNotifier {
   // -- Connection events ------------------------------------------------------
 
   /// A flash document arrived from device [deviceId]: adopt it and record every
-  /// populated slot in the cell history. Fires once per connect.
+  /// populated slot in the cell history. Fires once per connect in practice.
+  ///
+  /// A second read mid-connection replaces the document; any pending edits
+  /// seeded from the old document are discarded ([RigEditsDiscarded] is
+  /// emitted): keeping them would apply a buffer to a document it was never
+  /// diffed against, so a save could write the old document's slots to a
+  /// different device.
   void onFlashRead(String deviceId, String deviceName, DeviceFlash flash) {
     // Delivery is token-gated to a live link upstream, so the document always
     // carries its device's identity.
     assert(deviceId.isNotEmpty, 'a flash read belongs to an identified device');
 
-    _lastFlash = flash;
+    final replacedDirty = _doc is _Dirty;
+    if (replacedDirty) _events.emit(const RigEditsDiscarded());
+    // Assert fires with the safe state already established: debug/test trips
+    // loudly, release lands on the discard branch above.
+    _doc = _Clean(flash);
+    assert(
+      !replacedDirty,
+      'flash read while dirty: unsaved edits were discarded',
+    );
 
     // Every populated slot was seen now; one persist for the batch.
     final now = DateTime.now();
@@ -99,34 +115,39 @@ class RigState extends ChangeNotifier {
   }
 
   /// The link went away: the flash document and any unsaved edits die with the
-  /// connection.
+  /// connection ([RigEditsDiscarded] is emitted for the latter).
   void onLinkDropped() {
-    if (_lastFlash == null && _pendingEdits == null) return;
-    _lastFlash = null;
-    _pendingEdits = null;
+    final doc = _doc;
+    if (doc is _NoDoc) return;
+    if (doc is _Dirty) _events.emit(const RigEditsDiscarded());
+    _doc = const _NoDoc();
     notifyListeners();
   }
 
   // -- Edits (UI gestures; require a read doc — see [hasDeviceDoc]) ------------
 
-  /// The slot list an edit applies to: the pending buffer, started from
-  /// the flash state by the first edit.
-  RigSlots _editBuffer() {
-    final flash = _lastFlash;
-    assert(flash != null, 'edits require a read flash document');
-    return _pendingEdits ??= flash!.slots;
+  /// Run [edit] over the effective slots and store the result as the pending
+  /// buffer, promoting a clean document to dirty. The buffer always sits next
+  /// to the document it seeded from, so a save can never apply a buffer to a
+  /// superseded document.
+  void _edit(RigSlots Function(RigSlots base) edit) {
+    _doc = switch (_doc) {
+      _NoDoc() => throw StateError('edits require a read flash document'),
+      _Clean(:final flash) => _Dirty(flash, edit(flash.slots)),
+      _Dirty(:final flash, :final slots) => _Dirty(flash, edit(slots)),
+    };
   }
 
   /// Place [cell] into slot [i]; recorded in history immediately.
   void setSlot(int i, LoadCellProfile cell) {
-    _pendingEdits = _editBuffer().withSlot(i, RigSlot(cell: cell));
+    _edit((slots) => slots.withSlot(i, RigSlot(cell: cell)));
     _upsertHistory(cell, connectedDeviceName, DateTime.now());
     notifyListeners();
   }
 
   /// Empty slot [i]; not recorded in history (unlike [setSlot]).
   void clearSlot(int i) {
-    _pendingEdits = _editBuffer().withSlot(i, null);
+    _edit((slots) => slots.withSlot(i, null));
     notifyListeners();
   }
 
@@ -135,27 +156,28 @@ class RigState extends ChangeNotifier {
   /// finger.
   void swapSlots(int a, int b) {
     if (a == b) return;
-    _pendingEdits = _editBuffer().withSwap(a, b);
+    _edit((slots) => slots.withSwap(a, b));
     notifyListeners();
   }
 
   /// Discard pending edits; the flash state becomes effective again.
   void revert() {
-    if (_pendingEdits == null) return;
-    _pendingEdits = null;
+    final doc = _doc;
+    if (doc is! _Dirty) return;
+    _doc = _Clean(doc.flash);
     notifyListeners();
   }
 
   /// Write the edited slots to the device, then verify with a read-back. False
   /// on failure; pending edits are kept so the user can retry or revert.
   Future<bool> saveToDevice() async {
-    final edited = _pendingEdits;
-    final flash = _lastFlash;
-    if (edited == null) return true;
-    // Pending edits imply a read document, and both die with the link.
-    assert(flash != null, 'pending edits imply a read flash document');
+    final doc = _doc;
+    if (doc is! _Dirty) return true;
+    final edited = doc.slots;
     final backend = _backend();
     if (backend == null) {
+      // Edits die with the link (see [onLinkDropped]), so a dirty state on a
+      // dead link is a caller bug, not a race.
       throw StateError('saveToDevice with pending edits but no live link');
     }
     try {
@@ -175,18 +197,14 @@ class RigState extends ChangeNotifier {
       return false;
     }
     if (!_sameCells(verified, edited)) return false;
-    // Commit only if nothing moved under the in-flight write.
-    if (!identical(_pendingEdits, edited) || !identical(_lastFlash, flash)) {
-      return false;
-    }
+    // Commit only if nothing moved under the in-flight write (an edit, a
+    // re-read, or a link drop all replace the state object).
+    if (!identical(_doc, doc)) return false;
     // Adopt the read-back's slots (with any normalization), the read-time
     // board, and the fresh KVS.
-    _lastFlash = DeviceFlash(
-      board: flash!.board,
-      slots: verified,
-      kvs: readBack,
+    _doc = _Clean(
+      DeviceFlash(board: doc.flash.board, slots: verified, kvs: readBack),
     );
-    _pendingEdits = null;
     notifyListeners();
     return true;
   }
@@ -265,6 +283,52 @@ class RigState extends ChangeNotifier {
       return null;
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Document state
+// ---------------------------------------------------------------------------
+
+/// The rig's document state: nothing read yet, the document as read, or the
+/// document plus an unsaved edit buffer. Sealed so "edits without a document"
+/// cannot exist: the buffer lives in [_Dirty], next to the document it
+/// seeded from. The state object is replaced (never mutated) on every
+/// transition, so identity comparison pins a state in time (see
+/// [RigState.saveToDevice]).
+sealed class _DocState {
+  const _DocState();
+
+  /// The read document, when one exists.
+  DeviceFlash? get flash;
+}
+
+/// No flash document read yet, or it died with the link (see
+/// [RigState.onLinkDropped]).
+class _NoDoc extends _DocState {
+  const _NoDoc();
+
+  @override
+  Null get flash => null;
+}
+
+/// The flash document as read; no unsaved edits.
+class _Clean extends _DocState {
+  const _Clean(this.flash);
+
+  @override
+  final DeviceFlash flash;
+}
+
+/// The flash document plus [slots], its unsaved edit buffer (seeded from the
+/// document by the first edit — see [RigState._edit]).
+class _Dirty extends _DocState {
+  const _Dirty(this.flash, this.slots);
+
+  @override
+  final DeviceFlash flash;
+
+  /// The pending edit buffer.
+  final RigSlots slots;
 }
 
 /// A "last seen" cell, offered as a quick pick when filling a slot. Advisory

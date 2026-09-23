@@ -341,7 +341,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }
 
   Future<void> _downloadCsv(SessionSummary session, SessionData data) =>
-      _runCsvAction(() async {
+      runExportAction(context, () async {
         final appMeta = context.read<AppMeta>();
         final unit = await _pickExportUnit(session.displayUnit);
         if (unit == null) return null;
@@ -359,10 +359,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           fileName: artifact.fileName,
           dialogTitle: 'Download session CSV',
         );
-      });
+      }, errorTitle: 'CSV export');
 
   Future<void> _shareCsv(SessionSummary session, SessionData data) =>
-      _runCsvAction(() async {
+      runExportAction(context, () async {
         final appMeta = context.read<AppMeta>();
         final unit = await _pickExportUnit(session.displayUnit);
         if (unit == null) return null;
@@ -382,7 +382,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           dialogTitle: 'Share CSV',
           anchor: _shareAnchor(),
         );
-      });
+      }, errorTitle: 'CSV export');
 
   /// Ask the user for the export's converted unit (one file, one unit,
   /// chosen by the user), preselected to [initial].
@@ -428,30 +428,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         );
       },
     );
-  }
-
-  /// Run a CSV download/share action and surface its outcome as a snackbar:
-  /// the returned result message, the failure, or nothing when the user
-  /// cancelled (a null message).
-  Future<void> _runCsvAction(Future<String?> Function() action) async {
-    String? message;
-    Object? error;
-    try {
-      message = await action();
-    } catch (e) {
-      error = e;
-    }
-    if (!mounted) return;
-    if (error != null) {
-      showErrorSnackBar(
-        ScaffoldMessenger.of(context),
-        'CSV export failed: $error',
-      );
-    } else if (message != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    }
   }
 
   /// Anchor rect for the iPad share popover (the whole screen when invoked

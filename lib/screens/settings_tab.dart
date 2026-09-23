@@ -288,19 +288,16 @@ class _FirmwareCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final service = context.watch<FirmwareUpdateService>();
-    final check = service.check;
-    final String subtitle;
-    if (service.checking && check == null) {
-      subtitle = 'Checking for updates…';
-    } else if (check == null) {
-      subtitle = 'Tap to check for updates';
-    } else if (check.target == null) {
-      subtitle = 'No release available';
-    } else if (check.differsFromDevice) {
-      subtitle = 'Update available';
-    } else {
-      subtitle = 'Up to date';
-    }
+    final String subtitle = switch (service.checkState) {
+      CheckNeverRan() => 'Tap to check for updates',
+      CheckRunning() => 'Checking for updates…',
+      CheckOk(:final result) when result.target == null =>
+        'No release available',
+      CheckOk(:final result) when result.differsFromDevice =>
+        'Update available',
+      CheckOk() => 'Up to date',
+      CheckFailed() => 'Check failed',
+    };
     return Card(
       child: ListTile(
         title: const Text('Firmware update'),

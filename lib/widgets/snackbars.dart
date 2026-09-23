@@ -22,3 +22,29 @@ void showErrorSnackBar(
     ),
   );
 }
+
+/// Run one export-style [action] — anything returning a user-facing result
+/// message (`export_delivery.dart`, or e.g. a copy-to-clipboard confirmation)
+/// — and surface the outcome as a snackbar: the action's message on success,
+/// an error toast ('[errorTitle] failed: …') on a throw, nothing when it
+/// returns null (the user cancelled).
+Future<void> runExportAction(
+  BuildContext context,
+  Future<String?> Function() action, {
+  required String errorTitle,
+}) async {
+  String? message;
+  Object? error;
+  try {
+    message = await action();
+  } catch (e) {
+    error = e;
+  }
+  if (!context.mounted) return;
+  final messenger = ScaffoldMessenger.of(context);
+  if (error != null) {
+    showErrorSnackBar(messenger, '$errorTitle failed: $error');
+  } else if (message != null) {
+    messenger.showSnackBar(SnackBar(content: Text(message)));
+  }
+}

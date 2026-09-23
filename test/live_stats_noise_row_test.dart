@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/screens/live_tab.dart';
 import 'package:dynamite_app/models/device_profile.dart';
@@ -41,6 +42,7 @@ void main() {
               backend: () => null,
               connectedDeviceName: () => 'Bench unit',
               prefs: prefs,
+              events: AppEvents(),
             ),
             hub: hub,
             ctrl: GraphController(),

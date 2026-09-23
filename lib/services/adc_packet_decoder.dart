@@ -29,14 +29,12 @@ class AdcPacketDecoder {
   static final Stopwatch _clock = Stopwatch()..start();
   final Duration Function() _now;
 
-  /// Expected value of the next packet's 16-bit running sample counter, or -1
-  /// when continuity tracking is reset (new device stream, session
-  /// boundaries).
-  int _prevSampleCount = -1;
-
-  /// [_now] microseconds at the previous packet; null iff [_prevSampleCount]
-  /// is -1 (the pair is stamped together so they can never half-agree).
-  int? _prevRxUs;
+  /// Continuity anchor from the previous packet: the expected value of the
+  /// next packet's 16-bit running sample counter (the previous counter plus
+  /// its sample count), and [_now] microseconds when the previous packet
+  /// arrived. Null when continuity tracking is reset (new device stream,
+  /// session boundaries).
+  ({int sampleCount, int rxUs})? _prev;
 
   /// Wrap modulus of the wire sample counter: ~65.5 s at 1 kHz.
   static const int _counterModulus = 0x10000;
@@ -53,8 +51,7 @@ class AdcPacketDecoder {
   /// Forget the last counter so the next packet isn't diffed against a stale
   /// value. Self-invoked on a new stream; also requested at session boundaries.
   void resetContinuity() {
-    _prevSampleCount = -1;
-    _prevRxUs = null;
+    _prev = null;
   }
 
   /// Parse one BLE ADC-feed notification packet into the sink.
@@ -74,12 +71,13 @@ class AdcPacketDecoder {
     final int rxUs = _now().inMicroseconds;
     final int rate = hub.sampleRateHz;
     final int count = data[0] + (data[1] << 8);
-    if (_prevSampleCount != -1) {
-      final int diff = (count - _prevSampleCount) & 0xFFFF;
+    final prev = _prev;
+    if (prev != null) {
+      final int diff = (count - prev.sampleCount) & 0xFFFF;
       // Samples the clock says elapsed since the previous packet (measured
       // between deliveries, so loss can be anywhere along the path).
       final int elapsedSamples =
-          ((rxUs - _prevRxUs!) * rate + 500000) ~/ 1000000;
+          ((rxUs - prev.rxUs) * rate + 500000) ~/ 1000000;
       // De-quantize the counter's wrap: a gap of g samples shows as
       // g % _counterModulus, and the clock only needs to resolve half a
       // wrap (~32 s at 1 kHz) against sub-second delivery jitter to pick g
@@ -98,8 +96,7 @@ class AdcPacketDecoder {
         hub.addDroppedFrames(loss);
       }
     }
-    _prevSampleCount = (count + n) & 0xFFFF;
-    _prevRxUs = rxUs;
+    _prev = (sampleCount: (count + n) & 0xFFFF, rxUs: rxUs);
 
     // Anchor the counter to the sink timeline (after gap injection). The
     // writer derives ssn_origin from this pairing.

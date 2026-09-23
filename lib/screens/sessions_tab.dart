@@ -199,30 +199,17 @@ class _SessionsTabState extends State<SessionsTab> {
   }) async {
     final fileName = '${damaged.id}.${data ? 'data.raw' : 'meta'}';
     final dialogTitle = data ? 'Export samples (raw)' : 'Export metadata (raw)';
-    String? message;
-    Object? error;
-    try {
-      message = await downloadExport(
+    await runExportAction(
+      context,
+      () async => downloadExport(
         bytes: data
             ? await SessionStore.instance.rawDataBytes(damaged.id)
             : await SessionStore.instance.rawJournalBytes(damaged.id),
         fileName: fileName,
         dialogTitle: dialogTitle,
-      );
-    } catch (e) {
-      error = e;
-    }
-    if (!mounted) return;
-    if (error != null) {
-      showErrorSnackBar(
-        ScaffoldMessenger.of(context),
-        '$dialogTitle failed: $error',
-      );
-    } else if (message != null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(message)));
-    }
+      ),
+      errorTitle: dialogTitle,
+    );
   }
 }
 

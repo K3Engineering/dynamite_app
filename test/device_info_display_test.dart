@@ -96,6 +96,7 @@ void main() {
         backend: () => linkManager.backend,
         connectedDeviceName: () => linkManager.connectedDeviceName,
         prefs: prefs,
+        events: appEvents,
       );
       linkManager = BleLinkManager(
         events: appEvents,
