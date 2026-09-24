@@ -260,10 +260,10 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
             height: _kRowHeight,
             decoration: BoxDecoration(
               color: highlighted
-                  ? theme.colorScheme.primary.withValues(alpha: 0.08)
+                  ? theme.colorScheme.secondary.withValues(alpha: 0.08)
                   : null,
               border: highlighted
-                  ? Border.all(color: theme.colorScheme.primary, width: 1.5)
+                  ? Border.all(color: theme.colorScheme.secondary, width: 1.5)
                   : null,
             ),
             // The tile gets its own Material: with the highlight decoration
@@ -294,7 +294,7 @@ class _ChannelGutter extends StatelessWidget {
       height: _kRowHeight * 4,
       decoration: BoxDecoration(
         border: Border(
-          right: BorderSide(color: theme.colorScheme.primary, width: 3),
+          right: BorderSide(color: theme.colorScheme.secondary, width: 3),
         ),
       ),
       child: Column(
@@ -308,7 +308,7 @@ class _ChannelGutter extends StatelessWidget {
                   child: Text(
                     rigSlotTitle(i),
                     style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.primary,
+                      color: theme.colorScheme.secondary,
                       fontWeight: FontWeight.bold,
                     ),
                   ),

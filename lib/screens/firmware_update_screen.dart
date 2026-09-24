@@ -248,7 +248,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     switch (_stage) {
       case _Done():
         return [
-          Icon(Icons.check_circle_outline, color: scheme.primary, size: 48),
+          Icon(Icons.check_circle_outline, color: scheme.secondary, size: 48),
           const SizedBox(height: 16),
           Text(
             'Image accepted — the device is rebooting. It should be back on '

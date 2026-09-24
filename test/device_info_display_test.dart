@@ -193,9 +193,11 @@ void main() {
       final link = await pumpApp(tester);
       await connectDemo(tester);
 
+      // Link state sits in the slate badge; the model alone is the subtitle.
+      expect(devicesTabDescendant(find.text('Connected')), findsOneWidget);
       expect(
         devicesTabDescendant(
-          find.text('Connected • Dynamite Sampler Demo', findRichText: true),
+          find.text('Dynamite Sampler Demo', findRichText: true),
         ),
         findsOneWidget,
       );

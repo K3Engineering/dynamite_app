@@ -22,9 +22,9 @@ import 'package:dynamite_app/services/stream_reset_coordinator.dart';
 
 /// Layout contract for the Devices tab's action buttons: Scan/Stop (status
 /// row), Connect (inactive rows) and Cancel/Disconnect (active row) all share
-/// [deviceActionButtonWidth] and one right-edge column, and the active row's
-/// outlined button takes the row's content color (the gear/title's
-/// onPrimaryContainer) for its outline and label, dimmed while disabled.
+/// [deviceActionButtonWidth] and one right-edge column. The active row is a
+/// plain surface with a slate link-state badge; its outlined Disconnect takes
+/// the brown action accent, never the state color.
 ///
 /// Driven through the real app shell with the mock BLE platform installed
 /// (same harness as widget_test.dart). The demo device provides the active
@@ -154,7 +154,7 @@ void main() {
     expect(scan.right, moreOrLessEquals(connect.right, epsilon: 0.01));
   });
 
-  testWidgets('active-row Disconnect keeps the column and the row colors', (
+  testWidgets('active-row Disconnect keeps the column and the action accent', (
     tester,
   ) async {
     await pumpApp(tester);
@@ -171,14 +171,14 @@ void main() {
     expect(disconnect.height, scan.height);
     expect(disconnect.right, moreOrLessEquals(scan.right, epsilon: 0.01));
 
-    // Outline + label take the row's content color (light theme: white),
-    // dimmed to half alpha while teardown is in flight (disabled).
-    final style = tester.widget<OutlinedButton>(disconnectButton()).style!;
-    final enabled = style.side!.resolve(<WidgetState>{})!;
-    final disabled = style.side!.resolve(<WidgetState>{WidgetState.disabled})!;
-    expect(enabled.color, Colors.white);
-    expect(disabled.color, Colors.white.withValues(alpha: 0.5));
-    expect(style.foregroundColor!.resolve(<WidgetState>{}), Colors.white);
+    // The active row is a plain surface carrying a slate link-state badge;
+    // its Disconnect takes the brown action accent (the default OutlinedButton
+    // ink), never the state color.
+    expect(disconnectButton(), findsOneWidget);
+    final scheme = Theme.of(tester.element(disconnectButton())).colorScheme;
+    expect(scheme.primary, const Color(0xFF5D4037));
+    expect(scheme.primaryContainer, const Color(0xFF455A64));
+    expect(devicesTabDescendant(find.text('Connected')), findsOneWidget);
 
     // Teardown: bring the demo link down so its feed timer stops, then drain
     // the command-queue timeout (see widget_test.dart).
