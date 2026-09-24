@@ -37,7 +37,7 @@ class CalDeviationPlot extends StatelessWidget {
         child: CustomPaint(
           painter: _DeviationPainter(
             deviationsUvV,
-            lineColor: scheme.primary,
+            lineColor: scheme.secondary,
             axisColor: scheme.outlineVariant,
             labelStyle:
                 theme.textTheme.labelSmall?.copyWith(
