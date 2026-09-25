@@ -37,8 +37,7 @@ class _Harness {
     calls.clear();
     final recorder = ui.PictureRecorder();
     final frameCanvas = Canvas(recorder);
-    final result = cache.paint(
-      frameCanvas,
+    final result = cache.paint(frameCanvas, (
       generation: generation,
       destructiveKey: destructiveKey,
       remapKey: remapKey,
@@ -62,7 +61,7 @@ class _Harness {
         ));
         return texW.toDouble();
       },
-    );
+    ));
     recorder.endRecording().dispose();
     return result;
   }

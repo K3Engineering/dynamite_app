@@ -79,7 +79,7 @@ int _blockSizeFor(double viewSamples, double graphW) {
 /// The result is block-aligned and lies in (end + blockSize, end + 2 *
 /// blockSize]; capping at totalSamples is the caller's job (the envelope
 /// layer keeps bakes two block sizes behind the data edge, so a baked join
-/// block is always complete -- see [SegmentedGraphCache.maintain]).
+/// block is always complete -- see [SegmentedGraphCache.paint]).
 int joinBlockEnd(int end, int blockSize) => (end ~/ blockSize + 2) * blockSize;
 
 // ---------------------------------------------------------------------------
@@ -1433,8 +1433,7 @@ bool _paintEnvelopeDataLayer(
   final int blockSize = _blockSizeFor(viewSpan, gw);
   final double blockPx = blockSize * gw / viewSpan;
 
-  return cache.paint(
-    canvas,
+  return cache.paint(canvas, (
     generation: data.dataGeneration,
     destructiveKey: [unit, data.calibrationVersion, ...tares],
     remapKey: [for (final bound in channels) bound.channel],
@@ -1454,13 +1453,14 @@ bool _paintEnvelopeDataLayer(
     vPad: kSegmentImagePad,
     render: (cCanvas, start, end, texW) {
       // The polyline overshoots the segment end into its join block so the
-      // line reaches the seam with the neighbor's slope; that block is reduced
-      // over its FULL range so the join vertex matches the neighbor's.
+      // line reaches the seam with the neighbor's slope; that block is
+      // reduced over its FULL range so the join vertex matches the
+      // neighbor's.
       final int limit = math.min(joinBlockEnd(end, blockSize), totalSamples);
 
-      // Clip data ink out of gap x-ranges (the hatching drawn by the chrome is
-      // the only marker there). Safe at bake time: gaps are append-only, so a
-      // baked segment's gap set cannot change.
+      // Clip data ink out of gap x-ranges (the hatching drawn by the chrome
+      // is the only marker there). Safe at bake time: gaps are append-only,
+      // so a baked segment's gap set cannot change.
       final clip = _gapClipPath(data.gaps, start, limit, gw / viewSpan);
       if (clip != null) {
         cCanvas.save();
@@ -1486,7 +1486,7 @@ bool _paintEnvelopeDataLayer(
       if (clip != null) cCanvas.restore();
       return (end - start) * gw / viewSpan;
     },
-  );
+  ));
 }
 
 /// Everything-except-gaps clip for [start, end) under x = (s - start) *
