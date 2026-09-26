@@ -50,6 +50,15 @@ linter:
     prefer_final_locals: true
     prefer_final_in_for_each: true
     #prefer_final_parameters: true
+    avoid_dynamic_calls: true
+    cancel_subscriptions: true
+    only_throw_errors: true
+    no_adjacent_strings_in_list: true
+    # Anchors at main(): lib paths exercised only by tests read as
+    # unreachable and get an ignore where that's the intent.
+    unreachable_from_main: true
+    always_declare_return_types: true
+    parameter_assignments: true
     prefer_function_declarations_over_variables: true
     sized_box_shrink_expand: true
     unnecessary_lambdas: true

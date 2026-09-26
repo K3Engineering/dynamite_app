@@ -21,7 +21,7 @@ class _FakeHandle implements SinkWorkerHandle {
   int terminates = 0;
 
   /// When set, [post] throws this instead of recording.
-  Object? errorOnPost;
+  Error? errorOnPost;
 
   @override
   void post(SinkWorkerRequest request) {

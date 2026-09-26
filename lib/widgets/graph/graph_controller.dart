@@ -110,17 +110,13 @@ class GraphController extends ChangeNotifier {
   /// The single funnel for every window-moving interaction (pan, minimap
   /// tap/drag, pinch).
   void applyWindow(int newStart, int span, int totalSamples, int oldestSample) {
-    int newEnd = newStart + span;
     final minStart = math.min(oldestSample, totalSamples - span);
-
-    if (newStart < minStart) {
-      newStart = minStart;
-      newEnd = newStart + span;
-    }
+    final start = math.max(newStart, minStart);
+    final newEnd = start + span;
 
     // Park on the window; if it reaches the right edge, snap to live instead
     // (goLive derives the locked span from the window set here).
-    _viewport = GraphWindow(newStart, newEnd);
+    _viewport = GraphWindow(start, newEnd);
     if (newEnd >= totalSamples) {
       goLive(totalSamples: totalSamples, oldestSample: oldestSample);
       return;
