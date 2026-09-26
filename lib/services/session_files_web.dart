@@ -176,7 +176,7 @@ class _JsSinkWorkerHandle implements SinkWorkerHandle {
     if (result.typeofEquals('object')) {
       return [
         for (var i = 0, arr = result as JSArray; i < arr.length; i++)
-          (arr[i] as JSString).toDart,
+          (arr[i]! as JSString).toDart,
       ];
     }
     return null;
@@ -184,9 +184,9 @@ class _JsSinkWorkerHandle implements SinkWorkerHandle {
 }
 
 extension on SinkWorkerAck {
-  int get intResult => result as int;
-  bool get boolResult => result as bool;
-  List<String> get idListResult => result as List<String>;
+  int get intResult => result! as int;
+  bool get boolResult => result! as bool;
+  List<String> get idListResult => result! as List<String>;
 
   /// The transferred byte channel; null when the op found no file.
   Uint8List? get byteResult => bytes;

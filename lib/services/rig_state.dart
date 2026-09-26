@@ -280,7 +280,7 @@ class RigState extends ChangeNotifier {
   /// A malformed entry drops just itself, not the whole history.
   static RigHistoryEntry? _tryParseHistoryEntry(Object? e) {
     try {
-      return RigHistoryEntry.fromJson(Map<String, dynamic>.from(e as Map));
+      return RigHistoryEntry.fromJson(Map<String, dynamic>.from(e! as Map));
     } catch (_) {
       return null;
     }

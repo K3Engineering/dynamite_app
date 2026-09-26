@@ -91,7 +91,7 @@ void main() {
     hub.commitBatch(0);
   }
 
-  test('startSession refuses while a tare is averaging', () async {
+  test('startSession refuses while a tare is averaging', () {
     final (recording, hub, _) = wire();
 
     hub.requestTare();
@@ -103,7 +103,7 @@ void main() {
     expect(recording.sessionInProgress, isFalse);
   });
 
-  test('startSession refuses when no decodable data is flowing', () async {
+  test('startSession refuses when no decodable data is flowing', () {
     final (recording, hub, _) = wire();
     // Age the stream past the feed-health freshness window with no packet
     // ever arriving: positively silent, not merely starting.
@@ -115,19 +115,16 @@ void main() {
     expect(recording.sessionInProgress, isFalse);
   });
 
-  test(
-    'startSession refuses when only malformed packets are arriving',
-    () async {
-      final (recording, hub, _) = wire();
-      hub.streamStartedAt = DateTime.now().subtract(const Duration(seconds: 5));
-      hub.noteMalformedPacket(182);
+  test('startSession refuses when only malformed packets are arriving', () {
+    final (recording, hub, _) = wire();
+    hub.streamStartedAt = DateTime.now().subtract(const Duration(seconds: 5));
+    hub.noteMalformedPacket(182);
 
-      final result = start(recording);
+    final result = start(recording);
 
-      expect(result, isA<StartSessionNoData>());
-      expect(recording.sessionInProgress, isFalse);
-    },
-  );
+    expect(result, isA<StartSessionNoData>());
+    expect(recording.sessionInProgress, isFalse);
+  });
 
   test(
     'start latches the writer; stop finalizes it and returns its name',

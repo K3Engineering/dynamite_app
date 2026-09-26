@@ -64,6 +64,34 @@ linter:
     unnecessary_lambdas: true
     unnecessary_late: true
     avoid_unnecessary_containers: true
+    strict_top_level_inference: true
+    type_annotate_public_apis: true
+    document_ignores: true
+    depend_on_referenced_packages: true
+    deprecated_member_use_from_same_package: true
+    throw_in_finally: true
+    unnecessary_breaks: true
+    avoid_void_async: true
+    literal_only_boolean_expressions: true
+    switch_on_type: true
+    implicit_reopen: true
+    null_check_on_nullable_type_parameter: true
+    tighten_type_of_initializing_formals: true
+    type_literal_in_constant_pattern: true
+    prefer_null_aware_method_calls: true
+    avoid_annotating_with_dynamic: true
+    conditional_uri_does_not_exist: true
+    no_runtimeType_toString: true
+    valid_regexps: true
+    use_enums: true
+    unnecessary_library_directive: true
+    missing_code_block_language_in_doc_comment: true
+    unintended_html_in_doc_comment: true
+    avoid_equals_and_hash_code_on_mutable_classes: true
+    noop_primitive_operations: true
+    unnecessary_async: true
+    avoid_catching_errors: true
+    cast_nullable_to_non_nullable: true
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

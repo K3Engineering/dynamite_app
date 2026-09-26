@@ -659,9 +659,10 @@ void main() {
       final v1 = hub.calibrationVersion;
 
       // Same content, new instances: an unrelated notify must not invalidate
-      // the graph caches. NOT const: const canonicalization would alias
-      // [cell], skipping the == path this guards.
+      // the graph caches.
       hub.updateLoadCells([
+        // NOT const: const canonicalization would alias [cell], skipping the
+        // == path this guards.
         // ignore: prefer_const_constructors
         LoadCellProfile(capacityKg: 200, sensitivityMvV: 2),
         null,

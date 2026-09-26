@@ -98,7 +98,10 @@ class GraphController extends ChangeNotifier {
       case GraphWindow(:final start, :final end):
         // Parked windows never outlive the data's right edge; a negative start
         // is legitimate for a sparse young buffer.
-        assert(start < end && end <= totalSamples);
+        assert(
+          start < end && end <= totalSamples,
+          'window [$start, $end) out of bounds for $totalSamples samples',
+        );
         final s = start.clamp(0, totalSamples - 1);
         final e = end.clamp(s + 1, totalSamples);
         return (s, e);

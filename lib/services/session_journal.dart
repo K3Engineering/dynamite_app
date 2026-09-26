@@ -180,6 +180,10 @@ class SessionMeta {
     final DisplayUnit displayUnit;
     try {
       displayUnit = DisplayUnit.values.byName(displayUnitName);
+      // byName's ArgumentError is malformed DATA here (a unit string this
+      // build can't name), not a programming bug — translated to the parse
+      // verdict below.
+      // ignore: avoid_catching_errors
     } on ArgumentError {
       throw FormatException(
         'journal header: bad displayUnit: $displayUnitName',

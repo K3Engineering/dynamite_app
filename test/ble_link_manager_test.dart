@@ -368,7 +368,7 @@ void main() {
       expect(error, isA<ConnectionException>());
       // The row marker is the user-facing channel for the failure (no toast).
       expect(
-        (link.outcomeFor(deviceId) as ConnectRefused).kind,
+        (link.outcomeFor(deviceId)! as ConnectRefused).kind,
         ConnectFailureKind.failed,
       );
       expect(link.linkState, BtLinkState.idle);
@@ -403,7 +403,7 @@ void main() {
 
       expect(error, isA<TimeoutException>());
       expect(
-        (link.outcomeFor(deviceId) as ConnectRefused).kind,
+        (link.outcomeFor(deviceId)! as ConnectRefused).kind,
         ConnectFailureKind.timeout,
       );
       expect(link.linkState, BtLinkState.idle);
@@ -438,7 +438,7 @@ void main() {
 
       expect(error, isNull);
       expect(
-        (link.outcomeFor(deviceId) as ConnectRefused).kind,
+        (link.outcomeFor(deviceId)! as ConnectRefused).kind,
         ConnectFailureKind.failed,
       );
       // Back to idle (VM tests are non-web, so no reconnect embargo either way) with
