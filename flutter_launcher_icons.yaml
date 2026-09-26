@@ -1,0 +1,26 @@
+flutter_launcher_icons:
+  # iOS (squircle applied by the OS) + macOS + Windows + web/favicon all take
+  # the full-bleed opaque variant. Android pre-26 (minSdk 24) takes the
+  # rounded-tile variant; 26+ takes the adaptive layers, 33+ the monochrome one.
+  ios: true
+  image_path_ios: "assets/icon/fullbleed.png"
+  remove_alpha_ios: true
+  android: true
+  image_path_android: "assets/icon/android_legacy.png"
+  adaptive_icon_background: "assets/icon/adaptive_background.png"
+  adaptive_icon_foreground: "assets/icon/adaptive_foreground.png"
+  adaptive_icon_monochrome: "assets/icon/adaptive_monochrome.png"
+  # Re-running the generator clobbers web/favicon.png back to 16x16; overwrite
+  # it again from assets/icon/fullbleed.png (48px) afterwards.
+  web:
+    generate: true
+    image_path: "assets/icon/fullbleed.png"
+    background_color: "#0C2560"
+    theme_color: "#0C2560"
+  windows:
+    generate: true
+    image_path: "assets/icon/fullbleed.png"
+    icon_size: 256
+  macos:
+    generate: true
+    image_path: "assets/icon/fullbleed.png"
