@@ -189,7 +189,7 @@ class EnvelopeSeries {
   /// series — bucket aggregates don't compose soundly across member channels
   /// (the min of a sum is not the sum of the mins), so exact reduction is the
   /// only sound option. Watch the O(window) cost in always-repainting views.
-  EnvelopeSeries.exact({required this.sampleAt})
+  const EnvelopeSeries.exact({required this.sampleAt})
     : buckets = null,
       rawToDisplay = _identityMap;
 

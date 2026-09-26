@@ -49,9 +49,7 @@ int? fftWindowN(int spanSamples, int? requestedN) {
   final lo = ((loDb - pad) / step).floor() * step;
   final hi = ((hiDb + pad) / step).ceil() * step;
   // Degenerate (exact-detent) inputs still get a drawable range.
-  return hi > lo
-      ? (lo.toDouble(), hi.toDouble())
-      : (lo.toDouble(), (lo + step).toDouble());
+  return hi > lo ? (lo, hi) : (lo, lo + step);
 }
 
 /// Radix-2 FFT with a cached Hann window. Instances hold O(n) tables plus two
