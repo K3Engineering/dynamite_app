@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meta/meta.dart';
 import 'package:provider/provider.dart';
 
+import '../models/analysis_pane.dart';
 import '../models/app_meta.dart';
 import '../models/session_catalog.dart';
 import '../services/app_settings.dart';
@@ -16,6 +17,7 @@ import '../services/session_data.dart';
 import '../services/session_store.dart';
 import '../services/share_capability.dart';
 import '../utils/format.dart';
+import '../widgets/analysis_pane_bar.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/session_flows.dart';
@@ -38,6 +40,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   final GraphController _graphCtrl = GraphController();
 
+  /// The analysis pane slot's selection (see [GraphWorkspace.analysis]).
+  final ValueNotifier<AnalysisPaneSelection> _analysisPane = ValueNotifier(
+    const AnalysisPaneSelection(),
+  );
+
   late final ValueListenable<SessionCatalogState> _catalog;
 
   @override
@@ -50,6 +57,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   @override
   void dispose() {
+    _analysisPane.dispose();
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -197,20 +205,35 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             ],
           ),
 
-          SizedBox(
-            height: 332,
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: GraphWorkspace(
-                data: data,
-                ctrl: _graphCtrl,
-                unit: unit,
-                activeChannels: [
-                  for (int i = 0; i < visibleChannels.length; i++)
-                    if (visibleChannels[i]) i,
+          ValueListenableBuilder<AnalysisPaneSelection>(
+            valueListenable: _analysisPane,
+            builder: (context, analysis, _) => SizedBox(
+              // The analysis pane shares space with the force graph; an
+              // active pane needs the taller block.
+              height: analysis.kind == null ? 332 : 520,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: GraphWorkspace(
+                        data: data,
+                        ctrl: _graphCtrl,
+                        unit: unit,
+                        activeChannels: [
+                          for (int i = 0; i < visibleChannels.length; i++)
+                            if (visibleChannels[i]) i,
+                        ],
+                        analysis: analysis,
+                        isLiveGraph: false,
+                      ),
+                    ),
+                  ),
+                  AnalysisPaneBar(
+                    selection: analysis,
+                    onChanged: (s) => _analysisPane.value = s,
+                  ),
                 ],
-                showDerivative: false,
-                isLiveGraph: false,
               ),
             ),
           ),

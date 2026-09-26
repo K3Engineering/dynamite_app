@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../services/app_settings.dart';
+import '../models/analysis_pane.dart';
 import '../models/board_calibration.dart';
 import '../models/channel_limits.dart';
 import '../models/display_unit.dart';
@@ -18,6 +19,7 @@ import '../services/data_hub.dart';
 import '../services/feed_health_tracker.dart';
 import '../models/feed_health.dart';
 import '../models/hub_event.dart';
+import '../widgets/analysis_pane_bar.dart';
 import '../widgets/feed_health_text.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
@@ -50,9 +52,11 @@ class _LiveTabState extends State<LiveTab> {
   // Live window floor: 20 s at 1 kHz (a UI anchor, not read from the device).
   final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * 1000);
 
-  /// dF/dt row + derivative graph visibility; a notifier so toggling doesn't
-  /// rebuild the tab.
-  final ValueNotifier<bool> _showDerivative = ValueNotifier(false);
+  /// The analysis pane slot's selection; a notifier so switching panes
+  /// doesn't rebuild the whole tab.
+  final ValueNotifier<AnalysisPaneSelection> _analysisPane = ValueNotifier(
+    const AnalysisPaneSelection(),
+  );
 
   /// App-lifetime hub, captured for listener registration only.
   DataHub? _hub;
@@ -79,7 +83,7 @@ class _LiveTabState extends State<LiveTab> {
   @override
   void dispose() {
     _hub?.removeEventListener(_onHubEvent);
-    _showDerivative.dispose();
+    _analysisPane.dispose();
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -210,9 +214,9 @@ class _LiveTabState extends State<LiveTab> {
             BoardFaultBanner(detail: invalidBoardDetail),
           if (streaming)
             Expanded(
-              child: ValueListenableBuilder<bool>(
-                valueListenable: _showDerivative,
-                builder: (context, showDerivative, _) => Column(
+              child: ValueListenableBuilder<AnalysisPaneSelection>(
+                valueListenable: _analysisPane,
+                builder: (context, analysis, _) => Column(
                   children: [
                     LiveStats(
                       settings: settings,
@@ -220,7 +224,8 @@ class _LiveTabState extends State<LiveTab> {
                       hub: hub,
                       ctrl: _graphCtrl,
                       unit: unit,
-                      showDerivative: showDerivative,
+                      showDerivative:
+                          analysis.kind == AnalysisPaneKind.derivative,
                       healthListenable: healthListenable,
                     ),
                     Expanded(
@@ -228,13 +233,12 @@ class _LiveTabState extends State<LiveTab> {
                         hub,
                         unit,
                         settings.activeChannelIndices,
-                        showDerivative,
+                        analysis,
                       ),
                     ),
-                    ViewToggles(
-                      showDerivative: showDerivative,
-                      onToggleDerivative: () =>
-                          _showDerivative.value = !showDerivative,
+                    AnalysisPaneBar(
+                      selection: analysis,
+                      onChanged: (s) => _analysisPane.value = s,
                     ),
                   ],
                 ),
@@ -271,14 +275,14 @@ class _LiveTabState extends State<LiveTab> {
     DataHub hub,
     DisplayUnit unit,
     List<int> activeChannels,
-    bool showDerivative,
+    AnalysisPaneSelection analysis,
   ) {
     return GraphWorkspace(
       data: hub,
       ctrl: _graphCtrl,
       unit: unit,
       activeChannels: activeChannels,
-      showDerivative: showDerivative,
+      analysis: analysis,
     );
   }
 }
@@ -700,43 +704,6 @@ class DisconnectedPrompt extends StatelessWidget {
       action: FilledButton(
         onPressed: onConnect,
         child: const Text('Connect a device'),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// ViewToggles
-// ---------------------------------------------------------------------------
-
-class ViewToggles extends StatelessWidget {
-  final bool showDerivative;
-  final VoidCallback onToggleDerivative;
-
-  const ViewToggles({
-    super.key,
-    this.showDerivative = false,
-    required this.onToggleDerivative,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          FilterChip(
-            label: const Text('dF/dt'),
-            selected: showDerivative,
-            onSelected: (_) => onToggleDerivative(),
-            visualDensity: VisualDensity.compact,
-            labelStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: showDerivative ? cs.onSecondaryContainer : null,
-            ),
-          ),
-        ],
       ),
     );
   }
