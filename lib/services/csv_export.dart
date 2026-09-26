@@ -34,10 +34,7 @@ extension DisplayUnitCsv on DisplayUnit {
     if (quantum == null) return null;
     // The nudge keeps an exact power-of-ten quantum from gaining a spurious
     // extra decimal to floating-point error in the log.
-    return (1 - math.log(quantum) / math.ln10 - 1e-9)
-        .ceil()
-        .clamp(0, 10)
-        .toInt();
+    return (1 - math.log(quantum) / math.ln10 - 1e-9).ceil().clamp(0, 10);
   }
 }
 

@@ -243,7 +243,10 @@ class DataHub extends ChangeNotifier
 
   /// Write one channel's tare offset directly, in counts; absolute.
   void setTareOffset(int channel, double rawValue) {
-    assert(channel >= 0 && channel < kAdcChannelCount);
+    assert(
+      channel >= 0 && channel < kAdcChannelCount,
+      'channel $channel out of range [0, $kAdcChannelCount)',
+    );
     assert(rawValue.isFinite);
     _cancelPendingTare();
     tare[channel] = rawValue;
@@ -280,7 +283,10 @@ class DataHub extends ChangeNotifier
   /// advances, even while a tare window fills.
   @override
   void addSampleFrame(Int32List values) {
-    assert(values.length >= kAdcChannelCount);
+    assert(
+      values.length >= kAdcChannelCount,
+      'frame has ${values.length} values, expected $kAdcChannelCount',
+    );
     for (int i = 0; i < kAdcChannelCount; ++i) {
       final int val = values[i];
       _currentRaw[i] = val;
@@ -510,14 +516,20 @@ class DataHub extends ChangeNotifier
 
   /// Latest raw value (ADC counts) of a channel, for limit levels.
   int currentRawFor(int adcChannel) {
-    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
+    assert(
+      adcChannel >= 0 && adcChannel < kAdcChannelCount,
+      'channel $adcChannel out of range [0, $kAdcChannelCount)',
+    );
     return _currentRaw[adcChannel];
   }
 
   /// Current value of [adcChannel] in [unit]; a held value during a gap (see
   /// [liveEdgeIsGap]). Null when the unit is unavailable.
   double? currentValue(int adcChannel, DisplayUnit unit) {
-    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
+    assert(
+      adcChannel >= 0 && adcChannel < kAdcChannelCount,
+      'channel $adcChannel out of range [0, $kAdcChannelCount)',
+    );
     return converterFor(
       adcChannel,
     ).net(unit, _currentRaw[adcChannel].toDouble());
@@ -525,7 +537,10 @@ class DataHub extends ChangeNotifier
 
   /// The tare amount being zeroed out, in [unit]. Null when unavailable.
   double? tareOffset(int adcChannel, DisplayUnit unit) {
-    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
+    assert(
+      adcChannel >= 0 && adcChannel < kAdcChannelCount,
+      'channel $adcChannel out of range [0, $kAdcChannelCount)',
+    );
     return converterFor(adcChannel).tareOffset(unit);
   }
 
@@ -538,7 +553,10 @@ class DataHub extends ChangeNotifier
     required int start,
     required int end,
   }) {
-    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
+    assert(
+      adcChannel >= 0 && adcChannel < kAdcChannelCount,
+      'channel $adcChannel out of range [0, $kAdcChannelCount)',
+    );
     final conv = converterFor(adcChannel).netMap(unit);
     if (conv == null) return null;
     final ext = windowedRawExtremes(adcChannel, start, end);
@@ -548,7 +566,10 @@ class DataHub extends ChangeNotifier
   /// Instantaneous derivative (first difference) of [adcChannel] in unit/s;
   /// null when the unit is unavailable.
   double? currentDerivative(int adcChannel, DisplayUnit unit) {
-    assert(adcChannel >= 0 && adcChannel < kAdcChannelCount);
+    assert(
+      adcChannel >= 0 && adcChannel < kAdcChannelCount,
+      'channel $adcChannel out of range [0, $kAdcChannelCount)',
+    );
     if (totalSamples < 2) return 0;
 
     // A held value on either side would fabricate a flat or spiking

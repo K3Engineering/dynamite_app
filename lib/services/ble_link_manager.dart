@@ -479,7 +479,7 @@ class BleLinkManager extends ChangeNotifier {
   /// (see [OtaClient.flash]) — so the link is then ended via the
   /// requested-disconnect path. A body that THROWS keeps the link (nothing
   /// rebooted): the feed resumes and the error reaches the caller.
-  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) async {
+  Future<T> runOta<T>(Future<T> Function(OtaClient client) body) {
     final transport = _link.transport;
     if (transport == null) {
       throw StateError('OTA requires a connected device');

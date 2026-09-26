@@ -63,7 +63,10 @@ void _handleGraphPointerScroll(
 /// zoomed in past 1 sample/pixel this clamps to 1 (one block per sample). The
 /// last block in a range is allowed to be short.
 int _blockSizeFor(double viewSamples, double graphW) {
-  assert(graphW > 0); // callers only paint into non-degenerate plot areas
+  assert(
+    graphW > 0,
+    'graphW must be positive, got $graphW',
+  ); // callers only paint into non-degenerate plot areas
   // floor => >= 1 sample/block, so the polyline never has more vertices than
   // pixels. The remainder (viewSamples % blockSize) lands in the short final block.
   return math.max(1, (viewSamples / graphW).floor());
@@ -996,7 +999,7 @@ void _drawTimeAxis(
       : _findScale(xSpanSec, _xScaleConfig).delta.toDouble();
   final int decimals = step >= 1
       ? 0
-      : (-(math.log(step) / math.ln10).floor()).clamp(1, 3).toInt();
+      : (-(math.log(step) / math.ln10).floor()).clamp(1, 3);
 
   void vline(double sec, {required bool labeled}) {
     final xPos = (sec - startSec) * sampleRate * graphSz.width / viewSamples;
@@ -1319,7 +1322,10 @@ void _drawChannelEnvelope(
     final int drawStart = math.max(sStart, firstUsableSample);
     if (drawStart >= sEnd) continue;
     // Short only at the trailing block or a firstUsableSample clip.
-    assert(sEnd - drawStart >= 1 && sEnd - drawStart <= blockSize);
+    assert(
+      sEnd - drawStart >= 1 && sEnd - drawStart <= blockSize,
+      'block [$drawStart, $sEnd) has bad size for blockSize $blockSize',
+    );
 
     final BlockReduction r = useBuckets
         ? reduceBlockBuckets(series, drawStart, sEnd)
@@ -1924,7 +1930,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
             : ChannelLimits.clipRawNeg;
         final railY = valueToY(
           bound.netMap(clipRaw.toDouble()),
-        ).clamp(0.0, graphSz.height).toDouble();
+        ).clamp(0.0, graphSz.height);
         final railBar = positive
             ? Rect.fromLTRB(left, 0.0, left + colW, railY)
             : Rect.fromLTRB(left, railY, left + colW, graphSz.height);
@@ -1933,7 +1939,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
         if (cellNet == null) continue;
         final cellY = valueToY(
           positive ? cellNet : -cellNet,
-        ).clamp(0.0, graphSz.height).toDouble();
+        ).clamp(0.0, graphSz.height);
         final cellBar = positive
             ? Rect.fromLTRB(left, railY, left + colW, cellY)
             : Rect.fromLTRB(left, cellY, left + colW, railY);

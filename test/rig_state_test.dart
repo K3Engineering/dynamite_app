@@ -286,7 +286,7 @@ void main() {
       // The commit keeps the read-time (PGA-resolved) board, not a
       // re-parse of the gain-less read-back.
       expect(
-        ((rig.boardCalibration as ProvisionedBoardCalibration).channels[0]
+        ((rig.boardCalibration! as ProvisionedBoardCalibration).channels[0]
                 as CalibratedChannelBoard)
             .readings,
         ((fixture().board as ProvisionedBoardCalibration).channels[0]

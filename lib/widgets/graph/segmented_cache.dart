@@ -409,7 +409,10 @@ class SegmentedGraphCache {
     int start = bakeGap.$1;
     final int end = math.min(bakeGap.$2, start + env.targetSpan);
     if (end <= start) return false;
-    assert(end <= env.bakeable); // _gaps caps domainEnd at the bake horizon
+    assert(
+      end <= env.bakeable,
+      'bake range end $end exceeds bake horizon ${env.bakeable}',
+    ); // _gaps caps domainEnd at the bake horizon
 
     // Insertion point: first segment starting inside/after the bake range.
     int at = 0;
