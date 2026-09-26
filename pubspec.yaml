@@ -85,6 +85,10 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
 
+  # Launcher-icon generation from the PNGs in assets/icon (rendered from
+  # ../icons/icon57-61 via ../icons/render.cmd). Config: flutter_launcher_icons.yaml
+  flutter_launcher_icons: ^0.14.4
+
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
 
