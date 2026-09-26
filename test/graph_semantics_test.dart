@@ -2,6 +2,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'package:dynamite_app/models/analysis_pane.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/graph_data_source.dart';
@@ -43,8 +44,8 @@ void main() {
     Future<void> pumpGraph({
       required GraphDataSource data,
       required List<int> activeChannels,
-      bool isLiveSource = true,
-      bool showDerivative = false,
+      bool isLiveGraph = true,
+      AnalysisPaneSelection analysis = const AnalysisPaneSelection(),
     }) => tester.pumpWidget(
       MaterialApp(
         home: GraphWorkspace(
@@ -52,8 +53,8 @@ void main() {
           ctrl: GraphController(),
           unit: DisplayUnit.mVv.effective(data.unitAvailability),
           activeChannels: activeChannels,
-          isLiveSource: isLiveSource,
-          showDerivative: showDerivative,
+          isLiveGraph: isLiveGraph,
+          analysis: analysis,
         ),
       ),
     );
@@ -71,8 +72,8 @@ void main() {
     await pumpGraph(
       data: calibratedHub(),
       activeChannels: const [0, 1],
-      isLiveSource: false,
-      showDerivative: true,
+      isLiveGraph: false,
+      analysis: const AnalysisPaneSelection(kind: AnalysisPaneKind.derivative),
     );
     expect(
       find.bySemanticsLabel(
