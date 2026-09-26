@@ -594,86 +594,91 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       for (final ch in widget.activeChannels)
         ?_ConvertedChannel.of(widget.data, ch, unit),
     ];
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // The canvas exposes no semantics of its own; explicitChildNodes keeps
-        // the controls as their own nodes rather than merging into this label.
-        return Semantics(
-          container: true,
-          explicitChildNodes: true,
-          label: _graphSemanticsLabel(
-            live: widget.isLiveGraph,
-            channels: [for (final bound in convertedChannels) bound.channel],
-            unit: unit,
-            hasDerivative: widget.showDerivative,
-          ),
-          child: Stack(
+    // The canvas exposes no semantics of its own; explicitChildNodes keeps
+    // the controls as their own nodes rather than merging into this label.
+    // No LayoutBuilder here (unlike _GraphPane/_Minimap): nothing reads the
+    // constraints, and a LayoutBuilder's isolated build scope escalates
+    // descendant setStates (_SpanReadout setStates per packet) into an
+    // unconditional markNeedsLayout walk to the nearest relayout boundary
+    // (the Scaffold on the live tab) plus a layout-phase rebuild of the
+    // dirtied elements (runLayoutCallback flushes its build scope) -- even
+    // when the rebuild changes nothing render-side; ancestor rebuilds do
+    // the same and rebuild the entire subtree during layout
+    // (updateShouldRebuild is always true).
+    return Semantics(
+      container: true,
+      explicitChildNodes: true,
+      label: _graphSemanticsLabel(
+        live: widget.isLiveGraph,
+        channels: [for (final bound in convertedChannels) bound.channel],
+        unit: unit,
+        hasDerivative: widget.showDerivative,
+      ),
+      child: Stack(
+        children: [
+          Column(
             children: [
-              Column(
-                children: [
-                  Expanded(
-                    flex: widget.showDerivative ? 6 : 10,
-                    child: _GraphPane(
-                      data: widget.data,
-                      ctrl: widget.ctrl,
-                      painter: _ForceGraphPainter(
-                        widget.data,
-                        widget.ctrl,
-                        unit: unit,
-                        channels: convertedChannels,
-                        showXLabels: !widget.showDerivative,
-                        vsync: _vsync,
-                        cache: _forceCache,
-                        colorScheme: colorScheme,
-                        dpr: dpr,
-                        labels: _labelCache,
-                        bakePump: _bakePump,
-                      ),
-                    ),
-                  ),
-                  if (widget.showDerivative)
-                    Expanded(
-                      flex: 4,
-                      child: _GraphPane(
-                        data: widget.data,
-                        ctrl: widget.ctrl,
-                        painter: _DerivativeGraphPainter(
-                          widget.data,
-                          widget.ctrl,
-                          unit: unit,
-                          channels: convertedChannels,
-                          vsync: _vsync,
-                          cache: _derivCache ??= SegmentedGraphCache(),
-                          colorScheme: colorScheme,
-                          dpr: dpr,
-                          labels: _labelCache,
-                          bakePump: _bakePump,
-                        ),
-                      ),
-                    ),
-                  _Minimap(
-                    dataSource: widget.data,
-                    unit: unit,
-                    graphCtrl: widget.ctrl,
-                    channels: convertedChannels,
-                  ),
-                ],
-              ),
-              if (widget.isLiveGraph)
-                _LiveButton(data: widget.data, ctrl: widget.ctrl),
-              Positioned(
-                right: _kGraphRightSpace + 16,
-                bottom: 72,
-                child: _ZoomControls(
+              Expanded(
+                flex: widget.showDerivative ? 6 : 10,
+                child: _GraphPane(
                   data: widget.data,
                   ctrl: widget.ctrl,
-                  onZoom: _zoomBy,
+                  painter: _ForceGraphPainter(
+                    widget.data,
+                    widget.ctrl,
+                    unit: unit,
+                    channels: convertedChannels,
+                    showXLabels: !widget.showDerivative,
+                    vsync: _vsync,
+                    cache: _forceCache,
+                    colorScheme: colorScheme,
+                    dpr: dpr,
+                    labels: _labelCache,
+                    bakePump: _bakePump,
+                  ),
                 ),
+              ),
+              if (widget.showDerivative)
+                Expanded(
+                  flex: 4,
+                  child: _GraphPane(
+                    data: widget.data,
+                    ctrl: widget.ctrl,
+                    painter: _DerivativeGraphPainter(
+                      widget.data,
+                      widget.ctrl,
+                      unit: unit,
+                      channels: convertedChannels,
+                      vsync: _vsync,
+                      cache: _derivCache ??= SegmentedGraphCache(),
+                      colorScheme: colorScheme,
+                      dpr: dpr,
+                      labels: _labelCache,
+                      bakePump: _bakePump,
+                    ),
+                  ),
+                ),
+              _Minimap(
+                dataSource: widget.data,
+                unit: unit,
+                graphCtrl: widget.ctrl,
+                channels: convertedChannels,
               ),
             ],
           ),
-        );
-      },
+          if (widget.isLiveGraph)
+            _LiveButton(data: widget.data, ctrl: widget.ctrl),
+          Positioned(
+            right: _kGraphRightSpace + 16,
+            bottom: 72,
+            child: _ZoomControls(
+              data: widget.data,
+              ctrl: widget.ctrl,
+              onZoom: _zoomBy,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
