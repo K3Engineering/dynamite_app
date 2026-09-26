@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:meta/meta.dart';
 
 import 'device_profile.dart';
 
@@ -28,6 +29,7 @@ final Set<String> rigSlotKeys = Set.unmodifiable({
 String rigSlotTitle(int i) => i < kAdcChannelCount ? 'CH $i' : 'Slot $i';
 
 /// One populated device slot: the cell it holds.
+@immutable
 class RigSlot {
   const RigSlot({required this.cell});
 
@@ -41,6 +43,7 @@ class RigSlot {
 }
 
 /// The device's load cell slots; identity is positional. Immutable.
+@immutable
 class RigSlots {
   RigSlots(List<RigSlot?> slots)
     : slots = List.unmodifiable(
@@ -74,11 +77,13 @@ class RigSlots {
       },
   ];
 
+  @useResult
   RigSlots withSlot(int i, RigSlot? slot) => RigSlots([
     for (int k = 0; k < kRigSlotCount; ++k) k == i ? slot : slots[k],
   ]);
 
   /// Swap the contents of slots [a] and [b].
+  @useResult
   RigSlots withSwap(int a, int b) => RigSlots([
     for (int k = 0; k < kRigSlotCount; ++k)
       k == a
@@ -157,8 +162,9 @@ RigSlot? _rejectedSlot(int i, Map<String, String> kv) {
 
 /// A load cell: capacity plus the exact certificate sensitivity (e.g. 2.007
 /// mV/V, not a nominal class). Identity is positional, not an id.
+@immutable
 class LoadCellProfile {
-  LoadCellProfile({
+  const LoadCellProfile({
     this.name = '',
     required this.capacityKg,
     required this.sensitivityMvV,
@@ -186,6 +192,7 @@ class LoadCellProfile {
   static String _trim(double v) =>
       v == v.roundToDouble() ? v.toInt().toString() : v.toString();
 
+  @useResult
   LoadCellProfile copyWith({
     String? name,
     double? capacityKg,

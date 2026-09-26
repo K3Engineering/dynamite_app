@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 /// Recording write rate estimate: 4 channels x 4 bytes x the 1 kHz the
 /// device boots at (a planning estimate, not the stream's parsed rate).
 const int kRecordingBytesPerSecond = 16000;
@@ -8,6 +10,7 @@ const int kRecordingBytesPerSecond = 16000;
 /// estimate is unreliable enough to show nothing (see
 /// `storage_probe_web.dart`), only the missing eviction guarantee is worth
 /// a warning.
+@immutable
 sealed class StorageState {
   const StorageState();
 }

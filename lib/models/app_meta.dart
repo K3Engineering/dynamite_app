@@ -1,6 +1,9 @@
+import 'package:meta/meta.dart';
+
 /// App identity and version, resolved once at startup by the composition
 /// root (main.dart, via package_info_plus) and injected where displayed
 /// (the Settings About block) or stamped into exports.
+@immutable
 class AppMeta {
   const AppMeta({required this.version, required this.buildNumber});
 

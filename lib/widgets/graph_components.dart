@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meta/meta.dart';
 
 import '../models/bucket_series.dart';
 import '../models/channel_limits.dart';
@@ -80,6 +81,7 @@ int _blockSizeFor(double viewSamples, double graphW) {
 /// blockSize]; capping at totalSamples is the caller's job (the envelope
 /// layer keeps bakes two block sizes behind the data edge, so a baked join
 /// block is always complete -- see [SegmentedGraphCache.paint]).
+@visibleForTesting
 int joinBlockEnd(int end, int blockSize) => (end ~/ blockSize + 2) * blockSize;
 
 // ---------------------------------------------------------------------------
@@ -88,6 +90,7 @@ int joinBlockEnd(int end, int blockSize) => (end ~/ blockSize + 2) * blockSize;
 
 /// One active channel bound to the view's display unit. Its display maps are
 /// materialized non-null here, so painters never re-ask availability.
+@immutable
 final class _ConvertedChannel {
   const _ConvertedChannel._({
     required this.channel,
@@ -1173,6 +1176,7 @@ void _drawMissingDataHatching(
 /// of the buffer so a continuous primitive (triangle strip or polyline) is not
 /// broken across flushes. [drawThreshold] is the minimum filled-float count
 /// required before a flush actually emits anything.
+@visibleForTesting
 class VertexBatcher {
   VertexBatcher({
     required this.preserveFloats,
@@ -1418,6 +1422,7 @@ EnvelopeSeries _taredEnvelopeSeries(
 ///
 /// Returns true when bake work remains; the owner should schedule another
 /// frame.
+@useResult
 bool _paintEnvelopeDataLayer(
   Canvas canvas, {
   required SegmentedGraphCache cache,
@@ -1570,6 +1575,7 @@ typedef _GraphLayout = ({
   double viewSamples,
 });
 
+@useResult
 _GraphLayout? _setupGraphFrame(
   Canvas canvas,
   Size size,
@@ -1721,6 +1727,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     double Function(double value) valueToY,
   ) {}
 
+  @nonVirtual
   @override
   void paint(Canvas canvas, Size size) {
     final layout = _setupGraphFrame(
@@ -1824,6 +1831,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     if (workRemains) bakePump.schedule();
   }
 
+  @nonVirtual
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }

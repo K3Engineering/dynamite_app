@@ -230,7 +230,7 @@ void main() {
       // nominal chain; the strict parser refuses it rather than replaying
       // a partial instrument (the session boundary flags the damage).
       expect(
-        () => ChannelBoardCalibration.fromJson({
+        () => ChannelBoardCalibration.fromJson(const {
           'r': nominalLadder,
           'raw': [1.0e6, 5.0e5, 0.0, -5.0e5, -1.0e6],
         }),
@@ -240,7 +240,7 @@ void main() {
       expect(
         () => ChannelBoardCalibration.fromJson({
           'r': 'junk',
-          'raw': [1.0e6, 5.0e5, 0.0, -5.0e5, -1.0e6],
+          'raw': const [1.0e6, 5.0e5, 0.0, -5.0e5, -1.0e6],
           'n': testNominals.toJson(),
         }),
         throwsFormatException,
@@ -249,7 +249,7 @@ void main() {
       expect(
         () => ChannelBoardCalibration.fromJson({
           'r': nominalLadder,
-          'raw': [1.0e9, 5.0e5, 0.0, -5.0e5, -1.0e6],
+          'raw': const [1.0e9, 5.0e5, 0.0, -5.0e5, -1.0e6],
           'n': testNominals.toJson(),
         }),
         throwsFormatException,
@@ -259,7 +259,7 @@ void main() {
     test('a valid snapshot round-trips the full correction', () {
       final cal = CalibratedChannelBoard(
         resistors: nominalLadder,
-        readings: [6.4e6, 3.2e6, 845.2, -3.2e6, -6.4e6],
+        readings: const [6.4e6, 3.2e6, 845.2, -3.2e6, -6.4e6],
         nominals: testNominals,
       );
       final loaded = ChannelBoardCalibration.fromJson(cal.toJson());
@@ -570,14 +570,14 @@ $channelData${''}END
 
   group('LoadCellProfile', () {
     test('kgf per mV/V is capacity over the exact sensitivity', () {
-      final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
+      const cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
       expect(cell.kgfPerMvV, closeTo(100, 1e-12));
-      final cert = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2.02);
+      const cert = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2.02);
       expect(cert.kgfPerMvV, closeTo(200 / 2.02, 1e-12));
     });
 
     test('json round-trips; unknown keys are ignored', () {
-      final cell = LoadCellProfile(
+      const cell = LoadCellProfile(
         name: 'Golden cell',
         capacityKg: 100,
         sensitivityMvV: 2.0123,
@@ -590,16 +590,16 @@ $channelData${''}END
     });
 
     test('generic title renders from values, named title wins', () {
-      final generic = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
+      const generic = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
       expect(generic.title, '200 kg · 2 mV/V');
       final named = generic.copyWith(name: 'Reference cell');
       expect(named.title, 'Reference cell');
     });
 
     test('values line lists the exact mV/V', () {
-      final plain = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
+      const plain = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
       expect(plain.valuesLine, '200 kg · 2 mV/V');
-      final cert = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2.007);
+      const cert = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2.007);
       expect(cert.valuesLine, '200 kg · 2.007 mV/V');
     });
   });

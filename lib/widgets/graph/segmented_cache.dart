@@ -4,6 +4,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meta/meta.dart';
 
 // ---------------------------------------------------------------------------
 // Image baking
@@ -160,6 +161,7 @@ typedef _BakeEnv = ({
 
 /// One baked segment: an immutable vector render of samples [start, end)
 /// plus the mapping and config it was baked under.
+@immutable
 class GraphSegment {
   final ui.Image image;
 
@@ -193,7 +195,7 @@ class GraphSegment {
   final double hPad;
   final double vPad;
 
-  GraphSegment({
+  const GraphSegment({
     required this.image,
     required this.start,
     required this.end,
@@ -260,6 +262,7 @@ class SegmentedGraphCache {
   /// Returns true when a bake happened this frame; the owner should then
   /// schedule another frame so rolling bakes continue (static sources never
   /// fire repaint on their own).
+  @useResult
   bool paint(Canvas canvas, SegmentViewConfig c) {
     final baked = _maintain(c);
     _draw(canvas, c);

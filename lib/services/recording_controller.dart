@@ -14,6 +14,7 @@ import '../models/hub_event.dart';
 import '../utils/format.dart';
 
 /// Outcome of [RecordingController.startSession].
+@immutable
 sealed class StartSessionResult {
   const StartSessionResult();
 }
@@ -42,6 +43,7 @@ final class StartSessionNoData extends StartSessionResult {
 }
 
 /// Outcome of [RecordingController.stopSession].
+@immutable
 sealed class StopSessionResult {
   const StopSessionResult();
 }

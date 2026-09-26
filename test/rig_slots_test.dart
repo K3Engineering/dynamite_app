@@ -72,7 +72,7 @@ void main() {
     test('names flatten newlines and survive an equals sign', () {
       final slots = RigSlots.empty().withSlot(
         0,
-        RigSlot(
+        const RigSlot(
           cell: LoadCellProfile(
             name: 'a=b\nc',
             capacityKg: 100,
@@ -114,7 +114,7 @@ void main() {
         expect(slots[0], isNull, reason: '$kv');
       }
       // The neighbouring slots are unaffected.
-      final slots = RigSlots.fromKv({
+      final slots = RigSlots.fromKv(const {
         'lc0.sens': 'abc',
         'lc1.cap': '500',
         'lc1.sens': '2',
@@ -144,12 +144,12 @@ void main() {
     });
 
     test('withSwap onto an empty slot is a move', () {
-      final cell = LoadCellProfile(
+      const cell = LoadCellProfile(
         name: 'A',
         capacityKg: 100,
         sensitivityMvV: 2,
       );
-      final slots = RigSlots.empty().withSlot(0, RigSlot(cell: cell));
+      final slots = RigSlots.empty().withSlot(0, const RigSlot(cell: cell));
       final moved = slots.withSwap(0, 5);
       expect(moved.cellAt(0), isNull);
       expect(moved.cellAt(5)?.name, 'A');

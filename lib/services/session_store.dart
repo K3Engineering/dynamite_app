@@ -32,6 +32,7 @@ class SessionStore {
   static set instance(SessionStore? store) => _instance = store;
 
   /// Wrap [backend] (a temp root in tests) instead of the platform default.
+  @visibleForTesting
   factory SessionStore.over(SessionFilesBackend backend) =>
       SessionStore._(Future.value(backend));
 

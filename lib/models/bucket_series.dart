@@ -1,6 +1,8 @@
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
+
 import 'gap_list.dart';
 
 // ---------------------------------------------------------------------------
@@ -149,6 +151,7 @@ class ChannelIngest {
 /// Everything needed to reduce one channel's series into min/avg/max blocks:
 /// the exact per-sample evaluator plus the bucket aggregates that accelerate
 /// zoomed-out reductions.
+@immutable
 class EnvelopeSeries {
   /// Value at an absolute sample index, in display units. NaN marks a
   /// missing (gap) sample and breaks the polyline.
@@ -173,7 +176,7 @@ class EnvelopeSeries {
   ///    need NOT be affine: the bucket mean is off only by the board's
   ///    nonlinearity (ppm-level, from the board map), confined to the average
   ///    trace and invisible next to the envelope width.
-  EnvelopeSeries.bucketed({
+  const EnvelopeSeries.bucketed({
     required this.sampleAt,
     required this.buckets,
     required this.rawToDisplay,

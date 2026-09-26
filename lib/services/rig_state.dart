@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:meta/meta.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/board_calibration.dart';
@@ -170,6 +171,7 @@ class RigState extends ChangeNotifier {
 
   /// Write the edited slots to the device, then verify with a read-back. False
   /// on failure; pending edits are kept so the user can retry or revert.
+  @useResult
   Future<bool> saveToDevice() async {
     final doc = _doc;
     if (doc is! _Dirty) return true;

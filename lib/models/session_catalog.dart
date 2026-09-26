@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 import 'damaged_session.dart';
 import 'session_summary.dart';
 
@@ -5,6 +7,7 @@ import 'session_summary.dart';
 /// constructor owns the ordering — the id sorts chronologically, so
 /// descending ids IS descending creation order, ties included — and the
 /// lookup map; producers pass entries in any order.
+@immutable
 class SessionCatalog {
   SessionCatalog({
     required Iterable<SessionSummary> sessions,
@@ -45,6 +48,7 @@ class SessionCatalog {
   SessionSummary? session(String id) => _byId[id];
 }
 
+@immutable
 sealed class SessionCatalogState {
   const SessionCatalogState();
 }

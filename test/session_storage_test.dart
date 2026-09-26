@@ -596,7 +596,11 @@ void main() {
           ),
         );
         hub.updateLoadCells([
-          LoadCellProfile(name: 'Ref', capacityKg: 100, sensitivityMvV: 2.02),
+          const LoadCellProfile(
+            name: 'Ref',
+            capacityKg: 100,
+            sensitivityMvV: 2.02,
+          ),
           null,
           null,
           null,

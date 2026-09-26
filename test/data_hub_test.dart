@@ -486,7 +486,7 @@ void main() {
       feed(hub, frameOf(1000), 5);
 
       hub.updateLoadCells([
-        LoadCellProfile(capacityKg: 200, sensitivityMvV: 2),
+        const LoadCellProfile(capacityKg: 200, sensitivityMvV: 2),
         null,
         null,
         null,
@@ -586,7 +586,7 @@ void main() {
 
     test('unit availability reflects the board constants and the rig', () {
       final hub = DataHub();
-      final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
+      const cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
       expect(hub.unitAvailability, (
         boardHasNominals: false,
         anyChannelHasLoadCell: false,
@@ -654,13 +654,15 @@ void main() {
 
     test('content-equal load cell updates do not bump the version', () {
       final hub = DataHub();
-      final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
+      const cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
       hub.updateLoadCells([cell, null, null, null]);
       final v1 = hub.calibrationVersion;
 
       // Same content, new instances: an unrelated notify must not invalidate
-      // the graph caches.
+      // the graph caches. NOT const: const canonicalization would alias
+      // [cell], skipping the == path this guards.
       hub.updateLoadCells([
+        // ignore: prefer_const_constructors
         LoadCellProfile(capacityKg: 200, sensitivityMvV: 2),
         null,
         null,
@@ -670,7 +672,7 @@ void main() {
 
       // A changed profile (new instance) bumps the version.
       hub.updateLoadCells([
-        LoadCellProfile(capacityKg: 200, sensitivityMvV: 2.02),
+        const LoadCellProfile(capacityKg: 200, sensitivityMvV: 2.02),
         null,
         null,
         null,

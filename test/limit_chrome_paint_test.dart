@@ -41,7 +41,7 @@ void main() {
       ),
     );
     hub.updateLoadCells([
-      LoadCellProfile(capacityKg: 50, sensitivityMvV: 2.0),
+      const LoadCellProfile(capacityKg: 50, sensitivityMvV: 2.0),
       for (int i = 1; i < channels; i++) null,
     ]);
 

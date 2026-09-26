@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:meta/meta.dart';
 
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
@@ -86,6 +87,7 @@ class SessionChunkCodec {
   /// [GapList] and hold-filling with the previous real value. [bytes] must
   /// divide into whole frames; a mixed/sentinel-first/out-of-range frame throws
   /// (states the write path never produces).
+  @useResult
   ({List<Int32List> channels, GapList gaps}) decodeWithGaps(Uint8List bytes) {
     if (bytes.lengthInBytes % frameBytes != 0) {
       throw StateError(

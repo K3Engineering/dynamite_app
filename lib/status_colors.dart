@@ -1,9 +1,11 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:meta/meta.dart';
 
 /// Semantic status colors that [ColorScheme] doesn't provide.
 ///
 /// Registered on both app themes in `main.dart`; read via
 /// `Theme.of(context).extension<StatusColors>()!`.
+@immutable
 class StatusColors extends ThemeExtension<StatusColors> {
   const StatusColors({
     required this.linkActive,
@@ -34,6 +36,7 @@ class StatusColors extends ThemeExtension<StatusColors> {
     onConnectedWarning: Color(0xFFEF5350), // red 400
   );
 
+  @useResult
   @override
   StatusColors copyWith({
     Color? linkActive,

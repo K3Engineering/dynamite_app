@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 // ---------------------------------------------------------------------------
 
 /// Viewport state: following the live edge, or parked on a fixed window.
+@immutable
 sealed class GraphViewport {
   const GraphViewport();
 }

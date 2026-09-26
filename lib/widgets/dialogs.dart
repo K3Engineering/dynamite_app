@@ -1,10 +1,12 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:meta/meta.dart';
 
 /// Shared dialog helpers: one text prompt and one delete confirmation.
 
 /// Prompt for a single text value. Returns the entered text (which may be
 /// empty), or null when cancelled. Single-line prompts submit on Enter;
 /// multi-line ones (e.g. notes) confirm via the Save button only.
+@useResult
 Future<String?> showTextPrompt(
   BuildContext context, {
   required String title,
@@ -91,6 +93,7 @@ class _TextPromptDialogState extends State<_TextPromptDialog> {
 
 /// Ask the user to confirm deleting the session named [what]. Returns true
 /// only when confirmed.
+@useResult
 Future<bool> showDeleteConfirm(
   BuildContext context, {
   required String what,

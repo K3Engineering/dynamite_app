@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 import 'board_calibration.dart';
 import 'channel_calibration.dart';
 import 'display_unit.dart';
@@ -18,6 +20,7 @@ import 'display_unit.dart';
 /// Raw and mV take only the offset: raw bypasses the board map entirely,
 /// and mV rests on [ChannelBoardCalibration.displayExcitationV] — the one
 /// conversion input the calibration never characterized.
+@immutable
 class ChannelConverter {
   const ChannelConverter(this.calibration, this.tare);
 

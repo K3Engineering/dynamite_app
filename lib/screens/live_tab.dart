@@ -288,6 +288,7 @@ class _LiveTabState extends State<LiveTab> {
 // ---------------------------------------------------------------------------
 
 /// A pure status readout of the link state.
+@visibleForTesting
 class LiveStatusBar extends StatelessWidget {
   final BtLinkState linkState;
   final String connectedDeviceName;
@@ -469,6 +470,7 @@ class _ConnectedRssiIndicator extends StatelessWidget {
 // LiveStats
 // ---------------------------------------------------------------------------
 
+@visibleForTesting
 class LiveStats extends StatelessWidget {
   final AppSettings settings;
   final RigState rig;
