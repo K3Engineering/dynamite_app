@@ -9,7 +9,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
 import 'package:dynamite_app/services/kvs_client.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
-import 'package:dynamite_app/services/mockble.dart';
+import 'helpers/mockble.dart';
 
 /// Tests for [KvsClient] against [MockBlePlatform]'s KVS emulation, driven
 /// deterministically with [fakeAsync]. The mock answers KVS writes

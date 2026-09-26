@@ -11,7 +11,7 @@ import 'package:dynamite_app/services/kvs_client.dart';
 import 'package:dynamite_app/services/gatt_link_backend.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
 import 'helpers/flash_docs.dart';
-import 'package:dynamite_app/services/mockble.dart';
+import 'helpers/mockble.dart';
 
 /// Tests for [KvsFlashTransport]: the document-level view over the per-key
 /// KVS, against [MockBlePlatform]'s KVS emulation (fakeAsync, like

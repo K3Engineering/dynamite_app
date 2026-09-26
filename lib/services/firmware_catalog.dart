@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 
@@ -50,7 +51,33 @@ class GithubReleaseCatalog implements FirmwareCatalog {
   static const _assetProxyHost = 'gh-proxy.k3engineering.com';
   static const _assetPathPrefix = '/$_owner/$_repo/releases/download/';
 
+  // Deadlines so a connected-but-silent server can't pin a check or download
+  // forever. The image is multi-MB, so it gets its own, larger bound.
+  static const _metadataTimeout = Duration(seconds: 15);
+  static const _imageTimeout = Duration(minutes: 5);
+
   final http.Client _client;
+
+  /// GET with a real deadline. [http.AbortableRequest] aborts the underlying
+  /// connection (native and web); [Future.timeout] would only abandon the
+  /// caller and leak the in-flight request.
+  Future<http.Response> _get(
+    Uri url, {
+    Map<String, String>? headers,
+    required Duration timeout,
+  }) {
+    final abort = Completer<void>();
+    final timer = Timer(timeout, abort.complete);
+    final request = http.AbortableRequest(
+      'GET',
+      url,
+      abortTrigger: abort.future,
+    )..headers.addAll(headers ?? const {});
+    return _client
+        .send(request)
+        .then(http.Response.fromStream)
+        .whenComplete(timer.cancel);
+  }
 
   /// The proxy URL for a `browser_download_url`. Throws if the API hands us
   /// a URL the proxy won't serve; better to stop here than get an opaque
@@ -65,9 +92,10 @@ class GithubReleaseCatalog implements FirmwareCatalog {
 
   @override
   Future<FirmwareRelease?> latestFor({required FirmwareChannel channel}) async {
-    final res = await _client.get(
+    final res = await _get(
       _releasesUri,
       headers: {'Accept': 'application/vnd.github+json'},
+      timeout: _metadataTimeout,
     );
     if (res.statusCode != 200) {
       throw StateError('Release check failed (HTTP ${res.statusCode})');
@@ -81,7 +109,10 @@ class GithubReleaseCatalog implements FirmwareCatalog {
 
   @override
   Future<Uint8List> downloadImage(FirmwareRelease release) async {
-    final res = await _client.get(_proxied(release.downloadUrl));
+    final res = await _get(
+      _proxied(release.downloadUrl),
+      timeout: _imageTimeout,
+    );
     if (res.statusCode != 200) {
       throw StateError(
         'Image download failed (HTTP ${res.statusCode}) for '
@@ -95,7 +126,10 @@ class GithubReleaseCatalog implements FirmwareCatalog {
         '${bytes.length} bytes, expected ${release.size}',
       );
     }
-    final shaRes = await _client.get(_proxied(release.sha256Url));
+    final shaRes = await _get(
+      _proxied(release.sha256Url),
+      timeout: _metadataTimeout,
+    );
     if (shaRes.statusCode != 200) {
       throw StateError('Checksum download failed (HTTP ${shaRes.statusCode})');
     }

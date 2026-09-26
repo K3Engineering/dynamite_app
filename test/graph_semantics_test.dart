@@ -1,3 +1,4 @@
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
@@ -98,6 +99,18 @@ void main() {
         'Live force graph. No channels plotted. Unit: mV/V.',
       ),
       findsOneWidget,
+    );
+
+    // The overview minimap is actionable (tap/drag pan), so it must be labeled
+    // rather than an anonymous node.
+    final minimap = find.bySemanticsLabel('Graph history overview');
+    expect(minimap, findsOneWidget);
+    expect(
+      tester
+          .getSemantics(minimap)
+          .getSemanticsData()
+          .hasAction(SemanticsAction.tap),
+      isTrue,
     );
 
     // Unmount before the test ends: the live-follow ticker must be disposed

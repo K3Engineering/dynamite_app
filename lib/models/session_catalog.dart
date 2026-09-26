@@ -11,10 +11,10 @@ class SessionCatalog {
     required Iterable<DamagedSession> damaged,
     required Map<String, int> byteSizes,
   }) : sessions = List.unmodifiable(
-         [...sessions]..sort((a, b) => _desc(a.id, b.id)),
+         <SessionSummary>[...sessions]..sort((a, b) => _desc(a.id, b.id)),
        ),
        damaged = List.unmodifiable(
-         [...damaged]..sort((a, b) => _desc(a.id, b.id)),
+         <DamagedSession>[...damaged]..sort((a, b) => _desc(a.id, b.id)),
        ),
        byteSizes = Map.unmodifiable(byteSizes) {
     _byId = {for (final session in this.sessions) session.id: session};

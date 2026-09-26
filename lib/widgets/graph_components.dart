@@ -228,30 +228,37 @@ class _MinimapState extends State<_Minimap> {
         final graphWidth = _graphPlotWidth(constraints.maxWidth);
         return SizedBox(
           height: 32,
-          child: Listener(
-            behavior: HitTestBehavior.opaque,
-            onPointerSignal: (e) => _handleGraphPointerScroll(
-              e,
-              widget.dataSource,
-              widget.graphCtrl,
-              graphWidth,
-            ),
-            child: GestureDetector(
+          // The tap/drag pan affordance is synthesized as semantics actions by
+          // the GestureDetector; without a label it is an anonymous control.
+          child: Semantics(
+            container: true,
+            label: 'Graph history overview',
+            hint: 'Tap or drag to move the visible window',
+            child: Listener(
               behavior: HitTestBehavior.opaque,
-              onTapDown: (d) => _onMinimapTap(d, graphWidth),
-              onHorizontalDragUpdate: (d) => _onMinimapDrag(d, graphWidth),
-              child: CustomPaint(
-                foregroundPainter: _MinimapPainter(
-                  widget.dataSource,
-                  widget.unit,
-                  widget.graphCtrl,
-                  widget.channels,
-                  colorScheme,
-                  dpr,
-                  _cache,
-                  _bakePump,
+              onPointerSignal: (e) => _handleGraphPointerScroll(
+                e,
+                widget.dataSource,
+                widget.graphCtrl,
+                graphWidth,
+              ),
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: (d) => _onMinimapTap(d, graphWidth),
+                onHorizontalDragUpdate: (d) => _onMinimapDrag(d, graphWidth),
+                child: CustomPaint(
+                  foregroundPainter: _MinimapPainter(
+                    widget.dataSource,
+                    widget.unit,
+                    widget.graphCtrl,
+                    widget.channels,
+                    colorScheme,
+                    dpr,
+                    _cache,
+                    _bakePump,
+                  ),
+                  size: Size.infinite,
                 ),
-                size: Size.infinite,
               ),
             ),
           ),

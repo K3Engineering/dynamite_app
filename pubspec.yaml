@@ -64,7 +64,7 @@ dependencies:
   # Firmware update: GitHub Releases metadata + image download, image
   # checksum verification (the release sidecar .sha256), release-tag
   # semver ordering.
-  http: ^1.2.2
+  http: ^1.6.0
   crypto: ^3.0.5
   pub_semver: ^2.1.4
 dev_dependencies:

@@ -93,7 +93,7 @@ void main() {
 
     Map<String, dynamic> metaJson([void Function(Map<String, dynamic>)? f]) {
       final json = Map<String, dynamic>.from(
-        jsonDecode(jsonEncode(meta.toJson())),
+        jsonDecode(jsonEncode(meta.toJson())) as Map<String, dynamic>,
       );
       f?.call(json);
       return json;
