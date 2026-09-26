@@ -252,11 +252,12 @@ BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
   // Exact-path fallback for the aliased head (see "Ring-wrap safety").
   final int bNow = (samples - 1) ~/ bs;
   final int firstValidBucket = math.max(0, bNow - numBuckets + 1);
-  if (from < firstValidBucket * bs) {
+  int cursor = from;
+  if (cursor < firstValidBucket * bs) {
     final int headEnd = math.min(to, firstValidBucket * bs);
-    merge(reduceBlockExact(series.sampleAt, from, headEnd));
-    from = headEnd;
-    if (from >= to) return (min: min, max: max, sum: sum, count: count);
+    merge(reduceBlockExact(series.sampleAt, cursor, headEnd));
+    cursor = headEnd;
+    if (cursor >= to) return (min: min, max: max, sum: sum, count: count);
   }
 
   double rawMin = double.infinity;
@@ -264,7 +265,7 @@ BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
   double rawSum = 0;
   int rawCount = 0;
 
-  final int bFirst = from ~/ bs;
+  final int bFirst = cursor ~/ bs;
   final int bLast = (to - 1) ~/ bs;
   for (int b = bFirst; b <= bLast; b++) {
     final int li = b % numBuckets;
@@ -272,7 +273,7 @@ BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
     // Only the count is portion-aware; min/max/mean come from the whole
     // bucket -- this is the boundary approximation.
     int c = bs;
-    if (b == bFirst) c -= from - b * bs;
+    if (b == bFirst) c -= cursor - b * bs;
     if (b == bLast) c -= (b + 1) * bs - to;
     if (c <= 0) continue;
 

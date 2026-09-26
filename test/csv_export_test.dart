@@ -364,7 +364,8 @@ void main() {
         '${expected(2000, null)}',
       );
       final meta = metadataOf(csv);
-      expect((meta['channels'] as List)[1]['tare_raw'], isNull);
+      final ch1 = (meta['channels'] as List)[1] as Map<String, dynamic>;
+      expect(ch1['tare_raw'], isNull);
     });
 
     test('gap rows keep their ssn with every sample cell blank', () {

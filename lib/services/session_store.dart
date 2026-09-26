@@ -560,7 +560,9 @@ class SessionStore {
       if (run != null) {
         await abortSession(run.id);
       }
-      throw error;
+      // Not `throw error`: only_throw_errors bans throwing Object?. Latched
+      // writer errors are StateErrors with no trace to preserve anyway.
+      Error.throwWithStackTrace(error, StackTrace.current);
     }
   }
 

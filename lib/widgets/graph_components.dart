@@ -870,9 +870,9 @@ String _fmtTick(double sec, int decimals) {
   if (sec < 0) return '-${_fmtTick(-sec, decimals)}';
   // Snap fp noise (ticks are k * step products) so 59.999... prints as 1:00.
   final f = math.pow(10, decimals);
-  sec = (sec * f).round() / f;
-  final int m = sec ~/ 60;
-  final s = (sec - m * 60).toStringAsFixed(decimals);
+  final snapped = (sec * f).round() / f;
+  final int m = snapped ~/ 60;
+  final s = (snapped - m * 60).toStringAsFixed(decimals);
   if (m == 0) return s;
   return '$m:${s.padLeft(decimals == 0 ? 2 : decimals + 3, '0')}';
 }
@@ -939,14 +939,14 @@ typedef YAxisRange = ({
 YAxisRange _computeYRange(double dataMin, double dataMax, DisplayUnit unit) {
   // Guard only the exactly-degenerate span (a no-data derivative fold): the
   // SI-prefix rung keeps tiny-window labels readable, so there's no floor.
-  if (dataMax <= dataMin) dataMax = dataMin + 1.0;
+  final double max = dataMax <= dataMin ? dataMin + 1.0 : dataMax;
 
   // 1/2/5 tick delta aiming for ~5 ticks, at whatever decade the span lands.
-  final tickDelta = _niceNum((dataMax - dataMin) / 5);
+  final tickDelta = _niceNum((max - dataMin) / 5);
 
   // Snap yMin and yMax to tick boundaries
   final yMin = (dataMin / tickDelta).floor() * tickDelta;
-  final yMax = (dataMax / tickDelta).ceil() * tickDelta;
+  final yMax = (max / tickDelta).ceil() * tickDelta;
 
   final rung = unit.axisRung(math.max(yMin.abs(), yMax.abs()));
   final decimals = DisplayUnit.axisDecimalsFor(tickDelta / rung.factor);
