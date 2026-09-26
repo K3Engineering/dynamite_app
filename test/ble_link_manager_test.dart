@@ -14,7 +14,7 @@ import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
 import 'helpers/flash_docs.dart';
-import 'package:dynamite_app/services/mockble.dart';
+import 'helpers/mockble.dart';
 import 'package:dynamite_app/services/ota_client.dart';
 
 /// Tests for the [BleLinkManager] state machine against [MockBlePlatform],

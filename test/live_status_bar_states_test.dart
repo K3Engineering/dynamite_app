@@ -7,7 +7,7 @@ import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/screens/live_tab.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
-import 'package:dynamite_app/services/mockble.dart';
+import 'helpers/mockble.dart';
 
 /// The Live tab's disconnected surfaces, driven by the link state:
 ///

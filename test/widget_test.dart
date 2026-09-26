@@ -13,7 +13,7 @@ import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/feed_health_tracker.dart';
-import 'package:dynamite_app/services/mockble.dart';
+import 'helpers/mockble.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/services/session_metadata.dart';

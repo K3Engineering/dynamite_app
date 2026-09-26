@@ -5,12 +5,12 @@ import 'dart:typed_data';
 
 import 'package:universal_ble/universal_ble.dart';
 
-import 'adc_protocol.dart';
-import 'bt_device_config.dart';
-import 'demo_calibration.dart';
-import 'kvs_protocol.dart';
-import 'ota_protocol.dart';
-import '../models/device_flash.dart';
+import 'package:dynamite_app/services/adc_protocol.dart';
+import 'package:dynamite_app/services/bt_device_config.dart';
+import 'package:dynamite_app/services/demo_calibration.dart';
+import 'package:dynamite_app/services/kvs_protocol.dart';
+import 'package:dynamite_app/services/ota_protocol.dart';
+import 'package:dynamite_app/models/device_flash.dart';
 
 /// Samples per emitted feed packet (20 ms at 1 kHz, matching the mock's ADC
 /// config readback).

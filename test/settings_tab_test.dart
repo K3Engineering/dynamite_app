@@ -17,7 +17,7 @@ import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/firmware_catalog.dart';
 import 'package:dynamite_app/services/firmware_update_service.dart';
-import 'package:dynamite_app/services/mockble.dart';
+import 'helpers/mockble.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 
 import 'helpers/flash_docs.dart';

@@ -9,7 +9,7 @@ import 'package:dynamite_app/models/device_name.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
-import 'package:dynamite_app/services/mockble.dart';
+import 'helpers/mockble.dart';
 
 /// Link-level tests for the Settings-namespace device name: the connect-time
 /// read, the display-name overlay, and the [BleLinkManager.setDeviceName]

@@ -11,37 +11,82 @@ Future<String?> showTextPrompt(
   required String label,
   String initial = '',
   int maxLines = 1,
-}) async {
-  final controller = TextEditingController(text: initial);
-  final result = await showDialog<String>(
+}) {
+  return showDialog<String>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      title: Text(title),
+    builder: (_) => _TextPromptDialog(
+      title: title,
+      label: label,
+      initial: initial,
+      maxLines: maxLines,
+    ),
+  );
+}
+
+/// Stateful so the controller outlives the pop future: `showDialog` resolves
+/// when the route pops, but the field stays attached through the exit
+/// transition, so disposing there would race a focus/selection change.
+class _TextPromptDialog extends StatefulWidget {
+  const _TextPromptDialog({
+    required this.title,
+    required this.label,
+    required this.initial,
+    required this.maxLines,
+  });
+
+  final String title;
+  final String label;
+  final String initial;
+  final int maxLines;
+
+  @override
+  State<_TextPromptDialog> createState() => _TextPromptDialogState();
+}
+
+class _TextPromptDialogState extends State<_TextPromptDialog> {
+  late final TextEditingController controller;
+
+  @override
+  void initState() {
+    super.initState();
+    controller = TextEditingController(text: widget.initial);
+  }
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
       content: TextField(
         controller: controller,
         autofocus: true,
-        maxLines: maxLines,
+        maxLines: widget.maxLines,
         decoration: InputDecoration(
-          labelText: label,
+          labelText: widget.label,
           border: const OutlineInputBorder(),
-          alignLabelWithHint: maxLines > 1,
+          alignLabelWithHint: widget.maxLines > 1,
         ),
-        onSubmitted: maxLines == 1 ? (val) => Navigator.of(ctx).pop(val) : null,
+        onSubmitted: widget.maxLines == 1
+            ? (val) => Navigator.of(context).pop(val)
+            : null,
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(ctx).pop(),
+          onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(ctx).pop(controller.text),
+          onPressed: () => Navigator.of(context).pop(controller.text),
           child: const Text('Save'),
         ),
       ],
-    ),
-  );
-  controller.dispose();
-  return result;
+    );
+  }
 }
 
 /// Ask the user to confirm deleting the session named [what]. Returns true

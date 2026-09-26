@@ -13,7 +13,7 @@ import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'helpers/flash_docs.dart';
-import 'package:dynamite_app/services/mockble.dart';
+import 'helpers/mockble.dart';
 
 /// End-to-end (no hardware) test of the live data pipeline:
 ///   MockBlePlatform (wire format) -> BleLinkManager -> AdcPacketDecoder ->
