@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 /// A session directory the store cannot load as a session: its journal's
 /// header line failed strict parse (the unrecoverable content — name,
 /// calibration, tares, ssnOrigin — lives there and nowhere else), its
@@ -8,6 +10,7 @@
 /// repaired or promoted by the store itself: the list surfaces it with
 /// affordances (raw exports of whatever bytes exist, a user-gesture
 /// delete) and that's the only way out.
+@immutable
 class DamagedSession {
   const DamagedSession({
     required this.id,

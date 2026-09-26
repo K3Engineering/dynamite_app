@@ -197,8 +197,8 @@ void main() {
 
   test('the raw KVS snapshot freezes into the saved session', () async {
     final snapshot = KvsSnapshot(
-      factory: {'charging': 'enabled', 'adc_fsr': '1.2'},
-      user: {'lc0.cap': '200'},
+      factory: const {'charging': 'enabled', 'adc_fsr': '1.2'},
+      user: const {'lc0.cap': '200'},
     );
     final (recording, hub, _) = wire(deviceKvs: snapshot);
 

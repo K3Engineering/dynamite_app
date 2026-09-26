@@ -133,7 +133,7 @@ void main() {
       final cals = [
         ChannelCalibration(
           board: boardCal,
-          loadCell: LoadCellProfile(
+          loadCell: const LoadCellProfile(
             name: 'Load cell 100 kg',
             capacityKg: 100,
             sensitivityMvV: 2.007,
@@ -266,8 +266,8 @@ void main() {
 
     test('the raw KVS snapshot joins the device block, deterministically', () {
       final snapshot = KvsSnapshot(
-        factory: {'charging': 'enabled', 'adc_fsr': '1.2'},
-        user: {'lc0.sens': '2', 'lc0.cap': '200'},
+        factory: const {'charging': 'enabled', 'adc_fsr': '1.2'},
+        user: const {'lc0.sens': '2', 'lc0.cap': '200'},
       );
       final data = makeSession([
         [1],
@@ -299,10 +299,10 @@ void main() {
     test(
       'converted columns match the frozen converter at column precision',
       () {
-        final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
+        const cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
         final cals = [
-          ChannelCalibration(
-            board: const NominalChannelBoard(testNominals),
+          const ChannelCalibration(
+            board: NominalChannelBoard(testNominals),
             loadCell: cell,
           ),
           const ChannelCalibration(board: NominalChannelBoard(testNominals)),
@@ -330,11 +330,11 @@ void main() {
     );
 
     test('a null tare exports gross, not blanks', () {
-      final cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
+      const cell = LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0);
       final cals = [
         for (int ch = 0; ch < channels; ch++)
-          ChannelCalibration(
-            board: const NominalChannelBoard(testNominals),
+          const ChannelCalibration(
+            board: NominalChannelBoard(testNominals),
             loadCell: cell,
           ),
       ];
@@ -531,8 +531,8 @@ void main() {
         ],
         calibrations: [
           for (int ch = 0; ch < channels; ch++)
-            ChannelCalibration(
-              board: const NominalChannelBoard(testNominals),
+            const ChannelCalibration(
+              board: NominalChannelBoard(testNominals),
               loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.007),
             ),
         ],
@@ -557,11 +557,17 @@ void main() {
         calibrations: [
           ChannelCalibration(
             board: calibratedBoard(),
-            loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.007),
+            loadCell: const LoadCellProfile(
+              capacityKg: 100,
+              sensitivityMvV: 2.007,
+            ),
           ),
           ChannelCalibration(
             board: calibratedBoard(),
-            loadCell: LoadCellProfile(capacityKg: 20, sensitivityMvV: 2.0),
+            loadCell: const LoadCellProfile(
+              capacityKg: 20,
+              sensitivityMvV: 2.0,
+            ),
           ),
         ],
         tares: const [-12340.5, 55.0],
@@ -584,7 +590,10 @@ void main() {
         calibrations: [
           ChannelCalibration(
             board: calibratedBoard(),
-            loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.007),
+            loadCell: const LoadCellProfile(
+              capacityKg: 100,
+              sensitivityMvV: 2.007,
+            ),
           ),
           ChannelCalibration(board: calibratedBoard()),
         ],
@@ -632,7 +641,10 @@ void main() {
         calibrations: [
           ChannelCalibration(
             board: calibratedBoard(),
-            loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.007),
+            loadCell: const LoadCellProfile(
+              capacityKg: 100,
+              sensitivityMvV: 2.007,
+            ),
           ),
           const ChannelCalibration(board: NominalChannelBoard(testNominals)),
         ],
@@ -656,7 +668,10 @@ void main() {
         calibrations: [
           ChannelCalibration(
             board: calibratedBoard(),
-            loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.007),
+            loadCell: const LoadCellProfile(
+              capacityKg: 100,
+              sensitivityMvV: 2.007,
+            ),
           ),
           const ChannelCalibration(board: NominalChannelBoard(testNominals)),
         ],
@@ -726,7 +741,7 @@ void main() {
               ],
               nominals: testNominals,
             ),
-            loadCell: LoadCellProfile(
+            loadCell: const LoadCellProfile(
               name: "John Smith's 100 kg",
               capacityKg: 100,
               sensitivityMvV: 2.007,
@@ -741,7 +756,7 @@ void main() {
           ],
           calibrations: cals,
           deviceKvs: KvsSnapshot(
-            factory: {'cal.date': '2026-06-14', 'charging': 'enabled'},
+            factory: const {'cal.date': '2026-06-14', 'charging': 'enabled'},
             user: const {'lc0.cap': '100'},
           ),
         );
@@ -765,8 +780,8 @@ void main() {
 
   group('column precision (spec worked example: 100 kg / 2 mV/V cell, '
       'nominal chain)', () {
-    final cal = ChannelCalibration(
-      board: const NominalChannelBoard(testNominals),
+    const cal = ChannelCalibration(
+      board: NominalChannelBoard(testNominals),
       loadCell: LoadCellProfile(capacityKg: 100, sensitivityMvV: 2.0),
     );
 
@@ -785,7 +800,7 @@ void main() {
     for (final entry in expected.entries) {
       test('${entry.key.symbol} → ${entry.value} decimals', () {
         expect(
-          entry.key.exportDecimalsFor(ChannelConverter(cal, null)),
+          entry.key.exportDecimalsFor(const ChannelConverter(cal, null)),
           entry.value,
         );
       });

@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
+
 import 'device_profile.dart';
 
 /// One contiguous run of live samples handed from the live buffer (DataHub)
@@ -7,8 +9,9 @@ import 'device_profile.dart';
 /// dropped-sample ranges, and the packet-counter anchor for origin
 /// computation. The writer never reads the live ring — everything it needs
 /// is copied here at snapshot time.
+@immutable
 class SampleSlice {
-  SampleSlice({
+  const SampleSlice({
     required this.startIndex,
     required this.channels,
     required this.gapRanges,

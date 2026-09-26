@@ -26,6 +26,8 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
+
 import '../models/channel_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/display_unit.dart';
@@ -34,6 +36,7 @@ const int sessionJournalVersion = 1;
 
 /// Line 1 of the journal: the session header, frozen at recording start, so
 /// later recalibration or re-taring can't rewrite history.
+@immutable
 class SessionMeta {
   const SessionMeta({
     required this.name,
@@ -227,6 +230,7 @@ class SessionMeta {
 
 /// A whole snapshot of the mutable display state, appended by a post-recording
 /// edit; the last complete one wins.
+@immutable
 class SessionEdit {
   const SessionEdit({
     required this.name,
@@ -285,6 +289,7 @@ class SessionEdit {
 }
 
 /// The parsed content of a session journal.
+@immutable
 class SessionJournal {
   const SessionJournal._({
     required this.meta,
@@ -319,6 +324,7 @@ Uint8List encodeSessionEdit(SessionEdit edit) =>
 /// Parse the journal bytes. Line 1 and every complete later line must parse —
 /// anything else throws [FormatException] (the caller's damaged verdict). Only
 /// an unterminated trailing fragment is a legitimate crash tear and is dropped.
+@useResult
 SessionJournal parseSessionJournal(Uint8List bytes) {
   var offset = 0;
   SessionMeta? meta;

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meta/meta.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_meta.dart';
@@ -387,6 +388,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   /// Ask the user for the export's converted unit (one file, one unit,
   /// chosen by the user), preselected to [initial].
   /// Returns null when cancelled — the caller stays silent then.
+  @useResult
   Future<DisplayUnit?> _pickExportUnit(DisplayUnit initial) {
     return showDialog<DisplayUnit>(
       context: context,

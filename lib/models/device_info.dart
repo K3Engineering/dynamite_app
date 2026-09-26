@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 /// Static identity of a connected sampler, read once per link from the BLE
 /// Device Information service (0x180A) during post-connect setup.
 ///
@@ -6,6 +8,7 @@
 /// best-effort nulls. [serial] is the one legitimately absent field: the
 /// Serial Number String characteristic (0x2A25) is on the Web Bluetooth
 /// GATT blocklist, so it is null on web.
+@immutable
 class DeviceInfo {
   const DeviceInfo({
     required this.manufacturer,

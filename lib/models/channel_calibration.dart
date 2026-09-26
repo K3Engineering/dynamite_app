@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 import 'board_calibration.dart';
 import 'load_cell.dart';
 
@@ -5,6 +7,7 @@ import 'load_cell.dart';
 /// units: the board piecewise map plus the assigned load cell (if any). Net
 /// values are differences of the board map between a reading and the tare
 /// point, so piecewise nonlinearity is applied on both sides.
+@immutable
 class ChannelCalibration {
   const ChannelCalibration({required this.board, this.loadCell});
 

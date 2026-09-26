@@ -1,6 +1,7 @@
 // Release metadata for OTA firmware updates: version compare, channel rules,
 // and release selection. Network access lives in `firmware_catalog.dart`.
 
+import 'package:meta/meta.dart';
 import 'package:pub_semver/pub_semver.dart' as semver;
 
 /// Which release stream a device tracks. No "nightly": nightlies use the
@@ -23,6 +24,7 @@ enum FirmwareChannel {
 
 /// A version parsed from a release tag (`v1.2.3`, `v1.2.3-beta.4`). The
 /// leading `v` is optional on parse, always rendered.
+@immutable
 class FirmwareVersion implements Comparable<FirmwareVersion> {
   const FirmwareVersion(this.major, this.minor, this.patch, [this.prerelease]);
 
@@ -60,6 +62,7 @@ class FirmwareVersion implements Comparable<FirmwareVersion> {
 }
 
 /// The release a device should be running for its channel.
+@immutable
 class FirmwareRelease {
   const FirmwareRelease({
     required this.tag,
@@ -83,6 +86,7 @@ class FirmwareRelease {
 }
 
 /// Minimal view of one GitHub release for selection.
+@immutable
 class GithubRelease {
   const GithubRelease({
     required this.tag,
@@ -109,6 +113,7 @@ class GithubRelease {
   }
 }
 
+@immutable
 class GithubAsset {
   const GithubAsset({
     required this.name,

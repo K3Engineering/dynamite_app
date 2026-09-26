@@ -1,6 +1,8 @@
 /// App-level Bluetooth link/scan/adapter types.
 library;
 
+import 'package:meta/meta.dart';
+
 /// Lifecycle of a single device's BLE link. Per-device by design, though today
 /// only one link is tracked at a time (see [BleLinkManager]).
 enum BtLinkState {
@@ -44,6 +46,7 @@ enum BtAvailability {
 }
 
 /// A scanned device: identity, name, and the freshest advert's RSSI and time.
+@immutable
 class DiscoveredDevice {
   const DiscoveredDevice({
     required this.deviceId,

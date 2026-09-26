@@ -3,8 +3,11 @@
 /// bytes.
 library;
 
+import 'package:meta/meta.dart';
+
 import 'display_unit.dart';
 
+@immutable
 class SessionSummary {
   SessionSummary({
     required this.id,

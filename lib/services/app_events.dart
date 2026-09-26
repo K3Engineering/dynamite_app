@@ -1,9 +1,12 @@
 import 'dart:async';
 
+import 'package:meta/meta.dart';
+
 /// One-shot app-level events that some screen-independent producer (BLE link
 /// state machine, recording lifecycle) needs to surface to the user, no matter
 /// which tab happens to be mounted. Consumed once, at the shell level
 /// (see `AppShellState`), which turns them into SnackBars.
+@immutable
 sealed class AppEvent {
   const AppEvent();
 }

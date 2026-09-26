@@ -161,7 +161,7 @@ void main() {
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
         3,
-        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+        const LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
       );
       expect(rig.hasPending, isTrue);
 
@@ -196,7 +196,7 @@ void main() {
 
         rig.setSlot(
           3,
-          LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+          const LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
         );
         expect(rig.hasPending, isTrue);
         expect(rig.channelTitles[3], 'New');
@@ -238,7 +238,7 @@ void main() {
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
         3,
-        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+        const LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
       );
 
       final discarded = events.stream.firstWhere((e) => e is RigEditsDiscarded);
@@ -265,7 +265,7 @@ void main() {
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
         3,
-        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+        const LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
       );
 
       expect(await rig.saveToDevice(), isTrue);
@@ -300,7 +300,7 @@ void main() {
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
         3,
-        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+        const LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
       );
       transport.failWrite = true;
 
@@ -315,7 +315,7 @@ void main() {
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
         3,
-        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+        const LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
       );
 
       transport.writeGate = Completer<void>();
@@ -335,7 +335,7 @@ void main() {
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
         3,
-        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+        const LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
       );
       // The device silently ignored the write: it serves the OLD document.
       transport.readBackDoc = demoBoardCalibrationDoc;
@@ -352,7 +352,7 @@ void main() {
       rig.onFlashRead('dev1', 'Bench unit', fixture());
       rig.setSlot(
         3,
-        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+        const LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
       );
 
       transport.writeGate = Completer<void>();
@@ -361,7 +361,7 @@ void main() {
       // pending session while the write is in flight.
       rig.setSlot(
         4,
-        LoadCellProfile(name: 'Other', capacityKg: 10, sensitivityMvV: 2),
+        const LoadCellProfile(name: 'Other', capacityKg: 10, sensitivityMvV: 2),
       );
       transport.writeGate!.complete();
 
@@ -383,7 +383,7 @@ void main() {
       );
       rig.setSlot(
         3,
-        LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
+        const LoadCellProfile(name: 'New', capacityKg: 50, sensitivityMvV: 1),
       );
 
       expect(await rig.saveToDevice(), isTrue);
@@ -413,7 +413,7 @@ void main() {
         ]);
 
         // Add a typed-in cell so the list has a non-tie member too.
-        final typed = LoadCellProfile(
+        const typed = LoadCellProfile(
           name: 'New',
           capacityKg: 50,
           sensitivityMvV: 1,

@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 /// Map RSSI (dBm) to a 0–3 signal level for [RssiIndicator]'s bars icon.
 /// Thresholds suit a nearby BLE sensor (the load cell sits within a few
 /// meters): strong ≥ −55, good ≥ −65, fair ≥ −75, weak below.
+@visibleForTesting
 int rssiLevel(int rssi) => rssi >= -55
     ? 3
     : rssi >= -65

@@ -1,5 +1,7 @@
 import 'dart:collection';
 
+import 'package:meta/meta.dart';
+
 import 'board_calibration.dart';
 import 'load_cell.dart';
 
@@ -20,6 +22,7 @@ import 'load_cell.dart';
 /// half, User → slots) — there is no cross-folder merge. Raw values are
 /// also session provenance (the CSV's `device.kvs`) — conversions never
 /// consult them.
+@immutable
 class KvsSnapshot {
   KvsSnapshot({
     required Map<String, String> factory,
@@ -31,6 +34,7 @@ class KvsSnapshot {
   final Map<String, String> user;
 
   /// Apply a complete slot-key save to the User folder.
+  @useResult
   KvsSnapshot withUserSlots(Map<String, String> lcKeys) {
     final updated = Map<String, String>.of(user)
       ..removeWhere((key, _) => rigSlotKeys.contains(key))
@@ -65,8 +69,13 @@ class KvsSnapshot {
 
 /// The device flash document: the factory board calibration (read-only to
 /// the app) plus the app-writable load cell slots.
+@immutable
 class DeviceFlash {
-  DeviceFlash({required this.board, required this.slots, required this.kvs});
+  const DeviceFlash({
+    required this.board,
+    required this.slots,
+    required this.kvs,
+  });
 
   final BoardCalibration board;
   final RigSlots slots;

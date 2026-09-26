@@ -254,6 +254,7 @@ String unsupportedHint({required bool isWeb}) => isWeb
 
 /// The liveness subtitle for inactive BLE rows (RSSI when fresh, else "Last
 /// seen" age).
+@visibleForTesting
 ({String text, bool stale})? bleRowSubtitle({
   required int? scanRssi,
   required int? scanTs,
@@ -285,14 +286,17 @@ String unsupportedHint({required bool isWeb}) => isWeb
 }
 
 /// Stale rows: most recently seen first. A null stamp (defensive) sinks.
+@visibleForTesting
 int compareStaleRowsByRecency(int? aAliveMs, int? bAliveMs) =>
     (bAliveMs ?? 0).compareTo(aAliveMs ?? 0);
 
 /// The inactive row's presentation state. Priority: reconnect window >
 /// failure > staleness > normal.
+@visibleForTesting
 enum InactiveRowMood { normal, stale, failed }
 
 /// An inactive row's resolved visual; null colors mean "theme default".
+@visibleForTesting
 typedef InactiveRowVisual = ({
   InactiveRowMood mood,
   IconData icon,
@@ -304,6 +308,7 @@ typedef InactiveRowVisual = ({
 });
 
 /// Shared action-button width, sized to fit "Disconnecting…".
+@visibleForTesting
 const double deviceActionButtonWidth = 136;
 
 /// Card width below which the active row moves its buttons onto their own row.
@@ -312,6 +317,7 @@ const double deviceActionButtonWidth = 136;
 const double _activeRowSingleRowWidth = 480;
 
 /// Map platform/liveness/failure state to the inactive row's visual.
+@visibleForTesting
 InactiveRowVisual inactiveRowVisual({
   required int? scanRssi,
   required int? scanTs,

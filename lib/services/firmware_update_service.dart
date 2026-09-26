@@ -10,6 +10,7 @@ import 'ble_link_manager.dart';
 import 'firmware_catalog.dart';
 
 /// One release-check result against the connected device.
+@immutable
 class FirmwareCheck {
   const FirmwareCheck({
     required this.board,
@@ -36,6 +37,7 @@ class FirmwareCheck {
 /// The release-check lifecycle. One state at a time, so illegal
 /// combinations (a result alongside a failure) are unrepresentable. Only
 /// [CheckOk] carries a result; a failed re-check blanks the prior target.
+@immutable
 sealed class FirmwareCheckState {
   const FirmwareCheckState();
 }

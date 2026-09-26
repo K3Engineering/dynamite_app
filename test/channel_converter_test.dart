@@ -29,7 +29,7 @@ void main() {
     nominals: testNominals,
   );
   const nominalBoard = NominalChannelBoard(testNominals);
-  final cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
+  const cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
   final assigned = ChannelConverter(
     ChannelCalibration(board: board, loadCell: cell),
     alpha,

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:meta/meta.dart';
 import 'package:universal_ble/universal_ble.dart';
 
 import 'app_events.dart';
@@ -32,6 +33,7 @@ enum ConnectFailureKind {
 /// The latest connect result for a device, shown as the row hint. At most one
 /// per device: a connect attempt clears it, and before the next attempt only
 /// one of the three can be recorded.
+@immutable
 sealed class DeviceOutcome {
   const DeviceOutcome();
 }
@@ -98,6 +100,7 @@ sealed class Link {
   AdcConfig? get adcConfig => null;
 
   /// Null until the backend is brought up.
+  @nonVirtual
   LinkBackend? get backend => transport?.backend;
 
   /// True during post-connect setup and while streaming.
@@ -108,6 +111,7 @@ sealed class Link {
 
   BtLinkState get state;
 
+  @nonVirtual
   String get displayName {
     final t = transport;
     if (t == null) return '';
@@ -531,6 +535,7 @@ class BleLinkManager extends ChangeNotifier {
 
   /// Input is trimmed; empty (post-trim) CLEARS the name. Returns false when
   /// the device rejects the write; throws on invalid input or no link.
+  @useResult
   Future<bool> setDeviceName(String name) async {
     final link = _link;
     if (link is! Ready) {

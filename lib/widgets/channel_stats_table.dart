@@ -4,6 +4,7 @@ import '../models/display_unit.dart';
 import '../models/load_cell.dart';
 import 'channel_palette.dart';
 
+@immutable
 class ChannelStatsRow {
   const ChannelStatsRow({
     required this.label,

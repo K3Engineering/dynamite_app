@@ -7,6 +7,8 @@ library;
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:meta/meta.dart';
+
 const String kvsCmdGet = 'GET';
 const String kvsCmdSet = 'SET';
 const String kvsCmdDelete = 'DEL';
@@ -147,6 +149,7 @@ class KvsResponse {
 /// some OTHER command (stale; drop it). Throws [FormatException] on a garbled
 /// frame or non-UTF-8 payload — undecodable bytes mean the link can't be
 /// trusted.
+@useResult
 KvsResponse? parseKvsResponse(String request, Uint8List frame) {
   final requestBytes = utf8.encode(request);
   final status = switch (frame.isEmpty ? -1 : frame[0]) {

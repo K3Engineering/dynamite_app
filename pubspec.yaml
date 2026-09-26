@@ -67,6 +67,8 @@ dependencies:
   http: ^1.6.0
   crypto: ^3.0.5
   pub_semver: ^2.1.4
+  # @useResult, which flutter/foundation does not re-export.
+  meta: ^1.15.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

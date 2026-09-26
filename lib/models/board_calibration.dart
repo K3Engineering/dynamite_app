@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 import 'device_profile.dart';
 
 // ---------------------------------------------------------------------------
@@ -21,6 +23,7 @@ const int adcMinValue = -adcCountsPerPolarity;
 /// The analog-chain constants converting one channel's raw counts, resolved
 /// from the device at connect time. A board without this data shows raw counts
 /// only (see [UnprovisionedBoardCalibration]).
+@immutable
 class ChannelNominals {
   const ChannelNominals({
     required this.adcFsrV,
@@ -77,8 +80,9 @@ class ChannelNominals {
 
 /// Board-level analog constants: shared chain values, per-channel PGA gains,
 /// and the provenance tags on the flash values.
+@immutable
 class BoardNominals {
-  BoardNominals({
+  const BoardNominals({
     required this.adcFsrV,
     required this.afeGain,
     required this.excitationV,
@@ -230,6 +234,7 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 /// through the five (raw, setpoint) points), [NominalChannelBoard] the nominal
 /// chain alone. Both convert; "no board data at all" is a null
 /// `ChannelCalibration.board`, where only raw counts convert.
+@immutable
 sealed class ChannelBoardCalibration {
   const ChannelBoardCalibration._();
 
@@ -243,6 +248,7 @@ sealed class ChannelBoardCalibration {
   /// The excitation anchor for the mV unit. The calibration is ratiometric, so
   /// only mV depends on it; a distinct role from
   /// [ChannelNominals.excitationV], even though it resolves to the same value.
+  @nonVirtual
   double get displayExcitationV => nominals.excitationV;
 
   /// End-point sensitivity in counts per mV/V: the chord through the two
@@ -264,6 +270,7 @@ sealed class ChannelBoardCalibration {
   /// is corrupt flash; exact duplicates would divide by zero during
   /// interpolation). Both null = "no factory data" is NOT valid here;
   /// callers check presence before calling.
+  @useResult
   static bool channelDataIsValid(
     List<double> resistors,
     List<double> readings,
@@ -519,8 +526,9 @@ class NominalChannelBoard extends ChannelBoardCalibration {
 /// tool always writes the date, so its absence means an interrupted
 /// recalibration, which must not be ignored while the user expects the new
 /// calibration to be in effect.
+@immutable
 class CalGroup {
-  CalGroup({
+  const CalGroup({
     required this.date,
     this.boardId,
     this.tool,
@@ -628,6 +636,7 @@ CalGroup? parseCalGroup(Map<String, String> kv) {
 ///
 /// A failed READ (transport) fails the connection upstream, so no board object
 /// represents "couldn't read".
+@immutable
 sealed class BoardCalibration {
   const BoardCalibration._();
 

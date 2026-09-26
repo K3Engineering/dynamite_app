@@ -1,3 +1,5 @@
+import 'package:meta/meta.dart';
+
 /// Hub lifecycle/data events for observers that need exact deltas: the
 /// recording path (which samples landed) and stream-boundary tracking (the
 /// decoder's continuity reset, per-view pan/zoom reset). Consumers subscribe
@@ -6,6 +8,7 @@
 ///
 /// These are NOT the UI's rebuild signal — that stays `ChangeNotifier` on
 /// `DataHub` itself (the live graphs want per-packet rebuilds).
+@immutable
 sealed class HubEvent {
   const HubEvent();
 }

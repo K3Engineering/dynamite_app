@@ -106,8 +106,8 @@ void main() {
       expect(legacy.meta.deviceKvs, isNull);
 
       final snapshot = KvsSnapshot(
-        factory: {'charging': 'enabled'},
-        user: {'lc0.cap': '200'},
+        factory: const {'charging': 'enabled'},
+        user: const {'lc0.cap': '200'},
       );
       final journal = parseSessionJournal(
         utf8.encode(

@@ -7,8 +7,8 @@ import 'package:dynamite_app/models/device_flash.dart';
 void main() {
   test('KvsSnapshot sorts keys in each folder', () {
     final snapshot = KvsSnapshot(
-      factory: {'z': 'factory', 'a': '1'},
-      user: {'z': 'user', 'lc0.cap': '200'},
+      factory: const {'z': 'factory', 'a': '1'},
+      user: const {'z': 'user', 'lc0.cap': '200'},
     );
 
     expect(snapshot.factory.keys, ['a', 'z']);
@@ -17,8 +17,8 @@ void main() {
 
   test('withUserSlots replaces schema slots and preserves unknown keys', () {
     final snapshot = KvsSnapshot(
-      factory: {'adc_fsr': '1.2'},
-      user: {'lc0.cap': '200', 'lc0.sens': '2', 'lc3.tare': '123'},
+      factory: const {'adc_fsr': '1.2'},
+      user: const {'lc0.cap': '200', 'lc0.sens': '2', 'lc3.tare': '123'},
     );
 
     final saved = snapshot.withUserSlots({'lc1.cap': '100', 'lc1.sens': '2'});
@@ -28,17 +28,17 @@ void main() {
 
   test('JSON round-trips the folder-separated raw values', () {
     final snapshot = KvsSnapshot(
-      factory: {'b': '2', 'a': '1'},
-      user: {'lc0.cap': '200'},
+      factory: const {'b': '2', 'a': '1'},
+      user: const {'lc0.cap': '200'},
     );
     final back = KvsSnapshot.fromJson(snapshot.toJson());
 
     expect(back.factory, snapshot.factory);
     expect(back.user, snapshot.user);
     expect(
-      () => KvsSnapshot.fromJson({
+      () => KvsSnapshot.fromJson(const {
         'factory': {'a': 1},
-        'user': const <String, String>{},
+        'user': <String, String>{},
       }),
       throwsFormatException,
     );
