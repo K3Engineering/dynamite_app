@@ -7,6 +7,7 @@ import 'channel_calibration.dart';
 import 'channel_converter.dart';
 import 'display_unit.dart';
 import 'gap_list.dart';
+import 'plate_sum_series.dart';
 
 /// Raw sample storage behind the graph components. [rawAt] is the only
 /// accessor, so no storage layout crosses the interface. Dropped samples are
@@ -99,6 +100,13 @@ abstract interface class ChannelAggregates {
   /// stream/session. Never shrinks: the live hub's stream-lifetime peak, a
   /// loaded session's whole-session peak.
   (double, double)? channelExtremes(int channelIndex);
+
+  /// Bucket aggregates of the four-corner plate's weighted-sum series (see
+  /// `PlateSumAccumulator`), or null when the calibration set can't express
+  /// plate force (a channel without board data or a load cell). Force units
+  /// bind it as a bucketed [EnvelopeSeries]; other units keep the exact
+  /// per-sample path.
+  PlateSumAccumulator? get plateSum;
 }
 
 /// Per-channel conversion of raw counts to display units.

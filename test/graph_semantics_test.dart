@@ -102,6 +102,23 @@ void main() {
       findsOneWidget,
     );
 
+    // Balance plate: the top graph is the corner sum, and the label says so.
+    await pumpGraph(
+      data: calibratedHub(),
+      activeChannels: const [0, 1, 2, 3],
+      analysis: const AnalysisPaneSelection(
+        kind: AnalysisPaneKind.balance,
+        balanceMode: BalanceMode.plate,
+      ),
+    );
+    expect(
+      find.bySemanticsLabel(
+        'Live force graph. Channels: CH 0, CH 1, CH 2, CH 3. Unit: mV/V. '
+        'Plate view below; top graph shows the channel sum.',
+      ),
+      findsOneWidget,
+    );
+
     // The overview minimap is actionable (tap/drag pan), so it must be labeled
     // rather than an anonymous node.
     final minimap = find.bySemanticsLabel('Graph history overview');

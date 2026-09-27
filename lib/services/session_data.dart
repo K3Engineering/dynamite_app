@@ -4,9 +4,11 @@ import '../models/bucket_series.dart';
 import '../models/channel_calibration.dart';
 import '../models/channel_converter.dart';
 import '../models/device_flash.dart';
+import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
+import '../models/plate_sum_series.dart';
 
 /// Loaded session data for playback/review.
 class SessionData implements GraphDataSource {
@@ -60,6 +62,11 @@ class SessionData implements GraphDataSource {
   /// live hub uses.
   late final List<BucketAccumulator> _diffBuckets;
 
+  /// The plate-sum series, built during the load-time ingest when every
+  /// channel's frozen calibration has a board map and a cell (see
+  /// [PlateSumAccumulator]); null otherwise.
+  late final PlateSumAccumulator? _plateSum;
+
   SessionData({
     required this.channels,
     required this.sampleRate,
@@ -97,6 +104,24 @@ class SessionData implements GraphDataSource {
       final ext = ingest.extremes; // non-null: sampleCount > 0 here
       _extremes[ch] = (ext!.$1.toDouble(), ext.$2.toDouble());
     }
+
+    final acc = channels.length < kAdcChannelCount
+        ? null
+        : PlateSumAccumulator.tryBuild(
+            calibrations,
+            bucketSize: bucketSize,
+            numBuckets: numBuckets,
+          );
+    if (acc != null) {
+      final scratch = Int32List(kAdcChannelCount);
+      for (int i = 0; i < sampleCount; i++) {
+        for (int c = 0; c < kAdcChannelCount; c++) {
+          scratch[c] = channels[c][i];
+        }
+        acc.add(i, scratch);
+      }
+    }
+    _plateSum = acc;
   }
 
   double get durationSeconds => sampleCount / sampleRate;
@@ -150,6 +175,9 @@ class SessionData implements GraphDataSource {
   @override
   BucketSeries diffBucketsFor(int channelIndex) =>
       _diffBuckets[channelIndex].series;
+
+  @override
+  PlateSumAccumulator? get plateSum => _plateSum;
 
   @override
   (double, double)? channelExtremes(int channelIndex) =>

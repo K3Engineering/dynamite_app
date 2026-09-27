@@ -13,6 +13,7 @@ import '../models/display_unit.dart';
 import '../models/feed_health.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
+import '../models/plate_sum_series.dart';
 import '../models/sample_slice.dart';
 import 'adc_sink.dart';
 
@@ -83,6 +84,14 @@ class DataHub extends ChangeNotifier
     ),
     growable: false,
   );
+
+  /// The plate-sum series (see [PlateSumAccumulator]); null until every
+  /// channel has a board map and an assigned cell. Rebuilt (never
+  /// incrementally patched) when the calibration set changes: a rescan of the
+  /// retained window costs O(retained) map evaluations once per cal/cell
+  /// event, and stays identical to the always-on path because ring-held gap
+  /// values rescan to the same holds.
+  PlateSumAccumulator? _plateSum;
 
   /// The in-progress tare window: how many real samples its average spans and
   /// which channel (null = all). Nothing accumulates while it fills; completion
@@ -192,6 +201,7 @@ class DataHub extends ChangeNotifier
       _currentRaw[i] = 0;
       _ingest[i].reset();
     }
+    _plateSum?.reset();
     _tareVersion++;
     _emit(const HubCleared());
     notifyListeners();
@@ -292,6 +302,7 @@ class DataHub extends ChangeNotifier
       _currentRaw[i] = val;
       _addData(val, i);
     }
+    _plateSum?.add(totalSamples, values);
     totalSamples++;
 
     final pending = _pendingTare;
@@ -320,6 +331,7 @@ class DataHub extends ChangeNotifier
       for (int i = 0; i < kAdcChannelCount; ++i) {
         _addData(_currentRaw[i], i);
       }
+      _plateSum?.addHeld(totalSamples);
       totalSamples++;
     }
   }
@@ -378,6 +390,7 @@ class DataHub extends ChangeNotifier
     if (prev != null && _sameBoardCalibration(prev, calibration)) return;
     _boardCalibration = calibration;
     _calibrationVersion++;
+    _rebuildPlateSum();
     notifyListeners();
   }
 
@@ -388,6 +401,7 @@ class DataHub extends ChangeNotifier
     if (_boardCalibration == null) return;
     _boardCalibration = null;
     _calibrationVersion++;
+    _rebuildPlateSum();
     notifyListeners();
   }
 
@@ -452,7 +466,32 @@ class DataHub extends ChangeNotifier
     if (same) return;
     _loadCells = List.of(cells);
     _calibrationVersion++;
+    _rebuildPlateSum();
     notifyListeners();
+  }
+
+  /// Rebuild the plate-sum series from the current calibration set and the
+  /// retained window (maps/weights both changed — there is no delta to
+  /// patch). Nulls it out when any channel can't express plate force.
+  void _rebuildPlateSum() {
+    final acc = PlateSumAccumulator.tryBuild(
+      [for (int c = 0; c < kAdcChannelCount; c++) calibrationFor(c)],
+      bucketSize: bucketSize,
+      numBuckets: numBuckets,
+    );
+    if (acc == null) {
+      _plateSum = null;
+      return;
+    }
+    acc.resetAt(oldestSample);
+    final scratch = Int32List(kAdcChannelCount);
+    for (int j = oldestSample; j < totalSamples; j++) {
+      for (int c = 0; c < kAdcChannelCount; c++) {
+        scratch[c] = rawAt(c, j);
+      }
+      acc.add(j, scratch);
+    }
+    _plateSum = acc;
   }
 
   // -- GraphDataSource --------------------------------------------------------
@@ -507,6 +546,9 @@ class DataHub extends ChangeNotifier
   @override
   BucketSeries diffBucketsFor(int channelIndex) =>
       _diffBuckets[channelIndex].series;
+
+  @override
+  PlateSumAccumulator? get plateSum => _plateSum;
 
   @override
   (double, double)? channelExtremes(int channelIndex) {

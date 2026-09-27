@@ -64,6 +64,13 @@ class BucketAccumulator {
   /// Restart ingest from sample 0; aggregates are overwritten by later [add]s.
   void reset() => _samples = 0;
 
+  /// Rebase ingest to continue at [sampleIndex] without touching the slots.
+  /// For rebuilds over a retained window of a longer stream: indexing stays
+  /// absolute (renderers address buckets by absolute sample index) and slots
+  /// older than the window are untrustworthy — the state the [BucketSeries]
+  /// ring-wrap contract already handles everywhere else.
+  void rebase(int sampleIndex) => _samples = sampleIndex;
+
   /// Samples ingested so far (since construction/last [reset]).
   int get samples => _samples;
 

@@ -8,6 +8,7 @@ import 'package:dynamite_app/models/analysis_pane.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
+import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/widgets/analysis_pane_bar.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
@@ -113,6 +114,40 @@ void main() {
         reason: 'pane failed to paint: $analysis',
       );
     }
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+  });
+
+  testWidgets('plate mode with load cells paints the bucketed sum on top', (
+    tester,
+  ) async {
+    // A force unit + cells: the top graph swaps to the corner sum with its
+    // bucket fast path live (see PlateSumAccumulator).
+    final hub = hubWithData()
+      ..updateLoadCells([
+        for (int i = 0; i < channels; i++)
+          const LoadCellProfile(capacityKg: 200, sensitivityMvV: 2),
+      ]);
+    expect(hub.plateSum, isNotNull);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GraphWorkspace(
+          data: hub,
+          ctrl: GraphController(),
+          unit: DisplayUnit.kgf,
+          activeChannels: [for (int i = 0; i < channels; i++) i],
+          analysis: const AnalysisPaneSelection(
+            kind: AnalysisPaneKind.balance,
+            balanceMode: BalanceMode.plate,
+          ),
+        ),
+      ),
+    );
+    for (var i = 0; i < 3; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox());
     await tester.pump();
