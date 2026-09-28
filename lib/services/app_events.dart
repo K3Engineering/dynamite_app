@@ -57,19 +57,11 @@ class RigEditsDiscarded extends AppEvent {
   const RigEditsDiscarded();
 }
 
-/// A release check found the device running different bits than its
-/// channel's target (a genuine difference — the offer rule is
-/// direction-agnostic, so this covers new arrivals and pulled releases).
-class FirmwareUpdateAvailable extends AppEvent {
-  const FirmwareUpdateAvailable({required this.deviceName});
-
-  final String deviceName;
-}
-
 /// A flashed release's tag was confirmed on the device after its post-flash
 /// reboot (see [FirmwareUpdateService.noteFlashAccepted]). The mismatch
-/// direction needs no event of its own: that connect's release check
-/// re-raises [FirmwareUpdateAvailable].
+/// direction needs no event of its own: that connect's release check leaves
+/// [FirmwareUpdateService.checkState] differing, which the persistent update
+/// indicators read.
 class FirmwareFlashVerified extends AppEvent {
   const FirmwareFlashVerified(this.describe);
 

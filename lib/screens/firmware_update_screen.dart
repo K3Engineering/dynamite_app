@@ -8,7 +8,21 @@ import 'package:provider/provider.dart';
 import '../models/firmware_release.dart';
 import '../services/ble_link_manager.dart';
 import '../services/firmware_update_service.dart';
+import '../services/recording_controller.dart';
 import '../widgets/wide_layout.dart';
+
+/// Push the OTA update screen; [onDone] is the shell jump it runs after a
+/// flash completes. Every entry point (the Live and Devices update notices, the
+/// Settings firmware card) goes through here, so there is one push to change.
+void openFirmwareUpdate(BuildContext context, {required VoidCallback onDone}) {
+  unawaited(
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => FirmwareUpdateScreen(onDone: onDone),
+      ),
+    ),
+  );
+}
 
 /// The update flow's page state. Each payload stage carries the data its
 /// page renders, so there is no "failed with no error" or "flashing with a
@@ -50,8 +64,8 @@ final class _Failed extends _Stage {
   final String error;
 }
 
-/// The OTA update flow, pushed from the Settings firmware card or the
-/// update-available snackbar.
+/// The OTA update flow, pushed from the Settings firmware card or an
+/// update-available notice.
 ///
 /// Offer rule (see `firmware_release.dart`): the device should run the
 /// channel's target whatever the direction — "differs" flashes it, same-tag
@@ -189,6 +203,12 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     final linkUp = context.select<BleLinkManager, bool>(
       (l) => l.connectedDeviceId.isNotEmpty,
     );
+    // A flash reboots the device, which would interrupt any session; refuse it
+    // while recording. A session can only start from the Live tab, unreachable
+    // under this pushed route, so this cannot go stale once checked.
+    final recording = context.select<RecordingController, bool>(
+      (r) => r.sessionInProgress,
+    );
     final inProgress = _stage is! _Overview;
 
     return PopScope(
@@ -231,6 +251,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
                   service,
                   simulated: simulated,
                   linkUp: linkUp,
+                  recording: recording,
                 ),
               );
             },
@@ -344,13 +365,14 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     FirmwareUpdateService service, {
     required bool simulated,
     required bool linkUp,
+    required bool recording,
   }) {
     final theme = Theme.of(context);
     final state = service.checkState;
     final check = state is CheckOk ? state.result : null;
     final target = check?.target;
     final running = state is CheckRunning;
-    final canFlash = linkUp && !simulated && !running;
+    final canFlash = linkUp && !simulated && !running && !recording;
     final flashLabel = target == null
         ? 'No release to flash'
         : check!.differsFromDevice
@@ -419,6 +441,14 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
                   padding: const EdgeInsets.only(top: 8),
                   child: Text(
                     'Firmware update is unavailable for the demo device.',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              if (recording)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    'Stop the recording on the Live tab to update.',
                     style: theme.textTheme.bodySmall,
                   ),
                 ),

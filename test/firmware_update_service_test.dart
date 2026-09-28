@@ -119,7 +119,6 @@ void main() {
       // The reconnect's check confirmed the flashed tag — exactly once
       // (the pend is consumed).
       expect(seen.whereType<FirmwareFlashVerified>(), hasLength(1));
-      expect(seen.whereType<FirmwareUpdateAvailable>(), isEmpty);
       disconnectElapse(async, link);
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -129,25 +128,30 @@ void main() {
     });
   });
 
-  test('a flash the device does not confirm re-flags the update banner', () {
+  test('a flash the device does not confirm leaves the check differing', () {
     fakeAsync((async) {
       final (link, service, seen) = wire(async);
       service.catalog = _FixedCatalog(_release('v9.9.9'));
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
-      // Installed mock-1.0.0 vs target v9.9.9: first banner.
-      expect(seen.whereType<FirmwareUpdateAvailable>(), hasLength(1));
+      // Installed mock-1.0.0 vs target v9.9.9: the check differs, which is
+      // what the persistent update indicators render.
+      final first = service.checkState;
+      expect(first, isA<CheckOk>());
+      expect((first as CheckOk).result.differsFromDevice, isTrue);
 
-      // Flashed v9.9.9 but the rebooted device still reports mock-1.0.0:
-      // the rollback path — pend consumed, banner re-raised, and NEVER a
+      // Flashed v9.9.9 but the rebooted device still reports mock-1.0.0: the
+      // rollback path — pend consumed, the check still differs, and NEVER a
       // verification.
       service.noteFlashAccepted('v9.9.9');
       disconnectElapse(async, link);
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
       expect(seen.whereType<FirmwareFlashVerified>(), isEmpty);
-      expect(seen.whereType<FirmwareUpdateAvailable>(), hasLength(2));
+      final second = service.checkState;
+      expect(second, isA<CheckOk>());
+      expect((second as CheckOk).result.differsFromDevice, isTrue);
 
       disconnectElapse(async, link);
     });

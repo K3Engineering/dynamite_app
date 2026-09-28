@@ -51,8 +51,9 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     if (!mounted) return;
     setState(() => _saving = false);
     if (ok) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Load cells saved to device.')),
+      showNoticeSnackBar(
+        ScaffoldMessenger.of(context),
+        'Load cells saved to device.',
       );
     } else {
       showErrorSnackBar(

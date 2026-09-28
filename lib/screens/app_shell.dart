@@ -10,7 +10,6 @@ import '../widgets/wide_layout.dart';
 import 'live_tab.dart';
 import 'sessions_tab.dart';
 import 'devices_tab.dart';
-import 'firmware_update_screen.dart';
 import 'settings_tab.dart';
 
 /// Root scaffold holding the four tabs: a bottom `NavigationBar` on narrow
@@ -76,19 +75,10 @@ class AppShellState extends State<AppShell> {
           messenger,
           'Disconnected — unsaved load cell changes were discarded.',
         );
-      case FirmwareUpdateAvailable(:final deviceName):
-        messenger.showSnackBar(
-          SnackBar(
-            content: Text('A firmware update is available for $deviceName.'),
-            action: SnackBarAction(
-              label: 'Review',
-              onPressed: _openFirmwareUpdate,
-            ),
-          ),
-        );
       case FirmwareFlashVerified(:final describe):
-        messenger.showSnackBar(
-          SnackBar(content: Text('Update applied — now running $describe.')),
+        showNoticeSnackBar(
+          messenger,
+          'Update applied — now running $describe.',
         );
     }
   }
@@ -106,16 +96,6 @@ class AppShellState extends State<AppShell> {
 
   /// Jump to the Settings tab.
   void goToSettings() => switchToTab(3);
-
-  /// Deep-link from the update-available snackbar: straight to the update
-  /// screen, not the Settings tab holding its entry card.
-  void _openFirmwareUpdate() {
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => FirmwareUpdateScreen(onDone: goToDevices),
-      ),
-    );
-  }
 
   /// Tab-activation side effects, driven from here (the owner of the tab
   /// index) so the tabs themselves stay stateless:
