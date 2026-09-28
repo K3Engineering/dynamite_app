@@ -14,7 +14,7 @@ class BrowserStorageWarning extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
-      margin: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: scheme.errorContainer,
@@ -51,7 +51,7 @@ class StorageEvictionWarning extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Text(
         'The browser may delete stored sessions when the device runs low on '
         'storage. Export important sessions to CSV to keep them safe. Install the native '
@@ -80,7 +80,7 @@ class StorageCapacityStrip extends StatelessWidget {
     final usageText =
         '$used used · ${formatBytes(capacity.availableBytes)} free';
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

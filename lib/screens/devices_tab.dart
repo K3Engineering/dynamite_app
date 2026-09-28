@@ -13,6 +13,7 @@ import '../widgets/bt_icon.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/feed_health_indicator.dart';
 import '../widgets/firmware_update_notice.dart';
+import '../widgets/middle_click_autoscroll.dart';
 import '../widgets/rssi_indicator.dart';
 import '../widgets/section_header.dart';
 import '../widgets/snackbars.dart';
@@ -20,11 +21,24 @@ import '../status_colors.dart';
 import '../widgets/wide_layout.dart';
 import 'firmware_update_screen.dart';
 
-class DevicesTab extends StatelessWidget {
+class DevicesTab extends StatefulWidget {
   const DevicesTab({super.key, required this.onGoToSettings});
 
   /// The active row's gear action; the app shell owns the tab index.
   final VoidCallback onGoToSettings;
+
+  @override
+  State<DevicesTab> createState() => _DevicesTabState();
+}
+
+class _DevicesTabState extends State<DevicesTab> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -99,105 +113,111 @@ class DevicesTab extends StatelessWidget {
 
     return SafeArea(
       child: LayoutBuilder(
-        builder: (context, constraints) => ListView(
-          padding: EdgeInsets.symmetric(
-            horizontal: contentSideInset(constraints.maxWidth),
-            vertical: 16,
-          ),
-          children: [
-            Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 16),
-
-            const SectionHeader('BLE devices'),
-            const SizedBox(height: 8),
-
-            Padding(
-              padding: const EdgeInsets.only(left: 4, right: 28),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: BluetoothIndicator(
-                      visual: visual,
-                      mode: indicatorMode,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  SizedBox(
-                    width: deviceActionButtonWidth,
-                    child: FilledButton(
-                      // TODO(ux): see BleLinkManager._startScan — starting a scan
-                      // while streaming kills the active link (and any in-progress
-                      // recording). Decide disable-vs-confirm.
-                      onPressed: () => _scanWithFeedback(context, bt),
-                      child: Text(bt.isScanning ? 'Stop' : 'Scan'),
-                    ),
-                  ),
-                ],
-              ),
+        builder: (context, constraints) => MiddleClickAutoscroll(
+          controller: _scrollController,
+          child: ListView(
+            controller: _scrollController,
+            padding: EdgeInsets.symmetric(
+              horizontal: contentSideInset(constraints.maxWidth),
+              vertical: 16,
             ),
-            const SizedBox(height: 8),
+            children: [
+              Text('Devices', style: Theme.of(context).textTheme.headlineSmall),
+              const SizedBox(height: 16),
 
-            if (showEmptyBlock) _buildEmptyBlock(visual, bt.bluetoothState),
+              const SectionHeader('BLE devices'),
+              const SizedBox(height: 8),
 
-            // The active row is found in the scan list, which no path clears
-            // while a link is up.
-            for (final device in [...freshRows, ...staleRows])
-              device.deviceId == activeId
-                  ? _ActiveDeviceRow(
-                      name: device.name ?? 'Unknown device',
-                      model: bt.connectedDeviceInfo?.model,
-                      linkState: bt.linkState,
-                      connectedRssi: bt.connectedRssi,
-                      onDisconnect: bt.disconnectSelectedDevice,
-                      onGoToSettings: onGoToSettings,
-                      // Already on Devices, the tab a completed flash lands
-                      // on, so "Done" has nowhere to jump.
-                      onReviewUpdate: () =>
-                          openFirmwareUpdate(context, onDone: () {}),
-                    )
-                  : _InactiveDeviceRow(
-                      name: device.name ?? 'Unknown device',
-                      visual: visuals[device.deviceId]!,
-                      canConnect: bt.canConnectTo(device.deviceId),
-                      onConnect: () => _connectWithFeedback(
-                        () => bt.connectToDevice(device.deviceId),
-                        device.name ?? 'device',
+              Padding(
+                padding: const EdgeInsets.only(left: 4, right: 28),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: BluetoothIndicator(
+                        visual: visual,
+                        mode: indicatorMode,
                       ),
                     ),
-            const SizedBox(height: 16),
-
-            // Demo devices section.
-            const SectionHeader('Demo devices'),
-            const SizedBox(height: 8),
-            if (bt.isSimulated && bt.linkState != BtLinkState.idle)
-              _ActiveDeviceRow(
-                name: 'Demo Device',
-                icon: Icons.science,
-                model: bt.connectedDeviceInfo?.model,
-                linkState: bt.linkState,
-                connectedRssi: null,
-                onDisconnect: bt.disconnectSelectedDevice,
-                onGoToSettings: onGoToSettings,
-                onReviewUpdate: () =>
-                    openFirmwareUpdate(context, onDone: () {}),
-              )
-            else
-              _InactiveDeviceRow(
-                name: 'Demo Device',
-                visual: (
-                  mood: InactiveRowMood.normal,
-                  icon: Icons.science,
-                  iconColor: Colors.teal,
-                  subtitle: 'Simulated data — no hardware',
-                  subtitleColor: null,
-                  cardColor: null,
-                  titleColor: null,
+                    const SizedBox(width: 12),
+                    SizedBox(
+                      width: deviceActionButtonWidth,
+                      child: FilledButton(
+                        // TODO(ux): see BleLinkManager._startScan — starting a scan
+                        // while streaming kills the active link (and any in-progress
+                        // recording). Decide disable-vs-confirm.
+                        onPressed: () => _scanWithFeedback(context, bt),
+                        child: Text(bt.isScanning ? 'Stop' : 'Scan'),
+                      ),
+                    ),
+                  ],
                 ),
-                canConnect: bt.canConnectTo(demoDeviceId),
-                onConnect: () =>
-                    _connectWithFeedback(bt.connectToDemoDevice, 'Demo Device'),
               ),
-          ],
+              const SizedBox(height: 8),
+
+              if (showEmptyBlock) _buildEmptyBlock(visual, bt.bluetoothState),
+
+              // The active row is found in the scan list, which no path clears
+              // while a link is up.
+              for (final device in [...freshRows, ...staleRows])
+                device.deviceId == activeId
+                    ? _ActiveDeviceRow(
+                        name: device.name ?? 'Unknown device',
+                        model: bt.connectedDeviceInfo?.model,
+                        linkState: bt.linkState,
+                        connectedRssi: bt.connectedRssi,
+                        onDisconnect: bt.disconnectSelectedDevice,
+                        onGoToSettings: widget.onGoToSettings,
+                        // Already on Devices, the tab a completed flash lands
+                        // on, so "Done" has nowhere to jump.
+                        onReviewUpdate: () =>
+                            openFirmwareUpdate(context, onDone: () {}),
+                      )
+                    : _InactiveDeviceRow(
+                        name: device.name ?? 'Unknown device',
+                        visual: visuals[device.deviceId]!,
+                        canConnect: bt.canConnectTo(device.deviceId),
+                        onConnect: () => _connectWithFeedback(
+                          () => bt.connectToDevice(device.deviceId),
+                          device.name ?? 'device',
+                        ),
+                      ),
+              const SizedBox(height: 16),
+
+              // Demo devices section.
+              const SectionHeader('Demo devices'),
+              const SizedBox(height: 8),
+              if (bt.isSimulated && bt.linkState != BtLinkState.idle)
+                _ActiveDeviceRow(
+                  name: 'Demo Device',
+                  icon: Icons.science,
+                  model: bt.connectedDeviceInfo?.model,
+                  linkState: bt.linkState,
+                  connectedRssi: null,
+                  onDisconnect: bt.disconnectSelectedDevice,
+                  onGoToSettings: widget.onGoToSettings,
+                  onReviewUpdate: () =>
+                      openFirmwareUpdate(context, onDone: () {}),
+                )
+              else
+                _InactiveDeviceRow(
+                  name: 'Demo Device',
+                  visual: (
+                    mood: InactiveRowMood.normal,
+                    icon: Icons.science,
+                    iconColor: Colors.teal,
+                    subtitle: 'Simulated data — no hardware',
+                    subtitleColor: null,
+                    cardColor: null,
+                    titleColor: null,
+                  ),
+                  canConnect: bt.canConnectTo(demoDeviceId),
+                  onConnect: () => _connectWithFeedback(
+                    bt.connectToDemoDevice,
+                    'Demo Device',
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

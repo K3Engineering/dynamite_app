@@ -1,12 +1,10 @@
 import 'dart:math' as math;
 
-import 'package:material_ui/material_ui.dart';
-
 /// Width at or above which the shell replaces the bottom navigation bar with
 /// a side navigation rail.
 const double kWideLayoutWidth = 1024;
 
-/// Content cap applied by [contentSideInset] and [TabContentColumn].
+/// Content cap applied by [contentSideInset].
 const double kContentMaxWidth = 800;
 
 /// Horizontal inset that caps list content at [kContentMaxWidth] while the
@@ -16,22 +14,3 @@ const double kContentMaxWidth = 800;
 /// includes the navigation rail.
 double contentSideInset(double viewportWidth) =>
     math.max(16, (viewportWidth - kContentMaxWidth) / 2);
-
-/// Centered, width-capped wrapper for non-scrolling tab content (e.g. a page
-/// header outside the scrollable), aligned with scrollable content clamped
-/// via [contentSideInset].
-class TabContentColumn extends StatelessWidget {
-  const TabContentColumn({super.key, required this.child});
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: kContentMaxWidth),
-        child: child,
-      ),
-    );
-  }
-}
