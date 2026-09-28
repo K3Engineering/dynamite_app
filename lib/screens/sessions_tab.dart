@@ -91,12 +91,17 @@ class _SessionsTabState extends State<SessionsTab> {
             controller: _scrollController,
             slivers: [
               SliverPadding(
+                // Horizontal-only: vertical padding here is invisible to
+                // SliverFillRemaining (it always fills the whole leftover
+                // viewport), so it would leak into the scrollable range —
+                // the empty page then scrolls by the padding amount. The
+                // vertical space is spent as slivers the group accounts for.
                 padding: EdgeInsets.symmetric(
                   horizontal: contentSideInset(constraints.maxWidth),
-                  vertical: 16,
                 ),
                 sliver: SliverMainAxisGroup(
                   slivers: [
+                    const SliverToBoxAdapter(child: SizedBox(height: 16)),
                     SliverToBoxAdapter(
                       child: Text(
                         'Sessions',
@@ -163,30 +168,33 @@ class _SessionsTabState extends State<SessionsTab> {
       );
     }
 
-    return SliverList.builder(
-      itemCount: damaged.length + catalog.sessions.length,
-      itemBuilder: (context, index) {
-        if (index < damaged.length) {
-          return _DamagedCard(
-            damaged: damaged[index],
-            onExportSamples: damaged[index].hasData
-                ? () => _exportDamaged(damaged[index], data: true)
-                : null,
-            onExportMetadata: damaged[index].hasMeta
-                ? () => _exportDamaged(damaged[index], data: false)
-                : null,
-            onDelete: () =>
-                _deleteSession(damaged[index].id, damaged[index].id),
+    return SliverPadding(
+      padding: const EdgeInsets.only(bottom: 16),
+      sliver: SliverList.builder(
+        itemCount: damaged.length + catalog.sessions.length,
+        itemBuilder: (context, index) {
+          if (index < damaged.length) {
+            return _DamagedCard(
+              damaged: damaged[index],
+              onExportSamples: damaged[index].hasData
+                  ? () => _exportDamaged(damaged[index], data: true)
+                  : null,
+              onExportMetadata: damaged[index].hasMeta
+                  ? () => _exportDamaged(damaged[index], data: false)
+                  : null,
+              onDelete: () =>
+                  _deleteSession(damaged[index].id, damaged[index].id),
+            );
+          }
+          final session = catalog.sessions[index - damaged.length];
+          return _SessionCard(
+            session: session,
+            byteSize: catalog.byteSizes[session.id],
+            onTap: () => _openDetail(session),
+            onDelete: () => _deleteSession(session.id, session.name),
           );
-        }
-        final session = catalog.sessions[index - damaged.length];
-        return _SessionCard(
-          session: session,
-          byteSize: catalog.byteSizes[session.id],
-          onTap: () => _openDetail(session),
-          onDelete: () => _deleteSession(session.id, session.name),
-        );
-      },
+        },
+      ),
     );
   }
 
