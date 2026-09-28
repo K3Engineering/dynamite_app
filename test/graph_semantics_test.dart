@@ -102,7 +102,7 @@ void main() {
       findsOneWidget,
     );
 
-    // Balance plate: the top graph is the corner sum, and the label says so.
+    // Force plate: the top graph is the corner sum, and the label says so.
     await pumpGraph(
       data: calibratedHub(),
       activeChannels: const [0, 1, 2, 3],
@@ -114,7 +114,7 @@ void main() {
     expect(
       find.bySemanticsLabel(
         'Live force graph. Channels: CH 0, CH 1, CH 2, CH 3. Unit: mV/V. '
-        'Plate view below; top graph shows the channel sum.',
+        'Force plate view below; top graph shows the channel sum.',
       ),
       findsOneWidget,
     );

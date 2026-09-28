@@ -19,9 +19,11 @@ import '../models/load_cell.dart';
 import '../utils/balance.dart';
 import '../utils/fft.dart';
 import 'channel_palette.dart';
+import 'graph/force_plate_cache.dart';
 import 'graph/graph_controller.dart';
 import 'graph/segmented_cache.dart';
 
+export 'graph/force_plate_cache.dart';
 export 'graph/graph_controller.dart';
 export 'graph/segmented_cache.dart';
 
@@ -649,6 +651,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   /// until the sweep caught up. Recreated on any plate-mode toggle.
   SegmentedGraphCache? _plateTopCache;
 
+  /// Dot textures for the 2D force plate pane. Persistent (no recreation on
+  /// pane swaps): [ForcePlateCache] clears itself on its config stamp.
+  final ForcePlateCache<_PlateMarker> _plateDotCache = ForcePlateCache();
+
   /// Memoized spectra for the FFT pane (throttles recompute, see [_FftCache]).
   final _FftCache _fftCache = _FftCache();
 
@@ -732,6 +738,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     _forceCache.dispose();
     _analysisCache?.dispose();
     _plateTopCache?.dispose();
+    _plateDotCache.dispose();
     _labelCache.dispose();
     super.dispose();
   }
@@ -895,17 +902,21 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
           );
         }
         final bound = plateBound;
-        if (bound == null) return channelMessage('Balance');
+        if (bound == null) return channelMessage('Force Plate');
         return _GraphPane(
           data: data,
           ctrl: ctrl,
-          painter: _BalancePlatePainter(
+          painter: _ForcePlatePainter(
             data,
             ctrl,
             cornerChannels: sel.balanceCorners,
             cornerNets: [for (final b in bound) b.netMap],
+            unit: unit,
+            cache: _plateDotCache,
             colorScheme: colorScheme,
+            dpr: dpr,
             labels: _labelCache,
+            bakePump: _bakePump,
           ),
         );
       case AnalysisPaneKind.fft:
@@ -1000,7 +1011,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
           AnalysisPaneKind.sum => '. Channel-sum graph below',
           AnalysisPaneKind.balance =>
             widget.analysis.balanceMode == BalanceMode.plate
-                ? '. Plate view below; top graph shows the channel sum'
+                ? '. Force plate view below; top graph shows the channel sum'
                 : '. Balance view below',
           AnalysisPaneKind.diff => '. Differential graph below',
         },
@@ -3317,26 +3328,36 @@ class _FftPanePainter extends CustomPainter {
 }
 
 // ---------------------------------------------------------------------------
-// Balance plate pane (2D)
+// Force plate pane (2D)
 // ---------------------------------------------------------------------------
 
+/// Newest valid plate sample of a rendered range: its CoP and corner
+/// weights. One per rendered (sub)range of the trail; [ForcePlateCache]
+/// stores it per baked bucket so the newest-dot marker and the convergence
+/// ellipse outlive texture caching without a window rescan.
+typedef _PlateMarker = ({(double, double) cop, PlateWeights weights});
+
 /// The four-corner plate view: center of pressure on a normalized plate
-/// outline, a fading trail over the visible window, and a convergence
-/// readout (corner disagreement, see [copSpread]). Not a time series, so a
-/// direct painter like the FFT pane.
+/// outline, a trail of every window sample (dots cached write-once by
+/// [ForcePlateCache], live head/tail vector-drawn — see that file), and a
+/// convergence readout (corner disagreement, see [copSpread]).
 // TODO(plate-rails): plate mode drops the per-channel force traces, and with
 // them the right-gutter rail/capacity zones — so ADC-rail saturation (the
 // case where the sum AND the CoP silently lie) has no indicator. Add a
 // saturated-corner marker here (e.g. tint the offending "CH n" corner label).
-class _BalancePlatePainter extends CustomPainter {
-  _BalancePlatePainter(
+class _ForcePlatePainter extends CustomPainter {
+  _ForcePlatePainter(
     this._data,
     this._ctrl, {
     required this.cornerChannels,
     required this.cornerNets,
+    required this.unit,
+    required this.cache,
     required this.colorScheme,
+    required this.dpr,
     required this.labels,
-  }) : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
+    required this.bakePump,
+  }) : super(repaint: Listenable.merge([_data.repaint, _ctrl, bakePump]));
 
   final GraphDataSource _data;
   final GraphController _ctrl;
@@ -3346,15 +3367,30 @@ class _BalancePlatePainter extends CustomPainter {
   final List<int> cornerChannels;
   final List<double Function(double raw)> cornerNets;
 
+  /// Cache stamp ingredient: [cornerNets] bake the unit in at bind time.
+  final DisplayUnit unit;
+
+  /// Persistent, owned by [_GraphWorkspaceState] (like [_forceCache]); no
+  /// recreation rules — a config change clears inside the cache.
+  final ForcePlateCache<_PlateMarker> cache;
+
   final ColorScheme colorScheme;
+  final double dpr;
   final _LabelCache labels;
+
+  /// Drives the rolling bucket bakes (static sources never fire repaint on
+  /// their own — see [_TimeSeriesGraphPainter.bakePump]).
+  final BakePump bakePump;
 
   /// Plot coordinate extent: plate edges at ±1, ±1.3 leaves margin for
   /// off-plate points (clamped to ±1.25) and corner labels.
   static const double _extent = 1.3;
 
-  /// Trail dot budget: wider windows decimate by integer stride.
-  static const int _maxTrailPoints = 500;
+  /// Trail dot radius and flat alpha. Uniform alpha is what makes the
+  /// bucket textures write-once: a window-dependent fade would tie the dots
+  /// to the window and defeat caching.
+  static const double _kDotRadius = 1.4;
+  static const int _kDotAlpha = 160;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -3403,54 +3439,55 @@ class _BalancePlatePainter extends CustomPainter {
       );
     }
 
-    // Trail over the visible window: older dots dimmer, newest emphasized.
+    // Trail over the window: one dot per sample, cached by [cache]. The
+    // painter owns nothing per-dot here — both the bake canvas and the
+    // live vector draws funnel through [_renderDots] at plate-local origin.
     final total = _data.totalSamples;
-    (double, double)? lastCop;
-    PlateWeights? lastWeights;
-    if (total > 0) {
+    _PlateMarker? marker;
+    if (total > 0 && side > 0) {
       final (vs, ve) = _ctrl.effectiveRange(total, _data.oldestSample);
-      final span = ve - vs;
-      if (span > 0) {
-        final stride = math.max(1, span ~/ _maxTrailPoints);
-        final dotPaint = Paint();
-        for (int j = vs; j < ve; j += stride) {
-          final raws = [
-            for (int c = 0; c < kAdcChannelCount; c++)
-              _data.rawValueAt(cornerChannels[c], j),
-          ];
-          if (raws.any((raw) => raw.isNaN)) continue;
-          final w = (
-            tl: cornerNets[0](raws[0]),
-            tr: cornerNets[1](raws[1]),
-            bl: cornerNets[2](raws[2]),
-            br: cornerNets[3](raws[3]),
-          );
-          final cop = w.cop;
-          if (cop == null) continue;
-          final t = (j - vs) / span;
-          dotPaint.color = colorScheme.primary.withAlpha(
-            (36 + 200 * t).round(),
-          );
-          canvas.drawCircle(
-            toPx(cop.$1.clamp(-1.25, 1.25), cop.$2.clamp(-1.25, 1.25)),
-            1.4,
-            dotPaint,
-          );
-          lastCop = cop;
-          lastWeights = w;
-        }
-      }
+      // Plate-local pixel of a clamped CoP (toPx without the left offset).
+      Offset pointFor(double x, double y) => Offset(
+        (x + _extent) / (2 * _extent) * side,
+        (_extent - y) / (2 * _extent) * side,
+      );
+      final dotPaint = Paint()
+        ..color = colorScheme.primary.withAlpha(_kDotAlpha);
+      canvas.save();
+      canvas.translate(left, 0);
+      final trail = cache.paint(canvas, (
+        generation: _data.dataGeneration,
+        configKey: [
+          unit,
+          _data.calibrationVersion,
+          _data.tareVersion,
+          ...cornerChannels,
+          side,
+          dpr,
+        ],
+        side: side,
+        dpr: dpr,
+        viewStart: vs,
+        viewEnd: ve,
+        oldestSample: _data.oldestSample,
+        totalSamples: total,
+        render: (c, start, end) =>
+            _renderDots(c, start, end, pointFor, dotPaint),
+      ));
+      canvas.restore();
+      marker = trail.marker;
+      if (trail.workRemains) bakePump.schedule();
     }
 
     // Current point + the convergence ellipse (per-axis spread of the two
     // edge-pair position estimates, see [copSpread]).
     double? convPct;
-    if (lastCop != null) {
+    if (marker != null) {
       final center = toPx(
-        lastCop.$1.clamp(-1.25, 1.25),
-        lastCop.$2.clamp(-1.25, 1.25),
+        marker.cop.$1.clamp(-1.25, 1.25),
+        marker.cop.$2.clamp(-1.25, 1.25),
       );
-      final spread = copSpread(lastWeights!);
+      final spread = copSpread(marker.weights);
       if (spread != null) {
         final rx = spread.$1 / (2 * _extent) * side;
         final ry = spread.$2 / (2 * _extent) * side;
@@ -3548,8 +3585,43 @@ class _BalancePlatePainter extends CustomPainter {
     }
   }
 
+  /// The trail loop, shared by bucket bakes and the live vector head/tail:
+  /// one dot per sample, gaps and no-positive-load samples skipped. Returns
+  /// the newest valid sample of [start, end) (see [_PlateMarker]).
+  _PlateMarker? _renderDots(
+    Canvas canvas,
+    int start,
+    int end,
+    Offset Function(double x, double y) pointFor,
+    Paint dotPaint,
+  ) {
+    _PlateMarker? last;
+    for (int j = start; j < end; j++) {
+      final raws = [
+        for (int c = 0; c < kAdcChannelCount; c++)
+          _data.rawValueAt(cornerChannels[c], j),
+      ];
+      if (raws.any((raw) => raw.isNaN)) continue;
+      final w = (
+        tl: cornerNets[0](raws[0]),
+        tr: cornerNets[1](raws[1]),
+        bl: cornerNets[2](raws[2]),
+        br: cornerNets[3](raws[3]),
+      );
+      final cop = w.cop;
+      if (cop == null) continue;
+      canvas.drawCircle(
+        pointFor(cop.$1.clamp(-1.25, 1.25), cop.$2.clamp(-1.25, 1.25)),
+        _kDotRadius,
+        dotPaint,
+      );
+      last = (cop: cop, weights: w);
+    }
+    return last;
+  }
+
   @override
-  bool shouldRepaint(covariant _BalancePlatePainter oldDelegate) => true;
+  bool shouldRepaint(covariant _ForcePlatePainter oldDelegate) => true;
 }
 
 // ---------------------------------------------------------------------------
