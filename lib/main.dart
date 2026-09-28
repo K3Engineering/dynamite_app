@@ -231,9 +231,11 @@ class DynoApp extends StatelessWidget {
       // De-emphasized surface (the stale device row's card tint):
       // onSurface at 6% blended over surface.
       surfaceContainerHighest: Color(0xFFF0F0F0),
-      // SnackBar themes itself off these three; identical in both schemes,
-      // so one toast style regardless of mode. Error toasts override
-      // background/content via showErrorSnackBar.
+      // SnackBar themes itself off inverseSurface/onInverseSurface; identical
+      // in both schemes, so one toast style regardless of mode. Error toasts
+      // override background/content via showErrorSnackBar. inversePrimary is
+      // the accent for content on a dark container: snackbar action labels and
+      // the firmware-update notice lines (FirmwareUpdateNotice).
       inverseSurface: Color(0xFF323232),
       onInverseSurface: Colors.white,
       inversePrimary: Color(0xFF89B2C5),
@@ -263,7 +265,7 @@ class DynoApp extends StatelessWidget {
       // De-emphasized surface (the stale device row's card tint):
       // onSurface at 6% blended over surface.
       surfaceContainerHighest: Color(0xFF2B2B2B),
-      // Same toast as light.
+      // Same toast/notice surfaces as light; see the light scheme.
       inverseSurface: Color(0xFF323232),
       onInverseSurface: Colors.white,
       inversePrimary: Color(0xFF89B2C5),

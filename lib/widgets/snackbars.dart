@@ -1,10 +1,10 @@
 import 'package:material_ui/material_ui.dart';
 
 /// Shows a failure toast in the scheme's error colors. Informational toasts
-/// (saved, exported, copied…) stay plain `showSnackBar` calls.
+/// (saved, exported, copied…) go through [showNoticeSnackBar].
 ///
-/// [persist] keeps the toast up until the user dismisses it (a close icon is
-/// shown then) — for failures that must not scroll away unnoticed.
+/// [persist] keeps the toast up until the user dismisses it — for failures
+/// that must not scroll away unnoticed.
 void showErrorSnackBar(
   ScaffoldMessengerState messenger,
   String message, {
@@ -17,8 +17,33 @@ void showErrorSnackBar(
       behavior: SnackBarBehavior.floating,
       backgroundColor: colors.error,
       persist: persist,
-      showCloseIcon: persist,
+      showCloseIcon: true,
       closeIconColor: colors.onError,
+    ),
+  );
+}
+
+/// Shows an informational toast. This is the app's one notice shape: floating
+/// (margined and rounded, so it reads as a transient overlay rather than a
+/// full-width banner) with a close icon (so "dismissable" is visible, not just
+/// a swipe nobody can see). [action] adds a labelled action; the toast still
+/// auto-dismisses unless [persist].
+///
+/// Every informational snackbar goes through here or [showErrorSnackBar] so the
+/// shape cannot drift call by call.
+void showNoticeSnackBar(
+  ScaffoldMessengerState messenger,
+  String message, {
+  SnackBarAction? action,
+  bool persist = false,
+}) {
+  messenger.showSnackBar(
+    SnackBar(
+      content: Text(message),
+      behavior: SnackBarBehavior.floating,
+      action: action,
+      persist: persist,
+      showCloseIcon: true,
     ),
   );
 }
@@ -45,6 +70,6 @@ Future<void> runExportAction(
   if (error != null) {
     showErrorSnackBar(messenger, '$errorTitle failed: $error');
   } else if (message != null) {
-    messenger.showSnackBar(SnackBar(content: Text(message)));
+    showNoticeSnackBar(messenger, message);
   }
 }

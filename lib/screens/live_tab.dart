@@ -23,6 +23,7 @@ import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/channel_stats_table.dart';
+import '../widgets/firmware_update_notice.dart';
 import '../widgets/tare_sheet.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
@@ -31,6 +32,7 @@ import '../widgets/rssi_indicator.dart';
 import '../widgets/snackbars.dart';
 import '../status_colors.dart';
 import '../utils/format.dart';
+import 'firmware_update_screen.dart';
 
 // ---------------------------------------------------------------------------
 // LiveTab
@@ -108,17 +110,12 @@ class _LiveTabState extends State<LiveTab> {
         // Only a cleanly saved session is announced; errors surface via the
         // shell.
         case StopSessionSaved(:final sessionId, :final name):
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Session saved'),
-              behavior: SnackBarBehavior.floating,
-              showCloseIcon: true,
-              persist: false,
-              action: SnackBarAction(
-                label: 'Name it',
-                onPressed: () => _showRenameDialog(sessionId, name),
-              ),
-              duration: const Duration(seconds: 4),
+          showNoticeSnackBar(
+            ScaffoldMessenger.of(context),
+            'Session saved',
+            action: SnackBarAction(
+              label: 'Name it',
+              onPressed: () => _showRenameDialog(sessionId, name),
             ),
           );
         case StopSessionNothingRecorded() ||
@@ -203,7 +200,10 @@ class _LiveTabState extends State<LiveTab> {
               connectedDeviceName: deviceName,
               sampleRateHz: hub.sampleRateHz,
               health: health,
-              recording: recording.sessionInProgress,
+              firmwareNotice: FirmwareUpdateNotice(
+                onReview: () =>
+                    openFirmwareUpdate(context, onDone: widget.onGoToDevices),
+              ),
             ),
           ),
           if (invalidBoardDetail != null)
@@ -299,8 +299,10 @@ class LiveStatusBar extends StatelessWidget {
   /// The feed-health classification; null (not streaming) presents as normal.
   final FeedHealth? health;
 
-  /// Whether a recording session is in progress.
-  final bool recording;
+  /// The firmware-update notice line shown under the connected label; null
+  /// (the tests' default) hides it. Built by [LiveTab] from
+  /// [FirmwareUpdateService] so this widget stays a pure readout.
+  final Widget? firmwareNotice;
 
   const LiveStatusBar({
     super.key,
@@ -308,7 +310,7 @@ class LiveStatusBar extends StatelessWidget {
     required this.connectedDeviceName,
     required this.sampleRateHz,
     this.health,
-    this.recording = false,
+    this.firmwareNotice,
   });
 
   void _showHealthDetails(BuildContext context, FeedHealth health) {
@@ -379,10 +381,6 @@ class LiveStatusBar extends StatelessWidget {
         color: scheme.primaryContainer,
         child: Row(
           children: [
-            if (recording) ...[
-              Icon(Icons.circle, size: 10, color: scheme.error),
-              const SizedBox(width: 8),
-            ],
             Icon(
               Icons.bluetooth_connected,
               size: 18,
@@ -414,6 +412,7 @@ class LiveStatusBar extends StatelessWidget {
                         ),
                       ],
                     ),
+                  ?firmwareNotice,
                 ],
               ),
             ),

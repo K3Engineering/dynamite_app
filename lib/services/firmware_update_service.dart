@@ -69,11 +69,11 @@ class CheckFailed extends FirmwareCheckState {
 }
 
 /// Owns everything about release checks: the user's channel (persisted), the
-/// release-check state ([checkState]), the once-per-connect background check
-/// that raises the [FirmwareUpdateAvailable] banner, and the post-flash
-/// verdict (see [noteFlashAccepted]). The flash itself belongs to the update
-/// screen; this only answers "what should the device be running?". [link] is
-/// listened to from the constructor — construction is the wiring.
+/// release-check state ([checkState]), the once-per-connect background check,
+/// and the post-flash verdict (see [noteFlashAccepted]). The flash itself
+/// belongs to the update screen; this only answers "what should the device be
+/// running?". [link] is listened to from the constructor — construction is the
+/// wiring.
 class FirmwareUpdateService extends ChangeNotifier {
   FirmwareUpdateService({
     required SharedPreferences prefs,
@@ -112,10 +112,6 @@ class FirmwareUpdateService extends ChangeNotifier {
   /// drop. Only this background path consults it — UI-triggered checks
   /// always run.
   String? _checkedForDevice;
-
-  /// The target tag already bannered, so a re-check finding the same
-  /// difference doesn't stack a second snackbar.
-  String? _announcedTarget;
 
   /// The release tag a just-completed flash claims to have installed, held
   /// until the next successful check proves or disproves it (see
@@ -196,17 +192,6 @@ class FirmwareUpdateService extends ChangeNotifier {
           describeMatchesTag(check.installedDescribe, pending)) {
         _events.emit(FirmwareFlashVerified(check.installedDescribe));
       }
-      if (check.differsFromDevice) {
-        final tag = check.target!.tag;
-        if (tag != _announcedTarget) {
-          _announcedTarget = tag;
-          _events.emit(
-            FirmwareUpdateAvailable(deviceName: _link.connectedDeviceName),
-          );
-        }
-      } else {
-        _announcedTarget = null;
-      }
     }
     notifyListeners();
   }
@@ -217,7 +202,6 @@ class FirmwareUpdateService extends ChangeNotifier {
     final deviceId = _link.connectedDeviceId;
     if (deviceId.isEmpty) {
       _checkedForDevice = null;
-      _announcedTarget = null;
       checkState = const CheckNeverRan();
       notifyListeners();
       return;

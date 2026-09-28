@@ -288,26 +288,34 @@ class _FirmwareCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final service = context.watch<FirmwareUpdateService>();
-    final String subtitle = switch (service.checkState) {
+    final state = service.checkState;
+    final updateAvailable = state is CheckOk && state.result.differsFromDevice;
+    final scheme = Theme.of(context).colorScheme;
+    final String subtitle = switch (state) {
       CheckNeverRan() => 'Tap to check for updates',
       CheckRunning() => 'Checking for updates…',
       CheckOk(:final result) when result.target == null =>
         'No release available',
       CheckOk(:final result) when result.differsFromDevice =>
-        'Update available',
+        'Update available · ${result.target!.tag}',
       CheckOk() => 'Up to date',
       CheckFailed() => 'Check failed',
     };
+    // Availability fills the card: the app's "device is in this state, act on
+    // it" surface treatment (the connected row and the Live banner). Colors are
+    // explicit because the tinted card drops the ListTile's onSurface defaults
+    // to unreadable.
+    final onContainer = updateAvailable ? scheme.onPrimaryContainer : null;
     return Card(
+      color: updateAvailable ? scheme.primaryContainer : null,
       child: ListTile(
-        title: const Text('Firmware update'),
-        subtitle: Text(subtitle),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () => Navigator.of(context).push<void>(
-          MaterialPageRoute<void>(
-            builder: (_) => FirmwareUpdateScreen(onDone: onGoToDevices),
-          ),
-        ),
+        leading: updateAvailable
+            ? Icon(Icons.system_update_alt, color: scheme.inversePrimary)
+            : null,
+        title: Text('Firmware', style: TextStyle(color: onContainer)),
+        subtitle: Text(subtitle, style: TextStyle(color: onContainer)),
+        trailing: Icon(Icons.chevron_right, color: onContainer),
+        onTap: () => openFirmwareUpdate(context, onDone: onGoToDevices),
       ),
     );
   }

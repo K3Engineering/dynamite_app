@@ -12,11 +12,13 @@ import '../utils/format.dart';
 import '../widgets/bt_icon.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/feed_health_indicator.dart';
+import '../widgets/firmware_update_notice.dart';
 import '../widgets/rssi_indicator.dart';
 import '../widgets/section_header.dart';
 import '../widgets/snackbars.dart';
 import '../status_colors.dart';
 import '../widgets/wide_layout.dart';
+import 'firmware_update_screen.dart';
 
 class DevicesTab extends StatelessWidget {
   const DevicesTab({super.key, required this.onGoToSettings});
@@ -148,6 +150,10 @@ class DevicesTab extends StatelessWidget {
                       connectedRssi: bt.connectedRssi,
                       onDisconnect: bt.disconnectSelectedDevice,
                       onGoToSettings: onGoToSettings,
+                      // Already on Devices, the tab a completed flash lands
+                      // on, so "Done" has nowhere to jump.
+                      onReviewUpdate: () =>
+                          openFirmwareUpdate(context, onDone: () {}),
                     )
                   : _InactiveDeviceRow(
                       name: device.name ?? 'Unknown device',
@@ -172,6 +178,8 @@ class DevicesTab extends StatelessWidget {
                 connectedRssi: null,
                 onDisconnect: bt.disconnectSelectedDevice,
                 onGoToSettings: onGoToSettings,
+                onReviewUpdate: () =>
+                    openFirmwareUpdate(context, onDone: () {}),
               )
             else
               _InactiveDeviceRow(
@@ -495,6 +503,7 @@ class _ActiveDeviceRow extends StatelessWidget {
     required this.connectedRssi,
     required this.onDisconnect,
     required this.onGoToSettings,
+    required this.onReviewUpdate,
   });
 
   final String name;
@@ -514,6 +523,9 @@ class _ActiveDeviceRow extends StatelessWidget {
 
   /// The gear button's action.
   final VoidCallback onGoToSettings;
+
+  /// Opens the firmware update screen from the notice line.
+  final VoidCallback onReviewUpdate;
 
   @override
   Widget build(BuildContext context) {
@@ -608,6 +620,7 @@ class _ActiveDeviceRow extends StatelessWidget {
                 FeedHealthIndicator(
                   health: context.read<FeedHealthTracker>().health,
                 ),
+                FirmwareUpdateNotice(onReview: onReviewUpdate),
               ],
             ),
             trailing: wide ? actions : null,
