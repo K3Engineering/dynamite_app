@@ -53,7 +53,7 @@ dependencies:
   # Linux). file_picker 12 beta: the 11.x line pins win32 ^5, conflicting
   # with share_plus 13's win32 ^6 — re-evaluate at file_picker 12 stable.
   share_plus: ^13.3.0
-  file_picker: ^12.0.0
+  file_picker: ^13.1.0
   # For the YAML comment in the CSV export
   yaml_writer: ^2.1.0
   # For the CSV export's body rows (joining, quoting, \n line endings)
