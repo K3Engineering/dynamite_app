@@ -26,9 +26,9 @@ void main() {
       ),
     );
 
-    // 38 GB x 0.9 / 16 kB/s ≈ 26.5 days of runway, floored.
+    // 38 GB x 0.9 / 16 kB/s ~ 26.5 days of runway, floored.
     expect(
-      find.text('2.0 GB used · 38 GB free · ≈ 26 d of recording left'),
+      find.text('2.0 GB used · 38 GB free · ~ 26 d of recording left'),
       findsOneWidget,
     );
   });

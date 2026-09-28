@@ -598,7 +598,7 @@ class LiveStats extends StatelessWidget {
                 Padding(
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Text(
-                    '— no load cell assigned (Settings → Load cells)',
+                    '— no load cell assigned (Settings › Load cells)',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),

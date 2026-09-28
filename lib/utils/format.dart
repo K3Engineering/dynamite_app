@@ -102,10 +102,12 @@ String formatBytes(int bytes) {
 }
 
 /// Conservative recording runway, floored to a coarse bucket so the displayed
-/// number is always a minimum ("≈ 11 h" means at least 11 h).
+/// number is always a minimum ("~ 11 h" means at least 11 h). '~' rather than
+/// '≈': the bundled font subset has no '≈' glyph (see the fonts note in
+/// pubspec).
 String formatRunway(Duration runway) {
-  if (runway.inDays >= 2) return '≈ ${runway.inDays} d';
-  if (runway.inHours >= 2) return '≈ ${runway.inHours} h';
-  if (runway.inMinutes >= 15) return '≈ ${runway.inMinutes ~/ 5 * 5} min';
+  if (runway.inDays >= 2) return '~ ${runway.inDays} d';
+  if (runway.inHours >= 2) return '~ ${runway.inHours} h';
+  if (runway.inMinutes >= 15) return '~ ${runway.inMinutes ~/ 5 * 5} min';
   return '< 15 min';
 }

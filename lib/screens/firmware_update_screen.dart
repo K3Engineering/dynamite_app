@@ -356,7 +356,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         final target = result.target;
         if (target == null) return 'No release available for this board';
         return result.differsFromDevice
-            ? '${result.installedDescribe}  →  ${target.tag}'
+            ? '${result.installedDescribe}  ›  ${target.tag}'
             : '${result.installedDescribe} - up to date';
     }
   }
