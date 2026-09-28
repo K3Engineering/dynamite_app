@@ -176,7 +176,7 @@
       <div id="bar">
         <div id="bar-fill"></div>
       </div>
-      <span id="status">Loading&hellip;</span>
+      <span id="status">Downloading&hellip;</span>
     </div>
   </div>
   <!-- Primary-tab gate: flutter_bootstrap.js adds .show when this tab lost
@@ -188,26 +188,21 @@
     <div id="gate-hint">Close that tab to use the app here</div>
   </div>
   <script>
-    // Advance the status through the network milestones: one resource-timing
-    // entry fires per completed file. Entries can arrive out of order (the
-    // preloaded app wasm races the renderer), so only ever move forward;
-    // flutter_bootstrap.js then takes over for the engine stages.
-    var stages = [
-      ['flutter_bootstrap.js', 'Loading engine…'],
-      ['main.dart.mjs', 'Loading renderer…'],
-      ['skwasm.wasm', 'Downloading app…'],
-      ['main.dart.wasm', 'Compiling…'],
-    ];
-    var reached = -1;
+    // The two wasm files fetch concurrently (main.dart.wasm via the preload
+    // above), so their timing entries arrive in either order: track each
+    // independently and only claim "Compiling…" once both have landed —
+    // app-wasm instantiation awaits the skwasm instance, so anything
+    // earlier is still download-bound. flutter_bootstrap.js labels the
+    // engine stages after this.
+    var skwasm = false, mainWasm = false;
     new PerformanceObserver(function (list) {
       list.getEntries().forEach(function (entry) {
-        stages.forEach(function (stage, i) {
-          if (i > reached && entry.name.endsWith(stage[0])) {
-            reached = i;
-            document.getElementById('status').textContent = stage[1];
-          }
-        });
+        if (entry.name.endsWith('skwasm.wasm')) skwasm = true;
+        if (entry.name.endsWith('main.dart.wasm')) mainWasm = true;
       });
+      if (skwasm && mainWasm) {
+        document.getElementById('status').textContent = 'Compiling…';
+      }
     }).observe({ type: 'resource', buffered: true });
   </script>
   <script src="flutter_bootstrap.js" async></script>
