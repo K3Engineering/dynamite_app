@@ -100,18 +100,21 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # Bundle Roboto. With no text font in the manifest the engine's font fallback fetches
-  # Roboto from fonts.gstatic.com (fontFallbackBaseUrl), a cross-origin round
-  # trip on the critical path. Bundling joins it to FontManifest.json so it
-  # can be preloaded alongside MaterialIcons in web/index.html. Text fonts
-  # are NOT tree-shaken at build time (only icon fonts are), so this is the
-  # engine's own basic-Latin subset — the same file the fallback would fetch.
-  # TODO: we use a few different weights, they are synthesized algorithmically from this font
-  # Investigate whether it's worth it to fetch the other weights as well
+  # Bundle Roboto as one variable font (wght 100-900); a single file covers
+  # every FontWeight the app requests, so no weight is synthesized. With no
+  # text font in the manifest the engine's font fallback fetches Roboto from
+  # fonts.gstatic.com (fontFallbackBaseUrl), a cross-origin round trip on the
+  # critical path. Bundling joins it to FontManifest.json so it can be
+  # preloaded alongside MaterialIcons in web/index.html. Text fonts are NOT
+  # tree-shaken at build time (only icon fonts are), so this is Google Fonts'
+  # basic-Latin woff2. The subset lacks a few glyphs ('→', '≈', math/box
+  # chars): UI strings avoid them (see '›' in live_tab/firmware_update_screen,
+  # '~' in format.dart); don't add new ones without re-checking coverage.
+  # Non-latin user text (session/cell names) renders via platform fallback.
   fonts:
     - family: Roboto
       fonts:
-        - asset: fonts/Roboto-Regular.woff2
+        - asset: fonts/Roboto-Variable.woff2
 
   # To add assets to your application, add an assets section, like this:
   # assets:

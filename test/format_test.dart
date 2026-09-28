@@ -122,18 +122,18 @@ void main() {
 
   group('formatRunway', () {
     test('whole days at 2+', () {
-      expect(formatRunway(const Duration(days: 4, hours: 5)), '≈ 4 d');
-      expect(formatRunway(const Duration(days: 2)), '≈ 2 d');
+      expect(formatRunway(const Duration(days: 4, hours: 5)), '~ 4 d');
+      expect(formatRunway(const Duration(days: 2)), '~ 2 d');
     });
 
     test('whole hours at 2+', () {
-      expect(formatRunway(const Duration(hours: 11, minutes: 42)), '≈ 11 h');
-      expect(formatRunway(const Duration(hours: 2)), '≈ 2 h');
+      expect(formatRunway(const Duration(hours: 11, minutes: 42)), '~ 11 h');
+      expect(formatRunway(const Duration(hours: 2)), '~ 2 h');
     });
 
     test('5-minute steps below 2 hours', () {
-      expect(formatRunway(const Duration(minutes: 47)), '≈ 45 min');
-      expect(formatRunway(const Duration(minutes: 15)), '≈ 15 min');
+      expect(formatRunway(const Duration(minutes: 47)), '~ 45 min');
+      expect(formatRunway(const Duration(minutes: 15)), '~ 15 min');
     });
 
     test('the floor is a bare minimum', () {
