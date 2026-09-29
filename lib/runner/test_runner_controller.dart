@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart' show Color;
 
 import '../analysis/events.dart';
+import '../analysis/gait.dart';
 import '../analysis/metrics.dart';
 import '../analysis/metrics_sway.dart';
 import '../analysis/plate_series.dart';
@@ -99,6 +100,9 @@ class TestRunnerController extends ChangeNotifier {
   /// Completed timed windows (timed-capture mold).
   List<SwayRepResult> swayReps = const [];
 
+  /// Completed walk-by passes (free-pass mold).
+  List<GaitPassResult> gaitPasses = const [];
+
   /// The reason the most recent attempt was discarded, or null.
   String? lastDiscard;
 
@@ -119,13 +123,21 @@ class TestRunnerController extends ChangeNotifier {
     if (bw == null || origin == null) return null;
     final testReps = switch (test.mold) {
       TestMold.repCount => [for (final r in reps) r.phases.toTestRep(-origin)],
-      TestMold.timedCapture || TestMold.freePass => [
+      TestMold.timedCapture => [
         for (final r in swayReps)
           TestRep(
             label: r.label.isEmpty ? null : r.label,
             start: r.start - origin,
             end: r.end - origin,
             sampleRate: r.sampleRate,
+          ),
+      ],
+      TestMold.freePass => [
+        for (final p in gaitPasses)
+          TestRep(
+            start: p.start - origin,
+            end: p.end - origin,
+            sampleRate: p.sampleRate,
           ),
       ],
     };
@@ -154,6 +166,13 @@ class TestRunnerController extends ChangeNotifier {
   int _windowIndex = 0;
   int? _windowStart;
 
+  /// Free-pass scan pointer into the source (absolute sample index).
+  int _scanFrom = 0;
+
+  /// False until the plate has unloaded once after recording start: the
+  /// stance baseline itself must not scan as a footstrike.
+  bool _gaitStarted = false;
+
   /// The source's total-sample count latched at [recorder] start; the
   /// recording's first sample, i.e. the translation between the live
   /// source's index space and the session's (see [result]).
@@ -180,6 +199,8 @@ class TestRunnerController extends ChangeNotifier {
     const windowShade = Color(0x1A000000);
     final spans = <GraphOverlaySpan>[
       for (final rep in swayReps)
+        GraphOverlaySpan(start: rep.start, end: rep.end, color: windowShade),
+      for (final rep in gaitPasses)
         GraphOverlaySpan(start: rep.start, end: rep.end, color: windowShade),
       for (final rep in reps)
         for (final s in rep.phases.spans)
@@ -225,8 +246,16 @@ class TestRunnerController extends ChangeNotifier {
             color: const Color(0xFF2196F3),
           ),
     ];
-    if (spans.isEmpty && ellipses.isEmpty) return null;
-    return GraphOverlays(spans: spans, plateEllipses: ellipses);
+    final trails = <PlateTrailOverlay>[
+      for (final p in gaitPasses)
+        PlateTrailOverlay(points: p.trail, color: gaitTrailColor(p.number)),
+    ];
+    if (spans.isEmpty && ellipses.isEmpty && trails.isEmpty) return null;
+    return GraphOverlays(
+      spans: spans,
+      plateEllipses: ellipses,
+      plateTrails: trails,
+    );
   }
 
   JumpContext? get _jumpContext {
@@ -330,7 +359,7 @@ class TestRunnerController extends ChangeNotifier {
       case TestRunnerPhase.jumping:
         _advanceJump();
       case TestRunnerPhase.capturing:
-        _advanceCapture();
+        test.mold == TestMold.freePass ? _advanceGaitScan() : _advanceCapture();
       case TestRunnerPhase.summary:
       case TestRunnerPhase.failed:
         break;
@@ -343,6 +372,7 @@ class TestRunnerController extends ChangeNotifier {
       case TestRecorderStarted():
         reps = const [];
         swayReps = const [];
+        gaitPasses = const [];
         _repStart = null;
         // start() is synchronous and the hub forwards batches from its tail,
         // so this is the first recorded sample's index in the source's space.
@@ -357,7 +387,9 @@ class TestRunnerController extends ChangeNotifier {
           case TestMold.timedCapture:
             _beginWindow(0);
           case TestMold.freePass:
-            _fail('free-pass mold is not implemented yet');
+            _scanFrom = source.totalSamples;
+            _gaitStarted = false;
+            phase = TestRunnerPhase.capturing;
         }
       case TestRecorderRefused(:final reason):
         _fail(reason);
@@ -481,9 +513,14 @@ class TestRunnerController extends ChangeNotifier {
   // -- Timed-capture mold --
 
   /// Status for the status strip during [TestRunnerPhase.capturing]: which
-  /// window and how many whole milliseconds of it remain.
-  ({int number, int count, String label, int remainingMs})? get captureStatus {
-    if (phase != TestRunnerPhase.capturing) return null;
+  /// window, its total length in samples, and how many whole milliseconds of
+  /// it remain.
+  ({int number, int count, String label, int durationMs, int remainingMs})?
+  get captureStatus {
+    if (test.mold != TestMold.timedCapture ||
+        phase != TestRunnerPhase.capturing) {
+      return null;
+    }
     final start = _windowStart;
     final reader = source.read();
     if (start == null || reader == null) return null;
@@ -494,6 +531,7 @@ class TestRunnerController extends ChangeNotifier {
       number: _windowIndex + 1,
       count: test.windows.length,
       label: def.label,
+      durationMs: def.durationMs,
       remainingMs: math.max(0, remaining * 1000 ~/ reader.sampleRate),
     );
   }
@@ -552,6 +590,105 @@ class TestRunnerController extends ChangeNotifier {
   void _fail(String message) {
     error = message;
     phase = TestRunnerPhase.failed;
+    notifyListeners();
+  }
+
+  // -- Free-pass (gait) mold --
+
+  /// Scan forward for completed loading episodes: touchdown over the load
+  /// threshold, then the settle back under it. Episodes failing any of
+  /// [kGaitParams]'s validity checks are dropped with a note; a
+  /// trailing episode without its settle tail is left for the next tick (or
+  /// silently dropped when the operator stops).
+  void _advanceGaitScan() {
+    final reader = source.read();
+    final bw = bodyWeightKgf;
+    if (reader == null || bw == null) return;
+    final total = source.totalSamples;
+    if (total <= _scanFrom) return;
+    const params = kGaitParams;
+    final rate = reader.sampleRate;
+    final threshold = params.loadFraction * bw;
+    final sustain = math.max(1, params.onsetSustainMs * rate ~/ 1000);
+    final settle = params.settleMs * rate ~/ 1000;
+    final window = PlateWindow.capture(reader, _scanFrom, total);
+
+    if (!_gaitStarted) {
+      // Skip the stance that measured body weight: wait for the first
+      // settled unload, then start scanning for footstrikes.
+      final off = findSustainedBelow(
+        window,
+        window.start,
+        window.end,
+        threshold,
+        settle,
+      );
+      if (off == null) return;
+      _scanFrom = off + settle;
+      _gaitStarted = true;
+      notifyListeners();
+      return;
+    }
+
+    final touchdown = findSustainedAbove(
+      window,
+      window.start,
+      window.end,
+      threshold,
+      sustain,
+    );
+    if (touchdown == null) {
+      // Idle plate: trim the scan window down to the armed tail so an idle
+      // walk-by session doesn't rescan an ever-growing window every tick.
+      _scanFrom = math.max(_scanFrom + 1, total - sustain);
+      return;
+    }
+    final settleStart = findSustainedBelow(
+      window,
+      touchdown,
+      window.end,
+      threshold,
+      settle,
+    );
+    if (settleStart == null) {
+      // Contact longer than any footstrike: it's someone standing on the
+      // plate. Drop the episode and wait for the unload before scanning on
+      // (the same state as at recording start).
+      if (total - touchdown > params.maxContactMs * rate ~/ 1000) {
+        lastDiscard = 'Pass dropped: a touch or a stand, not a footstrike.';
+        _gaitStarted = false;
+        _scanFrom = touchdown;
+        notifyListeners();
+      }
+      // Still in contact (or the tail hasn't arrived yet): next tick.
+      return;
+    }
+
+    final episodeEnd = settleStart + settle;
+    final episode = PlateWindow.capture(reader, touchdown, episodeEnd);
+    switch (locateGaitContact(episode, GaitContext(bwKgf: bw))) {
+      case GaitPass(:final touchdown, :final toeOff):
+        gaitPasses = [
+          ...gaitPasses,
+          buildGaitPassResult(
+            reader,
+            GaitPass(touchdown, toeOff),
+            gaitPasses.length + 1,
+            GaitContext(bwKgf: bw),
+          ),
+        ];
+        lastDiscard = null;
+      case GaitRejected(:final reason):
+        lastDiscard = switch (reason) {
+          GaitInvalidReason.offPlateEdge =>
+            'Pass dropped: the foot hit the plate edge.',
+          GaitInvalidReason.contactLength =>
+            'Pass dropped: a touch or a stand, not a footstrike.',
+          GaitInvalidReason.underLoaded =>
+            'Pass dropped: not enough weight on the plate.',
+        };
+    }
+    _scanFrom = episodeEnd;
     notifyListeners();
   }
 

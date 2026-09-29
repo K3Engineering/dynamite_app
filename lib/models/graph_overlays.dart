@@ -24,6 +24,16 @@ class GraphOverlayMarker {
   final Color color;
 }
 
+/// A polyline of CoP positions on the 2D plate pane (a gait line through
+/// one footstrike), in support-normalized plate units (±1 = a plate edge).
+@immutable
+class PlateTrailOverlay {
+  const PlateTrailOverlay({required this.points, required this.color});
+
+  final List<(double, double)> points;
+  final Color color;
+}
+
 /// A confidence ellipse over a CoP cloud, drawn on the 2D plate pane in
 /// support-normalized plate units (±1 = a plate edge).
 @immutable
@@ -51,19 +61,30 @@ class PlateEllipseOverlay {
 }
 
 /// Annotation chrome layered on the graphs: spans/markers for time-series
-/// traces, ellipses for the 2D plate pane. Each pane picks what it can draw.
+/// traces, ellipses/trails for the 2D plate pane. Each pane picks what it
+/// can draw.
 @immutable
 class GraphOverlays {
   const GraphOverlays({
     this.spans = const [],
     this.markers = const [],
     this.plateEllipses = const [],
+    this.plateTrails = const [],
   });
 
   final List<GraphOverlaySpan> spans;
   final List<GraphOverlayMarker> markers;
   final List<PlateEllipseOverlay> plateEllipses;
+  final List<PlateTrailOverlay> plateTrails;
 }
+
+/// Gait-line color by 1-based pass number (cycles through a small palette).
+Color gaitTrailColor(int number) => switch (number % 4) {
+  1 => const Color(0xFF2196F3), // blue
+  2 => const Color(0xFFE91E63), // pink
+  3 => const Color(0xFF4CAF50), // green
+  _ => const Color(0xFFFF9800), // orange
+};
 
 /// Fill color for a CMJ phase label (see [CmjPhases.spans]).
 Color cmjPhaseColor(String label) => switch (label) {

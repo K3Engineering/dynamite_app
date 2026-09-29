@@ -779,6 +779,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             labels: _labelCache,
             bakePump: _bakePump,
             ellipses: widget.overlays?.plateEllipses ?? const [],
+            trails: widget.overlays?.plateTrails ?? const [],
           ),
         );
       case AnalysisPaneKind.rms:
@@ -3201,6 +3202,7 @@ class _ForcePlatePainter extends CustomPainter {
     required this.labels,
     required this.bakePump,
     required this.ellipses,
+    required this.trails,
   }) : super(repaint: Listenable.merge([_data.repaint, _ctrl, bakePump]));
 
   final GraphDataSource _data;
@@ -3228,6 +3230,9 @@ class _ForcePlatePainter extends CustomPainter {
   /// CoP-cloud confidence ellipses (see [PlateEllipseOverlay]), drawn over
   /// the trail.
   final List<PlateEllipseOverlay> ellipses;
+
+  /// CoP polylines of individual passes (see [PlateTrailOverlay]).
+  final List<PlateTrailOverlay> trails;
 
   final ColorScheme colorScheme;
   final double dpr;
@@ -3331,6 +3336,29 @@ class _ForcePlatePainter extends CustomPainter {
         if (trail.workRemains) bakePump.schedule();
       }
       _drawErrBar(canvas, plotW, plotH, vs, ve);
+    }
+
+    // Pass polylines (gait lines), under the ellipses/head marker.
+    for (final t in trails) {
+      if (t.points.length < 2) continue;
+      final path = Path()
+        ..moveTo(
+          toPx(t.points.first.$1, t.points.first.$2).dx,
+          toPx(t.points.first.$1, t.points.first.$2).dy,
+        );
+      for (int i = 1; i < t.points.length; i++) {
+        final p = toPx(t.points[i].$1, t.points[i].$2);
+        path.lineTo(p.dx, p.dy);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = t.color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..strokeJoin = StrokeJoin.round
+          ..strokeCap = StrokeCap.round,
+      );
     }
 
     // Confidence ellipses over the trail, under the head marker.
