@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../analysis/test_result.dart';
 import '../models/damaged_session.dart';
 import '../models/device_profile.dart';
 import '../models/session_catalog.dart';
@@ -364,6 +365,7 @@ class SessionStore {
       channelLabels: meta.channelLabels,
       visibleChannels: edit.visibleChannels,
       interrupted: interrupted,
+      testResult: edit.testResult,
     );
   }
 
@@ -449,6 +451,19 @@ class SessionStore {
 
   Future<void> setSessionNotes(String id, String notes) =>
       editSession(id, (current) => current.copyWith(notes: notes));
+
+  /// Attach (or clear) a guided-test analysis. Whole-snapshot edit like the
+  /// others; unknown/predating readers ignore the key.
+  Future<void> setSessionTestResult(String id, TestResult? result) =>
+      editSession(
+        id,
+        (current) => SessionEdit(
+          name: current.name,
+          notes: current.notes,
+          visibleChannels: current.visibleChannels,
+          testResult: result,
+        ),
+      );
 
   /// Delete the session directory.
   Future<void> deleteSession(String id) => _withCatalog((files, _) async {
