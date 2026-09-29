@@ -7,9 +7,12 @@ import 'package:material_ui/material_ui.dart' show Color;
 import '../analysis/events.dart';
 import '../analysis/gait.dart';
 import '../analysis/metrics.dart';
+import '../analysis/metrics_isometric.dart';
+import '../analysis/metrics_single_leg.dart';
 import '../analysis/metrics_sway.dart';
 import '../analysis/plate_series.dart';
 import '../analysis/segmentation_cmj.dart';
+import '../analysis/segmentation_dj.dart';
 import '../analysis/test_def.dart';
 import '../analysis/test_result.dart';
 import '../models/graph_overlays.dart';
@@ -97,11 +100,25 @@ class TestRunnerController extends ChangeNotifier {
   /// update [lastDiscard]).
   List<CmjRepResult> reps = const [];
 
+  /// Completed drop-jump reps (rep-count mold with unloaded arming).
+  List<DjRepResult> djReps = const [];
+
   /// Completed timed windows (timed-capture mold).
   List<SwayRepResult> swayReps = const [];
 
   /// Completed walk-by passes (free-pass mold).
   List<GaitPassResult> gaitPasses = const [];
+
+  /// Completed isometric holds (timed-capture windows with a target band).
+  List<IsoRepResult> isoReps = const [];
+
+  /// Completed single-leg holds (timed-capture windows with toe-off gating).
+  List<SlRepResult> slReps = const [];
+
+  /// Persistable reps for the timed/free-pass molds, in capture order and
+  /// the live source's index space ([result] shifts them on read). Jump
+  /// reps live on [reps] instead, since their spans come from segmentation.
+  List<TestRep> _recordedReps = const [];
 
   /// The reason the most recent attempt was discarded, or null.
   String? lastDiscard;
@@ -122,24 +139,15 @@ class TestRunnerController extends ChangeNotifier {
     final origin = _recordOrigin;
     if (bw == null || origin == null) return null;
     final testReps = switch (test.mold) {
-      TestMold.repCount => [for (final r in reps) r.phases.toTestRep(-origin)],
-      TestMold.timedCapture => [
-        for (final r in swayReps)
-          TestRep(
-            label: r.label.isEmpty ? null : r.label,
-            start: r.start - origin,
-            end: r.end - origin,
-            sampleRate: r.sampleRate,
-          ),
-      ],
-      TestMold.freePass => [
-        for (final p in gaitPasses)
-          TestRep(
-            start: p.start - origin,
-            end: p.end - origin,
-            sampleRate: p.sampleRate,
-          ),
-      ],
+      TestMold.repCount => switch (test.family) {
+        TestFamily.dropJump => [
+          for (final r in djReps) r.phases.toTestRep(-origin),
+        ],
+        _ => [for (final r in reps) r.phases.toTestRep(-origin)],
+      },
+      // Timed and free-pass molds accumulate their reps as they finalize.
+      TestMold.timedCapture ||
+      TestMold.freePass => [for (final r in _recordedReps) r.shifted(-origin)],
     };
     if (testReps.isEmpty) return null;
     return TestResult(
@@ -165,6 +173,11 @@ class TestRunnerController extends ChangeNotifier {
   /// Timed-capture progress: which window and where it started.
   int _windowIndex = 0;
   int? _windowStart;
+
+  /// The moment the force first entered the isometric band (sustained), or
+  /// null while the athlete is still getting into it: the hold runs from
+  /// here, not from the window's nominal start.
+  int? _isoEntry;
 
   /// Free-pass scan pointer into the source (absolute sample index).
   int _scanFrom = 0;
@@ -200,9 +213,20 @@ class TestRunnerController extends ChangeNotifier {
     final spans = <GraphOverlaySpan>[
       for (final rep in swayReps)
         GraphOverlaySpan(start: rep.start, end: rep.end, color: windowShade),
+      for (final rep in slReps)
+        GraphOverlaySpan(start: rep.start, end: rep.end, color: windowShade),
+      for (final rep in isoReps)
+        GraphOverlaySpan(start: rep.start, end: rep.end, color: windowShade),
       for (final rep in gaitPasses)
         GraphOverlaySpan(start: rep.start, end: rep.end, color: windowShade),
       for (final rep in reps)
+        for (final s in rep.phases.spans)
+          GraphOverlaySpan(
+            start: s.start,
+            end: s.end,
+            color: cmjPhaseColor(s.label),
+          ),
+      for (final rep in djReps)
         for (final s in rep.phases.spans)
           GraphOverlaySpan(
             start: s.start,
@@ -214,22 +238,27 @@ class TestRunnerController extends ChangeNotifier {
     if (phase == TestRunnerPhase.jumping && start != null) {
       final total = source.totalSamples;
       if (total > start) {
-        final ctx = _jumpContext;
-        if (ctx != null) {
-          final seg = segmentCmj(
-            PlateWindow.capture(reader, start, total),
-            ctx,
-          );
-          if (seg is CmjRep) {
-            for (final s in seg.phases.spans) {
-              spans.add(
-                GraphOverlaySpan(
-                  start: s.start,
-                  end: s.end,
-                  color: cmjPhaseColor(s.label),
-                ),
-              );
-            }
+        final bw = bodyWeightKgf;
+        if (bw != null) {
+          final preview = PlateWindow.capture(reader, start, total);
+          final previewSpans = switch (test.family) {
+            TestFamily.dropJump => switch (segmentDj(preview, bw)) {
+              DjRep(:final phases) => phases.spans,
+              DjRejected() => const <PhaseSpan>[],
+            },
+            _ => switch (segmentCmj(preview, _jumpContext!)) {
+              CmjRep(:final phases) => phases.spans,
+              CmjRejected() => const <PhaseSpan>[],
+            },
+          };
+          for (final s in previewSpans) {
+            spans.add(
+              GraphOverlaySpan(
+                start: s.start,
+                end: s.end,
+                color: cmjPhaseColor(s.label),
+              ),
+            );
           }
         }
       }
@@ -244,6 +273,16 @@ class TestRunnerController extends ChangeNotifier {
             semiB: e.semiB,
             angleRad: e.angleRad,
             color: const Color(0xFF2196F3),
+          ),
+      for (final rep in slReps)
+        if (rep.ellipse case final e?)
+          PlateEllipseOverlay(
+            cx: e.cx,
+            cy: e.cy,
+            semiA: e.semiA,
+            semiB: e.semiB,
+            angleRad: e.angleRad,
+            color: const Color(0xFF9C27B0),
           ),
     ];
     final trails = <PlateTrailOverlay>[
@@ -371,14 +410,20 @@ class TestRunnerController extends ChangeNotifier {
     switch (result) {
       case TestRecorderStarted():
         reps = const [];
+        djReps = const [];
         swayReps = const [];
         gaitPasses = const [];
+        isoReps = const [];
+        slReps = const [];
+        _recordedReps = const [];
         _repStart = null;
         // start() is synchronous and the hub forwards batches from its tail,
         // so this is the first recorded sample's index in the source's space.
         _recordOrigin = source.totalSamples;
-        // A usable body-weight baseline was just measured: armed for rep 1.
-        _armed = true;
+        // A usable body-weight baseline was just measured: stance-armed
+        // tests are armed for rep 1. Unloaded arming (drop jump from a box)
+        // arms only once the plate goes quiet-empty.
+        _armed = test.arming == TestArming.stance;
         lastDiscard = null;
         sessionName = _sessionName();
         switch (test.mold) {
@@ -397,17 +442,14 @@ class TestRunnerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Armed and waiting for the next rep: a stable loaded stance arms the rep,
-  /// then the first sustained exit from the body-weight band starts it. A
-  /// downward exit begins a countermovement; an upward one a squat-jump push.
+  /// Armed and waiting for the next rep. Stance-armed: a stable loaded
+  /// stance arms, then the first sustained exit from the body-weight band
+  /// starts a rep (down = countermovement, up = squat-jump push).
+  /// Unloaded-armed: a quiet empty plate arms, then the first sustained
+  /// load starts the rep (the drop-jump landing).
   void _checkOnset() {
     final reader = source.read();
     if (reader == null) return;
-    if (!_armed) {
-      if (!_stanceStable()) return;
-      _armed = true;
-      notifyListeners();
-    }
     final total = source.totalSamples;
     // Recent window only: a full second can still hold the previous rep's
     // flight zeros, which would read as a spurious onset.
@@ -416,6 +458,33 @@ class TestRunnerController extends ChangeNotifier {
       total - 300 * reader.sampleRate ~/ 1000,
     );
     final window = PlateWindow.capture(reader, from, total);
+    if (test.arming == TestArming.unloaded) {
+      if (!_armed) {
+        if (!_plateUnloaded()) return;
+        _armed = true;
+        notifyListeners();
+      }
+      final bw = bodyWeightKgf!;
+      final touchdown = findSustainedAbove(
+        window,
+        window.start,
+        window.end,
+        kDjParams.loadFraction * bw,
+        math.max(1, kDjParams.sustainMs * reader.sampleRate ~/ 1000),
+      );
+      if (touchdown != null) {
+        _repStart = touchdown;
+        _armed = false;
+        phase = TestRunnerPhase.jumping;
+        notifyListeners();
+      }
+      return;
+    }
+    if (!_armed) {
+      if (!_stanceStable()) return;
+      _armed = true;
+      notifyListeners();
+    }
     final (lower, upper) = onsetBandKgf(_jumpContext!);
     final onset = findSustainedOutside(
       window,
@@ -431,6 +500,19 @@ class TestRunnerController extends ChangeNotifier {
       phase = TestRunnerPhase.jumping;
       notifyListeners();
     }
+  }
+
+  /// A quiet empty plate: the arming condition for unloaded-start tests
+  /// (athlete back on the box between drop jumps).
+  bool _plateUnloaded() {
+    final reader = source.read();
+    if (reader == null) return false;
+    final total = source.totalSamples;
+    final n = 300 * reader.sampleRate ~/ 1000;
+    if (total - source.oldestSample < n) return false;
+    final window = PlateWindow.capture(reader, total - n, total);
+    final baseline = estimateBaseline(window, window.start, window.end);
+    return baseline != null && baseline.meanKgf.abs() < _emptyPlateKgf;
   }
 
   /// A short loaded stance at body weight: the re-arm condition between reps.
@@ -464,6 +546,25 @@ class TestRunnerController extends ChangeNotifier {
       return;
     }
     final window = PlateWindow.capture(reader, start, total);
+    if (test.family == TestFamily.dropJump) {
+      switch (segmentDj(window, bodyWeightKgf!)) {
+        case DjRep(:final phases):
+          _finishDjRep(window, phases);
+        case DjRejected(:final reason):
+          switch (reason) {
+            case DjInvalidReason.noContact:
+            case DjInvalidReason.noFlight:
+            case DjInvalidReason.incomplete:
+              // Still in progress: keep watching.
+              break;
+            case DjInvalidReason.noRebound:
+              _discard('No rebound detected — drop and jump straight back up.');
+            case DjInvalidReason.steppedOff:
+              _fail('The athlete left the plate mid-jump.');
+          }
+      }
+      return;
+    }
     switch (segmentCmj(window, _jumpContext!)) {
       case CmjRep(:final phases, :final jumpClass):
         _finishRep(window, phases, jumpClass);
@@ -502,6 +603,26 @@ class TestRunnerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _finishDjRep(PlateWindow window, DjPhases phases) {
+    djReps = [
+      ...djReps,
+      DjRepResult(
+        number: djReps.length + 1,
+        phases: phases,
+        metrics: evaluateDjMetrics(window, phases),
+      ),
+    ];
+    _repStart = null;
+    _armed = false;
+    lastDiscard = null;
+    if (djReps.length >= targetReps) {
+      unawaited(stopAndFinish());
+    } else {
+      phase = TestRunnerPhase.readyForRep;
+    }
+    notifyListeners();
+  }
+
   void _discard(String reason) {
     lastDiscard = reason;
     _repStart = null;
@@ -513,9 +634,16 @@ class TestRunnerController extends ChangeNotifier {
   // -- Timed-capture mold --
 
   /// Status for the status strip during [TestRunnerPhase.capturing]: which
-  /// window, its total length in samples, and how many whole milliseconds of
-  /// it remain.
-  ({int number, int count, String label, int durationMs, int remainingMs})?
+  /// window, its total length, how many whole milliseconds remain, and
+  /// whether an isometric hold is still waiting for band entry.
+  ({
+    int number,
+    int count,
+    String label,
+    int durationMs,
+    int remainingMs,
+    bool awaitingBand,
+  })?
   get captureStatus {
     if (test.mold != TestMold.timedCapture ||
         phase != TestRunnerPhase.capturing) {
@@ -525,14 +653,18 @@ class TestRunnerController extends ChangeNotifier {
     final reader = source.read();
     if (start == null || reader == null) return null;
     final def = test.windows[_windowIndex];
+    // An isometric hold runs from band entry, and the countdown with it.
+    final awaiting = def.eval == TestWindowEval.isometric && _isoEntry == null;
+    final anchor = awaiting ? start : (_isoEntry ?? start);
     final target = def.durationMs * reader.sampleRate ~/ 1000;
-    final remaining = target - (source.totalSamples - start);
+    final remaining = target - (source.totalSamples - anchor);
     return (
       number: _windowIndex + 1,
       count: test.windows.length,
       label: def.label,
       durationMs: def.durationMs,
       remainingMs: math.max(0, remaining * 1000 ~/ reader.sampleRate),
+      awaitingBand: awaiting,
     );
   }
 
@@ -542,6 +674,7 @@ class TestRunnerController extends ChangeNotifier {
   void _beginWindow(int index) {
     _windowIndex = index;
     _windowStart = source.totalSamples;
+    _isoEntry = null;
     phase = TestRunnerPhase.capturing;
     notifyListeners();
   }
@@ -553,14 +686,109 @@ class TestRunnerController extends ChangeNotifier {
     final def = test.windows[_windowIndex];
     final target = def.durationMs * reader.sampleRate ~/ 1000;
     if (source.totalSamples - start < target) return;
-    swayReps = [
-      ...swayReps,
-      evaluateSwayWindow(
-        PlateWindow.capture(reader, start, start + target),
-        def.label,
-        swayReps.length + 1,
-      ),
-    ];
+    switch (def.eval) {
+      case TestWindowEval.sway:
+        swayReps = [
+          ...swayReps,
+          evaluateSwayWindow(
+            PlateWindow.capture(reader, start, start + target),
+            def.label,
+            swayReps.length + 1,
+          ),
+        ];
+        final rep = swayReps.last;
+        _recordedReps = [
+          ..._recordedReps,
+          TestRep(
+            label: rep.label.isEmpty ? null : rep.label,
+            start: rep.start,
+            end: rep.end,
+            sampleRate: rep.sampleRate,
+          ),
+        ];
+      case TestWindowEval.isometric:
+        final band = def.isoBand!;
+        final ctx = IsoContext.forBw(
+          bodyWeightKgf!,
+          band.centerFractionOfBw,
+          band.halfWidthFraction,
+        );
+        // The hold runs from the first sustained band entry, not from the
+        // window's nominal start — the athlete gets into the press first.
+        var entry = _isoEntry;
+        if (entry == null) {
+          final sustain = 300 * reader.sampleRate ~/ 1000;
+          final search = PlateWindow.capture(
+            reader,
+            start,
+            source.totalSamples,
+          );
+          for (int i = start; i + sustain <= source.totalSamples; i++) {
+            bool inside = true;
+            for (int k = 0; k < sustain; k++) {
+              final f = search.smoothAt(i + k);
+              if (f < ctx.bandLowKgf || f > ctx.bandHighKgf) {
+                inside = false;
+                break;
+              }
+            }
+            if (inside) {
+              entry = i;
+              _isoEntry = i;
+              notifyListeners();
+              break;
+            }
+          }
+          if (entry == null) return;
+        }
+        if (source.totalSamples - entry < target) return;
+        isoReps = [
+          ...isoReps,
+          evaluateIsoWindow(
+            PlateWindow.capture(reader, entry, entry + target),
+            ctx,
+            def.label,
+            isoReps.length + 1,
+          ),
+        ];
+        final rep = isoReps.last;
+        _recordedReps = [
+          ..._recordedReps,
+          TestRep(
+            label: rep.label.isEmpty ? null : rep.label,
+            start: rep.start,
+            end: rep.end,
+            sampleRate: rep.sampleRate,
+          ),
+        ];
+      case TestWindowEval.singleLeg:
+        final window = PlateWindow.capture(reader, start, start + target);
+        final interval = findSingleLegInterval(window, bwKgf: bodyWeightKgf!);
+        if (interval == null) {
+          lastDiscard =
+              'No single-leg lift detected — the window is discarded.';
+          break;
+        }
+        slReps = [
+          ...slReps,
+          evaluateSlWindow(
+            PlateWindow.capture(reader, interval.start, interval.end),
+            interval.loadedLeft ? 'Left leg' : 'Right leg',
+            slReps.length + 1,
+          ),
+        ];
+        final rep = slReps.last;
+        _recordedReps = [
+          ..._recordedReps,
+          TestRep(
+            label: rep.label,
+            start: rep.start,
+            end: rep.end,
+            sampleRate: rep.sampleRate,
+          ),
+        ];
+        lastDiscard = null;
+    }
     final next = _windowIndex + 1;
     if (next >= test.windows.length) {
       _windowStart = null;
@@ -591,6 +819,22 @@ class TestRunnerController extends ChangeNotifier {
     error = message;
     phase = TestRunnerPhase.failed;
     notifyListeners();
+  }
+
+  /// The active isometric window's hold band in kgf, or null outside an
+  /// isometric capture (for the status strip's aim line).
+  ({double low, double high, double center})? get activeBandKgfs {
+    if (phase != TestRunnerPhase.capturing) return null;
+    final def = test.windows[_windowIndex];
+    if (def.eval != TestWindowEval.isometric) return null;
+    final bw = bodyWeightKgf;
+    if (bw == null) return null;
+    final band = def.isoBand!;
+    return (
+      low: bw * (band.centerFractionOfBw - band.halfWidthFraction),
+      high: bw * (band.centerFractionOfBw + band.halfWidthFraction),
+      center: bw * band.centerFractionOfBw,
+    );
   }
 
   // -- Free-pass (gait) mold --
@@ -675,6 +919,15 @@ class TestRunnerController extends ChangeNotifier {
             GaitPass(touchdown, toeOff),
             gaitPasses.length + 1,
             GaitContext(bwKgf: bw),
+          ),
+        ];
+        final pass = gaitPasses.last;
+        _recordedReps = [
+          ..._recordedReps,
+          TestRep(
+            start: pass.start,
+            end: pass.end,
+            sampleRate: pass.sampleRate,
           ),
         ];
         lastDiscard = null;

@@ -97,6 +97,16 @@ class TestRep {
   /// non-overlapping. Empty for a window-only capture.
   final List<PhaseSpan> spans;
 
+  /// This rep shifted by [delta] samples (from the live source's index
+  /// space into the recording slice's).
+  TestRep shifted(int delta) => TestRep(
+    label: label,
+    start: start + delta,
+    end: end + delta,
+    sampleRate: sampleRate,
+    spans: [for (final s in spans) s.shifted(delta)],
+  );
+
   Map<String, dynamic> toJson() => {
     if (label != null) 'label': label,
     'start': start,
