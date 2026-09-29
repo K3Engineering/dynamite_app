@@ -2,10 +2,11 @@ import 'package:material_ui/material_ui.dart';
 
 import '../analysis/metrics_sway.dart';
 import '../models/graph_overlays.dart';
+import 'metric_grid.dart';
 
-/// A sway metric × window table. One window shows bare values; a two-window
-/// test (Romberg) gets a ratio column instead of a meaningless cross-
-/// condition mean.
+/// The sway metric × window table. One window shows bare values; a two-
+/// window test (Romberg) gets a ratio column instead of a meaningless
+/// cross-condition mean.
 class SwayMetricsTable extends StatelessWidget {
   const SwayMetricsTable({super.key, required this.reps});
 
@@ -13,45 +14,20 @@ class SwayMetricsTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final headerStyle = theme.textTheme.labelSmall?.copyWith(
-      fontWeight: FontWeight.bold,
-    );
     final ratio = reps.length == 2;
-    return Table(
-      columnWidths: {
-        0: const FlexColumnWidth(2.2),
-        for (int i = 1; i <= reps.length; i++) i: const FlexColumnWidth(),
-        if (ratio) reps.length + 1: const FlexColumnWidth(),
-      },
-      defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-      children: [
-        TableRow(
-          children: [
-            const SizedBox.shrink(),
-            for (final r in reps)
-              Text(
-                r.label.isEmpty ? 'Rep ${r.number}' : r.label,
-                style: headerStyle,
-                textAlign: TextAlign.end,
-              ),
-            if (ratio)
-              Text(
-                _ratioHeader(),
-                style: headerStyle,
-                textAlign: TextAlign.end,
-              ),
-          ],
-        ),
+    return MetricGrid(
+      columns: [
+        for (final r in reps) r.label.isEmpty ? 'Rep ${r.number}' : r.label,
+        if (ratio) _ratioHeader(),
+      ],
+      rows: [
         for (final def in swayMetrics)
-          TableRow(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text(def.label, style: theme.textTheme.bodySmall),
-              ),
-              for (final r in reps) _cell(context, def, r.metric(def.id)),
-              if (ratio) _cell(context, def, _ratioOf(def.id)),
+          MetricGridRow(
+            label: def.label,
+            decimals: def.decimals,
+            values: [
+              for (final r in reps) r.metric(def.id),
+              if (ratio) _ratioOf(def.id),
             ],
           ),
       ],
@@ -70,18 +46,6 @@ class SwayMetricsTable extends StatelessWidget {
     if (a == null || b == null || a == 0) return null;
     return b / a;
   }
-
-  Widget _cell(BuildContext context, SwayMetricDef def, double? value) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Text(
-          value == null ? '—' : value.toStringAsFixed(def.decimals),
-          textAlign: TextAlign.end,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
-      );
 }
 
 /// Window shading on the force trace plus a CoP ellipse per window for the

@@ -84,6 +84,16 @@ int? findSustainedBelow(
   int sustain,
 ) => _findSustained(w, from, to, (f) => f < threshold, sustain);
 
+/// First absolute index in `[[from], [to])` where total force is strictly
+/// above [threshold] for [sustain] consecutive samples, or null.
+int? findSustainedAbove(
+  PlateWindow w,
+  int from,
+  int to,
+  double threshold,
+  int sustain,
+) => _findSustained(w, from, to, (f) => f > threshold, sustain);
+
 /// First absolute index in `[[from], [to])` where total force leaves the
 /// `[lower, upper]` band for [sustain] consecutive samples, or null when it
 /// never does. A rep may start by dropping (countermovement) or by rising
