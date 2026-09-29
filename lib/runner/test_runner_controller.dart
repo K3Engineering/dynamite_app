@@ -106,13 +106,13 @@ class TestRunnerController extends ChangeNotifier {
   /// against a reloaded session.
   TestResult? get result {
     final bw = bodyWeightKgf;
-    if (bw == null || reps.isEmpty) return null;
     final origin = _recordOrigin;
+    if (bw == null || reps.isEmpty || origin == null) return null;
     return TestResult(
       testId: test.id,
       person: person.trim(),
       bodyWeightKgf: bw,
-      reps: [for (final r in reps) r.phases.shifted(-origin!)],
+      reps: [for (final r in reps) r.phases.toTestRep(-origin)],
     );
   }
 
