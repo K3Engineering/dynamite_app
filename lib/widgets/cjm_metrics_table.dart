@@ -6,9 +6,11 @@ import '../analysis/segmentation_cmj.dart';
 import '../analysis/test_result.dart';
 import '../models/graph_data_source.dart';
 import '../models/graph_overlays.dart';
+import 'metric_grid.dart';
 
-/// A CMJ metric × rep table with per-metric means. Shared by the live runner's
-/// summary and a re-opened session.
+/// The jump battery's metric × rep table: one column per classified rep,
+/// a mean column, and an EUR row when both jump classes are present. Shared
+/// by the live runner's summary and a re-opened session.
 class CjmMetricsTable extends StatelessWidget {
   const CjmMetricsTable({super.key, required this.reps});
 
@@ -16,60 +18,25 @@ class CjmMetricsTable extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final headerStyle = theme.textTheme.labelSmall?.copyWith(
-      fontWeight: FontWeight.bold,
-    );
-    return Table(
-      columnWidths: {
-        0: const FlexColumnWidth(2.2),
-        for (int i = 1; i <= reps.length; i++) i: const FlexColumnWidth(),
-        reps.length + 1: const FlexColumnWidth(),
-      },
-      defaultVerticalAlignment: TableCellVerticalAlignment.middle,
-      children: [
-        TableRow(
-          children: [
-            const SizedBox.shrink(),
-            for (final r in reps)
-              Text(
-                'Rep ${r.number} (${jumpClassLabel(r.jumpClass)})',
-                style: headerStyle,
-                textAlign: TextAlign.end,
-              ),
-            Text('Mean', style: headerStyle, textAlign: TextAlign.end),
-          ],
-        ),
+    final eur = eccentricUtilizationRatio(reps);
+    return MetricGrid(
+      columns: [
+        for (final r in reps)
+          'Rep ${r.number} (${jumpClassLabel(r.jumpClass)})',
+        'Mean',
+      ],
+      rows: [
         for (final def in cmjMetrics)
-          TableRow(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text(def.label, style: theme.textTheme.bodySmall),
-              ),
-              for (final r in reps) _cell(context, def, r.metric(def.id)),
-              _cell(context, def, _mean(def.id)),
-            ],
+          MetricGridRow(
+            label: def.label,
+            decimals: def.decimals,
+            values: [for (final r in reps) r.metric(def.id), _mean(def.id)],
           ),
-        if (eccentricUtilizationRatio(reps) case final eur?)
-          TableRow(
-            children: [
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text('EUR (CMJ/SJ)', style: theme.textTheme.bodySmall),
-              ),
-              for (final _ in reps) const SizedBox.shrink(),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text(
-                  eur.toStringAsFixed(2),
-                  textAlign: TextAlign.end,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ),
-            ],
+        if (eur != null)
+          MetricGridRow(
+            label: 'EUR (CMJ/SJ)',
+            decimals: 2,
+            values: [for (final _ in reps) null, eur],
           ),
       ],
     );
@@ -80,18 +47,6 @@ class CjmMetricsTable extends StatelessWidget {
     if (values.isEmpty) return null;
     return values.reduce((a, b) => a + b) / values.length;
   }
-
-  Widget _cell(BuildContext context, CmjMetricDef def, double? value) =>
-      Padding(
-        padding: const EdgeInsets.symmetric(vertical: 4),
-        child: Text(
-          value == null ? '—' : value.toStringAsFixed(def.decimals),
-          textAlign: TextAlign.end,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            fontFeatures: const [FontFeature.tabularFigures()],
-          ),
-        ),
-      );
 }
 
 /// Recompute every rep's metrics for [result] against a loaded recording.

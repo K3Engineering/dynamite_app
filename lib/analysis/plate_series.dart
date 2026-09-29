@@ -234,6 +234,8 @@ class PlateWindow {
     required this.smoothKgf,
     required this.leftKgf,
     required this.rightKgf,
+    required this.frontKgf,
+    required this.backKgf,
     required this.copX,
     required this.copY,
   });
@@ -259,6 +261,10 @@ class PlateWindow {
   final Float64List leftKgf;
   final Float64List rightKgf;
 
+  /// Front (top-left + top-right) and back pair force, like [leftKgf].
+  final Float64List frontKgf;
+  final Float64List backKgf;
+
   /// Support-normalized CoP, NaN where the plate carries no positive load
   /// (see [PlateWeights.cop]).
   final Float64List copX;
@@ -276,6 +282,8 @@ class PlateWindow {
     final total = Float64List(n);
     final left = Float64List(n);
     final right = Float64List(n);
+    final front = Float64List(n);
+    final back = Float64List(n);
     final copX = Float64List(n);
     final copY = Float64List(n);
     for (int i = 0; i < n; i++) {
@@ -283,6 +291,8 @@ class PlateWindow {
       total[i] = w.total;
       left[i] = w.tl + w.bl;
       right[i] = w.tr + w.br;
+      front[i] = w.tl + w.tr;
+      back[i] = w.bl + w.br;
       final cop = w.cop;
       copX[i] = cop?.$1 ?? double.nan;
       copY[i] = cop?.$2 ?? double.nan;
@@ -303,6 +313,8 @@ class PlateWindow {
       smoothKgf: smooth,
       leftKgf: left,
       rightKgf: right,
+      frontKgf: front,
+      backKgf: back,
       copX: copX,
       copY: copY,
     );
@@ -316,6 +328,10 @@ class PlateWindow {
   double leftAt(int index) => leftKgf[index - start];
 
   double rightAt(int index) => rightKgf[index - start];
+
+  double frontAt(int index) => frontKgf[index - start];
+
+  double backAt(int index) => backKgf[index - start];
 
   /// Support-normalized CoP at [index], or null under no positive load.
   (double, double)? copAt(int index) {
