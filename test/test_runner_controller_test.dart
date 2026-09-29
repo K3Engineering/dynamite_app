@@ -7,6 +7,7 @@ import 'package:dynamite_app/analysis/metrics.dart';
 import 'package:dynamite_app/analysis/plate_series.dart';
 import 'package:dynamite_app/analysis/segmentation_cmj.dart';
 import 'package:dynamite_app/analysis/test_catalog.dart';
+import 'package:dynamite_app/analysis/test_def.dart';
 import 'package:dynamite_app/runner/plate_source.dart';
 import 'package:dynamite_app/runner/test_recorder.dart';
 import 'package:dynamite_app/runner/test_runner_controller.dart';
@@ -172,6 +173,65 @@ void main() {
     expect(saved.reps[1].spans, hasLength(3));
     // And the EUR join has both classes to work with.
     expect(eccentricUtilizationRatio(ctrl.reps), isNotNull);
+  });
+
+  testWidgets('captures two timed windows back to back', (tester) async {
+    // Two 1 s windows over a scripted sway trace: 1.5 s empty lead-in for
+    // tare, 1 s of quiet for the stance baseline, then the two windows plus
+    // slack.
+    const timedDef = TestDef(
+      id: 'romberg',
+      name: 'Romberg balance screen',
+      category: 'Balance',
+      description: '',
+      mold: TestMold.timedCapture,
+      centerPlot: TestCenterPlot.copPlate,
+      windows: [
+        TestCaptureWindow(label: 'A', durationMs: 1000),
+        TestCaptureWindow(label: 'B', durationMs: 1000),
+      ],
+    );
+    final corners = <List<double>>[[], [], [], []];
+    for (int i = 0; i < 1500; i++) {
+      for (final c in corners) {
+        c.add(0.0);
+      }
+    }
+    final sway = SyntheticSway(
+      samples: 3000,
+      copX: (t) => 0.1 * math.sin(2 * math.pi * t),
+      copY: (_) => 0.02,
+    );
+    final swayCorners = sway.cornerLists();
+    for (int c = 0; c < 4; c++) {
+      corners[c].addAll(swayCorners[c]);
+    }
+    final source = _FakePlateSource(corners);
+    final ctrl = TestRunnerController(
+      test: timedDef,
+      person: 'Test',
+      source: source,
+      recorder: _FakeRecorder(),
+    );
+    addTearDown(ctrl.dispose);
+    await runToSummary(tester, ctrl, source);
+
+    expect(ctrl.phase, TestRunnerPhase.summary);
+    expect(ctrl.swayReps, hasLength(2));
+    expect(ctrl.swayReps[0].label, 'A');
+    expect(ctrl.swayReps[1].label, 'B');
+    for (final rep in ctrl.swayReps) {
+      expect(rep.end - rep.start, 1000);
+      expect(rep.metric('sway_path'), isNotNull);
+      expect(rep.ellipse, isNotNull);
+    }
+    final saved = ctrl.result!;
+    expect(saved.testId, 'romberg');
+    expect(saved.reps, hasLength(2));
+    expect(saved.reps[0].label, 'A');
+    expect(saved.reps[0].start, 0);
+    expect(saved.reps[0].end - saved.reps[0].start, 1000);
+    expect(saved.reps[1].label, 'B');
   });
 
   testWidgets('persisted phases are session-relative on a shifted source', (

@@ -125,6 +125,66 @@ class SyntheticCmj {
   PlateWindow get window => PlateWindow.capture(reader, 0, sampleCount);
 }
 
+/// Scripted quiet-stance trace: constant total load whose corner split
+/// follows a time-varying scripted CoP. No noise: path/RMS expectations are
+/// then exact, and the controller's stability checks pass trivially.
+///
+/// [copX]/[copY] receive seconds and return support-normalized coordinates
+/// (±1 = a plate edge).
+class SyntheticSway {
+  SyntheticSway({
+    required this.copX,
+    required this.copY,
+    this.bwKg = 80,
+    this.samples = 2000,
+    this.sampleRate = 1000,
+  });
+
+  final double Function(double seconds) copX;
+  final double Function(double seconds) copY;
+  final double bwKg;
+  final int samples;
+  final int sampleRate;
+
+  /// Corner weights of one sample, in [TL, TR, BL, BR] order. Corners share
+  /// the product split, so the CoP is exactly the scripted one.
+  (double, double, double, double) cornersAt(int index) {
+    final t = index / sampleRate;
+    final x = copX(t);
+    final y = copY(t);
+    final quarter = bwKg / 4;
+    return (
+      quarter * (1 - x) * (1 + y),
+      quarter * (1 + x) * (1 + y),
+      quarter * (1 - x) * (1 - y),
+      quarter * (1 + x) * (1 - y),
+    );
+  }
+
+  /// Per-corner lists in [TL, TR, BL, BR] order (for the controller's fake
+  /// plate source).
+  List<List<double>> cornerLists() {
+    final corners = <List<double>>[[], [], [], []];
+    for (int i = 0; i < samples; i++) {
+      final c = cornersAt(i);
+      corners[0].add(c.$1);
+      corners[1].add(c.$2);
+      corners[2].add(c.$3);
+      corners[3].add(c.$4);
+    }
+    return corners;
+  }
+
+  PlateReader get reader => PlateReader.fromCornerForce(
+    (corner, index) => switch (cornersAt(index)) {
+      (final tl, final tr, final bl, final br) => [tl, tr, bl, br][corner],
+    },
+    sampleRate: sampleRate,
+  );
+
+  PlateWindow get window => PlateWindow.capture(reader, 0, samples);
+}
+
 double _lerp(double a, double b, double u) => a + (b - a) * u;
 
 double _gaussian(math.Random rand) {
