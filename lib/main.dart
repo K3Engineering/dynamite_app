@@ -66,11 +66,11 @@ void main() async {
   // The monitoring pause (see MonitorPause): decoder-side packet gate, wired
   // before the decoder so the gate closure exists at first packet.
   final monitorPause = MonitorPause(dataHub);
-  // The rig's derived channels (plate sum/axes/error — see
+  // The rig's math-channel profile (plate sum/axes/error, or none — see
   // `derived_channel.dart`), pushed on every config change.
-  dataHub.updateDerivedChannels(DerivedChannels.instance.channels);
+  dataHub.updateMathProfile(DerivedChannels.instance.profile);
   DerivedChannels.instance.addListener(
-    () => dataHub.updateDerivedChannels(DerivedChannels.instance.channels),
+    () => dataHub.updateMathProfile(DerivedChannels.instance.profile),
   );
   final decoder = AdcPacketDecoder(
     dataHub,

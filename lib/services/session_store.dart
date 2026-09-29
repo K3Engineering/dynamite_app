@@ -423,10 +423,10 @@ class SessionStore {
       gaps: decoded.gaps,
       ssnOrigin: meta.ssnOrigin,
       deviceKvs: meta.deviceKvs,
-      // Derived channels replay from raw + frozen calibration with the
-      // CURRENT rig config (see `DerivedChannels` — no per-session config
-      // snapshot yet).
-      derivedSpecs: DerivedChannels.instance.channels,
+      // Derived channels replay from raw + frozen calibration against the
+      // record-time profile snapshot; sessions recorded before it existed
+      // take the CURRENT config (pre-release: devs can wipe those).
+      mathProfile: meta.mathProfile ?? DerivedChannels.instance.profile,
     );
   });
 

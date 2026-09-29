@@ -2,25 +2,26 @@ import 'package:flutter/foundation.dart';
 
 import '../models/derived_channel.dart';
 
-/// The rig's derived-channel set (see `derived_channel.dart`), owned
-/// app-side per the branch's scope: in-memory, defaulting to the force
-/// plate basis over corner order [0,1,2,3].
+/// The rig's math-channel profile, owned app-side per the branch's scope:
+/// in-memory, defaulting to the force-plate profile over corner order
+/// [0,1,2,3] (the historical behavior). Consumers are wired from `main`.
 ///
-/// TODO(rig-config): persist per device (app profile now, device KVS
-/// later), and move corner assignment here from a fixed default — sessions
-/// replay with the CURRENT config, so a session recorded with a differently
-/// wired plate reviews mirrored until then.
+/// TODO(rig-config): persist per device in the device KVS (the load-cell
+/// slots' neighbor), with the profile arriving via [RigState]'s flash
+/// document like the slots do. Sessions snapshot the profile at record
+/// start, so review no longer depends on the CURRENT config.
 class DerivedChannels extends ChangeNotifier {
   DerivedChannels._();
 
   static final DerivedChannels instance = DerivedChannels._();
 
-  /// The configured derived channels in id order (id = kAdcChannelCount +
-  /// index). Availability (all members calibrated) is decided per source.
-  List<DerivedChannelSpec> channels = forcePlateChannels(const [0, 1, 2, 3]);
+  /// The configured profile; [MathProfile.specs] is the derived-channel set
+  /// in id order (id = kAdcChannelCount + index). Availability (all members
+  /// calibrated) is decided per source.
+  MathProfile profile = MathProfile.forcePlate(const [0, 1, 2, 3]);
 
-  void setChannels(List<DerivedChannelSpec> next) {
-    channels = next;
+  void setProfile(MathProfile next) {
+    profile = next;
     notifyListeners();
   }
 }

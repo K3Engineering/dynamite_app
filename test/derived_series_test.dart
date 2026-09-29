@@ -33,8 +33,10 @@ void main() {
   const cell = LoadCellProfile(capacityKg: 200, sensitivityMvV: 2);
   const board = NominalChannelBoard(testNominals);
 
-  // The plate basis over identity corner order; [0] is Σ, [1] the X ratio.
-  final specs = forcePlateChannels(const [0, 1, 2, 3]);
+  // The plate profile over identity corner order; specs [0] is Σ, [1] the
+  // X ratio.
+  final profile = MathProfile.forcePlate(const [0, 1, 2, 3]);
+  final specs = profile.specs;
   final sumSpec = specs[0];
   final xSpec = specs[1];
 
@@ -239,7 +241,7 @@ void main() {
   group('DataHub wiring', () {
     DataHub hubWithCal({bool cells = true}) {
       final hub = DataHub()
-        ..updateDerivedChannels(specs)
+        ..updateMathProfile(profile)
         ..updateBoardCalibration(
           ProvisionedBoardCalibration(
             nominals: BoardNominals(
@@ -330,7 +332,7 @@ void main() {
       calibrations: fullCal(withCell: cells),
       tares: List.filled(kAdcChannelCount, null),
       ssnOrigin: 0,
-      derivedSpecs: specs,
+      mathProfile: profile,
     );
 
     test('replayed at load when every member converts to force', () {

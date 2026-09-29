@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../models/analysis_pane.dart';
 import '../models/app_meta.dart';
+import '../models/derived_channel.dart';
 import '../models/session_catalog.dart';
 import '../services/app_settings.dart';
 import '../models/display_unit.dart';
@@ -182,6 +183,19 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     ];
     final unit = settings.displayUnit.effective(data.unitAvailability);
 
+    // The app-wide on-screen family (see [AppSettings.channelFamily]):
+    // [tableIds] for the header (inactive included, greyed), the filtered
+    // actives for the graphs.
+    final tableIds = [
+      for (int i = 0; i < channelLabels.length; i++)
+        if (settings.channelFamily.includes(i)) i,
+    ];
+    // Math family selected but the session's own profile had no math
+    // channels — a dead end, explain rather than show an empty graph.
+    final showMathNote =
+        settings.channelFamily == ChannelFamily.math &&
+        data.derivedChannels.isEmpty;
+
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -190,9 +204,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           // Channel header (same tappable table as the live view; hardware
           // toggles persist per session, derived toggles are screen-local).
           ChannelStatsTable(
-            labels: channelLabels,
-            activeChannels: activeChannels,
-            onToggleChannel: (index) {
+            labels: [for (final i in tableIds) channelLabels[i]],
+            activeChannels: [for (final i in tableIds) activeChannels[i]],
+            onToggleChannel: (pos) {
+              final index = tableIds[pos];
               if (index < hwCount) {
                 unawaited(
                   SessionStore.instance.toggleVisibleChannel(session.id, index),
@@ -212,7 +227,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 label: 'Peak',
                 emphasized: true,
                 values: [
-                  for (int ch = 0; ch < data.channelCount; ch++)
+                  for (final ch in tableIds)
                     switch (data.channelExtremes(ch)?.$2) {
                       final max? =>
                         data.seriesConverterFor(ch).netMap(unit)?.call(max),
@@ -226,7 +241,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               ChannelStatsRow(
                 label: 'Tare offset',
                 values: [
-                  for (int ch = 0; ch < data.channelCount; ch++)
+                  for (final ch in tableIds)
                     ch < hwCount
                         ? data.converterFor(ch).tareOffset(unit)
                         : null,
@@ -246,27 +261,32 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   Expanded(
                     child: Padding(
                       padding: const EdgeInsets.all(8.0),
-                      child: GraphWorkspace(
-                        data: data,
-                        ctrl: _graphCtrl,
-                        unit: unit,
-                        activeChannels: [
-                          for (int i = 0; i < channelLabels.length; i++)
-                            if (activeChannels[i]) i,
-                        ],
-                        analysis: analysis,
-                        isLiveGraph: false,
-                      ),
+                      child: showMathNote
+                          ? const EmptyPlaceholder(
+                              icon: Icons.calculate_outlined,
+                              title: 'No math channels in this session',
+                              hint:
+                                  'Set up the rig\'s math channels in Settings '
+                                  'before recording to use the Math view',
+                            )
+                          : GraphWorkspace(
+                              data: data,
+                              ctrl: _graphCtrl,
+                              unit: unit,
+                              activeChannels: [
+                                for (final i in tableIds)
+                                  if (activeChannels[i]) i,
+                              ],
+                              analysis: analysis,
+                              isLiveGraph: false,
+                            ),
                     ),
                   ),
                   AnalysisPaneBar(
                     selection: analysis,
                     onChanged: (s) => _analysisPane.value = s,
                     channelLabels: channelLabels,
-                    channelUnitless: [
-                      for (int i = 0; i < hwCount; i++) false,
-                      for (final d in data.derivedChannels) d.normalize,
-                    ],
+                    mathProfile: data.mathProfile,
                   ),
                 ],
               ),

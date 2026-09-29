@@ -34,12 +34,19 @@ class AppSettings extends ChangeNotifier {
     _wakelockEnabled = _prefs.getBool(_keyWakelock) ?? false;
 
     _showDebugLiveValues = _prefs.getBool(_keyDebugLiveValues) ?? false;
+
+    _channelFamily = switch (_prefs.getString(_keyChannelFamily)) {
+      final name? =>
+        ChannelFamily.values.asNameMap()[name] ?? ChannelFamily.all,
+      null => ChannelFamily.all,
+    };
   }
 
   static const String _keyUnit = 'display_unit';
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
   static const String _keyDebugLiveValues = 'debug_live_values';
+  static const String _keyChannelFamily = 'channel_family';
 
   final SharedPreferences _prefs;
 
@@ -58,6 +65,17 @@ class AppSettings extends ChangeNotifier {
   List<int> get activeChannelIndices => [
     for (int i = 0; i < _activeChannels.length; i++)
       if (_activeChannels[i]) i,
+  ];
+
+  /// Which slice of the channel id space is on screen (the stats table and
+  /// the graphs). Phone-width headers fit one family; see [ChannelFamily].
+  ChannelFamily _channelFamily = ChannelFamily.all;
+  ChannelFamily get channelFamily => _channelFamily;
+
+  /// [indices] filtered down to the on-screen family.
+  List<int> visibleChannelIndices(Iterable<int> indices) => [
+    for (final i in indices)
+      if (_channelFamily.includes(i)) i,
   ];
 
   bool _wakelockEnabled = false;
@@ -92,5 +110,11 @@ class AppSettings extends ChangeNotifier {
     _showDebugLiveValues = enabled;
     notifyListeners();
     await _prefs.setBool(_keyDebugLiveValues, enabled);
+  }
+
+  Future<void> setChannelFamily(ChannelFamily family) async {
+    _channelFamily = family;
+    notifyListeners();
+    await _prefs.setString(_keyChannelFamily, family.name);
   }
 }

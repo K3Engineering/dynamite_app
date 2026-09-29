@@ -63,10 +63,16 @@ class SessionData implements GraphDataSource {
   /// live hub uses.
   late final List<BucketAccumulator> _diffBuckets;
 
-  /// The rig's derived channels in id order (see [derivedChannels] and
-  /// `derived_channel.dart`), replayed over the frozen calibrations/tares
-  /// at load.
-  final List<DerivedChannelSpec> derivedSpecs;
+  /// The rig's math-channel profile, snapshotted into the session at
+  /// record start (older sessions take the loader's current config — see
+  /// `session_store.dart`), replayed over the frozen calibrations/tares at
+  /// load. [derivedSpecs] is its channel set in id order (see
+  /// `derived_channel.dart`).
+  @override
+  final MathProfile mathProfile;
+
+  /// The profile's derived channels in id order (see [derivedChannels]).
+  List<DerivedChannelSpec> get derivedSpecs => mathProfile.specs;
 
   /// Per-spec ingest runtimes; null slots couldn't bind on the session's
   /// frozen calibration set (see [DerivedChannelRuntime.tryBuild]).
@@ -80,9 +86,10 @@ class SessionData implements GraphDataSource {
     required this.tares,
     required this.ssnOrigin,
     this.deviceKvs,
-    this.derivedSpecs = const [],
+    MathProfile? mathProfile,
     GapList? gaps,
-  }) : gaps = gaps ?? GapList(),
+  }) : mathProfile = mathProfile ?? MathProfile.none(),
+       gaps = gaps ?? GapList(),
        _extremes = List.filled(channels.length, null) {
     final int numBuckets = (sampleCount == 0)
         ? 0

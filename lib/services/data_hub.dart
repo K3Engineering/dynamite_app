@@ -86,9 +86,14 @@ class DataHub extends ChangeNotifier
     growable: false,
   );
 
-  /// The rig's derived-channel set, in id order (id = kAdcChannelCount +
-  /// index); see `derived_channel.dart`.
-  List<DerivedChannelSpec> _derivedSpecs = const [];
+  /// The rig's math-channel profile; [MathProfile.specs] is the
+  /// derived-channel set, in id order (id = kAdcChannelCount + index); see
+  /// `derived_channel.dart`.
+  MathProfile _mathProfile = MathProfile.none();
+
+  /// The derived-channel set the runtimes are built over
+  /// ([_mathProfile]'s specs).
+  List<DerivedChannelSpec> get _derivedSpecs => _mathProfile.specs;
 
   /// Per-spec ingest runtimes (see [DerivedChannelRuntime]); null slots
   /// can't bind on the current calibration set (a member without a board
@@ -98,9 +103,9 @@ class DataHub extends ChangeNotifier
   /// store tare-free values and only rebind their display map).
   List<DerivedChannelRuntime?> _derived = const [];
 
-  /// Replace the derived-channel set (config edge); rebuilds all runtimes.
-  void updateDerivedChannels(List<DerivedChannelSpec> specs) {
-    _derivedSpecs = specs;
+  /// Replace the math-channel profile (config edge); rebuilds all runtimes.
+  void updateMathProfile(MathProfile profile) {
+    _mathProfile = profile;
     _rebuildDerived();
     notifyListeners();
   }
@@ -631,6 +636,9 @@ class DataHub extends ChangeNotifier
 
   @override
   List<DerivedChannelSpec> get derivedChannels => _derivedSpecs;
+
+  @override
+  MathProfile get mathProfile => _mathProfile;
 
   @override
   SeriesConverter seriesConverterFor(int id) => id < kAdcChannelCount

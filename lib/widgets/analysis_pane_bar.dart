@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../models/analysis_pane.dart';
+import '../models/derived_channel.dart';
 import '../utils/fft.dart';
 import 'channel_palette.dart';
 
@@ -13,7 +14,9 @@ import 'channel_palette.dart';
 // it stateless: the screen owns the [AnalysisPaneSelection].
 //
 // Channel ids span the widened space (hardware 0..3, derived 4.. — see
-// `derived_channel.dart`); [channelLabels]/[channelUnitless] describe them.
+// `derived_channel.dart`); [channelLabels] describes them. The dF/dt and
+// FFT panes take the workspace's channel selection (the stats-table
+// toggles), so only the RMS pane picks a channel here.
 // ---------------------------------------------------------------------------
 
 class AnalysisPaneBar extends StatelessWidget {
@@ -22,28 +25,28 @@ class AnalysisPaneBar extends StatelessWidget {
     required this.selection,
     required this.onChanged,
     required this.channelLabels,
-    required this.channelUnitless,
+    required this.mathProfile,
   });
 
   final AnalysisPaneSelection selection;
   final ValueChanged<AnalysisPaneSelection> onChanged;
 
-  /// Display label per channel id (both lists index-aligned with the ids).
+  /// Display label per channel id (index-aligned with the ids).
   final List<String> channelLabels;
 
-  /// Whether each channel id is unitless (a normalized blend).
-  final List<bool> channelUnitless;
-
-  static const _kinds = <(AnalysisPaneKind, String)>[
-    (AnalysisPaneKind.derivative, 'dF/dt'),
-    (AnalysisPaneKind.fft, 'FFT'),
-    (AnalysisPaneKind.plate, 'Plate'),
-    (AnalysisPaneKind.readout, 'Readout'),
-  ];
+  /// The rig's configured math channels; the Plate chip only exists when
+  /// the profile has plate semantics.
+  final MathProfile mathProfile;
 
   @override
   Widget build(BuildContext context) {
     final sel = selection;
+    final kinds = <(AnalysisPaneKind, String)>[
+      (AnalysisPaneKind.derivative, 'dF/dt'),
+      (AnalysisPaneKind.fft, 'FFT'),
+      if (mathProfile.plateXId != null) (AnalysisPaneKind.plate, 'Plate'),
+      (AnalysisPaneKind.rms, 'RMS'),
+    ];
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: Column(
@@ -52,7 +55,7 @@ class AnalysisPaneBar extends StatelessWidget {
             spacing: 8,
             alignment: WrapAlignment.center,
             children: [
-              for (final (kind, label) in _kinds)
+              for (final (kind, label) in kinds)
                 FilterChip(
                   label: Text(label),
                   selected: sel.kind == kind,
@@ -74,58 +77,22 @@ class AnalysisPaneBar extends StatelessWidget {
   Widget _paneParams(BuildContext context) {
     final sel = selection;
     return switch (sel.kind) {
-      null || AnalysisPaneKind.derivative => const SizedBox.shrink(),
+      null ||
+      AnalysisPaneKind.derivative ||
+      AnalysisPaneKind.plate => const SizedBox.shrink(),
       AnalysisPaneKind.fft => Wrap(
         spacing: 8,
         runSpacing: 4,
         alignment: WrapAlignment.center,
         crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          ..._channelChips(
-            selected: sel.fftChannels,
-            onToggle: (ch) => onChanged(
-              sel.copyWith(fftChannels: _toggled(sel.fftChannels, ch)),
-            ),
-          ),
-          const _ParamsDivider(),
-          ..._nChips,
-          const _ParamsDivider(),
-          ..._modeChips,
-        ],
+        children: [..._nChips, const _ParamsDivider(), ..._modeChips],
       ),
-      AnalysisPaneKind.plate => Wrap(
-        spacing: 8,
-        runSpacing: 4,
-        alignment: WrapAlignment.center,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          const Text('x:'),
-          _channelDropdown(
-            value: sel.plateX,
-            ids: _unitlessIds,
-            onChanged: (v) => onChanged(sel.copyWith(plateX: v)),
-          ),
-          const Text('y:'),
-          _channelDropdown(
-            value: sel.plateY,
-            ids: _unitlessIds,
-            onChanged: (v) => onChanged(sel.copyWith(plateY: v)),
-          ),
-        ],
-      ),
-      AnalysisPaneKind.readout => _channelDropdown(
-        value: sel.readoutChannel,
-        ids: [for (int i = 0; i < channelLabels.length; i++) i],
-        onChanged: (v) => onChanged(sel.copyWith(readoutChannel: v)),
+      AnalysisPaneKind.rms => _channelDropdown(
+        value: sel.rmsChannel,
+        onChanged: (v) => onChanged(sel.copyWith(rmsChannel: v)),
       ),
     };
   }
-
-  /// Ids of the unitless (normalized) channels, for the plate axes.
-  List<int> get _unitlessIds => [
-    for (int i = 0; i < channelLabels.length; i++)
-      if (channelUnitless[i]) i,
-  ];
 
   List<Widget> get _nChips => [
     ChoiceChip(
@@ -159,15 +126,14 @@ class AnalysisPaneBar extends StatelessWidget {
   ];
 
   Widget _channelDropdown({
-    required int value,
-    required List<int> ids,
+    required int? value,
     required ValueChanged<int> onChanged,
   }) => DropdownButton<int>(
-    value: ids.contains(value) ? value : null,
+    value: value != null && value < channelLabels.length ? value : null,
     isDense: true,
-    hint: const Text('—'),
+    hint: const Text('channel'),
     items: [
-      for (final id in ids)
+      for (int id = 0; id < channelLabels.length; id++)
         DropdownMenuItem(
           value: id,
           child: Row(
@@ -184,27 +150,6 @@ class AnalysisPaneBar extends StatelessWidget {
       if (v != null) onChanged(v);
     },
   );
-
-  static Set<int> _toggled(Set<int> channels, int ch) {
-    final next = Set<int>.of(channels);
-    if (!next.remove(ch)) next.add(ch);
-    return next;
-  }
-
-  /// Channel toggle chips colored like their traces.
-  List<Widget> _channelChips({
-    required Set<int> selected,
-    required ValueChanged<int> onToggle,
-  }) => [
-    for (int ch = 0; ch < channelLabels.length; ch++)
-      FilterChip(
-        avatar: CircleAvatar(backgroundColor: getChannelColor(ch), radius: 5),
-        label: Text(channelLabels[ch]),
-        selected: selected.contains(ch),
-        onSelected: (_) => onToggle(ch),
-        visualDensity: VisualDensity.compact,
-      ),
-  ];
 }
 
 /// Thin vertical separator between parameter groups.

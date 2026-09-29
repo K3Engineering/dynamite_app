@@ -33,12 +33,12 @@ void main() {
 
   const plateLabels = ['CH 0', 'CH 1', 'CH 2', 'CH 3', 'Σ', 'X', 'Y', 'Err'];
 
-  /// A hub with the force-plate derived channels configured and a few
-  /// seconds of positive-going tones per channel (positive so the plate
-  /// ratio has load to place). [cells] binds the derived channels.
+  /// A hub with the force-plate profile configured and a few seconds of
+  /// positive-going tones per channel (positive so the plate ratio has
+  /// load to place). [cells] binds the derived channels.
   DataHub hubWithData({bool cells = false}) {
     final hub = DataHub();
-    hub.updateDerivedChannels(forcePlateChannels(const [0, 1, 2, 3]));
+    hub.updateMathProfile(MathProfile.forcePlate(const [0, 1, 2, 3]));
     hub.updateBoardCalibration(
       ProvisionedBoardCalibration(
         nominals: BoardNominals(
@@ -80,17 +80,16 @@ void main() {
     const variants = <AnalysisPaneSelection>[
       AnalysisPaneSelection(kind: AnalysisPaneKind.derivative),
       AnalysisPaneSelection(kind: AnalysisPaneKind.plate),
-      AnalysisPaneSelection(kind: AnalysisPaneKind.readout),
+      AnalysisPaneSelection(kind: AnalysisPaneKind.rms),
       AnalysisPaneSelection(
-        kind: AnalysisPaneKind.readout,
-        readoutChannel: 2, // a hardware channel also binds
+        kind: AnalysisPaneKind.rms,
+        rmsChannel: 2, // a hardware channel also binds
       ),
       AnalysisPaneSelection(kind: AnalysisPaneKind.fft),
       AnalysisPaneSelection(
         kind: AnalysisPaneKind.fft,
         fftN: 4096,
         fftAsd: true,
-        fftChannels: {0, 2, 4}, // includes a derived (blend) channel
       ),
     ];
 
@@ -158,23 +157,15 @@ void main() {
               selection: selection,
               onChanged: (s) => setState(() => selection = s),
               channelLabels: plateLabels,
-              channelUnitless: const [
-                false,
-                false,
-                false,
-                false,
-                false,
-                true,
-                true,
-                true,
-              ],
+              mathProfile: MathProfile.forcePlate(const [0, 1, 2, 3]),
             ),
           ),
         ),
       ),
     );
 
-    // FFT params: N, mode, channel toggles (hardware and derived alike).
+    // FFT params: N and mode (the channels come from the workspace's
+    // stats-table selection, not the pane).
     await tester.tap(find.text('FFT'));
     await tester.pump();
     expect(selection.kind, AnalysisPaneKind.fft);
@@ -184,17 +175,40 @@ void main() {
     await tester.tap(find.text('/√Hz'));
     await tester.pump();
     expect(selection.fftAsd, isTrue);
-    await tester.tap(find.widgetWithText(FilterChip, 'CH 2'));
-    await tester.pump();
-    expect(selection.fftChannels, {0, 1, 3});
-    await tester.tap(find.widgetWithText(FilterChip, 'Σ'));
-    await tester.pump();
-    expect(selection.fftChannels, {0, 1, 3, 4});
 
     // Tapping the active pane chip collapses the slot.
     await tester.tap(find.text('FFT'));
     await tester.pump();
     expect(selection.kind, isNull);
+
+    // RMS picks a channel from the dropdown.
+    await tester.tap(find.text('RMS'));
+    await tester.pump();
+    expect(selection.kind, AnalysisPaneKind.rms);
+    await tester.tap(find.text('channel'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('X'));
+    await tester.pumpAndSettle();
+    expect(selection.rmsChannel, 5);
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a none math profile hides the Plate chip', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AnalysisPaneBar(
+            selection: const AnalysisPaneSelection(),
+            onChanged: (_) {},
+            channelLabels: const ['CH 0', 'CH 1', 'CH 2', 'CH 3'],
+            mathProfile: MathProfile.none(),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Plate'), findsNothing);
+    expect(find.text('dF/dt'), findsOneWidget);
 
     expect(tester.takeException(), isNull);
   });

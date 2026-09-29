@@ -1,5 +1,3 @@
-import 'device_profile.dart';
-
 // Selection state for the analysis pane slot in [GraphWorkspace]: which
 // derived view (if any) sits between the force graph and the minimap, plus
 // every pane's parameters. Pure data — the widgets live in
@@ -8,7 +6,7 @@ import 'device_profile.dart';
 // Owned by each screen in a ValueNotifier (ephemeral; not persisted).
 
 /// What occupies the analysis pane slot. Null = the slot is collapsed.
-enum AnalysisPaneKind { derivative, fft, plate, readout }
+enum AnalysisPaneKind { derivative, fft, plate, rms }
 
 /// Immutable pane selection + parameters. `copyWith` fields default to
 /// "keep current" via the [_unset] sentinel so nullable fields ([kind],
@@ -16,19 +14,12 @@ enum AnalysisPaneKind { derivative, fft, plate, readout }
 final class AnalysisPaneSelection {
   const AnalysisPaneSelection({
     this.kind,
-    this.fftChannels = const {0, 1, 2, 3},
     this.fftN,
     this.fftAsd = false,
-    this.plateX = kAdcChannelCount + 1,
-    this.plateY = kAdcChannelCount + 2,
-    this.readoutChannel = kAdcChannelCount + 3,
+    this.rmsChannel,
   });
 
   final AnalysisPaneKind? kind;
-
-  /// Channels whose spectra the FFT pane overlays, in the widened id space
-  /// (hardware 0..3, derived 4..; empty = none selected).
-  final Set<int> fftChannels;
 
   /// FFT length in samples; null = auto (largest pow2 that fits the window).
   final int? fftN;
@@ -37,34 +28,26 @@ final class AnalysisPaneSelection {
   /// N-invariant noise view), false = plain amplitude (dBFS, the tone view).
   final bool fftAsd;
 
-  /// The 2D plate's axes: channel ids for the horizontal/vertical plate
-  /// coordinates (the rig's normalized pair; defaults target the force
-  /// plate preset's X/Y).
-  final int plateX;
-  final int plateY;
-
-  /// Channel id the readout pane aggregates (RMS over the window).
-  final int readoutChannel;
+  /// Channel id the RMS pane aggregates (over the window); null = not yet
+  /// chosen, the pane asks for a pick. (The FFT and dF/dt panes take the
+  /// workspace's channel selection instead of a per-pane one.)
+  final int? rmsChannel;
 
   static const Object _unset = Object();
 
   AnalysisPaneSelection copyWith({
     Object? kind = _unset,
-    Set<int>? fftChannels,
     Object? fftN = _unset,
     bool? fftAsd,
-    int? plateX,
-    int? plateY,
-    int? readoutChannel,
+    Object? rmsChannel = _unset,
   }) {
     return AnalysisPaneSelection(
       kind: identical(kind, _unset) ? this.kind : kind as AnalysisPaneKind?,
-      fftChannels: fftChannels ?? this.fftChannels,
       fftN: identical(fftN, _unset) ? this.fftN : fftN as int?,
       fftAsd: fftAsd ?? this.fftAsd,
-      plateX: plateX ?? this.plateX,
-      plateY: plateY ?? this.plateY,
-      readoutChannel: readoutChannel ?? this.readoutChannel,
+      rmsChannel: identical(rmsChannel, _unset)
+          ? this.rmsChannel
+          : rmsChannel as int?,
     );
   }
 }

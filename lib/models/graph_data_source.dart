@@ -226,6 +226,12 @@ abstract interface class GraphDataSource
   /// unbound channel keeps its id slot.
   List<DerivedChannelSpec> get derivedChannels;
 
+  /// The rig's math-channel profile: [MathProfile.specs] is
+  /// [derivedChannels], and the plate semantics (axis/error ids) the Plate
+  /// pane binds. The live hub's is the current config; a session's is the
+  /// record-time snapshot.
+  MathProfile get mathProfile;
+
   /// Display conversion for any channel id in [0, channelCount).
   SeriesConverter seriesConverterFor(int id);
 

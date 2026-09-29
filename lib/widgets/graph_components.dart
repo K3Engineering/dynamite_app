@@ -591,6 +591,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     with SingleTickerProviderStateMixin {
   final SegmentedGraphCache _forceCache = SegmentedGraphCache();
 
+  /// Cache for the coordinates graph (the unitless channels' split pane —
+  /// see [build]); like [_forceCache], it serves one painter kind only.
+  final SegmentedGraphCache _coordCache = SegmentedGraphCache();
+
   /// Cache for the analysis pane's time-series variants (derivative, sum,
   /// diff, balance line); recreated when the pane KIND changes so a previous
   /// pane's segments can't ghost into the new one.
@@ -669,6 +673,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     _vsync.dispose();
     _bakePump.dispose();
     _forceCache.dispose();
+    _coordCache.dispose();
     _analysisCache?.dispose();
     _plateDotCache.dispose();
     _labelCache.dispose();
@@ -689,22 +694,23 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
 
   /// The analysis pane slot's content: a pane widget for the current
   /// selection, or null when collapsed. Panes whose channels can't bind in
-  /// [unit] (force unit without a load cell, a blend in mV/V, an unbound
-  /// derived channel) fail loudly as a message rather than plotting nothing.
+  /// [unit] fail loudly with the reason (see [_bindWhy]) rather than
+  /// plotting nothing. [bound] is the workspace's active-channel list,
+  /// unit-bound — the channel selection [AnalysisPaneKind.derivative] and
+  /// [AnalysisPaneKind.fft] plot.
   Widget? _buildAnalysisPane(
     BuildContext context,
     ColorScheme colorScheme,
     double dpr,
     DisplayUnit unit,
+    List<_ConvertedChannel> bound,
   ) {
     final sel = widget.analysis;
     final data = widget.data;
     final ctrl = widget.ctrl;
 
-    Widget channelMessage(String pane, [String? why]) => _paneMessage(
-      context,
-      '$pane: ${why ?? 'channel unavailable in ${unit.label}'}',
-    );
+    Widget unavailable(String pane, int id) =>
+        _paneMessage(context, '$pane: ${_bindWhy(data, id, unit)}');
 
     switch (sel.kind) {
       case null:
@@ -717,10 +723,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             data,
             ctrl,
             unit: unit,
-            channels: [
-              for (final ch in widget.activeChannels)
-                ?_ConvertedChannel.of(data, ch, unit),
-            ],
+            channels: bound,
             vsync: _vsync,
             cache: _analysisCache ??= SegmentedGraphCache(),
             colorScheme: colorScheme,
@@ -730,12 +733,22 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
           ),
         );
       case AnalysisPaneKind.plate:
-        final x = _ConvertedChannel.of(data, sel.plateX, unit);
-        final y = _ConvertedChannel.of(data, sel.plateY, unit);
-        if (x == null || y == null) return channelMessage('Plate');
+        final profile = data.mathProfile;
+        final xId = profile.plateXId;
+        final yId = profile.plateYId;
+        final errId = profile.plateErrId;
+        if (xId == null || yId == null || errId == null) {
+          return _paneMessage(context, 'Plate: no plate profile configured');
+        }
+        final x = _ConvertedChannel.of(data, xId, unit);
+        final y = _ConvertedChannel.of(data, yId, unit);
+        final err = _ConvertedChannel.of(data, errId, unit);
+        if (x == null) return unavailable('Plate', xId);
+        if (y == null) return unavailable('Plate', yId);
+        if (err == null) return unavailable('Plate', errId);
         // Corner labels, recovered from the axis channels' weight signs:
         // +x members sit right, +y members on top.
-        final corners = _plateCorners(data, sel.plateX, sel.plateY);
+        final corners = _plateCorners(data, xId, yId);
         return _GraphPane(
           data: data,
           ctrl: ctrl,
@@ -744,6 +757,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             ctrl,
             xChannel: x,
             yChannel: y,
+            errChannel: err,
             corners: corners,
             unit: unit,
             cache: _plateDotCache,
@@ -753,16 +767,19 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             bakePump: _bakePump,
           ),
         );
-      case AnalysisPaneKind.readout:
-        final bound = _ConvertedChannel.of(data, sel.readoutChannel, unit);
-        if (bound == null) return channelMessage('Readout');
-        return _ReadoutPane(data: data, ctrl: ctrl, channel: bound, unit: unit);
+      case AnalysisPaneKind.rms:
+        final ch = sel.rmsChannel;
+        if (ch == null) return _paneMessage(context, 'RMS: pick a channel');
+        final chan = _ConvertedChannel.of(data, ch, unit);
+        if (chan == null) return unavailable('RMS', ch);
+        return _RmsPane(data: data, ctrl: ctrl, channel: chan, unit: unit);
       case AnalysisPaneKind.fft:
-        final chans = sel.fftChannels.toList()..sort();
-        final bound = [
-          for (final ch in chans) ?_ConvertedChannel.of(data, ch, unit),
-        ];
-        if (bound.length < chans.length) return channelMessage('FFT');
+        // The pane plots the bound selection (unbound members drop out,
+        // like on the force graph); when EVERY selected channel fails,
+        // say why instead of showing a bare "no channels".
+        if (bound.isEmpty && widget.activeChannels.isNotEmpty) {
+          return unavailable('FFT', widget.activeChannels.first);
+        }
         return _GraphPane(
           data: data,
           ctrl: ctrl,
@@ -779,6 +796,34 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
           ),
         );
     }
+  }
+
+  /// Why channel [id] can't bind [unit]: member-calibration gaps for a
+  /// derived channel ("no load cell on CH 2" — the common dead-plate-pane
+  /// cause), the unconfigured-slot case, else the generic unit line (a
+  /// hardware channel without the unit's conversion, a blend channel in an
+  /// electrical unit).
+  static String _bindWhy(GraphDataSource data, int id, DisplayUnit unit) {
+    if (!isDerivedChannelId(id)) return 'channel unavailable in ${unit.label}';
+    final specs = data.derivedChannels;
+    final idx = derivedIndexOf(id);
+    if (idx >= specs.length) return 'no math channel configured in this slot';
+    final spec = specs[idx];
+    final noCell = [
+      for (final m in spec.members)
+        if (data.calibrationFor(m).loadCell == null) rigSlotTitle(m),
+    ];
+    final noBoard = [
+      for (final m in spec.members)
+        if (data.calibrationFor(m).board == null) rigSlotTitle(m),
+    ];
+    if (noCell.isEmpty && noBoard.isEmpty) {
+      return 'channel unavailable in ${unit.label}';
+    }
+    return [
+      if (noCell.isNotEmpty) 'no load cell on ${noCell.join(', ')}',
+      if (noBoard.isNotEmpty) 'no board data on ${noBoard.join(', ')}',
+    ].join(', ');
   }
 
   /// Plate-corner membership of two axis channel ids, from their specs'
@@ -824,6 +869,52 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
         ?_ConvertedChannel.of(widget.data, ch, unit),
     ];
 
+    // Family split: unitless plate coordinates never share an axis with
+    // forces — a ±1 blend under a kgf autorange reads as a flat zero line
+    // with the wrong unit on the axis. Two stacked graphs, one selection.
+    final forceChannels = [
+      for (final c in convertedChannels)
+        if (!c.unitless) c,
+    ];
+    final coordChannels = [
+      for (final c in convertedChannels)
+        if (c.unitless) c,
+    ];
+    final hasForce = forceChannels.isNotEmpty;
+    final hasCoords = coordChannels.isNotEmpty;
+    final hasPane = widget.analysis.kind != null;
+
+    // Vertical split of the graph region (flexes sum to 10); the analysis
+    // pane and the coordinates graph each take a share when present.
+    final forceFlex = !hasCoords ? (hasPane ? 6 : 10) : (hasPane ? 4 : 6);
+    final coordFlex = !hasForce ? (hasPane ? 6 : 10) : (hasPane ? 3 : 4);
+    final paneFlex = hasCoords ? 3 : 4;
+    // Time labels ride the bottom-most TIME pane only (the analysis pane
+    // has its own axis).
+    final forceXLabels = !hasCoords && !hasPane;
+
+    Widget timeGraph({
+      required List<_ConvertedChannel> channels,
+      required SegmentedGraphCache cache,
+      required bool showXLabels,
+    }) => _GraphPane(
+      data: widget.data,
+      ctrl: widget.ctrl,
+      painter: _ForceGraphPainter(
+        widget.data,
+        widget.ctrl,
+        unit: unit,
+        channels: channels,
+        showXLabels: showXLabels,
+        vsync: _vsync,
+        cache: cache,
+        colorScheme: colorScheme,
+        dpr: dpr,
+        labels: _labelCache,
+        bakePump: _bakePump,
+      ),
+    );
+
     // The canvas exposes no semantics of its own; explicitChildNodes keeps
     // the controls as their own nodes rather than merging into this label.
     // No LayoutBuilder here (unlike _GraphPane/_Minimap): nothing reads the
@@ -857,36 +948,52 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
           AnalysisPaneKind.derivative => '. Rate-of-change graph below',
           AnalysisPaneKind.fft => '. Spectrum graph below',
           AnalysisPaneKind.plate => '. Two-axis position view below',
-          AnalysisPaneKind.readout => '. Channel readout below',
+          AnalysisPaneKind.rms => '. Window RMS below',
         },
       ),
       child: Stack(
         children: [
           Column(
             children: [
-              Expanded(
-                flex: widget.analysis.kind != null ? 6 : 10,
-                child: _GraphPane(
-                  data: widget.data,
-                  ctrl: widget.ctrl,
-                  painter: _ForceGraphPainter(
-                    widget.data,
-                    widget.ctrl,
-                    unit: unit,
-                    channels: convertedChannels,
-                    showXLabels: widget.analysis.kind == null,
-                    vsync: _vsync,
+              // No bound channels at all: keep the blank-canvas plot area
+              // (a pane with no series paints nothing) rather than an empty
+              // slot.
+              if (!hasForce && !hasCoords)
+                Expanded(
+                  flex: hasPane ? 6 : 10,
+                  child: timeGraph(
+                    channels: const [],
                     cache: _forceCache,
-                    colorScheme: colorScheme,
-                    dpr: dpr,
-                    labels: _labelCache,
-                    bakePump: _bakePump,
+                    showXLabels: !hasPane,
                   ),
                 ),
-              ),
-              if (_buildAnalysisPane(context, colorScheme, dpr, unit)
+              if (hasForce)
+                Expanded(
+                  flex: forceFlex,
+                  child: timeGraph(
+                    channels: forceChannels,
+                    cache: _forceCache,
+                    showXLabels: forceXLabels,
+                  ),
+                ),
+              if (hasCoords)
+                Expanded(
+                  flex: coordFlex,
+                  child: timeGraph(
+                    channels: coordChannels,
+                    cache: _coordCache,
+                    showXLabels: !hasPane,
+                  ),
+                ),
+              if (_buildAnalysisPane(
+                    context,
+                    colorScheme,
+                    dpr,
+                    unit,
+                    convertedChannels,
+                  )
                   case final pane?)
-                Expanded(flex: 4, child: pane),
+                Expanded(flex: paneFlex, child: pane),
               _Minimap(
                 dataSource: widget.data,
                 unit: unit,
@@ -2749,7 +2856,8 @@ class _FftPanePainter extends CustomPainter {
   final GraphDataSource data;
   final GraphController ctrl;
 
-  /// Channels selected in the pane bar, unit-bound in the workspace.
+  /// The workspace's channel selection (the stats-table toggles),
+  /// unit-bound — same list the dF/dt pane plots.
   final List<_ConvertedChannel> channels;
   final int? requestedN;
   final bool asd;
@@ -2934,6 +3042,7 @@ class _ForcePlatePainter extends CustomPainter {
     this._ctrl, {
     required this.xChannel,
     required this.yChannel,
+    required this.errChannel,
     required this.corners,
     required this.unit,
     required this.cache,
@@ -2949,6 +3058,10 @@ class _ForcePlatePainter extends CustomPainter {
   /// The pane's axis channels (unit-bound).
   final _ConvertedChannel xChannel;
   final _ConvertedChannel yChannel;
+
+  /// The plate's saddle/error channel, drawn as the live bar in the right
+  /// gutter (see [_drawErrBar]).
+  final _ConvertedChannel errChannel;
 
   /// Corner labels: (member channel, x-sign, y-sign) from the axis
   /// channels' weight signs.
@@ -3026,40 +3139,43 @@ class _ForcePlatePainter extends CustomPainter {
     // live vector draws funnel through [_renderDots] at plate-local origin.
     final total = _data.totalSamples;
     _PlateMarker? marker;
-    if (total > 0 && side > 0) {
+    if (total > 0) {
       final (vs, ve) = _ctrl.effectiveRange(total, _data.oldestSample);
-      // Plate-local pixel of a clamped position (toPx without the left offset).
-      Offset pointFor(double x, double y) => Offset(
-        (x + _extent) / (2 * _extent) * side,
-        (_extent - y) / (2 * _extent) * side,
-      );
-      final dotPaint = Paint()
-        ..color = colorScheme.primary.withAlpha(_kDotAlpha);
-      canvas.save();
-      canvas.translate(left, 0);
-      final trail = cache.paint(canvas, (
-        generation: _data.dataGeneration,
-        configKey: [
-          unit,
-          _data.calibrationVersion,
-          _data.tareVersion,
-          xChannel.channel,
-          yChannel.channel,
-          side,
-          dpr,
-        ],
-        side: side,
-        dpr: dpr,
-        viewStart: vs,
-        viewEnd: ve,
-        oldestSample: _data.oldestSample,
-        totalSamples: total,
-        render: (c, start, end) =>
-            _renderDots(c, start, end, pointFor, dotPaint),
-      ));
-      canvas.restore();
-      marker = trail.marker;
-      if (trail.workRemains) bakePump.schedule();
+      if (side > 0) {
+        // Plate-local pixel of a clamped position (toPx without the left offset).
+        Offset pointFor(double x, double y) => Offset(
+          (x + _extent) / (2 * _extent) * side,
+          (_extent - y) / (2 * _extent) * side,
+        );
+        final dotPaint = Paint()
+          ..color = colorScheme.primary.withAlpha(_kDotAlpha);
+        canvas.save();
+        canvas.translate(left, 0);
+        final trail = cache.paint(canvas, (
+          generation: _data.dataGeneration,
+          configKey: [
+            unit,
+            _data.calibrationVersion,
+            _data.tareVersion,
+            xChannel.channel,
+            yChannel.channel,
+            side,
+            dpr,
+          ],
+          side: side,
+          dpr: dpr,
+          viewStart: vs,
+          viewEnd: ve,
+          oldestSample: _data.oldestSample,
+          totalSamples: total,
+          render: (c, start, end) =>
+              _renderDots(c, start, end, pointFor, dotPaint),
+        ));
+        canvas.restore();
+        marker = trail.marker;
+        if (trail.workRemains) bakePump.schedule();
+      }
+      _drawErrBar(canvas, plotW, plotH, vs, ve);
     }
 
     if (marker != null) {
@@ -3092,6 +3208,82 @@ class _ForcePlatePainter extends CustomPainter {
     }
   }
 
+  /// Fixed full-scale of the err bar: the plate's saddle residual as a
+  /// fraction of its total load — 5% is well into "something is loose".
+  /// Fixed (not autoscaled) so a quiet plate reads quiet; (estimate —
+  /// calibrate against real plates, adjust here).
+  static const double _kErrScale = 0.05;
+
+  /// The error channel's instantaneous value as a vertical bar in the right
+  /// gutter: newest defined sample of the window (the same instant as the
+  /// trail's end marker), centered at zero, clamped to ±[_kErrScale].
+  void _drawErrBar(
+    Canvas canvas,
+    double plotW,
+    double plotH,
+    int viewStart,
+    int viewEnd,
+  ) {
+    final channel = errChannel;
+    final net = channel.netMap;
+    // The scan is capped so an unloaded plate (undefined ratio samples)
+    // can't turn it into a full-window sweep per frame.
+    double? err;
+    final scanFrom = math.max(viewStart, viewEnd - 4000);
+    for (int j = viewEnd - 1; j >= scanFrom; j--) {
+      final raw = _data.rawValueAt(channel.channel, j);
+      if (!raw.isNaN) {
+        err = net(raw);
+        break;
+      }
+    }
+
+    final dim = colorScheme.onSurface.withAlpha(150);
+    final tag = labels.prepare('Err', color: dim);
+    final valuePar = labels.prepare(
+      err == null ? '—' : err.toStringAsFixed(3),
+      color: colorScheme.onSurface,
+    );
+    final trackTop = tag.height + 4;
+    final trackBottom = plotH - valuePar.height - 4;
+    if (trackBottom <= trackTop) return;
+
+    final cx = plotW + _kGraphRightSpace / 2;
+    const halfW = 6.0;
+    final halfH = (trackBottom - trackTop) / 2;
+    final midY = trackTop + halfH;
+
+    final outline = Paint()
+      ..color = colorScheme.onSurface.withAlpha(120)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawRect(
+      Rect.fromLTRB(cx - halfW, trackTop, cx + halfW, trackBottom),
+      outline,
+    );
+    // Zero tick.
+    canvas.drawLine(
+      Offset(cx - halfW - 2, midY),
+      Offset(cx + halfW + 2, midY),
+      outline,
+    );
+    if (err != null) {
+      final frac = (err / _kErrScale).clamp(-1.0, 1.0);
+      canvas.drawRect(
+        Rect.fromPoints(
+          Offset(cx - halfW, midY),
+          Offset(cx + halfW, midY - frac * halfH),
+        ),
+        Paint()..color = channel.color.withAlpha(160),
+      );
+    }
+    canvas.drawParagraph(tag, Offset(cx - tag.longestLine / 2, 0));
+    canvas.drawParagraph(
+      valuePar,
+      Offset(cx - valuePar.longestLine / 2, plotH - valuePar.height),
+    );
+  }
+
   /// The trail loop, shared by bucket bakes and the live vector head/tail:
   /// one dot per sample at the pane's two channel values; undefined samples
   /// (gaps, no positive load) skipped. Returns the newest valid sample of
@@ -3121,7 +3313,7 @@ class _ForcePlatePainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _ForcePlatePainter oldDelegate) => true;
 } // ---------------------------------------------------------------------------
-// Readout pane
+// RMS pane
 //
 // One channel's window-aggregated RMS as a number and a bar — the view for
 // slowly-varying diagnostic channels (the plate's error channel) and for a
@@ -3130,8 +3322,8 @@ class _ForcePlatePainter extends CustomPainter {
 // never a sticky session max.
 // ---------------------------------------------------------------------------
 
-class _ReadoutPane extends StatelessWidget {
-  const _ReadoutPane({
+class _RmsPane extends StatelessWidget {
+  const _RmsPane({
     required this.data,
     required this.ctrl,
     required this.channel,
