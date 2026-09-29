@@ -778,6 +778,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             dpr: dpr,
             labels: _labelCache,
             bakePump: _bakePump,
+            ellipses: widget.overlays?.plateEllipses ?? const [],
           ),
         );
       case AnalysisPaneKind.rms:
@@ -3199,6 +3200,7 @@ class _ForcePlatePainter extends CustomPainter {
     required this.dpr,
     required this.labels,
     required this.bakePump,
+    required this.ellipses,
   }) : super(repaint: Listenable.merge([_data.repaint, _ctrl, bakePump]));
 
   final GraphDataSource _data;
@@ -3222,6 +3224,10 @@ class _ForcePlatePainter extends CustomPainter {
   /// Persistent, owned by [_GraphWorkspaceState] (like [_forceCache]); no
   /// recreation rules — a config change clears inside the cache.
   final ForcePlateCache<_PlateMarker> cache;
+
+  /// CoP-cloud confidence ellipses (see [PlateEllipseOverlay]), drawn over
+  /// the trail.
+  final List<PlateEllipseOverlay> ellipses;
 
   final ColorScheme colorScheme;
   final double dpr;
@@ -3325,6 +3331,29 @@ class _ForcePlatePainter extends CustomPainter {
         if (trail.workRemains) bakePump.schedule();
       }
       _drawErrBar(canvas, plotW, plotH, vs, ve);
+    }
+
+    // Confidence ellipses over the trail, under the head marker.
+    for (final e in ellipses) {
+      final c = toPx(e.cx, e.cy);
+      final scale = side / (2 * _extent);
+      canvas.save();
+      canvas.translate(c.dx, c.dy);
+      // Plate coordinates are y-up; the canvas is y-down, so the rotation
+      // sign flips.
+      canvas.rotate(-e.angleRad);
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: Offset.zero,
+          width: 2 * e.semiA * scale,
+          height: 2 * e.semiB * scale,
+        ),
+        Paint()
+          ..color = e.color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+      canvas.restore();
     }
 
     if (marker != null) {

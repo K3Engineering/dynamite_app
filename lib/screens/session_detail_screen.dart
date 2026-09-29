@@ -7,8 +7,10 @@ import 'package:provider/provider.dart';
 
 import '../models/analysis_pane.dart';
 import '../models/app_meta.dart';
-import '../analysis/metrics.dart';
+import '../analysis/metrics_sway.dart';
+import '../analysis/test_result.dart';
 import '../models/derived_channel.dart';
+import '../models/graph_overlays.dart';
 import '../models/session_catalog.dart';
 import '../services/app_settings.dart';
 import '../models/display_unit.dart';
@@ -27,6 +29,7 @@ import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 import '../widgets/snackbars.dart';
+import '../widgets/sway_metrics_table.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   const SessionDetailScreen({super.key, required this.session});
@@ -167,6 +170,59 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         },
       );
 
+  /// The per-test section for this session, if it has a test result: its
+  /// graph overlays plus the header/table block. Unknown test ids (written
+  /// by a newer build) get a count-only note rather than a crash.
+  ({GraphOverlays? overlays, Widget? section}) _testResultSection(
+    TestResult? result,
+    SessionData data,
+  ) {
+    final r = result;
+    if (r == null) return (overlays: null, section: null);
+
+    Widget section(int repCount, Widget? table) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Test: ${r.testId.toUpperCase()}',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '$repCount valid rep${repCount == 1 ? '' : 's'} · body weight '
+            '${r.bodyWeightKgf.toStringAsFixed(1)} kgf',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (table != null) ...[const SizedBox(height: 8), table],
+        ],
+      ),
+    );
+
+    return switch (r.testId) {
+      'jump' => () {
+        final reps = evaluateTestResult(r, data);
+        return (
+          overlays: overlaysForTestResult(r),
+          section: reps.isEmpty
+              ? null
+              : section(reps.length, CjmMetricsTable(reps: reps)),
+        );
+      }(),
+      'romberg' => () {
+        final reps = evaluateSwayResult(r, data);
+        return (
+          overlays: overlaysForSwayReps(reps),
+          section: reps.isEmpty
+              ? null
+              : section(reps.length, SwayMetricsTable(reps: reps)),
+        );
+      }(),
+      _ => (overlays: null, section: section(r.reps.length, null)),
+    };
+  }
+
   Widget _buildContent(
     AppSettings settings,
     SessionSummary session,
@@ -184,13 +240,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         !_hiddenDerived.contains(i),
     ];
     final unit = settings.displayUnit.effective(data.unitAvailability);
-    final testResult = session.testResult;
-    final testReps = testResult == null
-        ? const <CmjRepResult>[]
-        : evaluateTestResult(testResult, data);
-    final overlays = testResult == null
-        ? null
-        : overlaysForTestResult(testResult);
+    final (overlays: testOverlays, section: testSection) = _testResultSection(
+      session.testResult,
+      data,
+    );
 
     // The app-wide on-screen family (see [AppSettings.channelFamily]):
     // [tableIds] for the header (inactive included, greyed), the filtered
@@ -288,7 +341,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                               ],
                               analysis: analysis,
                               isLiveSource: false,
-                              overlays: overlays,
+                              overlays: testOverlays,
                             ),
                     ),
                   ),
@@ -303,29 +356,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             ),
           ),
 
-          if (testResult != null && testReps.isNotEmpty) ...[
+          if (testSection case final section?) ...[
             const Divider(height: 24),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Test: ${testResult.testId.toUpperCase()}',
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${testReps.length} valid rep'
-                    '${testReps.length == 1 ? '' : 's'} · body weight '
-                    '${testResult.bodyWeightKgf.toStringAsFixed(1)} kgf',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                  const SizedBox(height: 8),
-                  CjmMetricsTable(reps: testReps),
-                ],
-              ),
-            ),
+            section,
           ],
 
           const Divider(height: 24),
