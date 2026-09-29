@@ -65,6 +65,7 @@ final class DerivedChannelSpec {
 final class MathProfile {
   MathProfile.none()
     : specs = const [],
+      plateTotalId = null,
       plateXId = null,
       plateYId = null,
       plateErrId = null;
@@ -76,6 +77,7 @@ final class MathProfile {
         'corners must be a permutation of the hardware channels',
       ),
       specs = forcePlateChannels(corners),
+      plateTotalId = kAdcChannelCount,
       plateXId = kAdcChannelCount + 1,
       plateYId = kAdcChannelCount + 2,
       plateErrId = kAdcChannelCount + 3;
@@ -83,8 +85,10 @@ final class MathProfile {
   /// The derived channels in id order; empty for a `none` profile.
   final List<DerivedChannelSpec> specs;
 
-  /// The plate pane's axis/error channel ids; null when the profile has no
-  /// plate semantics (not just unbound — not configured).
+  /// The plate semantics' channel ids (Σ total force; the plate pane's
+  /// axis/error channels); null when the profile has no plate semantics
+  /// (not just unbound — not configured).
+  final int? plateTotalId;
   final int? plateXId;
   final int? plateYId;
   final int? plateErrId;

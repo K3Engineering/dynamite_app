@@ -5,6 +5,7 @@ library;
 
 import 'package:meta/meta.dart';
 
+import '../analysis/test_result.dart';
 import 'display_unit.dart';
 
 @immutable
@@ -23,6 +24,7 @@ class SessionSummary {
     required this.interrupted,
     required List<String> channelLabels,
     required List<bool> visibleChannels,
+    this.testResult,
   }) : channelLabels = List.unmodifiable(channelLabels),
        visibleChannels = List.unmodifiable(visibleChannels);
 
@@ -64,4 +66,7 @@ class SessionSummary {
   /// loadable and exportable like any session, flagged forever — nothing
   /// ever promotes it afterwards.
   final bool interrupted;
+
+  /// The guided-test analysis attached to this session, if any.
+  final TestResult? testResult;
 }
