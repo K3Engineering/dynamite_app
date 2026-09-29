@@ -3,7 +3,9 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/analysis/metrics.dart';
 import 'package:dynamite_app/analysis/plate_series.dart';
+import 'package:dynamite_app/analysis/segmentation_cmj.dart';
 import 'package:dynamite_app/analysis/test_catalog.dart';
 import 'package:dynamite_app/runner/plate_source.dart';
 import 'package:dynamite_app/runner/test_recorder.dart';
@@ -86,8 +88,12 @@ class _FakeRecorder implements TestRecorder {
 
 void main() {
   /// A 1.5 s empty lead-in followed by three scripted jumps, so the controller
-  /// can zero, weigh, and capture all three reps.
-  _FakePlateSource buildTrace({int startsAt = 0}) {
+  /// can zero, weigh, and capture all three reps. [dips] picks each rep's
+  /// countermovement (true = CMJ, false = squat jump).
+  _FakePlateSource buildTrace({
+    int startsAt = 0,
+    List<bool> dips = const [true, true, true],
+  }) {
     final corners = <List<double>>[[], [], [], []];
     void addEmpty(int n) {
       for (final c in corners) {
@@ -96,8 +102,8 @@ void main() {
     }
 
     addEmpty(1500);
-    for (int rep = 0; rep < 3; rep++) {
-      final jump = SyntheticCmj(seed: rep + 1);
+    for (int rep = 0; rep < dips.length; rep++) {
+      final jump = SyntheticCmj(seed: rep + 1, dip: dips[rep]);
       for (int c = 0; c < 4; c++) {
         corners[c].addAll(jump.cornerKgf[c]);
       }
@@ -105,24 +111,30 @@ void main() {
     return _FakePlateSource(corners, startsAt: startsAt);
   }
 
-  testWidgets('segments three reps and summarizes', (tester) async {
-    final source = buildTrace();
-    final recorder = _FakeRecorder();
-    final ctrl = TestRunnerController(
-      test: cmjTest,
-      person: 'Test',
-      source: source,
-      recorder: recorder,
-    );
-    addTearDown(ctrl.dispose);
+  Future<void> runToSummary(
+    WidgetTester tester,
+    TestRunnerController ctrl,
+    _FakePlateSource source,
+  ) async {
     ctrl.begin();
-
-    // Reveal the trace 100 ms at a time, letting async finalization run.
     for (int i = 0; i < source.length; i += 100) {
       source.advance(100);
       await tester.pump();
     }
     await tester.pump();
+  }
+
+  testWidgets('segments three reps and summarizes', (tester) async {
+    final source = buildTrace();
+    final recorder = _FakeRecorder();
+    final ctrl = TestRunnerController(
+      test: jumpBatteryTest,
+      person: 'Test',
+      source: source,
+      recorder: recorder,
+    );
+    addTearDown(ctrl.dispose);
+    await runToSummary(tester, ctrl, source);
 
     expect(ctrl.phase, TestRunnerPhase.summary);
     expect(ctrl.reps, hasLength(3));
@@ -136,6 +148,32 @@ void main() {
     expect(ctrl.overlays?.spans, isNotEmpty);
   });
 
+  testWidgets('classifies a mixed CMJ/SJ battery', (tester) async {
+    final source = buildTrace(dips: [true, false, true]);
+    final ctrl = TestRunnerController(
+      test: jumpBatteryTest,
+      person: 'Test',
+      source: source,
+      recorder: _FakeRecorder(),
+    );
+    addTearDown(ctrl.dispose);
+    await runToSummary(tester, ctrl, source);
+
+    expect(ctrl.phase, TestRunnerPhase.summary);
+    expect(ctrl.reps, hasLength(3));
+    expect(
+      [for (final r in ctrl.reps) r.jumpClass],
+      [JumpClass.countermovement, JumpClass.squat, JumpClass.countermovement],
+    );
+    // The squat rep has no eccentric phase and no eccentric span.
+    expect(ctrl.reps[1].metric('eccentric_duration'), isNull);
+    expect(ctrl.reps[1].phases.spans, hasLength(3));
+    final saved = ctrl.result!;
+    expect(saved.reps[1].spans, hasLength(3));
+    // And the EUR join has both classes to work with.
+    expect(eccentricUtilizationRatio(ctrl.reps), isNotNull);
+  });
+
   testWidgets('persisted phases are session-relative on a shifted source', (
     tester,
   ) async {
@@ -145,19 +183,13 @@ void main() {
     final source = buildTrace(startsAt: 4200);
     int? origin;
     final ctrl = TestRunnerController(
-      test: cmjTest,
+      test: jumpBatteryTest,
       person: 'Test',
       source: source,
       recorder: _OriginCapturingRecorder(source, (idx) => origin = idx),
     );
     addTearDown(ctrl.dispose);
-    ctrl.begin();
-
-    for (int i = 0; i < source.length; i += 100) {
-      source.advance(100);
-      await tester.pump();
-    }
-    await tester.pump();
+    await runToSummary(tester, ctrl, source);
 
     expect(ctrl.phase, TestRunnerPhase.summary);
     expect(ctrl.reps, hasLength(3));
