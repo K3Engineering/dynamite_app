@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 
 import '../analysis/metrics.dart';
 import '../analysis/plate_series.dart';
+import '../analysis/segmentation_cmj.dart';
 import '../analysis/test_result.dart';
 import '../models/graph_data_source.dart';
 import '../models/graph_overlays.dart';
@@ -81,11 +82,13 @@ List<CmjRepResult> evaluateTestResult(TestResult result, GraphDataSource data) {
   if (reader == null) return const [];
   final reps = <CmjRepResult>[];
   for (int i = 0; i < result.reps.length; i++) {
-    final phases = result.reps[i];
-    if (phases.onset < data.oldestSample || phases.end > data.totalSamples) {
+    final rep = result.reps[i];
+    final phases = CmjPhases.tryFromSpans(rep);
+    if (phases == null) continue;
+    if (rep.start < data.oldestSample || rep.end > data.totalSamples) {
       continue;
     }
-    final window = PlateWindow.capture(reader, phases.onset, phases.end);
+    final window = PlateWindow.capture(reader, rep.start, rep.end);
     reps.add(
       CmjRepResult(
         number: i + 1,
@@ -104,8 +107,8 @@ List<CmjRepResult> evaluateTestResult(TestResult result, GraphDataSource data) {
 /// Phase shading for every rep in [result].
 GraphOverlays overlaysForTestResult(TestResult result) => GraphOverlays(
   spans: [
-    for (final phases in result.reps)
-      for (final s in phases.spans)
+    for (final rep in result.reps)
+      for (final s in rep.spans)
         GraphOverlaySpan(
           start: s.start,
           end: s.end,
