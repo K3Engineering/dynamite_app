@@ -62,18 +62,20 @@ class CmjMetricValue {
   final double? value;
 }
 
-/// One evaluated rep: its 1-based number, its phase boundaries, and every
-/// metric value. Shared by the live runner, the test summary, and a re-opened
-/// session.
+/// One evaluated rep: its 1-based number, its classification, its phase
+/// boundaries, and every metric value. Shared by the live runner, the test
+/// summary, and a re-opened session.
 @immutable
 class CmjRepResult {
   const CmjRepResult({
     required this.number,
+    required this.jumpClass,
     required this.phases,
     required this.metrics,
   });
 
   final int number;
+  final JumpClass jumpClass;
   final CmjPhases phases;
   final List<CmjMetricValue> metrics;
 
@@ -83,6 +85,36 @@ class CmjRepResult {
     }
     return null;
   }
+}
+
+/// Class label for display ("CMJ" / "SJ").
+String jumpClassLabel(JumpClass cls) => switch (cls) {
+  JumpClass.countermovement => 'CMJ',
+  JumpClass.squat => 'SJ',
+};
+
+/// Eccentric utilization ratio: mean CMJ height over mean SJ height (flight-
+/// time heights), or null when either class has no measured height. Jumping
+/// with a countermovement typically beats jumping from a dead hold, so a fit
+/// athlete lands a bit above 1.
+double? eccentricUtilizationRatio(List<CmjRepResult> reps) {
+  double meanHeight(JumpClass cls) {
+    double sum = 0;
+    int n = 0;
+    for (final r in reps) {
+      if (r.jumpClass != cls) continue;
+      final h = r.metric('height_flight');
+      if (h == null) continue;
+      sum += h;
+      n++;
+    }
+    return n == 0 ? double.nan : sum / n;
+  }
+
+  final cmj = meanHeight(JumpClass.countermovement);
+  final sj = meanHeight(JumpClass.squat);
+  if (sj.isNaN || cmj.isNaN || sj == 0) return null;
+  return cmj / sj;
 }
 
 /// The CMJ metric table, in display order.
@@ -138,7 +170,10 @@ final List<CmjMetricDef> cmjMetrics = List.unmodifiable([
     label: 'Eccentric duration',
     unit: 'ms',
     decimals: 0,
-    compute: (w, p, c) => p.eccentricSamples / p.sampleRate * 1000,
+    // A squat jump has no eccentric phase: dash, not zero.
+    compute: (w, p, c) => p.eccentricSamples == 0
+        ? null
+        : p.eccentricSamples / p.sampleRate * 1000,
   ),
   CmjMetricDef(
     id: 'concentric_duration',

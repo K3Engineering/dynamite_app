@@ -41,6 +41,7 @@ class SyntheticCmj {
     int seed = 1,
     double ringAmplitudeKg = 0,
     double ringHz = 33,
+    bool dip = true,
   }) {
     int n(double seconds) => (seconds * sampleRate).round();
     final quiet = n(1.0);
@@ -51,12 +52,16 @@ class SyntheticCmj {
     final settle = n(0.40);
     final tail = n(0.30);
 
-    // Ground-phase total force: quiet -> dip to 0.6 BW -> push to 2.8 BW ->
-    // release to zero.
+    // Ground-phase total force: quiet -> push to 2.8 BW -> release to zero.
+    // With [dip], a countermovement (down to 0.6 BW) precedes the push; a
+    // squat jump pushes straight from quiet stance, holding BW where the dip
+    // would sit (the hold is what the controller's between-rep arming sees).
     final ground = <double>[
       for (int i = 0; i < quiet; i++) bwKg,
-      for (int i = 0; i < unweight; i++) _lerp(bwKg, 0.6 * bwKg, i / unweight),
-      for (int i = 0; i < push; i++) _lerp(0.6 * bwKg, 2.8 * bwKg, i / push),
+      for (int i = 0; i < unweight; i++)
+        dip ? _lerp(bwKg, 0.6 * bwKg, i / unweight) : bwKg,
+      for (int i = 0; i < push; i++)
+        _lerp(dip ? 0.6 * bwKg : bwKg, 2.8 * bwKg, i / push),
       for (int i = 0; i < release; i++)
         _lerp(2.8 * bwKg, 0.0, (i + 1) / release),
     ];

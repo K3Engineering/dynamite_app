@@ -82,13 +82,34 @@ int? findSustainedBelow(
   int to,
   double threshold,
   int sustain,
+) => _findSustained(w, from, to, (f) => f < threshold, sustain);
+
+/// First absolute index in `[[from], [to])` where total force leaves the
+/// `[lower, upper]` band for [sustain] consecutive samples, or null when it
+/// never does. A rep may start by dropping (countermovement) or by rising
+/// (squat jump), so arming watches both directions at once.
+int? findSustainedOutside(
+  PlateWindow w,
+  int from,
+  int to,
+  double lower,
+  double upper,
+  int sustain,
+) => _findSustained(w, from, to, (f) => f < lower || f > upper, sustain);
+
+int? _findSustained(
+  PlateWindow w,
+  int from,
+  int to,
+  bool Function(double force) holds,
+  int sustain,
 ) {
   final start = math.max(from, w.start);
   final stop = math.min(to, w.end);
   for (int i = start; i + sustain <= stop; i++) {
     bool all = true;
     for (int k = 0; k < sustain; k++) {
-      if (!(w.smoothAt(i + k) < threshold)) {
+      if (!holds(w.smoothAt(i + k))) {
         all = false;
         break;
       }

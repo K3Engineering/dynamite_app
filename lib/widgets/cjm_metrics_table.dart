@@ -33,7 +33,7 @@ class CjmMetricsTable extends StatelessWidget {
             const SizedBox.shrink(),
             for (final r in reps)
               Text(
-                'Rep ${r.number}',
+                'Rep ${r.number} (${jumpClassLabel(r.jumpClass)})',
                 style: headerStyle,
                 textAlign: TextAlign.end,
               ),
@@ -49,6 +49,26 @@ class CjmMetricsTable extends StatelessWidget {
               ),
               for (final r in reps) _cell(context, def, r.metric(def.id)),
               _cell(context, def, _mean(def.id)),
+            ],
+          ),
+        if (eccentricUtilizationRatio(reps) case final eur?)
+          TableRow(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text('EUR (CMJ/SJ)', style: theme.textTheme.bodySmall),
+              ),
+              for (final _ in reps) const SizedBox.shrink(),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Text(
+                  eur.toStringAsFixed(2),
+                  textAlign: TextAlign.end,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ),
             ],
           ),
       ],
@@ -92,6 +112,10 @@ List<CmjRepResult> evaluateTestResult(TestResult result, GraphDataSource data) {
     reps.add(
       CmjRepResult(
         number: i + 1,
+        // The class is a fact of the persisted spans (see [CmjPhases.spans]).
+        jumpClass: phases.eccentricSamples > 0
+            ? JumpClass.countermovement
+            : JumpClass.squat,
         phases: phases,
         metrics: evaluateCmjMetrics(
           window,
