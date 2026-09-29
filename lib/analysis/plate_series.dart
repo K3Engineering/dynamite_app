@@ -229,6 +229,7 @@ class PlateWindow {
   PlateWindow._({
     required this.start,
     required this.sampleRate,
+    required this.geometry,
     required this.totalKgf,
     required this.smoothKgf,
     required this.leftKgf,
@@ -240,6 +241,9 @@ class PlateWindow {
   /// Absolute sample index of element 0.
   final int start;
   final int sampleRate;
+
+  /// The plate's geometry (converts support-normalized CoP to millimetres).
+  final PlateGeometry geometry;
 
   /// Total plate force, kgf (raw).
   final Float64List totalKgf;
@@ -294,6 +298,7 @@ class PlateWindow {
     return PlateWindow._(
       start: start,
       sampleRate: reader.sampleRate,
+      geometry: reader.geometry,
       totalKgf: total,
       smoothKgf: smooth,
       leftKgf: left,
