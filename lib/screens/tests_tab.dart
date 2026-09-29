@@ -43,9 +43,12 @@ class _TestCard extends StatelessWidget {
         leading: CircleAvatar(
           backgroundColor: theme.colorScheme.primaryContainer,
           foregroundColor: theme.colorScheme.onPrimaryContainer,
-          child: Icon(switch (def.id) {
-            'gait' => Icons.directions_walk,
-            'romberg' => Icons.balance,
+          child: Icon(switch (def.family) {
+            TestFamily.gait => Icons.directions_walk,
+            TestFamily.sway => Icons.balance,
+            TestFamily.singleLeg => Icons.accessibility_new,
+            TestFamily.isometric => Icons.fitness_center,
+            TestFamily.dropJump => Icons.arrow_downward,
             _ => Icons.speed,
           }),
         ),

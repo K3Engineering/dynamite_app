@@ -275,6 +275,79 @@ class SyntheticGaitWalk {
   }
 }
 
+/// Scripted drop-jump reps: for each rep — a sharp touchdown to a contact
+/// plateau, release into flight, a landing spike, a brief stand, then
+/// stepping back off ("onto the box"). CoP stays centred; the test's job
+/// is the time structure, not the sway.
+class SyntheticDropJump {
+  SyntheticDropJump({
+    this.bwKg = 80,
+    this.sampleRate = 1000,
+    this.reps = 3,
+    this.flightSamples = 500,
+  });
+
+  final double bwKg;
+  final int sampleRate;
+  final int reps;
+
+  /// Airborne gap per rep (500 ms → 0.307 m flight-time height).
+  final int flightSamples;
+
+  /// Scripted segment durations per rep, in samples.
+  static const rampUp = 50; // 0 → contact plateau
+  static const holdMs = 300; // contact plateau
+  static const fallMs = 50; // plateau → 0
+  static const spike = 80; // landing spike at 2.0 BW
+  static const stand = 300; // standing on the plate after landing
+  static const gapMs = 700; // off the plate (back on the box)
+  static const tail = 500;
+
+  int get sampleCount =>
+      reps *
+          (rampUp + holdMs + fallMs + flightSamples + spike + stand + gapMs) +
+      tail;
+
+  /// Contact peak in multiples of body weight.
+  static const contactPeak = 1.8;
+
+  /// Landing spike peak in multiples of body weight.
+  static const landingPeak = 2.0;
+
+  /// Total plate force of one sample, in kgf.
+  double totalAt(int index) {
+    const seg = rampUp + holdMs + fallMs + spike + stand + gapMs;
+    final i = index % (seg + flightSamples);
+    final repIdx = index ~/ (seg + flightSamples);
+    if (repIdx >= reps) return 0;
+    int off = i;
+    if (off < rampUp) return bwKg * contactPeak * off / rampUp;
+    off -= rampUp;
+    if (off < holdMs) return bwKg * contactPeak;
+    off -= holdMs;
+    if (off < fallMs) return bwKg * contactPeak * (1 - off / fallMs);
+    off -= fallMs;
+    if (off < flightSamples) return 0;
+    off -= flightSamples;
+    if (off < spike) return bwKg * landingPeak;
+    off -= spike;
+    if (off < stand) return bwKg;
+    return 0;
+  }
+
+  /// Per-corner lists in [TL, TR, BL, BR] order (CoP centred: equal split).
+  List<List<double>> cornerLists() {
+    final corners = <List<double>>[[], [], [], []];
+    for (int i = 0; i < sampleCount; i++) {
+      final q = totalAt(i) / 4;
+      for (final c in corners) {
+        c.add(q);
+      }
+    }
+    return corners;
+  }
+}
+
 /// Piecewise-linear interpolation through [points] (sorted by progress).
 double _piecewise(double u, List<(double, double)> points) {
   for (int i = 1; i < points.length; i++) {
