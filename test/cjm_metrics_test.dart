@@ -62,4 +62,64 @@ void main() {
       expect(byId['concentric_duration']!, greaterThan(0));
     });
   });
+
+  group('squat jump metrics', () {
+    test('eccentric duration is absent and heights still agree', () {
+      final jump = SyntheticCmj(dip: false);
+      final window = jump.window;
+      final baseline = estimateBaseline(window, 0, jump.quietEnd)!;
+      final rep =
+          segmentCmj(window, JumpContext.fromBaseline(baseline)) as CmjRep;
+      final byId = {
+        for (final v in evaluateCmjMetrics(
+          window,
+          rep.phases,
+          CmjContext(bwKgf: baseline.meanKgf),
+        ))
+          v.def.id: v.value,
+      };
+      expect(byId['eccentric_duration'], isNull);
+      final flight = byId['height_flight']!;
+      expect(flight, greaterThan(0.05));
+      expect((byId['height_impulse']! - flight).abs() / flight, lessThan(0.15));
+    });
+  });
+
+  group('eccentricUtilizationRatio', () {
+    CmjRepResult repResult({required bool dip, int number = 1}) {
+      final jump = SyntheticCmj(dip: dip);
+      final window = jump.window;
+      final baseline = estimateBaseline(window, 0, jump.quietEnd)!;
+      final rep =
+          segmentCmj(window, JumpContext.fromBaseline(baseline)) as CmjRep;
+      return CmjRepResult(
+        number: number,
+        jumpClass: rep.jumpClass,
+        phases: rep.phases,
+        metrics: evaluateCmjMetrics(
+          window,
+          rep.phases,
+          CmjContext(bwKgf: baseline.meanKgf),
+        ),
+      );
+    }
+
+    test('is cmj height over sj height when both classes are present', () {
+      final cmj = repResult(dip: true);
+      final sj = repResult(dip: false, number: 2);
+      final eur = eccentricUtilizationRatio([cmj, sj])!;
+      expect(
+        eur,
+        closeTo(
+          cmj.metric('height_flight')! / sj.metric('height_flight')!,
+          0.001,
+        ),
+      );
+    });
+
+    test('is null when a class is missing', () {
+      expect(eccentricUtilizationRatio([repResult(dip: true)]), isNull);
+      expect(eccentricUtilizationRatio([repResult(dip: false)]), isNull);
+    });
+  });
 }

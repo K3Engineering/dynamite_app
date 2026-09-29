@@ -35,6 +35,24 @@ void main() {
         p.flightSamples,
         closeTo(jump.flightEndIndex - jump.takeoffIndex, 30),
       );
+      expect(seg.jumpClass, JumpClass.countermovement);
+      expect(p.spans, hasLength(4));
+    });
+
+    test('pushing straight from quiet is a squat jump', () {
+      final jump = SyntheticCmj(dip: false);
+      final window = jump.window;
+      final baseline = estimateBaseline(window, 0, jump.quietEnd)!;
+      final seg = segmentCmj(window, JumpContext.fromBaseline(baseline));
+      expect(seg, isA<CmjRep>());
+      final rep = seg as CmjRep;
+      expect(rep.jumpClass, JumpClass.squat);
+      expect(rep.phases.eccentricSamples, 0);
+      expect(rep.phases.spans, hasLength(3));
+      expect(
+        rep.phases.flightSamples,
+        closeTo(jump.flightEndIndex - jump.takeoffIndex, 30),
+      );
     });
 
     test('survives a 33 Hz plate ring', () {
