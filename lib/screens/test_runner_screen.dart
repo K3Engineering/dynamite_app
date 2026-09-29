@@ -14,8 +14,11 @@ import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
 import '../services/session_store.dart';
 import '../widgets/cjm_metrics_table.dart';
+import '../widgets/dj_metrics_table.dart';
 import '../widgets/gait_metrics_table.dart';
 import '../widgets/graph_components.dart';
+import '../widgets/iso_metrics_table.dart';
+import '../widgets/sl_metrics_table.dart';
 import '../widgets/sway_metrics_table.dart';
 
 /// Runs one guided test: zero the plate, measure a stable stance, then record
@@ -173,20 +176,26 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
         if (bw != null)
           Text(
             'Body weight ${bw.toStringAsFixed(1)} kgf · '
-            '${_ctrl.reps.length + _ctrl.swayReps.length + _ctrl.gaitPasses.length} '
-            'rep${_ctrl.reps.length + _ctrl.swayReps.length + _ctrl.gaitPasses.length == 1 ? '' : 's'}',
+            '${_ctrl.reps.length + _ctrl.djReps.length + _ctrl.swayReps.length + _ctrl.isoReps.length + _ctrl.slReps.length + _ctrl.gaitPasses.length} '
+            'rep${_ctrl.reps.length + _ctrl.djReps.length + _ctrl.swayReps.length + _ctrl.isoReps.length + _ctrl.slReps.length + _ctrl.gaitPasses.length == 1 ? '' : 's'}',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium,
           ),
         const SizedBox(height: 20),
         if (_ctrl.reps.isEmpty &&
+            _ctrl.djReps.isEmpty &&
             _ctrl.swayReps.isEmpty &&
+            _ctrl.isoReps.isEmpty &&
+            _ctrl.slReps.isEmpty &&
             _ctrl.gaitPasses.isEmpty)
           const Text('No valid reps were captured.')
         else
-          switch (widget.def.mold) {
-            TestMold.timedCapture => SwayMetricsTable(reps: _ctrl.swayReps),
-            TestMold.freePass => GaitMetricsTable(reps: _ctrl.gaitPasses),
+          switch (widget.def.family) {
+            TestFamily.sway => SwayMetricsTable(reps: _ctrl.swayReps),
+            TestFamily.isometric => IsoMetricsTable(reps: _ctrl.isoReps),
+            TestFamily.singleLeg => SlMetricsTable(reps: _ctrl.slReps),
+            TestFamily.gait => GaitMetricsTable(reps: _ctrl.gaitPasses),
+            TestFamily.dropJump => DjMetricsTable(reps: _ctrl.djReps),
             _ => CjmMetricsTable(reps: _ctrl.reps),
           },
         const SizedBox(height: 32),
@@ -237,11 +246,17 @@ class _RepStatus extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final done = ctrl.reps.length;
-    final height = ctrl.reps.isEmpty
-        ? null
-        : ctrl.reps.last.metric('height_flight');
+    final done = switch (ctrl.test.family) {
+      TestFamily.dropJump => ctrl.djReps.length,
+      _ => ctrl.reps.length,
+    };
+    final height = switch (ctrl.test.family) {
+      TestFamily.dropJump =>
+        ctrl.djReps.isEmpty ? null : ctrl.djReps.last.metric('height_flight'),
+      _ => ctrl.reps.isEmpty ? null : ctrl.reps.last.metric('height_flight'),
+    };
     final jumping = ctrl.phase == TestRunnerPhase.jumping;
+    final isDj = ctrl.test.family == TestFamily.dropJump;
     return Container(
       width: double.infinity,
       color: theme.colorScheme.primaryContainer,
@@ -250,7 +265,11 @@ class _RepStatus extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            jumping ? 'Jump!' : 'Make a jump',
+            jumping
+                ? 'Jump!'
+                : isDj
+                ? 'Drop and rebound'
+                : 'Make a jump',
             style: theme.textTheme.headlineSmall?.copyWith(
               color: theme.colorScheme.onPrimaryContainer,
             ),
@@ -305,6 +324,13 @@ class _CaptureStatus extends StatelessWidget {
               color: theme.colorScheme.onPrimaryContainer,
             ),
           ),
+          if (ctrl.activeBandKgfs case final band?)
+            Text(
+              'Aim ${band.low.toStringAsFixed(0)}–${band.high.toStringAsFixed(0)} kgf'
+              '${ctrl.liveForceKgf == null ? '' : ' — now ${ctrl.liveForceKgf!.toStringAsFixed(0)} kgf'}'
+              '${status != null && status.awaitingBand ? ' — push into the band to start' : ''}',
+              style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
+            ),
           if (status != null) ...[
             const SizedBox(height: 6),
             Row(
