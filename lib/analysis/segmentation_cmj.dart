@@ -4,6 +4,7 @@ import 'package:meta/meta.dart';
 
 import 'events.dart';
 import 'plate_series.dart';
+import 'test_result.dart';
 
 // ---------------------------------------------------------------------------
 // Countermovement-jump segmentation
@@ -114,6 +115,12 @@ class CmjPhases {
     required this.sampleRate,
   });
 
+  /// Span labels persisted for each phase, in the order [spans] emits them.
+  static const labelEccentric = 'eccentric';
+  static const labelConcentric = 'concentric';
+  static const labelFlight = 'flight';
+  static const labelLanding = 'landing';
+
   final int onset;
   final int bwCross;
   final int takeoff;
@@ -129,24 +136,48 @@ class CmjPhases {
 
   double get flightSeconds => flightSamples / sampleRate;
 
-  /// Phase spans `[start, end)` for overlay shading, in draw order.
-  List<({String label, int start, int end})> get spans => [
-    (label: 'eccentric', start: onset, end: bwCross),
-    (label: 'concentric', start: bwCross, end: takeoff + 1),
-    (label: 'flight', start: takeoff + 1, end: landing),
-    (label: 'landing', start: landing, end: end),
+  /// Phase spans `[start, end)` for overlay shading and persistence.
+  List<PhaseSpan> get spans => [
+    PhaseSpan(label: labelEccentric, start: onset, end: bwCross),
+    PhaseSpan(label: labelConcentric, start: bwCross, end: takeoff + 1),
+    PhaseSpan(label: labelFlight, start: takeoff + 1, end: landing),
+    PhaseSpan(label: labelLanding, start: landing, end: end),
   ];
 
-  /// These bounds shifted by [delta] samples (e.g. from the live source's
-  /// index space into the recording slice's).
-  CmjPhases shifted(int delta) => CmjPhases(
-    onset: onset + delta,
-    bwCross: bwCross + delta,
-    takeoff: takeoff + delta,
-    landing: landing + delta,
+  /// This rep as a persitable [TestRep], shifted by [delta] samples (from
+  /// the live source's index space into the recording slice's).
+  TestRep toTestRep(int delta) => TestRep(
+    start: onset + delta,
     end: end + delta,
     sampleRate: sampleRate,
+    spans: [for (final s in spans) s.shifted(delta)],
   );
+
+  /// Rebuild the phase bounds from a persisted [TestRep]'s spans, or null
+  /// when any expected span is missing (not a jump rep).
+  static CmjPhases? tryFromSpans(TestRep rep) {
+    PhaseSpan? span(String label) {
+      for (final s in rep.spans) {
+        if (s.label == label) return s;
+      }
+      return null;
+    }
+
+    final eccentric = span(labelEccentric);
+    final concentric = span(labelConcentric);
+    final flight = span(labelFlight);
+    if (eccentric == null || concentric == null || flight == null) {
+      return null;
+    }
+    return CmjPhases(
+      onset: eccentric.start,
+      bwCross: eccentric.end,
+      takeoff: concentric.end - 1,
+      landing: flight.end,
+      end: rep.end,
+      sampleRate: rep.sampleRate,
+    );
+  }
 }
 
 /// The unweighting onset threshold in kgf: `bw − max(k·sigma, floor·bw)`.

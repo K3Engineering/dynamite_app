@@ -167,12 +167,16 @@ void main() {
     for (int i = 0; i < 3; i++) {
       final live = ctrl.reps[i].phases;
       final persisted = saved.reps[i];
-      expect(persisted.onset, live.onset - origin!);
-      expect(persisted.bwCross, live.bwCross - origin!);
-      expect(persisted.takeoff, live.takeoff - origin!);
-      expect(persisted.landing, live.landing - origin!);
+      expect(persisted.start, live.onset - origin!);
       expect(persisted.end, live.end - origin!);
-      expect(persisted.onset, greaterThanOrEqualTo(0));
+      expect(persisted.start, greaterThanOrEqualTo(0));
+      final liveSpans = live.spans;
+      expect(persisted.spans, hasLength(liveSpans.length));
+      for (int j = 0; j < liveSpans.length; j++) {
+        expect(persisted.spans[j].label, liveSpans[j].label);
+        expect(persisted.spans[j].start, liveSpans[j].start - origin!);
+        expect(persisted.spans[j].end, liveSpans[j].end - origin!);
+      }
     }
   });
 }

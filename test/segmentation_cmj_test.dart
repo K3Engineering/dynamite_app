@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dynamite_app/analysis/events.dart';
 import 'package:dynamite_app/analysis/plate_series.dart';
 import 'package:dynamite_app/analysis/segmentation_cmj.dart';
+import 'package:dynamite_app/analysis/test_result.dart';
 
 import 'helpers/synthetic_plate.dart';
 
@@ -75,6 +76,29 @@ void main() {
       );
       expect(seg, isA<CmjRejected>());
       expect((seg as CmjRejected).reason, CmjInvalidReason.steppedOff);
+    });
+
+    test('phase bounds survive a TestRep round-trip', () {
+      const p = CmjPhases(
+        onset: 100,
+        bwCross: 400,
+        takeoff: 800,
+        landing: 1200,
+        end: 1800,
+        sampleRate: 1000,
+      );
+      final restored = CmjPhases.tryFromSpans(p.toTestRep(0))!;
+      expect(restored.onset, p.onset);
+      expect(restored.bwCross, p.bwCross);
+      expect(restored.takeoff, p.takeoff);
+      expect(restored.landing, p.landing);
+      expect(restored.end, p.end);
+      expect(restored.sampleRate, p.sampleRate);
+    });
+
+    test('a window-only rep is not a jump', () {
+      const rep = TestRep(start: 0, end: 30000, sampleRate: 1000);
+      expect(CmjPhases.tryFromSpans(rep), isNull);
     });
 
     test('a window ending mid-flight is incomplete', () {
