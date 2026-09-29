@@ -21,4 +21,27 @@ const TestDef jumpBatteryTest = TestDef(
   ],
 );
 
-const List<TestDef> testCatalog = [jumpBatteryTest];
+/// Quiet stance with eyes open then closed, in one recording — the classic
+/// Romberg screen. The EC/EO sway ratio is computed at display time.
+const TestDef rombergTest = TestDef(
+  id: 'romberg',
+  name: 'Romberg balance screen',
+  category: 'Balance',
+  description:
+      'Thirty seconds of quiet standing with eyes open, then thirty with '
+      'them closed. Sway path, ellipse area, and the eyes-closed penalty.',
+  mold: TestMold.timedCapture,
+  centerPlot: TestCenterPlot.copPlate,
+  windows: [
+    TestCaptureWindow(label: 'Eyes open', durationMs: 30000),
+    TestCaptureWindow(label: 'Eyes closed', durationMs: 30000),
+  ],
+  instructions: [
+    'Stand on the plate with feet on the left and right halves.',
+    'Arms at your sides, look straight ahead.',
+    'Two 30-second windows back to back; close your eyes when told.',
+    'Already have your eyes closed when the second window starts.',
+  ],
+);
+
+const List<TestDef> testCatalog = [jumpBatteryTest, rombergTest];

@@ -6,11 +6,32 @@ enum TestMold {
   /// N auto-segmented reps (jumps).
   repCount,
 
-  /// One fixed-duration capture (quiet stance, isometric holds).
+  /// Fixed-duration windows in sequence (quiet stance, isometric holds).
   timedCapture,
 
   /// A continuous stream segmented into passes, stopped by the user (gait).
   freePass,
+}
+
+/// What fills the runner screen while a test runs.
+enum TestCenterPlot {
+  /// Force + CoP traces (jumps).
+  forceTrace,
+
+  /// The 2D plate view with the CoP trail (quiet stance).
+  copPlate,
+}
+
+/// One fixed-duration window of a [TestMold.timedCapture] test.
+@immutable
+class TestCaptureWindow {
+  const TestCaptureWindow({required this.label, required this.durationMs});
+
+  /// Condition label shown during capture and stored on the rep (e.g. "Eyes
+  /// open").
+  final String label;
+
+  final int durationMs;
 }
 
 /// Declarative definition of one guided test. The runner interprets these
@@ -23,8 +44,9 @@ class TestDef {
     required this.category,
     required this.description,
     required this.mold,
+    this.centerPlot = TestCenterPlot.forceTrace,
     this.repCount,
-    this.durationMs,
+    this.windows = const [],
     this.instructions = const [],
   });
 
@@ -36,12 +58,13 @@ class TestDef {
   final String description;
 
   final TestMold mold;
+  final TestCenterPlot centerPlot;
 
   /// Reps to capture for [TestMold.repCount].
   final int? repCount;
 
-  /// Capture length for [TestMold.timedCapture].
-  final int? durationMs;
+  /// Windows to capture for [TestMold.timedCapture], in order.
+  final List<TestCaptureWindow> windows;
 
   /// Setup/behaviour lines shown on the pre-flight screen, in order.
   final List<String> instructions;

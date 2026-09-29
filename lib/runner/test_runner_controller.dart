@@ -2,9 +2,11 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'package:material_ui/material_ui.dart' show Color;
 
 import '../analysis/events.dart';
 import '../analysis/metrics.dart';
+import '../analysis/metrics_sway.dart';
 import '../analysis/plate_series.dart';
 import '../analysis/segmentation_cmj.dart';
 import '../analysis/test_def.dart';
@@ -34,6 +36,9 @@ enum TestRunnerPhase {
 
   /// A rep is in progress (onset seen, jump/flight/landing under way).
   jumping,
+
+  /// A fixed-duration window is being captured (timed-capture mold).
+  capturing,
 
   /// Recording finalized; metric results are available.
   summary,
@@ -87,8 +92,12 @@ class TestRunnerController extends ChangeNotifier {
   double? bodyWeightKgf;
   double _sigmaKgf = 0;
 
-  /// Completed reps (valid only; discarded attempts update [lastDiscard]).
+  /// Completed jump reps (rep-count mold; valid only — discarded attempts
+  /// update [lastDiscard]).
   List<CmjRepResult> reps = const [];
+
+  /// Completed timed windows (timed-capture mold).
+  List<SwayRepResult> swayReps = const [];
 
   /// The reason the most recent attempt was discarded, or null.
   String? lastDiscard;
@@ -107,12 +116,25 @@ class TestRunnerController extends ChangeNotifier {
   TestResult? get result {
     final bw = bodyWeightKgf;
     final origin = _recordOrigin;
-    if (bw == null || reps.isEmpty || origin == null) return null;
+    if (bw == null || origin == null) return null;
+    final testReps = switch (test.mold) {
+      TestMold.repCount => [for (final r in reps) r.phases.toTestRep(-origin)],
+      TestMold.timedCapture || TestMold.freePass => [
+        for (final r in swayReps)
+          TestRep(
+            label: r.label.isEmpty ? null : r.label,
+            start: r.start - origin,
+            end: r.end - origin,
+            sampleRate: r.sampleRate,
+          ),
+      ],
+    };
+    if (testReps.isEmpty) return null;
     return TestResult(
       testId: test.id,
       person: person.trim(),
       bodyWeightKgf: bw,
-      reps: [for (final r in reps) r.phases.toTestRep(-origin)],
+      reps: testReps,
     );
   }
 
@@ -120,13 +142,17 @@ class TestRunnerController extends ChangeNotifier {
   bool _stopping = false;
   bool _inTick = false;
 
-  /// True once a stable loaded stance has been seen; the next sustained drop
-  /// below body weight starts a rep. Decoupled from the stability check so the
-  /// dip itself (which corrupts the trailing window's sigma) doesn't cancel
-  /// arming.
+  /// True once a stable loaded stance has been seen; the next sustained exit
+  /// from the body-weight band starts a rep. Decoupled from the stability
+  /// check so the movement itself (which corrupts the trailing window's
+  /// sigma) doesn't cancel arming.
   bool _armed = false;
   int _tareVersionBefore = 0;
   int? _repStart;
+
+  /// Timed-capture progress: which window and where it started.
+  int _windowIndex = 0;
+  int? _windowStart;
 
   /// The source's total-sample count latched at [recorder] start; the
   /// recording's first sample, i.e. the translation between the live
@@ -134,7 +160,9 @@ class TestRunnerController extends ChangeNotifier {
   int? _recordOrigin;
 
   bool get _running =>
-      phase == TestRunnerPhase.readyForRep || phase == TestRunnerPhase.jumping;
+      phase == TestRunnerPhase.readyForRep ||
+      phase == TestRunnerPhase.jumping ||
+      phase == TestRunnerPhase.capturing;
 
   /// Latest total plate force (kgf), or null before data flows.
   double? get liveForceKgf {
@@ -144,11 +172,15 @@ class TestRunnerController extends ChangeNotifier {
     return reader.weightsAt(total - 1).total;
   }
 
-  /// Phase shading for completed reps plus the live rep preview.
+  /// Phase shading for completed reps plus the live rep preview, and the CoP
+  /// ellipses of completed sway windows.
   GraphOverlays? get overlays {
     final reader = source.read();
     if (reader == null) return null;
+    const windowShade = Color(0x1A000000);
     final spans = <GraphOverlaySpan>[
+      for (final rep in swayReps)
+        GraphOverlaySpan(start: rep.start, end: rep.end, color: windowShade),
       for (final rep in reps)
         for (final s in rep.phases.spans)
           GraphOverlaySpan(
@@ -181,7 +213,20 @@ class TestRunnerController extends ChangeNotifier {
         }
       }
     }
-    return spans.isEmpty ? null : GraphOverlays(spans: spans);
+    final ellipses = <PlateEllipseOverlay>[
+      for (final rep in swayReps)
+        if (rep.ellipse case final e?)
+          PlateEllipseOverlay(
+            cx: e.cx,
+            cy: e.cy,
+            semiA: e.semiA,
+            semiB: e.semiB,
+            angleRad: e.angleRad,
+            color: const Color(0xFF2196F3),
+          ),
+    ];
+    if (spans.isEmpty && ellipses.isEmpty) return null;
+    return GraphOverlays(spans: spans, plateEllipses: ellipses);
   }
 
   JumpContext? get _jumpContext {
@@ -284,6 +329,8 @@ class TestRunnerController extends ChangeNotifier {
         _checkOnset();
       case TestRunnerPhase.jumping:
         _advanceJump();
+      case TestRunnerPhase.capturing:
+        _advanceCapture();
       case TestRunnerPhase.summary:
       case TestRunnerPhase.failed:
         break;
@@ -295,6 +342,7 @@ class TestRunnerController extends ChangeNotifier {
     switch (result) {
       case TestRecorderStarted():
         reps = const [];
+        swayReps = const [];
         _repStart = null;
         // start() is synchronous and the hub forwards batches from its tail,
         // so this is the first recorded sample's index in the source's space.
@@ -303,7 +351,14 @@ class TestRunnerController extends ChangeNotifier {
         _armed = true;
         lastDiscard = null;
         sessionName = _sessionName();
-        phase = TestRunnerPhase.readyForRep;
+        switch (test.mold) {
+          case TestMold.repCount:
+            phase = TestRunnerPhase.readyForRep;
+          case TestMold.timedCapture:
+            _beginWindow(0);
+          case TestMold.freePass:
+            _fail('free-pass mold is not implemented yet');
+        }
       case TestRecorderRefused(:final reason):
         _fail(reason);
     }
@@ -420,6 +475,61 @@ class TestRunnerController extends ChangeNotifier {
     _repStart = null;
     _armed = false;
     phase = TestRunnerPhase.readyForRep;
+    notifyListeners();
+  }
+
+  // -- Timed-capture mold --
+
+  /// Status for the status strip during [TestRunnerPhase.capturing]: which
+  /// window and how many whole milliseconds of it remain.
+  ({int number, int count, String label, int remainingMs})? get captureStatus {
+    if (phase != TestRunnerPhase.capturing) return null;
+    final start = _windowStart;
+    final reader = source.read();
+    if (start == null || reader == null) return null;
+    final def = test.windows[_windowIndex];
+    final target = def.durationMs * reader.sampleRate ~/ 1000;
+    final remaining = target - (source.totalSamples - start);
+    return (
+      number: _windowIndex + 1,
+      count: test.windows.length,
+      label: def.label,
+      remainingMs: math.max(0, remaining * 1000 ~/ reader.sampleRate),
+    );
+  }
+
+  /// Open window [index]: it runs until [_advanceCapture] seals it at its
+  /// definition's duration. Windows are back to back — no re-baseline
+  /// between them (the subject keeps standing through the transition).
+  void _beginWindow(int index) {
+    _windowIndex = index;
+    _windowStart = source.totalSamples;
+    phase = TestRunnerPhase.capturing;
+    notifyListeners();
+  }
+
+  void _advanceCapture() {
+    final reader = source.read();
+    final start = _windowStart;
+    if (reader == null || start == null) return;
+    final def = test.windows[_windowIndex];
+    final target = def.durationMs * reader.sampleRate ~/ 1000;
+    if (source.totalSamples - start < target) return;
+    swayReps = [
+      ...swayReps,
+      evaluateSwayWindow(
+        PlateWindow.capture(reader, start, start + target),
+        def.label,
+        swayReps.length + 1,
+      ),
+    ];
+    final next = _windowIndex + 1;
+    if (next >= test.windows.length) {
+      _windowStart = null;
+      unawaited(stopAndFinish());
+    } else {
+      _beginWindow(next);
+    }
     notifyListeners();
   }
 

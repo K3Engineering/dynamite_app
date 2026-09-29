@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../analysis/test_def.dart';
 import '../analysis/test_result.dart';
+import '../models/analysis_pane.dart';
 import '../models/display_unit.dart';
 import '../runner/plate_source.dart';
 import '../runner/test_recorder.dart';
@@ -14,6 +15,7 @@ import '../services/rig_state.dart';
 import '../services/session_store.dart';
 import '../widgets/cjm_metrics_table.dart';
 import '../widgets/graph_components.dart';
+import '../widgets/sway_metrics_table.dart';
 
 /// Runs one guided test: zero the plate, measure a stable stance, then record
 /// auto-segmented reps and show their metrics.
@@ -92,7 +94,8 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
             readout: _forceReadout(),
           ),
           TestRunnerPhase.readyForRep ||
-          TestRunnerPhase.jumping => _buildRunning(context),
+          TestRunnerPhase.jumping ||
+          TestRunnerPhase.capturing => _buildRunning(context),
           TestRunnerPhase.summary => _buildSummary(context),
           TestRunnerPhase.failed => _buildFailed(context),
         },
@@ -106,7 +109,10 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
     // which entails a plate profile (see [PlateReader.tryForData]).
     return Column(
       children: [
-        _RepStatus(ctrl: _ctrl),
+        switch (widget.def.mold) {
+          TestMold.timedCapture => _CaptureStatus(ctrl: _ctrl),
+          _ => _RepStatus(ctrl: _ctrl),
+        },
         Expanded(
           child: GraphWorkspace(
             data: _hub,
@@ -114,14 +120,19 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
             unit: DisplayUnit.kgf,
             // The plate basis as line traces: total force on the force
             // graph, CoP x/y auto-split to the unitless coords graph; the
-            // rep-phase overlays shade both (time-domain only, so no 2D
-            // plate pane here).
+            // rep-phase overlays shade both.
             activeChannels: [
               profile.plateTotalId!,
               profile.plateXId!,
               profile.plateYId!,
             ],
             overlays: _ctrl.overlays,
+            analysis: switch (widget.def.centerPlot) {
+              TestCenterPlot.copPlate => const AnalysisPaneSelection(
+                kind: AnalysisPaneKind.plate,
+              ),
+              TestCenterPlot.forceTrace => const AnalysisPaneSelection(),
+            },
           ),
         ),
         Padding(
@@ -159,16 +170,20 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
         ),
         if (bw != null)
           Text(
-            'Body weight ${bw.toStringAsFixed(1)} kgf · ${_ctrl.reps.length} '
-            'rep${_ctrl.reps.length == 1 ? '' : 's'}',
+            'Body weight ${bw.toStringAsFixed(1)} kgf · '
+            '${_ctrl.reps.length + _ctrl.swayReps.length} '
+            'rep${_ctrl.reps.length + _ctrl.swayReps.length == 1 ? '' : 's'}',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium,
           ),
         const SizedBox(height: 20),
-        if (_ctrl.reps.isEmpty)
+        if (_ctrl.reps.isEmpty && _ctrl.swayReps.isEmpty)
           const Text('No valid reps were captured.')
         else
-          CjmMetricsTable(reps: _ctrl.reps),
+          switch (widget.def.mold) {
+            TestMold.timedCapture => SwayMetricsTable(reps: _ctrl.swayReps),
+            _ => CjmMetricsTable(reps: _ctrl.reps),
+          },
         const SizedBox(height: 32),
         FilledButton(
           onPressed: () =>
@@ -243,6 +258,51 @@ class _RepStatus extends StatelessWidget {
             ),
           if (ctrl.lastDiscard case final reason?)
             Text(reason, style: TextStyle(color: theme.colorScheme.error)),
+        ],
+      ),
+    );
+  }
+}
+
+/// The timed-capture status strip: which window and the countdown. Doubles
+/// as the instruction when the next window has a different condition label.
+class _CaptureStatus extends StatelessWidget {
+  const _CaptureStatus({required this.ctrl});
+
+  final TestRunnerController ctrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final status = ctrl.captureStatus;
+    final label = status == null
+        ? 'Done'
+        : 'Window ${status.number} of ${status.count}'
+              '${status.label.isEmpty ? '' : ' — ${status.label}'}';
+    final remaining = status == null
+        ? null
+        : (status.remainingMs / 1000).toStringAsFixed(0);
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.primaryContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: theme.colorScheme.onPrimaryContainer,
+            ),
+          ),
+          if (remaining != null)
+            Text(
+              '$remaining s',
+              style: theme.textTheme.headlineSmall?.copyWith(
+                color: theme.colorScheme.onPrimaryContainer,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
         ],
       ),
     );

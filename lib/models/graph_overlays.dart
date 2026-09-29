@@ -24,13 +24,45 @@ class GraphOverlayMarker {
   final Color color;
 }
 
-/// Annotation chrome layered on a time-series graph (rep phases, boundaries).
+/// A confidence ellipse over a CoP cloud, drawn on the 2D plate pane in
+/// support-normalized plate units (±1 = a plate edge).
+@immutable
+class PlateEllipseOverlay {
+  const PlateEllipseOverlay({
+    required this.cx,
+    required this.cy,
+    required this.semiA,
+    required this.semiB,
+    required this.angleRad,
+    required this.color,
+  });
+
+  /// Center of the cloud (mean CoP).
+  final double cx;
+  final double cy;
+
+  /// Semi-axis lengths, major then minor.
+  final double semiA;
+  final double semiB;
+
+  /// Orientation of the major axis in plate coordinates (+y up).
+  final double angleRad;
+  final Color color;
+}
+
+/// Annotation chrome layered on the graphs: spans/markers for time-series
+/// traces, ellipses for the 2D plate pane. Each pane picks what it can draw.
 @immutable
 class GraphOverlays {
-  const GraphOverlays({this.spans = const [], this.markers = const []});
+  const GraphOverlays({
+    this.spans = const [],
+    this.markers = const [],
+    this.plateEllipses = const [],
+  });
 
   final List<GraphOverlaySpan> spans;
   final List<GraphOverlayMarker> markers;
+  final List<PlateEllipseOverlay> plateEllipses;
 }
 
 /// Fill color for a CMJ phase label (see [CmjPhases.spans]).
