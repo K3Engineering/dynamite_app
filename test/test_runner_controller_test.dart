@@ -175,6 +175,47 @@ void main() {
     expect(eccentricUtilizationRatio(ctrl.reps), isNotNull);
   });
 
+  testWidgets('runs three drop jumps with unloaded arming', (tester) async {
+    // Empty lead-in, a BW stance (body-weight baseline), a step-off, then
+    // three scripted drop jumps with box-side gaps between.
+    final corners = <List<double>>[[], [], [], []];
+    void addConstant(int n, double kgf) {
+      for (int i = 0; i < n; i++) {
+        for (final c in corners) {
+          c.add(kgf / 4);
+        }
+      }
+    }
+
+    addConstant(1500, 0);
+    addConstant(2000, 80); // stance baseline
+    addConstant(1000, 0); // step onto the box (arming waits for this)
+    final dj = SyntheticDropJump();
+    final djCorners = dj.cornerLists();
+    for (int c = 0; c < 4; c++) {
+      corners[c].addAll(djCorners[c]);
+    }
+    final source = _FakePlateSource(corners);
+    final ctrl = TestRunnerController(
+      test: dropJumpTest,
+      person: 'Test',
+      source: source,
+      recorder: _FakeRecorder(),
+    );
+    addTearDown(ctrl.dispose);
+    await runToSummary(tester, ctrl, source);
+
+    expect(ctrl.phase, TestRunnerPhase.summary);
+    expect(ctrl.djReps, hasLength(3));
+    for (final rep in ctrl.djReps) {
+      expect(rep.metric('height_flight')!, closeTo(0.307, 0.03));
+      expect(rep.metric('rsi'), isNotNull);
+    }
+    final saved = ctrl.result!;
+    expect(saved.testId, 'drop_jump');
+    expect(saved.reps, hasLength(3));
+  });
+
   testWidgets('captures two timed windows back to back', (tester) async {
     // Two 1 s windows over a scripted sway trace: 1.5 s empty lead-in for
     // tare, 1 s of quiet for the stance baseline, then the two windows plus
@@ -185,6 +226,7 @@ void main() {
       category: 'Balance',
       description: '',
       mold: TestMold.timedCapture,
+      family: TestFamily.sway,
       centerPlot: TestCenterPlot.copPlate,
       windows: [
         TestCaptureWindow(label: 'A', durationMs: 1000),
@@ -232,6 +274,115 @@ void main() {
     expect(saved.reps[0].start, 0);
     expect(saved.reps[0].end - saved.reps[0].start, 1000);
     expect(saved.reps[1].label, 'B');
+  });
+
+  testWidgets('holds one isometric window at the target band', (tester) async {
+    const isoDef = TestDef(
+      id: 'iso_press',
+      name: 'Isometric press hold',
+      category: 'Isometric',
+      description: '',
+      mold: TestMold.timedCapture,
+      family: TestFamily.isometric,
+      windows: [
+        TestCaptureWindow(
+          label: 'Hold',
+          durationMs: 3000,
+          eval: TestWindowEval.isometric,
+          isoBand: IsoBandSpec(
+            centerFractionOfBw: 1.5,
+            halfWidthFraction: 0.10,
+          ),
+        ),
+      ],
+    );
+    final corners = <List<double>>[[], [], [], []];
+    void addConstant(int n, double kgf) {
+      for (int i = 0; i < n; i++) {
+        for (final c in corners) {
+          c.add(kgf / 4);
+        }
+      }
+    }
+
+    addConstant(1500, 0);
+    addConstant(2000, 80); // stance baseline
+    addConstant(4500, 120); // the hold: 1.5× BW, dead on target
+    final source = _FakePlateSource(corners);
+    final ctrl = TestRunnerController(
+      test: isoDef,
+      person: 'Test',
+      source: source,
+      recorder: _FakeRecorder(),
+    );
+    addTearDown(ctrl.dispose);
+    await runToSummary(tester, ctrl, source);
+
+    expect(ctrl.phase, TestRunnerPhase.summary);
+    expect(ctrl.isoReps, hasLength(1));
+    expect(ctrl.isoReps.single.metric('time_in_band')!, greaterThan(95));
+    expect(ctrl.isoReps.single.metric('cv')!, lessThan(1));
+    final saved = ctrl.result!;
+    expect(saved.testId, 'iso_press');
+    expect(saved.reps, hasLength(1));
+    expect(saved.reps.single.label, 'Hold');
+  });
+
+  testWidgets('gates the single-leg window on the located lift', (
+    tester,
+  ) async {
+    const slDef = TestDef(
+      id: 'single_leg',
+      name: 'Single-leg stance',
+      category: 'Balance',
+      description: '',
+      mold: TestMold.timedCapture,
+      family: TestFamily.singleLeg,
+      centerPlot: TestCenterPlot.copPlate,
+      windows: [
+        TestCaptureWindow(
+          label: 'Any leg',
+          durationMs: 8000,
+          eval: TestWindowEval.singleLeg,
+        ),
+      ],
+    );
+    final corners = <List<double>>[[], [], [], []];
+    void addSides(int n, double left, double right) {
+      for (int i = 0; i < n; i++) {
+        corners[0].add(left / 2);
+        corners[1].add(right / 2);
+        corners[2].add(left / 2);
+        corners[3].add(right / 2);
+      }
+    }
+
+    addSides(1500, 0, 0);
+    addSides(2000, 40, 40); // stance baseline
+    addSides(1000, 40, 40); // two-leg quiet inside the window
+    addSides(6000, 80, 0); // the lift (left stance)
+    addSides(1500, 40, 40); // back down
+    final source = _FakePlateSource(corners);
+    final ctrl = TestRunnerController(
+      test: slDef,
+      person: 'Test',
+      source: source,
+      recorder: _FakeRecorder(),
+    );
+    addTearDown(ctrl.dispose);
+    await runToSummary(tester, ctrl, source);
+
+    expect(ctrl.phase, TestRunnerPhase.summary);
+    expect(ctrl.slReps, hasLength(1));
+    final rep = ctrl.slReps.single;
+    expect(rep.label, 'Left leg');
+    expect(rep.metric('hold_duration')!, closeTo(6.0, 0.5));
+    final saved = ctrl.result!;
+    expect(saved.testId, 'single_leg');
+    expect(saved.reps, hasLength(1));
+    expect(saved.reps.single.label, 'Left leg');
+    // The stored window is the located interval, not the capture window.
+    expect(saved.reps.single.end - saved.reps.single.start, closeTo(6000, 500));
   });
 
   testWidgets('scans walk-by passes and summarizes on operator stop', (

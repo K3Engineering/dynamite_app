@@ -8,7 +8,10 @@ import 'package:provider/provider.dart';
 import '../models/analysis_pane.dart';
 import '../models/app_meta.dart';
 import '../analysis/gait.dart';
+import '../analysis/metrics_isometric.dart';
+import '../analysis/metrics_single_leg.dart';
 import '../analysis/metrics_sway.dart';
+import '../analysis/test_catalog.dart';
 import '../analysis/test_result.dart';
 import '../models/derived_channel.dart';
 import '../models/graph_overlays.dart';
@@ -26,7 +29,10 @@ import '../widgets/analysis_pane_bar.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/cjm_metrics_table.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/dj_metrics_table.dart';
 import '../widgets/gait_metrics_table.dart';
+import '../widgets/iso_metrics_table.dart';
+import '../widgets/sl_metrics_table.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
@@ -212,6 +218,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               : section(reps.length, CjmMetricsTable(reps: reps)),
         );
       }(),
+      'drop_jump' => () {
+        final reps = evaluateDjResult(r, data);
+        return (
+          overlays: overlaysForDjReps(reps),
+          section: reps.isEmpty
+              ? null
+              : section(reps.length, DjMetricsTable(reps: reps)),
+        );
+      }(),
       'romberg' => () {
         final reps = evaluateSwayResult(r, data);
         return (
@@ -228,6 +243,36 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           section: reps.isEmpty
               ? null
               : section(reps.length, GaitMetricsTable(reps: reps)),
+        );
+      }(),
+      'iso_press' => () {
+        // The target band is part of the protocol (the test definition),
+        // not the measurement.
+        final band = testCatalog
+            .firstWhere((d) => d.id == r.testId)
+            .windows
+            .first
+            .isoBand!;
+        final reps = evaluateIsoResult(
+          r,
+          data,
+          centerFractionOfBw: band.centerFractionOfBw,
+          halfWidthFraction: band.halfWidthFraction,
+        );
+        return (
+          overlays: overlaysForIsoReps(reps),
+          section: reps.isEmpty
+              ? null
+              : section(reps.length, IsoMetricsTable(reps: reps)),
+        );
+      }(),
+      'single_leg' => () {
+        final reps = evaluateSlResult(r, data);
+        return (
+          overlays: overlaysForSlReps(reps),
+          section: reps.isEmpty
+              ? null
+              : section(reps.length, SlMetricsTable(reps: reps)),
         );
       }(),
       _ => (overlays: null, section: section(r.reps.length, null)),

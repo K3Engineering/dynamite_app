@@ -86,10 +86,12 @@ Color gaitTrailColor(int number) => switch (number % 4) {
   _ => const Color(0xFFFF9800), // orange
 };
 
-/// Fill color for a CMJ phase label (see [CmjPhases.spans]).
+/// Fill color for a jump phase label (see [CmjPhases.spans],
+/// [DjPhases.spans]).
 Color cmjPhaseColor(String label) => switch (label) {
   'eccentric' => const Color(0x332196F3), // blue
   'concentric' => const Color(0x334CAF50), // green
+  'contact' => const Color(0x33009688), // teal
   'flight' => const Color(0x33FFC107), // amber
   'landing' => const Color(0x33F44336), // red
   _ => const Color(0x22000000),
