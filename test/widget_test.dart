@@ -174,14 +174,14 @@ void main() {
     await tester.tap(find.byType(NavigationDestination).at(1));
     await tester.pump();
 
-    expect(find.text('Countermovement jump'), findsOneWidget);
+    expect(find.text('Jump battery'), findsOneWidget);
 
-    await tester.tap(find.text('Countermovement jump'));
+    await tester.tap(find.text('Jump battery'));
     await tester.pumpAndSettle();
 
     // Pre-flight shows the title (also matched on the catalog card, which is
     // now covered by the pushed route) and the setup instructions.
-    expect(find.text('Countermovement jump'), findsWidgets);
+    expect(find.text('Jump battery'), findsWidgets);
     expect(find.text('Setup'), findsOneWidget);
 
     // No device is streaming, so Begin is disabled.

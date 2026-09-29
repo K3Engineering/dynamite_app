@@ -311,7 +311,8 @@ class TestRunnerController extends ChangeNotifier {
   }
 
   /// Armed and waiting for the next rep: a stable loaded stance arms the rep,
-  /// then the first sustained drop below body weight starts it.
+  /// then the first sustained exit from the body-weight band starts it. A
+  /// downward exit begins a countermovement; an upward one a squat-jump push.
   void _checkOnset() {
     final reader = source.read();
     if (reader == null) return;
@@ -328,11 +329,13 @@ class TestRunnerController extends ChangeNotifier {
       total - 300 * reader.sampleRate ~/ 1000,
     );
     final window = PlateWindow.capture(reader, from, total);
-    final onset = findSustainedBelow(
+    final (lower, upper) = onsetBandKgf(_jumpContext!);
+    final onset = findSustainedOutside(
       window,
       window.start,
       window.end,
-      onsetThresholdKgf(_jumpContext!),
+      lower,
+      upper,
       math.max(1, kJumpParams.onsetSustainMs * reader.sampleRate ~/ 1000),
     );
     if (onset != null) {
@@ -375,8 +378,8 @@ class TestRunnerController extends ChangeNotifier {
     }
     final window = PlateWindow.capture(reader, start, total);
     switch (segmentCmj(window, _jumpContext!)) {
-      case CmjRep(:final phases):
-        _finishRep(window, phases);
+      case CmjRep(:final phases, :final jumpClass):
+        _finishRep(window, phases, jumpClass);
       case CmjRejected(:final reason):
         switch (reason) {
           case CmjInvalidReason.noFlight:
@@ -389,9 +392,10 @@ class TestRunnerController extends ChangeNotifier {
     }
   }
 
-  void _finishRep(PlateWindow window, CmjPhases phases) {
+  void _finishRep(PlateWindow window, CmjPhases phases, JumpClass jumpClass) {
     final result = CmjRepResult(
       number: reps.length + 1,
+      jumpClass: jumpClass,
       phases: phases,
       metrics: evaluateCmjMetrics(
         window,

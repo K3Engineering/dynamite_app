@@ -84,14 +84,26 @@ enum CmjInvalidReason {
   incomplete,
 }
 
+/// Which kind of jump a segmented rep is. In a battery every valid rep goes
+/// into one of these buckets — a dip is a fact about the rep, never a
+/// validity question.
+enum JumpClass {
+  /// Countermovement: an unweighting dip precedes the push.
+  countermovement,
+
+  /// Squat jump: pushed straight from a quiet hold.
+  squat,
+}
+
 sealed class CmjSegment {
   const CmjSegment();
 }
 
 /// A complete jump.
 final class CmjRep extends CmjSegment {
-  const CmjRep(this.phases);
+  const CmjRep(this.phases, this.jumpClass);
   final CmjPhases phases;
+  final JumpClass jumpClass;
 }
 
 /// No usable jump, with the reason.
@@ -136,9 +148,12 @@ class CmjPhases {
 
   double get flightSeconds => flightSamples / sampleRate;
 
-  /// Phase spans `[start, end)` for overlay shading and persistence.
+  /// Phase spans `[start, end)` for overlay shading and persistence. A
+  /// squat jump has no eccentric phase — its absence in the persisted spans
+  /// is exactly how a stored rep's [JumpClass] is recovered.
   List<PhaseSpan> get spans => [
-    PhaseSpan(label: labelEccentric, start: onset, end: bwCross),
+    if (eccentricSamples > 0)
+      PhaseSpan(label: labelEccentric, start: onset, end: bwCross),
     PhaseSpan(label: labelConcentric, start: bwCross, end: takeoff + 1),
     PhaseSpan(label: labelFlight, start: takeoff + 1, end: landing),
     PhaseSpan(label: labelLanding, start: landing, end: end),
@@ -154,7 +169,8 @@ class CmjPhases {
   );
 
   /// Rebuild the phase bounds from a persisted [TestRep]'s spans, or null
-  /// when any expected span is missing (not a jump rep).
+  /// when any expected span is missing (not a jump rep). No eccentric span
+  /// means a squat jump: the whole ground phase is concentric.
   static CmjPhases? tryFromSpans(TestRep rep) {
     PhaseSpan? span(String label) {
       for (final s in rep.spans) {
@@ -163,15 +179,13 @@ class CmjPhases {
       return null;
     }
 
-    final eccentric = span(labelEccentric);
     final concentric = span(labelConcentric);
     final flight = span(labelFlight);
-    if (eccentric == null || concentric == null || flight == null) {
-      return null;
-    }
+    if (concentric == null || flight == null) return null;
+    final eccentric = span(labelEccentric);
     return CmjPhases(
-      onset: eccentric.start,
-      bwCross: eccentric.end,
+      onset: eccentric?.start ?? concentric.start,
+      bwCross: eccentric?.end ?? concentric.start,
       takeoff: concentric.end - 1,
       landing: flight.end,
       end: rep.end,
@@ -180,15 +194,27 @@ class CmjPhases {
   }
 }
 
-/// The unweighting onset threshold in kgf: `bw − max(k·sigma, floor·bw)`.
-double onsetThresholdKgf(JumpContext ctx, {JumpParams params = kJumpParams}) =>
-    ctx.bwKgf -
-    math.max(
-      params.onsetSigmaK * ctx.sigmaKgf,
-      params.onsetMinDropFraction * ctx.bwKgf,
-    );
+/// The quiet band around body weight in kgf, `[lower, upper)`. Movement
+/// onset is a sustained exit from it — below for a countermovement dip,
+/// above for a squat-jump push.
+(double, double) onsetBandKgf(
+  JumpContext ctx, {
+  JumpParams params = kJumpParams,
+}) {
+  final d = math.max(
+    params.onsetSigmaK * ctx.sigmaKgf,
+    params.onsetMinDropFraction * ctx.bwKgf,
+  );
+  return (ctx.bwKgf - d, ctx.bwKgf + d);
+}
 
-/// Segment [w] into a jump, or explain why not.
+/// The unweighting onset threshold in kgf: the lower band edge.
+double onsetThresholdKgf(JumpContext ctx, {JumpParams params = kJumpParams}) =>
+    onsetBandKgf(ctx, params: params).$1;
+
+/// Segment [w] into a jump, or explain why not. The window starts at the
+/// rep's band exit (the arming point): a countermovement jump dips from
+/// there, a squat jump is already rising.
 CmjSegment segmentCmj(
   PlateWindow w,
   JumpContext ctx, {
@@ -196,13 +222,10 @@ CmjSegment segmentCmj(
 }) {
   final bw = ctx.bwKgf;
   final sustain = math.max(1, (params.onsetSustainMs * w.sampleRate) ~/ 1000);
-  final onsetThreshold = onsetThresholdKgf(ctx, params: params);
-  final onset = findSustainedBelow(w, w.start, w.end, onsetThreshold, sustain);
-  if (onset == null) return const CmjRejected(CmjInvalidReason.noFlight);
 
   final flightThreshold = params.flightLoadFraction * bw;
   int? flightStart;
-  for (int i = onset; i < w.end; i++) {
+  for (int i = w.start; i < w.end; i++) {
     if (w.smoothAt(i) < flightThreshold) {
       flightStart = i;
       break;
@@ -233,14 +256,39 @@ CmjSegment segmentCmj(
   }
 
   final takeoff = flightStart - 1;
-  if (takeoff <= onset) {
+  if (takeoff <= w.start) {
     return const CmjRejected(CmjInvalidReason.noFlight);
   }
+
+  // Classification: a sustained dip inside the ground phase is a
+  // countermovement; pushing straight out of the quiet at the window start
+  // is a squat jump.
+  final dipOnset = findSustainedBelow(
+    w,
+    w.start,
+    takeoff,
+    onsetThresholdKgf(ctx, params: params),
+    sustain,
+  );
+  if (dipOnset == null) {
+    return CmjRep(
+      CmjPhases(
+        onset: w.start,
+        bwCross: w.start,
+        takeoff: takeoff,
+        landing: landing,
+        end: w.end,
+        sampleRate: w.sampleRate,
+      ),
+      JumpClass.squat,
+    );
+  }
+
   // Eccentric/concentric split at the upward body-weight crossing: the net
   // force is negative (COM decelerating upward) before it, positive after.
   // A force minimum is NOT usable here — force also falls to zero at takeoff.
   int? bwCross;
-  for (int i = onset + 1; i <= takeoff; i++) {
+  for (int i = dipOnset + 1; i <= takeoff; i++) {
     if (w.smoothAt(i) >= bw) {
       bwCross = i;
       break;
@@ -252,12 +300,13 @@ CmjSegment segmentCmj(
 
   return CmjRep(
     CmjPhases(
-      onset: onset,
+      onset: dipOnset,
       bwCross: bwCross,
       takeoff: takeoff,
       landing: landing,
       end: w.end,
       sampleRate: w.sampleRate,
     ),
+    JumpClass.countermovement,
   );
 }
