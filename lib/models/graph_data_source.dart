@@ -243,6 +243,24 @@ abstract interface class GraphDataSource
 
 /// Windowed extremes over a full [GraphDataSource].
 extension GraphSeriesQueries on GraphDataSource {
+  /// Whether [id] is unconvertible ONLY because it's a force-space blend
+  /// asked for an electrical unit (all members calibrated, so a force unit
+  /// would bind). These channels refuse electrical units by construction
+  /// (a blend's storage is kgf — see `derived_series.dart`); the UI names
+  /// them with a "switch to a force unit" hint rather than the generic
+  /// unavailable line.
+  bool isForceOnlyBlend(int id, DisplayUnit unit) {
+    if (!isDerivedChannelId(id) || unit.isForce) return false;
+    final idx = derivedIndexOf(id);
+    if (idx >= derivedChannels.length) return false;
+    final spec = derivedChannels[idx];
+    if (spec.normalize) return false;
+    return spec.members.every(
+      (m) =>
+          calibrationFor(m).board != null && calibrationFor(m).loadCell != null,
+    );
+  }
+
   /// Exact raw-space (min, max) of channel [ch] over `[start, end)` (clamped to
   /// retention), via the bucket fast path. Null when the window holds no
   /// sample. Held samples (gaps, undefined ratios) can't extend the range.

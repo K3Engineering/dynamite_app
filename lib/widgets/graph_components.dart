@@ -800,14 +800,17 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
 
   /// Why channel [id] can't bind [unit]: member-calibration gaps for a
   /// derived channel ("no load cell on CH 2" — the common dead-plate-pane
-  /// cause), the unconfigured-slot case, else the generic unit line (a
-  /// hardware channel without the unit's conversion, a blend channel in an
-  /// electrical unit).
+  /// cause), the unconfigured-slot case, a force-space blend in an
+  /// electrical unit (see [GraphSeriesQueries.isForceOnlyBlend]), else the
+  /// generic unit line (a hardware channel without the unit's conversion).
   static String _bindWhy(GraphDataSource data, int id, DisplayUnit unit) {
     if (!isDerivedChannelId(id)) return 'channel unavailable in ${unit.label}';
     final specs = data.derivedChannels;
     final idx = derivedIndexOf(id);
     if (idx >= specs.length) return 'no math channel configured in this slot';
+    if (data.isForceOnlyBlend(id, unit)) {
+      return 'force-only channel — select a force unit';
+    }
     final spec = specs[idx];
     final noCell = [
       for (final m in spec.members)
@@ -818,6 +821,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
         if (data.calibrationFor(m).board == null) rigSlotTitle(m),
     ];
     if (noCell.isEmpty && noBoard.isEmpty) {
+      assert(
+        false,
+        'unbound channel $id (${spec.label}) has every member calibrated',
+      );
       return 'channel unavailable in ${unit.label}';
     }
     return [
@@ -3209,10 +3216,10 @@ class _ForcePlatePainter extends CustomPainter {
   }
 
   /// Fixed full-scale of the err bar: the plate's saddle residual as a
-  /// fraction of its total load — 5% is well into "something is loose".
-  /// Fixed (not autoscaled) so a quiet plate reads quiet; (estimate —
-  /// calibrate against real plates, adjust here).
-  static const double _kErrScale = 0.05;
+  /// fraction of its total load. Sized from practice: up to ±0.26 observed
+  /// on the dev plates, so 0.3 keeps it on scale with headroom. Fixed (not
+  /// autoscaled) so a quiet plate reads quiet.
+  static const double _kErrScale = 0.3;
 
   /// The error channel's instantaneous value as a vertical bar in the right
   /// gutter: newest defined sample of the window (the same instant as the

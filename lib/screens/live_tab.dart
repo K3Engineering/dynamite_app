@@ -682,6 +682,26 @@ class LiveStats extends StatelessWidget {
                     ),
                   ),
                 ),
+              // Bound blends refuse electrical units (see
+              // [GraphSeriesQueries.isForceOnlyBlend]): they show '—' with
+              // no other explanation, so name them once.
+              if ([
+                    for (final i in channelIds)
+                      if (settings.activeChannels[i] &&
+                          hub.isForceOnlyBlend(i, unit))
+                        labels[i],
+                  ]
+                  case final forceOnly when forceOnly.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '— ${forceOnly.join(', ')}: force-only — select a force '
+                    'unit to show',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
               // Say why converted units show '—', once.
               if (switch (hub.boardCalibration) {
                     UnprovisionedBoardCalibration() =>
