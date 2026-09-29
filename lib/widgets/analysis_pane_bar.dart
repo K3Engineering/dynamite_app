@@ -1,8 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../models/analysis_pane.dart';
-import '../models/device_profile.dart';
-import '../models/load_cell.dart';
 import '../utils/fft.dart';
 import 'channel_palette.dart';
 
@@ -13,6 +11,9 @@ import 'channel_palette.dart';
 // chip again collapses the slot); a second row edits that pane's
 // parameters. Used by both the live tab and the session review screen, keep
 // it stateless: the screen owns the [AnalysisPaneSelection].
+//
+// Channel ids span the widened space (hardware 0..3, derived 4.. — see
+// `derived_channel.dart`); [channelLabels]/[channelUnitless] describe them.
 // ---------------------------------------------------------------------------
 
 class AnalysisPaneBar extends StatelessWidget {
@@ -20,17 +21,24 @@ class AnalysisPaneBar extends StatelessWidget {
     super.key,
     required this.selection,
     required this.onChanged,
+    required this.channelLabels,
+    required this.channelUnitless,
   });
 
   final AnalysisPaneSelection selection;
   final ValueChanged<AnalysisPaneSelection> onChanged;
 
+  /// Display label per channel id (both lists index-aligned with the ids).
+  final List<String> channelLabels;
+
+  /// Whether each channel id is unitless (a normalized blend).
+  final List<bool> channelUnitless;
+
   static const _kinds = <(AnalysisPaneKind, String)>[
     (AnalysisPaneKind.derivative, 'dF/dt'),
     (AnalysisPaneKind.fft, 'FFT'),
-    (AnalysisPaneKind.sum, 'Sum'),
-    (AnalysisPaneKind.balance, 'Balance'),
-    (AnalysisPaneKind.diff, 'Diff'),
+    (AnalysisPaneKind.plate, 'Plate'),
+    (AnalysisPaneKind.readout, 'Readout'),
   ];
 
   @override
@@ -85,67 +93,39 @@ class AnalysisPaneBar extends StatelessWidget {
           ..._modeChips,
         ],
       ),
-      AnalysisPaneKind.sum => Wrap(
-        spacing: 8,
-        runSpacing: 4,
-        alignment: WrapAlignment.center,
-        children: _channelChips(
-          selected: sel.sumChannels,
-          onToggle: (ch) => onChanged(
-            sel.copyWith(sumChannels: _toggled(sel.sumChannels, ch)),
-          ),
-        ),
-      ),
-      AnalysisPaneKind.balance => Wrap(
+      AnalysisPaneKind.plate => Wrap(
         spacing: 8,
         runSpacing: 4,
         alignment: WrapAlignment.center,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          ChoiceChip(
-            label: const Text('1D line'),
-            selected: sel.balanceMode == BalanceMode.line,
-            onSelected: (_) =>
-                onChanged(sel.copyWith(balanceMode: BalanceMode.line)),
-            visualDensity: VisualDensity.compact,
+          const Text('x:'),
+          _channelDropdown(
+            value: sel.plateX,
+            ids: _unitlessIds,
+            onChanged: (v) => onChanged(sel.copyWith(plateX: v)),
           ),
-          ChoiceChip(
-            label: const Text('2D plate'),
-            selected: sel.balanceMode == BalanceMode.plate,
-            onSelected: (_) =>
-                onChanged(sel.copyWith(balanceMode: BalanceMode.plate)),
-            visualDensity: VisualDensity.compact,
+          const Text('y:'),
+          _channelDropdown(
+            value: sel.plateY,
+            ids: _unitlessIds,
+            onChanged: (v) => onChanged(sel.copyWith(plateY: v)),
           ),
-          const _ParamsDivider(),
-          if (sel.balanceMode == BalanceMode.line)
-            ..._pairDropdowns(
-              a: sel.balanceLineA,
-              b: sel.balanceLineB,
-              onA: (v) => onChanged(sel.copyWith(balanceLineA: v)),
-              onB: (v) => onChanged(sel.copyWith(balanceLineB: v)),
-            )
-          else
-            _CornerGrid(
-              corners: sel.balanceCorners,
-              onTapCorner: (i) => onChanged(
-                sel.copyWith(
-                  balanceCorners: _cycledCorner(sel.balanceCorners, i),
-                ),
-              ),
-            ),
         ],
       ),
-      AnalysisPaneKind.diff => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: _pairDropdowns(
-          a: sel.diffA,
-          b: sel.diffB,
-          onA: (v) => onChanged(sel.copyWith(diffA: v)),
-          onB: (v) => onChanged(sel.copyWith(diffB: v)),
-        ),
+      AnalysisPaneKind.readout => _channelDropdown(
+        value: sel.readoutChannel,
+        ids: [for (int i = 0; i < channelLabels.length; i++) i],
+        onChanged: (v) => onChanged(sel.copyWith(readoutChannel: v)),
       ),
     };
   }
+
+  /// Ids of the unitless (normalized) channels, for the plate axes.
+  List<int> get _unitlessIds => [
+    for (int i = 0; i < channelLabels.length; i++)
+      if (channelUnitless[i]) i,
+  ];
 
   List<Widget> get _nChips => [
     ChoiceChip(
@@ -178,31 +158,27 @@ class AnalysisPaneBar extends StatelessWidget {
     ),
   ];
 
-  /// The two dropdowns of a channel pair, laid out so "B − A" reads
-  /// left-to-right the way the pane plots it.
-  List<Widget> _pairDropdowns({
-    required int a,
-    required int b,
-    required ValueChanged<int> onA,
-    required ValueChanged<int> onB,
-  }) => [
-    _channelDropdown(value: b, onChanged: onB),
-    const Padding(
-      padding: EdgeInsets.symmetric(horizontal: 4),
-      child: Text('−'),
-    ),
-    _channelDropdown(value: a, onChanged: onA),
-  ];
-
   Widget _channelDropdown({
     required int value,
+    required List<int> ids,
     required ValueChanged<int> onChanged,
   }) => DropdownButton<int>(
-    value: value,
+    value: ids.contains(value) ? value : null,
     isDense: true,
+    hint: const Text('—'),
     items: [
-      for (int ch = 0; ch < kAdcChannelCount; ch++)
-        DropdownMenuItem(value: ch, child: Text(rigSlotTitle(ch))),
+      for (final id in ids)
+        DropdownMenuItem(
+          value: id,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircleAvatar(backgroundColor: getChannelColor(id), radius: 5),
+              const SizedBox(width: 6),
+              Text(channelLabels[id]),
+            ],
+          ),
+        ),
     ],
     onChanged: (v) {
       if (v != null) onChanged(v);
@@ -220,26 +196,15 @@ class AnalysisPaneBar extends StatelessWidget {
     required Set<int> selected,
     required ValueChanged<int> onToggle,
   }) => [
-    for (int ch = 0; ch < kAdcChannelCount; ch++)
+    for (int ch = 0; ch < channelLabels.length; ch++)
       FilterChip(
         avatar: CircleAvatar(backgroundColor: getChannelColor(ch), radius: 5),
-        label: Text('CH $ch'),
+        label: Text(channelLabels[ch]),
         selected: selected.contains(ch),
         onSelected: (_) => onToggle(ch),
         visualDensity: VisualDensity.compact,
       ),
   ];
-
-  /// Tap on a corner gives it the next channel value, swapping with the
-  /// corner that held it — so the assignment stays a permutation.
-  static List<int> _cycledCorner(List<int> corners, int index) {
-    final next = List<int>.of(corners);
-    final v = (next[index] + 1) % kAdcChannelCount;
-    final holder = next.indexOf(v);
-    next[holder] = next[index];
-    next[index] = v;
-    return next;
-  }
 }
 
 /// Thin vertical separator between parameter groups.
@@ -255,47 +220,4 @@ class _ParamsDivider extends StatelessWidget {
       color: Theme.of(context).colorScheme.outlineVariant,
     ),
   );
-}
-
-/// The 2×2 corner assignment grid for the plate view. Each chip shows the
-/// corner position and its channel; tapping cycles the channel (see
-/// [AnalysisPaneBar._cycledCorner]).
-class _CornerGrid extends StatelessWidget {
-  const _CornerGrid({required this.corners, required this.onTapCorner});
-
-  /// Per-corner hardware channel [TL, TR, BL, BR].
-  final List<int> corners;
-  final ValueChanged<int> onTapCorner;
-
-  static const _cornerNames = ['TL', 'TR', 'BL', 'BR'];
-
-  @override
-  Widget build(BuildContext context) {
-    const chipW = 86.0;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (final row in const [(0, 1), (2, 3)])
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (final i in [row.$1, row.$2])
-                SizedBox(
-                  width: chipW,
-                  child: ActionChip(
-                    avatar: CircleAvatar(
-                      backgroundColor: getChannelColor(corners[i]),
-                      radius: 5,
-                    ),
-                    label: Text('${_cornerNames[i]} · CH ${corners[i]}'),
-                    onPressed: () => onTapCorner(i),
-                    visualDensity: VisualDensity.compact,
-                    labelStyle: Theme.of(context).textTheme.labelSmall,
-                  ),
-                ),
-            ],
-          ),
-      ],
-    );
-  }
 }

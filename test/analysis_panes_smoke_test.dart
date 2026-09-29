@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:dynamite_app/models/analysis_pane.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
+import 'package:dynamite_app/models/derived_channel.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/models/load_cell.dart';
@@ -30,10 +31,14 @@ void main() {
     excitationV: 4.53,
   );
 
-  /// A hub with a few seconds of positive-going tones per channel (positive
-  /// so the balance plate has load to place).
-  DataHub hubWithData() {
+  const plateLabels = ['CH 0', 'CH 1', 'CH 2', 'CH 3', 'Σ', 'X', 'Y', 'Err'];
+
+  /// A hub with the force-plate derived channels configured and a few
+  /// seconds of positive-going tones per channel (positive so the plate
+  /// ratio has load to place). [cells] binds the derived channels.
+  DataHub hubWithData({bool cells = false}) {
     final hub = DataHub();
+    hub.updateDerivedChannels(forcePlateChannels(const [0, 1, 2, 3]));
     hub.updateBoardCalibration(
       ProvisionedBoardCalibration(
         nominals: BoardNominals(
@@ -44,6 +49,12 @@ void main() {
         ),
       ),
     );
+    if (cells) {
+      hub.updateLoadCells([
+        for (int i = 0; i < channels; i++)
+          const LoadCellProfile(capacityKg: 200, sensitivityMvV: 2),
+      ]);
+    }
     final frame = Int32List(channels);
     final cpmv = testNominals.countsPerMvV;
     for (var i = 0; i < 3000; i++) {
@@ -63,33 +74,23 @@ void main() {
   testWidgets('every analysis pane paints over session-like data', (
     tester,
   ) async {
-    final hub = hubWithData();
+    final hub = hubWithData(cells: true);
     final ctrl = GraphController();
 
     const variants = <AnalysisPaneSelection>[
       AnalysisPaneSelection(kind: AnalysisPaneKind.derivative),
-      AnalysisPaneSelection(kind: AnalysisPaneKind.sum),
-      AnalysisPaneSelection(kind: AnalysisPaneKind.sum, sumChannels: {1, 3}),
-      AnalysisPaneSelection(kind: AnalysisPaneKind.diff),
+      AnalysisPaneSelection(kind: AnalysisPaneKind.plate),
+      AnalysisPaneSelection(kind: AnalysisPaneKind.readout),
       AnalysisPaneSelection(
-        kind: AnalysisPaneKind.diff,
-        diffA: 2,
-        diffB: 2, // degenerate pair: the pane must say so, not plot
-      ),
-      AnalysisPaneSelection(
-        kind: AnalysisPaneKind.balance,
-        balanceMode: BalanceMode.line,
-      ),
-      AnalysisPaneSelection(
-        kind: AnalysisPaneKind.balance,
-        balanceMode: BalanceMode.plate,
+        kind: AnalysisPaneKind.readout,
+        readoutChannel: 2, // a hardware channel also binds
       ),
       AnalysisPaneSelection(kind: AnalysisPaneKind.fft),
       AnalysisPaneSelection(
         kind: AnalysisPaneKind.fft,
         fftN: 4096,
         fftAsd: true,
-        fftChannels: {0, 2},
+        fftChannels: {0, 2, 4}, // includes a derived (blend) channel
       ),
     ];
 
@@ -99,8 +100,8 @@ void main() {
           home: GraphWorkspace(
             data: hub,
             ctrl: ctrl,
-            unit: DisplayUnit.mVv,
-            activeChannels: [for (int i = 0; i < channels; i++) i],
+            unit: DisplayUnit.kgf,
+            activeChannels: [for (int i = 0; i < kMaxChannelCount; i++) i],
             analysis: analysis,
           ),
         ),
@@ -119,28 +120,20 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('plate mode with load cells paints the bucketed sum on top', (
+  testWidgets('unbound derived channels keep the panes painting', (
     tester,
   ) async {
-    // A force unit + cells: the top graph swaps to the corner sum with its
-    // bucket fast path live (see PlateSumAccumulator).
-    final hub = hubWithData()
-      ..updateLoadCells([
-        for (int i = 0; i < channels; i++)
-          const LoadCellProfile(capacityKg: 200, sensitivityMvV: 2),
-      ]);
-    expect(hub.plateSum, isNotNull);
+    // No load cells: the derived channels can't bind; every pane must say
+    // so without throwing (the hardware channels still do).
+    final hub = hubWithData();
     await tester.pumpWidget(
       MaterialApp(
         home: GraphWorkspace(
           data: hub,
           ctrl: GraphController(),
-          unit: DisplayUnit.kgf,
-          activeChannels: [for (int i = 0; i < channels; i++) i],
-          analysis: const AnalysisPaneSelection(
-            kind: AnalysisPaneKind.balance,
-            balanceMode: BalanceMode.plate,
-          ),
+          unit: DisplayUnit.mVv,
+          activeChannels: const [0, 1, 2, 3],
+          analysis: const AnalysisPaneSelection(kind: AnalysisPaneKind.plate),
         ),
       ),
     );
@@ -164,13 +157,24 @@ void main() {
             builder: (context, setState) => AnalysisPaneBar(
               selection: selection,
               onChanged: (s) => setState(() => selection = s),
+              channelLabels: plateLabels,
+              channelUnitless: const [
+                false,
+                false,
+                false,
+                false,
+                false,
+                true,
+                true,
+                true,
+              ],
             ),
           ),
         ),
       ),
     );
 
-    // FFT params: N, mode, channel toggles.
+    // FFT params: N, mode, channel toggles (hardware and derived alike).
     await tester.tap(find.text('FFT'));
     await tester.pump();
     expect(selection.kind, AnalysisPaneKind.fft);
@@ -183,20 +187,12 @@ void main() {
     await tester.tap(find.widgetWithText(FilterChip, 'CH 2'));
     await tester.pump();
     expect(selection.fftChannels, {0, 1, 3});
-
-    // Balance plate corner cycling keeps the assignment a permutation.
-    await tester.tap(find.text('Balance'));
+    await tester.tap(find.widgetWithText(FilterChip, 'Σ'));
     await tester.pump();
-    await tester.tap(find.text('TL · CH 0'));
-    await tester.pump();
-    expect(selection.balanceCorners.toSet(), {0, 1, 2, 3});
-    expect(selection.balanceCorners[0], 1);
-    await tester.tap(find.text('1D line'));
-    await tester.pump();
-    expect(selection.balanceMode, BalanceMode.line);
+    expect(selection.fftChannels, {0, 1, 3, 4});
 
     // Tapping the active pane chip collapses the slot.
-    await tester.tap(find.text('Balance'));
+    await tester.tap(find.text('FFT'));
     await tester.pump();
     expect(selection.kind, isNull);
 

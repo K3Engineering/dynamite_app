@@ -102,19 +102,18 @@ void main() {
       findsOneWidget,
     );
 
-    // Force plate: the top graph is the corner sum, and the label says so.
+    // Plate pane active: the label names the view below (the top graph
+    // keeps the selected channels — the plate transform is a channel set,
+    // not a top-graph swap).
     await pumpGraph(
       data: calibratedHub(),
       activeChannels: const [0, 1, 2, 3],
-      analysis: const AnalysisPaneSelection(
-        kind: AnalysisPaneKind.balance,
-        balanceMode: BalanceMode.plate,
-      ),
+      analysis: const AnalysisPaneSelection(kind: AnalysisPaneKind.plate),
     );
     expect(
       find.bySemanticsLabel(
         'Live force graph. Channels: CH 0, CH 1, CH 2, CH 3. Unit: mV/V. '
-        'Force plate view below; top graph shows the channel sum.',
+        'Two-axis position view below.',
       ),
       findsOneWidget,
     );

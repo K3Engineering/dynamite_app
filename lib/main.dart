@@ -13,6 +13,7 @@ import 'services/app_events.dart';
 import 'services/ble_link_manager.dart';
 import 'services/data_hub.dart';
 import 'services/demo_device.dart';
+import 'services/derived_channels.dart';
 import 'services/feed_health_tracker.dart';
 import 'services/firmware_catalog.dart';
 import 'services/firmware_update_service.dart';
@@ -65,6 +66,12 @@ void main() async {
   // The monitoring pause (see MonitorPause): decoder-side packet gate, wired
   // before the decoder so the gate closure exists at first packet.
   final monitorPause = MonitorPause(dataHub);
+  // The rig's derived channels (plate sum/axes/error — see
+  // `derived_channel.dart`), pushed on every config change.
+  dataHub.updateDerivedChannels(DerivedChannels.instance.channels);
+  DerivedChannels.instance.addListener(
+    () => dataHub.updateDerivedChannels(DerivedChannels.instance.channels),
+  );
   final decoder = AdcPacketDecoder(
     dataHub,
     isPaused: () => monitorPause.paused,

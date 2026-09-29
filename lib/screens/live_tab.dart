@@ -140,7 +140,9 @@ class _LiveTabState extends State<LiveTab> {
       final hub = context.read<DataHub>();
       final result = recording.startSession(
         channelLabels: context.read<RigState>().channelTitles,
-        visibleChannels: settings.activeChannels,
+        // Sessions record raw hardware channels only; derived channels are
+        // recomputable display-side at review time.
+        visibleChannels: settings.activeChannels.sublist(0, kAdcChannelCount),
         // The unit the instrument is drawing, as the export's default.
         displayUnit: settings.displayUnit.effective(hub.unitAvailability),
       );
@@ -246,6 +248,8 @@ class _LiveTabState extends State<LiveTab> {
                     AnalysisPaneBar(
                       selection: analysis,
                       onChanged: (s) => _analysisPane.value = s,
+                      channelLabels: _channelLabels(rig, hub),
+                      channelUnitless: _channelUnitless(hub),
                     ),
                   ],
                 ),
@@ -294,6 +298,19 @@ class _LiveTabState extends State<LiveTab> {
       analysis: analysis,
     );
   }
+
+  /// Display label per channel id: the rig's hardware titles, then the
+  /// derived channels' minted labels (see `derived_channel.dart`).
+  static List<String> _channelLabels(RigState rig, DataHub hub) => [
+    ...rig.channelTitles,
+    for (final d in hub.derivedChannels) d.label,
+  ];
+
+  /// Whether each channel id is unitless (a normalized blend).
+  static List<bool> _channelUnitless(DataHub hub) => [
+    for (int i = 0; i < kAdcChannelCount; i++) false,
+    for (final d in hub.derivedChannels) d.normalize,
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -522,7 +539,7 @@ class LiveStats extends StatelessWidget {
           final anyUnassigned =
               unit.isForce &&
               [
-                for (int i = 0; i < settings.activeChannels.length; i++)
+                for (int i = 0; i < kAdcChannelCount; i++)
                   if (settings.activeChannels[i] &&
                       hub.calibrationFor(i).loadCell == null)
                     i,
@@ -535,6 +552,8 @@ class LiveStats extends StatelessWidget {
           final clipped = [
             for (int i = 0; i < kAdcChannelCount; i++)
               hasData && ChannelLimits.isClipped(hub.currentRawFor(i)),
+            // Derived channels have no ADC rail of their own.
+            for (final _ in hub.derivedChannels) false,
           ];
 
           final (viewStart, viewEnd) = ctrl.effectiveRange(
@@ -545,8 +564,13 @@ class LiveStats extends StatelessWidget {
           return Column(
             children: [
               ChannelStatsTable(
-                labels: rig.channelTitles,
-                activeChannels: settings.activeChannels,
+                labels: _LiveTabState._channelLabels(rig, hub),
+                // The settings list spans the full id space; the table
+                // shows only what THIS source carries.
+                activeChannels: settings.activeChannels.sublist(
+                  0,
+                  hub.channelCount,
+                ),
                 onToggleChannel: (i) =>
                     settings.setChannelActive(i, !settings.activeChannels[i]),
                 unit: unit,
@@ -555,7 +579,7 @@ class LiveStats extends StatelessWidget {
                   ChannelStatsRow(
                     label: 'Live',
                     values: [
-                      for (int i = 0; i < kAdcChannelCount; i++)
+                      for (int i = 0; i < hub.channelCount; i++)
                         hub.currentValue(i, unit),
                     ],
                     emphasized: true,
@@ -564,14 +588,14 @@ class LiveStats extends StatelessWidget {
                   ChannelStatsRow(
                     label: 'Peak',
                     values: [
-                      for (int i = 0; i < kAdcChannelCount; i++)
+                      for (int i = 0; i < hub.channelCount; i++)
                         hub.peakValue(i, unit, start: viewStart, end: viewEnd),
                     ],
                   ),
                   ChannelStatsRow(
                     label: 'Tare offset',
                     values: [
-                      for (int i = 0; i < kAdcChannelCount; i++)
+                      for (int i = 0; i < hub.channelCount; i++)
                         hub.tareOffset(i, unit),
                     ],
                   ),
@@ -582,14 +606,17 @@ class LiveStats extends StatelessWidget {
                       // through the diff map. A real load step in the window
                       // reads as noise: a wiggle meter, not a spec.
                       values: [
-                        for (int i = 0; i < kAdcChannelCount; i++)
+                        for (int i = 0; i < hub.channelCount; i++)
                           switch (hub.windowedStdDev(
                             i,
                             hub.totalSamples - 4 * hub.sampleRateHz,
                             hub.totalSamples,
                           )) {
                             final sigma? =>
-                              hub.converterFor(i).diffMap(unit)?.call(sigma),
+                              hub
+                                  .seriesConverterFor(i)
+                                  .diffMap(unit)
+                                  ?.call(sigma),
                             null => null,
                           },
                       ],
@@ -600,7 +627,7 @@ class LiveStats extends StatelessWidget {
                     ChannelStatsRow(
                       label: 'dF/dt',
                       values: [
-                        for (int i = 0; i < kAdcChannelCount; i++)
+                        for (int i = 0; i < hub.channelCount; i++)
                           hub.currentDerivative(i, unit),
                       ],
                       stale: stale,

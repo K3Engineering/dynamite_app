@@ -3,12 +3,13 @@ import 'package:flutter/foundation.dart';
 import '../models/bucket_series.dart';
 import '../models/channel_calibration.dart';
 import '../models/channel_converter.dart';
+import '../models/derived_channel.dart';
+import '../models/derived_series.dart';
 import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
-import '../models/plate_sum_series.dart';
 
 /// Loaded session data for playback/review.
 class SessionData implements GraphDataSource {
@@ -62,10 +63,14 @@ class SessionData implements GraphDataSource {
   /// live hub uses.
   late final List<BucketAccumulator> _diffBuckets;
 
-  /// The plate-sum series, built during the load-time ingest when every
-  /// channel's frozen calibration has a board map and a cell (see
-  /// [PlateSumAccumulator]); null otherwise.
-  late final PlateSumAccumulator? _plateSum;
+  /// The rig's derived channels in id order (see [derivedChannels] and
+  /// `derived_channel.dart`), replayed over the frozen calibrations/tares
+  /// at load.
+  final List<DerivedChannelSpec> derivedSpecs;
+
+  /// Per-spec ingest runtimes; null slots couldn't bind on the session's
+  /// frozen calibration set (see [DerivedChannelRuntime.tryBuild]).
+  late final List<DerivedChannelRuntime?> _derived;
 
   SessionData({
     required this.channels,
@@ -75,6 +80,7 @@ class SessionData implements GraphDataSource {
     required this.tares,
     required this.ssnOrigin,
     this.deviceKvs,
+    this.derivedSpecs = const [],
     GapList? gaps,
   }) : gaps = gaps ?? GapList(),
        _extremes = List.filled(channels.length, null) {
@@ -105,23 +111,35 @@ class SessionData implements GraphDataSource {
       _extremes[ch] = (ext!.$1.toDouble(), ext.$2.toDouble());
     }
 
-    final acc = channels.length < kAdcChannelCount
-        ? null
-        : PlateSumAccumulator.tryBuild(
+    // Derived channels replay over the same frames; calibration and tares
+    // are frozen, so a single load-time pass is the whole story.
+    if (channels.length < kAdcChannelCount || sampleCount == 0) {
+      _derived = List.filled(derivedSpecs.length, null);
+    } else {
+      final scratch = Int32List(kAdcChannelCount);
+      _derived = [
+        for (final spec in derivedSpecs)
+          DerivedChannelRuntime.tryBuild(
+            spec,
             calibrations,
+            tares,
             bucketSize: bucketSize,
             numBuckets: numBuckets,
-          );
-    if (acc != null) {
-      final scratch = Int32List(kAdcChannelCount);
+            ringSize: sampleCount,
+            gaps: this.gaps,
+          ),
+      ];
       for (int i = 0; i < sampleCount; i++) {
         for (int c = 0; c < kAdcChannelCount; c++) {
           scratch[c] = channels[c][i];
         }
-        acc.add(i, scratch);
+        final held = this.gaps.contains(i);
+        for (final rt in _derived) {
+          if (rt == null) continue;
+          held ? rt.addHeld(i) : rt.addFrame(i, scratch);
+        }
       }
     }
-    _plateSum = acc;
   }
 
   double get durationSeconds => sampleCount / sampleRate;
@@ -135,7 +153,16 @@ class SessionData implements GraphDataSource {
   int get oldestSample => 0;
 
   @override
-  int rawAt(int channelIndex, int index) => channels[channelIndex][index];
+  int rawAt(int channelIndex, int index) => channelIndex < kAdcChannelCount
+      ? channels[channelIndex][index]
+      : (_derivedAt(derivedIndexOf(channelIndex))?.ring[index] ?? 0);
+
+  @override
+  bool channelSampleDefined(int channelIndex, int index) {
+    if (gaps.contains(index)) return false;
+    if (channelIndex < kAdcChannelCount) return true;
+    return _derivedAt(derivedIndexOf(channelIndex))?.validAt(index) ?? false;
+  }
 
   @override
   Listenable get repaint => kNeverRepaints;
@@ -170,16 +197,56 @@ class SessionData implements GraphDataSource {
 
   @override
   BucketSeries valueBucketsFor(int channelIndex) =>
-      _valueBuckets[channelIndex].series;
+      channelIndex < kAdcChannelCount
+      ? _valueBuckets[channelIndex].series
+      : (_derivedAt(derivedIndexOf(channelIndex))?.valueSeries ??
+            _kEmptyBuckets);
 
   @override
   BucketSeries diffBucketsFor(int channelIndex) =>
-      _diffBuckets[channelIndex].series;
+      channelIndex < kAdcChannelCount
+      ? _diffBuckets[channelIndex].series
+      : (_derivedAt(derivedIndexOf(channelIndex))?.diffSeries ??
+            _kEmptyBuckets);
+
+  /// Aggregates of an unbound derived channel: empty (the converters
+  /// report every unit unavailable).
+  static final BucketSeries _kEmptyBuckets = BucketAccumulator(
+    bucketSize: kBucketSize,
+    numBuckets: 0,
+  ).series;
 
   @override
-  PlateSumAccumulator? get plateSum => _plateSum;
+  (double, double)? channelExtremes(int channelIndex) {
+    if (channelIndex >= kAdcChannelCount) {
+      final ext = _derivedAt(derivedIndexOf(channelIndex))?.extremes;
+      return ext == null ? null : (ext.$1.toDouble(), ext.$2.toDouble());
+    }
+    return _extremes[channelIndex];
+  }
+
+  /// The runtime for a derived index, or null when unbound or past the
+  /// configured set (see [DataHub._derivedAt]).
+  DerivedChannelRuntime? _derivedAt(int index) =>
+      index < _derived.length ? _derived[index] : null;
 
   @override
-  (double, double)? channelExtremes(int channelIndex) =>
-      _extremes[channelIndex];
+  int get channelCount => channels.length + derivedSpecs.length;
+
+  @override
+  List<DerivedChannelSpec> get derivedChannels => derivedSpecs;
+
+  @override
+  SeriesConverter seriesConverterFor(int id) => id < kAdcChannelCount
+      ? HardwareSeriesConverter(converterFor(id))
+      : (_derivedAt(derivedIndexOf(id))?.converterFor() ??
+            const UnboundSeriesConverter());
+
+  @override
+  List<double?> cacheTaresFor(int id) => id < kAdcChannelCount
+      ? [tares[id]]
+      : [
+          if (derivedIndexOf(id) < derivedSpecs.length)
+            for (final m in derivedSpecs[derivedIndexOf(id)].members) tares[m],
+        ];
 }

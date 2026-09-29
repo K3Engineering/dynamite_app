@@ -45,6 +45,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     const AnalysisPaneSelection(),
   );
 
+  /// Derived channels hidden in this screen's graph, by index within
+  /// [SessionData.derivedChannels]. Sessions persist only hardware-channel
+  /// visibility (recordings are raw-only), so derived visibility is
+  /// screen-local.
+  final Set<int> _hiddenDerived = {};
+
   late final ValueListenable<SessionCatalogState> _catalog;
 
   @override
@@ -164,7 +170,16 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     SessionData data,
   ) {
     final visibleChannels = session.visibleChannels;
-    final channelLabels = session.channelLabels;
+    final hwCount = visibleChannels.length;
+    final channelLabels = [
+      ...session.channelLabels,
+      for (final d in data.derivedChannels) d.label,
+    ];
+    final activeChannels = [
+      ...visibleChannels,
+      for (int i = 0; i < data.derivedChannels.length; i++)
+        !_hiddenDerived.contains(i),
+    ];
     final unit = settings.displayUnit.effective(data.unitAvailability);
 
     return SingleChildScrollView(
@@ -172,34 +187,49 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (session.interrupted) const _InterruptedBanner(),
-          // Channel header (same tappable table as the live view; toggles
-          // this session's per-session channel visibility).
+          // Channel header (same tappable table as the live view; hardware
+          // toggles persist per session, derived toggles are screen-local).
           ChannelStatsTable(
             labels: channelLabels,
-            activeChannels: visibleChannels,
-            onToggleChannel: (index) => unawaited(
-              SessionStore.instance.toggleVisibleChannel(session.id, index),
-            ),
+            activeChannels: activeChannels,
+            onToggleChannel: (index) {
+              if (index < hwCount) {
+                unawaited(
+                  SessionStore.instance.toggleVisibleChannel(session.id, index),
+                );
+              } else {
+                final i = index - hwCount;
+                setState(
+                  () => _hiddenDerived.contains(i)
+                      ? _hiddenDerived.remove(i)
+                      : _hiddenDerived.add(i),
+                );
+              }
+            },
             unit: unit,
             rows: [
               ChannelStatsRow(
                 label: 'Peak',
                 emphasized: true,
                 values: [
-                  for (int ch = 0; ch < data.channels.length; ch++)
+                  for (int ch = 0; ch < data.channelCount; ch++)
                     switch (data.channelExtremes(ch)?.$2) {
-                      final max? => data.converterFor(ch).net(unit, max),
+                      final max? =>
+                        data.seriesConverterFor(ch).netMap(unit)?.call(max),
                       null => null,
                     },
                 ],
               ),
               // The amount the session's frozen tare zeroed out (gross at
               // the tare point; 0 for a channel recorded without a tare).
+              // A hardware-channel concept: derived channels show '—'.
               ChannelStatsRow(
                 label: 'Tare offset',
                 values: [
-                  for (int ch = 0; ch < data.channels.length; ch++)
-                    data.converterFor(ch).tareOffset(unit),
+                  for (int ch = 0; ch < data.channelCount; ch++)
+                    ch < hwCount
+                        ? data.converterFor(ch).tareOffset(unit)
+                        : null,
                 ],
               ),
             ],
@@ -221,8 +251,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                         ctrl: _graphCtrl,
                         unit: unit,
                         activeChannels: [
-                          for (int i = 0; i < visibleChannels.length; i++)
-                            if (visibleChannels[i]) i,
+                          for (int i = 0; i < channelLabels.length; i++)
+                            if (activeChannels[i]) i,
                         ],
                         analysis: analysis,
                         isLiveGraph: false,
@@ -232,6 +262,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   AnalysisPaneBar(
                     selection: analysis,
                     onChanged: (s) => _analysisPane.value = s,
+                    channelLabels: channelLabels,
+                    channelUnitless: [
+                      for (int i = 0; i < hwCount; i++) false,
+                      for (final d in data.derivedChannels) d.normalize,
+                    ],
                   ),
                 ],
               ),

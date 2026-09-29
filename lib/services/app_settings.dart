@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/derived_channel.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 
@@ -18,9 +19,16 @@ class AppSettings extends ChangeNotifier {
     // default unit (mV/V — see [_displayUnit]).
     _displayUnit = DisplayUnit.fromName(_prefs.getString(_keyUnit));
 
+    // The stored list spans the channel id space (hardware + derived);
+    // shorter lists from before derived channels existed pad on (the new
+    // channels default to active so the rig's channels just appear).
     final active = _prefs.getStringList(_keyActiveChannels);
-    if (active != null && active.length == kAdcChannelCount) {
-      _activeChannels = active.map((s) => s == 'true').toList();
+    if (active != null &&
+        active.length >= kAdcChannelCount &&
+        active.length <= kMaxChannelCount) {
+      for (int i = 0; i < active.length; i++) {
+        _activeChannels[i] = active[i] == 'true';
+      }
     }
 
     _wakelockEnabled = _prefs.getBool(_keyWakelock) ?? false;
@@ -41,9 +49,10 @@ class AppSettings extends ChangeNotifier {
   DisplayUnit _displayUnit = DisplayUnit.mVv;
   DisplayUnit get displayUnit => _displayUnit;
 
-  /// Which channels are shown in the live view. Local to the live tab —
-  /// each recorded session carries its own visibility set.
-  List<bool> _activeChannels = List.filled(kAdcChannelCount, true);
+  /// Which channels are shown in the live view, in the widened channel id
+  /// space (hardware channels then derived). Local to the live tab — each
+  /// recorded session carries its own visibility set.
+  final List<bool> _activeChannels = List.filled(kMaxChannelCount, true);
   List<bool> get activeChannels => List.unmodifiable(_activeChannels);
 
   List<int> get activeChannelIndices => [

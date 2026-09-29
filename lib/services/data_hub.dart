@@ -7,13 +7,14 @@ import '../models/bucket_series.dart';
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
 import '../models/channel_converter.dart';
+import '../models/derived_channel.dart';
+import '../models/derived_series.dart';
 import '../models/hub_event.dart';
 import '../models/load_cell.dart';
 import '../models/display_unit.dart';
 import '../models/feed_health.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
-import '../models/plate_sum_series.dart';
 import '../models/sample_slice.dart';
 import 'adc_sink.dart';
 
@@ -85,13 +86,66 @@ class DataHub extends ChangeNotifier
     growable: false,
   );
 
-  /// The plate-sum series (see [PlateSumAccumulator]); null until every
-  /// channel has a board map and an assigned cell. Rebuilt (never
-  /// incrementally patched) when the calibration set changes: a rescan of the
-  /// retained window costs O(retained) map evaluations once per cal/cell
-  /// event, and stays identical to the always-on path because ring-held gap
-  /// values rescan to the same holds.
-  PlateSumAccumulator? _plateSum;
+  /// The rig's derived-channel set, in id order (id = kAdcChannelCount +
+  /// index); see `derived_channel.dart`.
+  List<DerivedChannelSpec> _derivedSpecs = const [];
+
+  /// Per-spec ingest runtimes (see [DerivedChannelRuntime]); null slots
+  /// can't bind on the current calibration set (a member without a board
+  /// map or load cell). Rebuilt whole (never incrementally patched) when
+  /// the calibration set or the config changes; NORMALIZED channels also
+  /// rebuild on tare edges (their ratio bakes the member tares; blends
+  /// store tare-free values and only rebind their display map).
+  List<DerivedChannelRuntime?> _derived = const [];
+
+  /// Replace the derived-channel set (config edge); rebuilds all runtimes.
+  void updateDerivedChannels(List<DerivedChannelSpec> specs) {
+    _derivedSpecs = specs;
+    _rebuildDerived();
+    notifyListeners();
+  }
+
+  /// Rebuild the derived runtimes from the current calibration set and the
+  /// retained window (maps/weights/tares both change the series — there is
+  /// no delta to patch). [ratiosOnly] skips blends: their series is
+  /// tare-free, so tare edges don't touch them.
+  void _rebuildDerived({bool ratiosOnly = false}) {
+    final calibrations = [
+      for (int c = 0; c < kAdcChannelCount; c++) calibrationFor(c),
+    ];
+    final next = <DerivedChannelRuntime?>[];
+    final scratch = Int32List(kAdcChannelCount);
+    for (int i = 0; i < _derivedSpecs.length; i++) {
+      if (ratiosOnly && !_derivedSpecs[i].normalize) {
+        next.add(i < _derived.length ? _derived[i] : null);
+        continue;
+      }
+      final rt = DerivedChannelRuntime.tryBuild(
+        _derivedSpecs[i],
+        calibrations,
+        tare,
+        bucketSize: bucketSize,
+        numBuckets: numBuckets,
+        ringSize: maxDataSz,
+        gaps: gaps,
+      );
+      if (rt != null) {
+        rt.resetAt(oldestSample);
+        for (int j = oldestSample; j < totalSamples; j++) {
+          for (int c = 0; c < kAdcChannelCount; c++) {
+            scratch[c] = rawAt(c, j);
+          }
+          if (gaps.contains(j)) {
+            rt.addHeld(j);
+          } else {
+            rt.addFrame(j, scratch);
+          }
+        }
+      }
+      next.add(rt);
+    }
+    _derived = next;
+  }
 
   /// The in-progress tare window: how many real samples its average spans and
   /// which channel (null = all). Nothing accumulates while it fills; completion
@@ -201,7 +255,11 @@ class DataHub extends ChangeNotifier
       _currentRaw[i] = 0;
       _ingest[i].reset();
     }
-    _plateSum?.reset();
+    for (final rt in _derived) {
+      rt?.reset();
+    }
+    // Tares were just dropped; the ratios bake them.
+    _rebuildDerived(ratiosOnly: true);
     _tareVersion++;
     _emit(const HubCleared());
     notifyListeners();
@@ -248,6 +306,7 @@ class DataHub extends ChangeNotifier
       if (channel == null || channel == i) tare[i] = null;
     }
     _tareVersion++;
+    _rebuildDerived(ratiosOnly: true);
     notifyListeners();
   }
 
@@ -261,6 +320,7 @@ class DataHub extends ChangeNotifier
     _cancelPendingTare();
     tare[channel] = rawValue;
     _tareVersion++;
+    _rebuildDerived(ratiosOnly: true);
     notifyListeners();
   }
 
@@ -287,6 +347,7 @@ class DataHub extends ChangeNotifier
     }
     _pendingTare = null;
     _tareVersion++;
+    _rebuildDerived(ratiosOnly: true);
   }
 
   /// Append one decoded sample (one value per channel); [totalSamples] always
@@ -302,7 +363,9 @@ class DataHub extends ChangeNotifier
       _currentRaw[i] = val;
       _addData(val, i);
     }
-    _plateSum?.add(totalSamples, values);
+    for (final rt in _derived) {
+      rt?.addFrame(totalSamples, values);
+    }
     totalSamples++;
 
     final pending = _pendingTare;
@@ -331,7 +394,9 @@ class DataHub extends ChangeNotifier
       for (int i = 0; i < kAdcChannelCount; ++i) {
         _addData(_currentRaw[i], i);
       }
-      _plateSum?.addHeld(totalSamples);
+      for (final rt in _derived) {
+        rt?.addHeld(totalSamples);
+      }
       totalSamples++;
     }
   }
@@ -390,7 +455,7 @@ class DataHub extends ChangeNotifier
     if (prev != null && _sameBoardCalibration(prev, calibration)) return;
     _boardCalibration = calibration;
     _calibrationVersion++;
-    _rebuildPlateSum();
+    _rebuildDerived();
     notifyListeners();
   }
 
@@ -401,7 +466,7 @@ class DataHub extends ChangeNotifier
     if (_boardCalibration == null) return;
     _boardCalibration = null;
     _calibrationVersion++;
-    _rebuildPlateSum();
+    _rebuildDerived();
     notifyListeners();
   }
 
@@ -466,32 +531,8 @@ class DataHub extends ChangeNotifier
     if (same) return;
     _loadCells = List.of(cells);
     _calibrationVersion++;
-    _rebuildPlateSum();
+    _rebuildDerived();
     notifyListeners();
-  }
-
-  /// Rebuild the plate-sum series from the current calibration set and the
-  /// retained window (maps/weights both changed — there is no delta to
-  /// patch). Nulls it out when any channel can't express plate force.
-  void _rebuildPlateSum() {
-    final acc = PlateSumAccumulator.tryBuild(
-      [for (int c = 0; c < kAdcChannelCount; c++) calibrationFor(c)],
-      bucketSize: bucketSize,
-      numBuckets: numBuckets,
-    );
-    if (acc == null) {
-      _plateSum = null;
-      return;
-    }
-    acc.resetAt(oldestSample);
-    final scratch = Int32List(kAdcChannelCount);
-    for (int j = oldestSample; j < totalSamples; j++) {
-      for (int c = 0; c < kAdcChannelCount; c++) {
-        scratch[c] = rawAt(c, j);
-      }
-      acc.add(j, scratch);
-    }
-    _plateSum = acc;
   }
 
   // -- GraphDataSource --------------------------------------------------------
@@ -504,8 +545,17 @@ class DataHub extends ChangeNotifier
   int get sampleRate => sampleRateHz;
 
   @override
-  int rawAt(int channelIndex, int index) =>
-      _rawData[channelIndex][index % maxDataSz];
+  int rawAt(int channelIndex, int index) => channelIndex < kAdcChannelCount
+      ? _rawData[channelIndex][index % maxDataSz]
+      : (_derivedAt(derivedIndexOf(channelIndex))?.ring[index % maxDataSz] ??
+            0);
+
+  @override
+  bool channelSampleDefined(int channelIndex, int index) {
+    if (gaps.contains(index)) return false;
+    if (channelIndex < kAdcChannelCount) return true;
+    return _derivedAt(derivedIndexOf(channelIndex))?.validAt(index) ?? false;
+  }
 
   @override
   ChannelConverter converterFor(int channelIndex) =>
@@ -541,20 +591,60 @@ class DataHub extends ChangeNotifier
 
   @override
   BucketSeries valueBucketsFor(int channelIndex) =>
-      _valueBuckets[channelIndex].series;
+      channelIndex < kAdcChannelCount
+      ? _valueBuckets[channelIndex].series
+      : (_derivedAt(derivedIndexOf(channelIndex))?.valueSeries ??
+            _kEmptyBuckets);
 
   @override
   BucketSeries diffBucketsFor(int channelIndex) =>
-      _diffBuckets[channelIndex].series;
+      channelIndex < kAdcChannelCount
+      ? _diffBuckets[channelIndex].series
+      : (_derivedAt(derivedIndexOf(channelIndex))?.diffSeries ??
+            _kEmptyBuckets);
 
-  @override
-  PlateSumAccumulator? get plateSum => _plateSum;
+  /// Aggregates of an unbound derived channel: empty, so windowed folds
+  /// find nothing there (the converters report every unit unavailable).
+  static final BucketSeries _kEmptyBuckets = BucketAccumulator(
+    bucketSize: bucketSize,
+    numBuckets: 0,
+  ).series;
 
   @override
   (double, double)? channelExtremes(int channelIndex) {
+    if (channelIndex >= kAdcChannelCount) {
+      final ext = _derivedAt(derivedIndexOf(channelIndex))?.extremes;
+      return ext == null ? null : (ext.$1.toDouble(), ext.$2.toDouble());
+    }
     final ext = _ingest[channelIndex].extremes;
     return ext == null ? null : (ext.$1.toDouble(), ext.$2.toDouble());
   }
+
+  /// The runtime for a derived index, or null when unbound — or when the
+  /// id is past the configured set (callers may enumerate a wider id space
+  /// than this source's config, e.g. toggled-but-removed channels).
+  DerivedChannelRuntime? _derivedAt(int index) =>
+      index < _derived.length ? _derived[index] : null;
+
+  @override
+  int get channelCount => kAdcChannelCount + _derivedSpecs.length;
+
+  @override
+  List<DerivedChannelSpec> get derivedChannels => _derivedSpecs;
+
+  @override
+  SeriesConverter seriesConverterFor(int id) => id < kAdcChannelCount
+      ? HardwareSeriesConverter(converterFor(id))
+      : (_derivedAt(derivedIndexOf(id))?.converterFor() ??
+            const UnboundSeriesConverter());
+
+  @override
+  List<double?> cacheTaresFor(int id) => id < kAdcChannelCount
+      ? [tare[id]]
+      : [
+          if (derivedIndexOf(id) < _derivedSpecs.length)
+            for (final m in _derivedSpecs[derivedIndexOf(id)].members) tare[m],
+        ];
 
   /// Whether the newest sample is a held (dropped) value.
   bool get liveEdgeIsGap => gaps.contains(totalSamples - 1);
@@ -568,66 +658,58 @@ class DataHub extends ChangeNotifier
     return _currentRaw[adcChannel];
   }
 
-  /// Current value of [adcChannel] in [unit]; a held value during a gap (see
-  /// [liveEdgeIsGap]). Null when the unit is unavailable.
-  double? currentValue(int adcChannel, DisplayUnit unit) {
-    assert(
-      adcChannel >= 0 && adcChannel < kAdcChannelCount,
-      'channel $adcChannel out of range [0, $kAdcChannelCount)',
-    );
-    return converterFor(
-      adcChannel,
-    ).net(unit, _currentRaw[adcChannel].toDouble());
+  /// Current value of channel [id] in [unit]; a held value during a gap
+  /// (see [liveEdgeIsGap]). Null when the unit is unavailable. [id] spans
+  /// the widened channel space (see `derived_channel.dart`).
+  double? currentValue(int id, DisplayUnit unit) {
+    assert(id >= 0 && id < channelCount, 'channel $id out of range');
+    if (totalSamples == 0) return null;
+    return seriesConverterFor(
+      id,
+    ).netMap(unit)?.call(rawAt(id, totalSamples - 1).toDouble());
   }
 
-  /// The tare amount being zeroed out, in [unit]. Null when unavailable.
-  double? tareOffset(int adcChannel, DisplayUnit unit) {
-    assert(
-      adcChannel >= 0 && adcChannel < kAdcChannelCount,
-      'channel $adcChannel out of range [0, $kAdcChannelCount)',
-    );
-    return converterFor(adcChannel).tareOffset(unit);
+  /// The tare amount being zeroed out, in [unit]; a hardware-channel
+  /// concept, null for derived channels (and when unavailable).
+  double? tareOffset(int id, DisplayUnit unit) {
+    assert(id >= 0 && id < channelCount, 'channel $id out of range');
+    if (isDerivedChannelId(id)) return null;
+    return converterFor(id).tareOffset(unit);
   }
 
-  /// Peak of [adcChannel] in [unit] over [start, end), clamped to retention and
-  /// bucket-accelerated. Null when the unit is unavailable or the window holds
-  /// no sample.
+  /// Peak of channel [id] in [unit] over [start, end), clamped to retention
+  /// and bucket-accelerated. Null when the unit is unavailable or the
+  /// window holds no sample.
   double? peakValue(
-    int adcChannel,
+    int id,
     DisplayUnit unit, {
     required int start,
     required int end,
   }) {
-    assert(
-      adcChannel >= 0 && adcChannel < kAdcChannelCount,
-      'channel $adcChannel out of range [0, $kAdcChannelCount)',
-    );
-    final conv = converterFor(adcChannel).netMap(unit);
+    assert(id >= 0 && id < channelCount, 'channel $id out of range');
+    final conv = seriesConverterFor(id).netMap(unit);
     if (conv == null) return null;
-    final ext = windowedRawExtremes(adcChannel, start, end);
+    final ext = windowedRawExtremes(id, start, end);
     return ext == null ? null : conv(ext.$2);
   }
 
-  /// Instantaneous derivative (first difference) of [adcChannel] in unit/s;
+  /// Instantaneous derivative (first difference) of channel [id] in unit/s;
   /// null when the unit is unavailable.
-  double? currentDerivative(int adcChannel, DisplayUnit unit) {
-    assert(
-      adcChannel >= 0 && adcChannel < kAdcChannelCount,
-      'channel $adcChannel out of range [0, $kAdcChannelCount)',
-    );
+  double? currentDerivative(int id, DisplayUnit unit) {
+    assert(id >= 0 && id < channelCount, 'channel $id out of range');
     if (totalSamples < 2) return 0;
 
     // A held value on either side would fabricate a flat or spiking
     // derivative; report 0 across gap edges instead.
     if (!diffDefinedAt(totalSamples - 1)) return 0;
 
-    final conv = converterFor(adcChannel).netMap(unit);
+    final conv = seriesConverterFor(id).netMap(unit);
     if (conv == null) return null;
 
     // Difference the converter output (not the raw diff): exact under the
     // piecewise map, and tare cancels. Scaled to units/second.
-    return (conv(rawAt(adcChannel, totalSamples - 1).toDouble()) -
-            conv(rawAt(adcChannel, totalSamples - 2).toDouble())) *
+    return (conv(rawAt(id, totalSamples - 1).toDouble()) -
+            conv(rawAt(id, totalSamples - 2).toDouble())) *
         sampleRateHz;
   }
 

@@ -6,6 +6,7 @@ import '../models/damaged_session.dart';
 import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
 import '../utils/future_chain.dart';
+import 'derived_channels.dart';
 import 'live_session_writer.dart';
 import 'session_data.dart';
 import 'session_files.dart';
@@ -422,6 +423,10 @@ class SessionStore {
       gaps: decoded.gaps,
       ssnOrigin: meta.ssnOrigin,
       deviceKvs: meta.deviceKvs,
+      // Derived channels replay from raw + frozen calibration with the
+      // CURRENT rig config (see `DerivedChannels` — no per-session config
+      // snapshot yet).
+      derivedSpecs: DerivedChannels.instance.channels,
     );
   });
 

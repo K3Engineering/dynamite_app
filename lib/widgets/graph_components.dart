@@ -11,12 +11,12 @@ import 'package:meta/meta.dart';
 import '../models/analysis_pane.dart';
 import '../models/bucket_series.dart';
 import '../models/channel_limits.dart';
+import '../models/derived_channel.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 import '../models/load_cell.dart';
-import '../utils/balance.dart';
 import '../utils/fft.dart';
 import 'channel_palette.dart';
 import 'graph/force_plate_cache.dart';
@@ -104,81 +104,91 @@ int joinBlockEnd(int end, int blockSize) =>
 // Unit-bound channels
 // ---------------------------------------------------------------------------
 
-/// What the shared envelope engine needs to know about a plotted series:
-/// its ink color and its segment-cache identity. [_ConvertedChannel] is a
-/// hardware channel bound to a unit; [_VirtualSeries] (below, with the
-/// virtual-series panes) is a derived trace over several channels.
-abstract interface class _PlottedSeries {
-  /// Stroke/fill color.
-  Color get color;
-
-  /// Identity mixed into the segment-cache remap key; a recipe change (e.g.
-  /// a different diff pair) must not blit the previous series' segments.
-  Object get remapId;
-}
-
-/// One active channel bound to the view's display unit. Its display maps are
-/// materialized non-null here, so painters never re-ask availability.
+/// One active channel bound to the view's display unit, spanning the whole
+/// channel id space (hardware 0..3, derived 4.. — see `derived_channel.dart`).
+/// Its display maps are materialized non-null here, so painters never re-ask
+/// availability. What the shared envelope engine needs to know about it: an
+/// ink color and a segment-cache identity ([remapId]).
 @immutable
-final class _ConvertedChannel implements _PlottedSeries {
+final class _ConvertedChannel {
   const _ConvertedChannel._({
     required this.channel,
-    required this.tare,
+    required this.cacheTares,
     required this.netMap,
     required this.diffMap,
+    required this.fullScaleRaw,
+    required this.unitless,
+    required this.hardwareIndex,
     required this.sensitivityCountsPerMvV,
     required this.loadCell,
   });
 
   /// Null when [unit] does not convert on the channel (a force unit with no
-  /// load cell assigned).
+  /// load cell assigned, a blend asked for mV/V, an unbound channel).
   static _ConvertedChannel? of(
     GraphDataSource data,
     int channel,
     DisplayUnit unit,
   ) {
-    final converter = data.converterFor(channel);
+    final converter = data.seriesConverterFor(channel);
     final net = converter.netMap(unit);
     if (net == null) return null;
     final diff = converter.diffMap(unit);
-    // diff is null exactly when net is (see ChannelConverter); a divergence
-    // is a broken calibration-model invariant, not an unavailable unit.
+    // diff is null exactly when net is (see SeriesConverter); a divergence
+    // is a broken conversion-model invariant, not an unavailable unit.
     assert(diff != null, 'net converts but diff does not (CH$channel, $unit)');
     if (diff == null) return null;
+    final hw = isDerivedChannelId(channel) ? null : channel;
     return _ConvertedChannel._(
       channel: channel,
-      tare: converter.tare,
+      cacheTares: data.cacheTaresFor(channel),
       netMap: net,
       diffMap: diff,
-      sensitivityCountsPerMvV:
-          converter.calibration.board?.sensitivityCountsPerMvV,
-      loadCell: converter.calibration.loadCell,
+      fullScaleRaw: converter.fullScaleRaw,
+      unitless: converter.unitless,
+      hardwareIndex: hw,
+      sensitivityCountsPerMvV: hw == null
+          ? null
+          : data.converterFor(hw).calibration.board?.sensitivityCountsPerMvV,
+      loadCell: hw == null ? null : data.converterFor(hw).calibration.loadCell,
     );
   }
 
+  /// The channel id: hardware index for hardware channels, the derived id
+  /// (kAdcChannelCount + config index) for derived ones.
   final int channel;
 
-  /// Tare offset in counts; null = untared ([ChannelConverter.tare]).
-  final double? tare;
+  /// Tares of every hardware channel read, mixed into the segment caches'
+  /// destructive key (see [GraphDataSource.cacheTaresFor]).
+  final List<double?> cacheTares;
 
-  /// Raw -> display value, net of tare ([ChannelConverter.netMap]).
+  /// Ring -> display value, net of tare ([SeriesConverter.netMap]).
   final double Function(double raw) netMap;
 
-  /// Raw diff -> display diff, terminal-slope based ([ChannelConverter.diffMap]).
+  /// Ring diff -> display diff ([SeriesConverter.diffMap]).
   final double Function(double rawDiff) diffMap;
 
-  /// Board sensitivity, used to size the force graph gutter's capacity zone.
-  /// Null only for raw on a nominal-less board (raw bypasses the board map and
-  /// still converts).
+  /// Full-scale span in ring units — the FFT's dBFS reference.
+  final double fullScaleRaw;
+
+  /// Normalized (unitless) channel: display maps ignore the selected unit.
+  final bool unitless;
+
+  /// The hardware channel index, or null for a derived channel (derived
+  /// channels have no rail/capacity chrome of their own).
+  final int? hardwareIndex;
+
+  /// Board sensitivity, used to size the force graph gutter's capacity zone
+  /// (hardware channels with board data only).
   final double? sensitivityCountsPerMvV;
 
-  /// Null when no cell is assigned.
+  /// Null when no cell is assigned (or the channel is derived).
   final LoadCellProfile? loadCell;
 
-  @override
+  /// Stroke/fill color.
   Color get color => getChannelColor(channel);
 
-  @override
+  /// Identity mixed into the segment-cache remap key.
   Object get remapId => channel;
 }
 
@@ -191,16 +201,14 @@ class _Minimap extends StatefulWidget {
   final DisplayUnit unit;
   final GraphController graphCtrl;
 
-  /// The series to plot — the same ones as the top graph (hardware channels
-  /// bound to [unit], or a virtual series like the plate sum).
-  final List<_PlottedSeries> channels;
+  /// The series to plot — the same ones as the top graph.
+  final List<_ConvertedChannel> channels;
 
   /// While the FFT pane is active, the samples feeding the transform are
   /// highlighted under the viewport rect (with the pane's N request).
   final ({int? requestedN})? fftFeed;
 
   const _Minimap({
-    super.key,
     required this.dataSource,
     required this.unit,
     required this.graphCtrl,
@@ -311,7 +319,7 @@ class _MinimapPainter extends CustomPainter {
   final GraphDataSource _data;
   final DisplayUnit _unit;
   final GraphController _ctrl;
-  final List<_PlottedSeries> _channels;
+  final List<_ConvertedChannel> _channels;
   final ({int? requestedN})? _fftFeed;
   final ColorScheme _colorScheme;
   final double _dpr;
@@ -364,7 +372,7 @@ class _MinimapPainter extends CustomPainter {
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
     for (final s in channels) {
-      final ext = _minimapSeriesRange(_data, unit, s);
+      final ext = _minimapSeriesRange(_data, s);
       if (ext == null) continue;
       yMin = math.min(yMin, math.min(ext.$1, 0.0));
       yMax = math.max(yMax, math.max(ext.$2, 0.0));
@@ -389,7 +397,7 @@ class _MinimapPainter extends CustomPainter {
       cache: _cache,
       data: _data,
       channels: channels,
-      tares: [for (final s in channels) ..._plottedTares(s)],
+      tares: [for (final s in channels) ...s.cacheTares],
       unit: unit,
       gw: gw,
       gh: gh,
@@ -399,7 +407,7 @@ class _MinimapPainter extends CustomPainter {
       yMin: yMin,
       yMax: yMax,
       firstUsableSample: oldestSample,
-      seriesFor: (s) => _envelopeSeriesOf(_data, s),
+      seriesFor: (s) => _taredEnvelopeSeries(_data, s),
       avgStrokeWidth: 1.0,
       avgAlpha: 180,
     );
@@ -549,64 +557,6 @@ class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
 // Graph Workspace Widget
 // ---------------------------------------------------------------------------
 
-/// The plate-mode top-graph series: the sum of the four plate corners,
-/// Σ_c net_c = f_unit · (M − Σ w_c·tareMvV_c) — [PlateSumAccumulator] holds
-/// the factorization. The corner mapping is a permutation of the channels,
-/// so the sum (and its cache identity) is mapping-independent.
-///
-/// Buckets bind only for force units: the accumulator's M is cell-weighted
-/// kgf, which mV/V/mV/raw sums are not affine in, so those units keep the
-/// exact per-sample path (identical rendering, no reduction fast path).
-_VirtualSeries _plateSumSeries(
-  GraphDataSource data,
-  DisplayUnit unit,
-  List<_ConvertedChannel> bound,
-  Color color,
-) {
-  // Σ w_c·tareMvV_c in display units — the tare shift of the affine bucket
-  // map. tareOffset is the display value at the tare point (0 untared); it
-  // is non-null exactly when the channel's net map exists, which [bound]
-  // already guarantees.
-  double sumTare = 0;
-  for (final b in bound) {
-    sumTare += data.converterFor(b.channel).tareOffset(unit)!;
-  }
-  final plate = data.plateSum;
-  final factor = unit.kgfFactor;
-  final bucketed = plate != null && factor != null;
-  final scratch = bucketed ? Int32List(kAdcChannelCount) : null;
-  return _VirtualSeries(
-    color: color,
-    remapId: 'platesum',
-    memberTares: [for (final b in bound) b.tare],
-    memberChannels: [for (final b in bound) b.channel],
-    sampleAt: (j) {
-      double acc = 0;
-      for (final b in bound) {
-        final v = data.rawValueAt(b.channel, j);
-        if (v.isNaN) return double.nan;
-        acc += b.netMap(v);
-      }
-      return acc;
-    },
-    buckets: bucketed ? plate.series : null,
-    rawToDisplay: bucketed
-        ? (m) => m * plate.quantumKgf * factor - sumTare
-        : null,
-    bucketSampleAt: bucketed
-        ? (j) {
-            // Bucket space has no missing-data state: the ring's held values
-            // at gaps evaluate to the accumulator's held M.
-            final s = scratch!;
-            for (int c = 0; c < kAdcChannelCount; c++) {
-              s[c] = data.rawAt(c, j);
-            }
-            return plate.weightedKgf(s) / plate.quantumKgf;
-          }
-        : null,
-  );
-}
-
 class GraphWorkspace extends StatefulWidget {
   final GraphDataSource data;
   final GraphController ctrl;
@@ -645,11 +595,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   /// diff, balance line); recreated when the pane KIND changes so a previous
   /// pane's segments can't ghost into the new one.
   SegmentedGraphCache? _analysisCache;
-
-  /// Cache for the top graph's plate-sum variant; separate from [_forceCache]
-  /// because swapping 4 channels for 1 virtual series would ghost-blend tiles
-  /// until the sweep caught up. Recreated on any plate-mode toggle.
-  SegmentedGraphCache? _plateTopCache;
 
   /// Dot textures for the 2D force plate pane. Persistent (no recreation on
   /// pane swaps): [ForcePlateCache] clears itself on its config stamp.
@@ -697,19 +642,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       _analysisCache?.dispose();
       _analysisCache = null;
     }
-    if (_isPlateSumTop(oldWidget.analysis) != _isPlateSumTop(widget.analysis)) {
-      _plateTopCache?.dispose();
-      _plateTopCache = null;
-    }
   }
-
-  /// Whether [sel] puts the corner-sum on the top graph: balance pane in
-  /// plate mode. (The binding may still fail — no force unit on a
-  /// cell-less rig — in which case the top stays the force graph and the
-  /// pane says so loudly.)
-  static bool _isPlateSumTop(AnalysisPaneSelection sel) =>
-      sel.kind == AnalysisPaneKind.balance &&
-      sel.balanceMode == BalanceMode.plate;
 
   /// Runs only while a rolling live window animates on a fresh stream; the
   /// next packet's repaint restarts it after a stall. Data-pinned views
@@ -737,7 +670,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     _bakePump.dispose();
     _forceCache.dispose();
     _analysisCache?.dispose();
-    _plateTopCache?.dispose();
     _plateDotCache.dispose();
     _labelCache.dispose();
     super.dispose();
@@ -757,16 +689,13 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
 
   /// The analysis pane slot's content: a pane widget for the current
   /// selection, or null when collapsed. Panes whose channels can't bind in
-  /// [unit] (force unit without a load cell) fail loudly as a message rather
-  /// than plotting nothing. [plateBound] is the precomputed (unit-bound)
-  /// corner channels for the plate view — shared with the top graph's sum
-  /// series — or null when the corners can't bind in [unit].
+  /// [unit] (force unit without a load cell, a blend in mV/V, an unbound
+  /// derived channel) fail loudly as a message rather than plotting nothing.
   Widget? _buildAnalysisPane(
     BuildContext context,
     ColorScheme colorScheme,
     double dpr,
     DisplayUnit unit,
-    List<_ConvertedChannel>? plateBound,
   ) {
     final sel = widget.analysis;
     final data = widget.data;
@@ -775,24 +704,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     Widget channelMessage(String pane, [String? why]) => _paneMessage(
       context,
       '$pane: ${why ?? 'channel unavailable in ${unit.label}'}',
-    );
-
-    Widget unitPane(_VirtualSeries series, String headerLabel) => _GraphPane(
-      data: data,
-      ctrl: ctrl,
-      painter: _DerivedUnitGraphPainter(
-        data,
-        ctrl,
-        unit: unit,
-        channels: [series],
-        headerLabel: headerLabel,
-        vsync: _vsync,
-        cache: _analysisCache ??= SegmentedGraphCache(),
-        colorScheme: colorScheme,
-        dpr: dpr,
-        labels: _labelCache,
-        bakePump: _bakePump,
-      ),
     );
 
     switch (sel.kind) {
@@ -818,99 +729,22 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             bakePump: _bakePump,
           ),
         );
-      case AnalysisPaneKind.sum:
-        final chans = sel.sumChannels.toList()..sort();
-        final bound = [
-          for (final ch in chans) ?_ConvertedChannel.of(data, ch, unit),
-        ];
-        if (bound.isEmpty) return channelMessage('Sum', 'no channels selected');
-        if (bound.length < chans.length) return channelMessage('Sum');
-        final series = _VirtualSeries(
-          color: colorScheme.primary,
-          remapId: 'sum:${chans.join(',')}',
-          memberTares: [for (final b in bound) b.tare],
-          sampleAt: (j) {
-            double acc = 0;
-            for (final b in bound) {
-              final v = data.rawValueAt(b.channel, j);
-              if (v.isNaN) return double.nan;
-              acc += b.netMap(v);
-            }
-            return acc;
-          },
-        );
-        return unitPane(series, 'sum: ${chans.map(rigSlotTitle).join(' + ')}');
-      case AnalysisPaneKind.diff:
-        if (sel.diffA == sel.diffB) {
-          return channelMessage('Diff', 'pick two distinct channels');
-        }
-        final a = _ConvertedChannel.of(data, sel.diffA, unit);
-        final b = _ConvertedChannel.of(data, sel.diffB, unit);
-        if (a == null || b == null) return channelMessage('Diff');
-        final series = _VirtualSeries(
-          color: colorScheme.tertiary,
-          remapId: 'diff:${sel.diffA}-${sel.diffB}',
-          memberTares: [a.tare, b.tare],
-          sampleAt: (j) {
-            final va = data.rawValueAt(a.channel, j);
-            final vb = data.rawValueAt(b.channel, j);
-            if (va.isNaN || vb.isNaN) return double.nan;
-            final d = b.netMap(vb) - a.netMap(va);
-            return d.isFinite ? d : double.nan;
-          },
-        );
-        return unitPane(
-          series,
-          '${rigSlotTitle(sel.diffB)} − ${rigSlotTitle(sel.diffA)}',
-        );
-      case AnalysisPaneKind.balance:
-        if (sel.balanceMode == BalanceMode.line) {
-          if (sel.balanceLineA == sel.balanceLineB) {
-            return channelMessage('Balance', 'pick two distinct cells');
-          }
-          final a = _ConvertedChannel.of(data, sel.balanceLineA, unit);
-          final b = _ConvertedChannel.of(data, sel.balanceLineB, unit);
-          if (a == null || b == null) return channelMessage('Balance');
-          final series = _VirtualSeries(
-            color: colorScheme.primary,
-            remapId: 'bal:${sel.balanceLineA}-${sel.balanceLineB}',
-            memberTares: [a.tare, b.tare],
-            sampleAt: (j) {
-              final va = data.rawValueAt(a.channel, j);
-              final vb = data.rawValueAt(b.channel, j);
-              if (va.isNaN || vb.isNaN) return double.nan;
-              return balancePosition(a.netMap(va), b.netMap(vb)) ?? double.nan;
-            },
-          );
-          return _GraphPane(
-            data: data,
-            ctrl: ctrl,
-            painter: _BalanceLineGraphPainter(
-              data,
-              ctrl,
-              unit: unit,
-              channels: [series],
-              headerLabel:
-                  '(${rigSlotTitle(sel.balanceLineB)} − ${rigSlotTitle(sel.balanceLineA)}) / sum',
-              vsync: _vsync,
-              cache: _analysisCache ??= SegmentedGraphCache(),
-              colorScheme: colorScheme,
-              dpr: dpr,
-              labels: _labelCache,
-              bakePump: _bakePump,
-            ),
-          );
-        }
-        final bound = plateBound;
-        if (bound == null) return channelMessage('Force Plate');
+      case AnalysisPaneKind.plate:
+        final x = _ConvertedChannel.of(data, sel.plateX, unit);
+        final y = _ConvertedChannel.of(data, sel.plateY, unit);
+        if (x == null || y == null) return channelMessage('Plate');
+        // Corner labels, recovered from the axis channels' weight signs:
+        // +x members sit right, +y members on top.
+        final corners = _plateCorners(data, sel.plateX, sel.plateY);
         return _GraphPane(
           data: data,
           ctrl: ctrl,
           painter: _ForcePlatePainter(
             data,
             ctrl,
-            cornerChannels: sel.balanceCorners,
-            cornerNets: [for (final b in bound) b.netMap],
+            xChannel: x,
+            yChannel: y,
+            corners: corners,
             unit: unit,
             cache: _plateDotCache,
             colorScheme: colorScheme,
@@ -919,6 +753,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             bakePump: _bakePump,
           ),
         );
+      case AnalysisPaneKind.readout:
+        final bound = _ConvertedChannel.of(data, sel.readoutChannel, unit);
+        if (bound == null) return channelMessage('Readout');
+        return _ReadoutPane(data: data, ctrl: ctrl, channel: bound, unit: unit);
       case AnalysisPaneKind.fft:
         final chans = sel.fftChannels.toList()..sort();
         final bound = [
@@ -941,6 +779,23 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
           ),
         );
     }
+  }
+
+  /// Plate-corner membership of two axis channel ids, from their specs'
+  /// weight signs (see `_buildAnalysisPane`); empty when either id isn't a
+  /// derived channel.
+  static List<(int channel, double sx, double sy)> _plateCorners(
+    GraphDataSource data,
+    int xId,
+    int yId,
+  ) {
+    if (!isDerivedChannelId(xId) || !isDerivedChannelId(yId)) return const [];
+    final xs = data.derivedChannels[derivedIndexOf(xId)].weights;
+    final ys = data.derivedChannels[derivedIndexOf(yId)].weights;
+    return [
+      for (int m = 0; m < kAdcChannelCount; m++)
+        if (xs[m] != 0 && ys[m] != 0) (m, xs[m].sign, ys[m].sign),
+    ];
   }
 
   /// Loud in-pane placeholder for unsatisfiable analysis requests.
@@ -969,23 +824,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
         ?_ConvertedChannel.of(widget.data, ch, unit),
     ];
 
-    // Plate mode swaps the top graph to the corner sum (the plate view below
-    // is the position readout; the 4-corner traces are its diagnostics).
-    // [plateBound] is shared by the top series and the plate pane; when the
-    // corners can't bind in this unit the top stays the force graph and the
-    // pane fails loudly, like the other panes.
-    final data = widget.data;
-    List<_ConvertedChannel>? plateBound;
-    if (_isPlateSumTop(widget.analysis)) {
-      final bound = [
-        for (final ch in widget.analysis.balanceCorners)
-          ?_ConvertedChannel.of(data, ch, unit),
-      ];
-      if (bound.length == kAdcChannelCount) plateBound = bound;
-    }
-    final sumSeries = plateBound == null
-        ? null
-        : _plateSumSeries(data, unit, plateBound, colorScheme.primary);
     // The canvas exposes no semantics of its own; explicitChildNodes keeps
     // the controls as their own nodes rather than merging into this label.
     // No LayoutBuilder here (unlike _GraphPane/_Minimap): nothing reads the
@@ -1001,19 +839,25 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       container: true,
       explicitChildNodes: true,
       label: _graphSemanticsLabel(
-        live: widget.isLiveSource,
-        channels: [for (final bound in convertedChannels) bound.channel],
+        live: widget.isLiveGraph,
+        channels: [
+          for (final bound in convertedChannels)
+            isDerivedChannelId(bound.channel) &&
+                    derivedIndexOf(bound.channel) <
+                        widget.data.derivedChannels.length
+                ? widget
+                      .data
+                      .derivedChannels[derivedIndexOf(bound.channel)]
+                      .label
+                : rigSlotTitle(bound.channel),
+        ],
         unit: unit,
         paneSuffix: switch (widget.analysis.kind) {
           null => '',
           AnalysisPaneKind.derivative => '. Rate-of-change graph below',
           AnalysisPaneKind.fft => '. Spectrum graph below',
-          AnalysisPaneKind.sum => '. Channel-sum graph below',
-          AnalysisPaneKind.balance =>
-            widget.analysis.balanceMode == BalanceMode.plate
-                ? '. Force plate view below; top graph shows the channel sum'
-                : '. Balance view below',
-          AnalysisPaneKind.diff => '. Differential graph below',
+          AnalysisPaneKind.plate => '. Two-axis position view below',
+          AnalysisPaneKind.readout => '. Channel readout below',
         },
       ),
       child: Stack(
@@ -1022,63 +866,32 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             children: [
               Expanded(
                 flex: widget.analysis.kind != null ? 6 : 10,
-                child: sumSeries == null
-                    ? _GraphPane(
-                        data: widget.data,
-                        ctrl: widget.ctrl,
-                        painter: _ForceGraphPainter(
-                          widget.data,
-                          widget.ctrl,
-                          unit: unit,
-                          channels: convertedChannels,
-                          showXLabels: widget.analysis.kind == null,
-                          vsync: _vsync,
-                          cache: _forceCache,
-                          colorScheme: colorScheme,
-                          dpr: dpr,
-                          labels: _labelCache,
-                          bakePump: _bakePump,
-                        ),
-                      )
-                    : _GraphPane(
-                        data: widget.data,
-                        ctrl: widget.ctrl,
-                        painter: _DerivedUnitGraphPainter(
-                          widget.data,
-                          widget.ctrl,
-                          unit: unit,
-                          channels: [sumSeries],
-                          headerLabel:
-                              'Σ ${widget.analysis.balanceCorners.map(rigSlotTitle).join(' + ')}',
-                          vsync: _vsync,
-                          cache: _plateTopCache ??= SegmentedGraphCache(),
-                          colorScheme: colorScheme,
-                          dpr: dpr,
-                          labels: _labelCache,
-                          bakePump: _bakePump,
-                        ),
-                      ),
+                child: _GraphPane(
+                  data: widget.data,
+                  ctrl: widget.ctrl,
+                  painter: _ForceGraphPainter(
+                    widget.data,
+                    widget.ctrl,
+                    unit: unit,
+                    channels: convertedChannels,
+                    showXLabels: widget.analysis.kind == null,
+                    vsync: _vsync,
+                    cache: _forceCache,
+                    colorScheme: colorScheme,
+                    dpr: dpr,
+                    labels: _labelCache,
+                    bakePump: _bakePump,
+                  ),
+                ),
               ),
-              if (_buildAnalysisPane(
-                    context,
-                    colorScheme,
-                    dpr,
-                    unit,
-                    plateBound,
-                  )
+              if (_buildAnalysisPane(context, colorScheme, dpr, unit)
                   case final pane?)
                 Expanded(flex: 4, child: pane),
               _Minimap(
-                // Recreate on a top-graph series swap: the previous series'
-                // segments must not ghost into the new one (the top caches
-                // treat their own swaps the same way).
-                key: ValueKey(sumSeries != null),
                 dataSource: widget.data,
                 unit: unit,
                 graphCtrl: widget.ctrl,
-                channels: sumSeries == null
-                    ? convertedChannels
-                    : <_PlottedSeries>[sumSeries],
+                channels: convertedChannels,
                 fftFeed: widget.analysis.kind == AnalysisPaneKind.fft
                     ? (requestedN: widget.analysis.fftN)
                     : null,
@@ -1240,14 +1053,14 @@ class _SpanReadout extends StatelessWidget {
 /// is empty when the slot is collapsed.
 String _graphSemanticsLabel({
   required bool live,
-  required List<int> channels,
+  required List<String> channels,
   required DisplayUnit unit,
   required String paneSuffix,
 }) {
   final kind = live ? 'Live' : 'Recorded';
   final chs = channels.isEmpty
       ? 'No channels plotted'
-      : 'Channels: ${channels.map(rigSlotTitle).join(', ')}';
+      : 'Channels: ${channels.join(', ')}';
   return '$kind force graph. $chs. Unit: ${unit.symbol}$paneSuffix.';
 }
 
@@ -1912,70 +1725,15 @@ EnvelopeSeries _taredEnvelopeSeries(
   rawToDisplay: bound.netMap,
 );
 
-/// The envelope recipe of any plotted series: a hardware channel's tared
-/// values, or a virtual series' evaluator (bucket-accelerated when it
-/// carries aggregates). Shared by the minimap (which plots whatever the
-/// main graph plots) and the virtual-series painters.
-EnvelopeSeries _envelopeSeriesOf(GraphDataSource data, _PlottedSeries s) {
-  if (s is _ConvertedChannel) return _taredEnvelopeSeries(data, s);
-  final v = s as _VirtualSeries; // the only other _PlottedSeries
-  final buckets = v.buckets;
-  final rawToDisplay = v.rawToDisplay;
-  if (buckets != null && rawToDisplay != null) {
-    return EnvelopeSeries.bucketed(
-      sampleAt: v.sampleAt,
-      buckets: buckets,
-      rawToDisplay: rawToDisplay,
-    );
-  }
-  return EnvelopeSeries.exact(sampleAt: v.sampleAt);
-}
-
-/// Cache-key tares of a plotted series: its own for a hardware channel, all
-/// read channels' for a virtual one.
-List<double?> _plottedTares(_PlottedSeries s) =>
-    s is _VirtualSeries ? s.memberTares : [(s as _ConvertedChannel).tare];
-
-/// Whole-history display (min, max) of a plotted series for the minimap's
-/// fixed axis; null without data. Hardware channels read their
-/// ingest-tracked extremes; a bucketed virtual series folds its aggregates
-/// ([_VirtualSeries.bucketSampleAt] evaluates the bucket space); an exact
-/// virtual series over-folds its members' extremes — min Σ ≥ Σ min and
-/// max Σ ≤ Σ max — a loose but sound bound for a navigation strip.
+/// Whole-history display (min, max) of a plotted channel for the minimap's
+/// fixed axis; null without data. Every channel carries ingest-tracked
+/// extremes of its own series, so the fold is uniform across the id space.
 (double, double)? _minimapSeriesRange(
   GraphDataSource data,
-  DisplayUnit unit,
-  _PlottedSeries s,
+  _ConvertedChannel s,
 ) {
-  if (s case final _ConvertedChannel c) {
-    final ext = data.channelExtremes(c.channel);
-    return ext == null ? null : (c.netMap(ext.$1), c.netMap(ext.$2));
-  }
-  final v = s as _VirtualSeries;
-  final buckets = v.buckets;
-  final bucketAt = v.bucketSampleAt;
-  final toDisplay = v.rawToDisplay;
-  if (buckets != null && bucketAt != null && toDisplay != null) {
-    final ext = windowedExtremes(
-      buckets,
-      data.oldestSample,
-      data.totalSamples,
-      bucketAt,
-    );
-    return ext == null ? null : (toDisplay(ext.$1), toDisplay(ext.$2));
-  }
-  double lo = 0, hi = 0;
-  bool any = false;
-  for (final ch in v.memberChannels) {
-    final ext = data.channelExtremes(ch);
-    final net = data.converterFor(ch).netMap(unit);
-    if (ext == null || net == null) continue;
-    final a = net(ext.$1), b = net(ext.$2);
-    lo += math.min(a, b);
-    hi += math.max(a, b);
-    any = true;
-  }
-  return any ? (lo, hi) : null;
+  final ext = data.channelExtremes(s.channel);
+  return ext == null ? null : (s.netMap(ext.$1), s.netMap(ext.$2));
 }
 
 /// Fold the raw extremes of [channels] over `[start, end)` (already clamped
@@ -2022,7 +1780,7 @@ List<double?> _plottedTares(_PlottedSeries s) =>
 /// Returns true when bake work remains; the owner should schedule another
 /// frame.
 @useResult
-bool _paintEnvelopeDataLayer<T extends _PlottedSeries>(
+bool _paintEnvelopeDataLayer<T extends _ConvertedChannel>(
   Canvas canvas, {
   required SegmentedGraphCache cache,
   required GraphDataSource data,
@@ -2258,14 +2016,13 @@ _GraphLayout? _setupGraphFrame(
 /// segment-cached envelope rendering. Subclasses define the series being
 /// plotted -- [series] (per-channel [EnvelopeSeries]), [computeYRange],
 /// [yTickLabel] -- plus layout tweaks and cache-key extras.
-abstract class _TimeSeriesGraphPainter<T extends _PlottedSeries>
+abstract class _TimeSeriesGraphPainter<T extends _ConvertedChannel>
     extends CustomPainter {
   final GraphDataSource _data;
   final DisplayUnit _unit;
   final GraphController _ctrl;
 
-  /// Series to plot (hardware channels bound to [_unit], or derived
-  /// [_VirtualSeries] recipes).
+  /// Series to plot (channels bound to [_unit]).
   final List<T> _channels;
   final SegmentedGraphCache cache;
   final ColorScheme colorScheme;
@@ -2520,9 +2277,21 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter<_ConvertedChannel> {
   @override
   double get topSpace => 4;
 
+  /// Fixed axis when every plotted channel is unitless (a normalized blend):
+  /// it's a ±1 coordinate, and autoscaling would make stationary noise read
+  /// as motion. Mixed force+unitless selections keep the window fit.
+  static const YAxisRange _kUnitlessRange = (
+    yMin: -1.1,
+    yMax: 1.1,
+    tickDelta: 0.5,
+    rung: (factor: 1.0, symbol: ''),
+    decimals: 1,
+  );
+
   @override
-  List<double?> cacheKeyTares() =>
-      _channels.map((bound) => bound.tare).toList();
+  List<double?> cacheKeyTares() => [
+    for (final bound in _channels) ...bound.cacheTares,
+  ];
 
   @override
   EnvelopeSeries series(_ConvertedChannel channel) =>
@@ -2534,6 +2303,9 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter<_ConvertedChannel> {
     double viewEnd,
     double plotHeight,
   ) {
+    if (_channels.isNotEmpty && _channels.every((c) => c.unitless)) {
+      return _kUnitlessRange;
+    }
     // [windowedRawExtremes] folds full buckets and scans only the partial
     // head/tail: O(window / bucketSize). No minimum-range floor; flat data
     // hits the degeneracy guard in [_computeYRange].
@@ -2555,11 +2327,12 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter<_ConvertedChannel> {
     return _computeYRange(yMin, yMax, unit, plotHeight);
   }
 
-  /// Limit bars in the right gutter: one column per channel, a rail zone from
-  /// the ADC rail to the plot edge and (with a load cell) a capacity zone from
-  /// 100% capacity to the rail. Projected through the unit converter net of
-  /// tare (see [ChannelConverter.diffMap]); clamping to the plot rect
-  /// collapses off-view and empty zones.
+  /// Limit bars in the right gutter: one column per hardware channel, a rail
+  /// zone from the ADC rail to the plot edge and (with a load cell) a
+  /// capacity zone from 100% capacity to the rail. Projected through the
+  /// unit converter net of tare (see [ChannelConverter.diffMap]); clamping
+  /// to the plot rect collapses off-view and empty zones. Derived channels
+  /// have no rails of their own.
   @override
   void drawGutterChrome(
     Canvas canvas,
@@ -2571,6 +2344,8 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter<_ConvertedChannel> {
     const colW = _kGraphRightSpace / kAdcChannelCount;
 
     for (final bound in _channels) {
+      final hw = bound.hardwareIndex;
+      if (hw == null) continue;
       final cell = bound.loadCell;
       final span = bound.sensitivityCountsPerMvV;
       // Net display value at 100% cell capacity; null without a cell or the
@@ -2578,7 +2353,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter<_ConvertedChannel> {
       final cellNet = cell != null && span != null
           ? bound.diffMap(cell.sensitivityMvV * span)
           : null;
-      final left = graphSz.width + colW * bound.channel;
+      final left = graphSz.width + colW * hw;
       for (final positive in [true, false]) {
         final clipRaw = positive
             ? ChannelLimits.clipRawPos
@@ -2634,6 +2409,15 @@ class _DerivativeGraphPainter
   @override
   int get firstSampleOffset => 1; // first difference needs sample j-1
 
+  /// A first difference cancels tare — EXCEPT for normalized channels: the
+  /// ratio bakes member tares in, so their diff series changes on a tare
+  /// edge and the cache must hear it.
+  @override
+  List<double?> cacheKeyTares() => [
+    for (final bound in _channels)
+      if (bound.unitless) ...bound.cacheTares,
+  ];
+
   /// Per-sample first difference in raw counts (gap-edge NaN lives in
   /// [SampleStorageQueries.diffDefinedAt]).
   double Function(int j) _rawDiffAt(int channel) =>
@@ -2669,6 +2453,11 @@ class _DerivativeGraphPainter
     rawToDisplay: _diffDisplayFor(channel),
   );
 
+  /// Every plotted channel unitless: the axis is pure per-second rate, no
+  /// unit rung.
+  bool get _allUnitless =>
+      _channels.isNotEmpty && _channels.every((c) => c.unitless);
+
   @override
   YAxisRange? computeYRange(
     double viewStart,
@@ -2703,6 +2492,21 @@ class _DerivativeGraphPainter
       fold(ext.$2);
     }
 
+    if (_allUnitless) {
+      // Same layout as a unit rung, with the identity scaling baked in.
+      final span = math.max(dMax - dMin, 1e-12);
+      final delta = _decadeStepCeil(span / 5);
+      final y0 = (dMin / delta).floor() * delta;
+      var y1 = (dMax / delta).ceil() * delta;
+      if (y1 <= y0) y1 = y0 + delta; // flat trace: still a drawable span
+      return (
+        yMin: y0,
+        yMax: y1,
+        tickDelta: delta,
+        rung: (factor: 1.0, symbol: ''),
+        decimals: delta >= 1 ? 0 : 2,
+      );
+    }
     return _computeYRange(dMin, dMax, _unit, plotHeight);
   }
 
@@ -2725,225 +2529,6 @@ class _DerivativeGraphPainter
     );
     canvas.drawParagraph(dLabel, const Offset(4, 2));
   }
-}
-
-// ---------------------------------------------------------------------------
-// Virtual-series panes (sum / diff / balance line)
-//
-// Derived traces with no hardware channel behind them, rendered by the same
-// engine as the force graph. Exact-path only ([EnvelopeSeries.exact]):
-// bucket aggregates don't compose soundly across member channels (the min of
-// a sum is not the sum of the mins).
-// ---------------------------------------------------------------------------
-
-/// A derived series recipe: explicit color and cache identity, an exact
-/// per-sample evaluator, and the member channels' tares for the destructive
-/// cache key (the evaluator nets them).
-final class _VirtualSeries implements _PlottedSeries {
-  const _VirtualSeries({
-    required this.color,
-    required this.remapId,
-    required this.sampleAt,
-    required this.memberTares,
-    this.memberChannels = const [],
-    this.buckets,
-    this.rawToDisplay,
-    this.bucketSampleAt,
-  });
-
-  /// Display value at an absolute sample index; NaN (gap sample, undefined
-  /// operation) breaks the polyline. Must never return ±∞ — evaluators map
-  /// non-finite results to NaN to protect the envelope's min/max math.
-  final double Function(int sampleIndex) sampleAt;
-
-  /// Tares of every hardware channel the evaluator reads, all destructive
-  /// for the segment cache.
-  final List<double?> memberTares;
-
-  /// Hardware channels the evaluator reads (for the minimap's whole-history
-  /// bounds, which over-fold the member extremes when [buckets] is absent).
-  /// Empty when unknowable cost-free; only the plate sum feeds it today.
-  final List<int> memberChannels;
-
-  /// Optional bucket acceleration of THE SAME series (ingest-accumulated,
-  /// e.g. the plate sum — member-channel buckets themselves never compose;
-  /// see [EnvelopeSeries.bucketed]). All three fields come as a set.
-  final BucketSeries? buckets;
-  final double Function(double raw)? rawToDisplay;
-
-  /// Exact evaluator in BUCKET space (for windowed folds over the
-  /// aggregates); must evaluate the same series [buckets] aggregates.
-  final double Function(int sampleIndex)? bucketSampleAt;
-
-  @override
-  final Color color;
-  @override
-  final Object remapId;
-}
-
-/// Engine plumbing shared by the virtual-series panes: envelope rendering
-/// (bucket-accelerated when the series carries aggregates, exact otherwise),
-/// member tares in the destructive cache key, and a header label naming the
-/// recipe. The exact path's window fold in [computeYRange] is O(window) per
-/// repaint — fine for the windows these debug panes serve, and parked views
-/// repaint only on interaction.
-abstract class _VirtualSeriesGraphPainter
-    extends _TimeSeriesGraphPainter<_VirtualSeries> {
-  _VirtualSeriesGraphPainter(
-    super.data,
-    super.ctrl, {
-    required super.unit,
-    required super.channels,
-    required super.vsync,
-    required super.cache,
-    required super.colorScheme,
-    required super.dpr,
-    required super.labels,
-    required super.bakePump,
-    required this.headerLabel,
-  });
-
-  /// Header naming the recipe ("CH 1 − CH 0"), drawn in the band above the
-  /// plot carved out by [topSpace].
-  final String headerLabel;
-
-  @override
-  EnvelopeSeries series(_VirtualSeries channel) =>
-      _envelopeSeriesOf(_data, channel);
-
-  @override
-  List<double?> cacheKeyTares() => [
-    for (final s in _channels) ...s.memberTares,
-  ];
-
-  @override
-  double get topSpace => 14;
-
-  /// Window fold of the plotted series: bucket-accelerated when the series
-  /// carries aggregates (O(window / bucketSize)), exact over the per-sample
-  /// evaluator otherwise (O(window), NaN skipped). [yRangeFor] decides the
-  /// axis from the folded extremes.
-  @override
-  YAxisRange? computeYRange(double viewStart, double viewEnd) {
-    final (s, e) = _data.clampToRetained(viewStart.floor(), viewEnd.ceil());
-    double lo = double.infinity, hi = double.negativeInfinity;
-
-    void fold(double v) {
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
-    }
-
-    for (final plotted in _channels) {
-      final buckets = plotted.buckets;
-      final bucketAt = plotted.bucketSampleAt;
-      final toDisplay = plotted.rawToDisplay;
-      if (buckets != null && bucketAt != null && toDisplay != null) {
-        // The rawToDisplay map is monotone (EnvelopeSeries invariant), so
-        // both raw bounds feed the range directly.
-        final ext = windowedExtremes(buckets, s, e, bucketAt);
-        if (ext != null) {
-          fold(toDisplay(ext.$1));
-          fold(toDisplay(ext.$2));
-        }
-        continue;
-      }
-      final f = plotted.sampleAt;
-      for (int j = s; j < e; j++) {
-        final v = f(j);
-        if (v.isNaN) continue;
-        fold(v);
-      }
-    }
-    if (!lo.isFinite) return null;
-    return yRangeFor(lo, hi);
-  }
-
-  /// The axis for the folded window extremes (unit-bound for sum/diff,
-  /// fixed for the balance line).
-  YAxisRange yRangeFor(double lo, double hi);
-
-  @override
-  void drawOverlay(
-    Canvas canvas,
-    Size graphSz,
-    YAxisRange yRange,
-    double Function(double value) valueToY,
-    double viewStart,
-    double viewEnd,
-  ) {
-    final label = labels.prepare(
-      headerLabel,
-      color: colorScheme.onSurface.withAlpha(150),
-    );
-    canvas.drawParagraph(label, Offset(4, 2 - topSpace));
-  }
-}
-
-/// A derived trace in the current display unit (channel sum, channel
-/// difference) with the usual unit-bound nice axis.
-class _DerivedUnitGraphPainter extends _VirtualSeriesGraphPainter {
-  _DerivedUnitGraphPainter(
-    super.data,
-    super.ctrl, {
-    required super.unit,
-    required super.channels,
-    required super.vsync,
-    required super.cache,
-    required super.colorScheme,
-    required super.dpr,
-    required super.labels,
-    required super.bakePump,
-    required super.headerLabel,
-  });
-
-  @override
-  YAxisRange yRangeFor(double lo, double hi) => _computeYRange(lo, hi, _unit);
-
-  @override
-  String yTickLabel(double tick, YAxisRange yRange) => _formatTickLabel(
-    tick / yRange.rung.factor,
-    yRange.rung.symbol,
-    yRange.decimals,
-  );
-}
-
-/// The two-cell balance line: (B − A)/(A + B) on a fixed [-1.1, 1.1] axis.
-/// Deliberately NOT window-fitted: it's a normalized coordinate, so
-/// autoscaling would make stationary noise look like motion.
-class _BalanceLineGraphPainter extends _VirtualSeriesGraphPainter {
-  _BalanceLineGraphPainter(
-    super.data,
-    super.ctrl, {
-    required super.unit,
-    required super.channels,
-    required super.vsync,
-    required super.cache,
-    required super.colorScheme,
-    required super.dpr,
-    required super.labels,
-    required super.bakePump,
-    required super.headerLabel,
-  });
-
-  static const YAxisRange _kRange = (
-    yMin: -1.1,
-    yMax: 1.1,
-    tickDelta: 0.5,
-    rung: (factor: 1.0, symbol: ''),
-    decimals: 1,
-  );
-
-  @override
-  YAxisRange yRangeFor(double lo, double hi) => _kRange;
-
-  /// Fixed axis even where the window is all NaN (no load): the zero line
-  /// and ±1 edges must stay on screen.
-  @override
-  YAxisRange? computeYRange(double viewStart, double viewEnd) => _kRange;
-
-  @override
-  String yTickLabel(double tick, YAxisRange yRange) =>
-      _formatTickValue(tick, yRange.decimals);
 }
 
 // ---------------------------------------------------------------------------
@@ -3101,10 +2686,11 @@ class _FftCache {
         samples[i] = net(data.rawAt(bound.channel, start + i).toDouble());
       }
       final spec = fft.amplitudeSpectrum(samples);
-      // Reference: the ADC rail (2^23-count full scale) expressed in the
-      // display unit through the position-free diff map — "dBFS" reads as
-      // the instrument's input span in every unit, tare-independent.
-      final fsDisplay = bound.diffMap((1 << 23).toDouble());
+      // Reference: the channel's full-scale span (2^23 counts for hardware,
+      // the summed rail span for blends, 1.0 for ratios) expressed in the
+      // display unit — "dBFS" reads as the instrument's input span in every
+      // unit, tare-independent.
+      final fsDisplay = bound.diffMap(bound.fullScaleRaw);
       final db = Float64List(spec.length);
       for (int k = 0; k < spec.length; k++) {
         final a = spec[k] * norm / fsDisplay;
@@ -3331,26 +2917,24 @@ class _FftPanePainter extends CustomPainter {
 // Force plate pane (2D)
 // ---------------------------------------------------------------------------
 
-/// Newest valid plate sample of a rendered range: its CoP and corner
-/// weights. One per rendered (sub)range of the trail; [ForcePlateCache]
-/// stores it per baked bucket so the newest-dot marker and the convergence
-/// ellipse outlive texture caching without a window rescan.
-typedef _PlateMarker = ({(double, double) cop, PlateWeights weights});
+/// Newest valid plate sample of a rendered (sub)range of the trail, in the
+/// pane's two axis coordinates. One per rendered range; [ForcePlateCache]
+/// stores it per baked bucket so the newest-dot marker outlives texture
+/// caching without a window rescan.
+typedef _PlateMarker = ({double x, double y});
 
-/// The four-corner plate view: center of pressure on a normalized plate
-/// outline, a trail of every window sample (dots cached write-once by
-/// [ForcePlateCache], live head/tail vector-drawn — see that file), and a
-/// convergence readout (corner disagreement, see [copSpread]).
-// TODO(plate-rails): plate mode drops the per-channel force traces, and with
-// them the right-gutter rail/capacity zones — so ADC-rail saturation (the
-// case where the sum AND the CoP silently lie) has no indicator. Add a
-// saturated-corner marker here (e.g. tint the offending "CH n" corner label).
+/// The two-axis position view: the pane's X/Y channels plotted as a plate
+/// coordinate over a trail of every window sample (dots cached write-once
+/// by [ForcePlateCache], live head/tail vector-drawn — see that file). The
+/// painter owns no channel math: the axis channels are bound derived
+/// channels, undefined samples (an unloaded plate) carry no dot.
 class _ForcePlatePainter extends CustomPainter {
   _ForcePlatePainter(
     this._data,
     this._ctrl, {
-    required this.cornerChannels,
-    required this.cornerNets,
+    required this.xChannel,
+    required this.yChannel,
+    required this.corners,
     required this.unit,
     required this.cache,
     required this.colorScheme,
@@ -3362,12 +2946,15 @@ class _ForcePlatePainter extends CustomPainter {
   final GraphDataSource _data;
   final GraphController _ctrl;
 
-  /// Hardware channel per plate corner [TL, TR, BL, BR], and the net
-  /// converters in the same order.
-  final List<int> cornerChannels;
-  final List<double Function(double raw)> cornerNets;
+  /// The pane's axis channels (unit-bound).
+  final _ConvertedChannel xChannel;
+  final _ConvertedChannel yChannel;
 
-  /// Cache stamp ingredient: [cornerNets] bake the unit in at bind time.
+  /// Corner labels: (member channel, x-sign, y-sign) from the axis
+  /// channels' weight signs.
+  final List<(int channel, double sx, double sy)> corners;
+
+  /// Cache stamp ingredient: the channels bind the unit at bind time.
   final DisplayUnit unit;
 
   /// Persistent, owned by [_GraphWorkspaceState] (like [_forceCache]); no
@@ -3425,14 +3012,9 @@ class _ForcePlatePainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1,
     );
-    const cornerPos = [(-1.0, 1.0), (1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)];
-    for (int i = 0; i < kAdcChannelCount; i++) {
-      final (cx, cy) = cornerPos[i];
-      final par = labels.prepare(
-        'CH ${cornerChannels[i]}',
-        color: getChannelColor(cornerChannels[i]),
-      );
-      final p = toPx(cx * 0.88, cy * 0.85);
+    for (final (ch, sx, sy) in corners) {
+      final par = labels.prepare(rigSlotTitle(ch), color: getChannelColor(ch));
+      final p = toPx(sx * 0.88, sy * 0.85);
       canvas.drawParagraph(
         par,
         Offset(p.dx - par.longestLine / 2, p.dy - par.height / 2),
@@ -3446,7 +3028,7 @@ class _ForcePlatePainter extends CustomPainter {
     _PlateMarker? marker;
     if (total > 0 && side > 0) {
       final (vs, ve) = _ctrl.effectiveRange(total, _data.oldestSample);
-      // Plate-local pixel of a clamped CoP (toPx without the left offset).
+      // Plate-local pixel of a clamped position (toPx without the left offset).
       Offset pointFor(double x, double y) => Offset(
         (x + _extent) / (2 * _extent) * side,
         (_extent - y) / (2 * _extent) * side,
@@ -3461,7 +3043,8 @@ class _ForcePlatePainter extends CustomPainter {
           unit,
           _data.calibrationVersion,
           _data.tareVersion,
-          ...cornerChannels,
+          xChannel.channel,
+          yChannel.channel,
           side,
           dpr,
         ],
@@ -3479,30 +3062,11 @@ class _ForcePlatePainter extends CustomPainter {
       if (trail.workRemains) bakePump.schedule();
     }
 
-    // Current point + the convergence ellipse (per-axis spread of the two
-    // edge-pair position estimates, see [copSpread]).
-    double? convPct;
     if (marker != null) {
       final center = toPx(
-        marker.cop.$1.clamp(-1.25, 1.25),
-        marker.cop.$2.clamp(-1.25, 1.25),
+        marker.x.clamp(-1.25, 1.25),
+        marker.y.clamp(-1.25, 1.25),
       );
-      final spread = copSpread(marker.weights);
-      if (spread != null) {
-        final rx = spread.$1 / (2 * _extent) * side;
-        final ry = spread.$2 / (2 * _extent) * side;
-        canvas.drawOval(
-          Rect.fromCenter(center: center, width: 2 * rx, height: 2 * ry),
-          Paint()
-            ..color = colorScheme.tertiary
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 1,
-        );
-        convPct =
-            100 *
-            math.sqrt(spread.$1 * spread.$1 + spread.$2 * spread.$2) /
-            (2 * math.sqrt2);
-      }
       canvas.drawCircle(center, 3.5, Paint()..color = colorScheme.primary);
       canvas.drawCircle(
         center,
@@ -3526,68 +3090,12 @@ class _ForcePlatePainter extends CustomPainter {
         ),
       );
     }
-
-    // Header readout: corner disagreement as % of the plate diagonal.
-    final caption = labels.prepare(
-      convPct == null
-          ? 'conv —'
-          : 'conv ${convPct >= 10 ? convPct.toStringAsFixed(0) : convPct.toStringAsFixed(1)}%',
-      color: colorScheme.onSurface.withAlpha(150),
-    );
-    canvas.drawParagraph(caption, const Offset(4, 5));
-
-    _drawConvergenceBar(canvas, plotW, plotH, convPct);
-  }
-
-  /// The gutter bar: [pct] of plate-diagonal disagreement on a log scale,
-  /// 0.1%..100% — decades matter more than fine gradations.
-  void _drawConvergenceBar(
-    Canvas canvas,
-    double plotW,
-    double plotH,
-    double? pct,
-  ) {
-    final gx = plotW + 16;
-    const gw = 12.0;
-    canvas.drawRect(
-      Rect.fromLTWH(gx, 0, gw, plotH),
-      Paint()
-        ..color = colorScheme.onSurface.withAlpha(60)
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 0.5,
-    );
-
-    double level(double p) =>
-        ((math.log(p) / math.ln10 + 1) / 3).clamp(0.0, 1.0);
-
-    for (final tick in const [0.1, 1.0, 10.0]) {
-      final y = plotH * (1 - level(tick));
-      canvas.drawLine(
-        Offset(gx, y),
-        Offset(gx + gw, y),
-        Paint()
-          ..color = colorScheme.onSurface.withAlpha(60)
-          ..strokeWidth = 0.5,
-      );
-      final par = labels.prepare(
-        '${tick.toStringAsFixed(tick < 1 ? 1 : 0)}%',
-        color: colorScheme.onSurface.withAlpha(150),
-      );
-      canvas.drawParagraph(par, Offset(gx + gw + 3, y - par.height / 2));
-    }
-
-    if (pct != null) {
-      final v = level(pct.clamp(0.1, 100));
-      canvas.drawRect(
-        Rect.fromLTWH(gx, plotH * (1 - v), gw, plotH * v),
-        Paint()..color = colorScheme.primary.withAlpha(140),
-      );
-    }
   }
 
   /// The trail loop, shared by bucket bakes and the live vector head/tail:
-  /// one dot per sample, gaps and no-positive-load samples skipped. Returns
-  /// the newest valid sample of [start, end) (see [_PlateMarker]).
+  /// one dot per sample at the pane's two channel values; undefined samples
+  /// (gaps, no positive load) skipped. Returns the newest valid sample of
+  /// [start, end) (see [_PlateMarker]).
   _PlateMarker? _renderDots(
     Canvas canvas,
     int start,
@@ -3597,33 +3105,124 @@ class _ForcePlatePainter extends CustomPainter {
   ) {
     _PlateMarker? last;
     for (int j = start; j < end; j++) {
-      final raws = [
-        for (int c = 0; c < kAdcChannelCount; c++)
-          _data.rawValueAt(cornerChannels[c], j),
-      ];
-      if (raws.any((raw) => raw.isNaN)) continue;
-      final w = (
-        tl: cornerNets[0](raws[0]),
-        tr: cornerNets[1](raws[1]),
-        bl: cornerNets[2](raws[2]),
-        br: cornerNets[3](raws[3]),
-      );
-      final cop = w.cop;
-      if (cop == null) continue;
+      final x = xChannel.netMap(_data.rawValueAt(xChannel.channel, j));
+      final y = yChannel.netMap(_data.rawValueAt(yChannel.channel, j));
+      if (x.isNaN || y.isNaN) continue;
       canvas.drawCircle(
-        pointFor(cop.$1.clamp(-1.25, 1.25), cop.$2.clamp(-1.25, 1.25)),
+        pointFor(x.clamp(-1.25, 1.25), y.clamp(-1.25, 1.25)),
         _kDotRadius,
         dotPaint,
       );
-      last = (cop: cop, weights: w);
+      last = (x: x, y: y);
     }
     return last;
   }
 
   @override
   bool shouldRepaint(covariant _ForcePlatePainter oldDelegate) => true;
-}
+} // ---------------------------------------------------------------------------
+// Readout pane
+//
+// One channel's window-aggregated RMS as a number and a bar — the view for
+// slowly-varying diagnostic channels (the plate's error channel) and for a
+// big live thrust value alike. Window-scoped only: the bar reference is the
+// channel's whole-history span (the ±1 coordinate for normalized channels),
+// never a sticky session max.
+// ---------------------------------------------------------------------------
 
+class _ReadoutPane extends StatelessWidget {
+  const _ReadoutPane({
+    required this.data,
+    required this.ctrl,
+    required this.channel,
+    required this.unit,
+  });
+
+  final GraphDataSource data;
+  final GraphController ctrl;
+
+  /// The channel to aggregate (unit-bound in the workspace).
+  final _ConvertedChannel channel;
+  final DisplayUnit unit;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListenableBuilder(
+      listenable: Listenable.merge([data.repaint, ctrl]),
+      builder: (context, _) {
+        final colorScheme = Theme.of(context).colorScheme;
+        final (vs, ve) = ctrl.effectiveRange(
+          data.totalSamples,
+          data.oldestSample,
+        );
+
+        // RMS of the channel over the visible window, skipping undefined
+        // samples (gaps, an unloaded plate for a ratio).
+        double sumSq = 0;
+        int count = 0;
+        final net = channel.netMap;
+        for (int j = vs; j < ve; j++) {
+          final v = net(data.rawValueAt(channel.channel, j));
+          if (v.isNaN) continue;
+          sumSq += v * v;
+          count++;
+        }
+        final rms = count == 0 ? null : math.sqrt(sumSq / count);
+
+        // Bar reference: the ±1 coordinate of a normalized channel, else
+        // the channel's whole-history span (its own recorded scale).
+        double ref = 1.0;
+        if (!channel.unitless) {
+          final ext = data.channelExtremes(channel.channel);
+          if (ext != null) {
+            ref = math.max(net(ext.$1).abs(), net(ext.$2).abs());
+          }
+        }
+        final fraction = rms == null || ref <= 0
+            ? 0.0
+            : (rms / ref).clamp(0.0, 1.0);
+
+        final textTheme = Theme.of(context).textTheme;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                'RMS over window',
+                style: textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                rms == null
+                    ? '—'
+                    : channel.unitless
+                    ? rms.toStringAsFixed(3)
+                    : '${unit.formatValueOnly(rms)} ${unit.symbol}',
+                style: textTheme.headlineMedium?.copyWith(
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
+              const SizedBox(height: 8),
+              ClipRRect(
+                borderRadius: BorderRadius.circular(2),
+                child: LinearProgressIndicator(
+                  value: fraction,
+                  minHeight: 8,
+                  backgroundColor: colorScheme.surfaceContainerHighest,
+                  color: channel.color,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

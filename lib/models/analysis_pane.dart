@@ -1,3 +1,5 @@
+import 'device_profile.dart';
+
 // Selection state for the analysis pane slot in [GraphWorkspace]: which
 // derived view (if any) sits between the force graph and the minimap, plus
 // every pane's parameters. Pure data — the widgets live in
@@ -6,11 +8,7 @@
 // Owned by each screen in a ValueNotifier (ephemeral; not persisted).
 
 /// What occupies the analysis pane slot. Null = the slot is collapsed.
-enum AnalysisPaneKind { derivative, fft, sum, balance, diff }
-
-/// The balance pane's two shapes: a two-cell position line, or the
-/// four-corner plate view.
-enum BalanceMode { line, plate }
+enum AnalysisPaneKind { derivative, fft, plate, readout }
 
 /// Immutable pane selection + parameters. `copyWith` fields default to
 /// "keep current" via the [_unset] sentinel so nullable fields ([kind],
@@ -21,18 +19,15 @@ final class AnalysisPaneSelection {
     this.fftChannels = const {0, 1, 2, 3},
     this.fftN,
     this.fftAsd = false,
-    this.sumChannels = const {0, 1, 2, 3},
-    this.balanceMode = BalanceMode.plate,
-    this.balanceLineA = 0,
-    this.balanceLineB = 1,
-    this.balanceCorners = const [0, 1, 2, 3],
-    this.diffA = 0,
-    this.diffB = 1,
+    this.plateX = kAdcChannelCount + 1,
+    this.plateY = kAdcChannelCount + 2,
+    this.readoutChannel = kAdcChannelCount + 3,
   });
 
   final AnalysisPaneKind? kind;
 
-  /// Channels whose spectra the FFT pane overlays (empty = none selected).
+  /// Channels whose spectra the FFT pane overlays, in the widened id space
+  /// (hardware 0..3, derived 4..; empty = none selected).
   final Set<int> fftChannels;
 
   /// FFT length in samples; null = auto (largest pow2 that fits the window).
@@ -42,23 +37,14 @@ final class AnalysisPaneSelection {
   /// N-invariant noise view), false = plain amplitude (dBFS, the tone view).
   final bool fftAsd;
 
-  /// Channels added together by the Sum pane.
-  final Set<int> sumChannels;
+  /// The 2D plate's axes: channel ids for the horizontal/vertical plate
+  /// coordinates (the rig's normalized pair; defaults target the force
+  /// plate preset's X/Y).
+  final int plateX;
+  final int plateY;
 
-  final BalanceMode balanceMode;
-
-  /// 1D balance endpoints: the pane plots (B − A)/(A + B).
-  final int balanceLineA;
-  final int balanceLineB;
-
-  /// 2D balance corner → hardware channel assignment in plate order
-  /// [top-left, top-right, bottom-left, bottom-right]. Kept a permutation
-  /// of 0..3 by the corner-grid control.
-  final List<int> balanceCorners;
-
-  /// Diff pane pair: plots net([diffB]) − net([diffA]).
-  final int diffA;
-  final int diffB;
+  /// Channel id the readout pane aggregates (RMS over the window).
+  final int readoutChannel;
 
   static const Object _unset = Object();
 
@@ -67,26 +53,18 @@ final class AnalysisPaneSelection {
     Set<int>? fftChannels,
     Object? fftN = _unset,
     bool? fftAsd,
-    Set<int>? sumChannels,
-    BalanceMode? balanceMode,
-    int? balanceLineA,
-    int? balanceLineB,
-    List<int>? balanceCorners,
-    int? diffA,
-    int? diffB,
+    int? plateX,
+    int? plateY,
+    int? readoutChannel,
   }) {
     return AnalysisPaneSelection(
       kind: identical(kind, _unset) ? this.kind : kind as AnalysisPaneKind?,
       fftChannels: fftChannels ?? this.fftChannels,
       fftN: identical(fftN, _unset) ? this.fftN : fftN as int?,
       fftAsd: fftAsd ?? this.fftAsd,
-      sumChannels: sumChannels ?? this.sumChannels,
-      balanceMode: balanceMode ?? this.balanceMode,
-      balanceLineA: balanceLineA ?? this.balanceLineA,
-      balanceLineB: balanceLineB ?? this.balanceLineB,
-      balanceCorners: balanceCorners ?? this.balanceCorners,
-      diffA: diffA ?? this.diffA,
-      diffB: diffB ?? this.diffB,
+      plateX: plateX ?? this.plateX,
+      plateY: plateY ?? this.plateY,
+      readoutChannel: readoutChannel ?? this.readoutChannel,
     );
   }
 }
