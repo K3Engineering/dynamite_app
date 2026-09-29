@@ -12,6 +12,7 @@ import '../services/storage_probe.dart';
 import '../utils/format.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
+import '../widgets/middle_click_autoscroll.dart';
 import '../widgets/snackbars.dart';
 import '../widgets/storage_capacity_strip.dart';
 import '../widgets/wide_layout.dart';
@@ -25,6 +26,7 @@ class SessionsTab extends StatefulWidget {
 }
 
 class _SessionsTabState extends State<SessionsTab> {
+  final _scrollController = ScrollController();
   late final ValueListenable<SessionCatalogState> _catalog =
       SessionStore.instance.catalog;
 
@@ -54,6 +56,7 @@ class _SessionsTabState extends State<SessionsTab> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     unawaited(_capacityCueSub?.cancel());
     super.dispose();
   }
@@ -81,49 +84,70 @@ class _SessionsTabState extends State<SessionsTab> {
   @override
   Widget build(BuildContext context) {
     return SafeArea(
-      child: Column(
-        children: [
-          TabContentColumn(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
-              child: Row(
-                children: [
-                  Text(
-                    'Sessions',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                  const Spacer(),
-                ],
+      child: LayoutBuilder(
+        builder: (context, constraints) => MiddleClickAutoscroll(
+          controller: _scrollController,
+          child: CustomScrollView(
+            controller: _scrollController,
+            slivers: [
+              SliverPadding(
+                // Horizontal-only: vertical padding here is invisible to
+                // SliverFillRemaining (it always fills the whole leftover
+                // viewport), so it would leak into the scrollable range —
+                // the empty page then scrolls by the padding amount. The
+                // vertical space is spent as slivers the group accounts for.
+                padding: EdgeInsets.symmetric(
+                  horizontal: contentSideInset(constraints.maxWidth),
+                ),
+                sliver: SliverMainAxisGroup(
+                  slivers: [
+                    const SliverToBoxAdapter(child: SizedBox(height: 16)),
+                    SliverToBoxAdapter(
+                      child: Text(
+                        'Sessions',
+                        style: Theme.of(context).textTheme.headlineSmall,
+                      ),
+                    ),
+                    const SliverToBoxAdapter(child: SizedBox(height: 16)),
+                    if (browserMayAutoDeleteSessions())
+                      const SliverToBoxAdapter(child: BrowserStorageWarning()),
+                    if (_storageState case final state?)
+                      SliverToBoxAdapter(
+                        child: switch (state) {
+                          StorageCapacity() => StorageCapacityStrip(
+                            capacity: state,
+                          ),
+                          StorageEvictable() => const StorageEvictionWarning(),
+                        },
+                      ),
+                    ValueListenableBuilder<SessionCatalogState>(
+                      valueListenable: _catalog,
+                      builder: (context, state, _) => switch (state) {
+                        SessionCatalogLoading() => const SliverFillRemaining(
+                          hasScrollBody: false,
+                          child: Center(child: CircularProgressIndicator()),
+                        ),
+                        SessionCatalogFailed(:final error) =>
+                          SliverFillRemaining(
+                            hasScrollBody: false,
+                            child: EmptyPlaceholder(
+                              icon: Icons.error_outline,
+                              title: 'Error loading sessions',
+                              hint: '$error',
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                          ),
+                        SessionCatalogReady(:final catalog) => _buildCatalog(
+                          catalog,
+                        ),
+                      },
+                    ),
+                  ],
+                ),
               ),
-            ),
+            ],
           ),
-          if (browserMayAutoDeleteSessions())
-            const TabContentColumn(child: BrowserStorageWarning()),
-          if (_storageState case final state?)
-            TabContentColumn(
-              child: switch (state) {
-                StorageCapacity() => StorageCapacityStrip(capacity: state),
-                StorageEvictable() => const StorageEvictionWarning(),
-              },
-            ),
-          Expanded(
-            child: ValueListenableBuilder<SessionCatalogState>(
-              valueListenable: _catalog,
-              builder: (context, state, _) => switch (state) {
-                SessionCatalogLoading() => const Center(
-                  child: CircularProgressIndicator(),
-                ),
-                SessionCatalogFailed(:final error) => EmptyPlaceholder(
-                  icon: Icons.error_outline,
-                  title: 'Error loading sessions',
-                  hint: '$error',
-                  color: Theme.of(context).colorScheme.error,
-                ),
-                SessionCatalogReady(:final catalog) => _buildCatalog(catalog),
-              },
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -131,18 +155,22 @@ class _SessionsTabState extends State<SessionsTab> {
   Widget _buildCatalog(SessionCatalog catalog) {
     final damaged = catalog.damaged;
     if (catalog.sessions.isEmpty && damaged.isEmpty) {
-      return const EmptyPlaceholder(
-        icon: Icons.folder_open,
-        title: 'No recorded sessions yet',
-        hint: 'Start a recording from the Live tab',
+      // `hasScrollBody: false`: the child is not a scrollable, so the sliver
+      // sizes itself to the leftover viewport and the placeholder centers
+      // below the title and strips instead of floating mid-list.
+      return const SliverFillRemaining(
+        hasScrollBody: false,
+        child: EmptyPlaceholder(
+          icon: Icons.folder_open,
+          title: 'No recorded sessions yet',
+          hint: 'Start a recording from the Live tab',
+        ),
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) => ListView.builder(
-        padding: EdgeInsets.symmetric(
-          horizontal: contentSideInset(constraints.maxWidth),
-        ),
+    return SliverPadding(
+      padding: const EdgeInsets.only(bottom: 16),
+      sliver: SliverList.builder(
         itemCount: damaged.length + catalog.sessions.length,
         itemBuilder: (context, index) {
           if (index < damaged.length) {
