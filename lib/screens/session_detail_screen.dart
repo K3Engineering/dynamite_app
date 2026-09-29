@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../models/analysis_pane.dart';
 import '../models/app_meta.dart';
+import '../analysis/metrics.dart';
 import '../models/derived_channel.dart';
 import '../models/session_catalog.dart';
 import '../services/app_settings.dart';
@@ -19,6 +20,7 @@ import '../services/session_store.dart';
 import '../services/share_capability.dart';
 import '../utils/format.dart';
 import '../widgets/channel_stats_table.dart';
+import '../widgets/cjm_metrics_table.dart';
 import '../widgets/dialogs.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
@@ -182,6 +184,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         !_hiddenDerived.contains(i),
     ];
     final unit = settings.displayUnit.effective(data.unitAvailability);
+    final testResult = session.testResult;
+    final testReps = testResult == null
+        ? const <CmjRepResult>[]
+        : evaluateTestResult(testResult, data);
+    final overlays = testResult == null
+        ? null
+        : overlaysForTestResult(testResult);
 
     // The app-wide on-screen family (see [AppSettings.channelFamily]):
     // [tableIds] for the header (inactive included, greyed), the filtered
@@ -279,6 +288,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                               ],
                               analysis: analysis,
                               isLiveSource: false,
+                              overlays: overlays,
                             ),
                     ),
                   ),
@@ -293,6 +303,31 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               ),
             ),
           ),
+
+          if (testResult != null && testReps.isNotEmpty) ...[
+            const Divider(height: 24),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Test: ${testResult.testId.toUpperCase()}',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${testReps.length} valid rep'
+                    '${testReps.length == 1 ? '' : 's'} · body weight '
+                    '${testResult.bodyWeightKgf.toStringAsFixed(1)} kgf',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  CjmMetricsTable(reps: testReps),
+                ],
+              ),
+            ),
+          ],
 
           const Divider(height: 24),
 
