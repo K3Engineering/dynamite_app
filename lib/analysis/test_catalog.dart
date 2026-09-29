@@ -44,4 +44,23 @@ const TestDef rombergTest = TestDef(
   ],
 );
 
-const List<TestDef> testCatalog = [jumpBatteryTest, rombergTest];
+/// A walk-by over the plate: one footstrike per pass, segmented live. The
+/// two-axis plate view draws each pass's CoP gait line.
+const TestDef gaitTest = TestDef(
+  id: 'gait',
+  name: 'Gait walk-by',
+  category: 'Gait',
+  description:
+      'Walk across the plate several times, one foot fully on it per pass. '
+      'Contact time, loading, and the CoP gait line under the foot.',
+  mold: TestMold.freePass,
+  centerPlot: TestCenterPlot.copPlate,
+  instructions: [
+    'Mark a walking line so one foot lands fully on the plate each pass.',
+    'Walk through at your normal pace, not a stop on the plate.',
+    'Keep turning around and walking through; each strike is a pass.',
+    'Press stop when you have enough passes.',
+  ],
+);
+
+const List<TestDef> testCatalog = [jumpBatteryTest, rombergTest, gaitTest];

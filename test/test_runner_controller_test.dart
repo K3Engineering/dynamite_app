@@ -234,6 +234,61 @@ void main() {
     expect(saved.reps[1].label, 'B');
   });
 
+  testWidgets('scans walk-by passes and summarizes on operator stop', (
+    tester,
+  ) async {
+    // Empty lead-in, then a BW stance and two scripted passes with a
+    // trailing idle stretch.
+    final corners = <List<double>>[[], [], [], []];
+    for (int i = 0; i < 1500; i++) {
+      for (final c in corners) {
+        c.add(0.0);
+      }
+    }
+    final walk = SyntheticGaitWalk();
+    final walkCorners = walk.cornerLists();
+    for (int c = 0; c < 4; c++) {
+      corners[c].addAll(walkCorners[c]);
+    }
+    for (int i = 0; i < 500; i++) {
+      for (final c in corners) {
+        c.add(0.0);
+      }
+    }
+    final source = _FakePlateSource(corners);
+    final ctrl = TestRunnerController(
+      test: gaitTest,
+      person: 'Test',
+      source: source,
+      recorder: _FakeRecorder(),
+    );
+    addTearDown(ctrl.dispose);
+    ctrl.begin();
+    for (int i = 0; i < source.length; i += 100) {
+      source.advance(100);
+      await tester.pump();
+    }
+    await ctrl.stopAndFinish();
+    await tester.pump();
+
+    expect(ctrl.phase, TestRunnerPhase.summary);
+    expect(ctrl.gaitPasses, hasLength(2));
+    expect(ctrl.gaitPasses[0].number, 1);
+    expect(ctrl.gaitPasses[1].number, 2);
+    for (final pass in ctrl.gaitPasses) {
+      expect(pass.metric('contact_time')!, closeTo(700, 60));
+      expect(pass.trail, isNotEmpty);
+    }
+    final saved = ctrl.result!;
+    expect(saved.testId, 'gait');
+    expect(saved.reps, hasLength(2));
+    for (final rep in saved.reps) {
+      expect(rep.end - rep.start, closeTo(700, 60));
+    }
+    // The second pass starts strictly after the first in the recording.
+    expect(saved.reps[1].start, greaterThan(saved.reps[0].end));
+  });
+
   testWidgets('persisted phases are session-relative on a shifted source', (
     tester,
   ) async {

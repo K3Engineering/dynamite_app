@@ -14,6 +14,7 @@ import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
 import '../services/session_store.dart';
 import '../widgets/cjm_metrics_table.dart';
+import '../widgets/gait_metrics_table.dart';
 import '../widgets/graph_components.dart';
 import '../widgets/sway_metrics_table.dart';
 
@@ -111,6 +112,7 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
       children: [
         switch (widget.def.mold) {
           TestMold.timedCapture => _CaptureStatus(ctrl: _ctrl),
+          TestMold.freePass => _FreePassStatus(ctrl: _ctrl),
           _ => _RepStatus(ctrl: _ctrl),
         },
         Expanded(
@@ -171,17 +173,20 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
         if (bw != null)
           Text(
             'Body weight ${bw.toStringAsFixed(1)} kgf · '
-            '${_ctrl.reps.length + _ctrl.swayReps.length} '
-            'rep${_ctrl.reps.length + _ctrl.swayReps.length == 1 ? '' : 's'}',
+            '${_ctrl.reps.length + _ctrl.swayReps.length + _ctrl.gaitPasses.length} '
+            'rep${_ctrl.reps.length + _ctrl.swayReps.length + _ctrl.gaitPasses.length == 1 ? '' : 's'}',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium,
           ),
         const SizedBox(height: 20),
-        if (_ctrl.reps.isEmpty && _ctrl.swayReps.isEmpty)
+        if (_ctrl.reps.isEmpty &&
+            _ctrl.swayReps.isEmpty &&
+            _ctrl.gaitPasses.isEmpty)
           const Text('No valid reps were captured.')
         else
           switch (widget.def.mold) {
             TestMold.timedCapture => SwayMetricsTable(reps: _ctrl.swayReps),
+            TestMold.freePass => GaitMetricsTable(reps: _ctrl.gaitPasses),
             _ => CjmMetricsTable(reps: _ctrl.reps),
           },
         const SizedBox(height: 32),
@@ -222,8 +227,8 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
   }
 }
 
-/// The recording-phase status strip: rep progress, the last discard reason,
-/// and the current rep's live jump height.
+/// The recording-phase status strip: the call to action ("make a jump"),
+/// rep progress, the last discard reason, and the completed reps' heights.
 class _RepStatus extends StatelessWidget {
   const _RepStatus({required this.ctrl});
 
@@ -236,6 +241,7 @@ class _RepStatus extends StatelessWidget {
     final height = ctrl.reps.isEmpty
         ? null
         : ctrl.reps.last.metric('height_flight');
+    final jumping = ctrl.phase == TestRunnerPhase.jumping;
     return Container(
       width: double.infinity,
       color: theme.colorScheme.primaryContainer,
@@ -244,9 +250,13 @@ class _RepStatus extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            ctrl.phase == TestRunnerPhase.jumping
-                ? 'Jump ${done + 1} of ${ctrl.targetReps}…'
-                : 'Ready — rep ${done + 1} of ${ctrl.targetReps}',
+            jumping ? 'Jump!' : 'Make a jump',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              color: theme.colorScheme.onPrimaryContainer,
+            ),
+          ),
+          Text(
+            'Rep ${done + 1} of ${ctrl.targetReps}',
             style: theme.textTheme.titleMedium?.copyWith(
               color: theme.colorScheme.onPrimaryContainer,
             ),
@@ -295,14 +305,68 @@ class _CaptureStatus extends StatelessWidget {
               color: theme.colorScheme.onPrimaryContainer,
             ),
           ),
-          if (remaining != null)
-            Text(
-              '$remaining s',
-              style: theme.textTheme.headlineSmall?.copyWith(
-                color: theme.colorScheme.onPrimaryContainer,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              ),
+          if (status != null) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: LinearProgressIndicator(
+                    value: status.durationMs == 0
+                        ? 0
+                        : 1 - status.remainingMs / status.durationMs,
+                    minHeight: 8,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  '$remaining s',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    color: theme.colorScheme.onPrimaryContainer,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
             ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+/// The free-pass (gait) status strip: the call to action, the pass count,
+/// and the last dropped pass's reason.
+class _FreePassStatus extends StatelessWidget {
+  const _FreePassStatus({required this.ctrl});
+
+  final TestRunnerController ctrl;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final passes = ctrl.gaitPasses.length;
+    return Container(
+      width: double.infinity,
+      color: theme.colorScheme.primaryContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Walk through the plate',
+            style: theme.textTheme.headlineSmall?.copyWith(
+              color: theme.colorScheme.onPrimaryContainer,
+            ),
+          ),
+          Text(
+            '$passes pass${passes == 1 ? '' : 'es'}',
+            style: theme.textTheme.titleMedium?.copyWith(
+              color: theme.colorScheme.onPrimaryContainer,
+            ),
+          ),
+          if (ctrl.lastDiscard case final reason?)
+            Text(reason, style: TextStyle(color: theme.colorScheme.error)),
         ],
       ),
     );

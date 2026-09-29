@@ -7,6 +7,7 @@ import 'package:provider/provider.dart';
 
 import '../models/analysis_pane.dart';
 import '../models/app_meta.dart';
+import '../analysis/gait.dart';
 import '../analysis/metrics_sway.dart';
 import '../analysis/test_result.dart';
 import '../models/derived_channel.dart';
@@ -24,6 +25,7 @@ import '../utils/format.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/cjm_metrics_table.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/gait_metrics_table.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
@@ -217,6 +219,15 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           section: reps.isEmpty
               ? null
               : section(reps.length, SwayMetricsTable(reps: reps)),
+        );
+      }(),
+      'gait' => () {
+        final reps = evaluateGaitResult(r, data);
+        return (
+          overlays: overlaysForGaitReps(reps),
+          section: reps.isEmpty
+              ? null
+              : section(reps.length, GaitMetricsTable(reps: reps)),
         );
       }(),
       _ => (overlays: null, section: section(r.reps.length, null)),
