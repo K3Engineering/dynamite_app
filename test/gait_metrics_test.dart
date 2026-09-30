@@ -27,7 +27,7 @@ void main() {
       final verdict = locateGaitContact(firstPassWindow(walk), ctx);
       expect(verdict, isA<GaitPass>());
       final pass = verdict as GaitPass;
-      // The 700-sample contact minus smoothing/threshold edge effects.
+      // The 700-sample contact minus threshold edge effects.
       expect(pass.toeOff - pass.touchdown, closeTo(700, 60));
     });
 
@@ -98,22 +98,18 @@ void main() {
       expect(m['contact_time']!, closeTo(700, 60));
     });
 
-    test('peak force approaches the scripted M-peak', () {
-      // Boxcar smoothing rounds the corner off the 105 ms rise.
-      expect(m['peak_force']!, greaterThan(0.95 * 1.05 * bw - 20));
-      expect(m['peak_force']!, lessThanOrEqualTo(1.05 * bw));
+    test('peak force reaches the scripted M-peak', () {
+      expect(m['peak_force']!, closeTo(1.05 * bw, 1));
       expect(m['peak_force_bw']!, closeTo(100 * m['peak_force']! / bw, 1));
     });
 
     test('loading rate tracks the rise slope', () {
-      // Rise: 84 kgf over 105 ms ≈ 800 kgf/s; boxcar preserves the mid-rise
-      // slope.
+      // Rise: 84 kgf over 105 ms ≈ 800 kgf/s.
       expect(m['loading_rate']!, closeTo(800, 100));
     });
 
     test('impulse is the area under the M', () {
-      // Trapezoid over the control points: 0.744 u·BW; boxcar preserves
-      // the integral.
+      // Trapezoid over the control points: 0.744 u·BW.
       expect(m['impulse']!, closeTo(0.744 * bw * 0.7, 3));
     });
 

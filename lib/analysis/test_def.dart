@@ -1,5 +1,21 @@
 import 'package:meta/meta.dart';
 
+/// Which jump styles a jump-battery run accepts (selected per run on the
+/// preflight screen). Coaching names: "concentric" means no countermovement
+/// (squat jump), "eccentric" means a dip first (countermovement jump).
+enum TestJumpStyle {
+  /// Both styles count and are auto-classified.
+  auto,
+
+  /// Only no-dip jumps count (a dipped rep is discarded with a coaching
+  /// note).
+  concentric,
+
+  /// Only dipped jumps count (a no-dip rep is discarded with a coaching
+  /// note).
+  eccentric,
+}
+
 /// How a test sequences its captures; the runner picks its state machine from
 /// this.
 enum TestMold {

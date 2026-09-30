@@ -4,8 +4,10 @@ import 'package:meta/meta.dart';
 
 import '../models/graph_data_source.dart';
 import 'events.dart';
+import 'force_mask.dart';
 import 'metric_eval.dart';
 import 'plate_series.dart';
+import 'segmentation_cmj.dart' show JumpParams;
 import 'test_result.dart';
 
 // ---------------------------------------------------------------------------
@@ -17,8 +19,8 @@ import 'test_result.dart';
 // so the integral can't be seeded. Flight time alone gives the height.
 // ---------------------------------------------------------------------------
 
-/// Tunables of [segmentDj]. Fractions are of body weight; starting guesses
-/// to tune against real drop jumps.
+/// Tunables of [segmentDj]. Fractions are of body weight; durations in
+/// milliseconds.
 @immutable
 class DjParams {
   const DjParams({
@@ -27,9 +29,11 @@ class DjParams {
     this.minContactMs = 80,
     this.maxContactMs = 900,
     this.flightLoadFraction = 0.02,
+    this.flightFloorKgf = 1.0,
+    this.flightBridgeMs = 60,
     this.minFlightMs = 80,
     this.maxFlightMs = 1200,
-    this.minLandingMs = 50,
+    this.landingTailMs = 400,
   });
 
   /// Touchdown is total force above this fraction of body weight.
@@ -42,14 +46,21 @@ class DjParams {
   final int minContactMs;
   final int maxContactMs;
 
-  /// Airborne is total force below this fraction of body weight.
+  /// Airborne is total force below this fraction of body weight, floored at
+  /// [flightFloorKgf] absolute (tare noise / light athletes).
   final double flightLoadFraction;
+  final double flightFloorKgf;
+
+  /// Bridge sub-threshold gaps shorter than this inside a flight episode
+  /// (ring excursions; see `segmentation_cmj.dart`'s header).
+  final int flightBridgeMs;
 
   final int minFlightMs;
   final int maxFlightMs;
 
-  /// Reject a window that ends before this much landing data.
-  final int minLandingMs;
+  /// The rep's window ends this long after the landing: the impact peak must
+  /// be inside it (see [JumpParams.landingTailMs]).
+  final int landingTailMs;
 }
 
 const DjParams kDjParams = DjParams();
@@ -158,7 +169,9 @@ class DjPhases {
 }
 
 /// Segment [w] into a drop jump, or explain why not. The window starts at
-/// the touchdown crossing (the arming point).
+/// the touchdown crossing (the arming point). Flight detection is the same
+/// mask-morphology mechanism as the jump battery (see `segmentation_cmj.dart`
+/// and `force_mask.dart`), over the raw force.
 DjSegment segmentDj(
   PlateWindow w,
   double bwKgf, {
@@ -175,54 +188,62 @@ DjSegment segmentDj(
   if (touchdown == null) return const DjRejected(DjInvalidReason.noContact);
 
   final minContact = (params.minContactMs * w.sampleRate) ~/ 1000;
-  final flightThreshold = params.flightLoadFraction * bwKgf;
-  final exit = findSustainedBelow(
-    w,
-    touchdown + minContact,
-    w.end,
-    flightThreshold,
-    sustain,
+  final maxContact = (params.maxContactMs * w.sampleRate) ~/ 1000;
+  final minFlight = (params.minFlightMs * w.sampleRate) ~/ 1000;
+  final maxFlight = (params.maxFlightMs * w.sampleRate) ~/ 1000;
+  final tail = (params.landingTailMs * w.sampleRate) ~/ 1000;
+  final threshold = math.max(
+    params.flightLoadFraction * bwKgf,
+    params.flightFloorKgf,
   );
-  if (exit == null) {
+
+  bool airborne(double f) => f < threshold;
+  final episodes = maskedRuns(
+    w,
+    airborne,
+    bridgeSamples: (params.flightBridgeMs * w.sampleRate) ~/ 1000,
+  );
+  // The rebound flight is the first plausible episode that starts after the
+  // minimum contact. Earlier sub-threshold episodes (a dab during the
+  // landing) are skipped, not latched.
+  MaskRun? flight;
+  for (final e in episodes) {
+    if (e.start < touchdown + minContact) continue;
+    if (e.length > maxFlight) {
+      return const DjRejected(DjInvalidReason.steppedOff);
+    }
+    if (e.start - touchdown > maxContact) {
+      return const DjRejected(DjInvalidReason.noRebound);
+    }
+    if (e.length >= minFlight) {
+      flight = e;
+      break;
+    }
+  }
+  if (flight == null) {
     // Contact may still be running (live preview), unless it already
     // overran any plausible rebound.
-    final contactSamples = w.end - touchdown;
-    if (contactSamples > (params.maxContactMs * w.sampleRate) ~/ 1000) {
+    if (w.end - touchdown > maxContact) {
       return const DjRejected(DjInvalidReason.noRebound);
     }
     return const DjRejected(DjInvalidReason.noFlight);
   }
-
-  final flightStart = exit;
-  int flightEnd = flightStart;
-  while (flightEnd + 1 < w.end && w.smoothAt(flightEnd + 1) < flightThreshold) {
-    flightEnd++;
-  }
-  final flightSamples = flightEnd - flightStart + 1;
-  if (flightSamples > (params.maxFlightMs * w.sampleRate) ~/ 1000) {
-    return const DjRejected(DjInvalidReason.steppedOff);
-  }
-  if (flightSamples < (params.minFlightMs * w.sampleRate) ~/ 1000) {
-    return const DjRejected(DjInvalidReason.noFlight);
+  if (runIsOpen(w, flight, airborne)) {
+    return const DjRejected(DjInvalidReason.incomplete);
   }
 
-  final contactSamples = flightStart - touchdown;
-  if (contactSamples > (params.maxContactMs * w.sampleRate) ~/ 1000) {
-    return const DjRejected(DjInvalidReason.noRebound);
-  }
-
-  final landing = flightEnd + 1;
-  if (landing >= w.end ||
-      w.end - landing < (params.minLandingMs * w.sampleRate) ~/ 1000) {
+  final landing = flight.end + 1;
+  final end = landing + tail;
+  if (end > w.end) {
     return const DjRejected(DjInvalidReason.incomplete);
   }
 
   return DjRep(
     DjPhases(
       touchdown: touchdown,
-      takeoff: flightStart - 1,
+      takeoff: flight.start - 1,
       landing: landing,
-      end: w.end,
+      end: end,
       sampleRate: w.sampleRate,
     ),
   );
@@ -251,7 +272,7 @@ const double _kGravity = 9.80665;
 double _peakRange(PlateWindow w, int start, int end) {
   double max = double.negativeInfinity;
   for (int i = start; i <= end; i++) {
-    max = math.max(max, w.smoothAt(i));
+    max = math.max(max, w.forceAt(i));
   }
   return max;
 }

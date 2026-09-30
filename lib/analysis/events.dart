@@ -51,14 +51,16 @@ class BaselineStats {
 }
 
 /// Population mean and sigma of total force over `[start, end)` clamped to
-/// [w]. Null when the clamped window holds no sample.
+/// [w]. Null when the clamped window holds no sample. Reads the raw force:
+/// quiet-stance noise is low-frequency (sway, heartbeat), so a smoothing
+/// filter would barely shrink sigma anyway.
 BaselineStats? estimateBaseline(PlateWindow w, int start, int end) {
   final s = math.max(start, w.start);
   final e = math.min(end, w.end);
   if (e - s < 1) return null;
   double sum = 0, sumSq = 0;
   for (int i = s; i < e; i++) {
-    final f = w.smoothAt(i);
+    final f = w.forceAt(i);
     sum += f;
     sumSq += f * f;
   }
@@ -119,7 +121,7 @@ int? _findSustained(
   for (int i = start; i + sustain <= stop; i++) {
     bool all = true;
     for (int k = 0; k < sustain; k++) {
-      if (!holds(w.smoothAt(i + k))) {
+      if (!holds(w.forceAt(i + k))) {
         all = false;
         break;
       }
@@ -127,4 +129,24 @@ int? _findSustained(
     if (all) return i;
   }
   return null;
+}
+
+/// Walk back from [index] to the first sample of the mask run containing it
+/// (the last sample where [holds] fails, plus one), never earlier than
+/// [bound]. A sustained-crossing search over a short trailing window finds
+/// the run's in-window start; when the run began before the window, only this
+/// walk recovers the true crossing — without it, the onset boundary shifts
+/// with the (batch-scheduled) tick that happened to detect it.
+int runStartBack(
+  PlateWindow w,
+  int index,
+  bool Function(double force) holds,
+  int bound,
+) {
+  var i = index;
+  final floor = math.max(bound, w.start);
+  while (i > floor && holds(w.forceAt(i - 1))) {
+    i--;
+  }
+  return i;
 }

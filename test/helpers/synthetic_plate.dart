@@ -42,6 +42,7 @@ class SyntheticCmj {
     double ringAmplitudeKg = 0,
     double ringHz = 33,
     bool dip = true,
+    int skimMs = 0,
   }) {
     int n(double seconds) => (seconds * sampleRate).round();
     final quiet = n(1.0);
@@ -56,10 +57,16 @@ class SyntheticCmj {
     // With [dip], a countermovement (down to 0.6 BW) precedes the push; a
     // squat jump pushes straight from quiet stance, holding BW where the dip
     // would sit (the hold is what the controller's between-rep arming sees).
+    // [skimMs]: hold ~zero force at the dip bottom for this long — a toe
+    // skim / free-fall unweighting. Shorter than the minimum flight, but an
+    // easy thing to mistake for takeoff if the flight scan latches the first
+    // below-threshold run it sees.
+    final skim = skimMs * sampleRate ~/ 1000;
     final ground = <double>[
       for (int i = 0; i < quiet; i++) bwKg,
       for (int i = 0; i < unweight; i++)
         dip ? _lerp(bwKg, 0.6 * bwKg, i / unweight) : bwKg,
+      for (int i = 0; i < skim; i++) 0.3,
       for (int i = 0; i < push; i++)
         _lerp(dip ? 0.6 * bwKg : bwKg, 2.8 * bwKg, i / push),
       for (int i = 0; i < release; i++)
@@ -214,7 +221,7 @@ class SyntheticGaitWalk {
   int get sampleCount =>
       stanceSamples + passPeaks.length * (gapSamples * 2 + contactSamples);
 
-  /// Script contact bounds (before boxcar smoothing), absolute indices.
+  /// Script contact bounds, absolute indices.
   List<(int start, int end)> get contacts => [
     for (int k = 0; k < passPeaks.length; k++)
       (
