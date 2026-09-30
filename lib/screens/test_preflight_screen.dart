@@ -19,6 +19,7 @@ class TestPreflightScreen extends StatefulWidget {
 
 class _TestPreflightScreenState extends State<TestPreflightScreen> {
   final TextEditingController _person = TextEditingController();
+  TestJumpStyle _jumpStyle = TestJumpStyle.auto;
 
   @override
   void dispose() {
@@ -78,6 +79,42 @@ class _TestPreflightScreenState extends State<TestPreflightScreen> {
               ),
             ),
           const SizedBox(height: 20),
+          if (def.family == TestFamily.jump) ...[
+            Text('Jump style', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            SegmentedButton<TestJumpStyle>(
+              segments: const [
+                ButtonSegment(value: TestJumpStyle.auto, label: Text('Auto')),
+                ButtonSegment(
+                  value: TestJumpStyle.concentric,
+                  label: Text('Concentric'),
+                ),
+                ButtonSegment(
+                  value: TestJumpStyle.eccentric,
+                  label: Text('Eccentric'),
+                ),
+              ],
+              selected: {_jumpStyle},
+              onSelectionChanged: (selection) =>
+                  setState(() => _jumpStyle = selection.first),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              switch (_jumpStyle) {
+                TestJumpStyle.auto =>
+                  'Both styles count and are classified per rep.',
+                TestJumpStyle.concentric =>
+                  'Only no-dip (squat) jumps count; dipped reps are discarded.',
+                TestJumpStyle.eccentric =>
+                  'Only dipped (countermovement) jumps count; no-dip reps are '
+                      'discarded.',
+              },
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.secondary,
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
           TextField(
             controller: _person,
             textCapitalization: TextCapitalization.words,
@@ -110,7 +147,11 @@ class _TestPreflightScreenState extends State<TestPreflightScreen> {
   void _begin() {
     Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => TestRunnerScreen(def: widget.def, person: _person.text),
+        builder: (_) => TestRunnerScreen(
+          def: widget.def,
+          person: _person.text,
+          jumpStyle: _jumpStyle,
+        ),
       ),
     );
   }

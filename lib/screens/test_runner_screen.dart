@@ -24,10 +24,16 @@ import 'session_detail_screen.dart';
 /// Runs one guided test: zero the plate, measure a stable stance, then record
 /// auto-segmented reps and show their metrics.
 class TestRunnerScreen extends StatefulWidget {
-  const TestRunnerScreen({super.key, required this.def, required this.person});
+  const TestRunnerScreen({
+    super.key,
+    required this.def,
+    required this.person,
+    this.jumpStyle = TestJumpStyle.auto,
+  });
 
   final TestDef def;
   final String person;
+  final TestJumpStyle jumpStyle;
 
   @override
   State<TestRunnerScreen> createState() => _TestRunnerScreenState();
@@ -46,6 +52,7 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
     _ctrl = TestRunnerController(
       test: widget.def,
       person: widget.person,
+      jumpStyle: widget.jumpStyle,
       source: DataHubPlateSource(_hub),
       recorder: RecordingTestRecorder(
         recording: context.read<RecordingController>(),

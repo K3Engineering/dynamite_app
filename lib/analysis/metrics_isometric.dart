@@ -83,7 +83,7 @@ final List<MetricDef<IsoContext>> isoMetrics = List.unmodifiable([
 double _meanForce(PlateWindow w) {
   double sum = 0;
   for (int i = w.start; i < w.end; i++) {
-    sum += w.smoothAt(i);
+    sum += w.forceAt(i);
   }
   return sum / w.length;
 }
@@ -91,19 +91,19 @@ double _meanForce(PlateWindow w) {
 double _peak(PlateWindow w) {
   double max = double.negativeInfinity;
   for (int i = w.start; i < w.end; i++) {
-    max = math.max(max, w.smoothAt(i));
+    max = math.max(max, w.forceAt(i));
   }
   return max;
 }
 
-/// Coefficient of variation of the smoothed force: σ over mean, as a
+/// Coefficient of variation of the total force: σ over mean, as a
 /// percentage. Lower is steadier.
 double? _cvPercent(PlateWindow w, IsoContext c) {
   final mean = _meanForce(w);
   if (mean == 0) return null;
   double sumSq = 0;
   for (int i = w.start; i < w.end; i++) {
-    final d = w.smoothAt(i) - mean;
+    final d = w.forceAt(i) - mean;
     sumSq += d * d;
   }
   return 100 * math.sqrt(sumSq / w.length) / mean;
@@ -113,7 +113,7 @@ double? _cvPercent(PlateWindow w, IsoContext c) {
 double _timeInBand(PlateWindow w, IsoContext c) {
   int inside = 0;
   for (int i = w.start; i < w.end; i++) {
-    final f = w.smoothAt(i);
+    final f = w.forceAt(i);
     if (f >= c.bandLowKgf && f <= c.bandHighKgf) inside++;
   }
   return 100 * inside / w.length;
@@ -129,7 +129,7 @@ double _drift(PlateWindow w, IsoContext c) {
   double sxy = 0, sxx = 0;
   for (int i = w.start; i < w.end; i++) {
     final t = i - w.start - tMean;
-    sxy += t * (w.smoothAt(i) - yMean);
+    sxy += t * (w.forceAt(i) - yMean);
     sxx += t * t;
   }
   return (sxy / sxx) * w.sampleRate;

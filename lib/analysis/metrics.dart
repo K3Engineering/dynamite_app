@@ -238,45 +238,46 @@ List<CmjRepResult> evaluateJumpResult(TestResult result, GraphDataSource data) {
   return reps;
 }
 
-/// COM velocity at takeoff (m/s): impulse-momentum of the net force from the
-/// quiet onset, seeded at rest. Below body weight the net force is negative
-/// (the countermovement), so the integral dips then crosses zero on the way
-/// up — the value at takeoff is what carries the athlete off the plate.
+/// COM velocity at takeoff (m/s): impulse-momentum of the raw net force from
+/// the quiet onset, seeded at rest. Below body weight the net force is
+/// negative (the countermovement), so the integral dips then climbs on the
+/// way up — the value at takeoff is what carries the athlete off the plate.
 double _takeoffVelocity(PlateWindow w, CmjPhases p, CmjContext c) {
   final dt = 1 / w.sampleRate;
   double v = 0;
   for (int i = p.onset; i <= p.takeoff; i++) {
-    v += c.gravity * (w.smoothAt(i) / c.bwKgf - 1) * dt;
+    v += c.gravity * (w.forceAt(i) / c.bwKgf - 1) * dt;
   }
   return v;
 }
 
-/// Maximum total force over `[start, end]` inclusive.
+/// Maximum total force over `[start, end]` inclusive (raw).
 double _peak(PlateWindow w, int start, int end) {
   double max = double.negativeInfinity;
   for (int i = start; i <= end; i++) {
-    final f = w.smoothAt(i);
+    final f = w.forceAt(i);
     if (f > max) max = f;
   }
   return max;
 }
 
-/// Net impulse (kgf·s) of `force − bw` over `[start, end]`.
+/// Net impulse (kgf·s) of `force − bw` over `[start, end]` (raw).
 double _netImpulse(PlateWindow w, int start, int end, double bw) {
   double acc = 0;
   for (int i = start; i <= end; i++) {
-    acc += w.smoothAt(i) - bw;
+    acc += w.forceAt(i) - bw;
   }
   return acc / w.sampleRate;
 }
 
-/// Rate of force development over the first 100 ms of the concentric phase,
-/// or null when the concentric phase is shorter than the window.
+/// Rate of force development over the first 100 ms from the concentric
+/// phase's start (the impulse-zero dip bottom), or null when the concentric
+/// phase is shorter than the window.
 double? _rfd100(PlateWindow w, CmjPhases p) {
   final offset = (0.1 * w.sampleRate).round();
-  final i1 = p.bwCross + offset;
+  final i1 = p.split + offset;
   if (i1 > p.takeoff) return null;
-  return (w.smoothAt(i1) - w.smoothAt(p.bwCross)) / (offset / w.sampleRate);
+  return (w.forceAt(i1) - w.forceAt(p.split)) / (offset / w.sampleRate);
 }
 
 /// Left/right asymmetry of the propulsive load: `|L − R| / max(L, R)` as a
