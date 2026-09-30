@@ -92,6 +92,9 @@ linter:
     unnecessary_async: true
     avoid_catching_errors: true
     cast_nullable_to_non_nullable: true
+    unnecessary_null_checks: true
+    no_self_assignments: true
+    require_trailing_commas: true
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options

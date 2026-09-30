@@ -411,7 +411,7 @@ class LiveStatusBar extends StatelessWidget {
                   if (report)
                     Row(
                       children: [
-                        Icon(Icons.error_outline, size: 14, color: warning!),
+                        Icon(Icons.error_outline, size: 14, color: warning),
                         const SizedBox(width: 4),
                         Flexible(
                           child: Text(
