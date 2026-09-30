@@ -27,20 +27,20 @@ void main() {
   group('isometric hold metrics', () {
     test('a dead-steady hold at band center', () {
       final m = metricsOf((_) => 120.0, 5000);
-      expect(m['mean_force']!, closeTo(120, 0.5));
-      expect(m['peak_force']!, closeTo(120, 0.5));
-      expect(m['cv']!, closeTo(0, 0.05));
-      expect(m['time_in_band']!, closeTo(100, 0.5));
-      expect(m['drift']!, closeTo(0, 0.02));
+      expect(m['mean_force'], closeTo(120, 0.5));
+      expect(m['peak_force'], closeTo(120, 0.5));
+      expect(m['cv'], closeTo(0, 0.05));
+      expect(m['time_in_band'], closeTo(100, 0.5));
+      expect(m['drift'], closeTo(0, 0.02));
     });
 
     test('a linear fade reads as drift and band time', () {
       // 110 → 130 kgf over 10 s; the band is [112, 128]: the ramp spends
       // its inner 16/20 of the range inside it.
       final m = metricsOf((i) => 110 + 20 * i / 9999, 10000);
-      expect(m['drift']!, closeTo(2.0, 0.05));
-      expect(m['time_in_band']!, closeTo(80, 3));
-      expect(m['mean_force']!, closeTo(120, 0.5));
+      expect(m['drift'], closeTo(2.0, 0.05));
+      expect(m['time_in_band'], closeTo(80, 3));
+      expect(m['mean_force'], closeTo(120, 0.5));
     });
 
     test('a hold out of band scores low without failing', () {
@@ -48,7 +48,7 @@ void main() {
       // band time says how far off the aim was.
       final m = metricsOf((_) => 100.0, 5000);
       expect(m['time_in_band'], 0);
-      expect(m['mean_force']!, closeTo(100, 0.5));
+      expect(m['mean_force'], closeTo(100, 0.5));
     });
   });
 }

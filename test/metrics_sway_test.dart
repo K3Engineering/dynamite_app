@@ -36,16 +36,16 @@ void main() {
     });
 
     test('path length is exactly the ramp traverse', () {
-      expect(m['sway_path']!, closeTo(2 * a * halfW, 0.5));
+      expect(m['sway_path'], closeTo(2 * a * halfW, 0.5));
     });
 
     test('mean velocity is path over window duration', () {
-      expect(m['mean_cop_velocity']!, closeTo(2 * a * halfW / (n / 1000), 0.5));
+      expect(m['mean_cop_velocity'], closeTo(2 * a * halfW / (n / 1000), 0.5));
     });
 
     test('M/L RMS matches the uniform ramp', () {
-      expect(m['ml_rms']!, closeTo(a / math.sqrt(3) * halfW, 0.5));
-      expect(m['ap_rms']!, closeTo(0, 0.01));
+      expect(m['ml_rms'], closeTo(a / math.sqrt(3) * halfW, 0.5));
+      expect(m['ap_rms'], closeTo(0, 0.01));
     });
 
     test('a degenerate line has zero ellipse area', () {
@@ -53,7 +53,7 @@ void main() {
     });
 
     test('left load share is 50% on a centred trace', () {
-      expect(m['left_share']!, closeTo(50, 0.01));
+      expect(m['left_share'], closeTo(50, 0.01));
     });
   });
 
@@ -80,8 +80,8 @@ void main() {
     });
 
     test('RMS values match the sinusoid amplitudes', () {
-      expect(m2['ml_rms']!, closeTo(ax / math.sqrt(2) * halfW, 0.2));
-      expect(m2['ap_rms']!, closeTo(ay / math.sqrt(2) * halfL, 0.2));
+      expect(m2['ml_rms'], closeTo(ax / math.sqrt(2) * halfW, 0.2));
+      expect(m2['ap_rms'], closeTo(ay / math.sqrt(2) * halfL, 0.2));
     });
 
     test('95% ellipse area from the cloud covariance', () {
@@ -89,7 +89,7 @@ void main() {
       // mm² through the support half-extents.
       final semiA = math.sqrt(kEllipseChi2_95 * ax * ax / 2) * halfW;
       final semiB = math.sqrt(kEllipseChi2_95 * ay * ay / 2) * halfL;
-      expect(m2['sway_area95']!, closeTo(math.pi * semiA * semiB, 1));
+      expect(m2['sway_area95'], closeTo(math.pi * semiA * semiB, 1));
     });
 
     test('ellipse overlay geometry uses normalized support units', () {

@@ -95,32 +95,32 @@ void main() {
     });
 
     test('contact time tracks the scripted contact', () {
-      expect(m['contact_time']!, closeTo(700, 60));
+      expect(m['contact_time'], closeTo(700, 60));
     });
 
     test('peak force reaches the scripted M-peak', () {
-      expect(m['peak_force']!, closeTo(1.05 * bw, 1));
-      expect(m['peak_force_bw']!, closeTo(100 * m['peak_force']! / bw, 1));
+      expect(m['peak_force'], closeTo(1.05 * bw, 1));
+      expect(m['peak_force_bw'], closeTo(100 * m['peak_force']! / bw, 1));
     });
 
     test('loading rate tracks the rise slope', () {
       // Rise: 84 kgf over 105 ms ≈ 800 kgf/s.
-      expect(m['loading_rate']!, closeTo(800, 100));
+      expect(m['loading_rate'], closeTo(800, 100));
     });
 
     test('impulse is the area under the M', () {
       // Trapezoid over the control points: 0.744 u·BW.
-      expect(m['impulse']!, closeTo(0.744 * bw * 0.7, 3));
+      expect(m['impulse'], closeTo(0.744 * bw * 0.7, 3));
     });
 
     test('push-off share is balanced on a symmetric CoP sweep', () {
-      expect(m['pushoff_share']!, closeTo(50, 4));
+      expect(m['pushoff_share'], closeTo(50, 4));
     });
 
     test('gait line length tracks the end-to-end sweep', () {
       // 1.2 normalized units along y ≈ 366 mm plus the medial wiggle.
-      expect(m['gait_line_length']!, greaterThan(300));
-      expect(m['gait_line_length']!, lessThan(600));
+      expect(m['gait_line_length'], greaterThan(300));
+      expect(m['gait_line_length'], lessThan(600));
     });
 
     test('the trail covers the contact', () {
