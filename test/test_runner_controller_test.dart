@@ -219,7 +219,7 @@ void main() {
     expect(ctrl.phase, TestRunnerPhase.summary);
     expect(ctrl.djReps, hasLength(3));
     for (final rep in ctrl.djReps) {
-      expect(rep.metric('height_flight')!, closeTo(0.307, 0.03));
+      expect(rep.metric('height_flight'), closeTo(0.307, 0.03));
       expect(rep.metric('rsi'), isNotNull);
     }
     final saved = ctrl.result!;
@@ -331,8 +331,8 @@ void main() {
 
     expect(ctrl.phase, TestRunnerPhase.summary);
     expect(ctrl.isoReps, hasLength(1));
-    expect(ctrl.isoReps.single.metric('time_in_band')!, greaterThan(95));
-    expect(ctrl.isoReps.single.metric('cv')!, lessThan(1));
+    expect(ctrl.isoReps.single.metric('time_in_band'), greaterThan(95));
+    expect(ctrl.isoReps.single.metric('cv'), lessThan(1));
     final saved = ctrl.result!;
     expect(saved.testId, 'iso_press');
     expect(saved.reps, hasLength(1));
@@ -387,7 +387,7 @@ void main() {
     expect(ctrl.slReps, hasLength(1));
     final rep = ctrl.slReps.single;
     expect(rep.eval.label, 'Left leg');
-    expect(rep.metric('hold_duration')!, closeTo(6.0, 0.5));
+    expect(rep.metric('hold_duration'), closeTo(6.0, 0.5));
     final saved = ctrl.result!;
     expect(saved.testId, 'single_leg');
     expect(saved.reps, hasLength(1));
@@ -438,7 +438,7 @@ void main() {
     expect(ctrl.gaitPasses[0].number, 1);
     expect(ctrl.gaitPasses[1].number, 2);
     for (final pass in ctrl.gaitPasses) {
-      expect(pass.metric('contact_time')!, closeTo(700, 60));
+      expect(pass.metric('contact_time'), closeTo(700, 60));
       expect(pass.trail, isNotEmpty);
     }
     final saved = ctrl.result!;
