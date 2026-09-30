@@ -1,9 +1,13 @@
 import 'dart:math' as math;
 
+import 'package:material_ui/material_ui.dart' show Color;
 import 'package:meta/meta.dart';
 
 import '../models/graph_data_source.dart';
+import '../models/graph_overlays.dart';
+import 'metric_eval.dart';
 import 'plate_series.dart';
+import 'result_overlays.dart';
 import 'test_result.dart';
 
 // ---------------------------------------------------------------------------
@@ -30,75 +34,18 @@ typedef CopEllipse = ({
   double angleRad,
 });
 
-/// One entry in the sway metric table.
-@immutable
-class SwayMetricDef {
-  const SwayMetricDef({
-    required this.id,
-    required this.label,
-    required this.unit,
-    required this.decimals,
-    required this.compute,
-  });
-
-  final String id;
-  final String label;
-
-  /// Display unit symbol; empty for a dimensionless value.
-  final String unit;
-
-  /// Digits to show.
-  final int decimals;
-
-  final double? Function(PlateWindow w) compute;
-}
-
-/// A computed metric value; null when the metric is not meaningful for this
-/// window (renders as a dash).
-@immutable
-class SwayMetricValue {
-  const SwayMetricValue(this.def, this.value);
-  final SwayMetricDef def;
-  final double? value;
-}
-
-/// One evaluated sway window (a rep): its bounds in the recording, its
-/// label, and every metric value. Shared by the live runner, the test
-/// summary, and a re-opened session.
+/// One evaluated sway window: its evaluation (condition label, bounds,
+/// metric values) and the fitted ellipse for the plate-pane overlay.
 @immutable
 class SwayRepResult {
-  const SwayRepResult({
-    required this.number,
-    required this.label,
-    required this.start,
-    required this.end,
-    required this.sampleRate,
-    required this.values,
-    required this.ellipse,
-  });
+  const SwayRepResult({required this.eval, required this.ellipse});
 
-  final int number;
-
-  /// The window's condition label from the test definition (e.g. "Eyes
-  /// open"); empty when the test has one window.
-  final String label;
-
-  /// Analysis window `[start, end)` in samples.
-  final int start;
-  final int end;
-  final int sampleRate;
-
-  final List<SwayMetricValue> values;
+  final RepEvaluation eval;
 
   /// The 95% CoP confidence ellipse, for the plate-pane overlay.
   final CopEllipse? ellipse;
 
-  double? metric(String id) {
-    for (final v in values) {
-      if (v.def.id == id) return v.value;
-    }
-    return null;
-  }
+  double? metric(String id) => eval.metric(id);
 }
 
 /// Iterate samples where the plate carries a positive load (CoP defined),
@@ -222,63 +169,73 @@ double? _area95(PlateWindow w) {
       w.geometry.supportHalfLengthMm;
 }
 
-/// The sway metric table, in display order.
-final List<SwayMetricDef> swayMetrics = List.unmodifiable([
-  const SwayMetricDef(
+/// The sway metric table, in display order. (Window-only metrics: no
+/// evaluation context beyond the window itself.)
+final List<MetricDef<Object?>> swayMetrics = List.unmodifiable([
+  const MetricDef<Object?>(
     id: 'sway_path',
     label: 'CoP path length',
     unit: 'mm',
     decimals: 0,
-    compute: _pathMm,
+    compute: _pathMmNoCtx,
   ),
-  const SwayMetricDef(
+  const MetricDef<Object?>(
     id: 'sway_area95',
     label: '95% ellipse area',
     unit: 'mm²',
     decimals: 0,
-    compute: _area95,
+    compute: _area95NoCtx,
   ),
-  const SwayMetricDef(
+  const MetricDef<Object?>(
     id: 'mean_cop_velocity',
     label: 'Mean CoP velocity',
     unit: 'mm/s',
     decimals: 1,
-    compute: _meanVelocity,
+    compute: _meanVelocityNoCtx,
   ),
-  SwayMetricDef(
+  MetricDef<Object?>(
     id: 'ml_rms',
     label: 'CoP RMS (M/L)',
     unit: 'mm',
     decimals: 2,
-    compute: (w) => _rmsMm(w, true),
+    compute: (w, _) => _rmsMm(w, true),
   ),
-  SwayMetricDef(
+  MetricDef<Object?>(
     id: 'ap_rms',
     label: 'CoP RMS (A/P)',
     unit: 'mm',
     decimals: 2,
-    compute: (w) => _rmsMm(w, false),
+    compute: (w, _) => _rmsMm(w, false),
   ),
-  const SwayMetricDef(
+  const MetricDef<Object?>(
     id: 'left_share',
     label: 'Left load share',
     unit: '%',
     decimals: 1,
-    compute: _leftShare,
+    compute: _leftShareNoCtx,
   ),
 ]);
+
+double? _pathMmNoCtx(PlateWindow w, Object? _) => _pathMm(w);
+double? _area95NoCtx(PlateWindow w, Object? _) => _area95(w);
+double? _meanVelocityNoCtx(PlateWindow w, Object? _) => _meanVelocity(w);
+double? _leftShareNoCtx(PlateWindow w, Object? _) => _leftShare(w);
+
+/// Header for the ratio column of a two-window sway test: "EC/EO" for the
+/// Romberg pair, a neutral fallback otherwise.
+String swayRatioHeader(String? labelA, String? labelB) =>
+    (labelA, labelB) == ('Eyes open', 'Eyes closed') ? 'EC/EO' : 'B/A';
 
 /// Evaluate one sway window.
 SwayRepResult evaluateSwayWindow(PlateWindow w, String label, int number) =>
     SwayRepResult(
-      number: number,
-      label: label,
-      start: w.start,
-      end: w.end,
-      sampleRate: w.sampleRate,
-      values: [
-        for (final def in swayMetrics) SwayMetricValue(def, def.compute(w)),
-      ],
+      eval: RepEvaluation(
+        number: number,
+        label: label.isEmpty ? null : label,
+        start: w.start,
+        end: w.end,
+        values: evaluateMetrics(w, swayMetrics, null),
+      ),
       ellipse: copConfidenceEllipse(w),
     );
 
@@ -307,3 +264,21 @@ List<SwayRepResult> evaluateSwayResult(
   }
   return reps;
 }
+
+/// Window shading on the force trace plus a CoP ellipse per window for the
+/// 2D plate pane.
+GraphOverlays overlaysForSwayReps(List<SwayRepResult> reps) => GraphOverlays(
+  spans: windowShadeOverlays([for (final r in reps) r.eval]).spans,
+  plateEllipses: [
+    for (final r in reps)
+      if (r.ellipse case final e?)
+        PlateEllipseOverlay(
+          cx: e.cx,
+          cy: e.cy,
+          semiA: e.semiA,
+          semiB: e.semiB,
+          angleRad: e.angleRad,
+          color: const Color(0xFF2196F3),
+        ),
+  ],
+);

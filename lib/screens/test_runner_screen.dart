@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
@@ -5,6 +8,7 @@ import '../analysis/test_def.dart';
 import '../analysis/test_result.dart';
 import '../models/analysis_pane.dart';
 import '../models/display_unit.dart';
+import '../models/session_catalog.dart';
 import '../runner/plate_source.dart';
 import '../runner/test_recorder.dart';
 import '../runner/test_runner_controller.dart';
@@ -13,13 +17,9 @@ import '../services/data_hub.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
 import '../services/session_store.dart';
-import '../widgets/cjm_metrics_table.dart';
-import '../widgets/dj_metrics_table.dart';
-import '../widgets/gait_metrics_table.dart';
 import '../widgets/graph_components.dart';
-import '../widgets/iso_metrics_table.dart';
-import '../widgets/sl_metrics_table.dart';
-import '../widgets/sway_metrics_table.dart';
+import '../widgets/metrics_table.dart';
+import 'session_detail_screen.dart';
 
 /// Runs one guided test: zero the plate, measure a stable stance, then record
 /// auto-segmented reps and show their metrics.
@@ -37,6 +37,7 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
   late final TestRunnerController _ctrl;
   final GraphController _graph = GraphController(minLiveSpan: 10 * 1000);
   late final DataHub _hub;
+  late final StreamSubscription<TestRunnerCue> _cueSub;
 
   @override
   void initState() {
@@ -53,7 +54,19 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
       ),
       onResult: _persistResult,
     );
+    _cueSub = _ctrl.cues.listen(_onCue);
     _ctrl.begin();
+  }
+
+  /// Audible feedback for transitions the athlete can't watch for (window
+  /// changes during an eyes-closed window, rep accepted/discarded).
+  void _onCue(TestRunnerCue cue) {
+    unawaited(
+      SystemSound.play(switch (cue) {
+        TestRunnerCue.repDiscarded => SystemSoundType.alert,
+        _ => SystemSoundType.click,
+      }),
+    );
   }
 
   /// Attach the analysis to the just-saved session. Best-effort: the recording
@@ -68,6 +81,7 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
 
   @override
   void dispose() {
+    unawaited(_cueSub.cancel());
     _ctrl.dispose();
     _graph.dispose();
     super.dispose();
@@ -80,10 +94,11 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
       body: AnimatedBuilder(
         animation: _ctrl,
         builder: (context, _) => switch (_ctrl.phase) {
-          TestRunnerPhase.awaitingClear => const _PromptPanel(
+          TestRunnerPhase.awaitingClear => _PromptPanel(
             icon: Icons.pan_tool_alt,
             title: 'Step off the plate',
             subtitle: 'The plate will be zeroed once it is empty.',
+            readout: _forceReadout(),
           ),
           TestRunnerPhase.taring => const _PromptPanel(
             icon: Icons.exposure_zero,
@@ -94,7 +109,7 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
           TestRunnerPhase.awaitingStance => _PromptPanel(
             icon: Icons.accessibility_new,
             title: 'Step on and stand still',
-            subtitle: 'Hold still to measure your body weight.',
+            subtitle: _stanceHint(),
             readout: _forceReadout(),
           ),
           TestRunnerPhase.readyForRep ||
@@ -105,6 +120,15 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
         },
       ),
     );
+  }
+
+  /// Why the stance measurement isn't done yet (or that it is running).
+  String _stanceHint() {
+    final b = _ctrl.baseline;
+    if (b == null) return 'Waiting for plate data…';
+    if (b.meanKgf.abs() < 5) return 'Step fully onto the plate.';
+    if (!b.isStable) return 'Too much movement — hold still.';
+    return 'Measuring your body weight…';
   }
 
   Widget _buildRunning(BuildContext context) {
@@ -159,6 +183,7 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
   Widget _buildSummary(BuildContext context) {
     final theme = Theme.of(context);
     final bw = _ctrl.bodyWeightKgf;
+    final count = _ctrl.validRepCount;
     return ListView(
       padding: const EdgeInsets.all(16),
       children: [
@@ -176,36 +201,66 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
         if (bw != null)
           Text(
             'Body weight ${bw.toStringAsFixed(1)} kgf · '
-            '${_ctrl.reps.length + _ctrl.djReps.length + _ctrl.swayReps.length + _ctrl.isoReps.length + _ctrl.slReps.length + _ctrl.gaitPasses.length} '
-            'rep${_ctrl.reps.length + _ctrl.djReps.length + _ctrl.swayReps.length + _ctrl.isoReps.length + _ctrl.slReps.length + _ctrl.gaitPasses.length == 1 ? '' : 's'}',
+            '$count rep${count == 1 ? '' : 's'}',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium,
           ),
         const SizedBox(height: 20),
-        if (_ctrl.reps.isEmpty &&
-            _ctrl.djReps.isEmpty &&
-            _ctrl.swayReps.isEmpty &&
-            _ctrl.isoReps.isEmpty &&
-            _ctrl.slReps.isEmpty &&
-            _ctrl.gaitPasses.isEmpty)
+        if (count == 0)
           const Text('No valid reps were captured.')
         else
           switch (widget.def.family) {
-            TestFamily.sway => SwayMetricsTable(reps: _ctrl.swayReps),
-            TestFamily.isometric => IsoMetricsTable(reps: _ctrl.isoReps),
-            TestFamily.singleLeg => SlMetricsTable(reps: _ctrl.slReps),
-            TestFamily.gait => GaitMetricsTable(reps: _ctrl.gaitPasses),
-            TestFamily.dropJump => DjMetricsTable(reps: _ctrl.djReps),
-            _ => CjmMetricsTable(reps: _ctrl.reps),
+            TestFamily.sway => MetricsTable.sway(reps: _ctrl.swayReps),
+            TestFamily.isometric => MetricsTable.isometric(reps: _ctrl.isoReps),
+            TestFamily.singleLeg => MetricsTable.singleLeg(reps: _ctrl.slReps),
+            TestFamily.gait => MetricsTable.gait(reps: _ctrl.gaitPasses),
+            TestFamily.dropJump => MetricsTable.dropJump(reps: _ctrl.djReps),
+            _ => MetricsTable.jump(reps: _ctrl.reps),
           },
         const SizedBox(height: 32),
-        FilledButton(
+        if (_ctrl.sessionId != null) ...[
+          FilledButton.icon(
+            onPressed: _openSession,
+            icon: const Icon(Icons.insights),
+            label: const Text('View saved session'),
+          ),
+          const SizedBox(height: 12),
+        ],
+        FilledButton.tonal(
           onPressed: () =>
               Navigator.of(context).popUntil((route) => route.isFirst),
           child: const Text('Done'),
         ),
       ],
     );
+  }
+
+  /// Jump from the summary to the just-saved session's detail page. Falls
+  /// back to simply leaving the flow if the catalog hasn't republished the
+  /// fresh entry yet.
+  Future<void> _openSession() async {
+    final id = _ctrl.sessionId;
+    if (id == null) return;
+    try {
+      final store = SessionStore.instance;
+      await store.ensureCatalogLoaded();
+      if (store.catalog.value case SessionCatalogReady(:final catalog)) {
+        final summary = catalog.session(id);
+        if (summary != null && mounted) {
+          await Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => SessionDetailScreen(session: summary),
+            ),
+          );
+          return;
+        }
+      }
+    } catch (_) {
+      // The catalog failing shouldn't strand the user in the runner.
+    }
+    if (mounted) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    }
   }
 
   Widget _buildFailed(BuildContext context) {
@@ -236,7 +291,7 @@ class _TestRunnerScreenState extends State<TestRunnerScreen> {
   }
 }
 
-/// The recording-phase status strip: the call to action ("make a jump"),
+/// The recording-phase status strip: what to do now (armed vs re-arming),
 /// rep progress, the last discard reason, and the completed reps' heights.
 class _RepStatus extends StatelessWidget {
   const _RepStatus({required this.ctrl});
@@ -257,6 +312,16 @@ class _RepStatus extends StatelessWidget {
     };
     final jumping = ctrl.phase == TestRunnerPhase.jumping;
     final isDj = ctrl.test.family == TestFamily.dropJump;
+    final String callToAction;
+    if (jumping) {
+      callToAction = 'Rep in progress…';
+    } else if (!ctrl.armed) {
+      // The onset check only runs once the arming condition holds — a jump
+      // before that would be silently missed, so say so.
+      callToAction = isDj ? 'Step back onto the box…' : 'Stand still…';
+    } else {
+      callToAction = isDj ? 'Drop and rebound' : 'Jump!';
+    }
     return Container(
       width: double.infinity,
       color: theme.colorScheme.primaryContainer,
@@ -265,11 +330,7 @@ class _RepStatus extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            jumping
-                ? 'Jump!'
-                : isDj
-                ? 'Drop and rebound'
-                : 'Make a jump',
+            callToAction,
             style: theme.textTheme.headlineSmall?.copyWith(
               color: theme.colorScheme.onPrimaryContainer,
             ),
@@ -311,6 +372,9 @@ class _CaptureStatus extends StatelessWidget {
     final remaining = status == null
         ? null
         : (status.remainingMs / 1000).toStringAsFixed(0);
+    final singleLeg = ctrl.test.windows.any(
+      (w) => w.eval == TestWindowEval.singleLeg,
+    );
     return Container(
       width: double.infinity,
       color: theme.colorScheme.primaryContainer,
@@ -324,6 +388,12 @@ class _CaptureStatus extends StatelessWidget {
               color: theme.colorScheme.onPrimaryContainer,
             ),
           ),
+          if (singleLeg)
+            Text(
+              'Lift one foot and hold — the timer detects toe-off and '
+              'touch-down by itself.',
+              style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
+            ),
           if (ctrl.activeBandKgfs case final band?)
             Text(
               'Aim ${band.low.toStringAsFixed(0)}–${band.high.toStringAsFixed(0)} kgf'
@@ -386,7 +456,8 @@ class _FreePassStatus extends StatelessWidget {
             ),
           ),
           Text(
-            '$passes pass${passes == 1 ? '' : 'es'}',
+            '$passes pass${passes == 1 ? '' : 'es'} — press "Stop and save" '
+            'when you have enough',
             style: theme.textTheme.titleMedium?.copyWith(
               color: theme.colorScheme.onPrimaryContainer,
             ),

@@ -1,10 +1,14 @@
 import 'dart:math' as math;
 
+import 'package:material_ui/material_ui.dart' show Color;
 import 'package:meta/meta.dart';
 
 import '../models/graph_data_source.dart';
+import '../models/graph_overlays.dart';
+import 'metric_eval.dart';
 import 'metrics_sway.dart';
 import 'plate_series.dart';
+import 'result_overlays.dart';
 import 'test_result.dart';
 
 // ---------------------------------------------------------------------------
@@ -129,68 +133,19 @@ SingleLegInterval? findSingleLegInterval(
 
 // -- Metrics --
 
-/// One entry in the single-leg metric table.
-@immutable
-class SlMetricDef {
-  const SlMetricDef({
-    required this.id,
-    required this.label,
-    required this.unit,
-    required this.decimals,
-    required this.compute,
-  });
-
-  final String id;
-  final String label;
-  final String unit;
-  final int decimals;
-
-  final double? Function(PlateWindow w) compute;
-}
-
-/// A computed metric value; null when not meaningful for this hold.
-@immutable
-class SlMetricValue {
-  const SlMetricValue(this.def, this.value);
-  final SlMetricDef def;
-  final double? value;
-}
-
-/// One evaluated single-leg hold (shared live / summary / re-opened
-/// session).
+/// One evaluated single-leg hold: its evaluation (stance-side label,
+/// interval bounds, metric values) and the fitted ellipse for the
+/// plate-pane overlay.
 @immutable
 class SlRepResult {
-  const SlRepResult({
-    required this.number,
-    required this.label,
-    required this.start,
-    required this.end,
-    required this.sampleRate,
-    required this.values,
-    required this.ellipse,
-  });
+  const SlRepResult({required this.eval, required this.ellipse});
 
-  final int number;
-
-  /// "Left leg" / "Right leg" — the stance side.
-  final String label;
-
-  /// The located interval `[start, end)` in samples.
-  final int start;
-  final int end;
-  final int sampleRate;
-
-  final List<SlMetricValue> values;
+  final RepEvaluation eval;
 
   /// The CoP confidence ellipse over the hold, for the plate-pane overlay.
   final CopEllipse? ellipse;
 
-  double? metric(String id) {
-    for (final v in values) {
-      if (v.def.id == id) return v.value;
-    }
-    return null;
-  }
+  double? metric(String id) => eval.metric(id);
 }
 
 /// CoP path length in millimetres over the hold.
@@ -212,39 +167,40 @@ double? _pathMm(PlateWindow w) {
   return n < 2 ? null : sum;
 }
 
-/// The single-leg metric table, in display order.
-final List<SlMetricDef> slMetrics = List.unmodifiable([
-  SlMetricDef(
+/// The single-leg metric table, in display order. (Window-only metrics: no
+/// evaluation context beyond the window itself.)
+final List<MetricDef<Object?>> slMetrics = List.unmodifiable([
+  MetricDef<Object?>(
     id: 'hold_duration',
     label: 'Hold duration',
     unit: 's',
     decimals: 1,
-    compute: (w) => w.length / w.sampleRate,
+    compute: (w, _) => w.length / w.sampleRate,
   ),
-  const SlMetricDef(
+  MetricDef<Object?>(
     id: 'sway_path',
     label: 'CoP path length',
     unit: 'mm',
     decimals: 0,
-    compute: _pathMm,
+    compute: (w, _) => _pathMm(w),
   ),
-  SlMetricDef(
+  MetricDef<Object?>(
     id: 'mean_cop_velocity',
     label: 'Mean CoP velocity',
     unit: 'mm/s',
     decimals: 1,
-    compute: (w) {
+    compute: (w, _) {
       final path = _pathMm(w);
       if (path == null) return null;
       return path / (w.length / w.sampleRate);
     },
   ),
-  const SlMetricDef(
+  MetricDef<Object?>(
     id: 'stance_load',
     label: 'Load on stance side',
     unit: '%',
     decimals: 1,
-    compute: _stanceLoad,
+    compute: (w, _) => _stanceLoad(w),
   ),
 ]);
 
@@ -264,12 +220,13 @@ double? _stanceLoad(PlateWindow w) {
 /// Evaluate one single-leg interval window.
 SlRepResult evaluateSlWindow(PlateWindow w, String label, int number) =>
     SlRepResult(
-      number: number,
-      label: label,
-      start: w.start,
-      end: w.end,
-      sampleRate: w.sampleRate,
-      values: [for (final def in slMetrics) SlMetricValue(def, def.compute(w))],
+      eval: RepEvaluation(
+        number: number,
+        label: label.isEmpty ? null : label,
+        start: w.start,
+        end: w.end,
+        values: evaluateMetrics(w, slMetrics, null),
+      ),
       ellipse: copConfidenceEllipse(w),
     );
 
@@ -294,3 +251,21 @@ List<SlRepResult> evaluateSlResult(TestResult result, GraphDataSource data) {
   }
   return reps;
 }
+
+/// Interval shading on the force trace plus a CoP ellipse per hold on the
+/// 2D plate pane.
+GraphOverlays overlaysForSlReps(List<SlRepResult> reps) => GraphOverlays(
+  spans: windowShadeOverlays([for (final r in reps) r.eval]).spans,
+  plateEllipses: [
+    for (final r in reps)
+      if (r.ellipse case final e?)
+        PlateEllipseOverlay(
+          cx: e.cx,
+          cy: e.cy,
+          semiA: e.semiA,
+          semiB: e.semiB,
+          angleRad: e.angleRad,
+          color: const Color(0xFF9C27B0),
+        ),
+  ],
+);

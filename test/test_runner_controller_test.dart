@@ -72,9 +72,13 @@ class _FakeRecorder implements TestRecorder {
   Listenable get changes => _notifier;
 
   @override
+  TestRecorderStopResult? lastStop;
+
+  @override
   TestRecorderStartResult start(String name) {
     _inProgress = true;
     sessionName = name;
+    lastStop = null;
     _notifier.notifyListeners();
     return const TestRecorderStarted();
   }
@@ -82,8 +86,9 @@ class _FakeRecorder implements TestRecorder {
   @override
   Future<TestRecorderStopResult> stop() async {
     _inProgress = false;
+    lastStop = TestRecorderSaved('session-1', sessionName);
     _notifier.notifyListeners();
-    return TestRecorderSaved('session-1', sessionName);
+    return lastStop!;
   }
 }
 
@@ -260,10 +265,10 @@ void main() {
 
     expect(ctrl.phase, TestRunnerPhase.summary);
     expect(ctrl.swayReps, hasLength(2));
-    expect(ctrl.swayReps[0].label, 'A');
-    expect(ctrl.swayReps[1].label, 'B');
+    expect(ctrl.swayReps[0].eval.label, 'A');
+    expect(ctrl.swayReps[1].eval.label, 'B');
     for (final rep in ctrl.swayReps) {
-      expect(rep.end - rep.start, 1000);
+      expect(rep.eval.end - rep.eval.start, 1000);
       expect(rep.metric('sway_path'), isNotNull);
       expect(rep.ellipse, isNotNull);
     }
@@ -375,7 +380,7 @@ void main() {
     expect(ctrl.phase, TestRunnerPhase.summary);
     expect(ctrl.slReps, hasLength(1));
     final rep = ctrl.slReps.single;
-    expect(rep.label, 'Left leg');
+    expect(rep.eval.label, 'Left leg');
     expect(rep.metric('hold_duration')!, closeTo(6.0, 0.5));
     final saved = ctrl.result!;
     expect(saved.testId, 'single_leg');

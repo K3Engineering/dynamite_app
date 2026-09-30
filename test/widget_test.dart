@@ -184,10 +184,15 @@ void main() {
     expect(find.text('Jump battery'), findsWidgets);
     expect(find.text('Setup'), findsOneWidget);
 
-    // No device is streaming, so Begin is disabled.
-    final begin = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, 'Begin'),
+    // No device is streaming, so Begin is disabled. (It sits below the fold
+    // in the default test viewport — the ListView builds it lazily.)
+    final beginFinder = find.widgetWithText(FilledButton, 'Begin');
+    await tester.scrollUntilVisible(
+      beginFinder,
+      200,
+      scrollable: find.byType(Scrollable).first,
     );
+    final begin = tester.widget<FilledButton>(beginFinder);
     expect(begin.onPressed, isNull);
   });
 }

@@ -73,14 +73,14 @@ class TestResult {
 }
 
 /// One valid rep: a captured window plus the phase labels that split it, in
-/// the recording's sample-index space.
+/// the recording's sample-index space. The sample rate is NOT carried here —
+/// it's the session's own, read from the journal header.
 @immutable
 class TestRep {
   const TestRep({
     this.label,
     required this.start,
     required this.end,
-    required this.sampleRate,
     this.spans = const [],
   });
 
@@ -91,7 +91,6 @@ class TestRep {
   /// Analysis window `[start, end)` in samples.
   final int start;
   final int end;
-  final int sampleRate;
 
   /// Labeled phase spans covering parts of the window, ascending and
   /// non-overlapping. Empty for a window-only capture.
@@ -103,7 +102,6 @@ class TestRep {
     label: label,
     start: start + delta,
     end: end + delta,
-    sampleRate: sampleRate,
     spans: [for (final s in spans) s.shifted(delta)],
   );
 
@@ -111,12 +109,12 @@ class TestRep {
     if (label != null) 'label': label,
     'start': start,
     'end': end,
-    'sampleRate': sampleRate,
     'spans': [for (final s in spans) s.toJson()],
   };
 
   /// Strict parse: bounds must be internally ordered, spans ascending and
-  /// contained in the window; anything else is corruption.
+  /// contained in the window; anything else is corruption. (A legacy
+  /// `sampleRate` key from older journals is ignored.)
   factory TestRep.fromJson(Map<String, dynamic> json) {
     int req(String key) {
       final v = json[key];
@@ -126,10 +124,6 @@ class TestRep {
       return v;
     }
 
-    final sampleRate = req('sampleRate');
-    if (sampleRate <= 0) {
-      throw FormatException('testRep: bad sampleRate: $sampleRate');
-    }
     final start = req('start');
     final end = req('end');
     if (start >= end) {
@@ -163,7 +157,6 @@ class TestRep {
       label: labelJson as String?,
       start: start,
       end: end,
-      sampleRate: sampleRate,
       spans: spans,
     );
   }

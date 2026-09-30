@@ -105,7 +105,10 @@ void main() {
         end: 1800,
         sampleRate: 1000,
       );
-      final restored = CmjPhases.tryFromSpans(p.toTestRep(0))!;
+      final restored = CmjPhases.tryFromSpans(
+        p.toTestRep(0),
+        sampleRate: 1000,
+      )!;
       expect(restored.onset, p.onset);
       expect(restored.bwCross, p.bwCross);
       expect(restored.takeoff, p.takeoff);
@@ -115,8 +118,8 @@ void main() {
     });
 
     test('a window-only rep is not a jump', () {
-      const rep = TestRep(start: 0, end: 30000, sampleRate: 1000);
-      expect(CmjPhases.tryFromSpans(rep), isNull);
+      const rep = TestRep(start: 0, end: 30000);
+      expect(CmjPhases.tryFromSpans(rep, sampleRate: 1000), isNull);
     });
 
     test('a window ending mid-flight is incomplete', () {

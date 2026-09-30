@@ -1,8 +1,6 @@
 import 'test_def.dart';
 
-/// The v1 test catalog. Only the jump battery is wired end to end so far;
-/// the rest land as their molds are built out. A catalog of one is honest
-/// for a skeleton.
+/// The v1 test catalog.
 const TestDef jumpBatteryTest = TestDef(
   id: 'jump',
   name: 'Jump battery',
@@ -41,8 +39,8 @@ const TestDef rombergTest = TestDef(
   instructions: [
     'Stand on the plate with feet on the left and right halves.',
     'Arms at your sides, look straight ahead.',
-    'Two 30-second windows back to back; close your eyes when told.',
-    'Already have your eyes closed when the second window starts.',
+    'Two 30-second windows back to back; a beep marks each change.',
+    'Close your eyes when the second window starts.',
   ],
 );
 
@@ -148,3 +146,12 @@ const List<TestDef> testCatalog = [
   isoPressTest,
   singleLegTest,
 ];
+
+/// The catalog's definition for [id], or null for an unknown test (written
+/// by a newer or older build).
+TestDef? findTestDef(String id) {
+  for (final def in testCatalog) {
+    if (def.id == id) return def;
+  }
+  return null;
+}
