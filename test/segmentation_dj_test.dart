@@ -122,16 +122,16 @@ void main() {
 
     test('flight-time height matches the scripted flight', () {
       // ~500 ms airborne → ~0.307 m.
-      expect(m['height_flight']!, closeTo(0.307, 0.03));
+      expect(m['height_flight'], closeTo(0.307, 0.03));
     });
 
     test('RSI is height over contact time', () {
-      expect(m['rsi']!, closeTo(m['height_flight']! / 0.4, 0.2));
+      expect(m['rsi'], closeTo(m['height_flight']! / 0.4, 0.2));
     });
 
     test('peaks track the scripted plateaus', () {
-      expect(m['peak_force']!, closeTo(1.8 * bw, 8));
-      expect(m['peak_landing_force']!, closeTo(2.0 * bw, 8));
+      expect(m['peak_force'], closeTo(1.8 * bw, 8));
+      expect(m['peak_landing_force'], closeTo(2.0 * bw, 8));
     });
   });
 }

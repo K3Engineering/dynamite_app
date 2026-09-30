@@ -51,18 +51,18 @@ void main() {
 
     test('peak force and landing peak track the scripted profile', () {
       // Peaks read the raw force, so the scripted plateaus come out exact.
-      expect(byId['peak_force']!, closeTo(2.8 * 80, 2));
-      expect(byId['peak_landing_force']!, closeTo(2.4 * 80, 2));
+      expect(byId['peak_force'], closeTo(2.8 * 80, 2));
+      expect(byId['peak_landing_force'], closeTo(2.4 * 80, 2));
     });
 
     test('left/right asymmetry matches the scripted shares', () {
-      expect(byId['lr_asymmetry']!, closeTo(100 * 0.10 / 0.55, 1.0));
+      expect(byId['lr_asymmetry'], closeTo(100 * 0.10 / 0.55, 1.0));
     });
 
     test('RFD and both phase durations are present', () {
       expect(byId['rfd_0_100'], isNotNull);
-      expect(byId['eccentric_duration']!, greaterThan(0));
-      expect(byId['concentric_duration']!, greaterThan(0));
+      expect(byId['eccentric_duration'], greaterThan(0));
+      expect(byId['concentric_duration'], greaterThan(0));
     });
   });
 
