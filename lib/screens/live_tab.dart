@@ -19,6 +19,7 @@ import '../services/feed_health_tracker.dart';
 import '../models/feed_health.dart';
 import '../models/hub_event.dart';
 import '../widgets/feed_health_text.dart';
+import '../services/monitor_pause.dart';
 import '../services/recording_controller.dart';
 import '../services/rig_state.dart';
 import '../widgets/bt_icon.dart';
@@ -96,6 +97,11 @@ class _LiveTabState extends State<LiveTab> {
       return;
     }
     context.read<DataHub>().requestTare();
+  }
+
+  void _onTogglePause() {
+    final pause = context.read<MonitorPause>();
+    pause.paused ? pause.resume() : pause.pause();
   }
 
   Future<void> _onToggleRecord() async {
@@ -179,6 +185,7 @@ class _LiveTabState extends State<LiveTab> {
       (l) => l.connectedDeviceName,
     );
     final recording = context.watch<RecordingController>();
+    final monitorPause = context.watch<MonitorPause>();
     final rig = context.watch<RigState>();
     // read (not watch): LiveStats/graph subscribe to the hub themselves.
     final hub = context.read<DataHub>();
@@ -252,7 +259,9 @@ class _LiveTabState extends State<LiveTab> {
             ActionButtons(
               isRecording: recording.sessionInProgress,
               sessionStartTime: recording.sessionStartTime,
+              isPaused: monitorPause.paused,
               onToggleRecord: _onToggleRecord,
+              onTogglePause: _onTogglePause,
               onTare: _onTare,
               onTareSettings: () => showTareSheet(
                 context,
@@ -761,11 +770,16 @@ class ActionButtons extends StatelessWidget {
 
   final bool isRecording;
 
-  /// The recording's start instant for the STOP readout; null renders plain
-  /// STOP.
+  /// The recording's start instant for the elapsed caption; null renders a
+  /// static 'Recording' caption (the finalization window).
   final DateTime? sessionStartTime;
 
+  /// The monitoring pause: incoming samples are being discarded and the
+  /// buffer is frozen (see `MonitorPause`).
+  final bool isPaused;
+
   final VoidCallback onToggleRecord;
+  final VoidCallback onTogglePause;
   final VoidCallback onTare;
 
   /// Opens the per-channel tare sheet; disabled while recording like TARE.
@@ -774,7 +788,9 @@ class ActionButtons extends StatelessWidget {
   const ActionButtons({
     super.key,
     required this.isRecording,
+    required this.isPaused,
     required this.onToggleRecord,
+    required this.onTogglePause,
     required this.onTare,
     required this.onTareSettings,
     this.sessionStartTime,
@@ -782,33 +798,43 @@ class ActionButtons extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final status = Theme.of(context).extension<StatusColors>()!;
     final taring = context.select<DataHub, bool>((h) => h.taring);
     final startTime = sessionStartTime;
+    // Pause and recording are mutually exclusive: either discards data a
+    // session promised to keep. The disabled state (not a snackbar) is the
+    // refusal — the loud mode control explains why the row is half-dead.
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          FilledButton.icon(
-            onPressed: onToggleRecord,
+          _ModeControl(
+            tooltip: isRecording ? 'Stop recording' : 'Start recording',
             icon: Icon(isRecording ? Icons.stop : Icons.fiber_manual_record),
-            label: isRecording && startTime != null
+            caption: isRecording && startTime != null
                 ? _RecordingElapsedText(startTime: startTime)
-                : Text(isRecording ? 'STOP' : 'REC'),
-            style: FilledButton.styleFrom(
-              backgroundColor: isRecording
-                  ? Theme.of(context).colorScheme.error
-                  : Theme.of(context).colorScheme.primary,
-              foregroundColor: isRecording
-                  ? Theme.of(context).colorScheme.onError
-                  : Theme.of(context).colorScheme.onPrimary,
-            ),
+                : Text(isRecording ? 'Recording' : 'Record'),
+            onPressed: isPaused ? null : onToggleRecord,
+            backgroundColor: isRecording ? cs.error : null,
+            foregroundColor: isRecording ? cs.onError : null,
+          ),
+          _ModeControl(
+            tooltip: isPaused ? 'Resume monitoring' : 'Pause monitoring',
+            icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
+            caption: Text(isPaused ? 'Paused' : 'Monitoring'),
+            onPressed: isRecording ? null : onTogglePause,
+            outlined: !isPaused,
+            backgroundColor: isPaused ? status.warningContainer : null,
+            foregroundColor: isPaused ? status.onWarningContainer : null,
           ),
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
               OutlinedButton.icon(
-                onPressed: isRecording ? null : onTare,
+                onPressed: isRecording || isPaused ? null : onTare,
                 icon: const Icon(Icons.exposure_zero),
                 label: Text(taring ? 'TARING' : 'TARE'),
                 style: OutlinedButton.styleFrom(shape: _splitLeft),
@@ -817,7 +843,7 @@ class ActionButtons extends StatelessWidget {
               Tooltip(
                 message: 'Tare options',
                 child: OutlinedButton(
-                  onPressed: isRecording ? null : onTareSettings,
+                  onPressed: isRecording || isPaused ? null : onTareSettings,
                   style: OutlinedButton.styleFrom(shape: _splitRight),
                   child: const Icon(Icons.tune),
                 ),
@@ -830,8 +856,73 @@ class ActionButtons extends StatelessWidget {
   }
 }
 
-/// The STOP button's live `STOP mm:ss` label; rebuilds only when the whole
-/// second changes.
+/// One toggle-style mode control of the action row: the icon grants the
+/// action, the caption names the current state. Mode controls (record,
+/// monitor pause) use this; momentary actions (TARE) stay plain buttons.
+/// Loud states (recording in flight, monitoring paused) paint filled with
+/// [backgroundColor]; the mutual exclusion guarantees a loud control is
+/// never the disabled one, so styled buttons need no disabled tokens.
+class _ModeControl extends StatelessWidget {
+  const _ModeControl({
+    required this.tooltip,
+    required this.icon,
+    required this.caption,
+    required this.onPressed,
+    this.outlined = false,
+    this.backgroundColor,
+    this.foregroundColor,
+  });
+
+  /// The full verb+object phrase ('Pause monitoring'); also the semantics
+  /// label. Tooltips show even when the button is disabled.
+  final String tooltip;
+  final Widget icon;
+  final Widget caption;
+  final VoidCallback? onPressed;
+
+  /// Quiet presentation (monitoring running normally); loud states are
+  /// filled via [backgroundColor]/[foregroundColor].
+  final bool outlined;
+  final Color? backgroundColor;
+  final Color? foregroundColor;
+
+  @override
+  Widget build(BuildContext context) {
+    final captionStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    );
+    final button = outlined
+        ? IconButton.outlined(
+            onPressed: onPressed,
+            tooltip: tooltip,
+            icon: icon,
+          )
+        : IconButton.filled(
+            onPressed: onPressed,
+            tooltip: tooltip,
+            icon: icon,
+            style: backgroundColor == null
+                ? null
+                : IconButton.styleFrom(
+                    backgroundColor: backgroundColor,
+                    foregroundColor: foregroundColor,
+                  ),
+          );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        button,
+        DefaultTextStyle(
+          style: captionStyle ?? const TextStyle(),
+          child: caption,
+        ),
+      ],
+    );
+  }
+}
+
+/// The recording control's live `mm:ss` caption; rebuilds only when the
+/// whole second changes.
 class _RecordingElapsedText extends StatefulWidget {
   const _RecordingElapsedText({required this.startTime});
 
@@ -873,6 +964,5 @@ class _RecordingElapsedTextState extends State<_RecordingElapsedText>
   }
 
   @override
-  Widget build(BuildContext context) =>
-      Text('STOP ${formatElapsedClock(_elapsed)}');
+  Widget build(BuildContext context) => Text(formatElapsedClock(_elapsed));
 }

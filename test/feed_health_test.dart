@@ -23,20 +23,31 @@ void main() {
     streamStartedAt = null;
   });
 
-  FeedHealth? derive({required bool streaming}) => deriveFeedHealth(
-    streaming: streaming,
-    totalSamples: totalSamples,
-    lastDataAt: lastDataAt,
-    lastMalformedPacketAt: lastMalformedPacketAt,
-    streamStartedAt: streamStartedAt,
-    now: t0,
-    staleAfter: window,
-  );
+  FeedHealth? derive({required bool streaming, bool paused = false}) =>
+      deriveFeedHealth(
+        streaming: streaming,
+        totalSamples: totalSamples,
+        lastDataAt: lastDataAt,
+        lastMalformedPacketAt: lastMalformedPacketAt,
+        streamStartedAt: streamStartedAt,
+        now: t0,
+        staleAfter: window,
+        paused: paused,
+      );
 
   test('undefined (null) when the link is not streaming — even with data', () {
     totalSamples = 100;
     lastDataAt = t0;
     expect(derive(streaming: false), isNull);
+  });
+
+  test('undefined (null) while monitoring is paused — even mid-stall', () {
+    totalSamples = 100;
+    lastDataAt = t0.subtract(const Duration(seconds: 30));
+    expect(derive(streaming: true), FeedHealth.stopped);
+    // The stall is deliberate (the pause discards packets), so nothing to
+    // report.
+    expect(derive(streaming: true, paused: true), isNull);
   });
 
   test('a stream within its first freshness window is "starting"', () {

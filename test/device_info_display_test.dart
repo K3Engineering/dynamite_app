@@ -16,6 +16,7 @@ import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/feed_health_tracker.dart';
+import 'package:dynamite_app/services/monitor_pause.dart';
 import 'package:dynamite_app/services/firmware_catalog.dart';
 import 'package:dynamite_app/services/firmware_update_service.dart';
 import 'helpers/mockble.dart';
@@ -91,7 +92,11 @@ void main() {
     Future<BleLinkManager> pumpApp(WidgetTester tester) async {
       final appEvents = AppEvents();
       final dataHub = DataHub();
-      final decoder = AdcPacketDecoder(dataHub);
+      final monitorPause = MonitorPause(dataHub);
+      final decoder = AdcPacketDecoder(
+        dataHub,
+        isPaused: () => monitorPause.paused,
+      );
       final prefs = await SharedPreferences.getInstance();
       late final BleLinkManager linkManager;
       final rigState = RigState(
@@ -149,6 +154,7 @@ void main() {
             Provider.value(value: feedHealth),
             ChangeNotifierProvider.value(value: dataHub),
             ChangeNotifierProvider.value(value: linkManager),
+            ChangeNotifierProvider.value(value: monitorPause),
             ChangeNotifierProvider.value(value: rigState),
             ChangeNotifierProvider.value(value: recording),
             ChangeNotifierProvider.value(
