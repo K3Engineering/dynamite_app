@@ -3,48 +3,72 @@ import 'dart:math' as math;
 import 'package:meta/meta.dart';
 
 import 'events.dart';
+import 'force_mask.dart';
 import 'plate_series.dart';
 import 'test_result.dart';
 
 // ---------------------------------------------------------------------------
 // Countermovement-jump segmentation
 //
-// Offline over a captured window: find the unweighting onset, the flight
-// phase, and the landing, then split the ground phase at the upward body-
-// weight crossing (eccentric = net force negative, concentric = positive to
-// takeoff). The live runner calls this on the growing window as a display
-// preview; the saved result is recomputed from the frozen recording, so both
-// agree.
+// Offline over a captured window, on the RAW force trace: find the airborne
+// episodes (mask below the flight threshold, bridged over ring excursions and
+// toe-skim fragments), take the first episode long enough to be a flight,
+// then split the ground phase at the impulse-zero point (COM turnaround, the
+// bottom of the dip: net force negative before, positive after). The window
+// starts at the rep's onset (band exit), so a countermovement jump dips from
+// there and a squat jump is already rising.
+//
+// Two properties of this mechanism are worth knowing before tweaking it:
+//  - No first-fragment latch: a short sub-threshold run (ring, a toe skim
+//    mid-dip) is evidence of nothing; the scan moves on to a valid episode.
+//    The old first-contiguous-run rule could lock a rep into permanent
+//    rejection from a single above-threshold sample at flight entry.
+//  - No filtering: thresholds act on raw force, so edges are sample-accurate.
+//    Robustness is all in the time domain (bridge/min lengths in ms). Flight
+//    bridging holds for any ring excursion shorter than the bridge — a ring
+//    excursion lasts at most half a period, so the bridge covers rings down
+//    to roughly 1/(2·bridge) (~8 Hz at 60 ms). We know today's plywood bench
+//    rings at 19-34 Hz; nothing here is tuned to that.
 // ---------------------------------------------------------------------------
 
-/// Tunables of [segmentCmj]. Fractions are of body weight; everything here is
-/// a starting guess to be tuned against real jumps.
+/// Tunables of [segmentCmj]. Durations are in milliseconds, thresholds in
+/// kgf or fractions of body weight, all validated against real jumps in
+/// `profiling/lab/` (see the exploration notes there).
 @immutable
 class JumpParams {
   const JumpParams({
     this.onsetSigmaK = 5,
-    this.onsetMinDropFraction = 0.08,
+    this.onsetFloorKgf = 0.75,
     this.onsetSustainMs = 20,
     this.flightLoadFraction = 0.02,
+    this.flightFloorKgf = 1.0,
+    this.flightBridgeMs = 60,
     this.minFlightMs = 80,
     this.maxFlightMs = 1200,
-    this.minLandingMs = 50,
+    this.landingTailMs = 400,
   });
 
-  /// Onset is force below `bw − k·sigma`.
+  /// Onset is force outside `bw ± max(k·sigma, [onsetFloorKgf])`.
   final double onsetSigmaK;
 
-  /// Onset also requires a drop of at least this fraction of body weight.
-  /// Body-weight noise (heartbeat, sway) can make `k·sigma` a very low bar;
-  /// the floor keeps a foot shift from arming a rep, while a countermovement
-  /// dips far below it.
-  final double onsetMinDropFraction;
+  /// Absolute noise floor for the onset band. Guards a σ→0 baseline (a
+  /// dead-quiet stance would otherwise arm on anything); deliberately NOT a
+  /// fraction of body weight — noise doesn't scale with the athlete.
+  final double onsetFloorKgf;
 
   /// Onset must hold this long.
   final int onsetSustainMs;
 
-  /// Airborne is total force below this fraction of body weight.
+  /// Airborne is total force below this fraction of body weight...
   final double flightLoadFraction;
+
+  /// ...but never below this absolute floor (covers tare drift and light
+  /// athletes, where the fraction would go under the noise).
+  final double flightFloorKgf;
+
+  /// Bridge sub-threshold gaps shorter than this inside a flight episode
+  /// (see the file header).
+  final int flightBridgeMs;
 
   /// Reject a flight shorter than this (no plausible jump).
   final int minFlightMs;
@@ -53,8 +77,10 @@ class JumpParams {
   /// jumped.
   final int maxFlightMs;
 
-  /// Reject a window that ends before this much landing data.
-  final int minLandingMs;
+  /// A rep's analysed window ends this long after touchdown: covers the
+  /// whole landing impact (the peak lands ~100-150 ms in) so landing metrics
+  /// see the event rather than its rising edge.
+  final int landingTailMs;
 }
 
 const JumpParams kJumpParams = JumpParams();
@@ -80,7 +106,7 @@ enum CmjInvalidReason {
   /// Airborne implausibly long: the athlete stepped off.
   steppedOff,
 
-  /// The window ends before the landing settles.
+  /// The window ends before the landing tail is captured.
   incomplete,
 }
 
@@ -113,14 +139,16 @@ final class CmjRejected extends CmjSegment {
 }
 
 /// Phase boundaries as absolute sample indices. `takeoff` is the last ground
-/// contact; flight is `(takeoff, landing)` exclusive. `bwCross` is the upper
-/// body-weight crossing inside the ground phase (the eccentric/concentric
-/// split).
+/// contact; flight is `(takeoff, landing)` exclusive; `landing` is the first
+/// sample back at force. `split` is the eccentric/concentric boundary: the
+/// impulse-zero point where the COM stops descending (net impulse from
+/// [onset] returns to zero), so the eccentric phase covers unweighting AND
+/// braking. A squat jump has no eccentric phase (`split == onset`).
 @immutable
 class CmjPhases {
   const CmjPhases({
     required this.onset,
-    required this.bwCross,
+    required this.split,
     required this.takeoff,
     required this.landing,
     required this.end,
@@ -134,16 +162,16 @@ class CmjPhases {
   static const labelLanding = 'landing';
 
   final int onset;
-  final int bwCross;
+  final int split;
   final int takeoff;
   final int landing;
 
-  /// Exclusive end of the analysed window.
+  /// Exclusive end of the analysed window (`landing` + the landing tail).
   final int end;
   final int sampleRate;
 
-  int get eccentricSamples => bwCross - onset;
-  int get concentricSamples => takeoff - bwCross;
+  int get eccentricSamples => split - onset;
+  int get concentricSamples => takeoff - split;
   int get flightSamples => landing - takeoff - 1;
 
   double get flightSeconds => flightSamples / sampleRate;
@@ -153,8 +181,8 @@ class CmjPhases {
   /// is exactly how a stored rep's [JumpClass] is recovered.
   List<PhaseSpan> get spans => [
     if (eccentricSamples > 0)
-      PhaseSpan(label: labelEccentric, start: onset, end: bwCross),
-    PhaseSpan(label: labelConcentric, start: bwCross, end: takeoff + 1),
+      PhaseSpan(label: labelEccentric, start: onset, end: split),
+    PhaseSpan(label: labelConcentric, start: split, end: takeoff + 1),
     PhaseSpan(label: labelFlight, start: takeoff + 1, end: landing),
     PhaseSpan(label: labelLanding, start: landing, end: end),
   ];
@@ -185,7 +213,7 @@ class CmjPhases {
     final eccentric = span(labelEccentric);
     return CmjPhases(
       onset: eccentric?.start ?? concentric.start,
-      bwCross: eccentric?.end ?? concentric.start,
+      split: eccentric?.end ?? concentric.start,
       takeoff: concentric.end - 1,
       landing: flight.end,
       end: rep.end,
@@ -201,16 +229,44 @@ class CmjPhases {
   JumpContext ctx, {
   JumpParams params = kJumpParams,
 }) {
-  final d = math.max(
-    params.onsetSigmaK * ctx.sigmaKgf,
-    params.onsetMinDropFraction * ctx.bwKgf,
-  );
+  final d = math.max(params.onsetSigmaK * ctx.sigmaKgf, params.onsetFloorKgf);
   return (ctx.bwKgf - d, ctx.bwKgf + d);
 }
 
 /// The unweighting onset threshold in kgf: the lower band edge.
 double onsetThresholdKgf(JumpContext ctx, {JumpParams params = kJumpParams}) =>
     onsetBandKgf(ctx, params: params).$1;
+
+/// The flight threshold in kgf: a body-weight fraction with an absolute
+/// floor.
+double flightThresholdKgf(double bwKgf, {JumpParams params = kJumpParams}) =>
+    math.max(params.flightLoadFraction * bwKgf, params.flightFloorKgf);
+
+/// The eccentric/concentric split: the impulse-zero point. Integrating the
+/// net force from [onset] (where v=0), the COM velocity is most negative at
+/// the minimum of the cumulative sum (the bottom of the dip) and climbs back
+/// through zero where falling turns to rising — the true turnaround. Falls
+/// back to the velocity minimum when the sum never recovers (a window that
+/// isn't a jump; validity is the caller's problem).
+int impulseZeroSplit(PlateWindow w, int onset, int takeoff, double bwKgf) {
+  double net = 0, min = 0;
+  int bottom = onset;
+  final sums = <double>[];
+  for (int i = onset; i <= takeoff; i++) {
+    net += w.forceAt(i) - bwKgf;
+    sums.add(net);
+  }
+  for (int k = 0; k < sums.length; k++) {
+    if (sums[k] < min) {
+      min = sums[k];
+      bottom = k;
+    }
+  }
+  for (int k = bottom; k < sums.length; k++) {
+    if (sums[k] >= 0) return onset + k;
+  }
+  return onset + bottom;
+}
 
 /// Segment [w] into a jump, or explain why not. The window starts at the
 /// rep's band exit (the arming point): a countermovement jump dips from
@@ -221,90 +277,78 @@ CmjSegment segmentCmj(
   JumpParams params = kJumpParams,
 }) {
   final bw = ctx.bwKgf;
-  final sustain = math.max(1, (params.onsetSustainMs * w.sampleRate) ~/ 1000);
+  final sustain = math.max(1, params.onsetSustainMs * w.sampleRate ~/ 1000);
+  final threshold = flightThresholdKgf(bw, params: params);
+  final minFlight = params.minFlightMs * w.sampleRate ~/ 1000;
+  final maxFlight = params.maxFlightMs * w.sampleRate ~/ 1000;
+  final tail = params.landingTailMs * w.sampleRate ~/ 1000;
 
-  final flightThreshold = params.flightLoadFraction * bw;
-  int? flightStart;
-  for (int i = w.start; i < w.end; i++) {
-    if (w.smoothAt(i) < flightThreshold) {
-      flightStart = i;
+  bool airborne(double f) => f < threshold;
+  final episodes = maskedRuns(
+    w,
+    airborne,
+    bridgeSamples: params.flightBridgeMs * w.sampleRate ~/ 1000,
+  );
+  // The first plausible flight wins. Shorter episodes (ring fragments, a toe
+  // skim mid-dip) are skipped, not latched: nothing here can poison the rep.
+  MaskRun? flight;
+  for (final e in episodes) {
+    if (e.length > maxFlight) {
+      return const CmjRejected(CmjInvalidReason.steppedOff);
+    }
+    if (e.length >= minFlight) {
+      flight = e;
       break;
     }
   }
-  if (flightStart == null) {
+  if (flight == null) {
     return const CmjRejected(CmjInvalidReason.noFlight);
   }
-
-  int flightEnd = flightStart;
-  while (flightEnd + 1 < w.end && w.smoothAt(flightEnd + 1) < flightThreshold) {
-    flightEnd++;
-  }
-  // Checked before the ground-phase split so an instant drop to zero (a
-  // step-off, where onset and takeoff coincide) is still caught.
-  final flightSamples = flightEnd - flightStart + 1;
-  if (flightSamples > (params.maxFlightMs * w.sampleRate) ~/ 1000) {
-    return const CmjRejected(CmjInvalidReason.steppedOff);
-  }
-  if (flightSamples < (params.minFlightMs * w.sampleRate) ~/ 1000) {
-    return const CmjRejected(CmjInvalidReason.noFlight);
-  }
-
-  final landing = flightEnd + 1;
-  if (landing >= w.end ||
-      w.end - landing < (params.minLandingMs * w.sampleRate) ~/ 1000) {
+  if (runIsOpen(w, flight, airborne)) {
     return const CmjRejected(CmjInvalidReason.incomplete);
   }
 
-  final takeoff = flightStart - 1;
+  final takeoff = flight.start - 1;
+  final landing = flight.end + 1;
+  final end = landing + tail;
   if (takeoff <= w.start) {
     return const CmjRejected(CmjInvalidReason.noFlight);
+  }
+  if (end > w.end) {
+    return const CmjRejected(CmjInvalidReason.incomplete);
   }
 
   // Classification: a sustained dip inside the ground phase is a
   // countermovement; pushing straight out of the quiet at the window start
   // is a squat jump.
-  final dipOnset = findSustainedBelow(
+  final dip = findSustainedBelow(
     w,
     w.start,
     takeoff,
     onsetThresholdKgf(ctx, params: params),
     sustain,
   );
-  if (dipOnset == null) {
+  if (dip == null) {
     return CmjRep(
       CmjPhases(
         onset: w.start,
-        bwCross: w.start,
+        split: w.start,
         takeoff: takeoff,
         landing: landing,
-        end: w.end,
+        end: end,
         sampleRate: w.sampleRate,
       ),
       JumpClass.squat,
     );
   }
 
-  // Eccentric/concentric split at the upward body-weight crossing: the net
-  // force is negative (COM decelerating upward) before it, positive after.
-  // A force minimum is NOT usable here — force also falls to zero at takeoff.
-  int? bwCross;
-  for (int i = dipOnset + 1; i <= takeoff; i++) {
-    if (w.smoothAt(i) >= bw) {
-      bwCross = i;
-      break;
-    }
-  }
-  if (bwCross == null) {
-    return const CmjRejected(CmjInvalidReason.noFlight);
-  }
-
   return CmjRep(
     CmjPhases(
-      onset: dipOnset,
-      bwCross: bwCross,
+      onset: dip,
+      split: impulseZeroSplit(w, dip, takeoff, bw),
       takeoff: takeoff,
       landing: landing,
-      end: w.end,
+      end: end,
       sampleRate: w.sampleRate,
     ),
     JumpClass.countermovement,

@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
@@ -99,13 +98,6 @@ extension PlateWeightsCoP on PlateWeights {
 
 /// Raw ADC counts for [channel] at absolute sample [index].
 typedef RawSampleAt = double Function(int channel, int index);
-
-/// Width of the moving average that produces the plate's smoothed force
-/// envelope. One ~30 ms boxcar nulls the ~33 Hz mechanical ringing of the
-/// bench plate; jump dynamics live well below that, and a boxcar preserves both
-/// the flight duration (symmetric edge delay) and the net impulse (integral
-/// preserving), so event detection and integration can both run on it.
-const int kPlateSmoothMs = 30;
 
 /// Reads the four corners of one plate into kgf force and CoP.
 ///
@@ -225,13 +217,20 @@ class PlateReader {
 /// A captured window of plate samples: total force and CoP per sample, flat
 /// arrays in absolute sample-index space. Both cold (segmentation and
 /// metrics) and the live preview read the same object.
+///
+/// Everything downstream reads the RAW force: detection robustness is left to
+/// time-domain rules (sustained crossings, mask morphology — see
+/// `force_mask.dart`), because any low-pass envelope both delays edges and
+/// still leaks the plate's ring through its sidelobes. The raw total is also
+/// the integration signal: impulsive metrics need the actual area under the
+/// curve, which a boxcar merely redistributes. The plate's mechanical ring
+/// integrates to ~zero over full cycles, so leaving it in costs little.
 class PlateWindow {
   PlateWindow._({
     required this.start,
     required this.sampleRate,
     required this.geometry,
     required this.totalKgf,
-    required this.smoothKgf,
     required this.leftKgf,
     required this.rightKgf,
     required this.frontKgf,
@@ -249,12 +248,6 @@ class PlateWindow {
 
   /// Total plate force, kgf (raw).
   final Float64List totalKgf;
-
-  /// Causal moving average of [totalKgf] over [kPlateSmoothMs]. This is the
-  /// event-detection and integration signal: the raw force carries the plate's
-  /// ~33 Hz ring, which crosses any threshold many times per flight and would
-  /// fragment every run.
-  final Float64List smoothKgf;
 
   /// Left (top-left + bottom-left) and right (top-right + bottom-right) force
   /// in kgf; their sum is [totalKgf].
@@ -297,20 +290,11 @@ class PlateWindow {
       copX[i] = cop?.$1 ?? double.nan;
       copY[i] = cop?.$2 ?? double.nan;
     }
-    final smooth = Float64List(n);
-    final window = math.max(1, reader.sampleRate * kPlateSmoothMs ~/ 1000);
-    double run = 0;
-    for (int i = 0; i < n; i++) {
-      run += total[i];
-      if (i >= window) run -= total[i - window];
-      smooth[i] = run / math.min(i + 1, window);
-    }
     return PlateWindow._(
       start: start,
       sampleRate: reader.sampleRate,
       geometry: reader.geometry,
       totalKgf: total,
-      smoothKgf: smooth,
       leftKgf: left,
       rightKgf: right,
       frontKgf: front,
@@ -321,9 +305,6 @@ class PlateWindow {
   }
 
   double forceAt(int index) => totalKgf[index - start];
-
-  /// Smoothed total force at [index] (see [smoothKgf]).
-  double smoothAt(int index) => smoothKgf[index - start];
 
   double leftAt(int index) => leftKgf[index - start];
 

@@ -83,14 +83,17 @@ enum TestRunnerCue {
 /// the saved session still gets its analysis attached.
 ///
 /// Rep detection is offline over the growing window: each hub tick re-segments
-/// `[repStart, now]` and finalizes as soon as a complete jump is present. The
-/// saved result is later recomputed from the frozen recording, so both agree.
+/// `[repStart, now]` and finalizes as soon as a complete jump is present
+/// (its landing tail captured). After the last accepted rep the recording
+/// keeps running [_recordTailSeconds] before the automatic stop, so the
+/// session carries the stabilization data too.
 class TestRunnerController extends ChangeNotifier {
   TestRunnerController({
     required this.test,
     required this.person,
     required this.source,
     required this.recorder,
+    this.jumpStyle = TestJumpStyle.auto,
     this.onResult,
   });
 
@@ -102,6 +105,10 @@ class TestRunnerController extends ChangeNotifier {
   final PlateSource source;
   final TestRecorder recorder;
 
+  /// Which jump styles count as reps ([TestJumpStyle.auto] = both). Jump
+  /// battery only; ignored by other families.
+  final TestJumpStyle jumpStyle;
+
   /// Called once when the recording finalizes with valid reps, to persist the
   /// analysis alongside the session. Fire-and-forget: a persistence failure
   /// must not lose the recording.
@@ -112,6 +119,10 @@ class TestRunnerController extends ChangeNotifier {
 
   /// A rep that never produces a jump within this long is discarded.
   static const int _maxJumpMs = 6000;
+
+  /// Recording keeps running this long after the last accepted rep (stabil-
+  /// ization data for the archive), then the run stops automatically.
+  static const int _recordTailSeconds = 3;
 
   TestRunnerPhase phase = TestRunnerPhase.awaitingClear;
 
@@ -207,6 +218,15 @@ class TestRunnerController extends ChangeNotifier {
   bool _started = false;
   bool _stopping = false;
   bool _inTick = false;
+
+  /// Auto-stop target for the recording tail: the source's sample count at
+  /// which an unchanged battery auto-stops. Null until the last rep is
+  /// accepted.
+  int? _stopAfterCount;
+
+  /// End of the last accepted rep (bounds the onset walk-back so a new
+  /// rep's onset can't retreat into the previous one's landing).
+  int? _lastRepEnd;
 
   /// True once the arming condition for the next rep holds: a stable loaded
   /// stance (stance-armed tests) or a quiet empty plate (unloaded-armed).
@@ -511,7 +531,14 @@ class TestRunnerController extends ChangeNotifier {
           _startRecording();
         }
       case TestRunnerPhase.readyForRep:
-        _checkOnset();
+        final stop = _stopAfterCount;
+        if (stop != null) {
+          // Battery finished; just riding out the recording tail. No more
+          // reps are detected even if the athlete jumps again.
+          if (source.totalSamples >= stop) unawaited(stopAndFinish());
+        } else {
+          _checkOnset();
+        }
       case TestRunnerPhase.jumping:
         _advanceJump();
       case TestRunnerPhase.capturing:
@@ -538,6 +565,8 @@ class TestRunnerController extends ChangeNotifier {
         slReps = const [];
         _recordedReps = const [];
         _repStart = null;
+        _stopAfterCount = null;
+        _lastRepEnd = null;
         // start() is synchronous and the hub forwards batches from its tail,
         // so this is the first recorded sample's index in the source's space.
         _recordOrigin = source.totalSamples;
@@ -586,15 +615,16 @@ class TestRunnerController extends ChangeNotifier {
         notifyListeners();
       }
       final bw = bodyWeightKgf!;
+      final threshold = kDjParams.loadFraction * bw;
       final touchdown = findSustainedAbove(
         window,
         window.start,
         window.end,
-        kDjParams.loadFraction * bw,
+        threshold,
         math.max(1, kDjParams.sustainMs * reader.sampleRate ~/ 1000),
       );
       if (touchdown != null) {
-        _repStart = touchdown;
+        _repStart = _runStart(reader, touchdown, (f) => f > threshold);
         _armed = false;
         phase = TestRunnerPhase.jumping;
         _emit(TestRunnerCue.repStarted);
@@ -617,12 +647,31 @@ class TestRunnerController extends ChangeNotifier {
       math.max(1, kJumpParams.onsetSustainMs * reader.sampleRate ~/ 1000),
     );
     if (onset != null) {
-      _repStart = onset;
+      _repStart = _runStart(reader, onset, (f) => f < lower || f > upper);
       _armed = false;
       phase = TestRunnerPhase.jumping;
       _emit(TestRunnerCue.repStarted);
       notifyListeners();
     }
+  }
+
+  /// The true start of the threshold run that contains [detected], walked
+  /// back from a bounded window (see [runStartBack]). Detection scans only
+  /// the trailing 300 ms, so when a rep's movement began just before arming
+  /// (a slow sink, a late tick), the in-window run start can be tens of ms
+  /// late — and worse, batch-dependent. [bound] is the previous rep's end:
+  /// the walk must never retreat into its landing.
+  int _runStart(PlateReader reader, int detected, bool Function(double) holds) {
+    final oldest = math.max(
+      source.oldestSample,
+      _lastRepEnd ?? source.oldestSample,
+    );
+    final w = PlateWindow.capture(
+      reader,
+      math.max(oldest, detected - 2 * reader.sampleRate),
+      detected + 1,
+    );
+    return runStartBack(w, detected, holds, oldest);
   }
 
   /// A quiet empty plate: the arming condition for unloaded-start tests
@@ -704,6 +753,22 @@ class TestRunnerController extends ChangeNotifier {
   }
 
   void _finishRep(PlateWindow window, CmjPhases phases, JumpClass jumpClass) {
+    final accepted = switch (jumpStyle) {
+      TestJumpStyle.auto => true,
+      TestJumpStyle.concentric => jumpClass == JumpClass.squat,
+      TestJumpStyle.eccentric => jumpClass == JumpClass.countermovement,
+    };
+    if (!accepted) {
+      _discard(switch (jumpStyle) {
+        TestJumpStyle.concentric =>
+          'Only no-dip jumps count here — that one had a dip. '
+              'Push straight up.',
+        _ =>
+          'Only dipped jumps count here — that one had no dip. '
+              'Sink first, then jump.',
+      });
+      return;
+    }
     reps = [
       ...reps,
       buildCmjRepResult(
@@ -714,27 +779,27 @@ class TestRunnerController extends ChangeNotifier {
         reps.length + 1,
       ),
     ];
-    _repStart = null;
-    _armed = false;
-    _emit(TestRunnerCue.repAccepted);
-    if (reps.length >= targetReps) {
-      unawaited(stopAndFinish());
-    } else {
-      phase = TestRunnerPhase.readyForRep;
-    }
-    notifyListeners();
+    _repCompleted(phases.end, reps.length);
   }
 
   void _finishDjRep(PlateWindow window, DjPhases phases) {
     djReps = [...djReps, buildDjRepResult(window, phases, djReps.length + 1)];
+    _repCompleted(phases.end, djReps.length);
+  }
+
+  /// Shared bookkeeping for an accepted rep; schedules the recording tail's
+  /// auto-stop once the battery is full instead of stopping immediately.
+  void _repCompleted(int repEnd, int accepted) {
     _repStart = null;
     _armed = false;
+    _lastRepEnd = repEnd;
     _emit(TestRunnerCue.repAccepted);
-    if (djReps.length >= targetReps) {
-      unawaited(stopAndFinish());
-    } else {
-      phase = TestRunnerPhase.readyForRep;
+    final reader = source.read();
+    if (accepted >= targetReps && reader != null) {
+      _stopAfterCount =
+          source.totalSamples + _recordTailSeconds * reader.sampleRate;
     }
+    phase = TestRunnerPhase.readyForRep;
     notifyListeners();
   }
 
@@ -839,7 +904,7 @@ class TestRunnerController extends ChangeNotifier {
           for (int i = start; i + sustain <= source.totalSamples; i++) {
             bool inside = true;
             for (int k = 0; k < sustain; k++) {
-              final f = search.smoothAt(i + k);
+              final f = search.forceAt(i + k);
               if (f < ctx.bandLowKgf || f > ctx.bandHighKgf) {
                 inside = false;
                 break;

@@ -93,8 +93,9 @@ class _FakeRecorder implements TestRecorder {
 }
 
 void main() {
-  /// A 1.5 s empty lead-in followed by three scripted jumps, so the controller
-  /// can zero, weigh, and capture all three reps. [dips] picks each rep's
+  /// A 1.5 s empty lead-in followed by scripted jumps, so the controller
+  /// can zero, weigh, and capture all reps, plus 4 s of standing at the end
+  /// for the after-last-rep recording tail. [dips] picks each rep's
   /// countermovement (true = CMJ, false = squat jump).
   _FakePlateSource buildTrace({
     int startsAt = 0,
@@ -113,6 +114,9 @@ void main() {
       for (int c = 0; c < 4; c++) {
         corners[c].addAll(jump.cornerKgf[c]);
       }
+    }
+    for (final c in corners) {
+      c.addAll(List.filled(4000, 20.0)); // standing tail (80 kgf over 4 cells)
     }
     return _FakePlateSource(corners, startsAt: startsAt);
   }
@@ -200,6 +204,8 @@ void main() {
     for (int c = 0; c < 4; c++) {
       corners[c].addAll(djCorners[c]);
     }
+    // Back on the box; long enough for the after-last-rep recording tail.
+    addConstant(4000, 0);
     final source = _FakePlateSource(corners);
     final ctrl = TestRunnerController(
       test: dropJumpTest,
@@ -443,6 +449,79 @@ void main() {
     }
     // The second pass starts strictly after the first in the recording.
     expect(saved.reps[1].start, greaterThan(saved.reps[0].end));
+  });
+
+  testWidgets('keeps recording for the tail after the last rep', (
+    tester,
+  ) async {
+    final source = buildTrace();
+    final recorder = _FakeRecorder();
+    final ctrl = TestRunnerController(
+      test: jumpBatteryTest,
+      person: 'Test',
+      source: source,
+      recorder: recorder,
+    );
+    addTearDown(ctrl.dispose);
+    ctrl.begin();
+    int? acceptedAt;
+    for (int i = 0; i < source.length; i += 100) {
+      source.advance(100);
+      await tester.pump();
+      if (ctrl.reps.length == 3 && acceptedAt == null) {
+        acceptedAt = source.totalSamples;
+        // Battery full, but the recording rides out the tail.
+        expect(ctrl.phase, TestRunnerPhase.readyForRep);
+        expect(recorder.inProgress, isTrue);
+      }
+    }
+    await tester.pump();
+    expect(ctrl.phase, TestRunnerPhase.summary);
+    expect(acceptedAt, isNotNull);
+    expect(
+      source.totalSamples - acceptedAt!,
+      greaterThanOrEqualTo(2900 /* ~3 s tail at 1 kHz */),
+    );
+  });
+
+  testWidgets('concentric style gate discards dipped jumps', (tester) async {
+    // dip, squat, squat, squat: the dipped first attempt is discarded, the
+    // battery fills on the three squats.
+    final source = buildTrace(dips: [true, false, false, false]);
+    final ctrl = TestRunnerController(
+      test: jumpBatteryTest,
+      person: 'Test',
+      source: source,
+      jumpStyle: TestJumpStyle.concentric,
+      recorder: _FakeRecorder(),
+    );
+    addTearDown(ctrl.dispose);
+    await runToSummary(tester, ctrl, source);
+
+    expect(ctrl.phase, TestRunnerPhase.summary);
+    expect(ctrl.reps, hasLength(3));
+    expect([
+      for (final r in ctrl.reps) r.jumpClass,
+    ], everyElement(JumpClass.squat));
+  });
+
+  testWidgets('eccentric style gate discards no-dip jumps', (tester) async {
+    final source = buildTrace(dips: [false, true, true, true]);
+    final ctrl = TestRunnerController(
+      test: jumpBatteryTest,
+      person: 'Test',
+      source: source,
+      jumpStyle: TestJumpStyle.eccentric,
+      recorder: _FakeRecorder(),
+    );
+    addTearDown(ctrl.dispose);
+    await runToSummary(tester, ctrl, source);
+
+    expect(ctrl.phase, TestRunnerPhase.summary);
+    expect(ctrl.reps, hasLength(3));
+    expect([
+      for (final r in ctrl.reps) r.jumpClass,
+    ], everyElement(JumpClass.countermovement));
   });
 
   testWidgets('persisted phases are session-relative on a shifted source', (

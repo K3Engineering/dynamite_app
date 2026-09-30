@@ -50,10 +50,9 @@ void main() {
     });
 
     test('peak force and landing peak track the scripted profile', () {
-      // Peaks are reported on the smoothed envelope, so the scripted ramp's
-      // corner is rounded by roughly the smoothing window.
-      expect(byId['peak_force']!, closeTo(2.8 * 80, 12));
-      expect(byId['peak_landing_force']!, closeTo(2.4 * 80, 12));
+      // Peaks read the raw force, so the scripted plateaus come out exact.
+      expect(byId['peak_force']!, closeTo(2.8 * 80, 2));
+      expect(byId['peak_landing_force']!, closeTo(2.4 * 80, 2));
     });
 
     test('left/right asymmetry matches the scripted shares', () {
