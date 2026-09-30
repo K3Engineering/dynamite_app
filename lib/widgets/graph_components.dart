@@ -2872,7 +2872,7 @@ class _FftPanePainter extends CustomPainter {
     required this.unit,
   }) : super(repaint: Listenable.merge([data.repaint, ctrl]));
 
-  static const double _topSpace = 14;
+  static const double _topSpace = 18;
   static const double _bottomSpace = 16;
 
   final _FftCache _cache;
@@ -2941,25 +2941,24 @@ class _FftPanePainter extends CustomPainter {
   void _paintSpectrum(Canvas canvas, Size graphSz, _FftResult r) {
     final textColor = colorScheme.onSurface.withAlpha(150);
 
-    // Top band: the transform summary centered (a flush-left tag in this
-    // band reads as chrome of the plot above; centered, it reads as this
-    // pane's title), the unit tag right where the Y axis's unit lives.
+    // The unit tag rides the band above the frame (the Y axis's unit lives
+    // at the right). The transform summary goes inside the frame's
+    // top-left: its 13 pt line box is taller than the band, so up there it
+    // straddled the frame border. The peak readout drops a row below it
+    // (see below), so no two texts share a row by construction.
     final modeTag = labels.prepare(asd ? 'dBFS/√Hz' : 'dBFS', color: textColor);
     final infoTag = labels.prepare(
       'Hann · N=${r.n} · '
       'Δf=${r.binHz.toStringAsFixed(r.binHz < 1 ? 2 : 1)} Hz · '
       '${_formatSpan(r.n / r.fsHz)}',
       color: textColor,
-      maxWidth: graphSz.width - modeTag.longestLine - 16,
-    );
-    canvas.drawParagraph(
-      infoTag,
-      Offset((graphSz.width - infoTag.longestLine) / 2, 2 - _topSpace),
+      maxWidth: graphSz.width - 8,
     );
     canvas.drawParagraph(
       modeTag,
       Offset(graphSz.width - modeTag.longestLine - 4, 2 - _topSpace),
     );
+    canvas.drawParagraph(infoTag, const Offset(4, 2));
 
     final yRange = (
       yMin: r.loDb,
@@ -3081,11 +3080,12 @@ class _FftPanePainter extends CustomPainter {
       '${r.peakDb.toStringAsFixed(0)} dB',
       color: colorScheme.onSurface,
     );
-    // Keep the readout inside the plot on either side of the marker.
+    // Second text row, below the info tag; kept inside the plot on either
+    // side of the marker.
     final lx = px + 4 + peakLabel.longestLine > graphSz.width
         ? px - 4 - peakLabel.longestLine
         : px + 4;
-    canvas.drawParagraph(peakLabel, Offset(lx, 2));
+    canvas.drawParagraph(peakLabel, Offset(lx, 20));
   }
 
   @override
