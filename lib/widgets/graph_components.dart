@@ -905,13 +905,21 @@ class _LabelCache {
 
   /// The laid-out paragraph for [text] in [color], building and caching it on
   /// first use.
-  ui.Paragraph prepare(String text, {Color color = Colors.black}) {
-    final key = '$text|${color.toARGB32()}';
+  ui.Paragraph prepare(
+    String text, {
+    Color color = Colors.black,
+    bool bold = false,
+  }) {
+    final key = '$text|${color.toARGB32()}|$bold';
     if (!_cache.containsKey(key) && _cache.length >= _limit) {
       _clear();
     }
     return _cache.putIfAbsent(key, () {
-      final style = ui.TextStyle(color: color, fontSize: 13);
+      final style = ui.TextStyle(
+        color: color,
+        fontSize: 13,
+        fontWeight: bold ? FontWeight.w600 : FontWeight.normal,
+      );
       final builder =
           ui.ParagraphBuilder(
               ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
@@ -941,7 +949,7 @@ class _LabelCache {
 /// Minimum spacing between axis ticks (logical px): [Size]-based density
 /// instead of a fixed tick count, so wide/tall plots get more labels than a
 /// phone without crowding either.
-const double _kMinXTickPx = 80;
+const double _kMinXTickPx = 48;
 const double _kMinYTickPx = 32;
 
 typedef YAxisRange = ({
@@ -1020,12 +1028,16 @@ void _drawTimeAxis(
       ? 0
       : (-(math.log(step) / math.ln10).floor()).clamp(1, 3);
 
-  void vline(double sec, {required bool labeled}) {
+  void vline(double sec, {required bool labeled, bool major = false}) {
     final xPos = (sec - startSec) * sampleRate * graphSz.width / viewSamples;
     grid.moveTo(xPos, 0);
     grid.lineTo(xPos, graphSz.height);
     if (labeled) {
-      final par = labels.prepare(_fmtTick(sec, decimals), color: textColor);
+      final par = labels.prepare(
+        _fmtTick(sec, decimals),
+        color: textColor,
+        bold: major,
+      );
       canvas.drawParagraph(
         par,
         Offset(xPos - par.longestLine / 2, graphSz.height + 2),
@@ -1033,10 +1045,10 @@ void _drawTimeAxis(
     }
   }
 
-  // Ticks live on the absolute grid k * step, so they hold still while the
-  // window slides over them.
+  // Ticks live on the absolute grid k * step, so they (and the every-5th
+  // major emphasis) hold still while the window slides over them.
   for (int k = (startSec / step).ceil(); k * step < endSec; k++) {
-    vline(k * step, labeled: showLabels);
+    vline(k * step, labeled: showLabels, major: k % 5 == 0);
   }
   if (drawMinor) {
     // Minor lines at half-step offsets; these never coincide with a major.
