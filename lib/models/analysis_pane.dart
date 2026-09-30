@@ -16,6 +16,7 @@ final class AnalysisPaneSelection {
     this.kind,
     this.fftN,
     this.fftAsd = false,
+    this.fftLogX = false,
     this.rmsChannel,
   });
 
@@ -28,6 +29,10 @@ final class AnalysisPaneSelection {
   /// N-invariant noise view), false = plain amplitude (dBFS, the tone view).
   final bool fftAsd;
 
+  /// FFT X-axis scale: true = logarithmic (bin 1 .. Nyquist, DC has no log
+  /// home and drops off the trace), false = linear (0 .. Nyquist).
+  final bool fftLogX;
+
   /// Channel id the RMS pane aggregates (over the window); null = not yet
   /// chosen, the pane asks for a pick. (The FFT and dF/dt panes take the
   /// workspace's channel selection instead of a per-pane one.)
@@ -39,12 +44,14 @@ final class AnalysisPaneSelection {
     Object? kind = _unset,
     Object? fftN = _unset,
     bool? fftAsd,
+    bool? fftLogX,
     Object? rmsChannel = _unset,
   }) {
     return AnalysisPaneSelection(
       kind: identical(kind, _unset) ? this.kind : kind as AnalysisPaneKind?,
       fftN: identical(fftN, _unset) ? this.fftN : fftN as int?,
       fftAsd: fftAsd ?? this.fftAsd,
+      fftLogX: fftLogX ?? this.fftLogX,
       rmsChannel: identical(rmsChannel, _unset)
           ? this.rmsChannel
           : rmsChannel as int?,

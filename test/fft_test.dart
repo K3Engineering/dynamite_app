@@ -32,23 +32,6 @@ void main() {
     });
   });
 
-  group('snapDbRange', () {
-    test('snaps outward to the grid with padding', () {
-      final (lo, hi) = snapDbRange(-123, -45);
-      expect(lo, -130); // floor((-123 - 2) / 10) * 10
-      expect(hi, -40); // ceil((-45 + 2) / 10) * 10
-    });
-
-    test('degenerate input still gets a drawable range', () {
-      // Padding alone separates the snapped ends here; the degenerate guard
-      // only fires when pad == 0.
-      final (lo, hi) = snapDbRange(-220, -220);
-      expect((lo, hi), (-230.0, -210.0));
-      final (lo2, hi2) = snapDbRange(-220, -220, pad: 0);
-      expect(hi2 - lo2, 10);
-    });
-  });
-
   group('Radix2Fft.amplitudeSpectrum', () {
     test('a bin-centered tone reads its true amplitude', () {
       const n = 1024;

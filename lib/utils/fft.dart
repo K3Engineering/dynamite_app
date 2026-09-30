@@ -37,21 +37,6 @@ int? fftWindowN(int spanSamples, int? requestedN) {
   return n < kFftMinN ? null : n;
 }
 
-/// Expand [loDb, hiDb] outward to a [step] dB grid with [pad] of headroom.
-/// Snapped bounds change in discrete steps, so a live spectrum's axis sweeps
-/// in 10 dB jumps instead of jittering every frame.
-(double, double) snapDbRange(
-  double loDb,
-  double hiDb, {
-  double step = 10,
-  double pad = 2,
-}) {
-  final lo = ((loDb - pad) / step).floor() * step;
-  final hi = ((hiDb + pad) / step).ceil() * step;
-  // Degenerate (exact-detent) inputs still get a drawable range.
-  return hi > lo ? (lo, hi) : (lo, lo + step);
-}
-
 /// Radix-2 FFT with a cached Hann window. Instances hold O(n) tables plus two
 /// O(n) scratch buffers, so callers keep one per n instead of rebuilding.
 class Radix2Fft {

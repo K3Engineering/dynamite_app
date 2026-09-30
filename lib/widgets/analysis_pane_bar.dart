@@ -85,7 +85,13 @@ class AnalysisPaneBar extends StatelessWidget {
         runSpacing: 4,
         alignment: WrapAlignment.center,
         crossAxisAlignment: WrapCrossAlignment.center,
-        children: [..._nChips, const _ParamsDivider(), ..._modeChips],
+        children: [
+          ..._nChips,
+          const _ParamsDivider(),
+          ..._modeChips,
+          const _ParamsDivider(),
+          ..._xChips,
+        ],
       ),
       AnalysisPaneKind.rms => _channelDropdown(
         value: sel.rmsChannel,
@@ -121,6 +127,21 @@ class AnalysisPaneBar extends StatelessWidget {
       label: const Text('/√Hz'),
       selected: selection.fftAsd,
       onSelected: (_) => onChanged(selection.copyWith(fftAsd: true)),
+      visualDensity: VisualDensity.compact,
+    ),
+  ];
+
+  List<Widget> get _xChips => [
+    ChoiceChip(
+      label: const Text('lin Hz'),
+      selected: !selection.fftLogX,
+      onSelected: (_) => onChanged(selection.copyWith(fftLogX: false)),
+      visualDensity: VisualDensity.compact,
+    ),
+    ChoiceChip(
+      label: const Text('log Hz'),
+      selected: selection.fftLogX,
+      onSelected: (_) => onChanged(selection.copyWith(fftLogX: true)),
       visualDensity: VisualDensity.compact,
     ),
   ];

@@ -790,6 +790,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             channels: bound,
             requestedN: sel.fftN,
             asd: sel.fftAsd,
+            logX: sel.fftLogX,
             colorScheme: colorScheme,
             labels: _labelCache,
             unit: unit,
@@ -896,9 +897,12 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     final forceFlex = !hasCoords ? (hasPane ? 6 : 10) : (hasPane ? 4 : 6);
     final coordFlex = !hasForce ? (hasPane ? 6 : 10) : (hasPane ? 3 : 4);
     final paneFlex = hasCoords ? 3 : 4;
-    // Time labels ride the bottom-most TIME pane only (the analysis pane
-    // has its own axis).
-    final forceXLabels = !hasCoords && !hasPane;
+    // Time labels ride the bottom-most plot whose x is time. The dF/dt
+    // pane draws its own, so the graphs suppress theirs while it's up;
+    // the FFT/plate/RMS panes have no time axis and leave the labels on
+    // the bottom-most time-series graph.
+    final paneCarriesTime = widget.analysis.kind == AnalysisPaneKind.derivative;
+    final forceXLabels = !hasCoords && !paneCarriesTime;
 
     Widget timeGraph({
       required List<_ConvertedChannel> channels,
@@ -971,7 +975,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                   child: timeGraph(
                     channels: const [],
                     cache: _forceCache,
-                    showXLabels: !hasPane,
+                    showXLabels: !paneCarriesTime,
                   ),
                 ),
               if (hasForce)
@@ -989,7 +993,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                   child: timeGraph(
                     channels: coordChannels,
                     cache: _coordCache,
-                    showXLabels: !hasPane,
+                    showXLabels: !paneCarriesTime,
                   ),
                 ),
               if (_buildAnalysisPane(
@@ -2654,9 +2658,13 @@ class _DerivativeGraphPainter
 // at these sizes, and recompute is throttled by [_FftCache].
 // ---------------------------------------------------------------------------
 
-/// dB floor for bin values before the autorange fold (kills -inf at exact
-/// zeros).
+/// dB floor for individual bin values (kills -inf at exact zeros).
 const double _kFftFloorDb = -220;
+
+/// Fixed bottom of the FFT Y axis (dBFS in amplitude mode, dBFS/√Hz in
+/// density mode) — see the axis-range comment in [_FftCache._compute].
+const double _kFftAxisFloorDb = -160;
+const double _kFftAxisFloorDbAsd = -200;
 
 /// A computed spectrum, ready to draw.
 final class _FftResult {
@@ -2680,7 +2688,7 @@ final class _FftResult {
   /// Per plotted channel: hardware index + dB bins (length n/2 + 1).
   final List<({int channel, Float64List dbBins})> channels;
 
-  /// Snapped display range (10 dB grid, see [snapDbRange]).
+  /// Display range: [loDb] fixed per mode, [hiDb] snapped above the peak.
   final double loDb;
   final double hiDb;
 
@@ -2791,7 +2799,7 @@ class _FftCache {
     final norm = asd ? 1.0 / math.sqrt(fs / n * Radix2Fft.hannEnbwBins) : 1.0;
     final samples = Float64List(n);
     final spectra = <({int channel, Float64List dbBins})>[];
-    double minDb = double.infinity, maxDb = double.negativeInfinity;
+    double maxDb = double.negativeInfinity;
     int peakChannel = channels.first.channel, peakBin = 1;
     double peakDb = double.negativeInfinity;
     for (final bound in channels) {
@@ -2813,7 +2821,6 @@ class _FftCache {
             : math.max(20 * math.log(a) / math.ln10, _kFftFloorDb);
         db[k] = v;
         if (k == 0) continue; // DC excluded from stats (mean-removed)
-        if (v < minDb) minDb = v;
         if (v > maxDb) maxDb = v;
         if (v > peakDb) {
           peakDb = v;
@@ -2823,10 +2830,18 @@ class _FftCache {
       }
       spectra.add((channel: bound.channel, dbBins: db));
     }
-    // The axis bottoms out 140 dB under the peak (≈ the 24-bit converter's
-    // own floor): deeper bins are exact-zero plotting artifacts and would
-    // only stretch the plot.
-    final (lo, hi) = snapDbRange(math.max(minDb, peakDb - 140), maxDb);
+    // Fixed floor per mode (data-independent → the axis can't jitter);
+    // deeper bins clamp onto the bottom frame edge at draw time, reading
+    // as a saturated range rather than disappearing. The √Hz floor sits
+    // lower: the density normalization lifts the noise floor by
+    // 10·log10(1/(binHz·ENBW)), which turns negative (floor sinks) at
+    // small N — ~20 dB down at N = kFftMinN against a fast stream.
+    final lo = asd ? _kFftAxisFloorDbAsd : _kFftAxisFloorDb;
+    // Top snaps up to the 10 dB grid above the loudest bin, so it steps
+    // only when the peak itself moves a detent. +2 dB of headroom, and a
+    // drawable range even for an all-silence transform (maxDb at the
+    // -220 bin floor).
+    final hi = math.max((((maxDb + 2) / 10).ceil() * 10).toDouble(), lo + 10);
     return _FftOk(
       _FftResult(
         n: n,
@@ -2851,6 +2866,7 @@ class _FftPanePainter extends CustomPainter {
     required this.channels,
     required this.requestedN,
     required this.asd,
+    required this.logX,
     required this.colorScheme,
     required this.labels,
     required this.unit,
@@ -2868,6 +2884,10 @@ class _FftPanePainter extends CustomPainter {
   final List<_ConvertedChannel> channels;
   final int? requestedN;
   final bool asd;
+
+  /// X scale. Display-only: the transform result ([_FftCache]) is shared
+  /// between both, so it stays out of the cache key.
+  final bool logX;
   final ColorScheme colorScheme;
   final _LabelCache labels;
   final DisplayUnit unit;
@@ -2921,13 +2941,21 @@ class _FftPanePainter extends CustomPainter {
   void _paintSpectrum(Canvas canvas, Size graphSz, _FftResult r) {
     final textColor = colorScheme.onSurface.withAlpha(150);
 
-    // Header: the transform parameters + mode tag, in the top band.
-    final header = labels.prepare(
-      'N=${r.n} · Δf=${r.binHz.toStringAsFixed(r.binHz < 1 ? 2 : 1)} Hz · Hann',
-      color: textColor,
-    );
-    canvas.drawParagraph(header, const Offset(4, 2 - _topSpace));
+    // Top band: the transform summary centered (a flush-left tag in this
+    // band reads as chrome of the plot above; centered, it reads as this
+    // pane's title), the unit tag right where the Y axis's unit lives.
     final modeTag = labels.prepare(asd ? 'dBFS/√Hz' : 'dBFS', color: textColor);
+    final infoTag = labels.prepare(
+      'Hann · N=${r.n} · '
+      'Δf=${r.binHz.toStringAsFixed(r.binHz < 1 ? 2 : 1)} Hz · '
+      '${_formatSpan(r.n / r.fsHz)}',
+      color: textColor,
+      maxWidth: graphSz.width - modeTag.longestLine - 16,
+    );
+    canvas.drawParagraph(
+      infoTag,
+      Offset((graphSz.width - infoTag.longestLine) / 2, 2 - _topSpace),
+    );
     canvas.drawParagraph(
       modeTag,
       Offset(graphSz.width - modeTag.longestLine - 4, 2 - _topSpace),
@@ -2944,7 +2972,12 @@ class _FftPanePainter extends CustomPainter {
         graphSz.height - (v - r.loDb) * graphSz.height / (r.hiDb - r.loDb);
 
     final fMax = r.fsHz / 2;
-    double freqToX(double f) => f / fMax * graphSz.width;
+    // Log: the axis spans exactly the computed spectrum's non-DC bins
+    // (bin 1 .. Nyquist) — no fmin knob, nothing to clamp.
+    final logMin = math.log(r.binHz), logMax = math.log(fMax);
+    double freqToX(double f) => logX
+        ? (math.log(f) - logMin) / (logMax - logMin) * graphSz.width
+        : f / fMax * graphSz.width;
 
     final grid = Path();
     _drawValueAxis(
@@ -2957,21 +2990,50 @@ class _FftPanePainter extends CustomPainter {
       labels: labels,
       textColor: colorScheme.onSurface,
     );
-    // Frequency grid: ~5 nice ticks, edges skipped (frame already marks them).
-    final step = _decadeStepCeil(fMax / 5);
-    final freqDecimals = step >= 1 ? 0 : 1;
-    for (double f = step; f < fMax; f += step) {
-      final x = freqToX(f);
-      grid.moveTo(x, 0);
-      grid.lineTo(x, graphSz.height);
-      final par = labels.prepare(
-        f.toStringAsFixed(freqDecimals),
-        color: colorScheme.onSurface,
-      );
-      canvas.drawParagraph(
-        par,
-        Offset(x - par.longestLine / 2, graphSz.height + 2),
-      );
+    // Frequency grid. Linear: ~5 nice ticks, edges skipped (the frame
+    // already marks them). Log: labeled decades with unlabeled 2–9 minors;
+    // the span is log10(N/2) ≈ 1.8–4.5 decades, so both always fit.
+    if (logX) {
+      final dMin = logMin / math.ln10, dMax = logMax / math.ln10;
+      for (int d = dMin.floor(); d <= dMax.ceil(); d++) {
+        final decade = math.pow(10, d).toDouble();
+        if (decade >= r.binHz && decade <= fMax) {
+          final x = freqToX(decade);
+          grid.moveTo(x, 0);
+          grid.lineTo(x, graphSz.height);
+          final par = labels.prepare(
+            decade.toStringAsFixed(d < 0 ? -d : 0),
+            color: colorScheme.onSurface,
+          );
+          canvas.drawParagraph(
+            par,
+            Offset(x - par.longestLine / 2, graphSz.height + 2),
+          );
+        }
+        for (int m = 2; m <= 9; m++) {
+          final f = decade * m;
+          if (f < r.binHz || f > fMax) continue;
+          final x = freqToX(f);
+          grid.moveTo(x, 0);
+          grid.lineTo(x, graphSz.height);
+        }
+      }
+    } else {
+      final step = _decadeStepCeil(fMax / 5);
+      final freqDecimals = step >= 1 ? 0 : 1;
+      for (double f = step; f < fMax; f += step) {
+        final x = freqToX(f);
+        grid.moveTo(x, 0);
+        grid.lineTo(x, graphSz.height);
+        final par = labels.prepare(
+          f.toStringAsFixed(freqDecimals),
+          color: colorScheme.onSurface,
+        );
+        canvas.drawParagraph(
+          par,
+          Offset(x - par.longestLine / 2, graphSz.height + 2),
+        );
+      }
     }
     final gridPen = Paint()
       ..color = colorScheme.onSurface.withAlpha(50)
@@ -2979,7 +3041,8 @@ class _FftPanePainter extends CustomPainter {
       ..strokeWidth = 0.2;
     canvas.drawPath(grid, gridPen);
 
-    // Spectra. Bins below the snapped floor run along the bottom edge.
+    // Spectra. Bins below the display floor pile onto the bottom edge —
+    // a saturated range, not lost data.
     final pen = Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.2;
@@ -2994,7 +3057,8 @@ class _FftPanePainter extends CustomPainter {
         },
       );
       final bins = spec.dbBins;
-      for (int k = 0; k < bins.length; k++) {
+      // log(0) undefined: the DC bin has no log home and stays linear-only.
+      for (int k = logX ? 1 : 0; k < bins.length; k++) {
         batcher.add(freqToX(k * r.binHz), valueToY(math.max(bins[k], r.loDb)));
         if (batcher.wouldOverflow(2)) batcher.flush();
       }
