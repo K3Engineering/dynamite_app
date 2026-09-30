@@ -100,7 +100,7 @@ final class MathProfile {
           'kind': 'forcePlate',
           // The corner permutation is the profile's only parameter; the
           // specs are re-derived on load (single source of truth).
-          'corners': plateCorners!,
+          'corners': plateCorners,
         };
 
   /// Strict inverse: anything malformed throws [FormatException] (the
