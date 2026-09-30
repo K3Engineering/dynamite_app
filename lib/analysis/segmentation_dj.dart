@@ -2,7 +2,9 @@ import 'dart:math' as math;
 
 import 'package:meta/meta.dart';
 
+import '../models/graph_data_source.dart';
 import 'events.dart';
+import 'metric_eval.dart';
 import 'plate_series.dart';
 import 'test_result.dart';
 
@@ -128,13 +130,13 @@ class DjPhases {
   TestRep toTestRep(int delta) => TestRep(
     start: touchdown + delta,
     end: end + delta,
-    sampleRate: sampleRate,
     spans: [for (final s in spans) s.shifted(delta)],
   );
 
   /// Rebuild the phase bounds from a persisted [TestRep]'s spans, or null
-  /// when the contact span is missing (not a drop-jump rep).
-  static DjPhases? tryFromSpans(TestRep rep) {
+  /// when the contact span is missing (not a drop-jump rep). [sampleRate]
+  /// is the recording's own (not persisted per rep).
+  static DjPhases? tryFromSpans(TestRep rep, {required int sampleRate}) {
     PhaseSpan? span(String label) {
       for (final s in rep.spans) {
         if (s.label == label) return s;
@@ -150,7 +152,7 @@ class DjPhases {
       takeoff: contact.end - 1,
       landing: flight.end,
       end: rep.end,
-      sampleRate: rep.sampleRate,
+      sampleRate: sampleRate,
     );
   }
 }
@@ -228,52 +230,18 @@ DjSegment segmentDj(
 
 // -- Metrics --
 
-/// One entry in the drop-jump metric table.
-@immutable
-class DjMetricDef {
-  const DjMetricDef({
-    required this.id,
-    required this.label,
-    required this.unit,
-    required this.decimals,
-    required this.compute,
-  });
-
-  final String id;
-  final String label;
-  final String unit;
-  final int decimals;
-
-  final double? Function(PlateWindow w, DjPhases p) compute;
-}
-
-/// A computed metric value; null when not meaningful for this rep.
-@immutable
-class DjMetricValue {
-  const DjMetricValue(this.def, this.value);
-  final DjMetricDef def;
-  final double? value;
-}
-
-/// One evaluated drop jump (shared live / summary / re-opened session).
+/// One evaluated drop jump: its evaluation plus the phase boundaries
+/// (overlays and persistence read those straight off the phases).
 @immutable
 class DjRepResult {
-  const DjRepResult({
-    required this.number,
-    required this.phases,
-    required this.metrics,
-  });
+  const DjRepResult({required this.eval, required this.phases});
 
-  final int number;
+  final RepEvaluation eval;
   final DjPhases phases;
-  final List<DjMetricValue> metrics;
 
-  double? metric(String id) {
-    for (final v in metrics) {
-      if (v.def.id == id) return v.value;
-    }
-    return null;
-  }
+  int get number => eval.number;
+
+  double? metric(String id) => eval.metric(id);
 }
 
 /// Standard gravity for the flight-time height (same constant as the jump
@@ -289,36 +257,36 @@ double _peakRange(PlateWindow w, int start, int end) {
 }
 
 /// The drop-jump metric table, in display order.
-final List<DjMetricDef> djMetrics = List.unmodifiable([
-  const DjMetricDef(
+final List<MetricDef<DjPhases>> djMetrics = List.unmodifiable([
+  const MetricDef<DjPhases>(
     id: 'height_flight',
     label: 'Jump height (flight)',
     unit: 'm',
     decimals: 3,
     compute: _djHeight,
   ),
-  const DjMetricDef(
+  const MetricDef<DjPhases>(
     id: 'rsi',
     label: 'RSI (height / contact)',
-    unit: '',
+    unit: 'm/s',
     decimals: 2,
     compute: _rsi,
   ),
-  DjMetricDef(
+  MetricDef<DjPhases>(
     id: 'contact_time',
     label: 'Contact time',
     unit: 'ms',
     decimals: 0,
     compute: (w, p) => p.contactSamples / p.sampleRate * 1000,
   ),
-  DjMetricDef(
+  MetricDef<DjPhases>(
     id: 'peak_force',
     label: 'Peak force (contact)',
     unit: 'kgf',
     decimals: 1,
     compute: (w, p) => _peakRange(w, p.touchdown, p.takeoff),
   ),
-  DjMetricDef(
+  MetricDef<DjPhases>(
     id: 'peak_landing_force',
     label: 'Peak force (landing)',
     unit: 'kgf',
@@ -337,7 +305,38 @@ double? _rsi(PlateWindow w, DjPhases p) {
   return _djHeight(w, p) / contactS;
 }
 
-/// Evaluate every metric in [djMetrics] for one rep.
-List<DjMetricValue> evaluateDjMetrics(PlateWindow w, DjPhases p) => [
-  for (final def in djMetrics) DjMetricValue(def, def.compute(w, p)),
-];
+/// Evaluate one rep: phases plus every metric in [djMetrics].
+DjRepResult buildDjRepResult(PlateWindow w, DjPhases phases, int number) =>
+    DjRepResult(
+      eval: RepEvaluation(
+        number: number,
+        start: phases.touchdown,
+        end: phases.end,
+        values: evaluateMetrics(w, djMetrics, phases),
+      ),
+      phases: phases,
+    );
+
+/// Recompute every rep's metrics for [result] against a loaded recording.
+/// Empty when the plate can't be read or a stored window falls outside it.
+List<DjRepResult> evaluateDjResult(TestResult result, GraphDataSource data) {
+  final reader = PlateReader.tryForData(data);
+  if (reader == null) return const [];
+  final reps = <DjRepResult>[];
+  for (int i = 0; i < result.reps.length; i++) {
+    final rep = result.reps[i];
+    final phases = DjPhases.tryFromSpans(rep, sampleRate: data.sampleRate);
+    if (phases == null) continue;
+    if (rep.start < data.oldestSample || rep.end > data.totalSamples) {
+      continue;
+    }
+    reps.add(
+      buildDjRepResult(
+        PlateWindow.capture(reader, rep.start, rep.end),
+        phases,
+        i + 1,
+      ),
+    );
+  }
+  return reps;
+}

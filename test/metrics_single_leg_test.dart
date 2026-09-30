@@ -99,7 +99,7 @@ void main() {
         'Left leg',
         1,
       );
-      final m = {for (final v in rep.values) v.def.id: v.value};
+      final m = {for (final v in rep.eval.values) v.def.id: v.value};
       expect(m['hold_duration']!, closeTo(8, 0.01));
       expect(m['stance_load']!, closeTo(100, 0.5));
     });

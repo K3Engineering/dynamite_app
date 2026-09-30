@@ -1,14 +1,15 @@
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/analysis/events.dart';
+import 'package:dynamite_app/analysis/metric_eval.dart';
 import 'package:dynamite_app/analysis/metrics.dart';
 import 'package:dynamite_app/analysis/segmentation_cmj.dart';
 
 import 'helpers/synthetic_plate.dart';
 
 void main() {
-  group('evaluateCmjMetrics', () {
-    late List<CmjMetricValue> values;
+  group('jump metrics', () {
+    late List<MetricValue> values;
     late Map<String, double?> byId;
 
     setUp(() {
@@ -18,7 +19,10 @@ void main() {
       final seg =
           segmentCmj(window, JumpContext.fromBaseline(baseline)) as CmjRep;
       final ctx = CmjContext(bwKgf: baseline.meanKgf);
-      values = evaluateCmjMetrics(window, seg.phases, ctx);
+      values = evaluateMetrics(window, cmjMetrics, (
+        phases: seg.phases,
+        ctx: ctx,
+      ));
       byId = {for (final v in values) v.def.id: v.value};
     });
 
@@ -71,11 +75,10 @@ void main() {
       final rep =
           segmentCmj(window, JumpContext.fromBaseline(baseline)) as CmjRep;
       final byId = {
-        for (final v in evaluateCmjMetrics(
-          window,
-          rep.phases,
-          CmjContext(bwKgf: baseline.meanKgf),
-        ))
+        for (final v in evaluateMetrics(window, cmjMetrics, (
+          phases: rep.phases,
+          ctx: CmjContext(bwKgf: baseline.meanKgf),
+        )))
           v.def.id: v.value,
       };
       expect(byId['eccentric_duration'], isNull);
@@ -92,15 +95,12 @@ void main() {
       final baseline = estimateBaseline(window, 0, jump.quietEnd)!;
       final rep =
           segmentCmj(window, JumpContext.fromBaseline(baseline)) as CmjRep;
-      return CmjRepResult(
-        number: number,
-        jumpClass: rep.jumpClass,
-        phases: rep.phases,
-        metrics: evaluateCmjMetrics(
-          window,
-          rep.phases,
-          CmjContext(bwKgf: baseline.meanKgf),
-        ),
+      return buildCmjRepResult(
+        window,
+        rep.phases,
+        rep.jumpClass,
+        CmjContext(bwKgf: baseline.meanKgf),
+        number,
       );
     }
 
