@@ -2,8 +2,11 @@ import 'dart:math' as math;
 
 import 'package:meta/meta.dart';
 
+import '../models/graph_data_source.dart';
+import 'metric_eval.dart';
 import 'plate_series.dart';
 import 'segmentation_cmj.dart';
+import 'test_result.dart';
 
 // ---------------------------------------------------------------------------
 // CMJ metric registry
@@ -27,64 +30,28 @@ class CmjContext {
   final double gravity;
 }
 
-typedef CmjMetricFn =
-    double? Function(PlateWindow w, CmjPhases p, CmjContext c);
+/// Evaluation context of the jump metrics: the segmented phases plus the
+/// baseline facts.
+typedef CmjMetricEnv = ({CmjPhases phases, CmjContext ctx});
 
-/// One entry in the CMJ metric table.
-@immutable
-class CmjMetricDef {
-  const CmjMetricDef({
-    required this.id,
-    required this.label,
-    required this.unit,
-    required this.decimals,
-    required this.compute,
-  });
-
-  final String id;
-  final String label;
-
-  /// Display unit symbol; empty for a dimensionless value.
-  final String unit;
-
-  /// Digits to show.
-  final int decimals;
-
-  final CmjMetricFn compute;
-}
-
-/// A computed metric value; null when the metric is not meaningful for this
-/// rep (renders as a dash).
-@immutable
-class CmjMetricValue {
-  const CmjMetricValue(this.def, this.value);
-  final CmjMetricDef def;
-  final double? value;
-}
-
-/// One evaluated rep: its 1-based number, its classification, its phase
-/// boundaries, and every metric value. Shared by the live runner, the test
-/// summary, and a re-opened session.
+/// One evaluated rep: its evaluation (number, class label, window, metric
+/// values), its classification, and its phase boundaries (overlays and
+/// persistence read those straight off the phases).
 @immutable
 class CmjRepResult {
   const CmjRepResult({
-    required this.number,
+    required this.eval,
     required this.jumpClass,
     required this.phases,
-    required this.metrics,
   });
 
-  final int number;
+  final RepEvaluation eval;
   final JumpClass jumpClass;
   final CmjPhases phases;
-  final List<CmjMetricValue> metrics;
 
-  double? metric(String id) {
-    for (final v in metrics) {
-      if (v.def.id == id) return v.value;
-    }
-    return null;
-  }
+  int get number => eval.number;
+
+  double? metric(String id) => eval.metric(id);
 }
 
 /// Class label for display ("CMJ" / "SJ").
@@ -117,114 +84,159 @@ double? eccentricUtilizationRatio(List<CmjRepResult> reps) {
   return cmj / sj;
 }
 
-/// The CMJ metric table, in display order.
-final List<CmjMetricDef> cmjMetrics = List.unmodifiable([
-  CmjMetricDef(
+/// The jump metric table, in display order.
+final List<MetricDef<CmjMetricEnv>> cmjMetrics = List.unmodifiable([
+  MetricDef<CmjMetricEnv>(
     id: 'height_flight',
     label: 'Jump height (flight)',
     unit: 'm',
     decimals: 3,
-    compute: (w, p, c) {
-      final t = p.flightSeconds;
-      return c.gravity * t * t / 8;
+    compute: (w, e) {
+      final t = e.phases.flightSeconds;
+      return e.ctx.gravity * t * t / 8;
     },
   ),
-  CmjMetricDef(
+  MetricDef<CmjMetricEnv>(
     id: 'height_impulse',
     label: 'Jump height (impulse)',
     unit: 'm',
     decimals: 3,
-    compute: (w, p, c) {
-      final v = _takeoffVelocity(w, p, c);
-      return v * v / (2 * c.gravity);
+    compute: (w, e) {
+      final v = _takeoffVelocity(w, e.phases, e.ctx);
+      return v * v / (2 * e.ctx.gravity);
     },
   ),
-  CmjMetricDef(
+  MetricDef<CmjMetricEnv>(
     id: 'height_delta',
     label: 'Height Δ (impulse − flight)',
     unit: 'cm',
     decimals: 1,
-    compute: (w, p, c) {
-      final v = _takeoffVelocity(w, p, c);
-      final impulse = v * v / (2 * c.gravity);
-      final flight = c.gravity * p.flightSeconds * p.flightSeconds / 8;
+    compute: (w, e) {
+      final v = _takeoffVelocity(w, e.phases, e.ctx);
+      final impulse = v * v / (2 * e.ctx.gravity);
+      final flight =
+          e.ctx.gravity * e.phases.flightSeconds * e.phases.flightSeconds / 8;
       return (impulse - flight) * 100;
     },
   ),
-  const CmjMetricDef(
+  MetricDef<CmjMetricEnv>(
     id: 'takeoff_velocity',
     label: 'Takeoff velocity',
     unit: 'm/s',
     decimals: 2,
-    compute: _takeoffVelocity,
+    compute: (w, e) => _takeoffVelocity(w, e.phases, e.ctx),
   ),
-  CmjMetricDef(
+  MetricDef<CmjMetricEnv>(
     id: 'flight_time',
     label: 'Flight time',
     unit: 'ms',
     decimals: 0,
-    compute: (w, p, c) => p.flightSeconds * 1000,
+    compute: (w, e) => e.phases.flightSeconds * 1000,
   ),
-  CmjMetricDef(
+  MetricDef<CmjMetricEnv>(
     id: 'eccentric_duration',
     label: 'Eccentric duration',
     unit: 'ms',
     decimals: 0,
     // A squat jump has no eccentric phase: dash, not zero.
-    compute: (w, p, c) => p.eccentricSamples == 0
+    compute: (w, e) => e.phases.eccentricSamples == 0
         ? null
-        : p.eccentricSamples / p.sampleRate * 1000,
+        : e.phases.eccentricSamples / e.phases.sampleRate * 1000,
   ),
-  CmjMetricDef(
+  MetricDef<CmjMetricEnv>(
     id: 'concentric_duration',
     label: 'Concentric duration',
     unit: 'ms',
     decimals: 0,
-    compute: (w, p, c) => p.concentricSamples / p.sampleRate * 1000,
+    compute: (w, e) => e.phases.concentricSamples / e.phases.sampleRate * 1000,
   ),
-  CmjMetricDef(
+  MetricDef<CmjMetricEnv>(
     id: 'peak_force',
     label: 'Peak force',
     unit: 'kgf',
     decimals: 1,
-    compute: (w, p, c) => _peak(w, p.onset, p.takeoff),
+    compute: (w, e) => _peak(w, e.phases.onset, e.phases.takeoff),
   ),
-  CmjMetricDef(
+  MetricDef<CmjMetricEnv>(
     id: 'peak_landing_force',
     label: 'Peak landing force',
     unit: 'kgf',
     decimals: 1,
-    compute: (w, p, c) => _peak(w, p.landing, p.end - 1),
+    compute: (w, e) => _peak(w, e.phases.landing, e.phases.end - 1),
   ),
-  CmjMetricDef(
+  MetricDef<CmjMetricEnv>(
     id: 'propulsion_impulse',
     label: 'Net propulsion impulse',
     unit: 'kgf·s',
     decimals: 2,
-    compute: (w, p, c) => _netImpulse(w, p.onset, p.takeoff, c.bwKgf),
+    compute: (w, e) =>
+        _netImpulse(w, e.phases.onset, e.phases.takeoff, e.ctx.bwKgf),
   ),
-  const CmjMetricDef(
+  MetricDef<CmjMetricEnv>(
     id: 'rfd_0_100',
     label: 'RFD (0–100 ms)',
     unit: 'kgf/s',
     decimals: 0,
-    compute: _rfd100,
+    compute: (w, e) => _rfd100(w, e.phases),
   ),
-  const CmjMetricDef(
+  MetricDef<CmjMetricEnv>(
     id: 'lr_asymmetry',
     label: 'L/R asymmetry',
     unit: '%',
     decimals: 1,
-    compute: _lrAsymmetry,
+    compute: (w, e) => _lrAsymmetry(w, e.phases),
   ),
 ]);
 
-/// Evaluate every metric in [cmjMetrics] for one rep.
-List<CmjMetricValue> evaluateCmjMetrics(
+/// Evaluate one rep: phases, class, and every metric in [cmjMetrics].
+CmjRepResult buildCmjRepResult(
   PlateWindow w,
-  CmjPhases p,
-  CmjContext c,
-) => [for (final def in cmjMetrics) CmjMetricValue(def, def.compute(w, p, c))];
+  CmjPhases phases,
+  JumpClass jumpClass,
+  CmjContext ctx,
+  int number,
+) => CmjRepResult(
+  eval: RepEvaluation(
+    number: number,
+    label: jumpClassLabel(jumpClass),
+    start: phases.onset,
+    end: phases.end,
+    values: evaluateMetrics(w, cmjMetrics, (phases: phases, ctx: ctx)),
+  ),
+  jumpClass: jumpClass,
+  phases: phases,
+);
+
+/// Recompute every rep's metrics for [result] against a loaded recording.
+/// Empty when the plate can't be read (no plate profile, missing
+/// calibration/cells) or a stored window falls outside the recording.
+List<CmjRepResult> evaluateJumpResult(TestResult result, GraphDataSource data) {
+  final reader = PlateReader.tryForData(data);
+  if (reader == null) return const [];
+  final reps = <CmjRepResult>[];
+  for (int i = 0; i < result.reps.length; i++) {
+    final rep = result.reps[i];
+    final phases = CmjPhases.tryFromSpans(rep, sampleRate: data.sampleRate);
+    if (phases == null) continue;
+    if (rep.start < data.oldestSample || rep.end > data.totalSamples) {
+      continue;
+    }
+    final window = PlateWindow.capture(reader, rep.start, rep.end);
+    reps.add(
+      buildCmjRepResult(
+        window,
+        phases,
+        // The class is a fact of the persisted spans (see [CmjPhases.spans]).
+        phases.eccentricSamples > 0
+            ? JumpClass.countermovement
+            : JumpClass.squat,
+        CmjContext(bwKgf: result.bodyWeightKgf),
+        i + 1,
+      ),
+    );
+  }
+  return reps;
+}
 
 /// COM velocity at takeoff (m/s): impulse-momentum of the net force from the
 /// quiet onset, seeded at rest. Below body weight the net force is negative
@@ -260,7 +272,7 @@ double _netImpulse(PlateWindow w, int start, int end, double bw) {
 
 /// Rate of force development over the first 100 ms of the concentric phase,
 /// or null when the concentric phase is shorter than the window.
-double? _rfd100(PlateWindow w, CmjPhases p, CmjContext c) {
+double? _rfd100(PlateWindow w, CmjPhases p) {
   final offset = (0.1 * w.sampleRate).round();
   final i1 = p.bwCross + offset;
   if (i1 > p.takeoff) return null;
@@ -269,7 +281,7 @@ double? _rfd100(PlateWindow w, CmjPhases p, CmjContext c) {
 
 /// Left/right asymmetry of the propulsive load: `|L − R| / max(L, R)` as a
 /// percentage, from the force integral over the ground phase.
-double? _lrAsymmetry(PlateWindow w, CmjPhases p, CmjContext c) {
+double? _lrAsymmetry(PlateWindow w, CmjPhases p) {
   double left = 0, right = 0;
   for (int i = p.onset; i <= p.takeoff; i++) {
     left += w.leftAt(i);

@@ -91,7 +91,7 @@ void main() {
       const ctx = GaitContext(bwKgf: bw);
       final verdict = locateGaitContact(firstPassWindow(walk), ctx);
       pass = buildGaitPassResult(reader, verdict as GaitPass, 1, ctx);
-      m = {for (final v in pass.values) v.def.id: v.value};
+      m = {for (final v in pass.eval.values) v.def.id: v.value};
     });
 
     test('contact time tracks the scripted contact', () {

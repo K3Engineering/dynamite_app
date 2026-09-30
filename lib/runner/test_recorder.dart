@@ -12,6 +12,12 @@ abstract interface class TestRecorder {
   bool get inProgress;
   Listenable get changes;
 
+  /// Outcome of the most recent finalized stop, whoever triggered it
+  /// (the runner, Live's STOP, or an automatic stop). Null while the first
+  /// recording is still running or was just started; observers of an
+  /// external stop read this to learn the session's fate.
+  TestRecorderStopResult? get lastStop;
+
   TestRecorderStartResult start(String name);
   Future<TestRecorderStopResult> stop();
 }
@@ -46,8 +52,20 @@ final class TestRecorderNothingRecorded extends TestRecorderStopResult {
 }
 
 final class TestRecorderFailed extends TestRecorderStopResult {
-  const TestRecorderFailed(this.error);
+  const TestRecorderFailed(this.error, {this.sessionId});
+
   final Object error;
+
+  /// Set when data had reached storage before the failure — the session
+  /// exists on disk, possibly truncated (lists as interrupted).
+  final String? sessionId;
+}
+
+/// [stop] found no recording to stop: a stop the runner didn't start is
+/// already finalizing (a storage-error auto-stop, or a race with an external
+/// stop). The caller waits for [inProgress] to clear and reads [lastStop].
+final class TestRecorderAlreadyFinalizing extends TestRecorderStopResult {
+  const TestRecorderAlreadyFinalizing();
 }
 
 /// The production adapter: one test run owns the app's recording lifecycle.
@@ -96,16 +114,25 @@ class RecordingTestRecorder implements TestRecorder {
   }
 
   @override
-  Future<TestRecorderStopResult> stop() async {
-    final result = await _recording.stopSession();
-    return switch (result) {
-      StopSessionSaved(:final sessionId, :final name) => TestRecorderSaved(
-        sessionId,
-        name,
-      ),
-      StopSessionNothingRecorded() => const TestRecorderNothingRecorded(),
-      StopSessionFailed(:final error) => TestRecorderFailed(error),
-      StopSessionRefused() => const TestRecorderNothingRecorded(),
-    };
-  }
+  TestRecorderStopResult? get lastStop => switch (_recording.lastStopResult) {
+    null => null,
+    final result => _mapStop(result),
+  };
+
+  TestRecorderStopResult _mapStop(StopSessionResult result) => switch (result) {
+    StopSessionSaved(:final sessionId, :final name) => TestRecorderSaved(
+      sessionId,
+      name,
+    ),
+    StopSessionNothingRecorded() => const TestRecorderNothingRecorded(),
+    StopSessionFailed(:final error, :final sessionId) => TestRecorderFailed(
+      error,
+      sessionId: sessionId,
+    ),
+    StopSessionRefused() => const TestRecorderAlreadyFinalizing(),
+  };
+
+  @override
+  Future<TestRecorderStopResult> stop() async =>
+      _mapStop(await _recording.stopSession());
 }

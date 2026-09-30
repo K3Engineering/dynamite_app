@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/analysis/metric_eval.dart';
 import 'package:dynamite_app/analysis/plate_series.dart';
 import 'package:dynamite_app/analysis/segmentation_dj.dart';
 
@@ -89,7 +90,7 @@ void main() {
         end: 1400,
         sampleRate: 1000,
       );
-      final restored = DjPhases.tryFromSpans(p.toTestRep(0))!;
+      final restored = DjPhases.tryFromSpans(p.toTestRep(0), sampleRate: 1000)!;
       expect(restored.touchdown, p.touchdown);
       expect(restored.takeoff, p.takeoff);
       expect(restored.landing, p.landing);
@@ -110,8 +111,9 @@ void main() {
       );
       final p = (seg as DjRep).phases;
       m = {
-        for (final v in evaluateDjMetrics(
+        for (final v in evaluateMetrics(
           PlateWindow.capture(reader, p.touchdown, p.end),
+          djMetrics,
           p,
         ))
           v.def.id: v.value,

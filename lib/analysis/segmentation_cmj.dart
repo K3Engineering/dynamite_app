@@ -164,14 +164,14 @@ class CmjPhases {
   TestRep toTestRep(int delta) => TestRep(
     start: onset + delta,
     end: end + delta,
-    sampleRate: sampleRate,
     spans: [for (final s in spans) s.shifted(delta)],
   );
 
   /// Rebuild the phase bounds from a persisted [TestRep]'s spans, or null
   /// when any expected span is missing (not a jump rep). No eccentric span
-  /// means a squat jump: the whole ground phase is concentric.
-  static CmjPhases? tryFromSpans(TestRep rep) {
+  /// means a squat jump: the whole ground phase is concentric. [sampleRate]
+  /// is the recording's own (not persisted per rep).
+  static CmjPhases? tryFromSpans(TestRep rep, {required int sampleRate}) {
     PhaseSpan? span(String label) {
       for (final s in rep.spans) {
         if (s.label == label) return s;
@@ -189,7 +189,7 @@ class CmjPhases {
       takeoff: concentric.end - 1,
       landing: flight.end,
       end: rep.end,
-      sampleRate: rep.sampleRate,
+      sampleRate: sampleRate,
     );
   }
 }

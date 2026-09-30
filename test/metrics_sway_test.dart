@@ -12,7 +12,7 @@ void main() {
   const halfL = 304.8;
 
   Map<String, double?> byId(SwayRepResult rep) => {
-    for (final v in rep.values) v.def.id: v.value,
+    for (final v in rep.eval.values) v.def.id: v.value,
   };
 
   group('linear CoP ramp', () {

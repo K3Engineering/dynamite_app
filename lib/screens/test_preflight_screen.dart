@@ -63,6 +63,21 @@ class _TestPreflightScreenState extends State<TestPreflightScreen> {
               ),
             ),
           const SizedBox(height: 20),
+          Text('How the run goes', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
+          for (final line in _flowLines(def))
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.circle, size: 6),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(line)),
+                ],
+              ),
+            ),
+          const SizedBox(height: 20),
           TextField(
             controller: _person,
             textCapitalization: TextCapitalization.words,
@@ -100,3 +115,23 @@ class _TestPreflightScreenState extends State<TestPreflightScreen> {
     );
   }
 }
+
+/// What the runner will ask of the subject, in order — the zeroing and
+/// weigh-in choreography the per-test instructions don't cover.
+List<String> _flowLines(TestDef def) => [
+  'Step off: the plate zeroes itself.',
+  switch ((def.mold, def.arming)) {
+    (TestMold.repCount, TestArming.unloaded) =>
+      'Step on and stand still for the weigh-in, then move to the box. '
+          'Each landing on the plate is a rep.',
+    (TestMold.repCount, _) =>
+      'Step on and stand still for the weigh-in. Jump when told, and stand '
+          'still between reps — that re-arms the next one.',
+    (TestMold.timedCapture, _) =>
+      'Step on and stand still for the weigh-in. The windows then run back '
+          'to back; a beep marks each change.',
+    (TestMold.freePass, _) =>
+      'Step on and stand still for the weigh-in, then step off and start '
+          'walking by. Press "Stop and save" when done.',
+  },
+];

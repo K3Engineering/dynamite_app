@@ -6,11 +6,16 @@ import 'package:material_ui/material_ui.dart';
 class MetricGridRow {
   const MetricGridRow({
     required this.label,
+    this.unit = '',
     required this.decimals,
     required this.values,
   });
 
   final String label;
+
+  /// Display unit symbol, appended to the label; empty for a dimensionless
+  /// value.
+  final String unit;
   final int decimals;
   final List<double?> values;
 }
@@ -50,7 +55,10 @@ class MetricGrid extends StatelessWidget {
             children: [
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text(row.label, style: theme.textTheme.bodySmall),
+                child: Text(
+                  row.unit.isEmpty ? row.label : '${row.label} (${row.unit})',
+                  style: theme.textTheme.bodySmall,
+                ),
               ),
               for (final v in row.values) _cell(context, row.decimals, v),
             ],
