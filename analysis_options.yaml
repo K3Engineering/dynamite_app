@@ -40,15 +40,14 @@ linter:
     unawaited_futures: true
     discarded_futures: true
     unnecessary_await_in_return: true
-    await_only_futures: true
-    use_build_context_synchronously: true
     prefer_const_constructors: true
     prefer_const_declarations: true
-    prefer_const_constructors_in_immutables: true
     prefer_const_literals_to_create_immutables: true
-    prefer_final_fields: true
     prefer_final_locals: true
     prefer_final_in_for_each: true
+    # parameter_assignments (above) already bans reassigning parameters, so
+    # final would add no protection; enabling flags ~2.1k declarations
+    # (every method/override/callback parameter) for pure style.
     #prefer_final_parameters: true
     avoid_dynamic_calls: true
     cancel_subscriptions: true
@@ -59,15 +58,10 @@ linter:
     unreachable_from_main: true
     always_declare_return_types: true
     parameter_assignments: true
-    prefer_function_declarations_over_variables: true
     sized_box_shrink_expand: true
     unnecessary_lambdas: true
-    unnecessary_late: true
-    avoid_unnecessary_containers: true
-    strict_top_level_inference: true
     type_annotate_public_apis: true
     document_ignores: true
-    depend_on_referenced_packages: true
     deprecated_member_use_from_same_package: true
     throw_in_finally: true
     unnecessary_breaks: true
@@ -75,18 +69,14 @@ linter:
     literal_only_boolean_expressions: true
     switch_on_type: true
     implicit_reopen: true
-    null_check_on_nullable_type_parameter: true
     tighten_type_of_initializing_formals: true
-    type_literal_in_constant_pattern: true
     prefer_null_aware_method_calls: true
     avoid_annotating_with_dynamic: true
     conditional_uri_does_not_exist: true
     no_runtimeType_toString: true
-    valid_regexps: true
     use_enums: true
     unnecessary_library_directive: true
     missing_code_block_language_in_doc_comment: true
-    unintended_html_in_doc_comment: true
     avoid_equals_and_hash_code_on_mutable_classes: true
     noop_primitive_operations: true
     unnecessary_async: true
@@ -95,6 +85,25 @@ linter:
     unnecessary_null_checks: true
     no_self_assignments: true
     require_trailing_commas: true
+
+    # Enabled by proxy via package:flutter_lints (core+recommended at
+    # flutter_lints 6.0.0 / lints 6.1.0). Listed so the effective set is
+    # visible in one place; re-check on flutter_lints bumps, since rules
+    # move between sets over time (e.g. switch_on_type only entered core
+    # after lints 6.1.0).
+    #   await_only_futures
+    #   avoid_unnecessary_containers
+    #   depend_on_referenced_packages
+    #   null_check_on_nullable_type_parameter
+    #   prefer_const_constructors_in_immutables
+    #   prefer_final_fields
+    #   prefer_function_declarations_over_variables
+    #   strict_top_level_inference
+    #   type_literal_in_constant_pattern
+    #   unintended_html_in_doc_comment
+    #   unnecessary_late
+    #   use_build_context_synchronously
+    #   valid_regexps
 
 # Additional information about this file can be found at
 # https://dart.dev/guides/language/analysis-options
