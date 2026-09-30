@@ -853,21 +853,29 @@ String _formatSpan(double spanSec) {
   return '$m:$s';
 }
 
-typedef _ScaleConfigItem = ({int limit, int delta});
+/// Smallest 1/2/5-decade step >= [target]. Used directly by the Y axis, and
+/// by [_timeStepCeil] below one second.
+double _decadeStepCeil(double target) {
+  final base = math.pow(10, (math.log(target) / math.ln10).floor()).toDouble();
+  if (base >= target) return base;
+  if (2 * base >= target) return 2 * base;
+  if (5 * base >= target) return 5 * base;
+  return 10 * base;
+}
 
-/// Clock-nice major tick steps for spans >= 1 s.
-const List<_ScaleConfigItem> _xScaleConfig = [
-  (limit: 5, delta: 1),
-  (limit: 10, delta: 2),
-  (limit: 30, delta: 5),
-  (limit: 60, delta: 10),
-  (limit: 120, delta: 20),
-  (limit: 300, delta: 30),
-  (limit: 600, delta: 60),
-];
-
-_ScaleConfigItem _findScale(double val, List<_ScaleConfigItem> list) {
-  return list.firstWhere((e) => val < e.limit, orElse: () => list.last);
+/// Smallest clock-nice step >= [target] seconds: 1/2/5 decades below one
+/// second, then [1, 2, 5, 10, 20, 30, 60] of seconds, minutes, hours, ...
+/// (30 s and friends keep m:ss labels meaningful; a 1/2/5 decade of "100 s"
+/// would print 1:40).
+double _timeStepCeil(double target) {
+  if (target < 1) return _decadeStepCeil(target);
+  for (double scale = 1; ; scale *= 60) {
+    // Terminates once scale >= target, via r = 1.
+    for (final r in const [1, 2, 5, 10, 20, 30, 60]) {
+      final step = scale * r;
+      if (step >= target) return step;
+    }
+  }
 }
 
 /// Format an X-axis tick time (absolute seconds since session start) with
@@ -903,14 +911,14 @@ class _LabelCache {
       _clear();
     }
     return _cache.putIfAbsent(key, () {
-      final style = ui.TextStyle(color: color, fontSize: 11);
+      final style = ui.TextStyle(color: color, fontSize: 13);
       final builder =
           ui.ParagraphBuilder(
               ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
             )
             ..pushStyle(style)
             ..addText(text);
-      return builder.build()..layout(const ui.ParagraphConstraints(width: 80));
+      return builder.build()..layout(const ui.ParagraphConstraints(width: 96));
     });
   }
 
@@ -930,6 +938,12 @@ class _LabelCache {
 // render through the unit's SI-prefix rung.
 // ---------------------------------------------------------------------------
 
+/// Minimum spacing between axis ticks (logical px): [Size]-based density
+/// instead of a fixed tick count, so wide/tall plots get more labels than a
+/// phone without crowding either.
+const double _kMinXTickPx = 80;
+const double _kMinYTickPx = 32;
+
 typedef YAxisRange = ({
   double yMin,
   double yMax,
@@ -942,13 +956,20 @@ typedef YAxisRange = ({
   int decimals,
 });
 
-YAxisRange _computeYRange(double dataMin, double dataMax, DisplayUnit unit) {
+YAxisRange _computeYRange(
+  double dataMin,
+  double dataMax,
+  DisplayUnit unit,
+  double plotHeight,
+) {
   // Guard only the exactly-degenerate span (a no-data derivative fold): the
   // SI-prefix rung keeps tiny-window labels readable, so there's no floor.
   final double max = dataMax <= dataMin ? dataMin + 1.0 : dataMax;
 
-  // 1/2/5 tick delta aiming for ~5 ticks, at whatever decade the span lands.
-  final tickDelta = _niceNum((max - dataMin) / 5);
+  // 1/2/5 tick delta sized so ticks land at least [_kMinYTickPx] apart.
+  final tickDelta = _decadeStepCeil(
+    (max - dataMin) * _kMinYTickPx / plotHeight,
+  );
 
   // Snap yMin and yMax to tick boundaries
   final yMin = (dataMin / tickDelta).floor() * tickDelta;
@@ -992,11 +1013,9 @@ void _drawTimeAxis(
   final endSec = viewEnd / sampleRate;
   final xSpanSec = viewSamples / sampleRate;
 
-  // Aim for ~5 major ticks: decade 1/2/5 steps below one second, clock-nice
-  // steps (1, 2, 5, 10, 30, 60s, ...) above.
-  final double step = xSpanSec < 1.0
-      ? _niceNum(xSpanSec / 5)
-      : _findScale(xSpanSec, _xScaleConfig).delta.toDouble();
+  // Tick count scales with plot width: the smallest nice step that keeps
+  // ticks at least [_kMinXTickPx] apart.
+  final double step = _timeStepCeil(xSpanSec * _kMinXTickPx / graphSz.width);
   final int decimals = step >= 1
       ? 0
       : (-(math.log(step) / math.ln10).floor()).clamp(1, 3);
@@ -1705,7 +1724,12 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
   /// Y-axis range (display units) for the visible window. Null when no
   /// active channel is plottable in the window: the graph paints blank.
-  YAxisRange? computeYRange(double viewStart, double viewEnd);
+  /// [plotHeight] sizes the tick density (see [_kMinYTickPx]).
+  YAxisRange? computeYRange(
+    double viewStart,
+    double viewEnd,
+    double plotHeight,
+  );
 
   String yTickLabel(double tick, YAxisRange yRange);
 
@@ -1755,7 +1779,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
     final oldestSample = _data.oldestSample;
 
-    final yRange = computeYRange(viewStart, viewEnd);
+    final yRange = computeYRange(viewStart, viewEnd, graphSz.height);
     if (yRange == null) return;
 
     // Canvas y grows downward, so the axis is flipped: yMax maps to 0.
@@ -1878,7 +1902,11 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       _taredEnvelopeSeries(_data, channel);
 
   @override
-  YAxisRange? computeYRange(double viewStart, double viewEnd) {
+  YAxisRange? computeYRange(
+    double viewStart,
+    double viewEnd,
+    double plotHeight,
+  ) {
     // [windowedRawExtremes] folds full buckets and scans only the partial
     // head/tail: O(window / bucketSize). No minimum-range floor; flat data
     // hits the degeneracy guard in [_computeYRange].
@@ -1897,7 +1925,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     // No plotted channel has data in the window: paint blank.
     if (!yMin.isFinite || !yMax.isFinite) return null;
 
-    return _computeYRange(yMin, yMax, unit);
+    return _computeYRange(yMin, yMax, unit, plotHeight);
   }
 
   /// Limit bars in the right gutter: one column per channel, a rail zone from
@@ -2014,7 +2042,11 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   );
 
   @override
-  YAxisRange? computeYRange(double viewStart, double viewEnd) {
+  YAxisRange? computeYRange(
+    double viewStart,
+    double viewEnd,
+    double plotHeight,
+  ) {
     // [windowedExtremes] folds full buckets and scans only the partial
     // head/tail: O(window / bucketSize).
     double dMin = 0;
@@ -2043,7 +2075,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
       fold(ext.$2);
     }
 
-    return _computeYRange(dMin, dMax, _unit);
+    return _computeYRange(dMin, dMax, _unit, plotHeight);
   }
 
   @override
@@ -2079,21 +2111,3 @@ String _formatTickLabel(double value, String unitSymbol, int decimals) =>
 /// and ticks always resolve their step.
 String _formatTickValue(double value, int decimals) =>
     value.toStringAsFixed(decimals);
-
-/// Return a "nice" number close to [value] for axis step sizes.
-double _niceNum(double value) {
-  if (value <= 0) return 1;
-  final exp = (math.log(value) / math.ln10).floor();
-  final frac = value / math.pow(10, exp);
-  double nice;
-  if (frac < 1.5) {
-    nice = 1;
-  } else if (frac < 3.5) {
-    nice = 2;
-  } else if (frac < 7.5) {
-    nice = 5;
-  } else {
-    nice = 10;
-  }
-  return nice * math.pow(10, exp);
-}
