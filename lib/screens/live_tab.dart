@@ -812,6 +812,15 @@ class ActionButtons extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _ModeControl(
+            tooltip: isPaused ? 'Resume monitoring' : 'Pause monitoring',
+            icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
+            caption: Text(isPaused ? 'Paused' : 'Monitoring'),
+            onPressed: isRecording ? null : onTogglePause,
+            outlined: !isPaused,
+            backgroundColor: isPaused ? status.warningContainer : null,
+            foregroundColor: isPaused ? status.onWarningContainer : null,
+          ),
+          _ModeControl(
             tooltip: isRecording ? 'Stop recording' : 'Start recording',
             icon: Icon(isRecording ? Icons.stop : Icons.fiber_manual_record),
             caption: isRecording && startTime != null
@@ -820,15 +829,6 @@ class ActionButtons extends StatelessWidget {
             onPressed: isPaused ? null : onToggleRecord,
             backgroundColor: isRecording ? cs.error : null,
             foregroundColor: isRecording ? cs.onError : null,
-          ),
-          _ModeControl(
-            tooltip: isPaused ? 'Resume monitoring' : 'Pause monitoring',
-            icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
-            caption: Text(isPaused ? 'Paused' : 'Monitoring'),
-            onPressed: isRecording ? null : onTogglePause,
-            outlined: !isPaused,
-            backgroundColor: isPaused ? status.warningContainer : null,
-            foregroundColor: isPaused ? status.onWarningContainer : null,
           ),
           Row(
             mainAxisSize: MainAxisSize.min,
