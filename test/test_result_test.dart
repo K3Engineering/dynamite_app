@@ -13,7 +13,6 @@ void main() {
     label: 'cmj',
     start: 100,
     end: 1800,
-    sampleRate: 1000,
     spans: [
       PhaseSpan(label: 'eccentric', start: 100, end: 400),
       PhaseSpan(label: 'concentric', start: 400, end: 801),
@@ -42,7 +41,6 @@ void main() {
       expect(r.label, 'cmj');
       expect(r.start, 100);
       expect(r.end, 1800);
-      expect(r.sampleRate, 1000);
       expect(r.spans, hasLength(4));
       expect(r.spans[0].label, 'eccentric');
       expect(r.spans[0].start, 100);
@@ -51,7 +49,7 @@ void main() {
     });
 
     test('a window-only rep (no label, no spans) round-trips', () {
-      const windowOnly = TestRep(start: 2000, end: 32000, sampleRate: 1000);
+      const windowOnly = TestRep(start: 2000, end: 32000);
       final decoded = TestRep.fromJson(windowOnly.toJson());
       expect(decoded.label, isNull);
       expect(decoded.spans, isEmpty);
@@ -62,7 +60,6 @@ void main() {
       (json['reps'] as List).first = {
         'start': 100,
         'end': 1800,
-        'sampleRate': 1000,
         'spans': [
           {'label': 'eccentric', 'start': 400, 'end': 300},
         ],
@@ -75,7 +72,6 @@ void main() {
       (json['reps'] as List).first = {
         'start': 100,
         'end': 1800,
-        'sampleRate': 1000,
         'spans': [
           {'label': 'eccentric', 'start': 50, 'end': 400},
         ],
@@ -88,7 +84,6 @@ void main() {
       (json['reps'] as List).first = {
         'start': 1800,
         'end': 100,
-        'sampleRate': 1000,
         'spans': const <Map<String, dynamic>>[],
       };
       expect(() => TestResult.fromJson(json), throwsFormatException);

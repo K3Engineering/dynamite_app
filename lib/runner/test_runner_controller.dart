@@ -6,11 +6,13 @@ import 'package:material_ui/material_ui.dart' show Color;
 
 import '../analysis/events.dart';
 import '../analysis/gait.dart';
+import '../analysis/metric_eval.dart';
 import '../analysis/metrics.dart';
 import '../analysis/metrics_isometric.dart';
 import '../analysis/metrics_single_leg.dart';
 import '../analysis/metrics_sway.dart';
 import '../analysis/plate_series.dart';
+import '../analysis/result_overlays.dart';
 import '../analysis/segmentation_cmj.dart';
 import '../analysis/segmentation_dj.dart';
 import '../analysis/test_def.dart';
@@ -51,10 +53,34 @@ enum TestRunnerPhase {
   failed,
 }
 
+/// One-shot events for audible cues; the runner screen turns each into a
+/// sound. Emitted once per occurrence, never replayed.
+enum TestRunnerCue {
+  /// A rep's onset registered (the jump/drop landed on the plate).
+  repStarted,
+
+  /// A rep validated and counted.
+  repAccepted,
+
+  /// An attempt was rejected ([TestRunnerController.lastDiscard] says why).
+  repDiscarded,
+
+  /// The next timed-capture window opened (conditions changed).
+  windowStarted,
+
+  /// The isometric hold's force entered the target band (timer runs).
+  bandEntered,
+
+  /// The gait scan armed — the stance baseline is past, walking counts now.
+  gaitArmed,
+}
+
 /// Drives one guided test from zeroing through segmented reps and a saved
 /// session. Owned by the runner screen (a guided run is modal) and the sole
-/// caller of the recorder during that run — a manual Live recording in progress
-/// refuses the test up front, and an external stop aborts it loudly.
+/// caller of the recorder during that run — a manual Live recording in
+/// progress refuses the test up front, and any stop the controller didn't
+/// start (Live's STOP, a stream death, a storage auto-stop) is adopted:
+/// the saved session still gets its analysis attached.
 ///
 /// Rep detection is offline over the growing window: each hub tick re-segments
 /// `[repStart, now]` and finalizes as soon as a complete jump is present. The
@@ -110,7 +136,7 @@ class TestRunnerController extends ChangeNotifier {
   List<GaitPassResult> gaitPasses = const [];
 
   /// Completed isometric holds (timed-capture windows with a target band).
-  List<IsoRepResult> isoReps = const [];
+  List<RepEvaluation> isoReps = const [];
 
   /// Completed single-leg holds (timed-capture windows with toe-off gating).
   List<SlRepResult> slReps = const [];
@@ -129,6 +155,24 @@ class TestRunnerController extends ChangeNotifier {
 
   int get targetReps => test.repCount ?? 1;
 
+  /// Total valid reps captured so far, across every mold's typed list.
+  int get validRepCount =>
+      reps.length +
+      djReps.length +
+      swayReps.length +
+      isoReps.length +
+      slReps.length +
+      gaitPasses.length;
+
+  /// One-shot cue events (beeps); see [TestRunnerCue].
+  Stream<TestRunnerCue> get cues => _cues.stream;
+  final StreamController<TestRunnerCue> _cues =
+      StreamController<TestRunnerCue>.broadcast();
+
+  void _emit(TestRunnerCue cue) {
+    if (!_cues.isClosed) _cues.add(cue);
+  }
+
   /// The finalized analysis, or null before body weight and a valid rep
   /// exist. Bounds are translated into the recording's 0-based index space
   /// here ([TestResult.reps] indexes the session, while the live loop thinks
@@ -138,16 +182,18 @@ class TestRunnerController extends ChangeNotifier {
     final bw = bodyWeightKgf;
     final origin = _recordOrigin;
     if (bw == null || origin == null) return null;
+    // Live bounds shift into the recording's 0-based index space.
+    final delta = -origin;
     final testReps = switch (test.mold) {
       TestMold.repCount => switch (test.family) {
         TestFamily.dropJump => [
-          for (final r in djReps) r.phases.toTestRep(-origin),
+          for (final r in djReps) r.phases.toTestRep(delta),
         ],
-        _ => [for (final r in reps) r.phases.toTestRep(-origin)],
+        _ => [for (final r in reps) r.phases.toTestRep(delta)],
       },
       // Timed and free-pass molds accumulate their reps as they finalize.
       TestMold.timedCapture ||
-      TestMold.freePass => [for (final r in _recordedReps) r.shifted(-origin)],
+      TestMold.freePass => [for (final r in _recordedReps) r.shifted(delta)],
     };
     if (testReps.isEmpty) return null;
     return TestResult(
@@ -162,10 +208,10 @@ class TestRunnerController extends ChangeNotifier {
   bool _stopping = false;
   bool _inTick = false;
 
-  /// True once a stable loaded stance has been seen; the next sustained exit
-  /// from the body-weight band starts a rep. Decoupled from the stability
-  /// check so the movement itself (which corrupts the trailing window's
-  /// sigma) doesn't cancel arming.
+  /// True once the arming condition for the next rep holds: a stable loaded
+  /// stance (stance-armed tests) or a quiet empty plate (unloaded-armed).
+  /// Exposed so the status strip can say "stand still" vs "jump".
+  bool get armed => _armed;
   bool _armed = false;
   int _tareVersionBefore = 0;
   int? _repStart;
@@ -204,21 +250,40 @@ class TestRunnerController extends ChangeNotifier {
     return reader.weightsAt(total - 1).total;
   }
 
+  /// The trailing baseline candidate: stability feedback while awaiting the
+  /// stance measurement (force readout plus a stillness hint).
+  BaselineStats? get baseline => _trailingBaseline();
+
   /// Phase shading for completed reps plus the live rep preview, and the CoP
   /// ellipses of completed sway windows.
   GraphOverlays? get overlays {
     final reader = source.read();
     if (reader == null) return null;
-    const windowShade = Color(0x1A000000);
     final spans = <GraphOverlaySpan>[
       for (final rep in swayReps)
-        GraphOverlaySpan(start: rep.start, end: rep.end, color: windowShade),
+        GraphOverlaySpan(
+          start: rep.eval.start,
+          end: rep.eval.end,
+          color: kWindowShadeColor,
+        ),
       for (final rep in slReps)
-        GraphOverlaySpan(start: rep.start, end: rep.end, color: windowShade),
+        GraphOverlaySpan(
+          start: rep.eval.start,
+          end: rep.eval.end,
+          color: kWindowShadeColor,
+        ),
       for (final rep in isoReps)
-        GraphOverlaySpan(start: rep.start, end: rep.end, color: windowShade),
+        GraphOverlaySpan(
+          start: rep.start,
+          end: rep.end,
+          color: kWindowShadeColor,
+        ),
       for (final rep in gaitPasses)
-        GraphOverlaySpan(start: rep.start, end: rep.end, color: windowShade),
+        GraphOverlaySpan(
+          start: rep.eval.start,
+          end: rep.eval.end,
+          color: kWindowShadeColor,
+        ),
       for (final rep in reps)
         for (final s in rep.phases.spans)
           GraphOverlaySpan(
@@ -329,24 +394,75 @@ class TestRunnerController extends ChangeNotifier {
   Future<void> stopAndFinish() async {
     if (_stopping || !_running) return;
     _stopping = true;
-    final stopResult = await recorder.stop();
-    _stopping = false;
-    switch (stopResult) {
-      case TestRecorderSaved(:final sessionId, :final name):
-        this.sessionId = sessionId;
-        sessionName = name;
-        phase = TestRunnerPhase.summary;
-        final sink = onResult;
-        final analysis = result;
-        if (sink != null && analysis != null) {
-          unawaited(sink(sessionId, analysis));
-        }
-      case TestRecorderNothingRecorded():
-        _fail('Nothing was recorded — no data reached the plate.');
-      case TestRecorderFailed(:final error):
-        _fail('Saving failed: $error');
+    try {
+      switch (await recorder.stop()) {
+        case TestRecorderSaved(:final sessionId, :final name):
+          _finishWithSaved(sessionId, name);
+        case TestRecorderNothingRecorded():
+          _fail('Nothing was recorded — no data reached the plate.');
+        case TestRecorderFailed(:final error, :final sessionId):
+          // Partial save: keep whatever persisted (analysis best-effort),
+          // but the failure stays loud.
+          if (sessionId != null) _persistResult(sessionId);
+          _fail('Saving failed: $error');
+        case TestRecorderAlreadyFinalizing():
+          // A stop we didn't start was in flight: adopt its outcome.
+          await _waitForRecordingEnd();
+          _adoptExternalStop();
+      }
+    } finally {
+      _stopping = false;
     }
     notifyListeners();
+  }
+
+  /// A saved recording reached summary: attach the analysis and show results.
+  void _finishWithSaved(String sessionId, String name) {
+    this.sessionId = sessionId;
+    sessionName = name;
+    phase = TestRunnerPhase.summary;
+    _persistResult(sessionId);
+  }
+
+  void _persistResult(String sessionId) {
+    final sink = onResult;
+    final analysis = result;
+    if (sink != null && analysis != null) {
+      unawaited(sink(sessionId, analysis));
+    }
+  }
+
+  /// A stop the controller didn't start (Live's STOP, a stream death, a
+  /// storage auto-stop): the recording's fate is latched on the recorder —
+  /// adopt it. A saved session still gets its analysis attached; anything
+  /// else is a loud failure, never a silent summary.
+  void _adoptExternalStop() {
+    switch (recorder.lastStop) {
+      case TestRecorderSaved(:final sessionId, :final name):
+        _finishWithSaved(sessionId, name);
+      case TestRecorderNothingRecorded():
+        _fail('The recording stopped before any data reached storage.');
+      case TestRecorderFailed(:final error, :final sessionId):
+        if (sessionId != null) _persistResult(sessionId);
+        _fail('Saving failed: $error');
+      case TestRecorderAlreadyFinalizing() || null:
+        _fail('The recording stopped unexpectedly — check the connection.');
+    }
+  }
+
+  /// Wait until an in-flight finalization completes (liveness via the
+  /// recorder's change notifications, condition re-checked per wake).
+  Future<void> _waitForRecordingEnd() async {
+    while (recorder.inProgress) {
+      final done = Completer<void>();
+      void ping() => done.complete();
+      recorder.changes.addListener(ping);
+      try {
+        await done.future;
+      } finally {
+        recorder.changes.removeListener(ping);
+      }
+    }
   }
 
   void _onChange() => _tick();
@@ -365,10 +481,11 @@ class TestRunnerController extends ChangeNotifier {
   }
 
   void _tickInner() {
-    // A stop we didn't initiate (Live's STOP, a link drop, storage error)
-    // leaves the run with a saved session at best.
+    // A stop we didn't initiate (Live's STOP, a link drop, a storage
+    // auto-stop) finished the recording out from under the run: adopt its
+    // outcome — the same path as a self-initiated stop converges to.
     if (_running && !_stopping && !recorder.inProgress) {
-      phase = TestRunnerPhase.summary;
+      _adoptExternalStop();
       notifyListeners();
       return;
     }
@@ -401,8 +518,12 @@ class TestRunnerController extends ChangeNotifier {
         test.mold == TestMold.freePass ? _advanceGaitScan() : _advanceCapture();
       case TestRunnerPhase.summary:
       case TestRunnerPhase.failed:
-        break;
+        return;
     }
+    // The live status strips (countdown, readouts, arming) read the growing
+    // data, so repaint every tick. Summary/failed return above — they are
+    // static and skip the per-tick rebuild.
+    notifyListeners();
   }
 
   void _startRecording() {
@@ -476,6 +597,7 @@ class TestRunnerController extends ChangeNotifier {
         _repStart = touchdown;
         _armed = false;
         phase = TestRunnerPhase.jumping;
+        _emit(TestRunnerCue.repStarted);
         notifyListeners();
       }
       return;
@@ -498,6 +620,7 @@ class TestRunnerController extends ChangeNotifier {
       _repStart = onset;
       _armed = false;
       phase = TestRunnerPhase.jumping;
+      _emit(TestRunnerCue.repStarted);
       notifyListeners();
     }
   }
@@ -581,20 +704,19 @@ class TestRunnerController extends ChangeNotifier {
   }
 
   void _finishRep(PlateWindow window, CmjPhases phases, JumpClass jumpClass) {
-    final result = CmjRepResult(
-      number: reps.length + 1,
-      jumpClass: jumpClass,
-      phases: phases,
-      metrics: evaluateCmjMetrics(
+    reps = [
+      ...reps,
+      buildCmjRepResult(
         window,
         phases,
+        jumpClass,
         CmjContext(bwKgf: bodyWeightKgf!),
+        reps.length + 1,
       ),
-    );
-    reps = [...reps, result];
+    ];
     _repStart = null;
     _armed = false;
-    lastDiscard = null;
+    _emit(TestRunnerCue.repAccepted);
     if (reps.length >= targetReps) {
       unawaited(stopAndFinish());
     } else {
@@ -604,17 +726,10 @@ class TestRunnerController extends ChangeNotifier {
   }
 
   void _finishDjRep(PlateWindow window, DjPhases phases) {
-    djReps = [
-      ...djReps,
-      DjRepResult(
-        number: djReps.length + 1,
-        phases: phases,
-        metrics: evaluateDjMetrics(window, phases),
-      ),
-    ];
+    djReps = [...djReps, buildDjRepResult(window, phases, djReps.length + 1)];
     _repStart = null;
     _armed = false;
-    lastDiscard = null;
+    _emit(TestRunnerCue.repAccepted);
     if (djReps.length >= targetReps) {
       unawaited(stopAndFinish());
     } else {
@@ -628,6 +743,7 @@ class TestRunnerController extends ChangeNotifier {
     _repStart = null;
     _armed = false;
     phase = TestRunnerPhase.readyForRep;
+    _emit(TestRunnerCue.repDiscarded);
     notifyListeners();
   }
 
@@ -676,6 +792,7 @@ class TestRunnerController extends ChangeNotifier {
     _windowStart = source.totalSamples;
     _isoEntry = null;
     phase = TestRunnerPhase.capturing;
+    _emit(TestRunnerCue.windowStarted);
     notifyListeners();
   }
 
@@ -696,16 +813,12 @@ class TestRunnerController extends ChangeNotifier {
             swayReps.length + 1,
           ),
         ];
-        final rep = swayReps.last;
+        final rep = swayReps.last.eval;
         _recordedReps = [
           ..._recordedReps,
-          TestRep(
-            label: rep.label.isEmpty ? null : rep.label,
-            start: rep.start,
-            end: rep.end,
-            sampleRate: rep.sampleRate,
-          ),
+          TestRep(label: rep.label, start: rep.start, end: rep.end),
         ];
+        _emit(TestRunnerCue.repAccepted);
       case TestWindowEval.isometric:
         final band = def.isoBand!;
         final ctx = IsoContext.forBw(
@@ -735,6 +848,7 @@ class TestRunnerController extends ChangeNotifier {
             if (inside) {
               entry = i;
               _isoEntry = i;
+              _emit(TestRunnerCue.bandEntered);
               notifyListeners();
               break;
             }
@@ -742,52 +856,43 @@ class TestRunnerController extends ChangeNotifier {
           if (entry == null) return;
         }
         if (source.totalSamples - entry < target) return;
-        isoReps = [
-          ...isoReps,
-          evaluateIsoWindow(
-            PlateWindow.capture(reader, entry, entry + target),
-            ctx,
-            def.label,
-            isoReps.length + 1,
-          ),
-        ];
-        final rep = isoReps.last;
+        final rep = evaluateIsoWindow(
+          PlateWindow.capture(reader, entry, entry + target),
+          ctx,
+          def.label,
+          isoReps.length + 1,
+        );
+        isoReps = [...isoReps, rep];
         _recordedReps = [
           ..._recordedReps,
-          TestRep(
-            label: rep.label.isEmpty ? null : rep.label,
-            start: rep.start,
-            end: rep.end,
-            sampleRate: rep.sampleRate,
-          ),
+          TestRep(label: rep.label, start: rep.start, end: rep.end),
         ];
+        _emit(TestRunnerCue.repAccepted);
       case TestWindowEval.singleLeg:
         final window = PlateWindow.capture(reader, start, start + target);
         final interval = findSingleLegInterval(window, bwKgf: bodyWeightKgf!);
         if (interval == null) {
           lastDiscard =
               'No single-leg lift detected — the window is discarded.';
+          _emit(TestRunnerCue.repDiscarded);
           break;
         }
-        slReps = [
-          ...slReps,
-          evaluateSlWindow(
-            PlateWindow.capture(reader, interval.start, interval.end),
-            interval.loadedLeft ? 'Left leg' : 'Right leg',
-            slReps.length + 1,
-          ),
-        ];
-        final rep = slReps.last;
+        final rep = evaluateSlWindow(
+          PlateWindow.capture(reader, interval.start, interval.end),
+          interval.loadedLeft ? 'Left leg' : 'Right leg',
+          slReps.length + 1,
+        );
+        slReps = [...slReps, rep];
         _recordedReps = [
           ..._recordedReps,
           TestRep(
-            label: rep.label,
-            start: rep.start,
-            end: rep.end,
-            sampleRate: rep.sampleRate,
+            label: rep.eval.label,
+            start: rep.eval.start,
+            end: rep.eval.end,
           ),
         ];
         lastDiscard = null;
+        _emit(TestRunnerCue.repAccepted);
     }
     final next = _windowIndex + 1;
     if (next >= test.windows.length) {
@@ -870,6 +975,7 @@ class TestRunnerController extends ChangeNotifier {
       if (off == null) return;
       _scanFrom = off + settle;
       _gaitStarted = true;
+      _emit(TestRunnerCue.gaitArmed);
       notifyListeners();
       return;
     }
@@ -902,6 +1008,7 @@ class TestRunnerController extends ChangeNotifier {
         lastDiscard = 'Pass dropped: a touch or a stand, not a footstrike.';
         _gaitStarted = false;
         _scanFrom = touchdown;
+        _emit(TestRunnerCue.repDiscarded);
         notifyListeners();
       }
       // Still in contact (or the tail hasn't arrived yet): next tick.
@@ -912,25 +1019,19 @@ class TestRunnerController extends ChangeNotifier {
     final episode = PlateWindow.capture(reader, touchdown, episodeEnd);
     switch (locateGaitContact(episode, GaitContext(bwKgf: bw))) {
       case GaitPass(:final touchdown, :final toeOff):
-        gaitPasses = [
-          ...gaitPasses,
-          buildGaitPassResult(
-            reader,
-            GaitPass(touchdown, toeOff),
-            gaitPasses.length + 1,
-            GaitContext(bwKgf: bw),
-          ),
-        ];
-        final pass = gaitPasses.last;
+        final pass = buildGaitPassResult(
+          reader,
+          GaitPass(touchdown, toeOff),
+          gaitPasses.length + 1,
+          GaitContext(bwKgf: bw),
+        );
+        gaitPasses = [...gaitPasses, pass];
         _recordedReps = [
           ..._recordedReps,
-          TestRep(
-            start: pass.start,
-            end: pass.end,
-            sampleRate: pass.sampleRate,
-          ),
+          TestRep(start: pass.eval.start, end: pass.eval.end),
         ];
         lastDiscard = null;
+        _emit(TestRunnerCue.repAccepted);
       case GaitRejected(:final reason):
         lastDiscard = switch (reason) {
           GaitInvalidReason.offPlateEdge =>
@@ -940,6 +1041,7 @@ class TestRunnerController extends ChangeNotifier {
           GaitInvalidReason.underLoaded =>
             'Pass dropped: not enough weight on the plate.',
         };
+        _emit(TestRunnerCue.repDiscarded);
     }
     _scanFrom = episodeEnd;
     notifyListeners();
@@ -953,6 +1055,7 @@ class TestRunnerController extends ChangeNotifier {
     if (_running && recorder.inProgress) {
       unawaited(recorder.stop());
     }
+    unawaited(_cues.close());
     super.dispose();
   }
 }

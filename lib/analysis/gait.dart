@@ -3,8 +3,11 @@ import 'dart:math' as math;
 import 'package:meta/meta.dart';
 
 import '../models/graph_data_source.dart';
+import '../models/graph_overlays.dart';
 import 'events.dart';
+import 'metric_eval.dart';
 import 'plate_series.dart';
+import 'result_overlays.dart';
 import 'test_result.dart';
 
 // ---------------------------------------------------------------------------
@@ -162,97 +165,53 @@ GaitEpisode locateGaitContact(
 
 // -- Metrics --
 
-/// One entry in the gait metric table.
-@immutable
-class GaitMetricDef {
-  const GaitMetricDef({
-    required this.id,
-    required this.label,
-    required this.unit,
-    required this.decimals,
-    required this.compute,
-  });
-
-  final String id;
-  final String label;
-  final String unit;
-  final int decimals;
-
-  final double? Function(PlateWindow contact, GaitContext c) compute;
-}
-
-/// A computed metric value; null when not meaningful for this pass.
-@immutable
-class GaitMetricValue {
-  const GaitMetricValue(this.def, this.value);
-  final GaitMetricDef def;
-  final double? value;
-}
-
-/// One evaluated pass: contact bounds in the recording, metrics, and the
-/// CoP trail during contact ("gait line") for the plate-pane overlay.
+/// One evaluated pass: its evaluation (contact bounds, metric values) and
+/// the CoP trail during contact ("gait line") for the plate-pane overlay.
 @immutable
 class GaitPassResult {
-  const GaitPassResult({
-    required this.number,
-    required this.start,
-    required this.end,
-    required this.sampleRate,
-    required this.values,
-    required this.trail,
-  });
+  const GaitPassResult({required this.eval, required this.trail});
 
-  final int number;
-
-  /// Contact window `[start, end)` in samples.
-  final int start;
-  final int end;
-  final int sampleRate;
-
-  final List<GaitMetricValue> values;
+  final RepEvaluation eval;
 
   /// CoP positions over contact, support-normalized (±1 = a plate edge).
   final List<(double, double)> trail;
 
-  double? metric(String id) {
-    for (final v in values) {
-      if (v.def.id == id) return v.value;
-    }
-    return null;
-  }
+  int get number => eval.number;
+
+  double? metric(String id) => eval.metric(id);
 }
 
 /// The gait metric table, in display order.
-final List<GaitMetricDef> gaitMetrics = List.unmodifiable([
-  GaitMetricDef(
+final List<MetricDef<GaitContext>> gaitMetrics = List.unmodifiable([
+  MetricDef<GaitContext>(
     id: 'contact_time',
     label: 'Contact time',
     unit: 'ms',
     decimals: 0,
     compute: (w, c) => w.length / w.sampleRate * 1000,
   ),
-  GaitMetricDef(
+  MetricDef<GaitContext>(
     id: 'peak_force',
     label: 'Peak force',
     unit: 'kgf',
     decimals: 1,
     compute: (w, c) => _peak(w),
   ),
-  GaitMetricDef(
+  MetricDef<GaitContext>(
     id: 'peak_force_bw',
     label: 'Peak force',
     unit: '%BW',
     decimals: 0,
     compute: (w, c) => 100 * _peak(w) / c.bwKgf,
   ),
-  const GaitMetricDef(
+  const MetricDef<GaitContext>(
     id: 'loading_rate',
     label: 'Loading rate',
     unit: 'kgf/s',
     decimals: 0,
     compute: _loadingRate,
   ),
-  GaitMetricDef(
+  MetricDef<GaitContext>(
     id: 'impulse',
     label: 'Impulse',
     unit: 'kgf·s',
@@ -265,14 +224,14 @@ final List<GaitMetricDef> gaitMetrics = List.unmodifiable([
       return acc / w.sampleRate;
     },
   ),
-  const GaitMetricDef(
+  const MetricDef<GaitContext>(
     id: 'pushoff_share',
     label: 'Push-off load share',
     unit: '%',
     decimals: 1,
     compute: _pushoffShare,
   ),
-  GaitMetricDef(
+  MetricDef<GaitContext>(
     id: 'gait_line_length',
     label: 'CoP path length',
     unit: 'mm',
@@ -362,13 +321,12 @@ GaitPassResult buildGaitPassResult(
 ) {
   final w = PlateWindow.capture(reader, contact.touchdown, contact.toeOff + 1);
   return GaitPassResult(
-    number: number,
-    start: contact.touchdown,
-    end: contact.toeOff + 1,
-    sampleRate: reader.sampleRate,
-    values: [
-      for (final def in gaitMetrics) GaitMetricValue(def, def.compute(w, ctx)),
-    ],
+    eval: RepEvaluation(
+      number: number,
+      start: w.start,
+      end: w.end,
+      values: evaluateMetrics(w, gaitMetrics, ctx),
+    ),
     trail: [for (int i = w.start; i < w.end; i++) ?w.copAt(i)],
   );
 }
@@ -413,3 +371,13 @@ List<GaitPassResult> evaluateGaitResult(
   }
   return passes;
 }
+
+/// A gait-line polyline per pass on the 2D plate pane, with matching window
+/// shading on the force trace.
+GraphOverlays overlaysForGaitReps(List<GaitPassResult> reps) => GraphOverlays(
+  spans: windowShadeOverlays([for (final r in reps) r.eval]).spans,
+  plateTrails: [
+    for (final r in reps)
+      PlateTrailOverlay(points: r.trail, color: gaitTrailColor(r.number)),
+  ],
+);

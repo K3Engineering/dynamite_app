@@ -8,10 +8,14 @@ import 'package:provider/provider.dart';
 import '../models/analysis_pane.dart';
 import '../models/app_meta.dart';
 import '../analysis/gait.dart';
+import '../analysis/metrics.dart';
 import '../analysis/metrics_isometric.dart';
 import '../analysis/metrics_single_leg.dart';
 import '../analysis/metrics_sway.dart';
+import '../analysis/result_overlays.dart';
+import '../analysis/segmentation_dj.dart';
 import '../analysis/test_catalog.dart';
+import '../analysis/test_def.dart';
 import '../analysis/test_result.dart';
 import '../models/derived_channel.dart';
 import '../models/graph_overlays.dart';
@@ -27,17 +31,12 @@ import '../services/share_capability.dart';
 import '../utils/format.dart';
 import '../widgets/analysis_pane_bar.dart';
 import '../widgets/channel_stats_table.dart';
-import '../widgets/cjm_metrics_table.dart';
 import '../widgets/dialogs.dart';
-import '../widgets/dj_metrics_table.dart';
-import '../widgets/gait_metrics_table.dart';
-import '../widgets/iso_metrics_table.dart';
-import '../widgets/sl_metrics_table.dart';
+import '../widgets/metrics_table.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
 import '../widgets/snackbars.dart';
-import '../widgets/sway_metrics_table.dart';
 
 class SessionDetailScreen extends StatefulWidget {
   const SessionDetailScreen({super.key, required this.session});
@@ -179,8 +178,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       );
 
   /// The per-test section for this session, if it has a test result: its
-  /// graph overlays plus the header/table block. Unknown test ids (written
-  /// by a newer build) get a count-only note rather than a crash.
+  /// graph overlays plus the header/table block. The test definition comes
+  /// from the catalog (one source of truth for ids); unknown ids (written by
+  /// a newer build) get a count-only note rather than a crash.
   ({GraphOverlays? overlays, Widget? section}) _testResultSection(
     TestResult? result,
     SessionData data,
@@ -188,15 +188,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     final r = result;
     if (r == null) return (overlays: null, section: null);
 
-    Widget section(int repCount, Widget? table) => Padding(
+    Widget section(String title, int repCount, Widget? table) => Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            'Test: ${r.testId.toUpperCase()}',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
           const SizedBox(height: 4),
           Text(
             '$repCount valid rep${repCount == 1 ? '' : 's'} · body weight '
@@ -208,74 +205,101 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       ),
     );
 
-    return switch (r.testId) {
-      'jump' => () {
-        final reps = evaluateTestResult(r, data);
-        return (
-          overlays: overlaysForTestResult(r),
-          section: reps.isEmpty
-              ? null
-              : section(reps.length, CjmMetricsTable(reps: reps)),
-        );
+    final def = findTestDef(r.testId);
+    if (def == null) {
+      return (
+        overlays: null,
+        section: section('Test: ${r.testId}', r.reps.length, null),
+      );
+    }
+
+    return switch (def.family) {
+      TestFamily.jump => () {
+        final reps = evaluateJumpResult(r, data);
+        return reps.isEmpty
+            ? (overlays: null, section: null)
+            : (
+                overlays: jumpPhaseOverlays(r),
+                section: section(
+                  'Test: ${def.name}',
+                  reps.length,
+                  MetricsTable.jump(reps: reps),
+                ),
+              );
       }(),
-      'drop_jump' => () {
+      TestFamily.dropJump => () {
         final reps = evaluateDjResult(r, data);
-        return (
-          overlays: overlaysForDjReps(reps),
-          section: reps.isEmpty
-              ? null
-              : section(reps.length, DjMetricsTable(reps: reps)),
-        );
+        return reps.isEmpty
+            ? (overlays: null, section: null)
+            : (
+                overlays: jumpPhaseOverlays(r),
+                section: section(
+                  'Test: ${def.name}',
+                  reps.length,
+                  MetricsTable.dropJump(reps: reps),
+                ),
+              );
       }(),
-      'romberg' => () {
+      TestFamily.sway => () {
         final reps = evaluateSwayResult(r, data);
-        return (
-          overlays: overlaysForSwayReps(reps),
-          section: reps.isEmpty
-              ? null
-              : section(reps.length, SwayMetricsTable(reps: reps)),
-        );
+        return reps.isEmpty
+            ? (overlays: null, section: null)
+            : (
+                overlays: overlaysForSwayReps(reps),
+                section: section(
+                  'Test: ${def.name}',
+                  reps.length,
+                  MetricsTable.sway(reps: reps),
+                ),
+              );
       }(),
-      'gait' => () {
-        final reps = evaluateGaitResult(r, data);
-        return (
-          overlays: overlaysForGaitReps(reps),
-          section: reps.isEmpty
-              ? null
-              : section(reps.length, GaitMetricsTable(reps: reps)),
-        );
-      }(),
-      'iso_press' => () {
+      TestFamily.isometric => () {
         // The target band is part of the protocol (the test definition),
         // not the measurement.
-        final band = testCatalog
-            .firstWhere((d) => d.id == r.testId)
-            .windows
-            .first
-            .isoBand!;
+        final band = def.windows.firstWhere((w) => w.isoBand != null).isoBand!;
         final reps = evaluateIsoResult(
           r,
           data,
           centerFractionOfBw: band.centerFractionOfBw,
           halfWidthFraction: band.halfWidthFraction,
         );
-        return (
-          overlays: overlaysForIsoReps(reps),
-          section: reps.isEmpty
-              ? null
-              : section(reps.length, IsoMetricsTable(reps: reps)),
-        );
+        return reps.isEmpty
+            ? (overlays: null, section: null)
+            : (
+                overlays: windowShadeOverlays(reps),
+                section: section(
+                  'Test: ${def.name}',
+                  reps.length,
+                  MetricsTable.isometric(reps: reps),
+                ),
+              );
       }(),
-      'single_leg' => () {
+      TestFamily.singleLeg => () {
         final reps = evaluateSlResult(r, data);
-        return (
-          overlays: overlaysForSlReps(reps),
-          section: reps.isEmpty
-              ? null
-              : section(reps.length, SlMetricsTable(reps: reps)),
-        );
+        return reps.isEmpty
+            ? (overlays: null, section: null)
+            : (
+                overlays: overlaysForSlReps(reps),
+                section: section(
+                  'Test: ${def.name}',
+                  reps.length,
+                  MetricsTable.singleLeg(reps: reps),
+                ),
+              );
       }(),
-      _ => (overlays: null, section: section(r.reps.length, null)),
+      TestFamily.gait => () {
+        final reps = evaluateGaitResult(r, data);
+        return reps.isEmpty
+            ? (overlays: null, section: null)
+            : (
+                overlays: overlaysForGaitReps(reps),
+                section: section(
+                  'Test: ${def.name}',
+                  reps.length,
+                  MetricsTable.gait(reps: reps),
+                ),
+              );
+      }(),
     };
   }
 

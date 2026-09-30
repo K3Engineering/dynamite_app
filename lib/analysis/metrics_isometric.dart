@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:meta/meta.dart';
 
 import '../models/graph_data_source.dart';
+import 'metric_eval.dart';
 import 'plate_series.dart';
 import 'test_result.dart';
 
@@ -40,92 +41,37 @@ class IsoContext {
   );
 }
 
-/// One entry in the isometric metric table.
-@immutable
-class IsoMetricDef {
-  const IsoMetricDef({
-    required this.id,
-    required this.label,
-    required this.unit,
-    required this.decimals,
-    required this.compute,
-  });
-
-  final String id;
-  final String label;
-  final String unit;
-  final int decimals;
-
-  final double? Function(PlateWindow w, IsoContext c) compute;
-}
-
-/// A computed metric value; null when not meaningful for this hold.
-@immutable
-class IsoMetricValue {
-  const IsoMetricValue(this.def, this.value);
-  final IsoMetricDef def;
-  final double? value;
-}
-
-/// One evaluated hold (shared live / summary / re-opened session).
-@immutable
-class IsoRepResult {
-  const IsoRepResult({
-    required this.number,
-    required this.label,
-    required this.start,
-    required this.end,
-    required this.sampleRate,
-    required this.values,
-  });
-
-  final int number;
-  final String label;
-  final int start;
-  final int end;
-  final int sampleRate;
-
-  final List<IsoMetricValue> values;
-
-  double? metric(String id) {
-    for (final v in values) {
-      if (v.def.id == id) return v.value;
-    }
-    return null;
-  }
-}
-
 /// The isometric metric table, in display order.
-final List<IsoMetricDef> isoMetrics = List.unmodifiable([
-  IsoMetricDef(
+final List<MetricDef<IsoContext>> isoMetrics = List.unmodifiable([
+  MetricDef<IsoContext>(
     id: 'mean_force',
     label: 'Mean force',
     unit: 'kgf',
     decimals: 1,
     compute: (w, c) => _meanForce(w),
   ),
-  IsoMetricDef(
+  MetricDef<IsoContext>(
     id: 'peak_force',
     label: 'Peak force',
     unit: 'kgf',
     decimals: 1,
     compute: (w, c) => _peak(w),
   ),
-  const IsoMetricDef(
+  const MetricDef<IsoContext>(
     id: 'cv',
     label: 'Steadiness (CV)',
     unit: '%',
     decimals: 2,
     compute: _cvPercent,
   ),
-  const IsoMetricDef(
+  const MetricDef<IsoContext>(
     id: 'time_in_band',
     label: 'Time in band',
     unit: '%',
     decimals: 1,
     compute: _timeInBand,
   ),
-  const IsoMetricDef(
+  const MetricDef<IsoContext>(
     id: 'drift',
     label: 'Drift rate',
     unit: 'kgf/s',
@@ -190,27 +136,24 @@ double _drift(PlateWindow w, IsoContext c) {
 }
 
 /// Evaluate one hold window.
-IsoRepResult evaluateIsoWindow(
+RepEvaluation evaluateIsoWindow(
   PlateWindow w,
   IsoContext ctx,
   String label,
   int number,
-) => IsoRepResult(
+) => RepEvaluation(
   number: number,
-  label: label,
+  label: label.isEmpty ? null : label,
   start: w.start,
   end: w.end,
-  sampleRate: w.sampleRate,
-  values: [
-    for (final def in isoMetrics) IsoMetricValue(def, def.compute(w, ctx)),
-  ],
+  values: evaluateMetrics(w, isoMetrics, ctx),
 );
 
 /// Recompute every hold's metrics for [result] against a loaded recording.
 /// Empty when the plate can't be read or a stored window falls outside it.
 /// [centerFractionOfBw]/[halfWidthFraction] come from the test definition
 /// (the band is protocol, not measurement).
-List<IsoRepResult> evaluateIsoResult(
+List<RepEvaluation> evaluateIsoResult(
   TestResult result,
   GraphDataSource data, {
   required double centerFractionOfBw,
@@ -223,7 +166,7 @@ List<IsoRepResult> evaluateIsoResult(
     centerFractionOfBw,
     halfWidthFraction,
   );
-  final reps = <IsoRepResult>[];
+  final reps = <RepEvaluation>[];
   for (int i = 0; i < result.reps.length; i++) {
     final rep = result.reps[i];
     if (rep.start < data.oldestSample || rep.end > data.totalSamples) {
