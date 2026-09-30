@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/analysis/events.dart';
@@ -27,13 +29,16 @@ void main() {
       final seg = segmentCmj(window, JumpContext.fromBaseline(baseline));
       expect(seg, isA<CmjRep>());
       final p = (seg as CmjRep).phases;
-      expect(p.onset, lessThan(p.bwCross));
-      expect(p.bwCross, lessThan(p.takeoff));
+      expect(p.onset, lessThan(p.split));
+      expect(p.split, lessThan(p.takeoff));
       expect(p.takeoff, lessThan(p.landing));
       expect(p.landing, lessThanOrEqualTo(p.end - 1));
+      // Raw edges: takeoff/touchdown within a couple samples of the script.
+      expect((p.takeoff - jump.takeoffIndex).abs(), lessThanOrEqualTo(3));
+      expect((p.landing - 1 - jump.flightEndIndex).abs(), lessThanOrEqualTo(3));
       expect(
         p.flightSamples,
-        closeTo(jump.flightEndIndex - jump.takeoffIndex, 30),
+        closeTo(jump.flightEndIndex - jump.takeoffIndex, 10),
       );
       expect(seg.jumpClass, JumpClass.countermovement);
       expect(p.spans, hasLength(4));
@@ -57,8 +62,8 @@ void main() {
 
     test('survives a 33 Hz plate ring', () {
       // A floppy plate rings hard at takeoff; the raw force crosses any
-      // threshold many times per flight. Segmentation runs on the smoothed
-      // envelope, so it must still find the jump.
+      // threshold many times per flight. The flight mask's bridging rejoins
+      // the fragments, so the flight must still come out whole.
       final jump = SyntheticCmj(ringAmplitudeKg: 5);
       final window = jump.window;
       final baseline = estimateBaseline(window, 0, jump.quietEnd)!;
@@ -69,6 +74,52 @@ void main() {
         p.flightSamples,
         closeTo(jump.flightEndIndex - jump.takeoffIndex, 30),
       );
+    });
+
+    test('a toe skim mid-dip is not the flight', () {
+      // The dip bottom hovers at ~zero for 60 ms (< the 80 ms minimum
+      // flight). A scan that latches the first below-threshold run would
+      // reject this rep forever with "flight too short".
+      final jump = SyntheticCmj(skimMs: 60);
+      final window = jump.window;
+      final baseline = estimateBaseline(window, 0, jump.quietEnd)!;
+      final seg = segmentCmj(window, JumpContext.fromBaseline(baseline));
+      expect(seg, isA<CmjRep>());
+      final p = (seg as CmjRep).phases;
+      expect(
+        p.flightSamples,
+        closeTo(jump.flightEndIndex - jump.takeoffIndex, 30),
+      );
+      expect(p.takeoff, greaterThan(jump.quietEnd + 200));
+    });
+
+    test('the split sits at the impulse-zero dip bottom', () {
+      final jump = SyntheticCmj();
+      final window = jump.window;
+      final baseline = estimateBaseline(window, 0, jump.quietEnd)!;
+      final p =
+          (segmentCmj(window, JumpContext.fromBaseline(baseline)) as CmjRep)
+              .phases;
+      // Recompute the cumulative net impulse and check the split is where
+      // the sum climbs back to zero.
+      final bw = baseline.meanKgf;
+      double net = 0;
+      final nets = <double>[];
+      for (int i = p.onset; i <= p.takeoff; i++) {
+        net += window.forceAt(i) - bw;
+        nets.add(net);
+      }
+      final bottom = nets.indexOf(nets.reduce(math.min));
+      int expected = -1;
+      for (int k = bottom; k < nets.length; k++) {
+        if (nets[k] >= 0) {
+          expected = k;
+          break;
+        }
+      }
+      expect(p.split, p.onset + expected);
+      expect(p.split, greaterThan(p.onset + 100));
+      expect(p.split, lessThan(p.takeoff));
     });
 
     test('quiet stance alone is no flight', () {
@@ -99,7 +150,7 @@ void main() {
     test('phase bounds survive a TestRep round-trip', () {
       const p = CmjPhases(
         onset: 100,
-        bwCross: 400,
+        split: 400,
         takeoff: 800,
         landing: 1200,
         end: 1800,
@@ -110,7 +161,7 @@ void main() {
         sampleRate: 1000,
       )!;
       expect(restored.onset, p.onset);
-      expect(restored.bwCross, p.bwCross);
+      expect(restored.split, p.split);
       expect(restored.takeoff, p.takeoff);
       expect(restored.landing, p.landing);
       expect(restored.end, p.end);

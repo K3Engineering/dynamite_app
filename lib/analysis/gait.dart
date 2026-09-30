@@ -121,7 +121,7 @@ GaitEpisode locateGaitContact(
   for (int i = w.end - sustain; i >= touchdown; i--) {
     bool all = true;
     for (int k = 0; k < sustain; k++) {
-      if (!(w.smoothAt(i + k) > threshold)) {
+      if (!(w.forceAt(i + k) > threshold)) {
         all = false;
         break;
       }
@@ -142,7 +142,7 @@ GaitEpisode locateGaitContact(
 
   double peak = 0;
   for (int i = touchdown; i <= toeOff; i++) {
-    peak = math.max(peak, w.smoothAt(i));
+    peak = math.max(peak, w.forceAt(i));
   }
   if (peak < params.minPeakFraction * ctx.bwKgf) {
     return const GaitRejected(GaitInvalidReason.underLoaded);
@@ -219,7 +219,7 @@ final List<MetricDef<GaitContext>> gaitMetrics = List.unmodifiable([
     compute: (w, c) {
       double acc = 0;
       for (int i = w.start; i < w.end; i++) {
-        acc += w.smoothAt(i);
+        acc += w.forceAt(i);
       }
       return acc / w.sampleRate;
     },
@@ -243,7 +243,7 @@ final List<MetricDef<GaitContext>> gaitMetrics = List.unmodifiable([
 double _peak(PlateWindow w) {
   double max = 0;
   for (int i = w.start; i < w.end; i++) {
-    max = math.max(max, w.smoothAt(i));
+    max = math.max(max, w.forceAt(i));
   }
   return max;
 }
@@ -254,7 +254,7 @@ double _loadingRate(PlateWindow w, GaitContext c) {
   final horizon = math.min(w.end, w.start + 50 * w.sampleRate ~/ 1000);
   double max = 0;
   for (int i = w.start; i + 1 < horizon; i++) {
-    max = math.max(max, w.smoothAt(i + 1) - w.smoothAt(i));
+    max = math.max(max, w.forceAt(i + 1) - w.forceAt(i));
   }
   return max * w.sampleRate;
 }
@@ -305,7 +305,7 @@ double? _pushoffShare(PlateWindow w, GaitContext c) {
   double pushoff = 0, total = 0;
   for (int i = w.start; i < w.end; i++) {
     pushoff += forward ? w.frontAt(i) : w.backAt(i);
-    total += w.smoothAt(i);
+    total += w.forceAt(i);
   }
   if (!(total > 0)) return null;
   return 100 * pushoff / total;
