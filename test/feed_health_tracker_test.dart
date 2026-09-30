@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/models/feed_health.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/feed_health_tracker.dart';
@@ -43,5 +44,32 @@ void main() {
   test('a hub reset while not streaming does not un-null the health', () {
     hub.clear();
     expect(tracker.health.value, isNull);
+  });
+
+  test('a monitoring pause nulls the health at once; the first resumed '
+      'batch reclassifies', () {
+    final paused = ValueNotifier(false);
+    tracker = FeedHealthTracker(
+      hub: hub,
+      streamingChanges: streaming,
+      streamingNow: () => streaming.value,
+      pauseChanges: paused,
+      pausedNow: () => paused.value,
+    );
+
+    streaming.value = true;
+    expect(tracker.health.value, FeedHealth.starting);
+
+    paused.value = true; // the pause edge classifies in the same dispatch
+    expect(tracker.health.value, isNull);
+
+    paused.value = false;
+    // Resume is deliberately not an eager tick: lastDataAt sat stale through
+    // the pause, so classifying now would flash "Stream stopped". The first
+    // resumed batch re-classifies well ahead of the 1 Hz ticker.
+    expect(tracker.health.value, isNull);
+    hub.addSampleFrame(Int32List(kAdcChannelCount));
+    hub.commitBatch(0);
+    expect(tracker.health.value, FeedHealth.flowing);
   });
 }

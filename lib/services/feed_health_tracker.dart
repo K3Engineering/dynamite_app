@@ -21,8 +21,13 @@ class FeedHealthTracker {
     required FeedHealthSource hub,
     required Listenable streamingChanges,
     required bool Function() streamingNow,
-  }) : _hub = hub {
+    Listenable? pauseChanges,
+    bool Function()? pausedNow,
+  }) : _hub = hub,
+       _pauseChanges = pauseChanges,
+       _pausedNow = pausedNow ?? (() => false) {
     _hub.addEventListener(_onHubEvent);
+    _pauseChanges?.addListener(_onPauseEdge);
     _watcher = EdgeWatcher<bool>(
       sources: [streamingChanges],
       now: streamingNow,
@@ -37,6 +42,11 @@ class FeedHealthTracker {
   /// [FeedHealthSource]): polled, so it needs no notify side, and it can't
   /// reach the hub's command surface.
   final FeedHealthSource _hub;
+
+  /// The monitoring pause (`MonitorPause`): while [_pausedNow] the feed's
+  /// silence is expected, so classification reports nothing (null).
+  final Listenable? _pauseChanges;
+  final bool Function() _pausedNow;
 
   late final EdgeWatcher<bool> _watcher;
 
@@ -57,9 +67,22 @@ class FeedHealthTracker {
   }
 
   void _onHubEvent(HubEvent event) {
-    // Only HubCleared matters (see the class comment): batch appends are
-    // covered by lastDataAt on the next tick, at 1 Hz resolution.
-    if (event is HubCleared && _timer != null) _tick();
+    // Batch appends are covered by lastDataAt on the next tick, at 1 Hz
+    // resolution — except the first batch after a resume: health sat null
+    // through the pause and the next tick could be a second out.
+    if (event is HubCleared ||
+        (event is HubBatchAppended && health.value == null)) {
+      if (_timer != null) _tick();
+    }
+  }
+
+  /// A pause edge: classify at once so the pause takes effect this frame
+  /// ([_tick] reports null while paused). Resume edges are ignored on
+  /// purpose: lastDataAt is deliberately stale through the pause, so an
+  /// eager tick would flash "Stream stopped"; the first resumed batch
+  /// reclassifies instead (see [_onHubEvent]).
+  void _onPauseEdge() {
+    if (_timer != null && _pausedNow()) _tick();
   }
 
   void _tick() {
@@ -69,6 +92,7 @@ class FeedHealthTracker {
       lastDataAt: _hub.lastDataAt,
       lastMalformedPacketAt: _hub.lastMalformedPacketAt,
       streamStartedAt: _hub.streamStartedAt,
+      paused: _pausedNow(),
     );
     if (next != health.value) health.value = next;
   }
@@ -81,6 +105,7 @@ class FeedHealthTracker {
     _timer = null;
     _watcher.dispose();
     _hub.removeEventListener(_onHubEvent);
+    _pauseChanges?.removeListener(_onPauseEdge);
     health.dispose();
   }
 }

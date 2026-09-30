@@ -349,9 +349,13 @@ class DataHub extends ChangeNotifier
   }
 
   /// Close out a decoded packet: emit [HubBatchAppended] for the slice since
-  /// [startIdx] and notify once.
+  /// [startIdx] and notify once. The [lastDataAt] stamp moves BEFORE the
+  /// emit so batch listeners (the feed-health re-derivation after a
+  /// monitoring-pause resume) read this batch's freshness, not the previous
+  /// one's.
   @override
   void commitBatch(int startIdx) {
+    lastDataAt = DateTime.now();
     final int count = totalSamples - startIdx;
     if (count > 0) {
       _emit(HubBatchAppended(startIdx, count));
@@ -362,7 +366,6 @@ class DataHub extends ChangeNotifier
     if (pending != null && DateTime.now().isAfter(pending.deadline)) {
       _pendingTare = null;
     }
-    lastDataAt = DateTime.now();
     gaps.pruneBefore(totalSamples - maxDataSz); // ring-wrap hygiene
     notifyListeners();
   }

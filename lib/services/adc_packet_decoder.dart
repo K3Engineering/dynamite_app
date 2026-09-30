@@ -13,8 +13,12 @@ import '../utils/log.dart';
 /// counter's ~65.5 s wrap; beyond slack the clock is the authority. Loss is
 /// reported via [AdcSink.addDroppedFrames].
 class AdcPacketDecoder {
-  AdcPacketDecoder(this.hub, {Duration Function()? now})
-    : _now = now ?? (() => _clock.elapsed) {
+  AdcPacketDecoder(
+    this.hub, {
+    Duration Function()? now,
+    bool Function()? isPaused,
+  }) : _now = now ?? (() => _clock.elapsed),
+       _isPaused = isPaused ?? (() => false) {
     // A sink clear means a new device stream: reset so its first packet isn't
     // diffed against the previous stream's counter.
     hub.addEventListener((event) {
@@ -23,6 +27,11 @@ class AdcPacketDecoder {
   }
 
   final AdcSink hub;
+
+  /// The monitoring pause (`MonitorPause`): while true, packets keep the
+  /// continuity bookkeeping current but are discarded before the sink, so the
+  /// hub's buffer stays frozen.
+  final bool Function() _isPaused;
 
   /// Monotonic clock for the cross-check (site-managed time invites NTP-slew
   /// false positives); injectable for tests.
@@ -56,8 +65,11 @@ class AdcPacketDecoder {
 
   /// Parse one BLE ADC-feed notification packet into the sink.
   ///
-  /// Data is always buffered for live display; recording observes the sink
-  /// via [HubBatchAppended] (emitted from [AdcSink.commitBatch]).
+  /// Data is buffered for live display; recording observes the sink via
+  /// [HubBatchAppended] (emitted from [AdcSink.commitBatch]). While monitoring
+  /// is paused ([_isPaused]), packets update only the continuity bookkeeping:
+  /// resume diffs against the last discarded packet and sees no catch-up gap,
+  /// so the frozen buffer never pays for the discarded span.
   void onDataPacket(Uint8List data) {
     final n = adcSamplesInPacket(data.length);
     if (n == null) {
@@ -66,13 +78,12 @@ class AdcPacketDecoder {
       return;
     }
 
-    final int startIdx = hub.totalSamples;
-
     final int rxUs = _now().inMicroseconds;
     final int rate = hub.sampleRateHz;
     final int count = data[0] + (data[1] << 8);
     final prev = _prev;
-    if (prev != null) {
+    final paused = _isPaused();
+    if (prev != null && !paused) {
       final int diff = (count - prev.sampleCount) & 0xFFFF;
       // Samples the clock says elapsed since the previous packet (measured
       // between deliveries, so loss can be anywhere along the path).
@@ -97,6 +108,9 @@ class AdcPacketDecoder {
       }
     }
     _prev = (sampleCount: (count + n) & 0xFFFF, rxUs: rxUs);
+    if (paused) return;
+
+    final int startIdx = hub.totalSamples;
 
     // Anchor the counter to the sink timeline (after gap injection). The
     // writer derives ssn_origin from this pairing.

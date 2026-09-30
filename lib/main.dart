@@ -20,6 +20,7 @@ import 'services/firmware_update_service.dart';
 // restart, so each generation registers a cleanup the next one runs first.
 import 'services/hot_restart_cleanup_stub.dart'
     if (dart.library.js_interop) 'services/hot_restart_cleanup_web.dart';
+import 'services/monitor_pause.dart';
 import 'services/recording_controller.dart';
 import 'services/rig_state.dart';
 import 'services/rig_link_guard.dart';
@@ -61,7 +62,13 @@ void main() async {
   );
 
   final dataHub = DataHub();
-  final decoder = AdcPacketDecoder(dataHub);
+  // The monitoring pause (see MonitorPause): decoder-side packet gate, wired
+  // before the decoder so the gate closure exists at first packet.
+  final monitorPause = MonitorPause(dataHub);
+  final decoder = AdcPacketDecoder(
+    dataHub,
+    isPaused: () => monitorPause.paused,
+  );
   late final BleLinkManager linkManager;
   final rigState = RigState(
     backend: () => linkManager.backend,
@@ -88,6 +95,8 @@ void main() async {
     hub: dataHub,
     streamingChanges: linkManager,
     streamingNow: () => linkManager.isStreaming,
+    pauseChanges: monitorPause,
+    pausedNow: () => monitorPause.paused,
   );
   // A link loss ends the rig session; a dirty discard is surfaced.
   RigLinkGuard(
@@ -161,6 +170,7 @@ void main() async {
         Provider.value(value: feedHealth),
         ChangeNotifierProvider.value(value: dataHub),
         ChangeNotifierProvider.value(value: linkManager),
+        ChangeNotifierProvider.value(value: monitorPause),
         ChangeNotifierProvider.value(value: rigState),
         ChangeNotifierProvider.value(value: recording),
         ChangeNotifierProvider.value(value: firmwareUpdates),

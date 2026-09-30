@@ -210,6 +210,54 @@ void main() {
     });
   });
 
+  group('monitoring pause gate (isPaused)', () {
+    test('paused packets are discarded but keep continuity bookkeeping', () {
+      var paused = false;
+      final d = AdcPacketDecoder(hub, isPaused: () => paused);
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+      final frozen = hub.totalSamples;
+
+      paused = true;
+      // The in-pause counter jump would inject a gap if it reached the
+      // continuity diff: it must not.
+      d.onDataPacket(makePacket(defaultPacketSamples, (s, c) => 2));
+      d.onDataPacket(makePacket(4 * defaultPacketSamples, (s, c) => 3));
+      expect(hub.totalSamples, frozen);
+
+      paused = false;
+      // Resume diffs against the last DISCARDED packet — counter 80 + 20
+      // samples = 100 — so this packet reports no catch-up gap.
+      d.onDataPacket(makePacket(5 * defaultPacketSamples, (s, c) => 4));
+      expect(hub.totalSamples, frozen + defaultPacketSamples);
+      expect(hub.gaps.contains(frozen), isFalse);
+      expect(hub.rawAt(0, frozen), 4);
+    });
+
+    test('paused packets leave the counter anchor and last-data stamp '
+        'untouched', () {
+      var paused = false;
+      final d = AdcPacketDecoder(hub, isPaused: () => paused);
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+      final stamp = hub.lastDataAt;
+
+      paused = true;
+      d.onDataPacket(makePacket(defaultPacketSamples, (s, c) => 2));
+      // The anchor still pairs counter 0 with hub index 0: a session
+      // snapshot (impossible while paused, but the invariant holds) sees no
+      // discarded packet.
+      expect(hub.packetAnchor, (counter: 0, hubIndex: 0));
+      // No commitBatch while paused, so the health input keeps its age.
+      expect(hub.lastDataAt, stamp);
+
+      paused = false;
+      d.onDataPacket(makePacket(2 * defaultPacketSamples, (s, c) => 3));
+      expect(hub.packetAnchor, (
+        counter: 2 * defaultPacketSamples,
+        hubIndex: defaultPacketSamples,
+      ));
+    });
+  });
+
   group('AdcPacketDecoder clock cross-check', () {
     // Deterministic arrival clock: real packets arrive ~1 kHz / samples, and
     // the cross-check only cares about coarse (100 ms-scale) agreement.

@@ -11,6 +11,8 @@ class StatusColors extends ThemeExtension<StatusColors> {
     required this.linkActive,
     required this.linkConnected,
     required this.onConnectedWarning,
+    required this.warningContainer,
+    required this.onWarningContainer,
   });
 
   /// A link transition is in flight: scanning, connecting, post-connect
@@ -24,16 +26,26 @@ class StatusColors extends ThemeExtension<StatusColors> {
   /// connected device row and the live status bar).
   final Color onConnectedWarning;
 
+  /// Attention (not alarm) container/content pair: a state the user set that
+  /// must not be forgotten — monitoring paused. Distinct from error red,
+  /// which recording owns.
+  final Color warningContainer;
+  final Color onWarningContainer;
+
   static const StatusColors light = StatusColors(
     linkActive: Colors.lightBlue,
     linkConnected: Colors.blueAccent,
     onConnectedWarning: Color(0xFFFF8A80), // redAccent 100
+    warningContainer: Color(0xFFFFB300), // amber 600
+    onWarningContainer: Colors.black,
   );
 
   static const StatusColors dark = StatusColors(
     linkActive: Color(0xFF81D4FA), // lightBlue 300
     linkConnected: Color(0xFF82B1FF), // blueAccent 100
     onConnectedWarning: Color(0xFFEF5350), // red 400
+    warningContainer: Color(0xFFFFCA28), // amber 400
+    onWarningContainer: Colors.black,
   );
 
   @useResult
@@ -42,10 +54,14 @@ class StatusColors extends ThemeExtension<StatusColors> {
     Color? linkActive,
     Color? linkConnected,
     Color? onConnectedWarning,
+    Color? warningContainer,
+    Color? onWarningContainer,
   }) => StatusColors(
     linkActive: linkActive ?? this.linkActive,
     linkConnected: linkConnected ?? this.linkConnected,
     onConnectedWarning: onConnectedWarning ?? this.onConnectedWarning,
+    warningContainer: warningContainer ?? this.warningContainer,
+    onWarningContainer: onWarningContainer ?? this.onWarningContainer,
   );
 
   @override
@@ -57,6 +73,16 @@ class StatusColors extends ThemeExtension<StatusColors> {
       onConnectedWarning: Color.lerp(
         onConnectedWarning,
         other.onConnectedWarning,
+        t,
+      )!,
+      warningContainer: Color.lerp(
+        warningContainer,
+        other.warningContainer,
+        t,
+      )!,
+      onWarningContainer: Color.lerp(
+        onWarningContainer,
+        other.onWarningContainer,
         t,
       )!,
     );

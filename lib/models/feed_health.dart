@@ -48,7 +48,9 @@ abstract interface class FeedHealthSource {
 }
 
 /// Classify the feed from stream measurements (passed rather than the hub to
-/// keep this pure). Null when [streaming] is false. [staleAfter] is the
+/// keep this pure). Null when [streaming] is false — and when [paused]: a
+/// monitoring pause discards incoming samples on purpose, so the stalled
+/// feed is expected silence, not a problem to report. [staleAfter] is the
 /// freshness window: at 50 Hz, 2 s without a packet is never a scheduling
 /// hiccup.
 FeedHealth? deriveFeedHealth({
@@ -59,8 +61,9 @@ FeedHealth? deriveFeedHealth({
   DateTime? streamStartedAt,
   DateTime? now,
   Duration staleAfter = const Duration(seconds: 2),
+  bool paused = false,
 }) {
-  if (!streaming) return null;
+  if (!streaming || paused) return null;
   final t = now ?? DateTime.now();
   bool fresh(DateTime? at) => at != null && t.difference(at) < staleAfter;
 
