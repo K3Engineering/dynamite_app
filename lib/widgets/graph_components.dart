@@ -2016,6 +2016,9 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   double get topSpace => 2;
 
   @override
+  bool get drawMinorGrid => true;
+
+  @override
   int get firstSampleOffset => 1; // first difference needs sample j-1
 
   /// Per-sample first difference in raw counts (gap-edge NaN lives in
