@@ -59,8 +59,13 @@ void main() {
       expect(byId['lr_asymmetry'], closeTo(100 * 0.10 / 0.55, 1.0));
     });
 
-    test('RFD and both phase durations are present', () {
-      expect(byId['rfd_0_100'], isNotNull);
+    test('peak RFD windows and both phase durations are present', () {
+      final rfd50 = byId['rfd_peak_50']!;
+      final rfd100 = byId['rfd_peak_100']!;
+      expect(rfd50, greaterThan(0));
+      // Every 100 ms window is the mean of two 50 ms sub-windows, so the
+      // 50 ms max can never sit below the 100 ms one.
+      expect(rfd50, greaterThanOrEqualTo(rfd100));
       expect(byId['eccentric_duration'], greaterThan(0));
       expect(byId['concentric_duration'], greaterThan(0));
     });
