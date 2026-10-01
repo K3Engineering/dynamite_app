@@ -45,7 +45,7 @@ dependencies:
   # 7 glyphs, 1.5 kB, 1 fetch on the hot path. dce drops the widgets
   # afterwards (no CupertinoIcons string in main.dart.wasm). removing the dep
   # kills the fetch but warns on every release build (flutter/flutter#119074), so kept.
-  cupertino_icons: ^1.0.8
+  cupertino_icons: ^2.0.0
 
   cross_file: ^0.3.4+2
   package_info_plus: ^10.1.0
