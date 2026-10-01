@@ -173,11 +173,18 @@ final List<MetricDef<CmjMetricEnv>> cmjMetrics = List.unmodifiable([
         _netImpulse(w, e.phases.onset, e.phases.takeoff, e.ctx.bwKgf),
   ),
   MetricDef<CmjMetricEnv>(
-    id: 'rfd_0_100',
-    label: 'RFD (0–100 ms)',
+    id: 'rfd_peak_50',
+    label: 'Max sustained RFD (50 ms)',
     unit: 'kgf/s',
     decimals: 0,
-    compute: (w, e) => _rfd100(w, e.phases),
+    compute: (w, e) => _peakRfd(w, e.phases, 50),
+  ),
+  MetricDef<CmjMetricEnv>(
+    id: 'rfd_peak_100',
+    label: 'Max sustained RFD (100 ms)',
+    unit: 'kgf/s',
+    decimals: 0,
+    compute: (w, e) => _peakRfd(w, e.phases, 100),
   ),
   MetricDef<CmjMetricEnv>(
     id: 'lr_asymmetry',
@@ -270,14 +277,22 @@ double _netImpulse(PlateWindow w, int start, int end, double bw) {
   return acc / w.sampleRate;
 }
 
-/// Rate of force development over the first 100 ms from the concentric
-/// phase's start (the impulse-zero dip bottom), or null when the concentric
-/// phase is shorter than the window.
-double? _rfd100(PlateWindow w, CmjPhases p) {
-  final offset = (0.1 * w.sampleRate).round();
-  final i1 = p.split + offset;
-  if (i1 > p.takeoff) return null;
-  return (w.forceAt(i1) - w.forceAt(p.split)) / (offset / w.sampleRate);
+/// Peak sustained RFD: the steepest [windowMs] stretch of the force rise,
+/// `max over [onset, takeoff] of (F(t + windowMs) − F(t)) / windowMs` on raw
+/// force. Window-averaged on purpose, unlike the instantaneous max slope —
+/// at 1 kHz the latter picks ms-scale catch transients (shoe/plate/bench
+/// stiffness) rather than sustained force production. Null when ground
+/// contact is shorter than the window.
+double? _peakRfd(PlateWindow w, CmjPhases p, int windowMs) {
+  final offset = (windowMs * w.sampleRate / 1000).round();
+  if (p.takeoff - p.onset < offset) return null;
+  final seconds = offset / w.sampleRate;
+  double best = double.negativeInfinity;
+  for (int i = p.onset; i + offset <= p.takeoff; i++) {
+    final slope = (w.forceAt(i + offset) - w.forceAt(i)) / seconds;
+    if (slope > best) best = slope;
+  }
+  return best;
 }
 
 /// Left/right asymmetry of the propulsive load: `|L − R| / max(L, R)` as a
