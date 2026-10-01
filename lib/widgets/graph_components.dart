@@ -1000,8 +1000,8 @@ YAxisRange _computeYRange(
 
 /// Append vertical X-axis grid lines (and optional time labels) for the visible
 /// window [viewStart, viewEnd) to [grid]. Times are absolute -- seconds since
-/// sample 0 (session start) -- at every zoom level. When [drawMinor] is true,
-/// half-step minor lines are added between the major ticks.
+/// sample 0 (session start) -- at every zoom level. Half-step minor lines are
+/// added between the major ticks.
 void _drawTimeAxis(
   Canvas canvas,
   Path grid,
@@ -1011,7 +1011,6 @@ void _drawTimeAxis(
   required int sampleRate,
   required bool showLabels,
   required _LabelCache labels,
-  bool drawMinor = false,
   Color textColor = Colors.black,
 }) {
   final viewSamples = viewEnd - viewStart;
@@ -1050,21 +1049,15 @@ void _drawTimeAxis(
   for (int k = (startSec / step).ceil(); k * step < endSec; k++) {
     vline(k * step, labeled: showLabels, major: k % 5 == 0);
   }
-  if (drawMinor) {
-    // Minor lines at half-step offsets; these never coincide with a major.
-    for (
-      int k = (startSec / step - 0.5).ceil();
-      (k + 0.5) * step < endSec;
-      k++
-    ) {
-      vline((k + 0.5) * step, labeled: false);
-    }
+  // Minor lines at half-step offsets; these never coincide with a major.
+  for (int k = (startSec / step - 0.5).ceil(); (k + 0.5) * step < endSec; k++) {
+    vline((k + 0.5) * step, labeled: false);
   }
 }
 
 /// Append horizontal Y-axis grid lines and labels (formatted by [labelFor]) for
-/// [yRange] to [grid]. When [drawMinor] is true, half-delta minor lines are
-/// added. [valueToY] maps an axis value to a pixel Y.
+/// [yRange] to [grid]. Half-delta minor lines are added. [valueToY] maps an
+/// axis value to a pixel Y.
 void _drawValueAxis(
   Canvas canvas,
   Path grid,
@@ -1073,7 +1066,6 @@ void _drawValueAxis(
   double Function(double value) valueToY, {
   required String Function(double tick) labelFor,
   required _LabelCache labels,
-  bool drawMinor = false,
   Color textColor = Colors.black,
 }) {
   final delta = yRange.tickDelta;
@@ -1099,18 +1091,16 @@ void _drawValueAxis(
     }
   }
 
-  if (drawMinor) {
-    final minorDelta = delta / 2;
-    for (
-      double tick = (yRange.yMin / minorDelta).ceil() * minorDelta;
-      tick <= yRange.yMax + minorDelta * 0.01;
-      tick += minorDelta
-    ) {
-      final yPos = valueToY(tick);
-      if (yPos >= -1 && yPos <= graphSz.height + 1) {
-        grid.moveTo(0, yPos);
-        grid.lineTo(graphSz.width, yPos);
-      }
+  final minorDelta = delta / 2;
+  for (
+    double tick = (yRange.yMin / minorDelta).ceil() * minorDelta;
+    tick <= yRange.yMax + minorDelta * 0.01;
+    tick += minorDelta
+  ) {
+    final yPos = valueToY(tick);
+    if (yPos >= -1 && yPos <= graphSz.height + 1) {
+      grid.moveTo(0, yPos);
+      grid.lineTo(graphSz.width, yPos);
     }
   }
 }
@@ -1719,9 +1709,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// Whether to draw time labels below the X axis.
   bool get showXLabels => true;
 
-  /// Whether to add half-delta minor grid lines on both axes.
-  bool get drawMinorGrid => false;
-
   /// Offset from [GraphDataSource.oldestSample] of the first sample the
   /// series can be evaluated at (1 for a first difference).
   int get firstSampleOffset => 0;
@@ -1813,7 +1800,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       sampleRate: _data.sampleRate,
       showLabels: showXLabels,
       labels: labels,
-      drawMinor: drawMinorGrid,
       textColor: colorScheme.onSurface,
     );
     _drawValueAxis(
@@ -1824,7 +1810,6 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       valueToY,
       labelFor: (tick) => yTickLabel(tick, yRange),
       labels: labels,
-      drawMinor: drawMinorGrid,
       textColor: colorScheme.onSurface,
     );
     final gridPen = Paint()
@@ -1901,9 +1886,6 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
 
   @override
   double get topSpace => 4;
-
-  @override
-  bool get drawMinorGrid => true;
 
   @override
   List<double?> cacheKeyTares() =>
@@ -2014,9 +1996,6 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
 
   @override
   double get topSpace => 2;
-
-  @override
-  bool get drawMinorGrid => true;
 
   @override
   int get firstSampleOffset => 1; // first difference needs sample j-1
