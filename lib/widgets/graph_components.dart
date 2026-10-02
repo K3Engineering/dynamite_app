@@ -863,15 +863,18 @@ double _decadeStepCeil(double target) {
   return 10 * base;
 }
 
+/// Clock-nice step ladder, as rungs of seconds/minutes/hours: shared by
+/// [_timeStepCeil] and [_timeStepFloor]. 30 s and friends keep m:ss labels
+/// meaningful; a 1/2/5 decade of "100 s" would print 1:40.
+const _kClockRungs = [1, 2, 5, 10, 20, 30, 60];
+
 /// Smallest clock-nice step >= [target] seconds: 1/2/5 decades below one
-/// second, then [1, 2, 5, 10, 20, 30, 60] of seconds, minutes, hours, ...
-/// (30 s and friends keep m:ss labels meaningful; a 1/2/5 decade of "100 s"
-/// would print 1:40).
+/// second, then [_kClockRungs] of seconds, minutes, hours, ...
 double _timeStepCeil(double target) {
   if (target < 1) return _decadeStepCeil(target);
   for (double scale = 1; ; scale *= 60) {
     // Terminates once scale >= target, via r = 1.
-    for (final r in const [1, 2, 5, 10, 20, 30, 60]) {
+    for (final r in _kClockRungs) {
       final step = scale * r;
       if (step >= target) return step;
     }
@@ -891,7 +894,7 @@ double _timeStepFloor(double target) {
   // Walk the ladder down from the first rung past [target].
   double prev = 1;
   for (double scale = 1; ; scale *= 60) {
-    for (final r in const [1, 2, 5, 10, 20, 30, 60]) {
+    for (final r in _kClockRungs) {
       final step = scale * r;
       if (step > target) return prev;
       prev = step;
@@ -1061,6 +1064,7 @@ void _drawTimeAxis(
   double step = _timeStepCeil(xSpanSec * _kMinXTickPx / graphSz.width);
   int decimals;
   int period;
+  double maxLabelH = 0;
   for (;;) {
     decimals = step >= 1
         ? 0
@@ -1077,20 +1081,19 @@ void _drawTimeAxis(
     // Capped at half the window so at least two majors are on screen at
     // any pan position: uncapped, a narrow plot (phone) can pick a step
     // whose superStep exceeds the whole span, leaving some windows with
-    // no major at all. The walk down keeps the cap a multiple of step so
-    // majors stay labeled ticks.
+    // no major at all. The cap stays a multiple of step so majors stay
+    // labeled ticks.
     double superStep = _timeStepCeil(5 * step);
     if (superStep > xSpanSec / 2 && xSpanSec / 2 >= step) {
       superStep = _timeStepFloor(xSpanSec / 2);
-      for (
-        int q = (superStep / step).round();
-        (superStep - q * step).abs() >= step * 1e-6;
-        q = (superStep / step).round()
-      ) {
+      if ((superStep - (superStep / step).round() * step).abs() >=
+          step * 1e-6) {
+        // The floor landed on the only rung above step that fails to
+        // divide it (the 2->5 / 20->30 transition; the octave jump
+        // absorbs the odd factor, so every higher rung is a multiple).
+        // One rung down always divides -- often it is step itself.
         superStep = _timeStepFloor(superStep * (1 - 1e-9));
       }
-      // The span/2 >= step guard above means the walk can always stop at
-      // step itself (q=1), which is a trivial multiple.
     }
     period = (superStep / step).round();
     assert(
@@ -1100,43 +1103,26 @@ void _drawTimeAxis(
 
     double maxLabelW = 0;
     for (int k = (startSec / step).ceil(); k * step < endSec; k++) {
-      final w = labels
-          .prepare(
-            _fmtTick(k * step, decimals),
-            color: textColor,
-            bold: k % period == 0,
-          )
-          .longestLine;
-      if (w > maxLabelW) maxLabelW = w;
+      final par = labels.prepare(
+        _fmtTick(k * step, decimals),
+        color: textColor,
+        bold: k % period == 0,
+      );
+      if (par.longestLine > maxLabelW) maxLabelW = par.longestLine;
+      if (par.height > maxLabelH) maxLabelH = par.height;
     }
     if (step * graphSz.width / xSpanSec >= maxLabelW + _kLabelGapPx) break;
     step = _timeStepCeil(step * (1 + 1e-9)); // next ladder rung up
   }
 
-  void vline(double sec, {required bool labeled, bool major = false}) {
+  /// Append a vertical grid line at absolute time [sec]; returns its pixel
+  /// X so the labeled-tick loop below can position the label.
+  double vline(double sec, {bool major = false}) {
     final xPos = (sec - startSec) * sampleRate * graphSz.width / viewSamples;
     final path = major ? gridMajor : gridMinor;
     path.moveTo(xPos, 0);
     path.lineTo(xPos, graphSz.height);
-    if (labeled) {
-      final par = labels.prepare(
-        _fmtTick(sec, decimals),
-        color: textColor,
-        bold: major,
-      );
-      // The tick population extends past both view edges (see below) so
-      // edge ticks slide instead of toggle; their labels would paint
-      // off-plot, so clip horizontally to the label strip.
-      canvas.save();
-      canvas.clipRect(
-        Rect.fromLTWH(0, graphSz.height, graphSz.width, par.height + 4),
-      );
-      canvas.drawParagraph(
-        par,
-        Offset(xPos - par.longestLine / 2, graphSz.height + 2),
-      );
-      canvas.restore();
-    }
+    return xPos;
   }
 
   // Ticks live on the absolute grid k * step, so they (and the majors) hold
@@ -1146,20 +1132,43 @@ void _drawTimeAxis(
   // micro-oscillating across an edge tick slides it in and out instead of
   // toggling it per frame; the caller's clip hides the off-screen portions.
   final slackSec = step + _kLiveEdgeLeadMs / 1000.0;
+  if (showLabels) {
+    // Labels paint under the plot, outside the caller's grid clip, and the
+    // population above reaches past both view edges -- clip horizontally
+    // to the label strip so edge labels slide in and out instead of
+    // bleeding into the gutters.
+    canvas.save();
+    canvas.clipRect(
+      Rect.fromLTWH(0, graphSz.height, graphSz.width, maxLabelH + 4),
+    );
+  }
   for (
     int k = ((startSec - slackSec) / step).ceil();
     k * step < endSec + slackSec;
     k++
   ) {
-    vline(k * step, labeled: showLabels, major: k % period == 0);
+    final major = k % period == 0;
+    final xPos = vline(k * step, major: major);
+    if (showLabels) {
+      final par = labels.prepare(
+        _fmtTick(k * step, decimals),
+        color: textColor,
+        bold: major,
+      );
+      canvas.drawParagraph(
+        par,
+        Offset(xPos - par.longestLine / 2, graphSz.height + 2),
+      );
+    }
   }
+  if (showLabels) canvas.restore();
   // Minor lines at half-step offsets; these never coincide with a major.
   for (
     int k = ((startSec - slackSec) / step - 0.5).ceil();
     (k + 0.5) * step < endSec + slackSec;
     k++
   ) {
-    vline((k + 0.5) * step, labeled: false);
+    vline((k + 0.5) * step);
   }
 }
 
