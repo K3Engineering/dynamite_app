@@ -863,9 +863,9 @@ double _decadeStepCeil(double target) {
   return 10 * base;
 }
 
-/// Clock-nice step ladder, as rungs of seconds/minutes/hours: shared by
-/// [_timeStepCeil] and [_timeStepFloor]. 30 s and friends keep m:ss labels
-/// meaningful; a 1/2/5 decade of "100 s" would print 1:40.
+/// Clock-nice step ladder, as rungs of seconds/minutes/hours, used by
+/// [_timeStepCeil]. 30 s and friends keep m:ss labels meaningful; a 1/2/5
+/// decade of "100 s" would print 1:40.
 const _kClockRungs = [1, 2, 5, 10, 20, 30, 60];
 
 /// Smallest clock-nice step >= [target] seconds: 1/2/5 decades below one
@@ -877,27 +877,6 @@ double _timeStepCeil(double target) {
     for (final r in _kClockRungs) {
       final step = scale * r;
       if (step >= target) return step;
-    }
-  }
-}
-
-/// Largest clock-nice step <= [target]: the complement of [_timeStepCeil].
-double _timeStepFloor(double target) {
-  if (target < 1) {
-    // 1/2/5-decade floor.
-    final base = math.pow(10, (math.log(target) / math.ln10).ceil()).toDouble();
-    if (base <= target) return base;
-    if (base / 2 <= target) return base / 2;
-    if (base / 5 <= target) return base / 5;
-    return base / 10;
-  }
-  // Walk the ladder down from the first rung past [target].
-  double prev = 1;
-  for (double scale = 1; ; scale *= 60) {
-    for (final r in _kClockRungs) {
-      final step = scale * r;
-      if (step > target) return prev;
-      prev = step;
     }
   }
 }
@@ -1078,26 +1057,14 @@ void _drawTimeAxis(
     // Naively bolding every 5th tick lands on round 5x-step values like
     // 100 s or 25 min instead, which read as noise next to m:ss labels.
     //
-    // Capped at half the window so at least two majors are on screen at
-    // any pan position: uncapped, a narrow plot (phone) can pick a step
-    // whose superStep exceeds the whole span, leaving some windows with
-    // no major at all. The cap stays a multiple of step so majors stay
-    // labeled ticks.
-    double superStep = _timeStepCeil(5 * step);
-    if (superStep > xSpanSec / 2 && xSpanSec / 2 >= step) {
-      superStep = _timeStepFloor(xSpanSec / 2);
-      if ((superStep - (superStep / step).round() * step).abs() >=
-          step * 1e-6) {
-        // The floor landed on the only rung above step that fails to
-        // divide it (the 2->5 / 20->30 transition; the octave jump
-        // absorbs the odd factor, so every higher rung is a multiple).
-        // One rung down always divides -- often it is step itself.
-        superStep = _timeStepFloor(superStep * (1 - 1e-9));
-      }
-    }
-    period = (superStep / step).round();
+    // 0 means no majors at this zoom: the rung exceeds half the window.
+    // Capping it at half the window instead can collapse it to step
+    // itself, and then every tick renders major -- all-bold labels with
+    // no emphasis information at all.
+    final double superStep = _timeStepCeil(5 * step);
+    period = superStep <= xSpanSec / 2 ? (superStep / step).round() : 0;
     assert(
-      (superStep - period * step).abs() < step * 1e-6,
+      period == 0 || (superStep - period * step).abs() < step * 1e-6,
       'superStep $superStep is not a multiple of step $step',
     );
 
@@ -1106,7 +1073,7 @@ void _drawTimeAxis(
       final par = labels.prepare(
         _fmtTick(k * step, decimals),
         color: textColor,
-        bold: k % period == 0,
+        bold: period != 0 && k % period == 0,
       );
       if (par.longestLine > maxLabelW) maxLabelW = par.longestLine;
       if (par.height > maxLabelH) maxLabelH = par.height;
@@ -1147,7 +1114,7 @@ void _drawTimeAxis(
     k * step < endSec + slackSec;
     k++
   ) {
-    final major = k % period == 0;
+    final major = period != 0 && k % period == 0;
     final xPos = vline(k * step, major: major);
     if (showLabels) {
       final par = labels.prepare(
