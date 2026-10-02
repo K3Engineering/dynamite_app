@@ -878,6 +878,27 @@ double _timeStepCeil(double target) {
   }
 }
 
+/// Largest clock-nice step <= [target]: the complement of [_timeStepCeil].
+double _timeStepFloor(double target) {
+  if (target < 1) {
+    // 1/2/5-decade floor.
+    final base = math.pow(10, (math.log(target) / math.ln10).ceil()).toDouble();
+    if (base <= target) return base;
+    if (base / 2 <= target) return base / 2;
+    if (base / 5 <= target) return base / 5;
+    return base / 10;
+  }
+  // Walk the ladder down from the first rung past [target].
+  double prev = 1;
+  for (double scale = 1; ; scale *= 60) {
+    for (final r in const [1, 2, 5, 10, 20, 30, 60]) {
+      final step = scale * r;
+      if (step > target) return prev;
+      prev = step;
+    }
+  }
+}
+
 /// Format an X-axis tick time (absolute seconds since session start) with
 /// [decimals] fractional digits: "42", "0.35", "12:05", "1:00.5". Hours fold
 /// per tick: at and past one hour the format grows a field ("1:02:30")
@@ -1052,7 +1073,25 @@ void _drawTimeAxis(
     // 10-min step) 5-10 ticks apart, and hold still as the window slides.
     // Naively bolding every 5th tick lands on round 5x-step values like
     // 100 s or 25 min instead, which read as noise next to m:ss labels.
-    final double superStep = _timeStepCeil(5 * step);
+    //
+    // Capped at half the window so at least two majors are on screen at
+    // any pan position: uncapped, a narrow plot (phone) can pick a step
+    // whose superStep exceeds the whole span, leaving some windows with
+    // no major at all. The walk down keeps the cap a multiple of step so
+    // majors stay labeled ticks.
+    double superStep = _timeStepCeil(5 * step);
+    if (superStep > xSpanSec / 2 && xSpanSec / 2 >= step) {
+      superStep = _timeStepFloor(xSpanSec / 2);
+      for (
+        int q = (superStep / step).round();
+        (superStep - q * step).abs() >= step * 1e-6;
+        q = (superStep / step).round()
+      ) {
+        superStep = _timeStepFloor(superStep * (1 - 1e-9));
+      }
+      // The span/2 >= step guard above means the walk can always stop at
+      // step itself (q=1), which is a trivial multiple.
+    }
     period = (superStep / step).round();
     assert(
       (superStep - period * step).abs() < step * 1e-6,
@@ -1085,10 +1124,18 @@ void _drawTimeAxis(
         color: textColor,
         bold: major,
       );
+      // The tick population extends past both view edges (see below) so
+      // edge ticks slide instead of toggle; their labels would paint
+      // off-plot, so clip horizontally to the label strip.
+      canvas.save();
+      canvas.clipRect(
+        Rect.fromLTWH(0, graphSz.height, graphSz.width, par.height + 4),
+      );
       canvas.drawParagraph(
         par,
         Offset(xPos - par.longestLine / 2, graphSz.height + 2),
       );
+      canvas.restore();
     }
   }
 
@@ -1889,11 +1936,11 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     // Major lines echo the bold labels: same tiers on screen. The zero
     // baseline ([_drawZeroBaseline], alpha 130 @ 0.8) stays a tier above.
     final gridMajorPen = Paint()
-      ..color = colorScheme.onSurface.withAlpha(100)
+      ..color = colorScheme.onSurface.withAlpha(80)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0.4;
     // Clip to the plot: the X axis populates ticks one edge-slack past each
-    // side (see [_drawTimeAxis]). Labels draw unclipped below/on top.
+    // side (see [_drawTimeAxis]; its labels clip themselves horizontally).
     canvas.save();
     canvas.clipRect(Offset.zero & graphSz);
     canvas.drawPath(gridMinor, gridMinorPen);
