@@ -961,7 +961,7 @@ const double _kMinXTickPx = 48;
 const double _kMinYTickPx = 32;
 
 /// Breathing room demanded between neighboring X labels, on top of each
-/// label's measured width (see [_drawTimeAxis]).
+/// label's measured width (see [_fitTimeStep]).
 const double _kLabelGapPx = 8;
 
 typedef YAxisRange = ({
@@ -1010,188 +1010,193 @@ YAxisRange _computeYRange(
 // Shared plot toolkit
 // ---------------------------------------------------------------------------
 
-/// Append vertical X-axis grid lines (and optional time labels) for the
-/// visible window [viewStart, viewEnd): labeled ticks on the clock-aligned
-/// major period go to [gridMajor] (and print bold), every other tick and
-/// the half-step minor lines between them go to [gridMinor]. Times are
-/// absolute -- seconds since sample 0 (session start) -- at every zoom
-/// level.
-void _drawTimeAxis(
-  Canvas canvas,
-  Path gridMinor,
-  Path gridMajor,
-  Size graphSz, {
-  required double viewStart,
-  required double viewEnd,
-  required int sampleRate,
-  required bool showLabels,
-  required _LabelCache labels,
-  Color textColor = Colors.black,
-}) {
-  final viewSamples = viewEnd - viewStart;
-  if (viewSamples <= 0) return;
+/// Which axis [_drawAxis] renders: the grid-line direction and label
+/// placement (X: vertical lines, labels centered below the plot; Y:
+/// horizontal lines, labels centered vertically past the right edge).
+enum _AxisOrientation { x, y }
 
-  final startSec = viewStart / sampleRate;
-  final endSec = viewEnd / sampleRate;
-  final xSpanSec = viewSamples / sampleRate;
+/// Major cadence for tick [step]: the smallest [stepCeil] ladder rung at
+/// least 5x step, expressed as a count of steps. The count lands at 5-10:
+/// on the clock ladder the 5x rung keeps majors clock-aligned (whole 2-min
+/// marks from a 20 s step, hour marks from a 10-min step), where bolding a
+/// plain "every 5th tick" would land on round multiples of step like 100 s
+/// or 25 min, which read as noise next to m:ss labels. The rung can never
+/// collapse to step itself, so a tight zoom simply shows few or no majors
+/// -- no minimum-count gate needed.
+///
+/// Majors are the ticks with k % period == 0 on the absolute tick grid
+/// k * step, so the tick k == 0 (X: session start; Y: zero) is a major
+/// whenever it is visible.
+int _majorPeriod(double step, double Function(double target) stepCeil) {
+  final superStep = stepCeil(5 * step);
+  final period = (superStep / step).round();
+  assert(
+    (superStep - period * step).abs() < step * 1e-6,
+    'superStep $superStep is not a multiple of step $step',
+  );
+  return period;
+}
 
-  // Tick count scales with plot width: the smallest nice step that keeps
-  // ticks at least [_kMinXTickPx] apart, then bumped up the ladder until the
-  // labels themselves fit with [_kLabelGapPx] to spare -- folded h:mm:ss and
-  // fractional labels are wider than the 48 px floor and would overlap
-  // (measured, not estimated; the width depends on which ticks are visible).
-  double step = _timeStepCeil(xSpanSec * _kMinXTickPx / graphSz.width);
-  int decimals;
-  int period;
-  double maxLabelH = 0;
+/// Fractional digits for [_fmtTick] at [step]: enough to resolve the step,
+/// capped at 3 (ms).
+int _timeDecimals(double step) =>
+    step >= 1 ? 0 : (-(math.log(step) / math.ln10).floor()).clamp(1, 3);
+
+/// Smallest clock-nice step for the time window [startSec, endSec) across
+/// [extent] px: the lowest ladder rung keeping ticks at least
+/// [_kMinXTickPx] apart, then bumped up the ladder until the labels
+/// themselves fit with [_kLabelGapPx] to spare -- folded h:mm:ss and
+/// fractional labels are wider than the 48 px floor and would overlap
+/// (measured, not estimated; the width depends on which ticks are visible).
+double _fitTimeStep(
+  double startSec,
+  double endSec,
+  double extent,
+  _LabelCache labels,
+  Color textColor,
+) {
+  final spanSec = endSec - startSec;
+  var step = _timeStepCeil(spanSec * _kMinXTickPx / extent);
   for (;;) {
-    decimals = step >= 1
-        ? 0
-        : (-(math.log(step) / math.ln10).floor()).clamp(1, 3);
-
-    // Majors every [period] ticks: the smallest ladder rung >= 5x step, so
-    // it is always an integer multiple of step and, once steps reach
-    // minutes, at least a multiple of 60 s -- majors land on clock-aligned
-    // boundaries (whole 2-min marks from a 20 s step, hour marks from a
-    // 10-min step) 5-10 ticks apart, and hold still as the window slides.
-    // Naively bolding every 5th tick lands on round 5x-step values like
-    // 100 s or 25 min instead, which read as noise next to m:ss labels.
-    //
-    // 0 means no majors at this zoom: the rung exceeds half the window.
-    // Capping it at half the window instead can collapse it to step
-    // itself, and then every tick renders major -- all-bold labels with
-    // no emphasis information at all.
-    final double superStep = _timeStepCeil(5 * step);
-    period = superStep <= xSpanSec / 2 ? (superStep / step).round() : 0;
-    assert(
-      period == 0 || (superStep - period * step).abs() < step * 1e-6,
-      'superStep $superStep is not a multiple of step $step',
-    );
-
+    final period = _majorPeriod(step, _timeStepCeil);
+    final decimals = _timeDecimals(step);
     double maxLabelW = 0;
     for (int k = (startSec / step).ceil(); k * step < endSec; k++) {
       final par = labels.prepare(
         _fmtTick(k * step, decimals),
         color: textColor,
-        bold: period != 0 && k % period == 0,
+        bold: k % period == 0,
+      );
+      if (par.longestLine > maxLabelW) maxLabelW = par.longestLine;
+    }
+    if (step * extent / spanSec >= maxLabelW + _kLabelGapPx) return step;
+    step = _timeStepCeil(step * (1 + 1e-9)); // next ladder rung up
+  }
+}
+
+/// Append one axis's grid lines and tick labels for the window
+/// [windowStart, windowEnd] (X: seconds since session start; Y: display
+/// units). [step] is the caller's tick step on the [stepCeil] ladder (X:
+/// [_fitTimeStep]; Y: [YAxisRange.tickDelta]), [labelFor] formats a tick
+/// value, and [posOf] maps one to its pixel along the axis.
+///
+/// Labeled ticks live on the absolute grid k * step, so they (and the
+/// majors) hold still while the window slides. Majors (bold label,
+/// [gridMajor]) are every [_majorPeriod]-th tick; other labeled ticks and
+/// the half-step minor lines between them go to [gridMinor]. Indexing ticks
+/// by k rather than accumulating keeps the major test exact and makes the
+/// k == 0 tick literally 0.0 (no "-0.000" snap needed at the zero label).
+///
+/// [enumSlack] extends the drawn population past both window edges; X
+/// passes one tick plus the live edge's worst lead jitter
+/// ([_kLiveEdgeLeadMs]: a landing packet rewinds the wall-clock lead), so a
+/// live window micro-oscillating across an edge tick slides it in and out
+/// instead of toggling it per frame. The labels then clip to the label
+/// strip so slack labels don't bleed into the plot. Y snaps its range to
+/// tick boundaries and passes 0: its ticks are always in range.
+void _drawAxis(
+  Canvas canvas,
+  Path gridMinor,
+  Path gridMajor,
+  Size graphSz, {
+  required _AxisOrientation orientation,
+  required double windowStart,
+  required double windowEnd,
+  required double step,
+  required double Function(double target) stepCeil,
+  required String Function(double tick) labelFor,
+  required double Function(double value) posOf,
+  double enumSlack = 0.0,
+  required bool showLabels,
+  required _LabelCache labels,
+  Color textColor = Colors.black,
+}) {
+  final period = _majorPeriod(step, stepCeil);
+  final lo = windowStart - enumSlack;
+  // Inclusive end, with room for fp noise: a tick exactly at the snapped or
+  // slacked edge (Y's bounds) draws rather than dropping out.
+  final hi = windowEnd + enumSlack + step * 0.01;
+
+  void gridLine(double pos, {required bool major}) {
+    final path = major ? gridMajor : gridMinor;
+    switch (orientation) {
+      case _AxisOrientation.x:
+        path
+          ..moveTo(pos, 0)
+          ..lineTo(pos, graphSz.height);
+      case _AxisOrientation.y:
+        path
+          ..moveTo(0, pos)
+          ..lineTo(graphSz.width, pos);
+    }
+  }
+
+  // Measure the labels before installing the label-strip clip.
+  double maxLabelH = 0;
+  double maxLabelW = 0;
+  final clipped = showLabels && enumSlack > 0;
+  if (showLabels) {
+    for (int k = (lo / step).ceil(); k * step <= hi; k++) {
+      final par = labels.prepare(
+        labelFor(k * step),
+        color: textColor,
+        bold: k % period == 0,
       );
       if (par.longestLine > maxLabelW) maxLabelW = par.longestLine;
       if (par.height > maxLabelH) maxLabelH = par.height;
     }
-    if (step * graphSz.width / xSpanSec >= maxLabelW + _kLabelGapPx) break;
-    step = _timeStepCeil(step * (1 + 1e-9)); // next ladder rung up
+    if (clipped) {
+      canvas.save();
+      canvas.clipRect(switch (orientation) {
+        _AxisOrientation.x => Rect.fromLTWH(
+          0,
+          graphSz.height,
+          graphSz.width,
+          maxLabelH + 4,
+        ),
+        _AxisOrientation.y => Rect.fromLTWH(
+          graphSz.width,
+          0,
+          maxLabelW + 4,
+          graphSz.height,
+        ),
+      });
+    }
   }
 
-  /// Append a vertical grid line at absolute time [sec]; returns its pixel
-  /// X so the labeled-tick loop below can position the label.
-  double vline(double sec, {bool major = false}) {
-    final xPos = (sec - startSec) * sampleRate * graphSz.width / viewSamples;
-    final path = major ? gridMajor : gridMinor;
-    path.moveTo(xPos, 0);
-    path.lineTo(xPos, graphSz.height);
-    return xPos;
-  }
-
-  // Ticks live on the absolute grid k * step, so they (and the majors) hold
-  // still while the window slides over them. The population extends one tick
-  // plus the live edge's worst lead jitter ([_kLiveEdgeLeadMs]: a landing
-  // packet rewinds the wall-clock lead) past each edge, so a live window
-  // micro-oscillating across an edge tick slides it in and out instead of
-  // toggling it per frame; the caller's clip hides the off-screen portions.
-  final slackSec = step + _kLiveEdgeLeadMs / 1000.0;
-  if (showLabels) {
-    // Labels paint under the plot, outside the caller's grid clip, and the
-    // population above reaches past both view edges -- clip horizontally
-    // to the label strip so edge labels slide in and out instead of
-    // bleeding into the gutters.
-    canvas.save();
-    canvas.clipRect(
-      Rect.fromLTWH(0, graphSz.height, graphSz.width, maxLabelH + 4),
-    );
-  }
-  for (
-    int k = ((startSec - slackSec) / step).ceil();
-    k * step < endSec + slackSec;
-    k++
-  ) {
-    final major = period != 0 && k % period == 0;
-    final xPos = vline(k * step, major: major);
+  for (int k = (lo / step).ceil(); k * step <= hi; k++) {
+    final major = k % period == 0;
+    final pos = posOf(k * step);
+    gridLine(pos, major: major);
     if (showLabels) {
       final par = labels.prepare(
-        _fmtTick(k * step, decimals),
+        labelFor(k * step),
         color: textColor,
         bold: major,
       );
-      canvas.drawParagraph(
-        par,
-        Offset(xPos - par.longestLine / 2, graphSz.height + 2),
-      );
+      switch (orientation) {
+        case _AxisOrientation.x:
+          canvas.drawParagraph(
+            par,
+            Offset(pos - par.longestLine / 2, graphSz.height + 2),
+          );
+        case _AxisOrientation.y:
+          canvas.drawParagraph(
+            par,
+            Offset(graphSz.width + 4, pos - par.height / 2),
+          );
+      }
     }
   }
-  if (showLabels) canvas.restore();
-  // Minor lines at half-step offsets; these never coincide with a major.
-  for (
-    int k = ((startSec - slackSec) / step - 0.5).ceil();
-    (k + 0.5) * step < endSec + slackSec;
-    k++
-  ) {
-    vline((k + 0.5) * step);
-  }
-}
+  if (clipped) canvas.restore();
 
-/// Append horizontal Y-axis grid lines and labels (formatted by [labelFor])
-/// for [yRange]: labeled ticks to [gridMajor], half-delta minor lines to
-/// [gridMinor]. [valueToY] maps an axis value to a pixel Y.
-void _drawValueAxis(
-  Canvas canvas,
-  Path gridMinor,
-  Path gridMajor,
-  Size graphSz,
-  YAxisRange yRange,
-  double Function(double value) valueToY, {
-  required String Function(double tick) labelFor,
-  required _LabelCache labels,
-  Color textColor = Colors.black,
-}) {
-  final delta = yRange.tickDelta;
-  for (
-    double tick = (yRange.yMin / delta).ceil() * delta;
-    tick <= yRange.yMax + delta * 0.01;
-    tick += delta
-  ) {
-    final yPos = valueToY(tick);
-    if (yPos >= -1 && yPos <= graphSz.height + 1) {
-      gridMajor.moveTo(0, yPos);
-      gridMajor.lineTo(graphSz.width, yPos);
-      // Snap accumulation noise at the zero tick: a tick within a billionth
-      // of the step is the zero crossing, not a "-0.000..." label.
-      final par = labels.prepare(
-        labelFor(tick.abs() < delta * 1e-9 ? 0.0 : tick),
-        color: textColor,
-      );
-      canvas.drawParagraph(
-        par,
-        Offset(graphSz.width + 4, yPos - par.height / 2),
-      );
-    }
-  }
-
-  final minorDelta = delta / 2;
-  // Index by j rather than accumulating so the coinciding-with-major test is
-  // exact: [yMin] is a multiple of delta, so majors are the even multiples
-  // of minorDelta. Skipping them leaves emphasis to the major pen rather
-  // than a double stroke.
-  for (
-    int j = (yRange.yMin / minorDelta).ceil();
-    j * minorDelta <= yRange.yMax + minorDelta * 0.01;
-    j++
-  ) {
+  // Half-step minor lines. Index by j so the overlap test is exact: the
+  // even multiples of minorStep are the labeled ticks themselves, and
+  // skipping them leaves emphasis to the tick lines, not a double stroke.
+  final minorStep = step / 2;
+  for (int j = (lo / minorStep).ceil(); j * minorStep <= hi; j++) {
     if (j % 2 == 0) continue;
-    final yPos = valueToY(j * minorDelta);
-    if (yPos >= -1 && yPos <= graphSz.height + 1) {
-      gridMinor.moveTo(0, yPos);
-      gridMinor.lineTo(graphSz.width, yPos);
-    }
+    gridLine(posOf(j * minorStep), major: false);
   }
 }
 
@@ -1882,26 +1887,47 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
 
     final gridMinor = Path();
     final gridMajor = Path();
-    _drawTimeAxis(
+    final sampleRate = _data.sampleRate.toDouble();
+    final startSec = viewStart / sampleRate;
+    final endSec = viewEnd / sampleRate;
+    final timeStep = _fitTimeStep(
+      startSec,
+      endSec,
+      graphSz.width,
+      labels,
+      colorScheme.onSurface,
+    );
+    _drawAxis(
       canvas,
       gridMinor,
       gridMajor,
       graphSz,
-      viewStart: viewStart,
-      viewEnd: viewEnd,
-      sampleRate: _data.sampleRate,
+      orientation: _AxisOrientation.x,
+      windowStart: startSec,
+      windowEnd: endSec,
+      step: timeStep,
+      stepCeil: _timeStepCeil,
+      labelFor: (sec) => _fmtTick(sec, _timeDecimals(timeStep)),
+      posOf: (sec) =>
+          (sec - startSec) * sampleRate * graphSz.width / viewSamples,
+      enumSlack: timeStep + _kLiveEdgeLeadMs / 1000.0,
       showLabels: showXLabels,
       labels: labels,
       textColor: colorScheme.onSurface,
     );
-    _drawValueAxis(
+    _drawAxis(
       canvas,
       gridMinor,
       gridMajor,
       graphSz,
-      yRange,
-      valueToY,
+      orientation: _AxisOrientation.y,
+      windowStart: yRange.yMin,
+      windowEnd: yRange.yMax,
+      step: yRange.tickDelta,
+      stepCeil: _decadeStepCeil,
       labelFor: (tick) => yTickLabel(tick, yRange),
+      posOf: valueToY,
+      showLabels: true,
       labels: labels,
       textColor: colorScheme.onSurface,
     );
@@ -1916,7 +1942,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0.4;
     // Clip to the plot: the X axis populates ticks one edge-slack past each
-    // side (see [_drawTimeAxis]; its labels clip themselves horizontally).
+    // side (see [_drawAxis]'s enumSlack; its labels clip to the label strip).
     canvas.save();
     canvas.clipRect(Offset.zero & graphSz);
     canvas.drawPath(gridMinor, gridMinorPen);
