@@ -64,6 +64,13 @@ class BucketAccumulator {
   /// Restart ingest from sample 0; aggregates are overwritten by later [add]s.
   void reset() => _samples = 0;
 
+  /// Rebase ingest to continue at [sampleIndex] without touching the slots.
+  /// For rebuilds over a retained window of a longer stream: indexing stays
+  /// absolute (renderers address buckets by absolute sample index) and slots
+  /// older than the window are untrustworthy — the state the [BucketSeries]
+  /// ring-wrap contract already handles everywhere else.
+  void rebase(int sampleIndex) => _samples = sampleIndex;
+
   /// Samples ingested so far (since construction/last [reset]).
   int get samples => _samples;
 
@@ -157,10 +164,12 @@ class EnvelopeSeries {
   /// missing (gap) sample and breaks the polyline.
   final double Function(int sampleIndex) sampleAt;
 
-  /// Bucket aggregates of the same series, in raw integer space.
-  final BucketSeries buckets;
+  /// Bucket aggregates of the same series, in raw integer space; null for
+  /// exact-only series.
+  final BucketSeries? buckets;
 
-  /// Raw-space -> display-units map matching [sampleAt].
+  /// Raw-space -> display-units map matching [sampleAt]. Unused for
+  /// bucket-less series.
   final double Function(double raw) rawToDisplay;
 
   /// A series with bucket-accelerated reduction (see [reduceBlockBuckets]
@@ -178,9 +187,20 @@ class EnvelopeSeries {
   ///    trace and invisible next to the envelope width.
   const EnvelopeSeries.bucketed({
     required this.sampleAt,
-    required this.buckets,
+    required BucketSeries this.buckets,
     required this.rawToDisplay,
   });
+
+  /// A series with no bucket acceleration: every block reduces via
+  /// [reduceBlockExact] regardless of width. For derived (sum/diff/balance)
+  /// series — bucket aggregates don't compose soundly across member channels
+  /// (the min of a sum is not the sum of the mins), so exact reduction is the
+  /// only sound option. Watch the O(window) cost in always-repainting views.
+  const EnvelopeSeries.exact({required this.sampleAt})
+    : buckets = null,
+      rawToDisplay = _identityMap;
+
+  static double _identityMap(double raw) => raw;
 }
 
 // ---------------------------------------------------------------------------
@@ -233,7 +253,9 @@ BlockReduction reduceBlockExact(
 /// `numBuckets` buckets, so the straddling head bucket is detected via
 /// [BucketSeries.samples] and reduced exactly through [EnvelopeSeries.sampleAt].
 BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
-  final buckets = series.buckets;
+  // Callers select this path only for bucketed series (see
+  // [EnvelopeSeries.bucketed]); an exact series has no aggregates to fold.
+  final buckets = series.buckets!;
   final rawToDisplay = series.rawToDisplay;
   final int bs = buckets.bucketSize;
   final int numBuckets = buckets.mins.length;
