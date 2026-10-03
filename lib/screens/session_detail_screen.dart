@@ -210,7 +210,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                     if (visibleChannels[i]) i,
                 ],
                 showDerivative: false,
-                isLiveGraph: false,
+                isLiveSource: false,
               ),
             ),
           ),

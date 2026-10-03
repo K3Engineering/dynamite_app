@@ -130,6 +130,18 @@ void main() {
       ctrl.centerOn(500, 1000, 0);
       expect(ctrl.effectiveRange(1000, 0), (400, 600));
     });
+
+    test('a parked window rides retention eviction', () {
+      final ctrl = GraphController();
+      ctrl.applyWindow(50, 100, 1000, 0); // parked on [50, 150)
+      // The ring advances underneath it: oldestSample moves to 100 while
+      // the window straddles the edge -- the evicted half falls away...
+      expect(ctrl.effectiveRange(700000, 100), (100, 150));
+      // ...and once the whole window is evicted, nothing drawable remains:
+      // the window collapses onto the retention head instead of framing
+      // samples the ring can no longer serve (regression test).
+      expect(ctrl.effectiveRange(700000, 200), (200, 201));
+    });
   });
 
   /// Early in a stream (less data than minLiveSpan) a zoomed window exceeds

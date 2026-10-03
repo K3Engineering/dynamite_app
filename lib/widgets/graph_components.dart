@@ -72,6 +72,12 @@ int _blockSizeFor(double viewSamples, double graphW) {
   return math.max(1, (viewSamples / graphW).floor());
 }
 
+/// How far past a segment end its render reduces (in blocks) for the seam
+/// join -- and, being the same quantity, how far behind the data edge bakes
+/// stay so a baked join block is always complete (see [joinBlockEnd] and
+/// the bakeableSamples horizon in [_paintEnvelopeDataLayer]).
+const int _kJoinBlockSlackBlocks = 2;
+
 /// The sample index a segment render must reduce through for its seam join
 /// to match the neighbor segment: the polyline overshoots the segment end
 /// into the first block past it (the "join block"), and that block must be
@@ -80,12 +86,14 @@ int _blockSizeFor(double viewSamples, double graphW) {
 /// segment end lands at a different (partial-data) average, which reads as a
 /// vertical step at the seam.
 ///
-/// The result is block-aligned and lies in (end + blockSize, end + 2 *
-/// blockSize]; capping at totalSamples is the caller's job (the envelope
-/// layer keeps bakes two block sizes behind the data edge, so a baked join
-/// block is always complete -- see [SegmentedGraphCache.paint]).
+/// The result is block-aligned and lies in (end + blockSize, end +
+/// _kJoinBlockSlackBlocks * blockSize]; capping at totalSamples is the
+/// caller's job (the envelope layer keeps bakes that many block sizes
+/// behind the data edge, so a baked join block is always complete -- see
+/// [SegmentedGraphCache.paint]).
 @visibleForTesting
-int joinBlockEnd(int end, int blockSize) => (end ~/ blockSize + 2) * blockSize;
+int joinBlockEnd(int end, int blockSize) =>
+    (end ~/ blockSize + _kJoinBlockSlackBlocks) * blockSize;
 
 // ---------------------------------------------------------------------------
 // Unit-bound channels
@@ -154,11 +162,6 @@ final class _ConvertedChannel {
 // Minimap
 // ---------------------------------------------------------------------------
 
-/// Span of samples the minimap squeezes into its width: all available data,
-/// clamped below by the controller's minimum live span.
-int _minimapSpan(int totalSamples, int oldestSample, int minLiveSpan) =>
-    math.max(totalSamples - oldestSample, minLiveSpan);
-
 class _Minimap extends StatefulWidget {
   final GraphDataSource dataSource;
   final DisplayUnit unit;
@@ -198,10 +201,9 @@ class _MinimapState extends State<_Minimap> {
       0.0,
       1.0,
     );
-    final mapSpan = _minimapSpan(
+    final mapSpan = widget.graphCtrl.defaultLiveSpan(
       totalSamples,
       oldestSample,
-      widget.graphCtrl.minLiveSpan,
     );
     final mapStart = totalSamples - mapSpan;
     widget.graphCtrl.centerOn(
@@ -216,7 +218,7 @@ class _MinimapState extends State<_Minimap> {
     if (totalSamples == 0 || graphWidth <= 0) return;
     final oldestSample = widget.dataSource.oldestSample;
     final samplesPerPixel =
-        _minimapSpan(totalSamples, oldestSample, widget.graphCtrl.minLiveSpan) /
+        widget.graphCtrl.defaultLiveSpan(totalSamples, oldestSample) /
         graphWidth;
     widget.graphCtrl.pan(
       (d.delta.dx * samplesPerPixel).round(),
@@ -317,26 +319,33 @@ class _MinimapPainter extends CustomPainter {
     if (totalSamples == 0) return;
 
     final oldestSample = _data.oldestSample;
-    final mapSpan = _minimapSpan(totalSamples, oldestSample, _ctrl.minLiveSpan);
+    final mapSpan = _ctrl.defaultLiveSpan(totalSamples, oldestSample);
     final mapStart = totalSamples - mapSpan;
 
     final channels = _channels;
     final unit = _unit;
 
-    // O(channels): the minimap spans all history, so the per-channel extremes
-    // ARE the window extremes.
+    // Bucket-folded extremes over the retained window, like the force
+    // painter. The lifetime [GraphDataSource.channelExtremes] never shrink,
+    // so after a ring wrap they would keep scaling Y by evicted samples the
+    // minimap can no longer draw.
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
     for (final bound in channels) {
-      // Zero is a display-space anchor, so include it even when the data does
-      // not cross it.
-      final ext = _data.channelExtremes(bound.channel);
-      final lo = ext == null ? 0.0 : math.min(bound.netMap(ext.$1), 0.0);
-      final hi = ext == null ? 0.0 : math.max(bound.netMap(ext.$2), 0.0);
-      if (lo < yMin) yMin = lo;
-      if (hi > yMax) yMax = hi;
+      final ext = _data.windowedRawExtremes(
+        bound.channel,
+        mapStart,
+        totalSamples,
+      );
+      if (ext == null) continue;
+      yMin = math.min(yMin, bound.netMap(ext.$1));
+      yMax = math.max(yMax, bound.netMap(ext.$2));
     }
     if (!yMin.isFinite || !yMax.isFinite) return;
+    // Zero is a display-space anchor, so include it even when the data does
+    // not cross it.
+    yMin = math.min(yMin, 0.0);
+    yMax = math.max(yMax, 0.0);
     // Non-degenerate on flat data (the mapping divides by the span).
     if (yMax <= yMin) yMax = yMin + 1;
 
@@ -505,7 +514,12 @@ class GraphWorkspace extends StatefulWidget {
   /// Indices of the channels to plot.
   final List<int> activeChannels;
   final bool showDerivative;
-  final bool isLiveGraph;
+
+  /// Whether the source is the live feed (vs a loaded session); gates the
+  /// LIVE button and the semantics wording. Unrelated to
+  /// [GraphController.isLive] (viewport mode) and
+  /// [GraphController.lockedLiveSpan] (rolling animation).
+  final bool isLiveSource;
 
   const GraphWorkspace({
     super.key,
@@ -514,7 +528,7 @@ class GraphWorkspace extends StatefulWidget {
     required this.unit,
     required this.activeChannels,
     this.showDerivative = false,
-    this.isLiveGraph = true,
+    this.isLiveSource = true,
   });
 
   @override
@@ -558,14 +572,16 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     }
   }
 
-  /// Runs only while following the live edge on a fresh stream; the next
-  /// packet's repaint restarts it after a stall.
+  /// Runs only while a rolling live window animates on a fresh stream; the
+  /// next packet's repaint restarts it after a stall. Data-pinned views
+  /// (parked, or live "everything") don't tick: nothing on screen moves
+  /// between packets there, so the packet's own repaint suffices.
   void _syncTicker() {
     final DateTime? last = widget.data.lastDataAt;
     final bool fresh =
         last != null &&
         DateTime.now().difference(last).inMilliseconds < _kTickerStallMs;
-    final bool shouldTick = widget.ctrl.isLive && fresh;
+    final bool shouldTick = widget.ctrl.lockedLiveSpan != null && fresh;
     // isActive, not isTicking: start() throws on isActive, and a started
     // ticker is active before its first frame, so isTicking can't guard a
     // double start() (web delivers batches as in-frame microtasks).
@@ -622,7 +638,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       container: true,
       explicitChildNodes: true,
       label: _graphSemanticsLabel(
-        live: widget.isLiveGraph,
+        live: widget.isLiveSource,
         channels: [for (final bound in convertedChannels) bound.channel],
         unit: unit,
         hasDerivative: widget.showDerivative,
@@ -679,7 +695,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
               ),
             ],
           ),
-          if (widget.isLiveGraph)
+          if (widget.isLiveSource)
             _LiveButton(data: widget.data, ctrl: widget.ctrl),
           Positioned(
             right: _kGraphRightSpace + 16,
@@ -1572,7 +1588,19 @@ bool _paintEnvelopeDataLayer(
   final int blockSize = _blockSizeFor(viewSpan, gw);
   final double blockPx = blockSize * gw / viewSpan;
 
-  return cache.paint(canvas, (
+  // The bake render clamps content to firstUsableSample (the ring can't
+  // serve evicted samples), but that clamp is deliberately NOT in the
+  // segment keys: keying on it would churn every packet after a ring wrap
+  // and force full rebakes of unchanged segments. Instead clip the whole
+  // draw (bakes and blits alike) at the retention edge so a stale blit
+  // can't show evicted-sample ink a fresh draw would omit. A no-op
+  // whenever the window starts at or inside usable data.
+  final usableX = (firstUsableSample - viewStart) * gw / viewSpan;
+  if (usableX > 0) {
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(usableX, -1e9, 2e9, 2e9));
+  }
+  final workRemains = cache.paint(canvas, (
     generation: data.dataGeneration,
     destructiveKey: [unit, data.calibrationVersion, ...tares],
     remapKey: [for (final bound in channels) bound.channel],
@@ -1584,9 +1612,12 @@ bool _paintEnvelopeDataLayer(
     yMin: yMin,
     yMax: yMax,
     totalSamples: totalSamples,
-    // Bakes stop two blocks behind the data edge so their join block is
+    // Bakes stop the join slack behind the data edge so their join block is
     // complete (see [joinBlockEnd]).
-    bakeableSamples: math.max(0, totalSamples - 2 * blockSize),
+    bakeableSamples: math.max(
+      0,
+      totalSamples - _kJoinBlockSlackBlocks * blockSize,
+    ),
     // One block of overshoot can be many px when zoomed past 1 sample/px.
     hPad: math.max(kSegmentImagePad, blockPx + 2),
     vPad: kSegmentImagePad,
@@ -1598,8 +1629,10 @@ bool _paintEnvelopeDataLayer(
       final int limit = math.min(joinBlockEnd(end, blockSize), totalSamples);
 
       // Clip data ink out of gap x-ranges (the hatching drawn by the chrome
-      // is the only marker there). Safe at bake time: gaps are append-only,
-      // so a baked segment's gap set cannot change.
+      // is the only marker there). A baked segment's gap set is frozen even
+      // though gaps are NOT append-only: new gaps land at the live edge,
+      // past the 2-block bake horizon, and pruneBefore drops gaps only left
+      // of the retention edge, which the draw-time clip above hides.
       final clip = _gapClipPath(data.gaps, start, limit, gw / viewSpan);
       if (clip != null) {
         cCanvas.save();
@@ -1626,6 +1659,8 @@ bool _paintEnvelopeDataLayer(
       return (end - start) * gw / viewSpan;
     },
   ));
+  if (usableX > 0) canvas.restore();
+  return workRemains;
 }
 
 /// Everything-except-gaps clip for [start, end) under x = (s - start) *

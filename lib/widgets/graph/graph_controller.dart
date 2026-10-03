@@ -38,9 +38,12 @@ class GraphController extends ChangeNotifier {
   final int minLiveSpan;
 
   GraphController({this.minLiveSpan = 0})
-    : _viewport = minLiveSpan > 0 ? GraphLive(minLiveSpan) : const GraphLive();
+    : _viewport = _initialViewport(minLiveSpan);
 
   GraphViewport _viewport;
+
+  static GraphViewport _initialViewport(int minLiveSpan) =>
+      minLiveSpan > 0 ? GraphLive(minLiveSpan) : const GraphLive();
 
   /// Whether following the live edge.
   bool get isLive => _viewport is GraphLive;
@@ -58,9 +61,23 @@ class GraphController extends ChangeNotifier {
   /// Restore the initial state (a fresh stream erased the data: any pan/zoom
   /// window over the old trace is meaningless).
   void reset() {
-    _viewport = minLiveSpan > 0 ? GraphLive(minLiveSpan) : const GraphLive();
+    _viewport = _initialViewport(minLiveSpan);
     notifyListeners();
   }
+
+  /// The span of the default live view (and of "show everything"): all
+  /// retained data, floored at [minLiveSpan] so a young stream opens as a
+  /// scrolling window over mostly-empty space instead of squeezing. The
+  /// single derivation the zoom clamp, the go-live maturity test, and the
+  /// minimap's squeezed range all share.
+  int defaultLiveSpan(int totalSamples, int oldestSample) =>
+      math.max(totalSamples - oldestSample, minLiveSpan);
+
+  /// The leftmost allowed window start: retention's head, or the
+  /// right-edge-flush position when less than [span] is retained (a negative
+  /// start is legitimate on a sparse young buffer).
+  static int _minWindowStart(int oldestSample, int totalSamples, int span) =>
+      math.min(oldestSample, totalSamples - span);
 
   /// Snap to live mode -- follow the right edge. Derives the span lock from
   /// the current window (or keeps the existing lock when already live); this
@@ -75,7 +92,7 @@ class GraphController extends ChangeNotifier {
         lockedSpan = span;
       case GraphWindow(:final start, :final end):
         final currentSpan = end - start;
-        if (currentSpan < math.max(totalSamples - oldestSample, minLiveSpan)) {
+        if (currentSpan < defaultLiveSpan(totalSamples, oldestSample)) {
           // Zoomed in from the default view: lock to it. Compared against
           // the default live span, not the data on hand, which early in a
           // stream differs.
@@ -98,16 +115,19 @@ class GraphController extends ChangeNotifier {
   (int start, int end) effectiveRange(int totalSamples, int oldestSample) {
     switch (_viewport) {
       case GraphLive(:final span):
-        final s = span ?? math.max(minLiveSpan, totalSamples - oldestSample);
+        final s = span ?? defaultLiveSpan(totalSamples, oldestSample);
         return (totalSamples - s, totalSamples);
       case GraphWindow(:final start, :final end):
         // Parked windows never outlive the data's right edge; a negative start
-        // is legitimate for a sparse young buffer.
+        // is legitimate for a sparse young buffer. The left edge rides
+        // retention eviction (the ring can't serve evicted samples; the ring
+        // itself never lets a parked window START left of oldestSample --
+        // only eviction moves the floor under it).
         assert(
           start < end && end <= totalSamples,
           'window [$start, $end) out of bounds for $totalSamples samples',
         );
-        final s = start.clamp(0, totalSamples - 1);
+        final s = start.clamp(oldestSample, totalSamples - 1);
         final e = end.clamp(s + 1, totalSamples);
         return (s, e);
     }
@@ -119,7 +139,7 @@ class GraphController extends ChangeNotifier {
   /// The single funnel for every window-moving interaction (pan, minimap
   /// tap/drag, pinch).
   void applyWindow(int newStart, int span, int totalSamples, int oldestSample) {
-    final minStart = math.min(oldestSample, totalSamples - span);
+    final minStart = _minWindowStart(oldestSample, totalSamples, span);
     final start = math.max(newStart, minStart);
     final newEnd = start + span;
 
@@ -150,7 +170,7 @@ class GraphController extends ChangeNotifier {
     required int totalSamples,
     required int oldestSample,
   }) {
-    final maxSpan = math.max(totalSamples - oldestSample, minLiveSpan);
+    final maxSpan = defaultLiveSpan(totalSamples, oldestSample);
     // Min ~50 samples visible, or the whole dataset when smaller (clamp would
     // invert and throw otherwise).
     final minSpan = math.min(50, maxSpan);
@@ -165,7 +185,7 @@ class GraphController extends ChangeNotifier {
     int newStart = focal - (effectiveFocal * span).round();
     int newEnd = newStart + span;
 
-    final minStart = math.min(oldestSample, totalSamples - span);
+    final minStart = _minWindowStart(oldestSample, totalSamples, span);
 
     if (newStart < minStart) {
       newStart = minStart;
