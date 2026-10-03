@@ -14,6 +14,7 @@
 ///  "channelLabels":["Ch 1",...],"tares":[null,123.5,...],
 ///  "calibration":[{...},...],"displayUnit":"kgf","deviceInfo":{...},
 ///  "deviceKvs":{"factory":{...},"user":{...}} | null,
+///  "math":{"kind":"forcePlate","corners":[0,1,2,3]} | absent,
 ///  "recordedAt":"2026-08-28T14:30:12.345+02:00",
 ///  "ssnOrigin":123456,"visibleChannels":[true,...]}
 /// ```
@@ -28,7 +29,9 @@ import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 
+import '../analysis/test_result.dart';
 import '../models/channel_calibration.dart';
+import '../models/derived_channel.dart';
 import '../models/device_flash.dart';
 import '../models/display_unit.dart';
 
@@ -48,6 +51,7 @@ class SessionMeta {
     required this.displayUnit,
     required this.deviceInfo,
     this.deviceKvs,
+    this.mathProfile,
     required this.recordedAt,
     required this.ssnOrigin,
     required this.visibleChannels,
@@ -74,6 +78,12 @@ class SessionMeta {
   /// The raw device KVS at recording start. Null on older sessions.
   final KvsSnapshot? deviceKvs;
 
+  /// The rig's math-channel setup at record start: derived channels replay
+  /// against THIS, not the loader's current config. Null on sessions
+  /// recorded before the snapshot existed (the loader substitutes its
+  /// current profile).
+  final MathProfile? mathProfile;
+
   /// Local wall clock at recording start with its zone offset (the CSV
   /// `recorded_at`).
   final String recordedAt;
@@ -97,6 +107,7 @@ class SessionMeta {
     'displayUnit': displayUnit.name,
     'deviceInfo': deviceInfo,
     'deviceKvs': ?deviceKvs?.toJson(),
+    'math': ?mathProfile?.toJson(),
     'recordedAt': recordedAt,
     'ssnOrigin': ssnOrigin,
     'visibleChannels': visibleChannels,
@@ -203,6 +214,12 @@ class SessionMeta {
                     'journal header: deviceKvs must be an object or null',
                   ),
           );
+    final mathJson = json['math'];
+    // Optional since its introduction: present-but-malformed is corruption
+    // (throws from the profile's strict parse), absent is an older session.
+    final mathProfile = mathJson == null
+        ? null
+        : MathProfile.fromJson(mathJson);
     final recordedAt = json['recordedAt'];
     // The CSV export hands this string out as the recording's timestamp,
     // so it must actually parse as ISO 8601; anything else would export
@@ -225,6 +242,7 @@ class SessionMeta {
       displayUnit: displayUnit,
       deviceInfo: Map.unmodifiable(deviceInfo),
       deviceKvs: deviceKvs,
+      mathProfile: mathProfile,
       recordedAt: recordedAt,
       ssnOrigin: ssnOrigin,
       visibleChannels: List.unmodifiable(visibleChannels),
@@ -240,11 +258,16 @@ class SessionEdit {
     required this.name,
     required this.notes,
     required this.visibleChannels,
+    this.testResult,
   });
 
   final String name;
   final String notes;
   final List<bool> visibleChannels;
+
+  /// The guided-test analysis attached to this session, if any. Additive:
+  /// readers that predate it ignore the key.
+  final TestResult? testResult;
 
   /// The state to show when no edit line survives: the meta's recording-time
   /// values, with empty notes.
@@ -258,6 +281,7 @@ class SessionEdit {
     'name': name,
     'notes': notes,
     'visibleChannels': visibleChannels,
+    'testResult': ?testResult?.toJson(),
   };
 
   /// Strict against [channelCount]: a different channel layout is not an edit
@@ -277,6 +301,14 @@ class SessionEdit {
         'journal edit: visibleChannels must be a list of $channelCount bools',
       );
     }
+    final testResultJson = json['testResult'];
+    final testResult = testResultJson == null
+        ? null
+        : TestResult.fromJson(
+            testResultJson is Map
+                ? Map<String, dynamic>.from(testResultJson)
+                : throw const FormatException('journal edit: bad testResult'),
+          );
     return SessionEdit(
       name: name,
       notes: notes,
@@ -288,6 +320,7 @@ class SessionEdit {
                   'visibleChannels entries must be bools',
                 ),
       ]),
+      testResult: testResult,
     );
   }
 }

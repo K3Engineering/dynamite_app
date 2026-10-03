@@ -130,11 +130,11 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
   }
 
-  testWidgets('AppShell renders a four-destination bottom nav', (tester) async {
+  testWidgets('AppShell renders a five-destination bottom nav', (tester) async {
     await pumpApp(tester);
 
     expect(find.byType(NavigationBar), findsOneWidget);
-    expect(find.byType(NavigationDestination), findsNWidgets(4));
+    expect(find.byType(NavigationDestination), findsNWidgets(5));
   });
 
   testWidgets('Live tab shows the connect prompt with no device linked', (
@@ -150,9 +150,10 @@ void main() {
   ) async {
     await pumpApp(tester);
 
-    // Devices is the 3rd destination (Live, Sessions, Devices, Settings).
-    // Tab activation schedules no async work, so a single frame settles it.
-    await tester.tap(find.byType(NavigationDestination).at(2));
+    // Devices is the 4th destination (Live, Tests, Sessions, Devices,
+    // Settings). Tab activation schedules no async work, so a single frame
+    // settles it.
+    await tester.tap(find.byType(NavigationDestination).at(3));
     await tester.pump();
 
     // The Devices tab header is present (also matches the nav label, so
@@ -162,5 +163,36 @@ void main() {
       find.ancestor(of: find.text('Scan'), matching: find.byType(FilledButton)),
       findsOneWidget,
     );
+  });
+
+  testWidgets('Tests tab lists the catalog and opens pre-flight', (
+    tester,
+  ) async {
+    await pumpApp(tester);
+
+    // Tests is the 2nd destination (Live, Tests, Sessions, Devices, Settings).
+    await tester.tap(find.byType(NavigationDestination).at(1));
+    await tester.pump();
+
+    expect(find.text('Jump battery'), findsOneWidget);
+
+    await tester.tap(find.text('Jump battery'));
+    await tester.pumpAndSettle();
+
+    // Pre-flight shows the title (also matched on the catalog card, which is
+    // now covered by the pushed route) and the setup instructions.
+    expect(find.text('Jump battery'), findsWidgets);
+    expect(find.text('Setup'), findsOneWidget);
+
+    // No device is streaming, so Begin is disabled. (It sits below the fold
+    // in the default test viewport — the ListView builds it lazily.)
+    final beginFinder = find.widgetWithText(FilledButton, 'Begin');
+    await tester.scrollUntilVisible(
+      beginFinder,
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    final begin = tester.widget<FilledButton>(beginFinder);
+    expect(begin.onPressed, isNull);
   });
 }
