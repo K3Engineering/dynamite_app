@@ -154,11 +154,6 @@ final class _ConvertedChannel {
 // Minimap
 // ---------------------------------------------------------------------------
 
-/// Span of samples the minimap squeezes into its width: all available data,
-/// clamped below by the controller's minimum live span.
-int _minimapSpan(int totalSamples, int oldestSample, int minLiveSpan) =>
-    math.max(totalSamples - oldestSample, minLiveSpan);
-
 class _Minimap extends StatefulWidget {
   final GraphDataSource dataSource;
   final DisplayUnit unit;
@@ -198,10 +193,9 @@ class _MinimapState extends State<_Minimap> {
       0.0,
       1.0,
     );
-    final mapSpan = _minimapSpan(
+    final mapSpan = widget.graphCtrl.defaultLiveSpan(
       totalSamples,
       oldestSample,
-      widget.graphCtrl.minLiveSpan,
     );
     final mapStart = totalSamples - mapSpan;
     widget.graphCtrl.centerOn(
@@ -216,7 +210,7 @@ class _MinimapState extends State<_Minimap> {
     if (totalSamples == 0 || graphWidth <= 0) return;
     final oldestSample = widget.dataSource.oldestSample;
     final samplesPerPixel =
-        _minimapSpan(totalSamples, oldestSample, widget.graphCtrl.minLiveSpan) /
+        widget.graphCtrl.defaultLiveSpan(totalSamples, oldestSample) /
         graphWidth;
     widget.graphCtrl.pan(
       (d.delta.dx * samplesPerPixel).round(),
@@ -317,26 +311,33 @@ class _MinimapPainter extends CustomPainter {
     if (totalSamples == 0) return;
 
     final oldestSample = _data.oldestSample;
-    final mapSpan = _minimapSpan(totalSamples, oldestSample, _ctrl.minLiveSpan);
+    final mapSpan = _ctrl.defaultLiveSpan(totalSamples, oldestSample);
     final mapStart = totalSamples - mapSpan;
 
     final channels = _channels;
     final unit = _unit;
 
-    // O(channels): the minimap spans all history, so the per-channel extremes
-    // ARE the window extremes.
+    // Bucket-folded extremes over the retained window, like the force
+    // painter. The lifetime [GraphDataSource.channelExtremes] never shrink,
+    // so after a ring wrap they would keep scaling Y by evicted samples the
+    // minimap can no longer draw.
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
     for (final bound in channels) {
-      // Zero is a display-space anchor, so include it even when the data does
-      // not cross it.
-      final ext = _data.channelExtremes(bound.channel);
-      final lo = ext == null ? 0.0 : math.min(bound.netMap(ext.$1), 0.0);
-      final hi = ext == null ? 0.0 : math.max(bound.netMap(ext.$2), 0.0);
-      if (lo < yMin) yMin = lo;
-      if (hi > yMax) yMax = hi;
+      final ext = _data.windowedRawExtremes(
+        bound.channel,
+        mapStart,
+        totalSamples,
+      );
+      if (ext == null) continue;
+      yMin = math.min(yMin, bound.netMap(ext.$1));
+      yMax = math.max(yMax, bound.netMap(ext.$2));
     }
     if (!yMin.isFinite || !yMax.isFinite) return;
+    // Zero is a display-space anchor, so include it even when the data does
+    // not cross it.
+    yMin = math.min(yMin, 0.0);
+    yMax = math.max(yMax, 0.0);
     // Non-degenerate on flat data (the mapping divides by the span).
     if (yMax <= yMin) yMax = yMin + 1;
 
@@ -1572,7 +1573,19 @@ bool _paintEnvelopeDataLayer(
   final int blockSize = _blockSizeFor(viewSpan, gw);
   final double blockPx = blockSize * gw / viewSpan;
 
-  return cache.paint(canvas, (
+  // The bake render clamps content to firstUsableSample (the ring can't
+  // serve evicted samples), but that clamp is deliberately NOT in the
+  // segment keys: keying on it would churn every packet after a ring wrap
+  // and force full rebakes of unchanged segments. Instead clip the whole
+  // draw (bakes and blits alike) at the retention edge so a stale blit
+  // can't show evicted-sample ink a fresh draw would omit. A no-op
+  // whenever the window starts at or inside usable data.
+  final usableX = (firstUsableSample - viewStart) * gw / viewSpan;
+  if (usableX > 0) {
+    canvas.save();
+    canvas.clipRect(Rect.fromLTWH(usableX, -1e9, 2e9, 2e9));
+  }
+  final workRemains = cache.paint(canvas, (
     generation: data.dataGeneration,
     destructiveKey: [unit, data.calibrationVersion, ...tares],
     remapKey: [for (final bound in channels) bound.channel],
@@ -1598,8 +1611,10 @@ bool _paintEnvelopeDataLayer(
       final int limit = math.min(joinBlockEnd(end, blockSize), totalSamples);
 
       // Clip data ink out of gap x-ranges (the hatching drawn by the chrome
-      // is the only marker there). Safe at bake time: gaps are append-only,
-      // so a baked segment's gap set cannot change.
+      // is the only marker there). A baked segment's gap set is frozen even
+      // though gaps are NOT append-only: new gaps land at the live edge,
+      // past the 2-block bake horizon, and pruneBefore drops gaps only left
+      // of the retention edge, which the draw-time clip above hides.
       final clip = _gapClipPath(data.gaps, start, limit, gw / viewSpan);
       if (clip != null) {
         cCanvas.save();
@@ -1626,6 +1641,8 @@ bool _paintEnvelopeDataLayer(
       return (end - start) * gw / viewSpan;
     },
   ));
+  if (usableX > 0) canvas.restore();
+  return workRemains;
 }
 
 /// Everything-except-gaps clip for [start, end) under x = (s - start) *
