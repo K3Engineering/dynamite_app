@@ -73,6 +73,12 @@ class GraphController extends ChangeNotifier {
   int defaultLiveSpan(int totalSamples, int oldestSample) =>
       math.max(totalSamples - oldestSample, minLiveSpan);
 
+  /// The leftmost allowed window start: retention's head, or the
+  /// right-edge-flush position when less than [span] is retained (a negative
+  /// start is legitimate on a sparse young buffer).
+  static int _minWindowStart(int oldestSample, int totalSamples, int span) =>
+      math.min(oldestSample, totalSamples - span);
+
   /// Snap to live mode -- follow the right edge. Derives the span lock from
   /// the current window (or keeps the existing lock when already live); this
   /// is the single funnel for entering live mode, so every entry applies the
@@ -133,7 +139,7 @@ class GraphController extends ChangeNotifier {
   /// The single funnel for every window-moving interaction (pan, minimap
   /// tap/drag, pinch).
   void applyWindow(int newStart, int span, int totalSamples, int oldestSample) {
-    final minStart = math.min(oldestSample, totalSamples - span);
+    final minStart = _minWindowStart(oldestSample, totalSamples, span);
     final start = math.max(newStart, minStart);
     final newEnd = start + span;
 
@@ -179,7 +185,7 @@ class GraphController extends ChangeNotifier {
     int newStart = focal - (effectiveFocal * span).round();
     int newEnd = newStart + span;
 
-    final minStart = math.min(oldestSample, totalSamples - span);
+    final minStart = _minWindowStart(oldestSample, totalSamples, span);
 
     if (newStart < minStart) {
       newStart = minStart;
