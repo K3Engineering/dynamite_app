@@ -13,7 +13,12 @@ sealed class GraphViewport {
 }
 
 /// Following the live edge. [span] locks the visible window to a fixed sample
-/// count; null means "show everything" (auto-expanding squeeze).
+/// count; null means "show everything" (auto-expanding squeeze). The null
+/// lock is only reachable once the retained data exceeds
+/// [GraphController.minLiveSpan] (see [GraphController.goLive]), so its
+/// window always starts exactly at the oldest sample -- both edges sit on
+/// data, which is what lets the painter pin the view instead of floating it
+/// on the live-edge estimate.
 final class GraphLive extends GraphViewport {
   const GraphLive([this.span]);
 
@@ -40,6 +45,16 @@ class GraphController extends ChangeNotifier {
   /// Whether following the live edge.
   bool get isLive => _viewport is GraphLive;
 
+  /// The locked span when rolling on the live edge ([GraphLive] with a
+  /// span); null when parked or when live-showing everything. Only rolling
+  /// windows float on the fractional live-edge estimate; parked and
+  /// show-everything views are data-pinned, so nothing on screen moves
+  /// between packet arrivals.
+  int? get lockedLiveSpan => switch (_viewport) {
+    GraphLive(:final span?) => span,
+    _ => null,
+  };
+
   /// Restore the initial state (a fresh stream erased the data: any pan/zoom
   /// window over the old trace is meaningless).
   void reset() {
@@ -47,43 +62,33 @@ class GraphController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Snap to live mode -- follow the right edge.
-  /// If [span] is provided, locks to that scrolling window.
-  /// If not provided, derives the lock from the current window (or keeps the
-  /// existing lock when already live).
-  void goLive({
-    int? span,
-    required int totalSamples,
-    required int oldestSample,
-  }) {
+  /// Snap to live mode -- follow the right edge. Derives the span lock from
+  /// the current window (or keeps the existing lock when already live); this
+  /// is the single funnel for entering live mode, so every entry applies the
+  /// same maturity test below.
+  void goLive({required int totalSamples, required int oldestSample}) {
     final int? lockedSpan;
-    if (span != null) {
-      // Explicitly lock to a span (used by zoom out when it hits max)
-      lockedSpan = span;
-    } else {
-      switch (_viewport) {
-        case GraphLive(:final span):
-          // Already live (e.g. a fresh stream resetting the view): keep the
-          // current lock.
-          lockedSpan = span;
-        case GraphWindow(:final start, :final end):
-          final currentSpan = end - start;
-          if (currentSpan <
-              math.max(totalSamples - oldestSample, minLiveSpan)) {
-            // Zoomed in from the default view: lock to it. Compared against
-            // the default live span, not the data on hand, which early in a
-            // stream differs.
-            lockedSpan = currentSpan;
-          } else if (currentSpan > minLiveSpan) {
-            // They zoomed out to see all available data (beyond minLiveSpan);
-            // they want to see everything auto-expand.
-            lockedSpan = null;
-          } else {
-            // They zoomed out, but we don't have much data yet. Lock to minimum
-            // span so it cleanly starts scrolling once it hits 20s.
-            lockedSpan = minLiveSpan;
-          }
-      }
+    switch (_viewport) {
+      case GraphLive(:final span):
+        // Already live (e.g. a fresh stream resetting the view): keep the
+        // current lock.
+        lockedSpan = span;
+      case GraphWindow(:final start, :final end):
+        final currentSpan = end - start;
+        if (currentSpan < math.max(totalSamples - oldestSample, minLiveSpan)) {
+          // Zoomed in from the default view: lock to it. Compared against
+          // the default live span, not the data on hand, which early in a
+          // stream differs.
+          lockedSpan = currentSpan;
+        } else if (currentSpan > minLiveSpan) {
+          // They zoomed out to see all available data (beyond minLiveSpan);
+          // they want to see everything auto-expand.
+          lockedSpan = null;
+        } else {
+          // They zoomed out, but we don't have much data yet. Lock to minimum
+          // span so it cleanly starts scrolling once it hits 20s.
+          lockedSpan = minLiveSpan;
+        }
     }
 
     _viewport = GraphLive(lockedSpan);
@@ -168,14 +173,16 @@ class GraphController extends ChangeNotifier {
     }
 
     if (newEnd >= totalSamples) {
-      // At the right edge -- enter/stay live. Unlike applyWindow, a zoom that
-      // hits max span means "show everything" (no locked span, auto-expand).
+      // At the right edge -- enter/stay live. Like applyWindow, funnel
+      // through goLive: a max-span zoom over mature data means "show
+      // everything" (no lock, auto-expand), but over less than minLiveSpan
+      // of data max span IS the minLiveSpan floor, and goLive reverts to
+      // the default scrolling window -- an early "zoom out to max" looks
+      // identical to the default view, so it must be the same state, not a
+      // look-alike that starts squeezing instead of scrolling once the
+      // data crosses minLiveSpan.
       _viewport = GraphWindow(totalSamples - span, totalSamples);
-      goLive(
-        span: span >= maxSpan ? null : span,
-        totalSamples: totalSamples,
-        oldestSample: oldestSample,
-      );
+      goLive(totalSamples: totalSamples, oldestSample: oldestSample);
       return;
     }
 

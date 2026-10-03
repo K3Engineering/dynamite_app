@@ -1090,8 +1090,8 @@ double _fitTimeStep(
 /// [enumSlack] extends the drawn population past both window edges; X
 /// passes one tick plus the live edge's worst lead jitter
 /// ([_kLiveEdgeLeadMs]: a landing packet rewinds the wall-clock lead), so a
-/// live window micro-oscillating across an edge tick slides it in and out
-/// instead of toggling it per frame. The labels then clip to the label
+/// rolling window micro-oscillating across an edge tick slides it in and
+/// out instead of toggling it per frame. The labels then clip to the label
 /// strip so slack labels don't bleed into the plot. Y snaps its range to
 /// tick boundaries and passes 0: its ticks are always in range.
 void _drawAxis(
@@ -1731,13 +1731,18 @@ _GraphLayout? _setupGraphFrame(
     data.totalSamples,
     data.oldestSample,
   );
-  // A live view anchors its right edge to the fractional live edge so the
-  // trace scrolls between packets; parked windows stay on their integer range.
+  // Rolling live windows anchor their right edge to the fractional live
+  // edge so the trace scrolls smoothly between packets. Data-pinned views
+  // (parked, or live "everything") keep their integer edges: they are pure
+  // functions of the data on hand, and floating them would let the lead's
+  // per-packet rewind shake every tick and label by the lead's pixel width
+  // (most visible at squeezed full-view spans, where nothing else moves).
+  final rollingSpan = ctrl.lockedLiveSpan;
   double viewStartF = viewStart.toDouble();
   double viewEndF = viewEnd.toDouble();
-  if (ctrl.isLive) {
-    viewEndF = _liveEdge(data, viewEnd - viewStart);
-    viewStartF = viewEndF - (viewEnd - viewStart);
+  if (rollingSpan != null) {
+    viewEndF = _liveEdge(data, rollingSpan);
+    viewStartF = viewEndF - rollingSpan;
   }
   final viewSamples = viewEndF - viewStartF;
   if (viewSamples < minSamples) return null;

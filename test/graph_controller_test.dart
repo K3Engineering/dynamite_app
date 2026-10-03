@@ -160,6 +160,19 @@ void main() {
       // 20s, not everything.
       expect(ctrl.effectiveRange(25000, 0), (5000, 25000));
     });
+
+    test('zooming out to max reverts to the default scrolling window', () {
+      final ctrl = GraphController(minLiveSpan: 20000);
+      // 5s of data; zoom out as far as possible. The resulting view
+      // overhangs the data exactly like the untouched default view, so it
+      // must BE that state: a look-alike auto-expanding lock would start
+      // squeezing instead of scrolling once the data reaches 20s
+      // (regression test).
+      ctrl.zoom(0.25, 1.0, 5000, 0);
+      expect(ctrl.isLive, isTrue);
+      expect(ctrl.effectiveRange(5000, 0), (-15000, 5000));
+      expect(ctrl.effectiveRange(25000, 0), (5000, 25000));
+    });
   });
 
   group('GraphController notifies listeners', () {
