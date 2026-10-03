@@ -44,7 +44,7 @@ void main() {
     Future<void> pumpGraph({
       required GraphDataSource data,
       required List<int> activeChannels,
-      bool isLiveGraph = true,
+      bool isLiveSource = true,
       AnalysisPaneSelection analysis = const AnalysisPaneSelection(),
     }) => tester.pumpWidget(
       MaterialApp(
@@ -53,7 +53,7 @@ void main() {
           ctrl: GraphController(),
           unit: DisplayUnit.mVv.effective(data.unitAvailability),
           activeChannels: activeChannels,
-          isLiveGraph: isLiveGraph,
+          isLiveSource: isLiveSource,
           analysis: analysis,
         ),
       ),
@@ -72,7 +72,7 @@ void main() {
     await pumpGraph(
       data: calibratedHub(),
       activeChannels: const [0, 1],
-      isLiveGraph: false,
+      isLiveSource: false,
       analysis: const AnalysisPaneSelection(kind: AnalysisPaneKind.derivative),
     );
     expect(

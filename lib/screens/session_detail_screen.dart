@@ -278,7 +278,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                                   if (activeChannels[i]) i,
                               ],
                               analysis: analysis,
-                              isLiveGraph: false,
+                              isLiveSource: false,
                             ),
                     ),
                   ),

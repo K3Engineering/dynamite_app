@@ -366,16 +366,18 @@ class _MinimapPainter extends CustomPainter {
     final channels = _channels;
     final unit = _unit;
 
-    // O(series) or O(history / bucketSize): the minimap spans all history,
-    // so the whole-history extremes ARE the window extremes. Zero is a
-    // display-space anchor, included even when the data does not cross it.
+    // Bucket-folded extremes over the drawable window, like the force
+    // painter. Whole-ingest [GraphDataSource.channelExtremes] never shrink,
+    // so after a ring wrap they would keep scaling Y by evicted samples the
+    // minimap can no longer draw. Zero is a display-space anchor, included
+    // even when the data does not cross it.
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
     for (final s in channels) {
-      final ext = _minimapSeriesRange(_data, s);
+      final ext = _data.windowedRawExtremes(s.channel, mapStart, totalSamples);
       if (ext == null) continue;
-      yMin = math.min(yMin, math.min(ext.$1, 0.0));
-      yMax = math.max(yMax, math.max(ext.$2, 0.0));
+      yMin = math.min(yMin, math.min(s.netMap(ext.$1), 0.0));
+      yMax = math.max(yMax, math.max(s.netMap(ext.$2), 0.0));
     }
     if (!yMin.isFinite || !yMax.isFinite) return;
     // Non-degenerate on flat data (the mapping divides by the span).
@@ -571,7 +573,12 @@ class GraphWorkspace extends StatefulWidget {
   /// Which derived view (if any) occupies the analysis pane slot between the
   /// force graph and the minimap, plus that pane's parameters.
   final AnalysisPaneSelection analysis;
-  final bool isLiveGraph;
+
+  /// Whether the source is the live feed (vs a loaded session); gates the
+  /// LIVE button and the semantics wording. Unrelated to
+  /// [GraphController.isLive] (viewport mode) and
+  /// [GraphController.lockedLiveSpan] (rolling animation).
+  final bool isLiveSource;
 
   const GraphWorkspace({
     super.key,
@@ -580,7 +587,7 @@ class GraphWorkspace extends StatefulWidget {
     required this.unit,
     required this.activeChannels,
     this.analysis = const AnalysisPaneSelection(),
-    this.isLiveGraph = true,
+    this.isLiveSource = true,
   });
 
   @override
@@ -941,7 +948,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       container: true,
       explicitChildNodes: true,
       label: _graphSemanticsLabel(
-        live: widget.isLiveGraph,
+        live: widget.isLiveSource,
         channels: [
           for (final bound in convertedChannels)
             isDerivedChannelId(bound.channel) &&
@@ -1842,17 +1849,6 @@ EnvelopeSeries _taredEnvelopeSeries(
   buckets: data.valueBucketsFor(bound.channel),
   rawToDisplay: bound.netMap,
 );
-
-/// Whole-history display (min, max) of a plotted channel for the minimap's
-/// fixed axis; null without data. Every channel carries ingest-tracked
-/// extremes of its own series, so the fold is uniform across the id space.
-(double, double)? _minimapSeriesRange(
-  GraphDataSource data,
-  _ConvertedChannel s,
-) {
-  final ext = data.channelExtremes(s.channel);
-  return ext == null ? null : (s.netMap(ext.$1), s.netMap(ext.$2));
-}
 
 /// Fold the raw extremes of [channels] over `[start, end)` (already clamped
 /// to the source's usable range). [seriesFor] yields a channel's bucket
@@ -2960,13 +2956,6 @@ class _FftPanePainter extends CustomPainter {
     );
     canvas.drawParagraph(infoTag, const Offset(4, 2));
 
-    final yRange = (
-      yMin: r.loDb,
-      yMax: r.hiDb,
-      tickDelta: 10.0,
-      rung: (factor: 1.0, symbol: ''),
-      decimals: 0,
-    );
     double valueToY(double v) =>
         graphSz.height - (v - r.loDb) * graphSz.height / (r.hiDb - r.loDb);
 
@@ -2978,28 +2967,36 @@ class _FftPanePainter extends CustomPainter {
         ? (math.log(f) - logMin) / (logMax - logMin) * graphSz.width
         : f / fMax * graphSz.width;
 
-    final grid = Path();
-    _drawValueAxis(
+    final gridMinor = Path();
+    final gridMajor = Path();
+    _drawAxis(
       canvas,
-      grid,
+      gridMinor,
+      gridMajor,
       graphSz,
-      yRange,
-      valueToY,
+      orientation: _AxisOrientation.y,
+      windowStart: r.loDb,
+      windowEnd: r.hiDb,
+      step: 10.0,
+      stepCeil: _decadeStepCeil,
       labelFor: (tick) => tick.toStringAsFixed(0),
+      posOf: valueToY,
+      showLabels: true,
       labels: labels,
       textColor: colorScheme.onSurface,
     );
     // Frequency grid. Linear: ~5 nice ticks, edges skipped (the frame
     // already marks them). Log: labeled decades with unlabeled 2–9 minors;
     // the span is log10(N/2) ≈ 1.8–4.5 decades, so both always fit.
+    // Labeled lines are majors, unlabeled minors — like [_drawAxis]'s tiers.
     if (logX) {
       final dMin = logMin / math.ln10, dMax = logMax / math.ln10;
       for (int d = dMin.floor(); d <= dMax.ceil(); d++) {
         final decade = math.pow(10, d).toDouble();
         if (decade >= r.binHz && decade <= fMax) {
           final x = freqToX(decade);
-          grid.moveTo(x, 0);
-          grid.lineTo(x, graphSz.height);
+          gridMajor.moveTo(x, 0);
+          gridMajor.lineTo(x, graphSz.height);
           final par = labels.prepare(
             decade.toStringAsFixed(d < 0 ? -d : 0),
             color: colorScheme.onSurface,
@@ -3013,8 +3010,8 @@ class _FftPanePainter extends CustomPainter {
           final f = decade * m;
           if (f < r.binHz || f > fMax) continue;
           final x = freqToX(f);
-          grid.moveTo(x, 0);
-          grid.lineTo(x, graphSz.height);
+          gridMinor.moveTo(x, 0);
+          gridMinor.lineTo(x, graphSz.height);
         }
       }
     } else {
@@ -3022,8 +3019,8 @@ class _FftPanePainter extends CustomPainter {
       final freqDecimals = step >= 1 ? 0 : 1;
       for (double f = step; f < fMax; f += step) {
         final x = freqToX(f);
-        grid.moveTo(x, 0);
-        grid.lineTo(x, graphSz.height);
+        gridMajor.moveTo(x, 0);
+        gridMajor.lineTo(x, graphSz.height);
         final par = labels.prepare(
           f.toStringAsFixed(freqDecimals),
           color: colorScheme.onSurface,
@@ -3034,11 +3031,18 @@ class _FftPanePainter extends CustomPainter {
         );
       }
     }
-    final gridPen = Paint()
-      ..color = colorScheme.onSurface.withAlpha(50)
+    // Same pen tiers as the force graph: labeled lines (majors) get more
+    // ink than unlabeled minors.
+    final gridMinorPen = Paint()
+      ..color = colorScheme.onSurface.withAlpha(45)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0.2;
-    canvas.drawPath(grid, gridPen);
+    final gridMajorPen = Paint()
+      ..color = colorScheme.onSurface.withAlpha(80)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.4;
+    canvas.drawPath(gridMinor, gridMinorPen);
+    canvas.drawPath(gridMajor, gridMajorPen);
 
     // Spectra. Bins below the display floor pile onto the bottom edge —
     // a saturated range, not lost data.
