@@ -195,15 +195,20 @@
     // earlier is still download-bound. flutter_bootstrap.js labels the
     // engine stages after this.
     var skwasm = false, mainWasm = false;
-    new PerformanceObserver(function (list) {
+    var wasmWatcher = new PerformanceObserver(function (list) {
       list.getEntries().forEach(function (entry) {
         if (entry.name.endsWith('skwasm.wasm')) skwasm = true;
         if (entry.name.endsWith('main.dart.wasm')) mainWasm = true;
       });
       if (skwasm && mainWasm) {
+        // Fire-once: the flags stay set, so a live observer would re-run
+        // this on every later resource entry against the splash, which
+        // flutter-first-frame already removed.
+        wasmWatcher.disconnect();
         document.getElementById('status').textContent = 'Compiling…';
       }
-    }).observe({ type: 'resource', buffered: true });
+    });
+    wasmWatcher.observe({ type: 'resource', buffered: true });
   </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
