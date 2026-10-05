@@ -14,6 +14,7 @@
 ///  "channelLabels":["Ch 1",...],"tares":[null,123.5,...],
 ///  "calibration":[{...},...],"displayUnit":"kgf","deviceInfo":{...},
 ///  "deviceKvs":{"factory":{...},"user":{...}} | null,
+///  "math":{"kind":"forcePlate","corners":[0,1,2,3]} | absent,
 ///  "recordedAt":"2026-08-28T14:30:12.345+02:00",
 ///  "ssnOrigin":123456,"visibleChannels":[true,...]}
 /// ```
@@ -29,6 +30,7 @@ import 'dart:typed_data';
 import 'package:meta/meta.dart';
 
 import '../models/channel_calibration.dart';
+import '../models/derived_channel.dart';
 import '../models/device_flash.dart';
 import '../models/display_unit.dart';
 
@@ -48,6 +50,7 @@ class SessionMeta {
     required this.displayUnit,
     required this.deviceInfo,
     this.deviceKvs,
+    this.mathProfile,
     required this.recordedAt,
     required this.ssnOrigin,
     required this.visibleChannels,
@@ -74,6 +77,12 @@ class SessionMeta {
   /// The raw device KVS at recording start. Null on older sessions.
   final KvsSnapshot? deviceKvs;
 
+  /// The rig's math-channel setup at record start: derived channels replay
+  /// against THIS, not the loader's current config. Null on sessions
+  /// recorded before the snapshot existed (the loader substitutes its
+  /// current profile).
+  final MathProfile? mathProfile;
+
   /// Local wall clock at recording start with its zone offset (the CSV
   /// `recorded_at`).
   final String recordedAt;
@@ -97,6 +106,7 @@ class SessionMeta {
     'displayUnit': displayUnit.name,
     'deviceInfo': deviceInfo,
     'deviceKvs': ?deviceKvs?.toJson(),
+    'math': ?mathProfile?.toJson(),
     'recordedAt': recordedAt,
     'ssnOrigin': ssnOrigin,
     'visibleChannels': visibleChannels,
@@ -203,6 +213,12 @@ class SessionMeta {
                     'journal header: deviceKvs must be an object or null',
                   ),
           );
+    final mathJson = json['math'];
+    // Optional since its introduction: present-but-malformed is corruption
+    // (throws from the profile's strict parse), absent is an older session.
+    final mathProfile = mathJson == null
+        ? null
+        : MathProfile.fromJson(mathJson);
     final recordedAt = json['recordedAt'];
     // The CSV export hands this string out as the recording's timestamp,
     // so it must actually parse as ISO 8601; anything else would export
@@ -225,6 +241,7 @@ class SessionMeta {
       displayUnit: displayUnit,
       deviceInfo: Map.unmodifiable(deviceInfo),
       deviceKvs: deviceKvs,
+      mathProfile: mathProfile,
       recordedAt: recordedAt,
       ssnOrigin: ssnOrigin,
       visibleChannels: List.unmodifiable(visibleChannels),

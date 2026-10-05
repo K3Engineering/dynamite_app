@@ -230,6 +230,9 @@ class RecordingController extends ChangeNotifier {
       displayUnit: displayUnit,
       deviceInfo: Map.of(_deviceMetadataSnapshot()),
       deviceKvs: _deviceKvsSnapshot(),
+      // The rig's math setup, so review replays the derived channels the
+      // operator saw, not whatever is configured at load time.
+      mathProfile: _dataHub.mathProfile,
       recordedAt: iso8601WithOffset(startedAt),
     );
     final writer = SessionStore.instance.startSession(
