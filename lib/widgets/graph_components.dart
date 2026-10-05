@@ -602,18 +602,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     super.dispose();
   }
 
-  /// Zoom by [factor] (>1 in, <1 out), anchored at the live edge when
-  /// following it and at the window center otherwise.
-  void _zoomBy(double factor) {
-    if (widget.data.totalSamples <= 0) return;
-    widget.ctrl.zoom(
-      factor,
-      widget.ctrl.isLive ? 1.0 : 0.5,
-      widget.data.totalSamples,
-      widget.data.oldestSample,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -624,16 +612,15 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
         ?_ConvertedChannel.of(widget.data, ch, unit),
     ];
     // The canvas exposes no semantics of its own; explicitChildNodes keeps
-    // the controls as their own nodes rather than merging into this label.
+    // the overlay button as its own node rather than merging into this label.
     // No LayoutBuilder here (unlike _GraphPane/_Minimap): nothing reads the
-    // constraints, and a LayoutBuilder's isolated build scope escalates
-    // descendant setStates (_SpanReadout setStates per packet) into an
-    // unconditional markNeedsLayout walk to the nearest relayout boundary
-    // (the Scaffold on the live tab) plus a layout-phase rebuild of the
-    // dirtied elements (runLayoutCallback flushes its build scope) -- even
-    // when the rebuild changes nothing render-side; ancestor rebuilds do
-    // the same and rebuild the entire subtree during layout
-    // (updateShouldRebuild is always true).
+    // constraints, and a LayoutBuilder's isolated build scope escalates any
+    // descendant setState into an unconditional markNeedsLayout walk to the
+    // nearest relayout boundary (the Scaffold on the live tab) plus a
+    // layout-phase rebuild of the dirtied elements (runLayoutCallback flushes
+    // its build scope) -- even when the rebuild changes nothing render-side;
+    // ancestor rebuilds do the same and rebuild the entire subtree during
+    // layout (updateShouldRebuild is always true).
     return Semantics(
       container: true,
       explicitChildNodes: true,
@@ -697,15 +684,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
           ),
           if (widget.isLiveSource)
             _LiveButton(data: widget.data, ctrl: widget.ctrl),
-          Positioned(
-            right: _kGraphRightSpace + 16,
-            bottom: 72,
-            child: _ZoomControls(
-              data: widget.data,
-              ctrl: widget.ctrl,
-              onZoom: _zoomBy,
-            ),
-          ),
         ],
       ),
     );
@@ -772,17 +750,25 @@ class _LiveButton extends StatelessWidget {
   }
 }
 
-/// Zoom controls with the span readout between them.
-class _ZoomControls extends StatelessWidget {
-  const _ZoomControls({
-    required this.data,
-    required this.ctrl,
-    required this.onZoom,
-  });
+/// Zoom controls with the span readout between them. Row chrome below the
+/// graph (see `GraphViewControls`)
+class GraphZoomControls extends StatelessWidget {
+  const GraphZoomControls({super.key, required this.data, required this.ctrl});
 
   final GraphDataSource data;
   final GraphController ctrl;
-  final void Function(double factor) onZoom;
+
+  /// Zoom by [factor] (>1 in, <1 out), anchored at the live edge when
+  /// following it and at the window center otherwise.
+  void _zoomBy(double factor) {
+    if (data.totalSamples <= 0) return;
+    ctrl.zoom(
+      factor,
+      ctrl.isLive ? 1.0 : 0.5,
+      data.totalSamples,
+      data.oldestSample,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -796,13 +782,13 @@ class _ZoomControls extends StatelessWidget {
         children: [
           IconButton(
             icon: Icon(Icons.zoom_out, color: cs.onPrimary),
-            onPressed: () => onZoom(1 / 1.2),
+            onPressed: () => _zoomBy(1 / 1.1892), // fourth root of 2
             tooltip: 'Zoom out',
           ),
           _SpanReadout(data: data, ctrl: ctrl),
           IconButton(
             icon: Icon(Icons.zoom_in, color: cs.onPrimary),
-            onPressed: () => onZoom(1.2),
+            onPressed: () => _zoomBy(1.1892),
             tooltip: 'Zoom in',
           ),
         ],

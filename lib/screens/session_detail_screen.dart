@@ -21,6 +21,7 @@ import '../widgets/dialogs.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
+import '../widgets/graph_view_controls.dart';
 import '../widgets/snackbars.dart';
 
 class SessionDetailScreen extends StatefulWidget {
@@ -37,6 +38,9 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   _LoadState _loadState = const _Loading();
 
   final GraphController _graphCtrl = GraphController();
+
+  /// dF/dt pane visibility for the replay graph.
+  bool _showDerivative = false;
 
   late final ValueListenable<SessionCatalogState> _catalog;
 
@@ -209,10 +213,18 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   for (int i = 0; i < visibleChannels.length; i++)
                     if (visibleChannels[i]) i,
                 ],
-                showDerivative: false,
+                showDerivative: _showDerivative,
                 isLiveSource: false,
               ),
             ),
+          ),
+
+          GraphViewControls(
+            showDerivative: _showDerivative,
+            onToggleDerivative: () =>
+                setState(() => _showDerivative = !_showDerivative),
+            data: data,
+            ctrl: _graphCtrl,
           ),
 
           const Divider(height: 24),

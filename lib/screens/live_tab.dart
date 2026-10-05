@@ -29,6 +29,7 @@ import '../widgets/tare_sheet.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
+import '../widgets/graph_view_controls.dart';
 import '../widgets/rssi_indicator.dart';
 import '../widgets/snackbars.dart';
 import '../status_colors.dart';
@@ -238,10 +239,12 @@ class _LiveTabState extends State<LiveTab> {
                         showDerivative,
                       ),
                     ),
-                    ViewToggles(
+                    GraphViewControls(
                       showDerivative: showDerivative,
                       onToggleDerivative: () =>
                           _showDerivative.value = !showDerivative,
+                      data: hub,
+                      ctrl: _graphCtrl,
                     ),
                   ],
                 ),
@@ -708,43 +711,6 @@ class DisconnectedPrompt extends StatelessWidget {
       action: FilledButton(
         onPressed: onConnect,
         child: const Text('Connect a device'),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// ViewToggles
-// ---------------------------------------------------------------------------
-
-class ViewToggles extends StatelessWidget {
-  final bool showDerivative;
-  final VoidCallback onToggleDerivative;
-
-  const ViewToggles({
-    super.key,
-    this.showDerivative = false,
-    required this.onToggleDerivative,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          FilterChip(
-            label: const Text('dF/dt'),
-            selected: showDerivative,
-            onSelected: (_) => onToggleDerivative(),
-            visualDensity: VisualDensity.compact,
-            labelStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: showDerivative ? cs.onSecondaryContainer : null,
-            ),
-          ),
-        ],
       ),
     );
   }
