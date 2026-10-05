@@ -5,6 +5,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meta/meta.dart';
 import 'package:provider/provider.dart';
 
+import '../models/analysis_pane.dart';
 import '../models/app_meta.dart';
 import '../models/derived_channel.dart';
 import '../models/session_catalog.dart';
@@ -39,8 +40,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   final GraphController _graphCtrl = GraphController(isLiveSource: false);
 
-  /// dF/dt pane visibility for the replay graph.
-  bool _showDerivative = false;
+  /// The analysis pane slot's selection (see [GraphWorkspace.analysis]).
+  final ValueNotifier<AnalysisPaneSelection> _analysisPane = ValueNotifier(
+    const AnalysisPaneSelection(),
+  );
 
   /// Derived channels hidden in this screen's graph, by index within
   /// [SessionData.derivedChannels]. Sessions persist only hardware-channel
@@ -58,6 +61,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     unawaited(_loadData());
   }
 
+  @override
+  void dispose() {
+    _analysisPane.dispose();
+    _graphCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadData() async {
     try {
       final data = await SessionStore.instance.loadSession(widget.session.id);
@@ -67,12 +77,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
       if (!mounted) return;
       setState(() => _loadState = _Failed(e));
     }
-  }
-
-  @override
-  void dispose() {
-    _graphCtrl.dispose();
-    super.dispose();
   }
 
   @override
@@ -246,37 +250,46 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             ],
           ),
 
-          SizedBox(
-            height: 332,
-            child: Padding(
-              padding: const EdgeInsets.all(8.0),
-              child: showMathNote
-                  ? const EmptyPlaceholder(
-                      icon: Icons.calculate_outlined,
-                      title: 'No math channels in this session',
-                      hint:
-                          'Set up the rig\'s math channels in Settings '
-                          'before recording to use the Math view',
-                    )
-                  : GraphWorkspace(
-                      data: data,
-                      ctrl: _graphCtrl,
-                      unit: unit,
-                      activeChannels: [
-                        for (final i in tableIds)
-                          if (activeChannels[i]) i,
-                      ],
-                      showDerivative: _showDerivative,
+          ValueListenableBuilder<AnalysisPaneSelection>(
+            valueListenable: _analysisPane,
+            builder: (context, analysis, _) => SizedBox(
+              // The analysis pane shares space with the force graph; an
+              // active pane needs the taller block.
+              height: analysis.kind == null ? 332 : 520,
+              child: Column(
+                children: [
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: showMathNote
+                          ? const EmptyPlaceholder(
+                              icon: Icons.calculate_outlined,
+                              title: 'No math channels in this session',
+                              hint:
+                                  'Set up the rig\'s math channels in Settings '
+                                  'before recording to use the Math view',
+                            )
+                          : GraphWorkspace(
+                              data: data,
+                              ctrl: _graphCtrl,
+                              unit: unit,
+                              activeChannels: [
+                                for (final i in tableIds)
+                                  if (activeChannels[i]) i,
+                              ],
+                              analysis: analysis,
+                            ),
                     ),
+                  ),
+                  GraphViewControls(
+                    selection: analysis,
+                    onPaneChanged: (s) => _analysisPane.value = s,
+                    data: data,
+                    ctrl: _graphCtrl,
+                  ),
+                ],
+              ),
             ),
-          ),
-
-          GraphViewControls(
-            showDerivative: _showDerivative,
-            onToggleDerivative: () =>
-                setState(() => _showDerivative = !_showDerivative),
-            data: data,
-            ctrl: _graphCtrl,
           ),
 
           const Divider(height: 24),

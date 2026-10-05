@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meta/meta.dart';
 
+import '../models/analysis_pane.dart';
 import '../models/bucket_series.dart';
 import '../models/channel_limits.dart';
 import '../models/derived_channel.dart';
@@ -552,7 +553,10 @@ class GraphWorkspace extends StatefulWidget {
 
   /// Indices of the channels to plot.
   final List<int> activeChannels;
-  final bool showDerivative;
+
+  /// Which derived view (if any) occupies the analysis pane slot between the
+  /// force graph and the minimap, plus that pane's parameters.
+  final AnalysisPaneSelection analysis;
 
   const new({
     super.key,
@@ -560,7 +564,7 @@ class GraphWorkspace extends StatefulWidget {
     required this.ctrl,
     required this.unit,
     required this.activeChannels,
-    this.showDerivative = false,
+    this.analysis = const AnalysisPaneSelection(),
   });
 
   @override
@@ -570,14 +574,24 @@ class GraphWorkspace extends StatefulWidget {
 class _GraphWorkspaceState extends State<GraphWorkspace>
     with SingleTickerProviderStateMixin {
   final GraphSurfaceCache _forceCache = GraphSurfaceCache();
-  final GraphSurfaceCache _derivCache = GraphSurfaceCache();
+
+  /// Cache for the coordinates graph (the unitless channels' split pane —
+  /// see [build]); like [_forceCache], it serves one painter kind only.
+  final GraphSurfaceCache _coordCache = GraphSurfaceCache();
+
+  /// Cache for the analysis pane's time-series variants (the derivative);
+  /// recreated when the pane KIND changes so a previous pane's segments
+  /// can't ghost into the new one.
+  GraphSurfaceCache? _analysisCache;
+
   final BakePump _bakePump = BakePump();
 
   /// One label cache per painter: [AxisLabelCache] treats a paint as a pass,
   /// and two painters sharing a cache would make the first painter's labels
   /// evictible during the second one's pass.
   final AxisLabelCache _forceLabels = AxisLabelCache();
-  final AxisLabelCache _derivLabels = AxisLabelCache();
+  final AxisLabelCache _coordLabels = AxisLabelCache();
+  final AxisLabelCache _analysisLabels = AxisLabelCache();
 
   /// The one window snapshot every chart surface paints from (see
   /// [_GraphGeometry]); its notifier also drives the painters' repaints for
@@ -612,12 +626,17 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       // Static sources all use generation 0, so identity is the reset signal.
       if (oldWidget.data != widget.data) {
         _forceCache.clear();
-        _derivCache.clear();
+        _coordCache.clear();
+        _analysisCache?.clear();
         if (oldWidget.ctrl == widget.ctrl) {
           widget.ctrl.reset();
         }
       }
       _onGeometrySourceChanged();
+    }
+    if (oldWidget.analysis.kind != widget.analysis.kind) {
+      _analysisCache?.dispose();
+      _analysisCache = null;
     }
   }
 
@@ -656,10 +675,48 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     _geometry.dispose();
     _bakePump.dispose();
     _forceCache.dispose();
-    _derivCache.dispose();
+    _coordCache.dispose();
+    _analysisCache?.dispose();
     _forceLabels.dispose();
-    _derivLabels.dispose();
+    _coordLabels.dispose();
+    _analysisLabels.dispose();
     super.dispose();
+  }
+
+  /// The analysis pane slot's content: a pane widget for the current
+  /// selection, or null when collapsed. [bound] is the workspace's
+  /// active-channel list, unit-bound.
+  Widget? _buildAnalysisPane(
+    BuildContext context,
+    ColorScheme colorScheme,
+    double dpr,
+    DisplayUnit unit,
+    List<_ConvertedChannel> bound,
+  ) {
+    final sel = widget.analysis;
+    final data = widget.data;
+    final ctrl = widget.ctrl;
+
+    switch (sel.kind) {
+      case null:
+        return null;
+      case AnalysisPaneKind.derivative:
+        return _GraphPane(
+          data: data,
+          ctrl: ctrl,
+          painter: _DerivativeGraphPainter(
+            data,
+            unit: unit,
+            channels: bound,
+            geometry: _geometry,
+            cache: _analysisCache ??= GraphSurfaceCache(),
+            colorScheme: colorScheme,
+            dpr: dpr,
+            labels: _analysisLabels,
+            bakePump: _bakePump,
+          ),
+        );
+    }
   }
 
   @override
@@ -671,6 +728,53 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       for (final ch in widget.activeChannels)
         ?_ConvertedChannel.of(widget.data, ch, unit),
     ];
+
+    // Family split: unitless plate coordinates never share an axis with
+    // forces — a ±1 blend under a kgf autorange reads as a flat zero line
+    // with the wrong unit on the axis. Two stacked graphs, one selection.
+    final forceChannels = [
+      for (final c in convertedChannels)
+        if (!c.unitless) c,
+    ];
+    final coordChannels = [
+      for (final c in convertedChannels)
+        if (c.unitless) c,
+    ];
+    final hasForce = forceChannels.isNotEmpty;
+    final hasCoords = coordChannels.isNotEmpty;
+    final hasPane = widget.analysis.kind != null;
+
+    // Vertical split of the graph region (flexes sum to 10); the analysis
+    // pane and the coordinates graph each take a share when present.
+    final forceFlex = !hasCoords ? (hasPane ? 6 : 10) : (hasPane ? 4 : 6);
+    final coordFlex = !hasForce ? (hasPane ? 6 : 10) : (hasPane ? 3 : 4);
+    final paneFlex = hasCoords ? 3 : 4;
+    // Time labels ride the bottom-most plot whose x is time. The dF/dt
+    // pane draws its own, so the graphs suppress theirs while it's up.
+    final paneCarriesTime = widget.analysis.kind == AnalysisPaneKind.derivative;
+    final forceXLabels = !hasCoords && !paneCarriesTime;
+
+    Widget timeGraph({
+      required List<_ConvertedChannel> channels,
+      required GraphSurfaceCache cache,
+      required AxisLabelCache labels,
+      required bool showXLabels,
+    }) => _GraphPane(
+      data: widget.data,
+      ctrl: widget.ctrl,
+      painter: _ForceGraphPainter(
+        widget.data,
+        unit: unit,
+        channels: channels,
+        showXLabels: showXLabels,
+        geometry: _geometry,
+        cache: cache,
+        colorScheme: colorScheme,
+        dpr: dpr,
+        labels: labels,
+        bakePump: _bakePump,
+      ),
+    );
     // The canvas exposes no semantics of its own; explicitChildNodes keeps
     // the overlay button as its own node rather than merging into this label.
     // No LayoutBuilder here (unlike _GraphPane/_Minimap): nothing reads the
@@ -698,50 +802,57 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                 : rigSlotTitle(bound.channel),
         ],
         unit: unit,
-        hasDerivative: widget.showDerivative,
+        paneSuffix: switch (widget.analysis.kind) {
+          null => '',
+          AnalysisPaneKind.derivative => '. Rate-of-change graph below',
+        },
       ),
       child: Stack(
         children: [
           Column(
             children: [
-              Expanded(
-                flex: widget.showDerivative ? 6 : 10,
-                child: _GraphPane(
-                  data: widget.data,
-                  ctrl: widget.ctrl,
-                  painter: _ForceGraphPainter(
-                    widget.data,
-                    unit: unit,
-                    channels: convertedChannels,
-                    showXLabels: !widget.showDerivative,
-                    geometry: _geometry,
-                    cache: _forceCache,
-                    colorScheme: colorScheme,
-                    dpr: dpr,
-                    labels: _forceLabels,
-                    bakePump: _bakePump,
-                  ),
-                ),
-              ),
-              if (widget.showDerivative)
+              // No bound channels at all: keep the blank-canvas plot area
+              // (a pane with no series paints nothing) rather than an empty
+              // slot.
+              if (!hasForce && !hasCoords)
                 Expanded(
-                  flex: 4,
-                  child: _GraphPane(
-                    data: widget.data,
-                    ctrl: widget.ctrl,
-                    painter: _DerivativeGraphPainter(
-                      widget.data,
-                      unit: unit,
-                      channels: convertedChannels,
-                      geometry: _geometry,
-                      cache: _derivCache,
-                      colorScheme: colorScheme,
-                      dpr: dpr,
-                      labels: _derivLabels,
-                      bakePump: _bakePump,
-                    ),
+                  flex: hasPane ? 6 : 10,
+                  child: timeGraph(
+                    channels: const [],
+                    cache: _forceCache,
+                    labels: _forceLabels,
+                    showXLabels: !paneCarriesTime,
                   ),
                 ),
+              if (hasForce)
+                Expanded(
+                  flex: forceFlex,
+                  child: timeGraph(
+                    channels: forceChannels,
+                    cache: _forceCache,
+                    labels: _forceLabels,
+                    showXLabels: forceXLabels,
+                  ),
+                ),
+              if (hasCoords)
+                Expanded(
+                  flex: coordFlex,
+                  child: timeGraph(
+                    channels: coordChannels,
+                    cache: _coordCache,
+                    labels: _coordLabels,
+                    showXLabels: !paneCarriesTime,
+                  ),
+                ),
+              if (_buildAnalysisPane(
+                    context,
+                    colorScheme,
+                    dpr,
+                    unit,
+                    convertedChannels,
+                  )
+                  case final pane?)
+                Expanded(flex: paneFlex, child: pane),
               _Minimap(
                 dataSource: widget.data,
                 unit: unit,
@@ -1162,19 +1273,19 @@ class _SpanReadout extends StatelessWidget {
 /// Screen-reader summary of the graph: structural only, since values churn
 /// per packet. The stats table speaks live readings. [channels] carries
 /// display names (rig slots or derived-channel labels): a derived id has no
-/// rig slot.
+/// rig slot. [paneSuffix] names the analysis pane below the force graph
+/// ('. Rate-of-change graph below'), or is empty when the slot is collapsed.
 String _graphSemanticsLabel({
   required bool live,
   required List<String> channels,
   required DisplayUnit unit,
-  required bool hasDerivative,
+  required String paneSuffix,
 }) {
   final kind = live ? 'Live' : 'Recorded';
   final chs = channels.isEmpty
       ? 'No channels plotted'
       : 'Channels: ${channels.join(', ')}';
-  final deriv = hasDerivative ? '. Rate-of-change graph below' : '';
-  return '$kind force graph. $chs. Unit: ${unit.symbol}$deriv.';
+  return '$kind force graph. $chs. Unit: ${unit.symbol}$paneSuffix.';
 }
 
 /// Format a zoom-window span in seconds for the readout: "800 ms" below a
