@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../models/analysis_pane.dart';
+import '../models/derived_channel.dart';
 import '../models/graph_data_source.dart';
 import 'analysis_pane_bar.dart';
 import 'graph_components.dart';
@@ -12,6 +13,7 @@ class GraphViewControls extends StatelessWidget {
     super.key,
     required this.selection,
     required this.onPaneChanged,
+    required this.mathProfile,
     required this.data,
     required this.ctrl,
   });
@@ -19,6 +21,9 @@ class GraphViewControls extends StatelessWidget {
   /// The analysis pane slot's selection, displayed by the pane bar.
   final AnalysisPaneSelection selection;
   final ValueChanged<AnalysisPaneSelection> onPaneChanged;
+
+  /// Forwarded to [AnalysisPaneBar]: gates which pane chips exist.
+  final MathProfile mathProfile;
 
   /// The plotted source and its viewport, driven by the zoom controls.
   final GraphDataSource data;
@@ -38,6 +43,7 @@ class GraphViewControls extends StatelessWidget {
             child: AnalysisPaneBar(
               selection: selection,
               onChanged: onPaneChanged,
+              mathProfile: mathProfile,
             ),
           ),
           GraphZoomControls(data: data, ctrl: ctrl),
