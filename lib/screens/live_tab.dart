@@ -6,6 +6,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:provider/provider.dart';
 
 import '../services/app_settings.dart';
+import '../models/analysis_pane.dart';
 import '../models/board_calibration.dart';
 import '../models/channel_limits.dart';
 import '../models/derived_channel.dart';
@@ -63,9 +64,11 @@ class _LiveTabState extends State<LiveTab> {
   // Live window floor: 20 s at 1 kHz (a UI anchor, not read from the device).
   final GraphController _graphCtrl = GraphController(minLiveSpan: 20 * 1000);
 
-  /// dF/dt row + derivative graph visibility; a notifier so toggling doesn't
-  /// rebuild the tab.
-  final ValueNotifier<bool> _showDerivative = ValueNotifier(false);
+  /// The analysis pane slot's selection; a notifier so switching panes
+  /// doesn't rebuild the whole tab.
+  final ValueNotifier<AnalysisPaneSelection> _analysisPane = ValueNotifier(
+    const AnalysisPaneSelection(),
+  );
 
   /// App-lifetime hub, captured for listener registration only.
   DataHub? _hub;
@@ -92,7 +95,7 @@ class _LiveTabState extends State<LiveTab> {
   @override
   void dispose() {
     _hub?.removeEventListener(_onHubEvent);
-    _showDerivative.dispose();
+    _analysisPane.dispose();
     _graphCtrl.dispose();
     super.dispose();
   }
@@ -261,9 +264,9 @@ class _LiveTabState extends State<LiveTab> {
             )
           else if (streaming)
             Expanded(
-              child: ValueListenableBuilder<bool>(
-                valueListenable: _showDerivative,
-                builder: (context, showDerivative, _) => Column(
+              child: ValueListenableBuilder<AnalysisPaneSelection>(
+                valueListenable: _analysisPane,
+                builder: (context, analysis, _) => Column(
                   children: [
                     LiveStats(
                       settings: settings,
@@ -272,21 +275,16 @@ class _LiveTabState extends State<LiveTab> {
                       channelIds: tableIds,
                       ctrl: _graphCtrl,
                       unit: unit,
-                      showDerivative: showDerivative,
+                      showDerivative:
+                          analysis.kind == AnalysisPaneKind.derivative,
                       healthListenable: healthListenable,
                     ),
                     Expanded(
-                      child: _buildGraphArea(
-                        hub,
-                        unit,
-                        graphIds,
-                        showDerivative,
-                      ),
+                      child: _buildGraphArea(hub, unit, graphIds, analysis),
                     ),
                     GraphViewControls(
-                      showDerivative: showDerivative,
-                      onToggleDerivative: () =>
-                          _showDerivative.value = !showDerivative,
+                      selection: analysis,
+                      onPaneChanged: (s) => _analysisPane.value = s,
                       data: hub,
                       ctrl: _graphCtrl,
                     ),
@@ -327,14 +325,14 @@ class _LiveTabState extends State<LiveTab> {
     DataHub hub,
     DisplayUnit unit,
     List<int> activeChannels,
-    bool showDerivative,
+    AnalysisPaneSelection analysis,
   ) {
     return GraphWorkspace(
       data: hub,
       ctrl: _graphCtrl,
       unit: unit,
       activeChannels: activeChannels,
-      showDerivative: showDerivative,
+      analysis: analysis,
     );
   }
 
