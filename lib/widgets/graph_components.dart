@@ -18,6 +18,7 @@ import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 import '../models/load_cell.dart';
+import '../utils/fft.dart';
 import 'channel_palette.dart';
 import 'graph/graph_controller.dart';
 import 'graph/segmented_cache.dart';
@@ -107,7 +108,8 @@ int joinBlockEnd(int end, int blockSize) =>
 /// One active channel bound to the view's display unit, spanning the whole
 /// channel id space (hardware 0..3, derived 4.. — see `derived_channel.dart`).
 /// Its display maps are materialized non-null here, so painters never re-ask
-/// availability.
+/// availability. What the shared envelope engine needs to know about it:
+/// an ink color.
 @immutable
 final class _ConvertedChannel {
   const _ConvertedChannel._({
@@ -115,6 +117,7 @@ final class _ConvertedChannel {
     required this.cacheTares,
     required this.netMap,
     required this.diffMap,
+    required this.fullScaleRaw,
     required this.unitless,
     required this.hardwareIndex,
     required this.sensitivityCountsPerMvV,
@@ -142,6 +145,7 @@ final class _ConvertedChannel {
       cacheTares: data.cacheTaresFor(channel),
       netMap: net,
       diffMap: diff,
+      fullScaleRaw: converter.fullScaleRaw,
       unitless: converter.unitless,
       hardwareIndex: hw,
       sensitivityCountsPerMvV: hw == null
@@ -159,12 +163,14 @@ final class _ConvertedChannel {
   /// destructive key (see [GraphDataSource.cacheTaresFor]).
   final List<double?> cacheTares;
 
-  /// Ring -> display value, net of tare; raw-space channels: raw counts ->
-  /// display value ([SeriesConverter.netMap]).
+  /// Ring -> display value, net of tare ([SeriesConverter.netMap]).
   final double Function(double raw) netMap;
 
   /// Ring diff -> display diff ([SeriesConverter.diffMap]).
   final double Function(double rawDiff) diffMap;
+
+  /// Full-scale span in ring units — the FFT's dBFS reference.
+  final double fullScaleRaw;
 
   /// Normalized (unitless) channel: display maps ignore the selected unit.
   final bool unitless;
@@ -179,6 +185,9 @@ final class _ConvertedChannel {
 
   /// Null when no cell is assigned (or the channel is derived).
   final LoadCellProfile? loadCell;
+
+  /// Stroke/fill color.
+  Color get color => getChannelColor(channel);
 }
 
 // ---------------------------------------------------------------------------
@@ -190,15 +199,19 @@ class _Minimap extends StatefulWidget {
   final DisplayUnit unit;
   final GraphController graphCtrl;
 
-  /// Channels to plot, bound to [unit] in the workspace (see
-  /// [_ConvertedChannel]).
+  /// The series to plot — the same ones as the top graph.
   final List<_ConvertedChannel> channels;
+
+  /// While the FFT pane is active, the samples feeding the transform are
+  /// highlighted under the viewport rect (with the pane's N request).
+  final ({int? requestedN})? fftFeed;
 
   const _Minimap({
     required this.dataSource,
     required this.unit,
     required this.graphCtrl,
     required this.channels,
+    this.fftFeed,
   });
 
   @override
@@ -283,6 +296,7 @@ class _MinimapState extends State<_Minimap> {
                     widget.unit,
                     widget.graphCtrl,
                     widget.channels,
+                    widget.fftFeed,
                     colorScheme,
                     dpr,
                     _cache,
@@ -304,6 +318,7 @@ class _MinimapPainter extends CustomPainter {
   final DisplayUnit _unit;
   final GraphController _ctrl;
   final List<_ConvertedChannel> _channels;
+  final ({int? requestedN})? _fftFeed;
   final ColorScheme _colorScheme;
   final double _dpr;
   final SegmentedGraphCache _cache;
@@ -319,6 +334,7 @@ class _MinimapPainter extends CustomPainter {
     this._unit,
     this._ctrl,
     this._channels,
+    this._fftFeed,
     this._colorScheme,
     this._dpr,
     this._cache,
@@ -348,27 +364,20 @@ class _MinimapPainter extends CustomPainter {
     final channels = _channels;
     final unit = _unit;
 
-    // Bucket-folded extremes over the retained window, like the force
-    // painter. The lifetime [GraphDataSource.channelExtremes] never shrink,
+    // Bucket-folded extremes over the drawable window, like the force
+    // painter. Whole-ingest [GraphDataSource.channelExtremes] never shrink,
     // so after a ring wrap they would keep scaling Y by evicted samples the
-    // minimap can no longer draw.
+    // minimap can no longer draw. Zero is a display-space anchor, included
+    // even when the data does not cross it.
     double yMin = double.infinity;
     double yMax = double.negativeInfinity;
-    for (final bound in channels) {
-      final ext = _data.windowedRawExtremes(
-        bound.channel,
-        mapStart,
-        totalSamples,
-      );
+    for (final s in channels) {
+      final ext = _data.windowedRawExtremes(s.channel, mapStart, totalSamples);
       if (ext == null) continue;
-      yMin = math.min(yMin, bound.netMap(ext.$1));
-      yMax = math.max(yMax, bound.netMap(ext.$2));
+      yMin = math.min(yMin, math.min(s.netMap(ext.$1), 0.0));
+      yMax = math.max(yMax, math.max(s.netMap(ext.$2), 0.0));
     }
     if (!yMin.isFinite || !yMax.isFinite) return;
-    // Zero is a display-space anchor, so include it even when the data does
-    // not cross it.
-    yMin = math.min(yMin, 0.0);
-    yMax = math.max(yMax, 0.0);
     // Non-degenerate on flat data (the mapping divides by the span).
     if (yMax <= yMin) yMax = yMin + 1;
 
@@ -398,7 +407,7 @@ class _MinimapPainter extends CustomPainter {
       yMin: yMin,
       yMax: yMax,
       firstUsableSample: oldestSample,
-      seriesFor: (bound) => _taredEnvelopeSeries(_data, bound),
+      seriesFor: (s) => _taredEnvelopeSeries(_data, s),
       avgStrokeWidth: 1.0,
       avgAlpha: 180,
     );
@@ -408,6 +417,28 @@ class _MinimapPainter extends CustomPainter {
       totalSamples,
       oldestSample,
     );
+
+    // FFT pane active: highlight the exact samples feeding the transform
+    // (the last N of the viewport), so its window rule is visible UI.
+    final feed = _fftFeed;
+    if (feed != null) {
+      final usable =
+          viewEnd - (viewStart > oldestSample ? viewStart : oldestSample);
+      final n = fftWindowN(usable, feed.requestedN);
+      if (n != null) {
+        final feedStart = math.max(viewEnd - n, oldestSample).toDouble();
+        canvas.drawRect(
+          Rect.fromLTRB(
+            (feedStart - mapStart) * gw / mapSpan,
+            0,
+            (viewEnd - mapStart) * gw / mapSpan,
+            gh,
+          ),
+          Paint()..color = _colorScheme.primary.withAlpha(32),
+        );
+      }
+    }
+
     // A parked window stays pinned in absolute time as eviction passes it
     // (see [GraphController.effectiveRange]), so the box slides off the
     // left; clamp it to the map or its border would draw into the Y-label
@@ -579,6 +610,9 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   /// can't ghost into the new one.
   SegmentedGraphCache? _analysisCache;
 
+  /// Memoized spectra for the FFT pane (throttles recompute, see [_FftCache]).
+  final _FftCache _fftCache = _FftCache();
+
   final BakePump _bakePump = BakePump();
   final _LabelCache _labelCache = _LabelCache();
 
@@ -608,6 +642,11 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       widget.ctrl.addListener(_syncTicker);
       widget.data.repaint.addListener(_syncTicker);
       _syncTicker();
+    }
+    if (oldWidget.data != widget.data) {
+      // A swapped data source may alias the cache key (static sources share
+      // dataGeneration 0); drop the memo.
+      _fftCache.clear();
     }
     if (oldWidget.analysis.kind != widget.analysis.kind) {
       _analysisCache?.dispose();
@@ -647,8 +686,11 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   }
 
   /// The analysis pane slot's content: a pane widget for the current
-  /// selection, or null when collapsed. [bound] is the workspace's
-  /// active-channel list, unit-bound.
+  /// selection, or null when collapsed. Panes whose channels can't bind in
+  /// [unit] fail loudly with the reason (see [_bindWhy]) rather than
+  /// plotting nothing. [bound] is the workspace's active-channel list,
+  /// unit-bound — the channel selection [AnalysisPaneKind.derivative] and
+  /// [AnalysisPaneKind.fft] plot.
   Widget? _buildAnalysisPane(
     BuildContext context,
     ColorScheme colorScheme,
@@ -659,6 +701,9 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     final sel = widget.analysis;
     final data = widget.data;
     final ctrl = widget.ctrl;
+
+    Widget unavailable(String pane, int id) =>
+        _paneMessage(context, '$pane: ${_bindWhy(data, id, unit)}');
 
     switch (sel.kind) {
       case null:
@@ -680,7 +725,81 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             bakePump: _bakePump,
           ),
         );
+      case AnalysisPaneKind.fft:
+        // The pane plots the bound selection (unbound members drop out,
+        // like on the force graph); when EVERY selected channel fails,
+        // say why instead of showing a bare "no channels".
+        if (bound.isEmpty && widget.activeChannels.isNotEmpty) {
+          return unavailable('FFT', widget.activeChannels.first);
+        }
+        return _GraphPane(
+          data: data,
+          ctrl: ctrl,
+          painter: _FftPanePainter(
+            _fftCache,
+            data: data,
+            ctrl: ctrl,
+            channels: bound,
+            requestedN: sel.fftN,
+            asd: sel.fftAsd,
+            logX: sel.fftLogX,
+            colorScheme: colorScheme,
+            labels: _labelCache,
+            unit: unit,
+          ),
+        );
     }
+  }
+
+  /// Why channel [id] can't bind [unit]: member-calibration gaps for a
+  /// derived channel ("no load cell on CH 2" — the common dead-plate-pane
+  /// cause), the unconfigured-slot case, a force-space blend in an
+  /// electrical unit (see [GraphSeriesQueries.isForceOnlyBlend]), else the
+  /// generic unit line (a hardware channel without the unit's conversion).
+  static String _bindWhy(GraphDataSource data, int id, DisplayUnit unit) {
+    if (!isDerivedChannelId(id)) return 'channel unavailable in ${unit.label}';
+    final specs = data.derivedChannels;
+    final idx = derivedIndexOf(id);
+    if (idx >= specs.length) return 'no math channel configured in this slot';
+    if (data.isForceOnlyBlend(id, unit)) {
+      return 'force-only channel — select a force unit';
+    }
+    final spec = specs[idx];
+    final noCell = [
+      for (final m in spec.members)
+        if (data.calibrationFor(m).loadCell == null) rigSlotTitle(m),
+    ];
+    final noBoard = [
+      for (final m in spec.members)
+        if (data.calibrationFor(m).board == null) rigSlotTitle(m),
+    ];
+    if (noCell.isEmpty && noBoard.isEmpty) {
+      assert(
+        false,
+        'unbound channel $id (${spec.label}) has every member calibrated',
+      );
+      return 'channel unavailable in ${unit.label}';
+    }
+    return [
+      if (noCell.isNotEmpty) 'no load cell on ${noCell.join(', ')}',
+      if (noBoard.isNotEmpty) 'no board data on ${noBoard.join(', ')}',
+    ].join(', ');
+  }
+
+  /// Loud in-pane placeholder for unsatisfiable analysis requests.
+  Widget _paneMessage(BuildContext context, String text) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: Text(
+          text,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -714,7 +833,9 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     final coordFlex = !hasForce ? (hasPane ? 6 : 10) : (hasPane ? 3 : 4);
     final paneFlex = hasCoords ? 3 : 4;
     // Time labels ride the bottom-most plot whose x is time. The dF/dt
-    // pane draws its own, so the graphs suppress theirs while it's up.
+    // pane draws its own, so the graphs suppress theirs while it's up;
+    // the FFT pane has no time axis and leaves the labels on the
+    // bottom-most time-series graph.
     final paneCarriesTime = widget.analysis.kind == AnalysisPaneKind.derivative;
     final forceXLabels = !hasCoords && !paneCarriesTime;
 
@@ -739,6 +860,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
         bakePump: _bakePump,
       ),
     );
+
     // The canvas exposes no semantics of its own; explicitChildNodes keeps
     // the overlay button as its own node rather than merging into this label.
     // No LayoutBuilder here (unlike _GraphPane/_Minimap): nothing reads the
@@ -769,6 +891,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
         paneSuffix: switch (widget.analysis.kind) {
           null => '',
           AnalysisPaneKind.derivative => '. Rate-of-change graph below',
+          AnalysisPaneKind.fft => '. Spectrum graph below',
         },
       ),
       child: Stack(
@@ -819,6 +942,9 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                 unit: unit,
                 graphCtrl: widget.ctrl,
                 channels: convertedChannels,
+                fftFeed: widget.analysis.kind == AnalysisPaneKind.fft
+                    ? (requestedN: widget.analysis.fftN)
+                    : null,
               ),
             ],
           ),
@@ -1192,10 +1318,9 @@ class _SpanReadout extends StatelessWidget {
 }
 
 /// Screen-reader summary of the graph: structural only, since values churn
-/// per packet. The stats table speaks live readings. [channels] carries
-/// display names (rig slots or derived-channel labels): a derived id has no
-/// rig slot. [paneSuffix] names the analysis pane below the force graph
-/// ('. Rate-of-change graph below'), or is empty when the slot is collapsed.
+/// per packet. The stats table speaks live readings. [paneSuffix] names the
+/// analysis pane below the force graph ('. Rate-of-change graph below'), or
+/// is empty when the slot is collapsed.
 String _graphSemanticsLabel({
   required bool live,
   required List<String> channels,
@@ -1286,13 +1411,15 @@ class _LabelCache {
   final Map<String, ui.Paragraph> _cache = HashMap();
 
   /// The laid-out paragraph for [text] in [color], building and caching it on
-  /// first use.
+  /// first use. [maxWidth] is the layout constraint (default sized for axis
+  /// labels; pass the plot width for centered messages).
   ui.Paragraph prepare(
     String text, {
     Color color = Colors.black,
     bool bold = false,
+    double maxWidth = 96,
   }) {
-    final key = '$text|${color.toARGB32()}|$bold';
+    final key = '$text|${color.toARGB32()}|$bold|$maxWidth';
     if (!_cache.containsKey(key) && _cache.length >= _limit) {
       _clear();
     }
@@ -1308,7 +1435,7 @@ class _LabelCache {
             )
             ..pushStyle(style)
             ..addText(text);
-      return builder.build()..layout(const ui.ParagraphConstraints(width: 96));
+      return builder.build()..layout(ui.ParagraphConstraints(width: maxWidth));
     });
   }
 
@@ -1999,7 +2126,7 @@ bool _paintEnvelopeDataLayer(
       for (final bound in channels) {
         _drawChannelEnvelope(
           cCanvas,
-          color: getChannelColor(bound.channel),
+          color: bound.color,
           graphW: gw,
           viewStart: start,
           viewSamples: viewSpan,
@@ -2160,8 +2287,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final DisplayUnit _unit;
   final GraphController _ctrl;
 
-  /// Channels to plot, bound to [_unit] in the workspace (see
-  /// [_ConvertedChannel]).
+  /// Series to plot (channels bound to [_unit]).
   final List<_ConvertedChannel> _channels;
   final SegmentedGraphCache cache;
   final ColorScheme colorScheme;
@@ -2445,6 +2571,17 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   @override
   double get topSpace => 4;
 
+  /// Fixed axis when every plotted channel is unitless (a normalized blend):
+  /// it's a ±1 coordinate, and autoscaling would make stationary noise read
+  /// as motion. Mixed force+unitless selections keep the window fit.
+  static const YAxisRange _kUnitlessRange = (
+    yMin: -1.1,
+    yMax: 1.1,
+    tickDelta: 0.5,
+    rung: (factor: 1.0, symbol: ''),
+    decimals: 1,
+  );
+
   @override
   List<double?> cacheKeyTares() => [
     for (final bound in _channels) ...bound.cacheTares,
@@ -2460,6 +2597,9 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     double viewEnd,
     double plotHeight,
   ) {
+    if (_channels.isNotEmpty && _channels.every((c) => c.unitless)) {
+      return _kUnitlessRange;
+    }
     // [windowedRawExtremes] folds full buckets and scans only the partial
     // head/tail: O(window / bucketSize). No minimum-range floor; flat data
     // hits the degeneracy guard in [_computeYRange].
@@ -2606,6 +2746,11 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     rawToDisplay: _diffDisplayFor(channel),
   );
 
+  /// Every plotted channel unitless: the axis is pure per-second rate, no
+  /// unit rung.
+  bool get _allUnitless =>
+      _channels.isNotEmpty && _channels.every((c) => c.unitless);
+
   @override
   YAxisRange? computeYRange(
     double viewStart,
@@ -2640,6 +2785,21 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
       fold(ext.$2);
     }
 
+    if (_allUnitless) {
+      // Same layout as a unit rung, with the identity scaling baked in.
+      final span = math.max(dMax - dMin, 1e-12);
+      final delta = _decadeStepCeil(span / 5);
+      final y0 = (dMin / delta).floor() * delta;
+      var y1 = (dMax / delta).ceil() * delta;
+      if (y1 <= y0) y1 = y0 + delta; // flat trace: still a drawable span
+      return (
+        yMin: y0,
+        yMax: y1,
+        tickDelta: delta,
+        rung: (factor: 1.0, symbol: ''),
+        decimals: delta >= 1 ? 0 : 2,
+      );
+    }
     return _computeYRange(dMin, dMax, _unit, plotHeight);
   }
 
@@ -2662,6 +2822,457 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     );
     canvas.drawParagraph(dLabel, const Offset(4, 2));
   }
+}
+
+// ---------------------------------------------------------------------------
+// FFT pane
+//
+// The spectrum of the last N samples of the visible time window, per
+// selected channel. Not a [_TimeSeriesGraphPainter]: the x axis is frequency,
+// so the sample-index segment cache doesn't apply — a direct paint is cheap
+// at these sizes, and recompute is throttled by [_FftCache].
+// ---------------------------------------------------------------------------
+
+/// dB floor for individual bin values (kills -inf at exact zeros).
+const double _kFftFloorDb = -220;
+
+/// Fixed bottom of the FFT Y axis (dBFS in amplitude mode, dBFS/√Hz in
+/// density mode) — see the axis-range comment in [_FftCache._compute].
+const double _kFftAxisFloorDb = -160;
+const double _kFftAxisFloorDbAsd = -200;
+
+/// A computed spectrum, ready to draw.
+final class _FftResult {
+  const _FftResult({
+    required this.n,
+    required this.binHz,
+    required this.fsHz,
+    required this.channels,
+    required this.loDb,
+    required this.hiDb,
+    required this.peakChannel,
+    required this.peakBin,
+    required this.peakDb,
+  });
+
+  /// Transform length, Hz per bin, and the sample rate.
+  final int n;
+  final double binHz;
+  final double fsHz;
+
+  /// Per plotted channel: hardware index + dB bins (length n/2 + 1).
+  final List<({int channel, Float64List dbBins})> channels;
+
+  /// Display range: [loDb] fixed per mode, [hiDb] snapped above the peak.
+  final double loDb;
+  final double hiDb;
+
+  /// Loudest non-DC bin across all channels (the marker).
+  final int peakChannel;
+  final int peakBin;
+  final double peakDb;
+}
+
+/// What the FFT pane has to show: a spectrum, or the reason it can't
+/// compute one right now (short window, gap, no channels).
+sealed class _FftOutcome {
+  const _FftOutcome();
+}
+
+final class _FftEmpty extends _FftOutcome {
+  const _FftEmpty(this.message);
+
+  final String message;
+}
+
+final class _FftOk extends _FftOutcome {
+  const _FftOk(this.result);
+
+  final _FftResult result;
+}
+
+/// Memoized spectrum. The result is a function of the pane parameters, the
+/// data identity, the plot window, and — while streaming — wall time
+/// quantized to 100 ms (capping recompute at 10 Hz with no timers). The
+/// window enters the key directly when parked; when following the live edge
+/// the window is a pure function of the clock, so the clock covers it.
+class _FftCache {
+  Object? _key;
+  _FftOutcome? _outcome;
+
+  /// Twiddle/window tables per transform length (expensive to build).
+  final Map<int, Radix2Fft> _tables = {};
+
+  /// Drop the memo when the data source is swapped (a static source may
+  /// alias another's key — both report dataGeneration 0).
+  void clear() => _key = null;
+
+  _FftOutcome resolve({
+    required GraphDataSource data,
+    required GraphController ctrl,
+    required DisplayUnit unit,
+    required List<_ConvertedChannel> channels,
+    required int? requestedN,
+    required bool asd,
+  }) {
+    final total = data.totalSamples;
+    final last = data.lastDataAt;
+    final clock = last == null ? 0 : last.millisecondsSinceEpoch ~/ 100;
+    final (winStart, winEnd) = ctrl.effectiveRange(total, data.oldestSample);
+    final key = (
+      data.dataGeneration,
+      data.calibrationVersion,
+      data.tareVersion,
+      unit,
+      asd,
+      requestedN,
+      [for (final c in channels) c.channel].join(','),
+      ctrl.isLive ? 'live' : (winStart, winEnd),
+      clock,
+      total,
+    );
+    final cached = _outcome;
+    if (key == _key && cached != null) return cached;
+
+    _key = key;
+    return _outcome = _compute(
+      data,
+      channels,
+      requestedN: requestedN,
+      asd: asd,
+      winStart: winStart,
+      winEnd: winEnd,
+    );
+  }
+
+  _FftOutcome _compute(
+    GraphDataSource data,
+    List<_ConvertedChannel> channels, {
+    required int? requestedN,
+    required bool asd,
+    required int winStart,
+    required int winEnd,
+  }) {
+    if (channels.isEmpty) return const _FftEmpty('No channels selected');
+    if (winEnd <= winStart) return const _FftEmpty('No data in the window');
+    // Only samples still in the retained buffer can feed the transform.
+    final oldest = data.oldestSample;
+    final usable = winEnd - (winStart > oldest ? winStart : oldest);
+    final n = fftWindowN(usable, requestedN);
+    if (n == null) {
+      return const _FftEmpty('Window too short — zoom out or pick a smaller N');
+    }
+    final start = winEnd - n;
+    if (data.gaps.rangesIn(start, winEnd).isNotEmpty) {
+      return const _FftEmpty('Gap in the FFT window — pan elsewhere');
+    }
+
+    final fs = data.sampleRate.toDouble();
+    final fft = _tables.putIfAbsent(n, () => Radix2Fft(n));
+    // √Hz mode normalizes by the window's noise bandwidth (Hann ENBW): the
+    // N-invariant noise density. Tones read inflated — honest.
+    final norm = asd ? 1.0 / math.sqrt(fs / n * Radix2Fft.hannEnbwBins) : 1.0;
+    final samples = Float64List(n);
+    final spectra = <({int channel, Float64List dbBins})>[];
+    double maxDb = double.negativeInfinity;
+    int peakChannel = channels.first.channel, peakBin = 1;
+    double peakDb = double.negativeInfinity;
+    for (final bound in channels) {
+      final net = bound.netMap;
+      for (int i = 0; i < n; i++) {
+        samples[i] = net(data.rawAt(bound.channel, start + i).toDouble());
+      }
+      final spec = fft.amplitudeSpectrum(samples);
+      // Reference: the channel's full-scale span (2^23 counts for hardware,
+      // the summed rail span for blends, 1.0 for ratios) expressed in the
+      // display unit — "dBFS" reads as the instrument's input span in every
+      // unit, tare-independent.
+      final fsDisplay = bound.diffMap(bound.fullScaleRaw);
+      final db = Float64List(spec.length);
+      for (int k = 0; k < spec.length; k++) {
+        final a = spec[k] * norm / fsDisplay;
+        final v = a <= 0
+            ? _kFftFloorDb
+            : math.max(20 * math.log(a) / math.ln10, _kFftFloorDb);
+        db[k] = v;
+        if (k == 0) continue; // DC excluded from stats (mean-removed)
+        if (v > maxDb) maxDb = v;
+        if (v > peakDb) {
+          peakDb = v;
+          peakBin = k;
+          peakChannel = bound.channel;
+        }
+      }
+      spectra.add((channel: bound.channel, dbBins: db));
+    }
+    // Fixed floor per mode (data-independent → the axis can't jitter);
+    // deeper bins clamp onto the bottom frame edge at draw time, reading
+    // as a saturated range rather than disappearing. The √Hz floor sits
+    // lower: the density normalization lifts the noise floor by
+    // 10·log10(1/(binHz·ENBW)), which turns negative (floor sinks) at
+    // small N — ~20 dB down at N = kFftMinN against a fast stream.
+    final lo = asd ? _kFftAxisFloorDbAsd : _kFftAxisFloorDb;
+    // Top snaps up to the 10 dB grid above the loudest bin, so it steps
+    // only when the peak itself moves a detent. +2 dB of headroom, and a
+    // drawable range even for an all-silence transform (maxDb at the
+    // -220 bin floor).
+    final hi = math.max((((maxDb + 2) / 10).ceil() * 10).toDouble(), lo + 10);
+    return _FftOk(
+      _FftResult(
+        n: n,
+        binHz: fs / n,
+        fsHz: fs,
+        channels: spectra,
+        loDb: lo,
+        hiDb: hi,
+        peakChannel: peakChannel,
+        peakBin: peakBin,
+        peakDb: peakDb,
+      ),
+    );
+  }
+}
+
+class _FftPanePainter extends CustomPainter {
+  _FftPanePainter(
+    this._cache, {
+    required this.data,
+    required this.ctrl,
+    required this.channels,
+    required this.requestedN,
+    required this.asd,
+    required this.logX,
+    required this.colorScheme,
+    required this.labels,
+    required this.unit,
+  }) : super(repaint: Listenable.merge([data.repaint, ctrl]));
+
+  static const double _topSpace = 18;
+  static const double _bottomSpace = 16;
+
+  final _FftCache _cache;
+  final GraphDataSource data;
+  final GraphController ctrl;
+
+  /// The workspace's channel selection (the stats-table toggles),
+  /// unit-bound — same list the dF/dt pane plots.
+  final List<_ConvertedChannel> channels;
+  final int? requestedN;
+  final bool asd;
+
+  /// X scale. Display-only: the transform result ([_FftCache]) is shared
+  /// between both, so it stays out of the cache key.
+  final bool logX;
+  final ColorScheme colorScheme;
+  final _LabelCache labels;
+  final DisplayUnit unit;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.translate(_kGraphLeftSpace, _topSpace);
+    final graphSz = Size(
+      size.width - _kGraphLeftSpace - kGraphRightSpace,
+      size.height - _topSpace - _bottomSpace,
+    );
+    if (graphSz.width <= 0 || graphSz.height <= 0) return;
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, graphSz.width, graphSz.height),
+      Paint()
+        ..color = colorScheme.primary.withAlpha(150)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.5,
+    );
+
+    switch (_cache.resolve(
+      data: data,
+      ctrl: ctrl,
+      unit: unit,
+      channels: channels,
+      requestedN: requestedN,
+      asd: asd,
+    )) {
+      case _FftEmpty(:final message):
+        _drawCenteredMessage(canvas, graphSz, message);
+      case _FftOk(:final result):
+        _paintSpectrum(canvas, graphSz, result);
+    }
+  }
+
+  void _drawCenteredMessage(Canvas canvas, Size graphSz, String message) {
+    final par = labels.prepare(
+      message,
+      color: colorScheme.onSurface.withAlpha(150),
+      maxWidth: graphSz.width,
+    );
+    canvas.drawParagraph(
+      par,
+      Offset(
+        (graphSz.width - par.longestLine).clamp(0.0, graphSz.width) / 2,
+        graphSz.height / 2 - par.height / 2,
+      ),
+    );
+  }
+
+  void _paintSpectrum(Canvas canvas, Size graphSz, _FftResult r) {
+    final textColor = colorScheme.onSurface.withAlpha(150);
+
+    // The unit tag rides the band above the frame (the Y axis's unit lives
+    // at the right). The transform summary goes inside the frame's
+    // top-left: its 13 pt line box is taller than the band, so up there it
+    // straddled the frame border. The peak readout drops a row below it
+    // (see below), so no two texts share a row by construction.
+    final modeTag = labels.prepare(asd ? 'dBFS/√Hz' : 'dBFS', color: textColor);
+    final infoTag = labels.prepare(
+      'Hann · N=${r.n} · '
+      'Δf=${r.binHz.toStringAsFixed(r.binHz < 1 ? 2 : 1)} Hz · '
+      '${formatWindowSpan(r.n / r.fsHz)}',
+      color: textColor,
+      maxWidth: graphSz.width - 8,
+    );
+    canvas.drawParagraph(
+      modeTag,
+      Offset(graphSz.width - modeTag.longestLine - 4, 2 - _topSpace),
+    );
+    canvas.drawParagraph(infoTag, const Offset(4, 2));
+
+    double valueToY(double v) =>
+        graphSz.height - (v - r.loDb) * graphSz.height / (r.hiDb - r.loDb);
+
+    final fMax = r.fsHz / 2;
+    // Log: the axis spans exactly the computed spectrum's non-DC bins
+    // (bin 1 .. Nyquist) — no fmin knob, nothing to clamp.
+    final logMin = math.log(r.binHz), logMax = math.log(fMax);
+    double freqToX(double f) => logX
+        ? (math.log(f) - logMin) / (logMax - logMin) * graphSz.width
+        : f / fMax * graphSz.width;
+
+    final gridMinor = Path();
+    final gridMajor = Path();
+    _drawAxis(
+      canvas,
+      gridMinor,
+      gridMajor,
+      graphSz,
+      orientation: _AxisOrientation.y,
+      windowStart: r.loDb,
+      windowEnd: r.hiDb,
+      step: 10.0,
+      stepCeil: _decadeStepCeil,
+      labelFor: (tick) => tick.toStringAsFixed(0),
+      posOf: valueToY,
+      showLabels: true,
+      labels: labels,
+      textColor: colorScheme.onSurface,
+    );
+    // Frequency grid. Linear: ~5 nice ticks, edges skipped (the frame
+    // already marks them). Log: labeled decades with unlabeled 2–9 minors;
+    // the span is log10(N/2) ≈ 1.8–4.5 decades, so both always fit.
+    // Labeled lines are majors, unlabeled minors — like [_drawAxis]'s tiers.
+    if (logX) {
+      final dMin = logMin / math.ln10, dMax = logMax / math.ln10;
+      for (int d = dMin.floor(); d <= dMax.ceil(); d++) {
+        final decade = math.pow(10, d).toDouble();
+        if (decade >= r.binHz && decade <= fMax) {
+          final x = freqToX(decade);
+          gridMajor.moveTo(x, 0);
+          gridMajor.lineTo(x, graphSz.height);
+          final par = labels.prepare(
+            decade.toStringAsFixed(d < 0 ? -d : 0),
+            color: colorScheme.onSurface,
+          );
+          canvas.drawParagraph(
+            par,
+            Offset(x - par.longestLine / 2, graphSz.height + 2),
+          );
+        }
+        for (int m = 2; m <= 9; m++) {
+          final f = decade * m;
+          if (f < r.binHz || f > fMax) continue;
+          final x = freqToX(f);
+          gridMinor.moveTo(x, 0);
+          gridMinor.lineTo(x, graphSz.height);
+        }
+      }
+    } else {
+      final step = _decadeStepCeil(fMax / 5);
+      final freqDecimals = step >= 1 ? 0 : 1;
+      for (double f = step; f < fMax; f += step) {
+        final x = freqToX(f);
+        gridMajor.moveTo(x, 0);
+        gridMajor.lineTo(x, graphSz.height);
+        final par = labels.prepare(
+          f.toStringAsFixed(freqDecimals),
+          color: colorScheme.onSurface,
+        );
+        canvas.drawParagraph(
+          par,
+          Offset(x - par.longestLine / 2, graphSz.height + 2),
+        );
+      }
+    }
+    // Same pen tiers as the force graph: labeled lines (majors) get more
+    // ink than unlabeled minors.
+    final gridMinorPen = Paint()
+      ..color = colorScheme.onSurface.withAlpha(45)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.2;
+    final gridMajorPen = Paint()
+      ..color = colorScheme.onSurface.withAlpha(80)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.4;
+    canvas.drawPath(gridMinor, gridMinorPen);
+    canvas.drawPath(gridMajor, gridMajorPen);
+
+    // Spectra. Bins below the display floor pile onto the bottom edge —
+    // a saturated range, not lost data.
+    final pen = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    for (final spec in r.channels) {
+      final color = getChannelColor(spec.channel);
+      final batcher = VertexBatcher(
+        preserveFloats: 2,
+        drawThreshold: 2,
+        onFlush: (view) {
+          pen.color = color;
+          canvas.drawRawPoints(ui.PointMode.polygon, view, pen);
+        },
+      );
+      final bins = spec.dbBins;
+      // log(0) undefined: the DC bin has no log home and stays linear-only.
+      for (int k = logX ? 1 : 0; k < bins.length; k++) {
+        batcher.add(freqToX(k * r.binHz), valueToY(math.max(bins[k], r.loDb)));
+        if (batcher.wouldOverflow(2)) batcher.flush();
+      }
+      batcher.flush();
+    }
+
+    // Peak marker + readout.
+    final peakFreq = r.peakBin * r.binHz;
+    final px = freqToX(peakFreq);
+    canvas.drawLine(
+      Offset(px, 0),
+      Offset(px, graphSz.height),
+      Paint()
+        ..color = getChannelColor(r.peakChannel).withAlpha(160)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.8,
+    );
+    final peakLabel = labels.prepare(
+      '${peakFreq.toStringAsFixed(peakFreq < 10 ? 2 : 1)} Hz · '
+      '${r.peakDb.toStringAsFixed(0)} dB',
+      color: colorScheme.onSurface,
+    );
+    // Second text row, below the info tag; kept inside the plot on either
+    // side of the marker.
+    final lx = px + 4 + peakLabel.longestLine > graphSz.width
+        ? px - 4 - peakLabel.longestLine
+        : px + 4;
+    canvas.drawParagraph(peakLabel, Offset(lx, 20));
+  }
+
+  @override
+  bool shouldRepaint(covariant _FftPanePainter oldDelegate) => true;
 }
 
 // ---------------------------------------------------------------------------
