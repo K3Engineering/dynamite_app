@@ -7,6 +7,7 @@ import '../models/device_profile.dart';
 import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
 import '../utils/future_chain.dart';
+import 'derived_channels.dart';
 import 'live_session_writer.dart';
 import 'session_data.dart';
 import 'session_files.dart';
@@ -389,6 +390,10 @@ class SessionStore {
       gaps: decoded.gaps,
       ssnOrigin: meta.ssnOrigin,
       deviceKvs: meta.deviceKvs,
+      // Derived channels replay from raw + frozen calibration against the
+      // record-time profile snapshot; sessions recorded before it existed
+      // take the CURRENT config (pre-release: devs can wipe those).
+      mathProfile: meta.mathProfile ?? DerivedChannels.instance.profile,
     );
   });
 
