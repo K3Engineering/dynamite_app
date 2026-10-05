@@ -27,13 +27,15 @@ export 'graph/segmented_cache.dart';
 // ---------------------------------------------------------------------------
 
 /// Horizontal/vertical padding shared by the graph painters and the gesture
-/// areas. [_kGraphRightSpace] reserves room for the Y-axis labels.
+/// areas. [kGraphRightSpace] reserves room for the Y-axis labels; public so
+/// the controls row in `GraphViewControls` can align its right edge with
+/// the painted plot/minimap edge.
 const double _kGraphLeftSpace = 8;
-const double _kGraphRightSpace = 56;
+const double kGraphRightSpace = 56;
 const double _kGraphBottomSpace = 24;
 
 double _graphPlotWidth(double totalWidth) =>
-    totalWidth - _kGraphLeftSpace - _kGraphRightSpace;
+    totalWidth - _kGraphLeftSpace - kGraphRightSpace;
 
 /// Shared mouse-wheel zoom for graph surfaces (main graphs and minimap):
 /// zooms the controller window about the cursor position.
@@ -307,7 +309,7 @@ class _MinimapPainter extends CustomPainter {
     const double vPad = 2;
 
     canvas.translate(_kGraphLeftSpace, vPad);
-    final gw = size.width - _kGraphLeftSpace - _kGraphRightSpace;
+    final gw = size.width - _kGraphLeftSpace - kGraphRightSpace;
     final gh = size.height - vPad * 2;
 
     if (gw <= 0 || gh <= 0) return;
@@ -602,18 +604,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     super.dispose();
   }
 
-  /// Zoom by [factor] (>1 in, <1 out), anchored at the live edge when
-  /// following it and at the window center otherwise.
-  void _zoomBy(double factor) {
-    if (widget.data.totalSamples <= 0) return;
-    widget.ctrl.zoom(
-      factor,
-      widget.ctrl.isLive ? 1.0 : 0.5,
-      widget.data.totalSamples,
-      widget.data.oldestSample,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
@@ -624,16 +614,15 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
         ?_ConvertedChannel.of(widget.data, ch, unit),
     ];
     // The canvas exposes no semantics of its own; explicitChildNodes keeps
-    // the controls as their own nodes rather than merging into this label.
+    // the overlay button as its own node rather than merging into this label.
     // No LayoutBuilder here (unlike _GraphPane/_Minimap): nothing reads the
-    // constraints, and a LayoutBuilder's isolated build scope escalates
-    // descendant setStates (_SpanReadout setStates per packet) into an
-    // unconditional markNeedsLayout walk to the nearest relayout boundary
-    // (the Scaffold on the live tab) plus a layout-phase rebuild of the
-    // dirtied elements (runLayoutCallback flushes its build scope) -- even
-    // when the rebuild changes nothing render-side; ancestor rebuilds do
-    // the same and rebuild the entire subtree during layout
-    // (updateShouldRebuild is always true).
+    // constraints, and a LayoutBuilder's isolated build scope escalates any
+    // descendant setState into an unconditional markNeedsLayout walk to the
+    // nearest relayout boundary (the Scaffold on the live tab) plus a
+    // layout-phase rebuild of the dirtied elements (runLayoutCallback flushes
+    // its build scope) -- even when the rebuild changes nothing render-side;
+    // ancestor rebuilds do the same and rebuild the entire subtree during
+    // layout (updateShouldRebuild is always true).
     return Semantics(
       container: true,
       explicitChildNodes: true,
@@ -697,15 +686,6 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
           ),
           if (widget.isLiveSource)
             _LiveButton(data: widget.data, ctrl: widget.ctrl),
-          Positioned(
-            right: _kGraphRightSpace + 16,
-            bottom: 72,
-            child: _ZoomControls(
-              data: widget.data,
-              ctrl: widget.ctrl,
-              onZoom: _zoomBy,
-            ),
-          ),
         ],
       ),
     );
@@ -772,41 +752,124 @@ class _LiveButton extends StatelessWidget {
   }
 }
 
-/// Zoom controls with the span readout between them.
-class _ZoomControls extends StatelessWidget {
-  const _ZoomControls({
-    required this.data,
-    required this.ctrl,
-    required this.onZoom,
-  });
+/// Zoom controls: a split button group [− | span | +]. The middle segment
+/// opens a menu of preset window spans plus "All" (the whole retained
+/// buffer, auto-expanding on live). Row chrome below the graph (see
+/// `GraphViewControls`)
+class GraphZoomControls extends StatelessWidget {
+  const GraphZoomControls({super.key, required this.data, required this.ctrl});
 
   final GraphDataSource data;
   final GraphController ctrl;
-  final void Function(double factor) onZoom;
+
+  /// Preset window spans for the middle segment's menu, in seconds; "All"
+  /// needs no number and is appended separately.
+  static const _presetSpansSec = [0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0];
+
+  // Split-group shapes, twin of the TARE group in `ActionButtons`: rounded
+  // outer corners, small inner corners, segments separated by a 4px gap.
+  static const _splitLeft = RoundedRectangleBorder(
+    borderRadius: BorderRadius.horizontal(
+      left: Radius.circular(20),
+      right: Radius.circular(4),
+    ),
+  );
+  static const _splitMid = RoundedRectangleBorder(
+    borderRadius: BorderRadius.all(Radius.circular(4)),
+  );
+  static const _splitRight = RoundedRectangleBorder(
+    borderRadius: BorderRadius.horizontal(
+      left: Radius.circular(4),
+      right: Radius.circular(20),
+    ),
+  );
+
+  /// Zoom by [factor] (>1 in, <1 out), anchored at the live edge when
+  /// following it and at the window center otherwise.
+  void _zoomBy(double factor) {
+    if (data.totalSamples <= 0) return;
+    ctrl.zoom(
+      factor,
+      ctrl.isLive ? 1.0 : 0.5,
+      data.totalSamples,
+      data.oldestSample,
+    );
+  }
+
+  /// Set an exact window span in samples. [GraphController.zoomTo] clamps;
+  /// passing `defaultLiveSpan` ("All") funnels through `goLive` into the
+  /// auto-expanding show-everything view over mature data. Anchoring matches
+  /// [_zoomBy].
+  void _applySpan(int spanSamples) {
+    if (data.totalSamples <= 0) return;
+    final (s, e) = ctrl.effectiveRange(data.totalSamples, data.oldestSample);
+    ctrl.zoomTo(
+      spanSamples,
+      ctrl.isLive ? 1.0 : 0.5,
+      baseStart: s,
+      baseSpan: e - s,
+      anchorLiveEdge: ctrl.isLive,
+      totalSamples: data.totalSamples,
+      oldestSample: data.oldestSample,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Material(
-      elevation: 4,
-      borderRadius: BorderRadius.circular(24),
-      color: cs.primary,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            icon: Icon(Icons.zoom_out, color: cs.onPrimary),
-            onPressed: () => onZoom(1 / 1.2),
-            tooltip: 'Zoom out',
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Tooltip(
+          message: 'Zoom out',
+          child: FilledButton(
+            style: FilledButton.styleFrom(
+              shape: _splitLeft,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+            ),
+            onPressed: () => _zoomBy(1 / 1.1892), // fourth root of 2
+            child: const Icon(Icons.zoom_out),
           ),
-          _SpanReadout(data: data, ctrl: ctrl),
-          IconButton(
-            icon: Icon(Icons.zoom_in, color: cs.onPrimary),
-            onPressed: () => onZoom(1.2),
-            tooltip: 'Zoom in',
+        ),
+        const SizedBox(width: 4),
+        MenuAnchor(
+          builder: (context, menu, _) => Tooltip(
+            message: 'Visible time window',
+            child: FilledButton(
+              style: FilledButton.styleFrom(
+                shape: _splitMid,
+                padding: EdgeInsets.zero,
+              ),
+              onPressed: () => menu.isOpen ? menu.close() : menu.open(),
+              child: _SpanReadout(data: data, ctrl: ctrl),
+            ),
           ),
-        ],
-      ),
+          menuChildren: [
+            for (final sec in _presetSpansSec)
+              MenuItemButton(
+                onPressed: () => _applySpan((sec * data.sampleRate).round()),
+                child: Text(_formatSpan(sec)),
+              ),
+            MenuItemButton(
+              onPressed: () => _applySpan(
+                ctrl.defaultLiveSpan(data.totalSamples, data.oldestSample),
+              ),
+              child: const Text('All'),
+            ),
+          ],
+        ),
+        const SizedBox(width: 4),
+        Tooltip(
+          message: 'Zoom in',
+          child: FilledButton(
+            style: FilledButton.styleFrom(
+              shape: _splitRight,
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+            ),
+            onPressed: () => _zoomBy(1.1892),
+            child: const Icon(Icons.zoom_in),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -1749,7 +1812,7 @@ _GraphLayout? _setupGraphFrame(
 
   canvas.translate(_kGraphLeftSpace, topSpace);
   final graphSz = Size(
-    size.width - _kGraphLeftSpace - _kGraphRightSpace,
+    size.width - _kGraphLeftSpace - kGraphRightSpace,
     size.height - bottomSpace - topSpace,
   );
 
@@ -2106,7 +2169,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   ) {
     final railPaint = Paint()..color = colorScheme.error.withAlpha(48);
     final cellPaint = Paint()..color = colorScheme.error.withAlpha(22);
-    const colW = _kGraphRightSpace / kAdcChannelCount;
+    const colW = kGraphRightSpace / kAdcChannelCount;
 
     for (final bound in _channels) {
       final cell = bound.loadCell;
