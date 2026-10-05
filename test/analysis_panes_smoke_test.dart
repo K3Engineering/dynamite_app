@@ -74,6 +74,12 @@ void main() {
 
     const variants = <AnalysisPaneSelection>[
       AnalysisPaneSelection(kind: AnalysisPaneKind.derivative),
+      AnalysisPaneSelection(kind: AnalysisPaneKind.fft),
+      AnalysisPaneSelection(
+        kind: AnalysisPaneKind.fft,
+        fftN: 4096,
+        fftAsd: true,
+      ),
     ];
 
     for (final analysis in variants) {
@@ -102,7 +108,7 @@ void main() {
     await tester.pump();
   });
 
-  testWidgets('the pane bar selects panes and collapses the slot', (
+  testWidgets('the pane bar selects panes and edits their parameters', (
     tester,
   ) async {
     var selection = const AnalysisPaneSelection();
@@ -119,12 +125,20 @@ void main() {
       ),
     );
 
-    await tester.tap(find.text('dF/dt'));
+    // FFT params: N and mode (the channels come from the workspace's
+    // stats-table selection, not the pane).
+    await tester.tap(find.text('FFT'));
     await tester.pump();
-    expect(selection.kind, AnalysisPaneKind.derivative);
+    expect(selection.kind, AnalysisPaneKind.fft);
+    await tester.tap(find.text('4k'));
+    await tester.pump();
+    expect(selection.fftN, 4096);
+    await tester.tap(find.text('/√Hz'));
+    await tester.pump();
+    expect(selection.fftAsd, isTrue);
 
     // Tapping the active pane chip collapses the slot.
-    await tester.tap(find.text('dF/dt'));
+    await tester.tap(find.text('FFT'));
     await tester.pump();
     expect(selection.kind, isNull);
 
