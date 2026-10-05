@@ -8,11 +8,14 @@ import '../models/app_meta.dart';
 import '../services/app_settings.dart';
 import '../models/board_calibration.dart';
 import '../models/bt_scan.dart';
+import '../models/derived_channel.dart';
 import '../models/device_info.dart';
 import '../models/device_name.dart';
+import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../services/ble_link_manager.dart';
 import '../services/data_hub.dart';
+import '../services/derived_channels.dart';
 import '../services/firmware_update_service.dart';
 import '../services/rig_state.dart';
 import '../widgets/bt_icon.dart';
@@ -129,6 +132,19 @@ class _SettingsTabState extends State<SettingsTab> {
               ),
               const SizedBox(height: 16),
 
+              Text('Channels', style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 8),
+              SegmentedButton<ChannelFamily>(
+                segments: [
+                  for (final f in ChannelFamily.values)
+                    ButtonSegment(value: f, label: Text(f.label)),
+                ],
+                selected: {settings.channelFamily},
+                onSelectionChanged: (selection) =>
+                    settings.setChannelFamily(selection.first),
+              ),
+              const SizedBox(height: 16),
+
               SwitchListTile(
                 title: const Text('Keep screen awake'),
                 subtitle: const Text(
@@ -220,6 +236,14 @@ class _SettingsTabState extends State<SettingsTab> {
                 ),
                 const SizedBox(height: 8),
                 RigSlotsSection(rig: context.read<RigState>()),
+                const SizedBox(height: 16),
+
+                Text(
+                  'Math channels',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+                const SizedBox(height: 8),
+                const _MathChannelsSection(),
                 const SizedBox(height: 16),
 
                 // Tappable whenever a board object is held, invalid included.
@@ -419,6 +443,93 @@ class _DeviceNameEditorState extends State<_DeviceNameEditor> {
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The rig's math-channel setup (see `derived_channel.dart`). UX prototype
+/// of the future device-KVS-backed config: edits hit [DerivedChannels] —
+/// in-memory, so nothing here survives a restart yet.
+class _MathChannelsSection extends StatelessWidget {
+  const _MathChannelsSection();
+
+  /// Corner positions of the plate profile, in [MathProfile.forcePlate]
+  /// corner order [TL, TR, BL, BR].
+  static const _cornerNames = [
+    'Top-left',
+    'Top-right',
+    'Bottom-left',
+    'Bottom-right',
+  ];
+
+  /// Set corner [pos] to hardware channel [ch]; the channel's previous
+  /// corner takes [pos]'s old channel (a swap), so an invalid permutation
+  /// is unrepresentable.
+  void _pickCorner(List<int> corners, int pos, int ch) {
+    final next = [...corners];
+    next[next.indexOf(ch)] = next[pos];
+    next[pos] = ch;
+    DerivedChannels.instance.setProfile(MathProfile.forcePlate(next));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final titles = context.watch<RigState>().channelTitles;
+    return ListenableBuilder(
+      listenable: DerivedChannels.instance,
+      builder: (context, _) {
+        final profile = DerivedChannels.instance.profile;
+        final corners = profile.plateCorners;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: false, label: Text('None')),
+                ButtonSegment(value: true, label: Text('Force plate')),
+              ],
+              selected: {corners != null},
+              showSelectedIcon: false,
+              onSelectionChanged: (selection) =>
+                  DerivedChannels.instance.setProfile(
+                    selection.first
+                        ? MathProfile.forcePlate(const [0, 1, 2, 3])
+                        : MathProfile.none(),
+                  ),
+            ),
+            if (corners != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Which channel sits at each plate corner',
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+              const SizedBox(height: 4),
+              for (final (pos, name) in _cornerNames.indexed)
+                Row(
+                  children: [
+                    SizedBox(width: 84, child: Text(name)),
+                    Expanded(
+                      child: DropdownButton<int>(
+                        isExpanded: true,
+                        value: corners[pos],
+                        items: [
+                          for (int ch = 0; ch < kAdcChannelCount; ch++)
+                            DropdownMenuItem(
+                              value: ch,
+                              child: Text(titles[ch]),
+                            ),
+                        ],
+                        onChanged: (ch) {
+                          if (ch != null) _pickCorner(corners, pos, ch);
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ],
+        );
+      },
     );
   }
 }

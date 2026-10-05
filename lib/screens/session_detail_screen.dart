@@ -6,6 +6,7 @@ import 'package:meta/meta.dart';
 import 'package:provider/provider.dart';
 
 import '../models/app_meta.dart';
+import '../models/derived_channel.dart';
 import '../models/session_catalog.dart';
 import '../services/app_settings.dart';
 import '../models/display_unit.dart';
@@ -41,6 +42,12 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
   /// dF/dt pane visibility for the replay graph.
   bool _showDerivative = false;
+
+  /// Derived channels hidden in this screen's graph, by index within
+  /// [SessionData.derivedChannels]. Sessions persist only hardware-channel
+  /// visibility (recordings are raw-only), so derived visibility is
+  /// screen-local.
+  final Set<int> _hiddenDerived = {};
 
   late final ValueListenable<SessionCatalogState> _catalog;
 
@@ -160,42 +167,80 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     SessionData data,
   ) {
     final visibleChannels = session.visibleChannels;
-    final channelLabels = session.channelLabels;
+    final hwCount = visibleChannels.length;
+    final channelLabels = [
+      ...session.channelLabels,
+      for (final d in data.derivedChannels) d.label,
+    ];
+    final activeChannels = [
+      ...visibleChannels,
+      for (int i = 0; i < data.derivedChannels.length; i++)
+        !_hiddenDerived.contains(i),
+    ];
     final unit = settings.displayUnit.effective(data.unitAvailability);
+
+    // The app-wide on-screen family (see [AppSettings.channelFamily]):
+    // [tableIds] for the header (inactive included, greyed), the filtered
+    // actives for the graphs.
+    final tableIds = [
+      for (int i = 0; i < channelLabels.length; i++)
+        if (settings.channelFamily.includes(i)) i,
+    ];
+    // Math family selected but the session's own profile had no math
+    // channels — a dead end, explain rather than show an empty graph.
+    final showMathNote =
+        settings.channelFamily == ChannelFamily.math &&
+        data.derivedChannels.isEmpty;
 
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (session.interrupted) const _InterruptedBanner(),
-          // Channel header (same tappable table as the live view; toggles
-          // this session's per-session channel visibility).
+          // Channel header (same tappable table as the live view; hardware
+          // toggles persist per session, derived toggles are screen-local).
           ChannelStatsTable(
-            labels: channelLabels,
-            activeChannels: visibleChannels,
-            onToggleChannel: (index) => unawaited(
-              SessionStore.instance.toggleVisibleChannel(session.id, index),
-            ),
+            labels: [for (final i in tableIds) channelLabels[i]],
+            activeChannels: [for (final i in tableIds) activeChannels[i]],
+            onToggleChannel: (pos) {
+              final index = tableIds[pos];
+              if (index < hwCount) {
+                unawaited(
+                  SessionStore.instance.toggleVisibleChannel(session.id, index),
+                );
+              } else {
+                final i = index - hwCount;
+                setState(
+                  () => _hiddenDerived.contains(i)
+                      ? _hiddenDerived.remove(i)
+                      : _hiddenDerived.add(i),
+                );
+              }
+            },
             unit: unit,
             rows: [
               ChannelStatsRow(
                 label: 'Peak',
                 emphasized: true,
                 values: [
-                  for (int ch = 0; ch < data.channels.length; ch++)
+                  for (final ch in tableIds)
                     switch (data.channelExtremes(ch)?.$2) {
-                      final max? => data.converterFor(ch).net(unit, max),
+                      final max? =>
+                        data.seriesConverterFor(ch).netMap(unit)?.call(max),
                       null => null,
                     },
                 ],
               ),
               // The amount the session's frozen tare zeroed out (gross at
               // the tare point; 0 for a channel recorded without a tare).
+              // A hardware-channel concept: derived channels show '—'.
               ChannelStatsRow(
                 label: 'Tare offset',
                 values: [
-                  for (int ch = 0; ch < data.channels.length; ch++)
-                    data.converterFor(ch).tareOffset(unit),
+                  for (final ch in tableIds)
+                    ch < hwCount
+                        ? data.converterFor(ch).tareOffset(unit)
+                        : null,
                 ],
               ),
             ],
@@ -205,17 +250,25 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             height: 332,
             child: Padding(
               padding: const EdgeInsets.all(8.0),
-              child: GraphWorkspace(
-                data: data,
-                ctrl: _graphCtrl,
-                unit: unit,
-                activeChannels: [
-                  for (int i = 0; i < visibleChannels.length; i++)
-                    if (visibleChannels[i]) i,
-                ],
-                showDerivative: _showDerivative,
-                isLiveSource: false,
-              ),
+              child: showMathNote
+                  ? const EmptyPlaceholder(
+                      icon: Icons.calculate_outlined,
+                      title: 'No math channels in this session',
+                      hint:
+                          'Set up the rig\'s math channels in Settings '
+                          'before recording to use the Math view',
+                    )
+                  : GraphWorkspace(
+                      data: data,
+                      ctrl: _graphCtrl,
+                      unit: unit,
+                      activeChannels: [
+                        for (final i in tableIds)
+                          if (activeChannels[i]) i,
+                      ],
+                      showDerivative: _showDerivative,
+                      isLiveSource: false,
+                    ),
             ),
           ),
 

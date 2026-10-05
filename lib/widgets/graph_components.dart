@@ -11,6 +11,7 @@ import 'package:meta/meta.dart';
 
 import '../models/bucket_series.dart';
 import '../models/channel_limits.dart';
+import '../models/derived_channel.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
@@ -102,62 +103,80 @@ int joinBlockEnd(int end, int blockSize) =>
 // Unit-bound channels
 // ---------------------------------------------------------------------------
 
-/// One active channel bound to the view's display unit. Its display maps are
-/// materialized non-null here, so painters never re-ask availability.
+/// One active channel bound to the view's display unit, spanning the whole
+/// channel id space (hardware 0..3, derived 4.. — see `derived_channel.dart`).
+/// Its display maps are materialized non-null here, so painters never re-ask
+/// availability.
 @immutable
 final class _ConvertedChannel {
   const _ConvertedChannel._({
     required this.channel,
-    required this.tare,
+    required this.cacheTares,
     required this.netMap,
     required this.diffMap,
+    required this.unitless,
+    required this.hardwareIndex,
     required this.sensitivityCountsPerMvV,
     required this.loadCell,
   });
 
   /// Null when [unit] does not convert on the channel (a force unit with no
-  /// load cell assigned).
+  /// load cell assigned, a blend asked for mV/V, an unbound channel).
   static _ConvertedChannel? of(
     GraphDataSource data,
     int channel,
     DisplayUnit unit,
   ) {
-    final converter = data.converterFor(channel);
+    final converter = data.seriesConverterFor(channel);
     final net = converter.netMap(unit);
     if (net == null) return null;
     final diff = converter.diffMap(unit);
-    // diff is null exactly when net is (see ChannelConverter); a divergence
-    // is a broken calibration-model invariant, not an unavailable unit.
+    // diff is null exactly when net is (see SeriesConverter); a divergence
+    // is a broken conversion-model invariant, not an unavailable unit.
     assert(diff != null, 'net converts but diff does not (CH$channel, $unit)');
     if (diff == null) return null;
+    final hw = isDerivedChannelId(channel) ? null : channel;
     return _ConvertedChannel._(
       channel: channel,
-      tare: converter.tare,
+      cacheTares: data.cacheTaresFor(channel),
       netMap: net,
       diffMap: diff,
-      sensitivityCountsPerMvV:
-          converter.calibration.board?.sensitivityCountsPerMvV,
-      loadCell: converter.calibration.loadCell,
+      unitless: converter.unitless,
+      hardwareIndex: hw,
+      sensitivityCountsPerMvV: hw == null
+          ? null
+          : data.converterFor(hw).calibration.board?.sensitivityCountsPerMvV,
+      loadCell: hw == null ? null : data.converterFor(hw).calibration.loadCell,
     );
   }
 
+  /// The channel id: hardware index for hardware channels, the derived id
+  /// (kAdcChannelCount + config index) for derived ones.
   final int channel;
 
-  /// Tare offset in counts; null = untared ([ChannelConverter.tare]).
-  final double? tare;
+  /// Tares of every hardware channel read, mixed into the segment caches'
+  /// destructive key (see [GraphDataSource.cacheTaresFor]).
+  final List<double?> cacheTares;
 
-  /// Raw -> display value, net of tare ([ChannelConverter.netMap]).
+  /// Ring -> display value, net of tare; raw-space channels: raw counts ->
+  /// display value ([SeriesConverter.netMap]).
   final double Function(double raw) netMap;
 
-  /// Raw diff -> display diff, terminal-slope based ([ChannelConverter.diffMap]).
+  /// Ring diff -> display diff ([SeriesConverter.diffMap]).
   final double Function(double rawDiff) diffMap;
 
-  /// Board sensitivity, used to size the force graph gutter's capacity zone.
-  /// Null only for raw on a nominal-less board (raw bypasses the board map and
-  /// still converts).
+  /// Normalized (unitless) channel: display maps ignore the selected unit.
+  final bool unitless;
+
+  /// The hardware channel index, or null for a derived channel (derived
+  /// channels have no rail/capacity chrome of their own).
+  final int? hardwareIndex;
+
+  /// Board sensitivity, used to size the force graph gutter's capacity zone
+  /// (hardware channels with board data only).
   final double? sensitivityCountsPerMvV;
 
-  /// Null when no cell is assigned.
+  /// Null when no cell is assigned (or the channel is derived).
   final LoadCellProfile? loadCell;
 }
 
@@ -368,7 +387,7 @@ class _MinimapPainter extends CustomPainter {
       cache: _cache,
       data: _data,
       channels: channels,
-      tares: [for (final bound in channels) bound.tare],
+      tares: [for (final s in channels) ...s.cacheTares],
       unit: unit,
       gw: gw,
       gh: gh,
@@ -634,7 +653,17 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
       explicitChildNodes: true,
       label: _graphSemanticsLabel(
         live: widget.isLiveSource,
-        channels: [for (final bound in convertedChannels) bound.channel],
+        channels: [
+          for (final bound in convertedChannels)
+            isDerivedChannelId(bound.channel) &&
+                    derivedIndexOf(bound.channel) <
+                        widget.data.derivedChannels.length
+                ? widget
+                      .data
+                      .derivedChannels[derivedIndexOf(bound.channel)]
+                      .label
+                : rigSlotTitle(bound.channel),
+        ],
         unit: unit,
         hasDerivative: widget.showDerivative,
       ),
@@ -1060,17 +1089,19 @@ class _SpanReadout extends StatelessWidget {
 }
 
 /// Screen-reader summary of the graph: structural only, since values churn
-/// per packet. The stats table speaks live readings.
+/// per packet. The stats table speaks live readings. [channels] carries
+/// display names (rig slots or derived-channel labels): a derived id has no
+/// rig slot.
 String _graphSemanticsLabel({
   required bool live,
-  required List<int> channels,
+  required List<String> channels,
   required DisplayUnit unit,
   required bool hasDerivative,
 }) {
   final kind = live ? 'Live' : 'Recorded';
   final chs = channels.isEmpty
       ? 'No channels plotted'
-      : 'Channels: ${channels.map(rigSlotTitle).join(', ')}';
+      : 'Channels: ${channels.join(', ')}';
   final deriv = hasDerivative ? '. Rate-of-change graph below' : '';
   return '$kind force graph. $chs. Unit: ${unit.symbol}$deriv.';
 }
@@ -2312,8 +2343,9 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   double get topSpace => 4;
 
   @override
-  List<double?> cacheKeyTares() =>
-      _channels.map((bound) => bound.tare).toList();
+  List<double?> cacheKeyTares() => [
+    for (final bound in _channels) ...bound.cacheTares,
+  ];
 
   @override
   EnvelopeSeries series(_ConvertedChannel channel) =>
@@ -2346,11 +2378,12 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     return _computeYRange(yMin, yMax, unit, plotHeight);
   }
 
-  /// Limit bars in the right gutter: one column per channel, a rail zone from
-  /// the ADC rail to the plot edge and (with a load cell) a capacity zone from
-  /// 100% capacity to the rail. Projected through the unit converter net of
-  /// tare (see [ChannelConverter.diffMap]); clamping to the plot rect
-  /// collapses off-view and empty zones.
+  /// Limit bars in the right gutter: one column per hardware channel, a rail
+  /// zone from the ADC rail to the plot edge and (with a load cell) a
+  /// capacity zone from 100% capacity to the rail. Projected through the
+  /// unit converter net of tare (see [ChannelConverter.diffMap]); clamping
+  /// to the plot rect collapses off-view and empty zones. Derived channels
+  /// have no rails of their own.
   @override
   void drawGutterChrome(
     Canvas canvas,
@@ -2362,6 +2395,8 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     const colW = kGraphRightSpace / kAdcChannelCount;
 
     for (final bound in _channels) {
+      final hw = bound.hardwareIndex;
+      if (hw == null) continue;
       final cell = bound.loadCell;
       final span = bound.sensitivityCountsPerMvV;
       // Net display value at 100% cell capacity; null without a cell or the
@@ -2369,7 +2404,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
       final cellNet = cell != null && span != null
           ? bound.diffMap(cell.sensitivityMvV * span)
           : null;
-      final left = graphSz.width + colW * bound.channel;
+      final left = graphSz.width + colW * hw;
       for (final positive in [true, false]) {
         final clipRaw = positive
             ? ChannelLimits.clipRawPos
@@ -2423,6 +2458,15 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
 
   @override
   int get firstSampleOffset => 1; // first difference needs sample j-1
+
+  /// A first difference cancels tare — EXCEPT for normalized channels: the
+  /// ratio bakes member tares in, so their diff series changes on a tare
+  /// edge and the cache must hear it.
+  @override
+  List<double?> cacheKeyTares() => [
+    for (final bound in _channels)
+      if (bound.unitless) ...bound.cacheTares,
+  ];
 
   /// Per-sample first difference in raw counts (gap-edge NaN lives in
   /// [SampleStorageQueries.diffDefinedAt]).

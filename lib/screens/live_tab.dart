@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import '../services/app_settings.dart';
 import '../models/board_calibration.dart';
 import '../models/channel_limits.dart';
+import '../models/derived_channel.dart';
 import '../models/display_unit.dart';
 
 import '../models/bt_scan.dart';
@@ -41,10 +42,18 @@ import 'firmware_update_screen.dart';
 // ---------------------------------------------------------------------------
 
 class LiveTab extends StatefulWidget {
-  const LiveTab({super.key, required this.onGoToDevices});
+  const LiveTab({
+    super.key,
+    required this.onGoToDevices,
+    required this.onGoToSettings,
+  });
 
   /// The idle prompt's "Connect a device" action; the shell owns the tab index.
   final VoidCallback onGoToDevices;
+
+  /// The empty-math-family placeholder's "Set up math channels" action; the
+  /// shell owns the tab index.
+  final VoidCallback onGoToSettings;
 
   @override
   State<LiveTab> createState() => _LiveTabState();
@@ -137,7 +146,9 @@ class _LiveTabState extends State<LiveTab> {
       final hub = context.read<DataHub>();
       final result = recording.startSession(
         channelLabels: context.read<RigState>().channelTitles,
-        visibleChannels: settings.activeChannels,
+        // Sessions record raw hardware channels only; derived channels are
+        // recomputable display-side at review time.
+        visibleChannels: settings.activeChannels.sublist(0, kAdcChannelCount),
         // The unit the instrument is drawing, as the export's default.
         displayUnit: settings.displayUnit.effective(hub.unitAvailability),
       );
@@ -196,6 +207,24 @@ class _LiveTabState extends State<LiveTab> {
         _ => null,
       },
     );
+    // Subscribed so a math-profile change flips the CTA without a stream edge.
+    final mathChannelCount = context.select<DataHub, int>(
+      (h) => h.derivedChannels.length,
+    );
+
+    // The on-screen family's channels (see [AppSettings.channelFamily]):
+    // [tableIds] for the stats table (inactive included, greyed),
+    // [graphIds] for the graphs (active only).
+    final tableIds = [
+      for (int i = 0; i < hub.channelCount; i++)
+        if (settings.channelFamily.includes(i)) i,
+    ];
+    final graphIds = [
+      for (final i in tableIds)
+        if (settings.activeChannels[i]) i,
+    ];
+    final showMathCta =
+        settings.channelFamily == ChannelFamily.math && mathChannelCount == 0;
 
     final healthListenable = context.read<FeedHealthTracker>().health;
     return SafeArea(
@@ -216,7 +245,21 @@ class _LiveTabState extends State<LiveTab> {
           ),
           if (invalidBoardDetail != null)
             BoardFaultBanner(detail: invalidBoardDetail),
-          if (streaming)
+          if (streaming && showMathCta)
+            // The Math family selected with no math channels configured:
+            // the dead end gets a way out.
+            Expanded(
+              child: EmptyPlaceholder(
+                icon: Icons.calculate_outlined,
+                title: 'No math channels configured',
+                hint: 'Set up the rig\'s math channels to use this view',
+                action: FilledButton(
+                  onPressed: widget.onGoToSettings,
+                  child: const Text('Set up math channels'),
+                ),
+              ),
+            )
+          else if (streaming)
             Expanded(
               child: ValueListenableBuilder<bool>(
                 valueListenable: _showDerivative,
@@ -226,6 +269,7 @@ class _LiveTabState extends State<LiveTab> {
                       settings: settings,
                       rig: rig,
                       hub: hub,
+                      channelIds: tableIds,
                       ctrl: _graphCtrl,
                       unit: unit,
                       showDerivative: showDerivative,
@@ -235,7 +279,7 @@ class _LiveTabState extends State<LiveTab> {
                       child: _buildGraphArea(
                         hub,
                         unit,
-                        settings.activeChannelIndices,
+                        graphIds,
                         showDerivative,
                       ),
                     ),
@@ -293,6 +337,13 @@ class _LiveTabState extends State<LiveTab> {
       showDerivative: showDerivative,
     );
   }
+
+  /// Display label per channel id: the rig's hardware titles, then the
+  /// derived channels' minted labels (see `derived_channel.dart`).
+  static List<String> _channelLabels(RigState rig, DataHub hub) => [
+    ...rig.channelTitles,
+    for (final d in hub.derivedChannels) d.label,
+  ];
 }
 
 // ---------------------------------------------------------------------------
@@ -487,6 +538,10 @@ class LiveStats extends StatelessWidget {
   final RigState rig;
   final DataHub hub;
 
+  /// The channel ids the table shows: the on-screen family's channels,
+  /// inactive included greyed (see [AppSettings.channelFamily]).
+  final List<int> channelIds;
+
   /// The graph viewport; the Peak row reports the max over this window.
   final GraphController ctrl;
 
@@ -503,6 +558,7 @@ class LiveStats extends StatelessWidget {
     required this.settings,
     required this.rig,
     required this.hub,
+    required this.channelIds,
     required this.ctrl,
     required this.unit,
     this.showDerivative = false,
@@ -511,6 +567,7 @@ class LiveStats extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final labels = _LiveTabState._channelLabels(rig, hub);
     return ValueListenableBuilder<FeedHealth?>(
       valueListenable: healthListenable,
       builder: (context, health, _) => ListenableBuilder(
@@ -521,8 +578,9 @@ class LiveStats extends StatelessWidget {
           final anyUnassigned =
               unit.isForce &&
               [
-                for (int i = 0; i < settings.activeChannels.length; i++)
-                  if (settings.activeChannels[i] &&
+                for (final i in channelIds)
+                  if (!isDerivedChannelId(i) &&
+                      settings.activeChannels[i] &&
                       hub.calibrationFor(i).loadCell == null)
                     i,
               ].isNotEmpty;
@@ -531,9 +589,12 @@ class LiveStats extends StatelessWidget {
           final stale = hub.liveEdgeIsGap || (health?.noDataFlowing ?? false);
 
           final hasData = hub.totalSamples > 0;
+          // Derived channels have no ADC rail of their own.
           final clipped = [
-            for (int i = 0; i < kAdcChannelCount; i++)
-              hasData && ChannelLimits.isClipped(hub.currentRawFor(i)),
+            for (final i in channelIds)
+              !isDerivedChannelId(i) &&
+                  hasData &&
+                  ChannelLimits.isClipped(hub.currentRawFor(i)),
           ];
 
           final (viewStart, viewEnd) = ctrl.effectiveRange(
@@ -544,18 +605,23 @@ class LiveStats extends StatelessWidget {
           return Column(
             children: [
               ChannelStatsTable(
-                labels: rig.channelTitles,
-                activeChannels: settings.activeChannels,
-                onToggleChannel: (i) =>
+                labels: [for (final i in channelIds) labels[i]],
+                activeChannels: [
+                  for (final i in channelIds) settings.activeChannels[i],
+                ],
+                onToggleChannel: (pos) {
+                  final i = channelIds[pos];
+                  unawaited(
                     settings.setChannelActive(i, !settings.activeChannels[i]),
+                  );
+                },
                 unit: unit,
                 clipped: clipped,
                 rows: [
                   ChannelStatsRow(
                     label: 'Live',
                     values: [
-                      for (int i = 0; i < kAdcChannelCount; i++)
-                        hub.currentValue(i, unit),
+                      for (final i in channelIds) hub.currentValue(i, unit),
                     ],
                     emphasized: true,
                     stale: stale,
@@ -563,15 +629,14 @@ class LiveStats extends StatelessWidget {
                   ChannelStatsRow(
                     label: 'Peak',
                     values: [
-                      for (int i = 0; i < kAdcChannelCount; i++)
+                      for (final i in channelIds)
                         hub.peakValue(i, unit, start: viewStart, end: viewEnd),
                     ],
                   ),
                   ChannelStatsRow(
                     label: 'Tare offset',
                     values: [
-                      for (int i = 0; i < kAdcChannelCount; i++)
-                        hub.tareOffset(i, unit),
+                      for (final i in channelIds) hub.tareOffset(i, unit),
                     ],
                   ),
                   if (settings.showDebugLiveValues) ...[
@@ -581,14 +646,17 @@ class LiveStats extends StatelessWidget {
                       // through the diff map. A real load step in the window
                       // reads as noise: a wiggle meter, not a spec.
                       values: [
-                        for (int i = 0; i < kAdcChannelCount; i++)
+                        for (final i in channelIds)
                           switch (hub.windowedStdDev(
                             i,
                             hub.totalSamples - 4 * hub.sampleRateHz,
                             hub.totalSamples,
                           )) {
                             final sigma? =>
-                              hub.converterFor(i).diffMap(unit)?.call(sigma),
+                              hub
+                                  .seriesConverterFor(i)
+                                  .diffMap(unit)
+                                  ?.call(sigma),
                             null => null,
                           },
                       ],
@@ -599,7 +667,7 @@ class LiveStats extends StatelessWidget {
                     ChannelStatsRow(
                       label: 'dF/dt',
                       values: [
-                        for (int i = 0; i < kAdcChannelCount; i++)
+                        for (final i in channelIds)
                           hub.currentDerivative(i, unit),
                       ],
                       stale: stale,
@@ -611,6 +679,26 @@ class LiveStats extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Text(
                     '— no load cell assigned (Settings › Load cells)',
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              // Bound blends refuse electrical units (see
+              // [GraphSeriesQueries.isForceOnlyBlend]): they show '—' with
+              // no other explanation, so name them once.
+              if ([
+                    for (final i in channelIds)
+                      if (settings.activeChannels[i] &&
+                          hub.isForceOnlyBlend(i, unit))
+                        labels[i],
+                  ]
+                  case final forceOnly when forceOnly.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '— ${forceOnly.join(', ')}: force-only — select a force '
+                    'unit to show',
                     style: Theme.of(context).textTheme.labelSmall?.copyWith(
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
