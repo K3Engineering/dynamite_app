@@ -102,6 +102,22 @@ void main() {
       findsOneWidget,
     );
 
+    // Plate pane active: the label names the view below (the top graph
+    // keeps the selected channels — the plate transform is a channel set,
+    // not a top-graph swap).
+    await pumpGraph(
+      data: calibratedHub(),
+      activeChannels: const [0, 1, 2, 3],
+      analysis: const AnalysisPaneSelection(kind: AnalysisPaneKind.plate),
+    );
+    expect(
+      find.bySemanticsLabel(
+        'Live force graph. Channels: CH 0, CH 1, CH 2, CH 3. Unit: mV/V. '
+        'Two-axis position view below.',
+      ),
+      findsOneWidget,
+    );
+
     // The overview minimap is actionable (tap/drag pan), so it must be labeled
     // rather than an anonymous node.
     final minimap = find.bySemanticsLabel('Graph history overview');

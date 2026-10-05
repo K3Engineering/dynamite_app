@@ -283,6 +283,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   GraphViewControls(
                     selection: analysis,
                     onPaneChanged: (s) => _analysisPane.value = s,
+                    mathProfile: data.mathProfile,
                     data: data,
                     ctrl: _graphCtrl,
                   ),
