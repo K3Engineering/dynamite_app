@@ -6,7 +6,7 @@
 // Owned by each screen in a ValueNotifier (ephemeral; not persisted).
 
 /// What occupies the analysis pane slot. Null = the slot is collapsed.
-enum AnalysisPaneKind { derivative, fft }
+enum AnalysisPaneKind { derivative, fft, plate }
 
 /// Immutable pane selection + parameters. `copyWith` fields default to
 /// "keep current" via the [_unset] sentinel so nullable fields ([kind],
