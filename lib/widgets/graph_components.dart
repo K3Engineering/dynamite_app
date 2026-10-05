@@ -20,9 +20,11 @@ import '../models/graph_data_source.dart';
 import '../models/load_cell.dart';
 import '../utils/fft.dart';
 import 'channel_palette.dart';
+import 'graph/force_plate_cache.dart';
 import 'graph/graph_controller.dart';
 import 'graph/segmented_cache.dart';
 
+export 'graph/force_plate_cache.dart';
 export 'graph/graph_controller.dart';
 export 'graph/segmented_cache.dart';
 
@@ -610,6 +612,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   /// can't ghost into the new one.
   SegmentedGraphCache? _analysisCache;
 
+  /// Dot textures for the 2D force plate pane. Persistent (no recreation on
+  /// pane swaps): [ForcePlateCache] clears itself on its config stamp.
+  final ForcePlateCache<_PlateMarker> _plateDotCache = ForcePlateCache();
+
   /// Memoized spectra for the FFT pane (throttles recompute, see [_FftCache]).
   final _FftCache _fftCache = _FftCache();
 
@@ -681,6 +687,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     _forceCache.dispose();
     _coordCache.dispose();
     _analysisCache?.dispose();
+    _plateDotCache.dispose();
     _labelCache.dispose();
     super.dispose();
   }
@@ -719,6 +726,41 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             channels: bound,
             vsync: _vsync,
             cache: _analysisCache ??= SegmentedGraphCache(),
+            colorScheme: colorScheme,
+            dpr: dpr,
+            labels: _labelCache,
+            bakePump: _bakePump,
+          ),
+        );
+      case AnalysisPaneKind.plate:
+        final profile = data.mathProfile;
+        final xId = profile.plateXId;
+        final yId = profile.plateYId;
+        final errId = profile.plateErrId;
+        if (xId == null || yId == null || errId == null) {
+          return _paneMessage(context, 'Plate: no plate profile configured');
+        }
+        final x = _ConvertedChannel.of(data, xId, unit);
+        final y = _ConvertedChannel.of(data, yId, unit);
+        final err = _ConvertedChannel.of(data, errId, unit);
+        if (x == null) return unavailable('Plate', xId);
+        if (y == null) return unavailable('Plate', yId);
+        if (err == null) return unavailable('Plate', errId);
+        // Corner labels, recovered from the axis channels' weight signs:
+        // +x members sit right, +y members on top.
+        final corners = _plateCorners(data, xId, yId);
+        return _GraphPane(
+          data: data,
+          ctrl: ctrl,
+          painter: _ForcePlatePainter(
+            data,
+            ctrl,
+            xChannel: x,
+            yChannel: y,
+            errChannel: err,
+            corners: corners,
+            unit: unit,
+            cache: _plateDotCache,
             colorScheme: colorScheme,
             dpr: dpr,
             labels: _labelCache,
@@ -786,6 +828,23 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     ].join(', ');
   }
 
+  /// Plate-corner membership of two axis channel ids, from their specs'
+  /// weight signs (see `_buildAnalysisPane`); empty when either id isn't a
+  /// derived channel.
+  static List<(int channel, double sx, double sy)> _plateCorners(
+    GraphDataSource data,
+    int xId,
+    int yId,
+  ) {
+    if (!isDerivedChannelId(xId) || !isDerivedChannelId(yId)) return const [];
+    final xs = data.derivedChannels[derivedIndexOf(xId)].weights;
+    final ys = data.derivedChannels[derivedIndexOf(yId)].weights;
+    return [
+      for (int m = 0; m < kAdcChannelCount; m++)
+        if (xs[m] != 0 && ys[m] != 0) (m, xs[m].sign, ys[m].sign),
+    ];
+  }
+
   /// Loud in-pane placeholder for unsatisfiable analysis requests.
   Widget _paneMessage(BuildContext context, String text) {
     return Center(
@@ -834,7 +893,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     final paneFlex = hasCoords ? 3 : 4;
     // Time labels ride the bottom-most plot whose x is time. The dF/dt
     // pane draws its own, so the graphs suppress theirs while it's up;
-    // the FFT pane has no time axis and leaves the labels on the
+    // the FFT/plate panes have no time axis and leave the labels on the
     // bottom-most time-series graph.
     final paneCarriesTime = widget.analysis.kind == AnalysisPaneKind.derivative;
     final forceXLabels = !hasCoords && !paneCarriesTime;
@@ -892,6 +951,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
           null => '',
           AnalysisPaneKind.derivative => '. Rate-of-change graph below',
           AnalysisPaneKind.fft => '. Spectrum graph below',
+          AnalysisPaneKind.plate => '. Two-axis position view below',
         },
       ),
       child: Stack(
@@ -3273,6 +3333,299 @@ class _FftPanePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _FftPanePainter oldDelegate) => true;
+}
+
+// ---------------------------------------------------------------------------
+// Force plate pane (2D)
+// ---------------------------------------------------------------------------
+
+/// Newest valid plate sample of a rendered (sub)range of the trail, in the
+/// pane's two axis coordinates. One per rendered range; [ForcePlateCache]
+/// stores it per baked bucket so the newest-dot marker outlives texture
+/// caching without a window rescan.
+typedef _PlateMarker = ({double x, double y});
+
+/// The two-axis position view: the pane's X/Y channels plotted as a plate
+/// coordinate over a trail of every window sample (dots cached write-once
+/// by [ForcePlateCache], live head/tail vector-drawn — see that file). The
+/// painter owns no channel math: the axis channels are bound derived
+/// channels, undefined samples (an unloaded plate) carry no dot.
+class _ForcePlatePainter extends CustomPainter {
+  _ForcePlatePainter(
+    this._data,
+    this._ctrl, {
+    required this.xChannel,
+    required this.yChannel,
+    required this.errChannel,
+    required this.corners,
+    required this.unit,
+    required this.cache,
+    required this.colorScheme,
+    required this.dpr,
+    required this.labels,
+    required this.bakePump,
+  }) : super(repaint: Listenable.merge([_data.repaint, _ctrl, bakePump]));
+
+  final GraphDataSource _data;
+  final GraphController _ctrl;
+
+  /// The pane's axis channels (unit-bound).
+  final _ConvertedChannel xChannel;
+  final _ConvertedChannel yChannel;
+
+  /// The plate's saddle/error channel, drawn as the live bar in the right
+  /// gutter (see [_drawErrBar]).
+  final _ConvertedChannel errChannel;
+
+  /// Corner labels: (member channel, x-sign, y-sign) from the axis
+  /// channels' weight signs.
+  final List<(int channel, double sx, double sy)> corners;
+
+  /// Cache stamp ingredient: the channels bind the unit at bind time.
+  final DisplayUnit unit;
+
+  /// Persistent, owned by [_GraphWorkspaceState] (like [_forceCache]); no
+  /// recreation rules — a config change clears inside the cache.
+  final ForcePlateCache<_PlateMarker> cache;
+
+  final ColorScheme colorScheme;
+  final double dpr;
+  final _LabelCache labels;
+
+  /// Drives the rolling bucket bakes (static sources never fire repaint on
+  /// their own — see [_TimeSeriesGraphPainter.bakePump]).
+  final BakePump bakePump;
+
+  /// Plot coordinate extent: plate edges at ±1, ±1.3 leaves margin for
+  /// off-plate points (clamped to ±1.25) and corner labels.
+  static const double _extent = 1.3;
+
+  /// Trail dot radius and flat alpha. Uniform alpha is what makes the
+  /// bucket textures write-once: a window-dependent fade would tie the dots
+  /// to the window and defeat caching.
+  static const double _kDotRadius = 1.4;
+  static const int _kDotAlpha = 160;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    const double topSpace = 2;
+    const double bottomSpace = 4;
+    canvas.translate(_kGraphLeftSpace, topSpace);
+    final plotW = size.width - _kGraphLeftSpace - kGraphRightSpace;
+    final plotH = size.height - topSpace - bottomSpace;
+    if (plotW <= 0 || plotH <= 0) return;
+    canvas.drawRect(
+      Rect.fromLTWH(0, 0, plotW, plotH),
+      Paint()
+        ..color = colorScheme.primary.withAlpha(150)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.5,
+    );
+
+    // The plate is square; center it in the plot's width.
+    final side = math.max(0.0, math.min(plotW - 8, plotH));
+    final left = (plotW - side) / 2;
+    Offset toPx(double x, double y) => Offset(
+      left + (x + _extent) / (2 * _extent) * side,
+      // Canvas y grows down; plate +y is up.
+      (_extent - y) / (2 * _extent) * side,
+    );
+
+    // Plate outline + corner channel labels.
+    canvas.drawRect(
+      Rect.fromPoints(toPx(-1, 1), toPx(1, -1)),
+      Paint()
+        ..color = colorScheme.onSurface.withAlpha(120)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+    for (final (ch, sx, sy) in corners) {
+      final par = labels.prepare(rigSlotTitle(ch), color: getChannelColor(ch));
+      final p = toPx(sx * 0.88, sy * 0.85);
+      canvas.drawParagraph(
+        par,
+        Offset(p.dx - par.longestLine / 2, p.dy - par.height / 2),
+      );
+    }
+
+    // Trail over the window: one dot per sample, cached by [cache]. The
+    // painter owns nothing per-dot here — both the bake canvas and the
+    // live vector draws funnel through [_renderDots] at plate-local origin.
+    final total = _data.totalSamples;
+    _PlateMarker? marker;
+    if (total > 0) {
+      final (vs, ve) = _ctrl.effectiveRange(total, _data.oldestSample);
+      if (side > 0) {
+        // Plate-local pixel of a clamped position (toPx without the left offset).
+        Offset pointFor(double x, double y) => Offset(
+          (x + _extent) / (2 * _extent) * side,
+          (_extent - y) / (2 * _extent) * side,
+        );
+        final dotPaint = Paint()
+          ..color = colorScheme.primary.withAlpha(_kDotAlpha);
+        canvas.save();
+        canvas.translate(left, 0);
+        final trail = cache.paint(canvas, (
+          generation: _data.dataGeneration,
+          configKey: [
+            unit,
+            _data.calibrationVersion,
+            _data.tareVersion,
+            xChannel.channel,
+            yChannel.channel,
+            side,
+            dpr,
+          ],
+          side: side,
+          dpr: dpr,
+          viewStart: vs,
+          viewEnd: ve,
+          oldestSample: _data.oldestSample,
+          totalSamples: total,
+          render: (c, start, end) =>
+              _renderDots(c, start, end, pointFor, dotPaint),
+        ));
+        canvas.restore();
+        marker = trail.marker;
+        if (trail.workRemains) bakePump.schedule();
+      }
+      _drawErrBar(canvas, plotW, plotH, vs, ve);
+    }
+
+    if (marker != null) {
+      final center = toPx(
+        marker.x.clamp(-1.25, 1.25),
+        marker.y.clamp(-1.25, 1.25),
+      );
+      canvas.drawCircle(center, 3.5, Paint()..color = colorScheme.primary);
+      canvas.drawCircle(
+        center,
+        3.5,
+        Paint()
+          ..color = colorScheme.surface
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
+    } else if (total > 0) {
+      final par = labels.prepare(
+        'no positive load in the window',
+        color: colorScheme.onSurface.withAlpha(150),
+        maxWidth: plotW,
+      );
+      canvas.drawParagraph(
+        par,
+        Offset(
+          (plotW - par.longestLine).clamp(0.0, plotW) / 2,
+          plotH / 2 - par.height / 2,
+        ),
+      );
+    }
+  }
+
+  /// Fixed full-scale of the err bar: the plate's saddle residual as a
+  /// fraction of its total load. Sized from practice: up to ±0.26 observed
+  /// on the dev plates, so 0.3 keeps it on scale with headroom. Fixed (not
+  /// autoscaled) so a quiet plate reads quiet.
+  static const double _kErrScale = 0.3;
+
+  /// The error channel's instantaneous value as a vertical bar in the right
+  /// gutter: newest defined sample of the window (the same instant as the
+  /// trail's end marker), centered at zero, clamped to ±[_kErrScale].
+  void _drawErrBar(
+    Canvas canvas,
+    double plotW,
+    double plotH,
+    int viewStart,
+    int viewEnd,
+  ) {
+    final channel = errChannel;
+    final net = channel.netMap;
+    // The scan is capped so an unloaded plate (undefined ratio samples)
+    // can't turn it into a full-window sweep per frame.
+    double? err;
+    final scanFrom = math.max(viewStart, viewEnd - 4000);
+    for (int j = viewEnd - 1; j >= scanFrom; j--) {
+      final raw = _data.rawValueAt(channel.channel, j);
+      if (!raw.isNaN) {
+        err = net(raw);
+        break;
+      }
+    }
+
+    final dim = colorScheme.onSurface.withAlpha(150);
+    final tag = labels.prepare('Err', color: dim);
+    final valuePar = labels.prepare(
+      err == null ? '—' : err.toStringAsFixed(3),
+      color: colorScheme.onSurface,
+    );
+    final trackTop = tag.height + 4;
+    final trackBottom = plotH - valuePar.height - 4;
+    if (trackBottom <= trackTop) return;
+
+    final cx = plotW + kGraphRightSpace / 2;
+    const halfW = 6.0;
+    final halfH = (trackBottom - trackTop) / 2;
+    final midY = trackTop + halfH;
+
+    final outline = Paint()
+      ..color = colorScheme.onSurface.withAlpha(120)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawRect(
+      Rect.fromLTRB(cx - halfW, trackTop, cx + halfW, trackBottom),
+      outline,
+    );
+    // Zero tick.
+    canvas.drawLine(
+      Offset(cx - halfW - 2, midY),
+      Offset(cx + halfW + 2, midY),
+      outline,
+    );
+    if (err != null) {
+      final frac = (err / _kErrScale).clamp(-1.0, 1.0);
+      canvas.drawRect(
+        Rect.fromPoints(
+          Offset(cx - halfW, midY),
+          Offset(cx + halfW, midY - frac * halfH),
+        ),
+        Paint()..color = channel.color.withAlpha(160),
+      );
+    }
+    canvas.drawParagraph(tag, Offset(cx - tag.longestLine / 2, 0));
+    canvas.drawParagraph(
+      valuePar,
+      Offset(cx - valuePar.longestLine / 2, plotH - valuePar.height),
+    );
+  }
+
+  /// The trail loop, shared by bucket bakes and the live vector head/tail:
+  /// one dot per sample at the pane's two channel values; undefined samples
+  /// (gaps, no positive load) skipped. Returns the newest valid sample of
+  /// [start, end) (see [_PlateMarker]).
+  _PlateMarker? _renderDots(
+    Canvas canvas,
+    int start,
+    int end,
+    Offset Function(double x, double y) pointFor,
+    Paint dotPaint,
+  ) {
+    _PlateMarker? last;
+    for (int j = start; j < end; j++) {
+      final x = xChannel.netMap(_data.rawValueAt(xChannel.channel, j));
+      final y = yChannel.netMap(_data.rawValueAt(yChannel.channel, j));
+      if (x.isNaN || y.isNaN) continue;
+      canvas.drawCircle(
+        pointFor(x.clamp(-1.25, 1.25), y.clamp(-1.25, 1.25)),
+        _kDotRadius,
+        dotPaint,
+      );
+      last = (x: x, y: y);
+    }
+    return last;
+  }
+
+  @override
+  bool shouldRepaint(covariant _ForcePlatePainter oldDelegate) => true;
 }
 
 // ---------------------------------------------------------------------------

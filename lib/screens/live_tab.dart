@@ -285,6 +285,7 @@ class _LiveTabState extends State<LiveTab> {
                     GraphViewControls(
                       selection: analysis,
                       onPaneChanged: (s) => _analysisPane.value = s,
+                      mathProfile: hub.mathProfile,
                       data: hub,
                       ctrl: _graphCtrl,
                     ),
