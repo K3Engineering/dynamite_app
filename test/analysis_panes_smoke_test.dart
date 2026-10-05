@@ -6,8 +6,9 @@ import 'package:material_ui/material_ui.dart';
 
 import 'package:dynamite_app/models/analysis_pane.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
-import 'package:dynamite_app/models/device_profile.dart';
+import 'package:dynamite_app/models/derived_channel.dart';
 import 'package:dynamite_app/models/display_unit.dart';
+import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/widgets/analysis_pane_bar.dart';
@@ -30,10 +31,12 @@ void main() {
     excitationV: 4.53,
   );
 
-  /// A hub with a few seconds of positive-going tones per channel. [cells]
-  /// binds the force units.
+  /// A hub with the force-plate profile configured and a few seconds of
+  /// positive-going tones per channel (positive so the plate ratio has
+  /// load to place). [cells] binds the derived channels.
   DataHub hubWithData({bool cells = false}) {
     final hub = DataHub();
+    hub.updateMathProfile(MathProfile.forcePlate(const [0, 1, 2, 3]));
     hub.updateBoardCalibration(
       ProvisionedBoardCalibration(
         nominals: BoardNominals(
@@ -74,6 +77,7 @@ void main() {
 
     const variants = <AnalysisPaneSelection>[
       AnalysisPaneSelection(kind: AnalysisPaneKind.derivative),
+      AnalysisPaneSelection(kind: AnalysisPaneKind.plate),
       AnalysisPaneSelection(kind: AnalysisPaneKind.fft),
       AnalysisPaneSelection(
         kind: AnalysisPaneKind.fft,
@@ -89,7 +93,7 @@ void main() {
             data: hub,
             ctrl: ctrl,
             unit: DisplayUnit.kgf,
-            activeChannels: [for (int i = 0; i < kAdcChannelCount; i++) i],
+            activeChannels: [for (int i = 0; i < kMaxChannelCount; i++) i],
             analysis: analysis,
           ),
         ),
@@ -108,6 +112,32 @@ void main() {
     await tester.pump();
   });
 
+  testWidgets('unbound derived channels keep the panes painting', (
+    tester,
+  ) async {
+    // No load cells: the derived channels can't bind; every pane must say
+    // so without throwing (the hardware channels still do).
+    final hub = hubWithData();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: GraphWorkspace(
+          data: hub,
+          ctrl: GraphController(),
+          unit: DisplayUnit.mVv,
+          activeChannels: const [0, 1, 2, 3],
+          analysis: const AnalysisPaneSelection(kind: AnalysisPaneKind.plate),
+        ),
+      ),
+    );
+    for (var i = 0; i < 3; i++) {
+      await tester.pump(const Duration(milliseconds: 50));
+    }
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+  });
+
   testWidgets('the pane bar selects panes and edits their parameters', (
     tester,
   ) async {
@@ -119,6 +149,7 @@ void main() {
             builder: (context, setState) => AnalysisPaneBar(
               selection: selection,
               onChanged: (s) => setState(() => selection = s),
+              mathProfile: MathProfile.forcePlate(const [0, 1, 2, 3]),
             ),
           ),
         ),
@@ -141,6 +172,24 @@ void main() {
     await tester.tap(find.text('FFT'));
     await tester.pump();
     expect(selection.kind, isNull);
+
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a none math profile hides the Plate chip', (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AnalysisPaneBar(
+            selection: const AnalysisPaneSelection(),
+            onChanged: (_) {},
+            mathProfile: MathProfile.none(),
+          ),
+        ),
+      ),
+    );
+    expect(find.text('Plate'), findsNothing);
+    expect(find.text('dF/dt'), findsOneWidget);
 
     expect(tester.takeException(), isNull);
   });
