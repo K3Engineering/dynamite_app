@@ -40,7 +40,7 @@ int? fftWindowN(int spanSamples, int? requestedN) {
 /// Radix-2 FFT with a cached Hann window. Instances hold O(n) tables plus two
 /// O(n) scratch buffers, so callers keep one per n instead of rebuilding.
 class Radix2Fft {
-  factory Radix2Fft(int n) {
+  factory(int n) {
     if (n < 4 || n & (n - 1) != 0) {
       throw ArgumentError.value(n, 'n', 'must be a power of two >= 4');
     }
@@ -77,7 +77,7 @@ class Radix2Fft {
     );
   }
 
-  Radix2Fft._(
+  new _(
     this.n,
     this._rev,
     this._cos,
