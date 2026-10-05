@@ -25,8 +25,15 @@ class GraphViewControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
+    // The right inset matches the painters' Y-axis gutter so the zoom
+    // cluster's right edge is collinear with the plot and minimap edges.
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.only(
+        left: 16,
+        right: kGraphRightSpace,
+        top: 4,
+        bottom: 4,
+      ),
       child: Row(
         children: [
           FilterChip(
