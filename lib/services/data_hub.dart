@@ -462,6 +462,9 @@ class DataHub extends ChangeNotifier
       totalSamples > maxDataSz ? totalSamples - maxDataSz : 0;
 
   @override
+  int get maxViewableSamples => maxDataSz;
+
+  @override
   int get sampleRate => sampleRateHz;
 
   @override

@@ -21,6 +21,13 @@ abstract interface class SampleStorage {
   /// oldestSample` is the retained window.
   int get oldestSample;
 
+  /// The largest window this source can ever hold, in samples: the ring
+  /// capacity for the live hub, the whole session for a static source.
+  /// Constant per mount — unlike `totalSamples - oldestSample`, which grows
+  /// with a live stream — so fixed-choice UI (the zoom preset menu) can size
+  /// against it without reshaping under the user.
+  int get maxViewableSamples;
+
   /// The sample rate of the data (Hz).
   int get sampleRate;
 

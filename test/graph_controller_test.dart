@@ -131,16 +131,32 @@ void main() {
       expect(ctrl.effectiveRange(1000, 0), (400, 600));
     });
 
-    test('a parked window rides retention eviction', () {
+    test('a parked window stays pinned through retention eviction', () {
       final ctrl = GraphController();
       ctrl.applyWindow(50, 100, 1000, 0); // parked on [50, 150)
-      // The ring advances underneath it: oldestSample moves to 100 while
-      // the window straddles the edge -- the evicted half falls away...
-      expect(ctrl.effectiveRange(700000, 100), (100, 150));
-      // ...and once the whole window is evicted, nothing drawable remains:
-      // the window collapses onto the retention head instead of framing
-      // samples the ring can no longer serve (regression test).
-      expect(ctrl.effectiveRange(700000, 200), (200, 201));
+      // Untouched while inside retention, boundary inclusive.
+      expect(ctrl.effectiveRange(700000, 50), (50, 150));
+      // Eviction eats the window's left edge: the window stays pinned in
+      // absolute time -- the painters render the evicted part blank.
+      expect(ctrl.effectiveRange(700000, 100), (50, 150));
+      // Fully evicted: still pinned (and still parked, so the LIVE button's
+      // signal remains truthful); the painters show the "beyond history"
+      // state.
+      expect(ctrl.effectiveRange(700000, 200), (50, 150));
+      expect(ctrl.isLive, isFalse);
+    });
+
+    test('panning a drained window re-anchors onto retention', () {
+      final ctrl = GraphController();
+      ctrl.applyWindow(50, 100, 1000, 0); // parked on [50, 150)
+      // Window fully evicted; any pan (even a zero-delta one, from a touch
+      // that doesn't move) is clamped back onto the retention head, span
+      // intact -- the user touches real data again.
+      ctrl.pan(0, 700000, 200);
+      expect(ctrl.effectiveRange(700000, 200), (200, 300));
+      ctrl.pan(-400, 700000, 200);
+      expect(ctrl.effectiveRange(700000, 200), (200, 300));
+      expect(ctrl.isLive, isFalse);
     });
   });
 
@@ -211,7 +227,8 @@ void main() {
     test('a stale panned window violates the invariant loudly', () {
       // A window parked deep in history (set while the old stream had plenty
       // of data) evaluated against a cleared hub: the assert fires. In
-      // release the clamp's inverted limits throw a RangeError instead.
+      // release the assert is gone, so the stale range passes silently; the
+      // reset in live_tab.dart on HubCleared stayed the only guard.
       final ctrl = GraphController(minLiveSpan: 20000);
       ctrl.applyWindow(100000, 100000, 300000, 0); // user panned into history
       expect(() => ctrl.effectiveRange(0, 0), throwsA(isA<AssertionError>()));

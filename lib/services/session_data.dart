@@ -110,6 +110,9 @@ class SessionData implements GraphDataSource {
   int get oldestSample => 0;
 
   @override
+  int get maxViewableSamples => sampleCount;
+
+  @override
   int rawAt(int channelIndex, int index) => channels[channelIndex][index];
 
   @override

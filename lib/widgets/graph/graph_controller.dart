@@ -26,7 +26,9 @@ final class GraphLive extends GraphViewport {
 }
 
 /// Parked on the fixed window [start, end) (absolute sample indices). Hub
-/// resets drop it via [GraphController.reset].
+/// resets drop it via [GraphController.reset]. Retention eviction is NOT
+/// chased: the window may lie partly or wholly left of `oldestSample`, and
+/// the painters render that part blank (see [GraphController.effectiveRange]).
 final class GraphWindow extends GraphViewport {
   const GraphWindow(this.start, this.end);
 
@@ -118,18 +120,19 @@ class GraphController extends ChangeNotifier {
         final s = span ?? defaultLiveSpan(totalSamples, oldestSample);
         return (totalSamples - s, totalSamples);
       case GraphWindow(:final start, :final end):
-        // Parked windows never outlive the data's right edge; a negative start
-        // is legitimate for a sparse young buffer. The left edge rides
-        // retention eviction (the ring can't serve evicted samples; the ring
-        // itself never lets a parked window START left of oldestSample --
-        // only eviction moves the floor under it).
+        // Parked windows never outlive the data's RIGHT edge (assert below,
+        // guarded by [GraphController.reset] on stream clear); a negative
+        // start is legitimate for a sparse young buffer. The LEFT edge is
+        // returned verbatim once retention eviction passes it: clamping to
+        // oldestSample would scroll 10-min-old data behind a view the user
+        // parked, and scrolling behind a non-live view reads as live. The
+        // painters clip at the retention head instead
+        // (graph_components.dart `_paintEnvelopeDataLayer`).
         assert(
           start < end && end <= totalSamples,
           'window [$start, $end) out of bounds for $totalSamples samples',
         );
-        final s = start.clamp(oldestSample, totalSamples - 1);
-        final e = end.clamp(s + 1, totalSamples);
-        return (s, e);
+        return (start, end);
     }
   }
 
