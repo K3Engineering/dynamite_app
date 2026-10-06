@@ -119,17 +119,18 @@ class GraphController extends ChangeNotifier {
         return (totalSamples - s, totalSamples);
       case GraphWindow(:final start, :final end):
         // Parked windows never outlive the data's right edge; a negative start
-        // is legitimate for a sparse young buffer. The left edge rides
-        // retention eviction (the ring can't serve evicted samples; the ring
-        // itself never lets a parked window START left of oldestSample --
-        // only eviction moves the floor under it).
+        // is legitimate for a sparse young buffer. When retention eviction
+        // (the ring wrap: only eviction moves the floor under a parked
+        // window, which never STARTs left of oldestSample) reaches the left
+        // edge, the whole window slides right onto the retention head, span
+        // intact -- the evicted data is gone, so the view becomes a rolling
+        // delay rather than collapsing into a 1-sample ghost.
         assert(
           start < end && end <= totalSamples,
           'window [$start, $end) out of bounds for $totalSamples samples',
         );
-        final s = start.clamp(oldestSample, totalSamples - 1);
-        final e = end.clamp(s + 1, totalSamples);
-        return (s, e);
+        final s = math.max(start, oldestSample);
+        return (s, math.min(s + (end - start), totalSamples));
     }
   }
 

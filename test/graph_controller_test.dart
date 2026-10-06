@@ -131,16 +131,19 @@ void main() {
       expect(ctrl.effectiveRange(1000, 0), (400, 600));
     });
 
-    test('a parked window rides retention eviction', () {
+    test('a parked window slides with retention eviction, span intact', () {
       final ctrl = GraphController();
       ctrl.applyWindow(50, 100, 1000, 0); // parked on [50, 150)
-      // The ring advances underneath it: oldestSample moves to 100 while
-      // the window straddles the edge -- the evicted half falls away...
-      expect(ctrl.effectiveRange(700000, 100), (100, 150));
-      // ...and once the whole window is evicted, nothing drawable remains:
-      // the window collapses onto the retention head instead of framing
-      // samples the ring can no longer serve (regression test).
-      expect(ctrl.effectiveRange(700000, 200), (200, 201));
+      // Untouched while inside retention, boundary inclusive.
+      expect(ctrl.effectiveRange(700000, 50), (50, 150));
+      // Eviction reaches the window: the whole window slides right onto the
+      // retention head, span intact (never a shrink or collapse -- the
+      // 1-sample ghost this replaces).
+      expect(ctrl.effectiveRange(700000, 100), (100, 200));
+      // Fully evicted: keeps sliding at the head, stays parked (the LIVE
+      // chip's signal remains truthful).
+      expect(ctrl.effectiveRange(700000, 200), (200, 300));
+      expect(ctrl.isLive, isFalse);
     });
   });
 
