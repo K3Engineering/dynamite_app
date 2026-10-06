@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/services.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meta/meta.dart';
 
@@ -753,18 +754,28 @@ class _LiveButton extends StatelessWidget {
 }
 
 /// Zoom controls: a split button group [− | span | +]. The middle segment
-/// opens a menu of preset window spans plus "All" (the whole retained
-/// buffer, auto-expanding on live). Row chrome below the graph (see
-/// `GraphViewControls`)
+/// opens a menu of preset window spans, "All" (the whole retained buffer,
+/// auto-expanding on live), and a "Custom…" exact-span dialog. A preset is
+/// shown only when the source could EVER hold it (the live ring never spans
+/// an hour, a 30 s recording never shows minute presets) and greyed until
+/// the current data does — so the menu's shape is constant per mount and
+/// rows never move, they only un-grey in place as a live stream grows.
+/// Row chrome below the graph (see `GraphViewControls`)
 class GraphZoomControls extends StatelessWidget {
   const GraphZoomControls({super.key, required this.data, required this.ctrl});
 
   final GraphDataSource data;
   final GraphController ctrl;
 
-  /// Preset window spans for the middle segment's menu, in seconds; "All"
-  /// needs no number and is appended separately.
-  static const _presetSpansSec = [0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0];
+  /// Preset window spans for the middle segment's menu: (seconds, label),
+  /// decade steps. "All" and "Custom…" follow in the menu.
+  static const _presets = [
+    (1, '1 s'),
+    (10, '10 s'),
+    (60, '1 min'),
+    (600, '10 min'),
+    (3600, '1 h'),
+  ];
 
   // Split-group shapes, twin of the TARE group in `ActionButtons`: rounded
   // outer corners, small inner corners, segments separated by a 4px gap.
@@ -814,6 +825,23 @@ class GraphZoomControls extends StatelessWidget {
     );
   }
 
+  /// Open the exact-span dialog prefilled with the current window. A typed
+  /// span beyond the retained data clamps inside [GraphController.zoomTo].
+  Future<void> _promptCustomSpan(BuildContext context) async {
+    if (data.totalSamples <= 0) return;
+    final (start, end) = ctrl.effectiveRange(
+      data.totalSamples,
+      data.oldestSample,
+    );
+    final seconds = await showDialog<double>(
+      context: context,
+      builder: (_) =>
+          _CustomSpanDialog(initialSec: (end - start) / data.sampleRate),
+    );
+    if (seconds == null) return;
+    _applySpan((seconds * data.sampleRate).round());
+  }
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -831,31 +859,46 @@ class GraphZoomControls extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 4),
-        MenuAnchor(
-          builder: (context, menu, _) => Tooltip(
-            message: 'Visible time window',
-            child: FilledButton(
-              style: FilledButton.styleFrom(
-                shape: _splitMid,
-                padding: EdgeInsets.zero,
+        // Listens so a growing live stream re-derives each preset's greyed
+        // state; the show/hide ceiling itself is static per source.
+        ListenableBuilder(
+          listenable: data.repaint,
+          builder: (context, _) {
+            final available = data.totalSamples - data.oldestSample;
+            return MenuAnchor(
+              builder: (context, menu, _) => Tooltip(
+                message: 'Visible time window',
+                child: FilledButton(
+                  style: FilledButton.styleFrom(
+                    shape: _splitMid,
+                    padding: EdgeInsets.zero,
+                  ),
+                  onPressed: () => menu.isOpen ? menu.close() : menu.open(),
+                  child: _SpanReadout(data: data, ctrl: ctrl),
+                ),
               ),
-              onPressed: () => menu.isOpen ? menu.close() : menu.open(),
-              child: _SpanReadout(data: data, ctrl: ctrl),
-            ),
-          ),
-          menuChildren: [
-            for (final sec in _presetSpansSec)
-              MenuItemButton(
-                onPressed: () => _applySpan((sec * data.sampleRate).round()),
-                child: Text(_formatSpan(sec)),
-              ),
-            MenuItemButton(
-              onPressed: () => _applySpan(
-                ctrl.defaultLiveSpan(data.totalSamples, data.oldestSample),
-              ),
-              child: const Text('All'),
-            ),
-          ],
+              menuChildren: [
+                for (final (sec, label) in _presets)
+                  if (sec * data.sampleRate <= data.maxViewableSamples)
+                    MenuItemButton(
+                      onPressed: sec * data.sampleRate > available
+                          ? null
+                          : () => _applySpan(sec * data.sampleRate),
+                      child: Text(label),
+                    ),
+                MenuItemButton(
+                  onPressed: () => _applySpan(
+                    ctrl.defaultLiveSpan(data.totalSamples, data.oldestSample),
+                  ),
+                  child: const Text('All'),
+                ),
+                MenuItemButton(
+                  onPressed: () => _promptCustomSpan(context),
+                  child: const Text('Custom…'),
+                ),
+              ],
+            );
+          },
         ),
         const SizedBox(width: 4),
         Tooltip(
@@ -874,7 +917,109 @@ class GraphZoomControls extends StatelessWidget {
   }
 }
 
-/// The current zoom-window span (e.g. "800 ms", "4.2 s", "2:05").
+/// Exact-span entry: a digits-and-dot-only number field plus a unit
+/// selector. [FilteringTextInputFormatter] (not [TextInputType], which is a
+/// keyboard-layout hint that filters nothing) makes non-numeric input
+/// untypeable on every input path, and Apply is enabled only for a
+/// numerically valid positive value — so the dialog has no error states at
+/// all: garbage is either untypeable or leaves the button greyed.
+class _CustomSpanDialog extends StatefulWidget {
+  const _CustomSpanDialog({required this.initialSec});
+
+  /// Current window span in seconds; prefill (whole-value selected).
+  final double initialSec;
+
+  @override
+  State<_CustomSpanDialog> createState() => _CustomSpanDialogState();
+}
+
+class _CustomSpanDialogState extends State<_CustomSpanDialog> {
+  /// Unit-selector multipliers to seconds; the typed number is
+  /// reinterpreted in the selected unit, not converted between units.
+  static const _unitFactors = {'ms': 0.001, 's': 1.0, 'min': 60.0, 'h': 3600.0};
+
+  late final TextEditingController _text;
+  String _unit = 's';
+
+  /// The entered span in seconds; null = not a positive number (empty,
+  /// zero, or formatter-passable garbage like "1.2.3").
+  double? get _seconds {
+    final value = double.tryParse(_text.text);
+    return value == null || value <= 0 ? null : value * _unitFactors[_unit]!;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialSec;
+    final text = initial % 1 == 0
+        ? initial.toStringAsFixed(0)
+        : initial.toStringAsFixed(1);
+    _text = TextEditingController(text: text)
+      // Apply's enabled state depends on the text.
+      ..addListener(() => setState(() {}));
+    _text.selection = TextSelection(baseOffset: 0, extentOffset: text.length);
+  }
+
+  @override
+  void dispose() {
+    _text.dispose();
+    super.dispose();
+  }
+
+  void _apply() {
+    final seconds = _seconds;
+    if (seconds != null) Navigator.of(context).pop(seconds);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Window span'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _text,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [
+              FilteringTextInputFormatter.allow(RegExp(r'[\d.]')),
+            ],
+            decoration: const InputDecoration(
+              labelText: 'Span',
+              border: OutlineInputBorder(),
+            ),
+            onSubmitted: (_) => _apply(),
+          ),
+          const SizedBox(height: 12),
+          SegmentedButton<String>(
+            segments: const [
+              ButtonSegment(value: 'ms', label: Text('ms')),
+              ButtonSegment(value: 's', label: Text('s')),
+              ButtonSegment(value: 'min', label: Text('min')),
+              ButtonSegment(value: 'h', label: Text('h')),
+            ],
+            selected: {_unit},
+            onSelectionChanged: (unit) => setState(() => _unit = unit.first),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _seconds == null ? null : _apply,
+          child: const Text('Apply'),
+        ),
+      ],
+    );
+  }
+}
+
+/// The current zoom-window span (e.g. "800 ms", "12.4 s", "1:02:05").
 class _SpanReadout extends StatelessWidget {
   const _SpanReadout({required this.data, required this.ctrl});
 
@@ -891,10 +1036,12 @@ class _SpanReadout extends StatelessWidget {
           data.oldestSample,
         );
         return Container(
-          width: 60,
+          // Wide enough for hours-folded spans ("1:00:00") in bold tabular
+          // figures; replay windows can legitimately exceed an hour.
+          width: 68,
           alignment: Alignment.center,
           child: Text(
-            _formatSpan((end - start) / data.sampleRate),
+            formatWindowSpan((end - start) / data.sampleRate),
             style: TextStyle(
               color: Theme.of(context).colorScheme.onPrimary,
               fontWeight: FontWeight.bold,
@@ -923,13 +1070,22 @@ String _graphSemanticsLabel({
   return '$kind force graph. $chs. Unit: ${unit.symbol}$deriv.';
 }
 
-/// Format a zoom-window span in seconds for the readout.
-String _formatSpan(double spanSec) {
+/// Format a zoom-window span in seconds for the readout: "800 ms" below a
+/// second, trimmed decimals below a minute ("12.4 s", "30 s"), then the
+/// same hours-folding clock shape as the X axis ticks (see [_fmtTick]):
+/// "2:05", "1:00:30".
+@visibleForTesting
+String formatWindowSpan(double spanSec) {
   if (spanSec < 1.0) return '${(spanSec * 1000).round()} ms';
-  if (spanSec < 60.0) return '${spanSec.toStringAsFixed(1)} s';
-  final m = spanSec ~/ 60;
-  final s = (spanSec % 60).floor().toString().padLeft(2, '0');
-  return '$m:$s';
+  if (spanSec < 60.0) {
+    final oneDecimal = spanSec.toStringAsFixed(1);
+    return '${oneDecimal.endsWith('.0') ? oneDecimal.substring(0, oneDecimal.length - 2) : oneDecimal} s';
+  }
+  final total = spanSec.floor();
+  final m = total ~/ 60;
+  final s = (total % 60).toString().padLeft(2, '0');
+  if (m < 60) return '$m:$s';
+  return '${m ~/ 60}:${(m % 60).toString().padLeft(2, '0')}:$s';
 }
 
 /// Smallest 1/2/5-decade step >= [target]. Used directly by the Y axis, and
