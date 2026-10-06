@@ -1,22 +1,29 @@
 import 'package:material_ui/material_ui.dart';
 
+import '../models/analysis_pane.dart';
+import '../models/derived_channel.dart';
 import '../models/graph_data_source.dart';
+import 'analysis_pane_bar.dart';
 import 'graph_components.dart';
 
-/// The chrome row below a [GraphWorkspace]: the dF/dt pane toggle and the
-/// zoom-window controls. Shared by the live tab and session replay
+/// The chrome row below a [GraphWorkspace]: the analysis-pane bar and the
+/// zoom-window controls. Shared by the live tab and session replay.
 class GraphViewControls extends StatelessWidget {
   const GraphViewControls({
     super.key,
-    required this.showDerivative,
-    required this.onToggleDerivative,
+    required this.selection,
+    required this.onPaneChanged,
+    required this.mathProfile,
     required this.data,
     required this.ctrl,
   });
 
-  /// Whether the derivative pane is shown.
-  final bool showDerivative;
-  final VoidCallback onToggleDerivative;
+  /// The analysis pane slot's selection, displayed by the pane bar.
+  final AnalysisPaneSelection selection;
+  final ValueChanged<AnalysisPaneSelection> onPaneChanged;
+
+  /// Forwarded to [AnalysisPaneBar]: gates which pane chips exist.
+  final MathProfile mathProfile;
 
   /// The plotted source and its viewport, driven by the zoom controls.
   final GraphDataSource data;
@@ -24,28 +31,21 @@ class GraphViewControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
     // The right inset matches the painters' Y-axis gutter so the zoom
     // cluster's right edge is collinear with the plot and minimap edges.
+    // The left inset comes from [AnalysisPaneBar]'s own padding.
     return Padding(
-      padding: const EdgeInsets.only(
-        left: 16,
-        right: kGraphRightSpace,
-        top: 4,
-        bottom: 4,
-      ),
+      padding: const EdgeInsets.only(right: kGraphRightSpace),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          FilterChip(
-            label: const Text('dF/dt'),
-            selected: showDerivative,
-            onSelected: (_) => onToggleDerivative(),
-            visualDensity: VisualDensity.compact,
-            labelStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: showDerivative ? cs.onSecondaryContainer : null,
+          Expanded(
+            child: AnalysisPaneBar(
+              selection: selection,
+              onChanged: onPaneChanged,
+              mathProfile: mathProfile,
             ),
           ),
-          const Spacer(),
           GraphZoomControls(data: data, ctrl: ctrl),
         ],
       ),

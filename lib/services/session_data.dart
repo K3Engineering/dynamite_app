@@ -3,13 +3,19 @@ import 'package:flutter/foundation.dart';
 import '../models/bucket_series.dart';
 import '../models/channel_calibration.dart';
 import '../models/channel_converter.dart';
+import '../models/derived_channel.dart';
+import '../models/derived_dispatch.dart';
+import '../models/derived_series.dart';
 import '../models/device_flash.dart';
+import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 
-/// Loaded session data for playback/review.
-class SessionData implements GraphDataSource {
+/// Loaded session data for playback/review. Derived channels (ids >=
+/// kAdcChannelCount, see `derived_channel.dart`) ride along via
+/// [DerivedDispatch].
+class SessionData with DerivedDispatch implements GraphDataSource {
   final List<Int32List> channels;
   @override
   final int sampleRate;
@@ -60,6 +66,22 @@ class SessionData implements GraphDataSource {
   /// live hub uses.
   late final List<BucketAccumulator> _diffBuckets;
 
+  /// The rig's math-channel profile, snapshotted into the session at
+  /// record start (older sessions take the loader's current config — see
+  /// `session_store.dart`), replayed over the frozen calibrations/tares at
+  /// load. [derivedSpecs] is its channel set in id order (see
+  /// `derived_channel.dart`).
+  @override
+  final MathProfile mathProfile;
+
+  /// The profile's derived channels in id order (see [derivedChannels]).
+  @override
+  List<DerivedChannelSpec> get derivedSpecs => mathProfile.specs;
+
+  /// Per-spec ingest runtimes; null slots couldn't bind on the session's
+  /// frozen calibration set (see [DerivedChannelRuntime.tryBuild]).
+  late final List<DerivedChannelRuntime?> _derived;
+
   SessionData({
     required this.channels,
     required this.sampleRate,
@@ -68,8 +90,10 @@ class SessionData implements GraphDataSource {
     required this.tares,
     required this.ssnOrigin,
     this.deviceKvs,
+    MathProfile? mathProfile,
     GapList? gaps,
-  }) : gaps = gaps ?? GapList(),
+  }) : mathProfile = mathProfile ?? MathProfile.none(),
+       gaps = gaps ?? GapList(),
        _extremes = List.filled(channels.length, null) {
     final int numBuckets = (sampleCount == 0)
         ? 0
@@ -97,6 +121,36 @@ class SessionData implements GraphDataSource {
       final ext = ingest.extremes; // non-null: sampleCount > 0 here
       _extremes[ch] = (ext!.$1.toDouble(), ext.$2.toDouble());
     }
+
+    // Derived channels replay over the same frames; calibration and tares
+    // are frozen, so a single load-time pass is the whole story.
+    if (channels.length < kAdcChannelCount || sampleCount == 0) {
+      _derived = List.filled(derivedSpecs.length, null);
+    } else {
+      final scratch = Int32List(kAdcChannelCount);
+      _derived = [
+        for (final spec in derivedSpecs)
+          DerivedChannelRuntime.tryBuild(
+            spec,
+            calibrations,
+            tares,
+            bucketSize: bucketSize,
+            numBuckets: numBuckets,
+            ringSize: sampleCount,
+            gaps: this.gaps,
+          ),
+      ];
+      for (int i = 0; i < sampleCount; i++) {
+        for (int c = 0; c < kAdcChannelCount; c++) {
+          scratch[c] = channels[c][i];
+        }
+        final held = this.gaps.contains(i);
+        for (final rt in _derived) {
+          if (rt == null) continue;
+          held ? rt.addHeld(i) : rt.addFrame(i, scratch);
+        }
+      }
+    }
   }
 
   double get durationSeconds => sampleCount / sampleRate;
@@ -113,7 +167,9 @@ class SessionData implements GraphDataSource {
   int get maxViewableSamples => sampleCount;
 
   @override
-  int rawAt(int channelIndex, int index) => channels[channelIndex][index];
+  int rawAt(int channelIndex, int index) => channelIndex < kAdcChannelCount
+      ? channels[channelIndex][index]
+      : (derivedAt(derivedIndexOf(channelIndex))?.ring[index] ?? 0);
 
   @override
   Listenable get repaint => kNeverRepaints;
@@ -146,15 +202,29 @@ class SessionData implements GraphDataSource {
   @override
   int get tareVersion => 0;
 
+  // -- DerivedDispatch hooks (hardware halves; the derived id dispatch lives
+  // in the mixin) -----------------------------------------------------------
+
   @override
-  BucketSeries valueBucketsFor(int channelIndex) =>
+  List<DerivedChannelRuntime?> get derivedRuntimes => _derived;
+
+  @override
+  BucketSeries hardwareValueBuckets(int channelIndex) =>
       _valueBuckets[channelIndex].series;
 
   @override
-  BucketSeries diffBucketsFor(int channelIndex) =>
+  BucketSeries hardwareDiffBuckets(int channelIndex) =>
       _diffBuckets[channelIndex].series;
 
   @override
-  (double, double)? channelExtremes(int channelIndex) =>
+  (double, double)? hardwareExtremes(int channelIndex) =>
       _extremes[channelIndex];
+
+  @override
+  double? hardwareTare(int channelIndex) => tares[channelIndex];
+
+  /// The recorded hardware channel count, not [kAdcChannelCount]: a session
+  /// stores exactly the channels its recorder had.
+  @override
+  int get channelCount => channels.length + derivedSpecs.length;
 }
