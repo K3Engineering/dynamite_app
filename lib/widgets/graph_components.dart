@@ -388,8 +388,13 @@ class _MinimapPainter extends CustomPainter {
       totalSamples,
       oldestSample,
     );
-    final double x1 = (viewStart - mapStart) * gw / mapSpan;
-    final double x2 = (viewEnd - mapStart) * gw / mapSpan;
+    // A parked window stays pinned in absolute time as eviction passes it
+    // (see [GraphController.effectiveRange]), so the box slides off the
+    // left; clamp it to the map or its border would draw into the Y-label
+    // gutter. Fully off it collapses to a line on the left edge -- the
+    // main graph shows the "beyond history" state.
+    final double x1 = ((viewStart - mapStart) * gw / mapSpan).clamp(0.0, gw);
+    final double x2 = ((viewEnd - mapStart) * gw / mapSpan).clamp(0.0, gw);
 
     final dimPaint = Paint()..color = _colorScheme.onSurface.withAlpha(60);
     if (x1 > 0) canvas.drawRect(Rect.fromLTWH(0, 0, x1, gh), dimPaint);
@@ -2131,6 +2136,35 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     final viewSamples = layout.viewSamples;
 
     final oldestSample = _data.oldestSample;
+
+    // A parked window wholly past the retention edge (parked, then eviction
+    // passed it by): the ring holds no sample in it. Any Y range here would
+    // be invented, so no axes -- a bare frame and the reason. The LIVE
+    // button (the workspace's overlay) is the way out. Partially evicted
+    // windows draw normally below, clipped at the retention head.
+    if (viewEnd <= oldestSample + firstSampleOffset) {
+      final retentionMin = (_data.maxViewableSamples / 60 / _data.sampleRate)
+          .round();
+      final parBuilder = ui.ParagraphBuilder(ui.ParagraphStyle(maxLines: 1))
+        ..pushStyle(
+          ui.TextStyle(
+            color: colorScheme.onSurface.withAlpha(150),
+            fontSize: 13,
+          ),
+        )
+        ..addText('Beyond $retentionMin min history');
+      final par = parBuilder.build()
+        ..layout(const ui.ParagraphConstraints(width: double.infinity));
+      canvas.drawParagraph(
+        par,
+        Offset(
+          math.max(0, (graphSz.width - par.longestLine) / 2),
+          (graphSz.height - par.height) / 2,
+        ),
+      );
+      par.dispose();
+      return;
+    }
 
     final yRange = computeYRange(viewStart, viewEnd, graphSz.height);
     if (yRange == null) return;

@@ -26,7 +26,9 @@ final class GraphLive extends GraphViewport {
 }
 
 /// Parked on the fixed window [start, end) (absolute sample indices). Hub
-/// resets drop it via [GraphController.reset].
+/// resets drop it via [GraphController.reset]. Retention eviction is NOT
+/// chased: the window may lie partly or wholly left of `oldestSample`, and
+/// the painters render that part blank (see [GraphController.effectiveRange]).
 final class GraphWindow extends GraphViewport {
   const GraphWindow(this.start, this.end);
 
@@ -118,19 +120,19 @@ class GraphController extends ChangeNotifier {
         final s = span ?? defaultLiveSpan(totalSamples, oldestSample);
         return (totalSamples - s, totalSamples);
       case GraphWindow(:final start, :final end):
-        // Parked windows never outlive the data's right edge; a negative start
-        // is legitimate for a sparse young buffer. When retention eviction
-        // (the ring wrap: only eviction moves the floor under a parked
-        // window, which never STARTs left of oldestSample) reaches the left
-        // edge, the whole window slides right onto the retention head, span
-        // intact -- the evicted data is gone, so the view becomes a rolling
-        // delay rather than collapsing into a 1-sample ghost.
+        // Parked windows never outlive the data's RIGHT edge (assert below,
+        // guarded by [GraphController.reset] on stream clear); a negative
+        // start is legitimate for a sparse young buffer. The LEFT edge is
+        // returned verbatim once retention eviction passes it: clamping to
+        // oldestSample would scroll 10-min-old data behind a view the user
+        // parked, and scrolling behind a non-live view reads as live. The
+        // painters clip at the retention head instead
+        // (graph_components.dart `_paintEnvelopeDataLayer`).
         assert(
           start < end && end <= totalSamples,
           'window [$start, $end) out of bounds for $totalSamples samples',
         );
-        final s = math.max(start, oldestSample);
-        return (s, math.min(s + (end - start), totalSamples));
+        return (start, end);
     }
   }
 
