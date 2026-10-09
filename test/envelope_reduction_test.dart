@@ -123,6 +123,125 @@ void main() {
     );
   });
 
+  group('mV/V bucket sums (exact converted-unit mean)', () {
+    // Piecewise board map with a kink at raw == 1000 (slope 0.5 below, 2
+    // above). A block straddling the kink makes the raw-mean approximation
+    // (map of the raw mean) diverge from the true mean of mapped values --
+    // exactly the error the mV/V sums path removes.
+    double kinkBoard(double raw) =>
+        raw <= 1000 ? raw * 0.5 : 500 + (raw - 1000) * 2.0;
+
+    /// A bucketed series over [all] with net map `(kinkBoard - tareMv) * k`;
+    /// [armed] toggles the mV/V sums + exact mean wiring on/off.
+    EnvelopeSeries buildKinked(
+      List<int> all, {
+      bool armed = true,
+      double tare = 900,
+      double k = 3,
+    }) {
+      final tareMv = kinkBoard(tare);
+      final acc = BucketAccumulator(
+        bucketSize: bs,
+        numBuckets: numBuckets,
+        mvVOf: armed ? (raw) => kinkBoard(raw.toDouble()) : null,
+      );
+      for (int i = 0; i < all.length; i++) {
+        acc.add(i, all[i]);
+      }
+      return EnvelopeSeries.bucketed(
+        sampleAt: (j) => (kinkBoard(all[j].toDouble()) - tareMv) * k,
+        buckets: acc.series,
+        rawToDisplay: (raw) => (kinkBoard(raw) - tareMv) * k,
+        meanFromMvV: armed ? (meanMv) => (meanMv - tareMv) * k : null,
+      );
+    }
+
+    test(
+      'kink-straddling block: mV path matches the exact mean; raw path errs',
+      () {
+        // One bucket, values 950..1040 straddling the 1000 kink.
+        final all = List<int>.generate(bs, (i) => 950 + i * 10);
+        final armed = buildKinked(all);
+        final disarmed = buildKinked(all, armed: false);
+
+        final exact = reduceBlockExact(armed.sampleAt, 0, bs);
+        final bArmed = reduceBlockBuckets(armed, 0, bs);
+        final bDisarmed = reduceBlockBuckets(disarmed, 0, bs);
+
+        // min/max are map-exact on both paths (monotone map).
+        expect(bArmed.min, exact.min);
+        expect(bArmed.max, exact.max);
+        expect(bArmed.count, exact.count);
+        // The mean is exact for the mV/V sums...
+        expect(bArmed.sum, closeTo(exact.sum, 1e-6));
+        // ...and measurably off for the raw-mean approximation (convex kink:
+        // mean of mapped > mapped of mean), proving the wire-up is exercised.
+        expect((bDisarmed.sum - exact.sum).abs(), greaterThan(1.0));
+      },
+    );
+
+    test('disarmed accumulator serves no mV/V sums and hits the fallback', () {
+      // Board map vanishes on the third sample (raw == 2); the re-ingest
+      // below feeds other values, so the map stays valid after reset.
+      final acc = BucketAccumulator(
+        bucketSize: bs,
+        numBuckets: numBuckets,
+        mvVOf: (raw) => raw == 2 ? null : raw.toDouble(),
+      );
+      for (int i = 0; i < 2 * bs; i++) {
+        acc.add(i, i);
+      }
+      expect(acc.series.sumMvV, isNull, reason: 'one-way disarm latch');
+
+      final series = EnvelopeSeries.bucketed(
+        sampleAt: (j) => j.toDouble(),
+        buckets: acc.series,
+        rawToDisplay: (raw) => raw,
+        meanFromMvV: (meanMv) => meanMv,
+      );
+      // Identical map/id here, so the check is that the fallback formula was
+      // used (same result); the kinked test above proves they CAN differ.
+      final b = reduceBlockBuckets(series, 0, 2 * bs);
+      expect(
+        b.sum,
+        closeTo(reduceBlockExact(series.sampleAt, 0, 2 * bs).sum, 1e-9),
+      );
+
+      // reset re-arms with a fresh map (a new stream).
+      acc.reset();
+      expect(acc.series.sumMvV, isNotNull);
+      for (int i = 0; i < bs; i++) {
+        acc.add(i, 10 + i);
+      }
+      expect(acc.series.sumMvV![0], (10 + 19) * bs / 2.0);
+    });
+
+    test('armed accumulator sums mV/V per bucket', () {
+      final acc = BucketAccumulator(
+        bucketSize: bs,
+        numBuckets: numBuckets,
+        mvVOf: (raw) => raw * 0.5,
+      );
+      for (int i = 0; i < 2 * bs; i++) {
+        acc.add(i, i);
+      }
+      final sums = acc.series.sumMvV!;
+      final expected = [
+        for (int j = 0; j < bs; j++) j * 0.5,
+      ].fold<double>(0, (a, b) => a + b);
+      expect(sums[0], closeTo(expected, 1e-9));
+      expect(
+        sums[1],
+        closeTo(
+          [
+            for (int j = bs; j < 2 * bs; j++) j * 0.5,
+          ].fold<double>(0, (a, b) => a + b),
+          1e-9,
+        ),
+      );
+    });
+  });
+
   group('foldBucketRange', () {
     void bruteAndFold(List<int> all, int start, int end) {
       final acc = BucketAccumulator(bucketSize: bs, numBuckets: numBuckets);

@@ -87,6 +87,22 @@ class ChannelConverter {
     return (raw) => resolved.board.mvVFromRaw(raw) * resolved.scale;
   }
 
+  /// The affine part of [netMap] (tare offset + unit scale) applied to an
+  /// mV/V input rather than raw counts: mean(net) == (mean(mvV) - tareMvV)
+  /// * scale. Exact under any monotone board map -- each sample passes
+  /// through the same map, so piecewise kinks cancel inside the mean --
+  /// which lets bucket sums stored in mV/V (see BucketSeries.sumMvV) yield a
+  /// bucket mean with no nonlinearity error. Null for raw (its map is
+  /// affine in raw counts already -- raw sums are exact) and in every
+  /// [netMap]-null case.
+  double Function(double meanMvV)? netMeanMvVMap(DisplayUnit unit) {
+    if (unit == DisplayUnit.raw) return null;
+    final resolved = _boardAndScale(unit);
+    if (resolved == null) return null;
+    final tareMvV = tare == null ? 0.0 : resolved.board.mvVFromRaw(tare!);
+    return (meanMvV) => (meanMvV - tareMvV) * resolved.scale;
+  }
+
   /// The raw-diff -> display-unit map (no tare: offsets cancel in a
   /// difference). Uses the channel's terminal slope so the map is
   /// position-free (the derivative graph's bucket fast path needs that); the

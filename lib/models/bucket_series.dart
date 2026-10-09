@@ -26,21 +26,48 @@ typedef BucketSeries = ({
   Int32List mins,
   Int32List maxs,
   Int32List sums,
+
+  /// Per-bucket sums in mV/V of excitation (post board map, pre tare and
+  /// unit scale), when the accumulator was fed a board map (see
+  /// [BucketAccumulator]). Lets [reduceBlockBuckets] produce an EXACT bucket
+  /// mean for converted units: the net display map is affine in mV/V (see
+  /// [EnvelopeSeries.meanFromMvV]), while the raw-sum mean is off by the
+  /// board's nonlinearity. Null when unavailable -- diff accumulators,
+  /// board-less channels, and permanently after [BucketAccumulator]s see
+  /// their board map vanish or change mid-stream.
+  Float64List? sumMvV,
   int samples,
 });
 
 /// Mutable accumulator behind a [BucketSeries]: the ring of buckets and the
 /// ingest step, shared by live and session loading so both bucket identically.
 class BucketAccumulator {
-  BucketAccumulator({required this.bucketSize, required int numBuckets})
-    : mins = Int32List(numBuckets),
-      maxs = Int32List(numBuckets),
-      sums = Int32List(numBuckets);
+  /// [mvVOf] maps a raw sample to mV/V of excitation (the channel's current
+  /// board map); when present, the accumulator also sums in mV/V (see
+  /// [BucketSeries.sumMvV]). The sums mix data WITH the map: a mid-stream
+  /// board-map change makes already-aggregated sums stale, so armed
+  /// accumulators disarm permanently on a vanished map (and the live hub
+  /// disarms on a replaced map) -- never serving stale-mapped sums.
+  BucketAccumulator({
+    required this.bucketSize,
+    required int numBuckets,
+    double? Function(int raw)? mvVOf,
+  }) : mins = Int32List(numBuckets),
+       maxs = Int32List(numBuckets),
+       sums = Int32List(numBuckets),
+       _mvVOf = mvVOf,
+       _sumMvV = mvVOf == null ? null : Float64List(numBuckets);
 
   final int bucketSize;
   final Int32List mins;
   final Int32List maxs;
   final Int32List sums;
+
+  final double? Function(int raw)? _mvVOf;
+
+  /// The mV/V sums ring; null = unarmed (never had a map, or disarmed).
+  /// Contents are trustworthy under the same ring-wrap window as [sums].
+  Float64List? _sumMvV;
 
   int _samples = 0;
 
@@ -49,7 +76,8 @@ class BucketAccumulator {
   void add(int sampleIndex, int value) {
     assert(sampleIndex == _samples, 'samples must be ingested sequentially');
     final int slot = (sampleIndex ~/ bucketSize) % mins.length;
-    if (sampleIndex % bucketSize == 0) {
+    final bool atBucketStart = sampleIndex % bucketSize == 0;
+    if (atBucketStart) {
       mins[slot] = value;
       maxs[slot] = value;
       sums[slot] = value;
@@ -58,11 +86,35 @@ class BucketAccumulator {
       if (value > maxs[slot]) maxs[slot] = value;
       sums[slot] += value;
     }
+    final sumsMv = _sumMvV;
+    if (sumsMv != null) {
+      final mv = _mvVOf!(value);
+      if (mv == null) {
+        // The board map is gone: partially aggregated sums can never
+        // complete. One-way latch; reductions fall back to the raw-mean
+        // approximation (the pre-mV behavior), never to stale sums.
+        _sumMvV = null;
+      } else if (atBucketStart) {
+        sumsMv[slot] = mv;
+      } else {
+        sumsMv[slot] += mv;
+      }
+    }
     _samples = sampleIndex + 1;
   }
 
+  /// Stop serving mV/V sums (see the class doc). Re-armed only by [reset]:
+  /// a new stream aggregates from scratch under the then-current map.
+  void disarmMvV() => _sumMvV = null;
+
   /// Restart ingest from sample 0; aggregates are overwritten by later [add]s.
-  void reset() => _samples = 0;
+  void reset() {
+    _samples = 0;
+    // Re-arm with the CURRENT map (see [disarmMvV]); the old ring is reused
+    // -- stale slots are outside the validity window until rewritten, same
+    // as the int rings.
+    if (_sumMvV == null && _mvVOf != null) _sumMvV = Float64List(mins.length);
+  }
 
   /// Samples ingested so far (since construction/last [reset]).
   int get samples => _samples;
@@ -73,6 +125,7 @@ class BucketAccumulator {
     mins: mins,
     maxs: maxs,
     sums: sums,
+    sumMvV: _sumMvV,
     samples: _samples,
   );
 }
@@ -163,6 +216,17 @@ class EnvelopeSeries {
   /// Raw-space -> display-units map matching [sampleAt].
   final double Function(double raw) rawToDisplay;
 
+  /// The affine part of [rawToDisplay] (tare offset + unit scale) applied to
+  /// an mV/V bucket mean: mean(net) == (mean(mvV) - tareMvV) * scale. Exact
+  /// whenever [rawToDisplay] is affine in mV/V, which the net converter is,
+  /// because each sample passes through the SAME board map -- piecewise
+  /// kinks cancel inside the mean (see [BucketSeries.sumMvV]). Consumed only
+  /// together with [BucketSeries.sumMvV]; null means "no exact mean
+  /// available" and the raw-sum approximation is used instead (off by the
+  /// board nonlinearity). Raw unit: null (its map is affine in raw already,
+  /// so raw sums are exact).
+  final double Function(double meanMvV)? meanFromMvV;
+
   /// A series with bucket-accelerated reduction (see [reduceBlockBuckets]
   /// for the accuracy tradeoff).
   ///
@@ -172,14 +236,15 @@ class EnvelopeSeries {
   ///    diff extremes can't come from raw-value buckets, hence the dedicated
   ///    ingest-time diff buckets).
   ///  * [rawToDisplay] must agree with [sampleAt] outside gaps and be monotone
-  ///    nondecreasing, so bucket extremes map exactly to display extremes. It
-  ///    need NOT be affine: the bucket mean is off only by the board's
-  ///    nonlinearity (ppm-level, from the board map), confined to the average
-  ///    trace and invisible next to the envelope width.
+  ///    nondecreasing, so bucket extremes map exactly to display extremes.
+  ///  * [meanFromMvV], when present, must satisfy
+  ///    `meanFromMvV(mean f_i) == mean(rawToDisplay(r_i))` for any sample
+  ///    set (the affine-in-mV/V property in its doc).
   const EnvelopeSeries.bucketed({
     required this.sampleAt,
     required this.buckets,
     required this.rawToDisplay,
+    this.meanFromMvV,
   });
 }
 
@@ -268,6 +333,11 @@ BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
   double rawSum = 0;
   int rawCount = 0;
 
+  // Armed mV/V sums enable the exact bucket mean (see
+  // [EnvelopeSeries.meanFromMvV]); portion-scaled like the raw sums.
+  final Float64List? sumMvV = buckets.sumMvV;
+  double mvSum = 0;
+
   final int bFirst = cursor ~/ bs;
   final int bLast = (to - 1) ~/ bs;
   for (int b = bFirst; b <= bLast; b++) {
@@ -290,6 +360,7 @@ BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
     final int written = math.min(bs, samples - b * bs);
     if (c > written) c = written; // defensive; to <= samples in practice
     rawSum += buckets.sums[li] * c / written;
+    if (sumMvV != null) mvSum += sumMvV[li] * c / written;
     rawCount += c;
   }
 
@@ -302,12 +373,17 @@ BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
       mn = mx;
       mx = t;
     }
+    final meanFromMvV = series.meanFromMvV;
     merge((
       min: mn,
       max: mx,
-      // Assumes rawToDisplay is affine: sum(f(x_i)) == n * f(mean x). The
-      // piecewise board map breaks this by its nonlinearity, ppm-level.
-      sum: rawCount * rawToDisplay(rawSum / rawCount),
+      // Exact when the mV/V sums path is available: the net conversion is
+      // affine in mV/V (see EnvelopeSeries.meanFromMvV). Fallback maps the
+      // raw-sum mean -- exact for affine maps (raw unit; linear boards),
+      // off by the board's nonlinearity (ppm-level) for piecewise ones.
+      sum: (meanFromMvV != null && sumMvV != null)
+          ? rawCount * meanFromMvV(mvSum / rawCount)
+          : rawCount * rawToDisplay(rawSum / rawCount),
       count: rawCount,
     ));
   }
