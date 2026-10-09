@@ -485,9 +485,11 @@ class ChannelStatsCellPainter extends CustomPainter {
     for (final codeUnit in text.codeUnits) {
       final glyph = _atlas.glyph(codeUnit);
       _rects.add(glyph.src);
-      _transforms.add(
-        ui.RSTransform(1 / _atlas.dpr, 0, x - glyph.src.left / _atlas.dpr, 0),
-      );
+      // drawAtlas normalizes each src rect to the origin before applying the
+      // RSTransform (empirical on CanvasKit and VM — the dart:ui docs don't
+      // spell this out), so tx is just the cursor; subtracting src.left
+      // would shift every glyph left by its atlas position.
+      _transforms.add(ui.RSTransform(1 / _atlas.dpr, 0, x, 0));
       _colors.add(color);
       x += glyph.advance;
     }
