@@ -194,6 +194,33 @@ void main() {
         closeTo(1000 / board.sensitivityCountsPerMvV * 100, 1e-12),
       );
     });
+
+    test(
+      'netMeanMvVMap matches the net map of a mean (bucket-mean parity)',
+      () {
+        // The invariant bucketed reductions rely on (see
+        // EnvelopeSeries.meanFromMvV): the mV/V mean map must equal the
+        // mean of the per-sample net maps -- possible because the net
+        // conversion is affine in mV/V. Raws straddle several cal kinks.
+        final net = assigned.netMap(DisplayUnit.kgf)!;
+        final meanMap = assigned.netMeanMvVMap(DisplayUnit.kgf)!;
+        final raws = <double>[
+          alpha - 3e6,
+          alpha - 1e5,
+          alpha + 42.5,
+          alpha + 3e6,
+          120.0,
+        ];
+        final meanNet = raws.map(net).reduce((a, b) => a + b) / raws.length;
+        final meanMvV =
+            raws.map(board.mvVFromRaw).reduce((a, b) => a + b) / raws.length;
+        expect(meanMap(meanMvV), closeTo(meanNet, 1e-9));
+      },
+    );
+
+    test('netMeanMvVMap is unavailable for raw (raw sums are exact)', () {
+      expect(assigned.netMeanMvVMap(DisplayUnit.raw), isNull);
+    });
   });
 
   group('gross inverse (manual tare entry)', () {

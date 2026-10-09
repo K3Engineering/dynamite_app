@@ -59,9 +59,19 @@ class DataHub extends ChangeNotifier
   );
 
   /// Per-channel bucket aggregates of the raw values; see [valueBucketsFor].
-  final List<BucketAccumulator> _valueBuckets = List.generate(
+  /// Value buckets also sum in mV/V (armed accumulator, see
+  /// [BucketSeries.sumMvV]) so bucketed block means are exact for converted
+  /// units. The closure reads the CURRENT board map; it is valid because
+  /// calibration is read before the streaming reset, and a mid-stream
+  /// replace disarms (see [updateBoardCalibration]). `late final` so the
+  /// closure can reach [calibrationFor].
+  late final List<BucketAccumulator> _valueBuckets = List.generate(
     kAdcChannelCount,
-    (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
+    (i) => BucketAccumulator(
+      bucketSize: bucketSize,
+      numBuckets: numBuckets,
+      mvVOf: (raw) => calibrationFor(i).board?.mvVFromRaw(raw.toDouble()),
+    ),
     growable: false,
   );
 
@@ -377,6 +387,17 @@ class DataHub extends ChangeNotifier
     final prev = _boardCalibration;
     if (prev != null && _sameBoardCalibration(prev, calibration)) return;
     _boardCalibration = calibration;
+    if (prev != null) {
+      // Samples already streamed were bucket-summed in mV/V under the
+      // previous board map; a replaced map makes those sums stale (not
+      // merely an accuracy loss) -- disarm rather than ever mix maps. The
+      // buckets re-arm only on an ingest reset (a new stream). First read
+      // (prev == null) needs nothing: either no samples yet, or a
+      // board-less stream already self-disarmed its accumulators.
+      for (final acc in _valueBuckets) {
+        acc.disarmMvV();
+      }
+    }
     _calibrationVersion++;
     notifyListeners();
   }

@@ -17,6 +17,7 @@ import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 import '../models/load_cell.dart';
 import 'channel_palette.dart';
+import 'graph/block_reduction_cache.dart';
 import 'graph/graph_controller.dart';
 import 'graph/segmented_cache.dart';
 
@@ -110,6 +111,7 @@ final class _ConvertedChannel {
     required this.channel,
     required this.tare,
     required this.netMap,
+    required this.meanFromMvV,
     required this.diffMap,
     required this.sensitivityCountsPerMvV,
     required this.loadCell,
@@ -134,6 +136,7 @@ final class _ConvertedChannel {
       channel: channel,
       tare: converter.tare,
       netMap: net,
+      meanFromMvV: converter.netMeanMvVMap(unit),
       diffMap: diff,
       sensitivityCountsPerMvV:
           converter.calibration.board?.sensitivityCountsPerMvV,
@@ -148,6 +151,11 @@ final class _ConvertedChannel {
 
   /// Raw -> display value, net of tare ([ChannelConverter.netMap]).
   final double Function(double raw) netMap;
+
+  /// mV/V mean -> display mean, exact for converted units
+  /// ([ChannelConverter.netMeanMvVMap]); null for raw and unavailable
+  /// channels, where bucket means keep using the raw-sum approximation.
+  final double Function(double meanMvV)? meanFromMvV;
 
   /// Raw diff -> display diff, terminal-slope based ([ChannelConverter.diffMap]).
   final double Function(double rawDiff) diffMap;
@@ -187,6 +195,7 @@ class _Minimap extends StatefulWidget {
 
 class _MinimapState extends State<_Minimap> {
   final SegmentedGraphCache _cache = SegmentedGraphCache();
+  final BlockReductionCache _reductionCache = BlockReductionCache();
   final BakePump _bakePump = BakePump();
 
   @override
@@ -266,6 +275,7 @@ class _MinimapState extends State<_Minimap> {
                     colorScheme,
                     dpr,
                     _cache,
+                    _reductionCache,
                     _bakePump,
                   ),
                   size: Size.infinite,
@@ -288,6 +298,10 @@ class _MinimapPainter extends CustomPainter {
   final double _dpr;
   final SegmentedGraphCache _cache;
 
+  /// Completed-block reduction memo (see [BlockReductionCache]), owned by
+  /// the host [State] next to [_cache] (_dispose-free: pure Dart maps).
+  final BlockReductionCache _reductionCache;
+
   /// Drives the rolling segment bakes: a repaint listenable for this painter
   /// and the scheduler for extra frames when bake work remains (rolling
   /// bootstrap / staleness passes must complete even for static sources
@@ -302,6 +316,7 @@ class _MinimapPainter extends CustomPainter {
     this._colorScheme,
     this._dpr,
     this._cache,
+    this._reductionCache,
     this._bakePump,
   ) : super(repaint: Listenable.merge([_data.repaint, _ctrl, _bakePump]));
 
@@ -366,6 +381,7 @@ class _MinimapPainter extends CustomPainter {
     final workRemains = _paintEnvelopeDataLayer(
       canvas,
       cache: _cache,
+      reductionCache: _reductionCache,
       data: _data,
       channels: channels,
       tares: [for (final bound in channels) bound.tare],
@@ -546,8 +562,10 @@ class GraphWorkspace extends StatefulWidget {
 class _GraphWorkspaceState extends State<GraphWorkspace>
     with SingleTickerProviderStateMixin {
   final SegmentedGraphCache _forceCache = SegmentedGraphCache();
+  final BlockReductionCache _forceReductionCache = BlockReductionCache();
 
   SegmentedGraphCache? _derivCache;
+  BlockReductionCache? _derivReductionCache;
   final BakePump _bakePump = BakePump();
   final _LabelCache _labelCache = _LabelCache();
 
@@ -655,6 +673,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                     showXLabels: !widget.showDerivative,
                     vsync: _vsync,
                     cache: _forceCache,
+                    reductionCache: _forceReductionCache,
                     colorScheme: colorScheme,
                     dpr: dpr,
                     labels: _labelCache,
@@ -675,6 +694,8 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                       channels: convertedChannels,
                       vsync: _vsync,
                       cache: _derivCache ??= SegmentedGraphCache(),
+                      reductionCache: _derivReductionCache ??=
+                          BlockReductionCache(),
                       colorScheme: colorScheme,
                       dpr: dpr,
                       labels: _labelCache,
@@ -1642,6 +1663,8 @@ void _drawChannelEnvelope(
   required double viewSamples,
   required int totalSamples,
   required int firstUsableSample,
+  required int channelIndex,
+  required BlockReductionCache reductionCache,
   required EnvelopeSeries series,
   required double Function(double value) valueToY,
   required int clipEnvelopeSamples,
@@ -1683,9 +1706,19 @@ void _drawChannelEnvelope(
       'block [$drawStart, $sEnd) has bad size for blockSize $blockSize',
     );
 
-    final BlockReduction r = useBuckets
-        ? reduceBlockBuckets(series, drawStart, sEnd)
-        : reduceBlockExact(series.sampleAt, drawStart, sEnd);
+    // A block is immutable -- reducible once, cacheable forever -- only
+    // when it is complete (fully written at the data edge) and unclipped
+    // by the retention edge (a [drawStart] clip is re-derived every frame
+    // as the edge advances). See [BlockReductionCache].
+    final bool complete = drawStart == sStart && sEnd - sStart == blockSize;
+    final BlockReduction r = reductionCache.resolve(
+      channel: channelIndex,
+      blockIndex: k,
+      complete: complete,
+      reduce: () => useBuckets
+          ? reduceBlockBuckets(series, drawStart, sEnd)
+          : reduceBlockExact(series.sampleAt, drawStart, sEnd),
+    );
 
     if (r.count == 0) {
       // Break the polyline at a fully-dropped block: flush, then reset so the
@@ -1739,6 +1772,7 @@ EnvelopeSeries _taredEnvelopeSeries(
   sampleAt: (j) => bound.netMap(data.rawValueAt(bound.channel, j)),
   buckets: data.valueBucketsFor(bound.channel),
   rawToDisplay: bound.netMap,
+  meanFromMvV: bound.meanFromMvV,
 );
 
 /// Fold the raw extremes of [channels] over `[start, end)` (already clamped
@@ -1780,7 +1814,11 @@ EnvelopeSeries _taredEnvelopeSeries(
 /// display [unit], calibration version, and [tares] are destructive (never
 /// blitted once stale); the channel list is the remap key (stale segments keep
 /// blitting as ghosts while swept); a data-generation change clears the cache.
-/// See the staleness model on [SegmentedGraphCache].
+/// See the staleness model on [SegmentedGraphCache]. [reductionCache] memos
+/// completed-block reductions under the same identity (generation +
+/// destructive key + block grid; see [BlockReductionCache]), so the
+/// live-edge gap draws and (re)bakes reduce each block once instead of
+/// every frame.
 ///
 /// Returns true when bake work remains; the owner should schedule another
 /// frame.
@@ -1788,6 +1826,7 @@ EnvelopeSeries _taredEnvelopeSeries(
 bool _paintEnvelopeDataLayer(
   Canvas canvas, {
   required SegmentedGraphCache cache,
+  required BlockReductionCache reductionCache,
   required GraphDataSource data,
   required List<_ConvertedChannel> channels,
   required List<double?> tares,
@@ -1824,9 +1863,19 @@ bool _paintEnvelopeDataLayer(
     canvas.save();
     canvas.clipRect(Rect.fromLTWH(usableX, -1e9, 2e9, 2e9));
   }
+  // Share the destructive-key list with the reduction cache's upkeep (the
+  // identity model matches one-to-one, so both flip on the same change).
+  final destructiveKey = <Object?>[unit, data.calibrationVersion, ...tares];
+  reductionCache.prepare(
+    generation: data.dataGeneration,
+    destructiveKey: destructiveKey,
+    blockSize: blockSize,
+    viewBlockStart: (viewStart / blockSize).floor(),
+    viewBlockEnd: ((viewStart + viewSpan) / blockSize).ceil(),
+  );
   final workRemains = cache.paint(canvas, (
     generation: data.dataGeneration,
-    destructiveKey: [unit, data.calibrationVersion, ...tares],
+    destructiveKey: destructiveKey,
     remapKey: [for (final bound in channels) bound.channel],
     gw: gw,
     gh: gh,
@@ -1871,6 +1920,8 @@ bool _paintEnvelopeDataLayer(
           viewSamples: viewSpan,
           totalSamples: limit,
           firstUsableSample: firstUsableSample,
+          channelIndex: bound.channel,
+          reductionCache: reductionCache,
           series: seriesFor(bound),
           valueToY: valueToY,
           clipEnvelopeSamples: end,
@@ -2030,6 +2081,10 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// [_ConvertedChannel]).
   final List<_ConvertedChannel> _channels;
   final SegmentedGraphCache cache;
+
+  /// Completed-block reduction memo, owned and disposed by the host [State]
+  /// next to [cache] (see [BlockReductionCache]).
+  final BlockReductionCache reductionCache;
   final ColorScheme colorScheme;
 
   /// Device pixel ratio used when rasterizing segment textures.
@@ -2051,6 +2106,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     required List<_ConvertedChannel> channels,
     required Listenable vsync,
     required this.cache,
+    required this.reductionCache,
     required this.colorScheme,
     required this.dpr,
     required this.labels,
@@ -2265,6 +2321,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     final workRemains = _paintEnvelopeDataLayer(
       canvas,
       cache: cache,
+      reductionCache: reductionCache,
       data: _data,
       channels: _channels,
       tares: cacheKeyTares(),
@@ -2302,6 +2359,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     required super.channels,
     required super.vsync,
     required super.cache,
+    required super.reductionCache,
     required super.colorScheme,
     required super.dpr,
     required super.labels,
@@ -2412,6 +2470,7 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     required super.channels,
     required super.vsync,
     required super.cache,
+    required super.reductionCache,
     required super.colorScheme,
     required super.dpr,
     required super.labels,

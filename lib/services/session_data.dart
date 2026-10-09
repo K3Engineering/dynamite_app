@@ -76,7 +76,18 @@ class SessionData implements GraphDataSource {
         : ((sampleCount - 1) ~/ bucketSize) + 1;
     _valueBuckets = List.generate(
       channels.length,
-      (_) => BucketAccumulator(bucketSize: bucketSize, numBuckets: numBuckets),
+      // mV/V sums from the session's recorded calibration snapshot
+      // (immutable per session, so no disarm handling is needed) for exact
+      // bucket means; see BucketSeries.sumMvV. Board-less channels bucket
+      // raw-only.
+      (i) => BucketAccumulator(
+        bucketSize: bucketSize,
+        numBuckets: numBuckets,
+        mvVOf: switch (calibrations[i].board) {
+          final board? => (raw) => board.mvVFromRaw(raw.toDouble()),
+          null => null,
+        },
+      ),
     );
     _diffBuckets = List.generate(
       channels.length,
