@@ -12,6 +12,7 @@ import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/models/feed_health.dart';
 import 'package:dynamite_app/services/rig_state.dart';
+import 'package:dynamite_app/widgets/channel_stats_table.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
 /// Widget test for the live stats' Peak row: it reports the max over the
@@ -53,21 +54,29 @@ void main() {
       ),
     );
 
-    // All four channels fed identically: one value per cell.
-    expect(find.text('+900'), findsNWidgets(kAdcChannelCount)); // Peak row
-    expect(find.text('+700'), findsNWidgets(kAdcChannelCount)); // Live row
+    // All four channels fed identically: one value per cell. Values are
+    // painted, not Text widgets, so count cell painters by their text.
+    int painted(String text) => tester
+        .widgetList<CustomPaint>(find.byType(CustomPaint))
+        .where((w) => w.painter is ChannelStatsCellPainter)
+        .map((w) => w.painter! as ChannelStatsCellPainter)
+        .where((p) => p.text == text)
+        .length;
+
+    expect(painted('+900'), kAdcChannelCount); // Peak row
+    expect(painted('+700'), kAdcChannelCount); // Live row
 
     // Second half in view: the 900s are scrolled out of the window.
     ctrl.applyWindow(500, 500, hub.totalSamples, hub.oldestSample);
     await tester.pump();
-    expect(find.text('+900'), findsNothing);
-    expect(find.text('+700'), findsNWidgets(kAdcChannelCount * 2));
+    expect(painted('+900'), 0);
+    expect(painted('+700'), kAdcChannelCount * 2);
 
     // First half in view (parked, not at the live edge): the peak returns.
     ctrl.applyWindow(0, 500, hub.totalSamples, hub.oldestSample);
     await tester.pump();
     expect(ctrl.isLive, isFalse);
-    expect(find.text('+900'), findsNWidgets(kAdcChannelCount));
-    expect(find.text('+700'), findsNWidgets(kAdcChannelCount));
+    expect(painted('+900'), kAdcChannelCount);
+    expect(painted('+700'), kAdcChannelCount);
   });
 }
