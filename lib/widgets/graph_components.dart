@@ -266,19 +266,27 @@ class _MinimapState extends State<_Minimap> {
                 behavior: HitTestBehavior.opaque,
                 onTapDown: (d) => _onMinimapTap(d, graphWidth),
                 onHorizontalDragUpdate: (d) => _onMinimapDrag(d, graphWidth),
-                child: CustomPaint(
-                  foregroundPainter: _MinimapPainter(
-                    widget.dataSource,
-                    widget.unit,
-                    widget.graphCtrl,
-                    widget.channels,
-                    colorScheme,
-                    dpr,
-                    _cache,
-                    _reductionCache,
-                    _bakePump,
+                child: RepaintBoundary(
+                  // Without a boundary the minimap shares a layer with the
+                  // pane painters, whose vsync listenable dirties it every
+                  // ticker frame while rolling live; that re-runs this
+                  // painter (incl. its whole-history bake sliver) per frame
+                  // though its own repaint triggers are packet-rate
+                  // ([_MinimapPainter]'s listenable merge).
+                  child: CustomPaint(
+                    foregroundPainter: _MinimapPainter(
+                      widget.dataSource,
+                      widget.unit,
+                      widget.graphCtrl,
+                      widget.channels,
+                      colorScheme,
+                      dpr,
+                      _cache,
+                      _reductionCache,
+                      _bakePump,
+                    ),
+                    size: Size.infinite,
                   ),
-                  size: Size.infinite,
                 ),
               ),
             ),
