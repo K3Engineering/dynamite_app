@@ -389,11 +389,21 @@ class SegmentedGraphCache {
       _sweepConfigStaleSegment(env) ||
       _refreshStalestSegment(env);
 
-  /// Priority 1: bake the widest uncovered gap past the threshold, left
-  /// aligned so a gap touching the data edge leaves the sub-threshold
-  /// sliver at the edge. Left neighbors are absorbed while the merged bake
-  /// stays within one target width, so the live-edge segment grows in place
-  /// (one bake per sliver) instead of accumulating sliver-wide strips.
+  /// Priority 1: bake the widest uncovered gap past the threshold, right
+  /// aligned: a bake is paid back per frame the range stays in view, and in
+  /// a moving window (live follow, pans) the left side exits first. Also, under
+  /// a sustained arrival rate above the bake budget, left alignment spends
+  /// every bake at the exiting edge while the whole window vector-draws.
+  /// Gaps up to one target span get the same range under either alignment
+  /// (the common case), so only over-wide gaps change fill order:
+  /// rightmost-first, matching the config sweep (freshest data converges
+  /// first). A remainder left of the bake too narrow to ever re-cross the
+  /// threshold is swallowed into the bake: unlike a leftover at the data
+  /// edge, which arrival grows back to the threshold by itself, one abutting
+  /// existing coverage would vector-draw forever. Left neighbors are
+  /// absorbed while the merged bake stays within one target width, so the
+  /// live-edge segment grows in place (one bake per sliver) instead of
+  /// accumulating sliver-wide strips.
   bool _bakeWidestGap(_BakeEnv env) {
     (int, int)? bakeGap;
     double widestPx = kSegmentGapBakePx;
@@ -406,8 +416,11 @@ class SegmentedGraphCache {
     }
     if (bakeGap == null) return false;
 
-    int start = bakeGap.$1;
-    final int end = math.min(bakeGap.$2, start + env.targetSpan);
+    final int end = bakeGap.$2;
+    int start = math.max(bakeGap.$1, end - env.targetSpan);
+    if ((start - bakeGap.$1) * env.pps <= kSegmentGapBakePx) {
+      start = bakeGap.$1; // swallow the orphaned remainder
+    }
     if (end <= start) return false;
     assert(
       end <= env.bakeable,
