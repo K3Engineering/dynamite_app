@@ -79,19 +79,21 @@ void main() {
   tearDown(() => h.dispose());
 
   group('SegmentedGraphCache bootstrap fill', () {
-    test('spends one bake per frame until the view is covered', () {
-      // 400 uncovered samples at 1 px/sample => two 200-sample target bakes.
-      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isTrue);
-      expect(h.bakes, [(start: 0, end: 200, texW: 200, onFrameCanvas: false)]);
-      // The still-uncovered remainder is vector-drawn on the frame canvas.
-      expect(h.gapDraws, [
-        (start: 200, end: 400, texW: 200, onFrameCanvas: true),
-      ]);
-
+    test('spends one bake per frame until the view is covered, rightmost '
+        'first', () {
+      // 400 uncovered samples at 1 px/sample => two 200-sample target bakes;
+      // an over-wide gap bakes its RIGHT slice first (see _bakeWidestGap).
       expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isTrue);
       expect(h.bakes, [
         (start: 200, end: 400, texW: 200, onFrameCanvas: false),
       ]);
+      // The still-uncovered remainder is vector-drawn on the frame canvas.
+      expect(h.gapDraws, [
+        (start: 0, end: 200, texW: 200, onFrameCanvas: true),
+      ]);
+
+      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isTrue);
+      expect(h.bakes, [(start: 0, end: 200, texW: 200, onFrameCanvas: false)]);
 
       // Fully covered and fresh: no bake work remains, no gap draws.
       expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isFalse);
@@ -102,9 +104,9 @@ void main() {
   group('SegmentedGraphCache live-edge sliver', () {
     test('a sub-kSegmentGapBakePx sliver is drawn direct every frame, never '
         'baked', () {
-      // Cover [0, 200); the remaining 20 samples (20px < 40px threshold)
-      // stay a vector-drawn sliver.
-      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 220), isTrue);
+      // Exactly cover [0, 200); 20 trickling samples then form a 20px sliver
+      // past the coverage (< 40px threshold), drawn direct from then on.
+      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 200), isTrue);
       expect(h.bakes.single.start, 0);
       expect(h.bakes.single.end, 200);
 
@@ -122,7 +124,7 @@ void main() {
 
     test('an outgrown sliver bake absorbs its left neighbor instead of '
         'accumulating strips', () {
-      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 250); // bakes [0,200)
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 200); // bakes [0,200)
       h.paint(viewStart: 0, viewSpan: 400, totalSamples: 250); // [200,250)
       expect(h.bakes.single, (
         start: 200,
@@ -141,6 +143,28 @@ void main() {
         texW: 100,
         onFrameCanvas: false,
       ));
+    });
+
+    test('a wide-gap bake swallows a sub-threshold remainder instead of '
+        'orphaning it', () {
+      h.paint(viewStart: 0, viewSpan: 600, gw: 600, totalSamples: 200);
+
+      // 230 samples arrive at once: the gap's right slice would be
+      // [230, 430), leaving a 30px remainder (< threshold) next to the
+      // [0, 200) coverage. Narrower than the threshold it needs to ever
+      // bake, it would vector-draw forever -- so the bake widens to cover
+      // the whole gap (230 samples > one 200-sample target span).
+      expect(
+        h.paint(viewStart: 0, viewSpan: 600, gw: 600, totalSamples: 430),
+        isTrue,
+      );
+      expect(h.bakes.single, (
+        start: 200,
+        end: 430,
+        texW: 230,
+        onFrameCanvas: false,
+      ));
+      expect(h.gapDraws, isEmpty);
     });
   });
 
@@ -281,10 +305,12 @@ void main() {
         h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, generation: 1),
         isTrue,
       );
-      // Re-baking from scratch, left aligned (bootstrap fill order).
-      expect(h.bakes, [(start: 0, end: 200, texW: 200, onFrameCanvas: false)]);
+      // Re-baking from scratch, right aligned (bootstrap fill order).
+      expect(h.bakes, [
+        (start: 200, end: 400, texW: 200, onFrameCanvas: false),
+      ]);
       expect(h.gapDraws, [
-        (start: 200, end: 400, texW: 200, onFrameCanvas: true),
+        (start: 0, end: 200, texW: 200, onFrameCanvas: true),
       ]);
     });
 
@@ -327,9 +353,9 @@ void main() {
           ),
           isTrue,
         );
-        expect(h.bakes.single.start, 0);
+        expect(h.bakes.single.start, 200);
         expect(h.gapDraws, [
-          (start: 200, end: 400, texW: 200, onFrameCanvas: true),
+          (start: 0, end: 200, texW: 200, onFrameCanvas: true),
         ]);
       },
     );
@@ -348,7 +374,7 @@ void main() {
       fill();
       h.cache.clear();
       expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isTrue);
-      expect(h.bakes.single.start, 0);
+      expect(h.bakes.single.start, 200); // right slice of the wide gap
     });
   });
 
@@ -516,19 +542,19 @@ void main() {
       // Jump far away: margin is kSegmentEvictionMargin * targetSpan
       // (8 * 200 = 1600 samples), so the [0, 400) segments are dropped.
       h.paint(viewStart: 4000, viewSpan: 400, totalSamples: 4400);
-      expect(h.bakes.single.start, 4000);
+      expect(h.bakes.single.start, 4200); // right slice of the wide gap
 
       // Back at the origin: the old coverage is gone and must re-bake.
       expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 4400), isTrue);
-      expect(h.bakes.single.start, 0);
+      expect(h.bakes.single.start, 200);
     });
   });
 
   group('SegmentedGraphCache bake horizon', () {
     test('the span past the horizon is never baked and vector-draws every '
         'frame', () {
-      // 390 bakeable of 400 total: bakes cover [0, 390), the [390, 400)
-      // tail stays a direct draw forever.
+      // 390 bakeable of 400 total: bakes cover [0, 390) right-to-left, the
+      // [390, 400) tail stays a direct draw forever.
       expect(
         h.paint(
           viewStart: 0,
@@ -538,13 +564,16 @@ void main() {
         ),
         isTrue,
       );
-      expect(h.bakes.single.end, lessThanOrEqualTo(390));
-      expect(h.gapDraws.single, (
-        start: 200,
-        end: 400,
+      expect(h.bakes.single, (
+        start: 190,
+        end: 390,
         texW: 200,
-        onFrameCanvas: true,
+        onFrameCanvas: false,
       ));
+      expect(h.gapDraws, [
+        (start: 0, end: 190, texW: 190, onFrameCanvas: true),
+        (start: 390, end: 400, texW: 10, onFrameCanvas: true),
+      ]);
 
       expect(
         h.paint(
@@ -555,7 +584,12 @@ void main() {
         ),
         isTrue,
       );
-      expect(h.bakes.single.end, 390);
+      expect(h.bakes.single, (
+        start: 0,
+        end: 190,
+        texW: 190,
+        onFrameCanvas: false,
+      ));
       expect(h.gapDraws.single, (
         start: 390,
         end: 400,
@@ -598,7 +632,8 @@ void main() {
 
       // Data arrives: the horizon passes the old tail, which is now baked
       // like any other uncovered range -- here grown past the gap-bake
-      // threshold, absorbing the [200, 340) strip in one target-width bake.
+      // threshold. It bakes as its own 60-sample segment: the [140, 340)
+      // neighbor is too far left to absorb within one target width.
       expect(
         h.paint(
           viewStart: 0,
@@ -609,9 +644,9 @@ void main() {
         isTrue,
       );
       expect(h.bakes.single, (
-        start: 200,
+        start: 340,
         end: 400,
-        texW: 200,
+        texW: 60,
         onFrameCanvas: false,
       ));
     });
