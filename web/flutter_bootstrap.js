@@ -22,9 +22,13 @@ function startEngine() {
       },
       // Loads canvaskit/wimp.js + wimp.wasm (impeller-based skwasm) instead
       // of the skia-based skwasm module; only used when the build is wasm.
-      // flutter_tools has no CLI flag for this. Our SDK (3.47.5) pins wimp
-      // to single-threaded (skwasm_loader.js); multithreaded wimp only
-      // exists on the beta/main channels.
+      // flutter_tools has no CLI flag for this.
+      //
+      // Skwasm picks the module, not the thread count: this SDK's loader
+      // hard-codes skwasmSingleThreaded when enableWimp is set, because
+      // multithreaded wimp is unstable (flutter#178749). So wimp rasterizes
+      // on the main thread and does not need a cross-origin-isolated page;
+      // `web/_headers` (COOP/COEP) is a deployment concern, not this flag's.
       enableWimp: true,
     },
     onEntrypointLoaded: async function (engineInitializer) {
