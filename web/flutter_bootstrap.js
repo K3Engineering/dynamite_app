@@ -20,6 +20,12 @@ function startEngine() {
         webkit: true,
         gecko: true,
       },
+      // Loads canvaskit/wimp.js + wimp.wasm (impeller-based skwasm) instead
+      // of the skia-based skwasm module; only used when the build is wasm.
+      // flutter_tools has no CLI flag for this. Our SDK (3.47.5) pins wimp
+      // to single-threaded (skwasm_loader.js); multithreaded wimp only
+      // exists on the beta/main channels.
+      enableWimp: true,
     },
     onEntrypointLoaded: async function (engineInitializer) {
       const status = document.getElementById('status');
