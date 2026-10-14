@@ -385,14 +385,14 @@ void main() {
       h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
 
       // yMax 100 -> 120 is a 16.7% y-scale drift (> 8%): both segments are
-      // stale, refreshed round-robin within the bake budget.
+      // stale, refreshed rightmost-first within the bake budget.
       expect(
         h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, yMax: 120),
         isTrue,
       );
       expect(h.bakes.single, (
-        start: 0,
-        end: 200,
+        start: 200,
+        end: 400,
         texW: 200,
         onFrameCanvas: false,
       ));
@@ -401,7 +401,7 @@ void main() {
         h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, yMax: 120),
         isTrue,
       );
-      expect(h.bakes.single.start, 200);
+      expect(h.bakes.single.start, 0);
 
       // Both refreshed under the new mapping: steady state again.
       expect(
@@ -470,20 +470,20 @@ void main() {
     test('suppression also applies to pure y-drift (no config change)', () {
       fill();
       // Same collapse without a key bump: the drift refresh owns the
-      // re-bake (worst-first, left on ties); the still-stretched segment's
-      // range draws nothing.
+      // re-bake (rightmost-first); the still-stretched segment's range
+      // draws nothing.
       expect(
         h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, yMax: 5),
         isTrue,
       );
-      expect(h.bakes.single.start, 0);
+      expect(h.bakes.single.start, 200);
       expect(h.gapDraws, isEmpty);
 
       expect(
         h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, yMax: 5),
         isTrue,
       );
-      expect(h.bakes.single.start, 200);
+      expect(h.bakes.single.start, 0);
       expect(h.gapDraws, isEmpty);
     });
 
@@ -649,6 +649,214 @@ void main() {
         texW: 60,
         onFrameCanvas: false,
       ));
+    });
+  });
+
+  group('SegmentedGraphCache staleness quiescence', () {
+    // These tests pin one no-progress loop shape each that the staleness
+    // guards (SegmentedGraphCache._isStale / ._refreshEnd) exist to kill:
+    // assert the cache converges, then stays converged (bake pump idle).
+    void expectQuiescent({
+      required double viewStart,
+      required double viewSpan,
+      required int totalSamples,
+      double gw = 400,
+    }) {
+      for (int i = 0; i < 2; i++) {
+        expect(
+          h.paint(
+            viewStart: viewStart,
+            viewSpan: viewSpan,
+            totalSamples: totalSamples,
+            gw: gw,
+          ),
+          isFalse,
+        );
+        expect(h.calls, isEmpty);
+      }
+    }
+
+    test('a pass-1 swallow bake (tile born past one target) goes '
+        'quiescent', () {
+      h.paint(viewStart: 0, viewSpan: 600, gw: 600, totalSamples: 200);
+      // The gap bake swallows its 30 px remainder: [200, 430) is born at
+      // target + 30 px. A width-threshold stale predicate would re-bake
+      // this range forever; the progress guards leave it alone.
+      h.paint(viewStart: 0, viewSpan: 600, gw: 600, totalSamples: 430);
+      expect(h.bakes.single, (
+        start: 200,
+        end: 430,
+        texW: 230,
+        onFrameCanvas: false,
+      ));
+
+      expectQuiescent(viewStart: 0, viewSpan: 600, totalSamples: 430, gw: 600);
+    });
+
+    test('rounding-oversized full-target tiles never re-trigger; a narrow '
+        'tile with a right neighbor extends to exactly one target span', () {
+      // gw 650 / span 100 => pps 6.5 => targetSpan rounds to 31 samples,
+      // i.e. full-target tiles are born at 201.5 px, slightly PAST the
+      // nominal target. Their clamp leftover is exactly zero samples, so
+      // no stale predicate may fire on them.
+      h.paint(viewStart: 0, viewSpan: 100, gw: 650, totalSamples: 100);
+      expect(h.bakes.single, (
+        start: 69,
+        end: 100,
+        texW: 202,
+        onFrameCanvas: false,
+      ));
+      h.paint(viewStart: 0, viewSpan: 100, gw: 650, totalSamples: 100);
+      expect(h.bakes.single, (
+        start: 38,
+        end: 69,
+        texW: 202,
+        onFrameCanvas: false,
+      ));
+      h.paint(viewStart: 0, viewSpan: 100, gw: 650, totalSamples: 100);
+      expect(h.bakes.single, (
+        start: 7,
+        end: 38,
+        texW: 202,
+        onFrameCanvas: false,
+      ));
+      // The [0, 7) gap (45.5 px) still crosses the bake threshold.
+      h.paint(viewStart: 0, viewSpan: 100, gw: 650, totalSamples: 100);
+      expect(h.bakes.single, (
+        start: 0,
+        end: 7,
+        texW: 46,
+        onFrameCanvas: false,
+      ));
+      // [0, 7) is meaningfully narrow (45.5 px < target/2) with a right
+      // neighbor: it extends to exactly one target span (31 samples),
+      // leaving the partially overlapped [7, 38) in place.
+      h.paint(viewStart: 0, viewSpan: 100, gw: 650, totalSamples: 100);
+      expect(h.bakes.single, (
+        start: 0,
+        end: 31,
+        texW: 202,
+        onFrameCanvas: false,
+      ));
+      expect(h.gapDraws, isEmpty);
+
+      expectQuiescent(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 650);
+    });
+
+    test('a sub-0.5-target tile ending exactly at the bake horizon stays '
+        'put (nothing to its right to claim)', () {
+      // [0, 7) is 45.5 px wide and ends at the horizon: extending it is
+      // impossible, so no amount of arrival-free frames may re-bake it.
+      h.paint(viewStart: 0, viewSpan: 100, gw: 650, totalSamples: 7);
+      expect(h.bakes.single, (
+        start: 0,
+        end: 7,
+        texW: 46,
+        onFrameCanvas: false,
+      ));
+
+      expectQuiescent(viewStart: 0, viewSpan: 100, totalSamples: 7, gw: 650);
+    });
+
+    test('a sub-0.5-target tile with a right neighbor extends to exactly '
+        'one target span, then quiesces', () {
+      h.paint(viewStart: 0, viewSpan: 600, gw: 600, totalSamples: 150);
+      // The data jump leaves a 60 px sliver next to the coverage when the
+      // gap fills right-aligned.
+      h.paint(viewStart: 0, viewSpan: 600, gw: 600, totalSamples: 410);
+      expect(h.bakes.single, (
+        start: 210,
+        end: 410,
+        texW: 200,
+        onFrameCanvas: false,
+      ));
+      // The 60-sample sliver crosses the gap threshold and bakes as its
+      // own narrow segment; the live-edge absorb is capped at one target
+      // width, so it cannot merge with [0, 150).
+      h.paint(viewStart: 0, viewSpan: 600, gw: 600, totalSamples: 410);
+      expect(h.bakes.single, (
+        start: 150,
+        end: 210,
+        texW: 60,
+        onFrameCanvas: false,
+      ));
+      // 60 px < target/2 with room to its right: extend to exactly one
+      // target span, leaving the partially overlapped [210, 410) neighbor
+      // in place.
+      h.paint(viewStart: 0, viewSpan: 600, gw: 600, totalSamples: 410);
+      expect(h.bakes.single, (
+        start: 150,
+        end: 350,
+        texW: 200,
+        onFrameCanvas: false,
+      ));
+      expect(h.gapDraws, isEmpty);
+
+      expectQuiescent(viewStart: 0, viewSpan: 600, totalSamples: 410, gw: 600);
+    });
+
+    test('an oversized tile converges in two small bakes (clamp frame, '
+        'then gap frame) instead of one whole-tile rebake', () {
+      // gw 400 => pps 4, 50-sample target span. Growing gw to 760
+      // stretches each tile to 380 px (~1.9 targets) with a 26-sample
+      // span (~198 px).
+      h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100);
+      h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100);
+
+      // Frame 1: the staleness scan clamps the rightmost tile to one
+      // target span; its >kSegmentGapBakePx remainder vector-draws at
+      // exact current quality this frame instead of being rebaked whole.
+      expect(
+        h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 760),
+        isTrue,
+      );
+      expect(h.bakes.single, (
+        start: 50,
+        end: 76,
+        texW: 198,
+        onFrameCanvas: false,
+      ));
+      expect(h.gapDraws.single, (
+        start: 76,
+        end: 100,
+        texW: 183,
+        onFrameCanvas: true,
+      ));
+
+      // Frame 2: the clamp remainder has gap priority over the left
+      // tile's staleness and refills right-aligned.
+      h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 760);
+      expect(h.bakes.single, (
+        start: 76,
+        end: 100,
+        texW: 183,
+        onFrameCanvas: false,
+      ));
+      expect(h.gapDraws, isEmpty);
+
+      // Frames 3-4: the left tile converges the same way.
+      h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 760);
+      expect(h.bakes.single, (
+        start: 0,
+        end: 26,
+        texW: 198,
+        onFrameCanvas: false,
+      ));
+      expect(h.gapDraws.single, (
+        start: 26,
+        end: 50,
+        texW: 183,
+        onFrameCanvas: true,
+      ));
+      h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 760);
+      expect(h.bakes.single, (
+        start: 26,
+        end: 50,
+        texW: 183,
+        onFrameCanvas: false,
+      ));
+
+      expectQuiescent(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 760);
     });
   });
 
