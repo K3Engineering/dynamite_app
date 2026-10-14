@@ -255,9 +255,9 @@ class SegmentedGraphCache {
   ///
   /// bakeableSamples caps segment coverage: no bake ever ends past it. See
   /// the live-edge invariant in the file header; renderers pass the data
-  /// edge minus the span their tail needs to be final (the envelope layer's
-  /// join block past a segment end: up to two block sizes, see joinBlockEnd
-  /// in graph_components.dart).
+  /// edge minus the join slack needed to make their join block final (the
+  /// envelope layer's join block past a segment end: up to two block sizes,
+  /// see joinBlockEnd in graph_components.dart).
   ///
   /// Returns true when a bake happened this frame; the owner should then
   /// schedule another frame so rolling bakes continue (static sources never
