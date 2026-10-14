@@ -654,8 +654,9 @@ void main() {
 
   group('SegmentedGraphCache staleness quiescence', () {
     // These tests pin one no-progress loop shape each that the staleness
-    // guards (SegmentedGraphCache._isStale / ._refreshEnd) exist to kill:
-    // assert the cache converges, then stays converged (bake pump idle).
+    // guards (SegmentedGraphCache._stalePlan / ._planRefresh) exist to
+    // kill: assert the cache converges, then stays converged (bake pump
+    // idle).
     void expectQuiescent({
       required double viewStart,
       required double viewSpan,
@@ -694,11 +695,10 @@ void main() {
     });
 
     test('rounding-oversized full-target tiles never re-trigger; a narrow '
-        'tile with a right neighbor extends to exactly one target span', () {
+        'tile at the left edge merges with its right neighbor', () {
       // gw 650 / span 100 => pps 6.5 => targetSpan rounds to 31 samples,
       // i.e. full-target tiles are born at 201.5 px, slightly PAST the
-      // nominal target. Their clamp leftover is exactly zero samples, so
-      // no stale predicate may fire on them.
+      // nominal target. No stale predicate may fire on them.
       h.paint(viewStart: 0, viewSpan: 100, gw: 650, totalSamples: 100);
       expect(h.bakes.single, (
         start: 69,
@@ -728,14 +728,14 @@ void main() {
         texW: 46,
         onFrameCanvas: false,
       ));
-      // [0, 7) is meaningfully narrow (45.5 px < target/2) with a right
-      // neighbor: it extends to exactly one target span (31 samples),
-      // leaving the partially overlapped [7, 38) in place.
+      // [0, 7) is meaningfully narrow (45.5 px < target/2) with an abutting
+      // right neighbor it cannot outgrow into: it swallows [7, 38) whole
+      // (38 samples, 247 px <= 1.5 targets), keeping the cache disjoint.
       h.paint(viewStart: 0, viewSpan: 100, gw: 650, totalSamples: 100);
       expect(h.bakes.single, (
         start: 0,
-        end: 31,
-        texW: 202,
+        end: 38,
+        texW: 247,
         onFrameCanvas: false,
       ));
       expect(h.gapDraws, isEmpty);
@@ -758,8 +758,8 @@ void main() {
       expectQuiescent(viewStart: 0, viewSpan: 100, totalSamples: 7, gw: 650);
     });
 
-    test('a sub-0.5-target tile with a right neighbor extends to exactly '
-        'one target span, then quiesces', () {
+    test('a sub-0.5-target tile swallows its abutting left neighbor in one '
+        'bake, then quiesces', () {
       h.paint(viewStart: 0, viewSpan: 600, gw: 600, totalSamples: 150);
       // The data jump leaves a 60 px sliver next to the coverage when the
       // gap fills right-aligned.
@@ -772,7 +772,7 @@ void main() {
       ));
       // The 60-sample sliver crosses the gap threshold and bakes as its
       // own narrow segment; the live-edge absorb is capped at one target
-      // width, so it cannot merge with [0, 150).
+      // width, so it cannot merge with [0, 150) there.
       h.paint(viewStart: 0, viewSpan: 600, gw: 600, totalSamples: 410);
       expect(h.bakes.single, (
         start: 150,
@@ -780,14 +780,14 @@ void main() {
         texW: 60,
         onFrameCanvas: false,
       ));
-      // 60 px < target/2 with room to its right: extend to exactly one
-      // target span, leaving the partially overlapped [210, 410) neighbor
-      // in place.
+      // 60 px < target/2: the refresh swallows the abutting [0, 150)
+      // (210 samples, 210 px <= 1.5 targets) instead of extending [150,
+      // 210)'s end over part of [210, 410) as an overlap.
       h.paint(viewStart: 0, viewSpan: 600, gw: 600, totalSamples: 410);
       expect(h.bakes.single, (
-        start: 150,
-        end: 350,
-        texW: 200,
+        start: 0,
+        end: 210,
+        texW: 210,
         onFrameCanvas: false,
       ));
       expect(h.gapDraws, isEmpty);
@@ -825,32 +825,16 @@ void main() {
       expectQuiescent(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 760);
     });
 
-    test('a past-2-target tile splits: clamp bake, gap refill, narrow '
-        'consolidation', () {
+    test('a past-2-target tile splits right-anchored: the remainder refills '
+        'as gaps marching left, then merges its left-cap sliver', () {
       // One tile [0, 100) at 200 px (gw 200, pps 2, 100-sample target
       // span). gw 450 (pps 4.5, 44-sample target span) stretches it to
-      // 450 px: the refresh clamps to one target span and the remainder
-      // refills as a gap over the following frames.
+      // 450 px: the refresh bakes the RIGHTMOST target span.
       h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 200);
       expectQuiescent(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 200);
 
-      // Frame 1: clamp [0, 44), and the [44, 100) remainder vector-draws.
-      h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 450);
-      expect(h.bakes.single, (
-        start: 0,
-        end: 44,
-        texW: 198,
-        onFrameCanvas: false,
-      ));
-      expect(h.gapDraws.single, (
-        start: 44,
-        end: 100,
-        texW: 252,
-        onFrameCanvas: true,
-      ));
-
-      // Frame 2: the 252 px gap refills right-aligned at one target span;
-      // its 54 px left remainder exceeds the swallow threshold.
+      // Frame 1: split [56, 100) (44 samples, 198 px); the [0, 56)
+      // remainder vector-draws.
       h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 450);
       expect(h.bakes.single, (
         start: 56,
@@ -859,8 +843,24 @@ void main() {
         onFrameCanvas: false,
       ));
       expect(h.gapDraws.single, (
-        start: 44,
+        start: 0,
         end: 56,
+        texW: 252,
+        onFrameCanvas: true,
+      ));
+
+      // Frame 2: the 252 px gap refills right-aligned at one target span;
+      // its 54 px left remainder exceeds the swallow threshold.
+      h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 450);
+      expect(h.bakes.single, (
+        start: 12,
+        end: 56,
+        texW: 198,
+        onFrameCanvas: false,
+      ));
+      expect(h.gapDraws.single, (
+        start: 0,
+        end: 12,
         texW: 54,
         onFrameCanvas: true,
       ));
@@ -868,26 +868,115 @@ void main() {
       // Frame 3: the 54 px remainder crosses the gap threshold.
       h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 450);
       expect(h.bakes.single, (
-        start: 44,
-        end: 56,
+        start: 0,
+        end: 12,
         texW: 54,
         onFrameCanvas: false,
       ));
       expect(h.gapDraws, isEmpty);
 
-      // Frame 4: the 54 px strip is narrow with room to its right; it
-      // extends to one target span, partially overlapping [56, 100)
-      // (left-wins clip at blit time).
+      // Frame 4: the 54 px strip [0, 12) is narrow with no left neighbor
+      // and no uncovered room: it swallows [12, 56) whole (56 samples,
+      // 252 px <= 1.5 targets).
       h.paint(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 450);
       expect(h.bakes.single, (
-        start: 44,
-        end: 88,
-        texW: 198,
+        start: 0,
+        end: 56,
+        texW: 252,
         onFrameCanvas: false,
       ));
       expect(h.gapDraws, isEmpty);
 
       expectQuiescent(viewStart: 0, viewSpan: 100, totalSamples: 100, gw: 450);
+    });
+  });
+
+  group('SegmentedGraphCache zoom sweep consolidation', () {
+    test('zoom-out: narrow-tile era collapses into 1.5-target tiles at '
+        '~3 tiles per bake, rightmost-first', () {
+      // 1000 samples at gw 1000 (pps 1) fill as five 200-sample tiles.
+      for (int i = 0; i < 5; i++) {
+        expect(
+          h.paint(viewStart: 0, viewSpan: 1000, gw: 1000, totalSamples: 1000),
+          isTrue,
+        );
+      }
+      expect(
+        h.paint(viewStart: 0, viewSpan: 1000, gw: 1000, totalSamples: 1000),
+        isFalse,
+      );
+
+      // Zoom out to span 2500 (pps 0.4, 500-sample target span): the old
+      // tiles shrink to 80 px each. The exposed range refills first (gap
+      // priority, right-aligned)...
+      const view = (
+        viewStart: 0.0,
+        viewSpan: 2500.0,
+        gw: 1000.0,
+        totalSamples: 2500,
+      );
+      h.paint(
+        viewStart: view.viewStart,
+        viewSpan: view.viewSpan,
+        gw: view.gw,
+        totalSamples: view.totalSamples,
+      );
+      expect(h.bakes, [
+        (start: 2000, end: 2500, texW: 200, onFrameCanvas: false),
+      ]);
+      h.paint(
+        viewStart: view.viewStart,
+        viewSpan: view.viewSpan,
+        gw: view.gw,
+        totalSamples: view.totalSamples,
+      );
+      expect(h.bakes, [
+        (start: 1500, end: 2000, texW: 200, onFrameCanvas: false),
+      ]);
+      h.paint(
+        viewStart: view.viewStart,
+        viewSpan: view.viewSpan,
+        gw: view.gw,
+        totalSamples: view.totalSamples,
+      );
+      expect(h.bakes, [
+        (start: 1000, end: 1500, texW: 200, onFrameCanvas: false),
+      ]);
+
+      // ...then the sweep consolidates the five 80 px tiles in two bakes:
+      // rightmost-first, each swallowing abutting left neighbors up to 1.5
+      // targets (3 tiles / 240 px, then 2 tiles / 160 px). No tile is
+      // rebaked twice; the pre-simplification overlap debris (each tile
+      // extending targetSpan over its already-fresh neighbor) cannot form.
+      h.paint(
+        viewStart: view.viewStart,
+        viewSpan: view.viewSpan,
+        gw: view.gw,
+        totalSamples: view.totalSamples,
+      );
+      expect(h.bakes, [
+        (start: 400, end: 1000, texW: 240, onFrameCanvas: false),
+      ]);
+      h.paint(
+        viewStart: view.viewStart,
+        viewSpan: view.viewSpan,
+        gw: view.gw,
+        totalSamples: view.totalSamples,
+      );
+      expect(h.bakes, [(start: 0, end: 400, texW: 160, onFrameCanvas: false)]);
+
+      for (int i = 0; i < 2; i++) {
+        expect(
+          h.paint(
+            viewStart: view.viewStart,
+            viewSpan: view.viewSpan,
+            gw: view.gw,
+            totalSamples: view.totalSamples,
+          ),
+          isFalse,
+        );
+        expect(h.calls, isEmpty);
+      }
     });
   });
 

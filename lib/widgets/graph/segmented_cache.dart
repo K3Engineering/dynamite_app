@@ -212,11 +212,19 @@ class GraphSegment {
   void dispose() => image.dispose();
 }
 
+/// One refresh outcome: replace `_segments[from].._segments[to]` (inclusive)
+/// with a single bake of [start, end). A no-op refresh is the identity plan:
+/// [from] == [to], [start] == the segment's own start, [end] == its own
+/// (horizon-clamped) end. See [SegmentedGraphCache._planRefresh].
+typedef _RefreshPlan = ({int from, int to, int start, int end});
+
 class SegmentedGraphCache {
-  /// Baked segments ordered by [GraphSegment.start]. Overlaps are allowed
-  /// (a refresh may extend over a neighbor; clipped at blit time in the left
-  /// segment's favor, which is always the fresher one); gaps are drawn as
-  /// vectors or left blank until a bake covers them.
+  /// Baked segments ordered by [GraphSegment.start]. Segments never overlap
+  /// (asserted in [_maintain]): a refresh only ever retracts to the bake
+  /// horizon, swallows abutting neighbors, or stops at the next segment's
+  /// start ([_planRefresh]), so the list is a disjoint tiling of the covered
+  /// ranges. Ranges between segments are gaps: vector-drawn or left blank
+  /// until a bake covers them.
   final List<GraphSegment> _segments = [];
 
   /// Current bake config; segments carry their own stamps. A destructiveKey
@@ -338,7 +346,18 @@ class SegmentedGraphCache {
       baked = true;
     }
 
+    assert(_segmentsAreDisjoint());
     return baked;
+  }
+
+  /// Debug-only invariant check: [_segments] is ordered by [GraphSegment.start]
+  /// with no overlaps (gaps are fine). Every mutation path ends here via
+  /// [_maintain].
+  bool _segmentsAreDisjoint() {
+    for (int k = 1; k < _segments.length; k++) {
+      if (_segments[k - 1].end > _segments[k].start) return false;
+    }
+    return true;
   }
 
   /// The raster half of [paint]: blit the cached segments for the window
@@ -440,28 +459,19 @@ class SegmentedGraphCache {
     return true;
   }
 
-  /// Priority 2: re-bake the rightmost visible stale segment (any kind --
-  /// see [_isStale]) to the fixed range [_refreshEnd] computes.
+  /// Priority 2: re-bake the rightmost visible stale segment (see
+  /// [_stalePlan]), replacing the range [_planRefresh] computes.
   bool _refreshStaleSegment(_BakeEnv env) {
     for (int i = _segments.length - 1; i >= 0; i--) {
       final s = _segments[i];
       if (s.end <= env.viewStart || s.start >= env.viewEnd) continue;
-      if (!_isStale(s, env)) continue;
-      final int end = _refreshEnd(s, env);
-      if (end <= s.start) {
+      final p = _stalePlan(i, env);
+      if (p == null) continue;
+      if (p.end <= p.start) {
         _segments.removeAt(i).dispose();
         continue;
       }
-      // Only segments fully inside the range are replaced; a partially
-      // overlapped right neighbor stays, and the left-wins blit clip (see
-      // [_blitSegments]) renders the overlap in this fresher segment's
-      // favor.
-      int removeTo = i;
-      while (removeTo + 1 < _segments.length &&
-          _segments[removeTo + 1].end <= end) {
-        removeTo++;
-      }
-      _splice(i, removeTo, _bake(s.start, end, env));
+      _splice(p.from, p.to, _bake(p.start, p.end, env));
       return true;
     }
     return false;
@@ -487,57 +497,109 @@ class SegmentedGraphCache {
       (s.gh - env.gh).abs() > 0.1 ||
       s.dpr != env.dpr;
 
-  /// Whether visible [s] needs a re-bake:
+  /// The refresh plan for [i] if it is stale, else null:
   ///   * config-stale -- baked under outdated keys/gh/dpr;
   ///   * drift-stale -- x- or y-scale drift past [kMaxSegmentDrift];
-  ///   * size-stale -- [_refreshEnd] would move [s]'s far edge with the
-  ///     refresh making progress: past two targets on screen the refresh
-  ///     clamps to one target (the remainder becomes a gap that refills);
-  ///     meaningfully narrow with room to its right the refresh extends to
-  ///     one target span (a neighbor to consolidate, or live-edge room; a
-  ///     segment ending at the bake horizon has none and stays).
+  ///   * size-stale -- past two targets on screen or under half a target,
+  ///     AND [_planRefresh] would change the geometry. A size outlier whose
+  ///     refresh can only reproduce its own range is left alone: re-baking
+  ///     identical pixels every frame is a [BakePump]-fed busy loop (the
+  ///     quiescence invariant -- every bake moves a boundary or updates
+  ///     content, then the scan goes quiet).
   ///
-  /// Size-staleness is defined by whether the refresh makes progress.
-  /// Gap bakes birth segments up to a target plus
-  /// [kSegmentGapBakePx] (the swallow), and
-  /// `targetSpan = round(kSegmentTargetPx / pps)` lands a nominal
-  /// full-target segment up to `pps/2` px off 200 either way -- well under
-  /// either threshold, so births are never size-stale. Config/drift
-  /// staleness refreshes in place: the range reproduces but the content
-  /// updates. Every re-bake therefore either changes the range (size) or
-  /// updates the content (config/drift), and the scan goes quiescent.
-  bool _isStale(GraphSegment s, _BakeEnv env) {
-    if (_isConfigStale(s, env)) return true;
+  /// Config and drift staleness take whatever plan [_planRefresh] computes,
+  /// including an absorbed left neighbor: two tiles that both need re-baking
+  /// are cheaper merged into one bake than refreshed in two frames.
+  _RefreshPlan? _stalePlan(int i, _BakeEnv env) {
+    final s = _segments[i];
+    final base = (
+      from: i,
+      to: i,
+      start: s.start,
+      end: math.min(s.end, env.bakeable),
+    );
+    final p = _planRefresh(i, env);
+    if (_isConfigStale(s, env)) return p;
     final double w = (s.end - s.start) * env.pps;
     final double xScale = w / s.contentW;
     final double yScale = (s.yMax - s.yMin) / (env.yMax - env.yMin);
     if (math.max((1 - xScale).abs(), (1 - yScale).abs()) > kMaxSegmentDrift) {
-      return true;
+      return p;
     }
-    // Past two targets: split. The second clause is the progress guard:
-    // at pps over ~200 px/sample targetSpan hits its 1-sample floor and
-    // the clamp cannot shrink the segment, so it must not fire.
-    if (w > 2 * kSegmentTargetPx && s.start + env.targetSpan < s.end) {
-      return true;
-    }
-    return w < kSegmentTargetPx / 2 &&
-        math.min(s.start + env.targetSpan, env.bakeable) > s.end;
+    final bool sizeOutlier =
+        w > 2 * kSegmentTargetPx || w < kSegmentTargetPx / 2;
+    return sizeOutlier && p != base ? p : null;
   }
 
-  /// The re-bake end for a stale segment [s]: coverage-preserving -- the
-  /// segment keeps its own range, so a refresh is one bake with no hole to
-  /// refill. Extended to one target span when [s] is narrow ([_isStale]
-  /// gates the extension on the room existing), clamped to one target span
-  /// past two targets on screen (the remainder becomes a gap that refills
-  /// over the following frames). Capped at the bake horizon, which can
-  /// recede under an old segment (block-size jumps); a segment starting at
-  /// or past the horizon gets an empty range, and the caller drops it.
-  int _refreshEnd(GraphSegment s, _BakeEnv env) {
-    int end = math.max(s.end, s.start + env.targetSpan);
-    if ((end - s.start) * env.pps > 2 * kSegmentTargetPx) {
-      end = s.start + env.targetSpan;
+  /// Where a refresh of [i] would bake and which segments it would replace
+  /// (see [_RefreshPlan]), independent of why. Disjointness ([_segments])
+  /// is what makes this a partition operation rather than range arithmetic:
+  /// the refresh never crosses the next segment's start, and swallows
+  /// neighbors only whole.
+  ///
+  ///   * Past the bake horizon: retract the end (the horizon can recede
+  ///     under an old segment on block-size jumps); a segment starting at or
+  ///     past it yields an empty plan -- the caller drops the segment.
+  ///   * Past two targets on screen: split to the RIGHTMOST target span --
+  ///     rightmost-first refinement like the sweep itself, and the left
+  ///     remainder pairs with [_bakeWidestGap]'s right-aligned fill so the
+  ///     hole refills marching left instead of stranding a sliver between
+  ///     two tiles. The `end - targetSpan > s.start` clause is the progress
+  ///     guard: at pps over ~200 px/sample the span hits its 1-sample floor
+  ///     and cannot shrink the segment.
+  ///   * Otherwise: swallow abutting LEFT neighbors while the merged width
+  ///     stays within 1.5 targets. Left, because the sweep runs
+  ///     rightmost-first -- those neighbors are the still-stale ones, so one
+  ///     bake replaces several stale tiles instead of one. 1.5 targets, not
+  ///     the 2-target split cap: a merged tile needs headroom below the
+  ///     split threshold or the next mild zoom-in splits it again.
+  ///   * Still under half a target after that: grow the end into UNCOVERED
+  ///     room only (live-edge slack or a gap, capped by the next segment's
+  ///     start and the horizon); and if still narrow with an abutting right
+  ///     neighbor, swallow the neighbor whole under the same 1.5-target cap.
+  ///
+  /// Birth widths are then bounded: splits land at one target span (up to
+  /// `pps/2` px off [kSegmentTargetPx] from the [targetSpan] rounding) and
+  /// merges at 1.5 targets, so nothing is born already past a size
+  /// threshold -- the birth side of the quiescence invariant.
+  _RefreshPlan _planRefresh(int i, _BakeEnv env) {
+    final s = _segments[i];
+    final int end = math.min(s.end, env.bakeable);
+    if (end <= s.start) {
+      return (from: i, to: i, start: s.start, end: end);
     }
-    return math.min(end, env.bakeable);
+    if ((end - s.start) * env.pps > 2 * kSegmentTargetPx &&
+        end - env.targetSpan > s.start) {
+      return (from: i, to: i, start: end - env.targetSpan, end: end);
+    }
+    int from = i;
+    int start = s.start;
+    while (from > 0 &&
+        _segments[from - 1].end == start &&
+        (end - _segments[from - 1].start) * env.pps <= 1.5 * kSegmentTargetPx) {
+      from--;
+      start = _segments[from].start;
+    }
+    int mergedEnd = end;
+    int to = i;
+    if ((mergedEnd - start) * env.pps < kSegmentTargetPx / 2) {
+      final int uncoveredLimit = math.min(
+        to + 1 < _segments.length ? _segments[to + 1].start : env.bakeable,
+        env.bakeable,
+      );
+      mergedEnd = math.max(
+        mergedEnd,
+        math.min(start + env.targetSpan, uncoveredLimit),
+      );
+      if ((mergedEnd - start) * env.pps < kSegmentTargetPx / 2 &&
+          to + 1 < _segments.length &&
+          _segments[to + 1].start == mergedEnd &&
+          (_segments[to + 1].end - start) * env.pps <= 1.5 * kSegmentTargetPx) {
+        to++;
+        mergedEnd = _segments[to].end;
+      }
+    }
+    return (from: from, to: to, start: start, end: mergedEnd);
   }
 
   void _splice(int from, int to, GraphSegment seg) {
@@ -599,17 +661,14 @@ class SegmentedGraphCache {
   ) {
     final double range = yMax - yMin;
     final paint = Paint()..filterQuality = kSegmentFilterQuality;
-    double coveredX = 0;
     for (final s in _segments) {
       if (!_isBlittable(s, yMin, yMax, gh)) continue;
       final double x1 = (s.start - viewStart) * pps;
       final double x2 = (s.end - viewStart) * pps;
-      // Where ranges overlap, the LEFT segment is the fresher one (refreshes
-      // only ever extend rightward over a neighbor), so clip this blit to
-      // start where the previous coverage ends.
-      final double clipL = math.max(coveredX, 0.0);
+      // Segments are disjoint (see [_segments]), so one screen x has at most
+      // one blit; the clip is just the view bounds.
+      final double clipL = math.max(x1, 0.0);
       final double clipR = math.min(x2, gw);
-      coveredX = math.max(coveredX, x2);
       if (clipR <= clipL) continue;
 
       final double xs = (x2 - x1) / s.contentW;
