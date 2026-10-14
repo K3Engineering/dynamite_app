@@ -48,9 +48,9 @@ ui.Image _bakeImage(
 // exposures) are the only full vector-draw paths.
 //
 // Config changes split by kind. Plot height, dpr, channel add/remove are
-// pure drift: old tiles keep blitting (ghosts/shifts) while the sweep
+// pure drift: old segments keep blitting (ghosts/shifts) while the sweep
 // re-bakes them rightmost-first (freshest data converges first). Tares ride
-// the destructive key with unit/calibration instead: one tile composites
+// the destructive key with unit/calibration instead: one segment composites
 // every channel, so no single blit correction can hold per-channel shifts.
 // On any config bump, segments outside the view are disposed so stale
 // content cannot resurrect on a later pan.
@@ -59,9 +59,8 @@ ui.Image _bakeImage(
 // resampled from another texture.
 //
 // Live-edge invariant: segments never end past a bake horizon
-// (SegmentViewConfig.bakeableSamples) that excludes the renderer's
-// incomplete tail at the data edge; the tail vector-draws every frame
-// instead.
+// (SegmentViewConfig.bakeableSamples) that excludes the filling block and
+// horizon zone at the data edge; both vector-draw every frame instead.
 // ---------------------------------------------------------------------------
 
 /// Target on-screen width (logical px) of one baked segment texture.
@@ -96,7 +95,7 @@ const double kSegmentGapBakePx = 40;
 const int kSegmentBakeBudget = 1;
 
 /// Cached segments more than this many target-widths outside the view are
-/// evicted; a tile is kSegmentTargetPx * dpr * plotHeight * dpr * 4 bytes
+/// evicted; a segment is kSegmentTargetPx * dpr * plotHeight * dpr * 4 bytes
 /// (a few MB on a tall graph at dpr 2), so the cache cannot be unbounded.
 const int kSegmentEvictionMargin = 8;
 
@@ -472,7 +471,7 @@ class SegmentedGraphCache {
   /// must match, and the corrective vertical stretch must keep the baked
   /// line ([kBakedLinePx] at bake) within [kMaxBlitLineFraction] of the plot
   /// height. One-sided: shrinking only sharpens, but a large stretch -- e.g.
-  /// the Y-range collapsing onto a quiet channel -- smears the tile's line
+  /// the Y-range collapsing onto a quiet channel -- smears the segment's line
   /// across the screen. A suppressed segment is kept, not disposed: a
   /// Y-range snap-back makes it blittable again.
   bool _isBlittable(GraphSegment s, double yMin, double yMax, double gh) {
@@ -491,22 +490,22 @@ class SegmentedGraphCache {
   /// Whether visible [s] needs a re-bake:
   ///   * config-stale -- baked under outdated keys/gh/dpr;
   ///   * drift-stale -- x- or y-scale drift past [kMaxSegmentDrift];
-  ///   * size-stale -- [_refreshEnd] would move [s]'s far edge: clamping an
-  ///     oversized tile discards more than the swallow re-absorbs, or a
-  ///     meaningfully narrow tile has room to its right to claim (a neighbor
-  ///     to consolidate, or live-edge room; a tile ending at the bake
-  ///     horizon has none and stays).
+  ///   * size-stale -- [_refreshEnd] would move [s]'s far edge with the
+  ///     refresh making progress: past two targets on screen the refresh
+  ///     clamps to one target (the remainder becomes a gap that refills);
+  ///     meaningfully narrow with room to its right the refresh extends to
+  ///     one target span (a neighbor to consolidate, or live-edge room; a
+  ///     segment ending at the bake horizon has none and stays).
   ///
   /// Size-staleness is defined by whether the refresh makes progress.
-  /// Gap bakes birth tiles up to a target plus
+  /// Gap bakes birth segments up to a target plus
   /// [kSegmentGapBakePx] (the swallow), and
   /// `targetSpan = round(kSegmentTargetPx / pps)` lands a nominal
-  /// full-target tile up to `pps/2` px off 200 either way. Any "too wide"
-  /// width predicate can mark such a tile stale at birth; the refresh then
-  /// reproduces its exact range and [paint] re-bakes identical pixels every
-  /// frame (the [BakePump] keeps scheduling). With progress-defined
-  /// staleness every re-bake either changes the range (size) or updates the
-  /// content (config/drift), and the scan goes quiescent.
+  /// full-target segment up to `pps/2` px off 200 either way -- well under
+  /// either threshold, so births are never size-stale. Config/drift
+  /// staleness refreshes in place: the range reproduces but the content
+  /// updates. Every re-bake therefore either changes the range (size) or
+  /// updates the content (config/drift), and the scan goes quiescent.
   bool _isStale(GraphSegment s, _BakeEnv env) {
     if (_isConfigStale(s, env)) return true;
     final double w = (s.end - s.start) * env.pps;
@@ -515,27 +514,29 @@ class SegmentedGraphCache {
     if (math.max((1 - xScale).abs(), (1 - yScale).abs()) > kMaxSegmentDrift) {
       return true;
     }
-    if ((s.end - (s.start + env.targetSpan)) * env.pps > kSegmentGapBakePx) {
+    // Past two targets: split. The second clause is the progress guard:
+    // at pps over ~200 px/sample targetSpan hits its 1-sample floor and
+    // the clamp cannot shrink the segment, so it must not fire.
+    if (w > 2 * kSegmentTargetPx && s.start + env.targetSpan < s.end) {
       return true;
     }
     return w < kSegmentTargetPx / 2 &&
         math.min(s.start + env.targetSpan, env.bakeable) > s.end;
   }
 
-  /// The re-bake end for a stale segment [s]: one target span from its
-  /// start, grown to [GraphSegment.end] when the clamp leftover is at most
-  /// [kSegmentGapBakePx] (a sliver abutting existing coverage never
-  /// re-crosses the gap threshold and would vector-draw forever --
-  /// [_bakeWidestGap]'s swallow rule), and capped at the bake horizon.
-  ///
-  /// The swallow clause is one-sided: the leftover must be POSITIVE. For a
-  /// tile narrower than the target the clause must not fire, or every
-  /// sub-target refresh would collapse back to [s.start, s.end) and re-bake
-  /// the tile in place at its old width forever.
+  /// The re-bake end for a stale segment [s]: coverage-preserving -- the
+  /// segment keeps its own range, so a refresh is one bake with no hole to
+  /// refill. Extended to one target span when [s] is narrow ([_isStale]
+  /// gates the extension on the room existing), clamped to one target span
+  /// past two targets on screen (the remainder becomes a gap that refills
+  /// over the following frames). Capped at the bake horizon, which can
+  /// recede under an old segment (block-size jumps); a segment starting at
+  /// or past the horizon gets an empty range, and the caller drops it.
   int _refreshEnd(GraphSegment s, _BakeEnv env) {
-    int end = s.start + env.targetSpan;
-    final double leftoverPx = (s.end - end) * env.pps;
-    if (leftoverPx > 0 && leftoverPx <= kSegmentGapBakePx) end = s.end;
+    int end = math.max(s.end, s.start + env.targetSpan);
+    if ((end - s.start) * env.pps > 2 * kSegmentTargetPx) {
+      end = s.start + env.targetSpan;
+    }
     return math.min(end, env.bakeable);
   }
 
@@ -585,7 +586,7 @@ class SegmentedGraphCache {
   /// form gh - (v - yMin) * gh / (yMax - yMin) is affine in (yMin, yMax), so
   /// a y scale+offset corrects for range changes AND for plot-height changes
   /// since the bake. Per-channel offsets (tares) are NOT corrected here:
-  /// one tile composites every channel, so no single affine can hold
+  /// one segment composites every channel, so no single affine can hold
   /// per-channel shifts -- tares ride the destructive key instead.
   void _blitSegments(
     Canvas canvas,
@@ -613,7 +614,7 @@ class SegmentedGraphCache {
 
       final double xs = (x2 - x1) / s.contentW;
       // Total y scale: value-range drift (first factor) rescaled into today's
-      // pixel height (second factor). Where the tile's top content row
+      // pixel height (second factor). Where the segment's top content row
       // (value s.yMax) lands today:
       final double ys = (s.yMax - s.yMin) / range * (gh / s.gh);
       final double yTop = gh * (1 - (s.yMax - yMin) / range);
