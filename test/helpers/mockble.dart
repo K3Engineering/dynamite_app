@@ -316,7 +316,11 @@ class MockBlePlatform extends UniversalBlePlatform {
   }
 
   @override
-  Future<List<BleService>> discoverServices(String deviceId, bool _) async {
+  Future<List<BleService>> discoverServices(
+    String deviceId,
+    bool _, {
+    DiscoverServicesPlatformConfig? platformConfig,
+  }) async {
     await Future<void>.delayed(netDelay);
     final services = _generateServices(deviceId);
     if (!includeAdcService) {
