@@ -564,11 +564,12 @@ class BleLinkManager extends ChangeNotifier {
        _onAdcData = onAdcData,
        _onSampleRate = onSampleRate,
        _demo = demo {
-    // With the default `global` queue, a command stuck against a half-torn-down
-    // device (common on web when the user rapidly connects/disconnects) blocks
-    // and serially times out every later command — a storm of 10s "Future not
-    // completed" failures. `perDevice` isolates a dead device's stuck commands
-    // from a fresh attempt.
+    // The package's default queue is `auto` (per-device on Android/Web/Linux,
+    // parallel elsewhere). Explicit `perDevice` regardless: a command stuck
+    // against a half-torn-down device (common on web when the user rapidly
+    // connects/disconnects) must serialize onto that device's queue, not block
+    // and serially time out every later command — under the old `global`
+    // default that produced a storm of 10s "Future not completed" failures.
     UniversalBle.queueType = QueueType.perDevice;
     // Default is 10 s; a hung web GATT promise should surface sooner.
     UniversalBle.timeout = const Duration(seconds: 5);
@@ -721,7 +722,7 @@ class BleLinkManager extends ChangeNotifier {
   /// Only fires on Android (API 26+); universal_ble only calls
   /// updateConnectionParameters from its native (pigeon) channel, so web
   /// never emits these.
-  void _onConnectionParametersChange(BleConnectionParametersUpdated update) {
+  void _onConnectionParametersChange(BleConnectionParametersChange update) {
     if (_link.deviceId.isNotEmpty && _link.deviceId != update.deviceId) {
       return;
     }
@@ -799,7 +800,11 @@ class BleLinkManager extends ChangeNotifier {
     }
   }
 
-  void _onConnectionChange(String deviceId, bool isConnected, String? err) {
+  // `error` is null for app-requested changes, as in the pre-3.0 signature.
+  // errorCode (typed classification) and nativeErrorCode are available on
+  // `change` if the outcome hints ever need more than the message string.
+  void _onConnectionChange(BleConnectionChange change) {
+    final BleConnectionChange(:deviceId, :isConnected, error: err) = change;
     debugPrint(
       'isConnected $deviceId, $isConnected ${(err == null) ? '' : err}',
     );
@@ -1075,12 +1080,9 @@ class BleLinkManager extends ChangeNotifier {
     _onAdcData(data);
   }
 
-  void _onValueChange(
-    String deviceId,
-    String characteristicId,
-    Uint8List data,
-    int? timestamp,
-  ) {
+  void _onValueChange(BleCharacteristicValue update) {
+    final BleCharacteristicValue(:deviceId, :characteristicId, value: data) =
+        update;
     if (deviceId != _link.deviceId) {
       logTrace(
         () =>
@@ -1090,9 +1092,9 @@ class BleLinkManager extends ChangeNotifier {
       );
       return;
     }
-    // universal_ble normalizes characteristicId to lowercase before invoking
-    // this callback, and all ids are already lowercase, so an exact match is
-    // safe.
+    // universal_ble canonicalizes deviceId (lower-case on native, verbatim on
+    // web) and normalizes characteristicId before invoking this callback, and
+    // all our ids are lowercase, so exact matches are safe.
     if (characteristicId == btChrAdcFeedId) {
       _deliverAdcData(data);
     } else if (characteristicId == btChrKvs) {

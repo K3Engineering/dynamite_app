@@ -151,6 +151,10 @@ class BleLinkTransport implements LinkTransport {
 
   @override
   Future<void> discoverServices() async {
+    // TODO(ble): consider AndroidDiscoverServicesOptions(clearGattCache: true)
+    // after an OTA flash — Android caches the GATT table per device and can
+    // serve a stale layout if firmware ever moves services around between
+    // versions. Not needed while the layout is stable.
     final discovered = await UniversalBle.discoverServices(deviceId);
     for (final service in discovered) {
       if (service.uuid != btServiceId) continue;

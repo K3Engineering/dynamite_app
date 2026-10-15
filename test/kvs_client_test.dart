@@ -25,8 +25,10 @@ void main() {
       write: (bytes) =>
           UniversalBle.write(deviceId, btServiceId, btChrKvs, bytes),
     );
-    UniversalBle.onValueChange = (deviceId, characteristicId, data, timestamp) {
-      if (characteristicId == btChrKvs) client.handleNotification(data);
+    UniversalBle.onValueChange = (update) {
+      if (update.characteristicId == btChrKvs) {
+        client.handleNotification(update.value);
+      }
     };
     return client;
   }
