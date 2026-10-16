@@ -1303,58 +1303,124 @@ int _majorPeriod(double step, double Function(double target) stepCeil) {
 int _timeDecimals(double step) =>
     step >= 1 ? 0 : (-(math.log(step) / math.ln10).floor()).clamp(1, 3);
 
+/// One enumerated axis tick: its value on the absolute k*step grid, pixel
+/// position, prepared label paragraph, and major flag. Ticks are enumerated
+/// once per axis per paint (see [_enumAxisTicks]); the fit check, the grid
+/// lines, and the label draw all consume that single list rather than
+/// re-walking the k-range per consumer.
+class _AxisTick {
+  const _AxisTick(this.value, this.pos, this.par, this.major);
+  final double value;
+  final double pos;
+  final ui.Paragraph par;
+  final bool major;
+}
+
+/// Enumerate the labeled ticks of one axis at tick [step], preparing each
+/// label paragraph. Labeled ticks live on the absolute grid k * step, so
+/// they (and the majors) hold still while the window slides; indexing by k
+/// rather than accumulating keeps the major test exact and makes the k == 0
+/// tick literally 0.0 (no "-0.000" snap needed at the zero label).
+///
+/// [enumSlack] extends the population past both window edges; X passes one
+/// tick plus the live edge's worst lead jitter ([_kLiveEdgeLeadMs]: a
+/// landing packet rewinds the wall-clock lead), so a rolling window
+/// micro-oscillating across an edge tick slides it in and out instead of
+/// toggling it per frame. The labels then clip to the label strip in
+/// [_drawAxis] so slack labels don't bleed into the plot. Y snaps its range
+/// to tick boundaries and passes 0: its ticks are always in range. The
+/// inclusive end (step * 0.01) leaves room for fp noise: a tick exactly at
+/// the snapped or slacked edge (Y's bounds) draws rather than dropping out.
+List<_AxisTick> _enumAxisTicks(
+  double windowStart,
+  double windowEnd, {
+  required double step,
+  required double Function(double target) stepCeil,
+  required double enumSlack,
+  required String Function(double tick) labelFor,
+  required double Function(double value) posOf,
+  required _LabelCache labels,
+  required Color textColor,
+}) {
+  final period = _majorPeriod(step, stepCeil);
+  final lo = windowStart - enumSlack;
+  final hi = windowEnd + enumSlack + step * 0.01;
+  return [
+    for (int k = (lo / step).ceil(); k * step <= hi; k++)
+      _AxisTick(
+        k * step,
+        posOf(k * step),
+        labels.prepare(
+          labelFor(k * step),
+          color: textColor,
+          bold: k % period == 0,
+        ),
+        k % period == 0,
+      ),
+  ];
+}
+
 /// Smallest clock-nice step for the time window [startSec, endSec) across
 /// [extent] px: the lowest ladder rung keeping ticks at least
 /// [_kMinXTickPx] apart, then bumped up the ladder until the labels
 /// themselves fit with [_kLabelGapPx] to spare -- folded h:mm:ss and
 /// fractional labels are wider than the 48 px floor and would overlap
 /// (measured, not estimated; the width depends on which ticks are visible).
-double _fitTimeStep(
+///
+/// [slackOf] maps a candidate step to the edge slack the axis draws with
+/// ([_enumAxisTicks]'s enumSlack), so the tick list returned on the winning
+/// rung is exactly the population [_drawAxis] draws. The fit check reads
+/// only labels strictly inside the window: slack edge ticks draw but don't
+/// constrain the spacing.
+({double step, List<_AxisTick> ticks}) _fitTimeStep(
   double startSec,
   double endSec,
-  double extent,
-  _LabelCache labels,
-  Color textColor,
-) {
+  double extent, {
+  required double Function(double step) slackOf,
+  required double Function(double target) stepCeil,
+  required String Function(double tick, int decimals) labelFor,
+  required double Function(double value) posOf,
+  required _LabelCache labels,
+  required Color textColor,
+}) {
   final spanSec = endSec - startSec;
-  var step = _timeStepCeil(spanSec * _kMinXTickPx / extent);
+  var step = stepCeil(spanSec * _kMinXTickPx / extent);
   for (;;) {
-    final period = _majorPeriod(step, _timeStepCeil);
     final decimals = _timeDecimals(step);
+    final ticks = _enumAxisTicks(
+      startSec,
+      endSec,
+      step: step,
+      stepCeil: stepCeil,
+      enumSlack: slackOf(step),
+      labelFor: (tick) => labelFor(tick, decimals),
+      posOf: posOf,
+      labels: labels,
+      textColor: textColor,
+    );
     double maxLabelW = 0;
-    for (int k = (startSec / step).ceil(); k * step < endSec; k++) {
-      final par = labels.prepare(
-        _fmtTick(k * step, decimals),
-        color: textColor,
-        bold: k % period == 0,
-      );
-      if (par.longestLine > maxLabelW) maxLabelW = par.longestLine;
+    for (final t in ticks) {
+      if (t.value < startSec || t.value >= endSec) continue;
+      if (t.par.longestLine > maxLabelW) maxLabelW = t.par.longestLine;
     }
-    if (step * extent / spanSec >= maxLabelW + _kLabelGapPx) return step;
-    step = _timeStepCeil(step * (1 + 1e-9)); // next ladder rung up
+    if (step * extent / spanSec >= maxLabelW + _kLabelGapPx) {
+      return (step: step, ticks: ticks);
+    }
+    step = stepCeil(step * (1 + 1e-9)); // next ladder rung up
   }
 }
 
-/// Append one axis's grid lines and tick labels for the window
-/// [windowStart, windowEnd] (X: seconds since session start; Y: display
-/// units). [step] is the caller's tick step on the [stepCeil] ladder (X:
-/// [_fitTimeStep]; Y: [YAxisRange.tickDelta]), [labelFor] formats a tick
-/// value, and [posOf] maps one to its pixel along the axis.
+/// Draw one axis's grid lines and tick labels from [ticks], enumerated by
+/// the caller for the window [windowStart, windowEnd] (X: seconds since
+/// session start, via [_fitTimeStep]; Y: display units, via
+/// [_enumAxisTicks] at [YAxisRange.tickDelta]).
 ///
-/// Labeled ticks live on the absolute grid k * step, so they (and the
-/// majors) hold still while the window slides. Majors (bold label,
-/// [gridMajor]) are every [_majorPeriod]-th tick; other labeled ticks and
-/// the half-step minor lines between them go to [gridMinor]. Indexing ticks
-/// by k rather than accumulating keeps the major test exact and makes the
-/// k == 0 tick literally 0.0 (no "-0.000" snap needed at the zero label).
+/// Major ticks (bold label) go to [gridMajor], other labeled ticks and the
+/// half-step minor lines between them to [gridMinor].
 ///
-/// [enumSlack] extends the drawn population past both window edges; X
-/// passes one tick plus the live edge's worst lead jitter
-/// ([_kLiveEdgeLeadMs]: a landing packet rewinds the wall-clock lead), so a
-/// rolling window micro-oscillating across an edge tick slides it in and
-/// out instead of toggling it per frame. The labels then clip to the label
-/// strip so slack labels don't bleed into the plot. Y snaps its range to
-/// tick boundaries and passes 0: its ticks are always in range.
+/// [enumSlack], [step], [windowStart], and [windowEnd] must be the values
+/// [ticks] were enumerated with; they still feed the half-step minor-line
+/// walk and decide whether slack labels clip to the label strip.
 void _drawAxis(
   Canvas canvas,
   Path gridMinor,
@@ -1363,19 +1429,13 @@ void _drawAxis(
   required _AxisOrientation orientation,
   required double windowStart,
   required double windowEnd,
+  required List<_AxisTick> ticks,
   required double step,
-  required double Function(double target) stepCeil,
-  required String Function(double tick) labelFor,
   required double Function(double value) posOf,
   double enumSlack = 0.0,
   required bool showLabels,
-  required _LabelCache labels,
-  Color textColor = Colors.black,
 }) {
-  final period = _majorPeriod(step, stepCeil);
   final lo = windowStart - enumSlack;
-  // Inclusive end, with room for fp noise: a tick exactly at the snapped or
-  // slacked edge (Y's bounds) draws rather than dropping out.
   final hi = windowEnd + enumSlack + step * 0.01;
 
   void gridLine(double pos, {required bool major}) {
@@ -1392,20 +1452,16 @@ void _drawAxis(
     }
   }
 
-  // Measure the labels before installing the label-strip clip.
-  double maxLabelH = 0;
-  double maxLabelW = 0;
-  final clipped = showLabels && enumSlack > 0;
   if (showLabels) {
-    for (int k = (lo / step).ceil(); k * step <= hi; k++) {
-      final par = labels.prepare(
-        labelFor(k * step),
-        color: textColor,
-        bold: k % period == 0,
-      );
-      if (par.longestLine > maxLabelW) maxLabelW = par.longestLine;
-      if (par.height > maxLabelH) maxLabelH = par.height;
+    // The label strip's size comes from the drawn labels: font height is
+    // fixed, widths vary, so take the max over the enumerated paragraphs.
+    double maxLabelH = 0;
+    double maxLabelW = 0;
+    for (final t in ticks) {
+      if (t.par.longestLine > maxLabelW) maxLabelW = t.par.longestLine;
+      if (t.par.height > maxLabelH) maxLabelH = t.par.height;
     }
+    final clipped = enumSlack > 0;
     if (clipped) {
       canvas.save();
       canvas.clipRect(switch (orientation) {
@@ -1423,33 +1479,26 @@ void _drawAxis(
         ),
       });
     }
-  }
-
-  for (int k = (lo / step).ceil(); k * step <= hi; k++) {
-    final major = k % period == 0;
-    final pos = posOf(k * step);
-    gridLine(pos, major: major);
-    if (showLabels) {
-      final par = labels.prepare(
-        labelFor(k * step),
-        color: textColor,
-        bold: major,
-      );
+    for (final t in ticks) {
       switch (orientation) {
         case _AxisOrientation.x:
           canvas.drawParagraph(
-            par,
-            Offset(pos - par.longestLine / 2, graphSz.height + 2),
+            t.par,
+            Offset(t.pos - t.par.longestLine / 2, graphSz.height + 2),
           );
         case _AxisOrientation.y:
           canvas.drawParagraph(
-            par,
-            Offset(graphSz.width + 4, pos - par.height / 2),
+            t.par,
+            Offset(graphSz.width + 4, t.pos - t.par.height / 2),
           );
       }
     }
+    if (clipped) canvas.restore();
   }
-  if (clipped) canvas.restore();
+
+  for (final t in ticks) {
+    gridLine(t.pos, major: t.major);
+  }
 
   // Half-step minor lines. Index by j so the overlap test is exact: the
   // even multiples of minorStep are the labeled ticks themselves, and
@@ -2239,12 +2288,19 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     final sampleRate = _data.sampleRate.toDouble();
     final startSec = viewStart / sampleRate;
     final endSec = viewEnd / sampleRate;
-    final timeStep = _fitTimeStep(
+    double xToPx(double sec) =>
+        (sec - startSec) * sampleRate * graphSz.width / viewSamples;
+    double xSlack(double step) => step + _kLiveEdgeLeadMs / 1000.0;
+    final (step: xStep, ticks: xTicks) = _fitTimeStep(
       startSec,
       endSec,
       graphSz.width,
-      labels,
-      colorScheme.onSurface,
+      slackOf: xSlack,
+      stepCeil: _timeStepCeil,
+      labelFor: _fmtTick,
+      posOf: xToPx,
+      labels: labels,
+      textColor: colorScheme.onSurface,
     );
     _drawAxis(
       canvas,
@@ -2254,15 +2310,11 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       orientation: _AxisOrientation.x,
       windowStart: startSec,
       windowEnd: endSec,
-      step: timeStep,
-      stepCeil: _timeStepCeil,
-      labelFor: (sec) => _fmtTick(sec, _timeDecimals(timeStep)),
-      posOf: (sec) =>
-          (sec - startSec) * sampleRate * graphSz.width / viewSamples,
-      enumSlack: timeStep + _kLiveEdgeLeadMs / 1000.0,
+      ticks: xTicks,
+      step: xStep,
+      posOf: xToPx,
+      enumSlack: xSlack(xStep),
       showLabels: showXLabels,
-      labels: labels,
-      textColor: colorScheme.onSurface,
     );
     _drawAxis(
       canvas,
@@ -2272,13 +2324,20 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       orientation: _AxisOrientation.y,
       windowStart: yRange.yMin,
       windowEnd: yRange.yMax,
+      ticks: _enumAxisTicks(
+        yRange.yMin,
+        yRange.yMax,
+        step: yRange.tickDelta,
+        stepCeil: _decadeStepCeil,
+        enumSlack: 0.0,
+        labelFor: (tick) => yTickLabel(tick, yRange),
+        posOf: valueToY,
+        labels: labels,
+        textColor: colorScheme.onSurface,
+      ),
       step: yRange.tickDelta,
-      stepCeil: _decadeStepCeil,
-      labelFor: (tick) => yTickLabel(tick, yRange),
       posOf: valueToY,
       showLabels: true,
-      labels: labels,
-      textColor: colorScheme.onSurface,
     );
     final gridMinorPen = Paint()
       ..color = colorScheme.onSurface.withAlpha(45)
