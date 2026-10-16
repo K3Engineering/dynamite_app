@@ -1,4 +1,4 @@
-/// The device-name grammar (docs/flash-schema-v1.md): the Settings-namespace
+/// The device-name grammar (docs/flash-schema-v2.md): the Settings-namespace
 /// name the user can write to the device.
 library;
 
@@ -11,7 +11,7 @@ final RegExp _deviceNamePattern = RegExp(
   r"^[A-Za-z0-9][A-Za-z0-9 ._()'-]{0,28}$",
 );
 
-/// Whether [name] is a legal device name (docs/flash-schema-v1.md).
+/// Whether [name] is a legal device name (docs/flash-schema-v2.md).
 /// Callers trim first — surrounding whitespace is input hygiene, never
 /// part of the stored value; an empty (post-trim) input means "clear the
 /// name" (a DEL), which this check does not cover.

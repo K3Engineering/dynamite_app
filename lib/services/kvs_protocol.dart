@@ -26,7 +26,7 @@ const String kvsFolderUser = 'U';
 const String kvsFolderSettings = 'S';
 
 /// The Settings-namespace key holding the user-assigned device name (value
-/// grammar: docs/flash-schema-v1.md — enforced by `isValidDeviceName` in
+/// grammar: docs/flash-schema-v2.md — enforced by `isValidDeviceName` in
 /// the model layer, not here).
 const String kvsKeyDeviceName = 'device_name';
 
