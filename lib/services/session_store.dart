@@ -2,10 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
+import '../analysis/test_result.dart';
 import '../models/damaged_session.dart';
 import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
 import '../utils/future_chain.dart';
+import 'derived_channels.dart';
 import 'live_session_writer.dart';
 import 'session_data.dart';
 import 'session_files.dart';
@@ -396,6 +398,7 @@ class SessionStore {
       channelLabels: meta.channelLabels,
       visibleChannels: edit.visibleChannels,
       interrupted: interrupted,
+      testResult: edit.testResult,
     );
   }
 
@@ -422,6 +425,10 @@ class SessionStore {
       gaps: decoded.gaps,
       ssnOrigin: meta.ssnOrigin,
       deviceKvs: meta.deviceKvs,
+      // Derived channels replay from raw + frozen calibration against the
+      // record-time profile snapshot; sessions recorded before it existed
+      // take the CURRENT config (pre-release: devs can wipe those).
+      mathProfile: meta.mathProfile ?? DerivedChannels.instance.profile,
     );
   });
 
@@ -473,6 +480,7 @@ class SessionStore {
           name: current.name,
           notes: current.notes,
           visibleChannels: visible,
+          testResult: current.testResult,
         );
       });
 
@@ -482,6 +490,7 @@ class SessionStore {
       name: name,
       notes: current.notes,
       visibleChannels: current.visibleChannels,
+      testResult: current.testResult,
     ),
   );
 
@@ -491,8 +500,22 @@ class SessionStore {
       name: current.name,
       notes: notes,
       visibleChannels: current.visibleChannels,
+      testResult: current.testResult,
     ),
   );
+
+  /// Attach (or clear) a guided-test analysis. Whole-snapshot edit like the
+  /// others; unknown/predating readers ignore the key.
+  Future<void> setSessionTestResult(String id, TestResult? result) =>
+      editSession(
+        id,
+        (current) => SessionEdit(
+          name: current.name,
+          notes: current.notes,
+          visibleChannels: current.visibleChannels,
+          testResult: result,
+        ),
+      );
 
   /// Delete the session directory.
   Future<void> deleteSession(String id) => _withCatalog((files, _) async {

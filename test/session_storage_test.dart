@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
 import 'package:dynamite_app/models/channel_converter.dart';
+import 'package:dynamite_app/models/derived_channel.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
@@ -67,6 +68,7 @@ void main() {
         displayUnit: DisplayUnit.kgf,
         deviceInfo: const {},
         deviceKvs: null,
+        mathProfile: MathProfile.forcePlate(const [0, 1, 2, 3]),
         recordedAt: '2026-07-29T14:05:32.000Z',
       ),
       sourceRingCapacity: DataHub.maxDataSz,
@@ -87,6 +89,7 @@ void main() {
     displayUnit: DisplayUnit.kgf,
     deviceInfo: const {},
     deviceKvs: null,
+    mathProfile: MathProfile.forcePlate(const [0, 1, 2, 3]),
     recordedAt: '2026-07-29T14:05:32.000Z',
   );
 
