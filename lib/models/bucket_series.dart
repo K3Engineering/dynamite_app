@@ -358,7 +358,9 @@ BlockReduction reduceBlockBuckets(EnvelopeSeries series, int from, int to) {
     // Samples actually written into this bucket (< bs only for the newest,
     // still-filling bucket); its mean is sum/written, not sum/bs.
     final int written = math.min(bs, samples - b * bs);
-    if (c > written) c = written; // defensive; to <= samples in practice
+    // The caller clamps `to` to totalSamples, so a block never reaches into
+    // an unwritten bucket.
+    assert(c <= written);
     rawSum += buckets.sums[li] * c / written;
     if (sumMvV != null) mvSum += sumMvV[li] * c / written;
     rawCount += c;

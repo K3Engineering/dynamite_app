@@ -437,20 +437,12 @@ class DataHub extends ChangeNotifier
       final y = b[i];
       if (x case final CalibratedChannelBoard xd) {
         if (y is! CalibratedChannelBoard) return false;
-        if (!_sameList(xd.resistors, y.resistors)) return false;
-        if (!_sameList(xd.readings, y.readings)) return false;
+        if (!listEquals(xd.resistors, y.resistors)) return false;
+        if (!listEquals(xd.readings, y.readings)) return false;
       } else if (y is CalibratedChannelBoard) {
         return false;
       }
       if (!_sameNominals(x.nominals, y.nominals)) return false;
-    }
-    return true;
-  }
-
-  static bool _sameList(List<double> a, List<double> b) {
-    if (a.length != b.length) return false;
-    for (int k = 0; k < a.length; ++k) {
-      if (a[k] != b[k]) return false;
     }
     return true;
   }
@@ -466,11 +458,7 @@ class DataHub extends ChangeNotifier
   /// Replace the load-cell assignments. Content-equal updates are a no-op.
   void updateLoadCells(List<LoadCellProfile?> cells) {
     assert(cells.length == kAdcChannelCount);
-    var same = _loadCells.length == cells.length;
-    for (int i = 0; same && i < cells.length; i++) {
-      same = _loadCells[i] == cells[i];
-    }
-    if (same) return;
+    if (listEquals(_loadCells, cells)) return;
     _loadCells = List.of(cells);
     _calibrationVersion++;
     notifyListeners();

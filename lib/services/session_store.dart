@@ -290,19 +290,22 @@ class SessionStore {
     final hasMeta = journalBytes != null && journalBytes.isNotEmpty;
     // The `final` marker is zero bytes, so data + journal is the byte total.
     final byteTotal = dataBytes + (journalBytes?.length ?? 0);
+    // Every damage verdict shares the identity and byte count above; only the
+    // reason differs.
+    _ListedEntry damaged(String reason) => _DamagedEntry(
+      DamagedSession(
+        id: id,
+        hasData: hasData,
+        hasMeta: hasMeta,
+        reason: reason,
+      ),
+      byteTotal: byteTotal,
+    );
 
     try {
       sessionIdCreatedAt(id);
     } on FormatException {
-      return _DamagedEntry(
-        DamagedSession(
-          id: id,
-          hasData: hasData,
-          hasMeta: hasMeta,
-          reason: 'Not a session this store wrote (malformed id)',
-        ),
-        byteTotal: byteTotal,
-      );
+      return damaged('Not a session this store wrote (malformed id)');
     }
 
     SessionJournal journal;
@@ -310,44 +313,20 @@ class SessionStore {
       if (journalBytes == null) throw const FormatException('no journal');
       journal = parseSessionJournal(journalBytes);
     } on FormatException {
-      return _DamagedEntry(
-        DamagedSession(
-          id: id,
-          hasData: hasData,
-          hasMeta: hasMeta,
-          reason: 'Session metadata unreadable',
-        ),
-        byteTotal: byteTotal,
-      );
+      return damaged('Session metadata unreadable');
     }
 
     final frameBytes = SessionChunkCodec(journal.meta.channelCount).frameBytes;
     if (dataBytes % frameBytes != 0) {
       // A write torn mid-frame: no prefix of this file is the recording,
       // so the session is damaged rather than silently shortened.
-      return _DamagedEntry(
-        DamagedSession(
-          id: id,
-          hasData: hasData,
-          hasMeta: hasMeta,
-          reason: 'Sample data ends mid-frame',
-        ),
-        byteTotal: byteTotal,
-      );
+      return damaged('Sample data ends mid-frame');
     }
     final frames = dataBytes ~/ frameBytes;
     if (frames < 1) {
       // Crash-at-create artifact: the header line landed, the first data
       // append never did.
-      return _DamagedEntry(
-        DamagedSession(
-          id: id,
-          hasData: hasData,
-          hasMeta: hasMeta,
-          reason: 'Recording never produced data',
-        ),
-        byteTotal: byteTotal,
-      );
+      return damaged('Recording never produced data');
     }
     // No completion marker: an interrupted recording. It loads and exports
     // like a complete session but lists as interrupted, and is never promoted.

@@ -290,11 +290,10 @@ String unsupportedHint({required bool isWeb}) => isWeb
   required int nowMs,
   required bool supportsScanRssi,
 }) {
+  final rssiText = scanRssi == null ? null : 'RSSI: $scanRssi dBm';
   final stamp = lastAliveMs;
   if (stamp == null) {
-    final text = scanRssi != null
-        ? 'RSSI: $scanRssi dBm'
-        : (supportsScanRssi ? 'RSSI: --' : null);
+    final text = rssiText ?? (supportsScanRssi ? 'RSSI: --' : null);
     return text == null ? null : (text: text, stale: false);
   }
   final age = Duration(milliseconds: nowMs - stamp);
@@ -303,10 +302,7 @@ String unsupportedHint({required bool isWeb}) => isWeb
       scanTs != null &&
       Duration(milliseconds: nowMs - scanTs) <= BleLinkManager.deviceStaleAfter;
   if (!stale && supportsScanRssi && advertFresh) {
-    return (
-      text: scanRssi != null ? 'RSSI: $scanRssi dBm' : 'RSSI: --',
-      stale: false,
-    );
+    return (text: rssiText ?? 'RSSI: --', stale: false);
   }
   // One label on both platforms; "Last connected" read wrong for a stamp taken
   // at disconnect time.

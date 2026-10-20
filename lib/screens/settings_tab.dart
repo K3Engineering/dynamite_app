@@ -83,6 +83,12 @@ class _SettingsTabState extends State<SettingsTab> {
       for (final u in DisplayUnit.values)
         if (u.isAvailable(availability)) u,
     };
+    const buildMode = kDebugMode
+        ? 'Debug'
+        : (kProfileMode ? 'Profile' : 'Release');
+    const targetInfo = kIsWeb
+        ? 'Target: Web (${dart2wasm ? "WASM" : "JS"})'
+        : 'Target: Native';
 
     return SafeArea(
       child: LayoutBuilder(
@@ -249,26 +255,13 @@ class _SettingsTabState extends State<SettingsTab> {
 
               const SectionHeader('About'),
               const SizedBox(height: 16),
-              Builder(
-                builder: (context) {
-                  const buildMode = kDebugMode
-                      ? 'Debug'
-                      : (kProfileMode ? 'Profile' : 'Release');
-
-                  var targetInfo = 'Target: ${kIsWeb ? "Web" : "Native"}';
-                  if (kIsWeb) {
-                    targetInfo += ' (${dart2wasm ? "WASM" : "JS"})';
-                  }
-
-                  return Text(
-                    'Dynamite App v${appMeta.versionLabel}\n'
-                    'Build Mode: $buildMode\n'
-                    '$targetInfo',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  );
-                },
+              Text(
+                'Dynamite App v${appMeta.versionLabel}\n'
+                'Build Mode: $buildMode\n'
+                '$targetInfo',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ),
