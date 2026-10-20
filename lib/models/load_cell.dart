@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:meta/meta.dart';
 
+import '../utils/format.dart';
 import 'device_profile.dart';
 
 // ---------------------------------------------------------------------------
@@ -136,15 +137,13 @@ class RigSlots {
   /// (parsing splits at the first one). Integral values emit without a fraction
   /// so an unchanged rig diffs clean.
   Map<String, String> toKv() {
-    String num(double v) =>
-        v == v.roundToDouble() ? v.toInt().toString() : v.toString();
     return {
       for (int i = 0; i < kRigSlotCount; ++i)
         if (slots[i] case final s?) ...{
           if (s.cell.name.isNotEmpty)
             'lc$i.name': s.cell.name.replaceAll(RegExp(r'\s+'), ' '),
-          'lc$i.cap': num(s.cell.capacityKg),
-          'lc$i.sens': num(s.cell.sensitivityMvV),
+          'lc$i.cap': formatDecimal(s.cell.capacityKg),
+          'lc$i.sens': formatDecimal(s.cell.sensitivityMvV),
         },
     };
   }
@@ -181,16 +180,11 @@ class LoadCellProfile {
   double get kgfPerMvV => capacityKg / sensitivityMvV;
 
   /// Human label: the name, or the values for generic profiles.
-  String get title => name.isNotEmpty
-      ? name
-      : '${_trim(capacityKg)} kg · ${_trim(sensitivityMvV)} mV/V';
+  String get title => name.isNotEmpty ? name : valuesLine;
 
   /// The values line, e.g. `100 kg · 2.007 mV/V`.
   String get valuesLine =>
-      '${_trim(capacityKg)} kg · ${_trim(sensitivityMvV)} mV/V';
-
-  static String _trim(double v) =>
-      v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+      '${formatDecimal(capacityKg)} kg · ${formatDecimal(sensitivityMvV)} mV/V';
 
   @useResult
   LoadCellProfile copyWith({

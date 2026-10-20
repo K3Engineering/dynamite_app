@@ -376,27 +376,13 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
   }, errorTitle: 'CSV export');
 
   Future<void> _downloadCsv(SessionSummary session, SessionData data) =>
-      _exportCsv(
-        session,
-        data,
-        (a) => downloadExport(
-          bytes: a.bytes,
-          fileName: a.fileName,
-          dialogTitle: 'Download session CSV',
-        ),
-      );
+      _exportCsv(session, data, downloadDelivery('Download session CSV'));
 
   Future<void> _shareCsv(SessionSummary session, SessionData data) =>
       _exportCsv(
         session,
         data,
-        (a) => shareExport(
-          bytes: a.bytes,
-          fileName: a.fileName,
-          mimeType: a.mimeType,
-          dialogTitle: 'Share CSV',
-          anchor: fullScreenShareAnchor(context),
-        ),
+        shareDelivery('Share CSV', anchor: fullScreenShareAnchor(context)),
       );
 
   /// Ask the user for the export's converted unit (one file, one unit,

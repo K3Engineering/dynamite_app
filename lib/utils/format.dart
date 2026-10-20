@@ -19,6 +19,10 @@ String iso8601WithOffset(DateTime value) {
       '${(minutes % 60).toString().padLeft(2, '0')}';
 }
 
+/// A double without a trailing '.0' for whole numbers: "100", "2.007".
+String formatDecimal(double v) =>
+    v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+
 /// "1,040" — comma-grouped integer, hand-rolled to avoid the intl dep.
 String formatThousands(int n) {
   final digits = n.abs().toString();

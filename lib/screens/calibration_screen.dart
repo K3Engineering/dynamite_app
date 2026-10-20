@@ -78,13 +78,8 @@ class CalibrationScreen extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: OutlinedButton.icon(
-            onPressed: () => deliver(
-              (a) => downloadExport(
-                bytes: a.bytes,
-                fileName: a.fileName,
-                dialogTitle: 'Download calibration report',
-              ),
-            ),
+            onPressed: () =>
+                deliver(downloadDelivery('Download calibration report')),
             icon: const Icon(Icons.download),
             label: const Text('Download'),
           ),
@@ -94,11 +89,8 @@ class CalibrationScreen extends StatelessWidget {
           child: OutlinedButton.icon(
             onPressed: fileShareSupportedHere
                 ? () => deliver(
-                    (a) => shareExport(
-                      bytes: a.bytes,
-                      fileName: a.fileName,
-                      mimeType: a.mimeType,
-                      dialogTitle: 'Share calibration report',
+                    shareDelivery(
+                      'Share calibration report',
                       anchor: fullScreenShareAnchor(context),
                     ),
                   )

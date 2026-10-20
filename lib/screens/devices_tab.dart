@@ -48,15 +48,20 @@ class _DevicesTabState extends State<DevicesTab> {
     // The top indicator reflects adapter/scan state only; link state lives on
     // the rows.
     final status = Theme.of(context).extension<StatusColors>()!;
+    // Pull the list once: [BleLinkManager.devices] builds an unmodifiable copy
+    // per call.
+    final devices = bt.devices;
+    final activeId = bt.activeDeviceId;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
     final visual = btAdapterScanVisual(
       availability: bt.bluetoothState,
       isScanning: bt.isScanning,
-      hasConnectableDevices: bt.devices.isNotEmpty && !bt.linkBusy,
+      hasConnectableDevices: devices.isNotEmpty && !bt.linkBusy,
       status: status,
       colors: scheme,
     );
 
-    final isEmpty = bt.devices.isEmpty;
+    final isEmpty = devices.isEmpty;
     final showEmptyBlock = isEmpty && !bt.isScanning;
 
     final indicatorMode = topIndicatorMode(
@@ -65,49 +70,51 @@ class _DevicesTabState extends State<DevicesTab> {
       emptyBlockVisible: showEmptyBlock,
     );
 
-    // Partition rows stably: fresh keep scan order, stale sink and sort by
-    // recency. The active row is never stale.
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    final activeId = bt.activeDeviceId;
-    final visuals = <String, InactiveRowVisual>{
-      for (final d in bt.devices)
-        d.deviceId: inactiveRowVisual(
-          scanRssi: d.rssi,
-          scanTs: d.timestamp,
-          lastAliveMs: bt.lastAliveMs(d.deviceId),
-          nowMs: nowMs,
-          supportsScanRssi: bt.supportsScanRssi,
-          // Transient beats history: the reconnect embargo outranks the last
-          // outcome.
-          reconnectHint: bt.reconnectPendingFor(d.deviceId)
-              ? 'Waiting after disconnect…'
-              : null,
-          failureHint: switch (bt.outcomeFor(d.deviceId)) {
-            ConnectRefused(:final kind) => connectFailureHint(
-              kind,
-              isWeb: kIsWeb,
-            ),
-            SetupFailed(:final detail) => 'Setup failed: $detail',
-            Disconnected(:final error) => 'Disconnected: $error',
-            null => null,
-          },
-          status: status,
-          colors: scheme,
+    // Rows are resolved once, as device+visual pairs: the stale/fresh split
+    // and the row widgets read the same visual instead of a keyed lookup.
+    final rows = [
+      for (final d in devices)
+        (
+          device: d,
+          visual: inactiveRowVisual(
+            scanRssi: d.rssi,
+            scanTs: d.timestamp,
+            lastAliveMs: bt.lastAliveMs(d.deviceId),
+            nowMs: nowMs,
+            supportsScanRssi: bt.supportsScanRssi,
+            // Transient beats history: the reconnect embargo outranks the last
+            // outcome.
+            reconnectHint: bt.reconnectPendingFor(d.deviceId)
+                ? 'Waiting after disconnect…'
+                : null,
+            failureHint: switch (bt.outcomeFor(d.deviceId)) {
+              ConnectRefused(:final kind) => connectFailureHint(
+                kind,
+                isWeb: kIsWeb,
+              ),
+              SetupFailed(:final detail) => 'Setup failed: $detail',
+              Disconnected(:final error) => 'Disconnected: $error',
+              null => null,
+            },
+            status: status,
+            colors: scheme,
+          ),
         ),
-    };
-    final freshRows = <DiscoveredDevice>[];
-    final staleRows = <DiscoveredDevice>[];
-    for (final d in bt.devices) {
-      (d.deviceId != activeId &&
-                  visuals[d.deviceId]!.mood == InactiveRowMood.stale
-              ? staleRows
-              : freshRows)
-          .add(d);
+    ];
+    // Fresh keep scan order, stale sink and sort by recency; the active row is
+    // never stale.
+    final freshRows = <_DeviceRow>[];
+    final staleRows = <_DeviceRow>[];
+    for (final row in rows) {
+      final stale =
+          row.device.deviceId != activeId &&
+          row.visual.mood == InactiveRowMood.stale;
+      (stale ? staleRows : freshRows).add(row);
     }
     staleRows.sort(
       (a, b) => compareStaleRowsByRecency(
-        bt.lastAliveMs(a.deviceId),
-        bt.lastAliveMs(b.deviceId),
+        bt.lastAliveMs(a.device.deviceId),
+        bt.lastAliveMs(b.device.deviceId),
       ),
     );
 
@@ -158,10 +165,10 @@ class _DevicesTabState extends State<DevicesTab> {
 
               // The active row is found in the scan list, which no path clears
               // while a link is up.
-              for (final device in [...freshRows, ...staleRows])
-                device.deviceId == activeId
+              for (final row in [...freshRows, ...staleRows])
+                row.device.deviceId == activeId
                     ? _ActiveDeviceRow(
-                        name: device.name ?? 'Unknown device',
+                        name: row.device.name ?? 'Unknown device',
                         model: bt.connectedDeviceInfo?.model,
                         linkState: bt.linkState,
                         connectedRssi: bt.connectedRssi,
@@ -173,12 +180,12 @@ class _DevicesTabState extends State<DevicesTab> {
                             openFirmwareUpdate(context, onDone: () {}),
                       )
                     : _InactiveDeviceRow(
-                        name: device.name ?? 'Unknown device',
-                        visual: visuals[device.deviceId]!,
-                        canConnect: bt.canConnectTo(device.deviceId),
+                        name: row.device.name ?? 'Unknown device',
+                        visual: row.visual,
+                        canConnect: bt.canConnectTo(row.device.deviceId),
                         onConnect: () => _connectWithFeedback(
-                          () => bt.connectToDevice(device.deviceId),
-                          device.name ?? 'device',
+                          () => bt.connectToDevice(row.device.deviceId),
+                          row.device.name ?? 'device',
                         ),
                       ),
               const SizedBox(height: 16),
@@ -313,6 +320,10 @@ String unsupportedHint({required bool isWeb}) => isWeb
 @visibleForTesting
 int compareStaleRowsByRecency(int? aAliveMs, int? bAliveMs) =>
     (bAliveMs ?? 0).compareTo(aAliveMs ?? 0);
+
+/// An inactive row's device and its already-resolved visual (see
+/// [inactiveRowVisual]).
+typedef _DeviceRow = ({DiscoveredDevice device, InactiveRowVisual visual});
 
 /// The inactive row's presentation state. Priority: reconnect window >
 /// failure > staleness > normal.

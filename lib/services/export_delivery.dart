@@ -25,6 +25,26 @@ typedef ExportArtifact = ({Uint8List bytes, String fileName, String mimeType});
 /// (null = the user cancelled).
 typedef ExportDelivery = Future<String?> Function(ExportArtifact artifact);
 
+/// [downloadExport] as an [ExportDelivery]: the save-as dialog's title is the
+/// only thing a caller varies.
+ExportDelivery downloadDelivery(String dialogTitle) =>
+    (a) => downloadExport(
+      bytes: a.bytes,
+      fileName: a.fileName,
+      dialogTitle: dialogTitle,
+    );
+
+/// [shareExport] as an [ExportDelivery]. [anchor] positions the iPad popover
+/// (see [fullScreenShareAnchor]).
+ExportDelivery shareDelivery(String dialogTitle, {ShareAnchor? anchor}) =>
+    (a) => shareExport(
+      bytes: a.bytes,
+      fileName: a.fileName,
+      mimeType: a.mimeType,
+      dialogTitle: dialogTitle,
+      anchor: anchor,
+    );
+
 /// Anchor rect for the iPad share popover when there is no natural source
 /// widget (app-bar menu, button row): the whole screen.
 ShareAnchor? fullScreenShareAnchor(BuildContext context) {

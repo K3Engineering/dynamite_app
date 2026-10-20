@@ -110,18 +110,25 @@ class SessionMeta {
     if (version is! int || version != sessionJournalVersion) {
       throw FormatException('journal header: bad version: $version');
     }
-    final name = json['name'];
-    if (name is! String) {
-      throw FormatException('journal header: bad name: $name');
+
+    /// A required [key] present as a T, else [FormatException]. (The `bad`
+    /// message template is the same for every field, so it lives here.)
+    T req<T>(String key) {
+      final v = json[key];
+      if (v is! T) throw FormatException('journal header: bad $key: $v');
+      return v;
     }
-    final sampleRate = json['sampleRate'];
-    if (sampleRate is! int || sampleRate <= 0) {
-      throw FormatException('journal header: bad sampleRate: $sampleRate');
+
+    /// A required positive int [key].
+    int reqPositive(String key) {
+      final v = req<int>(key);
+      if (v <= 0) throw FormatException('journal header: bad $key: $v');
+      return v;
     }
-    final channelCount = json['channelCount'];
-    if (channelCount is! int || channelCount <= 0) {
-      throw FormatException('journal header: bad channelCount: $channelCount');
-    }
+
+    final name = req<String>('name');
+    final sampleRate = reqPositive('sampleRate');
+    final channelCount = reqPositive('channelCount');
 
     List<T> list<T>(String key, T Function(Object? e) convert) {
       final v = json[key];
@@ -168,12 +175,7 @@ class SessionMeta {
             ),
     );
 
-    final displayUnitName = json['displayUnit'];
-    if (displayUnitName is! String) {
-      throw FormatException(
-        'journal header: bad displayUnit: $displayUnitName',
-      );
-    }
+    final displayUnitName = req<String>('displayUnit');
     // Must be a unit this build can name: an unrecognized string parse-
     // accepted here would later fall back to a default unit — a silent
     // rewrite of frozen provenance. Damaged is the verdict.
@@ -189,10 +191,7 @@ class SessionMeta {
         'journal header: bad displayUnit: $displayUnitName',
       );
     }
-    final deviceInfo = json['deviceInfo'];
-    if (deviceInfo is! Map) {
-      throw FormatException('journal header: bad deviceInfo: $deviceInfo');
-    }
+    final deviceInfo = req<Map<Object?, Object?>>('deviceInfo');
     final deviceKvsJson = json['deviceKvs'];
     final deviceKvs = deviceKvsJson == null
         ? null
@@ -203,17 +202,14 @@ class SessionMeta {
                     'journal header: deviceKvs must be an object or null',
                   ),
           );
-    final recordedAt = json['recordedAt'];
-    // The CSV export hands this string out as the recording's timestamp,
-    // so it must actually parse as ISO 8601; anything else would export
-    // garbage under a real session's name.
-    if (recordedAt is! String || DateTime.tryParse(recordedAt) == null) {
+    final recordedAt = req<String>('recordedAt');
+    // The CSV export hands this string out as the recording's timestamp, so it
+    // must actually parse as ISO 8601; anything else would export garbage
+    // under a real session's name.
+    if (DateTime.tryParse(recordedAt) == null) {
       throw FormatException('journal header: bad recordedAt: $recordedAt');
     }
-    final ssnOrigin = json['ssnOrigin'];
-    if (ssnOrigin is! int) {
-      throw FormatException('journal header: bad ssnOrigin: $ssnOrigin');
-    }
+    final ssnOrigin = req<int>('ssnOrigin');
 
     return SessionMeta(
       name: name,

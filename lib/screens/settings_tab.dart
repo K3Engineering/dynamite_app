@@ -436,7 +436,9 @@ class _UnitGroup extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final settings = context.watch<AppSettings>();
+    // read: the tab above already watches [AppSettings] and passes the resolved
+    // selection in.
+    final settings = context.read<AppSettings>();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
