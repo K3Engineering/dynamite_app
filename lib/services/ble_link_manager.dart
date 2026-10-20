@@ -66,7 +66,6 @@ class LinkTelemetry {
 class LinkInfo {
   LinkInfo({
     required this.transport,
-    required this.advertisedName,
     required this.storedName,
     required this.info,
     required this.mtu,
@@ -75,7 +74,6 @@ class LinkInfo {
   });
 
   final LinkTransport transport;
-  final String advertisedName;
   String? storedName;
   final DeviceInfo info;
   final int? mtu;
@@ -83,9 +81,6 @@ class LinkInfo {
   final LinkTelemetry telemetry;
 
   String get deviceId => transport.deviceId;
-
-  String get displayName =>
-      storedName ?? (advertisedName.isEmpty ? deviceId : advertisedName);
 }
 
 sealed class Link {
@@ -523,7 +518,7 @@ class BleLinkManager extends ChangeNotifier {
         } catch (_) {
           // A dead feed with no retry path: tear down, like a failed
           // subscribe at connect time.
-          final name = link.info.displayName;
+          final name = link.displayName;
           _teardownLink(transport, releasePlatform: true);
           _events.emit(BleConnectionLost(name));
           notifyListeners();
@@ -925,7 +920,6 @@ class BleLinkManager extends ChangeNotifier {
       _link = Ready(
         LinkInfo(
           transport: transport,
-          advertisedName: transport.displayName,
           storedName: setup.storedName,
           info: deviceInfo,
           mtu: setup.mtu,

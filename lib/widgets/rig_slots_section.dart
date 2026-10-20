@@ -403,6 +403,8 @@ class _StatusBar extends StatelessWidget {
 // Add-to-empty-slot dialog: the entry fields, with last-seen cells below
 // ---------------------------------------------------------------------------
 
+// TODO(refactor): consider merging this with _SlotEditorDialog below
+
 /// The "+" sheet for an empty slot: type a cell in, or tap a cell this app
 /// has met before (on any device) to pre-fill the fields and tweak before
 /// saving. Either way the slot fills through the one Save button, as a

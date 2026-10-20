@@ -168,6 +168,22 @@ class SessionStore {
     final sessions = [...catalog.sessions]..removeWhere((s) => s.id == id);
     final damaged = [...catalog.damaged]..removeWhere((d) => d.id == id);
     final byteSizes = {...catalog.byteSizes}..remove(id);
+    _applyClassifiedEntry(id, entry, sessions, damaged, byteSizes);
+    return SessionCatalog(
+      sessions: sessions,
+      damaged: damaged,
+      byteSizes: byteSizes,
+    );
+  }
+
+  /// Add [entry]'s verdict for [id] to the catalog collections.
+  void _applyClassifiedEntry(
+    String id,
+    _ListedEntry entry,
+    List<SessionSummary> sessions,
+    List<DamagedSession> damaged,
+    Map<String, int> byteSizes,
+  ) {
     switch (entry) {
       case final _SessionEntry session:
         sessions.add(
@@ -184,11 +200,6 @@ class SessionStore {
         byteSizes[id] = damagedEntry.byteTotal;
       case _UnlistedEntry():
     }
-    return SessionCatalog(
-      sessions: sessions,
-      damaged: damaged,
-      byteSizes: byteSizes,
-    );
   }
 
   Future<void> _publishCatalog(SessionFilesBackend files) async {
@@ -260,22 +271,7 @@ class SessionStore {
     final sizes = <String, int>{};
     for (final id in await files.listDirIds()) {
       final entry = await _classify(files, id);
-      switch (entry) {
-        case final _SessionEntry session:
-          sessions.add(
-            _summaryFor(
-              session.id,
-              session.journal,
-              session.dataBytes,
-              interrupted: session.interrupted,
-            ),
-          );
-          sizes[id] = session.byteTotal;
-        case final _DamagedEntry entry:
-          damaged.add(entry.damaged);
-          sizes[id] = entry.byteTotal;
-        case _UnlistedEntry():
-      }
+      _applyClassifiedEntry(id, entry, sessions, damaged, sizes);
     }
     return SessionCatalog(
       sessions: sessions,
@@ -355,20 +351,11 @@ class SessionStore {
     }
     // No completion marker: an interrupted recording. It loads and exports
     // like a complete session but lists as interrupted, and is never promoted.
-    if (!await files.isFinalized(id)) {
-      return _SessionEntry(
-        id: id,
-        journal: journal,
-        dataBytes: dataBytes,
-        interrupted: true,
-        byteTotal: byteTotal,
-      );
-    }
     return _SessionEntry(
       id: id,
       journal: journal,
       dataBytes: dataBytes,
-      interrupted: false,
+      interrupted: !await files.isFinalized(id),
       byteTotal: byteTotal,
     );
   }
@@ -469,30 +456,14 @@ class SessionStore {
       editSession(id, (current) {
         final visible = [...current.visibleChannels];
         visible[index] = !visible[index];
-        return SessionEdit(
-          name: current.name,
-          notes: current.notes,
-          visibleChannels: visible,
-        );
+        return current.copyWith(visibleChannels: visible);
       });
 
-  Future<void> renameSession(String id, String name) => editSession(
-    id,
-    (current) => SessionEdit(
-      name: name,
-      notes: current.notes,
-      visibleChannels: current.visibleChannels,
-    ),
-  );
+  Future<void> renameSession(String id, String name) =>
+      editSession(id, (current) => current.copyWith(name: name));
 
-  Future<void> setSessionNotes(String id, String notes) => editSession(
-    id,
-    (current) => SessionEdit(
-      name: current.name,
-      notes: notes,
-      visibleChannels: current.visibleChannels,
-    ),
-  );
+  Future<void> setSessionNotes(String id, String notes) =>
+      editSession(id, (current) => current.copyWith(notes: notes));
 
   /// Delete the session directory.
   Future<void> deleteSession(String id) => _withCatalog((files, _) async {

@@ -254,6 +254,16 @@ class SessionEdit {
     visibleChannels: meta.visibleChannels,
   );
 
+  SessionEdit copyWith({
+    String? name,
+    String? notes,
+    List<bool>? visibleChannels,
+  }) => SessionEdit(
+    name: name ?? this.name,
+    notes: notes ?? this.notes,
+    visibleChannels: visibleChannels ?? this.visibleChannels,
+  );
+
   Map<String, dynamic> toJson() => {
     'name': name,
     'notes': notes,
