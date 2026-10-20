@@ -211,7 +211,7 @@ void main() {
 
       ctrl.applyWindow(100, 200, 1000, 0);
       expect(count, 1);
-      ctrl.goLive(totalSamples: 1000, oldestSample: 0);
+      ctrl.goLive(span: 200, totalSamples: 1000, oldestSample: 0);
       expect(count, 2);
       ctrl.applyWindow(300, 200, 1000, 0);
       expect(count, 3);
@@ -239,7 +239,8 @@ void main() {
       final ctrl = GraphController(minLiveSpan: 20000);
       ctrl.applyWindow(100000, 100000, 300000, 0);
 
-      ctrl.goLive(totalSamples: 0, oldestSample: 0);
+      // The live tab's reset passes the window it is leaving.
+      ctrl.goLive(span: 100000, totalSamples: 0, oldestSample: 0);
 
       final (start, end) = ctrl.effectiveRange(0, 0);
       expect(ctrl.isLive, isTrue);

@@ -29,8 +29,6 @@ class BlockReductionCache {
   int _generation = -1;
   int _blockSize = -1;
   List<Object?> _destructiveKey = const [];
-  int _keepFrom = 0;
-  int _keepTo = 0;
 
   /// Frame upkeep, called once per paint with the SAME identity values the
   /// SegmentedGraphCache gets: clears on identity change (see the class
@@ -53,11 +51,11 @@ class BlockReductionCache {
       _destructiveKey = List.of(destructiveKey);
     }
     final margin = viewBlockEnd - viewBlockStart;
-    _keepFrom = viewBlockStart - margin;
-    _keepTo = viewBlockEnd + margin;
+    final keepFrom = viewBlockStart - margin;
+    final keepTo = viewBlockEnd + margin;
     for (final blocks in _byChannel.values) {
       if (blocks.length > _maxEntriesPerChannel) {
-        blocks.removeWhere((k, _) => k < _keepFrom || k > _keepTo);
+        blocks.removeWhere((k, _) => k < keepFrom || k > keepTo);
       }
     }
   }
