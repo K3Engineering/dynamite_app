@@ -147,24 +147,24 @@ BoardNominals? resolveBoardConstants(
   if (missing.isNotEmpty) {
     throw FormatException('board constants: missing ${missing.join(', ')}');
   }
-  final values = <String, double>{};
   final provenance = <String, String>{};
-  for (final key in boardConstantKeys) {
+  double parse(String key) {
     // Values may carry a provenance tag: "4.53,nominal".
     final parts = kv[key]!.split(',');
     final value = double.tryParse(parts.first.trim());
     if (value == null || !value.isFinite || value <= 0) {
       throw FormatException('board constants: bad $key: "${kv[key]}"');
     }
-    values[key] = value;
     if (parts.length > 1) {
       provenance[key] = parts.sublist(1).join(',').trim();
     }
+    return value;
   }
+
   return BoardNominals(
-    adcFsrV: values['adc_fsr']!,
-    excitationV: values['exc']!,
-    afeGain: values['afe_gain']!,
+    adcFsrV: parse('adc_fsr'),
+    excitationV: parse('exc'),
+    afeGain: parse('afe_gain'),
     pgaGains: pgaGains,
     provenance: provenance,
   );
@@ -387,36 +387,29 @@ class CalibratedChannelBoard extends ChannelBoardCalibration {
   late final List<double> _sortedRaw;
   late final List<double> _sortedSetpoints;
 
-  /// Map an absolute raw ADC reading to mV/V of excitation via the
-  /// piecewise map. Out-of-range readings extend the outermost segment.
-  @override
-  double mvVFromRaw(double raw) {
-    final xs = _sortedRaw;
-    final ys = _sortedSetpoints;
-    // Right endpoint of the segment containing raw, clamped to the outer
+  /// Piecewise-linear map x → y through the sorted (xs, ys) points.
+  static double _piecewise(List<double> xs, List<double> ys, double x) {
+    // Right endpoint of the segment containing x, clamped to the outer
     // segments: below/above the cal range extrapolates along them.
     var i = 1;
-    while (i < xs.length - 1 && raw > xs[i]) {
+    while (i < xs.length - 1 && x > xs[i]) {
       ++i;
     }
     return ys[i - 1] +
-        (raw - xs[i - 1]) * (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
+        (x - xs[i - 1]) * (ys[i] - ys[i - 1]) / (xs[i] - xs[i - 1]);
   }
 
-  /// Inverse of [mvVFromRaw]: the segment lookup runs on the setpoint axis
-  /// (monotone across a valid channel's span); out-of-range extends the outer
-  /// segment.
+  /// Map an absolute raw ADC reading to mV/V of excitation via the
+  /// piecewise map.
   @override
-  double rawFromMvV(double mvV) {
-    final xs = _sortedRaw;
-    final ys = _sortedSetpoints;
-    var i = 1;
-    while (i < ys.length - 1 && mvV > ys[i]) {
-      ++i;
-    }
-    return xs[i - 1] +
-        (mvV - ys[i - 1]) * (xs[i] - xs[i - 1]) / (ys[i] - ys[i - 1]);
-  }
+  double mvVFromRaw(double raw) =>
+      _piecewise(_sortedRaw, _sortedSetpoints, raw);
+
+  /// Inverse of [mvVFromRaw]: the lookup runs on the setpoint axis (monotone
+  /// across a valid channel's span).
+  @override
+  double rawFromMvV(double mvV) =>
+      _piecewise(_sortedSetpoints, _sortedRaw, mvV);
 
   // -- Diagnostics ----------------------------------------------------------
 
@@ -567,10 +560,7 @@ class CalGroup {
 List<double>? _parseNumberList(String? value, int count, String key) {
   if (value == null) return null;
   final parts = value.split(',');
-  final parsed = [
-    for (final part in parts)
-      part.isEmpty ? null : double.tryParse(part.trim()),
-  ];
+  final parsed = [for (final part in parts) double.tryParse(part.trim())];
   if (parsed.length != count || parsed.any((v) => v == null || !v.isFinite)) {
     throw FormatException('calibration: bad $key: "$value"');
   }
@@ -585,15 +575,10 @@ List<double>? _parseNumberList(String? value, int count, String key) {
 CalGroup? parseCalGroup(Map<String, String> kv) {
   final date = kv['cal.date'];
   if (date == null) return null;
-  final channelData = <({List<double> resistors, List<double> readings})?>[];
-  var sawAbsent = false;
-  var sawPresent = false;
+  final channelData = <({List<double> resistors, List<double> readings})>[];
   for (int i = 0; i < kAdcChannelCount; ++i) {
-    final hasEntries = kv.containsKey('ch$i.r') || kv.containsKey('ch$i.raw');
-    if (!hasEntries) {
-      channelData.add(null);
-      sawAbsent = true;
-      continue;
+    if (!kv.containsKey('ch$i.r') && !kv.containsKey('ch$i.raw')) {
+      throw const FormatException('calibration: only some channels calibrated');
     }
     final resistors = _parseNumberList(
       kv['ch$i.r'],
@@ -611,10 +596,6 @@ CalGroup? parseCalGroup(Map<String, String> kv) {
       throw FormatException('calibration: invalid channel data (ch$i)');
     }
     channelData.add((resistors: resistors, readings: readings));
-    sawPresent = true;
-  }
-  if (sawAbsent || !sawPresent) {
-    throw const FormatException('calibration: only some channels calibrated');
   }
   final temps = _parseNumberList(kv['cal.temp'], 2, 'cal.temp');
   return CalGroup(
@@ -624,7 +605,7 @@ CalGroup? parseCalGroup(Map<String, String> kv) {
     origin: kv['cal.origin'],
     tempsC: temps == null ? null : (dut: temps[0], calBoard: temps[1]),
     adcGains: _parseNumberList(kv['cal.adc'], kAdcChannelCount, 'cal.adc'),
-    channelData: [for (final d in channelData) d!],
+    channelData: channelData,
   );
 }
 
