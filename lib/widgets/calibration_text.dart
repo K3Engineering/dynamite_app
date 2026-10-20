@@ -49,6 +49,14 @@ List<String> calProvenanceParts(CalGroup? group) => [
   if (group?.tempsC case final t?) '${t.dut}/${t.calBoard} °C (DUT/cal board)',
 ];
 
+/// Which calibration is in effect, when it is not the plain factory one: the
+/// namespace a group was read from. Null for the factory group, which is the
+/// unremarkable case.
+String? calSourceLabel(CalGroup? group) => switch (group?.namespace) {
+  CalNamespace.user => 'Recalibrated',
+  CalNamespace.factory || null => null,
+};
+
 /// The conversion chain, including where the nominal values were read from.
 String calChainLine(BoardNominals n) =>
     'Chain: FSR ${n.adcFsrV} V · AFE ${n.afeGain}× '
@@ -115,7 +123,11 @@ String boardCalibrationStatusLine(BoardCalibration? board) {
       final group = b.calGroup;
       if (group == null) return 'Not calibrated — nominal values in use';
       final age = calibrationAge(group.date);
-      return ['Calibrated', group.date, if (age != null) '($age)'].join(' ');
+      return [
+        calSourceLabel(group) ?? 'Calibrated',
+        group.date,
+        if (age != null) '($age)',
+      ].join(' ');
   }
 }
 
@@ -129,7 +141,8 @@ String calibrationReport(
   b.writeln('Device: $deviceLabel');
   final group = board.calGroup;
   if (group != null) {
-    b.writeln('Calibrated: ${group.date}');
+    final source = calSourceLabel(group);
+    b.writeln('Calibrated: ${group.date}${source == null ? '' : ' ($source)'}');
     final provenance = calProvenanceParts(group);
     if (provenance.isNotEmpty) {
       b.writeln('Provenance: ${provenance.join(' · ')}');

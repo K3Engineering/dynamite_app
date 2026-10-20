@@ -1,5 +1,6 @@
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
+import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'helpers/flash_docs.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -398,6 +399,74 @@ END
           boardFromDoc(testConstantKeys, pgaGains: testGains)
               as ProvisionedBoardCalibration;
       expect(board.isCalibrated, isFalse);
+    });
+  });
+
+  group('User-namespace recalibration', () {
+    /// The factory fixture routed to Factory, plus [extra] routed to User.
+    KvsSnapshot withUser(Map<String, String> extra) {
+      final base = kvsFromDoc(demoBoardCalibrationDoc);
+      return KvsSnapshot(factory: base.factory, user: {...base.user, ...extra});
+    }
+
+    /// A complete User group whose readings are shifted from the factory
+    /// fixture's, so which one converts is visible.
+    Map<String, String> userGroup({String date = '2026-09-01'}) => {
+      'cal.date': date,
+      'cal.origin': 'user',
+      'cal.tool': 'board_calibration 2.1',
+      for (int i = 0; i < kAdcChannelCount; ++i) ...{
+        'ch$i.r': '10000,10,10,10,10,10000',
+        'ch$i.raw': '6000000,3000000,0,-3000000,-6000000',
+      },
+    };
+
+    test('a User group overrides the Factory group', () {
+      final flash = DeviceFlash.fromKvs(
+        withUser(userGroup()),
+        pgaGains: testGains,
+      );
+      final board = flash.board as ProvisionedBoardCalibration;
+      expect(board.calGroup!.namespace, CalNamespace.user);
+      expect(board.calGroup!.date, '2026-09-01');
+      final ch0 = board.channels[0] as CalibratedChannelBoard;
+      expect(ch0.readings[0], 6000000);
+    });
+
+    test('without a User group the Factory group applies', () {
+      final flash = DeviceFlash.fromKvs(
+        kvsFromDoc(demoBoardCalibrationDoc),
+        pgaGains: testGains,
+      );
+      final board = flash.board as ProvisionedBoardCalibration;
+      expect(board.calGroup!.namespace, CalNamespace.factory);
+      expect(board.calGroup!.date, '2026-07-20');
+    });
+
+    test('a torn User group is unreadable, never a silent fallback', () {
+      final torn = userGroup();
+      torn.remove('cal.date');
+      final flash = DeviceFlash.fromKvs(withUser(torn), pgaGains: testGains);
+      expect(flash.board, isA<InvalidBoardCalibration>());
+    });
+
+    test('a torn Factory group is ignored while a User group is valid', () {
+      final base = kvsFromDoc(demoBoardCalibrationDoc);
+      final tornFactory = Map<String, String>.of(base.factory)
+        ..remove('cal.date');
+      final flash = DeviceFlash.fromKvs(
+        KvsSnapshot(factory: tornFactory, user: {...base.user, ...userGroup()}),
+        pgaGains: testGains,
+      );
+      final board = flash.board as ProvisionedBoardCalibration;
+      expect(board.calGroup!.namespace, CalNamespace.user);
+    });
+
+    test('the revert key set covers every group key the schema writes', () {
+      // cal.r.prov is written by the factory tool but read by no UI: a key
+      // missing here would survive a revert.
+      expect(calGroupKeys, containsAll(['cal.date', 'cal.r.prov']));
+      expect(calGroupKeys, hasLength(7 + 2 * kAdcChannelCount));
     });
   });
 

@@ -6,22 +6,24 @@ import 'board_calibration.dart';
 import 'load_cell.dart';
 
 // ---------------------------------------------------------------------------
-// The device flash document: the factory board calibration (read-only to
-// the app) plus the app-writable load cell slots, as the folder-separated
-// KVS store the device holds. The per-channel join of the two halves
-// ([ChannelCalibration]) that the unit layer consumes lives in
-// channel_calibration.dart.
+// The device flash document: the board calibration (the Factory group, or
+// the User recalibration overriding it) plus the app-writable load cell
+// slots, as the folder-separated KVS store the device holds. The per-channel
+// join of the two halves ([ChannelCalibration]) that the unit layer consumes
+// lives in channel_calibration.dart.
 //
 // The app OWNS the schema slot keys and only those: a save SETs/DELs the
 // exact `lcN.*` keys in the User namespace and never touches the board half
-// or any unknown key — see `KvsFlashTransport.writeSlots`.
+// or any unknown key — see `KvsFlashTransport.writeSlots`. Reverting a User
+// calibration is a separate explicit action that DELs the User cal-group keys
+// and nothing else.
 // ---------------------------------------------------------------------------
 
 /// The device KVS as read: folder-separated raw key/value pairs, sorted by
-/// key. The typed parse consumes each folder separately (Factory → board
-/// half, User → slots) — there is no cross-folder merge. Raw values are
-/// also session provenance (the CSV's `device.kvs`) — conversions never
-/// consult them.
+/// key. The typed parse reads the calibration group from User first, then
+/// Factory (a recalibration overrides the as-built one), and the slots from
+/// User. Raw values are also session provenance (the CSV's `device.kvs`) —
+/// conversions never consult them.
 @immutable
 class KvsSnapshot {
   KvsSnapshot({
@@ -39,6 +41,18 @@ class KvsSnapshot {
     final updated = Map<String, String>.of(user)
       ..removeWhere((key, _) => rigSlotKeys.contains(key))
       ..addAll(lcKeys);
+    return KvsSnapshot(factory: factory, user: updated);
+  }
+
+  /// Drop the User-folder calibration group (a revert to factory). Throws
+  /// when the User folder holds no cal-group keys — nothing to revert.
+  @useResult
+  KvsSnapshot withoutUserCalGroup() {
+    if (!user.keys.any(calGroupKeys.contains)) {
+      throw StateError('no User calibration to revert');
+    }
+    final updated = Map<String, String>.of(user)
+      ..removeWhere((key, _) => calGroupKeys.contains(key));
     return KvsSnapshot(factory: factory, user: updated);
   }
 
@@ -83,23 +97,28 @@ class DeviceFlash {
   /// The raw store the typed halves were parsed from (session provenance).
   final KvsSnapshot kvs;
 
-  /// Parse the typed board/slot halves out of a raw KVS snapshot. Each half
-  /// reads its own folder: the board half ([BoardCalibration.fromKv]) is
-  /// strict, but its [FormatException] is caught here and becomes an
-  /// [InvalidBoardCalibration] — a misprovisioned board streams raw counts
-  /// with a warning instead of failing the connection. The slot half
-  /// ([RigSlots.fromKv]) is lenient (the app owns those keys: an unparseable
-  /// slot reads as empty, the raw value stays visible in [kvs], and the next
-  /// save reconciles the device). [pgaGains] is the ADC's GAIN-register
-  /// readback for board-constant resolution — always present: an unreadable
-  /// ADC config fails the connection upstream (see `BleLinkManager`).
+  /// Parse the typed board/slot halves out of a raw KVS snapshot. The board
+  /// half ([BoardCalibration.fromKv]) is strict — its [FormatException] is
+  /// caught here and becomes an [InvalidBoardCalibration], a board that
+  /// streams raw counts with a warning instead of failing the connection. A
+  /// torn User recalibration lands here: raw counts until the user reverts.
+  /// The slot half ([RigSlots.fromKv]) is lenient (the app owns those keys: an
+  /// unparseable slot reads as empty, the raw value stays visible in [kvs],
+  /// and the next save reconciles the device). [pgaGains] is the ADC's
+  /// GAIN-register readback for board-constant resolution — always present: an
+  /// unreadable ADC config fails the connection upstream (see
+  /// `BleLinkManager`).
   factory DeviceFlash.fromKvs(
     KvsSnapshot kvs, {
     required List<double> pgaGains,
   }) {
     final BoardCalibration board;
     try {
-      board = BoardCalibration.fromKv(kvs.factory, pgaGains: pgaGains);
+      board = BoardCalibration.fromKv(
+        kvs.factory,
+        user: kvs.user,
+        pgaGains: pgaGains,
+      );
     } on FormatException catch (e) {
       return DeviceFlash(
         board: InvalidBoardCalibration(e.message),

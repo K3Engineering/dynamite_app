@@ -52,6 +52,13 @@ class _FakeBackend implements LinkBackend {
       kvsFromDoc(readBackDoc ?? deviceDoc);
 
   @override
+  Future<void> revertUserCalibration() async {
+    final kv = parseFlashKv(deviceDoc)
+      ..removeWhere((key, _) => calGroupKeys.contains(key));
+    deviceDoc = [for (final e in kv.entries) '${e.key}=${e.value}'].join('\n');
+  }
+
+  @override
   Future<bool> storeDeviceName(String? name) async => true;
 
   @override

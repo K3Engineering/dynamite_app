@@ -17,6 +17,12 @@ abstract interface class LinkBackend {
   /// Throws on failure — the caller keeps its pending edits.
   Future<void> writeSlots(Map<String, String> lcKeys);
 
+  /// Delete the User-namespace calibration group (a user-initiated revert to
+  /// the factory calibration). Deletes exactly the cal-group keys the snapshot
+  /// holds and nothing else — never Factory keys, never slot keys. Throws on
+  /// failure; the caller re-reads the snapshot on success.
+  Future<void> revertUserCalibration();
+
   /// Read the device KVS snapshot (connect-time load, save verification).
   /// Empty folders when the device holds no keys (an unprovisioned unit).
   /// Throws on failure.

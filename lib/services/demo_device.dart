@@ -129,6 +129,11 @@ class DemoDevice implements LinkTransport, LinkBackend {
   }
 
   @override
+  Future<void> revertUserCalibration() async {
+    _kvs = _kvs.withoutUserCalGroup();
+  }
+
+  @override
   Future<KvsSnapshot> readKvsSnapshot() async => _kvs;
 
   @override

@@ -516,6 +516,7 @@ void main() {
         ),
         calGroup: CalGroup(
           date: '2026-01-01',
+          namespace: CalNamespace.factory,
           channelData: [
             for (int i = 0; i < channels; ++i)
               (

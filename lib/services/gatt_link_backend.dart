@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import '../models/board_calibration.dart';
 import '../models/device_flash.dart';
 import '../models/load_cell.dart';
 import 'kvs_client.dart';
@@ -28,6 +29,10 @@ class GattLinkBackend implements LinkBackend {
   @override
   Future<void> writeSlots(Map<String, String> lcKeys) =>
       withFeedPaused(() => _transport.writeSlots(lcKeys));
+
+  @override
+  Future<void> revertUserCalibration() =>
+      withFeedPaused(_transport.revertUserCalibration);
 
   @override
   Future<KvsSnapshot> readKvsSnapshot() =>
@@ -122,5 +127,24 @@ class KvsFlashTransport {
       }
     }
     _snapshot = _snapshot.withUserSlots(lcKeys);
+  }
+
+  /// Delete the User-namespace calibration group from the last-read snapshot:
+  /// exactly the cal-group keys the device holds, nothing else. The caller
+  /// re-reads afterwards, so a stale snapshot cannot leave keys behind.
+  Future<void> revertUserCalibration() async {
+    final keys = [
+      for (final key in _snapshot.user.keys)
+        if (calGroupKeys.contains(key)) key,
+    ];
+    if (keys.isEmpty) {
+      throw StateError('no User calibration to revert');
+    }
+    for (final key in keys) {
+      if (!await _client.delete(kvsFolderUser, key)) {
+        throw StateError('KVS delete rejected for $key');
+      }
+    }
+    _snapshot = _snapshot.withoutUserCalGroup();
   }
 }

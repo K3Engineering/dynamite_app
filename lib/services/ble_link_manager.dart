@@ -549,6 +549,28 @@ class BleLinkManager extends ChangeNotifier {
     return ok;
   }
 
+  /// Delete the User-namespace recalibration so the factory calibration applies
+  /// again, then re-read the flash document. False when there is no ready link
+  /// or the device refuses; the document is untouched then.
+  @useResult
+  Future<bool> revertUserCalibration() async {
+    final backend = this.backend;
+    if (backend == null) return false;
+    try {
+      await backend.revertUserCalibration();
+      final snapshot = await backend.readKvsSnapshot();
+      onDeviceFlash(
+        DeviceFlash.fromKvs(
+          snapshot,
+          pgaGains: _link.adcConfig?.pgaGains ?? const [],
+        ),
+      );
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   BleLinkManager({
     required AppEvents events,
     required this.onDeviceFlash,

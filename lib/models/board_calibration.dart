@@ -118,16 +118,27 @@ final Set<String> channelCalibrationKeys = Set.unmodifiable({
 });
 
 /// The exact calibration-group keys the schema owns: the marker
-/// (`cal.date`), the provenance metadata, and the per-channel entries.
+/// (`cal.date`), the provenance metadata, and the per-channel entries. A
+/// complete revoke/revert DELs exactly these.
 final Set<String> calGroupKeys = Set.unmodifiable({
   'cal.date',
   'cal.board',
   'cal.tool',
   'cal.origin',
+  'cal.r.prov',
   'cal.temp',
   'cal.adc',
   ...channelCalibrationKeys,
 });
+
+/// Which namespace a calibration group was read from.
+enum CalNamespace {
+  /// The Factory group: the as-built factory calibration (immutable).
+  factory,
+
+  /// The User group: a recalibration that overrides [factory].
+  user,
+}
 
 /// Resolve the board constants from a flash document's key=value map and the
 /// ADC's PGA readback. Null when the flash holds none of the constant keys (an
@@ -523,6 +534,7 @@ class NominalChannelBoard extends ChannelBoardCalibration {
 class CalGroup {
   const CalGroup({
     required this.date,
+    required this.namespace,
     this.boardId,
     this.tool,
     this.origin,
@@ -533,6 +545,10 @@ class CalGroup {
 
   /// Calibration date string as written in flash (`cal.date`).
   final String date;
+
+  /// The namespace this group was read from — [CalNamespace.user] overrides
+  /// [CalNamespace.factory], see [BoardCalibration.fromKv].
+  final CalNamespace namespace;
 
   /// Calibration board firmware id (`cal.board`), if any.
   final String? boardId;
@@ -572,7 +588,7 @@ List<double>? _parseNumberList(String? value, int count, String key) {
 /// policy). Throws [FormatException] on a present-but-invalid group:
 /// calibration is all-or-nothing, so every channel's ladder/readings must be
 /// present and jointly valid.
-CalGroup? parseCalGroup(Map<String, String> kv) {
+CalGroup? parseCalGroup(Map<String, String> kv, CalNamespace namespace) {
   final date = kv['cal.date'];
   if (date == null) return null;
   final channelData = <({List<double> resistors, List<double> readings})>[];
@@ -600,6 +616,7 @@ CalGroup? parseCalGroup(Map<String, String> kv) {
   final temps = _parseNumberList(kv['cal.temp'], 2, 'cal.temp');
   return CalGroup(
     date: date,
+    namespace: namespace,
     boardId: kv['cal.board'],
     tool: kv['cal.tool'],
     origin: kv['cal.origin'],
@@ -621,23 +638,27 @@ CalGroup? parseCalGroup(Map<String, String> kv) {
 sealed class BoardCalibration {
   const BoardCalibration._();
 
-  /// Parse the board half of a flash document from the FACTORY key/value map.
+  /// Parse the board half of a flash document from the FACTORY key/value map
+  /// and, optionally, the USER map holding a recalibration.
   /// [pgaGains] completes the board constants (see [resolveBoardConstants]).
   ///
-  /// Throws [FormatException] on present-but-invalid board data: partial
-  /// constants, orphaned calibration keys, or a rejected cal group. Absent data
-  /// is legal (unprovisioned → raw counts; constants without a cal group →
-  /// nominal channels). Unknown keys are ignored. [DeviceFlash.fromKvs] turns
-  /// this into an [InvalidBoardCalibration].
+  /// The User group, when present, is the effective calibration and overrides
+  /// the Factory one; a torn User group is an error, not a fallback. Throws
+  /// [FormatException] on present-but-invalid board data: partial constants,
+  /// orphaned calibration keys, or a rejected cal group. Absent data is legal
+  /// (unprovisioned → raw counts; constants without a cal group → nominal
+  /// channels). Unknown keys are ignored. [DeviceFlash.fromKvs] turns this
+  /// into an [InvalidBoardCalibration].
   factory BoardCalibration.fromKv(
-    Map<String, String> kv, {
+    Map<String, String> factory, {
+    Map<String, String> user = const {},
     required List<double> pgaGains,
   }) {
-    final nominals = resolveBoardConstants(kv, pgaGains: pgaGains);
+    final nominals = resolveBoardConstants(factory, pgaGains: pgaGains);
     if (nominals == null) {
       // Calibration keys without the constant chain are a bad-provisioning
       // fragment, not "unprovisioned".
-      if (kv.keys.any(calGroupKeys.contains)) {
+      if (factory.keys.any(calGroupKeys.contains)) {
         throw const FormatException(
           'board data: calibration keys without the constant chain '
           '(run provision first)',
@@ -646,14 +667,31 @@ sealed class BoardCalibration {
       return const UnprovisionedBoardCalibration();
     }
 
-    final group = parseCalGroup(kv);
-    if (group == null && kv.keys.any(calGroupKeys.contains)) {
-      // No date marker, so every calibration key must be absent outright.
-      throw const FormatException(
-        'board calibration: calibration keys without the cal.date marker',
-      );
-    }
+    final group = _effectiveCalGroup(user, factory);
     return ProvisionedBoardCalibration(nominals: nominals, calGroup: group);
+  }
+
+  /// The group in effect: User when it holds one, else Factory. Keys present
+  /// without the `cal.date` marker are a torn write (an interrupted
+  /// recalibration overwrite) and throw — in either folder.
+  static CalGroup? _effectiveCalGroup(
+    Map<String, String> user,
+    Map<String, String> factory,
+  ) {
+    for (final (kv, namespace) in [
+      (user, CalNamespace.user),
+      (factory, CalNamespace.factory),
+    ]) {
+      final group = parseCalGroup(kv, namespace);
+      if (group != null) return group;
+      if (kv.keys.any(calGroupKeys.contains)) {
+        throw FormatException(
+          'board calibration: ${namespace.name} calibration keys without '
+          'the cal.date marker',
+        );
+      }
+    }
+    return null;
   }
 }
 

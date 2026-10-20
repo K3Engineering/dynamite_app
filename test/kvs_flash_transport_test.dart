@@ -6,6 +6,7 @@ import 'package:universal_ble/universal_ble.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
+import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
 import 'package:dynamite_app/services/kvs_client.dart';
 import 'package:dynamite_app/services/gatt_link_backend.dart';
@@ -63,6 +64,60 @@ void main() {
     demoBoardCalibrationDoc,
     pgaGains: const [1, 1, 1, 1],
   ).slots.toKv();
+
+  Object? revert(KvsFlashTransport transport, FakeAsync async) {
+    Object? error;
+    unawaited(
+      transport.revertUserCalibration().then(
+        (_) {},
+        onError: (Object e) => error = e,
+      ),
+    );
+    async.flushMicrotasks();
+    return error;
+  }
+
+  test('revertUserCalibration deletes the User group and nothing else', () {
+    fakeAsync((async) {
+      final (transport, _) = wire();
+      // A recalibration lives next to the slots in User.
+      mock.kvsStore[kvsFolderUser]!.addAll({
+        'cal.date': '2026-09-01',
+        'cal.origin': 'user',
+        'cal.r.prov': 'nominal',
+        for (int i = 0; i < kAdcChannelCount; ++i) ...{
+          'ch$i.r': '10000,10,10,10,10,10000',
+          'ch$i.raw': '6000000,3000000,0,-3000000,-6000000',
+        },
+      });
+      final before = read(transport, async)!;
+      final userKeysBefore = before.user.keys.toSet();
+
+      expect(revert(transport, async), isNull);
+
+      final userAfter = mock.kvsStore[kvsFolderUser]!;
+      // Every cal-group key went; the slot keys and unknown User keys stayed.
+      expect(userAfter.keys.where(calGroupKeys.contains), isEmpty);
+      expect(userAfter.keys.toSet(), userKeysBefore.difference(calGroupKeys));
+      // Factory is untouched: the as-built calibration is the fallback.
+      expect(mock.kvsStore[kvsFolderFactory]!['cal.date'], isNotNull);
+
+      final flash = DeviceFlash.fromKvs(
+        read(transport, async)!,
+        pgaGains: const [1, 1, 1, 1],
+      );
+      final board = flash.board as ProvisionedBoardCalibration;
+      expect(board.calGroup!.namespace, CalNamespace.factory);
+    });
+  });
+
+  test('revertUserCalibration fails loudly with no User group', () {
+    fakeAsync((async) {
+      final (transport, _) = wire();
+      read(transport, async);
+      expect(revert(transport, async), isA<StateError>());
+    });
+  });
 
   test('readKvsSnapshot reads the seeded store folder-separated', () {
     fakeAsync((async) {

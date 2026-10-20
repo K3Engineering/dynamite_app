@@ -582,6 +582,7 @@ void main() {
             ),
             calGroup: CalGroup(
               date: '2026-01-01',
+              namespace: CalNamespace.factory,
               channelData: [
                 for (int i = 0; i < channels; ++i)
                   (
@@ -666,6 +667,7 @@ void main() {
           ),
           calGroup: CalGroup(
             date: '2026-01-15',
+            namespace: CalNamespace.factory,
             tool: 'calibrate.py v3',
             channelData: [
               for (int i = 0; i < channels; ++i)

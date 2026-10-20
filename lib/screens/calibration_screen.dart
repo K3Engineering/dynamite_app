@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../models/board_calibration.dart';
+import '../services/ble_link_manager.dart';
 import '../services/export_delivery.dart';
 import '../services/report_export.dart';
 import '../services/share_capability.dart';
@@ -39,7 +40,42 @@ class CalibrationScreen extends StatelessWidget {
             const SizedBox(height: 16),
           ],
           CalibrationView(board: board),
+          if (board is ProvisionedBoardCalibration &&
+              board.calGroup?.namespace == CalNamespace.user) ...[
+            const SizedBox(height: 16),
+            _revertCard(context),
+          ],
+          // TODO: surface both calibrations side by side (Factory vs User)
+          // and/or their per-point delta, instead of only the effective one.
         ],
+      ),
+    );
+  }
+
+  /// The way back from a User recalibration: delete it, Factory applies again.
+  Widget _revertCard(BuildContext context) {
+    final link = context.read<BleLinkManager>();
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.restore),
+        title: const Text('Revert to factory calibration'),
+        subtitle: const Text(
+          'Deletes the recalibration from the device. The factory calibration '
+          'applies again.',
+        ),
+        onTap: () async {
+          final ok = await link.revertUserCalibration();
+          if (!context.mounted) return;
+          final messenger = ScaffoldMessenger.of(context);
+          if (ok) {
+            showNoticeSnackBar(
+              messenger,
+              'Reverted to the factory calibration',
+            );
+          } else {
+            showErrorSnackBar(messenger, 'Could not revert the calibration');
+          }
+        },
       ),
     );
   }

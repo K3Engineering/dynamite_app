@@ -91,7 +91,12 @@ class _BoardCard extends StatelessWidget {
     if (group == null) {
       status = 'No calibration — nominal values in use';
     } else {
-      final parts = [group.date, if (age != null) '($age)'];
+      final source = calSourceLabel(group);
+      final parts = [
+        source ?? 'Calibrated',
+        group.date,
+        if (age != null) '($age)',
+      ];
       status = 'Calibrated ${parts.join(' ')}'.trimRight();
     }
 
