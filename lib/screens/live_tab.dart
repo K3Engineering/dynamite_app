@@ -520,12 +520,9 @@ class LiveStats extends StatelessWidget {
           // the fix once.
           final anyUnassigned =
               unit.isForce &&
-              [
-                for (int i = 0; i < settings.activeChannels.length; i++)
-                  if (settings.activeChannels[i] &&
-                      hub.calibrationFor(i).loadCell == null)
-                    i,
-              ].isNotEmpty;
+              settings.activeChannelIndices.any(
+                (i) => hub.calibrationFor(i).loadCell == null,
+              );
 
           // A live gap or no data flowing grays values out as stale.
           final stale = hub.liveEdgeIsGap || (health?.noDataFlowing ?? false);

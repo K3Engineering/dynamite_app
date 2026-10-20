@@ -1,6 +1,7 @@
-import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint, listEquals;
 import 'package:meta/meta.dart';
 
+import '../utils/format.dart';
 import 'device_profile.dart';
 
 // ---------------------------------------------------------------------------
@@ -28,41 +29,27 @@ final Set<String> rigSlotKeys = Set.unmodifiable({
 /// device's physical labels.
 String rigSlotTitle(int i) => i < kAdcChannelCount ? 'CH $i' : 'Slot $i';
 
-/// One populated device slot: the cell it holds.
-@immutable
-class RigSlot {
-  const RigSlot({required this.cell});
-
-  final LoadCellProfile cell;
-
-  @override
-  bool operator ==(Object other) => other is RigSlot && other.cell == cell;
-
-  @override
-  int get hashCode => cell.hashCode;
-}
-
 /// The device's load cell slots; identity is positional. Immutable.
 @immutable
 class RigSlots {
-  RigSlots(List<RigSlot?> slots)
+  RigSlots(List<LoadCellProfile?> slots)
     : slots = List.unmodifiable(
         slots.length == kRigSlotCount
             ? slots
             : throw ArgumentError('need $kRigSlotCount slots'),
       );
 
-  final List<RigSlot?> slots;
+  /// Each slot's cell, or null when the slot is empty.
+  final List<LoadCellProfile?> slots;
 
   factory RigSlots.empty() => RigSlots(List.filled(kRigSlotCount, null));
 
-  RigSlot? operator [](int i) => slots[i];
+  LoadCellProfile? operator [](int i) => slots[i];
 
-  LoadCellProfile? cellAt(int i) => slots[i]?.cell;
-
-  /// Cells converting the four ADC channels (slots 0–3), nulls included.
+  /// The cells converting the four ADC channels (slots 0–3 of [slots]),
+  /// nulls included.
   List<LoadCellProfile?> get channelCells => [
-    for (int i = 0; i < kAdcChannelCount; ++i) cellAt(i),
+    for (int i = 0; i < kAdcChannelCount; ++i) slots[i],
   ];
 
   /// Channel row titles: the cell's name, else its spec line anchored to the
@@ -70,7 +57,7 @@ class RigSlots {
   /// [LoadCellProfile.title] directly instead.)
   List<String> get channelTitles => [
     for (int i = 0; i < kAdcChannelCount; ++i)
-      switch (cellAt(i)) {
+      switch (slots[i]) {
         null => rigSlotTitle(i),
         final cell when cell.name.isNotEmpty => cell.name,
         final cell => '${rigSlotTitle(i)} · ${cell.valuesLine}',
@@ -78,8 +65,8 @@ class RigSlots {
   ];
 
   @useResult
-  RigSlots withSlot(int i, RigSlot? slot) => RigSlots([
-    for (int k = 0; k < kRigSlotCount; ++k) k == i ? slot : slots[k],
+  RigSlots withSlot(int i, LoadCellProfile? cell) => RigSlots([
+    for (int k = 0; k < kRigSlotCount; ++k) k == i ? cell : slots[k],
   ]);
 
   /// Swap the contents of slots [a] and [b].
@@ -94,13 +81,8 @@ class RigSlots {
   ]);
 
   @override
-  bool operator ==(Object other) {
-    if (other is! RigSlots) return false;
-    for (int i = 0; i < kRigSlotCount; ++i) {
-      if (other.slots[i] != slots[i]) return false;
-    }
-    return true;
-  }
+  bool operator ==(Object other) =>
+      other is RigSlots && listEquals(other.slots, slots);
 
   @override
   int get hashCode => Object.hashAll(slots);
@@ -115,12 +97,10 @@ class RigSlots {
         switch ((num(kv['lc$i.cap']), num(kv['lc$i.sens']))) {
           (final cap?, final sens?)
               when cap.isFinite && sens.isFinite && cap > 0 && sens > 0 =>
-            RigSlot(
-              cell: LoadCellProfile(
-                name: kv['lc$i.name'] ?? '',
-                capacityKg: cap,
-                sensitivityMvV: sens,
-              ),
+            LoadCellProfile(
+              name: kv['lc$i.name'] ?? '',
+              capacityKg: cap,
+              sensitivityMvV: sens,
             ),
           // Absent (or name-only) slot: no owned value to complain about.
           (null, null) => null,
@@ -136,15 +116,13 @@ class RigSlots {
   /// (parsing splits at the first one). Integral values emit without a fraction
   /// so an unchanged rig diffs clean.
   Map<String, String> toKv() {
-    String num(double v) =>
-        v == v.roundToDouble() ? v.toInt().toString() : v.toString();
     return {
       for (int i = 0; i < kRigSlotCount; ++i)
-        if (slots[i] case final s?) ...{
-          if (s.cell.name.isNotEmpty)
-            'lc$i.name': s.cell.name.replaceAll(RegExp(r'\s+'), ' '),
-          'lc$i.cap': num(s.cell.capacityKg),
-          'lc$i.sens': num(s.cell.sensitivityMvV),
+        if (slots[i] case final cell?) ...{
+          if (cell.name.isNotEmpty)
+            'lc$i.name': cell.name.replaceAll(RegExp(r'\s+'), ' '),
+          'lc$i.cap': formatDecimal(cell.capacityKg),
+          'lc$i.sens': formatDecimal(cell.sensitivityMvV),
         },
     };
   }
@@ -152,7 +130,7 @@ class RigSlots {
 
 /// A slot whose `cap`/`sens` are present but unparseable: read as empty, with
 /// a developer-visible trace.
-RigSlot? _rejectedSlot(int i, Map<String, String> kv) {
+LoadCellProfile? _rejectedSlot(int i, Map<String, String> kv) {
   debugPrint(
     'RigSlots: ignoring slot $i with malformed cap/sens '
     '(cap=${kv['lc$i.cap']}, sens=${kv['lc$i.sens']})',
@@ -181,16 +159,11 @@ class LoadCellProfile {
   double get kgfPerMvV => capacityKg / sensitivityMvV;
 
   /// Human label: the name, or the values for generic profiles.
-  String get title => name.isNotEmpty
-      ? name
-      : '${_trim(capacityKg)} kg · ${_trim(sensitivityMvV)} mV/V';
+  String get title => name.isNotEmpty ? name : valuesLine;
 
   /// The values line, e.g. `100 kg · 2.007 mV/V`.
   String get valuesLine =>
-      '${_trim(capacityKg)} kg · ${_trim(sensitivityMvV)} mV/V';
-
-  static String _trim(double v) =>
-      v == v.roundToDouble() ? v.toInt().toString() : v.toString();
+      '${formatDecimal(capacityKg)} kg · ${formatDecimal(sensitivityMvV)} mV/V';
 
   @useResult
   LoadCellProfile copyWith({

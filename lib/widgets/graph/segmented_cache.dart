@@ -141,21 +141,15 @@ typedef SegmentViewConfig = ({
   SegmentRenderer render,
 });
 
-/// Everything one (re)bake needs, computed once per
-/// [SegmentedGraphCache.paint] call.
+/// Everything one (re)bake needs: the frame config plus the quantities
+/// [_maintain] derives from it once, so the bakes and the raster half read
+/// the same derived values.
 typedef _BakeEnv = ({
+  SegmentViewConfig c,
   double pps,
-  double gh,
-  double dpr,
   int viewStart,
   int viewEnd,
-  double yMin,
-  double yMax,
-  int bakeable,
   int targetSpan,
-  double hPad,
-  double vPad,
-  SegmentRenderer render,
 });
 
 /// One baked segment: an immutable vector render of samples [start, end)
@@ -247,6 +241,29 @@ class SegmentedGraphCache {
 
   void dispose() => clear();
 
+  /// Adopt [c]'s config as the cache's current stamps (see [_configDiffers]).
+  void _stampConfig(SegmentViewConfig c) {
+    _gh = c.gh;
+    _dpr = c.dpr;
+    _destructiveKey = List.of(c.destructiveKey);
+    _remapKey = List.of(c.remapKey);
+  }
+
+  /// Whether the given config stamps differ from the cache's current ones.
+  /// One check, two candidates: the frame config (a bump disposes out-of-view
+  /// segments in [_maintain]) and a segment's bake stamps (a mismatch marks
+  /// the segment for the rolling re-bake in [_stalePlan]).
+  bool _configDiffers(
+    List<Object?> destructiveKey,
+    List<Object?> remapKey,
+    double gh,
+    double dpr,
+  ) =>
+      !listEquals(destructiveKey, _destructiveKey) ||
+      !listEquals(remapKey, _remapKey) ||
+      (gh - _gh).abs() > 0.1 ||
+      dpr != _dpr;
+
   /// Bring the cache up to date for the frame [c] and blit it: apply
   /// generation/config changes, evict segments far outside the view, spend
   /// up to [kSegmentBakeBudget] segment (re)bakes, then blit the cached
@@ -271,62 +288,47 @@ class SegmentedGraphCache {
   /// fire repaint on their own).
   @useResult
   bool paint(Canvas canvas, SegmentViewConfig c) {
-    final baked = _maintain(c);
-    _draw(canvas, c);
+    final (env, baked) = _maintain(c);
+    _blitSegments(canvas, env);
+    _drawGaps(canvas, env);
     return baked;
   }
 
-  /// The maintenance half of [paint]: everything except the raster.
-  bool _maintain(SegmentViewConfig c) {
-    if (c.generation != _generation) {
-      clear();
-      _generation = c.generation;
-      _gh = c.gh;
-      _dpr = c.dpr;
-      _destructiveKey = List.of(c.destructiveKey);
-      _remapKey = List.of(c.remapKey);
-    }
-
+  /// The maintenance half of [paint]: everything except the raster. Returns
+  /// the frame's derived quantities alongside whether a bake happened, so the
+  /// raster half reads exactly the values the bakes were made with.
+  (_BakeEnv, bool) _maintain(SegmentViewConfig c) {
     final double pps = c.gw / c.viewSpan; // logical px per sample
     final double viewEnd = c.viewStart + c.viewSpan;
     final int targetSpan = math.max(1, (kSegmentTargetPx / pps).round());
     // Coverage bookkeeping is integer: bakes and gap ranges are
     // sample-aligned (block anchoring). The fractional scroll offset only
-    // shifts blit placement, in [_draw].
+    // shifts blit placement, in [_blitSegments].
     final int covStart = c.viewStart.floor();
     final int covEnd = viewEnd.ceil();
 
-    // Config bump: dispose stale segments outside the view, so they cannot
-    // resurrect on a later pan before the sweep reaches them. Disposed
-    // ranges vector-draw if panned back to.
-    if (!listEquals(c.destructiveKey, _destructiveKey) ||
-        !listEquals(c.remapKey, _remapKey) ||
-        (c.gh - _gh).abs() > 0.1 ||
-        c.dpr != _dpr) {
+    if (c.generation != _generation) {
+      clear();
+      _generation = c.generation;
+      _stampConfig(c);
+    } else if (_configDiffers(c.destructiveKey, c.remapKey, c.gh, c.dpr)) {
+      // Config bump: dispose stale segments outside the view, so they cannot
+      // resurrect on a later pan before the sweep reaches them. Disposed
+      // ranges vector-draw if panned back to.
       _segments.removeWhere((s) {
         if (s.end > covStart && s.start < covEnd) return false;
         s.dispose();
         return true;
       });
-      _gh = c.gh;
-      _dpr = c.dpr;
-      _destructiveKey = List.of(c.destructiveKey);
-      _remapKey = List.of(c.remapKey);
+      _stampConfig(c);
     }
 
     final env = (
+      c: c,
       pps: pps,
-      gh: c.gh,
-      dpr: c.dpr,
       viewStart: covStart,
       viewEnd: covEnd,
-      yMin: c.yMin,
-      yMax: c.yMax,
-      bakeable: c.bakeableSamples,
       targetSpan: targetSpan,
-      hPad: c.hPad,
-      vPad: c.vPad,
-      render: c.render,
     );
 
     final int margin = kSegmentEvictionMargin * targetSpan;
@@ -347,7 +349,7 @@ class SegmentedGraphCache {
     }
 
     assert(_segmentsAreDisjoint());
-    return baked;
+    return (env, baked);
   }
 
   /// Debug-only invariant check: [_segments] is ordered by [GraphSegment.start]
@@ -358,25 +360,6 @@ class SegmentedGraphCache {
       if (_segments[k - 1].end > _segments[k].start) return false;
     }
     return true;
-  }
-
-  /// The raster half of [paint]: blit the cached segments for the window
-  /// mapped to x in [0, gw), and vector-draw the uncovered gaps.
-  void _draw(Canvas canvas, SegmentViewConfig c) {
-    final double pps = c.gw / c.viewSpan;
-    final double viewEnd = c.viewStart + c.viewSpan;
-    _blitSegments(canvas, pps, c.gw, c.gh, c.viewStart, c.yMin, c.yMax);
-    _drawGaps(
-      canvas,
-      pps,
-      c.gw,
-      c.gh,
-      c.viewStart,
-      viewEnd,
-      c.totalSamples,
-      c.vPad,
-      c.render,
-    );
   }
 
   /// Uncovered sub-ranges of [viewStart, min(viewEnd, totalSamples)).
@@ -422,7 +405,7 @@ class SegmentedGraphCache {
   bool _bakeWidestGap(_BakeEnv env) {
     (int, int)? bakeGap;
     double widestPx = kSegmentGapBakePx;
-    for (final g in _gaps(env.viewStart, env.viewEnd, env.bakeable)) {
+    for (final g in _gaps(env.viewStart, env.viewEnd, env.c.bakeableSamples)) {
       final double w = (g.$2 - g.$1) * env.pps;
       if (w > widestPx) {
         widestPx = w;
@@ -436,10 +419,10 @@ class SegmentedGraphCache {
     if ((start - bakeGap.$1) * env.pps <= kSegmentGapBakePx) {
       start = bakeGap.$1; // swallow the orphaned remainder
     }
-    if (end <= start) return false;
+    assert(end > start); // non-empty gap and targetSpan >= 1 keep start < end
     assert(
-      end <= env.bakeable,
-      'bake range end $end exceeds bake horizon ${env.bakeable}',
+      end <= env.c.bakeableSamples,
+      'bake range end $end exceeds bake horizon ${env.c.bakeableSamples}',
     ); // _gaps caps domainEnd at the bake horizon
 
     // Insertion point: first segment starting inside/after the bake range.
@@ -447,15 +430,18 @@ class SegmentedGraphCache {
     while (at < _segments.length && _segments[at].start < start) {
       at++;
     }
-    while (at > 0 &&
-        (end - _segments[at - 1].start) * env.pps <= kSegmentTargetPx) {
-      at--;
-      start = _segments[at].start;
-      _segments[at].dispose();
-      _segments.removeAt(at);
+    // Absorb whole left neighbors while the merged bake stays within one
+    // target width, so the live-edge segment grows in place (one bake per
+    // sliver) instead of accumulating sliver-wide strips. [_splice] with an
+    // empty right range is a plain insert.
+    int from = at;
+    while (from > 0 &&
+        (end - _segments[from - 1].start) * env.pps <= kSegmentTargetPx) {
+      from--;
     }
+    if (from < at) start = _segments[from].start;
 
-    _segments.insert(at, _bake(start, end, env));
+    _splice(from, at - 1, _bake(start, end, env));
     return true;
   }
 
@@ -484,18 +470,15 @@ class SegmentedGraphCache {
   /// the Y-range collapsing onto a quiet channel -- smears the segment's line
   /// across the screen. A suppressed segment is kept, not disposed: a
   /// Y-range snap-back makes it blittable again.
-  bool _isBlittable(GraphSegment s, double yMin, double yMax, double gh) {
+  bool _isBlittable(GraphSegment s, SegmentViewConfig c) {
     if (!listEquals(s.destructiveKey, _destructiveKey)) return false;
-    final double ys = (s.yMax - s.yMin) / (yMax - yMin) * (gh / s.gh);
-    return ys * kBakedLinePx <= gh * kMaxBlitLineFraction;
+    return _blitYScale(s, c) * kBakedLinePx <= c.gh * kMaxBlitLineFraction;
   }
 
-  /// Whether [s] was baked under outdated config (any kind).
-  bool _isConfigStale(GraphSegment s, _BakeEnv env) =>
-      !listEquals(s.destructiveKey, _destructiveKey) ||
-      !listEquals(s.remapKey, _remapKey) ||
-      (s.gh - env.gh).abs() > 0.1 ||
-      s.dpr != env.dpr;
+  /// The corrective vertical scale a blit of [s] applies: baked value-range
+  /// drift times the plot-height ratio since the bake.
+  static double _blitYScale(GraphSegment s, SegmentViewConfig c) =>
+      (s.yMax - s.yMin) / (c.yMax - c.yMin) * (c.gh / s.gh);
 
   /// The refresh plan for [i] if it is stale, else null:
   ///   * config-stale -- baked under outdated keys/gh/dpr;
@@ -512,23 +495,26 @@ class SegmentedGraphCache {
   /// are cheaper merged into one bake than refreshed in two frames.
   _RefreshPlan? _stalePlan(int i, _BakeEnv env) {
     final s = _segments[i];
-    final base = (
-      from: i,
-      to: i,
-      start: s.start,
-      end: math.min(s.end, env.bakeable),
-    );
     final p = _planRefresh(i, env);
-    if (_isConfigStale(s, env)) return p;
+    if (_configDiffers(s.destructiveKey, s.remapKey, s.gh, s.dpr)) return p;
     final double w = (s.end - s.start) * env.pps;
     final double xScale = w / s.contentW;
-    final double yScale = (s.yMax - s.yMin) / (env.yMax - env.yMin);
+    final double yScale = (s.yMax - s.yMin) / (env.c.yMax - env.c.yMin);
     if (math.max((1 - xScale).abs(), (1 - yScale).abs()) > kMaxSegmentDrift) {
       return p;
     }
     final bool sizeOutlier =
         w > 2 * kSegmentTargetPx || w < kSegmentTargetPx / 2;
-    return sizeOutlier && p != base ? p : null;
+    return sizeOutlier &&
+            p !=
+                (
+                  from: i,
+                  to: i,
+                  start: s.start,
+                  end: math.min(s.end, env.c.bakeableSamples),
+                )
+        ? p
+        : null;
   }
 
   /// Where a refresh of [i] would bake and which segments it would replace
@@ -563,8 +549,9 @@ class SegmentedGraphCache {
   /// merges at 1.5 targets, so nothing is born already past a size
   /// threshold -- the birth side of the quiescence invariant.
   _RefreshPlan _planRefresh(int i, _BakeEnv env) {
+    final int bakeable = env.c.bakeableSamples;
     final s = _segments[i];
-    final int end = math.min(s.end, env.bakeable);
+    final int end = math.min(s.end, bakeable);
     if (end <= s.start) {
       return (from: i, to: i, start: s.start, end: end);
     }
@@ -584,8 +571,8 @@ class SegmentedGraphCache {
     int to = i;
     if ((mergedEnd - start) * env.pps < kSegmentTargetPx / 2) {
       final int uncoveredLimit = math.min(
-        to + 1 < _segments.length ? _segments[to + 1].start : env.bakeable,
-        env.bakeable,
+        to + 1 < _segments.length ? _segments[to + 1].start : bakeable,
+        bakeable,
       );
       mergedEnd = math.max(
         mergedEnd,
@@ -602,6 +589,8 @@ class SegmentedGraphCache {
     return (from: from, to: to, start: start, end: mergedEnd);
   }
 
+  /// Replace `_segments[from].._segments[to]` (inclusive) with [seg]; an empty
+  /// range (`to < from`) is a plain insert at [from].
   void _splice(int from, int to, GraphSegment seg) {
     for (int k = from; k <= to; k++) {
       _segments[k].dispose();
@@ -612,15 +601,16 @@ class SegmentedGraphCache {
   /// Vector-render samples [start, end) into a fresh texture sized to the
   /// range's current on-screen width, so its blit starts at scale ~1.
   GraphSegment _bake(int start, int end, _BakeEnv env) {
+    final SegmentViewConfig c = env.c;
     final int texW = math.max(1, ((end - start) * env.pps).ceil());
     double contentW = texW.toDouble();
     final img = _bakeImage(
-      ((texW + 2 * env.hPad) * env.dpr).ceil(),
-      ((env.gh + 2 * env.vPad) * env.dpr).ceil(),
-      env.dpr,
-      (c) {
-        c.translate(env.hPad, env.vPad);
-        contentW = env.render(c, start, end, texW);
+      ((texW + 2 * c.hPad) * c.dpr).ceil(),
+      ((c.gh + 2 * c.vPad) * c.dpr).ceil(),
+      c.dpr,
+      (canvas) {
+        canvas.translate(c.hPad, c.vPad);
+        contentW = c.render(canvas, start, end, texW);
       },
     );
     return GraphSegment(
@@ -628,14 +618,14 @@ class SegmentedGraphCache {
       start: start,
       end: end,
       contentW: math.max(contentW, 0.001),
-      yMin: env.yMin,
-      yMax: env.yMax,
-      gh: env.gh,
-      dpr: env.dpr,
+      yMin: c.yMin,
+      yMax: c.yMax,
+      gh: c.gh,
+      dpr: c.dpr,
       destructiveKey: _destructiveKey,
       remapKey: _remapKey,
-      hPad: env.hPad,
-      vPad: env.vPad,
+      hPad: c.hPad,
+      vPad: c.vPad,
     );
   }
 
@@ -650,36 +640,27 @@ class SegmentedGraphCache {
   /// since the bake. Per-channel offsets (tares) are NOT corrected here:
   /// one segment composites every channel, so no single affine can hold
   /// per-channel shifts -- tares ride the destructive key instead.
-  void _blitSegments(
-    Canvas canvas,
-    double pps,
-    double gw,
-    double gh,
-    double viewStart,
-    double yMin,
-    double yMax,
-  ) {
-    final double range = yMax - yMin;
+  void _blitSegments(Canvas canvas, _BakeEnv env) {
+    final SegmentViewConfig c = env.c;
+    final double range = c.yMax - c.yMin;
     final paint = Paint()..filterQuality = kSegmentFilterQuality;
     for (final s in _segments) {
-      if (!_isBlittable(s, yMin, yMax, gh)) continue;
-      final double x1 = (s.start - viewStart) * pps;
-      final double x2 = (s.end - viewStart) * pps;
+      if (!_isBlittable(s, c)) continue;
+      final double x1 = (s.start - c.viewStart) * env.pps;
+      final double x2 = (s.end - c.viewStart) * env.pps;
       // Segments are disjoint (see [_segments]), so one screen x has at most
       // one blit; the clip is just the view bounds.
       final double clipL = math.max(x1, 0.0);
-      final double clipR = math.min(x2, gw);
+      final double clipR = math.min(x2, c.gw);
       if (clipR <= clipL) continue;
 
       final double xs = (x2 - x1) / s.contentW;
-      // Total y scale: value-range drift (first factor) rescaled into today's
-      // pixel height (second factor). Where the segment's top content row
-      // (value s.yMax) lands today:
-      final double ys = (s.yMax - s.yMin) / range * (gh / s.gh);
-      final double yTop = gh * (1 - (s.yMax - yMin) / range);
+      final double ys = _blitYScale(s, c);
+      // Where the segment's top content row (value s.yMax) lands today.
+      final double yTop = c.gh * (1 - (s.yMax - c.yMin) / range);
 
       canvas.save();
-      canvas.clipRect(Rect.fromLTRB(clipL, -s.vPad, clipR, gh + s.vPad));
+      canvas.clipRect(Rect.fromLTRB(clipL, -s.vPad, clipR, c.gh + s.vPad));
       canvas.drawImageRect(
         s.image,
         // Source is the CONTENT rect (content + pads), not the ceil'd image
@@ -704,34 +685,25 @@ class SegmentedGraphCache {
   }
 
   /// Vector-render the uncovered visible ranges (see the file header).
-  void _drawGaps(
-    Canvas canvas,
-    double pps,
-    double gw,
-    double gh,
-    double viewStart,
-    double viewEnd,
-    int totalSamples,
-    double vPad,
-    SegmentRenderer render,
-  ) {
-    for (final (gs, ge) in _gaps(
-      viewStart.floor(),
-      viewEnd.ceil(),
-      totalSamples,
-    )) {
-      final double w = (ge - gs) * pps;
-      if (w <= 0) continue;
-      final double x = (gs - viewStart) * pps;
+  void _drawGaps(Canvas canvas, _BakeEnv env) {
+    final SegmentViewConfig c = env.c;
+    for (final (gs, ge) in _gaps(env.viewStart, env.viewEnd, c.totalSamples)) {
+      final double w = (ge - gs) * env.pps;
+      final double x = (gs - c.viewStart) * env.pps;
       canvas.save();
       // The floored coverage start can put a gap's left edge up to one
       // sample-pixel left of the plot area; the translate keeps the content
       // mapping exact, so the clip is what gets clamped.
       canvas.clipRect(
-        Rect.fromLTRB(math.max(x, 0.0), -vPad, math.min(x + w, gw), gh + vPad),
+        Rect.fromLTRB(
+          math.max(x, 0.0),
+          -c.vPad,
+          math.min(x + w, c.gw),
+          c.gh + c.vPad,
+        ),
       );
       canvas.translate(x, 0);
-      render(canvas, gs, ge, math.max(1, w.ceil()));
+      c.render(canvas, gs, ge, math.max(1, w.ceil()));
       canvas.restore();
     }
   }

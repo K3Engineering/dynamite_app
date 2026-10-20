@@ -309,7 +309,7 @@ class _TableCellValue extends StatelessWidget {
     required this.isActive,
     required this.isStale,
     required this.textStyle,
-    this.onTap,
+    required this.onTap,
   });
 
   final int channel;
@@ -320,7 +320,7 @@ class _TableCellValue extends StatelessWidget {
   final bool isActive;
   final bool isStale;
   final TextStyle? textStyle;
-  final VoidCallback? onTap;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -337,7 +337,7 @@ class _TableCellValue extends StatelessWidget {
     return _TappableChannelCell(
       channel: channel,
       active: isActive,
-      onTap: onTap ?? () {},
+      onTap: onTap,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 1, horizontal: 1),
         child: Text(

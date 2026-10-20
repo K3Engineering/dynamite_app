@@ -104,7 +104,7 @@ class RigState extends ChangeNotifier {
     final now = DateTime.now();
     var seenAny = false;
     for (int i = 0; i < kRigSlotCount; ++i) {
-      final cell = flash.slots.cellAt(i);
+      final cell = flash.slots[i];
       if (cell != null) {
         _upsertHistory(cell, deviceName, now, persist: false);
         seenAny = true;
@@ -141,7 +141,7 @@ class RigState extends ChangeNotifier {
 
   /// Place [cell] into slot [i]; recorded in history immediately.
   void setSlot(int i, LoadCellProfile cell) {
-    _edit((slots) => slots.withSlot(i, RigSlot(cell: cell)));
+    _edit((slots) => slots.withSlot(i, cell));
     _upsertHistory(cell, connectedDeviceName, DateTime.now());
     notifyListeners();
   }
@@ -182,40 +182,27 @@ class RigState extends ChangeNotifier {
       // dead link is a caller bug, not a race.
       throw StateError('saveToDevice with pending edits but no live link');
     }
-    try {
-      await backend.writeSlots(edited.toKv());
-    } catch (_) {
-      return false;
-    }
-    // Verify: firmware may reject, truncate, or normalize the write, and there
-    // is no change detection. The equality check below catches a mangled
-    // read-back.
     final KvsSnapshot readBack;
     final RigSlots verified;
     try {
+      await backend.writeSlots(edited.toKv());
+      // Verify: firmware may reject, truncate, or normalize the write, and
+      // there is no change detection. Reading back catches a mangled write.
       readBack = await backend.readKvsSnapshot();
       verified = RigSlots.fromKv(readBack.user);
     } catch (_) {
       return false;
     }
-    if (!_sameCells(verified, edited)) return false;
-    // Commit only if nothing moved under the in-flight write (an edit, a
-    // re-read, or a link drop all replace the state object).
-    if (!identical(_doc, doc)) return false;
+    // A mismatched read-back and a state that moved under the in-flight write
+    // (an edit, a re-read, or a link drop all replace the state object) are
+    // the same answer to the caller.
+    if (verified != edited || !identical(_doc, doc)) return false;
     // Adopt the read-back's slots (with any normalization), the read-time
     // board, and the fresh KVS.
     _doc = _Clean(
       DeviceFlash(board: doc.flash.board, slots: verified, kvs: readBack),
     );
     notifyListeners();
-    return true;
-  }
-
-  /// Compare cells slot by slot (the read-back may differ textually).
-  static bool _sameCells(RigSlots a, RigSlots b) {
-    for (int i = 0; i < kRigSlotCount; ++i) {
-      if (a.cellAt(i) != b.cellAt(i)) return false;
-    }
     return true;
   }
 

@@ -105,54 +105,52 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     );
   }
 
-  Widget _buildSession(AppSettings settings, SessionSummary session) =>
-      Scaffold(
-        appBar: AppBar(
-          title: Text(
-            session.name.isEmpty ? untitledSessionName : session.name,
-          ),
-          actions: [
-            PopupMenuButton<String>(
-              onSelected: (action) => _onMenuAction(action, session),
-              itemBuilder: (menuContext) => [
-                const PopupMenuItem(value: 'rename', child: Text('Rename')),
-                const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
-                const PopupMenuItem(
-                  value: 'download_csv',
-                  child: Text('Download CSV'),
-                ),
-                PopupMenuItem(
-                  value: 'share_csv',
-                  enabled: fileShareSupportedHere,
-                  child: Text(
-                    'Share CSV'
-                    '${fileShareSupportedHere ? '' : ' (not supported here)'}',
-                  ),
-                ),
-                PopupMenuItem(
-                  value: 'delete',
-                  child: Text(
-                    'Delete',
-                    style: TextStyle(
-                      color: Theme.of(menuContext).colorScheme.error,
-                    ),
-                  ),
-                ),
-              ],
+  Widget _buildSession(
+    AppSettings settings,
+    SessionSummary session,
+  ) => Scaffold(
+    appBar: AppBar(
+      title: Text(session.name.isEmpty ? untitledSessionName : session.name),
+      actions: [
+        PopupMenuButton<String>(
+          onSelected: (action) => _onMenuAction(action, session),
+          itemBuilder: (_) => [
+            const PopupMenuItem(value: 'rename', child: Text('Rename')),
+            const PopupMenuItem(value: 'notes', child: Text('Edit notes')),
+            const PopupMenuItem(
+              value: 'download_csv',
+              child: Text('Download CSV'),
+            ),
+            PopupMenuItem(
+              value: 'share_csv',
+              enabled: fileShareSupportedHere,
+              child: Text(
+                'Share CSV'
+                '${fileShareSupportedHere ? '' : ' (not supported here)'}',
+              ),
+            ),
+            PopupMenuItem(
+              value: 'delete',
+              child: Text(
+                'Delete',
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
             ),
           ],
         ),
-        body: switch (_loadState) {
-          _Loading() => const Center(child: CircularProgressIndicator()),
-          _Failed(:final error) => EmptyPlaceholder(
-            icon: Icons.error_outline,
-            title: 'Error loading session',
-            hint: '$error',
-            color: Theme.of(context).colorScheme.error,
-          ),
-          _Ready(:final data) => _buildContent(settings, session, data),
-        },
-      );
+      ],
+    ),
+    body: switch (_loadState) {
+      _Loading() => const Center(child: CircularProgressIndicator()),
+      _Failed(:final error) => EmptyPlaceholder(
+        icon: Icons.error_outline,
+        title: 'Error loading session',
+        hint: '$error',
+        color: Theme.of(context).colorScheme.error,
+      ),
+      _Ready(:final data) => _buildContent(settings, session, data),
+    },
+  );
 
   Widget _buildContent(
     AppSettings settings,
@@ -353,49 +351,39 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     if (mounted && deleted) Navigator.of(context).pop();
   }
 
+  /// The CSV export flow: pick the converted unit, build the artifact, hand
+  /// it to [deliver] (download or share). A cancelled unit pick returns null,
+  /// which keeps the snackbar silent.
+  Future<void> _exportCsv(
+    SessionSummary session,
+    SessionData data,
+    ExportDelivery deliver,
+  ) => runExportAction(context, () async {
+    final appMeta = context.read<AppMeta>();
+    final unit = await _pickExportUnit(session.displayUnit);
+    if (unit == null) return null;
+    return deliver(
+      buildSessionCsvArtifact(
+        sessionName: session.name,
+        recordedAtIso: session.recordedAt,
+        deviceInfo: session.deviceInfo,
+        data: data,
+        unit: unit,
+        appMeta: appMeta,
+        interrupted: session.interrupted,
+      ),
+    );
+  }, errorTitle: 'CSV export');
+
   Future<void> _downloadCsv(SessionSummary session, SessionData data) =>
-      runExportAction(context, () async {
-        final appMeta = context.read<AppMeta>();
-        final unit = await _pickExportUnit(session.displayUnit);
-        if (unit == null) return null;
-        final artifact = buildSessionCsvArtifact(
-          sessionName: session.name,
-          recordedAtIso: session.recordedAt,
-          deviceInfo: session.deviceInfo,
-          data: data,
-          unit: unit,
-          appMeta: appMeta,
-          interrupted: session.interrupted,
-        );
-        return downloadExport(
-          bytes: artifact.bytes,
-          fileName: artifact.fileName,
-          dialogTitle: 'Download session CSV',
-        );
-      }, errorTitle: 'CSV export');
+      _exportCsv(session, data, downloadDelivery('Download session CSV'));
 
   Future<void> _shareCsv(SessionSummary session, SessionData data) =>
-      runExportAction(context, () async {
-        final appMeta = context.read<AppMeta>();
-        final unit = await _pickExportUnit(session.displayUnit);
-        if (unit == null) return null;
-        final artifact = buildSessionCsvArtifact(
-          sessionName: session.name,
-          recordedAtIso: session.recordedAt,
-          deviceInfo: session.deviceInfo,
-          data: data,
-          unit: unit,
-          appMeta: appMeta,
-          interrupted: session.interrupted,
-        );
-        return shareExport(
-          bytes: artifact.bytes,
-          fileName: artifact.fileName,
-          mimeType: artifact.mimeType,
-          dialogTitle: 'Share CSV',
-          anchor: _shareAnchor(),
-        );
-      }, errorTitle: 'CSV export');
+      _exportCsv(
+        session,
+        data,
+        shareDelivery('Share CSV', anchor: fullScreenShareAnchor(context)),
+      );
 
   /// Ask the user for the export's converted unit (one file, one unit,
   /// chosen by the user), preselected to [initial].
@@ -441,21 +429,6 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           ),
         );
       },
-    );
-  }
-
-  /// Anchor rect for the iPad share popover (the whole screen when invoked
-  /// from the app-bar menu or the button row).
-  ShareAnchor? _shareAnchor() {
-    final box = context.findRenderObject();
-    if (box is! RenderBox) return null;
-    final global = box.localToGlobal(Offset.zero);
-    final size = box.size;
-    return (
-      left: global.dx,
-      top: global.dy,
-      width: size.width,
-      height: size.height,
     );
   }
 }

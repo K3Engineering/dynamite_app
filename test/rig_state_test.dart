@@ -217,7 +217,7 @@ void main() {
         // Drag the spare (slot 4) onto CH 1 (slot 1): the two exchange.
         rig.swapSlots(4, 1);
         expect(rig.channelTitles[1], 'Spare 50');
-        expect(rig.effectiveSlots.cellAt(4)?.name, 'Break jig');
+        expect(rig.effectiveSlots[4]?.name, 'Break jig');
 
         // Drag 'Spare 50' (now on CH 1) onto the empty CH 3: a move — the
         // channel it left goes empty, the evicted 'Break jig' stays put.
@@ -225,7 +225,7 @@ void main() {
         expect(rig.channelTitles[1], 'CH 1');
         expect(rig.effectiveSlots[1], isNull);
         expect(rig.channelTitles[3], 'Spare 50');
-        expect(rig.effectiveSlots.cellAt(4)?.name, 'Break jig');
+        expect(rig.effectiveSlots[4]?.name, 'Break jig');
 
         // Self-swap is a no-op.
         rig.swapSlots(3, 3);
@@ -344,7 +344,7 @@ void main() {
       expect(rig.hasPending, isTrue);
       expect(rig.channelTitles[3], 'New');
       // The flash truth was NOT advanced to the unverified write.
-      expect(rig.effectiveSlots.cellAt(3)?.name, 'New');
+      expect(rig.effectiveSlots[3]?.name, 'New');
     });
 
     test('an edit landing mid-write is kept, not silently discarded', () async {
@@ -369,7 +369,7 @@ void main() {
       expect(await saveFuture, isFalse);
       expect(rig.hasPending, isTrue);
       expect(rig.channelTitles[3], 'New');
-      expect(rig.effectiveSlots.cellAt(4)?.name, 'Other');
+      expect(rig.effectiveSlots[4]?.name, 'Other');
     });
 
     test('unknown flash keys are untouched by a save', () async {

@@ -54,6 +54,15 @@ class CalibrationScreen extends StatelessWidget {
     // back to the device id.
     final label = deviceName.isEmpty ? deviceId : deviceName;
     final report = calibrationReport(board, label);
+
+    /// Build the report artifact and hand it to one delivery path
+    /// (download or share), surfacing the outcome as a snackbar.
+    void deliver(ExportDelivery delivery) => runExportAction(
+      context,
+      () => delivery(calibrationReportArtifact(report, deviceLabel: label)),
+      errorTitle: 'Report export',
+    );
+
     return Row(
       children: [
         Expanded(
@@ -69,17 +78,8 @@ class CalibrationScreen extends StatelessWidget {
         const SizedBox(width: 12),
         Expanded(
           child: OutlinedButton.icon(
-            onPressed: () => runExportAction(context, () {
-              final artifact = calibrationReportArtifact(
-                report,
-                deviceLabel: label,
-              );
-              return downloadExport(
-                bytes: artifact.bytes,
-                fileName: artifact.fileName,
-                dialogTitle: 'Download calibration report',
-              );
-            }, errorTitle: 'Report export'),
+            onPressed: () =>
+                deliver(downloadDelivery('Download calibration report')),
             icon: const Icon(Icons.download),
             label: const Text('Download'),
           ),
@@ -88,39 +88,18 @@ class CalibrationScreen extends StatelessWidget {
         Expanded(
           child: OutlinedButton.icon(
             onPressed: fileShareSupportedHere
-                ? () => runExportAction(context, () {
-                    final artifact = calibrationReportArtifact(
-                      report,
-                      deviceLabel: label,
-                    );
-                    return shareExport(
-                      bytes: artifact.bytes,
-                      fileName: artifact.fileName,
-                      mimeType: artifact.mimeType,
-                      dialogTitle: 'Share calibration report',
-                      anchor: _shareAnchor(context),
-                    );
-                  }, errorTitle: 'Report export')
+                ? () => deliver(
+                    shareDelivery(
+                      'Share calibration report',
+                      anchor: fullScreenShareAnchor(context),
+                    ),
+                  )
                 : null,
             icon: const Icon(Icons.share),
             label: const Text('Share'),
           ),
         ),
       ],
-    );
-  }
-
-  /// Anchor rect for the iPad share popover (the whole screen).
-  ShareAnchor? _shareAnchor(BuildContext context) {
-    final box = context.findRenderObject();
-    if (box is! RenderBox) return null;
-    final global = box.localToGlobal(Offset.zero);
-    final size = box.size;
-    return (
-      left: global.dx,
-      top: global.dy,
-      width: size.width,
-      height: size.height,
     );
   }
 }

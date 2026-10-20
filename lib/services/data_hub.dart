@@ -227,7 +227,7 @@ class DataHub extends ChangeNotifier
   /// higher-rate noise to the same floor. A new request replaces an
   /// in-progress one; previous offsets stay in effect while the window fills.
   void requestTare({int? channel}) {
-    assert(channel == null || (channel >= 0 && channel < kAdcChannelCount));
+    _checkChannel(channel);
     _pendingTare = _PendingTare(
       _sampleRateHz,
       channel,
@@ -242,7 +242,7 @@ class DataHub extends ChangeNotifier
 
   /// Drop tare offsets (back to gross) for one [channel] or all.
   void resetTare({int? channel}) {
-    assert(channel == null || (channel >= 0 && channel < kAdcChannelCount));
+    _checkChannel(channel);
     _cancelPendingTare();
     for (int i = 0; i < kAdcChannelCount; ++i) {
       if (channel == null || channel == i) tare[i] = null;
@@ -253,15 +253,20 @@ class DataHub extends ChangeNotifier
 
   /// Write one channel's tare offset directly, in counts; absolute.
   void setTareOffset(int channel, double rawValue) {
-    assert(
-      channel >= 0 && channel < kAdcChannelCount,
-      'channel $channel out of range [0, $kAdcChannelCount)',
-    );
+    _checkChannel(channel);
     assert(rawValue.isFinite);
     _cancelPendingTare();
     tare[channel] = rawValue;
     _tareVersion++;
     notifyListeners();
+  }
+
+  /// Range check for the per-channel entry points; null means "all channels".
+  static void _checkChannel(int? channel) {
+    assert(
+      channel == null || (channel >= 0 && channel < kAdcChannelCount),
+      'channel $channel out of range [0, $kAdcChannelCount)',
+    );
   }
 
   /// A window's worth of real samples has arrived: their mean becomes the
@@ -437,20 +442,12 @@ class DataHub extends ChangeNotifier
       final y = b[i];
       if (x case final CalibratedChannelBoard xd) {
         if (y is! CalibratedChannelBoard) return false;
-        if (!_sameList(xd.resistors, y.resistors)) return false;
-        if (!_sameList(xd.readings, y.readings)) return false;
+        if (!listEquals(xd.resistors, y.resistors)) return false;
+        if (!listEquals(xd.readings, y.readings)) return false;
       } else if (y is CalibratedChannelBoard) {
         return false;
       }
       if (!_sameNominals(x.nominals, y.nominals)) return false;
-    }
-    return true;
-  }
-
-  static bool _sameList(List<double> a, List<double> b) {
-    if (a.length != b.length) return false;
-    for (int k = 0; k < a.length; ++k) {
-      if (a[k] != b[k]) return false;
     }
     return true;
   }
@@ -466,11 +463,7 @@ class DataHub extends ChangeNotifier
   /// Replace the load-cell assignments. Content-equal updates are a no-op.
   void updateLoadCells(List<LoadCellProfile?> cells) {
     assert(cells.length == kAdcChannelCount);
-    var same = _loadCells.length == cells.length;
-    for (int i = 0; same && i < cells.length; i++) {
-      same = _loadCells[i] == cells[i];
-    }
-    if (same) return;
+    if (listEquals(_loadCells, cells)) return;
     _loadCells = List.of(cells);
     _calibrationVersion++;
     notifyListeners();
@@ -543,20 +536,14 @@ class DataHub extends ChangeNotifier
 
   /// Latest raw value (ADC counts) of a channel, for limit levels.
   int currentRawFor(int adcChannel) {
-    assert(
-      adcChannel >= 0 && adcChannel < kAdcChannelCount,
-      'channel $adcChannel out of range [0, $kAdcChannelCount)',
-    );
+    _checkChannel(adcChannel);
     return _currentRaw[adcChannel];
   }
 
   /// Current value of [adcChannel] in [unit]; a held value during a gap (see
   /// [liveEdgeIsGap]). Null when the unit is unavailable.
   double? currentValue(int adcChannel, DisplayUnit unit) {
-    assert(
-      adcChannel >= 0 && adcChannel < kAdcChannelCount,
-      'channel $adcChannel out of range [0, $kAdcChannelCount)',
-    );
+    _checkChannel(adcChannel);
     return converterFor(
       adcChannel,
     ).net(unit, _currentRaw[adcChannel].toDouble());
@@ -564,10 +551,7 @@ class DataHub extends ChangeNotifier
 
   /// The tare amount being zeroed out, in [unit]. Null when unavailable.
   double? tareOffset(int adcChannel, DisplayUnit unit) {
-    assert(
-      adcChannel >= 0 && adcChannel < kAdcChannelCount,
-      'channel $adcChannel out of range [0, $kAdcChannelCount)',
-    );
+    _checkChannel(adcChannel);
     return converterFor(adcChannel).tareOffset(unit);
   }
 
@@ -580,10 +564,7 @@ class DataHub extends ChangeNotifier
     required int start,
     required int end,
   }) {
-    assert(
-      adcChannel >= 0 && adcChannel < kAdcChannelCount,
-      'channel $adcChannel out of range [0, $kAdcChannelCount)',
-    );
+    _checkChannel(adcChannel);
     final conv = converterFor(adcChannel).netMap(unit);
     if (conv == null) return null;
     final ext = windowedRawExtremes(adcChannel, start, end);
@@ -593,10 +574,7 @@ class DataHub extends ChangeNotifier
   /// Instantaneous derivative (first difference) of [adcChannel] in unit/s;
   /// null when the unit is unavailable.
   double? currentDerivative(int adcChannel, DisplayUnit unit) {
-    assert(
-      adcChannel >= 0 && adcChannel < kAdcChannelCount,
-      'channel $adcChannel out of range [0, $kAdcChannelCount)',
-    );
+    _checkChannel(adcChannel);
     if (totalSamples < 2) return 0;
 
     // A held value on either side would fabricate a flat or spiking

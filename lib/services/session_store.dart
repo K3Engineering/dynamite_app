@@ -168,6 +168,22 @@ class SessionStore {
     final sessions = [...catalog.sessions]..removeWhere((s) => s.id == id);
     final damaged = [...catalog.damaged]..removeWhere((d) => d.id == id);
     final byteSizes = {...catalog.byteSizes}..remove(id);
+    _applyClassifiedEntry(id, entry, sessions, damaged, byteSizes);
+    return SessionCatalog(
+      sessions: sessions,
+      damaged: damaged,
+      byteSizes: byteSizes,
+    );
+  }
+
+  /// Add [entry]'s verdict for [id] to the catalog collections.
+  void _applyClassifiedEntry(
+    String id,
+    _ListedEntry entry,
+    List<SessionSummary> sessions,
+    List<DamagedSession> damaged,
+    Map<String, int> byteSizes,
+  ) {
     switch (entry) {
       case final _SessionEntry session:
         sessions.add(
@@ -184,11 +200,6 @@ class SessionStore {
         byteSizes[id] = damagedEntry.byteTotal;
       case _UnlistedEntry():
     }
-    return SessionCatalog(
-      sessions: sessions,
-      damaged: damaged,
-      byteSizes: byteSizes,
-    );
   }
 
   Future<void> _publishCatalog(SessionFilesBackend files) async {
@@ -260,22 +271,7 @@ class SessionStore {
     final sizes = <String, int>{};
     for (final id in await files.listDirIds()) {
       final entry = await _classify(files, id);
-      switch (entry) {
-        case final _SessionEntry session:
-          sessions.add(
-            _summaryFor(
-              session.id,
-              session.journal,
-              session.dataBytes,
-              interrupted: session.interrupted,
-            ),
-          );
-          sizes[id] = session.byteTotal;
-        case final _DamagedEntry entry:
-          damaged.add(entry.damaged);
-          sizes[id] = entry.byteTotal;
-        case _UnlistedEntry():
-      }
+      _applyClassifiedEntry(id, entry, sessions, damaged, sizes);
     }
     return SessionCatalog(
       sessions: sessions,
@@ -294,19 +290,22 @@ class SessionStore {
     final hasMeta = journalBytes != null && journalBytes.isNotEmpty;
     // The `final` marker is zero bytes, so data + journal is the byte total.
     final byteTotal = dataBytes + (journalBytes?.length ?? 0);
+    // Every damage verdict shares the identity and byte count above; only the
+    // reason differs.
+    _ListedEntry damaged(String reason) => _DamagedEntry(
+      DamagedSession(
+        id: id,
+        hasData: hasData,
+        hasMeta: hasMeta,
+        reason: reason,
+      ),
+      byteTotal: byteTotal,
+    );
 
     try {
       sessionIdCreatedAt(id);
     } on FormatException {
-      return _DamagedEntry(
-        DamagedSession(
-          id: id,
-          hasData: hasData,
-          hasMeta: hasMeta,
-          reason: 'Not a session this store wrote (malformed id)',
-        ),
-        byteTotal: byteTotal,
-      );
+      return damaged('Not a session this store wrote (malformed id)');
     }
 
     SessionJournal journal;
@@ -314,61 +313,28 @@ class SessionStore {
       if (journalBytes == null) throw const FormatException('no journal');
       journal = parseSessionJournal(journalBytes);
     } on FormatException {
-      return _DamagedEntry(
-        DamagedSession(
-          id: id,
-          hasData: hasData,
-          hasMeta: hasMeta,
-          reason: 'Session metadata unreadable',
-        ),
-        byteTotal: byteTotal,
-      );
+      return damaged('Session metadata unreadable');
     }
 
     final frameBytes = SessionChunkCodec(journal.meta.channelCount).frameBytes;
     if (dataBytes % frameBytes != 0) {
       // A write torn mid-frame: no prefix of this file is the recording,
       // so the session is damaged rather than silently shortened.
-      return _DamagedEntry(
-        DamagedSession(
-          id: id,
-          hasData: hasData,
-          hasMeta: hasMeta,
-          reason: 'Sample data ends mid-frame',
-        ),
-        byteTotal: byteTotal,
-      );
+      return damaged('Sample data ends mid-frame');
     }
     final frames = dataBytes ~/ frameBytes;
     if (frames < 1) {
       // Crash-at-create artifact: the header line landed, the first data
       // append never did.
-      return _DamagedEntry(
-        DamagedSession(
-          id: id,
-          hasData: hasData,
-          hasMeta: hasMeta,
-          reason: 'Recording never produced data',
-        ),
-        byteTotal: byteTotal,
-      );
+      return damaged('Recording never produced data');
     }
     // No completion marker: an interrupted recording. It loads and exports
     // like a complete session but lists as interrupted, and is never promoted.
-    if (!await files.isFinalized(id)) {
-      return _SessionEntry(
-        id: id,
-        journal: journal,
-        dataBytes: dataBytes,
-        interrupted: true,
-        byteTotal: byteTotal,
-      );
-    }
     return _SessionEntry(
       id: id,
       journal: journal,
       dataBytes: dataBytes,
-      interrupted: false,
+      interrupted: !await files.isFinalized(id),
       byteTotal: byteTotal,
     );
   }
@@ -469,30 +435,14 @@ class SessionStore {
       editSession(id, (current) {
         final visible = [...current.visibleChannels];
         visible[index] = !visible[index];
-        return SessionEdit(
-          name: current.name,
-          notes: current.notes,
-          visibleChannels: visible,
-        );
+        return current.copyWith(visibleChannels: visible);
       });
 
-  Future<void> renameSession(String id, String name) => editSession(
-    id,
-    (current) => SessionEdit(
-      name: name,
-      notes: current.notes,
-      visibleChannels: current.visibleChannels,
-    ),
-  );
+  Future<void> renameSession(String id, String name) =>
+      editSession(id, (current) => current.copyWith(name: name));
 
-  Future<void> setSessionNotes(String id, String notes) => editSession(
-    id,
-    (current) => SessionEdit(
-      name: current.name,
-      notes: notes,
-      visibleChannels: current.visibleChannels,
-    ),
-  );
+  Future<void> setSessionNotes(String id, String notes) =>
+      editSession(id, (current) => current.copyWith(notes: notes));
 
   /// Delete the session directory.
   Future<void> deleteSession(String id) => _withCatalog((files, _) async {

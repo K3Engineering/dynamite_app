@@ -2,6 +2,9 @@ import 'dart:math' as math;
 
 import 'package:material_ui/material_ui.dart';
 
+import '../models/board_calibration.dart';
+import '../utils/nice_step.dart';
+
 /// The calibration "certificate plot": per-point end-point nonlinearity —
 /// deviation from the chord through the ±FS cal points, in µV/V. Gain and
 /// offset are removed by construction, so the plot shows shape only: what
@@ -20,14 +23,11 @@ class CalDeviationPlot extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
-    var extreme = 0.0;
-    for (final d in deviationsUvV) {
-      if (d.abs() > extreme.abs()) extreme = d;
-    }
-    final label = extreme == 0
+    final extreme = _extremeIndex(deviationsUvV);
+    final label = extreme == null
         ? 'End-point nonlinearity plot, no measurable deviation'
         : 'End-point nonlinearity plot, maximum deviation '
-              '${extreme > 0 ? '+' : ''}${extreme.toStringAsFixed(3)} µV/V';
+              '${_fmtDeviation(deviationsUvV[extreme])} µV/V';
     return Semantics(
       image: true,
       label: label,
@@ -50,6 +50,22 @@ class CalDeviationPlot extends StatelessWidget {
     );
   }
 }
+
+/// Index of the deviation with the largest magnitude, or null when every entry
+/// is exactly zero. One scan serving both the semantics label and the on-plot
+/// callout.
+int? _extremeIndex(List<double> values) {
+  int? best;
+  for (int k = 0; k < values.length; ++k) {
+    if (values[k] == 0) continue;
+    if (best == null || values[k].abs() > values[best].abs()) best = k;
+  }
+  return best;
+}
+
+/// Signed, three decimals: "+0.125", "-0.040".
+String _fmtDeviation(double uvV) =>
+    '${uvV > 0 ? '+' : ''}${uvV.toStringAsFixed(3)}';
 
 class _DeviationPainter extends CustomPainter {
   _DeviationPainter(
@@ -75,33 +91,18 @@ class _DeviationPainter extends CustomPainter {
   static const _topPad = 6.0;
   static const _rightPad = 8.0;
 
-  /// Smallest 1/2/5×10^k ≥ [v], so the y bound stays round at any scale.
-  static double _niceBound(double v) {
-    final mag = math.pow(10, (math.log(v) / math.ln10).floor()).toDouble();
-    for (final m in [1.0, 2.0, 5.0]) {
-      if (mag * m >= v) return mag * m;
-    }
-    return mag * 10;
-  }
-
-  /// Nice bounds are 1/2/5×10^k: integers print bare, fractions with just
-  /// enough decimals ("0.02", "0.5" — never "0.50").
-  static String _fmtBound(double bound) {
-    if (bound == bound.roundToDouble()) return bound.toInt().toString();
-    final s = bound.toStringAsFixed(2);
-    return s.endsWith('0') ? s.substring(0, s.length - 1) : s;
-  }
-
   @override
   void paint(Canvas canvas, Size size) {
     // Display convention is input increasing left-to-right; storage order
     // is +FS first.
     final values = deviations.reversed.toList(growable: false);
+    assert(values.length == _xLabels.length, 'one x label per cal point');
     final maxAbs = values.fold<double>(0, (a, b) => math.max(a, b.abs()));
     // 20% headroom past the worst deviation; an exactly-affine device gets
     // an arbitrary ±0.01 µV/V frame so its flat zero line still reads as a
     // plot.
-    final bound = maxAbs == 0 ? 0.01 : _niceBound(maxAbs * 1.2);
+    final bound = maxAbs == 0 ? 0.01 : niceStepCeil(maxAbs * 1.2);
+    final boundLabel = '${bound.toStringAsFixed(niceStepDecimals(bound))} µV/V';
 
     const left = _leftPad;
     final right = size.width - _rightPad;
@@ -115,10 +116,9 @@ class _DeviationPainter extends CustomPainter {
     final axisPaint = Paint()
       ..color = axisColor
       ..strokeWidth = 1;
-    for (final uvV in [bound, 0.0, -bound]) {
-      axisPaint.color = uvV == 0.0
-          ? axisColor
-          : axisColor.withValues(alpha: 0.4);
+    canvas.drawLine(Offset(left, yOf(0)), Offset(right, yOf(0)), axisPaint);
+    axisPaint.color = axisColor.withValues(alpha: 0.4);
+    for (final uvV in [bound, -bound]) {
       canvas.drawLine(
         Offset(left, yOf(uvV)),
         Offset(right, yOf(uvV)),
@@ -126,16 +126,18 @@ class _DeviationPainter extends CustomPainter {
       );
     }
 
-    void label(String text, Offset centerLeft) {
+    /// Paint [text] at the offset [at] derives from its laid-out size.
+    void paintText(String text, Offset Function(double w, double h) at) {
       final tp = TextPainter(
         text: TextSpan(text: text, style: labelStyle),
         textDirection: TextDirection.ltr,
       )..layout();
-      tp.paint(canvas, centerLeft - Offset(0, tp.height / 2));
+      tp.paint(canvas, at(tp.width, tp.height));
     }
 
-    label('+${_fmtBound(bound)} µV/V', Offset(0, yOf(bound)));
-    label('−${_fmtBound(bound)} µV/V', Offset(0, yOf(-bound)));
+    // Gutter labels hug the left edge, vertically centered on their bound.
+    paintText('+$boundLabel', (_, h) => Offset(0, yOf(bound) - h / 2));
+    paintText('−$boundLabel', (_, h) => Offset(0, yOf(-bound) - h / 2));
 
     final linePaint = Paint()
       ..color = lineColor
@@ -149,41 +151,24 @@ class _DeviationPainter extends CustomPainter {
     canvas.drawPath(path, linePaint);
     for (int k = 0; k < values.length; ++k) {
       canvas.drawCircle(Offset(xOf(k), yOf(values[k])), 2.5, pointPaint);
-      if (k < _xLabels.length) {
-        final tp = TextPainter(
-          text: TextSpan(text: _xLabels[k], style: labelStyle),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        tp.paint(canvas, Offset(xOf(k) - tp.width / 2, bottom + 3));
-      }
+      paintText(_xLabels[k], (w, _) => Offset(xOf(k) - w / 2, bottom + 3));
     }
 
     // The one number on the plot (the rest live in the table): the extreme
     // deviation's value, placed off its point toward the zero line.
-    var iExt = 0;
-    for (int k = 1; k < values.length; ++k) {
-      if (values[k].abs() > values[iExt].abs()) iExt = k;
-    }
+    final iExt = _extremeIndex(values);
+    if (iExt == null) return;
     final extreme = values[iExt];
-    if (extreme != 0) {
-      final tp = TextPainter(
-        text: TextSpan(
-          text: '${extreme > 0 ? '+' : ''}${extreme.toStringAsFixed(3)} µV/V',
-          style: labelStyle,
-        ),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      final px = xOf(iExt);
-      final py = yOf(extreme);
-      final dx = (px - tp.width / 2).clamp(left, right - tp.width);
-      final dy = extreme > 0 ? py + 6 : py - tp.height - 4;
-      tp.paint(canvas, Offset(dx, dy));
-    }
+    final py = yOf(extreme);
+    paintText(
+      '${_fmtDeviation(extreme)} µV/V',
+      (w, h) => Offset(
+        (xOf(iExt) - w / 2).clamp(left, right - w),
+        extreme > 0 ? py + 6 : py - h - 4,
+      ),
+    );
   }
 
   @override
-  bool shouldRepaint(_DeviationPainter old) =>
-      old.deviations != deviations ||
-      old.lineColor != lineColor ||
-      old.axisColor != axisColor;
+  bool shouldRepaint(_DeviationPainter old) => true;
 }

@@ -16,6 +16,7 @@ import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 import '../models/load_cell.dart';
+import '../utils/nice_step.dart';
 import 'channel_palette.dart';
 import 'graph/block_reduction_cache.dart';
 import 'graph/graph_controller.dart';
@@ -35,6 +36,10 @@ export 'graph/segmented_cache.dart';
 const double _kGraphLeftSpace = 8;
 const double kGraphRightSpace = 56;
 const double _kGraphBottomSpace = 24;
+
+/// Extent for clip rects that must cover any plot area plus its stroke/pad
+/// overdraw (the only bounded thing there is the other axis).
+const double _kUnbounded = 1e9;
 
 double _graphPlotWidth(double totalWidth) =>
     totalWidth - _kGraphLeftSpace - kGraphRightSpace;
@@ -205,37 +210,43 @@ class _MinimapState extends State<_Minimap> {
     super.dispose();
   }
 
-  void _onMinimapTap(TapDownDetails d, double graphWidth) {
+  /// The minimap's window in samples: `(totalSamples, (mapStart, mapSpan))`,
+  /// or null when there is nothing to map (no data, or a plot too narrow to
+  /// divide by). Tap and drag both read it, so the two gestures cannot
+  /// disagree about the map's scale.
+  (int, (int, int))? _mapWindow(double graphWidth) {
     final totalSamples = widget.dataSource.totalSamples;
-    if (totalSamples == 0 || graphWidth <= 0) return;
-    final oldestSample = widget.dataSource.oldestSample;
+    if (totalSamples == 0 || graphWidth <= 0) return null;
+    final mapSpan = widget.graphCtrl.defaultLiveSpan(
+      totalSamples,
+      widget.dataSource.oldestSample,
+    );
+    return (totalSamples, (totalSamples - mapSpan, mapSpan));
+  }
+
+  void _onMinimapTap(TapDownDetails d, double graphWidth) {
+    final window = _mapWindow(graphWidth);
+    if (window == null) return;
+    final (totalSamples, (mapStart, mapSpan)) = window;
     final frac = ((d.localPosition.dx - _kGraphLeftSpace) / graphWidth).clamp(
       0.0,
       1.0,
     );
-    final mapSpan = widget.graphCtrl.defaultLiveSpan(
-      totalSamples,
-      oldestSample,
-    );
-    final mapStart = totalSamples - mapSpan;
     widget.graphCtrl.centerOn(
       mapStart + (frac * mapSpan).round(),
       totalSamples,
-      oldestSample,
+      widget.dataSource.oldestSample,
     );
   }
 
   void _onMinimapDrag(DragUpdateDetails d, double graphWidth) {
-    final totalSamples = widget.dataSource.totalSamples;
-    if (totalSamples == 0 || graphWidth <= 0) return;
-    final oldestSample = widget.dataSource.oldestSample;
-    final samplesPerPixel =
-        widget.graphCtrl.defaultLiveSpan(totalSamples, oldestSample) /
-        graphWidth;
+    final window = _mapWindow(graphWidth);
+    if (window == null) return;
+    final (totalSamples, (_, mapSpan)) = window;
     widget.graphCtrl.pan(
-      (d.delta.dx * samplesPerPixel).round(),
+      (d.delta.dx * mapSpan / graphWidth).round(),
       totalSamples,
-      oldestSample,
+      widget.dataSource.oldestSample,
     );
   }
 
@@ -325,7 +336,7 @@ class _MinimapPainter extends CustomPainter {
     const double vPad = 2;
 
     canvas.translate(_kGraphLeftSpace, vPad);
-    final gw = size.width - _kGraphLeftSpace - kGraphRightSpace;
+    final gw = _graphPlotWidth(size.width);
     final gh = size.height - vPad * 2;
 
     if (gw <= 0 || gh <= 0) return;
@@ -340,30 +351,16 @@ class _MinimapPainter extends CustomPainter {
     final mapSpan = _ctrl.defaultLiveSpan(totalSamples, oldestSample);
     final mapStart = totalSamples - mapSpan;
 
-    final channels = _channels;
-    final unit = _unit;
-
     // Bucket-folded extremes over the retained window, like the force
     // painter. The lifetime [GraphDataSource.channelExtremes] never shrink,
     // so after a ring wrap they would keep scaling Y by evicted samples the
     // minimap can no longer draw.
-    double yMin = double.infinity;
-    double yMax = double.negativeInfinity;
-    for (final bound in channels) {
-      final ext = _data.windowedRawExtremes(
-        bound.channel,
-        mapStart,
-        totalSamples,
-      );
-      if (ext == null) continue;
-      yMin = math.min(yMin, bound.netMap(ext.$1));
-      yMax = math.max(yMax, bound.netMap(ext.$2));
-    }
-    if (!yMin.isFinite || !yMax.isFinite) return;
+    final ext = _foldNetExtremes(_data, _channels, mapStart, totalSamples);
+    if (ext == null) return;
     // Zero is a display-space anchor, so include it even when the data does
     // not cross it.
-    yMin = math.min(yMin, 0.0);
-    yMax = math.max(yMax, 0.0);
+    final yMin = math.min(ext.$1, 0.0);
+    var yMax = math.max(ext.$2, 0.0);
     // Non-degenerate on flat data (the mapping divides by the span).
     if (yMax <= yMin) yMax = yMin + 1;
 
@@ -383,9 +380,9 @@ class _MinimapPainter extends CustomPainter {
       cache: _cache,
       reductionCache: _reductionCache,
       data: _data,
-      channels: channels,
-      tares: [for (final bound in channels) bound.tare],
-      unit: unit,
+      channels: _channels,
+      tares: [for (final bound in _channels) bound.tare],
+      unit: _unit,
       gw: gw,
       gh: gh,
       dpr: _dpr,
@@ -563,9 +560,8 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     with SingleTickerProviderStateMixin {
   final SegmentedGraphCache _forceCache = SegmentedGraphCache();
   final BlockReductionCache _forceReductionCache = BlockReductionCache();
-
-  SegmentedGraphCache? _derivCache;
-  BlockReductionCache? _derivReductionCache;
+  final SegmentedGraphCache _derivCache = SegmentedGraphCache();
+  final BlockReductionCache _derivReductionCache = BlockReductionCache();
   final BakePump _bakePump = BakePump();
   final _LabelCache _labelCache = _LabelCache();
 
@@ -623,7 +619,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     _vsync.dispose();
     _bakePump.dispose();
     _forceCache.dispose();
-    _derivCache?.dispose();
+    _derivCache.dispose();
     _labelCache.dispose();
     super.dispose();
   }
@@ -693,9 +689,8 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                       unit: unit,
                       channels: convertedChannels,
                       vsync: _vsync,
-                      cache: _derivCache ??= SegmentedGraphCache(),
-                      reductionCache: _derivReductionCache ??=
-                          BlockReductionCache(),
+                      cache: _derivCache,
+                      reductionCache: _derivReductionCache,
                       colorScheme: colorScheme,
                       dpr: dpr,
                       labels: _labelCache,
@@ -757,11 +752,16 @@ class _LiveButton extends StatelessWidget {
         if (ctrl.isLive || data.totalSamples == 0) {
           return const SizedBox.shrink();
         }
+        final (start, end) = ctrl.effectiveRange(
+          data.totalSamples,
+          data.oldestSample,
+        );
         return Positioned(
           right: 64,
           top: 8,
           child: FilledButton.icon(
             onPressed: () => ctrl.goLive(
+              span: end - start,
               totalSamples: data.totalSamples,
               oldestSample: data.oldestSample,
             ),
@@ -1097,8 +1097,8 @@ String _graphSemanticsLabel({
 }
 
 /// Format a zoom-window span in seconds for the readout: "800 ms" below a
-/// second, trimmed decimals below a minute ("12.4 s", "30 s"), then the
-/// same hours-folding clock shape as the X axis ticks (see [_fmtTick]):
+/// second, trimmed decimals below a minute ("12.4 s", "30 s"), then rounded
+/// to the second in the axis ticks' hours-folding clock shape ([_fmtTick]):
 /// "2:05", "1:00:30".
 @visibleForTesting
 String formatWindowSpan(double spanSec) {
@@ -1107,21 +1107,7 @@ String formatWindowSpan(double spanSec) {
     final oneDecimal = spanSec.toStringAsFixed(1);
     return '${oneDecimal.endsWith('.0') ? oneDecimal.substring(0, oneDecimal.length - 2) : oneDecimal} s';
   }
-  final total = spanSec.floor();
-  final m = total ~/ 60;
-  final s = (total % 60).toString().padLeft(2, '0');
-  if (m < 60) return '$m:$s';
-  return '${m ~/ 60}:${(m % 60).toString().padLeft(2, '0')}:$s';
-}
-
-/// Smallest 1/2/5-decade step >= [target]. Used directly by the Y axis, and
-/// by [_timeStepCeil] below one second.
-double _decadeStepCeil(double target) {
-  final base = math.pow(10, (math.log(target) / math.ln10).floor()).toDouble();
-  if (base >= target) return base;
-  if (2 * base >= target) return 2 * base;
-  if (5 * base >= target) return 5 * base;
-  return 10 * base;
+  return _fmtTick(spanSec, 0);
 }
 
 /// Clock-nice step ladder, as rungs of seconds/minutes/hours, used by
@@ -1130,9 +1116,9 @@ double _decadeStepCeil(double target) {
 const _kClockRungs = [1, 2, 5, 10, 20, 30, 60];
 
 /// Smallest clock-nice step >= [target] seconds: 1/2/5 decades below one
-/// second, then [_kClockRungs] of seconds, minutes, hours, ...
+/// second ([niceStepCeil]), then [_kClockRungs] of seconds, minutes, hours, ...
 double _timeStepCeil(double target) {
-  if (target < 1) return _decadeStepCeil(target);
+  if (target < 1) return niceStepCeil(target);
   for (double scale = 1; ; scale *= 60) {
     // Terminates once scale >= target, via r = 1.
     for (final r in _kClockRungs) {
@@ -1248,9 +1234,7 @@ YAxisRange _computeYRange(
   final double max = dataMax <= dataMin ? dataMin + 1.0 : dataMax;
 
   // 1/2/5 tick delta sized so ticks land at least [_kMinYTickPx] apart.
-  final tickDelta = _decadeStepCeil(
-    (max - dataMin) * _kMinYTickPx / plotHeight,
-  );
+  final tickDelta = niceStepCeil((max - dataMin) * _kMinYTickPx / plotHeight);
 
   // Snap yMin and yMax to tick boundaries
   final yMin = (dataMin / tickDelta).floor() * tickDelta;
@@ -1353,10 +1337,12 @@ _AxisLines _enumAxisLines(
   final period = _majorPeriod(step, stepCeil);
   final lo = windowStart - enumSlack;
   final hi = windowEnd + enumSlack + step * 0.01;
-  // Minor lines live on the half-step grid, indexed by j so the overlap test
-  // is exact: even multiples of minorStep are the labeled ticks themselves,
-  // and skipping them leaves emphasis to the tick lines, not a double stroke.
+  // Minor lines live on the ODD half-step grid, indexed by j so the overlap
+  // test is exact: even multiples of minorStep are the labeled ticks
+  // themselves, so starting at the first odd j and stepping by 2 skips them --
+  // leaving emphasis to the tick lines, not a double stroke.
   final minorStep = step / 2;
+  final firstMinor = (lo / minorStep).ceil();
   return _AxisLines(
     [
       for (int k = (lo / step).ceil(); k * step <= hi; k++)
@@ -1372,8 +1358,12 @@ _AxisLines _enumAxisLines(
         ),
     ],
     [
-      for (int j = (lo / minorStep).ceil(); j * minorStep <= hi; j++)
-        if (j % 2 != 0) posOf(j * minorStep),
+      for (
+        int j = firstMinor.isEven ? firstMinor + 1 : firstMinor;
+        j * minorStep <= hi;
+        j += 2
+      )
+        posOf(j * minorStep),
     ],
     clipLabels: enumSlack > 0,
   );
@@ -1704,7 +1694,8 @@ void _drawChannelEnvelope(
   required double graphW,
   required int viewStart,
   required double viewSamples,
-  required int totalSamples,
+  required int blockSize,
+  required int renderEnd,
   required int firstUsableSample,
   required int channelIndex,
   required BlockReductionCache reductionCache,
@@ -1722,8 +1713,6 @@ void _drawChannelEnvelope(
     envColor: color.withAlpha(envAlpha),
   );
 
-  final int blockSize = _blockSizeFor(viewSamples, graphW);
-
   // Buckets pay off (and stay accurate) once a block spans >= 2 buckets.
   final buckets = series.buckets;
   final bool useBuckets = blockSize >= 2 * buckets.bucketSize;
@@ -1732,13 +1721,13 @@ void _drawChannelEnvelope(
   // scroll-invariant.
   final int startBlock = (math.max(viewStart, firstUsableSample) / blockSize)
       .floor();
-  final int endBlock = (totalSamples / blockSize).ceil();
+  final int endBlock = (renderEnd / blockSize).ceil();
 
   for (int k = startBlock; k < endBlock; k++) {
     final int sStart = k * blockSize;
     final int sEnd = math.min(
       sStart + blockSize,
-      totalSamples,
+      renderEnd,
     ); // last block may be short
 
     final int drawStart = math.max(sStart, firstUsableSample);
@@ -1818,35 +1807,29 @@ EnvelopeSeries _taredEnvelopeSeries(
   meanFromMvV: bound.meanFromMvV,
 );
 
-/// Fold the raw extremes of [channels] over `[start, end)` (already clamped
-/// to the source's usable range). [seriesFor] yields a channel's bucket
-/// aggregates and exact evaluator, or null when the channel has no data;
-/// [adjust] maps each folded bound per channel (tare offset, display scale).
-/// BOTH adjusted bounds feed each end of the range, so a negative display
-/// multiplier can't invert it. Returns null when no channel covers a sample.
-(double, double)? _foldChannelExtremes<T>(
-  Iterable<T> channels,
+/// Fold [channels]' windowed raw extremes over `[start, end)` into one
+/// display range, each channel's bounds through its net map (both mapped
+/// bounds feed both ends, so a negative display multiplier can't invert the
+/// range). Null when no channel covers a sample. Gap samples hold a previous
+/// real value, so they can never extend the range: no exclusion needed.
+/// Shared by the force graph's Y range and the minimap.
+(double, double)? _foldNetExtremes(
+  GraphDataSource data,
+  List<_ConvertedChannel> channels,
   int start,
   int end,
-  (BucketSeries buckets, double Function(int i) rawAt)? Function(T channel)
-  seriesFor,
-  double Function(double raw, T channel) adjust,
 ) {
   double? lo, hi;
-  for (final ch in channels) {
-    final series = seriesFor(ch);
-    if (series == null) continue;
-    // Gap samples hold a previous real value, so they can never extend
-    // the range: no exclusion needed.
-    final ext = windowedExtremes(series.$1, start, end, series.$2);
+  for (final bound in channels) {
+    final ext = data.windowedRawExtremes(bound.channel, start, end);
     if (ext == null) continue;
-    for (final v in [adjust(ext.$1, ch), adjust(ext.$2, ch)]) {
+    for (final v in [bound.netMap(ext.$1), bound.netMap(ext.$2)]) {
       if (lo == null || v < lo) lo = v;
       if (hi == null || v > hi) hi = v;
     }
   }
   // lo and hi are always assigned together; null means no channel folded.
-  return (lo == null) ? null : (lo, hi!);
+  return lo == null ? null : (lo, hi!);
 }
 
 /// Paint the segment-cached envelope data layer for the window
@@ -1904,7 +1887,9 @@ bool _paintEnvelopeDataLayer(
   final usableX = (firstUsableSample - viewStart) * gw / viewSpan;
   if (usableX > 0) {
     canvas.save();
-    canvas.clipRect(Rect.fromLTWH(usableX, -1e9, 2e9, 2e9));
+    canvas.clipRect(
+      Rect.fromLTWH(usableX, -_kUnbounded, 2 * _kUnbounded, 2 * _kUnbounded),
+    );
   }
   // Share the destructive-key list with the reduction cache's upkeep (the
   // identity model matches one-to-one, so both flip on the same change).
@@ -1961,7 +1946,8 @@ bool _paintEnvelopeDataLayer(
           graphW: gw,
           viewStart: start,
           viewSamples: viewSpan,
-          totalSamples: limit,
+          blockSize: blockSize,
+          renderEnd: limit,
           firstUsableSample: firstUsableSample,
           channelIndex: bound.channel,
           reductionCache: reductionCache,
@@ -1986,18 +1972,24 @@ bool _paintEnvelopeDataLayer(
 /// with even-odd gap holes; ranges are disjoint.
 Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
   if (gaps.isEmpty) return null;
-  const double big = 1e9; // covers any pad/overdraw around the plot area
   Path? path;
   for (final (gs, ge) in gaps.rangesIn(start, end)) {
     path ??= Path()
       ..fillType = PathFillType.evenOdd
-      ..addRect(const Rect.fromLTRB(-big, -big, big, big));
+      ..addRect(
+        const Rect.fromLTRB(
+          -_kUnbounded,
+          -_kUnbounded,
+          _kUnbounded,
+          _kUnbounded,
+        ),
+      );
     path.addRect(
       Rect.fromLTRB(
         (gs - start) * pxPerSample,
-        -big,
+        -_kUnbounded,
         (ge - start) * pxPerSample,
-        big,
+        _kUnbounded,
       ),
     );
   }
@@ -2315,7 +2307,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
         yRange.yMin,
         yRange.yMax,
         step: yRange.tickDelta,
-        stepCeil: _decadeStepCeil,
+        stepCeil: niceStepCeil,
         enumSlack: 0.0,
         labelFor: (tick) => yTickLabel(tick, yRange),
         posOf: valueToY,
@@ -2431,22 +2423,16 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     // [windowedRawExtremes] folds full buckets and scans only the partial
     // head/tail: O(window / bucketSize). No minimum-range floor; flat data
     // hits the degeneracy guard in [_computeYRange].
-    final unit = _unit;
-    final start = viewStart.floor();
-    final end = viewEnd.ceil();
-
-    double yMin = double.infinity;
-    double yMax = double.negativeInfinity;
-    for (final bound in _channels) {
-      final ext = _data.windowedRawExtremes(bound.channel, start, end);
-      if (ext == null) continue;
-      yMin = math.min(yMin, bound.netMap(ext.$1));
-      yMax = math.max(yMax, bound.netMap(ext.$2));
-    }
     // No plotted channel has data in the window: paint blank.
-    if (!yMin.isFinite || !yMax.isFinite) return null;
+    final ext = _foldNetExtremes(
+      _data,
+      _channels,
+      viewStart.floor(),
+      viewEnd.ceil(),
+    );
+    if (ext == null) return null;
 
-    return _computeYRange(yMin, yMax, unit, plotHeight);
+    return _computeYRange(ext.$1, ext.$2, _unit, plotHeight);
   }
 
   /// Limit bars in the right gutter: one column per channel, a rail zone from
@@ -2473,27 +2459,33 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
           ? bound.diffMap(cell.sensitivityMvV * span)
           : null;
       final left = graphSz.width + colW * bound.channel;
-      for (final positive in [true, false]) {
-        final clipRaw = positive
-            ? ChannelLimits.clipRawPos
-            : ChannelLimits.clipRawNeg;
-        final railY = valueToY(
-          bound.netMap(clipRaw.toDouble()),
-        ).clamp(0.0, graphSz.height);
-        final railBar = positive
-            ? Rect.fromLTRB(left, 0.0, left + colW, railY)
-            : Rect.fromLTRB(left, railY, left + colW, graphSz.height);
-        if (railBar.height > 0) canvas.drawRect(railBar, railPaint);
 
-        if (cellNet == null) continue;
-        final cellY = valueToY(
-          positive ? cellNet : -cellNet,
-        ).clamp(0.0, graphSz.height);
-        final cellBar = positive
-            ? Rect.fromLTRB(left, railY, left + colW, cellY)
-            : Rect.fromLTRB(left, cellY, left + colW, railY);
-        if (cellBar.height > 0) canvas.drawRect(cellBar, cellPaint);
-      }
+      // The two rail bars meet the plot's top and bottom edges respectively;
+      // a zero-height rect (rail off-view) paints nothing.
+      final railTop = valueToY(
+        bound.netMap(ChannelLimits.clipRawPos.toDouble()),
+      ).clamp(0.0, graphSz.height);
+      final railBot = valueToY(
+        bound.netMap(ChannelLimits.clipRawNeg.toDouble()),
+      ).clamp(0.0, graphSz.height);
+      canvas.drawRect(Rect.fromLTRB(left, 0, left + colW, railTop), railPaint);
+      canvas.drawRect(
+        Rect.fromLTRB(left, railBot, left + colW, graphSz.height),
+        railPaint,
+      );
+
+      if (cellNet == null) continue;
+      // Capacity zones fill the gap between each rail bar and 100% capacity.
+      final cellTop = valueToY(cellNet).clamp(0.0, graphSz.height);
+      final cellBot = valueToY(-cellNet).clamp(0.0, graphSz.height);
+      canvas.drawRect(
+        Rect.fromLTRB(left, railTop, left + colW, cellTop),
+        cellPaint,
+      );
+      canvas.drawRect(
+        Rect.fromLTRB(left, cellBot, left + colW, railBot),
+        cellPaint,
+      );
     }
   }
 
@@ -2571,9 +2563,6 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   ) {
     // [windowedExtremes] folds full buckets and scans only the partial
     // head/tail: O(window / bucketSize).
-    double dMin = 0;
-    double dMax = 0;
-    bool first = true;
     final (startI, endI) = _data.clampToRetained(
       viewStart.floor(),
       viewEnd.ceil(),
@@ -2581,23 +2570,25 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     // The first difference at index 0 has no predecessor.
     final from = math.max(startI, _data.oldestSample + firstSampleOffset);
 
-    void fold(double d) {
-      if (first || d < dMin) dMin = d;
-      if (first || d > dMax) dMax = d;
-      first = false;
-    }
-
     // Each channel folds via the bucket fast path through its own diff map
     // (monotone, so both bounds fold safely).
-    final ext = _foldChannelExtremes(_channels, from, endI, (bound) {
-      return (_data.diffBucketsFor(bound.channel), _rawDiffAt(bound.channel));
-    }, (raw, bound) => _diffDisplayFor(bound)(raw));
-    if (ext != null) {
-      fold(ext.$1);
-      fold(ext.$2);
+    double? dMin, dMax;
+    for (final bound in _channels) {
+      final ext = windowedExtremes(
+        _data.diffBucketsFor(bound.channel),
+        from,
+        endI,
+        _rawDiffAt(bound.channel),
+      );
+      if (ext == null) continue;
+      final display = _diffDisplayFor(bound);
+      for (final d in [display(ext.$1), display(ext.$2)]) {
+        if (dMin == null || d < dMin) dMin = d;
+        if (dMax == null || d > dMax) dMax = d;
+      }
     }
-
-    return _computeYRange(dMin, dMax, _unit, plotHeight);
+    // No channel data: degenerate 0..1 axis via [_computeYRange]'s guard.
+    return _computeYRange(dMin ?? 0.0, dMax ?? 0.0, _unit, plotHeight);
   }
 
   @override

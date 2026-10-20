@@ -23,15 +23,15 @@ void main() {
 
     test('slots parse with names and exact sensitivities', () {
       final slots = flash.slots;
-      expect(slots.cellAt(0)?.name, 'Thrust cell');
-      expect(slots.cellAt(0)?.capacityKg, 200);
-      expect(slots.cellAt(0)?.sensitivityMvV, closeTo(1.9993, 1e-12));
+      expect(slots[0]?.name, 'Thrust cell');
+      expect(slots[0]?.capacityKg, 200);
+      expect(slots[0]?.sensitivityMvV, closeTo(1.9993, 1e-12));
 
-      expect(slots.cellAt(1)?.name, 'Break jig');
-      expect(slots.cellAt(2)?.name, ''); // unnamed cell on CH 2
-      expect(slots.cellAt(2)?.capacityKg, 100);
+      expect(slots[1]?.name, 'Break jig');
+      expect(slots[2]?.name, ''); // unnamed cell on CH 2
+      expect(slots[2]?.capacityKg, 100);
       expect(slots[3], isNull); // CH 3 empty
-      expect(slots.cellAt(4)?.name, 'Spare 50'); // a spare
+      expect(slots[4]?.name, 'Spare 50'); // a spare
       for (int i = 5; i < kRigSlotCount; ++i) {
         expect(slots[i], isNull, reason: 'slot $i empty');
       }
@@ -72,17 +72,15 @@ void main() {
     test('names flatten newlines and survive an equals sign', () {
       final slots = RigSlots.empty().withSlot(
         0,
-        const RigSlot(
-          cell: LoadCellProfile(
-            name: 'a=b\nc',
-            capacityKg: 100,
-            sensitivityMvV: 2,
-          ),
+        const LoadCellProfile(
+          name: 'a=b\nc',
+          capacityKg: 100,
+          sensitivityMvV: 2,
         ),
       );
       final kv = slots.toKv();
       expect(kv['lc0.name'], 'a=b c');
-      expect(RigSlots.fromKv(kv).cellAt(0)?.name, 'a=b c');
+      expect(RigSlots.fromKv(kv)[0]?.name, 'a=b c');
     });
 
     test('unknown keys are ignored, never re-emitted', () {
@@ -92,7 +90,7 @@ void main() {
           'hw.rev=3\nfuture.tooling=keep me\n'
           'lc0.cap=100\nlc0.sens=2';
       final flash = flashFromDoc(withExtras, pgaGains: const [1, 1, 1, 1]);
-      expect(flash.slots.cellAt(0)?.capacityKg, 100);
+      expect(flash.slots[0]?.capacityKg, 100);
       expect(flash.board, isA<UnprovisionedBoardCalibration>());
       expect(flash.slots.toKv().keys.every((k) => k.startsWith('lc')), isTrue);
     });
@@ -120,23 +118,17 @@ void main() {
         'lc1.sens': '2',
       });
       expect(slots[0], isNull);
-      expect(slots.cellAt(1)?.capacityKg, 500);
+      expect(slots[1]?.capacityKg, 500);
     });
 
     test('withSwap exchanges two slots and nothing else', () {
       RigSlots fill() => RigSlots([
         for (int i = 0; i < kRigSlotCount; ++i)
-          RigSlot(
-            cell: LoadCellProfile(
-              name: 'c$i',
-              capacityKg: 100,
-              sensitivityMvV: 2,
-            ),
-          ),
+          LoadCellProfile(name: 'c$i', capacityKg: 100, sensitivityMvV: 2),
       ]);
       final swapped = fill().withSwap(0, 2);
       expect(
-        [for (int i = 0; i < 4; ++i) swapped.cellAt(i)?.name],
+        [for (int i = 0; i < 4; ++i) swapped[i]?.name],
         ['c2', 'c1', 'c0', 'c3'],
       );
       final back = swapped.withSwap(2, 0);
@@ -149,10 +141,10 @@ void main() {
         capacityKg: 100,
         sensitivityMvV: 2,
       );
-      final slots = RigSlots.empty().withSlot(0, const RigSlot(cell: cell));
+      final slots = RigSlots.empty().withSlot(0, cell);
       final moved = slots.withSwap(0, 5);
-      expect(moved.cellAt(0), isNull);
-      expect(moved.cellAt(5)?.name, 'A');
+      expect(moved[0], isNull);
+      expect(moved[5]?.name, 'A');
     });
   });
 }

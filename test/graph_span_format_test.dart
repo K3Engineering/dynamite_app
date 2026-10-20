@@ -25,6 +25,10 @@ void main() {
       expect(formatWindowSpan(3599), '59:59');
     });
 
+    test('fractional minute spans round to the second', () {
+      expect(formatWindowSpan(125.7), '2:06');
+    });
+
     test('hour spans fold hours like the axis ticks', () {
       expect(formatWindowSpan(3600), '1:00:00');
       expect(formatWindowSpan(3661), '1:01:01');
