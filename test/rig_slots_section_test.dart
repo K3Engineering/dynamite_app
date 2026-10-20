@@ -116,8 +116,8 @@ void main() {
   });
 
   void expectSwapped(RigState rig) {
-    expect(rig.effectiveSlots.cellAt(1)?.name, 'Spare 50');
-    expect(rig.effectiveSlots.cellAt(4)?.name, 'Break jig');
+    expect(rig.effectiveSlots[1]?.name, 'Spare 50');
+    expect(rig.effectiveSlots[4]?.name, 'Break jig');
     // A swap is a pending edit: the dirty state of the bar is up.
     expect(rig.hasPending, isTrue);
     expect(find.textContaining('Changes not saved to device'), findsOneWidget);
@@ -162,7 +162,7 @@ void main() {
     await flick.moveBy(const Offset(0, -200));
     await flick.up();
     await tester.pumpAndSettle();
-    expect(rig.effectiveSlots.cellAt(1)?.name, 'Break jig');
+    expect(rig.effectiveSlots[1]?.name, 'Break jig');
     expect(rig.hasPending, isFalse);
 
     // Tap-and-hold on 'Break jig' (slot 1, CH 1), then drag three rows down

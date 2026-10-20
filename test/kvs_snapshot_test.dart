@@ -66,6 +66,6 @@ void main() {
       (flash.board as InvalidBoardCalibration).detail,
       contains('bad exc'),
     );
-    expect(flash.slots.slots[0]?.cell.capacityKg, 200);
+    expect(flash.slots[0]?.capacityKg, 200);
   });
 }

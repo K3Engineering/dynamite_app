@@ -104,7 +104,7 @@ class RigState extends ChangeNotifier {
     final now = DateTime.now();
     var seenAny = false;
     for (int i = 0; i < kRigSlotCount; ++i) {
-      final cell = flash.slots.cellAt(i);
+      final cell = flash.slots[i];
       if (cell != null) {
         _upsertHistory(cell, deviceName, now, persist: false);
         seenAny = true;
@@ -141,7 +141,7 @@ class RigState extends ChangeNotifier {
 
   /// Place [cell] into slot [i]; recorded in history immediately.
   void setSlot(int i, LoadCellProfile cell) {
-    _edit((slots) => slots.withSlot(i, RigSlot(cell: cell)));
+    _edit((slots) => slots.withSlot(i, cell));
     _upsertHistory(cell, connectedDeviceName, DateTime.now());
     notifyListeners();
   }

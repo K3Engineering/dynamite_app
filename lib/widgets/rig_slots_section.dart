@@ -188,8 +188,6 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
             onTap: _saving ? null : () => showSlotEditor(context, rig, i),
           );
         } else {
-          final cell = slot.cell;
-          final subtitle = cell.valuesLine;
           final feedback = Material(
             elevation: 4,
             borderRadius: BorderRadius.circular(8),
@@ -197,14 +195,14 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
             child: SizedBox(
               width: rowWidth,
               child: ListTile(
-                title: Text(cell.title),
-                subtitle: Text(subtitle),
+                title: Text(slot.title),
+                subtitle: Text(slot.valuesLine),
               ),
             ),
           );
           final row = ListTile(
-            title: Text(cell.title),
-            subtitle: Text(subtitle),
+            title: Text(slot.title),
+            subtitle: Text(slot.valuesLine),
             trailing: Padding(
               padding: const EdgeInsets.all(8),
               child: Icon(
@@ -446,7 +444,7 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
     super.initState();
     // The fields seed from a snapshot: the dialog edits what the slot held at
     // open, not the live slot.
-    final cell = rig.effectiveSlots.cellAt(slot);
+    final cell = rig.effectiveSlots[slot];
     _adding = cell == null;
     nameCtrl = TextEditingController(text: cell?.name ?? '');
     capCtrl = TextEditingController(text: _text(cell?.capacityKg));
