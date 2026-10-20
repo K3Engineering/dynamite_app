@@ -347,23 +347,12 @@ class _MinimapPainter extends CustomPainter {
     // painter. The lifetime [GraphDataSource.channelExtremes] never shrink,
     // so after a ring wrap they would keep scaling Y by evicted samples the
     // minimap can no longer draw.
-    double yMin = double.infinity;
-    double yMax = double.negativeInfinity;
-    for (final bound in channels) {
-      final ext = _data.windowedRawExtremes(
-        bound.channel,
-        mapStart,
-        totalSamples,
-      );
-      if (ext == null) continue;
-      yMin = math.min(yMin, bound.netMap(ext.$1));
-      yMax = math.max(yMax, bound.netMap(ext.$2));
-    }
-    if (!yMin.isFinite || !yMax.isFinite) return;
+    final ext = _foldNetExtremes(_data, channels, mapStart, totalSamples);
+    if (ext == null) return;
     // Zero is a display-space anchor, so include it even when the data does
     // not cross it.
-    yMin = math.min(yMin, 0.0);
-    yMax = math.max(yMax, 0.0);
+    final yMin = math.min(ext.$1, 0.0);
+    var yMax = math.max(ext.$2, 0.0);
     // Non-degenerate on flat data (the mapping divides by the span).
     if (yMax <= yMin) yMax = yMin + 1;
 
@@ -1097,8 +1086,8 @@ String _graphSemanticsLabel({
 }
 
 /// Format a zoom-window span in seconds for the readout: "800 ms" below a
-/// second, trimmed decimals below a minute ("12.4 s", "30 s"), then the
-/// same hours-folding clock shape as the X axis ticks (see [_fmtTick]):
+/// second, trimmed decimals below a minute ("12.4 s", "30 s"), then rounded
+/// to the second in the axis ticks' hours-folding clock shape ([_fmtTick]):
 /// "2:05", "1:00:30".
 @visibleForTesting
 String formatWindowSpan(double spanSec) {
@@ -1107,11 +1096,7 @@ String formatWindowSpan(double spanSec) {
     final oneDecimal = spanSec.toStringAsFixed(1);
     return '${oneDecimal.endsWith('.0') ? oneDecimal.substring(0, oneDecimal.length - 2) : oneDecimal} s';
   }
-  final total = spanSec.floor();
-  final m = total ~/ 60;
-  final s = (total % 60).toString().padLeft(2, '0');
-  if (m < 60) return '$m:$s';
-  return '${m ~/ 60}:${(m % 60).toString().padLeft(2, '0')}:$s';
+  return _fmtTick(spanSec, 0);
 }
 
 /// Smallest 1/2/5-decade step >= [target]. Used directly by the Y axis, and
@@ -1818,35 +1803,29 @@ EnvelopeSeries _taredEnvelopeSeries(
   meanFromMvV: bound.meanFromMvV,
 );
 
-/// Fold the raw extremes of [channels] over `[start, end)` (already clamped
-/// to the source's usable range). [seriesFor] yields a channel's bucket
-/// aggregates and exact evaluator, or null when the channel has no data;
-/// [adjust] maps each folded bound per channel (tare offset, display scale).
-/// BOTH adjusted bounds feed each end of the range, so a negative display
-/// multiplier can't invert it. Returns null when no channel covers a sample.
-(double, double)? _foldChannelExtremes<T>(
-  Iterable<T> channels,
+/// Fold [channels]' windowed raw extremes over `[start, end)` into one
+/// display range, each channel's bounds through its net map (both mapped
+/// bounds feed both ends, so a negative display multiplier can't invert the
+/// range). Null when no channel covers a sample. Gap samples hold a previous
+/// real value, so they can never extend the range: no exclusion needed.
+/// Shared by the force graph's Y range and the minimap.
+(double, double)? _foldNetExtremes(
+  GraphDataSource data,
+  List<_ConvertedChannel> channels,
   int start,
   int end,
-  (BucketSeries buckets, double Function(int i) rawAt)? Function(T channel)
-  seriesFor,
-  double Function(double raw, T channel) adjust,
 ) {
   double? lo, hi;
-  for (final ch in channels) {
-    final series = seriesFor(ch);
-    if (series == null) continue;
-    // Gap samples hold a previous real value, so they can never extend
-    // the range: no exclusion needed.
-    final ext = windowedExtremes(series.$1, start, end, series.$2);
+  for (final bound in channels) {
+    final ext = data.windowedRawExtremes(bound.channel, start, end);
     if (ext == null) continue;
-    for (final v in [adjust(ext.$1, ch), adjust(ext.$2, ch)]) {
+    for (final v in [bound.netMap(ext.$1), bound.netMap(ext.$2)]) {
       if (lo == null || v < lo) lo = v;
       if (hi == null || v > hi) hi = v;
     }
   }
   // lo and hi are always assigned together; null means no channel folded.
-  return (lo == null) ? null : (lo, hi!);
+  return lo == null ? null : (lo, hi!);
 }
 
 /// Paint the segment-cached envelope data layer for the window
@@ -2431,22 +2410,16 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
     // [windowedRawExtremes] folds full buckets and scans only the partial
     // head/tail: O(window / bucketSize). No minimum-range floor; flat data
     // hits the degeneracy guard in [_computeYRange].
-    final unit = _unit;
-    final start = viewStart.floor();
-    final end = viewEnd.ceil();
-
-    double yMin = double.infinity;
-    double yMax = double.negativeInfinity;
-    for (final bound in _channels) {
-      final ext = _data.windowedRawExtremes(bound.channel, start, end);
-      if (ext == null) continue;
-      yMin = math.min(yMin, bound.netMap(ext.$1));
-      yMax = math.max(yMax, bound.netMap(ext.$2));
-    }
     // No plotted channel has data in the window: paint blank.
-    if (!yMin.isFinite || !yMax.isFinite) return null;
+    final ext = _foldNetExtremes(
+      _data,
+      _channels,
+      viewStart.floor(),
+      viewEnd.ceil(),
+    );
+    if (ext == null) return null;
 
-    return _computeYRange(yMin, yMax, unit, plotHeight);
+    return _computeYRange(ext.$1, ext.$2, _unit, plotHeight);
   }
 
   /// Limit bars in the right gutter: one column per channel, a rail zone from
@@ -2571,9 +2544,6 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   ) {
     // [windowedExtremes] folds full buckets and scans only the partial
     // head/tail: O(window / bucketSize).
-    double dMin = 0;
-    double dMax = 0;
-    bool first = true;
     final (startI, endI) = _data.clampToRetained(
       viewStart.floor(),
       viewEnd.ceil(),
@@ -2581,23 +2551,25 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     // The first difference at index 0 has no predecessor.
     final from = math.max(startI, _data.oldestSample + firstSampleOffset);
 
-    void fold(double d) {
-      if (first || d < dMin) dMin = d;
-      if (first || d > dMax) dMax = d;
-      first = false;
-    }
-
     // Each channel folds via the bucket fast path through its own diff map
     // (monotone, so both bounds fold safely).
-    final ext = _foldChannelExtremes(_channels, from, endI, (bound) {
-      return (_data.diffBucketsFor(bound.channel), _rawDiffAt(bound.channel));
-    }, (raw, bound) => _diffDisplayFor(bound)(raw));
-    if (ext != null) {
-      fold(ext.$1);
-      fold(ext.$2);
+    double? dMin, dMax;
+    for (final bound in _channels) {
+      final ext = windowedExtremes(
+        _data.diffBucketsFor(bound.channel),
+        from,
+        endI,
+        _rawDiffAt(bound.channel),
+      );
+      if (ext == null) continue;
+      final display = _diffDisplayFor(bound);
+      for (final d in [display(ext.$1), display(ext.$2)]) {
+        if (dMin == null || d < dMin) dMin = d;
+        if (dMax == null || d > dMax) dMax = d;
+      }
     }
-
-    return _computeYRange(dMin, dMax, _unit, plotHeight);
+    // No channel data: degenerate 0..1 axis via [_computeYRange]'s guard.
+    return _computeYRange(dMin ?? 0.0, dMax ?? 0.0, _unit, plotHeight);
   }
 
   @override
