@@ -659,6 +659,90 @@ void main() {
         onFrameCanvas: false,
       ));
     });
+
+    test('a refresh swallowing a right neighbor past a RECEDED horizon '
+        'clamps to the horizon', () {
+      // pps 12.5, target span 16 throughout. Build the magic pair:
+      // A=[10, 16)@y100 (y-drift-stale vs the end state) abutting
+      // B=[16, 32)@y130 (fresh), with B's tail past a receded horizon.
+      h.paint(viewStart: 0, viewSpan: 32, totalSamples: 32, yMax: 100);
+      h.paint(viewStart: 0, viewSpan: 32, totalSamples: 32, yMax: 100);
+      // Window [10, 42), horizon receded to 26: the sweep clamps [16, 32)
+      // to [16, 26) ...
+      h.paint(
+        viewStart: 10,
+        viewSpan: 32,
+        totalSamples: 32,
+        bakeableSamples: 26,
+        remapKey: const ['k2'],
+        yMax: 100,
+      );
+      expect(h.bakes.single, (
+        start: 16,
+        end: 26,
+        texW: 125,
+        onFrameCanvas: false,
+      ));
+      // ... then [0, 16) to [10, 16) -- the future stale tile A.
+      h.paint(
+        viewStart: 10,
+        viewSpan: 32,
+        totalSamples: 32,
+        bakeableSamples: 26,
+        remapKey: const ['k2'],
+        yMax: 100,
+      );
+      expect(h.bakes.single, (
+        start: 10,
+        end: 16,
+        texW: 75,
+        onFrameCanvas: false,
+      ));
+      // Horizon back at 32, fold now spans to 130: the [26, 32) gap bake
+      // absorbs [16, 26) into B=[16, 32) FRESH under the new range.
+      h.paint(
+        viewStart: 10,
+        viewSpan: 32,
+        totalSamples: 32,
+        bakeableSamples: 32,
+        remapKey: const ['k2'],
+        yMax: 130,
+      );
+      expect(h.bakes.single, (
+        start: 16,
+        end: 32,
+        texW: 200,
+        onFrameCanvas: false,
+      ));
+      // Horizon receded to 26 again. B stays untouched (not stale; its
+      // empty plan reads as identity), A is y-drift-stale (100 vs 130) and
+      // narrow (75 px), so its refresh swallows B -- whose end is past the
+      // receded horizon. Pre-fix this baked [10, 32); the clamp caps it at
+      // 26, and B's [26, 32) tail becomes a horizon-zone vector draw.
+      expect(
+        h.paint(
+          viewStart: 10,
+          viewSpan: 32,
+          totalSamples: 32,
+          bakeableSamples: 26,
+          remapKey: const ['k2'],
+          yMax: 130,
+        ),
+        isTrue,
+      );
+      expect(h.bakes.single, (
+        start: 10,
+        end: 26,
+        texW: 200,
+        onFrameCanvas: false,
+      ));
+      expect(h.gapDraws.single, (
+        start: 26,
+        end: 32,
+        texW: 75,
+        onFrameCanvas: true,
+      ));
+    });
   });
 
   group('SegmentedGraphCache fold window', () {

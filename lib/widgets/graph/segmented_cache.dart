@@ -617,14 +617,15 @@ class SegmentedGraphCache {
         mergedEnd = _segments[to].end;
       }
     }
-    // Swallowed LEFT neighbors may straddle the left view edge, a swallowed
-    // RIGHT neighbor or a grown end the right one: clamp into the fold
-    // window (the fringe drops to an out-of-view gap).
+    // Swallowed LEFT neighbors may straddle the left view edge; a swallowed
+    // RIGHT neighbor or a grown end may reach the right one -- or past a
+    // RECEDED bake horizon, which neighbors are never trimmed to. Clamp into
+    // the fold window and at the horizon (fringes drop to gaps).
     return (
       from: from,
       to: to,
       start: math.max(start, env.viewStart),
-      end: math.min(mergedEnd, env.viewEnd),
+      end: math.min(mergedEnd, math.min(env.viewEnd, bakeable)),
     );
   }
 
