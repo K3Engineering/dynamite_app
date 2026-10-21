@@ -25,6 +25,7 @@ class Mutant {
     required this.needle,
     required this.replacement,
     required this.killedBy,
+    this.survive = false,
   });
 
   final String name;
@@ -36,6 +37,12 @@ class Mutant {
 
   /// The net expected to kill it (documentation, not enforcement).
   final String killedBy;
+
+  /// Whether surviving is the CORRECT outcome -- for mutants that disable a
+  /// debug-only guard, where the nets are supposed to catch the bug on their
+  /// own. A `survive` mutant that is killed means a net started depending on
+  /// the guard it is meant to be independent of.
+  final bool survive;
 }
 
 const functional = 'lib/widgets/graph/segmented_cache_functional.dart';
@@ -77,6 +84,11 @@ const mutants = <Mutant>[
   Mutant(
     name: 'plan-bakes-choke-point-assert-removed',
     file: functional,
+    // Expected SURVIVED, and that is the correct verdict: the assert is a
+    // debug-only backstop, so disabling it changes no release behaviour. The
+    // nets are the sim and the model check, which re-derive the invariant
+    // from first principles; this row proves they do not lean on the assert.
+    survive: true,
     needle: '''  assert(
     job.start >= env.covStart &&
 ''',
@@ -84,9 +96,8 @@ const mutants = <Mutant>[
     true &&
 ''',
     killedBy:
-        'the test-side independent checks (sim + model check), proving they '
-        'do not rely on the production assert (a valid, compiling mutation: '
-        'disables the check without changing behaviour)',
+        'expected survivor: the test-side checks stand alone. If this ever '
+        'reads KILLED, a net has started depending on the assert',
   ),
   Mutant(
     name: 'coverage-window-floor-ceil-swap',
@@ -242,10 +253,15 @@ Future<void> main(List<String> args) async {
       Verdict.rotted => 'ROTTED  ',
     };
     stdout.writeln('$tag  ${m.name}   (net: ${m.killedBy})');
-    if (verdict != Verdict.killed) failures++;
+    // A mutant flagged `survive` expects SURVIVED; anything else (rotted,
+    // invalid, or unexpectedly killed) is a problem in its own right.
+    final ok = m.survive
+        ? verdict == Verdict.survived
+        : verdict == Verdict.killed;
+    if (!ok) failures++;
   }
   stdout.writeln(
-    '${selected.length - failures}/${selected.length} killed '
+    '${selected.length - failures}/${selected.length} as expected '
     '(${sw.elapsed})',
   );
   if (failures > 0) exitCode = 1;

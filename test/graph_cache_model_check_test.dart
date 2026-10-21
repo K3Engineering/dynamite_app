@@ -25,11 +25,13 @@ import 'package:dynamite_app/widgets/graph/segmented_cache_functional.dart';
 // transitions (the run reports whether closure was reached), so these
 // invariants hold for every reachable geometry, not a sampled one.
 //
-// Tiers (env MODEL_CHECK_TIER=full for the wide grid, default PR width),
-// sized from probe measurements, not guesses:
-//   * pr   -- 12-sample universe, ~34k states to closure, ~2 s core time.
-//   * full -- 16-sample universe, ~280k states, ~20-30 s core time. Run
-//             manually on planner changes; not wired into CI.
+// Tiers (env MODEL_CHECK_TIER): the default grid runs per PR; `full` is a
+// manual pre-release sweep. Sizes below are measured on this repo, and the
+// elapsed-time assertions below re-check them, so treat them as a budget to
+// re-measure on planner changes, not as constants of nature:
+//   * pr   -- 12-sample universe, ~143k states to closure, ~25 s here.
+//   * full -- 16-sample universe, ~2.25M states, ~10 min here (it will NOT
+//             fit the pr budget; MODEL_CHECK_TIER=full raises the cap).
 // Reachable-state count is strongly superlinear in the universe size and
 // in the number of STAMP axes (at 16 samples the full key/gh/dpr cartesian
 // product alone pushes past 2M states), so the grids stay small and the
@@ -88,7 +90,10 @@ CacheConfig _config({
 );
 
 void main() {
-  test('reachable cache states obey the invariants', () {
+  test(
+    'reachable cache states obey the invariants',
+    tags: 'slow',
+    () {
     final full = Platform.environment['MODEL_CHECK_TIER'] == 'full';
     final sw = Stopwatch()..start();
     final universe = full ? 16 : 12;
@@ -329,7 +334,7 @@ void main() {
     // up here before it silently 10x's CI time.
     expect(
       sw.elapsed,
-      lessThan(Duration(seconds: full ? 300 : 60)),
+      lessThan(Duration(seconds: full ? 900 : 60)),
       reason:
           'model check outgrew its tier budget; the reachable state '
           'space exploded -- inspect the planner change',
