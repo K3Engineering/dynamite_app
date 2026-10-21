@@ -41,13 +41,18 @@ class GapList {
 
   /// Append the gap `[start, end)`. Ranges only ever arrive at the live edge
   /// (monotonically increasing), so this merges with the trailing range or
-  /// appends after it.
+  /// appends after it. Throws a [StateError] — in debug AND release — when
+  /// [start] precedes the trailing bound: the sorted/disjoint invariant
+  /// [contains] binary-searches on must never break silently, so this is a
+  /// real throw, not a debug-only assert.
   void append(int start, int end) {
     if (end <= start) return;
-    assert(
-      _bounds.isEmpty || start >= _bounds.last,
-      'append must be at the live edge',
-    );
+    if (_bounds.isNotEmpty && start < _bounds.last) {
+      throw StateError(
+        'append must be at the live edge: start $start precedes the '
+        'trailing bound ${_bounds.last}',
+      );
+    }
     if (_bounds.isNotEmpty && _bounds.last == start) {
       _bounds[_bounds.length - 1] = end; // extend the trailing range
     } else {

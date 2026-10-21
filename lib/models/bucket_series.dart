@@ -52,7 +52,19 @@ class BucketAccumulator {
     required this.bucketSize,
     required int numBuckets,
     double? Function(int raw)? mvVOf,
-  }) : mins = Int32List(numBuckets),
+  }) : // Int32 headroom: the sums ring is Int32List, so a bucket whose total
+       // exceeds 2^31 - 1 wraps silently on store. The binding worst case is
+       // a DIFF bucket over alternating 24-bit rails: max |diff| per sample
+       // is 2^24 - 1, so a bucket holds at most
+       // bucketSize * (2^24 - 1). The ceiling 128 keeps that strictly inside
+       // int32: 128 * (2^24 - 1) = 2147483520 < 2147483647 = 2^31 - 1.
+       // A larger bucketSize would admit a wrap, so bumping kBucketSize past
+       // 128 must fail loudly here rather than corrupt sums in production.
+       assert(
+         bucketSize > 0 && bucketSize <= 128,
+         'bucketSize must be in (0, 128] to keep diff-bucket sums in int32',
+       ),
+       mins = Int32List(numBuckets),
        maxs = Int32List(numBuckets),
        sums = Int32List(numBuckets),
        _mvVOf = mvVOf,

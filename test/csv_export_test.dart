@@ -41,8 +41,11 @@ void main() {
   /// session row (recorded_unix derives from it at export).
   const generator = 'dynamite-flutter 1.0.0';
   const recordedAtIso = '2026-07-29T14:05:32.000Z';
-  final recordedUnix =
-      DateTime.parse(recordedAtIso).millisecondsSinceEpoch ~/ 1000;
+  // recorded_at as epoch seconds, computed by hand and pinned as a LITERAL:
+  // 2026-07-29T14:05:32.000Z = 1785333932000 ms since the unix epoch,
+  // 1785333932000 ~/ 1000 = 1785333932. Deriving this with the emitter's own
+  // expression would let a `~/`→`/` mutation slip through unseen.
+  const recordedUnix = 1785333932;
 
   const testIdentity = DeviceInfo(
     manufacturer: 'K3 Engineering',
@@ -105,23 +108,63 @@ void main() {
       csv.trim().split('\n').skipWhile((l) => l.startsWith('#')).toList();
 
   group('SessionCsvExport', () {
-    test('emits magic, quartet header, and ssn-keyed data rows', () {
+    test('emits the full artifact byte-for-byte', () {
       final data = makeSession([
         [10, 20, 30],
         [-1, -2, -3],
       ], ssnOrigin: 41230);
 
-      final lines = buildCsv(data, DisplayUnit.kgf).split('\n');
-      final body = bodyOf(buildCsv(data, DisplayUnit.kgf));
+      final csv = buildCsv(data, DisplayUnit.kgf);
 
-      expect(lines[0], '# dynamite-csv 1');
-      expect(lines[1], startsWith('# {'));
-      expect(body[0], 'ssn,ch0,ch1,ch0_kgf,ch1_kgf');
-      // ssn is an arithmetic progression from ssn_origin; with no load cell
-      // assigned, both converted columns are all-blank (the file's '—').
-      expect(body[1], '41230,10,-1,,');
-      expect(body[2], '41231,20,-2,,');
-      expect(body[3], '41232,30,-3,,');
+      // The whole file as one literal: magic line, metadata JSON line, the
+      // YAML rendering of the same object, header row, then ssn-keyed data
+      // rows (an arithmetic progression from ssn_origin; with no load cell
+      // assigned both converted columns are all-blank — the file's '—').
+      // This is an EXACT comparison — no trim() anywhere — so a
+      // trailing-blank-line mutant dies here.
+      const expected = '''
+# dynamite-csv 1
+# {"format":"dynamite-csv","version":1,"generator":"dynamite-flutter 1.0.0","recorded_at":"2026-07-29T14:05:32.000Z","recorded_unix":1785333932,"sample_rate_hz":1000,"ssn_origin":41230,"converted_unit":"kgf","device":{"name":null,"id":"A4CF1208F51E","model":"Dynamite Sampler Pro Mk1","hardware_rev":"v700P","firmware":"v700P|v1.2.3","manufacturer":"K3 Engineering","afe":{"adc_ref_v":1.2,"front_end_gain":101.0,"adc_gain":[1.0,1.0],"excitation_v":4.53},"kvs":null},"channels":[{"load_cell":null,"tare_raw":null,"board_cal":null},{"load_cell":null,"tare_raw":null,"board_cal":null}]}
+# format: "dynamite-csv"
+# version: 1
+# generator: "dynamite-flutter 1.0.0"
+# recorded_at: "2026-07-29T14:05:32.000Z"
+# recorded_unix: 1785333932
+# sample_rate_hz: 1000
+# ssn_origin: 41230
+# converted_unit: "kgf"
+# device:
+#   name: null
+#   id: "A4CF1208F51E"
+#   model: "Dynamite Sampler Pro Mk1"
+#   hardware_rev: "v700P"
+#   firmware: "v700P|v1.2.3"
+#   manufacturer: "K3 Engineering"
+#   afe:
+#     adc_ref_v: 1.2
+#     front_end_gain: 101.0
+#     adc_gain:
+#       - 1.0
+#       - 1.0
+#     excitation_v: 4.53
+#   kvs: null
+# channels:
+#   - load_cell: null
+#     tare_raw: null
+#     board_cal: null
+#   - load_cell: null
+#     tare_raw: null
+#     board_cal: null
+ssn,ch0,ch1,ch0_kgf,ch1_kgf
+41230,10,-1,,
+41231,20,-2,,
+41232,30,-3,,
+''';
+      expect(csv, expected);
+
+      // The file's terminator: exactly one '\n' after the last row.
+      expect(csv.endsWith('\n'), isTrue);
+      expect(csv.endsWith('\n\n'), isFalse);
     });
 
     test('metadata line carries the spec schema from the frozen session', () {
@@ -205,23 +248,24 @@ void main() {
       ]);
 
       // A complete session exports exactly the v1 schema — no key at all.
-      expect(
-        metadataOf(buildCsv(data, DisplayUnit.kgf)),
-        isNot(contains('interrupted')),
-      );
+      final completeCsv = buildCsv(data, DisplayUnit.kgf);
+      expect(metadataOf(completeCsv), isNot(contains('interrupted')));
+      // Byte-pinned too: even a differently-encoded key must not appear.
+      expect(completeCsv, isNot(contains('"interrupted"')));
 
-      final interruptedMeta = metadataOf(
-        SessionCsvExport(
-          data,
-          DisplayUnit.kgf,
-          recordedAtIso: recordedAtIso,
-          generator: generator,
-          deviceInfo: toSessionDeviceMetadata(name: null, info: testIdentity),
-          interrupted: true,
-        ).encode(),
-      );
+      final interruptedCsv = SessionCsvExport(
+        data,
+        DisplayUnit.kgf,
+        recordedAtIso: recordedAtIso,
+        generator: generator,
+        deviceInfo: toSessionDeviceMetadata(name: null, info: testIdentity),
+        interrupted: true,
+      ).encode();
+      final interruptedMeta = metadataOf(interruptedCsv);
       expect(interruptedMeta['interrupted'], isTrue);
       expect(interruptedMeta['sample_rate_hz'], 1000);
+      // Byte-pinned: exactly this key, true, in the metadata line.
+      expect(interruptedCsv, contains('"interrupted":true'));
     });
 
     test('metadata line carries the frozen device identity', () {

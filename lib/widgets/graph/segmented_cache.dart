@@ -361,16 +361,23 @@ class SegmentedGraphCache {
       baked = true;
     }
 
-    assert(_segmentsAreDisjoint());
+    assert(segmentsAreWellFormed());
     return (env, baked);
   }
 
-  /// Debug-only invariant check: [_segments] is ordered by [GraphSegment.start]
-  /// with no overlaps (gaps are fine). Every mutation path ends here via
-  /// [_maintain].
-  bool _segmentsAreDisjoint() {
-    for (int k = 1; k < _segments.length; k++) {
-      if (_segments[k - 1].end > _segments[k].start) return false;
+  /// Invariant check: [_segments] is ordered by [GraphSegment.start],
+  /// pairwise disjoint (gaps are fine), and every segment is non-empty.
+  /// The assert site in [_maintain] (below [_bakeOne] — the only entry point
+  /// that mutates the list) reaches this on every mutation path; promoted
+  /// and strengthened from the old overlap-only `_segmentsAreDisjoint` so
+  /// tests can assert the same planner invariant at arbitrary checkpoints
+  /// (empty segments would pin a zero-width tile in the list forever, and an
+  /// unordered list would break [_planRefresh]'s neighbor swallows).
+  @visibleForTesting
+  bool segmentsAreWellFormed() {
+    for (int k = 0; k < _segments.length; k++) {
+      if (_segments[k].start >= _segments[k].end) return false;
+      if (k > 0 && _segments[k - 1].end > _segments[k].start) return false;
     }
     return true;
   }

@@ -575,7 +575,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   final SegmentedGraphCache _derivCache = SegmentedGraphCache();
   final BlockReductionCache _derivReductionCache = BlockReductionCache();
   final BakePump _bakePump = BakePump();
-  final _LabelCache _labelCache = _LabelCache();
+  final AxisLabelCache _labelCache = AxisLabelCache();
 
   /// Vsync driver for smooth live-edge scrolling; the painters merge [_vsync]
   /// into their repaint listenable.
@@ -1110,7 +1110,7 @@ String _graphSemanticsLabel({
 
 /// Format a zoom-window span in seconds for the readout: "800 ms" below a
 /// second, trimmed decimals below a minute ("12.4 s", "30 s"), then rounded
-/// to the second in the axis ticks' hours-folding clock shape ([_fmtTick]):
+/// to the second in the axis ticks' hours-folding clock shape ([formatAxisTick]):
 /// "2:05", "1:00:30".
 @visibleForTesting
 String formatWindowSpan(double spanSec) {
@@ -1122,17 +1122,18 @@ String formatWindowSpan(double spanSec) {
     final oneDecimal = spanSec.toStringAsFixed(1);
     return '${oneDecimal.endsWith('.0') ? oneDecimal.substring(0, oneDecimal.length - 2) : oneDecimal} s';
   }
-  return _fmtTick(spanSec, 0);
+  return formatAxisTick(spanSec, 0);
 }
 
 /// Clock-nice step ladder, as rungs of seconds/minutes/hours, used by
-/// [_timeStepCeil]. 30 s and friends keep m:ss labels meaningful; a 1/2/5
+/// [timeStepCeil]. 30 s and friends keep m:ss labels meaningful; a 1/2/5
 /// decade of "100 s" would print 1:40.
 const _kClockRungs = [1, 2, 5, 10, 20, 30, 60];
 
 /// Smallest clock-nice step >= [target] seconds: 1/2/5 decades below one
 /// second ([niceStepCeil]), then [_kClockRungs] of seconds, minutes, hours, ...
-double _timeStepCeil(double target) {
+@visibleForTesting
+double timeStepCeil(double target) {
   if (target < 1) return niceStepCeil(target);
   for (double scale = 1; ; scale *= 60) {
     // Terminates once scale >= target, via r = 1.
@@ -1148,8 +1149,9 @@ double _timeStepCeil(double target) {
 /// per tick: at and past one hour the format grows a field ("1:02:30")
 /// instead of minutes running past 59, so the rollover is visible in the
 /// axis and a tick's label never depends on the window around it.
-String _fmtTick(double sec, int decimals) {
-  if (sec < 0) return '-${_fmtTick(-sec, decimals)}';
+@visibleForTesting
+String formatAxisTick(double sec, int decimals) {
+  if (sec < 0) return '-${formatAxisTick(-sec, decimals)}';
   // Snap fp noise (ticks are k * step products) so 59.999... prints as 1:00.
   final f = math.pow(10, decimals);
   final snapped = (sec * f).round() / f;
@@ -1174,7 +1176,14 @@ String _fmtTick(double sec, int decimals) {
 /// and only disposed at the END of the frame (recorded pictures keep
 /// paragraph references until the raster pass, so synchronously disposing
 /// an entry another painter drew this frame would crash the compositor).
-class _LabelCache {
+///
+/// Test seam: public as [AxisLabelCache] (same rename-only pattern as
+/// [joinBlockEnd] / [formatWindowSpan]) so tests can drive the pass/eviction
+/// semantics directly. A constructor parameter for `_limit` was considered
+/// but rejected: a knob on a painter-owned type invites misuse in prod, and
+/// a few hundred extra label paragraphs are cheap in tests.
+@visibleForTesting
+class AxisLabelCache {
   static const int _limit = 512;
 
   final Map<String, ui.Paragraph> _cache = HashMap();
@@ -1344,7 +1353,8 @@ enum _AxisOrientation { x, y }
 /// Majors are the ticks with k % period == 0 on the absolute tick grid
 /// k * step, so the tick k == 0 (X: session start; Y: zero) is a major
 /// whenever it is visible.
-int _majorPeriod(double step, double Function(double target) stepCeil) {
+@visibleForTesting
+int majorPeriod(double step, double Function(double target) stepCeil) {
   final superStep = stepCeil(5 * step);
   final period = (superStep / step).round();
   assert(
@@ -1354,7 +1364,7 @@ int _majorPeriod(double step, double Function(double target) stepCeil) {
   return period;
 }
 
-/// Fractional digits for [_fmtTick] at [step]: enough to resolve the step,
+/// Fractional digits for [formatAxisTick] at [step]: enough to resolve the step,
 /// capped at 3 (ms).
 int _timeDecimals(double step) =>
     step >= 1 ? 0 : (-(math.log(step) / math.ln10).floor()).clamp(1, 3);
@@ -1403,10 +1413,10 @@ _AxisLines _enumAxisLines(
   required double enumSlack,
   required String Function(double tick) labelFor,
   required double Function(double value) posOf,
-  required _LabelCache labels,
+  required AxisLabelCache labels,
   required Color textColor,
 }) {
-  final period = _majorPeriod(step, stepCeil);
+  final period = majorPeriod(step, stepCeil);
   final lo = windowStart - enumSlack;
   final hi = windowEnd + enumSlack + step * 0.01;
   // Minor lines live on the ODD half-step grid, indexed by j so the overlap
@@ -1444,6 +1454,37 @@ _AxisLines _enumAxisLines(
   );
 }
 
+/// Test seam DELEGATING to [_enumAxisLines] (kept private): the enumerated
+/// tick grid (values + major flags) of a slack-free, snapped Y-style window,
+/// minus the pixel and paragraph machinery. So tests can pin the tick
+/// inclusion epsilon at the window edge and the k % period cadence through
+/// the production enumeration path, not a copy of it.
+@visibleForTesting
+List<({double value, bool major})> axisTickGrid(
+  double windowStart,
+  double windowEnd, {
+  required double step,
+  required double Function(double target) stepCeil,
+}) {
+  final labels = AxisLabelCache();
+  try {
+    final lines = _enumAxisLines(
+      windowStart,
+      windowEnd,
+      step: step,
+      stepCeil: stepCeil,
+      enumSlack: 0,
+      labelFor: (tick) => '$tick',
+      posOf: (value) => value,
+      labels: labels,
+      textColor: const Color(0xFF000000),
+    );
+    return [for (final t in lines.ticks) (value: t.value, major: t.major)];
+  } finally {
+    labels.dispose();
+  }
+}
+
 /// The X-axis grid lines ([_AxisLines]) at the smallest clock-nice step for
 /// the window [startSec, endSec) across [extent] px: the lowest ladder rung
 /// keeping ticks at least [_kMinXTickPx] apart, bumped up the ladder until
@@ -1462,7 +1503,7 @@ _AxisLines _fitTimeLines(
   required double Function(double target) stepCeil,
   required String Function(double tick, int decimals) labelFor,
   required double Function(double value) posOf,
-  required _LabelCache labels,
+  required AxisLabelCache labels,
   required Color textColor,
 }) {
   final spanSec = endSec - startSec;
@@ -2201,7 +2242,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final double dpr;
 
   /// Axis-label paragraph cache, owned (and disposed) by the host [State].
-  final _LabelCache labels;
+  final AxisLabelCache labels;
 
   /// Drives the rolling segment bakes: a repaint listenable for this painter
   /// and the scheduler for extra frames when bake work remains (rolling
@@ -2358,8 +2399,8 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       endSec,
       graphSz.width,
       slackOf: xSlack,
-      stepCeil: _timeStepCeil,
-      labelFor: _fmtTick,
+      stepCeil: timeStepCeil,
+      labelFor: formatAxisTick,
       posOf: xToPx,
       labels: labels,
       textColor: colorScheme.onSurface,

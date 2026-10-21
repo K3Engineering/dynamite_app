@@ -78,6 +78,13 @@ void main() {
   setUp(() => h = _Harness());
   tearDown(() => h.dispose());
 
+  /// The strengthened planner invariant, checked at checkpoints below
+  /// (in addition to the cache's own per-frame assert): segments ordered by
+  /// start, pairwise disjoint, and every segment non-empty.
+  void expectWellFormed() {
+    expect(h.cache.segmentsAreWellFormed(), isTrue);
+  }
+
   group('SegmentedGraphCache bootstrap fill', () {
     test('spends one bake per frame until the view is covered, rightmost '
         'first', () {
@@ -98,6 +105,7 @@ void main() {
       // Fully covered and fresh: no bake work remains, no gap draws.
       expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isFalse);
       expect(h.calls, isEmpty);
+      expectWellFormed();
     });
   });
 
@@ -357,6 +365,7 @@ void main() {
         expect(h.gapDraws, [
           (start: 0, end: 200, texW: 200, onFrameCanvas: true),
         ]);
+        expectWellFormed();
       },
     );
 
@@ -797,6 +806,7 @@ void main() {
         );
         expect(h.calls, isEmpty);
       }
+      expectWellFormed();
     }
 
     test('a pass-1 swallow bake (tile born past one target) goes '
@@ -1099,6 +1109,81 @@ void main() {
         );
         expect(h.calls, isEmpty);
       }
+      expectWellFormed();
+    });
+  });
+
+  group('SegmentedGraphCache planner well-formedness', () {
+    test('a scripted zoom/pan/arrival sequence keeps the segment list '
+        'ordered, disjoint and non-empty at every checkpoint', () {
+      // Fill [0, 1000) at 1 px/sample (five 200-sample tiles).
+      for (int i = 0; i < 5; i++) {
+        h.paint(viewStart: 0, viewSpan: 1000, gw: 1000, totalSamples: 1000);
+        expectWellFormed();
+      }
+
+      // Zoom out: tiles split/consolidate under the sweep.
+      for (int i = 0; i < 4; i++) {
+        h.paint(viewStart: 0, viewSpan: 2500, gw: 1000, totalSamples: 2500);
+        expectWellFormed();
+      }
+
+      // Pan across the buffer (segments appear and are evicted far off-view).
+      for (final start in [500.0, 1200.0, 300.0, 0.0]) {
+        h.paint(viewStart: start, viewSpan: 1000, gw: 1000, totalSamples: 2500);
+        expectWellFormed();
+      }
+      for (final start in [500.0, 1200.0, 300.0, 0.0]) {
+        h.paint(viewStart: start, viewSpan: 1000, gw: 1000, totalSamples: 2500);
+        expectWellFormed();
+      }
+
+      // Live-edge arrival entries: slivers bake/absorb below the horizon.
+      int total = 2500;
+      for (int frame = 0; frame < 6; frame++) {
+        total += 30;
+        h.paint(
+          viewStart: 0,
+          viewSpan: 1000,
+          gw: 1000,
+          totalSamples: total,
+          bakeableSamples: total - 20,
+        );
+        expectWellFormed();
+      }
+    });
+  });
+
+  group('SegmentedGraphCache dpr 2 geometry', () {
+    test('the bootstrap bake/blit flow is dpr-invariant in logical px', () {
+      // The identity flow from the bootstrap group at dpr 2: segment
+      // bookkeeping is entirely in logical px / samples, so the same
+      // bake/gap-draw sequence must result (only the rasterized textures'
+      // physical size doubles, which the harness cannot see).
+      expect(
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, dpr: 2.0),
+        isTrue,
+      );
+      expect(h.bakes, [
+        (start: 200, end: 400, texW: 200, onFrameCanvas: false),
+      ]);
+      expect(h.gapDraws, [
+        (start: 0, end: 200, texW: 200, onFrameCanvas: true),
+      ]);
+
+      expect(
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, dpr: 2.0),
+        isTrue,
+      );
+      expect(h.bakes, [(start: 0, end: 200, texW: 200, onFrameCanvas: false)]);
+      expect(h.gapDraws, isEmpty);
+
+      expect(
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, dpr: 2.0),
+        isFalse,
+      );
+      expect(h.calls, isEmpty);
+      expectWellFormed();
     });
   });
 

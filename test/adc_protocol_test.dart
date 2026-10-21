@@ -3,7 +3,9 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/device_profile.dart';
+import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/adc_protocol.dart';
+import 'package:dynamite_app/services/data_hub.dart';
 
 /// Build an `AdcConfigNetworkData` v1 struct: version u8, id u16, status
 /// u16, mode u16, clock u16, pga u16 (little-endian).
@@ -71,6 +73,58 @@ void main() {
         parseAdcConfig(makeConfig(clock: 0x0F14, pga: 0)..[0] = 2),
         isNull,
       );
+    });
+  });
+
+  group('production encoder ↔ AdcPacketDecoder round-trip', () {
+    test('rails and a wrap-straddling counter anchor come back unchanged', () {
+      final hub = DataHub();
+      final decoder = AdcPacketDecoder(hub);
+
+      // Signed 24-bit rails: ±(2^23 - 1) and -2^23, plus ordinary values.
+      const frames = [
+        [0x7FFFFF, -0x800000, -0x7FFFFF, 0],
+        [123456, -123456, 1, -1],
+        [0, 0x7FFFFF, -0x800000, 4000000],
+        [-4000000, 42, -42, 0x7FFFFF],
+        [-1, 1, 0, -0x7FFFFF],
+        [7, 700, 7000, 70000],
+      ];
+      // A counter near the top of the 16-bit range: six samples carry it
+      // exactly onto the wrap, so the continuation packet starts at 0.
+      const counter = 0xFFFA;
+      Uint8List packet(int counter, Iterable<List<int>> frames) =>
+          encodeAdcPacket(
+            counter: counter,
+            frames: [for (final f in frames) encodeAdcFrame(f)],
+          );
+      decoder.onDataPacket(packet(counter, frames));
+      // The starting counter anchored to hub index 0 — the pairing the live
+      // session writer derives ssn_origin from.
+      expect(hub.packetAnchor, (counter: counter, hubIndex: 0));
+      decoder.onDataPacket(
+        packet((counter + frames.length) & 0xFFFF, [
+          const [-2, 20, -200, 2000],
+          const [3, -30, 300, -3000],
+        ]),
+      );
+
+      // The continuation's wrapped counter anchored in lockstep, right where
+      // the first packet ended.
+      expect(hub.packetAnchor, (counter: 0, hubIndex: frames.length));
+      // Eight samples, and the 0xFFFF → 0 wrap injected no spurious gap.
+      const expected = [
+        ...frames,
+        [-2, 20, -200, 2000],
+        [3, -30, 300, -3000],
+      ];
+      expect(hub.totalSamples, expected.length);
+      expect(hub.gaps.isEmpty, isTrue);
+      for (var s = 0; s < expected.length; s++) {
+        for (var c = 0; c < kAdcChannelCount; c++) {
+          expect(hub.rawAt(c, s), expected[s][c], reason: 'sample $s ch $c');
+        }
+      }
     });
   });
 }
