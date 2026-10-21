@@ -652,6 +652,128 @@ void main() {
     });
   });
 
+  group('SegmentedGraphCache fold window', () {
+    // The Y-range is folded from the visible window only, so a bake covering
+    // out-of-window samples raster-clips them at the texture top and freezes
+    // the cut into the tile (file header invariant). These tests force each
+    // bake path that historically escaped the window (re-bake of a
+    // view-straddling tile, left-neighbor absorb in a gap bake) and assert
+    // the bake stays inside it.
+    test('a refresh of a left-straddling tile re-bakes only the in-window '
+        'part, dropping the out-of-fold fringe', () {
+      // Two tiles cover [0, 400); the window slides right so [0, 200)
+      // straddles the left edge, then a remapKey bump sweeps all tiles.
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      // Frame 1: the [400, 500) exposure bakes first (gap priority).
+      expect(
+        h.paint(
+          viewStart: 100,
+          viewSpan: 400,
+          totalSamples: 500,
+          remapKey: const ['other'],
+        ),
+        isTrue,
+      );
+      expect(h.bakes.single, (
+        start: 400,
+        end: 500,
+        texW: 100,
+        onFrameCanvas: false,
+      ));
+      // Frame 2: the sweep reaches the stale [200, 400), entirely in-window.
+      expect(
+        h.paint(
+          viewStart: 100,
+          viewSpan: 400,
+          totalSamples: 500,
+          remapKey: const ['other'],
+        ),
+        isTrue,
+      );
+      expect(h.bakes.single, (
+        start: 200,
+        end: 400,
+        texW: 200,
+        onFrameCanvas: false,
+      ));
+      // Frame 3: the straddling [0, 200) is refreshed clamped to the window
+      // -- NOT re-baked in full as [0, 200), which would clip its left half
+      // above the fold. The [0, 100) fringe becomes an out-of-view gap.
+      expect(
+        h.paint(
+          viewStart: 100,
+          viewSpan: 400,
+          totalSamples: 500,
+          remapKey: const ['other'],
+        ),
+        isTrue,
+      );
+      expect(h.bakes.single, (
+        start: 100,
+        end: 200,
+        texW: 100,
+        onFrameCanvas: false,
+      ));
+      expect(h.gapDraws, isEmpty);
+
+      // Converged: nothing stale, no fringe work churns on.
+      expect(
+        h.paint(
+          viewStart: 100,
+          viewSpan: 400,
+          totalSamples: 500,
+          remapKey: const ['other'],
+        ),
+        isFalse,
+      );
+      expect(h.calls, isEmpty);
+    });
+
+    test('a gap bake absorbing a left-straddling neighbor bakes from the '
+        'window edge, not the neighbor start', () {
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 200); // tile [0,200)
+      // Zoomed-out window [50, 1050): pps = 0.4, targetSpan = 500. The
+      // [200, 400) gap abuts the straddling tile; absorbing it keeps the
+      // merged bake within one target (160 px), so pre-fix this baked
+      // [0, 400). The clamp drops the [0, 50) fringe to an out-of-view gap.
+      expect(h.paint(viewStart: 50, viewSpan: 1000, totalSamples: 400), isTrue);
+      expect(h.bakes.single, (
+        start: 50,
+        end: 400,
+        texW: 140,
+        onFrameCanvas: false,
+      ));
+      // [50, 400) is fully covered; nothing vector-draws.
+      expect(h.gapDraws, isEmpty);
+    });
+
+    test('a refresh of a right-straddling tile retracts its end to the '
+        'window', () {
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      // Panned window [50, 350) at pps = 4/3: [200, 400) straddles the
+      // right edge. The config sweep refreshes it as [200, 350), dropping
+      // the out-of-fold tail.
+      expect(
+        h.paint(
+          viewStart: 50,
+          viewSpan: 300,
+          totalSamples: 400,
+          remapKey: const ['other'],
+        ),
+        isTrue,
+      );
+      expect(h.bakes.single, (
+        start: 200,
+        end: 350,
+        texW: 200,
+        onFrameCanvas: false,
+      ));
+      expect(h.gapDraws, isEmpty);
+    });
+  });
+
   group('SegmentedGraphCache staleness quiescence', () {
     // These tests pin one no-progress loop shape each that the staleness
     // guards (SegmentedGraphCache._stalePlan / ._planRefresh) exist to

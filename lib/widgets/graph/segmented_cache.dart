@@ -61,6 +61,19 @@ ui.Image _bakeImage(
 // Live-edge invariant: segments never end past a bake horizon
 // (SegmentViewConfig.bakeableSamples) that excludes the filling block and
 // horizon zone at the data edge; both vector-draw every frame instead.
+//
+// Fold-window invariant: a bake never covers samples outside the window the
+// frame's Y-range was folded from (_maintain's covStart..covEnd, computed as
+// the same floor/ceil of the same window the painters fold their extremes
+// over). A bake renders under the frame's yMin..yMax; samples the fold
+// doesn't cover land past valueToY < -vPad and are raster-clipped at the
+// texture edge, and that cut is frozen into the texture -- no later blit
+// correction or sweep restores texels that were never recorded. Segments
+// may still STRADDLE the window edges from window motion; but a re-bake of
+// one clamps its coverage into the window, dropping the out-of-fold fringe
+// to a gap that vector-draws when panned back to and bakes under a fold
+// that includes it. Enforced by the assert in [_bake]: every GraphSegment
+// construction passes through it.
 // ---------------------------------------------------------------------------
 
 /// Target on-screen width (logical px) of one baked segment texture.
@@ -420,10 +433,6 @@ class SegmentedGraphCache {
       start = bakeGap.$1; // swallow the orphaned remainder
     }
     assert(end > start); // non-empty gap and targetSpan >= 1 keep start < end
-    assert(
-      end <= env.c.bakeableSamples,
-      'bake range end $end exceeds bake horizon ${env.c.bakeableSamples}',
-    ); // _gaps caps domainEnd at the bake horizon
 
     // Insertion point: first segment starting inside/after the bake range.
     int at = 0;
@@ -440,6 +449,10 @@ class SegmentedGraphCache {
       from--;
     }
     if (from < at) start = _segments[from].start;
+    // An absorbed neighbor may straddle the left view edge; the fold-window
+    // invariant caps the bake at the window, dropping the neighbor's
+    // out-of-fold fringe to an out-of-view gap.
+    start = math.max(start, env.viewStart);
 
     _splice(from, at - 1, _bake(start, end, env));
     return true;
@@ -505,13 +518,19 @@ class SegmentedGraphCache {
     }
     final bool sizeOutlier =
         w > 2 * kSegmentTargetPx || w < kSegmentTargetPx / 2;
+    // The identity plan must apply the same fold-window clamps as
+    // [_planRefresh], or a straddling size outlier would read its own
+    // clamped shape as a geometry change and re-bake every frame.
     return sizeOutlier &&
             p !=
                 (
                   from: i,
                   to: i,
-                  start: s.start,
-                  end: math.min(s.end, env.c.bakeableSamples),
+                  start: math.max(s.start, env.viewStart),
+                  end: math.min(
+                    s.end,
+                    math.min(env.c.bakeableSamples, env.viewEnd),
+                  ),
                 )
         ? p
         : null;
@@ -521,7 +540,9 @@ class SegmentedGraphCache {
   /// (see [_RefreshPlan]), independent of why. Disjointness ([_segments])
   /// is what makes this a partition operation rather than range arithmetic:
   /// the refresh never crosses the next segment's start, and swallows
-  /// neighbors only whole.
+  /// neighbors only whole. The bake range is clamped to the fold window
+  /// ([_BakeEnv.viewStart], [_BakeEnv.viewEnd]) throughout: the invariant in
+  /// the file header.
   ///
   ///   * Past the bake horizon: retract the end (the horizon can recede
   ///     under an old segment on block-size jumps); a segment starting at or
@@ -551,13 +572,20 @@ class SegmentedGraphCache {
   _RefreshPlan _planRefresh(int i, _BakeEnv env) {
     final int bakeable = env.c.bakeableSamples;
     final s = _segments[i];
-    final int end = math.min(s.end, bakeable);
+    // Retract to the fold window as well as the horizon: [s] may straddle
+    // the right view edge from window motion.
+    final int end = math.min(s.end, math.min(bakeable, env.viewEnd));
     if (end <= s.start) {
       return (from: i, to: i, start: s.start, end: end);
     }
     if ((end - s.start) * env.pps > 2 * kSegmentTargetPx &&
         end - env.targetSpan > s.start) {
-      return (from: i, to: i, start: end - env.targetSpan, end: end);
+      return (
+        from: i,
+        to: i,
+        start: math.max(end - env.targetSpan, env.viewStart),
+        end: end,
+      );
     }
     int from = i;
     int start = s.start;
@@ -586,7 +614,15 @@ class SegmentedGraphCache {
         mergedEnd = _segments[to].end;
       }
     }
-    return (from: from, to: to, start: start, end: mergedEnd);
+    // Swallowed LEFT neighbors may straddle the left view edge, a swallowed
+    // RIGHT neighbor or a grown end the right one: clamp into the fold
+    // window (the fringe drops to an out-of-view gap).
+    return (
+      from: from,
+      to: to,
+      start: math.max(start, env.viewStart),
+      end: math.min(mergedEnd, env.viewEnd),
+    );
   }
 
   /// Replace `_segments[from].._segments[to]` (inclusive) with [seg]; an empty
@@ -600,7 +636,19 @@ class SegmentedGraphCache {
 
   /// Vector-render samples [start, end) into a fresh texture sized to the
   /// range's current on-screen width, so its blit starts at scale ~1.
+  ///
+  /// The single GraphSegment construction site, so both coverage invariants
+  /// (file header: fold window and bake horizon) are asserted here and hold
+  /// for every (re)bake path, present and future.
   GraphSegment _bake(int start, int end, _BakeEnv env) {
+    assert(
+      start >= env.viewStart &&
+          end <= env.viewEnd &&
+          end <= env.c.bakeableSamples,
+      'bake [$start, $end) outside fold window '
+      '[${env.viewStart}, ${env.viewEnd}) or past the bake horizon '
+      '${env.c.bakeableSamples}',
+    );
     final SegmentViewConfig c = env.c;
     final int texW = math.max(1, ((end - start) * env.pps).ceil());
     double contentW = texW.toDouble();
