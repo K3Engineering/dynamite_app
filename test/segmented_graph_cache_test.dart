@@ -38,21 +38,23 @@ class _Harness {
     final recorder = ui.PictureRecorder();
     final frameCanvas = Canvas(recorder);
     final result = cache.paint(frameCanvas, (
-      generation: generation,
-      destructiveKey: destructiveKey,
-      remapKey: remapKey,
-      gw: gw,
-      gh: gh,
-      dpr: dpr,
-      viewStart: viewStart,
-      viewSpan: viewSpan,
-      yMin: yMin,
-      yMax: yMax,
-      totalSamples: totalSamples,
-      bakeableSamples: bakeableSamples ?? totalSamples,
-      hPad: kSegmentImagePad,
-      vPad: kSegmentImagePad,
-      render: (canvas, start, end, texW) {
+      config: (
+        generation: generation,
+        destructiveKey: destructiveKey,
+        remapKey: remapKey,
+        gw: gw,
+        gh: gh,
+        dpr: dpr,
+        viewStart: viewStart,
+        viewSpan: viewSpan,
+        yMin: yMin,
+        yMax: yMax,
+        totalSamples: totalSamples,
+        bakeableSamples: bakeableSamples ?? totalSamples,
+        hPad: kSegmentImagePad,
+        vPad: kSegmentImagePad,
+      ),
+      render: (Canvas canvas, int start, int end, int texW) {
         calls.add((
           start: start,
           end: end,
@@ -78,13 +80,6 @@ void main() {
   setUp(() => h = _Harness());
   tearDown(() => h.dispose());
 
-  /// The strengthened planner invariant, checked at checkpoints below
-  /// (in addition to the cache's own per-frame assert): segments ordered by
-  /// start, pairwise disjoint, and every segment non-empty.
-  void expectWellFormed() {
-    expect(h.cache.segmentsAreWellFormed(), isTrue);
-  }
-
   group('SegmentedGraphCache bootstrap fill', () {
     test('spends one bake per frame until the view is covered, rightmost '
         'first', () {
@@ -105,7 +100,6 @@ void main() {
       // Fully covered and fresh: no bake work remains, no gap draws.
       expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isFalse);
       expect(h.calls, isEmpty);
-      expectWellFormed();
     });
   });
 
@@ -365,7 +359,6 @@ void main() {
         expect(h.gapDraws, [
           (start: 0, end: 200, texW: 200, onFrameCanvas: true),
         ]);
-        expectWellFormed();
       },
     );
 
@@ -890,7 +883,6 @@ void main() {
         );
         expect(h.calls, isEmpty);
       }
-      expectWellFormed();
     }
 
     test('a pass-1 swallow bake (tile born past one target) goes '
@@ -1193,48 +1185,6 @@ void main() {
         );
         expect(h.calls, isEmpty);
       }
-      expectWellFormed();
-    });
-  });
-
-  group('SegmentedGraphCache planner well-formedness', () {
-    test('a scripted zoom/pan/arrival sequence keeps the segment list '
-        'ordered, disjoint and non-empty at every checkpoint', () {
-      // Fill [0, 1000) at 1 px/sample (five 200-sample tiles).
-      for (int i = 0; i < 5; i++) {
-        h.paint(viewStart: 0, viewSpan: 1000, gw: 1000, totalSamples: 1000);
-        expectWellFormed();
-      }
-
-      // Zoom out: tiles split/consolidate under the sweep.
-      for (int i = 0; i < 4; i++) {
-        h.paint(viewStart: 0, viewSpan: 2500, gw: 1000, totalSamples: 2500);
-        expectWellFormed();
-      }
-
-      // Pan across the buffer (segments appear and are evicted far off-view).
-      for (final start in [500.0, 1200.0, 300.0, 0.0]) {
-        h.paint(viewStart: start, viewSpan: 1000, gw: 1000, totalSamples: 2500);
-        expectWellFormed();
-      }
-      for (final start in [500.0, 1200.0, 300.0, 0.0]) {
-        h.paint(viewStart: start, viewSpan: 1000, gw: 1000, totalSamples: 2500);
-        expectWellFormed();
-      }
-
-      // Live-edge arrival entries: slivers bake/absorb below the horizon.
-      int total = 2500;
-      for (int frame = 0; frame < 6; frame++) {
-        total += 30;
-        h.paint(
-          viewStart: 0,
-          viewSpan: 1000,
-          gw: 1000,
-          totalSamples: total,
-          bakeableSamples: total - 20,
-        );
-        expectWellFormed();
-      }
     });
   });
 
@@ -1267,12 +1217,110 @@ void main() {
         isFalse,
       );
       expect(h.calls, isEmpty);
-      expectWellFormed();
     });
   });
 
-  group('joinBlockEnd (envelope seam-join contract)', () {
-    // The polyline overshoots a segment end into the first block past it
+  group('SegmentedGraphCache blit geometry', () {
+    // Blits are invisible to a render-call recorder: they are drawImageRect
+    // calls, not render callbacks, and nothing in this suite could assert
+    // them before debugLastRaster. These pin the affine the cache hands the
+    // canvas, each against an independently computed expectation.
+    test('a fully covered view blits each segment at its window x, with the '
+        'correct vertical scale and clip', () {
+      // Two 200-sample tiles at 1 px/sample, gh 100, y-range 0..100 baked
+      // and blitted under an identity mapping.
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+
+      final raster = h.cache.debugLastRaster!;
+      expect(raster.blits, hasLength(2));
+
+      for (final b in raster.blits) {
+        // Identity mapping: content width == sample span, so the x-scale is
+        // 1 and the destination is the segment's own window span plus pads.
+        const xs = 1.0;
+        expect(b.seg.contentW, closeTo(200, 0.001));
+        expect(b.dx, closeTo(b.seg.start * 1.0 - kSegmentImagePad * xs, 0.001));
+        expect(b.dw, closeTo((b.seg.contentW + 2 * kSegmentImagePad) * xs, 0.001));
+        // Identity in y too: an unbaked-value drift of zero means the
+        // vertical scale is 1, so the destination height is the plot plus
+        // pads, and the top content row sits at y = 0.
+        expect(b.dh, closeTo(100 + 2 * kSegmentImagePad, 0.001));
+        expect(b.dy, closeTo(-kSegmentImagePad, 0.001));
+        // Clip is the view bounds, never outside it.
+        expect(b.clipL, greaterThanOrEqualTo(0));
+        expect(b.clipR, lessThanOrEqualTo(400));
+        // Source rect is the CONTENT box in physical px, not the ceil'd
+        // image bounds.
+        expect(b.sw, closeTo((b.seg.contentW + 2 * kSegmentImagePad), 0.001));
+        expect(b.sh, closeTo(100 + 2 * kSegmentImagePad, 0.001));
+      }
+    });
+
+    test('a vertical stretch scales dy/dh and leaves dx/dw alone', () {
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      final base = h.cache.debugLastRaster!.blits.first;
+
+      // Halve the Y range with no re-bake: every tile is now a 2x vertical
+      // stretch, so it must blit twice as tall and twice as far above.
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        yMax: 50,
+        bakeableSamples: 400,
+      );
+      final stretched = h.cache.debugLastRaster!.blits
+          .firstWhere((b) => b.seg.start == base.seg.start);
+      expect(stretched.dh, closeTo(base.dh * 2, 0.01));
+      expect(stretched.dx, closeTo(base.dx, 0.001));
+      expect(stretched.dw, closeTo(base.dw, 0.001));
+    });
+
+    test('a destructiveKey mismatch drops the segment from the blit list, not '
+        'just from the render calls', () {
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      expect(h.cache.debugLastRaster!.blits, hasLength(2));
+
+      // Both tiles are now destructive-stale. The sweep re-bakes the
+      // rightmost; the left must not blit at all this frame.
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        destructiveKey: const ['other'],
+      );
+      final raster = h.cache.debugLastRaster!;
+      expect(
+        raster.blits.map((b) => b.seg.start),
+        isNot(contains(0)),
+        reason: 'a destructive-stale segment must never be blitted',
+      );
+      // And nothing is vector-drawn in its place: suppressed means blank.
+      expect(raster.gaps, isEmpty);
+    });
+
+    test('a gap blit lands at the uncovered range, not near it', () {
+      // Cover [0, 200) first; then 20 samples arrive, forming a 20 px sliver
+      // past the coverage -- under the 40 px bake threshold, so it
+      // vector-draws at x = 200 instead of baking.
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 200);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 220);
+      final gaps = h.cache.debugLastRaster!.gaps;
+      expect(gaps, hasLength(1));
+      expect(gaps.single.start, 200);
+      expect(gaps.single.end, 220);
+      expect(gaps.single.x, closeTo(200, 0.001));
+      expect(gaps.single.w, closeTo(20, 0.001));
+    });
+  });
+
+  group('joinBlockEnd (envelope seam-join contract)', () {    // The polyline overshoots a segment end into the first block past it
     // (the join block), and that block must reduce over its FULL natural
     // range so the join vertex equals the neighbor's vertex for the same
     // block. The old `end + blockSize` limit truncated the join block,

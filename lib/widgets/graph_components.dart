@@ -2006,26 +2006,28 @@ bool _paintEnvelopeDataLayer(
     viewBlockEnd: ((viewStart + viewSpan) / blockSize).ceil(),
   );
   final workRemains = cache.paint(canvas, (
-    generation: data.dataGeneration,
-    destructiveKey: destructiveKey,
-    remapKey: [for (final bound in channels) bound.channel],
-    gw: gw,
-    gh: gh,
-    dpr: dpr,
-    viewStart: viewStart,
-    viewSpan: viewSpan,
-    yMin: yMin,
-    yMax: yMax,
-    totalSamples: totalSamples,
-    // Bakes stop the join slack behind the data edge so their join block is
-    // complete (see [joinBlockEnd]).
-    bakeableSamples: math.max(
-      0,
-      totalSamples - _kJoinBlockSlackBlocks * blockSize,
+    config: (
+      generation: data.dataGeneration,
+      destructiveKey: destructiveKey,
+      remapKey: [for (final bound in channels) bound.channel],
+      gw: gw,
+      gh: gh,
+      dpr: dpr,
+      viewStart: viewStart,
+      viewSpan: viewSpan,
+      yMin: yMin,
+      yMax: yMax,
+      totalSamples: totalSamples,
+      // Bakes stop the join slack behind the data edge so their join block is
+      // complete (see [joinBlockEnd]).
+      bakeableSamples: math.max(
+        0,
+        totalSamples - _kJoinBlockSlackBlocks * blockSize,
+      ),
+      // One block of overshoot can be many px when zoomed past 1 sample/px.
+      hPad: math.max(kSegmentImagePad, blockPx + 2),
+      vPad: kSegmentImagePad,
     ),
-    // One block of overshoot can be many px when zoomed past 1 sample/px.
-    hPad: math.max(kSegmentImagePad, blockPx + 2),
-    vPad: kSegmentImagePad,
     render: (cCanvas, start, end, texW) {
       // The polyline overshoots the segment end into its join block so the
       // line reaches the seam with the neighbor's slope; that block is
