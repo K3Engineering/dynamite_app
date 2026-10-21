@@ -119,10 +119,11 @@ const mutants = <Mutant>[
     file: functional,
     needle: '  if (!_keyEq(s.destructiveKey, state.destructiveKey)) return '
         'false;',
-    replacement: '  if (false) return false;',
+    replacement: '  if (_keyEq(s.destructiveKey, state.destructiveKey)) return '
+        'false;',
     killedBy:
-        'blit-geometry unit tests (a destructive-stale segment must vanish '
-        'from the BLIT list; the render-call recorder alone cannot see this)',
+        'blit-geometry unit tests: inverting the test suppresses the '
+        'segments whose keys match, which only the blit list can observe',
   ),
   Mutant(
     name: 'blit-y-scale-doubled',

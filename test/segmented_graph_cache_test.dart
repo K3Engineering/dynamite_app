@@ -1305,6 +1305,32 @@ void main() {
       expect(raster.gaps, isEmpty);
     });
 
+    test('a suppressed segment leaves the blit list entirely', () {
+      // Y-range collapse stretches the baked line past
+      // kMaxBlitLineFraction, so the still-stale tiles must not blit: the
+      // plot draws blank for them until the sweep re-bakes.
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      expect(h.cache.debugLastRaster!.blits, hasLength(2));
+
+      // Frame 1: the sweep re-bakes the rightmost; the left is suppressed.
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        yMax: 5,
+        remapKey: const ['other'],
+      );
+      final suppressed = h.cache.debugLastRaster!;
+      expect(
+        suppressed.blits.map((b) => b.seg.start),
+        isNot(contains(0)),
+        reason: 'a 20x stretched line must not smear across the plot',
+      );
+      expect(suppressed.gaps, isEmpty);
+    });
+
     test('a gap blit lands at the uncovered range, not near it', () {
       // Cover [0, 200) first; then 20 samples arrive, forming a 20 px sliver
       // past the coverage -- under the 40 px bake threshold, so it
