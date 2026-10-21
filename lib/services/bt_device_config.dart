@@ -1,5 +1,5 @@
 const btServiceId = "e331016b-6618-4f8f-8997-1a2c7c9e5fa3";
-const btChrAdcFeedId = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+const btChrAdcFeedId = "6e08f21a-c056-43ed-890a-d72bb0f7c12f";
 const btChrKvs = "10adce11-68a6-450b-9810-ca11b39fd283";
 
 // ADC configuration readout (read-only): the register snapshot the firmware
@@ -8,11 +8,10 @@ const btChrAdcConfig = "adcc0f19-2575-4502-9a48-0e99974eb34f";
 
 // OTA firmware update (see ble_ota.cpp): Control carries the session
 // handshake opcodes (write + single-byte status notifies), Data carries raw
-// image bytes (write only). UUIDs are the sample-copied firmware ones — the
-// firmware has a queued TODO to uniquify them; change in lockstep.
-const otaServiceId = "d6f1d96d-594c-4c53-b1c6-144a1dfde6d8";
-const btChrOtaControl = "7ad671aa-21c0-46a4-b722-270e3ae3d830";
-const btChrOtaData = "23408888-1f40-4cd8-9b89-ca8d45f8a5b0";
+// image bytes (write only).
+const otaServiceId = "6f2ecf77-fd83-42a8-86de-4be9713bd53c";
+const btChrOtaControl = "66815c6b-2b3f-4142-8a0a-bc34644eae01";
+const btChrOtaData = "09999d81-f1f6-4e31-8946-590220cc99af";
 
 // Bluetooth SIG Device Information service (0x180A) and its read-only string
 // characteristics — the static device identity, read once per link. Firmware
