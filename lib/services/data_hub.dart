@@ -1,5 +1,3 @@
-import 'dart:math' as math;
-
 import 'package:flutter/foundation.dart';
 
 import '../models/device_profile.dart';
@@ -318,19 +316,39 @@ class DataHub extends ChangeNotifier
   /// Record [count] dropped samples (the decoder detected a gap in the packet
   /// counter): append the range to [gaps] and hold each channel's last value
   /// ([_currentRaw]) in the ring buffer so the stored data stays magic-free.
-  /// Capped at [maxDataSz] to avoid a huge injection loop if the device
-  /// reboots and the counter jumps. Held samples are real ring-buffer time
-  /// (they advance [totalSamples]) but are NOT real readings, so they are
-  /// never accumulated into an in-progress tare average.
+  /// The timeline ALWAYS advances by the full [count] — silently capping at
+  /// [maxDataSz] used to shorten the timeline on a long dropout (a rebooting
+  /// device, or hours of lost packets on a flaky link), leaving session
+  /// durations false. Samples beyond [maxDataSz] are skipped in the
+  /// ring/bucket bookkeeping instead of materialized; the ring would evict
+  /// them instantly anyway. Held samples are real ring-buffer time (they
+  /// advance [totalSamples]) but are NOT real readings, so they are never
+  /// accumulated into an in-progress tare average.
   ///
-  /// TODO(perf): a reboot jump can inject up to ~262k held samples (65,535 x
+  /// TODO(perf): a reboot jump can inject up to ~600k held samples (150k x
   /// 4 channels) synchronously inside one BLE callback, stalling the UI
   /// isolate for a beat. If that becomes visible, chunk the injection across
-  /// frames (or fast-forward the ring/bucket state without per-sample work).
+  /// frames.
   @override
   void addDroppedFrames(int count) {
-    final int toInject = math.min(count, maxDataSz);
-    gaps.append(totalSamples, totalSamples + toInject);
+    // The full drop is a gap in the timeline regardless of how much is
+    // injected below; recording batches read it back as sentinel frames.
+    gaps.append(totalSamples, totalSamples + count);
+    int toInject = count;
+    if (count > maxDataSz) {
+      // Skip the oldest dropped samples outright, rounded so the skip ENDS
+      // on a bucket boundary in absolute index: the first injected sample
+      // then starts a fresh bucket and its slot reset covers the stale data
+      // the skipped range would otherwise merge into.
+      final skip = count - maxDataSz;
+      final alignedSkip =
+          skip + ((bucketSize - (totalSamples + skip) % bucketSize) % bucketSize);
+      totalSamples += alignedSkip;
+      for (final ingest in _ingest) {
+        ingest.skip(alignedSkip);
+      }
+      toInject = count - alignedSkip;
+    }
     for (int d = 0; d < toInject; d++) {
       for (int i = 0; i < kAdcChannelCount; ++i) {
         _addData(_currentRaw[i], i);
@@ -568,7 +586,13 @@ class DataHub extends ChangeNotifier
     final conv = converterFor(adcChannel).netMap(unit);
     if (conv == null) return null;
     final ext = windowedRawExtremes(adcChannel, start, end);
-    return ext == null ? null : conv(ext.$2);
+    if (ext == null) return null;
+    // Fold BOTH raw bounds: a decreasing board/excitation map (reversed
+    // ladder readings, which channelDataIsValid's sorted-spacing check
+    // accepts) maps ext.$2 to the LOW end — taking it unguarded prints the
+    // minimum as the peak.
+    final lo = conv(ext.$1), hi = conv(ext.$2);
+    return lo > hi ? lo : hi;
   }
 
   /// Instantaneous derivative (first difference) of [adcChannel] in unit/s;

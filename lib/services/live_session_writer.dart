@@ -6,7 +6,6 @@ import 'package:meta/meta.dart';
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
 import '../models/device_flash.dart';
-import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/sample_slice.dart';
@@ -218,13 +217,14 @@ class LiveSessionWriter {
   /// The session id, null until data exists (no artifact without data).
   String? get sessionId => _run?.id;
 
-  /// The session's origin pair, latched together on the first [appendData]: the
-  /// hub-absolute index of the first sample plus the device counter there.
-  ({int originIdx, int ssnOrigin})? _origins;
+  /// The session's origin, latched on the first [appendData]: the device
+  /// counter at the session's first sample (hub-absolute index + the
+  /// counter there); null before the first append.
+  int? _ssnOrigin;
 
   /// The device counter at the session's first sample; null before the first
   /// append.
-  int? get ssnOrigin => _origins?.ssnOrigin;
+  int? get ssnOrigin => _ssnOrigin;
 
   /// The rate stamped in the journal.
   int get sampleRate => header.sampleRate;
@@ -241,10 +241,12 @@ class LiveSessionWriter {
   int totalSamplesRecorded = 0;
 
   /// Accepted frames × frame size; the run's acked length must equal this at
-  /// finalize.
+  /// finalize. Derived from the HEADER's channel count, not the ADC constant:
+  /// with the two hardwired apart, a non-4-channel session's finalize check
+  /// compares against the wrong length and passes (or fails) silently.
   int get expectedDataBytes =>
       totalSamplesRecorded *
-      const SessionChunkCodec(kAdcChannelCount).frameBytes;
+      SessionChunkCodec(header.channelCount).frameBytes;
 
   /// First write failure encountered, if any. Once set it stays set.
   Object? writeError;
@@ -271,11 +273,9 @@ class LiveSessionWriter {
   /// Append a fully snapshotted slice; returns when it has been written and
   /// flushed. Safe to call without awaiting (calls are serialized).
   Future<void> appendData(SampleSlice slice) {
-    final origins = _origins ??= (
-      originIdx: slice.startIndex,
-      ssnOrigin:
-          slice.anchor.counter + (slice.startIndex - slice.anchor.hubIndex),
-    );
+    final ssnOrigin =
+        _ssnOrigin ??=
+            slice.anchor.counter + (slice.startIndex - slice.anchor.hubIndex);
 
     final count = slice.sampleCount;
     _unflushedSamples += count;
@@ -293,8 +293,9 @@ class LiveSessionWriter {
       _latchError(error);
     }
 
-    // Pack real values first, then mark the slice's gap frames in-band.
-    const codec = SessionChunkCodec(kAdcChannelCount);
+    // Pack real values first, then mark the slice's gap frames in-band,
+    // with the same codec the journal header records (see expectedDataBytes).
+    final codec = SessionChunkCodec(header.channelCount);
     final bytes = codec.pack(count, (s, ch) => slice.channels[ch][s]);
     final startIndex = slice.startIndex;
     codec.fillGapSentinels(bytes, [
@@ -310,7 +311,7 @@ class LiveSessionWriter {
           // First packet: dir + journal + append in one go; the journal needs
           // ssnOrigin, so it can't precede the append.
           final created = await _sinkFactory(
-            sessionMetaFromHeader(header, origins.ssnOrigin),
+            sessionMetaFromHeader(header, ssnOrigin),
             bytes,
           );
           _run = SessionRun(created, created.id, bytes.lengthInBytes);

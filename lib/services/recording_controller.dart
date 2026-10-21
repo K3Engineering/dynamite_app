@@ -281,10 +281,17 @@ class RecordingController extends ChangeNotifier {
     // finalizeSession flushes through the writer's serialized queue, draining
     // any in-flight appends first. Its failure is folded into the result, not
     // thrown: stopSession also runs on unawaited auto-stop paths, where a
-    // throw would be an unhandled async error.
+    // throw would be an unhandled async error. The timeout bounds the dart:io
+    // backend's wedged-flush failure mode (see the TODO in
+    // SessionStore.finalizeSession): without it a stuck flush leaves the
+    // lifecycle in _Stopping forever and every later tap silently refused.
     Object? error;
     try {
-      await SessionStore.instance.finalizeSession(writer: writer);
+      await SessionStore.instance
+          .finalizeSession(writer: writer)
+          .timeout(const Duration(seconds: 30));
+    } on TimeoutException catch (e) {
+      error = e;
     } catch (e) {
       error = e;
     }

@@ -1,5 +1,7 @@
-/// CSV export of a recorded session: builds the dynamite-csv file
-/// (docs/csv-format-v2.md). Handing it to the OS is export_delivery.dart's job.
+/// CSV export of a recorded session: builds the dynamite-csv file (its
+/// layout is defined by the emitter below and pinned byte-for-byte by
+/// test/csv_export_test.dart). Handing it to the OS is export_delivery.dart's
+/// job.
 library;
 
 import 'dart:convert';

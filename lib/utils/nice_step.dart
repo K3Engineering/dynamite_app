@@ -1,8 +1,11 @@
 import 'dart:math' as math;
 
 /// Smallest value on the 1/2/5×10^k ladder at least [target]: round plot
-/// bounds and axis steps at any scale.
+/// bounds and axis steps at any scale. Total: non-positive or non-finite
+/// input (a degenerate or broken fold window) falls back to a 1.0 step
+/// instead of throwing in log()/pow() mid-paint.
 double niceStepCeil(double target) {
+  if (!target.isFinite || target <= 0) return 1.0;
   final base = math.pow(10, (math.log(target) / math.ln10).floor()).toDouble();
   if (base >= target) return base;
   if (2 * base >= target) return 2 * base;

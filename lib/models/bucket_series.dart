@@ -103,6 +103,16 @@ class BucketAccumulator {
     _samples = sampleIndex + 1;
   }
 
+  /// Fast-forward past [count] samples without writing them: used for
+  /// dropouts longer than the ring, where the skipped range is materialized
+  /// nowhere. The caller must align the skip's END to a bucket boundary in
+  /// absolute index (DataHub.addDroppedFrames does), so the next [add]
+  /// triggers the at-bucket-start slot reset instead of merging into the
+  /// stale data the skipped range left behind.
+  void skip(int count) {
+    _samples += count;
+  }
+
   /// Stop serving mV/V sums (see the class doc). Re-armed only by [reset]:
   /// a new stream aggregates from scratch under the then-current map.
   void disarmMvV() => _sumMvV = null;
@@ -189,6 +199,12 @@ class ChannelIngest {
   /// which is both the live hub's stream-lifetime peak and a loaded
   /// session's whole-session peak.
   (int, int)? get extremes => valueBuckets.samples == 0 ? null : (_min, _max);
+
+  /// Fast-forward past [count] skipped samples (see [BucketAccumulator.skip]).
+  void skip(int count) {
+    valueBuckets.skip(count);
+    diffBuckets.skip(count);
+  }
 
   /// Restart both accumulators (new stream / reload).
   void reset() {
@@ -422,6 +438,68 @@ void foldBucketRange(
     foldBucket(buckets.mins[li], buckets.maxs[li], b * bs, (b + 1) * bs);
   }
   scanExact(bLastEx * bs, end);
+}
+
+/// Exact (min, max) of a DIFFERENCE series over `[start, end)`, or null when
+/// the window yields no value. Gap-adjacent samples ingest into the diff
+/// buckets as diff 0 (see [ingestDiff]) even though the renderer suppresses
+/// them with NaN, so a plain [windowedExtremes] widens a derivative axis to
+/// include 0 at every gap in view — samples it deliberately does not draw.
+/// Buckets containing a synthetic zero are scanned exactly instead; real
+/// diff-0 samples elsewhere still fold.
+(double, double)? windowedDiffExtremes(
+  BucketSeries buckets,
+  int start,
+  int end,
+  double Function(int sampleIndex) sampleAt,
+  GapList gaps,
+) {
+  // Indices whose ingested diff is synthetic: sample 0 and every sample
+  // whose predecessor lies in a gap (see [ingestDiff]).
+  final synthetic = <(int, int)>[
+    (0, 1),
+    for (final (gs, ge) in gaps.rangesIn(start - 1, end)) (gs, ge + 1),
+  ];
+  bool overlapsSynthetic(int from, int to) {
+    for (final (s, e) in synthetic) {
+      if (s < to && e > from) return true;
+    }
+    return false;
+  }
+
+  double mn = double.infinity;
+  double mx = double.negativeInfinity;
+  bool found = false;
+
+  void fold(double v) {
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+    found = true;
+  }
+
+  void scanExact(int from, int to) {
+    for (int i = from; i < to; i++) {
+      final v = sampleAt(i);
+      if (v.isNaN) continue;
+      fold(v);
+    }
+  }
+
+  foldBucketRange(
+    buckets,
+    start,
+    end,
+    foldBucket: (bMin, bMax, from, to) {
+      if (overlapsSynthetic(from, to)) {
+        scanExact(from, to);
+      } else {
+        fold(bMin.toDouble());
+        fold(bMax.toDouble());
+      }
+    },
+    scanExact: scanExact,
+  );
+  return found ? (mn, mx) : null;
 }
 
 /// Exact (min, max) of a series over `[start, end)`, or null when the window

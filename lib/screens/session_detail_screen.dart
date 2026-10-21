@@ -24,6 +24,19 @@ import '../widgets/graph_components.dart';
 import '../widgets/graph_view_controls.dart';
 import '../widgets/snackbars.dart';
 
+double? _peakFor(
+  SessionData data,
+  int ch,
+  DisplayUnit unit,
+  (double, double) ext,
+) {
+  final lo = data.converterFor(ch).net(unit, ext.$1);
+  final hi = data.converterFor(ch).net(unit, ext.$2);
+  if (lo == null) return hi;
+  if (hi == null) return lo;
+  return lo > hi ? lo : hi;
+}
+
 class SessionDetailScreen extends StatefulWidget {
   const SessionDetailScreen({super.key, required this.session});
 
@@ -181,8 +194,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 emphasized: true,
                 values: [
                   for (int ch = 0; ch < data.channels.length; ch++)
-                    switch (data.channelExtremes(ch)?.$2) {
-                      final max? => data.converterFor(ch).net(unit, max),
+                    // Fold both raw bounds, like the live peak: a decreasing
+                    // board map turns ext.$2 into the LOW end.
+                    switch (data.channelExtremes(ch)) {
+                      final ext? => _peakFor(data, ch, unit, ext),
                       null => null,
                     },
                 ],

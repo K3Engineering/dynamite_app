@@ -647,14 +647,24 @@ class _CellFields extends StatelessWidget {
 }
 
 /// The cell the three field contents describe, or null when either number
-/// is missing or non-positive. The add and edit dialogs gate their Save
-/// button on this and build their cell from it, so the enable condition and
-/// the value committed can never disagree.
+/// is missing, non-finite, or non-positive (double.tryParse accepts the
+/// strings "NaN" and "Infinity", which break the graph, the session journal
+/// and the KVS write path further down). The add and edit dialogs gate
+/// their Save button on this and build their cell from it, so the enable
+/// condition and the value committed can never disagree. Whitespace runs in
+/// the name are collapsed to what [RigSlots.toKv] writes, so the typed
+/// display name matches what the read-back verification compares.
 LoadCellProfile? _typedCell(String name, String cap, String sens) {
   final c = _typedNumber(cap);
   final s = _typedNumber(sens);
-  if (c == null || s == null || c <= 0 || s <= 0) return null;
-  return LoadCellProfile(name: name.trim(), capacityKg: c, sensitivityMvV: s);
+  if (c == null || s == null || !c.isFinite || !s.isFinite || c <= 0 || s <= 0) {
+    return null;
+  }
+  return LoadCellProfile(
+    name: name.trim().replaceAll(RegExp(r'\s+'), ' '),
+    capacityKg: c,
+    sensitivityMvV: s,
+  );
 }
 
 /// Parse a typed-in number, tolerating a comma decimal separator (some

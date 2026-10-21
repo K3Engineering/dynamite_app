@@ -100,10 +100,19 @@ class GithubReleaseCatalog implements FirmwareCatalog {
     if (res.statusCode != 200) {
       throw StateError('Release check failed (HTTP ${res.statusCode})');
     }
-    final releases = [
-      for (final r in jsonDecode(res.body) as List<Object?>)
-        GithubRelease.fromJson(r! as Map<String, Object?>),
-    ];
+    final releases = <GithubRelease>[];
+    // One malformed release in the list must not remove every later
+    // candidate from consideration: GitHub allows quirky field shapes on
+    // individual releases, so skip the bad entry and keep the valid ones.
+    // A list-level failure (not JSON, not a list) still throws into
+    // CheckFailed.
+    for (final r in jsonDecode(res.body) as List<Object?>) {
+      try {
+        releases.add(GithubRelease.fromJson(r! as Map<String, Object?>));
+      } catch (_) {
+        // Tolerated: see above.
+      }
+    }
     return selectFirmwareTarget(releases, channel: channel);
   }
 

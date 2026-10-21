@@ -110,8 +110,6 @@ class SessionData implements GraphDataSource {
     }
   }
 
-  double get durationSeconds => sampleCount / sampleRate;
-
   // -- GraphDataSource --------------------------------------------------------
 
   @override

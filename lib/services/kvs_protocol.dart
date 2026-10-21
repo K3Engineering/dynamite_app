@@ -203,7 +203,14 @@ bool _isWellFormedKvsFrame(Uint8List frame) {
       frame[4] == 0x53 /* S */;
   if (!(knownStatus && knownCommand && knownFolder)) return false;
   final hasSeparator = frame.indexOf(0x3D /* = */, 5) >= 0;
-  return (frame[0] == 0x31) == hasSeparator;
+  final isSet = _bytesAt(frame, 1, utf8.encode(kvsCmdSet));
+  // A success frame always carries '=payload' after the echoed request.
+  // Non-success frames echo the bare request, and a SET request itself
+  // contains '=' (key=value) — the separator test must account for that or
+  // a late SET answer landing while another command is pending reads as
+  // garbage instead of stale.
+  if (frame[0] == 0x31) return hasSeparator;
+  return isSet ? hasSeparator : !hasSeparator;
 }
 
 bool _bytesAt(Uint8List frame, int offset, List<int> bytes) {

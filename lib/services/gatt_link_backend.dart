@@ -96,6 +96,19 @@ class KvsFlashTransport {
     return _snapshot = KvsSnapshot(factory: factory, user: user);
   }
 
+  /// Apply one confirmed write to [user], keeping [_snapshot] consistent
+  /// even if a later op in the sequence throws: the next diff then
+  /// re-issues only the keys that didn't land, instead of re-issuing ops
+  /// for keys the device already applied and failing on their rejections.
+  Future<void> _apply(Map<String, String> user, String key,
+      Future<bool> Function() op, void Function() onSuccess) async {
+    if (!await op()) {
+      throw StateError('KVS write rejected for $key');
+    }
+    onSuccess();
+    _snapshot = KvsSnapshot(factory: _snapshot.factory, user: user);
+  }
+
   /// Write the exact load-cell slot keys [lcKeys] (`lc0.cap`, ...) as a
   /// per-key diff against the last-read snapshot: SET the new/changed ones,
   /// DEL slot keys the snapshot holds but [lcKeys] doesn't, leave everything
@@ -110,23 +123,20 @@ class KvsFlashTransport {
         throw ArgumentError.value(key, 'lcKeys', 'not a slot key');
       }
     }
-    final user = _snapshot.user;
+    final user = Map<String, String>.of(_snapshot.user);
     for (final e in lcKeys.entries) {
       if (user[e.key] == e.value) continue;
-      if (!await _client.set(kvsFolderUser, e.key, e.value)) {
-        throw StateError('KVS write rejected for ${e.key}');
-      }
+      await _apply(user, e.key, () => _client.set(kvsFolderUser, e.key, e.value),
+          () => user[e.key] = e.value);
     }
     // Reconcile: known slot keys the snapshot holds but the save doesn't
     // are deleted (a cleared slot, an abandoned partial write, a value the
     // lenient read refused to adopt — see RigSlots.fromKv).
-    for (final key in user.keys) {
+    for (final key in user.keys.toList()) {
       if (!rigSlotKeys.contains(key) || lcKeys.containsKey(key)) continue;
-      if (!await _client.delete(kvsFolderUser, key)) {
-        throw StateError('KVS delete rejected for $key');
-      }
+      await _apply(user, key, () => _client.delete(kvsFolderUser, key),
+          () => user.remove(key));
     }
-    _snapshot = _snapshot.withUserSlots(lcKeys);
   }
 
   /// Delete the User-namespace calibration group from the last-read snapshot:
@@ -140,11 +150,10 @@ class KvsFlashTransport {
     if (keys.isEmpty) {
       throw StateError('no User calibration to revert');
     }
+    final user = Map<String, String>.of(_snapshot.user);
     for (final key in keys) {
-      if (!await _client.delete(kvsFolderUser, key)) {
-        throw StateError('KVS delete rejected for $key');
-      }
+      await _apply(user, key, () => _client.delete(kvsFolderUser, key),
+          () => user.remove(key));
     }
-    _snapshot = _snapshot.withoutUserCalGroup();
   }
 }

@@ -30,8 +30,8 @@ Object? plainYaml(Object? node) {
 }
 
 /// Tests for the pure CSV-building half of the export path (the plugin
-/// dispatch half is platform code and stays untested). The format reference
-/// is docs/csv-format-v2.md.
+/// dispatch half is platform code and stays untested). These tests ARE the
+/// format reference: the emitter and the byte-exact expectations live here.
 void main() {
   const int channels = 2;
   const int sampleRate = 1000;

@@ -71,23 +71,23 @@ extension SampleStorageQueries on SampleStorage {
   /// holds no real sample.
   double? windowedStdDev(int ch, int start, int end) {
     final (s, e) = clampToRetained(start, end);
-    double sum = 0, sumSq = 0;
+    // Welford's online algorithm: at 24-bit values the textbook E[x²]-E[x]²
+    // loses up to 13 digits to catastrophic cancellation (a 1-count stddev on
+    // a full-scale channel under-reports ~80%), and fp error there scales
+    // with the mean, not the variance. The running centered sum squares the
+    // deviation instead, which stays on the order of the answer.
     int count = 0;
+    double mean = 0, m2 = 0;
     for (int i = s; i < e; i++) {
       final v = rawValueAt(ch, i);
       if (v.isNaN) continue;
-      sum += v;
-      sumSq += v * v;
       count++;
+      final d1 = v - mean;
+      mean += d1 / count;
+      m2 += d1 * (v - mean);
     }
     if (count == 0) return null;
-    // E[x²] - E[x]²; fp rounding can push a hair below zero.
-    return math.sqrt(
-      (sumSq / count - (sum / count) * (sum / count)).clamp(
-        0.0,
-        double.infinity,
-      ),
-    );
+    return math.sqrt((m2 / count).clamp(0.0, double.infinity));
   }
 }
 
