@@ -25,16 +25,15 @@ import 'package:dynamite_app/widgets/graph/segmented_cache_functional.dart';
 // transitions (the run reports whether closure was reached), so these
 // invariants hold for every reachable geometry, not a sampled one.
 //
-// One tier, sized for the per-PR suite: a 12-sample universe reaching
-// closure at ~143k states in ~25 s measured on this repo. The grid is
-// re-checked by the state-count budget below, so treat that as a budget to
-// re-measure on planner changes, not a constant of nature. Reachable-state
-// count is strongly superlinear in the universe size and in the number of
-// STAMP axes (a gh or dpr flip alone triples it), so the grid stays small and
-// the churn set covers one representative per staleness kind (generation
-// reset, destructive flip, remap flip, y-drift, receded horizon) instead of
-// the product. Boundary-threshold nuance (drift just past 8%) belongs to the
-// unit tests and the sim.
+// One tier, tagged 'slow' and run as its own CI job: sized for a per-PR check
+// but not for the PR suite's wall time. A 12-sample universe reaches closure at
+// ~148k states in ~25 s on this repo; that is a budget to re-measure on planner
+// changes, not a constant of nature. Reachable-state count is strongly
+// superlinear in the universe size and in the number of STAMP axes (a gh or dpr
+// flip alone triples it), so the grid stays small and the churn set covers one
+// representative per staleness kind (generation reset, destructive flip, remap
+// flip, y-drift, receded horizon) instead of the product. Boundary-threshold
+// nuance (drift just past 8%) belongs to the unit tests and the sim.
 
 /// Deterministic canonical form: equal states (same metas, same stamps) hash
 /// identically regardless of list instance or meta identity. Null is the
@@ -377,5 +376,5 @@ void main() {
           'model check outgrew its state budget; the reachable state '
           'space exploded -- inspect the planner change',
     );
-  });
+  }, tags: 'slow');
 }

@@ -104,6 +104,34 @@ void main() {
     expect(ranges(prepareFrame(state, cacheEnvFor(c))), [(10, 12)]);
   });
 
+  test('a size-stale segment with nothing left to bake plans no bake', () {
+    // Window [50,66), horizon 40, tile [40,60) is fresh but over two targets
+    // wide (20 samples * 25 px). Its only re-bake would be the horizon-clamped
+    // range [50,40) -- empty -- so the planner must return null rather than an
+    // empty plan the caller has to filter.
+    final c = config(viewStart: 50, bakeableSamples: 40, totalSamples: 200);
+    final state = stateOf([meta(40, 60, contentW: 20 * 25)], c);
+    final env = cacheEnvFor(c);
+    final prepared = prepareFrame(state, env);
+    expect(ranges(prepared), [(40, 60)]);
+    expect(planBakes(prepared, env), isNull);
+  });
+
+  test('a content-stale tile with nothing left to bake is retired instead', () {
+    // Same geometry, but the tile is also content-stale. Its pixels are wrong
+    // and no sample of it inside the window is at or below the horizon, so
+    // prepareFrame drops it and its range vector-draws -- rather than keeping
+    // wrong pixels the sweep could never replace.
+    final c = config(viewStart: 50, bakeableSamples: 40, totalSamples: 200);
+    final state = stateOf([
+      meta(40, 60, contentW: 20 * 25, destructiveKey: const ['other']),
+    ], c);
+    final env = cacheEnvFor(c);
+    final prepared = prepareFrame(state, env);
+    expect(ranges(prepared), isEmpty);
+    expect(planBakes(prepared, env), isNull);
+  });
+
   test('an off-view stale segment is kept so it can blit when panned back '
       'to', () {
     // [30,40) is outside the window and the horizon, but inside the eviction
