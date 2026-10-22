@@ -360,20 +360,16 @@ bool _isRetired(SegmentMeta s, CacheState state, CacheEnv env) {
   return _contentStale(s, state, env);
 }
 
-/// The meta a [plan] produced, given the impure measurement the shell made for
-/// it (see [BakeOutput]).
-SegmentMeta _metaFor(
-  BakePlan plan,
-  CacheState state,
-  CacheEnv env,
-  BakeOutput output,
-) {
+/// The meta a [bake] produced, given the impure measurement the shell made for
+/// it.
+SegmentMeta _metaFor(FrameBake bake, CacheState state, CacheEnv env) {
+  final plan = bake.plan;
   final c = env.config;
   return SegmentMeta(
-    textureId: output.textureId,
+    textureId: bake.textureId,
     start: plan.start,
     end: plan.end,
-    contentW: math.max(output.contentW, 0.001),
+    contentW: math.max(bake.contentW, 0.001),
     yMin: c.yMin,
     yMax: c.yMax,
     gh: c.gh,
@@ -612,34 +608,24 @@ BakePlan _clampPlan(BakePlan p, CacheEnv env) => (
   end: math.min(p.end, math.min(env.covEnd, env.config.bakeableSamples)),
 );
 
-/// What a bake measured that any later decision reads back: the rendered
-/// content width (the blit's x-scale reference) and the texture the shell filed
-/// it under. The shell constructs it from the impure render, so the core never
-/// sees a texture and never predicts a width ahead of the render.
-typedef BakeOutput = ({double contentW, int textureId});
-
-/// This frame's bake: the plan the core chose and the measurement the shell made
-/// of it, which are only meaningful together.
-typedef FrameBake = ({BakePlan plan, BakeOutput output});
+/// One bake the shell measured: the plan the core chose and what the render
+/// reported for it, kept together so a measurement cannot be attributed to a
+/// plan that did not produce it. [textureId] names the texture the shell filed;
+/// the core never sees the texture and never predicts [contentW] ahead of the
+/// render.
+typedef FrameBake = ({BakePlan plan, double contentW, int textureId});
 
 /// Transition 3: commit the frame's bake. [state] is what [prepareFrame]
 /// returned, [bake] is what the shell measured for [planBakes]'s plan (null for
-/// a quiet frame). Returns the new state plus the meta the bake produced.
-({CacheState state, SegmentMeta? baked}) applyBake(
-  CacheState state,
-  CacheEnv env,
-  FrameBake? bake,
-) {
-  if (bake == null) return (state: state, baked: null);
-  final meta = _metaFor(bake.plan, state, env, bake.output);
-  return (
-    state: state.withSegments([
-      ...state.segments.sublist(0, bake.plan.from),
-      meta,
-      ...state.segments.sublist(bake.plan.to + 1),
-    ]),
-    baked: meta,
-  );
+/// a quiet frame, which commits nothing).
+CacheState applyBake(CacheState state, CacheEnv env, FrameBake? bake) {
+  if (bake == null) return state;
+  final plan = bake.plan;
+  return state.withSegments([
+    ...state.segments.sublist(0, plan.from),
+    _metaFor(bake, state, env),
+    ...state.segments.sublist(plan.to + 1),
+  ]);
 }
 
 /// One blit with its geometry resolved (the drawImageRect operands), in logical

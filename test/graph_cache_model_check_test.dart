@@ -238,17 +238,14 @@ void main() {
         final measured = switch (plan) {
           final BakePlan p => (
             plan: p,
-            output: (
-              contentW: math
-                  .max(1, ((p.end - p.start) * env.pps).ceil())
-                  .toDouble(),
-              textureId: nextTextureId++,
-            ),
+            contentW: math
+                .max(1, ((p.end - p.start) * env.pps).ceil())
+                .toDouble(),
+            textureId: nextTextureId++,
           ),
           null => null,
         };
-        final committed = applyBake(prepared, env, measured);
-        final next = committed.state;
+        final next = applyBake(prepared, env, measured);
         if (plan != null) {
           bakeEdges++;
           // Progress: a bake frame must move the state, so a constant
@@ -257,13 +254,12 @@ void main() {
             _canon(next) != sCanon,
             'bake under a constant input changed nothing',
           );
+          // The bake's meta landed at the plan's insertion point, carrying the
+          // id the shell filed its texture under.
           check(
-            committed.baked != null &&
-                committed.baked!.textureId == nextTextureId - 1,
-            'a committed bake reported no meta',
+            next.segments[plan.from].textureId == nextTextureId - 1,
+            'a committed bake filed no meta',
           );
-        } else {
-          check(committed.baked == null, 'a quiet frame reported a bake');
         }
         final violations = invariantViolations(next);
         check(violations.isEmpty, violations.join('; '));

@@ -178,26 +178,21 @@ class SegmentedGraphCache {
     final state = prepareFrame(_state, env);
     final plan = planBakes(state, env);
 
-    // Rasterize the bake the core decided on, filing the texture under the id
-    // the bake reports. Null when the frame is quiet: no texture, no serial
-    // advance.
-    final bake = switch (plan) {
-      final BakePlan plan => (plan: plan, output: _executeBake(plan, env, c)),
-      null => null,
-    };
-    final committed = applyBake(state, env, bake);
+    // Rasterize the bake the core decided on, filing the texture under the id it
+    // reports. Null when the frame is quiet: no texture, no serial advance.
+    final bake = plan == null ? null : _executeBake(plan, env, c);
     final previous = _state?.segments;
-    _state = committed.state;
+    final committed = _state = applyBake(state, env, bake);
     // prepareFrame hands back the same list on a quiet frame, so a changed list
     // is the only way the texture map can have drifted. The assert below checks
     // that shortcut against the map itself.
-    if (!identical(previous, committed.state.segments)) {
-      _reconcileTextures(committed.state);
+    if (!identical(previous, committed.segments)) {
+      _reconcileTextures(committed);
     }
-    assert(invariantViolations(committed.state).isEmpty);
-    assert(_texturesMatchState(committed.state));
+    assert(invariantViolations(committed).isEmpty);
+    assert(_texturesMatchState(committed));
 
-    final raster = rasterPlan(committed.state, env);
+    final raster = rasterPlan(committed, env);
     if (_kRecordRaster) {
       _drawnBlits.clear();
       _drawnGaps.clear();
@@ -232,9 +227,10 @@ class SegmentedGraphCache {
 
   /// Rasterize one [plan]'s range with the frame's render closure, sized to the
   /// range's current on-screen width so its blit starts at scale ~1, and file
-  /// the texture under a fresh [BakeOutput.textureId]. The serial advances only
-  /// here, so every id belongs to a bake that produced a texture.
-  BakeOutput _executeBake(BakePlan plan, CacheEnv env, SegmentViewConfig c) {
+  /// the texture under a fresh id. The serial advances only here, so every id
+  /// belongs to a bake that produced a texture. Returns the measurement paired
+  /// with the plan that produced it, which is the value [applyBake] commits.
+  FrameBake _executeBake(BakePlan plan, CacheEnv env, SegmentViewConfig c) {
     final int texW = math.max(1, ((plan.end - plan.start) * env.pps).ceil());
     double contentW = texW.toDouble();
     final cc = c.config;
@@ -247,11 +243,11 @@ class SegmentedGraphCache {
         contentW = c.render(canvas, plan.start, plan.end, texW);
       },
     );
-    final output = (contentW: contentW, textureId: _nextTextureId++);
+    final bake = (plan: plan, contentW: contentW, textureId: _nextTextureId++);
     // Filed before the commit returns, so this frame's reconcile sees the new
     // segment's texture as live rather than orphaned.
-    _images[output.textureId] = img;
-    return output;
+    _images[bake.textureId] = img;
+    return bake;
   }
 
   /// Blit resolved rects (see [BlitRect] for what the fields hold).
