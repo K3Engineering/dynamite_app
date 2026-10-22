@@ -30,7 +30,7 @@ import 'package:dynamite_app/widgets/graph/segmented_cache_functional.dart';
 // re-checked by the state-count budget below, so treat them as a budget to
 // re-measure on planner changes, not as constants of nature:
 //   * pr   -- 12-sample universe, ~143k states to closure, ~25 s here.
-//   * full -- 16-sample universe, ~2.25M states, ~8 min here (it will NOT
+//   * full -- 16-sample universe, ~2.25M states, ~10 min here (it will NOT
 //             fit the pr budget; MODEL_CHECK_TIER=full raises the cap).
 // Reachable-state count is strongly superlinear in the universe size and
 // in the number of STAMP axes (at 16 samples the full key/gh/dpr cartesian
@@ -40,9 +40,12 @@ import 'package:dynamite_app/widgets/graph/segmented_cache_functional.dart';
 // of the product. Boundary-threshold nuance (drift just past 8%) and the
 // remaining axes belong to the unit tests and the sim.
 
-/// Deterministic canonical form: equal states (same metas, same stamps)
-/// hash identically regardless of list instance or meta identity.
-String _canon(CacheState s) {
+/// Deterministic canonical form: equal states (same metas, same stamps) hash
+/// identically regardless of list instance or meta identity. Null is the
+/// unstamped pre-first-frame state (see [prepareFrame]), which no real state
+/// can canonicalize to (`_canon` always emits stamps).
+String _canon(CacheState? s) {
+  if (s == null) return '#none';
   final b = StringBuffer('g${s.generation};${s.gh};${s.dpr};');
   b.writeAll(s.destructiveKey.map((k) => 'u$k'));
   b.writeAll(s.remapKey.map((k) => 'r$k'));
@@ -211,13 +214,16 @@ void main() {
       if (!ok) throw StateError('model check violation: $reason');
     }
 
-    final seen = <String>{_canon(CacheState.empty())};
+    // Reachable states, seeded with the unstamped start state; the count is
+    // the deterministic growth signal the budget at the end checks.
+    final seen = <String>{_canon(null)};
     // Serial source for the shell's texture ids. Must NOT appear in _canon:
     // two states differing only in ids are the same cache state.
     var nextTextureId = 0;
-    // FIFO: arrival depth is the shortest path, so the closure report is
-    // meaningful (LIFO polls deep paths first and inflates depth).
-    final frontier = Queue<(int, CacheState)>()..add((0, CacheState.empty()));
+    // FIFO (arrival depth is the shortest path, so the closure report is
+    // meaningful) seeded with "no state yet": the unstamped cache is a state
+    // of its own, and the only one that is null.
+    final frontier = Queue<(int, CacheState?)>()..add((0, null));
     var edges = 0, bakeEdges = 0, capped = false;
 
     while (frontier.isNotEmpty) {
@@ -252,7 +258,7 @@ void main() {
               : math
                     .max(1, ((job.end - job.start) * env.pps).ceil())
                     .toDouble(),
-          nextTextureId++,
+          job == null ? 0 : nextTextureId++,
         );
         final next = committed.state;
         if (job != null) {

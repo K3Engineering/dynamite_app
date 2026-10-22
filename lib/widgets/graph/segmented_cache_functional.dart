@@ -183,7 +183,7 @@ final class CacheState {
   final List<Object?> destructiveKey;
   final List<Object?> remapKey;
 
-  const CacheState._({
+  CacheState({
     required this.segments,
     required this.generation,
     required this.gh,
@@ -192,16 +192,19 @@ final class CacheState {
     required this.remapKey,
   });
 
-  factory CacheState.empty() => const CacheState._(
-    segments: [],
-    generation: -1,
-    gh: -1,
-    dpr: -1,
-    destructiveKey: [],
-    remapKey: [],
+  /// A cache that has never seen a frame: no segments, stamped from [c].
+  /// [prepareFrame] takes a nullable state instead of a stamped sentinel, so
+  /// "nothing yet" is not encoded in a magic generation/gh/dpr.
+  factory CacheState.fresh(CacheConfig c) => CacheState(
+    segments: const [],
+    generation: c.generation,
+    gh: c.gh,
+    dpr: c.dpr,
+    destructiveKey: List.of(c.destructiveKey),
+    remapKey: List.of(c.remapKey),
   );
 
-  CacheState withSegments(List<SegmentMeta> segments) => CacheState._(
+  CacheState withSegments(List<SegmentMeta> segments) => CacheState(
     segments: segments,
     generation: generation,
     gh: gh,
@@ -213,7 +216,7 @@ final class CacheState {
   /// Adopt [c]'s config as the current stamps (see [_configDiffers]).
   /// Lists are copied, like the shell's historical _stampConfig: callers
   /// may reuse and mutate their key lists between frames.
-  CacheState withStamps(CacheConfig c) => CacheState._(
+  CacheState withStamps(CacheConfig c) => CacheState(
     segments: segments,
     generation: c.generation,
     gh: c.gh,
@@ -269,20 +272,27 @@ bool _configDiffers(
 /// outside the view. Returns the new state and the metas whose textures the
 /// shell must dispose.
 ///
+/// [state] is null on the first frame: a fresh cache adopts the config's
+/// stamps and matches nothing (no segments, no drops), which is the same
+/// answer the stamped-sentinel version gave by accident.
+///
 /// On a generation change everything is dropped. On a config bump (see the
 /// staleness model), segments outside the view are dropped so stale content
 /// cannot resurrect on a later pan before the sweep reaches them; their
 /// ranges vector-draw if panned back to.
 ({CacheState state, List<SegmentMeta> drops}) prepareFrame(
-  CacheState state,
+  CacheState? state,
   CacheEnv env,
 ) {
   final config = env.config;
+  if (state == null) {
+    return (state: CacheState.fresh(config), drops: const []);
+  }
   final drops = <SegmentMeta>[];
   CacheState result;
   if (config.generation != state.generation) {
     drops.addAll(state.segments);
-    result = CacheState.empty().withStamps(config);
+    result = CacheState.fresh(config);
   } else if (_configDiffers(
     config.destructiveKey,
     config.remapKey,

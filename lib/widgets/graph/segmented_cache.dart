@@ -117,7 +117,10 @@ ui.Image _bakeImage(
 /// the textures (textureId -> ui.Image), executes the bake job [planBakes]
 /// emits, and rasterizes [rasterPlan].
 class SegmentedGraphCache {
-  CacheState _state = CacheState.empty();
+  /// Null until the first [paint]: a fresh cache has no stamps to compare
+  /// against, so "nothing yet" is the absence of a state rather than a
+  /// stamped sentinel (see [prepareFrame]).
+  CacheState? _state;
 
   /// Textures keyed by [SegmentMeta.textureId]. Metas are plain values
   /// (copies are harmless); the id is what names a texture.
@@ -134,7 +137,7 @@ class SegmentedGraphCache {
       img.dispose();
     }
     _images.clear();
-    _state = _state.withSegments(const []);
+    _state = null;
   }
 
   void dispose() => clear();
@@ -191,11 +194,11 @@ class SegmentedGraphCache {
       baked == null ? 0 : _nextTextureId++,
     );
     if (baked != null) _images[committed.baked!.textureId] = baked.image;
-    _state = committed.state;
-    assert(invariantViolations(_state).isEmpty);
-    assert(_texturesMatchState());
+    final state = _state = committed.state;
+    assert(invariantViolations(state).isEmpty);
+    assert(_texturesMatchState(state));
 
-    final raster = rasterPlan(_state, env);
+    final raster = rasterPlan(state, env);
     debugLastRaster = raster;
     _drawBlits(canvas, raster.blits, env);
     _drawGaps(canvas, raster.gaps, c);
@@ -205,9 +208,9 @@ class SegmentedGraphCache {
   /// Debug-only: every segment owns a live texture and no texture is
   /// orphaned. The core treats metas as values, so this is the invariant
   /// that keeps the map and the segment list in step.
-  bool _texturesMatchState() {
-    final ids = {for (final s in _state.segments) s.textureId};
-    return ids.length == _state.segments.length &&
+  bool _texturesMatchState(CacheState state) {
+    final ids = {for (final s in state.segments) s.textureId};
+    return ids.length == state.segments.length &&
         ids.every(_images.containsKey) &&
         _images.length == ids.length;
   }
