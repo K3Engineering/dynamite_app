@@ -345,21 +345,18 @@ void main() {
     expect(loaded.sampleCount, 4);
   });
 
-  test(
-    'dispose during a session is a plain detach: the controller is '
-    'app-lifetime, so nothing asserts on a state it cannot fix',
-    () {
-      final (recording, hub, _) = wire(disposeOnTearDown: false);
-      expect(start(recording), isA<StartSessionOk>());
-      feedFrames(hub, 2);
+  test('dispose during a session is a plain detach: the controller is '
+      'app-lifetime, so nothing asserts on a state it cannot fix', () {
+    final (recording, hub, _) = wire(disposeOnTearDown: false);
+    expect(start(recording), isA<StartSessionOk>());
+    feedFrames(hub, 2);
 
-      // The lifecycle is untouched: dispose only drops the listeners. (The
-      // writer's session lists as interrupted if the app never stops it, the
-      // same outcome as any other abandoned run.)
-      expect(recording.dispose, returnsNormally);
-      expect(recording.sessionInProgress, isTrue);
-    },
-  );
+    // The lifecycle is untouched: dispose only drops the listeners. (The
+    // writer's session lists as interrupted if the app never stops it, the
+    // same outcome as any other abandoned run.)
+    expect(recording.dispose, returnsNormally);
+    expect(recording.sessionInProgress, isTrue);
+  });
 
   test('dispose from idle is the normal path and does not assert', () async {
     final (recording, hub, _) = wire(disposeOnTearDown: false);
@@ -467,9 +464,10 @@ void main() {
     },
   );
 
-  test('a decoder-reported dropout is not part of the recorded stream: the '
-      'session is the RECEIVED stream, and its ssn stays a plain progression',
-      () async {
+  test(
+    'a decoder-reported dropout is not part of the recorded stream: the '
+    'session is the RECEIVED stream, and its ssn stays a plain progression',
+    () async {
       final (recording, hub, _) = wire();
       // Drive the real decoder ordering: a packet, then a counter jump (which
       // injects a gap into the hub), then the next packet.

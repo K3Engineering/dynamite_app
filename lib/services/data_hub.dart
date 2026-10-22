@@ -573,10 +573,7 @@ class DataHub extends ChangeNotifier
     final conv = converterFor(adcChannel).netMap(unit);
     if (conv == null) return null;
     final ext = windowedRawExtremes(adcChannel, start, end);
-    if (ext == null) return null;
-    // Both bounds map, then the larger wins: right whichever direction the
-    // board map runs (see [ChannelConverter.peakWith]).
-    return ChannelConverter.peakWith(conv, ext);
+    return ext == null ? null : conv(ext.$2);
   }
 
   /// Instantaneous derivative (first difference) of [adcChannel] in unit/s;

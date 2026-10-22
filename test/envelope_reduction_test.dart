@@ -754,9 +754,7 @@ void main() {
       // The pattern the deleted heuristic got wrong: 8 early gaps in a 50-bucket
       // window tripped its threshold and exact-scanned ~90% clean samples.
       final all = randomData(5000, 37);
-      final w = wire(all, [
-        for (int s = 100; s <= 800; s += 100) (s, s + 1),
-      ]);
+      final w = wire(all, [for (int s = 100; s <= 800; s += 100) (s, s + 1)]);
       var calls = 0;
       windowedDiffExtremes(w.buckets, 0, 5000, (j) {
         calls++;

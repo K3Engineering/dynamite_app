@@ -181,10 +181,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 emphasized: true,
                 values: [
                   for (int ch = 0; ch < data.channels.length; ch++)
-                    // peakOf maps both bounds: the raw maximum is only the
-                    // peak for an ascending board map (see its doc).
-                    switch (data.channelExtremes(ch)) {
-                      final ext? => data.converterFor(ch).peakOf(unit, ext),
+                    switch (data.channelExtremes(ch)?.$2) {
+                      final max? => data.converterFor(ch).net(unit, max),
                       null => null,
                     },
                 ],

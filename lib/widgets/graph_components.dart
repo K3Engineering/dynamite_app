@@ -1294,10 +1294,10 @@ YAxisRange _computeYRange(
   DisplayUnit unit,
   double plotHeight,
 ) {
-  // The only legitimate degenerate span is the no-data fold, which callers
-  // pass as 0,0: widen it to a unit window. Anything non-finite is a broken
-  // conversion upstream, so let it fail in the tick math rather than drawing
-  // a plausible axis for corrupt state.
+  // Flat data (or the 0,0 no-data derivative fold) has dataMax == dataMin:
+  // widen it to a unit window. Anything non-finite is a broken conversion
+  // upstream, so let it fail in the tick math rather than drawing a plausible
+  // axis for corrupt state.
   final double lo = dataMin;
   final double max = dataMax <= lo ? lo + 1.0 : dataMax;
 
@@ -1429,7 +1429,7 @@ Iterable<double> axisMinorTicks(
 }) sync* {
   final minorStep = step / 2;
   final hi = windowEnd + enumSlack + step * 0.01;
-  final firstMinor = ((windowStart - enumSlack) / minorStep).ceil();
+  final firstMinor = ((windowStart - enumSlack) / minorStep - 1e-9).ceil();
   for (
     int j = firstMinor.isEven ? firstMinor + 1 : firstMinor;
     j * minorStep <= hi;

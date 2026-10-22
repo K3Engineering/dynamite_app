@@ -12,12 +12,19 @@ import 'package:dynamite_app/widgets/graph_components.dart';
 void main() {
   const graphW = 800.0;
 
-  test('below the bucket path a block is exactly the samples-per-pixel floor', () {
-    for (final view in [1.0, 100.0, 800.0, 100.0 * graphW, 199.0 * graphW]) {
-      final floor = (view / graphW).floor();
-      expect(blockSizeFor(view, graphW), floor < 1 ? 1 : floor, reason: '$view');
-    }
-  });
+  test(
+    'below the bucket path a block is exactly the samples-per-pixel floor',
+    () {
+      for (final view in [1.0, 100.0, 800.0, 100.0 * graphW, 199.0 * graphW]) {
+        final floor = (view / graphW).floor();
+        expect(
+          blockSizeFor(view, graphW),
+          floor < 1 ? 1 : floor,
+          reason: '$view',
+        );
+      }
+    },
+  );
 
   test('a sub-pixel view still yields one sample per block', () {
     expect(blockSizeFor(1, graphW), 1);

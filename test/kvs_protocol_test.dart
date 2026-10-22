@@ -164,34 +164,29 @@ void main() {
       expect(parseKvsResponse('GETFaa', frame('1GETF')), isNull);
       expect(parseKvsResponse('GETFaa', frame('BGETFbb=x')), isNull);
       expect(parseKvsResponse('GETFaa', frame('EGETFbb=x')), isNull);
+      expect(parseKvsResponse('GETFa', frame('BGETFa=x')), isNull);
+      expect(parseKvsResponse('SETUk=a', frame('BSETUk=a=b')), isNull);
       expect(
         parseKvsResponse('GETFa', Uint8List.fromList([0x32, 0x47, 0x00])),
         isNull,
       );
     });
 
-    test('an echo of this command with a malformed body is a protocol error',
-        () {
-      // A success echo must carry '=payload'.
-      expect(
-        () => parseKvsResponse('GETFa', frame('1GETFa')),
-        throwsFormatException,
-      );
-      // An unknown status byte on a matching echo.
-      expect(
-        () => parseKvsResponse('GETFa', frame('2GETFa=x')),
-        throwsFormatException,
-      );
-      // Busy/error echoes never carry a payload.
-      expect(
-        () => parseKvsResponse('GETFa', frame('BGETFa=x')),
-        throwsFormatException,
-      );
-      expect(
-        () => parseKvsResponse('GETFa', frame('EGETFa=x')),
-        throwsFormatException,
-      );
-    });
+    test(
+      'an echo of this command with a malformed body is a protocol error',
+      () {
+        // A success echo must carry '=payload'.
+        expect(
+          () => parseKvsResponse('GETFa', frame('1GETFa')),
+          throwsFormatException,
+        );
+        // An unknown status byte on a matching echo.
+        expect(
+          () => parseKvsResponse('GETFa', frame('2GETFa=x')),
+          throwsFormatException,
+        );
+      },
+    );
 
     test('undecodable payload bytes are protocol errors, not U+FFFD', () {
       // Payload bytes that aren't valid UTF-8 (here a lone 0xFF) pass every

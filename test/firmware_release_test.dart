@@ -156,10 +156,11 @@ void main() {
     GithubReleaseCatalog catalogReturning(List<Object?> body) =>
         GithubReleaseCatalog(
           client: MockClient(
-            (request) async =>
-                http.Response(jsonEncode(body), 200, headers: {
-                  'content-type': 'application/json',
-                }),
+            (request) async => http.Response(
+              jsonEncode(body),
+              200,
+              headers: {'content-type': 'application/json'},
+            ),
           ),
         );
 

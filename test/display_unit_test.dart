@@ -132,7 +132,10 @@ void main() {
       // toStringAsFixed caps at 20 digits.
       expect(() => DisplayUnit.axisDecimalsFor(0), throwsArgumentError);
       expect(() => DisplayUnit.axisDecimalsFor(-1), throwsArgumentError);
-      expect(() => DisplayUnit.axisDecimalsFor(double.nan), throwsArgumentError);
+      expect(
+        () => DisplayUnit.axisDecimalsFor(double.nan),
+        throwsArgumentError,
+      );
       expect(
         () => DisplayUnit.axisDecimalsFor(double.infinity),
         throwsArgumentError,

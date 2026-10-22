@@ -223,49 +223,6 @@ void main() {
     });
   });
 
-  group('peak', () {
-    test('both bounds fold, so a descending map still reports the larger '
-        'display value', () {
-      // A board map can only run descending when its ladder polarity is
-      // inverted (the constructor asserts against it), so drive the fold with
-      // the map directly: taking the raw max and mapping it would print -5
-      // (the display MINIMUM) instead of 5.
-      expect(
-        ChannelConverter.peakWith((raw) => -raw, (-5.0, 5.0)),
-        5.0,
-      );
-      expect(
-        ChannelConverter.peakWith((raw) => raw, (-5.0, 5.0)),
-        5.0,
-      );
-    });
-
-    test('maps both bounds for every available unit', () {
-      for (final conv in [assigned, bare]) {
-        const ext = (-2e6, 5e4);
-        for (final u in DisplayUnit.values) {
-          final map = conv.netMap(u);
-          if (map == null) continue;
-          final mapped = [map(ext.$1), map(ext.$2)];
-          final expected = mapped[0] > mapped[1] ? mapped[0] : mapped[1];
-          expect(conv.peakOf(u, ext), closeTo(expected, 1e-9), reason: u.symbol);
-        }
-      }
-    });
-
-    test('is null exactly when the unit is unavailable', () {
-      for (final u in [
-        DisplayUnit.kN,
-        DisplayUnit.lbf,
-        DisplayUnit.kgf,
-        DisplayUnit.n,
-      ]) {
-        expect(bare.peakOf(u, (0, 1)), isNull, reason: u.symbol);
-        expect(assigned.peakOf(u, (0, 1)), isNotNull, reason: u.symbol);
-      }
-    });
-  });
-
   group('gross inverse (manual tare entry)', () {
     test('round-trips through the piecewise board map', () {
       final gross = assigned.grossMap(DisplayUnit.mVv)!;

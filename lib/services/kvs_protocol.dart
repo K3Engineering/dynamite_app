@@ -183,14 +183,9 @@ KvsResponse? parseKvsResponse(String request, Uint8List frame) {
     if (exact) throw FormatException('KVS garbled frame (${frame.length} B)');
     return null;
   }
-  if (exact) return KvsResponse(status: status, payload: '');
-  // Non-success answers echo the bare request, so '=' after our echo means a
-  // payload this status never carries: malformed. Any other trailing byte is
-  // a longer request's answer.
-  if (frame[echoEnd] == 0x3D /* = */ ) {
-    throw FormatException('KVS garbled frame (${frame.length} B)');
-  }
-  return null;
+  // Non-success answers echo the bare request; any trailing byte is a longer
+  // request's answer (including '=' inside a SET value).
+  return exact ? KvsResponse(status: status, payload: '') : null;
 }
 
 bool _bytesAt(Uint8List frame, int offset, List<int> bytes) {
