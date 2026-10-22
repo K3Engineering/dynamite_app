@@ -336,13 +336,20 @@ class DataHub extends ChangeNotifier
     gaps.append(totalSamples, totalSamples + count);
     int toInject = count;
     if (count > maxDataSz) {
-      // Skip the oldest dropped samples outright, rounded so the skip ENDS
-      // on a bucket boundary in absolute index: the first injected sample
-      // then starts a fresh bucket and its slot reset covers the stale data
-      // the skipped range would otherwise merge into.
+      // Skip the oldest dropped samples outright: the ring would evict them
+      // instantly, so materializing them is per-sample work for no data.
+      //
+      // The skip is rounded so it ENDS on a bucket boundary in absolute
+      // index. That is what makes the skipped range safe to never write:
+      // these ring slots then still hold a previous lap's values, and the
+      // first injected sample starts a fresh bucket ([BucketAccumulator.add]
+      // resets its slot at a bucket start) instead of merging into them.
+      // They are unreadable either way because [gaps] covers the whole drop
+      // (see the doc), so no renderer or export ever reads them as readings.
       final skip = count - maxDataSz;
       final alignedSkip =
-          skip + ((bucketSize - (totalSamples + skip) % bucketSize) % bucketSize);
+          skip +
+          ((bucketSize - (totalSamples + skip) % bucketSize) % bucketSize);
       totalSamples += alignedSkip;
       for (final ingest in _ingest) {
         ingest.skip(alignedSkip);
@@ -583,16 +590,11 @@ class DataHub extends ChangeNotifier
     required int end,
   }) {
     _checkChannel(adcChannel);
-    final conv = converterFor(adcChannel).netMap(unit);
-    if (conv == null) return null;
     final ext = windowedRawExtremes(adcChannel, start, end);
     if (ext == null) return null;
-    // Fold BOTH raw bounds: a decreasing board/excitation map (reversed
-    // ladder readings, which channelDataIsValid's sorted-spacing check
-    // accepts) maps ext.$2 to the LOW end — taking it unguarded prints the
-    // minimum as the peak.
-    final lo = conv(ext.$1), hi = conv(ext.$2);
-    return lo > hi ? lo : hi;
+    // Both raw bounds fold (see [ChannelConverter.peakOf]): a decreasing
+    // board/excitation map turns the raw maximum into the display minimum.
+    return converterFor(adcChannel).peakOf(unit, ext);
   }
 
   /// Instantaneous derivative (first difference) of [adcChannel] in unit/s;

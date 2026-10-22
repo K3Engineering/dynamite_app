@@ -466,11 +466,18 @@ class SessionStore {
     required int sourceRingCapacity,
     required void Function(Object error) onWriteError,
   }) {
-    assert(
-      header.channelCount == kAdcChannelCount,
-      'SessionHeader.channelCount (${header.channelCount}) != kAdcChannelCount'
-      ' ($kAdcChannelCount): journal and data frames would disagree',
-    );
+    // A wrong width is a silently corrupt journal + frame stream on disk, so
+    // this is a real throw, not a debug assert (the same call as
+    // [GapList.append]): the one call site passes kAdcChannelCount, so
+    // reaching this is a programming error, not device state.
+    if (header.channelCount != kAdcChannelCount) {
+      throw ArgumentError.value(
+        header.channelCount,
+        'header.channelCount',
+        'must equal kAdcChannelCount ($kAdcChannelCount): journal and data '
+            'frames would disagree',
+      );
+    }
     return LiveSessionWriter(
       header,
       sourceRingCapacity: sourceRingCapacity,

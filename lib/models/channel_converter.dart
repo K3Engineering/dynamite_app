@@ -130,6 +130,19 @@ class ChannelConverter {
   /// One-shot [netMap] call.
   double? net(DisplayUnit unit, double raw) => netMap(unit)?.call(raw);
 
+  /// The peak of a raw-extremes pair in [unit]: folds BOTH bounds through
+  /// [netMap], because a non-increasing board map (reversed ladder readings,
+  /// which [ChannelBoardCalibration.channelDataIsValid] accepts on purpose)
+  /// maps the raw maximum to the display MINIMUM. Taking the raw `max` bound
+  /// unguarded prints the minimum as the peak. Null when the unit is
+  /// unavailable for the channel.
+  double? peakOf(DisplayUnit unit, (double, double) rawExtremes) {
+    final conv = netMap(unit);
+    if (conv == null) return null;
+    final lo = conv(rawExtremes.$1), hi = conv(rawExtremes.$2);
+    return lo > hi ? lo : hi;
+  }
+
   /// One-shot [grossMap] call.
   double? gross(DisplayUnit unit, double raw) => grossMap(unit)?.call(raw);
 

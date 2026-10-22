@@ -512,8 +512,11 @@ List<(int, int)> _mergeRuns(List<(int, int)> runs) {
   final int bs = math.max(1, buckets.bucketSize);
   final int span = end - start;
 
-  // Past one synthetic run per 1/8 of the window's buckets, per-bucket exact
-  // scans would cover most of the window anyway.
+  // Below one dirty bucket per eight, the per-bucket path reads ~7/8 of the
+  // window from buckets; past that it would exact-scan most of the window
+  // through small holes anyway. The 8 is a performance guess, not a measured
+  // crossover: the fast path is correct at any threshold, so it only trades
+  // bucket reads for sample reads.
   if (span > 0 && synthetic.length * 8 * bs > span) {
     scanExact(start, end);
     return found ? (mn, mx) : null;
