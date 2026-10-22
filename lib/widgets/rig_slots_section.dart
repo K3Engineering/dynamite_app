@@ -657,7 +657,12 @@ class _CellFields extends StatelessWidget {
 LoadCellProfile? _typedCell(String name, String cap, String sens) {
   final c = _typedNumber(cap);
   final s = _typedNumber(sens);
-  if (c == null || s == null || !c.isFinite || !s.isFinite || c <= 0 || s <= 0) {
+  if (c == null ||
+      s == null ||
+      !c.isFinite ||
+      !s.isFinite ||
+      c <= 0 ||
+      s <= 0) {
     return null;
   }
   return LoadCellProfile(

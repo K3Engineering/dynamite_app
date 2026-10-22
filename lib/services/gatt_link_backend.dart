@@ -105,8 +105,12 @@ class KvsFlashTransport {
   /// next save re-issues an op the device may have applied. Safe because
   /// SET/DEL are idempotent and [readKvsSnapshot] adopts the device; the
   /// residue is a leaked key, never a wrong deletion.
-  Future<void> _apply(Map<String, String> user, String key,
-      Future<bool> Function() op, void Function() onSuccess) async {
+  Future<void> _apply(
+    Map<String, String> user,
+    String key,
+    Future<bool> Function() op,
+    void Function() onSuccess,
+  ) async {
     if (!await op()) {
       throw StateError('KVS write rejected for $key');
     }
@@ -131,16 +135,24 @@ class KvsFlashTransport {
     final user = Map<String, String>.of(_snapshot.user);
     for (final e in lcKeys.entries) {
       if (user[e.key] == e.value) continue;
-      await _apply(user, e.key, () => _client.set(kvsFolderUser, e.key, e.value),
-          () => user[e.key] = e.value);
+      await _apply(
+        user,
+        e.key,
+        () => _client.set(kvsFolderUser, e.key, e.value),
+        () => user[e.key] = e.value,
+      );
     }
     // Reconcile: known slot keys the snapshot holds but the save doesn't
     // are deleted (a cleared slot, an abandoned partial write, a value the
     // lenient read refused to adopt — see RigSlots.fromKv).
     for (final key in user.keys.toList()) {
       if (!rigSlotKeys.contains(key) || lcKeys.containsKey(key)) continue;
-      await _apply(user, key, () => _client.delete(kvsFolderUser, key),
-          () => user.remove(key));
+      await _apply(
+        user,
+        key,
+        () => _client.delete(kvsFolderUser, key),
+        () => user.remove(key),
+      );
     }
   }
 
@@ -157,8 +169,12 @@ class KvsFlashTransport {
     }
     final user = Map<String, String>.of(_snapshot.user);
     for (final key in keys) {
-      await _apply(user, key, () => _client.delete(kvsFolderUser, key),
-          () => user.remove(key));
+      await _apply(
+        user,
+        key,
+        () => _client.delete(kvsFolderUser, key),
+        () => user.remove(key),
+      );
     }
   }
 }

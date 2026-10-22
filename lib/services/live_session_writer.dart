@@ -245,8 +245,7 @@ class LiveSessionWriter {
   /// with the two hardwired apart, a non-4-channel session's finalize check
   /// compares against the wrong length and passes (or fails) silently.
   int get expectedDataBytes =>
-      totalSamplesRecorded *
-      SessionChunkCodec(header.channelCount).frameBytes;
+      totalSamplesRecorded * SessionChunkCodec(header.channelCount).frameBytes;
 
   /// First write failure encountered, if any. Once set it stays set.
   Object? writeError;
@@ -273,9 +272,8 @@ class LiveSessionWriter {
   /// Append a fully snapshotted slice; returns when it has been written and
   /// flushed. Safe to call without awaiting (calls are serialized).
   Future<void> appendData(SampleSlice slice) {
-    final ssnOrigin =
-        _ssnOrigin ??=
-            slice.anchor.counter + (slice.startIndex - slice.anchor.hubIndex);
+    final ssnOrigin = _ssnOrigin ??=
+        slice.anchor.counter + (slice.startIndex - slice.anchor.hubIndex);
 
     final count = slice.sampleCount;
     _unflushedSamples += count;
