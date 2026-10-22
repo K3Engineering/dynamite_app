@@ -20,9 +20,9 @@ import 'segmented_cache_functional.dart';
 // Vector-redrawing the whole plot every frame caused low framerates.
 // Web has no engine raster cache: a ui.Picture re-executes on Skia every
 // frame. Immutable sample ranges are baked once into GPU ui.Images and
-// blitted; rebakes are smeared across frames at one bake per
-// frame. A steady frame rate is preferred over fast refill: a burst of
-// work in one frame shows up as a stutter. A segment that cannot blit
+// blitted; rebakes are smeared across frames at one bake per frame. A steady
+// frame rate is preferred over fast refill: a burst of work in one frame
+// shows up as a stutter. A segment that cannot blit
 // (see _isBlittable in segmented_cache_functional.dart) draws nothing and
 // refills only via the sweep; genuinely uncovered ranges (live-edge sliver,
 // pan/zoom exposures) are the only full vector-draw paths.
@@ -31,7 +31,7 @@ import 'segmented_cache_functional.dart';
 // (segmented_cache_functional.dart): geometry, staleness, bake planning,
 // blit/gap rect resolution. One frame is three pure transitions around one
 // impure measurement (see that file's header):
-//   prepareFrame -> planBakes -> [this file rasterizes] -> applyBakes
+//   prepareFrame -> planBakes -> [this file rasterizes] -> applyBake
 //   -> rasterPlan -> [this file draws]
 // This file owns the impure minimum: ui.Image creation and disposal, canvas
 // calls, and bake scheduling (BakePump). It makes essentially no decisions;

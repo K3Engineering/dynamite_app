@@ -68,10 +68,6 @@ const double kMaxBlitLineFraction = 0.25;
 /// vectors every frame until they outgrow this.
 const double kSegmentGapBakePx = 40;
 
-/// Segment (re)bakes allowed per frame. Each is a UI-thread toImageSync;
-/// 1 prioritizes smearing rebakes across frames over quickly refilling
-/// after zooms/jumps (see the shell file header). Enforced structurally: the
-/// planner emits at most one job (see [planBakes]), not by looping a budget.
 /// Cached segments more than this many target-widths outside the view are
 /// evicted; a segment is kSegmentTargetPx * dpr * plotHeight * dpr * 4 bytes
 /// (a few MB on a tall graph at dpr 2), so the cache cannot be unbounded.
