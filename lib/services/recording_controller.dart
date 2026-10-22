@@ -339,20 +339,13 @@ class RecordingController extends ChangeNotifier {
 
   @override
   void dispose() {
-    // Disposing mid-recording used to orphan the run by omission: the writer
-    // stayed live with no owner to finalize it, and its onWriteError callback
-    // could still reach [stopSession] and notify a disposed ChangeNotifier.
-    // There is no way to finish the session here (dispose cannot await), so
-    // the only honest outcomes are "the app never does this" (the controller
-    // is app-lifetime, provided by ChangeNotifierProvider.value) or a bug in
-    // the caller. Assert it loudly in debug; a release build still detaches
-    // the listeners and leaves the recording interrupted, which the store's
-    // damage model already lists and exports correctly.
+    // dispose cannot await, so a mid-session dispose would orphan the writer:
+    // the app never does this (the controller is app-lifetime). Release still
+    // detaches and leaves an interrupted session, which the store lists.
     assert(
       _lifecycle is _Idle,
-      'RecordingController disposed while ${sessionInProgress ? 'a session is in progress' : ''}'
-      ' (${_lifecycle.runtimeType}): stop the session first — dispose cannot '
-      'finalize it, and the run would be orphaned mid-write',
+      'RecordingController disposed with a session in progress '
+      '(${_lifecycle.runtimeType}): stop the session first',
     );
     _streamingChanges.removeListener(_onStreamingChanged);
     _dataHub.removeEventListener(_onHubEvent);

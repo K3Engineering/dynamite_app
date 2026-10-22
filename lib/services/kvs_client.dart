@@ -13,25 +13,12 @@ import 'kvs_protocol.dart';
 /// locked/streaming), so a timeout means the link is broken. [abort] fails all
 /// pending work; the client is spent afterwards (a new link builds a new one).
 ///
-/// POST-TIMEOUT POLICY: a timed-out command is dropped from [_current], so a
-/// late answer for it normally reads as stale (a well-formed answer to some
-/// OTHER request) and is discarded by [handleNotification]. The one exception
-/// is a late answer BYTE-IDENTICAL to the live command's — the wire carries no
-/// transaction id, so it is indistinguishable from the live answer by
-/// construction, and accepting it is the documented behavior (see
-/// `kvs_client_test.dart`). That is safe here, and deliberately not "fixed"
-/// by counting and discarding a frame per timed-out command:
-///
-///  * SET/DEL are idempotent, so a stale success means the device really did
-///    execute that exact command.
-///  * A stale GET can return the value the device held moments ago. The write
-///    path closes that loop: [RigState.saveToDevice] re-reads the snapshot
-///    after writing and fails closed on a mismatch, so a stale read surfaces
-///    as a failed save (retryable), never as a silently adopted value.
-///  * A discard counter cannot work without an id: it would have to guess
-///    whether a frame was the late answer or the retry's own answer, and on a
-///    link lossy enough to time out it would eat the retry's answer and
-///    cascade forever — converting a benign stale read into a liveness bug.
+/// A late answer for a timed-out command normally reads as stale and is
+/// dropped; only a byte-identical one settles the live command, which is safe
+/// because the wire has no transaction id (so it is indistinguishable) and
+/// SET/DEL are idempotent. A stale GET is caught by [RigState.saveToDevice]'s
+/// read-back compare. Discarding a frame per timed-out command cannot work:
+/// with no id it can eat the retry's own answer and cascade.
 class KvsClient {
   KvsClient({
     required this.write,

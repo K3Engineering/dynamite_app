@@ -35,20 +35,12 @@ export 'graph/segmented_cache.dart';
 /// the controls row in `GraphViewControls` can align its right edge with
 /// the painted plot/minimap edge.
 ///
-/// These are CONSTANTS on purpose, and that is the whole fixed-scale
-/// decision: the graph canvas does not honor `MediaQuery.textScaler`. Axis
-/// labels are painted by raw `dart:ui` paragraphs at a literal 13 px
-/// (see [AxisLabelCache.prepare]) into gutters whose size is known before
-/// layout, and [_drawAxis] clips labels to a strip measured from those
-/// paragraphs — so a scaler applied only to the text would clip labels
-/// against an unchanged gutter rather than enlarge it. Honoring text scaling
-/// means threading a scaler through all three painters AND deriving both
-/// gutters from measured labels (this constant would become state, shared
-/// with `GraphViewControls` and the minimap). Not worth it here: the graph is
-/// an instrument plot where tick spacing is the reading, and every
-/// accessibility-critical number — session stats, peak, live cursor readouts,
-/// slot values — is a real widget that scales normally. Pin the trade-off in
-/// `graph_text_scale_test.dart` rather than letting it silently drift.
+/// The graph does not honor `MediaQuery.textScaler`. Labels are painted at a
+/// fixed 13 px into these gutters and [_drawAxis] clips them to a measured
+/// strip, so scaling the text alone would clip rather than enlarge. Doing it
+/// properly makes both gutters measured state shared by the painters,
+/// `GraphViewControls` and the minimap; the readouts that matter (stats, peak,
+/// cursor values) are widgets and scale already.
 const double _kGraphLeftSpace = 8;
 const double kGraphRightSpace = 56;
 const double _kGraphBottomSpace = 24;
@@ -1192,10 +1184,7 @@ String formatAxisTick(double sec, int decimals) {
 /// paragraph references until the raster pass, so synchronously disposing
 /// an entry another painter drew this frame would crash the compositor).
 ///
-/// Deliberately does NOT apply `MediaQuery.textScaler`: the 13 px size is a
-/// fixed instrument scale, clipped into constant-size gutters (see the
-/// comment on [_kGraphLeftSpace]). Scaling here alone would clip labels; see
-/// that comment for the end-to-end pricing of doing it properly.
+/// Deliberately does not apply `MediaQuery.textScaler`; see [_kGraphLeftSpace].
 ///
 /// Test seam: public as [AxisLabelCache] (same rename-only pattern as
 /// [joinBlockEnd] / [formatWindowSpan]) so tests can drive the pass/eviction
@@ -1950,13 +1939,8 @@ EnvelopeSeries _taredEnvelopeSeries(
 /// real value, so they can never extend the range: no exclusion needed.
 /// Shared by the force graph's Y range and the minimap.
 ///
-/// Folding both bounds is the SOLE defense against a non-increasing board
-/// map, and that is deliberate: a decreasing ladder sequence is accepted by
-/// [ChannelBoardCalibration.channelDataIsValid] (crossed taps, not corrupt
-/// flash — see its doc), so the pipeline must not assume monotonicity.
-/// Rejecting such data at parse time was considered and rejected: it would
-/// hide a diagnosable instrument behind "no board data", while folding keeps
-/// the data visible and lets `sensitivityVsNominal` report the flip.
+/// Folding both bounds is the only guard against a non-increasing board map,
+/// which [ChannelBoardCalibration.channelDataIsValid] accepts on purpose.
 (double, double)? _foldNetExtremes(
   GraphDataSource data,
   List<_ConvertedChannel> channels,

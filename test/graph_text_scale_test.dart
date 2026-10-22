@@ -8,51 +8,35 @@ import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
-/// Pins the FIXED-SCALE decision for the graph canvas (documented on
-/// `_kGraphLeftSpace`/`kGraphRightSpace` in graph_components.dart): axis
-/// labels are painted at a literal 13 px into constant-size gutters and do
-/// NOT follow `MediaQuery.textScaler`.
-///
-/// The point of these tests is not that scaling would be nice — it is that
-/// the half-measure is a real bug class. `_drawAxis` clips labels to a strip
-/// measured from the paragraphs, inside a gutter whose size was fixed before
-/// layout, so scaling the text alone clips it at the canvas edge instead of
-/// growing the plot's reserve. Anyone who adds a scaler must therefore grow
-/// both gutters (making `kGraphRightSpace` state shared with the controls
-/// row and minimap) and rewrite this file deliberately.
+/// Pins the fixed-scale graph canvas (see `_kGraphLeftSpace`): labels do not
+/// follow `MediaQuery.textScaler`. Scaling the text without also growing the
+/// measured gutters clips labels, so adding a scaler means rewriting this file
+/// together with the gutter layout.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const large = TextScaler.linear(2);
 
   test('the axis-label cache carries no text scaler', () {
-    // AxisLabelCache.prepare takes text/color/bold and nothing else: there is
-    // no scaler input to forget to thread, which is why the paragraphs are
-    // identical whatever MediaQuery says. Height comes from the fixed 13 px
-    // style (with whatever line metrics the test font reports).
+    // prepare takes no scaler, so the paragraphs are identical whatever
+    // MediaQuery says.
     final cache = AxisLabelCache();
     addTearDown(cache.dispose);
 
     final paragraph = cache.prepare('12345');
     expect(paragraph.height, greaterThan(0));
-    // Sanity: the same key returns the same laid-out paragraph, so this test
-    // is measuring the cache rather than a fresh build each time.
+    // Same key, same laid-out paragraph: this is measuring the cache.
     expect(identical(cache.prepare('12345'), paragraph), isTrue);
   });
 
   test('the gutters stay at their fixed sizes', () {
-    // Public because GraphViewControls aligns its right edge to it; if this
-    // ever becomes dynamic, every reader (controls row, minimap, both
-    // painters) has to move together.
+    // Every reader (both painters, the controls row, the minimap) sizes
+    // against this; making it dynamic moves them together.
     expect(kGraphRightSpace, 56);
   });
 
   testWidgets('the workspace renders at 2x text scale without asserting or '
-      'clipping itself apart', (tester) async {
-    // A large scale must not throw, overflow, or drop the graph: the canvas
-    // simply keeps its instrument scale. Contrast with the widget-rendered
-    // readouts around it, which do scale (that is why the trade-off is
-    // acceptable).
+      'dropping the graph', (tester) async {
     final handle = tester.ensureSemantics();
 
     final hub = DataHub();
@@ -79,7 +63,7 @@ void main() {
     await tester.pump();
 
     expect(tester.takeException(), isNull);
-    // Still a described graph, not a blank canvas.
+    // Still a described graph rather than a blank canvas.
     expect(
       find.bySemanticsLabel(
         'Live force graph. Channels: CH 0, CH 1. Unit: Raw.',

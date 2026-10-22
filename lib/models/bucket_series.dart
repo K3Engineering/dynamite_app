@@ -452,9 +452,8 @@ void foldBucketRange(
   scanExact(bLastEx * bs, end);
 }
 
-/// Merge ascending half-open [runs] that may touch or overlap into disjoint
-/// runs (adjacent runs merge: `[1,3)` + `[3,5)` -> `[1,5)`, which is the same
-/// set). Input must be sorted by start; empty runs are dropped.
+/// Merge ascending half-open [runs] into disjoint runs. Input must be sorted
+/// by start; empty runs are dropped.
 List<(int, int)> _mergeRuns(List<(int, int)> runs) {
   final out = <(int, int)>[];
   for (final (s, e) in runs) {
@@ -476,13 +475,8 @@ List<(int, int)> _mergeRuns(List<(int, int)> runs) {
 /// Buckets containing a synthetic zero are scanned exactly instead; real
 /// diff-0 samples elsewhere still fold.
 ///
-/// Cost: O(window) worst case, not O(buckets × gaps). The synthetic-index
-/// set is merged once and consumed by a forward cursor (buckets arrive in
-/// ascending order), so a window dense with short gaps costs one pass rather
-/// than a run-scan per bucket; past one run per eighth of the window's buckets
-/// the whole window is scanned once, which visits the same samples with less
-/// per-bucket overhead. Both fast paths return the exact extremes, so the
-/// shortcut is invisible in the result.
+/// Cost is O(window), not O(buckets × gaps): the synthetic runs are merged
+/// once and walked by a forward cursor. Windows dense with gaps scan once.
 (double, double)? windowedDiffExtremes(
   BucketSeries buckets,
   int start,
@@ -491,9 +485,7 @@ List<(int, int)> _mergeRuns(List<(int, int)> runs) {
   GapList gaps,
 ) {
   // Indices whose ingested diff is synthetic: sample 0 and every sample
-  // whose predecessor lies in a gap (see [ingestDiff]). Merged so the cursor
-  // below is a single monotone advance; gaps are already sorted and disjoint,
-  // and the prepended (0, 1) can only touch or overlap the first of them.
+  // whose predecessor lies in a gap (see [ingestDiff]).
   final synthetic = _mergeRuns([
     (0, 1),
     for (final (gs, ge) in gaps.rangesIn(start - 1, end)) (gs, ge + 1),
@@ -520,16 +512,15 @@ List<(int, int)> _mergeRuns(List<(int, int)> runs) {
   final int bs = math.max(1, buckets.bucketSize);
   final int span = end - start;
 
-  // Dense-gap guard: more than one synthetic run per 1/8 of the window's
-  // buckets means per-bucket exact scans would cover most of the window
-  // anyway. One scan visits the same samples and skips the bucket machinery.
+  // Past one synthetic run per 1/8 of the window's buckets, per-bucket exact
+  // scans would cover most of the window anyway.
   if (span > 0 && synthetic.length * 8 * bs > span) {
     scanExact(start, end);
     return found ? (mn, mx) : null;
   }
 
-  // Forward cursor into [synthetic]; [foldBucketRange] reports buckets in
-  // ascending sample order, so each run is passed over at most once.
+  // Buckets arrive in ascending sample order, so the cursor advances beyond
+  // each run at most once.
   int cursor = 0;
   bool overlapsSynthetic(int from, int to) {
     while (cursor < synthetic.length && synthetic[cursor].$2 <= from) {

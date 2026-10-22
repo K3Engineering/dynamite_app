@@ -101,15 +101,10 @@ class KvsFlashTransport {
   /// re-issues only the keys that didn't land, instead of re-issuing ops
   /// for keys the device already applied and failing on their rejections.
   ///
-  /// Deliberately NOT symmetric with a transport EXCEPTION mid-sequence
-  /// (as opposed to a rejected command, which is `op()` returning false):
-  /// [_snapshot] keeps the pre-op state, so the next save re-issues the op
-  /// even though the device may have applied it. That asymmetry is safe
-  /// because SET/DEL are idempotent and [readKvsSnapshot] adopts the device
-  /// afterwards (saveToDevice re-reads and fails closed on a mismatch). The
-  /// residue is a key the device holds that neither the snapshot nor the
-  /// save knows about: a leaked key, never a wrong deletion — the reconcile
-  /// pass only deletes keys [_snapshot] holds.
+  /// A transport exception (not a rejection) leaves [_snapshot] pre-op, so the
+  /// next save re-issues an op the device may have applied. Safe because
+  /// SET/DEL are idempotent and [readKvsSnapshot] adopts the device; the
+  /// residue is a leaked key, never a wrong deletion.
   Future<void> _apply(Map<String, String> user, String key,
       Future<bool> Function() op, void Function() onSuccess) async {
     if (!await op()) {

@@ -282,15 +282,9 @@ sealed class ChannelBoardCalibration {
   /// interpolation). Both null = "no factory data" is NOT valid here;
   /// callers check presence before calling.
   ///
-  /// Deliberately NOT checked here: that readings INCREASE with setpoints. A
-  /// decreasing sequence means crossed ladder taps (a reworked board), not
-  /// corrupt flash, and every consumer already handles it — the converters
-  /// sort by raw and map piecewise (the inverse runs on the monotone setpoint
-  /// axis), [_foldNetExtremes] folds BOTH bounds so a decreasing map cannot
-  /// invert a display range, and [sensitivityVsNominal] reports the flip as a
-  /// negative factor. Rejecting it here would demote a diagnosable instrument
-  /// to "no board data" (or a damaged session), which loses strictly more
-  /// information than it prevents.
+  /// Readings are not required to increase with setpoints: a decreasing
+  /// sequence is crossed ladder taps (a reworked board), not corrupt flash,
+  /// and consumers fold both mapped bounds so it cannot invert a range.
   @useResult
   static bool channelDataIsValid(
     List<double> resistors,
