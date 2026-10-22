@@ -17,25 +17,20 @@ import 'segmented_cache_functional.dart';
 //   * squeeze -- the window spans the whole growing history: blits get a
 //                corrective affine transform (both axis mappings are affine).
 //
-// Vector-redrawing the whole plot every frame caused low framerates.
-// Web has no engine raster cache: a ui.Picture re-executes on Skia every
-// frame. Immutable sample ranges are baked once into GPU ui.Images and
-// blitted; rebakes are smeared across frames at one bake per frame. A steady
-// frame rate is preferred over fast refill: a burst of work in one frame
-// shows up as a stutter. A segment that cannot blit
-// (see _isBlittable in segmented_cache_functional.dart) draws nothing and
-// refills only via the sweep; genuinely uncovered ranges (live-edge sliver,
-// pan/zoom exposures) are the only full vector-draw paths.
+// Vector-redrawing the whole plot every frame caused low framerates. Web has
+// no engine raster cache: a ui.Picture re-executes on Skia every frame.
+// Immutable sample ranges are baked once into GPU ui.Images and blitted;
+// rebakes are smeared across frames at one bake per frame, because a burst of
+// work in one frame shows up as a stutter. A segment that cannot blit (see
+// _isBlittable in segmented_cache_functional.dart) draws nothing and refills
+// only via the sweep; genuinely uncovered ranges (live-edge sliver, pan/zoom
+// exposures) are the only full vector-draw paths.
 //
-// EVERY decision the cache makes lives in the functional core
-// (segmented_cache_functional.dart): geometry, staleness, bake planning,
-// blit/gap rect resolution. One frame is four pure transitions around one
-// impure measurement (see that file's header):
+// The decisions live in segmented_cache_functional.dart; this file owns
+// ui.Image creation and disposal, canvas calls and bake scheduling (BakePump).
+// One frame (see that file's header for the transitions):
 //   prepareFrame -> planBakes -> [this file rasterizes] -> applyBake
 //   -> rasterPlan -> [this file draws]
-// This file owns the impure minimum: ui.Image creation and disposal, canvas
-// calls, and bake scheduling (BakePump). It makes essentially no decisions;
-// if a branch appears here, it is a decision leak and belongs in the core.
 //
 // Config changes split by kind. Plot height, dpr, channel add/remove are
 // pure drift: old segments keep blitting (ghosts/shifts) while the sweep
@@ -65,9 +60,8 @@ import 'segmented_cache_functional.dart';
 // may still STRADDLE the window edges from window motion; but a re-bake of
 // one clamps its coverage into the window, dropping the out-of-fold fringe
 // to a gap that vector-draws when panned back to and bakes under a fold
-// that includes it. Both invariants are enforced by the assert in
-// planBakes (functional core): the single choke point all bake decisions
-// pass through.
+// that includes it. Both invariants are asserted in planBakes, which every
+// bake decision passes through.
 // ---------------------------------------------------------------------------
 
 /// Base padding (logical px) baked around a segment texture so AA stroke
@@ -177,18 +171,25 @@ class SegmentedGraphCache {
   @useResult
   bool paint(Canvas canvas, SegmentViewConfig c) {
     final env = cacheEnvFor(c.config);
-    final planned = planBakes(prepareFrame(_state, env), env);
+    final state = prepareFrame(_state, env);
+    final plan = planBakes(state, env);
 
     // The impure measurement: rasterize the bake the core decided on, filing
     // the texture under the id that bake reports. Null when the frame is
     // quiet: no texture and no serial advance.
-    final bake = switch (planned.plan) {
+    final bake = switch (plan) {
       final BakePlan plan => (plan: plan, output: _executeBake(plan, env, c)),
       null => null,
     };
-    final committed = applyBake(planned.state, env, bake);
+    final committed = applyBake(state, env, bake);
+    final previous = _state?.segments;
     _state = committed.state;
-    _reconcileTextures(committed.state);
+    // prepareFrame hands back the same list on a quiet frame, so a changed
+    // list is the only way the texture map can have drifted. The assert below
+    // checks that shortcut against the map itself.
+    if (!identical(previous, committed.state.segments)) {
+      _reconcileTextures(committed.state);
+    }
     assert(invariantViolations(committed.state).isEmpty);
     assert(_texturesMatchState(committed.state));
 
@@ -196,7 +197,7 @@ class SegmentedGraphCache {
     debugLastRaster = raster;
     _drawBlits(canvas, raster.blits);
     _drawGaps(canvas, raster.gaps, c);
-    return planned.plan != null;
+    return plan != null;
   }
 
   /// Dispose every texture [state]'s segment list no longer names. A texture
@@ -213,8 +214,7 @@ class SegmentedGraphCache {
   }
 
   /// Debug-only: every segment owns a live texture and no texture is
-  /// orphaned. The core treats metas as values, so this is the invariant
-  /// that keeps the map and the segment list in step.
+  /// orphaned. This checks the reconcile shortcut in [paint] against the map.
   bool _texturesMatchState(CacheState state) {
     final ids = {for (final s in state.segments) s.textureId};
     return ids.length == state.segments.length &&

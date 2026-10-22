@@ -1,37 +1,29 @@
 import 'dart:math' as math;
 
-// ---------------------------------------------------------------------------
-// Segmented graph cache: functional core
+// Segmented graph cache: the decisions. The raster shell
+// (segmented_cache.dart) owns ui.Image, canvas calls and bake scheduling and
+// imports this file; nothing here may import the shell, dart:ui, a package, or
+// a clock. The imports above are the whole capability list, which is what
+// makes every decision below reproducible from its arguments. Nothing enforces
+// that (a `dart:ui` import analyzes fine), so it is review's job.
 //
-// EVERY decision SegmentedGraphCache makes is computed here, as pure
-// functions over value types. The raster shell (segmented_cache.dart) owns
-// the impure minimum: ui.Image creation, canvas calls, image disposal, and
-// bake scheduling. Nothing in this file may have side effects: no dart:ui,
-// no clocks, no randomness, no scheduling. This file must never import the
-// shell; the shell imports us.
-//
-// One frame is four pure transitions around one impure measurement:
+// One frame is four transitions around one impure measurement:
 //
 //   (state, env) --prepareFrame--> state'
 //   state'       --planBakes-----> at most one plan, or null for a quiet frame
 //   [shell rasterizes the plan, reading the render closure]
-//   (state', plan, bake) --applyBake--> state'' + the meta it produced
+//   (state', bake) --applyBake--> state'' + the meta the bake produced
 //   state''      --rasterPlan----> blit rects + gap rects to draw
 //
-// State objects are treated as immutable: every function returns a new
-// [CacheState] sharing the unchanged [SegmentMeta] instances. Metas are plain
-// values (a copy means the same segment); [SegmentMeta.textureId] is what
-// names a texture, and the shell frees textures by matching live ids against
-// the segment list.
+// State is treated as immutable: each function returns a new [CacheState]
+// sharing the unchanged [SegmentMeta] instances. A meta is a plain value (a
+// copy means the same segment); [SegmentMeta.textureId] names the shell's
+// texture, and the shell frees whatever the segment list no longer names.
 //
-// The design context, staleness model, and both coverage invariants (live-
-// edge bake horizon, fold-window containment) are documented in the shell
-// file's header. The invariants are enforced here: [planBakes] asserts
-// fold-window and horizon containment of every bake it plans -- the single
-// choke point all bake decisions pass through -- and [invariantViolations]
-// states the segment-list invariant in executable form for asserts and
-// tests.
-// ---------------------------------------------------------------------------
+// The staleness model and both coverage invariants (bake horizon, fold window)
+// are stated in the shell file's header. [planBakes] asserts the coverage
+// invariants for every bake it returns, and [invariantViolations] states the
+// segment-list invariant in executable form for asserts and tests.
 
 /// [List] equality without the flutter/foundation import, so this file
 /// stays pure-Dart and testable under plain `dart test`.
@@ -74,10 +66,8 @@ const double kSegmentGapBakePx = 40;
 /// (a few MB on a tall graph at dpr 2), so the cache cannot be unbounded.
 const int kSegmentEvictionMargin = 8;
 
-/// Everything about one cached segment except its texture. The raster shell
-/// owns textureId -> ui.Image; metas are plain values, so every decision that
-/// compares or matches segments (drops, splice victims, blits) can do it by
-/// value instead of by identity.
+/// Everything about one cached segment except its texture, which the shell
+/// owns as textureId -> ui.Image.
 final class SegmentMeta {
   /// Identifies this segment's texture in the shell's map. Assigned by the
   /// shell (a serial), never derived from the meta's content: two metas with
@@ -266,13 +256,18 @@ bool _configDiffers(
     (gh - state.gh).abs() > 0.1 ||
     dpr != state.dpr;
 
-/// Transition 1: apply generation/config changes and evict segments far
-/// outside the view. Returns the new state; segments it dropped are simply
+/// Transition 1: apply generation/config changes and evict segments the frame
+/// can no longer use. Returns the new state; segments it dropped are simply
 /// absent from it, which is what the shell frees textures from (see
 /// [_reconcileTextures]).
 ///
+/// Two kinds of drop: segments far outside the view (beyond
+/// [kSegmentEvictionMargin] target widths), so the cache stays bounded; and
+/// segments [_isRetired] names -- stale content with no sample left inside the
+/// window at or below the horizon, which the sweep could only drop anyway.
+///
 /// [state] is null on the first frame: a fresh cache adopts the config's
-/// stamps and matches nothing (no segments).
+/// stamps with no segments.
 ///
 /// On a generation change everything is dropped. On a config bump (see the
 /// staleness model), segments outside the view are dropped so stale content
@@ -283,13 +278,24 @@ CacheState prepareFrame(CacheState? state, CacheEnv env) {
   if (state == null) return CacheState.fresh(config);
   final result = _restamp(state, env);
   final int margin = kSegmentEvictionMargin * env.targetSpan;
-  final kept = [
+  // Scan before allocating: the quiet frame (nothing dropped) is the common
+  // one and must hand back the same list, which is also what tells the shell
+  // no texture can have been orphaned.
+  if (!result.segments.any(
+    (s) =>
+        s.end < env.covStart - margin ||
+        s.start > env.covEnd + margin ||
+        _isRetired(s, result, env),
+  )) {
+    return result;
+  }
+  return result.withSegments([
     for (final s in result.segments)
-      if (s.end >= env.covStart - margin && s.start <= env.covEnd + margin) s,
-  ];
-  return kept.length == result.segments.length
-      ? result
-      : result.withSegments(kept);
+      if (s.end >= env.covStart - margin &&
+          s.start <= env.covEnd + margin &&
+          !_isRetired(s, result, env))
+        s,
+  ]);
 }
 
 /// [state] under the frame's stamps: empty on a generation change, restricted
@@ -342,29 +348,21 @@ List<(int, int)> _gaps(
 /// uncovered range.
 typedef BakePlan = ({int from, int to, int start, int end});
 
-/// Transition 2: retire the segments the receded horizon has overtaken, then
-/// choose this frame's (re)bake -- priority:
+/// Transition 2: choose this frame's (re)bake -- priority:
 ///   1. the widest visible gap past [kSegmentGapBakePx];
 ///   2. the rightmost visible stale segment (see [_stalePlan]).
 ///
-/// Returns the state the plan indexes plus the plan (null for a quiet frame).
-/// The retired segments are gone from that state, so the caller needs no
-/// second list and no drop channel: which textures are live follows from the
-/// segment list.
+/// Null for a quiet frame. One bake per frame: bakes are rationed to keep a
+/// steady frame rate (see the shell file header), so a multi-bake plan would be
+/// unreachable code with a state-space of its own.
 ///
-/// One bake per frame: bakes are rationed to keep a steady frame rate (see
-/// the shell file header), so a multi-bake plan would be unreachable code
-/// with a state-space of its own.
-///
-/// The fold-window and bake-horizon invariants (shell file header) are
-/// asserted here: this is the single choke point all bake decisions pass
-/// through, so the invariants hold for every (re)bake path.
-({CacheState state, BakePlan? plan}) planBakes(CacheState state, CacheEnv env) {
-  final planned = _retireReceded(state, env);
+/// The fold-window and bake-horizon invariants are asserted here: every bake
+/// decision passes through here, so they hold for every (re)bake path.
+BakePlan? planBakes(CacheState state, CacheEnv env) {
   final plan =
-      _bakeWidestGap(planned.segments, env) ??
-      _refreshStaleSegment(planned.segments, planned, env);
-  if (plan == null) return (state: planned, plan: null);
+      _bakeWidestGap(state.segments, env) ??
+      _refreshStaleSegment(state.segments, state, env);
+  if (plan == null) return null;
   assert(
     plan.start >= env.covStart &&
         plan.end <= env.covEnd &&
@@ -373,39 +371,34 @@ typedef BakePlan = ({int from, int to, int start, int end});
     '[${env.covStart}, ${env.covEnd}) or past the bake horizon '
     '${env.config.bakeableSamples}',
   );
-  return (state: planned, plan: plan);
+  return plan;
 }
 
-/// Retire the visible segments the receded bake horizon has fully overtaken
-/// (see [_isReceded]). A pass of its own rather than part of the sweep, so the
-/// retirement does not depend on which bake wins the frame: it is a
-/// consequence of the horizon alone.
-CacheState _retireReceded(CacheState state, CacheEnv env) {
-  final kept = <SegmentMeta>[];
-  for (int i = 0; i < state.segments.length; i++) {
-    if (!_isReceded(state.segments, state, i, env)) {
-      kept.add(state.segments[i]);
-    }
-  }
-  return kept.length == state.segments.length
-      ? state
-      : state.withSegments(kept);
-}
-
-/// Whether the receded horizon has fully overtaken visible segment [i]: stale,
-/// and the horizon-clamped refresh range is empty, so the sweep could only
-/// drop it. A segment baked under a further-out horizon still covers samples
-/// past it and keeps blitting; only one left with no range at all goes.
-bool _isReceded(
-  List<SegmentMeta> segments,
-  CacheState state,
-  int i,
-  CacheEnv env,
-) {
-  final s = segments[i];
+/// Whether the horizon has retired [s]: its content is config- or drift-stale,
+/// and no sample of it is left inside the window at or below the horizon, so
+/// the sweep could only drop it. A segment baked under a further-out horizon
+/// still covers samples past it and keeps blitting; only one left with no
+/// refreshable range goes.
+///
+/// The window/horizon test comes first because it is a few integer
+/// comparisons and it is the common answer (every in-view tile has samples it
+/// can still be re-baked from); staleness then only runs for the rare segment
+/// that has nothing left.
+///
+/// Size-stale segments are excluded by kind, not by accident. A size outlier
+/// has an empty refresh range in some geometries (verified against the model
+/// check), but retiring it would drop a tile whose only problem is width, and
+/// [_stalePlan]'s identity-plan tie-break already keeps it from re-baking
+/// forever.
+bool _isRetired(SegmentMeta s, CacheState state, CacheEnv env) {
   if (s.end <= env.covStart || s.start >= env.covEnd) return false;
-  final p = _stalePlan(segments, state, i, env);
-  return p != null && p.end <= p.start;
+  final int refreshableEnd = math.min(
+    s.end,
+    math.min(env.config.bakeableSamples, env.covEnd),
+  );
+  if (refreshableEnd > math.max(s.start, env.covStart)) return false;
+  final kind = stalenessOf(s, state, env);
+  return kind != null && kind != Staleness.size;
 }
 
 /// The meta a [plan] produced, given the impure measurement the shell made for
@@ -434,23 +427,21 @@ SegmentMeta _metaFor(
 }
 
 /// Priority 1: bake the widest uncovered gap past the threshold, right
-/// aligned: a bake is paid back per frame the range stays in view, and in
-/// a moving window (live follow, pans) the left side exits first. Also, under
-/// a sustained arrival rate above the one-bake-per-frame rate, left alignment
-/// spends every bake at the exiting edge while the whole window vector-draws.
-/// Gaps up to one target span get the same range under either alignment
-/// (the common case), so only over-wide gaps change fill order:
-/// rightmost-first, matching the config sweep (freshest data converges
-/// first). A remainder left of the bake too narrow to ever re-cross the
-/// threshold is swallowed into the bake: unlike a leftover at the data
-/// edge, which arrival grows back to the threshold by itself, one abutting
-/// existing coverage would vector-draw forever. Left neighbors are
-/// absorbed while the merged bake stays within one target width, so the
-/// live-edge segment grows in place (one bake per sliver) instead of
+/// aligned. A bake pays back per frame the range stays in view, and in a moving
+/// window (live follow, pans) the left side exits first, so left alignment
+/// spends every bake at the exiting edge. Gaps up to one target span get the
+/// same range either way (the common case); only over-wide gaps differ, and
+/// rightmost-first matches the config sweep.
+///
+/// A remainder left of the bake too narrow to ever re-cross the threshold is
+/// swallowed into the bake: arrival grows a leftover at the data edge back to
+/// the threshold by itself, but one abutting existing coverage would
+/// vector-draw forever. Left neighbors are absorbed while the merged bake stays
+/// within one target width, so the live-edge segment grows in place instead of
 /// accumulating sliver-wide strips.
 ///
-/// The returned plan's [BakePlan.from]/[BakePlan.to] mark the absorbed
-/// segments to replace; a plan with from == at is a plain insert (to == at - 1).
+/// The plan's [BakePlan.from]/[BakePlan.to] mark the absorbed segments to
+/// replace; from == at is a plain insert (to == at - 1).
 BakePlan? _bakeWidestGap(List<SegmentMeta> segments, CacheEnv env) {
   (int, int)? bakeGap;
   double widestPx = kSegmentGapBakePx;
@@ -498,10 +489,9 @@ BakePlan? _bakeWidestGap(List<SegmentMeta> segments, CacheEnv env) {
 }
 
 /// Priority 2: re-bake the rightmost visible stale segment (see
-/// [_stalePlan]), replacing the range [_planRefresh] computes. The scan
-/// skips segments out of view, and skips an empty plan -- that is a
-/// horizon-receded retirement, which [_retireReceded] already did -- so a
-/// frame with nothing stale to re-bake returns null.
+/// [_stalePlan]), replacing the range [_planRefresh] computes. Skips segments
+/// out of view and skips an empty plan, so a frame with nothing stale to
+/// re-bake returns null.
 BakePlan? _refreshStaleSegment(
   List<SegmentMeta> segments,
   CacheState state,
@@ -535,19 +525,52 @@ bool _isBlittable(SegmentMeta s, CacheState state, CacheEnv env) {
 double _blitYScale(SegmentMeta s, CacheConfig c) =>
     (s.yMax - s.yMin) / (c.yMax - c.yMin) * (c.gh / s.gh);
 
-/// The refresh plan for [i] if it is stale, else null:
-///   * config-stale -- baked under outdated keys/gh/dpr;
-///   * drift-stale -- x- or y-scale drift past [kMaxSegmentDrift];
-///   * size-stale -- past two targets on screen or under half a target,
-///     AND [_planRefresh] would change the geometry. A size outlier whose
-///     refresh can only reproduce its own range is left alone: re-baking
-///     identical pixels every frame is a bake-pump-fed busy loop (the
-///     quiescence invariant -- every bake moves a boundary or updates
-///     content, then the scan goes quiet).
-///
+/// Why a segment needs a re-bake. Only content staleness (config, drift) can
+/// make a segment unrefreshable; [size] is a width-policy tie-break and never
+/// retires (see [_isRetired]).
+enum Staleness {
+  /// Baked under outdated keys, gh or dpr.
+  config,
+
+  /// x- or y-scale drifted past [kMaxSegmentDrift].
+  drift,
+
+  /// Past two targets on screen, or under half a target.
+  size,
+}
+
+/// Why [s] is stale, or null if it is fresh enough to keep. The one place
+/// staleness is decided: [planBakes] gates the allocating refresh plan on it,
+/// so a quiet frame does no plan arithmetic, and [prepareFrame] retires by it.
+Staleness? stalenessOf(SegmentMeta s, CacheState state, CacheEnv env) {
+  if (_configDiffers(s.destructiveKey, s.remapKey, s.gh, s.dpr, state)) {
+    return Staleness.config;
+  }
+  if (_driftStale(s, env)) return Staleness.drift;
+  final double w = (s.end - s.start) * env.pps;
+  if (w > 2 * kSegmentTargetPx || w < kSegmentTargetPx / 2) {
+    return Staleness.size;
+  }
+  return null;
+}
+
+/// Whether [s] has drifted past [kMaxSegmentDrift] on either axis: the
+/// resampling error a blit of it would bake in.
+bool _driftStale(SegmentMeta s, CacheEnv env) {
+  final double w = (s.end - s.start) * env.pps;
+  final double xScale = w / s.contentW;
+  final double yScale = (s.yMax - s.yMin) / (env.config.yMax - env.config.yMin);
+  return math.max((1 - xScale).abs(), (1 - yScale).abs()) > kMaxSegmentDrift;
+}
+
+/// The refresh plan for [i] if it is stale, else null (see [stalenessOf]).
 /// Config and drift staleness take whatever plan [_planRefresh] computes,
 /// including an absorbed left neighbor: two tiles that both need re-baking
 /// are cheaper merged into one bake than refreshed in two frames.
+///
+/// A size outlier is only worth a bake if the bake would CHANGE its geometry.
+/// One whose refresh can only reproduce its own range is left alone: re-baking
+/// identical pixels every frame is a bake-pump-fed busy loop.
 BakePlan? _stalePlan(
   List<SegmentMeta> segments,
   CacheState state,
@@ -555,22 +578,14 @@ BakePlan? _stalePlan(
   CacheEnv env,
 ) {
   final s = segments[i];
+  final kind = stalenessOf(s, state, env);
+  if (kind == null) return null;
   final p = _planRefresh(segments, i, env);
-  if (_configDiffers(s.destructiveKey, s.remapKey, s.gh, s.dpr, state)) {
-    return p;
-  }
-  final double w = (s.end - s.start) * env.pps;
-  final double xScale = w / s.contentW;
-  final double yScale = (s.yMax - s.yMin) / (env.config.yMax - env.config.yMin);
-  if (math.max((1 - xScale).abs(), (1 - yScale).abs()) > kMaxSegmentDrift) {
-    return p;
-  }
-  final bool sizeOutlier = w > 2 * kSegmentTargetPx || w < kSegmentTargetPx / 2;
+  if (kind != Staleness.size) return p;
   // Compare against the identity plan clamped by the SAME helper
   // [_planRefresh] uses, or a straddling size outlier would read its own
   // clamped shape as a geometry change and re-bake every frame.
-  return sizeOutlier &&
-          p != _clampPlan((from: i, to: i, start: s.start, end: s.end), env)
+  return p != _clampPlan((from: i, to: i, start: s.start, end: s.end), env)
       ? p
       : null;
 }
@@ -580,34 +595,26 @@ BakePlan? _stalePlan(
 /// [invariantViolations]) is what makes this a partition operation rather
 /// than range arithmetic: the refresh never crosses the next segment's
 /// start, and swallows neighbors only whole. The bake range is clamped to
-/// the fold window ([CacheEnv.covStart], [CacheEnv.covEnd]) throughout: the
-/// invariant in the shell file header.
+/// the fold window and the horizon throughout ([_clampPlan]).
 ///
-///   * Past the bake horizon: retract the end (the horizon can recede
-///     under an old segment on block-size jumps); a segment starting at or
-///     past it yields an empty plan -- the caller drops the segment.
-///   * Past two targets on screen: split to the RIGHTMOST target span --
-///     rightmost-first refinement like the sweep itself, and the left
-///     remainder pairs with [_bakeWidestGap]'s right-aligned fill so the
-///     hole refills marching left instead of stranding a sliver between
-///     two tiles. The `end - targetSpan > s.start` clause is the progress
-///     guard: at pps over ~200 px/sample the span hits its 1-sample floor
-///     and cannot shrink the segment.
-///   * Otherwise: swallow abutting LEFT neighbors while the merged width
-///     stays within 1.5 targets. Left, because the sweep runs
-///     rightmost-first -- those neighbors are the still-stale ones, so one
-///     bake replaces several stale tiles instead of one. 1.5 targets, not
-///     the 2-target split cap: a merged tile needs headroom below the
-///     split threshold or the next mild zoom-in splits it again.
-///   * Still under half a target after that: grow the end into UNCOVERED
-///     room only (live-edge slack or a gap, capped by the next segment's
-///     start and the horizon); and if still narrow with an abutting right
-///     neighbor, swallow the neighbor whole under the same 1.5-target cap.
+/// Past two targets on screen it splits to the RIGHTMOST target span, so the
+/// left remainder pairs with [_bakeWidestGap]'s right-aligned fill and the
+/// hole refills marching left instead of stranding a sliver between two
+/// tiles. The `end - targetSpan > s.start` clause is the progress guard: at
+/// pps over ~200 px/sample the span hits its 1-sample floor and cannot shrink
+/// the segment.
 ///
-/// Birth widths are then bounded: splits land at one target span (up to
-/// `pps/2` px off [kSegmentTargetPx] from the target-span rounding) and
-/// merges at 1.5 targets, so nothing is born already past a size
-/// threshold -- the birth side of the quiescence invariant.
+/// Otherwise it swallows abutting LEFT neighbors while the merged width stays
+/// within 1.5 targets -- left, because the sweep runs rightmost-first and
+/// those are the still-stale ones. 1.5 rather than the 2-target split cap
+/// leaves headroom, or the next mild zoom-in splits the merged tile again.
+/// Under half a target it grows the end into UNCOVERED room only (capped by
+/// the next segment's start and the horizon), and if still narrow with an
+/// abutting right neighbor, swallows that neighbor under the same 1.5 cap.
+///
+/// Birth widths are then bounded: splits land at one target span and merges
+/// at 1.5 targets, so nothing is born already past a size threshold -- the
+/// birth side of the quiescence invariant.
 BakePlan _planRefresh(List<SegmentMeta> segments, int i, CacheEnv env) {
   final int bakeable = env.config.bakeableSamples;
   final s = segments[i];
@@ -681,14 +688,10 @@ typedef BakeOutput = ({double contentW, int textureId});
 /// was made for a bake nobody asked for -- so neither can be passed alone.
 typedef FrameBake = ({BakePlan plan, BakeOutput output});
 
-/// Transition 3: commit the frame's bake. [state] is what [planBakes]
-/// returned, [bake] is what the shell measured for the plan (null for a quiet
-/// frame). Returns the new state plus the meta the bake produced (null for a
-/// quiet frame).
-///
-/// The splice indexes the state [planBakes] returned, which no longer holds
-/// the segments a receded horizon retired, so the positions are the ones the
-/// planner computed.
+/// Transition 3: commit the frame's bake. [state] is what [prepareFrame]
+/// returned, [bake] is what the shell measured for [planBakes]'s plan (null for
+/// a quiet frame). Returns the new state plus the meta the bake produced (null
+/// for a quiet frame).
 ({CacheState state, SegmentMeta? baked}) applyBake(
   CacheState state,
   CacheEnv env,
@@ -711,15 +714,11 @@ typedef FrameBake = ({BakePlan plan, BakeOutput output});
 /// vertically, then draw the source content rect (0,0 to [sw],[sh] physical
 /// px) into the [dx]/[dy]/[dw]/[dh] destination.
 ///
-/// Why the destination is an affine: texture x-px u covers sample
-/// start + u*(end-start)/contentW, which lands today at
-/// (sample - viewStart) * pps -- affine -- so one drawImageRect repositions
-/// the content exactly. Vertically, content rows [0, gh] covered values
-/// [yMax, yMin] at bake, and valueToY is affine in (yMin, yMax), so a y
-/// scale+offset corrects for range AND plot-height changes since the bake.
-/// Per-channel offsets (tares) are NOT corrected: one segment composites
-/// every channel, so no single affine can hold per-channel shifts -- tares
-/// ride the destructive key instead.
+/// The destination is an affine because the mappings are: texture x-px u
+/// covers sample start + u*(end-start)/contentW, which lands today at
+/// (sample - viewStart) * pps, and valueToY is affine in (yMin, yMax). So one
+/// drawImageRect repositions the content exactly and a y scale+offset also
+/// corrects for range and plot-height changes since the bake.
 typedef BlitRect = ({
   SegmentMeta seg,
   double clipL,
@@ -737,9 +736,8 @@ typedef BlitRect = ({
 /// One uncovered visible range to vector-render, with its placement and clip
 /// fully resolved: clip to [clipL]..[clipR] horizontally and [clipB]..[clipT]
 /// vertically, render samples [start, end) into [texW] logical px after a
-/// translate([x], 0). A raster texture has a width; a gap render does not, so
-/// the width the renderer is told to use is a decision like any other and is
-/// resolved here rather than derived again in the shell.
+/// translate([x], 0). A gap is drawn straight to the frame canvas, so [texW]
+/// only sets the renderer's x mapping.
 typedef GapRect = ({
   int start,
   int end,
@@ -754,6 +752,11 @@ typedef GapRect = ({
 
 /// Transition 4: resolve what the frame rasterizes -- one [BlitRect] per
 /// visible blittable segment and one [GapRect] per uncovered visible range.
+///
+/// TODO: this allocates one record per blit per frame (~40 at 8k), which is
+/// the remaining measurable cost of the pure path (~1 us/frame). A reusable
+/// output buffer would remove it, at the price of a mutable out-parameter, so
+/// only worth it if the alloc shows up in a profile.
 ({List<BlitRect> blits, List<GapRect> gaps}) rasterPlan(
   CacheState state,
   CacheEnv env,

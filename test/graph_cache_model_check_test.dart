@@ -58,6 +58,14 @@ String _canon(CacheState? s) {
   return b.toString();
 }
 
+bool _sameKey(List<Object?> a, List<Object?> b) {
+  if (a.length != b.length) return false;
+  for (var i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
+}
+
 CacheConfig _config({
   required double viewStart,
   required double viewSpan,
@@ -214,8 +222,8 @@ void main() {
       for (final input in inputs) {
         edges++;
         final env = cacheEnvFor(input);
-        final planned = planBakes(prepareFrame(s, env), env);
-        final plan = planned.plan;
+        final prepared = prepareFrame(s, env);
+        final plan = planBakes(prepared, env);
         if (plan != null) {
           check(
             plan.start >= env.covStart &&
@@ -240,7 +248,7 @@ void main() {
           ),
           null => null,
         };
-        final committed = applyBake(planned.state, env, measured);
+        final committed = applyBake(prepared, env, measured);
         final next = committed.state;
         if (plan != null) {
           bakeEdges++;
@@ -260,6 +268,47 @@ void main() {
         }
         final violations = invariantViolations(next);
         check(violations.isEmpty, violations.join('; '));
+        // Retirement, stated without the core's own predicate so it is a real
+        // net: no segment prepareFrame hands on may be past the eviction
+        // margin, nor content-stale with no sample left inside the window at
+        // or below the horizon. The latter is the case that matters: such a
+        // segment blits frozen pixels in the horizon zone forever, because the
+        // sweep could only drop it, never re-bake it.
+        //
+        // Kept segments only. The other direction (a fresh segment must not be
+        // retired) is not expressible this way: prepareFrame also drops
+        // off-view segments on a config bump, so "dropped implies stale" is
+        // false by design. segmented_cache_retire_test pins that direction.
+        bool pastMargin(SegmentMeta m) =>
+            m.end < env.covStart - kSegmentEvictionMargin * env.targetSpan ||
+            m.start > env.covEnd + kSegmentEvictionMargin * env.targetSpan;
+        bool contentStale(SegmentMeta m) =>
+            !_sameKey(m.destructiveKey, prepared.destructiveKey) ||
+            !_sameKey(m.remapKey, prepared.remapKey) ||
+            (m.gh - prepared.gh).abs() > 0.1 ||
+            m.dpr != prepared.dpr ||
+            math.max(
+                  (1 - (m.end - m.start) * env.pps / m.contentW).abs(),
+                  (1 - (m.yMax - m.yMin) / (input.yMax - input.yMin)).abs(),
+                ) >
+                kMaxSegmentDrift;
+        bool noRefreshableSample(SegmentMeta m) =>
+            math.min(m.end, math.min(input.bakeableSamples, env.covEnd)) <=
+            math.max(m.start, env.covStart);
+        bool shouldRetire(SegmentMeta m) =>
+            m.end > env.covStart &&
+            m.start < env.covEnd &&
+            contentStale(m) &&
+            noRefreshableSample(m);
+        for (final m in prepared.segments) {
+          check(
+            !pastMargin(m) && !shouldRetire(m),
+            'prepareFrame kept [${m.start},${m.end}) '
+            '(pastMargin=${pastMargin(m)} shouldRetire=${shouldRetire(m)}) '
+            'at win=[${env.covStart},${env.covEnd}) '
+            'horizon=${input.bakeableSamples}',
+          );
+        }
         // Segments the frame dropped are gone from the state, and every
         // surviving segment's texture id is unique -- the shell reconciles its
         // texture map against exactly this list (see _reconcileTextures), so a

@@ -738,6 +738,35 @@ void main() {
         onFrameCanvas: true,
       ));
     });
+
+    test('a stale segment the receded horizon fully overtakes stops blitting '
+        'and vector-draws instead', () {
+      // Two 50-sample tiles at 4 px/sample: [0,50) and [50,100), baked under
+      // yMax 100. Then the horizon recedes to 50 AND the fold widens to 140,
+      // so [50,100) is y-drift-stale with no sample left at or below the
+      // horizon. The sweep could only drop it, so prepareFrame must: leaving
+      // it blits frozen pixels under the old fold forever.
+      for (var i = 0; i < 3; i++) {
+        h.paint(viewStart: 0, viewSpan: 100, totalSamples: 200, yMax: 100);
+      }
+      expect(h.cache.debugLastRaster!.blits, hasLength(2));
+
+      h.paint(
+        viewStart: 0,
+        viewSpan: 100,
+        totalSamples: 200,
+        bakeableSamples: 50,
+        yMax: 140,
+      );
+      // [0,50) is refreshable and wins the sweep; [50,100) is retired, and
+      // its range vector-draws as a gap.
+      expect(h.bakes.single.start, 0);
+      expect(h.bakes.single.end, 50);
+      final raster = h.cache.debugLastRaster!;
+      expect(raster.blits.map((b) => b.seg.start), isNot(contains(50)));
+      expect(raster.gaps.single.start, 50);
+      expect(raster.gaps.single.end, 100);
+    });
   });
 
   group('SegmentedGraphCache fold window', () {
@@ -1313,7 +1342,9 @@ void main() {
       final base = h.cache.debugLastRaster!.blits.first;
 
       // Halve the Y range with no re-bake: every tile is now a 2x vertical
-      // stretch, so it must blit twice as tall and twice as far above.
+      // stretch, so it must blit twice as tall. Its top content row (the
+      // baked yMax, 100) now sits a full plot height ABOVE the view, so dy is
+      // driven by that offset, not by scaling the baked dy.
       h.paint(
         viewStart: 0,
         viewSpan: 400,
@@ -1325,8 +1356,55 @@ void main() {
         (b) => b.seg.start == base.seg.start,
       );
       expect(stretched.dh, closeTo(base.dh * 2, 0.01));
+      expect(stretched.dy, closeTo(-100 - kSegmentImagePad * 2, 0.01));
       expect(stretched.dx, closeTo(base.dx, 0.001));
       expect(stretched.dw, closeTo(base.dw, 0.001));
+    });
+
+    test('the blit pads scale with the content, and the source rect is in '
+        'physical px', () {
+      const hPad = 40.0;
+      const vPad = 4.0;
+      const dpr = 2.0;
+      // Bake at dpr 2 (texture in physical px) under an identity mapping, so
+      // the dest rect is logical px and the source rect is not.
+      for (var i = 0; i < 3; i++) {
+        h.paint(
+          viewStart: 0,
+          viewSpan: 400,
+          totalSamples: 400,
+          hPad: hPad,
+          vPad: vPad,
+          dpr: dpr,
+        );
+      }
+      final base = h.cache.debugLastRaster!.blits.first;
+      final contentW = base.seg.contentW;
+      // Dropping `* dpr` here would silently halve the sampled region on every
+      // retina device.
+      expect(base.sw, closeTo((contentW + 2 * hPad) * dpr, 0.001));
+      expect(base.sh, closeTo((100 + 2 * vPad) * dpr, 0.001));
+      expect(base.dw, closeTo(contentW + 2 * hPad, 0.001));
+      expect(base.dh, closeTo(100 + 2 * vPad, 0.001));
+
+      // Widen the x-axis only: xs = 400/410, ys = 1. Both pad offsets must
+      // ride xs; a pad added unscaled would be off by hPad*(1-xs) px.
+      h.paint(
+        viewStart: 0,
+        viewSpan: 410,
+        totalSamples: 400,
+        hPad: hPad,
+        vPad: vPad,
+        dpr: dpr,
+      );
+      final scaled = h.cache.debugLastRaster!.blits.firstWhere(
+        (b) => b.seg.start == base.seg.start,
+      );
+      const xs = 400 / 410;
+      expect(scaled.dw, closeTo((contentW + 2 * hPad) * xs, 0.01));
+      expect(scaled.dx, closeTo(base.seg.start * xs - hPad * xs, 0.01));
+      expect(scaled.dh, closeTo(base.dh, 0.001));
+      expect(scaled.dy, closeTo(base.dy, 0.001));
     });
 
     test('a destructiveKey mismatch drops the segment from the blit list, not '
