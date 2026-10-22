@@ -1242,7 +1242,10 @@ void main() {
         const xs = 1.0;
         expect(b.seg.contentW, closeTo(200, 0.001));
         expect(b.dx, closeTo(b.seg.start * 1.0 - kSegmentImagePad * xs, 0.001));
-        expect(b.dw, closeTo((b.seg.contentW + 2 * kSegmentImagePad) * xs, 0.001));
+        expect(
+          b.dw,
+          closeTo((b.seg.contentW + 2 * kSegmentImagePad) * xs, 0.001),
+        );
         // Identity in y too: an unbaked-value drift of zero means the
         // vertical scale is 1, so the destination height is the plot plus
         // pads, and the top content row sits at y = 0.
@@ -1273,8 +1276,9 @@ void main() {
         yMax: 50,
         bakeableSamples: 400,
       );
-      final stretched = h.cache.debugLastRaster!.blits
-          .firstWhere((b) => b.seg.start == base.seg.start);
+      final stretched = h.cache.debugLastRaster!.blits.firstWhere(
+        (b) => b.seg.start == base.seg.start,
+      );
       expect(stretched.dh, closeTo(base.dh * 2, 0.01));
       expect(stretched.dx, closeTo(base.dx, 0.001));
       expect(stretched.dw, closeTo(base.dw, 0.001));
@@ -1346,7 +1350,8 @@ void main() {
     });
   });
 
-  group('joinBlockEnd (envelope seam-join contract)', () {    // The polyline overshoots a segment end into the first block past it
+  group('joinBlockEnd (envelope seam-join contract)', () {
+    // The polyline overshoots a segment end into the first block past it
     // (the join block), and that block must reduce over its FULL natural
     // range so the join vertex equals the neighbor's vertex for the same
     // block. The old `end + blockSize` limit truncated the join block,

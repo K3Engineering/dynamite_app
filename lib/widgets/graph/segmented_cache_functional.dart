@@ -626,10 +626,12 @@ _RefreshPlan _planRefresh(List<SegmentMeta> work, int i, CacheEnv env) {
   }
   if ((end - s.start) * env.pps > 2 * kSegmentTargetPx &&
       end - env.targetSpan > s.start) {
-    return _clampPlan(
-      (from: i, to: i, start: end - env.targetSpan, end: end),
-      env,
-    );
+    return _clampPlan((
+      from: i,
+      to: i,
+      start: end - env.targetSpan,
+      end: end,
+    ), env);
   }
   int from = i;
   int start = s.start;

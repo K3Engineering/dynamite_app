@@ -90,10 +90,7 @@ CacheConfig _config({
 );
 
 void main() {
-  test(
-    'reachable cache states obey the invariants',
-    tags: 'slow',
-    () {
+  test('reachable cache states obey the invariants', tags: 'slow', () {
     final full = Platform.environment['MODEL_CHECK_TIER'] == 'full';
     final sw = Stopwatch()..start();
     final universe = full ? 16 : 12;

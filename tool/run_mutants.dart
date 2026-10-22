@@ -51,7 +51,8 @@ const mutants = <Mutant>[
   Mutant(
     name: 'refresh-horizon-clamp-removed',
     file: functional,
-    needle: '  end: math.min(p.end, math.min(env.covEnd, env.config'
+    needle:
+        '  end: math.min(p.end, math.min(env.covEnd, env.config'
         '.bakeableSamples)),',
     replacement: '  end: math.min(p.end, env.covEnd),',
     killedBy:
@@ -71,7 +72,8 @@ const mutants = <Mutant>[
   Mutant(
     name: 'gap-absorb-fold-clamp-removed',
     file: functional,
-    needle: '''  // An absorbed neighbor may straddle the left view edge; the fold-window
+    needle:
+        '''  // An absorbed neighbor may straddle the left view edge; the fold-window
   // invariant caps the bake at the window, dropping the neighbor's
   // out-of-fold fringe to an out-of-view gap.
   start = math.max(start, env.covStart);
@@ -128,9 +130,11 @@ const mutants = <Mutant>[
   Mutant(
     name: 'destructive-suppress-removed',
     file: functional,
-    needle: '  if (!_keyEq(s.destructiveKey, state.destructiveKey)) return '
+    needle:
+        '  if (!_keyEq(s.destructiveKey, state.destructiveKey)) return '
         'false;',
-    replacement: '  if (_keyEq(s.destructiveKey, state.destructiveKey)) return '
+    replacement:
+        '  if (_keyEq(s.destructiveKey, state.destructiveKey)) return '
         'false;',
     killedBy:
         'blit-geometry unit tests: inverting the test suppresses the '
