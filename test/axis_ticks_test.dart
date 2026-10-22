@@ -6,16 +6,20 @@ import 'package:dynamite_app/utils/nice_step.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
 /// Golden table for the X-axis clock-step ladder (timeStepCeil /
-/// majorPeriod / axisTickGrid), plus regressions for commit d035564's two
+/// majorPeriod / axisTicks), plus regressions for commit d035564's two
 /// graph fixes: the label-cache pass-eviction semantics and the edge-tick
 /// inclusion epsilon.
 ///
-/// Seams used (all rename-only or delegating; see graph_components.dart):
+/// Seams used (both rename/extract-only; see graph_components.dart):
 ///  * [timeStepCeil] / [majorPeriod] / [formatAxisTick]: private helpers made
 ///    public with @visibleForTesting;
-///  * [axisTickGrid]: delegates to the private _enumAxisLines (the same
-///    enumeration path the painters' labels and majors come from);
+///  * [axisTicks]: the pure tick grid the painters' labels and majors come
+///    from, extracted from _enumAxisLines so it needs no paragraph cache;
 ///  * [AxisLabelCache]: the renamed _LabelCache.
+/// Grid positions are irrelevant to these tests: the tick grid is checked in
+/// VALUE space, so the pixel mapping is the identity.
+double identity(double value) => value;
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -109,11 +113,13 @@ void main() {
               reason: '$reason: period * step must equal stepCeil(5 * step)',
             );
 
-            final ticks = axisTickGrid(
+            final ticks = axisTicks(
               0,
               span,
               step: step,
               stepCeil: timeStepCeil,
+              enumSlack: 0,
+              posOf: identity,
             );
             expect(ticks, isNotEmpty, reason: reason);
             for (final t in ticks) {
@@ -136,11 +142,13 @@ void main() {
           final reason = 'span=${span}s extent=${extent}px';
           final step = timeStepCeil(span * kMinXTickPx / extent);
           final dec = decimals(step);
-          final ticks = axisTickGrid(
+          final ticks = axisTicks(
             0,
             span,
             step: step,
             stepCeil: timeStepCeil,
+            enumSlack: 0,
+            posOf: identity,
           );
           final labels = [for (final t in ticks) formatAxisTick(t.value, dec)];
           for (int i = 1; i < labels.length; i++) {
@@ -165,11 +173,13 @@ void main() {
       // (yMin / step) == 6.000000000000001 in doubles, so .ceil() on it
       // starts the grid one tick high and drops the boundary tick. The
       // -1e-9 nudge keeps it.
-      final ticks = axisTickGrid(
+      final ticks = axisTicks(
         6 * 0.1,
         9 * 0.1,
         step: 0.1,
         stepCeil: niceStepCeil,
+        enumSlack: 0,
+        posOf: identity,
       );
       expect(ticks, isNotEmpty);
       expect(ticks.first.value, closeTo(6 * 0.1, 1e-12));
@@ -178,11 +188,13 @@ void main() {
     test('inclusion holds at both boundaries for fractional steps', () {
       // Same fp shape at a 0.2 step: yMin = 6 * 0.1 is not on the 0.2 grid
       // in doubles ((6*0.1)/0.2 == 3.0000000000000004), yMax = 6 * 0.2 is.
-      final ticks = axisTickGrid(
+      final ticks = axisTicks(
         6 * 0.1,
         6 * 0.2,
         step: 0.2,
         stepCeil: niceStepCeil,
+        enumSlack: 0,
+        posOf: identity,
       );
       expect(ticks.first.value, closeTo(6 * 0.1, 1e-12));
       expect(ticks.last.value, closeTo(6 * 0.2, 1e-12));

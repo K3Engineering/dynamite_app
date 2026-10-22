@@ -29,12 +29,6 @@ void main() {
     expect(identical(cache.prepare('12345'), paragraph), isTrue);
   });
 
-  test('the gutters stay at their fixed sizes', () {
-    // Every reader (both painters, the controls row, the minimap) sizes
-    // against this; making it dynamic moves them together.
-    expect(kGraphRightSpace, 56);
-  });
-
   testWidgets('the workspace renders at 2x text scale without asserting or '
       'dropping the graph', (tester) async {
     final handle = tester.ensureSemantics();

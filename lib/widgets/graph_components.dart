@@ -1400,11 +1400,20 @@ class _AxisLines {
   final bool clipLabels;
 }
 
-/// Enumerate one axis's grid lines and labels at tick [step], preparing each
-/// label paragraph. Labeled ticks live on the absolute grid k * step, so
-/// they (and the majors) hold still while the window slides; indexing by k
-/// rather than accumulating keeps the major test exact and makes the k == 0
-/// tick literally 0.0 (no "-0.000" snap needed at the zero label).
+/// One labeled tick of an axis grid, before any label paragraph exists: the
+/// grid value, its major flag, and (when the caller maps positions) its pixel
+/// position. The pure half of [_enumAxisLines].
+typedef AxisTick = ({double value, double pos, bool major});
+
+/// The pure tick grid at [step] over [windowStart]..[windowEnd] widened by
+/// [enumSlack]: nothing here prepares a label, so the enumeration can be
+/// pinned by tests without a paragraph cache. [_enumAxisLines] is the
+/// paragraph-attaching wrapper.
+///
+/// Labeled ticks live on the absolute grid k * step, so they (and the majors)
+/// hold still while the window slides; indexing by k rather than accumulating
+/// keeps the major test exact and makes the k == 0 tick literally 0.0 (no
+/// "-0.000" snap needed at the zero label).
 ///
 /// [enumSlack] extends the population past both window edges; X passes one
 /// tick plus the live edge's worst lead jitter ([_kLiveEdgeLeadMs]: a
@@ -1414,6 +1423,53 @@ class _AxisLines {
 /// its ticks are always in range. The inclusive end (step * 0.01) leaves
 /// room for fp noise: a line exactly at the snapped or slacked edge (Y's
 /// bounds) draws rather than dropping out.
+List<AxisTick> axisTicks(
+  double windowStart,
+  double windowEnd, {
+  required double step,
+  required double Function(double target) stepCeil,
+  required double enumSlack,
+  required double Function(double value) posOf,
+}) {
+  final period = majorPeriod(step, stepCeil);
+  final lo = windowStart - enumSlack;
+  final hi = windowEnd + enumSlack + step * 0.01;
+  return [
+    // The 1e-9 nudge keeps a tick exactly at the window edge from dropping
+    // out to fp error: yMin is itself snapped to a tick boundary (see
+    // [_computeYRange]), and (yMin / step).ceil() can land one step high.
+    for (int k = (lo / step - 1e-9).ceil(); k * step <= hi; k++)
+      (value: k * step, pos: posOf(k * step), major: k % period == 0),
+  ];
+}
+
+/// The pixel positions of the half-step minor lines over the same widened
+/// window as [axisTicks]. Minor lines live on the ODD half-step grid, indexed
+/// by j so the overlap test is exact: even multiples of minorStep are the
+/// labeled ticks themselves, so starting at the first odd j and stepping by 2
+/// skips them -- leaving emphasis to the tick lines, not a double stroke.
+List<double> axisMinorTicks(
+  double windowStart,
+  double windowEnd, {
+  required double step,
+  required double enumSlack,
+  required double Function(double value) posOf,
+}) {
+  final minorStep = step / 2;
+  final hi = windowEnd + enumSlack + step * 0.01;
+  final firstMinor = ((windowStart - enumSlack) / minorStep).ceil();
+  return [
+    for (
+      int j = firstMinor.isEven ? firstMinor + 1 : firstMinor;
+      j * minorStep <= hi;
+      j += 2
+    )
+      posOf(j * minorStep),
+  ];
+}
+
+/// [_AxisLines] for one axis at [step]: the pure grid above with a label
+/// paragraph prepared for each tick.
 _AxisLines _enumAxisLines(
   double windowStart,
   double windowEnd, {
@@ -1425,73 +1481,32 @@ _AxisLines _enumAxisLines(
   required AxisLabelCache labels,
   required Color textColor,
 }) {
-  final period = majorPeriod(step, stepCeil);
-  final lo = windowStart - enumSlack;
-  final hi = windowEnd + enumSlack + step * 0.01;
-  // Minor lines live on the ODD half-step grid, indexed by j so the overlap
-  // test is exact: even multiples of minorStep are the labeled ticks
-  // themselves, so starting at the first odd j and stepping by 2 skips them --
-  // leaving emphasis to the tick lines, not a double stroke.
-  final minorStep = step / 2;
-  final firstMinor = (lo / minorStep).ceil();
   return _AxisLines(
     [
-      // The 1e-9 nudge keeps a tick exactly at the window edge from dropping
-      // out to fp error: yMin is itself snapped to a tick boundary (see
-      // [_computeYRange]), and (yMin / step).ceil() can land one step high.
-      for (int k = (lo / step - 1e-9).ceil(); k * step <= hi; k++)
+      for (final t in axisTicks(
+        windowStart,
+        windowEnd,
+        step: step,
+        stepCeil: stepCeil,
+        enumSlack: enumSlack,
+        posOf: posOf,
+      ))
         _AxisTick(
-          k * step,
-          posOf(k * step),
-          labels.prepare(
-            labelFor(k * step),
-            color: textColor,
-            bold: k % period == 0,
-          ),
-          k % period == 0,
+          t.value,
+          t.pos,
+          labels.prepare(labelFor(t.value), color: textColor, bold: t.major),
+          t.major,
         ),
     ],
-    [
-      for (
-        int j = firstMinor.isEven ? firstMinor + 1 : firstMinor;
-        j * minorStep <= hi;
-        j += 2
-      )
-        posOf(j * minorStep),
-    ],
-    clipLabels: enumSlack > 0,
-  );
-}
-
-/// Test seam DELEGATING to [_enumAxisLines] (kept private): the enumerated
-/// tick grid (values + major flags) of a slack-free, snapped Y-style window,
-/// minus the pixel and paragraph machinery. So tests can pin the tick
-/// inclusion epsilon at the window edge and the k % period cadence through
-/// the production enumeration path, not a copy of it.
-@visibleForTesting
-List<({double value, bool major})> axisTickGrid(
-  double windowStart,
-  double windowEnd, {
-  required double step,
-  required double Function(double target) stepCeil,
-}) {
-  final labels = AxisLabelCache();
-  try {
-    final lines = _enumAxisLines(
+    axisMinorTicks(
       windowStart,
       windowEnd,
       step: step,
-      stepCeil: stepCeil,
-      enumSlack: 0,
-      labelFor: (tick) => '$tick',
-      posOf: (value) => value,
-      labels: labels,
-      textColor: const Color(0xFF000000),
-    );
-    return [for (final t in lines.ticks) (value: t.value, major: t.major)];
-  } finally {
-    labels.dispose();
-  }
+      enumSlack: enumSlack,
+      posOf: posOf,
+    ),
+    clipLabels: enumSlack > 0,
+  );
 }
 
 /// The X-axis grid lines ([_AxisLines]) at the smallest clock-nice step for

@@ -100,17 +100,18 @@ class GithubReleaseCatalog implements FirmwareCatalog {
     if (res.statusCode != 200) {
       throw StateError('Release check failed (HTTP ${res.statusCode})');
     }
+    // One malformed release must not silently vanish from the candidate list:
+    // a skipped entry can also be the NEWEST one, so the check would answer
+    // "no update" (or offer an older release) with nothing to show for it.
+    // Name the offending entry and fail the check instead, like every other
+    // malformed-response path here.
+    final decoded = jsonDecode(res.body) as List<Object?>;
     final releases = <GithubRelease>[];
-    // One malformed release in the list must not remove every later
-    // candidate from consideration: GitHub allows quirky field shapes on
-    // individual releases, so skip the bad entry and keep the valid ones.
-    // A list-level failure (not JSON, not a list) still throws into
-    // CheckFailed.
-    for (final r in jsonDecode(res.body) as List<Object?>) {
+    for (final (i, r) in decoded.indexed) {
       try {
         releases.add(GithubRelease.fromJson(r! as Map<String, Object?>));
-      } catch (_) {
-        // Tolerated: see above.
+      } catch (e) {
+        throw StateError('Release check failed: release #$i is malformed ($e)');
       }
     }
     return selectFirmwareTarget(releases, channel: channel);
