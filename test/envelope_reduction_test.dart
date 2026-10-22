@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/bucket_series.dart';
+import 'package:dynamite_app/models/gap_list.dart';
 
 /// Locks the documented invariants of the two block-reduction paths used by
 /// drawChannelEnvelope:
@@ -593,6 +594,167 @@ void main() {
     test('returns null when no sample in the window yields a value', () {
       final acc = ingest(randomData(30, 14));
       expect(windowedExtremes(acc.series, 5, 8, (_) => double.nan), isNull);
+    });
+  });
+
+  group('windowedDiffExtremes (gap-aware derivative axis)', () {
+    /// Ingest `all` plus a gap list, exactly as the live/session pipeline does:
+    /// the diff accumulator takes [ingestDiff]'s synthetic-zero rule, and the
+    /// exact evaluator suppresses the same samples with NaN. So a correct
+    /// result must equal the brute-force min/max over the NON-synthetic
+    /// samples — synthetic zeros are never real readings.
+    ({
+      BucketSeries buckets,
+      GapList gaps,
+      double Function(int) sampleAt,
+      List<double> drawn,
+    })
+    wire(List<int> all, List<(int, int)> gapRanges) {
+      // The buckets must aggregate the DIFF series: the accumulator takes
+      // ingestDiff's synthetic-zero rule (sample 0 and every gap-adjacent
+      // sample), which is precisely what the function under test reasons
+      // about.
+      final acc = BucketAccumulator(bucketSize: bs, numBuckets: all.length);
+      final gaps = GapList();
+      for (final (s, e) in gapRanges) {
+        gaps.append(s, e); // inputs must already be sorted/disjoint
+      }
+      for (int i = 0; i < all.length; i++) {
+        acc.add(
+          i,
+          ingestDiff(
+            sampleIndex: i,
+            value: all[i],
+            prevValue: i == 0 ? all[i] : all[i - 1],
+            gaps: gaps,
+          ),
+        );
+      }
+      final drawn = <double>[];
+      for (int j = 0; j < all.length; j++) {
+        // Mirror GraphDataSource.diffDefinedAt: j-1 must exist and neither
+        // side may be held (gap) data.
+        final defined = j >= 1 && !gaps.contains(j) && !gaps.contains(j - 1);
+        if (defined) drawn.add((all[j] - all[j - 1]).toDouble());
+      }
+      return (
+        buckets: acc.series,
+        gaps: gaps,
+        // Same shape as the painter's evaluator, but indexed absolutely so it
+        // can be called at any j (the painter clamps j >= 1 upstream).
+        sampleAt: (j) => j >= 1 && !gaps.contains(j) && !gaps.contains(j - 1)
+            ? (all[j] - all[j - 1]).toDouble()
+            : double.nan,
+        drawn: drawn,
+      );
+    }
+
+    List<int> randomData(int n, int seed) {
+      final rng = math.Random(seed);
+      return List<int>.generate(n, (_) => rng.nextInt(2001) - 1000);
+    }
+
+    void expectExact(
+      ({
+        BucketSeries buckets,
+        GapList gaps,
+        double Function(int) sampleAt,
+        List<double> drawn,
+      })
+      w,
+      int start,
+      int end, {
+      required String label,
+    }) {
+      final ext = windowedDiffExtremes(
+        w.buckets,
+        start,
+        end,
+        w.sampleAt,
+        w.gaps,
+      );
+      // The reference is the brute force over samples the renderer actually
+      // draws in [start, end).
+      final expected = [
+        for (int j = start; j < end; j++)
+          if (w.sampleAt(j).isNaN) null else w.sampleAt(j),
+      ].nonNulls.toList();
+      if (expected.isEmpty) {
+        expect(ext, isNull, reason: label);
+        return;
+      }
+      expect(ext, isNotNull, reason: label);
+      expect(ext!.$1, expected.reduce(math.min), reason: '$label min');
+      expect(ext.$2, expected.reduce(math.max), reason: '$label max');
+    }
+
+    test('matches brute force with no gaps at all', () {
+      final all = randomData(300, 31);
+      final w = wire(all, const []);
+      for (final (s, e) in [(0, 300), (0, 120), (50, 300), (120, 250)]) {
+        expectExact(w, s, e, label: 'no gaps [$s, $e)');
+      }
+    });
+
+    test('synthetic gap-edge zeros never widen the range', () {
+      // One large single-sample gap at 60: the diff at 60 (predecessor held)
+      // and at 61 (sample 60 held) is synthetic zero, while the real data is
+      // a slow ramp far from zero. A bucket fold that ignored the gap would
+      // drag the min down to 0.
+      final all = [for (int i = 0; i < 200; i++) 1000 + i * 7];
+      final w = wire(all, const [(60, 61)]);
+      final ext = windowedDiffExtremes(w.buckets, 0, 200, w.sampleAt, w.gaps);
+      expect(ext, isNotNull);
+      expect(ext!.$1, 7, reason: 'the flat synthetic zero must not appear');
+      expect(ext.$2, 7);
+      expectExact(w, 0, 200, label: 'single gap');
+    });
+
+    test('gap-heavy windows stay exact (dense-scan shortcut)', () {
+      // A gap every 40 samples: 25 runs over a 1000-sample window, far past
+      // one run per eighth of the window's 100 buckets, so this drives the
+      // single-pass shortcut. Its result must be identical to brute force.
+      final all = randomData(1000, 32);
+      final w = wire(all, [for (int s = 40; s < 1000; s += 40) (s, s + 1)]);
+      for (final (s, e) in [(0, 1000), (0, 500), (37, 863), (900, 1000)]) {
+        expectExact(w, s, e, label: 'dense [$s, $e)');
+      }
+    });
+
+    test('short gaps merge into runs without changing the result', () {
+      // Adjacent one-sample gaps: the merge turns [10,12) and [11,13)'s
+      // neighbours into single runs (GapList itself merges adjacent appends),
+      // so a bucket straddling both is scanned exactly once with the same
+      // outcome as scanning each.
+      final all = randomData(120, 33);
+      final w = wire(all, const [(10, 11), (11, 12), (12, 13), (60, 61)]);
+      for (final (s, e) in [(0, 120), (0, 30), (5, 70)]) {
+        expectExact(w, s, e, label: 'merged [$s, $e)');
+      }
+      // The merged run really is one range, and it covers exactly the three
+      // gaps' samples plus their suppressed successors.
+      expect(w.gaps.rangesIn(0, 120).toList(), [(10, 13), (60, 61)]);
+    });
+
+    test('the merged-run cursor never skips a later run', () {
+      // Interleaves bucket-aligned runs: with the old per-bucket scan every
+      // bucket saw every run, so a buggy cursor that advanced too far would
+      // fold the LAST run's bucket instead of scanning it.
+      final all = randomData(400, 34);
+      final w = wire(all, [for (int s = 100; s < 400; s += 100) (s, s + 2)]);
+      expectExact(w, 0, 400, label: 'cursor');
+      // The final run's bucket must be scanned: sample 400 is outside, so
+      // the run [399, 401) only touches sample 399's diff.
+      expectExact(w, 380, 400, label: 'cursor tail');
+    });
+
+    test('a window wholly inside one gap has no drawn sample', () {
+      final all = randomData(100, 35);
+      final w = wire(all, const [(20, 60)]);
+      expect(
+        windowedDiffExtremes(w.buckets, 25, 55, w.sampleAt, w.gaps),
+        isNull,
+      );
     });
   });
 }

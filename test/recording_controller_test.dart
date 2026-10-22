@@ -54,6 +54,10 @@ void main() {
 
   (RecordingController, DataHub, ValueNotifier<bool>) wire({
     KvsSnapshot? deviceKvs,
+    // Set false when the test disposes the controller itself (a second
+    // dispose would trip ChangeNotifier's own assert instead of the one
+    // under test).
+    bool disposeOnTearDown = true,
   }) {
     final events = AppEvents();
     final hub = DataHub();
@@ -72,7 +76,7 @@ void main() {
     // In production a packet counter anchor precedes any samples (packets
     // precede samples); tests must satisfy the same invariant.
     hub.notePacketCounter(0);
-    addTearDown(recording.dispose);
+    if (disposeOnTearDown) addTearDown(recording.dispose);
     return (recording, hub, streaming);
   }
 
@@ -323,6 +327,45 @@ void main() {
       (stop as StopSessionSaved).sessionId,
     );
     expect(loaded.sampleCount, 4);
+  });
+
+  test(
+    'dispose while a session is in progress trips the debug assert, and does '
+    'not detach the finalization path',
+    () async {
+      final (recording, hub, _) = wire(disposeOnTearDown: false);
+      expect(start(recording), isA<StartSessionOk>());
+      feedFrames(hub, 2);
+
+      // Disposing here cannot finalize (dispose is synchronous and the
+      // controller owns no shutdown future), so the invariant is enforced
+      // instead of silently orphaning the writer mid-write.
+      expect(recording.dispose, throwsA(isA<AssertionError>()));
+
+      // Release is still driven by stopSession — the path the app uses. The
+      // assert fired but the lifecycle was left intact, so the run finalizes
+      // normally rather than being lost.
+      expect(recording.sessionInProgress, isTrue);
+      expect(await recording.stopSession(), isA<StopSessionSaved>());
+    },
+  );
+
+  test('dispose from idle is the normal path and does not assert', () async {
+    final (recording, hub, _) = wire(disposeOnTearDown: false);
+    expect(
+      recording.dispose,
+      returnsNormally,
+      reason: 'app-lifetime teardown disposes an idle controller',
+    );
+
+    // A completed lifecycle returns to idle, where dispose is legal again.
+    final (second, secondHub, _) = wire(disposeOnTearDown: false);
+    expect(start(second), isA<StartSessionOk>());
+    feedFrames(secondHub, 2);
+    expect(await second.stopSession(), isA<StopSessionSaved>());
+    expect(second.dispose, returnsNormally);
+    // The first controller's writer never saw data: nothing to finalize.
+    expect(await recording.stopSession(), isA<StopSessionRefused>());
   });
 
   test(
