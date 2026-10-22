@@ -96,26 +96,17 @@ class KvsFlashTransport {
     return _snapshot = KvsSnapshot(factory: factory, user: user);
   }
 
-  /// Apply one confirmed write to [user], keeping [_snapshot] consistent
-  /// even if a later op in the sequence throws: the next diff then
-  /// re-issues only the keys that didn't land, instead of re-issuing ops
-  /// for keys the device already applied and failing on their rejections.
-  ///
-  /// A transport exception (not a rejection) leaves [_snapshot] pre-op, so the
-  /// next save re-issues an op the device may have applied. Safe because
-  /// SET/DEL are idempotent and [readKvsSnapshot] adopts the device; the
-  /// residue is a leaked key, never a wrong deletion.
-  Future<void> _apply(
-    Map<String, String> user,
-    String key,
-    Future<bool> Function() op,
-    void Function() onSuccess,
-  ) async {
-    if (!await op()) {
+  /// SET [key] and throw unless the device accepted it.
+  Future<void> _set(String key, String value) async {
+    if (!await _client.set(kvsFolderUser, key, value)) {
       throw StateError('KVS write rejected for $key');
     }
-    onSuccess();
-    _snapshot = KvsSnapshot(factory: _snapshot.factory, user: user);
+  }
+
+  /// DEL [key]; a rejection means the key is already gone, which is what the
+  /// caller wants. DEL idempotency is the whole retry story: see [writeSlots].
+  Future<void> _delete(String key) async {
+    await _client.delete(kvsFolderUser, key);
   }
 
   /// Write the exact load-cell slot keys [lcKeys] (`lc0.cap`, ...) as a
@@ -123,37 +114,31 @@ class KvsFlashTransport {
   /// DEL slot keys the snapshot holds but [lcKeys] doesn't, leave everything
   /// else — the board half, unknown keys — untouched. All writes go to the
   /// User folder, where the slots live; the app never writes Factory.
-  /// Throws when the device rejects any write — the caller keeps its
-  /// pending edits. Without a prior read the snapshot is empty, so every
-  /// key is written and nothing is deleted.
+  ///
+  /// Throws when the device rejects a SET — the caller keeps its pending
+  /// edits. A retry re-issues the whole diff; every op is idempotent (SET
+  /// overwrites, DEL of a missing key is a rejection the transport absorbs),
+  /// so a partially applied save still converges. Without a prior read the
+  /// snapshot is empty, so every key is written and nothing is deleted.
   Future<void> writeSlots(Map<String, String> lcKeys) async {
     for (final key in lcKeys.keys) {
       if (!rigSlotKeys.contains(key)) {
         throw ArgumentError.value(key, 'lcKeys', 'not a slot key');
       }
     }
-    final user = Map<String, String>.of(_snapshot.user);
+    final user = _snapshot.user;
     for (final e in lcKeys.entries) {
       if (user[e.key] == e.value) continue;
-      await _apply(
-        user,
-        e.key,
-        () => _client.set(kvsFolderUser, e.key, e.value),
-        () => user[e.key] = e.value,
-      );
+      await _set(e.key, e.value);
     }
     // Reconcile: known slot keys the snapshot holds but the save doesn't
     // are deleted (a cleared slot, an abandoned partial write, a value the
     // lenient read refused to adopt — see RigSlots.fromKv).
     for (final key in user.keys.toList()) {
       if (!rigSlotKeys.contains(key) || lcKeys.containsKey(key)) continue;
-      await _apply(
-        user,
-        key,
-        () => _client.delete(kvsFolderUser, key),
-        () => user.remove(key),
-      );
+      await _delete(key);
     }
+    _snapshot = _snapshot.withUserSlots(lcKeys);
   }
 
   /// Delete the User-namespace calibration group from the last-read snapshot:
@@ -167,14 +152,9 @@ class KvsFlashTransport {
     if (keys.isEmpty) {
       throw StateError('no User calibration to revert');
     }
-    final user = Map<String, String>.of(_snapshot.user);
     for (final key in keys) {
-      await _apply(
-        user,
-        key,
-        () => _client.delete(kvsFolderUser, key),
-        () => user.remove(key),
-      );
+      await _delete(key);
     }
+    _snapshot = _snapshot.withoutUserCalGroup();
   }
 }

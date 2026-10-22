@@ -181,8 +181,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                 emphasized: true,
                 values: [
                   for (int ch = 0; ch < data.channels.length; ch++)
-                    // Both bounds fold inside peakOf (a decreasing board map
-                    // turns the raw maximum into the display minimum).
+                    // peakOf maps both bounds: the raw maximum is only the
+                    // peak for an ascending board map (see its doc).
                     switch (data.channelExtremes(ch)) {
                       final ext? => data.converterFor(ch).peakOf(unit, ext),
                       null => null,

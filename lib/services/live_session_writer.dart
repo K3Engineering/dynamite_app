@@ -218,9 +218,8 @@ class LiveSessionWriter {
   /// The session id, null until data exists (no artifact without data).
   String? get sessionId => _run?.id;
 
-  /// The session's origin, latched on the first [appendData]: the device
-  /// counter at the session's first sample (hub-absolute index + the
-  /// counter there); null before the first append.
+  /// The device counter at the session's first sample; null before the first
+  /// append. Latched from the anchor on the first [appendData].
   int? _ssnOrigin;
 
   /// The device counter at the session's first sample; null before the first

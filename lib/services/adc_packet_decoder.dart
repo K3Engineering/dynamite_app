@@ -110,6 +110,15 @@ class AdcPacketDecoder {
     _prev = (sampleCount: (count + n) & 0xFFFF, rxUs: rxUs);
     if (paused) return;
 
+    // TODO(ssn): dropping the reported loss from the recorded stream (the gap
+    // is injected above, BEFORE this start index, so the batch never contains
+    // it) makes a recording the RECEIVED stream: `ssn_origin + row` trails the
+    // device counter by the cumulative dropped count, and rows /
+    // sample_rate_hz under-reports elapsed time. Nothing downstream reads
+    // `ssn` today, so the CSV documents that contract instead (see
+    // csv_export.dart). Making it exact means taking startIdx before
+    // addDroppedFrames, which also needs RecordingController to accept a
+    // slice larger than the ring (the writer's backpressure latch).
     final int startIdx = hub.totalSamples;
 
     // Anchor the counter to the sink timeline (after gap injection). The

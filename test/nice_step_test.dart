@@ -21,13 +21,13 @@ void main() {
       expect(niceStepCeil(0.5), 0.5);
     });
 
-    test('non-positive or non-finite targets fall back to a 1.0 step', () {
-      // A degenerate plot window (zero span, a broken fold) reaches here from
-      // mid-paint; log()/pow() would throw there.
-      expect(niceStepCeil(0), 1.0);
-      expect(niceStepCeil(-5), 1.0);
-      expect(niceStepCeil(double.nan), 1.0);
-      expect(niceStepCeil(double.infinity), 1.0);
+    test('non-positive or non-finite targets throw', () {
+      // No meaningful ladder rung exists for a degenerate span; drawing a
+      // plausible axis for a broken fold hides the bug.
+      expect(() => niceStepCeil(0), throwsArgumentError);
+      expect(() => niceStepCeil(-5), throwsArgumentError);
+      expect(() => niceStepCeil(double.nan), throwsArgumentError);
+      expect(() => niceStepCeil(double.infinity), throwsArgumentError);
     });
   });
 

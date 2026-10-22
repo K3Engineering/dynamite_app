@@ -117,12 +117,26 @@ enum DisplayUnit {
   }
 
   /// Decimals needed to resolve the 1/2/5 x 10^k tick step [tickStep] (in rung
-  /// units); the nudge absorbs floating-point error in the log. Clamped to
-  /// what [double.toStringAsFixed] accepts (a tick step below ~1e-20 in rung
-  /// units is degenerate); non-finite or non-positive input yields 0.
+  /// units); the nudge absorbs floating-point error in the log. [tickStep]
+  /// must be finite and positive (see [niceStepCeil]); a step needing more
+  /// than 20 digits is outside what [double.toStringAsFixed] accepts.
   static int axisDecimalsFor(double tickStep) {
-    if (!tickStep.isFinite || tickStep <= 0) return 0;
-    return (-(math.log(tickStep) / math.ln10 + 1e-9).floor()).clamp(0, 20);
+    if (!tickStep.isFinite || tickStep <= 0) {
+      throw ArgumentError.value(
+        tickStep,
+        'tickStep',
+        'must be finite and positive',
+      );
+    }
+    final decimals = -(math.log(tickStep) / math.ln10 + 1e-9).floor();
+    if (decimals > 20) {
+      throw ArgumentError.value(
+        tickStep,
+        'tickStep',
+        'needs more than 20 decimals to resolve',
+      );
+    }
+    return decimals < 0 ? 0 : decimals;
   }
 
   /// Parse a stored [DisplayUnit.name] (a preference, a session row) back to

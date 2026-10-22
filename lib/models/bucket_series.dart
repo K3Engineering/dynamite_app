@@ -52,14 +52,11 @@ class BucketAccumulator {
     required this.bucketSize,
     required int numBuckets,
     double? Function(int raw)? mvVOf,
-  }) : // Int32 headroom: the sums ring is Int32List, so a bucket whose total
-       // exceeds 2^31 - 1 wraps silently on store. The binding worst case is
-       // a DIFF bucket over alternating 24-bit rails: max |diff| per sample
-       // is 2^24 - 1, so a bucket holds at most
-       // bucketSize * (2^24 - 1). The ceiling 128 keeps that strictly inside
-       // int32: 128 * (2^24 - 1) = 2147483520 < 2147483647 = 2^31 - 1.
-       // A larger bucketSize would admit a wrap, so bumping kBucketSize past
-       // 128 must fail loudly here rather than corrupt sums in production.
+  }) : // The sums ring is Int32List: a bucket total above 2^31 - 1 wraps
+       // silently. The binding case is a DIFF bucket over alternating 24-bit
+       // rails, at most bucketSize * (2^24 - 1); 128 keeps that under int32
+       // (128 * (2^24 - 1) = 2147483520 < 2^31 - 1). Bumping kBucketSize past
+       // 128 must fail here, not corrupt sums in production.
        assert(
          bucketSize > 0 && bucketSize <= 128,
          'bucketSize must be in (0, 128] to keep diff-bucket sums in int32',
@@ -113,16 +110,6 @@ class BucketAccumulator {
       }
     }
     _samples = sampleIndex + 1;
-  }
-
-  /// Fast-forward past [count] samples without writing them: used for
-  /// dropouts longer than the ring, where the skipped range is materialized
-  /// nowhere. The caller must align the skip's END to a bucket boundary in
-  /// absolute index (DataHub.addDroppedFrames does), so the next [add]
-  /// triggers the at-bucket-start slot reset instead of merging into the
-  /// stale data the skipped range left behind.
-  void skip(int count) {
-    _samples += count;
   }
 
   /// Stop serving mV/V sums (see the class doc). Re-armed only by [reset]:
@@ -211,12 +198,6 @@ class ChannelIngest {
   /// which is both the live hub's stream-lifetime peak and a loaded
   /// session's whole-session peak.
   (int, int)? get extremes => valueBuckets.samples == 0 ? null : (_min, _max);
-
-  /// Fast-forward past [count] skipped samples (see [BucketAccumulator.skip]).
-  void skip(int count) {
-    valueBuckets.skip(count);
-    diffBuckets.skip(count);
-  }
 
   /// Restart both accumulators (new stream / reload).
   void reset() {
@@ -475,8 +456,8 @@ List<(int, int)> _mergeRuns(List<(int, int)> runs) {
 /// Buckets containing a synthetic zero are scanned exactly instead; real
 /// diff-0 samples elsewhere still fold.
 ///
-/// Cost is O(window), not O(buckets × gaps): the synthetic runs are merged
-/// once and walked by a forward cursor. Windows dense with gaps scan once.
+/// Cost is O(buckets + dirty buckets x bucketSize): the merged runs are
+/// walked by a forward cursor, and clean buckets fold from their aggregates.
 (double, double)? windowedDiffExtremes(
   BucketSeries buckets,
   int start,
@@ -507,19 +488,6 @@ List<(int, int)> _mergeRuns(List<(int, int)> runs) {
       if (v.isNaN) continue;
       fold(v);
     }
-  }
-
-  final int bs = math.max(1, buckets.bucketSize);
-  final int span = end - start;
-
-  // Below one dirty bucket per eight, the per-bucket path reads ~7/8 of the
-  // window from buckets; past that it would exact-scan most of the window
-  // through small holes anyway. The 8 is a performance guess, not a measured
-  // crossover: the fast path is correct at any threshold, so it only trades
-  // bucket reads for sample reads.
-  if (span > 0 && synthetic.length * 8 * bs > span) {
-    scanExact(start, end);
-    return found ? (mn, mx) : null;
   }
 
   // Buckets arrive in ascending sample order, so the cursor advances beyond

@@ -282,9 +282,8 @@ sealed class ChannelBoardCalibration {
   /// interpolation). Both null = "no factory data" is NOT valid here;
   /// callers check presence before calling.
   ///
-  /// Readings are not required to increase with setpoints: a decreasing
-  /// sequence is crossed ladder taps (a reworked board), not corrupt flash,
-  /// and consumers fold both mapped bounds so it cannot invert a range.
+  /// Reading order is checked at construction, not here: a saved snapshot
+  /// must stay loadable (see [CalibratedChannelBoard]).
   @useResult
   static bool channelDataIsValid(
     List<double> resistors,
@@ -379,6 +378,16 @@ class CalibratedChannelBoard extends ChannelBoardCalibration {
     final sp = setpoints;
     _sortedRaw = [for (final k in order) this.readings[k]];
     _sortedSetpoints = [for (final k in order) sp[k]];
+    // A polarized ladder reads the same direction as its setpoints. Reversed
+    // means the AFE/ADC polarity is inverted against the ladder (a misbuild or
+    // a bad cal fixture — crossed taps change the resistor-derived setpoints,
+    // not the reading order), which would map the raw maximum to the display
+    // minimum. Debug-only: a saved snapshot must still replay.
+    assert(
+      _sortedSetpoints.first < _sortedSetpoints.last,
+      'readings decrease with setpoints (polarity inverted against the '
+      'resistor ladder): ${_sortedRaw.first}..${_sortedRaw.last}',
+    );
   }
 
   /// Characterized ladder resistors ([kLadderResistorCount]).

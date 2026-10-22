@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -54,5 +55,26 @@ void main() {
     final hub = hubWith([0]);
     hub.addDroppedFrames(4);
     expect(hub.windowedStdDev(0, 1, hub.totalSamples), isNull);
+  });
+
+  test('stays exact at a 24-bit offset, where the unshifted formula '
+      'collapses', () {
+    // ~8.3e6 counts (near the positive rail) with one-count noise: the
+    // textbook E[x^2]-E[x]^2 cancels to ~0 here, so a sigma near 1 pins the
+    // shifted accumulation. The sequence is a fixed pseudo-random walk, not
+    // a 1-count alternation, so it also exercises an unknown true mean.
+    const offset = 8300000;
+    final rng = math.Random(7);
+    final values = [for (int i = 0; i < 4000; i++) offset + rng.nextInt(3) - 1];
+    final hub = hubWith(values);
+    final sigma = hub.windowedStdDev(0, 0, values.length)!;
+    // Population sigma of the sample, computed independently in double.
+    final mean = values.reduce((a, b) => a + b) / values.length;
+    final variance =
+        values.map((v) => (v - mean) * (v - mean)).reduce((a, b) => a + b) /
+        values.length;
+    expect(sigma, closeTo(math.sqrt(variance), 1e-6));
+    // The bug's signature: the old formula reads far below 1 count here.
+    expect(sigma, greaterThan(0.5));
   });
 }

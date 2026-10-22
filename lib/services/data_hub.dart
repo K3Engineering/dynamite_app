@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/foundation.dart';
 
 import '../models/device_profile.dart';
@@ -316,43 +318,22 @@ class DataHub extends ChangeNotifier
   /// Record [count] dropped samples (the decoder detected a gap in the packet
   /// counter): append the range to [gaps] and hold each channel's last value
   /// ([_currentRaw]) in the ring buffer so the stored data stays magic-free.
-  /// The timeline ALWAYS advances by the full [count] — silently capping at
-  /// [maxDataSz] used to shorten the timeline on a long dropout (a rebooting
-  /// device, or hours of lost packets on a flaky link), leaving session
-  /// durations false. Held samples are real ring-buffer time (they advance
-  /// [totalSamples]) but are NOT real readings, so they are never accumulated
-  /// into an in-progress tare average.
+  /// Injection is capped at [maxDataSz] so a reboot jump (a counter restart,
+  /// or a long silent link) can't turn one callback into an unbounded loop;
+  /// a longer loss therefore shortens the live timeline by the excess. Held
+  /// samples are real ring-buffer time (they advance [totalSamples]) but are
+  /// NOT real readings, so they are never accumulated into an in-progress
+  /// tare average.
   ///
-  /// The oldest samples of a drop longer than [maxDataSz] are skipped instead
-  /// of written: they land outside the retained window, so writing them would
-  /// be per-sample work for data nothing can read.
-  ///
-  /// TODO(perf): a reboot jump materializes up to [maxDataSz] + [bucketSize]
-  /// held samples synchronously inside one BLE callback, stalling the UI
-  /// isolate for a beat. If that becomes visible, chunk the injection across
-  /// frames.
+  /// TODO(perf): a reboot jump injects up to 600k held samples (x4 channels)
+  /// synchronously inside one BLE callback, stalling the UI isolate for a
+  /// beat. If that becomes visible, fast-forward the ring and bucket state
+  /// instead of looping per sample.
   @override
   void addDroppedFrames(int count) {
-    final int start = totalSamples;
-    // The full drop is a gap in the timeline regardless of how much is
-    // materialized below; recording batches read it back as sentinel frames.
-    gaps.append(start, start + count);
-    final int skip = count - maxDataSz;
-    if (skip >= bucketSize) {
-      // Round the skip DOWN to a bucket boundary in absolute index: the first
-      // materialized sample then starts a fresh bucket
-      // ([BucketAccumulator.add] resets its slot at a bucket start) instead of
-      // merging into slots the skipped range never wrote. Rounding down also
-      // keeps the whole retained window written — the remainder below one
-      // bucket is still materialized, and the newest maxDataSz samples (the
-      // retained window) then all come from this loop.
-      final int skipEnd = start + skip - (start + skip) % bucketSize;
-      totalSamples = skipEnd;
-      for (final ingest in _ingest) {
-        ingest.skip(skipEnd - start);
-      }
-    }
-    while (totalSamples < start + count) {
+    final int toInject = math.min(count, maxDataSz);
+    gaps.append(totalSamples, totalSamples + toInject);
+    for (int d = 0; d < toInject; d++) {
       for (int i = 0; i < kAdcChannelCount; ++i) {
         _addData(_currentRaw[i], i);
       }
@@ -586,11 +567,16 @@ class DataHub extends ChangeNotifier
     required int end,
   }) {
     _checkChannel(adcChannel);
+    // Resolve availability first: the LiveStats row asks for units the
+    // channel can't convert (a force unit with no cell), and a window fold
+    // per such channel per packet is pure waste.
+    final conv = converterFor(adcChannel).netMap(unit);
+    if (conv == null) return null;
     final ext = windowedRawExtremes(adcChannel, start, end);
     if (ext == null) return null;
-    // Both raw bounds fold (see [ChannelConverter.peakOf]): a decreasing
-    // board/excitation map turns the raw maximum into the display minimum.
-    return converterFor(adcChannel).peakOf(unit, ext);
+    // Both bounds map, then the larger wins: right whichever direction the
+    // board map runs (see [ChannelConverter.peakWith]).
+    return ChannelConverter.peakWith(conv, ext);
   }
 
   /// Instantaneous derivative (first difference) of [adcChannel] in unit/s;

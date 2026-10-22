@@ -99,10 +99,9 @@ String formatBytes(int bytes) {
     unit++;
   }
   if (unit == 0) return '$bytes B';
-  // Round first, roll over second: a value that ROUNDS to the unit base
-  // prints in the next unit ("1.0 MB"), never as "1024 kB". Only the
-  // integer-precision branch can reach this (sub-10 values keep one
-  // decimal, so "9.99 kB" rounds to "10.0 kB" and is fine as-is).
+  /// Round first, roll over second: a value that ROUNDS to the unit base
+  /// prints in the next unit ("1.0 MB"), never "1024 kB". Only the
+  /// integer-precision branch can reach this (sub-10 values keep one decimal).
   if (unit < units.length - 1 && value >= 999.5) {
     value /= 1024;
     unit++;

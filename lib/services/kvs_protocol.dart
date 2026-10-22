@@ -145,72 +145,52 @@ class KvsResponse {
   }
 }
 
-/// Parse the frame answering [request]. Null when it is a well-formed answer to
-/// some OTHER command (stale; drop it). Throws [FormatException] on a garbled
-/// frame or non-UTF-8 payload — undecodable bytes mean the link can't be
-/// trusted.
+/// Parse the frame answering [request]. Null when the frame does not answer
+/// [request] exactly: a stale answer, a duplicate, and garbage are all equally
+/// not this command's answer, and the wire has no transaction id to tell them
+/// apart. A garbled frame therefore surfaces as the live command's timeout —
+/// the one rule that cannot let a stale SET echo fail the command in flight.
+///
+/// Throws [FormatException] only for a frame that IS this command's answer but
+/// is malformed: an unknown status byte, a success echo without its payload,
+/// or a non-UTF-8 payload.
 @useResult
 KvsResponse? parseKvsResponse(String request, Uint8List frame) {
   final requestBytes = utf8.encode(request);
-  final status = switch (frame.isEmpty ? -1 : frame[0]) {
+  // Prefix-free match: anything that does not echo THIS request is dropped
+  // before its status byte matters (an empty frame included), so a late frame
+  // of any shape cannot fail the command in flight.
+  if (!_bytesAt(frame, 1, requestBytes)) return null;
+  final int echoEnd = 1 + requestBytes.length;
+  final bool exact = frame.length == echoEnd;
+  final status = switch (frame[0]) {
     0x31 => KvsStatus.ok, // '1'
     0x30 => KvsStatus.rejected, // '0'
     0x42 => KvsStatus.busy, // 'B'
     0x45 => KvsStatus.error, // 'E'
     final other => throw FormatException('KVS bad status byte: $other'),
   };
-  // Exact-echo match, prefix-free both ways so a stale answer to a longer or
-  // shorter command can't settle this pending one.
-  if (_bytesAt(frame, 1, requestBytes)) {
-    if (status == KvsStatus.ok &&
-        frame.length > 1 + requestBytes.length &&
-        frame[1 + requestBytes.length] == 0x3D /* = */ ) {
+  if (status == KvsStatus.ok) {
+    if (!exact && frame[echoEnd] == 0x3D /* = */ ) {
       return KvsResponse(
         status: status,
-        payload: utf8.decode(frame.sublist(1 + requestBytes.length + 1)),
+        payload: utf8.decode(frame.sublist(echoEnd + 1)),
       );
     }
-    if (status != KvsStatus.ok && frame.length == 1 + requestBytes.length) {
-      return KvsResponse(status: status, payload: '');
-    }
+    // A success answer must carry '=payload'; with nothing after the echo it
+    // is ours and malformed. A non-'=' trailing byte belongs to a longer
+    // request's echo (e.g. `GETFaa` pending, `1GETFaaX=...` arriving).
+    if (exact) throw FormatException('KVS garbled frame (${frame.length} B)');
+    return null;
   }
-  // Not this command's answer: well-formed means stale (drop), anything else
-  // is garbage (throw).
-  if (!_isWellFormedKvsFrame(frame)) {
+  if (exact) return KvsResponse(status: status, payload: '');
+  // Non-success answers echo the bare request, so '=' after our echo means a
+  // payload this status never carries: malformed. Any other trailing byte is
+  // a longer request's answer.
+  if (frame[echoEnd] == 0x3D /* = */ ) {
     throw FormatException('KVS garbled frame (${frame.length} B)');
   }
   return null;
-}
-
-/// Shaped like a KVS answer to SOME command: separates a stale frame (drop)
-/// from garbage on the wire (throw).
-bool _isWellFormedKvsFrame(Uint8List frame) {
-  // <Status:1><Cmd:3><Folder:1><Data…>; the data may be empty on a rejection.
-  if (frame.length < 5) return false;
-  final knownStatus =
-      frame[0] == 0x31 /* 1 */ ||
-      frame[0] == 0x30 /* 0 */ ||
-      frame[0] == 0x42 /* B */ ||
-      frame[0] == 0x45 /* E */;
-  final knownCommand =
-      _bytesAt(frame, 1, utf8.encode(kvsCmdGet)) ||
-      _bytesAt(frame, 1, utf8.encode(kvsCmdSet)) ||
-      _bytesAt(frame, 1, utf8.encode(kvsCmdDelete)) ||
-      _bytesAt(frame, 1, utf8.encode(kvsCmdIndex));
-  final knownFolder =
-      frame[4] == 0x46 /* F */ ||
-      frame[4] == 0x55 /* U */ ||
-      frame[4] == 0x53 /* S */;
-  if (!(knownStatus && knownCommand && knownFolder)) return false;
-  final hasSeparator = frame.indexOf(0x3D /* = */, 5) >= 0;
-  final isSet = _bytesAt(frame, 1, utf8.encode(kvsCmdSet));
-  // A success frame always carries '=payload' after the echoed request.
-  // Non-success frames echo the bare request, and a SET request itself
-  // contains '=' (key=value) — the separator test must account for that or
-  // a late SET answer landing while another command is pending reads as
-  // garbage instead of stale.
-  if (frame[0] == 0x31) return hasSeparator;
-  return isSet ? hasSeparator : !hasSeparator;
 }
 
 bool _bytesAt(Uint8List frame, int offset, List<int> bytes) {

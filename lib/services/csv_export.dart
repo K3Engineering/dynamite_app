@@ -2,6 +2,10 @@
 /// layout is defined by the emitter below and pinned byte-for-byte by
 /// test/csv_export_test.dart). Handing it to the OS is export_delivery.dart's
 /// job.
+///
+/// The body is the RECEIVED sample stream: one row per sample that reached the
+/// device-to-app path, `ssn` counting from `ssn_origin` with no allowance for
+/// loss. Unavailable values are blank cells, never sentinels or substitutes.
 library;
 
 import 'dart:convert';
@@ -175,9 +179,11 @@ class SessionCsvExport {
       ],
     ];
     for (int s = 0; s < data.sampleCount; s++) {
-      // ssn is unwrapped and gap-inclusive, so it's a plain arithmetic
-      // progression. A gap row blanks both quartets: the buffer holds a held,
-      // not real, value.
+      // ssn counts RECEIVED samples, not device time: a dropout the decoder
+      // reported before a batch never enters the recorded stream, so after any
+      // loss `ssn_origin + row` trails the device counter by the dropped
+      // count, and rows / sample_rate_hz under-reports elapsed time. A gap row
+      // (only in a salvaged file) blanks both quartets.
       final isGap = data.gaps.contains(s);
       rows.add([
         data.ssnOrigin + s,

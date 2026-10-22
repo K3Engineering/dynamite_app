@@ -102,6 +102,36 @@ void main() {
         0,
       );
     });
+
+    test('an unavailable unit is null without folding the window', () {
+      // The LiveStats row asks for a force unit on every channel, including
+      // ones with no load cell. With no board at all nothing converts, so the
+      // answer must be null and the window fold must never run: a spike in
+      // the ring would otherwise be read for a value that gets discarded.
+      final hub = DataHub();
+      final frame = Int32List(channels);
+      for (int i = 0; i < 10; i++) {
+        frame[0] = i * 100;
+        hub.addSampleFrame(frame);
+      }
+      for (final u in [
+        DisplayUnit.kN,
+        DisplayUnit.kgf,
+        DisplayUnit.mVv,
+        DisplayUnit.mV,
+      ]) {
+        expect(
+          hub.peakValue(0, u, start: 0, end: hub.totalSamples),
+          isNull,
+          reason: u.symbol,
+        );
+      }
+      // Raw is always available and still folds.
+      expect(
+        hub.peakValue(0, DisplayUnit.raw, start: 0, end: hub.totalSamples),
+        900,
+      );
+    });
   });
 
   group('windowed peak', () {
@@ -185,31 +215,27 @@ void main() {
     });
 
     test(
-      'a dropout longer than the ring advances the timeline by the full count '
-      'and leaves no readable stale slot',
+      'a dropout longer than the ring injects the ring capacity and caps the '
+      'timeline there',
       () {
         final hub = DataHub();
-        // A loud stream fills the ring, then one quiet sample arrives: the
-        // held value across the dropout is the quiet one, while most ring
-        // slots still hold 8e6 from one lap back. A skipped slot read as a
-        // reading would surface as an 8e6 peak in the window below.
-        feed(hub, frameOf(8000000), DataHub.maxDataSz);
         feed(hub, frameOf(1000000), 1);
         final int dropStart = hub.totalSamples;
 
-        // A reboot: a dropout twice the ring's length. Materializing the whole
-        // drop would be 1.2M held frames for a ring that keeps the newest 600k.
+        // A reboot: a dropout twice the ring's length. Injection is capped at
+        // the ring capacity, so the live timeline advances by that much only —
+        // materializing the excess would be per-sample work for data nothing
+        // can retain.
         const int drop = 2 * DataHub.maxDataSz;
         hub.addDroppedFrames(drop);
 
-        expect(hub.totalSamples, dropStart + drop);
-        // The whole drop is a gap, so recording batches write it as sentinels.
+        expect(hub.totalSamples, dropStart + DataHub.maxDataSz);
+        // The injected range is one gap; nothing past the cap moved.
         expect(hub.gaps.contains(dropStart), isTrue);
-        expect(hub.gaps.contains(dropStart + drop - 1), isTrue);
-        expect(hub.gaps.contains(dropStart + drop), isFalse);
-        // The retained window starts inside the drop, and every sample in it
-        // was written by this drop's held values: none reads a lap-old 8e6.
-        expect(hub.oldestSample, dropStart + drop - DataHub.maxDataSz);
+        expect(hub.gaps.contains(dropStart + DataHub.maxDataSz - 1), isTrue);
+        expect(hub.gaps.contains(dropStart + DataHub.maxDataSz), isFalse);
+        // The retained window is entirely held (gap) time at the held value.
+        expect(hub.oldestSample, dropStart);
         expect(
           hub.peakValue(
             0,
@@ -219,8 +245,7 @@ void main() {
           ),
           1000000,
         );
-        // Bucket bookkeeping kept pace with the timeline: a skipped range must
-        // leave no bucket short of samples or sums.
+        // Bucket bookkeeping kept pace with the timeline.
         expect(hub.valueBucketsFor(0).samples, hub.totalSamples);
         expect(hub.diffBucketsFor(0).samples, hub.totalSamples);
         expect(hub.currentValue(0, DisplayUnit.raw), 1000000);

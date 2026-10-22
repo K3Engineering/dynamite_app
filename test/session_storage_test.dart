@@ -696,6 +696,44 @@ void main() {
     });
   });
 
+  group('startSession header validation', () {
+    test('a channel count that disagrees with the device throws in release '
+        'too (an ArgumentError, not an assert)', () {
+      // The journal would say 3 while the writer packs 4-wide frames: a
+      // silently corrupt session on disk. This is a programming error at the
+      // one call site, so it fails loudly in every build mode.
+      expect(
+        () => SessionStore.instance.startSession(
+          (
+            name: 'bad width',
+            sampleRate: 1000,
+            channelCount: 3,
+            channelLabels: const ['a', 'b', 'c'],
+            tares: const [null, null, null],
+            calibration: [
+              for (int ch = 0; ch < 3; ch++)
+                const ChannelCalibration(board: null),
+            ],
+            visibleChannels: const [true, true, true],
+            displayUnit: DisplayUnit.kgf,
+            deviceInfo: const {},
+            deviceKvs: null,
+            recordedAt: '2026-07-29T14:05:32.000Z',
+          ),
+          sourceRingCapacity: DataHub.maxDataSz,
+          onWriteError: (_) {},
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.toString(),
+            'message',
+            contains('must equal kAdcChannelCount'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('file store listing', () {
     late IoSessionFilesBackend backend;
 

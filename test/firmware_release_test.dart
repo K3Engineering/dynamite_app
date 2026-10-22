@@ -1,6 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'package:dynamite_app/models/firmware_release.dart';
+import 'package:dynamite_app/services/firmware_catalog.dart';
 
 void main() {
   group('FirmwareVersion', () {
@@ -126,6 +131,66 @@ void main() {
       ], channel: FirmwareChannel.stable);
       expect(target?.tag, 'v0.4.0');
       expect(target?.sha256Url.path, endsWith('.bin.sha256'));
+    });
+  });
+
+  group('GithubReleaseCatalog.latestFor', () {
+    /// One well-formed GitHub release object, assets included.
+    Map<String, Object?> releaseJson(String tag) => {
+      'tag_name': tag,
+      'draft': false,
+      'prerelease': false,
+      'assets': [
+        for (final name in [
+          firmwareImageName(tag),
+          '${firmwareImageName(tag)}.sha256',
+        ])
+          {
+            'name': name,
+            'size': 1024,
+            'browser_download_url': 'https://github.com/x/$name',
+          },
+      ],
+    };
+
+    GithubReleaseCatalog catalogReturning(List<Object?> body) =>
+        GithubReleaseCatalog(
+          client: MockClient(
+            (request) async =>
+                http.Response(jsonEncode(body), 200, headers: {
+                  'content-type': 'application/json',
+                }),
+          ),
+        );
+
+    test('a malformed entry fails the check instead of vanishing', () async {
+      // The bad entry is the NEWEST: skipping it would answer "no update"
+      // (or offer the older release) with nothing surfaced.
+      final catalog = catalogReturning([
+        releaseJson('v0.5.0'),
+        {'tag_name': 42}, // malformed: tags are strings
+      ]);
+      await expectLater(
+        () => catalog.latestFor(channel: FirmwareChannel.stable),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            contains('release #1 is malformed'),
+          ),
+        ),
+      );
+    });
+
+    test('a well-formed list still selects the newest release', () async {
+      final catalog = catalogReturning([
+        releaseJson('v0.4.0'),
+        releaseJson('v0.5.0'),
+      ]);
+      expect(
+        (await catalog.latestFor(channel: FirmwareChannel.stable))?.tag,
+        'v0.5.0',
+      );
     });
   });
 }

@@ -1,16 +1,20 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/models/app_meta.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/device_info.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/session_catalog.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
+import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/app_events.dart';
+import 'package:dynamite_app/services/csv_export.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/session_files_io.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
@@ -94,6 +98,19 @@ void main() {
     }
     hub.commitBatch(0);
   }
+
+  /// One production ADC-feed packet (see [encodeAdcPacket]).
+  Uint8List packet({
+    required int counter,
+    required int samples,
+    required int value,
+  }) => encodeAdcPacket(
+    counter: counter,
+    frames: [
+      for (int s = 0; s < samples; s++)
+        encodeAdcFrame(List<int>.filled(kAdcChannelCount, value + s)),
+    ],
+  );
 
   test('startSession refuses while a tare is averaging', () {
     final (recording, hub, _) = wire();
@@ -329,20 +346,18 @@ void main() {
   });
 
   test(
-    'dispose while a session is in progress trips the debug assert, and does '
-    'not detach the finalization path',
-    () async {
+    'dispose during a session is a plain detach: the controller is '
+    'app-lifetime, so nothing asserts on a state it cannot fix',
+    () {
       final (recording, hub, _) = wire(disposeOnTearDown: false);
       expect(start(recording), isA<StartSessionOk>());
       feedFrames(hub, 2);
 
-      // dispose cannot finalize, so the invariant is enforced rather than
-      // silently orphaning the writer mid-write.
-      expect(recording.dispose, throwsA(isA<AssertionError>()));
-
-      // The lifecycle survives the assert, so the run still finalizes.
+      // The lifecycle is untouched: dispose only drops the listeners. (The
+      // writer's session lists as interrupted if the app never stops it, the
+      // same outcome as any other abandoned run.)
+      expect(recording.dispose, returnsNormally);
       expect(recording.sessionInProgress, isTrue);
-      expect(await recording.stopSession(), isA<StopSessionSaved>());
     },
   );
 
@@ -449,6 +464,57 @@ void main() {
       );
       expect(loaded.channels.first.length, 10);
       expect(loaded.channels[0][3], 1003);
+    },
+  );
+
+  test('a decoder-reported dropout is not part of the recorded stream: the '
+      'session is the RECEIVED stream, and its ssn stays a plain progression',
+      () async {
+      final (recording, hub, _) = wire();
+      // Drive the real decoder ordering: a packet, then a counter jump (which
+      // injects a gap into the hub), then the next packet.
+      final decoder = AdcPacketDecoder(hub);
+
+      expect(start(recording), isA<StartSessionOk>());
+      decoder.onDataPacket(packet(counter: 0, samples: 5, value: 100));
+      decoder.onDataPacket(packet(counter: 25, samples: 5, value: 200));
+      decoder.onDataPacket(packet(counter: 30, samples: 5, value: 300));
+
+      // The hub saw the loss (20 held samples between the two packets)...
+      expect(hub.totalSamples, 5 + 20 + 5 + 5);
+      expect(hub.gaps.isEmpty, isFalse);
+
+      final stop = await recording.stopSession();
+      final loaded = await SessionStore.instance.loadSession(
+        (stop as StopSessionSaved).sessionId,
+      );
+      // ...but the recorded stream is what arrived: 15 real samples, no
+      // held/sentinel span. The decoder injects the gap before taking the
+      // batch's start index, so recording never sees it.
+      expect(loaded.sampleCount, 15);
+      expect(loaded.gaps.isEmpty, isTrue);
+      // ssn counts received samples from the origin, so it stays a plain
+      // arithmetic progression and trails the device counter by the loss.
+      expect(loaded.ssnOrigin, 0);
+      final csv = buildSessionCsvArtifact(
+        sessionName: 'received stream',
+        recordedAtIso: '2026-07-29T14:05:32.000Z',
+        deviceInfo: const {},
+        data: loaded,
+        unit: DisplayUnit.raw,
+        appMeta: const AppMeta(version: '1.0.0', buildNumber: '1'),
+      );
+      final body = utf8
+          .decode(csv.bytes)
+          .split('\n')
+          .skipWhile((l) => l.startsWith('#'))
+          .skip(1) // the header row
+          .where((l) => l.isNotEmpty)
+          .toList();
+      expect(body, hasLength(15));
+      for (int i = 0; i < body.length; i++) {
+        expect(body[i].split(',').first, '${loaded.ssnOrigin + i}');
+      }
     },
   );
 

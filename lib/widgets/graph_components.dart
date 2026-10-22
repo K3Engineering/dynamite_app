@@ -34,12 +34,10 @@ export 'graph/segmented_cache.dart';
 /// the controls row in `GraphViewControls` can align its right edge with
 /// the painted plot/minimap edge.
 ///
-/// The graph does not honor `MediaQuery.textScaler`. Labels are painted at a
-/// fixed 13 px into these gutters and [_drawAxis] clips them to a measured
-/// strip, so scaling the text alone would clip rather than enlarge. Doing it
-/// properly makes both gutters measured state shared by the painters,
-/// `GraphViewControls` and the minimap; the readouts that matter (stats, peak,
-/// cursor values) are widgets and scale already.
+/// Fixed pixel gutters, so `MediaQuery.textScaler` is deliberately not
+/// honored: the axis labels paint at a fixed 13 px into a clipped strip.
+/// Scaling the text alone would clip it; doing it properly makes both gutters
+/// measured state shared by the painters, the controls row and the minimap.
 const double _kGraphLeftSpace = 8;
 const double kGraphRightSpace = 56;
 const double _kGraphBottomSpace = 24;
@@ -78,24 +76,23 @@ void _handleGraphPointerScroll(
 /// One block becomes one min/avg/max reduction and one polyline vertex. When
 /// zoomed in past 1 sample/pixel this clamps to 1 (one block per sample). The
 /// last block in a range is allowed to be short.
-int _blockSizeFor(double viewSamples, double graphW) {
+@visibleForTesting
+int blockSizeFor(double viewSamples, double graphW) {
   assert(
     graphW > 0,
     'graphW must be positive, got $graphW',
   ); // callers only paint into non-degenerate plot areas
-  // floor => >= 1 sample/block, so the polyline never has more vertices than
-  // pixels. The remainder (viewSamples % blockSize) lands in the short final block.
+  // floor => >= 1 sample/block, so the polyline's vertex count tracks the
+  // pixel width. The remainder (viewSamples % blockSize) lands in the short
+  // final block.
   final size = math.max(1, (viewSamples / graphW).floor());
   if (size < 2 * kBucketSize) return size;
-  // Bucket-align big blocks: block indices are anchored at absolute sample 0
-  // (see [_drawChannelEnvelope]), so a blockSize that is a whole multiple of
-  // the bucket size makes every COMPLETE block span whole buckets. Bucket
-  // reduction then equals the exact reduction and — critically for the
-  // immutable-reduction contract of [BlockReductionCache] — a complete
+  // Bucket-align big blocks: block indices are anchored at absolute sample 0,
+  // so a whole-multiple blockSize makes every COMPLETE block span whole
+  // buckets. Bucket reduction then equals the exact reduction, and a complete
   // block's min/max no longer depends on how full the newest bucket was when
-  // it was first reduced (the envelope used to extend into samples past the
-  // block end via the still-filling tail bucket). Rounding UP keeps the
-  // vertex-per-pixel bound above.
+  // it was first reduced (the immutable-reduction contract of
+  // [BlockReductionCache]). Rounding UP keeps the vertex bound.
   return ((size + kBucketSize - 1) ~/ kBucketSize) * kBucketSize;
 }
 
@@ -1180,24 +1177,16 @@ String formatAxisTick(double sec, int decimals) {
 // ---------------------------------------------------------------------------
 
 /// Bounded cache of laid-out axis-label paragraphs, one per painter. Owned by
-/// a host [State]: painters are recreated on rebuild, so a painter-owned cache
-/// would drop constantly. One painter paints at most once per frame, so a
-/// [beginPass] is a frame for its cache.
+/// a host [State] (painters are recreated on rebuild). One painter paints at
+/// most once per frame, so a [beginPass] is a frame for its cache.
 ///
-/// Scrolling x labels make the key space unbounded, so overflow must evict.
-/// An eviction only drops entries the current pass never asked for, and the
-/// disposal itself waits for the next [beginPass]: [_fitTimeLines] and
-/// [_drawAxis] read `longestLine` off the paragraphs of the pass they just
-/// enumerated, so disposing inside a pass handed them a collected native peer
-/// (the old whole-cache clear).
+/// Scrolling x labels make the key space unbounded, so overflow evicts only
+/// entries the current pass never asked for, and disposal waits for the next
+/// [beginPass]: [_fitTimeLines] and [_drawAxis] read `longestLine` off the
+/// paragraphs they just enumerated, so disposing inside a pass would hand
+/// them a collected native peer.
 ///
 /// Deliberately does not apply `MediaQuery.textScaler`; see [_kGraphLeftSpace].
-///
-/// Test seam: public as [AxisLabelCache] (same rename-only pattern as
-/// [joinBlockEnd] / [formatWindowSpan]) so tests can drive the pass/eviction
-/// semantics directly. A constructor parameter for [_limit] was considered but
-/// rejected: a knob on a painter-owned type invites misuse in prod, and a few
-/// hundred extra label paragraphs are cheap in tests.
 @visibleForTesting
 class AxisLabelCache {
   static const int _limit = 512;
@@ -1305,14 +1294,12 @@ YAxisRange _computeYRange(
   DisplayUnit unit,
   double plotHeight,
 ) {
-  // A non-finite extent (a broken conversion chain handing ±inf or NaN to
-  // the fold) must not carry into the tick math: fall back to a fixed
-  // window rather than throwing in log()/.floor() mid-paint.
-  final double lo = dataMin.isFinite ? dataMin : 0.0;
-  final double hi = dataMax.isFinite ? dataMax : lo + 1.0;
-  // Guard only the exactly-degenerate span (a no-data derivative fold): the
-  // SI-prefix rung keeps tiny-window labels readable, so there's no floor.
-  final double max = hi <= lo ? lo + 1.0 : hi;
+  // The only legitimate degenerate span is the no-data fold, which callers
+  // pass as 0,0: widen it to a unit window. Anything non-finite is a broken
+  // conversion upstream, so let it fail in the tick math rather than drawing
+  // a plausible axis for corrupt state.
+  final double lo = dataMin;
+  final double max = dataMax <= lo ? lo + 1.0 : dataMax;
 
   // 1/2/5 tick delta sized so ticks land at least [_kMinYTickPx] apart.
   final tickDelta = niceStepCeil((max - lo) * _kMinYTickPx / plotHeight);
@@ -1387,76 +1374,69 @@ class _AxisTick {
 class _AxisLines {
   const _AxisLines(this.ticks, this.minorPos, {required this.clipLabels});
   final List<_AxisTick> ticks;
-  final List<double> minorPos;
+  final Iterable<double> minorPos;
   final bool clipLabels;
 }
 
-/// One labeled tick of an axis grid, before any label paragraph exists: the
-/// grid value, its major flag, and (when the caller maps positions) its pixel
-/// position. The pure half of [_enumAxisLines].
+/// One labeled tick of an axis grid before any label paragraph exists: grid
+/// value, major flag, pixel position. The pure half of [_enumAxisLines].
 typedef AxisTick = ({double value, double pos, bool major});
 
 /// The pure tick grid at [step] over [windowStart]..[windowEnd] widened by
-/// [enumSlack]: nothing here prepares a label, so the enumeration can be
-/// pinned by tests without a paragraph cache. [_enumAxisLines] is the
-/// paragraph-attaching wrapper.
+/// [enumSlack], lazily ([_fitTimeLines] re-enumerates at candidate steps).
+/// Nothing here prepares a label, so tests can pin it without a cache.
 ///
 /// Labeled ticks live on the absolute grid k * step, so they (and the majors)
 /// hold still while the window slides; indexing by k rather than accumulating
-/// keeps the major test exact and makes the k == 0 tick literally 0.0 (no
-/// "-0.000" snap needed at the zero label).
+/// keeps the major test exact and makes the k == 0 tick literally 0.0.
 ///
 /// [enumSlack] extends the population past both window edges; X passes one
-/// tick plus the live edge's worst lead jitter ([_kLiveEdgeLeadMs]: a
-/// landing packet rewinds the wall-clock lead), so a rolling window
-/// micro-oscillating across an edge tick slides it in and out instead of
-/// toggling it per frame. Y snaps its range to tick boundaries and passes 0:
-/// its ticks are always in range. The inclusive end (step * 0.01) leaves
-/// room for fp noise: a line exactly at the snapped or slacked edge (Y's
-/// bounds) draws rather than dropping out.
-List<AxisTick> axisTicks(
+/// tick plus the live edge's worst lead jitter ([_kLiveEdgeLeadMs]), so a
+/// rolling window micro-oscillating across an edge tick slides it in and out
+/// instead of toggling it per frame. Y snaps its range to tick boundaries and
+/// passes 0. The inclusive end (step * 0.01) leaves room for fp noise, so a
+/// line exactly on the snapped or slacked edge draws.
+Iterable<AxisTick> axisTicks(
   double windowStart,
   double windowEnd, {
   required double step,
   required double Function(double target) stepCeil,
   required double enumSlack,
   required double Function(double value) posOf,
-}) {
+}) sync* {
   final period = majorPeriod(step, stepCeil);
   final lo = windowStart - enumSlack;
   final hi = windowEnd + enumSlack + step * 0.01;
-  return [
-    // The 1e-9 nudge keeps a tick exactly at the window edge from dropping
-    // out to fp error: yMin is itself snapped to a tick boundary (see
-    // [_computeYRange]), and (yMin / step).ceil() can land one step high.
-    for (int k = (lo / step - 1e-9).ceil(); k * step <= hi; k++)
-      (value: k * step, pos: posOf(k * step), major: k % period == 0),
-  ];
+  // The 1e-9 nudge keeps a tick exactly at the window edge from dropping out
+  // to fp error: yMin is itself snapped to a tick boundary (see
+  // [_computeYRange]), and (yMin / step).ceil() can land one step high.
+  for (int k = (lo / step - 1e-9).ceil(); k * step <= hi; k++) {
+    yield (value: k * step, pos: posOf(k * step), major: k % period == 0);
+  }
 }
 
-/// The pixel positions of the half-step minor lines over the same widened
-/// window as [axisTicks]. Minor lines live on the ODD half-step grid, indexed
-/// by j so the overlap test is exact: even multiples of minorStep are the
-/// labeled ticks themselves, so starting at the first odd j and stepping by 2
-/// skips them -- leaving emphasis to the tick lines, not a double stroke.
-List<double> axisMinorTicks(
+/// The pixel positions of the half-step minor lines over [axisTicks]' window,
+/// lazily (see [axisTicks]). Minor lines live on the ODD half-step grid,
+/// indexed by j so the overlap test is exact: even multiples of minorStep are
+/// the labeled ticks, so starting at the first odd j and stepping by 2 skips
+/// them.
+Iterable<double> axisMinorTicks(
   double windowStart,
   double windowEnd, {
   required double step,
   required double enumSlack,
   required double Function(double value) posOf,
-}) {
+}) sync* {
   final minorStep = step / 2;
   final hi = windowEnd + enumSlack + step * 0.01;
   final firstMinor = ((windowStart - enumSlack) / minorStep).ceil();
-  return [
-    for (
-      int j = firstMinor.isEven ? firstMinor + 1 : firstMinor;
-      j * minorStep <= hi;
-      j += 2
-    )
-      posOf(j * minorStep),
-  ];
+  for (
+    int j = firstMinor.isEven ? firstMinor + 1 : firstMinor;
+    j * minorStep <= hi;
+    j += 2
+  ) {
+    yield posOf(j * minorStep);
+  }
 }
 
 /// [_AxisLines] for one axis at [step]: the pure grid above with a label
@@ -1944,9 +1924,6 @@ EnvelopeSeries _taredEnvelopeSeries(
 /// range). Null when no channel covers a sample. Gap samples hold a previous
 /// real value, so they can never extend the range: no exclusion needed.
 /// Shared by the force graph's Y range and the minimap.
-///
-/// Folding both bounds is the only guard against a non-increasing board map,
-/// which [ChannelBoardCalibration.channelDataIsValid] accepts on purpose.
 (double, double)? _foldNetExtremes(
   GraphDataSource data,
   List<_ConvertedChannel> channels,
@@ -2008,7 +1985,7 @@ bool _paintEnvelopeDataLayer(
 
   double valueToY(double val) => gh - (val - yMin) * gh / (yMax - yMin);
 
-  final int blockSize = _blockSizeFor(viewSpan, gw);
+  final int blockSize = blockSizeFor(viewSpan, gw);
   final double blockPx = blockSize * gw / viewSpan;
 
   // The bake render clamps content to firstUsableSample (the ring can't

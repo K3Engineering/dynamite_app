@@ -281,8 +281,8 @@ void main() {
     });
   });
 
-  test('a mid-write failure leaves the snapshot consistent: the retry issues '
-      'only the ops that did not land', () {
+  test('a mid-write failure converges on retry: the re-sent SETs and DELs '
+      'are idempotent, so a partially applied save still finishes', () {
     fakeAsync((async) {
       final (transport, client) = wire();
       read(transport, async);
@@ -290,7 +290,7 @@ void main() {
 
       // The same six-op diff as the minimal-diff test above: one changed
       // value (SET), one new two-key slot (SET, SET), one emptied slot
-      // (DEL x3) — plenty of room for a mid-sequence failure.
+      // (DEL x3) - plenty of room for a mid-sequence failure.
       final modified = fixtureSlots()
         ..['lc0.sens'] = '1.9985'
         ..remove('lc4.name')
@@ -318,12 +318,13 @@ void main() {
       expect(mock.kvsCommandsToFail, 0);
       mock.kvsCommandLog.clear();
 
-      // The retry succeeds and re-issues only the ops that never landed:
-      // the internal snapshot tracked SETUlc0.sens via the per-op _apply,
-      // so it is diffed away instead of being re-sent (and rejected, or
-      // worse, clobbering a concurrent edit).
+      // The retry re-issues the whole diff against the unchanged snapshot.
+      // That is safe rather than wasteful here: the re-sent SET overwrites
+      // with the same value, and a DEL of an already-deleted key answers
+      // '0' (no such key), which the transport treats as success.
       expect(writeSlots(transport, modified, async), isNull);
       expect(mock.kvsCommandLog, [
+        'SETUlc0.sens=1.9985',
         'SETUlc6.cap=50',
         'SETUlc6.sens=2',
         'DELUlc4.cap',

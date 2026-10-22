@@ -248,5 +248,38 @@ void main() {
       expect(rePrepped.debugDisposed, isFalse);
       expect(cache.prepare('tick-0').longestLine, greaterThan(0));
     });
+
+    test('two interleaved painters never evict each other\'s live pass', () {
+      // The bug the per-painter split fixes: with ONE shared cache, painter A
+      // prepares its labels, then B's pass begins (clearing `_touched`) and
+      // overflows, evicting A's paragraphs while A is still measuring them.
+      // Two caches make the passes independent by construction; this pins
+      // that, plus the disposal timing within each cache.
+      final force = AxisLabelCache();
+      final deriv = AxisLabelCache();
+      addTearDown(force.dispose);
+      addTearDown(deriv.dispose);
+      const limit = 512;
+
+      force.beginPass();
+      final forceEarly = force.prepare('force-0');
+      deriv.beginPass();
+      for (int i = 0; i < limit + 10; i++) {
+        deriv.prepare('deriv-$i');
+      }
+
+      // A's paragraph is untouched by B's overflow: B has its own key space.
+      expect(forceEarly.debugDisposed, isFalse);
+      expect(forceEarly.longestLine, greaterThan(0));
+      expect(identical(force.prepare('force-0'), forceEarly), isTrue);
+
+      // A second pass on B (nothing touched) evicts B's stale set only, and
+      // disposal of that batch also waits for B's following pass.
+      deriv.beginPass();
+      deriv.prepare('deriv-fresh');
+      expect(forceEarly.debugDisposed, isFalse);
+      deriv.beginPass();
+      expect(forceEarly.longestLine, greaterThan(0));
+    });
   });
 }

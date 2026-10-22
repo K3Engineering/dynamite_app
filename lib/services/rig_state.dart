@@ -195,12 +195,11 @@ class RigState extends ChangeNotifier {
     }
     // A mismatched read-back and a state that moved under the in-flight write
     // (an edit, a re-read, or a link drop all replace the state object) are
-    // the same answer to the caller. The comparison is against the
-    // toKv→fromKv round-trip of the edits, so the serialization's documented
-    // normalizations (whitespace runs in names flatten, integral values lose
-    // their fraction) can't fail every save: passing the edits through the
-    // same conversion as the read-back makes the accepted form canonical.
-    if (verified != RigSlots.fromKv(edited.toKv()) || !identical(_doc, doc)) {
+    // the same answer to the caller. Compare in the DEVICE's serialized form:
+    // toKv is what the write sent, so the documented normalizations (whitespace
+    // runs in names flatten, integral values lose their fraction) can't fail
+    // every save on formatting alone.
+    if (!mapEquals(verified.toKv(), edited.toKv()) || !identical(_doc, doc)) {
       return false;
     }
     // Adopt the read-back's slots (with any normalization), the read-time

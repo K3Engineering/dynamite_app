@@ -467,9 +467,8 @@ class SessionStore {
     required void Function(Object error) onWriteError,
   }) {
     // A wrong width is a silently corrupt journal + frame stream on disk, so
-    // this is a real throw, not a debug assert (the same call as
-    // [GapList.append]): the one call site passes kAdcChannelCount, so
-    // reaching this is a programming error, not device state.
+    // a real throw, not a debug assert: the one call site passes
+    // kAdcChannelCount, so reaching this is a programming error.
     if (header.channelCount != kAdcChannelCount) {
       throw ArgumentError.value(
         header.channelCount,

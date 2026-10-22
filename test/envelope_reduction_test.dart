@@ -683,9 +683,9 @@ void main() {
       expectExact(w, 0, 200, label: 'single gap');
     });
 
-    test('gap-heavy windows stay exact (dense-scan shortcut)', () {
-      // 25 runs over 1000 samples: past one run per eighth of the window's
-      // 100 buckets, so this drives the single-pass shortcut.
+    test('gap-heavy windows stay exact', () {
+      // 25 runs over 1000 samples: the forward cursor must scan each dirty
+      // bucket and fold the clean ones, without losing a run.
       final all = randomData(1000, 32);
       final w = wire(all, [for (int s = 40; s < 1000; s += 40) (s, s + 1)]);
       for (final (s, e) in [(0, 1000), (0, 500), (37, 863), (900, 1000)]) {
@@ -720,6 +720,50 @@ void main() {
         windowedDiffExtremes(w.buckets, 25, 55, w.sampleAt, w.gaps),
         isNull,
       );
+    });
+
+    test('a sparse gap scans only the buckets it touches, not the window', () {
+      // The cost contract: clean buckets fold from their aggregates. One gap
+      // in a 5000-sample window must not drive an O(window) scan, which is what
+      // the deleted dense-gap shortcut could force.
+      final all = randomData(5000, 36);
+      final w = wire(all, const [(2400, 2401)]);
+      var calls = 0;
+      double counted(int j) {
+        calls++;
+        return w.sampleAt(j);
+      }
+
+      final ext = windowedDiffExtremes(w.buckets, 0, 5000, counted, w.gaps);
+      expect(ext, isNotNull);
+      // The window is 50 buckets; only the gap's bucket (plus the two partial
+      // edge buckets of foldBucketRange) is scanned per sample.
+      expect(calls, lessThan(4 * bs));
+
+      // And the answer still equals the brute-force fold.
+      final expected = [
+        for (int j = 0; j < 5000; j++)
+          if (!w.sampleAt(j).isNaN) w.sampleAt(j),
+      ];
+      expect(ext!.$1, expected.reduce(math.min));
+      expect(ext.$2, expected.reduce(math.max));
+    });
+
+    test('a run of gaps clustered at the window start does not force a '
+        'full-window scan', () {
+      // The pattern the deleted heuristic got wrong: 8 early gaps in a 50-bucket
+      // window tripped its threshold and exact-scanned ~90% clean samples.
+      final all = randomData(5000, 37);
+      final w = wire(all, [
+        for (int s = 100; s <= 800; s += 100) (s, s + 1),
+      ]);
+      var calls = 0;
+      windowedDiffExtremes(w.buckets, 0, 5000, (j) {
+        calls++;
+        return w.sampleAt(j);
+      }, w.gaps);
+      // Eight dirty buckets at most, well under the whole window.
+      expect(calls, lessThan(10 * bs));
     });
   });
 }

@@ -366,13 +366,9 @@ class SegmentedGraphCache {
   }
 
   /// Invariant check: [_segments] is ordered by [GraphSegment.start],
-  /// pairwise disjoint (gaps are fine), and every segment is non-empty.
-  /// The assert site in [_maintain] (below [_bakeOne] — the only entry point
-  /// that mutates the list) reaches this on every mutation path; promoted
-  /// and strengthened from the old overlap-only `_segmentsAreDisjoint` so
-  /// tests can assert the same planner invariant at arbitrary checkpoints
-  /// (empty segments would pin a zero-width tile in the list forever, and an
-  /// unordered list would break [_planRefresh]'s neighbor swallows).
+  /// pairwise disjoint (gaps are fine), and every segment is non-empty. The
+  /// assert in [_maintain] reaches this on every mutation path; public so
+  /// tests can check the planner invariant at arbitrary checkpoints.
   @visibleForTesting
   bool segmentsAreWellFormed() {
     for (int k = 0; k < _segments.length; k++) {

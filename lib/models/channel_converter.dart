@@ -61,10 +61,11 @@ class ChannelConverter {
   }
 
   /// The absolute-raw -> display-unit map, net of tare (see the class doc).
-  /// Monotone nondecreasing. A null tare means NO offset: the map itself
-  /// (zero is the map's own mV/V zero point, not zero counts). Null when
-  /// unavailable: a force unit on a channel with no assigned load cell, or
-  /// any converted unit with no board data.
+  /// Ascending for a normal board; the only descending case is the inverted
+  /// ladder the constructor rejects in debug. A null tare means NO offset:
+  /// zero is the map's own mV/V zero point, not zero counts. Null when
+  /// unavailable: a force unit with no load cell, or any converted unit with
+  /// no board data.
   double Function(double raw)? netMap(DisplayUnit unit) {
     if (unit == DisplayUnit.raw) return (raw) => raw - (tare ?? 0);
     final resolved = _boardAndScale(unit);
@@ -130,14 +131,20 @@ class ChannelConverter {
   /// One-shot [netMap] call.
   double? net(DisplayUnit unit, double raw) => netMap(unit)?.call(raw);
 
-  /// The peak of a raw-extremes pair in [unit]: folds BOTH bounds through
-  /// [netMap], because a non-increasing board map (reversed ladder readings,
-  /// which [ChannelBoardCalibration.channelDataIsValid] accepts on purpose)
-  /// maps the raw maximum to the display MINIMUM. Taking the raw `max` bound
-  /// unguarded prints the minimum as the peak. Null when the unit is
-  /// unavailable for the channel.
-  double? peakOf(DisplayUnit unit, (double, double) rawExtremes) {
-    final conv = netMap(unit);
+  /// The peak of a raw-extremes pair in [unit]: maps both bounds and returns
+  /// the larger, so the answer is right whichever direction the board map
+  /// runs (raw `max` is only the display maximum for an ascending map). Null
+  /// when the unit is unavailable for the channel.
+  double? peakOf(DisplayUnit unit, (double, double) rawExtremes) =>
+      peakWith(netMap(unit), rawExtremes);
+
+  /// [peakOf] for a caller that already resolved the map through [netMap]
+  /// (the live stats row resolves availability before folding a window).
+  @useResult
+  static double? peakWith(
+    double Function(double raw)? conv,
+    (double, double) rawExtremes,
+  ) {
     if (conv == null) return null;
     final lo = conv(rawExtremes.$1), hi = conv(rawExtremes.$2);
     return lo > hi ? lo : hi;

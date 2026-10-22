@@ -13,12 +13,10 @@ import 'kvs_protocol.dart';
 /// locked/streaming), so a timeout means the link is broken. [abort] fails all
 /// pending work; the client is spent afterwards (a new link builds a new one).
 ///
-/// A late answer for a timed-out command normally reads as stale and is
-/// dropped; only a byte-identical one settles the live command, which is safe
-/// because the wire has no transaction id (so it is indistinguishable) and
-/// SET/DEL are idempotent. A stale GET is caught by [RigState.saveToDevice]'s
-/// read-back compare. Discarding a frame per timed-out command cannot work:
-/// with no id it can eat the retry's own answer and cascade.
+/// A late answer for a timed-out command is normally stale and dropped; only a
+/// byte-identical one settles the live command, safe because the wire has no
+/// transaction id and SET/DEL are idempotent. Discarding a frame per timeout
+/// cannot work: with no id it can eat the retry's own answer.
 class KvsClient {
   KvsClient({
     required this.write,
