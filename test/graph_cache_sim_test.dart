@@ -57,7 +57,6 @@ class _Sim {
 
   final List<String> trace = [];
   final List<_Call> calls = [];
-  int bakesLifetime = 0;
 
   /// Quadratic ramp cresting before an instant drop (the device demo's
   /// sawtooth shape), plus a slow sine and the seeded spikes.
@@ -203,7 +202,6 @@ class _Sim {
         final isGap = identical(canvas, frameCanvas);
         calls.add((start: start, end: end, texW: texW, gap: isGap));
         if (!isGap) {
-          bakesLifetime++;
           // The value probe: extreme signal values this bake renders.
           double rLo = double.infinity, rHi = double.negativeInfinity;
           for (int i = start; i < math.min(end, totalSamples); i++) {
@@ -275,14 +273,12 @@ void main() {
         'bounds, then quiesce', () {
       for (var seed = 0; seed < 16; seed++) {
         final sim = _Sim(seed);
-        String log;
         try {
-          log = sim.run(220);
+          sim.run(220);
           // Tail: with everything static the sweep must finish and stay
           // finished -- any busy loop trips here.
-          final quiet = sim.settle();
           expect(
-            quiet,
+            sim.settle(),
             lessThan(60),
             reason: 'seed $seed never quiesced after static frames',
           );
@@ -290,11 +286,12 @@ void main() {
           debugPrint('FAILING SEED $seed; op trace:\n${sim.trace.join('\n')}');
           rethrow;
         }
-        expect(log, isNotEmpty);
       }
     });
 
     test('deterministic replay: same seed, same bake/gap trace', () {
+      // Not a cache property: it is what makes the "FAILING SEED n" log a
+      // replay, so a sim failure is reproducible from its printed trace.
       String traceOf(_Sim sim) {
         final out = StringBuffer();
         for (var f = 0; f < 150; f++) {

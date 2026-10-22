@@ -29,7 +29,7 @@ import 'segmented_cache_functional.dart';
 //
 // EVERY decision the cache makes lives in the functional core
 // (segmented_cache_functional.dart): geometry, staleness, bake planning,
-// blit/gap rect resolution. One frame is three pure transitions around one
+// blit/gap rect resolution. One frame is four pure transitions around one
 // impure measurement (see that file's header):
 //   prepareFrame -> planBakes -> [this file rasterizes] -> applyBake
 //   -> rasterPlan -> [this file draws]
@@ -48,9 +48,12 @@ import 'segmented_cache_functional.dart';
 // Quality invariant: a texture is only ever a vector render, never
 // resampled from another texture.
 //
-// Live-edge invariant: segments never end past a bake horizon
-// (SegmentViewConfig.bakeableSamples) that excludes the filling block and
-// horizon zone at the data edge; both vector-draw every frame instead.
+// Live-edge invariant: no BAKE ends past the bake horizon
+// (CacheConfig.bakeableSamples) that excludes the filling block and horizon
+// zone at the data edge; both vector-draw every frame instead. A segment
+// already baked may keep an end past a horizon that later receded under it --
+// its pixels exist and stay blittable -- so the invariant constrains bakes,
+// not the segment list (see [invariantViolations]).
 //
 // Fold-window invariant: a bake never covers samples outside the window the
 // frame's Y-range was folded from (the cache's covStart..covEnd, computed as
@@ -114,18 +117,18 @@ ui.Image _bakeImage(
 }
 
 /// The impure shell over the functional core (see both file headers): owns
-/// the textures (textureId -> ui.Image), executes the bake job [planBakes]
-/// emits, and rasterizes [rasterPlan].
+/// the textures (textureId -> ui.Image), executes the bake [planBakes]
+/// decides on, and rasterizes [rasterPlan].
 class SegmentedGraphCache {
   /// Null until the first [paint]: a fresh cache has no stamps to compare
   /// against, so "nothing yet" is the absence of a state rather than a
   /// stamped sentinel (see [prepareFrame]).
   CacheState? _state;
 
-  /// Textures keyed by [SegmentMeta.textureId]. Metas are plain values
-  /// (copies are harmless); the id is what names a texture.
-  /// [prepareFrame]/[planBakes] report superseded metas as drops; their
-  /// images are disposed here on the frame they drop out.
+  /// Textures keyed by [SegmentMeta.textureId]. Each frame reconciles this map
+  /// against the frame's segment list (see [_reconcileTextures]), so the map
+  /// and the state cannot drift apart and no drop list has to be threaded
+  /// out of the core.
   final Map<int, ui.Image> _images = {};
 
   /// Serial source for [SegmentMeta.textureId]; never reused, so a stale id
@@ -174,35 +177,39 @@ class SegmentedGraphCache {
   @useResult
   bool paint(Canvas canvas, SegmentViewConfig c) {
     final env = cacheEnvFor(c.config);
-    final prepared = prepareFrame(_state, env);
-    final plan = planBakes(prepared.state, env);
+    final planned = planBakes(prepareFrame(_state, env), env);
 
-    for (final m in [...prepared.drops, ...plan.drops]) {
-      _images.remove(m.textureId)?.dispose();
-    }
+    // The impure measurement: rasterize the bake the core decided on, filing
+    // the texture under the id that bake reports. Null when the frame is
+    // quiet: no texture and no serial advance.
+    final bake = switch (planned.plan) {
+      final BakePlan plan => (plan: plan, output: _executeBake(plan, env, c)),
+      null => null,
+    };
+    final committed = applyBake(planned.state, env, bake);
+    _state = committed.state;
+    _reconcileTextures(committed.state);
+    assert(invariantViolations(committed.state).isEmpty);
+    assert(_texturesMatchState(committed.state));
 
-    // The impure measurement: rasterize the bake the core decided on. The
-    // core never sees the texture, only the textureId it is filed under, so
-    // the serial only advances for a bake that produced one.
-    final job = plan.job;
-    final baked = job == null ? null : _executeBake(job, env, c);
-    final committed = applyBake(
-      prepared.state,
-      env,
-      plan,
-      baked?.contentW ?? 0,
-      baked == null ? 0 : _nextTextureId++,
-    );
-    if (baked != null) _images[committed.baked!.textureId] = baked.image;
-    final state = _state = committed.state;
-    assert(invariantViolations(state).isEmpty);
-    assert(_texturesMatchState(state));
-
-    final raster = rasterPlan(state, env);
+    final raster = rasterPlan(committed.state, env);
     debugLastRaster = raster;
-    _drawBlits(canvas, raster.blits, env);
+    _drawBlits(canvas, raster.blits);
     _drawGaps(canvas, raster.gaps, c);
-    return job != null;
+    return planned.plan != null;
+  }
+
+  /// Dispose every texture [state]'s segment list no longer names. A texture
+  /// is live iff a segment carries its id, so the state is the single source
+  /// of truth and a texture dropped anywhere in the core (eviction, generation
+  /// reset, splice) frees here, on that frame. [_executeBake] has already
+  /// filed the frame's own bake, whose id the committed segment carries.
+  void _reconcileTextures(CacheState state) {
+    final live = {for (final s in state.segments) s.textureId};
+    for (final id in _images.keys.toList()) {
+      if (live.contains(id)) continue;
+      _images.remove(id)!.dispose();
+    }
   }
 
   /// Debug-only: every segment owns a live texture and no texture is
@@ -215,14 +222,12 @@ class SegmentedGraphCache {
         _images.length == ids.length;
   }
 
-  /// Rasterize one [job] with the frame's render closure, sized to the
-  /// range's current on-screen width so its blit starts at scale ~1.
-  ({ui.Image image, double contentW}) _executeBake(
-    BakeJob job,
-    CacheEnv env,
-    SegmentViewConfig c,
-  ) {
-    final int texW = math.max(1, ((job.end - job.start) * env.pps).ceil());
+  /// Rasterize one [plan]'s range with the frame's render closure, sized to
+  /// the range's current on-screen width so its blit starts at scale ~1, and
+  /// file the texture under a fresh [BakeOutput.textureId]. The serial advances
+  /// only here, so every id belongs to a bake that produced a texture.
+  BakeOutput _executeBake(BakePlan plan, CacheEnv env, SegmentViewConfig c) {
+    final int texW = math.max(1, ((plan.end - plan.start) * env.pps).ceil());
     double contentW = texW.toDouble();
     final cc = c.config;
     final img = _bakeImage(
@@ -231,26 +236,22 @@ class SegmentedGraphCache {
       cc.dpr,
       (canvas) {
         canvas.translate(cc.hPad, cc.vPad);
-        contentW = c.render(canvas, job.start, job.end, texW);
+        contentW = c.render(canvas, plan.start, plan.end, texW);
       },
     );
-    return (image: img, contentW: contentW);
+    final output = (contentW: contentW, textureId: _nextTextureId++);
+    // Filed before the commit returns, so the very next reconcile (this frame)
+    // sees the new segment's texture as live rather than orphaned.
+    _images[output.textureId] = img;
+    return output;
   }
 
-  /// Blit resolved rects; clip is the view bounds horizontally and the
-  /// shared vPad band vertically (see [BlitRect]).
-  void _drawBlits(Canvas canvas, List<BlitRect> blits, CacheEnv env) {
+  /// Blit resolved rects (see [BlitRect] for what the fields hold).
+  void _drawBlits(Canvas canvas, List<BlitRect> blits) {
     final paint = Paint()..filterQuality = kSegmentFilterQuality;
     for (final b in blits) {
       canvas.save();
-      canvas.clipRect(
-        Rect.fromLTRB(
-          b.clipL,
-          -b.seg.vPad,
-          b.clipR,
-          env.config.gh + b.seg.vPad,
-        ),
-      );
+      canvas.clipRect(Rect.fromLTRB(b.clipL, b.clipB, b.clipR, b.clipT));
       canvas.drawImageRect(
         _images[b.seg.textureId]!,
         Rect.fromLTWH(0, 0, b.sw, b.sh),
@@ -265,20 +266,9 @@ class SegmentedGraphCache {
   void _drawGaps(Canvas canvas, List<GapRect> gaps, SegmentViewConfig c) {
     for (final g in gaps) {
       canvas.save();
-      // The floored coverage start can put a gap's left edge up to one
-      // sample-pixel left of the plot area; the translate keeps the content
-      // mapping exact, so the clip is what gets clamped.
-      final cc = c.config;
-      canvas.clipRect(
-        Rect.fromLTRB(
-          math.max(g.x, 0.0),
-          -cc.vPad,
-          math.min(g.x + g.w, cc.gw),
-          cc.gh + cc.vPad,
-        ),
-      );
+      canvas.clipRect(Rect.fromLTRB(g.clipL, g.clipB, g.clipR, g.clipT));
       canvas.translate(g.x, 0);
-      c.render(canvas, g.start, g.end, math.max(1, g.w.ceil()));
+      c.render(canvas, g.start, g.end, g.texW);
       canvas.restore();
     }
   }

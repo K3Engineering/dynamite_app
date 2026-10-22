@@ -33,6 +33,8 @@ class _Harness {
     int generation = 0,
     List<Object?> destructiveKey = const ['u'],
     List<Object?> remapKey = const ['k'],
+    double hPad = kSegmentImagePad,
+    double vPad = kSegmentImagePad,
   }) {
     calls.clear();
     final recorder = ui.PictureRecorder();
@@ -51,8 +53,8 @@ class _Harness {
         yMax: yMax,
         totalSamples: totalSamples,
         bakeableSamples: bakeableSamples ?? totalSamples,
-        hPad: kSegmentImagePad,
-        vPad: kSegmentImagePad,
+        hPad: hPad,
+        vPad: vPad,
       ),
       render: (Canvas canvas, int start, int end, int texW) {
         calls.add((
@@ -1225,6 +1227,49 @@ void main() {
     // calls, not render callbacks, and nothing in this suite could assert
     // them before debugLastRaster. These pin the affine the cache hands the
     // canvas, each against an independently computed expectation.
+    test('the two pads are not interchangeable: hPad widens x and the source '
+        'rect, vPad widens y and the clip', () {
+      // Production passes a LARGER hPad for the graphs' one-block polyline
+      // join overshoot (blockPx + 2) while vPad stays at the base pad. Every
+      // other test uses one constant for both, so swapping them in the blit
+      // (or in the bake size) would survive all of them.
+      const hPad = 40.0; // a zoomed-in block's overshoot
+      const vPad = 4.0;
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        hPad: hPad,
+        vPad: vPad,
+      );
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        hPad: hPad,
+        vPad: vPad,
+      );
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        hPad: hPad,
+        vPad: vPad,
+      );
+
+      final b = h.cache.debugLastRaster!.blits.first;
+      // Identity mapping: content 200 px, x-scale 1.
+      expect(b.dx, closeTo(b.seg.start - hPad, 0.001));
+      expect(b.dw, closeTo(b.seg.contentW + 2 * hPad, 0.001));
+      expect(b.sw, closeTo(b.seg.contentW + 2 * hPad, 0.001));
+      expect(b.dy, closeTo(-vPad, 0.001));
+      expect(b.dh, closeTo(100 + 2 * vPad, 0.001));
+      expect(b.sh, closeTo(100 + 2 * vPad, 0.001));
+      // The vertical clip band is the pad, not the horizontal one.
+      expect(b.clipB, closeTo(-vPad, 0.001));
+      expect(b.clipT, closeTo(100 + vPad, 0.001));
+    });
+
     test('a fully covered view blits each segment at its window x, with the '
         'correct vertical scale and clip', () {
       // Two 200-sample tiles at 1 px/sample, gh 100, y-range 0..100 baked

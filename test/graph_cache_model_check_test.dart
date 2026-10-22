@@ -1,5 +1,4 @@
 import 'dart:collection';
-import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
@@ -11,9 +10,10 @@ import 'package:dynamite_app/widgets/graph/segmented_cache_functional.dart';
 // (windows, Y ranges, config churn, generations, bake horizons), verifying
 // on every single transition:
 //   * the segment-list invariant (invariantViolations);
-//   * fold-window / bake-horizon containment of every bake job (also
-//     asserted inside planBakes; checked here independently);
-//   * drops never survive into the next state;
+//   * fold-window / bake-horizon containment of every bake (also asserted
+//     inside planBakes; checked here independently);
+//   * texture ids stay unique, so the shell's reconcile-by-id frees only
+//     textures no segment names;
 //   * progress: a frame that bakes must change the canonical state, so a
 //     constant input can never re-bake identical pixels forever (the
 //     bake-pump busy-loop shape).
@@ -25,20 +25,16 @@ import 'package:dynamite_app/widgets/graph/segmented_cache_functional.dart';
 // transitions (the run reports whether closure was reached), so these
 // invariants hold for every reachable geometry, not a sampled one.
 //
-// Tiers (env MODEL_CHECK_TIER): the default grid runs per PR; `full` is a
-// manual pre-release sweep. Sizes below are measured on this repo and are
-// re-checked by the state-count budget below, so treat them as a budget to
-// re-measure on planner changes, not as constants of nature:
-//   * pr   -- 12-sample universe, ~143k states to closure, ~25 s here.
-//   * full -- 16-sample universe, ~2.25M states, ~10 min here (it will NOT
-//             fit the pr budget; MODEL_CHECK_TIER=full raises the cap).
-// Reachable-state count is strongly superlinear in the universe size and
-// in the number of STAMP axes (at 16 samples the full key/gh/dpr cartesian
-// product alone pushes past 2M states), so the grids stay small and the
-// churn set covers one representative per staleness kind (generation
-// reset, destructive flip, remap flip, y-drift, receded horizon) instead
-// of the product. Boundary-threshold nuance (drift just past 8%) and the
-// remaining axes belong to the unit tests and the sim.
+// One tier, sized for the per-PR suite: a 12-sample universe reaching
+// closure at ~143k states in ~25 s measured on this repo. The grid is
+// re-checked by the state-count budget below, so treat that as a budget to
+// re-measure on planner changes, not a constant of nature. Reachable-state
+// count is strongly superlinear in the universe size and in the number of
+// STAMP axes (a gh or dpr flip alone triples it), so the grid stays small and
+// the churn set covers one representative per staleness kind (generation
+// reset, destructive flip, remap flip, y-drift, receded horizon) instead of
+// the product. Boundary-threshold nuance (drift just past 8%) belongs to the
+// unit tests and the sim.
 
 /// Deterministic canonical form: equal states (same metas, same stamps) hash
 /// identically regardless of list instance or meta identity. Null is the
@@ -93,11 +89,10 @@ CacheConfig _config({
 );
 
 void main() {
-  test('reachable cache states obey the invariants', tags: 'slow', () {
-    final full = Platform.environment['MODEL_CHECK_TIER'] == 'full';
+  test('reachable cache states obey the invariants', () {
     final sw = Stopwatch()..start();
-    final universe = full ? 16 : 12;
-    // Well past closure at both sizes (FIFO order, so arrival depth is the
+    const universe = 12;
+    // Well past closure at this size (FIFO order, so arrival depth is the
     // shortest path); the run asserts closure was actually reached.
     const maxDepth = 64;
 
@@ -138,7 +133,10 @@ void main() {
     // On two representative windows, one representative per staleness
     // kind: y-drift (baked under 100, refreshed at 130 -- the 8% boundary
     // is the unit tests' job), a receded bake horizon, generation reset,
-    // destructive flip, remap flip. The full tier adds gh and dpr flips.
+    // destructive flip, remap flip. gh/dpr flips are NOT here: each is another
+    // STAMP axis and multiplying the reachable space by it took this check
+    // from ~25 s to ~60 s, while the unit tests already pin their staleness
+    // kind ("a gh change is remap staleness", "a dpr change is ...").
     for (final vs in [0.0, 8.0]) {
       for (final yMax in [100.0, 130.0]) {
         inputs.add(
@@ -188,26 +186,6 @@ void main() {
           remapKey: 'k2',
         ),
       ]);
-      if (full) {
-        inputs.addAll([
-          _config(
-            viewStart: vs,
-            viewSpan: 16,
-            yMax: 100,
-            totalSamples: universe,
-            bakeableSamples: universe,
-            gh: 120,
-          ),
-          _config(
-            viewStart: vs,
-            viewSpan: 16,
-            yMax: 100,
-            totalSamples: universe,
-            bakeableSamples: universe,
-            dpr: 2,
-          ),
-        ]);
-      }
     }
 
     void check(bool ok, String reason) {
@@ -236,32 +214,35 @@ void main() {
       for (final input in inputs) {
         edges++;
         final env = cacheEnvFor(input);
-        final pre = prepareFrame(s, env);
-        final plan = planBakes(pre.state, env);
-        final job = plan.job;
-        if (job != null) {
+        final planned = planBakes(prepareFrame(s, env), env);
+        final plan = planned.plan;
+        if (plan != null) {
           check(
-            job.start >= env.covStart &&
-                job.end <= env.covEnd &&
-                job.end <= input.bakeableSamples,
-            'bake [${job.start}, ${job.end}) outside fold window '
+            plan.start >= env.covStart &&
+                plan.end <= env.covEnd &&
+                plan.end <= input.bakeableSamples,
+            'bake [${plan.start}, ${plan.end}) outside fold window '
             '[${env.covStart}, ${env.covEnd}) or past horizon '
             '${input.bakeableSamples}',
           );
         }
-        final committed = applyBake(
-          pre.state,
-          env,
-          plan,
-          job == null
-              ? 0
-              : math
-                    .max(1, ((job.end - job.start) * env.pps).ceil())
-                    .toDouble(),
-          job == null ? 0 : nextTextureId++,
-        );
+        // The shell's half of the frame, faked: the rendered width the
+        // render closure would report, and the serial id it would file under.
+        final measured = switch (plan) {
+          final BakePlan p => (
+            plan: p,
+            output: (
+              contentW: math
+                  .max(1, ((p.end - p.start) * env.pps).ceil())
+                  .toDouble(),
+              textureId: nextTextureId++,
+            ),
+          ),
+          null => null,
+        };
+        final committed = applyBake(planned.state, env, measured);
         final next = committed.state;
-        if (job != null) {
+        if (plan != null) {
           bakeEdges++;
           // Progress: a bake frame must move the state, so a constant
           // input cannot re-bake identical pixels next frame.
@@ -279,12 +260,15 @@ void main() {
         }
         final violations = invariantViolations(next);
         check(violations.isEmpty, violations.join('; '));
-        for (final d in [...pre.drops, ...plan.drops]) {
-          check(
-            !next.segments.contains(d),
-            'dropped meta [${d.start}, ${d.end}) survived the transition',
-          );
-        }
+        // Segments the frame dropped are gone from the state, and every
+        // surviving segment's texture id is unique -- the shell reconciles its
+        // texture map against exactly this list (see _reconcileTextures), so a
+        // survived drop would free a texture still in use.
+        final ids = {for (final m in next.segments) m.textureId};
+        check(
+          ids.length == next.segments.length,
+          'two segments share a texture id',
+        );
         // Coverage completeness, measured against the window computed
         // from FIRST PRINCIPLES (locals -- a wrong cacheEnvFor derivation
         // is self-consistent and the containment checks above cannot see
@@ -321,7 +305,7 @@ void main() {
     sw.stop();
     // ignore: avoid_print -- test instrumentation
     print(
-      'MODEL_CHECK tier=${full ? 'full' : 'pr'} states=${seen.length} '
+      'MODEL_CHECK states=${seen.length} '
       'edges=$edges bakeEdges=$bakeEdges inputs=${inputs.length} '
       'closed=${!capped} elapsed=${sw.elapsed}',
     );
@@ -339,9 +323,9 @@ void main() {
     // shared runner reads as a planner regression.
     expect(
       seen.length,
-      lessThan(full ? 4000000 : 400000),
+      lessThan(400000),
       reason:
-          'model check outgrew its tier state budget; the reachable state '
+          'model check outgrew its state budget; the reachable state '
           'space exploded -- inspect the planner change',
     );
   });
