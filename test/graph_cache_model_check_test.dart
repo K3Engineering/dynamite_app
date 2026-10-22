@@ -26,11 +26,11 @@ import 'package:dynamite_app/widgets/graph/segmented_cache_functional.dart';
 // invariants hold for every reachable geometry, not a sampled one.
 //
 // Tiers (env MODEL_CHECK_TIER): the default grid runs per PR; `full` is a
-// manual pre-release sweep. Sizes below are measured on this repo, and the
-// elapsed-time assertions below re-check them, so treat them as a budget to
+// manual pre-release sweep. Sizes below are measured on this repo and are
+// re-checked by the state-count budget below, so treat them as a budget to
 // re-measure on planner changes, not as constants of nature:
 //   * pr   -- 12-sample universe, ~143k states to closure, ~25 s here.
-//   * full -- 16-sample universe, ~2.25M states, ~10 min here (it will NOT
+//   * full -- 16-sample universe, ~2.25M states, ~8 min here (it will NOT
 //             fit the pr budget; MODEL_CHECK_TIER=full raises the cap).
 // Reachable-state count is strongly superlinear in the universe size and
 // in the number of STAMP axes (at 16 samples the full key/gh/dpr cartesian
@@ -327,13 +327,15 @@ void main() {
           'before closure; the reachable space outgrew the grid -- inspect '
           'the planner change before raising it',
     );
-    // Hard budget: a planner change that multiplies reachable states shows
-    // up here before it silently 10x's CI time.
+    // Hard budget on reachable states, the DETERMINISTIC growth signal: a
+    // planner change that multiplies them shows up here before it silently
+    // 10x's CI time. Elapsed is reported, never asserted -- wall clock on a
+    // shared runner reads as a planner regression.
     expect(
-      sw.elapsed,
-      lessThan(Duration(seconds: full ? 900 : 60)),
+      seen.length,
+      lessThan(full ? 4000000 : 400000),
       reason:
-          'model check outgrew its tier budget; the reachable state '
+          'model check outgrew its tier state budget; the reachable state '
           'space exploded -- inspect the planner change',
     );
   });

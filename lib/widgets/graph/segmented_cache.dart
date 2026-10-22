@@ -179,7 +179,8 @@ class SegmentedGraphCache {
     }
 
     // The impure measurement: rasterize the bake the core decided on. The
-    // core never sees the texture, only the textureId it is filed under.
+    // core never sees the texture, only the textureId it is filed under, so
+    // the serial only advances for a bake that produced one.
     final job = plan.job;
     final baked = job == null ? null : _executeBake(job, env, c);
     final committed = applyBake(
@@ -187,7 +188,7 @@ class SegmentedGraphCache {
       env,
       plan,
       baked?.contentW ?? 0,
-      _nextTextureId++,
+      baked == null ? 0 : _nextTextureId++,
     );
     if (baked != null) _images[committed.baked!.textureId] = baked.image;
     _state = committed.state;
