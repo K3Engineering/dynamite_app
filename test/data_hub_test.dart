@@ -183,6 +183,49 @@ void main() {
         2000,
       );
     });
+
+    test(
+      'a dropout longer than the ring advances the timeline by the full count '
+      'and leaves no readable stale slot',
+      () {
+        final hub = DataHub();
+        // A loud stream fills the ring, then one quiet sample arrives: the
+        // held value across the dropout is the quiet one, while most ring
+        // slots still hold 8e6 from one lap back. A skipped slot read as a
+        // reading would surface as an 8e6 peak in the window below.
+        feed(hub, frameOf(8000000), DataHub.maxDataSz);
+        feed(hub, frameOf(1000000), 1);
+        final int dropStart = hub.totalSamples;
+
+        // A reboot: a dropout twice the ring's length. Materializing the whole
+        // drop would be 1.2M held frames for a ring that keeps the newest 600k.
+        const int drop = 2 * DataHub.maxDataSz;
+        hub.addDroppedFrames(drop);
+
+        expect(hub.totalSamples, dropStart + drop);
+        // The whole drop is a gap, so recording batches write it as sentinels.
+        expect(hub.gaps.contains(dropStart), isTrue);
+        expect(hub.gaps.contains(dropStart + drop - 1), isTrue);
+        expect(hub.gaps.contains(dropStart + drop), isFalse);
+        // The retained window starts inside the drop, and every sample in it
+        // was written by this drop's held values: none reads a lap-old 8e6.
+        expect(hub.oldestSample, dropStart + drop - DataHub.maxDataSz);
+        expect(
+          hub.peakValue(
+            0,
+            DisplayUnit.raw,
+            start: hub.oldestSample,
+            end: hub.totalSamples,
+          ),
+          1000000,
+        );
+        // Bucket bookkeeping kept pace with the timeline: a skipped range must
+        // leave no bucket short of samples or sums.
+        expect(hub.valueBucketsFor(0).samples, hub.totalSamples);
+        expect(hub.diffBucketsFor(0).samples, hub.totalSamples);
+        expect(hub.currentValue(0, DisplayUnit.raw), 1000000);
+      },
+    );
   });
 
   group('clear', () {

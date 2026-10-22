@@ -202,50 +202,51 @@ void main() {
   });
 
   group('AxisLabelCache pass eviction (d035564)', () {
-    testWidgets(
-      'overflow evicts only entries untouched in the current pass, and '
-      'retired paragraphs survive until end of frame',
-      (tester) async {
-        final cache = AxisLabelCache();
-        addTearDown(cache.dispose);
-        const limit = 512; // the cache's internal _limit
+    test('overflow evicts only entries untouched in the current pass, and the '
+        'disposal waits for the next pass', () {
+      final cache = AxisLabelCache();
+      addTearDown(cache.dispose);
+      const limit = 512; // the cache's internal _limit
 
-        cache.beginPass();
-        final early = cache.prepare('tick-0');
-        Object? lastOfPass;
-        for (int i = 1; i < limit + 88; i++) {
-          final p = cache.prepare('tick-$i');
-          lastOfPass = p;
-          // Past the overflow point, metrics of THIS pass's paragraphs must
-          // stay readable (pre-fix a whole-cache clear disposed paragraphs
-          // the tick enumeration was still using -> "native peer has been
-          // collected").
-          expect(p.longestLine, greaterThan(0));
-          expect(early.longestLine, greaterThan(0));
-        }
-        // Everything stamped in this pass is off-limits for eviction:
-        // re-preparing returns the identical paragraph objects.
-        expect(identical(cache.prepare('tick-0'), early), isTrue);
-        expect(
-          identical(cache.prepare('tick-${limit + 87}'), lastOfPass),
-          isTrue,
-        );
-        // The whole pass outgrew the limit without evicting anything: no
-        // end-of-frame drain to flush yet.
-        await tester.pump();
+      cache.beginPass();
+      final early = cache.prepare('tick-0');
+      Object? lastOfPass;
+      for (int i = 1; i < limit + 88; i++) {
+        final p = cache.prepare('tick-$i');
+        lastOfPass = p;
+        // Past the overflow point, metrics of THIS pass's paragraphs must
+        // stay readable (pre-fix a whole-cache clear disposed paragraphs
+        // the tick enumeration was still using -> "native peer has been
+        // collected").
+        expect(p.longestLine, greaterThan(0));
+        expect(early.longestLine, greaterThan(0));
+      }
+      // Everything prepared in this pass is off-limits for eviction:
+      // re-preparing returns the identical paragraph objects, and the whole
+      // pass outgrew the limit without dropping any of them.
+      expect(identical(cache.prepare('tick-0'), early), isTrue);
+      expect(
+        identical(cache.prepare('tick-${limit + 87}'), lastOfPass),
+        isTrue,
+      );
+      expect(early.debugDisposed, isFalse);
 
-        // Next pass, none of the old labels are touched: the first new
-        // prepare trips the limit and evicts the entire stale set.
-        cache.beginPass();
-        cache.prepare('fresh-0');
-        await tester.pump(); // runs the deferred disposal drain; must not throw
+      // Next pass: nothing of the old labels is touched, so the first new
+      // prepare trips the limit and evicts the entire stale set. The
+      // evicted paragraphs stay readable until the pass after that.
+      cache.beginPass();
+      cache.prepare('fresh-0');
+      expect(early.debugDisposed, isFalse);
+      // The stale entries really are gone: re-preparing an old key
+      // produces a NEW paragraph instead of the kept instance.
+      final rePrepped = cache.prepare('tick-0');
+      expect(identical(rePrepped, early), isFalse);
 
-        // The stale entries really are gone: re-preparing an old key
-        // produces a NEW paragraph instead of the kept instance.
-        final rePrepped = cache.prepare('tick-0');
-        expect(identical(rePrepped, early), isFalse);
-        await tester.pump();
-      },
-    );
+      // The next pass is where the evicted batch is disposed.
+      cache.beginPass();
+      expect(early.debugDisposed, isTrue);
+      expect(rePrepped.debugDisposed, isFalse);
+      expect(cache.prepare('tick-0').longestLine, greaterThan(0));
+    });
   });
 }

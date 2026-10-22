@@ -651,9 +651,7 @@ class _CellFields extends StatelessWidget {
 /// strings "NaN" and "Infinity", which break the graph, the session journal
 /// and the KVS write path further down). The add and edit dialogs gate
 /// their Save button on this and build their cell from it, so the enable
-/// condition and the value committed can never disagree. Whitespace runs in
-/// the name are collapsed to what [RigSlots.toKv] writes, so the typed
-/// display name matches what the read-back verification compares.
+/// condition and the value committed can never disagree.
 LoadCellProfile? _typedCell(String name, String cap, String sens) {
   final c = _typedNumber(cap);
   final s = _typedNumber(sens);
@@ -666,7 +664,8 @@ LoadCellProfile? _typedCell(String name, String cap, String sens) {
     return null;
   }
   return LoadCellProfile(
-    name: name.trim().replaceAll(RegExp(r'\s+'), ' '),
+    // The stored form, so the name shown after Save matches the read-back.
+    name: canonicalLoadCellName(name),
     capacityKg: c,
     sensitivityMvV: s,
   );

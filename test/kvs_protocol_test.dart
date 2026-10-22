@@ -134,6 +134,27 @@ void main() {
       },
     );
 
+    test(
+      "a late answer to another SET is stale: its echo carries the request's "
+      "'=' and must not read as a payload",
+      () {
+        // The SET frame's own key=value contains '=', so "has a separator"
+        // alone cannot distinguish a rejected SET echo from a success. A
+        // pending GET must still drop both, not call them garbage.
+        expect(parseKvsResponse('GETFaaa', frame('0SETUlc0.cap=200')), isNull);
+        expect(parseKvsResponse('GETFaaa', frame('BSETUlc0.cap=200')), isNull);
+        expect(parseKvsResponse('GETFaaa', frame('ESETUlc0.cap=200')), isNull);
+        // The same shape against a pending SET: the non-success echo matches
+        // the pending request exactly, so it settles as the live answer.
+        final rejected = parseKvsResponse(
+          'SETUlc0.cap=200',
+          frame('0SETUlc0.cap=200'),
+        )!;
+        expect(rejected.status, KvsStatus.rejected);
+        expect(rejected.payload, isEmpty);
+      },
+    );
+
     test('garbled frames are protocol errors', () {
       expect(
         () => parseKvsResponse('GETFa', Uint8List(0)),

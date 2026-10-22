@@ -111,22 +111,29 @@ class RigSlots {
   }
 
   /// The populated slots' `lcN.*` keys — the full set the device should hold
-  /// (a save SETs these and DELs known slot keys it doesn't). The document is
-  /// line-based, so newlines in names are flattened; `=` in values is safe
-  /// (parsing splits at the first one). Integral values emit without a fraction
-  /// so an unchanged rig diffs clean.
+  /// (a save SETs these and DELs known slot keys it doesn't). Newlines in
+  /// names would break the line-based document; `=` in values is safe (parsing
+  /// splits at the first one). Integral values emit without a fraction so an
+  /// unchanged rig diffs clean.
   Map<String, String> toKv() {
     return {
       for (int i = 0; i < kRigSlotCount; ++i)
         if (slots[i] case final cell?) ...{
           if (cell.name.isNotEmpty)
-            'lc$i.name': cell.name.replaceAll(RegExp(r'\s+'), ' '),
+            'lc$i.name': canonicalLoadCellName(cell.name),
           'lc$i.cap': formatDecimal(cell.capacityKg),
           'lc$i.sens': formatDecimal(cell.sensitivityMvV),
         },
     };
   }
 }
+
+/// A load cell name as the device stores it: trimmed, with whitespace runs
+/// collapsed. [RigSlots.toKv] applies it, so the dialogs apply it to what the
+/// user typed too — the read-back verification compares the cell it gets back,
+/// and a name that changes shape on the device would fail every save.
+String canonicalLoadCellName(String name) =>
+    name.trim().replaceAll(RegExp(r'\s+'), ' ');
 
 /// A slot whose `cap`/`sens` are present but unparseable: read as empty, with
 /// a developer-visible trace.

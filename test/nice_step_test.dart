@@ -20,6 +20,15 @@ void main() {
       expect(niceStepCeil(0.003), closeTo(0.005, 1e-12));
       expect(niceStepCeil(0.5), 0.5);
     });
+
+    test('non-positive or non-finite targets fall back to a 1.0 step', () {
+      // A degenerate plot window (zero span, a broken fold) reaches here from
+      // mid-paint; log()/pow() would throw there.
+      expect(niceStepCeil(0), 1.0);
+      expect(niceStepCeil(-5), 1.0);
+      expect(niceStepCeil(double.nan), 1.0);
+      expect(niceStepCeil(double.infinity), 1.0);
+    });
   });
 
   group('niceStepDecimals', () {

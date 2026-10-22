@@ -319,44 +319,40 @@ class DataHub extends ChangeNotifier
   /// The timeline ALWAYS advances by the full [count] — silently capping at
   /// [maxDataSz] used to shorten the timeline on a long dropout (a rebooting
   /// device, or hours of lost packets on a flaky link), leaving session
-  /// durations false. Samples beyond [maxDataSz] are skipped in the
-  /// ring/bucket bookkeeping instead of materialized; the ring would evict
-  /// them instantly anyway. Held samples are real ring-buffer time (they
-  /// advance [totalSamples]) but are NOT real readings, so they are never
-  /// accumulated into an in-progress tare average.
+  /// durations false. Held samples are real ring-buffer time (they advance
+  /// [totalSamples]) but are NOT real readings, so they are never accumulated
+  /// into an in-progress tare average.
   ///
-  /// TODO(perf): a reboot jump can inject up to ~600k held samples (150k x
-  /// 4 channels) synchronously inside one BLE callback, stalling the UI
+  /// The oldest samples of a drop longer than [maxDataSz] are skipped instead
+  /// of written: they land outside the retained window, so writing them would
+  /// be per-sample work for data nothing can read.
+  ///
+  /// TODO(perf): a reboot jump materializes up to [maxDataSz] + [bucketSize]
+  /// held samples synchronously inside one BLE callback, stalling the UI
   /// isolate for a beat. If that becomes visible, chunk the injection across
   /// frames.
   @override
   void addDroppedFrames(int count) {
+    final int start = totalSamples;
     // The full drop is a gap in the timeline regardless of how much is
-    // injected below; recording batches read it back as sentinel frames.
-    gaps.append(totalSamples, totalSamples + count);
-    int toInject = count;
-    if (count > maxDataSz) {
-      // Skip the oldest dropped samples outright: the ring would evict them
-      // instantly, so materializing them is per-sample work for no data.
-      //
-      // The skip is rounded so it ENDS on a bucket boundary in absolute
-      // index. That is what makes the skipped range safe to never write:
-      // these ring slots then still hold a previous lap's values, and the
-      // first injected sample starts a fresh bucket ([BucketAccumulator.add]
-      // resets its slot at a bucket start) instead of merging into them.
-      // They are unreadable either way because [gaps] covers the whole drop
-      // (see the doc), so no renderer or export ever reads them as readings.
-      final skip = count - maxDataSz;
-      final alignedSkip =
-          skip +
-          ((bucketSize - (totalSamples + skip) % bucketSize) % bucketSize);
-      totalSamples += alignedSkip;
+    // materialized below; recording batches read it back as sentinel frames.
+    gaps.append(start, start + count);
+    final int skip = count - maxDataSz;
+    if (skip >= bucketSize) {
+      // Round the skip DOWN to a bucket boundary in absolute index: the first
+      // materialized sample then starts a fresh bucket
+      // ([BucketAccumulator.add] resets its slot at a bucket start) instead of
+      // merging into slots the skipped range never wrote. Rounding down also
+      // keeps the whole retained window written — the remainder below one
+      // bucket is still materialized, and the newest maxDataSz samples (the
+      // retained window) then all come from this loop.
+      final int skipEnd = start + skip - (start + skip) % bucketSize;
+      totalSamples = skipEnd;
       for (final ingest in _ingest) {
-        ingest.skip(alignedSkip);
+        ingest.skip(skipEnd - start);
       }
-      toInject = count - alignedSkip;
     }
-    for (int d = 0; d < toInject; d++) {
+    while (totalSamples < start + count) {
       for (int i = 0; i < kAdcChannelCount; ++i) {
         _addData(_currentRaw[i], i);
       }

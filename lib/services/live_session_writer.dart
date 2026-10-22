@@ -6,6 +6,7 @@ import 'package:meta/meta.dart';
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
 import '../models/device_flash.dart';
+import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/sample_slice.dart';
@@ -241,11 +242,10 @@ class LiveSessionWriter {
   int totalSamplesRecorded = 0;
 
   /// Accepted frames × frame size; the run's acked length must equal this at
-  /// finalize. Derived from the HEADER's channel count, not the ADC constant:
-  /// with the two hardwired apart, a non-4-channel session's finalize check
-  /// compares against the wrong length and passes (or fails) silently.
+  /// finalize.
   int get expectedDataBytes =>
-      totalSamplesRecorded * SessionChunkCodec(header.channelCount).frameBytes;
+      totalSamplesRecorded *
+      const SessionChunkCodec(kAdcChannelCount).frameBytes;
 
   /// First write failure encountered, if any. Once set it stays set.
   Object? writeError;
@@ -291,9 +291,8 @@ class LiveSessionWriter {
       _latchError(error);
     }
 
-    // Pack real values first, then mark the slice's gap frames in-band,
-    // with the same codec the journal header records (see expectedDataBytes).
-    final codec = SessionChunkCodec(header.channelCount);
+    // Pack real values first, then mark the slice's gap frames in-band.
+    const codec = SessionChunkCodec(kAdcChannelCount);
     final bytes = codec.pack(count, (s, ch) => slice.channels[ch][s]);
     final startIndex = slice.startIndex;
     codec.fillGapSentinels(bytes, [

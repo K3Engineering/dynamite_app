@@ -125,5 +125,15 @@ void main() {
       expect(DisplayUnit.axisDecimalsFor(1e-4 / 1e-6), 0); // ~100
       expect(DisplayUnit.axisDecimalsFor(1e-6 / 1e-3), 3); // ~0.001
     });
+
+    test('degenerate steps clamp into what toStringAsFixed accepts', () {
+      // A broken fold can hand a zero/negative/NaN step to the axis painter;
+      // log() has no answer there and toStringAsFixed caps at 20 digits.
+      expect(DisplayUnit.axisDecimalsFor(0), 0);
+      expect(DisplayUnit.axisDecimalsFor(-1), 0);
+      expect(DisplayUnit.axisDecimalsFor(double.nan), 0);
+      expect(DisplayUnit.axisDecimalsFor(double.infinity), 0);
+      expect(DisplayUnit.axisDecimalsFor(1e-30), 20);
+    });
   });
 }

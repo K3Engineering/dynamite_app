@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:collection';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
@@ -582,7 +581,12 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   final SegmentedGraphCache _derivCache = SegmentedGraphCache();
   final BlockReductionCache _derivReductionCache = BlockReductionCache();
   final BakePump _bakePump = BakePump();
-  final AxisLabelCache _labelCache = AxisLabelCache();
+
+  /// One label cache per painter: [AxisLabelCache] treats a paint as a pass,
+  /// and two painters sharing a cache would make the first painter's labels
+  /// evictible during the second one's pass.
+  final AxisLabelCache _forceLabels = AxisLabelCache();
+  final AxisLabelCache _derivLabels = AxisLabelCache();
 
   /// Vsync driver for smooth live-edge scrolling; the painters merge [_vsync]
   /// into their repaint listenable.
@@ -639,7 +643,8 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     _bakePump.dispose();
     _forceCache.dispose();
     _derivCache.dispose();
-    _labelCache.dispose();
+    _forceLabels.dispose();
+    _derivLabels.dispose();
     super.dispose();
   }
 
@@ -691,7 +696,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                     reductionCache: _forceReductionCache,
                     colorScheme: colorScheme,
                     dpr: dpr,
-                    labels: _labelCache,
+                    labels: _forceLabels,
                     bakePump: _bakePump,
                   ),
                 ),
@@ -712,7 +717,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                       reductionCache: _derivReductionCache,
                       colorScheme: colorScheme,
                       dpr: dpr,
-                      labels: _labelCache,
+                      labels: _derivLabels,
                       bakePump: _bakePump,
                     ),
                   ),
@@ -1174,36 +1179,46 @@ String formatAxisTick(double sec, int decimals) {
 // Axis label paragraph cache
 // ---------------------------------------------------------------------------
 
-/// Bounded cache of laid-out axis-label paragraphs. Owned by a host [State]:
-/// painters are recreated on rebuild, so a painter-owned cache would drop
-/// constantly. Evicts entries untouched in the CURRENT paint pass on
-/// overflow — a whole-cache clear mid-pass used to dispose paragraphs the
-/// tick enumeration was still holding, crashing later reads of the same
-/// paint ("native peer has been collected"). Evicted paragraphs are retired
-/// and only disposed at the END of the frame (recorded pictures keep
-/// paragraph references until the raster pass, so synchronously disposing
-/// an entry another painter drew this frame would crash the compositor).
+/// Bounded cache of laid-out axis-label paragraphs, one per painter. Owned by
+/// a host [State]: painters are recreated on rebuild, so a painter-owned cache
+/// would drop constantly. One painter paints at most once per frame, so a
+/// [beginPass] is a frame for its cache.
+///
+/// Scrolling x labels make the key space unbounded, so overflow must evict.
+/// An eviction only drops entries the current pass never asked for, and the
+/// disposal itself waits for the next [beginPass]: [_fitTimeLines] and
+/// [_drawAxis] read `longestLine` off the paragraphs of the pass they just
+/// enumerated, so disposing inside a pass handed them a collected native peer
+/// (the old whole-cache clear).
 ///
 /// Deliberately does not apply `MediaQuery.textScaler`; see [_kGraphLeftSpace].
 ///
 /// Test seam: public as [AxisLabelCache] (same rename-only pattern as
 /// [joinBlockEnd] / [formatWindowSpan]) so tests can drive the pass/eviction
-/// semantics directly. A constructor parameter for `_limit` was considered
-/// but rejected: a knob on a painter-owned type invites misuse in prod, and
-/// a few hundred extra label paragraphs are cheap in tests.
+/// semantics directly. A constructor parameter for [_limit] was considered but
+/// rejected: a knob on a painter-owned type invites misuse in prod, and a few
+/// hundred extra label paragraphs are cheap in tests.
 @visibleForTesting
 class AxisLabelCache {
   static const int _limit = 512;
 
   final Map<String, ui.Paragraph> _cache = HashMap();
-  final Map<String, int> _stamps = HashMap();
-  final List<ui.Paragraph> _retired = [];
-  int _generation = 0;
-  bool _draining = false;
 
-  /// Mark the start of a paint pass; only entries NOT touched in this pass
-  /// are eligible for eviction.
-  void beginPass() => _generation++;
+  /// Keys prepared since the last [beginPass]; everything else is evictible.
+  final Set<String> _touched = HashSet();
+
+  /// Evicted paragraphs, disposed at the next [beginPass].
+  final List<ui.Paragraph> _retired = [];
+
+  /// Start a paint pass: dispose what an earlier pass evicted, then forget
+  /// which keys the previous pass touched.
+  void beginPass() {
+    for (final paragraph in _retired) {
+      paragraph.dispose();
+    }
+    _retired.clear();
+    _touched.clear();
+  }
 
   /// The laid-out paragraph for [text] in [color], building and caching it on
   /// first use.
@@ -1213,71 +1228,47 @@ class AxisLabelCache {
     bool bold = false,
   }) {
     final key = '$text|${color.toARGB32()}|$bold';
+    _touched.add(key);
     final cached = _cache[key];
-    if (cached != null) {
-      _stamps[key] = _generation;
-      return cached;
-    }
+    if (cached != null) return cached;
     if (_cache.length >= _limit) {
-      // Evict only entries from earlier passes: everything stamped this
-      // pass may still be referenced by the in-flight tick enumeration.
-      // (A pass that alone exceeds the limit simply grows past it; those
-      // extras become stale and evictible next pass.)
+      // Only entries this pass never asked for: the rest may be read again
+      // later in the same paint. A pass that alone exceeds the limit grows
+      // past it and is evicted by a later one.
       _cache.removeWhere((k, paragraph) {
-        if (_stamps[k] == _generation) return false;
-        _stamps.remove(k);
+        if (_touched.contains(k)) return false;
         _retired.add(paragraph);
         return true;
       });
-      if (_retired.isNotEmpty) _drainRetired();
     }
-    _stamps[key] = _generation;
-    return _cache.putIfAbsent(key, () {
-      final style = ui.TextStyle(
-        color: color,
-        fontSize: 13,
-        fontWeight: bold ? FontWeight.w600 : FontWeight.normal,
-      );
-      final builder =
-          ui.ParagraphBuilder(
-              ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
-            )
-            ..pushStyle(style)
-            ..addText(text);
-      return builder.build()..layout(const ui.ParagraphConstraints(width: 96));
-    });
-  }
-
-  void _drainRetired() {
-    if (_draining) return;
-    _draining = true;
-    final doomed = List.of(_retired);
-    _retired.clear();
-    // Defer disposal until the frame's raster pass is done; a paragraph can
-    // still be referenced by a picture recorded earlier in the frame.
-    unawaited(
-      SchedulerBinding.instance.endOfFrame.then((_) {
-        for (final paragraph in doomed) {
-          paragraph.dispose();
-        }
-        _draining = false;
-      }),
+    final style = ui.TextStyle(
+      color: color,
+      fontSize: 13,
+      fontWeight: bold ? FontWeight.w600 : FontWeight.normal,
     );
+    final builder =
+        ui.ParagraphBuilder(
+            ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
+          )
+          ..pushStyle(style)
+          ..addText(text);
+    final paragraph = builder.build()
+      ..layout(const ui.ParagraphConstraints(width: 96));
+    _cache[key] = paragraph;
+    return paragraph;
   }
 
-  void _clear() {
+  void dispose() {
     for (final paragraph in _cache.values) {
       paragraph.dispose();
     }
     _cache.clear();
-    _stamps.clear();
+    _touched.clear();
     for (final paragraph in _retired) {
       paragraph.dispose();
     }
     _retired.clear();
   }
-
-  void dispose() => _clear();
 }
 
 // ---------------------------------------------------------------------------

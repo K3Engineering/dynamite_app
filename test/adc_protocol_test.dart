@@ -126,5 +126,50 @@ void main() {
         }
       }
     });
+
+    test(
+      'the wire layout itself: 16-bit LE counter, then 24-bit LE channels in '
+      'channel order',
+      () {
+        // Hand-rolled bytes, independent of [encodeAdcPacket]/[encodeAdcFrame]:
+        // a shared offset, endianness or channel-order mistake in the encoder
+        // and the decoder would otherwise agree with itself.
+        final bytes = Uint8List(wireAdcHeaderSize + 2 * wireAdcSampleLength);
+        // Counter 0x1234, little-endian.
+        bytes[0] = 0x34;
+        bytes[1] = 0x12;
+        // Frame 0: ch0 = 0x000001, ch1 = 0x000100, ch2 = 0x010000, ch3 = 2.
+        // Each value least-significant byte first, channels back to back.
+        const frame0 = [
+          0x01, 0x00, 0x00, // ch0
+          0x00, 0x01, 0x00, // ch1
+          0x00, 0x00, 0x01, // ch2
+          0x02, 0x00, 0x00, // ch3
+        ];
+        // Frame 1: ch0 = -1 (0xFFFFFF), ch1 = -2^23, ch2/ch3 = 0.
+        const frame1 = [
+          0xFF, 0xFF, 0xFF, // ch0
+          0x00, 0x00, 0x80, // ch1
+          0x00, 0x00, 0x00, // ch2
+          0x00, 0x00, 0x00, // ch3
+        ];
+        bytes.setAll(wireAdcHeaderSize, frame0);
+        bytes.setAll(wireAdcHeaderSize + wireAdcSampleLength, frame1);
+
+        final hub = DataHub();
+        AdcPacketDecoder(hub).onDataPacket(bytes);
+
+        expect(hub.packetAnchor, (counter: 0x1234, hubIndex: 0));
+        expect(hub.totalSamples, 2);
+        expect(
+          [for (var c = 0; c < kAdcChannelCount; c++) hub.rawAt(c, 0)],
+          [0x000001, 0x000100, 0x010000, 2],
+        );
+        expect(
+          [for (var c = 0; c < kAdcChannelCount; c++) hub.rawAt(c, 1)],
+          [-1, -0x800000, 0, 0],
+        );
+      },
+    );
   });
 }
