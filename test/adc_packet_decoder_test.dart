@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 // overhead per test file dominates CI; merge the protocol suites into one).
 
 import 'package:dynamite_app/models/device_profile.dart';
+import 'package:dynamite_app/models/hub_event.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/services/data_hub.dart';
@@ -86,7 +87,14 @@ void main() {
       expect(hub.gaps.contains(2 * defaultPacketSamples), isFalse);
     });
 
-    test('a counter jump injects the dropped range into DataHub.gaps', () {
+    test('a counter jump injects the dropped range into DataHub.gaps and '
+        'includes it in the emitted HubBatchAppended span', () {
+      final batches = <(int, int)>[];
+      hub.addEventListener((event) {
+        if (event is HubBatchAppended) {
+          batches.add((event.startIdx, event.count));
+        }
+      });
       // Packet 0 covers samples [0, 20) (counter = 0). The next packet's
       // counter is 2 * defaultPacketSamples (40), one stride beyond the expected 20,
       // so the decoder reports 20 dropped samples before decoding the new one.
@@ -96,6 +104,12 @@ void main() {
 
       // 20 held (gap) samples + 20 real samples from the second packet.
       expect(hub.totalSamples, before + 2 * defaultPacketSamples);
+      // The second batch starts at 20 and spans both the 20-sample gap and
+      // the 20 real samples (40 total).
+      expect(batches, [
+        (0, defaultPacketSamples),
+        (before, 2 * defaultPacketSamples),
+      ]);
       // The dropped range is half-open [20, 40).
       expect(hub.gaps.contains(20), isTrue);
       expect(hub.gaps.contains(39), isTrue);
@@ -347,6 +361,32 @@ void main() {
 
       expect(hub.totalSamples, 2 * defaultPacketSamples);
       expect(hub.gaps.contains(defaultPacketSamples), isFalse);
+    });
+
+    test('a loss exceeding the ring capacity caps the injected gap at '
+        'maxDataSz - n so the batch fits the retained ring', () {
+      final batches = <(int, int)>[];
+      hub.addEventListener((event) {
+        if (event is HubBatchAppended) {
+          batches.add((event.startIdx, event.count));
+        }
+      });
+      final d = AdcPacketDecoder(hub, now: clock);
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+      final before = hub.totalSamples; // 20
+
+      // 20 minutes of silence (2x the 600k-sample ring at 1 kHz).
+      advanceMs(2 * DataHub.maxDataSz);
+      d.onDataPacket(makePacket(0, (s, c) => 2));
+
+      // Gap injection left room for the packet's 20 real samples, so the
+      // whole batch is exactly maxDataSz samples and can be snapshotted.
+      expect(batches.last, (before, DataHub.maxDataSz));
+      final slice = hub.snapshotRange(batches.last.$1, batches.last.$2);
+      expect(slice.sampleCount, DataHub.maxDataSz);
+      expect(slice.gapRanges, [
+        (before, before + DataHub.maxDataSz - defaultPacketSamples),
+      ]);
     });
   });
 }

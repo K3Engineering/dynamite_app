@@ -750,4 +750,26 @@ void main() {
       expect(hub.calibrationVersion, greaterThan(v1));
     });
   });
+
+  group('snapshotRange', () {
+    test('rejects spans outside the retained ring', () {
+      final hub = DataHub()..notePacketCounter(0);
+      feed(hub, frameOf(1), DataHub.maxDataSz + 10);
+      expect(hub.oldestSample, 10);
+
+      // Evicted head, beyond tail, and negative count all throw RangeError.
+      expect(() => hub.snapshotRange(9, 5), throwsRangeError);
+      expect(
+        () => hub.snapshotRange(10, DataHub.maxDataSz + 1),
+        throwsRangeError,
+      );
+      expect(() => hub.snapshotRange(10, -1), throwsRangeError);
+
+      // The exact retained span succeeds.
+      expect(
+        hub.snapshotRange(10, DataHub.maxDataSz).sampleCount,
+        DataHub.maxDataSz,
+      );
+    });
+  });
 }

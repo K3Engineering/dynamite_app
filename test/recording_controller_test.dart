@@ -430,57 +430,57 @@ void main() {
     },
   );
 
-  test(
-    'a decoder-reported dropout is not part of the recorded stream: the '
-    'session is the RECEIVED stream, and its ssn stays a plain progression',
-    () async {
-      final (recording, hub, _) = wire();
-      // Drive the real decoder ordering: a packet, then a counter jump (which
-      // injects a gap into the hub), then the next packet.
-      final decoder = AdcPacketDecoder(hub);
+  test('a decoder-reported dropout is recorded in-band: gaps round-trip and '
+      'ssn stays locked to the device counter with blank gap rows', () async {
+    final (recording, hub, _) = wire();
+    // Drive the real decoder ordering: a packet, then a counter jump (which
+    // injects a gap into the hub), then the next packet.
+    final decoder = AdcPacketDecoder(hub);
 
-      expect(start(recording), isA<StartSessionOk>());
-      decoder.onDataPacket(packet(counter: 0, samples: 5, value: 100));
-      decoder.onDataPacket(packet(counter: 25, samples: 5, value: 200));
-      decoder.onDataPacket(packet(counter: 30, samples: 5, value: 300));
+    expect(start(recording), isA<StartSessionOk>());
+    decoder.onDataPacket(packet(counter: 0, samples: 5, value: 100));
+    decoder.onDataPacket(packet(counter: 25, samples: 5, value: 200));
+    decoder.onDataPacket(packet(counter: 30, samples: 5, value: 300));
 
-      // The hub saw the loss (20 held samples between the two packets)...
-      expect(hub.totalSamples, 5 + 20 + 5 + 5);
-      expect(hub.gaps.isEmpty, isFalse);
+    // The hub saw the loss (20 held samples between the first two packets)...
+    expect(hub.totalSamples, 5 + 20 + 5 + 5);
+    expect(hub.gaps.rangesIn(0, hub.totalSamples).toList(), [(5, 25)]);
 
-      final stop = await recording.stopSession();
-      final loaded = await SessionStore.instance.loadSession(
-        (stop as StopSessionSaved).sessionId,
-      );
-      // ...but the recorded stream is what arrived: 15 real samples, no
-      // held/sentinel span. The decoder injects the gap before taking the
-      // batch's start index, so recording never sees it.
-      expect(loaded.sampleCount, 15);
-      expect(loaded.gaps.isEmpty, isTrue);
-      // ssn counts received samples from the origin, so it stays a plain
-      // arithmetic progression and trails the device counter by the loss.
-      expect(loaded.ssnOrigin, 0);
-      final csv = buildSessionCsvArtifact(
-        sessionName: 'received stream',
-        recordedAtIso: '2026-07-29T14:05:32.000Z',
-        deviceInfo: const {},
-        data: loaded,
-        unit: DisplayUnit.raw,
-        appMeta: const AppMeta(version: '1.0.0', buildNumber: '1'),
-      );
-      final body = utf8
-          .decode(csv.bytes)
-          .split('\n')
-          .skipWhile((l) => l.startsWith('#'))
-          .skip(1) // the header row
-          .where((l) => l.isNotEmpty)
-          .toList();
-      expect(body, hasLength(15));
-      for (int i = 0; i < body.length; i++) {
-        expect(body[i].split(',').first, '${loaded.ssnOrigin + i}');
-      }
-    },
-  );
+    final stop = await recording.stopSession();
+    final loaded = await SessionStore.instance.loadSession(
+      (stop as StopSessionSaved).sessionId,
+    );
+    // ...and the recorded session carries the full 35-sample timeline with
+    // the [5, 25) gap reconstructed from the in-band sentinel frames.
+    expect(loaded.sampleCount, 35);
+    expect(loaded.gaps.rangesIn(0, loaded.sampleCount).toList(), [(5, 25)]);
+    expect(loaded.ssnOrigin, 0);
+    final csv = buildSessionCsvArtifact(
+      sessionName: 'gap stream',
+      recordedAtIso: '2026-07-29T14:05:32.000Z',
+      deviceInfo: const {},
+      data: loaded,
+      unit: DisplayUnit.raw,
+      appMeta: const AppMeta(version: '1.0.0', buildNumber: '1'),
+    );
+    final body = utf8
+        .decode(csv.bytes)
+        .split('\n')
+        .skipWhile((l) => l.startsWith('#'))
+        .skip(1) // the header row
+        .where((l) => l.isNotEmpty)
+        .toList();
+    expect(body, hasLength(35));
+    for (int i = 0; i < body.length; i++) {
+      expect(body[i].split(',').first, '${loaded.ssnOrigin + i}');
+    }
+    // Dropped rows [5, 25) keep their ssn with every sample cell blank;
+    // row 25 resumes with real readings at ssn 25 (matching counter 25).
+    for (int i = 5; i < 25; i++) {
+      expect(body[i], '$i,,,,,,,,');
+    }
+    expect(body[25], startsWith('25,200,200,200,200,'));
+  });
 
   group('autoSessionName', () {
     test('ISO Y-M-D with 24h zero-padded H:MM:SS', () {
