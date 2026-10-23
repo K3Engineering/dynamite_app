@@ -475,7 +475,7 @@ END
       // cal.r.prov is written by the factory tool but read by no UI: a key
       // missing here would survive a revert.
       expect(calGroupKeys, containsAll(['cal.date', 'cal.r.prov']));
-      expect(calGroupKeys, hasLength(7 + 2 * kAdcChannelCount));
+      expect(calGroupKeys, hasLength(8 + 3 * kAdcChannelCount));
     });
   });
 
