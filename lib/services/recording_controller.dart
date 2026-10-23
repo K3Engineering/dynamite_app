@@ -282,11 +282,6 @@ class RecordingController extends ChangeNotifier {
     // any in-flight appends first. Its failure is folded into the result, not
     // thrown: stopSession also runs on unawaited auto-stop paths, where a
     // throw would be an unhandled async error.
-    //
-    // No timeout: abandoning a wedged flush would leave the lifecycle _Idle
-    // while finalize still runs, letting a new session start and the late
-    // touchFinal unlist it mid-append. _Stopping is the honest state; the
-    // known issue is the sink's (see SessionStore.finalizeSession).
     Object? error;
     try {
       await SessionStore.instance.finalizeSession(writer: writer);
@@ -337,10 +332,6 @@ class RecordingController extends ChangeNotifier {
 
   @override
   void dispose() {
-    // App-lifetime: main provides this with ChangeNotifierProvider.value,
-    // which never disposes it. A mid-session dispose would orphan the writer
-    // (its session lists as interrupted), so callers stop the session first;
-    // there is nothing to await here to make that safe.
     _streamingChanges.removeListener(_onStreamingChanged);
     _dataHub.removeEventListener(_onHubEvent);
     super.dispose();

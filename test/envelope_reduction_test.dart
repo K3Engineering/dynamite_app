@@ -724,8 +724,7 @@ void main() {
 
     test('a sparse gap scans only the buckets it touches, not the window', () {
       // The cost contract: clean buckets fold from their aggregates. One gap
-      // in a 5000-sample window must not drive an O(window) scan, which is what
-      // the deleted dense-gap shortcut could force.
+      // in a 5000-sample window must not drive an O(window) scan.
       final all = randomData(5000, 36);
       final w = wire(all, const [(2400, 2401)]);
       var calls = 0;
@@ -751,8 +750,7 @@ void main() {
 
     test('a run of gaps clustered at the window start does not force a '
         'full-window scan', () {
-      // The pattern the deleted heuristic got wrong: 8 early gaps in a 50-bucket
-      // window tripped its threshold and exact-scanned ~90% clean samples.
+      // Eight early gaps in a 50-bucket window leave ~84% of buckets clean.
       final all = randomData(5000, 37);
       final w = wire(all, [for (int s = 100; s <= 800; s += 100) (s, s + 1)]);
       var calls = 0;

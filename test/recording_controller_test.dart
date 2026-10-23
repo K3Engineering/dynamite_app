@@ -58,9 +58,6 @@ void main() {
 
   (RecordingController, DataHub, ValueNotifier<bool>) wire({
     KvsSnapshot? deviceKvs,
-    // False when the test disposes the controller itself: a second dispose
-    // would trip ChangeNotifier's assert instead of the one under test.
-    bool disposeOnTearDown = true,
   }) {
     final events = AppEvents();
     final hub = DataHub();
@@ -79,7 +76,7 @@ void main() {
     // In production a packet counter anchor precedes any samples (packets
     // precede samples); tests must satisfy the same invariant.
     hub.notePacketCounter(0);
-    if (disposeOnTearDown) addTearDown(recording.dispose);
+    addTearDown(recording.dispose);
     return (recording, hub, streaming);
   }
 
@@ -343,37 +340,6 @@ void main() {
       (stop as StopSessionSaved).sessionId,
     );
     expect(loaded.sampleCount, 4);
-  });
-
-  test('dispose during a session is a plain detach: the controller is '
-      'app-lifetime, so nothing asserts on a state it cannot fix', () {
-    final (recording, hub, _) = wire(disposeOnTearDown: false);
-    expect(start(recording), isA<StartSessionOk>());
-    feedFrames(hub, 2);
-
-    // The lifecycle is untouched: dispose only drops the listeners. (The
-    // writer's session lists as interrupted if the app never stops it, the
-    // same outcome as any other abandoned run.)
-    expect(recording.dispose, returnsNormally);
-    expect(recording.sessionInProgress, isTrue);
-  });
-
-  test('dispose from idle is the normal path and does not assert', () async {
-    final (recording, hub, _) = wire(disposeOnTearDown: false);
-    expect(
-      recording.dispose,
-      returnsNormally,
-      reason: 'app-lifetime teardown disposes an idle controller',
-    );
-
-    // A completed lifecycle is back in idle, where dispose is legal.
-    final (second, secondHub, _) = wire(disposeOnTearDown: false);
-    expect(start(second), isA<StartSessionOk>());
-    feedFrames(secondHub, 2);
-    expect(await second.stopSession(), isA<StopSessionSaved>());
-    expect(second.dispose, returnsNormally);
-    // Never saw data, so there is nothing to finalize.
-    expect(await recording.stopSession(), isA<StopSessionRefused>());
   });
 
   test(

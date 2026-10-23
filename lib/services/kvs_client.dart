@@ -15,8 +15,7 @@ import 'kvs_protocol.dart';
 ///
 /// A late answer for a timed-out command is normally stale and dropped; only a
 /// byte-identical one settles the live command, safe because the wire has no
-/// transaction id and SET/DEL are idempotent. Discarding a frame per timeout
-/// cannot work: with no id it can eat the retry's own answer.
+/// transaction id and SET/DEL are idempotent.
 class KvsClient {
   KvsClient({
     required this.write,

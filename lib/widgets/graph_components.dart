@@ -33,11 +33,6 @@ export 'graph/segmented_cache.dart';
 /// areas. [kGraphRightSpace] reserves room for the Y-axis labels; public so
 /// the controls row in `GraphViewControls` can align its right edge with
 /// the painted plot/minimap edge.
-///
-/// Fixed pixel gutters, so `MediaQuery.textScaler` is deliberately not
-/// honored: the axis labels paint at a fixed 13 px into a clipped strip.
-/// Scaling the text alone would clip it; doing it properly makes both gutters
-/// measured state shared by the painters, the controls row and the minimap.
 const double _kGraphLeftSpace = 8;
 const double kGraphRightSpace = 56;
 const double _kGraphBottomSpace = 24;
@@ -1185,8 +1180,6 @@ String formatAxisTick(double sec, int decimals) {
 /// [beginPass]: [_fitTimeLines] and [_drawAxis] read `longestLine` off the
 /// paragraphs they just enumerated, so disposing inside a pass would hand
 /// them a collected native peer.
-///
-/// Deliberately does not apply `MediaQuery.textScaler`; see [_kGraphLeftSpace].
 @visibleForTesting
 class AxisLabelCache {
   static const int _limit = 512;
