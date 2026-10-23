@@ -30,16 +30,10 @@ class SessionData implements GraphDataSource {
   /// dynamite-csv `ssn_origin`), latched by the live writer from the first
   /// recorded packet and stamped into the journal when the first packet
   /// created the session — so it always exists for any session that has data.
-  /// `ssn` therefore counts RECEIVED samples: a dropout the decoder reported
-  /// is not part of the recorded stream, so `ssnOrigin + row` drifts from the
-  /// device counter by the cumulative dropped count (see `csv_export.dart`).
   final int ssnOrigin;
 
   /// Dropped-sample ranges (session-relative), reconstructed at load from
-  /// the data stream's in-band gap sentinels. Present only in sessions loaded
-  /// from sentinel-marked files (a crash salvage, or a test-seeded store):
-  /// the live decoder injects its dropouts before the batch it snapshots, so
-  /// an ordinary recording never contains one. The channel data holds held
+  /// the data stream's in-band gap sentinels. The channel data holds held
   /// values across these ranges, so stats/buckets need no exclusion logic;
   /// renderers use this to hatch and break the polyline, and CSV export
   /// blanks these rows.

@@ -318,20 +318,20 @@ class DataHub extends ChangeNotifier
   /// Record [count] dropped samples (the decoder detected a gap in the packet
   /// counter): append the range to [gaps] and hold each channel's last value
   /// ([_currentRaw]) in the ring buffer so the stored data stays magic-free.
-  /// Injection is capped at [maxDataSz] so a reboot jump (a counter restart,
-  /// or a long silent link) can't turn one callback into an unbounded loop;
-  /// a longer loss therefore shortens the live timeline by the excess. Held
-  /// samples are real ring-buffer time (they advance [totalSamples]) but are
-  /// NOT real readings, so they are never accumulated into an in-progress
-  /// tare average.
+  /// Injection is capped at `maxDataSz - reserve` so a long silent link can't
+  /// turn one callback into an unbounded loop or push a packet batch (gap +
+  /// [reserve] real samples) past the ring capacity; a longer loss therefore
+  /// shortens the timeline by the excess. Held samples are real ring-buffer
+  /// time (they advance [totalSamples]) but are NOT real readings, so they are
+  /// never accumulated into an in-progress tare average.
   ///
-  /// TODO(perf): a reboot jump injects up to 600k held samples (x4 channels)
+  /// TODO(perf): a full-ring gap injects up to 600k held samples (x4 channels)
   /// synchronously inside one BLE callback, stalling the UI isolate for a
   /// beat. If that becomes visible, fast-forward the ring and bucket state
   /// instead of looping per sample.
   @override
-  void addDroppedFrames(int count) {
-    final int toInject = math.min(count, maxDataSz);
+  void addDroppedFrames(int count, {int reserve = 0}) {
+    final int toInject = math.max(0, math.min(count, maxDataSz - reserve));
     gaps.append(totalSamples, totalSamples + toInject);
     for (int d = 0; d < toInject; d++) {
       for (int i = 0; i < kAdcChannelCount; ++i) {
@@ -343,13 +343,22 @@ class DataHub extends ChangeNotifier
 
   /// Copy the [count] samples at [startIdx] out of the ring with the span's gap
   /// ranges and packet-counter anchor ([SampleSlice]). Throws when no anchor
-  /// was noted (a recording only latches on a flowing feed).
+  /// was noted (a recording only latches on a flowing feed) or when the span
+  /// falls outside the retained ring.
   SampleSlice snapshotRange(int startIdx, int count) {
     final anchor = packetAnchor;
     if (anchor == null) {
       throw StateError(
         'snapshotRange without a packet anchor — no decodable data flowed '
         '(the StartSessionNoData guard was bypassed)',
+      );
+    }
+    if (count < 0 ||
+        startIdx < oldestSample ||
+        startIdx + count > totalSamples) {
+      throw RangeError(
+        'snapshotRange [$startIdx, ${startIdx + count}) outside retained ring '
+        '[$oldestSample, $totalSamples)',
       );
     }
     return SampleSlice(

@@ -22,8 +22,9 @@ abstract interface class AdcSink {
 
   void noteMalformedPacket(int length);
 
-  /// Inject [count] held-value samples for a detected packet gap.
-  void addDroppedFrames(int count);
+  /// Inject [count] held-value samples for a detected packet gap, leaving room
+  /// in the ring for [reserve] real samples of the same packet.
+  void addDroppedFrames(int count, {int reserve = 0});
 
   /// Append one channel-count frame; the sink copies out of [values]
   /// synchronously, so the caller may reuse its buffer.
