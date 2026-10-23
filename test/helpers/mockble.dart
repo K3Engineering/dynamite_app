@@ -62,6 +62,11 @@ class MockBlePlatform extends UniversalBlePlatform {
   /// When true, KVS commands throw, failing the connect-time flash read.
   bool failKvsCommands = false;
 
+  /// Fails only the next N KVS commands (each failing command decrements it):
+  /// a mid-sequence failure injector — unlike [failKvsCommands], commands
+  /// after the failed run recover on their own.
+  int kvsCommandsToFail = 0;
+
   /// When true, KVS commands answer 'B' (busy) while the feed is subscribed.
   bool kvsLockWhenStreaming = false;
 
@@ -149,6 +154,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     includeAdcService = true;
     badAdcConfig = false;
     failKvsCommands = false;
+    kvsCommandsToFail = 0;
     kvsLockWhenStreaming = false;
     kvsDropCommands = false;
     failFeedSubscribe = false;
@@ -423,6 +429,10 @@ class MockBlePlatform extends UniversalBlePlatform {
   ) async {
     if (characteristic == btChrKvs) {
       if (failKvsCommands) {
+        throw StateError('Mock KVS command failure');
+      }
+      if (kvsCommandsToFail > 0) {
+        kvsCommandsToFail--;
         throw StateError('Mock KVS command failure');
       }
       if (kvsCommandDelay > Duration.zero) {

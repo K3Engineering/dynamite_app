@@ -12,6 +12,10 @@ import 'kvs_protocol.dart';
 /// after [commandTimeout] — the device answers every command ('B' while
 /// locked/streaming), so a timeout means the link is broken. [abort] fails all
 /// pending work; the client is spent afterwards (a new link builds a new one).
+///
+/// A late answer for a timed-out command is normally stale and dropped; only a
+/// byte-identical one settles the live command, safe because the wire has no
+/// transaction id and SET/DEL are idempotent.
 class KvsClient {
   KvsClient({
     required this.write,

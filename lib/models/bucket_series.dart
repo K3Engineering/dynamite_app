@@ -52,7 +52,16 @@ class BucketAccumulator {
     required this.bucketSize,
     required int numBuckets,
     double? Function(int raw)? mvVOf,
-  }) : mins = Int32List(numBuckets),
+  }) : // The sums ring is Int32List: a bucket total above 2^31 - 1 wraps
+       // silently. The binding case is a DIFF bucket over alternating 24-bit
+       // rails, at most bucketSize * (2^24 - 1); 128 keeps that under int32
+       // (128 * (2^24 - 1) = 2147483520 < 2^31 - 1). Bumping kBucketSize past
+       // 128 must fail here, not corrupt sums in production.
+       assert(
+         bucketSize > 0 && bucketSize <= 128,
+         'bucketSize must be in (0, 128] to keep diff-bucket sums in int32',
+       ),
+       mins = Int32List(numBuckets),
        maxs = Int32List(numBuckets),
        sums = Int32List(numBuckets),
        _mvVOf = mvVOf,
@@ -422,6 +431,90 @@ void foldBucketRange(
     foldBucket(buckets.mins[li], buckets.maxs[li], b * bs, (b + 1) * bs);
   }
   scanExact(bLastEx * bs, end);
+}
+
+/// Merge ascending half-open [runs] into disjoint runs. Input must be sorted
+/// by start; empty runs are dropped.
+List<(int, int)> _mergeRuns(List<(int, int)> runs) {
+  final out = <(int, int)>[];
+  for (final (s, e) in runs) {
+    if (e <= s) continue;
+    if (out.isNotEmpty && s <= out.last.$2) {
+      if (e > out.last.$2) out[out.length - 1] = (out.last.$1, e);
+    } else {
+      out.add((s, e));
+    }
+  }
+  return out;
+}
+
+/// Exact (min, max) of a DIFFERENCE series over `[start, end)`, or null when
+/// the window yields no value. Gap-adjacent samples ingest into the diff
+/// buckets as diff 0 (see [ingestDiff]) even though the renderer suppresses
+/// them with NaN, so a plain [windowedExtremes] widens a derivative axis to
+/// include 0 at every gap in view — samples it deliberately does not draw.
+/// Buckets containing a synthetic zero are scanned exactly instead; real
+/// diff-0 samples elsewhere still fold.
+///
+/// Cost is O(buckets + dirty buckets x bucketSize): the merged runs are
+/// walked by a forward cursor, and clean buckets fold from their aggregates.
+(double, double)? windowedDiffExtremes(
+  BucketSeries buckets,
+  int start,
+  int end,
+  double Function(int sampleIndex) sampleAt,
+  GapList gaps,
+) {
+  // Indices whose ingested diff is synthetic: sample 0 and every sample
+  // whose predecessor lies in a gap (see [ingestDiff]).
+  final synthetic = _mergeRuns([
+    (0, 1),
+    for (final (gs, ge) in gaps.rangesIn(start - 1, end)) (gs, ge + 1),
+  ]);
+
+  double mn = double.infinity;
+  double mx = double.negativeInfinity;
+  bool found = false;
+
+  void fold(double v) {
+    if (v < mn) mn = v;
+    if (v > mx) mx = v;
+    found = true;
+  }
+
+  void scanExact(int from, int to) {
+    for (int i = from; i < to; i++) {
+      final v = sampleAt(i);
+      if (v.isNaN) continue;
+      fold(v);
+    }
+  }
+
+  // Buckets arrive in ascending sample order, so the cursor advances beyond
+  // each run at most once.
+  int cursor = 0;
+  bool overlapsSynthetic(int from, int to) {
+    while (cursor < synthetic.length && synthetic[cursor].$2 <= from) {
+      cursor++;
+    }
+    return cursor < synthetic.length && synthetic[cursor].$1 < to;
+  }
+
+  foldBucketRange(
+    buckets,
+    start,
+    end,
+    foldBucket: (bMin, bMax, from, to) {
+      if (overlapsSynthetic(from, to)) {
+        scanExact(from, to);
+      } else {
+        fold(bMin.toDouble());
+        fold(bMax.toDouble());
+      }
+    },
+    scanExact: scanExact,
+  );
+  return found ? (mn, mx) : null;
 }
 
 /// Exact (min, max) of a series over `[start, end)`, or null when the window

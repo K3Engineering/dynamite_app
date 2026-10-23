@@ -118,6 +118,13 @@ void main() {
       expect(formatBytes(2 * 1024 * 1024 * 1024), '2.0 GB');
       expect(formatBytes(3 * 1024 * 1024 * 1024 * 1024), '3.0 TB');
     });
+
+    test('a value that rounds to the unit base prints in the next unit', () {
+      // Above 10 units the label is integer-rounded, so 1023.8 kB would print
+      // "1024 kB"; the rollover runs on the rounded value instead.
+      expect(formatBytes(1048412), '1.0 MB'); // 1023.84 kB
+      expect(formatBytes(1023386), '999 kB'); // 999.4 kB: no rollover
+    });
   });
 
   group('formatRunway', () {

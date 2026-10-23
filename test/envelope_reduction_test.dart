@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/bucket_series.dart';
+import 'package:dynamite_app/models/gap_list.dart';
 
 /// Locks the documented invariants of the two block-reduction paths used by
 /// drawChannelEnvelope:
@@ -298,6 +299,242 @@ void main() {
     });
   });
 
+  group('production-scale buckets (kBucketSize = 100)', () {
+    // The groups above pin the invariants at a toy bucket size of 10; this
+    // group runs the SAME differential checks at the production grid
+    // (kBucketSize = 100, a small 8-bucket ring) over the full signed 24-bit
+    // ADC range, alternating rails, silent sections and held-value gaps.
+    const int bs = kBucketSize;
+    const int numBuckets = 8;
+
+    EnvelopeSeries buildSeries100(
+      List<int> all, {
+      double tare = 0,
+      double k = 1,
+    }) {
+      final acc = BucketAccumulator(bucketSize: bs, numBuckets: numBuckets);
+      for (int i = 0; i < all.length; i++) {
+        acc.add(i, all[i]);
+      }
+      return EnvelopeSeries.bucketed(
+        sampleAt: (j) => (all[j] - tare) * k,
+        buckets: acc.series,
+        rawToDisplay: (raw) => (raw - tare) * k,
+      );
+    }
+
+    List<int> fullRangeRandom(int n, int seed) {
+      final rng = math.Random(seed);
+      // Exhaust the full signed 24-bit ADC range.
+      return List<int>.generate(n, (_) => rng.nextInt(1 << 24) - (1 << 23));
+    }
+
+    /// Alternating rails with long silent (zero) sections mixed in.
+    List<int> railsAndSilence(int n) {
+      const int railHi = 0x7FFFFF;
+      const int railLo = -0x800000;
+      return List<int>.generate(n, (i) {
+        // Switch regime every 40 samples: rails, then silence, then rails
+        // with flipped polarity, then silence again.
+        final flip = (i ~/ 80).isEven;
+        if ((i ~/ 40).isEven) {
+          return (i.isEven == flip) ? railHi : railLo;
+        }
+        return 0;
+      });
+    }
+
+    /// Random values with explicit dropouts: inside a gap the value-side
+    /// ingest holds the previous sample (see DataHub.addDroppedFrames), so
+    /// the test series does the same.
+    List<int> heldGapsData(int n, int seed) {
+      final rng = math.Random(seed);
+      final all = List<int>.filled(n, 0);
+      int i = 0;
+      while (i < n) {
+        if (i > 0 && rng.nextInt(4) == 0) {
+          final hold = 15 + rng.nextInt(40);
+          for (int j = 0; j < hold && i < n; i++, j++) {
+            all[i] = all[i - 1];
+          }
+        } else {
+          all[i] = rng.nextInt(1 << 24) - (1 << 23);
+          i++;
+        }
+      }
+      return all;
+    }
+
+    // Bounded-but-dense sweep of ingest lengths; each length fans out into
+    // every (from, to) window containing at least one full bucket.
+    const lengths = [100, 128, 160, 200, 260];
+
+    void checkAllWindows(
+      List<int> all, {
+      double tare = 0,
+      double k = 1,
+      required String label,
+    }) {
+      for (final n in lengths) {
+        assert(n <= all.length);
+        final data = all.sublist(0, n);
+        final series = buildSeries100(data, tare: tare, k: k);
+        for (int from = 0; from + bs <= n; from++) {
+          for (int to = from + bs; to <= n; to++) {
+            final b = reduceBlockBuckets(series, from, to);
+            final e = reduceBlockExact(series.sampleAt, from, to);
+            final reason = '$label [$from, $to) (n=$n)';
+            // The count never approximates: portions sum to the window's
+            // population, exact or not.
+            expect(b.count, e.count, reason: '$reason count');
+            if (from % bs == 0 && to % bs == 0) {
+              // Bucket-aligned windows must reduce EXACTLY (min/max come
+              // from whole buckets covering exactly the window).
+              expect(b.min, closeTo(e.min, 1e-9), reason: '$reason min');
+              expect(b.max, closeTo(e.max, 1e-9), reason: '$reason max');
+            } else {
+              // Misaligned edges may only widen the envelope -- an extreme
+              // is never dropped.
+              expect(
+                b.min,
+                lessThanOrEqualTo(e.min + 1e-9),
+                reason: '$reason min conservative',
+              );
+              expect(
+                b.max,
+                greaterThanOrEqualTo(e.max - 1e-9),
+                reason: '$reason max conservative',
+              );
+            }
+          }
+        }
+      }
+    }
+
+    test('bounded-exhaustive windows over extreme data regimes', () {
+      checkAllWindows(fullRangeRandom(260, 21), label: 'fullRange');
+      checkAllWindows(railsAndSilence(260), label: 'rails');
+      checkAllWindows(
+        heldGapsData(260, 23),
+        tare: 37.5,
+        k: 0.75,
+        label: 'heldGaps affine',
+      );
+    });
+
+    test('ring-wrapped (aliased) head never leaks a stale slot', () {
+      // 8.5 buckets through an 8-bucket ring: bucket 0's slot was overwritten
+      // by bucket 8 (huge values). The trustworthy window begins at sample
+      // 100, and anything before it must go through the exact path.
+      final all = List<int>.generate(850, (i) => i < 100 ? 10 : 8000000 + i);
+      final series = buildSeries100(all);
+
+      for (int from = 0; from < 100; from += 17) {
+        for (final to in [100, 137, 250, 850]) {
+          if (to <= from) continue;
+          final b = reduceBlockBuckets(series, from, to);
+          final e = reduceBlockExact(series.sampleAt, from, to);
+          expect(b.count, e.count, reason: '[$from, $to) count');
+          expect(
+            b.min,
+            lessThanOrEqualTo(e.min),
+            reason: '[$from, $to) min conservative',
+          );
+          expect(
+            b.max,
+            greaterThanOrEqualTo(e.max),
+            reason: '[$from, $to) max conservative',
+          );
+          if (from % bs == 0 && to % bs == 0) {
+            expectSameReduction(b, e);
+          }
+        }
+      }
+
+      // The poison pin: a misread bucket-0 slot would drag the max to
+      // ~8000849; the exact head keeps the window at its true extreme 10.
+      final b = reduceBlockBuckets(series, 0, 100);
+      expect(b.max, 10);
+      expect(b.min, 10);
+
+      // foldBucketRange over a window wholly inside the aliased region is
+      // narrower than 2 buckets, so it must take the exact scan path (and
+      // can therefore never touch the stale slot).
+      int scanned = 0;
+      int folds = 0;
+      int foldedMin = 1 << 40, foldedMax = -(1 << 40);
+      foldBucketRange(
+        series.buckets,
+        0,
+        100,
+        foldBucket: (bMin, bMax, _, _) {
+          folds++;
+          foldedMin = math.min(foldedMin, bMin);
+          foldedMax = math.max(foldedMax, bMax);
+        },
+        scanExact: (from, to) {
+          for (int i = from; i < to; i++) {
+            scanned++;
+            foldedMin = math.min(foldedMin, all[i]);
+            foldedMax = math.max(foldedMax, all[i]);
+          }
+        },
+      );
+      expect(folds, 0, reason: 'never folds a bucket in the aliased head');
+      expect(scanned, 100);
+      expect(foldedMin, 10);
+      expect(foldedMax, 10);
+    });
+
+    test(
+      'a complete aligned block reduces identically mid-fill and after fill',
+      () {
+        // The bug the block-alignment fix (commit d035564) killed: a block
+        // reduced while the NEWEST bucket was still filling could cache a
+        // min/max that differed from the same reduction after more ingest.
+        // Drive a live accumulator, reduce each bucket-aligned block when
+        // the newest bucket is half-full, then again when full, then again
+        // after several more buckets -- every result must equal the exact
+        // reduction for that block.
+        const int n = 550; // stays inside the 800-sample ring
+        final all = fullRangeRandom(n, 99);
+        final acc = BucketAccumulator(bucketSize: bs, numBuckets: numBuckets);
+        EnvelopeSeries series() => EnvelopeSeries.bucketed(
+          sampleAt: (j) => all[j].toDouble(),
+          buckets: acc.series,
+          rawToDisplay: (raw) => raw,
+        );
+
+        void ingestTo(int count) {
+          for (int i = acc.samples; i < count; i++) {
+            acc.add(i, all[i]);
+          }
+        }
+
+        const blocks = [(0, 100), (100, 200), (0, 200), (300, 500), (0, 500)];
+        final snapshots = <List<BlockReduction>>[];
+        for (final fillPoint in [250, 300, 550]) {
+          ingestTo(fillPoint); // 250: newest bucket half-full, 300: just full
+          final round = [
+            for (final (f, t) in blocks)
+              if (t <= fillPoint) reduceBlockBuckets(series(), f, t),
+          ];
+          for (int i = 0; i < round.length; i++) {
+            expectSameReduction(
+              round[i],
+              reduceBlockExact(series().sampleAt, blocks[i].$1, blocks[i].$2),
+            );
+            if (snapshots.isNotEmpty && i < snapshots.first.length) {
+              // Same block, different fill history: identical result.
+              expectSameReduction(round[i], snapshots.first[i]);
+            }
+          }
+          snapshots.add(round);
+        }
+      },
+    );
+  });
+
   group('windowedExtremes', () {
     BucketAccumulator ingest(List<int> all) {
       final acc = BucketAccumulator(bucketSize: bs, numBuckets: numBuckets);
@@ -357,6 +594,172 @@ void main() {
     test('returns null when no sample in the window yields a value', () {
       final acc = ingest(randomData(30, 14));
       expect(windowedExtremes(acc.series, 5, 8, (_) => double.nan), isNull);
+    });
+  });
+
+  group('windowedDiffExtremes (gap-aware derivative axis)', () {
+    /// Ingest `all` plus a gap list exactly as the live/session pipeline does:
+    /// the diff accumulator takes [ingestDiff]'s synthetic-zero rule, and the
+    /// exact evaluator suppresses the same samples with NaN.
+    ({BucketSeries buckets, GapList gaps, double Function(int) sampleAt}) wire(
+      List<int> all,
+      List<(int, int)> gapRanges,
+    ) {
+      final acc = BucketAccumulator(bucketSize: bs, numBuckets: all.length);
+      final gaps = GapList();
+      for (final (s, e) in gapRanges) {
+        gaps.append(s, e); // inputs must already be sorted/disjoint
+      }
+      for (int i = 0; i < all.length; i++) {
+        acc.add(
+          i,
+          ingestDiff(
+            sampleIndex: i,
+            value: all[i],
+            prevValue: i == 0 ? all[i] : all[i - 1],
+            gaps: gaps,
+          ),
+        );
+      }
+      return (
+        buckets: acc.series,
+        gaps: gaps,
+        // The painter's evaluator with an absolute index (it clamps j >= 1
+        // upstream) and GraphDataSource.diffDefinedAt's rule.
+        sampleAt: (j) => j >= 1 && !gaps.contains(j) && !gaps.contains(j - 1)
+            ? (all[j] - all[j - 1]).toDouble()
+            : double.nan,
+      );
+    }
+
+    List<int> randomData(int n, int seed) {
+      final rng = math.Random(seed);
+      return List<int>.generate(n, (_) => rng.nextInt(2001) - 1000);
+    }
+
+    void expectExact(
+      ({BucketSeries buckets, GapList gaps, double Function(int) sampleAt}) w,
+      int start,
+      int end, {
+      required String label,
+    }) {
+      final ext = windowedDiffExtremes(
+        w.buckets,
+        start,
+        end,
+        w.sampleAt,
+        w.gaps,
+      );
+      final expected = [
+        for (int j = start; j < end; j++)
+          if (w.sampleAt(j).isNaN) null else w.sampleAt(j),
+      ].nonNulls.toList();
+      if (expected.isEmpty) {
+        expect(ext, isNull, reason: label);
+        return;
+      }
+      expect(ext, isNotNull, reason: label);
+      expect(ext!.$1, expected.reduce(math.min), reason: '$label min');
+      expect(ext.$2, expected.reduce(math.max), reason: '$label max');
+    }
+
+    test('matches brute force with no gaps at all', () {
+      final all = randomData(300, 31);
+      final w = wire(all, const []);
+      for (final (s, e) in [(0, 300), (0, 120), (50, 300), (120, 250)]) {
+        expectExact(w, s, e, label: 'no gaps [$s, $e)');
+      }
+    });
+
+    test('synthetic gap-edge zeros never widen the range', () {
+      // Gap at 60: the diff at 60 and 61 is a synthetic zero, while the real
+      // data is a slow ramp far from zero.
+      final all = [for (int i = 0; i < 200; i++) 1000 + i * 7];
+      final w = wire(all, const [(60, 61)]);
+      final ext = windowedDiffExtremes(w.buckets, 0, 200, w.sampleAt, w.gaps);
+      expect(ext, isNotNull);
+      expect(ext!.$1, 7, reason: 'the flat synthetic zero must not appear');
+      expect(ext.$2, 7);
+      expectExact(w, 0, 200, label: 'single gap');
+    });
+
+    test('gap-heavy windows stay exact', () {
+      // 25 runs over 1000 samples: the forward cursor must scan each dirty
+      // bucket and fold the clean ones, without losing a run.
+      final all = randomData(1000, 32);
+      final w = wire(all, [for (int s = 40; s < 1000; s += 40) (s, s + 1)]);
+      for (final (s, e) in [(0, 1000), (0, 500), (37, 863), (900, 1000)]) {
+        expectExact(w, s, e, label: 'dense [$s, $e)');
+      }
+    });
+
+    test('short gaps merge into runs without changing the result', () {
+      // GapList merges adjacent appends, so these arrive as two ranges and
+      // the synthetic expansion overlaps the next one.
+      final all = randomData(120, 33);
+      final w = wire(all, const [(10, 11), (11, 12), (12, 13), (60, 61)]);
+      for (final (s, e) in [(0, 120), (0, 30), (5, 70)]) {
+        expectExact(w, s, e, label: 'merged [$s, $e)');
+      }
+      expect(w.gaps.rangesIn(0, 120).toList(), [(10, 13), (60, 61)]);
+    });
+
+    test('the merged-run cursor never skips a later run', () {
+      // Bucket-aligned runs: a cursor that advanced too far would fold a
+      // later run's bucket instead of scanning it.
+      final all = randomData(400, 34);
+      final w = wire(all, [for (int s = 100; s < 400; s += 100) (s, s + 2)]);
+      expectExact(w, 0, 400, label: 'cursor');
+      expectExact(w, 380, 400, label: 'cursor tail');
+    });
+
+    test('a window wholly inside one gap has no drawn sample', () {
+      final all = randomData(100, 35);
+      final w = wire(all, const [(20, 60)]);
+      expect(
+        windowedDiffExtremes(w.buckets, 25, 55, w.sampleAt, w.gaps),
+        isNull,
+      );
+    });
+
+    test('a sparse gap scans only the buckets it touches, not the window', () {
+      // The cost contract: clean buckets fold from their aggregates. One gap
+      // in a 5000-sample window must not drive an O(window) scan.
+      final all = randomData(5000, 36);
+      final w = wire(all, const [(2400, 2401)]);
+      var calls = 0;
+      double counted(int j) {
+        calls++;
+        return w.sampleAt(j);
+      }
+
+      final ext = windowedDiffExtremes(w.buckets, 0, 5000, counted, w.gaps);
+      expect(ext, isNotNull);
+      // The window is 50 buckets; only the gap's bucket (plus the two partial
+      // edge buckets of foldBucketRange) is scanned per sample.
+      expect(calls, lessThan(4 * bs));
+
+      // And the answer still equals the brute-force fold.
+      final expected = [
+        for (int j = 0; j < 5000; j++)
+          if (!w.sampleAt(j).isNaN) w.sampleAt(j),
+      ];
+      expect(ext!.$1, expected.reduce(math.min));
+      expect(ext.$2, expected.reduce(math.max));
+    });
+
+    test('a run of gaps clustered at the window start does not force a '
+        'full-window scan', () {
+      // Eight early gaps in a 50-bucket window leave ~84% of buckets clean.
+      final all = randomData(5000, 37);
+      final w = wire(all, [for (int s = 100; s <= 800; s += 100) (s, s + 1)]);
+      var calls = 0;
+      windowedDiffExtremes(w.buckets, 0, 5000, (j) {
+        calls++;
+        return w.sampleAt(j);
+      }, w.gaps);
+      // Eight dirty buckets at most, well under the whole window.
+      expect(calls, lessThan(10 * bs));
     });
   });
 }

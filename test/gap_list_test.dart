@@ -46,6 +46,34 @@ void main() {
       expect(g.isEmpty, isTrue);
     });
 
+    test('append throws a StateError below the live edge', () {
+      // The precondition is release-real (a StateError, not an assert): a
+      // violated sorted/disjoint invariant would let contains() binary
+      // search silently hide gap samples. A normal expect works in every
+      // build mode.
+      final g = GapList()..append(10, 11);
+      // Reversed and overlapping appends both throw...
+      expect(() => g.append(5, 6), throwsStateError);
+      expect(
+        () => g.append(9, 12),
+        throwsA(
+          isA<StateError>().having(
+            (e) => e.message,
+            'message',
+            startsWith('append must be at the live edge'),
+          ),
+        ),
+      );
+      // ...the list is left untouched...
+      expect(g.rangesIn(0, 100).toList(), [(10, 11)]);
+      // ...and appends at or after the trailing bound still work (the
+      // equality case is the merge rule).
+      g
+        ..append(11, 12)
+        ..append(20, 21);
+      expect(g.rangesIn(0, 100).toList(), [(10, 12), (20, 21)]);
+    });
+
     test('rangesIn clamps overlapping ranges', () {
       final g = GapList()
         ..append(10, 20)
@@ -97,11 +125,17 @@ void main() {
         () => GapList.fromJson('[[30,40],[10,20]]'),
         throwsFormatException,
       );
+      // Out of order before append ever sees it (the StateError live-edge
+      // precondition can therefore never fire from fromJson inputs).
+      expect(() => GapList.fromJson('[[10,11],[5,6]]'), throwsFormatException);
       expect(
         () => GapList.fromJson('[[10,30],[20,40]]'),
         throwsFormatException,
       );
       expect(() => GapList.fromJson('[1,2]'), throwsFormatException);
+      // A range is exactly [start, end]: a triple (or any other arity) hits
+      // the same strictness.
+      expect(() => GapList.fromJson('[[1,2,3]]'), throwsFormatException);
       expect(() => GapList.fromJson('[["a","b"]]'), throwsFormatException);
       expect(() => GapList.fromJson('{}'), throwsFormatException);
     });
@@ -109,6 +143,9 @@ void main() {
     test('fromJson accepts adjacent ranges (they merge on append)', () {
       expect(GapList.fromJson('[[10,20],[20,30]]').rangesIn(0, 100).toList(), [
         (10, 30),
+      ]);
+      expect(GapList.fromJson('[[1,2],[2,3]]').rangesIn(0, 100).toList(), [
+        (1, 3),
       ]);
     });
   });

@@ -255,6 +255,15 @@ void main() {
         }),
         throwsFormatException,
       );
+      // Or with inverted polarity / out-of-order readings.
+      expect(
+        () => ChannelBoardCalibration.fromJson({
+          'r': nominalLadder,
+          'raw': const [-6.4e6, -3.2e6, 0.0, 3.2e6, 6.4e6],
+          'n': testNominals.toJson(),
+        }),
+        throwsFormatException,
+      );
     });
 
     test('a valid snapshot round-trips the full correction', () {
@@ -516,9 +525,10 @@ END
       );
     });
 
-    test('duplicate readings are rejected as degenerate', () {
+    test('duplicate or inverted readings are rejected', () {
       expectInvalid(
         '$testConstantKeys'
+            'cal.date=2026-07-20\n'
             'ch0.raw=100,100,100,100,100\n'
             'ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4\n'
             '$validCh3'
@@ -527,6 +537,18 @@ END
             'ch2.r=10000.1,10.0002,10.0004,9.9998,9.9996,9999.9\n'
             'ch2.raw=6401205.6,3201448.2,1502.8,-3196441.9,-6394203.4\n',
         'duplicate readings',
+      );
+      expectInvalid(
+        '$testConstantKeys'
+            'cal.date=2026-07-20\n'
+            'ch0.raw=-6397331.0,-3199374.1,845.2,3200621.9,6399057.3\n'
+            'ch0.r=10000.8,10.0012,9.9991,10.0008,10.0003,9999.4\n'
+            '$validCh3'
+            'ch1.r=9999.2,9.9994,10.0006,10.0001,9.9997,10000.6\n'
+            'ch1.raw=6395113.8,3197911.4,-231.5,-3199688.2,-6399884.7\n'
+            'ch2.r=10000.1,10.0002,10.0004,9.9998,9.9996,9999.9\n'
+            'ch2.raw=6401205.6,3201448.2,1502.8,-3196441.9,-6394203.4\n',
+        'inverted polarity',
       );
     });
 

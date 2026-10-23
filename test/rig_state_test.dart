@@ -379,7 +379,28 @@ void main() {
       expect(rig.effectiveSlots[4]?.name, 'Other');
     });
 
-    test('unknown flash keys are untouched by a save', () async {
+    test('a normalized name survives the read-back compare', () async {
+      // The dialog commits canonicalLoadCellName, but a profile can also reach
+      // saveToDevice from history or a hand-edited doc. The device stores
+      // "A B" for "  A   B  ", so an identity compare would fail the save on
+      // formatting the app itself normalized.
+      final rig = await newRig();
+      rig.onFlashRead('dev1', 'Bench unit', fixture());
+      rig.setSlot(
+        3,
+        const LoadCellProfile(
+          name: '  A   B  ',
+          capacityKg: 50,
+          sensitivityMvV: 1,
+        ),
+      );
+
+      expect(await rig.saveToDevice(), isTrue);
+      expect(rig.channelTitles[3], 'A B');
+      expect(transport.lastWrittenSlots!['lc3.name'], 'A B');
+    });
+
+    test('an unknown flash key is untouched by a save', () async {
       final rig = await newRig();
       const withExtras = 'hw.rev=3\nfuture.tooling=keep me';
       transport.deviceDoc = withExtras;

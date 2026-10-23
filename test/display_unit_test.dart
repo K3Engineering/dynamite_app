@@ -125,5 +125,22 @@ void main() {
       expect(DisplayUnit.axisDecimalsFor(1e-4 / 1e-6), 0); // ~100
       expect(DisplayUnit.axisDecimalsFor(1e-6 / 1e-3), 3); // ~0.001
     });
+
+    test('degenerate steps throw instead of guessing a precision', () {
+      // A broken fold must not paint a plausible axis at an invented
+      // precision; log() has no answer at zero/negative/NaN, and
+      // toStringAsFixed caps at 20 digits.
+      expect(() => DisplayUnit.axisDecimalsFor(0), throwsArgumentError);
+      expect(() => DisplayUnit.axisDecimalsFor(-1), throwsArgumentError);
+      expect(
+        () => DisplayUnit.axisDecimalsFor(double.nan),
+        throwsArgumentError,
+      );
+      expect(
+        () => DisplayUnit.axisDecimalsFor(double.infinity),
+        throwsArgumentError,
+      );
+      expect(() => DisplayUnit.axisDecimalsFor(1e-30), throwsArgumentError);
+    });
   });
 }

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 
 import '../models/damaged_session.dart';
+import '../models/device_profile.dart';
 import '../models/session_catalog.dart';
 import '../models/session_summary.dart';
 import '../utils/future_chain.dart';
@@ -457,12 +458,25 @@ class SessionStore {
   /// Start a streaming session from the caller-snapshotted [header]. Pure
   /// construction: the directory is only created by the writer's first packet,
   /// so this never fails and never leaves a data-less artifact. The caller
-  /// snapshots everything, so this layer never imports the hub.
+  /// snapshots everything, so this layer never imports the hub. The header's
+  /// channel count must match the device's: the writer packs frames that
+  /// wide, and the readback decodes with exactly the width in the journal.
   LiveSessionWriter startSession(
     SessionHeader header, {
     required int sourceRingCapacity,
     required void Function(Object error) onWriteError,
   }) {
+    // A wrong width is a silently corrupt journal + frame stream on disk, so
+    // a real throw, not a debug assert: the one call site passes
+    // kAdcChannelCount, so reaching this is a programming error.
+    if (header.channelCount != kAdcChannelCount) {
+      throw ArgumentError.value(
+        header.channelCount,
+        'header.channelCount',
+        'must equal kAdcChannelCount ($kAdcChannelCount): journal and data '
+            'frames would disagree',
+      );
+    }
     return LiveSessionWriter(
       header,
       sourceRingCapacity: sourceRingCapacity,

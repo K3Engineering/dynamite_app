@@ -20,6 +20,15 @@ void main() {
       expect(niceStepCeil(0.003), closeTo(0.005, 1e-12));
       expect(niceStepCeil(0.5), 0.5);
     });
+
+    test('non-positive or non-finite targets throw', () {
+      // No meaningful ladder rung exists for a degenerate span; drawing a
+      // plausible axis for a broken fold hides the bug.
+      expect(() => niceStepCeil(0), throwsArgumentError);
+      expect(() => niceStepCeil(-5), throwsArgumentError);
+      expect(() => niceStepCeil(double.nan), throwsArgumentError);
+      expect(() => niceStepCeil(double.infinity), throwsArgumentError);
+    });
   });
 
   group('niceStepDecimals', () {

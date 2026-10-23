@@ -71,23 +71,24 @@ extension SampleStorageQueries on SampleStorage {
   /// holds no real sample.
   double? windowedStdDev(int ch, int start, int end) {
     final (s, e) = clampToRetained(start, end);
+    // Shifted one-pass: subtract the first real sample before summing, so the
+    // squares stay on the order of the variance instead of the mean. The
+    // textbook E[x²]-E[x]² loses most of its digits to cancellation at 24-bit
+    // values (a 1-count sigma on a full-scale channel reads ~80% low).
+    double? v0;
     double sum = 0, sumSq = 0;
     int count = 0;
     for (int i = s; i < e; i++) {
       final v = rawValueAt(ch, i);
       if (v.isNaN) continue;
-      sum += v;
-      sumSq += v * v;
+      final d = v - (v0 ??= v);
       count++;
+      sum += d;
+      sumSq += d * d;
     }
     if (count == 0) return null;
-    // E[x²] - E[x]²; fp rounding can push a hair below zero.
-    return math.sqrt(
-      (sumSq / count - (sum / count) * (sum / count)).clamp(
-        0.0,
-        double.infinity,
-      ),
-    );
+    final mean = sum / count;
+    return math.sqrt((sumSq / count - mean * mean).clamp(0.0, double.infinity));
   }
 }
 

@@ -195,8 +195,13 @@ class RigState extends ChangeNotifier {
     }
     // A mismatched read-back and a state that moved under the in-flight write
     // (an edit, a re-read, or a link drop all replace the state object) are
-    // the same answer to the caller.
-    if (verified != edited || !identical(_doc, doc)) return false;
+    // the same answer to the caller. Compare in the DEVICE's serialized form:
+    // toKv is what the write sent, so the documented normalizations (whitespace
+    // runs in names flatten, integral values lose their fraction) can't fail
+    // every save on formatting alone.
+    if (!mapEquals(verified.toKv(), edited.toKv()) || !identical(_doc, doc)) {
+      return false;
+    }
     // Adopt the read-back's slots (with any normalization), the read-time
     // board, and the fresh KVS.
     _doc = _Clean(

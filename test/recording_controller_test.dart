@@ -1,15 +1,20 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/models/app_meta.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/device_info.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/session_catalog.dart';
 import 'package:dynamite_app/services/adc_packet_decoder.dart';
+import 'package:dynamite_app/services/adc_protocol.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/app_events.dart';
+import 'package:dynamite_app/services/csv_export.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/services/session_files_io.dart';
 import 'package:dynamite_app/services/recording_controller.dart';
@@ -90,6 +95,19 @@ void main() {
     }
     hub.commitBatch(0);
   }
+
+  /// One production ADC-feed packet (see [encodeAdcPacket]).
+  Uint8List packet({
+    required int counter,
+    required int samples,
+    required int value,
+  }) => encodeAdcPacket(
+    counter: counter,
+    frames: [
+      for (int s = 0; s < samples; s++)
+        encodeAdcFrame(List<int>.filled(kAdcChannelCount, value + s)),
+    ],
+  );
 
   test('startSession refuses while a tare is averaging', () {
     final (recording, hub, _) = wire();
@@ -245,6 +263,86 @@ void main() {
   });
 
   test(
+    'stopSession from idle (and after a completed stop) is refused',
+    () async {
+      final (recording, hub, _) = wire();
+
+      // _Idle: nothing to stop.
+      expect(await recording.stopSession(), isA<StopSessionRefused>());
+      expect(recording.sessionInProgress, isFalse);
+
+      // A full lifecycle lands back in _Idle, where stop is refused again.
+      expect(start(recording), isA<StartSessionOk>());
+      feedFrames(hub, 2);
+      expect(await recording.stopSession(), isA<StopSessionSaved>());
+      expect(await recording.stopSession(), isA<StopSessionRefused>());
+    },
+  );
+
+  test('a second stop while finalization is in flight is refused', () async {
+    // The sink's close parks on a latch, holding the _Stopping window open
+    // deterministically: finalize has flushed everything and waits inside
+    // closeSink.
+    final held = _HoldCloseBackend(
+      IoSessionFilesBackend('${tmp.path}/sessions'),
+    );
+    SessionStore.instance = SessionStore.over(held);
+    final (recording, hub, _) = wire();
+
+    expect(start(recording), isA<StartSessionOk>());
+    feedFrames(hub, 4);
+
+    final sink = await _firstSink(held);
+    final stopping = recording.stopSession();
+    await sink.closeRequested.future;
+    expect(recording.sessionInProgress, isTrue);
+
+    // Same guard as a mid-finalize REC tap: one lifecycle operation at a
+    // time (the payload belongs to the in-flight stop).
+    expect(await recording.stopSession(), isA<StopSessionRefused>());
+
+    sink.releaseClose.complete();
+    expect(await stopping, isA<StopSessionSaved>());
+    expect(recording.sessionInProgress, isFalse);
+  });
+
+  test('a batch arriving mid-finalize is dropped, never appended to the '
+      'closing session', () async {
+    final held = _HoldCloseBackend(
+      IoSessionFilesBackend('${tmp.path}/sessions'),
+    );
+    SessionStore.instance = SessionStore.over(held);
+    final (recording, hub, _) = wire();
+
+    expect(start(recording), isA<StartSessionOk>());
+    feedFrames(hub, 4);
+
+    final sink = await _firstSink(held);
+    final stopping = recording.stopSession();
+    await sink.closeRequested.future;
+    final sealedBytes = sink.dataBytes;
+
+    // The hub keeps delivering while the lifecycle is _Stopping: the
+    // controller's append path is gated to _Recording, so this batch must
+    // not grow the writer's totalSamplesRecorded — which the persisted
+    // byte count mirrors exactly (finalize's ack-vs-expected check would
+    // otherwise trip).
+    feedFrames(hub, 3);
+    await Future<void>.delayed(Duration.zero);
+    expect(sink.dataBytes, sealedBytes);
+
+    sink.releaseClose.complete();
+    final stop = await stopping;
+    expect(stop, isA<StopSessionSaved>());
+
+    // The finalized session holds exactly the four pre-stop samples.
+    final loaded = await SessionStore.instance.loadSession(
+      (stop as StopSessionSaved).sessionId,
+    );
+    expect(loaded.sampleCount, 4);
+  });
+
+  test(
     'stopSession folds a finalization failure into the returned error',
     () async {
       // Point the store at sessions root that cannot be created (a regular
@@ -332,6 +430,58 @@ void main() {
     },
   );
 
+  test(
+    'a decoder-reported dropout is not part of the recorded stream: the '
+    'session is the RECEIVED stream, and its ssn stays a plain progression',
+    () async {
+      final (recording, hub, _) = wire();
+      // Drive the real decoder ordering: a packet, then a counter jump (which
+      // injects a gap into the hub), then the next packet.
+      final decoder = AdcPacketDecoder(hub);
+
+      expect(start(recording), isA<StartSessionOk>());
+      decoder.onDataPacket(packet(counter: 0, samples: 5, value: 100));
+      decoder.onDataPacket(packet(counter: 25, samples: 5, value: 200));
+      decoder.onDataPacket(packet(counter: 30, samples: 5, value: 300));
+
+      // The hub saw the loss (20 held samples between the two packets)...
+      expect(hub.totalSamples, 5 + 20 + 5 + 5);
+      expect(hub.gaps.isEmpty, isFalse);
+
+      final stop = await recording.stopSession();
+      final loaded = await SessionStore.instance.loadSession(
+        (stop as StopSessionSaved).sessionId,
+      );
+      // ...but the recorded stream is what arrived: 15 real samples, no
+      // held/sentinel span. The decoder injects the gap before taking the
+      // batch's start index, so recording never sees it.
+      expect(loaded.sampleCount, 15);
+      expect(loaded.gaps.isEmpty, isTrue);
+      // ssn counts received samples from the origin, so it stays a plain
+      // arithmetic progression and trails the device counter by the loss.
+      expect(loaded.ssnOrigin, 0);
+      final csv = buildSessionCsvArtifact(
+        sessionName: 'received stream',
+        recordedAtIso: '2026-07-29T14:05:32.000Z',
+        deviceInfo: const {},
+        data: loaded,
+        unit: DisplayUnit.raw,
+        appMeta: const AppMeta(version: '1.0.0', buildNumber: '1'),
+      );
+      final body = utf8
+          .decode(csv.bytes)
+          .split('\n')
+          .skipWhile((l) => l.startsWith('#'))
+          .skip(1) // the header row
+          .where((l) => l.isNotEmpty)
+          .toList();
+      expect(body, hasLength(15));
+      for (int i = 0; i < body.length; i++) {
+        expect(body[i].split(',').first, '${loaded.ssnOrigin + i}');
+      }
+    },
+  );
+
   group('autoSessionName', () {
     test('ISO Y-M-D with 24h zero-padded H:MM:SS', () {
       expect(
@@ -362,6 +512,99 @@ SessionCatalog _readyCatalog(SessionStore store) =>
       SessionCatalogReady(:final catalog) => catalog,
       final state => throw StateError('Expected ready catalog, got $state'),
     };
+
+/// Wait for the writer's first-packet create to hand out the held sink (the
+/// append rides the writer's async write queue; the loop is only a bound,
+/// like the auto-stop wait above).
+Future<_HoldCloseSink> _firstSink(_HoldCloseBackend held) async {
+  for (var i = 0; i < 50 && held.lastSink == null; i++) {
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+  final sink = held.lastSink;
+  if (sink == null) throw StateError('the first append never created a sink');
+  return sink;
+}
+
+/// An [IoSessionFilesBackend] whose session sinks count appended bytes and
+/// park [SessionDataSink.close] on a test-released latch — holding
+/// finalization's async window (the controller's _Stopping state) open
+/// deterministically.
+class _HoldCloseBackend implements SessionFilesBackend {
+  _HoldCloseBackend(this._inner);
+
+  final IoSessionFilesBackend _inner;
+
+  /// The most recent sink handed out (non-null after the writer's first
+  /// packet lands).
+  _HoldCloseSink? lastSink;
+
+  @override
+  Future<SessionDataSink> createSession(
+    String id,
+    Uint8List metaBytes,
+    Uint8List firstData,
+  ) async {
+    final sink = _HoldCloseSink(
+      await _inner.createSession(id, metaBytes, firstData),
+    );
+    sink.dataBytes = firstData.length;
+    return lastSink = sink;
+  }
+
+  @override
+  Future<List<String>> listDirIds() => _inner.listDirIds();
+  @override
+  Future<Uint8List?> readJournal(String id) => _inner.readJournal(id);
+  @override
+  Future<Uint8List?> readData(String id) => _inner.readData(id);
+  @override
+  Future<int> dataByteLength(String id) => _inner.dataByteLength(id);
+  @override
+  Future<bool> isFinalized(String id) => _inner.isFinalized(id);
+  @override
+  Future<void> touchFinal(String id) => _inner.touchFinal(id);
+  @override
+  Future<void> truncateJournal(String id, int bytes) =>
+      _inner.truncateJournal(id, bytes);
+  @override
+  Future<void> appendJournal(String id, Uint8List bytes) =>
+      _inner.appendJournal(id, bytes);
+  @override
+  Future<void> delete(String id) => _inner.delete(id);
+}
+
+class _HoldCloseSink implements SessionDataSink {
+  _HoldCloseSink(this._inner);
+
+  final SessionDataSink _inner;
+
+  @override
+  String get id => _inner.id;
+
+  /// Bytes persisted through this sink (the create's first data included):
+  /// the observable twin of the writer's accepted-sample count.
+  int dataBytes = 0;
+
+  /// Completes when [close] is entered (finalize reached closeSink).
+  final Completer<void> closeRequested = Completer<void>();
+
+  /// Release the parked [close].
+  final Completer<void> releaseClose = Completer<void>();
+
+  @override
+  Future<int> append(Uint8List bytes) async {
+    final length = await _inner.append(bytes);
+    dataBytes += bytes.length;
+    return length;
+  }
+
+  @override
+  Future<void> close() async {
+    closeRequested.complete();
+    await releaseClose.future;
+    return _inner.close();
+  }
+}
 
 /// An [IoSessionFilesBackend] whose data sinks throw on every append: the
 /// create (journal + first write) succeeds, then storage "dies".

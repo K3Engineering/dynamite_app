@@ -696,6 +696,44 @@ void main() {
     });
   });
 
+  group('startSession header validation', () {
+    test('a channel count that disagrees with the device throws in release '
+        'too (an ArgumentError, not an assert)', () {
+      // The journal would say 3 while the writer packs 4-wide frames: a
+      // silently corrupt session on disk. This is a programming error at the
+      // one call site, so it fails loudly in every build mode.
+      expect(
+        () => SessionStore.instance.startSession(
+          (
+            name: 'bad width',
+            sampleRate: 1000,
+            channelCount: 3,
+            channelLabels: const ['a', 'b', 'c'],
+            tares: const [null, null, null],
+            calibration: [
+              for (int ch = 0; ch < 3; ch++)
+                const ChannelCalibration(board: null),
+            ],
+            visibleChannels: const [true, true, true],
+            displayUnit: DisplayUnit.kgf,
+            deviceInfo: const {},
+            deviceKvs: null,
+            recordedAt: '2026-07-29T14:05:32.000Z',
+          ),
+          sourceRingCapacity: DataHub.maxDataSz,
+          onWriteError: (_) {},
+        ),
+        throwsA(
+          isA<ArgumentError>().having(
+            (e) => e.toString(),
+            'message',
+            contains('must equal kAdcChannelCount'),
+          ),
+        ),
+      );
+    });
+  });
+
   group('file store listing', () {
     late IoSessionFilesBackend backend;
 
@@ -1111,6 +1149,71 @@ void main() {
       expect(damaged, hasLength(1));
       expect(damaged.single.id, 'junk');
       expect(damaged.single.reason, contains('malformed'));
+    });
+
+    test('frame-aligned but undecodable data pins the classify/load split: '
+        'listed as a session, loadSession throws', () async {
+      // _classify checks divisibility only — it never decodes sample data
+      // (a scan must stay cheap) — so frame-aligned content the decoder
+      // rejects passes the scan and fails strictly at load. Two shapes:
+      const gapId = '2026-08-28T14-30-12-gap0';
+      await seedSession(
+        gapId,
+        frames: const [
+          [1, 1, 1, 1],
+          [2, 2, 2, 2],
+        ],
+        // Frame 0 is the gap sentinel — a session never starts mid-gap.
+        gapRanges: const [(0, 1)],
+      );
+
+      const rawId = '2026-08-28T14-30-12-raw0';
+      final data = codec.pack(2, (s, ch) => 5);
+      // Frame 1 channel 0: above 2^23 - 1 (and not the sentinel) — the
+      // encoder never emits one (codec.pack itself would throw).
+      ByteData.sublistView(
+        data,
+      ).setInt32(codec.frameBytes, 0x00800000, Endian.little);
+      final sink = await backend.createSession(
+        rawId,
+        encodeSessionMeta(testMeta()),
+        data,
+      );
+      await sink.close();
+      await backend.touchFinal(rawId);
+
+      final listed = await catalog();
+      expect(listed.damaged, isEmpty);
+      expect(listed.session(gapId), isNotNull);
+      expect(listed.session(rawId), isNotNull);
+      await expectLater(store.loadSession(gapId), throwsStateError);
+      await expectLater(store.loadSession(rawId), throwsStateError);
+    });
+
+    test('an absent journal file is damaged: metadata unreadable', () async {
+      const id = '2026-08-28T14-30-12-nmet';
+      await seedSession(id);
+      await File('${tmp.path}/sessions/$id/$sessionJournalFile').delete();
+
+      final damaged = (await catalog()).damaged;
+      expect(damaged, hasLength(1));
+      expect(damaged.single.id, id);
+      expect(damaged.single.hasData, isTrue);
+      expect(damaged.single.hasMeta, isFalse);
+      expect(damaged.single.reason, contains('metadata unreadable'));
+    });
+
+    test('an empty journal file is damaged: metadata unreadable', () async {
+      const id = '2026-08-28T14-30-12-emty';
+      await seedSession(id);
+      await backend.truncateJournal(id, 0);
+
+      final damaged = (await catalog()).damaged;
+      expect(damaged, hasLength(1));
+      expect(damaged.single.id, id);
+      expect(damaged.single.hasData, isTrue);
+      expect(damaged.single.hasMeta, isFalse);
+      expect(damaged.single.reason, contains('metadata unreadable'));
     });
 
     test('loadSession throws on an impossible frame shape', () async {

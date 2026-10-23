@@ -61,10 +61,11 @@ class ChannelConverter {
   }
 
   /// The absolute-raw -> display-unit map, net of tare (see the class doc).
-  /// Monotone nondecreasing. A null tare means NO offset: the map itself
-  /// (zero is the map's own mV/V zero point, not zero counts). Null when
-  /// unavailable: a force unit on a channel with no assigned load cell, or
-  /// any converted unit with no board data.
+  /// Strictly increasing (board calibration points are validated ascending
+  /// in both raw and setpoint space, and unit scales are positive). A null
+  /// tare means NO offset: zero is the map's own mV/V zero point, not zero
+  /// counts. Null when unavailable: a force unit with no load cell, or any
+  /// converted unit with no board data.
   double Function(double raw)? netMap(DisplayUnit unit) {
     if (unit == DisplayUnit.raw) return (raw) => raw - (tare ?? 0);
     final resolved = _boardAndScale(unit);

@@ -33,7 +33,10 @@ jobs:
         run: flutter analyze
       - name: Run tests
         # Default concurrency is cores/2, leaving half the runner idle.
-        run: flutter test --concurrency=$(nproc)
+        # Randomized ordering seed flushes out inter-test state leaks.
+        run: >-
+          flutter test --concurrency=$(nproc)
+          --test-randomize-ordering-seed=random
 
   # Platform builds. Full set on push/schedule/dispatch.
   # On PRs only when labeled "build-all-platforms". Required status is only ever Analyze & Test.

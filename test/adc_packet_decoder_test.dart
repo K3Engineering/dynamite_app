@@ -14,26 +14,24 @@ import 'package:dynamite_app/services/data_hub.dart';
 /// accepts any count).
 const int defaultPacketSamples = 20;
 
-/// Builds an ADC-feed notification: 16-bit LE sample counter plus [samples]
-/// frames of [wireAdcSampleLength] bytes (24-bit LE per channel).
+/// Builds an ADC-feed notification with the production wire encoder
+/// ([encodeAdcPacket]/[encodeAdcFrame]), so these decoder tests exercise the
+/// same bytes the device (and mockble) would emit: 16-bit LE sample counter
+/// plus [samples] frames of 24-bit LE channel values.
 Uint8List makePacket(
   int startCounter,
   int Function(int s, int c) value, {
   int samples = defaultPacketSamples,
 }) {
-  final ev = Uint8List(wireAdcHeaderSize + wireAdcSampleLength * samples);
-  ev[0] = startCounter & 0xFF;
-  ev[1] = (startCounter >> 8) & 0xFF;
-  for (int s = 0; s < samples; ++s) {
-    for (int c = 0; c < kAdcChannelCount; ++c) {
-      final v = value(s, c) & 0xFFFFFF;
-      final base = wireAdcHeaderSize + s * wireAdcSampleLength + c * 3;
-      ev[base] = v & 0xFF;
-      ev[base + 1] = (v >> 8) & 0xFF;
-      ev[base + 2] = (v >> 16) & 0xFF;
-    }
-  }
-  return ev;
+  return encodeAdcPacket(
+    counter: startCounter,
+    frames: [
+      for (int s = 0; s < samples; ++s)
+        encodeAdcFrame([
+          for (int c = 0; c < kAdcChannelCount; ++c) value(s, c),
+        ]),
+    ],
+  );
 }
 
 void main() {

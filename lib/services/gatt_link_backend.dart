@@ -96,14 +96,30 @@ class KvsFlashTransport {
     return _snapshot = KvsSnapshot(factory: factory, user: user);
   }
 
+  /// SET [key] and throw unless the device accepted it.
+  Future<void> _set(String key, String value) async {
+    if (!await _client.set(kvsFolderUser, key, value)) {
+      throw StateError('KVS write rejected for $key');
+    }
+  }
+
+  /// DEL [key]; a rejection means the key is already gone, which is what the
+  /// caller wants. DEL idempotency is the whole retry story: see [writeSlots].
+  Future<void> _delete(String key) async {
+    await _client.delete(kvsFolderUser, key);
+  }
+
   /// Write the exact load-cell slot keys [lcKeys] (`lc0.cap`, ...) as a
   /// per-key diff against the last-read snapshot: SET the new/changed ones,
   /// DEL slot keys the snapshot holds but [lcKeys] doesn't, leave everything
   /// else — the board half, unknown keys — untouched. All writes go to the
   /// User folder, where the slots live; the app never writes Factory.
-  /// Throws when the device rejects any write — the caller keeps its
-  /// pending edits. Without a prior read the snapshot is empty, so every
-  /// key is written and nothing is deleted.
+  ///
+  /// Throws when the device rejects a SET — the caller keeps its pending
+  /// edits. A retry re-issues the whole diff; every op is idempotent (SET
+  /// overwrites, DEL of a missing key is a rejection the transport absorbs),
+  /// so a partially applied save still converges. Without a prior read the
+  /// snapshot is empty, so every key is written and nothing is deleted.
   Future<void> writeSlots(Map<String, String> lcKeys) async {
     for (final key in lcKeys.keys) {
       if (!rigSlotKeys.contains(key)) {
@@ -113,18 +129,14 @@ class KvsFlashTransport {
     final user = _snapshot.user;
     for (final e in lcKeys.entries) {
       if (user[e.key] == e.value) continue;
-      if (!await _client.set(kvsFolderUser, e.key, e.value)) {
-        throw StateError('KVS write rejected for ${e.key}');
-      }
+      await _set(e.key, e.value);
     }
     // Reconcile: known slot keys the snapshot holds but the save doesn't
     // are deleted (a cleared slot, an abandoned partial write, a value the
     // lenient read refused to adopt — see RigSlots.fromKv).
-    for (final key in user.keys) {
+    for (final key in user.keys.toList()) {
       if (!rigSlotKeys.contains(key) || lcKeys.containsKey(key)) continue;
-      if (!await _client.delete(kvsFolderUser, key)) {
-        throw StateError('KVS delete rejected for $key');
-      }
+      await _delete(key);
     }
     _snapshot = _snapshot.withUserSlots(lcKeys);
   }
@@ -141,9 +153,7 @@ class KvsFlashTransport {
       throw StateError('no User calibration to revert');
     }
     for (final key in keys) {
-      if (!await _client.delete(kvsFolderUser, key)) {
-        throw StateError('KVS delete rejected for $key');
-      }
+      await _delete(key);
     }
     _snapshot = _snapshot.withoutUserCalGroup();
   }

@@ -95,6 +95,67 @@ void main() {
     });
   });
 
+  group('BucketAccumulator int32 headroom', () {
+    // 24-bit ADC rail-to-rail span: the largest |first difference| any
+    // signal can produce (alternating rails), and the per-sample magnitude
+    // bounding every bucket sum.
+    const railSpan = (1 << 24) - 1; // 16777215
+
+    test('bucketSize is bounded so diff sums can never wrap int32', () {
+      // Anti-loud-failure guard: a constant bump past the int32 ceiling must
+      // fail at construction, not wrap silently in production. (Asserts are
+      // on under flutter test.)
+      expect(
+        () => BucketAccumulator(bucketSize: 0, numBuckets: 2),
+        throwsA(isA<AssertionError>()),
+      );
+      expect(
+        () => BucketAccumulator(bucketSize: 129, numBuckets: 2),
+        throwsA(isA<AssertionError>()),
+      );
+      // The production constant and the legal ceiling both construct fine.
+      expect(
+        BucketAccumulator(bucketSize: kBucketSize, numBuckets: 2).bucketSize,
+        kBucketSize,
+      );
+      expect(BucketAccumulator(bucketSize: 128, numBuckets: 2).bucketSize, 128);
+    });
+
+    test('the kBucketSize adversarial diff sum stays well under 2^31', () {
+      // Adversarial upper bound on any bucket sum: railSpan of headroom per
+      // sample, same sign — 100 * 16777215 computed by hand. Any int32 wrap
+      // would poison this exact value.
+      const expected = kBucketSize * railSpan; // 1677721500
+      expect(expected, lessThan(1 << 31)); // 2147483648
+      final acc = BucketAccumulator(bucketSize: kBucketSize, numBuckets: 2);
+      for (int i = 0; i < kBucketSize; i++) {
+        acc.add(i, railSpan);
+      }
+      expect(acc.sums[0], expected);
+    });
+
+    test('a full bucket at the legal ceiling (128) sums exactly', () {
+      final acc = BucketAccumulator(bucketSize: 128, numBuckets: 2);
+      // Alternating rails as VALUES: 64 samples of railSpan and 64 of 0,
+      // so the value-bucket sum is 64 * 16777215 = 2^30 - 64 = 1073741760
+      // by hand.
+      for (int i = 0; i < 128; i++) {
+        acc.add(i, i.isOdd ? railSpan : 0);
+      }
+      expect(acc.sums[0], 1073741760);
+      expect(acc.mins[0], 0);
+      expect(acc.maxs[0], railSpan);
+      // Plus the same-sign worst case: 128 * 16777215 = 2147483520 by hand,
+      // strictly below 2^31 - 1 = 2147483647. A wrap would store
+      // -2147483776 instead.
+      final worst = BucketAccumulator(bucketSize: 128, numBuckets: 2);
+      for (int i = 0; i < 128; i++) {
+        worst.add(i, railSpan);
+      }
+      expect(worst.sums[0], 2147483520);
+    });
+  });
+
   group('ChannelIngest extremes', () {
     test('track the ingested values and null out on reset', () {
       final ingest = ChannelIngest(

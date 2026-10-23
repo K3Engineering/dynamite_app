@@ -134,36 +134,59 @@ void main() {
       },
     );
 
-    test('garbled frames are protocol errors', () {
+    test(
+      "a late answer to another SET is stale: its echo carries the request's "
+      "'=' and must not read as a payload",
+      () {
+        // A pending GET must drop all three: the echo never matches, so no
+        // shape of a foreign SET answer can fail the command in flight.
+        expect(parseKvsResponse('GETFaaa', frame('0SETUlc0.cap=200')), isNull);
+        expect(parseKvsResponse('GETFaaa', frame('BSETUlc0.cap=200')), isNull);
+        expect(parseKvsResponse('GETFaaa', frame('ESETUlc0.cap=200')), isNull);
+        // The same shape against a pending SET: the non-success echo matches
+        // the pending request exactly, so it settles as the live answer.
+        final rejected = parseKvsResponse(
+          'SETUlc0.cap=200',
+          frame('0SETUlc0.cap=200'),
+        )!;
+        expect(rejected.status, KvsStatus.rejected);
+        expect(rejected.payload, isEmpty);
+      },
+    );
+
+    test('a frame that is not this command\'s answer is dropped, whatever '
+        'its shape', () {
+      // No transaction id exists on the wire, so an empty frame, a foreign
+      // echo, or garbage are all "not this command's answer": dropping them
+      // lets the live command time out rather than failing it on someone
+      // else's bytes.
+      expect(parseKvsResponse('GETFa', Uint8List(0)), isNull);
+      expect(parseKvsResponse('GETFaa', frame('1GETF')), isNull);
+      expect(parseKvsResponse('GETFaa', frame('BGETFbb=x')), isNull);
+      expect(parseKvsResponse('GETFaa', frame('EGETFbb=x')), isNull);
+      expect(parseKvsResponse('GETFa', frame('BGETFa=x')), isNull);
+      expect(parseKvsResponse('SETUk=a', frame('BSETUk=a=b')), isNull);
       expect(
-        () => parseKvsResponse('GETFa', Uint8List(0)),
-        throwsFormatException,
-      );
-      // Success status without the '=' separator (matching echo).
-      expect(
-        () => parseKvsResponse('GETFa', frame('1GETFa')),
-        throwsFormatException,
-      );
-      // An unknown status byte.
-      expect(
-        () => parseKvsResponse('GETFa', frame('2GETFa=x')),
-        throwsFormatException,
-      );
-      // Success frame with no separator anywhere.
-      expect(
-        () => parseKvsResponse('GETFaa', frame('1GETF')),
-        throwsFormatException,
-      );
-      // Non-success statuses never carry a payload.
-      expect(
-        () => parseKvsResponse('GETFaa', frame('BGETFbb=x')),
-        throwsFormatException,
-      );
-      expect(
-        () => parseKvsResponse('GETFaa', frame('EGETFbb=x')),
-        throwsFormatException,
+        parseKvsResponse('GETFa', Uint8List.fromList([0x32, 0x47, 0x00])),
+        isNull,
       );
     });
+
+    test(
+      'an echo of this command with a malformed body is a protocol error',
+      () {
+        // A success echo must carry '=payload'.
+        expect(
+          () => parseKvsResponse('GETFa', frame('1GETFa')),
+          throwsFormatException,
+        );
+        // An unknown status byte on a matching echo.
+        expect(
+          () => parseKvsResponse('GETFa', frame('2GETFa=x')),
+          throwsFormatException,
+        );
+      },
+    );
 
     test('undecodable payload bytes are protocol errors, not U+FFFD', () {
       // Payload bytes that aren't valid UTF-8 (here a lone 0xFF) pass every

@@ -1,8 +1,14 @@
 import 'dart:math' as math;
 
 /// Smallest value on the 1/2/5×10^k ladder at least [target]: round plot
-/// bounds and axis steps at any scale.
+/// bounds and axis steps at any scale. [target] must be finite and positive:
+/// there is no meaningful step for a degenerate span, and a caller that has
+/// one has a broken fold upstream, not a reason to draw a plausible-looking
+/// axis.
 double niceStepCeil(double target) {
+  if (!target.isFinite || target <= 0) {
+    throw ArgumentError.value(target, 'target', 'must be finite and positive');
+  }
   final base = math.pow(10, (math.log(target) / math.ln10).floor()).toDouble();
   if (base >= target) return base;
   if (2 * base >= target) return 2 * base;

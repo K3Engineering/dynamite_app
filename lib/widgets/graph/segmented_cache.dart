@@ -361,16 +361,19 @@ class SegmentedGraphCache {
       baked = true;
     }
 
-    assert(_segmentsAreDisjoint());
+    assert(segmentsAreWellFormed());
     return (env, baked);
   }
 
-  /// Debug-only invariant check: [_segments] is ordered by [GraphSegment.start]
-  /// with no overlaps (gaps are fine). Every mutation path ends here via
-  /// [_maintain].
-  bool _segmentsAreDisjoint() {
-    for (int k = 1; k < _segments.length; k++) {
-      if (_segments[k - 1].end > _segments[k].start) return false;
+  /// Invariant check: [_segments] is ordered by [GraphSegment.start],
+  /// pairwise disjoint (gaps are fine), and every segment is non-empty. The
+  /// assert in [_maintain] reaches this on every mutation path; public so
+  /// tests can check the planner invariant at arbitrary checkpoints.
+  @visibleForTesting
+  bool segmentsAreWellFormed() {
+    for (int k = 0; k < _segments.length; k++) {
+      if (_segments[k].start >= _segments[k].end) return false;
+      if (k > 0 && _segments[k - 1].end > _segments[k].start) return false;
     }
     return true;
   }

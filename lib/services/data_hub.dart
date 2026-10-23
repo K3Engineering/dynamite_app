@@ -318,15 +318,17 @@ class DataHub extends ChangeNotifier
   /// Record [count] dropped samples (the decoder detected a gap in the packet
   /// counter): append the range to [gaps] and hold each channel's last value
   /// ([_currentRaw]) in the ring buffer so the stored data stays magic-free.
-  /// Capped at [maxDataSz] to avoid a huge injection loop if the device
-  /// reboots and the counter jumps. Held samples are real ring-buffer time
-  /// (they advance [totalSamples]) but are NOT real readings, so they are
-  /// never accumulated into an in-progress tare average.
+  /// Injection is capped at [maxDataSz] so a reboot jump (a counter restart,
+  /// or a long silent link) can't turn one callback into an unbounded loop;
+  /// a longer loss therefore shortens the live timeline by the excess. Held
+  /// samples are real ring-buffer time (they advance [totalSamples]) but are
+  /// NOT real readings, so they are never accumulated into an in-progress
+  /// tare average.
   ///
-  /// TODO(perf): a reboot jump can inject up to ~262k held samples (65,535 x
-  /// 4 channels) synchronously inside one BLE callback, stalling the UI
-  /// isolate for a beat. If that becomes visible, chunk the injection across
-  /// frames (or fast-forward the ring/bucket state without per-sample work).
+  /// TODO(perf): a reboot jump injects up to 600k held samples (x4 channels)
+  /// synchronously inside one BLE callback, stalling the UI isolate for a
+  /// beat. If that becomes visible, fast-forward the ring and bucket state
+  /// instead of looping per sample.
   @override
   void addDroppedFrames(int count) {
     final int toInject = math.min(count, maxDataSz);
@@ -565,6 +567,9 @@ class DataHub extends ChangeNotifier
     required int end,
   }) {
     _checkChannel(adcChannel);
+    // Resolve availability first: the LiveStats row asks for units the
+    // channel can't convert (a force unit with no cell), and a window fold
+    // per such channel per packet is pure waste.
     final conv = converterFor(adcChannel).netMap(unit);
     if (conv == null) return null;
     final ext = windowedRawExtremes(adcChannel, start, end);

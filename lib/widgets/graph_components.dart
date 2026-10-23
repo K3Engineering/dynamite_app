@@ -71,14 +71,24 @@ void _handleGraphPointerScroll(
 /// One block becomes one min/avg/max reduction and one polyline vertex. When
 /// zoomed in past 1 sample/pixel this clamps to 1 (one block per sample). The
 /// last block in a range is allowed to be short.
-int _blockSizeFor(double viewSamples, double graphW) {
+@visibleForTesting
+int blockSizeFor(double viewSamples, double graphW) {
   assert(
     graphW > 0,
     'graphW must be positive, got $graphW',
   ); // callers only paint into non-degenerate plot areas
-  // floor => >= 1 sample/block, so the polyline never has more vertices than
-  // pixels. The remainder (viewSamples % blockSize) lands in the short final block.
-  return math.max(1, (viewSamples / graphW).floor());
+  // floor => >= 1 sample/block, so the polyline's vertex count tracks the
+  // pixel width. The remainder (viewSamples % blockSize) lands in the short
+  // final block.
+  final size = math.max(1, (viewSamples / graphW).floor());
+  if (size < 2 * kBucketSize) return size;
+  // Bucket-align big blocks: block indices are anchored at absolute sample 0,
+  // so a whole-multiple blockSize makes every COMPLETE block span whole
+  // buckets. Bucket reduction then equals the exact reduction, and a complete
+  // block's min/max no longer depends on how full the newest bucket was when
+  // it was first reduced (the immutable-reduction contract of
+  // [BlockReductionCache]). Rounding UP keeps the vertex bound.
+  return ((size + kBucketSize - 1) ~/ kBucketSize) * kBucketSize;
 }
 
 /// How far past a segment end its render reduces (in blocks) for the seam
@@ -563,7 +573,12 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   final SegmentedGraphCache _derivCache = SegmentedGraphCache();
   final BlockReductionCache _derivReductionCache = BlockReductionCache();
   final BakePump _bakePump = BakePump();
-  final _LabelCache _labelCache = _LabelCache();
+
+  /// One label cache per painter: [AxisLabelCache] treats a paint as a pass,
+  /// and two painters sharing a cache would make the first painter's labels
+  /// evictible during the second one's pass.
+  final AxisLabelCache _forceLabels = AxisLabelCache();
+  final AxisLabelCache _derivLabels = AxisLabelCache();
 
   /// Vsync driver for smooth live-edge scrolling; the painters merge [_vsync]
   /// into their repaint listenable.
@@ -620,7 +635,8 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     _bakePump.dispose();
     _forceCache.dispose();
     _derivCache.dispose();
-    _labelCache.dispose();
+    _forceLabels.dispose();
+    _derivLabels.dispose();
     super.dispose();
   }
 
@@ -672,7 +688,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                     reductionCache: _forceReductionCache,
                     colorScheme: colorScheme,
                     dpr: dpr,
-                    labels: _labelCache,
+                    labels: _forceLabels,
                     bakePump: _bakePump,
                   ),
                 ),
@@ -693,7 +709,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                       reductionCache: _derivReductionCache,
                       colorScheme: colorScheme,
                       dpr: dpr,
-                      labels: _labelCache,
+                      labels: _derivLabels,
                       bakePump: _bakePump,
                     ),
                   ),
@@ -1098,26 +1114,30 @@ String _graphSemanticsLabel({
 
 /// Format a zoom-window span in seconds for the readout: "800 ms" below a
 /// second, trimmed decimals below a minute ("12.4 s", "30 s"), then rounded
-/// to the second in the axis ticks' hours-folding clock shape ([_fmtTick]):
+/// to the second in the axis ticks' hours-folding clock shape ([formatAxisTick]):
 /// "2:05", "1:00:30".
 @visibleForTesting
 String formatWindowSpan(double spanSec) {
-  if (spanSec < 1.0) return '${(spanSec * 1000).round()} ms';
-  if (spanSec < 60.0) {
+  // Roll over on the ROUNDED value: values that print "999.9 ms"→"1000" or
+  // "59.95 s"→"60 s" take the next unit up instead of emitting "1000 ms" /
+  // "60 s".
+  if (spanSec < 0.9995) return '${(spanSec * 1000).round()} ms';
+  if (spanSec < 59.95) {
     final oneDecimal = spanSec.toStringAsFixed(1);
     return '${oneDecimal.endsWith('.0') ? oneDecimal.substring(0, oneDecimal.length - 2) : oneDecimal} s';
   }
-  return _fmtTick(spanSec, 0);
+  return formatAxisTick(spanSec, 0);
 }
 
 /// Clock-nice step ladder, as rungs of seconds/minutes/hours, used by
-/// [_timeStepCeil]. 30 s and friends keep m:ss labels meaningful; a 1/2/5
+/// [timeStepCeil]. 30 s and friends keep m:ss labels meaningful; a 1/2/5
 /// decade of "100 s" would print 1:40.
 const _kClockRungs = [1, 2, 5, 10, 20, 30, 60];
 
 /// Smallest clock-nice step >= [target] seconds: 1/2/5 decades below one
 /// second ([niceStepCeil]), then [_kClockRungs] of seconds, minutes, hours, ...
-double _timeStepCeil(double target) {
+@visibleForTesting
+double timeStepCeil(double target) {
   if (target < 1) return niceStepCeil(target);
   for (double scale = 1; ; scale *= 60) {
     // Terminates once scale >= target, via r = 1.
@@ -1133,8 +1153,9 @@ double _timeStepCeil(double target) {
 /// per tick: at and past one hour the format grows a field ("1:02:30")
 /// instead of minutes running past 59, so the rollover is visible in the
 /// axis and a tick's label never depends on the window around it.
-String _fmtTick(double sec, int decimals) {
-  if (sec < 0) return '-${_fmtTick(-sec, decimals)}';
+@visibleForTesting
+String formatAxisTick(double sec, int decimals) {
+  if (sec < 0) return '-${formatAxisTick(-sec, decimals)}';
   // Snap fp noise (ticks are k * step products) so 59.999... prints as 1:00.
   final f = math.pow(10, decimals);
   final snapped = (sec * f).round() / f;
@@ -1150,13 +1171,36 @@ String _fmtTick(double sec, int decimals) {
 // Axis label paragraph cache
 // ---------------------------------------------------------------------------
 
-/// Bounded cache of laid-out axis-label paragraphs. Owned by a host [State]:
-/// painters are recreated on rebuild, so a painter-owned cache would drop
-/// constantly. Clears on overflow and rebuilds the visible labels next paint.
-class _LabelCache {
+/// Bounded cache of laid-out axis-label paragraphs, one per painter. Owned by
+/// a host [State] (painters are recreated on rebuild). One painter paints at
+/// most once per frame, so a [beginPass] is a frame for its cache.
+///
+/// Scrolling x labels make the key space unbounded, so overflow evicts only
+/// entries the current pass never asked for, and disposal waits for the next
+/// [beginPass]: [_fitTimeLines] and [_drawAxis] read `longestLine` off the
+/// paragraphs they just enumerated, so disposing inside a pass would hand
+/// them a collected native peer.
+@visibleForTesting
+class AxisLabelCache {
   static const int _limit = 512;
 
   final Map<String, ui.Paragraph> _cache = HashMap();
+
+  /// Keys prepared since the last [beginPass]; everything else is evictible.
+  final Set<String> _touched = HashSet();
+
+  /// Evicted paragraphs, disposed at the next [beginPass].
+  final List<ui.Paragraph> _retired = [];
+
+  /// Start a paint pass: dispose what an earlier pass evicted, then forget
+  /// which keys the previous pass touched.
+  void beginPass() {
+    for (final paragraph in _retired) {
+      paragraph.dispose();
+    }
+    _retired.clear();
+    _touched.clear();
+  }
 
   /// The laid-out paragraph for [text] in [color], building and caching it on
   /// first use.
@@ -1166,33 +1210,47 @@ class _LabelCache {
     bool bold = false,
   }) {
     final key = '$text|${color.toARGB32()}|$bold';
-    if (!_cache.containsKey(key) && _cache.length >= _limit) {
-      _clear();
+    _touched.add(key);
+    final cached = _cache[key];
+    if (cached != null) return cached;
+    if (_cache.length >= _limit) {
+      // Only entries this pass never asked for: the rest may be read again
+      // later in the same paint. A pass that alone exceeds the limit grows
+      // past it and is evicted by a later one.
+      _cache.removeWhere((k, paragraph) {
+        if (_touched.contains(k)) return false;
+        _retired.add(paragraph);
+        return true;
+      });
     }
-    return _cache.putIfAbsent(key, () {
-      final style = ui.TextStyle(
-        color: color,
-        fontSize: 13,
-        fontWeight: bold ? FontWeight.w600 : FontWeight.normal,
-      );
-      final builder =
-          ui.ParagraphBuilder(
-              ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
-            )
-            ..pushStyle(style)
-            ..addText(text);
-      return builder.build()..layout(const ui.ParagraphConstraints(width: 96));
-    });
+    final style = ui.TextStyle(
+      color: color,
+      fontSize: 13,
+      fontWeight: bold ? FontWeight.w600 : FontWeight.normal,
+    );
+    final builder =
+        ui.ParagraphBuilder(
+            ui.ParagraphStyle(textAlign: TextAlign.left, maxLines: 1),
+          )
+          ..pushStyle(style)
+          ..addText(text);
+    final paragraph = builder.build()
+      ..layout(const ui.ParagraphConstraints(width: 96));
+    _cache[key] = paragraph;
+    return paragraph;
   }
 
-  void _clear() {
+  void dispose() {
     for (final paragraph in _cache.values) {
       paragraph.dispose();
     }
     _cache.clear();
+    _touched.clear();
+    for (final paragraph in _retired) {
+      paragraph.dispose();
+    }
+    _retired.clear();
   }
-
-  void dispose() => _clear();
 }
 
 // ---------------------------------------------------------------------------
@@ -1229,15 +1287,18 @@ YAxisRange _computeYRange(
   DisplayUnit unit,
   double plotHeight,
 ) {
-  // Guard only the exactly-degenerate span (a no-data derivative fold): the
-  // SI-prefix rung keeps tiny-window labels readable, so there's no floor.
-  final double max = dataMax <= dataMin ? dataMin + 1.0 : dataMax;
+  // Flat data (or the 0,0 no-data derivative fold) has dataMax == dataMin:
+  // widen it to a unit window. Anything non-finite is a broken conversion
+  // upstream, so let it fail in the tick math rather than drawing a plausible
+  // axis for corrupt state.
+  final double lo = dataMin;
+  final double max = dataMax <= lo ? lo + 1.0 : dataMax;
 
   // 1/2/5 tick delta sized so ticks land at least [_kMinYTickPx] apart.
-  final tickDelta = niceStepCeil((max - dataMin) * _kMinYTickPx / plotHeight);
+  final tickDelta = niceStepCeil((max - lo) * _kMinYTickPx / plotHeight);
 
   // Snap yMin and yMax to tick boundaries
-  final yMin = (dataMin / tickDelta).floor() * tickDelta;
+  final yMin = (lo / tickDelta).floor() * tickDelta;
   final yMax = (max / tickDelta).ceil() * tickDelta;
 
   final rung = unit.axisRung(math.max(yMin.abs(), yMax.abs()));
@@ -1272,7 +1333,8 @@ enum _AxisOrientation { x, y }
 /// Majors are the ticks with k % period == 0 on the absolute tick grid
 /// k * step, so the tick k == 0 (X: session start; Y: zero) is a major
 /// whenever it is visible.
-int _majorPeriod(double step, double Function(double target) stepCeil) {
+@visibleForTesting
+int majorPeriod(double step, double Function(double target) stepCeil) {
   final superStep = stepCeil(5 * step);
   final period = (superStep / step).round();
   assert(
@@ -1282,7 +1344,7 @@ int _majorPeriod(double step, double Function(double target) stepCeil) {
   return period;
 }
 
-/// Fractional digits for [_fmtTick] at [step]: enough to resolve the step,
+/// Fractional digits for [formatAxisTick] at [step]: enough to resolve the step,
 /// capped at 3 (ms).
 int _timeDecimals(double step) =>
     step >= 1 ? 0 : (-(math.log(step) / math.ln10).floor()).clamp(1, 3);
@@ -1305,24 +1367,73 @@ class _AxisTick {
 class _AxisLines {
   const _AxisLines(this.ticks, this.minorPos, {required this.clipLabels});
   final List<_AxisTick> ticks;
-  final List<double> minorPos;
+  final Iterable<double> minorPos;
   final bool clipLabels;
 }
 
-/// Enumerate one axis's grid lines and labels at tick [step], preparing each
-/// label paragraph. Labeled ticks live on the absolute grid k * step, so
-/// they (and the majors) hold still while the window slides; indexing by k
-/// rather than accumulating keeps the major test exact and makes the k == 0
-/// tick literally 0.0 (no "-0.000" snap needed at the zero label).
+/// One labeled tick of an axis grid before any label paragraph exists: grid
+/// value, major flag, pixel position. The pure half of [_enumAxisLines].
+typedef AxisTick = ({double value, double pos, bool major});
+
+/// The pure tick grid at [step] over [windowStart]..[windowEnd] widened by
+/// [enumSlack], lazily ([_fitTimeLines] re-enumerates at candidate steps).
+/// Nothing here prepares a label, so tests can pin it without a cache.
+///
+/// Labeled ticks live on the absolute grid k * step, so they (and the majors)
+/// hold still while the window slides; indexing by k rather than accumulating
+/// keeps the major test exact and makes the k == 0 tick literally 0.0.
 ///
 /// [enumSlack] extends the population past both window edges; X passes one
-/// tick plus the live edge's worst lead jitter ([_kLiveEdgeLeadMs]: a
-/// landing packet rewinds the wall-clock lead), so a rolling window
-/// micro-oscillating across an edge tick slides it in and out instead of
-/// toggling it per frame. Y snaps its range to tick boundaries and passes 0:
-/// its ticks are always in range. The inclusive end (step * 0.01) leaves
-/// room for fp noise: a line exactly at the snapped or slacked edge (Y's
-/// bounds) draws rather than dropping out.
+/// tick plus the live edge's worst lead jitter ([_kLiveEdgeLeadMs]), so a
+/// rolling window micro-oscillating across an edge tick slides it in and out
+/// instead of toggling it per frame. Y snaps its range to tick boundaries and
+/// passes 0. The inclusive end (step * 0.01) leaves room for fp noise, so a
+/// line exactly on the snapped or slacked edge draws.
+Iterable<AxisTick> axisTicks(
+  double windowStart,
+  double windowEnd, {
+  required double step,
+  required double Function(double target) stepCeil,
+  required double enumSlack,
+  required double Function(double value) posOf,
+}) sync* {
+  final period = majorPeriod(step, stepCeil);
+  final lo = windowStart - enumSlack;
+  final hi = windowEnd + enumSlack + step * 0.01;
+  // The 1e-9 nudge keeps a tick exactly at the window edge from dropping out
+  // to fp error: yMin is itself snapped to a tick boundary (see
+  // [_computeYRange]), and (yMin / step).ceil() can land one step high.
+  for (int k = (lo / step - 1e-9).ceil(); k * step <= hi; k++) {
+    yield (value: k * step, pos: posOf(k * step), major: k % period == 0);
+  }
+}
+
+/// The pixel positions of the half-step minor lines over [axisTicks]' window,
+/// lazily (see [axisTicks]). Minor lines live on the ODD half-step grid,
+/// indexed by j so the overlap test is exact: even multiples of minorStep are
+/// the labeled ticks, so starting at the first odd j and stepping by 2 skips
+/// them.
+Iterable<double> axisMinorTicks(
+  double windowStart,
+  double windowEnd, {
+  required double step,
+  required double enumSlack,
+  required double Function(double value) posOf,
+}) sync* {
+  final minorStep = step / 2;
+  final hi = windowEnd + enumSlack + step * 0.01;
+  final firstMinor = ((windowStart - enumSlack) / minorStep - 1e-9).ceil();
+  for (
+    int j = firstMinor.isEven ? firstMinor + 1 : firstMinor;
+    j * minorStep <= hi;
+    j += 2
+  ) {
+    yield posOf(j * minorStep);
+  }
+}
+
+/// [_AxisLines] for one axis at [step]: the pure grid above with a label
+/// paragraph prepared for each tick.
 _AxisLines _enumAxisLines(
   double windowStart,
   double windowEnd, {
@@ -1331,40 +1442,33 @@ _AxisLines _enumAxisLines(
   required double enumSlack,
   required String Function(double tick) labelFor,
   required double Function(double value) posOf,
-  required _LabelCache labels,
+  required AxisLabelCache labels,
   required Color textColor,
 }) {
-  final period = _majorPeriod(step, stepCeil);
-  final lo = windowStart - enumSlack;
-  final hi = windowEnd + enumSlack + step * 0.01;
-  // Minor lines live on the ODD half-step grid, indexed by j so the overlap
-  // test is exact: even multiples of minorStep are the labeled ticks
-  // themselves, so starting at the first odd j and stepping by 2 skips them --
-  // leaving emphasis to the tick lines, not a double stroke.
-  final minorStep = step / 2;
-  final firstMinor = (lo / minorStep).ceil();
   return _AxisLines(
     [
-      for (int k = (lo / step).ceil(); k * step <= hi; k++)
+      for (final t in axisTicks(
+        windowStart,
+        windowEnd,
+        step: step,
+        stepCeil: stepCeil,
+        enumSlack: enumSlack,
+        posOf: posOf,
+      ))
         _AxisTick(
-          k * step,
-          posOf(k * step),
-          labels.prepare(
-            labelFor(k * step),
-            color: textColor,
-            bold: k % period == 0,
-          ),
-          k % period == 0,
+          t.value,
+          t.pos,
+          labels.prepare(labelFor(t.value), color: textColor, bold: t.major),
+          t.major,
         ),
     ],
-    [
-      for (
-        int j = firstMinor.isEven ? firstMinor + 1 : firstMinor;
-        j * minorStep <= hi;
-        j += 2
-      )
-        posOf(j * minorStep),
-    ],
+    axisMinorTicks(
+      windowStart,
+      windowEnd,
+      step: step,
+      enumSlack: enumSlack,
+      posOf: posOf,
+    ),
     clipLabels: enumSlack > 0,
   );
 }
@@ -1387,7 +1491,7 @@ _AxisLines _fitTimeLines(
   required double Function(double target) stepCeil,
   required String Function(double tick, int decimals) labelFor,
   required double Function(double value) posOf,
-  required _LabelCache labels,
+  required AxisLabelCache labels,
   required Color textColor,
 }) {
   final spanSec = endSec - startSec;
@@ -1874,7 +1978,7 @@ bool _paintEnvelopeDataLayer(
 
   double valueToY(double val) => gh - (val - yMin) * gh / (yMax - yMin);
 
-  final int blockSize = _blockSizeFor(viewSpan, gw);
+  final int blockSize = blockSizeFor(viewSpan, gw);
   final double blockPx = blockSize * gw / viewSpan;
 
   // The bake render clamps content to firstUsableSample (the ring can't
@@ -2126,7 +2230,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final double dpr;
 
   /// Axis-label paragraph cache, owned (and disposed) by the host [State].
-  final _LabelCache labels;
+  final AxisLabelCache labels;
 
   /// Drives the rolling segment bakes: a repaint listenable for this painter
   /// and the scheduler for extra frames when bake work remains (rolling
@@ -2209,6 +2313,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   @nonVirtual
   @override
   void paint(Canvas canvas, Size size) {
+    labels.beginPass();
     final layout = _setupGraphFrame(
       canvas,
       size,
@@ -2282,8 +2387,8 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       endSec,
       graphSz.width,
       slackOf: xSlack,
-      stepCeil: _timeStepCeil,
-      labelFor: _fmtTick,
+      stepCeil: timeStepCeil,
+      labelFor: formatAxisTick,
       posOf: xToPx,
       labels: labels,
       textColor: colorScheme.onSurface,
@@ -2571,14 +2676,17 @@ class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
     final from = math.max(startI, _data.oldestSample + firstSampleOffset);
 
     // Each channel folds via the bucket fast path through its own diff map
-    // (monotone, so both bounds fold safely).
+    // (monotone, so both bounds fold safely). The gap-aware variant keeps
+    // synthetic gap-edge zeros out of the axis range (see
+    // [windowedDiffExtremes]).
     double? dMin, dMax;
     for (final bound in _channels) {
-      final ext = windowedExtremes(
+      final ext = windowedDiffExtremes(
         _data.diffBucketsFor(bound.channel),
         from,
         endI,
         _rawDiffAt(bound.channel),
+        _data.gaps,
       );
       if (ext == null) continue;
       final display = _diffDisplayFor(bound);

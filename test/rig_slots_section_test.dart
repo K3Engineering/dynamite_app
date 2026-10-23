@@ -213,6 +213,48 @@ void main() {
     expect(find.text('Empty slot'), findsNWidgets(7));
   });
 
+  testWidgets('typed cells with NaN, Infinity or a negative keep Save off, '
+      'and the committed name is canonical', (tester) async {
+    final rig = await pump(tester);
+    await tester.tap(find.text('Empty slot').first);
+    await tester.pumpAndSettle();
+
+    FilledButton saveButton() => tester.widget<FilledButton>(
+      inDialog(find.widgetWithText(FilledButton, 'Save')),
+    );
+    Future<void> type(String label, String value) async {
+      await tester.enterText(
+        inDialog(find.widgetWithText(TextField, label)),
+        value,
+      );
+      await tester.pump();
+    }
+
+    // double.tryParse accepts all of these strings; the graph, the journal
+    // and the KVS write path do not accept the values.
+    for (final bad in ['NaN', 'Infinity', '-Infinity', '0', '-5']) {
+      await type('Capacity (kg)', bad);
+      await type('Sensitivity (mV/V at full scale)', '2');
+      expect(saveButton().onPressed, isNull, reason: 'capacity "$bad"');
+    }
+    await type('Capacity (kg)', '50');
+    for (final bad in ['NaN', 'Infinity', '0']) {
+      await type('Sensitivity (mV/V at full scale)', bad);
+      expect(saveButton().onPressed, isNull, reason: 'sensitivity "$bad"');
+    }
+
+    // A valid pair enables Save; the committed name is the stored form, so
+    // the row after saving matches the device's read-back.
+    await type('Sensitivity (mV/V at full scale)', '2');
+    await type('Name (optional)', '  Bench   cell  ');
+    expect(saveButton().onPressed, isNotNull);
+    await tester.tap(inDialog(find.widgetWithText(FilledButton, 'Save')));
+    await tester.pumpAndSettle();
+
+    expect(rig.channelCells[3]?.name, 'Bench cell');
+    expect(rig.channelCells[3]?.capacityKg, 50);
+  });
+
   testWidgets('add dialog carries the fields; a history tap pre-fills them', (
     tester,
   ) async {

@@ -29,6 +29,15 @@ void main() {
       expect(formatWindowSpan(125.7), '2:06');
     });
 
+    test('spans that round up into the next unit print in that unit', () {
+      // 0.9997 s would print "1000 ms" and 59.97 s would print "60.0 s"; each
+      // rolls over on the rounded value instead.
+      expect(formatWindowSpan(0.9997), '1 s');
+      expect(formatWindowSpan(0.9994), '999 ms');
+      expect(formatWindowSpan(59.97), '1:00');
+      expect(formatWindowSpan(59.9), '59.9 s');
+    });
+
     test('hour spans fold hours like the axis ticks', () {
       expect(formatWindowSpan(3600), '1:00:00');
       expect(formatWindowSpan(3661), '1:01:01');

@@ -277,10 +277,12 @@ sealed class ChannelBoardCalibration {
   /// flash and session-snapshot parsers: [kLadderResistorCount] positive
   /// resistors (a zero or negative value gives nonsense setpoints or a NaN
   /// ladder total) and [kCalPointCount] finite readings inside the ADC's
-  /// bipolar range, at least 1000 counts apart (a duplicate or near-zero gap
-  /// is corrupt flash; exact duplicates would divide by zero during
-  /// interpolation). Both null = "no factory data" is NOT valid here;
-  /// callers check presence before calling.
+  /// bipolar range, strictly decreasing in storage order by at least 1000
+  /// counts per step (storage order runs from +FS to -FS, so a reversed or
+  /// scrambled step means inverted polarity or corrupt flash; duplicates or
+  /// near-zero gaps would divide by zero during interpolation). Both null =
+  /// "no factory data" is NOT valid here; callers check presence before
+  /// calling.
   @useResult
   static bool channelDataIsValid(
     List<double> resistors,
@@ -293,8 +295,7 @@ sealed class ChannelBoardCalibration {
       // (or a zero ladder total → NaN).
       if (!v.isFinite || v <= 0) return false;
     }
-    final sorted = [...readings]..sort();
-    for (final v in sorted) {
+    for (final v in readings) {
       // 'NaN'/'Infinity' parse fine with double.tryParse — reject them and
       // anything beyond the ADC's bipolar range: neither came from hardware.
       if (!v.isFinite ||
@@ -303,8 +304,8 @@ sealed class ChannelBoardCalibration {
         return false;
       }
     }
-    for (int i = 1; i < sorted.length; ++i) {
-      if (sorted[i] - sorted[i - 1] < 1000) return false;
+    for (int i = 1; i < readings.length; ++i) {
+      if (readings[i - 1] - readings[i] < 1000) return false;
     }
     return true;
   }
@@ -366,15 +367,15 @@ class CalibratedChannelBoard extends ChannelBoardCalibration {
     required List<double> resistors,
     required List<double> readings,
     required this.nominals,
-  }) : resistors = List.unmodifiable(resistors),
+  }) : assert(ChannelBoardCalibration.channelDataIsValid(resistors, readings)),
+       resistors = List.unmodifiable(resistors),
        readings = List.unmodifiable(readings),
        super._() {
-    // Sort the five points ascending by raw reading for interpolation.
-    final order = [for (int k = 0; k < kCalPointCount; ++k) k]
-      ..sort((a, b) => this.readings[a].compareTo(this.readings[b]));
-    final sp = setpoints;
-    _sortedRaw = [for (final k in order) this.readings[k]];
-    _sortedSetpoints = [for (final k in order) sp[k]];
+    // Storage order runs from +FS (k=0) to -FS (k=4), and channelDataIsValid
+    // enforces strictly decreasing readings and positive resistors, so
+    // reversing gives strictly ascending points in both raw and setpoint space.
+    _sortedRaw = this.readings.reversed.toList(growable: false);
+    _sortedSetpoints = setpoints.reversed.toList(growable: false);
   }
 
   /// Characterized ladder resistors ([kLadderResistorCount]).

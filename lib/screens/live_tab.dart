@@ -128,8 +128,8 @@ class _LiveTabState extends State<LiveTab> {
         case StopSessionNothingRecorded() ||
             StopSessionFailed() ||
             StopSessionRefused():
-          // Refused is unreachable here (the toggle only stops while in
-          // progress).
+          // Refused means a second stop ran while finalize was in flight;
+          // the first call's outcome is what the user hears about.
           break;
       }
     } else {

@@ -281,6 +281,66 @@ void main() {
     });
   });
 
+  test('a mid-write failure converges on retry: the re-sent SETs and DELs '
+      'are idempotent, so a partially applied save still finishes', () {
+    fakeAsync((async) {
+      final (transport, client) = wire();
+      read(transport, async);
+      mock.kvsCommandLog.clear();
+
+      // The same six-op diff as the minimal-diff test above: one changed
+      // value (SET), one new two-key slot (SET, SET), one emptied slot
+      // (DEL x3) - plenty of room for a mid-sequence failure.
+      final modified = fixtureSlots()
+        ..['lc0.sens'] = '1.9985'
+        ..remove('lc4.name')
+        ..remove('lc4.cap')
+        ..remove('lc4.sens')
+        ..['lc6.cap'] = '50'
+        ..['lc6.sens'] = '2';
+
+      // The first SET lands synchronously (the mock answers in the write
+      // handler); arming the one-command failure afterwards makes the
+      // SECOND op the one that throws.
+      Object? error;
+      unawaited(
+        transport
+            .writeSlots(modified)
+            .then((_) {}, onError: (Object e) => error = e),
+      );
+      mock.kvsCommandsToFail = 1;
+      async.flushMicrotasks();
+
+      // The write failed on the second op; only the confirmed first op is
+      // in the log, and the armed failure is spent.
+      expect(error, isA<StateError>());
+      expect(mock.kvsCommandLog, ['SETUlc0.sens=1.9985']);
+      expect(mock.kvsCommandsToFail, 0);
+      mock.kvsCommandLog.clear();
+
+      // The retry re-issues the whole diff against the unchanged snapshot.
+      // That is safe rather than wasteful here: the re-sent SET overwrites
+      // with the same value, and a DEL of an already-deleted key answers
+      // '0' (no such key), which the transport treats as success.
+      expect(writeSlots(transport, modified, async), isNull);
+      expect(mock.kvsCommandLog, [
+        'SETUlc0.sens=1.9985',
+        'SETUlc6.cap=50',
+        'SETUlc6.sens=2',
+        'DELUlc4.cap',
+        'DELUlc4.name',
+        'DELUlc4.sens',
+      ]);
+
+      // A fresh read-back reassembles exactly the intended slots.
+      final reread = read(KvsFlashTransport(client), async)!;
+      expect(
+        DeviceFlash.fromKvs(reread, pgaGains: const [1, 1, 1, 1]).slots.toKv(),
+        modified,
+      );
+    });
+  });
+
   test('read failure throws; write failure throws', () {
     fakeAsync((async) {
       final (transport, _) = wire();
