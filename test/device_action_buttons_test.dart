@@ -127,7 +127,7 @@ void main() {
   }
 
   Future<void> showDevicesTab(WidgetTester tester) async {
-    await tester.tap(find.byType(NavigationDestination).at(2));
+    await tester.tap(find.byType(NavigationDestination).at(3));
     await tester.pump();
     await tester.pump(const Duration(seconds: 6));
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/derived_channel.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 
@@ -18,20 +19,34 @@ class AppSettings extends ChangeNotifier {
     // default unit (mV/V — see [_displayUnit]).
     _displayUnit = DisplayUnit.fromName(_prefs.getString(_keyUnit));
 
+    // The stored list spans the channel id space (hardware + derived);
+    // shorter lists from before derived channels existed pad on (the new
+    // channels default to active so the rig's channels just appear).
     final active = _prefs.getStringList(_keyActiveChannels);
-    if (active != null && active.length == kAdcChannelCount) {
-      _activeChannels = active.map((s) => s == 'true').toList();
+    if (active != null &&
+        active.length >= kAdcChannelCount &&
+        active.length <= kMaxChannelCount) {
+      for (int i = 0; i < active.length; i++) {
+        _activeChannels[i] = active[i] == 'true';
+      }
     }
 
     _wakelockEnabled = _prefs.getBool(_keyWakelock) ?? false;
 
     _showDebugLiveValues = _prefs.getBool(_keyDebugLiveValues) ?? false;
+
+    _channelFamily = switch (_prefs.getString(_keyChannelFamily)) {
+      final name? =>
+        ChannelFamily.values.asNameMap()[name] ?? ChannelFamily.all,
+      null => ChannelFamily.all,
+    };
   }
 
   static const String _keyUnit = 'display_unit';
   static const String _keyActiveChannels = 'active_channels';
   static const String _keyWakelock = 'wakelock_enabled';
   static const String _keyDebugLiveValues = 'debug_live_values';
+  static const String _keyChannelFamily = 'channel_family';
 
   final SharedPreferences _prefs;
 
@@ -41,14 +56,26 @@ class AppSettings extends ChangeNotifier {
   DisplayUnit _displayUnit = DisplayUnit.mVv;
   DisplayUnit get displayUnit => _displayUnit;
 
-  /// Which channels are shown in the live view. Local to the live tab —
-  /// each recorded session carries its own visibility set.
-  List<bool> _activeChannels = List.filled(kAdcChannelCount, true);
+  /// Which channels are shown in the live view, in the widened channel id
+  /// space (hardware channels then derived). Local to the live tab — each
+  /// recorded session carries its own visibility set.
+  final List<bool> _activeChannels = List.filled(kMaxChannelCount, true);
   List<bool> get activeChannels => List.unmodifiable(_activeChannels);
 
   List<int> get activeChannelIndices => [
     for (int i = 0; i < _activeChannels.length; i++)
       if (_activeChannels[i]) i,
+  ];
+
+  /// Which slice of the channel id space is on screen (the stats table and
+  /// the graphs). Phone-width headers fit one family; see [ChannelFamily].
+  ChannelFamily _channelFamily = ChannelFamily.all;
+  ChannelFamily get channelFamily => _channelFamily;
+
+  /// [indices] filtered down to the on-screen family.
+  List<int> visibleChannelIndices(Iterable<int> indices) => [
+    for (final i in indices)
+      if (_channelFamily.includes(i)) i,
   ];
 
   bool _wakelockEnabled = false;
@@ -83,5 +110,11 @@ class AppSettings extends ChangeNotifier {
     _showDebugLiveValues = enabled;
     notifyListeners();
     await _prefs.setBool(_keyDebugLiveValues, enabled);
+  }
+
+  Future<void> setChannelFamily(ChannelFamily family) async {
+    _channelFamily = family;
+    notifyListeners();
+    await _prefs.setString(_keyChannelFamily, family.name);
   }
 }
