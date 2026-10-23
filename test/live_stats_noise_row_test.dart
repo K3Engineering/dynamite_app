@@ -12,6 +12,7 @@ import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/models/feed_health.dart';
 import 'package:dynamite_app/services/rig_state.dart';
+import 'package:dynamite_app/widgets/channel_stats_table.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
 /// Widget test for the debug-only "AC RMS" row in the live stats: hidden by
@@ -54,8 +55,16 @@ void main() {
     );
     await pumpStats();
 
+    // Values are painted, not Text widgets, so count cell painters by text.
+    int painted(String text) => tester
+        .widgetList<CustomPaint>(find.byType(CustomPaint))
+        .where((w) => w.painter is ChannelStatsCellPainter)
+        .map((w) => w.painter! as ChannelStatsCellPainter)
+        .where((p) => p.text == text)
+        .length;
+
     expect(find.text('AC RMS (4 s)'), findsNothing);
-    expect(find.text('+100'), findsNWidgets(kAdcChannelCount)); // Peak only
+    expect(painted('+100'), kAdcChannelCount); // Peak only
 
     // AppSettings has no listener in this harness: re-pump so the row gate
     // re-reads the flag.
@@ -63,6 +72,6 @@ void main() {
     await pumpStats();
 
     expect(find.text('AC RMS (4 s)'), findsOneWidget);
-    expect(find.text('+100'), findsNWidgets(kAdcChannelCount * 2));
+    expect(painted('+100'), kAdcChannelCount * 2);
   });
 }
