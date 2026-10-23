@@ -11,7 +11,7 @@ import 'dart:math' as math;
 //   (state, env) --prepareFrame--> state'
 //   state'       --planBakes-----> at most one plan, or null for a quiet frame
 //   [shell rasterizes the plan, reading the render closure]
-//   (state', bake) --applyBake--> state'' + the meta the bake produced
+//   (state', bake) --applyBake--> state''
 //   state''      --rasterPlan----> blit rects + gap rects to draw
 //
 // State is immutable: each transition returns a new [CacheState] sharing the
@@ -180,16 +180,18 @@ final class CacheState {
     remapKey: remapKey,
   );
 
-  /// Adopt [c]'s config as the current stamps. The lists are copied: callers
-  /// may reuse and mutate their key lists between frames.
-  CacheState withStamps(CacheConfig c) => CacheState._(
-    segments: segments,
-    generation: c.generation,
-    gh: c.gh,
-    dpr: c.dpr,
-    destructiveKey: List.of(c.destructiveKey),
-    remapKey: List.of(c.remapKey),
-  );
+  /// Adopt [c]'s config as the current stamps, replacing the segment list with
+  /// [segments]. The key lists are copied: callers may reuse and mutate their
+  /// key lists between frames.
+  CacheState withStamps(CacheConfig c, List<SegmentMeta> segments) =>
+      CacheState._(
+        segments: segments,
+        generation: c.generation,
+        gh: c.gh,
+        dpr: c.dpr,
+        destructiveKey: List.of(c.destructiveKey),
+        remapKey: List.of(c.remapKey),
+      );
 }
 
 /// The frame config plus the quantities derived from it once
@@ -282,7 +284,7 @@ CacheState _restamp(CacheState state, CacheEnv env) {
   )) {
     return state;
   }
-  return state.withStamps(config).withSegments([
+  return state.withStamps(config, [
     for (final s in state.segments)
       if (s.end > env.covStart && s.start < env.covEnd) s,
   ]);
@@ -309,7 +311,7 @@ List<(int, int)> _gaps(
 }
 
 /// One bake decision: replace segments [from]..[to] (inclusive) of the state
-/// [planBakes] returns with a bake of samples [start, end).
+/// [prepareFrame] returned with a bake of samples [start, end).
 typedef BakePlan = ({int from, int to, int start, int end});
 
 /// Transition 2: choose this frame's (re)bake -- priority:
@@ -538,9 +540,9 @@ BakePlan? _stalePlan(
 /// Past two targets on screen it splits to the RIGHTMOST target span, so the
 /// left remainder pairs with [_bakeWidestGap]'s right-aligned fill and the hole
 /// refills marching left instead of stranding a sliver between two tiles. The
-/// `end - targetSpan > s.start` clause is the progress guard: at pps over
-/// ~200 px/sample the span hits its 1-sample floor and cannot shrink the
-/// segment.
+/// `end - targetSpan > s.start` clause is the progress guard: at pps past
+/// [kSegmentTargetPx] px/sample the span hits its 1-sample floor and cannot
+/// shrink the segment.
 ///
 /// Otherwise it swallows abutting LEFT neighbors while the merged width stays
 /// within 1.5 targets -- left, because the sweep runs rightmost-first and those
