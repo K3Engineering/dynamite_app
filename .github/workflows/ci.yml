@@ -34,9 +34,34 @@ jobs:
       - name: Run tests
         # Default concurrency is cores/2, leaving half the runner idle.
         # Randomized ordering seed flushes out inter-test state leaks.
+        # The model check is tagged slow and runs in its own job (see below).
         run: >-
           flutter test --concurrency=$(nproc)
-          --test-randomize-ordering-seed=random
+          --test-randomize-ordering-seed=random --exclude-tags slow
+
+  model_check:
+    # The cache core's bounded model check: BFS over the reachable planner state
+    # space. Same invariants as the unit tests but exhaustive over a closed state
+    # space, and it catches planner bugs the sampled sims miss.
+    #
+    # Not on every PR: it is ~25 s of CPU-bound BFS, too slow for the regular
+    # loop. It runs on main pushes, the weekly schedule and manual dispatches,
+    # and on a PR labeled "model-check" (the same shape as build's platform
+    # label). Locally: flutter test --tags slow.
+    name: Model check
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'model-check')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - name: Reachable-state invariants
+        run: flutter test --tags slow test/graph_cache_model_check_test.dart
 
   # Platform builds. Full set on push/schedule/dispatch.
   # On PRs only when labeled "build-all-platforms". Required status is only ever Analyze & Test.

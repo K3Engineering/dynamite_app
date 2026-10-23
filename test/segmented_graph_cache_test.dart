@@ -33,33 +33,42 @@ class _Harness {
     int generation = 0,
     List<Object?> destructiveKey = const ['u'],
     List<Object?> remapKey = const ['k'],
+    double hPad = kSegmentImagePad,
+    double vPad = kSegmentImagePad,
+
+    /// Width the renderer reports, as a fraction of [texW]. Production's
+    /// renderers return a fractional width (samples * px-per-sample), which the
+    /// texture size rounds up, leaving a dead column.
+    double renderWidthScale = 1.0,
   }) {
     calls.clear();
     final recorder = ui.PictureRecorder();
     final frameCanvas = Canvas(recorder);
     final result = cache.paint(frameCanvas, (
-      generation: generation,
-      destructiveKey: destructiveKey,
-      remapKey: remapKey,
-      gw: gw,
-      gh: gh,
-      dpr: dpr,
-      viewStart: viewStart,
-      viewSpan: viewSpan,
-      yMin: yMin,
-      yMax: yMax,
-      totalSamples: totalSamples,
-      bakeableSamples: bakeableSamples ?? totalSamples,
-      hPad: kSegmentImagePad,
-      vPad: kSegmentImagePad,
-      render: (canvas, start, end, texW) {
+      config: (
+        generation: generation,
+        destructiveKey: destructiveKey,
+        remapKey: remapKey,
+        gw: gw,
+        gh: gh,
+        dpr: dpr,
+        viewStart: viewStart,
+        viewSpan: viewSpan,
+        yMin: yMin,
+        yMax: yMax,
+        totalSamples: totalSamples,
+        bakeableSamples: bakeableSamples ?? totalSamples,
+        hPad: hPad,
+        vPad: vPad,
+      ),
+      render: (Canvas canvas, int start, int end, int texW) {
         calls.add((
           start: start,
           end: end,
           texW: texW,
           onFrameCanvas: identical(canvas, frameCanvas),
         ));
-        return texW.toDouble();
+        return texW * renderWidthScale;
       },
     ));
     recorder.endRecording().dispose();
@@ -77,13 +86,6 @@ void main() {
 
   setUp(() => h = _Harness());
   tearDown(() => h.dispose());
-
-  /// The strengthened planner invariant, checked at checkpoints below
-  /// (in addition to the cache's own per-frame assert): segments ordered by
-  /// start, pairwise disjoint, and every segment non-empty.
-  void expectWellFormed() {
-    expect(h.cache.segmentsAreWellFormed(), isTrue);
-  }
 
   group('SegmentedGraphCache bootstrap fill', () {
     test('spends one bake per frame until the view is covered, rightmost '
@@ -105,7 +107,6 @@ void main() {
       // Fully covered and fresh: no bake work remains, no gap draws.
       expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isFalse);
       expect(h.calls, isEmpty);
-      expectWellFormed();
     });
   });
 
@@ -365,7 +366,6 @@ void main() {
         expect(h.gapDraws, [
           (start: 0, end: 200, texW: 200, onFrameCanvas: true),
         ]);
-        expectWellFormed();
       },
     );
 
@@ -659,6 +659,119 @@ void main() {
         onFrameCanvas: false,
       ));
     });
+
+    test('a refresh swallowing a right neighbor past a RECEDED horizon '
+        'clamps to the horizon', () {
+      // pps 12.5, target span 16 throughout. Build the magic pair:
+      // A=[10, 16)@y100 (y-drift-stale vs the end state) abutting
+      // B=[16, 32)@y130 (fresh), with B's tail past a receded horizon.
+      h.paint(viewStart: 0, viewSpan: 32, totalSamples: 32, yMax: 100);
+      h.paint(viewStart: 0, viewSpan: 32, totalSamples: 32, yMax: 100);
+      // Window [10, 42), horizon receded to 26: the sweep clamps [16, 32)
+      // to [16, 26) ...
+      h.paint(
+        viewStart: 10,
+        viewSpan: 32,
+        totalSamples: 32,
+        bakeableSamples: 26,
+        remapKey: const ['k2'],
+        yMax: 100,
+      );
+      expect(h.bakes.single, (
+        start: 16,
+        end: 26,
+        texW: 125,
+        onFrameCanvas: false,
+      ));
+      // ... then [0, 16) to [10, 16) -- the future stale tile A.
+      h.paint(
+        viewStart: 10,
+        viewSpan: 32,
+        totalSamples: 32,
+        bakeableSamples: 26,
+        remapKey: const ['k2'],
+        yMax: 100,
+      );
+      expect(h.bakes.single, (
+        start: 10,
+        end: 16,
+        texW: 75,
+        onFrameCanvas: false,
+      ));
+      // Horizon back at 32, fold now spans to 130: the [26, 32) gap bake
+      // absorbs [16, 26) into B=[16, 32) FRESH under the new range.
+      h.paint(
+        viewStart: 10,
+        viewSpan: 32,
+        totalSamples: 32,
+        bakeableSamples: 32,
+        remapKey: const ['k2'],
+        yMax: 130,
+      );
+      expect(h.bakes.single, (
+        start: 16,
+        end: 32,
+        texW: 200,
+        onFrameCanvas: false,
+      ));
+      // Horizon receded to 26 again. B stays untouched (not stale; its
+      // empty plan reads as identity), A is y-drift-stale (100 vs 130) and
+      // narrow (75 px), so its refresh swallows B -- whose end is past the
+      // receded horizon. Pre-fix this baked [10, 32); the clamp caps it at
+      // 26, and B's [26, 32) tail becomes a horizon-zone vector draw.
+      expect(
+        h.paint(
+          viewStart: 10,
+          viewSpan: 32,
+          totalSamples: 32,
+          bakeableSamples: 26,
+          remapKey: const ['k2'],
+          yMax: 130,
+        ),
+        isTrue,
+      );
+      expect(h.bakes.single, (
+        start: 10,
+        end: 26,
+        texW: 200,
+        onFrameCanvas: false,
+      ));
+      expect(h.gapDraws.single, (
+        start: 26,
+        end: 32,
+        texW: 75,
+        onFrameCanvas: true,
+      ));
+    });
+
+    test('a stale segment the receded horizon fully overtakes stops blitting '
+        'and vector-draws instead', () {
+      // Two 50-sample tiles at 4 px/sample: [0,50) and [50,100), baked under
+      // yMax 100. Then the horizon recedes to 50 AND the fold widens to 140,
+      // so [50,100) is y-drift-stale with no sample left at or below the
+      // horizon. The sweep could only drop it, so prepareFrame must: leaving
+      // it blits frozen pixels under the old fold forever.
+      for (var i = 0; i < 3; i++) {
+        h.paint(viewStart: 0, viewSpan: 100, totalSamples: 200, yMax: 100);
+      }
+      expect(h.cache.debugLastRaster!.blits, hasLength(2));
+
+      h.paint(
+        viewStart: 0,
+        viewSpan: 100,
+        totalSamples: 200,
+        bakeableSamples: 50,
+        yMax: 140,
+      );
+      // [0,50) is refreshable and wins the sweep; [50,100) is retired, and
+      // its range vector-draws as a gap.
+      expect(h.bakes.single.start, 0);
+      expect(h.bakes.single.end, 50);
+      final raster = h.cache.debugLastRaster!;
+      expect(raster.blits.map((b) => b.seg.start), isNot(contains(50)));
+      expect(raster.gaps.single.start, 50);
+      expect(raster.gaps.single.end, 100);
+    });
   });
 
   group('SegmentedGraphCache fold window', () {
@@ -806,7 +919,6 @@ void main() {
         );
         expect(h.calls, isEmpty);
       }
-      expectWellFormed();
     }
 
     test('a pass-1 swallow bake (tile born past one target) goes '
@@ -1109,48 +1221,6 @@ void main() {
         );
         expect(h.calls, isEmpty);
       }
-      expectWellFormed();
-    });
-  });
-
-  group('SegmentedGraphCache planner well-formedness', () {
-    test('a scripted zoom/pan/arrival sequence keeps the segment list '
-        'ordered, disjoint and non-empty at every checkpoint', () {
-      // Fill [0, 1000) at 1 px/sample (five 200-sample tiles).
-      for (int i = 0; i < 5; i++) {
-        h.paint(viewStart: 0, viewSpan: 1000, gw: 1000, totalSamples: 1000);
-        expectWellFormed();
-      }
-
-      // Zoom out: tiles split/consolidate under the sweep.
-      for (int i = 0; i < 4; i++) {
-        h.paint(viewStart: 0, viewSpan: 2500, gw: 1000, totalSamples: 2500);
-        expectWellFormed();
-      }
-
-      // Pan across the buffer (segments appear and are evicted far off-view).
-      for (final start in [500.0, 1200.0, 300.0, 0.0]) {
-        h.paint(viewStart: start, viewSpan: 1000, gw: 1000, totalSamples: 2500);
-        expectWellFormed();
-      }
-      for (final start in [500.0, 1200.0, 300.0, 0.0]) {
-        h.paint(viewStart: start, viewSpan: 1000, gw: 1000, totalSamples: 2500);
-        expectWellFormed();
-      }
-
-      // Live-edge arrival entries: slivers bake/absorb below the horizon.
-      int total = 2500;
-      for (int frame = 0; frame < 6; frame++) {
-        total += 30;
-        h.paint(
-          viewStart: 0,
-          viewSpan: 1000,
-          gw: 1000,
-          totalSamples: total,
-          bakeableSamples: total - 20,
-        );
-        expectWellFormed();
-      }
     });
   });
 
@@ -1183,7 +1253,322 @@ void main() {
         isFalse,
       );
       expect(h.calls, isEmpty);
-      expectWellFormed();
+    });
+  });
+
+  group('SegmentedGraphCache blit geometry', () {
+    // Blits are invisible to a render-call recorder: they are drawImageRect
+    // calls, not render callbacks. debugLastRaster records the Rect operands
+    // _drawBlits actually passed to the canvas, so these see the shell as well
+    // as the core: a swapped dx/dy or clipL/clipR fails here.
+    test('the two pads are not interchangeable: hPad widens x and the source '
+        'rect, vPad widens y and the clip', () {
+      // Production passes a LARGER hPad for the graphs' one-block polyline
+      // join overshoot (blockPx + 2) while vPad stays at the base pad. Every
+      // other test uses one constant for both, so swapping them in the blit
+      // (or in the bake size) would survive all of them.
+      const hPad = 40.0; // a zoomed-in block's overshoot
+      const vPad = 4.0;
+      for (var i = 0; i < 3; i++) {
+        h.paint(
+          viewStart: 0,
+          viewSpan: 400,
+          totalSamples: 400,
+          hPad: hPad,
+          vPad: vPad,
+        );
+      }
+
+      final b = h.cache.debugLastRaster!.blits.first;
+      // Identity mapping: content 200 px, x-scale 1.
+      expect(b.dst.left, closeTo(b.seg.start - hPad, 0.001));
+      expect(b.dst.width, closeTo(b.seg.contentW + 2 * hPad, 0.001));
+      expect(b.src.width, closeTo(b.seg.contentW + 2 * hPad, 0.001));
+      expect(b.dst.top, closeTo(-vPad, 0.001));
+      expect(b.dst.height, closeTo(100 + 2 * vPad, 0.001));
+      expect(b.src.height, closeTo(100 + 2 * vPad, 0.001));
+      // The vertical clip band is the pad, not the horizontal one.
+      expect(b.clip.top, closeTo(-vPad, 0.001));
+      expect(b.clip.bottom, closeTo(100 + vPad, 0.001));
+    });
+
+    test('a fully covered view blits each segment at its window x, with the '
+        'correct vertical scale and clip', () {
+      // Two 200-sample tiles at 1 px/sample, gh 100, y-range 0..100 baked
+      // and blitted under an identity mapping.
+      for (var i = 0; i < 3; i++) {
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      }
+
+      final raster = h.cache.debugLastRaster!;
+      expect(raster.blits, hasLength(2));
+
+      for (final b in raster.blits) {
+        // Identity mapping: content width == sample span, so the x-scale is
+        // 1 and the destination is the segment's own window span plus pads.
+        const xs = 1.0;
+        expect(b.seg.contentW, closeTo(200, 0.001));
+        expect(
+          b.dst.left,
+          closeTo(b.seg.start * 1.0 - kSegmentImagePad * xs, 0.001),
+        );
+        expect(
+          b.dst.width,
+          closeTo((b.seg.contentW + 2 * kSegmentImagePad) * xs, 0.001),
+        );
+        // Identity in y too: an unbaked-value drift of zero means the
+        // vertical scale is 1, so the destination height is the plot plus
+        // pads, and the top content row sits at y = 0.
+        expect(b.dst.height, closeTo(100 + 2 * kSegmentImagePad, 0.001));
+        expect(b.dst.top, closeTo(-kSegmentImagePad, 0.001));
+        // Clip is the view bounds, never outside it.
+        expect(b.clip.left, greaterThanOrEqualTo(0));
+        expect(b.clip.right, lessThanOrEqualTo(400));
+        expect(b.clip.left, lessThan(b.clip.right));
+        expect(b.clip.top, lessThan(b.clip.bottom));
+        // Source rect is the CONTENT box in physical px, not the ceil'd
+        // image bounds.
+        expect(
+          b.src.width,
+          closeTo((b.seg.contentW + 2 * kSegmentImagePad), 0.001),
+        );
+        expect(b.src.height, closeTo(100 + 2 * kSegmentImagePad, 0.001));
+        expect(b.src.left, 0);
+        expect(b.src.top, 0);
+      }
+    });
+
+    test('a vertical stretch scales dy/dh and leaves dx/dw alone', () {
+      for (var i = 0; i < 3; i++) {
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      }
+      final base = h.cache.debugLastRaster!.blits.first;
+
+      // Halve the Y range with no re-bake: every tile is now a 2x vertical
+      // stretch, so it must blit twice as tall. Its top content row (the
+      // baked yMax, 100) now sits a full plot height ABOVE the view, so dy is
+      // driven by that offset, not by scaling the baked dy.
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        yMax: 50,
+        bakeableSamples: 400,
+      );
+      final stretched = h.cache.debugLastRaster!.blits.firstWhere(
+        (b) => b.seg.start == base.seg.start,
+      );
+      expect(stretched.dst.height, closeTo(base.dst.height * 2, 0.01));
+      expect(stretched.dst.top, closeTo(-100 - kSegmentImagePad * 2, 0.01));
+      expect(stretched.dst.left, closeTo(base.dst.left, 0.001));
+      expect(stretched.dst.width, closeTo(base.dst.width, 0.001));
+    });
+
+    test('the blit pads scale with the content, and the source rect is in '
+        'physical px', () {
+      const hPad = 40.0;
+      const vPad = 4.0;
+      const dpr = 2.0;
+      // Bake at dpr 2 (texture in physical px) under an identity mapping, so
+      // the dest rect is logical px and the source rect is not.
+      for (var i = 0; i < 3; i++) {
+        h.paint(
+          viewStart: 0,
+          viewSpan: 400,
+          totalSamples: 400,
+          hPad: hPad,
+          vPad: vPad,
+          dpr: dpr,
+        );
+      }
+      final base = h.cache.debugLastRaster!.blits.first;
+      final contentW = base.seg.contentW;
+      // Dropping `* dpr` here would silently halve the sampled region on every
+      // retina device.
+      expect(base.src.width, closeTo((contentW + 2 * hPad) * dpr, 0.001));
+      expect(base.src.height, closeTo((100 + 2 * vPad) * dpr, 0.001));
+      expect(base.dst.width, closeTo(contentW + 2 * hPad, 0.001));
+      expect(base.dst.height, closeTo(100 + 2 * vPad, 0.001));
+
+      // Widen the x-axis only: xs = 400/410, ys = 1. Both pad offsets must
+      // ride xs; a pad added unscaled would be off by hPad*(1-xs) px.
+      h.paint(
+        viewStart: 0,
+        viewSpan: 410,
+        totalSamples: 400,
+        hPad: hPad,
+        vPad: vPad,
+        dpr: dpr,
+      );
+      final scaled = h.cache.debugLastRaster!.blits.firstWhere(
+        (b) => b.seg.start == base.seg.start,
+      );
+      const xs = 400 / 410;
+      expect(scaled.dst.width, closeTo((contentW + 2 * hPad) * xs, 0.01));
+      expect(scaled.dst.left, closeTo(base.seg.start * xs - hPad * xs, 0.01));
+      expect(scaled.dst.height, closeTo(base.dst.height, 0.001));
+      expect(scaled.dst.top, closeTo(base.dst.top, 0.001));
+    });
+
+    test('a destructiveKey mismatch drops the segment from the blit list, not '
+        'just from the render calls', () {
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      expect(h.cache.debugLastRaster!.blits, hasLength(2));
+
+      // Both tiles are now destructive-stale. The sweep re-bakes the
+      // rightmost; the left must not blit at all this frame.
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        destructiveKey: const ['other'],
+      );
+      final raster = h.cache.debugLastRaster!;
+      expect(
+        raster.blits.map((b) => b.seg.start),
+        isNot(contains(0)),
+        reason: 'a destructive-stale segment must never be blitted',
+      );
+      // And nothing is vector-drawn in its place: suppressed means blank.
+      expect(raster.gaps, isEmpty);
+    });
+
+    test('a suppressed segment leaves the blit list entirely', () {
+      // Y-range collapse stretches the baked line past
+      // kMaxBlitLineFraction, so the still-stale tiles must not blit: the
+      // plot draws blank for them until the sweep re-bakes.
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      expect(h.cache.debugLastRaster!.blits, hasLength(2));
+
+      // Frame 1: the sweep re-bakes the rightmost; the left is suppressed.
+      h.paint(
+        viewStart: 0,
+        viewSpan: 400,
+        totalSamples: 400,
+        yMax: 5,
+        remapKey: const ['other'],
+      );
+      final suppressed = h.cache.debugLastRaster!;
+      expect(
+        suppressed.blits.map((b) => b.seg.start),
+        isNot(contains(0)),
+        reason: 'a 20x stretched line must not smear across the plot',
+      );
+      expect(suppressed.gaps, isEmpty);
+    });
+
+    test('a gap blit lands at the uncovered range, not near it', () {
+      // Cover [0, 200) first; then 20 samples arrive, forming a 20 px sliver
+      // past the coverage -- under the 40 px bake threshold, so it
+      // vector-draws at x = 200 instead of baking.
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 200);
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 220);
+      final gaps = h.cache.debugLastRaster!.gaps;
+      expect(gaps, hasLength(1));
+      expect(gaps.single.start, 200);
+      expect(gaps.single.end, 220);
+      expect(gaps.single.x, closeTo(200, 0.001));
+      // The clip is exactly the visible gap, so the renderer cannot paint
+      // outside its own range.
+      expect(gaps.single.clip.left, closeTo(200, 0.001));
+      expect(gaps.single.clip.right, closeTo(220, 0.001));
+      expect(gaps.single.clip.top, closeTo(-kSegmentImagePad, 0.001));
+      expect(gaps.single.clip.bottom, closeTo(100 + kSegmentImagePad, 0.001));
+    });
+
+    test('a gap straddling the left view edge is clipped, not moved', () {
+      // A fractional window start puts the floored coverage start (and so the
+      // gap's own x) up to one sample-pixel left of the plot. The translate
+      // keeps the content mapping exact, so the CLIP is what gets clamped; a
+      // clip that followed the translate would paint over the left edge.
+      h.paint(
+        viewStart: 205.5,
+        viewSpan: 400,
+        totalSamples: 420,
+        bakeableSamples: 150,
+      );
+      final gap = h.cache.debugLastRaster!.gaps.single;
+      expect(gap.start, 205);
+      expect(gap.x, closeTo(-0.5, 0.001));
+      expect(gap.clip.left, 0);
+      // The right edge is the gap's own end (sample 420 -> x 214.5), not the
+      // plot edge: the clip must not widen the range either.
+      expect(gap.clip.right, closeTo(-0.5 + (gap.end - gap.start), 0.001));
+      expect(gap.clip.right, lessThan(400));
+    });
+
+    test('the source rect is the content box, not the ceil-sized image', () {
+      // A range whose rendered width is fractional leaves a dead column: the
+      // texture is ceil(texW) px. Sampling the image bounds instead of the
+      // content box bakes that scale error into every blit.
+      for (var i = 0; i < 3; i++) {
+        h.paint(
+          viewStart: 0,
+          viewSpan: 400,
+          totalSamples: 400,
+          renderWidthScale: 0.99,
+        );
+      }
+      final b = h.cache.debugLastRaster!.blits.first;
+      expect(b.seg.contentW, closeTo(198, 0.001));
+      // Identity x mapping with scale 1/0.99: the source is the content box,
+      // not the 200-column texture.
+      expect(
+        b.src.width,
+        closeTo(b.seg.contentW + 2 * kSegmentImagePad, 0.0001),
+      );
+      expect(b.src.width, isNot(closeTo(200 + 2 * kSegmentImagePad, 0.01)));
+    });
+  });
+
+  group('SegmentedGraphCache texture lifecycle', () {
+    // The cache's only real state is the texture map, keyed by
+    // SegmentMeta.textureId and reconciled against the segment list each frame.
+    // These pin that a texture actually reaches dispose() on every drop path; a
+    // leaked ui.Image is invisible to every other test.
+    test('a generation reset disposes every texture', () {
+      for (var i = 0; i < 3; i++) {
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      }
+      expect(h.cache.debugTextures, hasLength(2));
+      final old = h.cache.debugTextures.values.toList();
+
+      h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400, generation: 1);
+      for (final img in old) {
+        expect(img.debugDisposed, isTrue);
+      }
+    });
+
+    test('evicting a segment far outside the view disposes its texture', () {
+      for (var i = 0; i < 3; i++) {
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 4000);
+      }
+      final evicted = h.cache.debugTextures.values.first;
+      expect(h.cache.debugTextures.length, greaterThan(1));
+
+      // Jump far past the eviction margin so nothing in view survives.
+      h.paint(viewStart: 3600, viewSpan: 400, totalSamples: 4000);
+      expect(evicted.debugDisposed, isTrue);
+    });
+
+    test('clear() disposes every texture and forgets the state', () {
+      for (var i = 0; i < 3; i++) {
+        h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400);
+      }
+      final images = h.cache.debugTextures.values.toList();
+      expect(images, isNotEmpty);
+
+      h.cache.clear();
+      for (final img in images) {
+        expect(img.debugDisposed, isTrue);
+      }
+      expect(h.cache.debugTextures, isEmpty);
+      // State is forgotten too: the next frame bootstraps from empty.
+      expect(h.paint(viewStart: 0, viewSpan: 400, totalSamples: 400), isTrue);
     });
   });
 
