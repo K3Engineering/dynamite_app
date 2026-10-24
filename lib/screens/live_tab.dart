@@ -772,26 +772,36 @@ class ActionButtons extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _ModeControl(
-            tooltip: isPaused ? 'Resume monitoring' : 'Pause monitoring',
-            icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
-            caption: Text(isPaused ? 'Paused' : 'Monitoring'),
-            onPressed: isRecording ? null : onTogglePause,
-            outlined: !isPaused,
-            backgroundColor: isPaused ? status.warningContainer : null,
-            foregroundColor: isPaused ? status.onWarningContainer : null,
-          ),
-          _ModeControl(
-            tooltip: isRecording ? 'Stop recording' : 'Start recording',
-            icon: Icon(isRecording ? Icons.stop : Icons.fiber_manual_record),
-            caption: isRecording && startTime != null
-                ? _RecordingElapsedText(startTime: startTime)
-                : Text(isRecording ? 'Recording' : 'Record'),
-            onPressed: isPaused ? null : onToggleRecord,
-            backgroundColor: isRecording ? cs.error : null,
-            foregroundColor: isRecording ? cs.onError : null,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _ModeControl(
+                tooltip: isPaused ? 'Resume monitoring' : 'Pause monitoring',
+                icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
+                caption: Text(isPaused ? 'Paused' : 'Monitoring'),
+                sizingCaptions: const ['Monitoring', 'Paused'],
+                onPressed: isRecording ? null : onTogglePause,
+                outlined: !isPaused,
+                backgroundColor: isPaused ? status.warningContainer : null,
+                foregroundColor: isPaused ? status.onWarningContainer : null,
+              ),
+              const SizedBox(width: 24),
+              _ModeControl(
+                tooltip: isRecording ? 'Stop recording' : 'Start recording',
+                icon: Icon(
+                  isRecording ? Icons.stop : Icons.fiber_manual_record,
+                ),
+                caption: isRecording && startTime != null
+                    ? _RecordingElapsedText(startTime: startTime)
+                    : Text(isRecording ? 'Recording' : 'Record'),
+                sizingCaptions: const ['Record', 'Recording', '00:00:00'],
+                onPressed: isPaused ? null : onToggleRecord,
+                backgroundColor: isRecording ? cs.error : null,
+                foregroundColor: isRecording ? cs.onError : null,
+              ),
+            ],
           ),
           Row(
             mainAxisSize: MainAxisSize.min,
@@ -799,7 +809,12 @@ class ActionButtons extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: isRecording || isPaused ? null : onTare,
                 icon: const Icon(Icons.exposure_zero),
-                label: Text(taring ? 'TARING' : 'TARE'),
+                // Sized to 'TARING' in all states so the split button never
+                // shifts while a tare window fills.
+                label: _FixedWidthText(
+                  sizingTexts: const ['TARE', 'TARING'],
+                  child: Text(taring ? 'TARING' : 'TARE'),
+                ),
                 style: OutlinedButton.styleFrom(shape: _splitLeft),
               ),
               const SizedBox(width: 4),
@@ -834,6 +849,7 @@ class _ModeControl extends StatelessWidget {
     required this.tooltip,
     required this.icon,
     required this.caption,
+    required this.sizingCaptions,
     required this.onPressed,
     this.outlined = false,
     this.backgroundColor,
@@ -845,6 +861,11 @@ class _ModeControl extends StatelessWidget {
   final String tooltip;
   final Widget icon;
   final Widget caption;
+
+  /// All caption strings this control can show; laid out invisibly so
+  /// switching state never changes the column's width.
+  final List<String> sizingCaptions;
+
   final VoidCallback? onPressed;
 
   /// Quiet presentation (monitoring running normally); loud states are
@@ -857,6 +878,7 @@ class _ModeControl extends StatelessWidget {
   Widget build(BuildContext context) {
     final captionStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
       color: Theme.of(context).colorScheme.onSurfaceVariant,
+      fontFeatures: const [FontFeature.tabularFigures()],
     );
     final button = outlined
         ? IconButton.outlined(
@@ -881,9 +903,40 @@ class _ModeControl extends StatelessWidget {
         button,
         DefaultTextStyle(
           style: captionStyle ?? const TextStyle(),
-          child: caption,
+          child: _FixedWidthText(sizingTexts: sizingCaptions, child: caption),
         ),
       ],
+    );
+  }
+}
+
+/// Centers [child] inside a box as wide as the widest string in [sizingTexts]
+/// under the ambient [DefaultTextStyle], without mounting extra [Text] widgets.
+class _FixedWidthText extends StatelessWidget {
+  const _FixedWidthText({required this.sizingTexts, required this.child});
+
+  final List<String> sizingTexts;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final style = DefaultTextStyle.of(context).style;
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    var width = 0.0;
+    for (final text in sizingTexts) {
+      final painter = TextPainter(
+        text: TextSpan(text: text, style: style),
+        textScaler: scaler,
+        textDirection: direction,
+        maxLines: 1,
+      )..layout();
+      if (painter.width > width) width = painter.width;
+      painter.dispose();
+    }
+    return SizedBox(
+      width: width.ceilToDouble(),
+      child: Center(widthFactor: 1, child: child),
     );
   }
 }
