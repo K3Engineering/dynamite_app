@@ -25,6 +25,7 @@ void main() {
 
   Future<void> pumpButtons(
     WidgetTester tester, {
+    DataHub? hub,
     bool isRecording = false,
     bool isPaused = false,
     DateTime? sessionStartTime,
@@ -34,7 +35,7 @@ void main() {
   }) {
     return tester.pumpWidget(
       ChangeNotifierProvider<DataHub>.value(
-        value: DataHub(),
+        value: hub ?? DataHub(),
         child: MaterialApp(
           theme: ThemeData(extensions: const [StatusColors.light]),
           home: Scaffold(
@@ -176,5 +177,51 @@ void main() {
     );
 
     handle.dispose();
+  });
+
+  testWidgets('button rects stay fixed across pause, record, and tare states', (
+    tester,
+  ) async {
+    final hub = DataHub();
+
+    ({Rect pause, Rect record, Rect tare, Rect tareOpts}) measure() => (
+      pause: tester.getRect(find.bySubtype<IconButton>().at(0)),
+      record: tester.getRect(find.bySubtype<IconButton>().at(1)),
+      tare: tester.getRect(find.bySubtype<OutlinedButton>().at(0)),
+      tareOpts: tester.getRect(find.bySubtype<OutlinedButton>().at(1)),
+    );
+
+    await pumpButtons(tester, hub: hub);
+    final baseline = measure();
+
+    // Monitoring -> Paused.
+    await pumpButtons(tester, hub: hub, isPaused: true);
+    expect(measure(), baseline);
+
+    // Record -> Recording (finalization window, no startTime).
+    await pumpButtons(tester, hub: hub, isRecording: true);
+    expect(measure(), baseline);
+
+    // Recording with an elapsed clock (mm:ss and h:mm:ss).
+    await pumpButtons(
+      tester,
+      hub: hub,
+      isRecording: true,
+      sessionStartTime: DateTime.now().subtract(const Duration(seconds: 42)),
+    );
+    expect(measure(), baseline);
+    await pumpButtons(
+      tester,
+      hub: hub,
+      isRecording: true,
+      sessionStartTime: DateTime.now().subtract(const Duration(hours: 2)),
+    );
+    expect(measure(), baseline);
+
+    // TARE -> TARING.
+    hub.requestTare();
+    expect(hub.taring, isTrue);
+    await pumpButtons(tester, hub: hub);
+    expect(measure(), baseline);
   });
 }
