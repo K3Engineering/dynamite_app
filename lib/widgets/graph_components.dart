@@ -887,9 +887,9 @@ class GraphZoomControls extends StatelessWidget {
   /// A zoom segment; [label] is the hover tooltip and the button's
   /// accessible name.
   ///
-  /// The name goes inside the button because [Tooltip]'s own semantics node
-  /// sits above the button: a separate focus stop with no tap action. A label
-  /// inside merges into the button's node.
+  /// The name goes on the icon, not the [Tooltip], because a tooltip lands in
+  /// its own semantics node above the button: a separate focus stop with no
+  /// tap action. A label inside merges into the button's node.
   Widget _zoomButton({
     required String label,
     required IconData icon,
@@ -905,7 +905,7 @@ class GraphZoomControls extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 16),
         ),
         onPressed: onPressed,
-        child: Semantics(label: label, child: Icon(icon)),
+        child: Icon(icon, semanticLabel: label),
       ),
     );
   }
@@ -938,8 +938,8 @@ class GraphZoomControls extends StatelessWidget {
                     padding: EdgeInsets.zero,
                   ),
                   onPressed: () => menu.isOpen ? menu.close() : menu.open(),
-                  // No icon to carry the name: the readout is the whole
-                  // child, so its value joins this label in the button's node.
+                  // Unlike [_zoomButton] there's no icon here to name, so the
+                  // label wraps the readout and its value joins it.
                   child: Semantics(
                     label: 'Visible time window',
                     child: _SpanReadout(data: data, ctrl: ctrl),
