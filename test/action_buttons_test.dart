@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 
@@ -155,5 +156,25 @@ void main() {
     );
     expect(find.text('00:00'), findsOneWidget);
     expect(find.text('Recording'), findsNothing);
+  });
+
+  testWidgets('the tare options button carries its name on the tappable node', (
+    tester,
+  ) async {
+    final handle = tester.ensureSemantics();
+    await pumpButtons(tester);
+
+    final name = find.bySemanticsLabel('Tare options');
+    expect(name, findsOneWidget);
+    expect(
+      tester
+          .getSemantics(name)
+          .getSemanticsData()
+          .hasAction(SemanticsAction.tap),
+      isTrue,
+      reason: 'the name must be on the button, not stranded on the tooltip',
+    );
+
+    handle.dispose();
   });
 }

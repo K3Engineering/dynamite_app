@@ -803,12 +803,16 @@ class ActionButtons extends StatelessWidget {
                 style: OutlinedButton.styleFrom(shape: _splitLeft),
               ),
               const SizedBox(width: 4),
+              // The tooltip carries the name for sighted users; the icon has
+              // to carry it too, or assistive tech reaches an unnamed button
+              // (tooltip semantics land on a node above it, with no tap).
               Tooltip(
                 message: 'Tare options',
+                excludeFromSemantics: true,
                 child: OutlinedButton(
                   onPressed: isRecording || isPaused ? null : onTareSettings,
                   style: OutlinedButton.styleFrom(shape: _splitRight),
-                  child: const Icon(Icons.tune),
+                  child: const Icon(Icons.tune, semanticLabel: 'Tare options'),
                 ),
               ),
             ],
