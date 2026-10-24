@@ -119,4 +119,41 @@ void main() {
     await tester.pump();
     handle.dispose();
   });
+
+  testWidgets('zoom segments carry their own accessible name', (tester) async {
+    final handle = tester.ensureSemantics();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GraphZoomControls(data: DataHub(), ctrl: GraphController()),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    // Each label must sit on the node that also carries the tap: a tooltip
+    // stranded on a node above the button is announced but not actionable.
+    for (final name in ['Zoom out', 'Zoom in']) {
+      final button = find.bySemanticsLabel(name);
+      expect(button, findsOneWidget);
+      expect(
+        tester
+            .getSemantics(button)
+            .getSemanticsData()
+            .hasAction(SemanticsAction.tap),
+        isTrue,
+        reason: '"$name" must be the tappable node',
+      );
+    }
+    expect(
+      find.bySemanticsLabel(RegExp(r'^Visible time window\n\d')),
+      findsOneWidget,
+    );
+
+    handle.dispose();
+  });
 }

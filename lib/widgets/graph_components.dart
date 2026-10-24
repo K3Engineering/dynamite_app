@@ -884,21 +884,42 @@ class GraphZoomControls extends StatelessWidget {
     _applySpan((seconds * data.sampleRate).round());
   }
 
+  /// A zoom segment; [label] is the hover tooltip and the button's
+  /// accessible name.
+  ///
+  /// The name goes inside the button because [Tooltip]'s own semantics node
+  /// sits above the button: a separate focus stop with no tap action. A label
+  /// inside merges into the button's node.
+  Widget _zoomButton({
+    required String label,
+    required IconData icon,
+    required RoundedRectangleBorder shape,
+    required VoidCallback onPressed,
+  }) {
+    return Tooltip(
+      message: label,
+      excludeFromSemantics: true,
+      child: FilledButton(
+        style: FilledButton.styleFrom(
+          shape: shape,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+        ),
+        onPressed: onPressed,
+        child: Semantics(label: label, child: Icon(icon)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Tooltip(
-          message: 'Zoom out',
-          child: FilledButton(
-            style: FilledButton.styleFrom(
-              shape: _splitLeft,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-            ),
-            onPressed: () => _zoomBy(1 / 1.1892), // fourth root of 2
-            child: const Icon(Icons.zoom_out),
-          ),
+        _zoomButton(
+          label: 'Zoom out',
+          icon: Icons.zoom_out,
+          shape: _splitLeft,
+          onPressed: () => _zoomBy(1 / 1.1892), // fourth root of 2
         ),
         const SizedBox(width: 4),
         // Listens so a growing live stream re-derives each preset's greyed
@@ -910,13 +931,19 @@ class GraphZoomControls extends StatelessWidget {
             return MenuAnchor(
               builder: (context, menu, _) => Tooltip(
                 message: 'Visible time window',
+                excludeFromSemantics: true,
                 child: FilledButton(
                   style: FilledButton.styleFrom(
                     shape: _splitMid,
                     padding: EdgeInsets.zero,
                   ),
                   onPressed: () => menu.isOpen ? menu.close() : menu.open(),
-                  child: _SpanReadout(data: data, ctrl: ctrl),
+                  // No icon to carry the name: the readout is the whole
+                  // child, so its value joins this label in the button's node.
+                  child: Semantics(
+                    label: 'Visible time window',
+                    child: _SpanReadout(data: data, ctrl: ctrl),
+                  ),
                 ),
               ),
               menuChildren: [
@@ -943,16 +970,11 @@ class GraphZoomControls extends StatelessWidget {
           },
         ),
         const SizedBox(width: 4),
-        Tooltip(
-          message: 'Zoom in',
-          child: FilledButton(
-            style: FilledButton.styleFrom(
-              shape: _splitRight,
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-            ),
-            onPressed: () => _zoomBy(1.1892),
-            child: const Icon(Icons.zoom_in),
-          ),
+        _zoomButton(
+          label: 'Zoom in',
+          icon: Icons.zoom_in,
+          shape: _splitRight,
+          onPressed: () => _zoomBy(1.1892),
         ),
       ],
     );
