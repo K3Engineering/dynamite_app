@@ -17,9 +17,8 @@ analyzer:
     - macos/**
     - linux/**
   language:
-    # Kept as analyzer errors, not the 3.13 no_dynamic_casts / no_raw_types
-    # lint replacements: the lints report the same implicit casts at info
-    # level, and these already fail the build.
+    # Currently keeping these as analyzer errors and not the
+    # no_dynamic_casts / no_raw_types lint.
     strict-casts: true
     strict-inference: true
     strict-raw-types: true
@@ -27,19 +26,8 @@ analyzer:
 include: package:flutter_lints/flutter.yaml
     
 linter:
-  # The lint rules applied to this project can be customized in the
-  # section below to disable rules from the `package:flutter_lints/flutter.yaml`
-  # included above or to enable additional rules. A list of all available lints
-  # and their documentation is published at https://dart.dev/lints.
-  #
-  # Instead of disabling a lint rule for the entire project in the
-  # section below, it can also be suppressed for a single line of code
-  # or a specific dart file by using the `// ignore: name_of_lint` and
-  # `// ignore_for_file: name_of_lint` syntax on the line or in the file
-  # producing the lint.
   rules:
     # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
     unawaited_futures: true
     discarded_futures: true
     prefer_const_constructors: true
@@ -47,9 +35,6 @@ linter:
     prefer_const_literals_to_create_immutables: true
     prefer_final_locals: true
     prefer_final_in_for_each: true
-    # No prefer_final_parameters: parameter_assignments (above) already bans
-    # reassigning parameters, 3.13 rejects `final` on ordinary parameters,
-    # and the rule itself is deprecated.
     avoid_dynamic_calls: true
     cancel_subscriptions: true
     only_throw_errors: true
@@ -86,9 +71,6 @@ linter:
     unnecessary_null_checks: true
     no_self_assignments: true
     require_trailing_commas: true
-
-    # 3.13's language features, and the lints that keep them in view. All are
-    # clean on this tree, so they only fire on new code.
     empty_container_bodies: true
     initialize_in_field_declaration: true
     simplify_variable_pattern: true
@@ -109,10 +91,9 @@ linter:
     simple_directive_paths: true
 
     # Enabled by proxy via package:flutter_lints (core+recommended at
-    # flutter_lints 6.0.0 / lints 6.1.0). Listed so the effective set is
-    # visible in one place; re-check on flutter_lints bumps, since rules
-    # move between sets over time (e.g. switch_on_type only entered core
-    # after lints 6.1.0).
+    # flutter_lints 6.0.0 / lints 6.1.0). Re-check on flutter_lints bumps, 
+    # since rules move between sets over time 
+    # (e.g. switch_on_type only entered core after lints 6.1.0).
     #   await_only_futures
     #   avoid_unnecessary_containers
     #   depend_on_referenced_packages
