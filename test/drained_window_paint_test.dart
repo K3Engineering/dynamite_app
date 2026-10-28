@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:dynamite_app/models/analysis_pane.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
@@ -43,7 +44,9 @@ void main() {
               ctrl: ctrl,
               unit: .raw,
               activeChannels: const [0],
-              showDerivative: true,
+              analysis: const AnalysisPaneSelection(
+                kind: AnalysisPaneKind.derivative,
+              ),
             ),
           ),
         ),
