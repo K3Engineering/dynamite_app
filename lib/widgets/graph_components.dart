@@ -17,6 +17,7 @@ import '../models/device_profile.dart';
 import '../models/display_unit.dart';
 import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
+import '../models/graph_overlays.dart';
 import '../models/load_cell.dart';
 import '../utils/fft.dart';
 import '../utils/nice_step.dart';
@@ -616,6 +617,10 @@ class GraphWorkspace extends StatefulWidget {
   /// [GraphController.lockedLiveSpan] (rolling animation).
   final bool isLiveSource;
 
+  /// Annotation chrome drawn behind the force/coords graphs' traces
+  /// (guided-test rep phases).
+  final GraphOverlays? overlays;
+
   const new({
     super.key,
     required this.data,
@@ -624,6 +629,7 @@ class GraphWorkspace extends StatefulWidget {
     required this.activeChannels,
     this.analysis = const AnalysisPaneSelection(),
     this.isLiveSource = true,
+    this.overlays,
   });
 
   @override
@@ -809,6 +815,8 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
             dpr: dpr,
             labels: _analysisLabels,
             bakePump: _bakePump,
+            ellipses: widget.overlays?.plateEllipses ?? const [],
+            trails: widget.overlays?.plateTrails ?? const [],
           ),
         );
       case AnalysisPaneKind.fft:
@@ -950,6 +958,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     }) => _GraphPane(
       data: widget.data,
       ctrl: widget.ctrl,
+      overlays: widget.overlays,
       painter: _ForceGraphPainter(
         widget.data,
         widget.ctrl,
@@ -1071,20 +1080,91 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
 /// One interactive plot surface (gestures + the painted graph), shared by the
 /// force and derivative panes.
 class _GraphPane extends StatelessWidget {
-  const new({required this.data, required this.ctrl, required this.painter});
+  const new({
+    required this.data,
+    required this.ctrl,
+    required this.painter,
+    this.overlays,
+  });
 
   final GraphDataSource data;
   final GraphController ctrl;
   final CustomPainter painter;
+
+  /// Annotation chrome (rep phases), painted behind the trace. Expected only
+  /// on time-series panes; pane employments with another x axis (FFT, plate
+  /// scatter) would misread them.
+  final GraphOverlays? overlays;
 
   @override
   Widget build(BuildContext context) {
     return _InteractiveGraphArea(
       data: data,
       ctrl: ctrl,
-      child: CustomPaint(foregroundPainter: painter, size: Size.infinite),
+      child: CustomPaint(
+        painter: overlays == null
+            ? null
+            : _OverlayPainter(data, ctrl, overlays!),
+        foregroundPainter: painter,
+        size: Size.infinite,
+      ),
     );
   }
+}
+
+/// Paints [GraphOverlays] spans and markers behind a time-series trace. A
+/// separate background painter so the giant trace painters stay untouched;
+/// horizontal mapping mirrors [_setupGraphFrame].
+class _OverlayPainter extends CustomPainter {
+  new(this._data, this._ctrl, this._overlays)
+    : super(repaint: Listenable.merge([_data.repaint, _ctrl]));
+
+  final GraphDataSource _data;
+  final GraphController _ctrl;
+  final GraphOverlays _overlays;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final total = _data.totalSamples;
+    if (total < 1) return;
+    final (vs, ve) = _ctrl.effectiveRange(total, _data.oldestSample);
+    double viewStart = vs.toDouble();
+    double viewEnd = ve.toDouble();
+    if (_ctrl.isLive) {
+      viewEnd = _liveEdge(_data, ve - vs);
+      viewStart = viewEnd - (ve - vs);
+    }
+    final span = viewEnd - viewStart;
+    if (span <= 0) return;
+    final width = size.width - _kGraphLeftSpace - kGraphRightSpace;
+    if (width <= 0) return;
+    canvas.translate(_kGraphLeftSpace, 0);
+    double xFor(num index) => (index - viewStart) / span * width;
+
+    for (final s in _overlays.spans) {
+      final x0 = xFor(s.start).clamp(0.0, width);
+      final x1 = xFor(s.end).clamp(0.0, width);
+      if (x1 <= x0) continue;
+      canvas.drawRect(
+        Rect.fromLTRB(x0, 0, x1, size.height),
+        Paint()..color = s.color,
+      );
+    }
+    for (final m in _overlays.markers) {
+      final x = xFor(m.index);
+      if (x < 0 || x > width) continue;
+      canvas.drawLine(
+        Offset(x, 0),
+        Offset(x, size.height),
+        Paint()
+          ..color = m.color
+          ..strokeWidth = 1,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _OverlayPainter oldDelegate) => true;
 }
 
 /// Return to the live edge of a live graph.
@@ -3612,6 +3692,8 @@ class _ForcePlatePainter extends CustomPainter {
     required this.dpr,
     required this.labels,
     required this.bakePump,
+    required this.ellipses,
+    required this.trails,
   }) : super(repaint: Listenable.merge([_data.repaint, _ctrl, bakePump]));
 
   final GraphDataSource _data;
@@ -3635,6 +3717,13 @@ class _ForcePlatePainter extends CustomPainter {
   /// Persistent, owned by [_GraphWorkspaceState] (like [_forceCache]); no
   /// recreation rules — a config change clears inside the cache.
   final ForcePlateCache<_PlateMarker> cache;
+
+  /// CoP-cloud confidence ellipses (see [PlateEllipseOverlay]), drawn over
+  /// the trail.
+  final List<PlateEllipseOverlay> ellipses;
+
+  /// CoP polylines of individual passes (see [PlateTrailOverlay]).
+  final List<PlateTrailOverlay> trails;
 
   final ColorScheme colorScheme;
   final double dpr;
@@ -3739,6 +3828,52 @@ class _ForcePlatePainter extends CustomPainter {
         if (trail.workRemains) bakePump.schedule();
       }
       _drawErrBar(canvas, plotW, plotH, vs, ve);
+    }
+
+    // Pass polylines (gait lines), under the ellipses/head marker.
+    for (final t in trails) {
+      if (t.points.length < 2) continue;
+      final path = Path()
+        ..moveTo(
+          toPx(t.points.first.$1, t.points.first.$2).dx,
+          toPx(t.points.first.$1, t.points.first.$2).dy,
+        );
+      for (int i = 1; i < t.points.length; i++) {
+        final p = toPx(t.points[i].$1, t.points[i].$2);
+        path.lineTo(p.dx, p.dy);
+      }
+      canvas.drawPath(
+        path,
+        Paint()
+          ..color = t.color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..strokeJoin = StrokeJoin.round
+          ..strokeCap = StrokeCap.round,
+      );
+    }
+
+    // Confidence ellipses over the trail, under the head marker.
+    for (final e in ellipses) {
+      final c = toPx(e.cx, e.cy);
+      final scale = side / (2 * _extent);
+      canvas.save();
+      canvas.translate(c.dx, c.dy);
+      // Plate coordinates are y-up; the canvas is y-down, so the rotation
+      // sign flips.
+      canvas.rotate(-e.angleRad);
+      canvas.drawOval(
+        Rect.fromCenter(
+          center: Offset.zero,
+          width: 2 * e.semiA * scale,
+          height: 2 * e.semiB * scale,
+        ),
+        Paint()
+          ..color = e.color
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5,
+      );
+      canvas.restore();
     }
 
     if (marker != null) {

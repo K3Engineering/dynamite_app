@@ -9,10 +9,11 @@ import '../widgets/snackbars.dart';
 import '../widgets/wide_layout.dart';
 import 'live_tab.dart';
 import 'sessions_tab.dart';
+import 'tests_tab.dart';
 import 'devices_tab.dart';
 import 'settings_tab.dart';
 
-/// Root scaffold holding the four tabs: a bottom `NavigationBar` on narrow
+/// Root scaffold holding the five tabs: a bottom `NavigationBar` on narrow
 /// screens, a side `NavigationRail` at [kWideLayoutWidth] and above.
 ///
 /// The single consumer of [AppEvents]: one-shot service notices surface here as
@@ -36,6 +37,7 @@ class AppShellState extends State<AppShell> {
 
   static const _tabs = [
     _TabDef(icon: Icons.show_chart, label: 'Live'),
+    _TabDef(icon: Icons.speed, label: 'Tests'),
     _TabDef(icon: Icons.folder_open, label: 'Sessions'),
     _TabDef(icon: Icons.bluetooth, label: 'Devices'),
     _TabDef(icon: Icons.settings, label: 'Settings'),
@@ -92,10 +94,10 @@ class AppShellState extends State<AppShell> {
   }
 
   /// Jump to the Devices tab.
-  void goToDevices() => switchToTab(2);
+  void goToDevices() => switchToTab(3);
 
   /// Jump to the Settings tab.
-  void goToSettings() => switchToTab(3);
+  void goToSettings() => switchToTab(4);
 
   /// Tab-activation side effects, driven from here (the owner of the tab
   /// index) so the tabs themselves stay stateless:
@@ -104,7 +106,7 @@ class AppShellState extends State<AppShell> {
   ///    started here — it runs for the link's whole streaming lifetime
   ///    regardless of which tab is visible.
   void _onTabActivated(int index) {
-    _link.setDevicesTabVisible(index == 2);
+    _link.setDevicesTabVisible(index == 3);
   }
 
   @override
@@ -134,6 +136,7 @@ class AppShellState extends State<AppShell> {
                   onGoToDevices: goToDevices,
                   onGoToSettings: goToSettings,
                 ),
+                const TestsTab(),
                 const SessionsTab(),
                 DevicesTab(onGoToSettings: goToSettings),
                 SettingsTab(onGoToDevices: goToDevices),
