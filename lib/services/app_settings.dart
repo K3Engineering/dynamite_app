@@ -10,10 +10,10 @@ import '../models/display_unit.dart';
 /// rig's load cell slots) and everything load cell (device slots, history —
 /// owned by `RigState`).
 class AppSettings extends ChangeNotifier {
-  /// [prefs] is injected (see `main`): the instance is available
+  /// [_prefs] is injected (see `main`): the instance is available
   /// synchronously, so the load happens right here in the constructor and
   /// can never race a later setter.
-  AppSettings({required SharedPreferences prefs}) : _prefs = prefs {
+  new({required this._prefs}) {
     // A missing or unrecognizable stored value falls back to the platform
     // default unit (mV/V — see [_displayUnit]).
     _displayUnit = DisplayUnit.fromName(_prefs.getString(_keyUnit));
@@ -44,7 +44,7 @@ class AppSettings extends ChangeNotifier {
   /// Which channels are shown in the live view. Local to the live tab —
   /// each recorded session carries its own visibility set.
   List<bool> _activeChannels = List.filled(kAdcChannelCount, true);
-  List<bool> get activeChannels => List.unmodifiable(_activeChannels);
+  List<bool> get activeChannels => List.unmodifiableOf(_activeChannels);
 
   List<int> get activeChannelIndices => [
     for (int i = 0; i < _activeChannels.length; i++)

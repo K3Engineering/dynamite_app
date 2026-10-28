@@ -14,7 +14,7 @@ void showErrorSnackBar(
   messenger.showSnackBar(
     SnackBar(
       content: Text(message, style: TextStyle(color: colors.onError)),
-      behavior: SnackBarBehavior.floating,
+      behavior: .floating,
       backgroundColor: colors.error,
       persist: persist,
       showCloseIcon: true,
@@ -40,7 +40,7 @@ void showNoticeSnackBar(
   messenger.showSnackBar(
     SnackBar(
       content: Text(message),
-      behavior: SnackBarBehavior.floating,
+      behavior: .floating,
       action: action,
       persist: persist,
       showCloseIcon: true,

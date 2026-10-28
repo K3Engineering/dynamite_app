@@ -13,7 +13,7 @@ import '../services/firmware_update_service.dart';
 /// [onReview] opens the update screen. The target tag comes from the check, so
 /// the line reads "Firmware update available · v1.2.3".
 class FirmwareUpdateNotice extends StatelessWidget {
-  const FirmwareUpdateNotice({super.key, required this.onReview});
+  const new({super.key, required this.onReview});
 
   final VoidCallback onReview;
 
@@ -36,14 +36,14 @@ class FirmwareUpdateNotice extends StatelessWidget {
       child: GestureDetector(
         onTap: onReview,
         child: Row(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: .min,
           children: [
             Icon(Icons.system_update_alt, size: 14, color: accent),
             const SizedBox(width: 4),
             Flexible(
               child: Text(
                 'Firmware update available · $tag',
-                overflow: TextOverflow.ellipsis,
+                overflow: .ellipsis,
                 style: TextStyle(color: accent, fontSize: 12),
               ),
             ),

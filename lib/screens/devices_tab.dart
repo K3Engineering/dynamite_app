@@ -22,7 +22,7 @@ import '../widgets/wide_layout.dart';
 import 'firmware_update_screen.dart';
 
 class DevicesTab extends StatefulWidget {
-  const DevicesTab({super.key, required this.onGoToSettings});
+  const new({super.key, required this.onGoToSettings});
 
   /// The active row's gear action; the app shell owns the tab index.
   final VoidCallback onGoToSettings;
@@ -209,7 +209,7 @@ class _DevicesTabState extends State<DevicesTab> {
                 _InactiveDeviceRow(
                   name: 'Demo Device',
                   visual: (
-                    mood: InactiveRowMood.normal,
+                    mood: .normal,
                     icon: Icons.science,
                     iconColor: Colors.teal,
                     subtitle: 'Simulated data — no hardware',
@@ -233,26 +233,18 @@ class _DevicesTabState extends State<DevicesTab> {
   /// The state-aware empty block.
   Widget _buildEmptyBlock(BtStatusVisual visual, BtAvailability availability) {
     final (title, hint) = switch (availability) {
-      BtAvailability.poweredOn => (
+      .poweredOn => (
         'No devices found',
         'Tap Scan to search for nearby devices',
       ),
-      BtAvailability.poweredOff => (
-        visual.label,
-        'Turn on Bluetooth to find devices',
-      ),
-      BtAvailability.unauthorized => (
+      .poweredOff => (visual.label, 'Turn on Bluetooth to find devices'),
+      .unauthorized => (
         visual.label,
         'Grant Bluetooth permission to find devices',
       ),
-      BtAvailability.unsupported => (
-        visual.label,
-        unsupportedHint(isWeb: kIsWeb),
-      ),
-      BtAvailability.unknown || BtAvailability.resetting => (
-        visual.label,
-        'This should only take a moment',
-      ),
+      .unsupported => (visual.label, unsupportedHint(isWeb: kIsWeb)),
+      .unknown ||
+      .resetting => (visual.label, 'This should only take a moment'),
     };
     final poweredOn = availability == BtAvailability.poweredOn;
     return Padding(
@@ -270,17 +262,11 @@ class _DevicesTabState extends State<DevicesTab> {
 }
 
 /// Map a connect-failure [kind] to the per-row hint.
-String connectFailureHint(
-  ConnectFailureKind kind, {
-  required bool isWeb,
-}) => switch (kind) {
-  ConnectFailureKind.failed =>
-    isWeb
-        ? "Couldn't connect — tap Scan and pick it again"
-        : "Couldn't connect — check that it's on, nearby, and not connected to another device",
-  ConnectFailureKind.timeout =>
-    'Timed out — check that the device is on, nearby, and not connected to another device',
-};
+String connectFailureHint(ConnectFailureKind kind, {required bool isWeb}) =>
+    switch (kind) {
+      .failed => isWeb ? "Couldn't connect — tap Scan and pick it again" : "Couldn't connect — check that it's on, nearby, and not connected to another device",
+      .timeout => 'Timed out — check that the device is on, nearby, and not connected to another device',
+    };
 
 /// The empty block's hint for [BtAvailability.unsupported], per platform.
 String unsupportedHint({required bool isWeb}) => isWeb
@@ -368,7 +354,7 @@ InactiveRowVisual inactiveRowVisual({
   // and the mood stays normal so it keeps fresh-group ordering.
   if (reconnectHint != null) {
     return (
-      mood: InactiveRowMood.normal,
+      mood: .normal,
       icon: Icons.bluetooth_searching,
       iconColor: status.linkActive,
       subtitle: reconnectHint,
@@ -379,7 +365,7 @@ InactiveRowVisual inactiveRowVisual({
   }
   if (failureHint != null) {
     return (
-      mood: InactiveRowMood.failed,
+      mood: .failed,
       icon: Icons.error_outline,
       iconColor: colors.error,
       subtitle: failureHint,
@@ -398,7 +384,7 @@ InactiveRowVisual inactiveRowVisual({
   if (freshness != null && freshness.stale) {
     final dim = colors.onSurface.withValues(alpha: 0.38);
     return (
-      mood: InactiveRowMood.stale,
+      mood: .stale,
       icon: Icons.bluetooth,
       iconColor: dim,
       subtitle: freshness.text,
@@ -408,7 +394,7 @@ InactiveRowVisual inactiveRowVisual({
     );
   }
   return (
-    mood: InactiveRowMood.normal,
+    mood: .normal,
     icon: Icons.bluetooth,
     iconColor: colors.outline,
     subtitle: freshness?.text,
@@ -451,7 +437,7 @@ Future<void> _scanWithFeedback(BuildContext context, BleLinkManager bt) async {
 /// The Connect button stays enabled across moods and is disabled only per
 /// [canConnect].
 class _InactiveDeviceRow extends StatelessWidget {
-  const _InactiveDeviceRow({
+  const new({
     required this.name,
     required this.visual,
     required this.canConnect,
@@ -522,7 +508,7 @@ ButtonStyle activeRowActionButtonStyle({required Color onContainer}) =>
 
 /// The active device row.
 class _ActiveDeviceRow extends StatelessWidget {
-  const _ActiveDeviceRow({
+  const new({
     required this.name,
     this.icon,
     this.model,
@@ -566,12 +552,12 @@ class _ActiveDeviceRow extends StatelessWidget {
     final isDisconnecting = linkState == BtLinkState.disconnecting;
 
     final actions = Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: .min,
       children: [
         IconButton(
           icon: const Icon(Icons.settings_outlined),
           tooltip: 'Device settings',
-          visualDensity: VisualDensity.compact,
+          visualDensity: .compact,
           onPressed: onGoToSettings,
         ),
         SizedBox(
@@ -603,7 +589,7 @@ class _ActiveDeviceRow extends StatelessWidget {
             minLeadingWidth: 28,
             horizontalTitleGap: 8,
             leading: Stack(
-              alignment: Alignment.center,
+              alignment: .center,
               children: [
                 Icon(icon ?? visual.icon, color: visual.color),
                 if (visual.showSpinner)
@@ -623,8 +609,8 @@ class _ActiveDeviceRow extends StatelessWidget {
             // One Text.rich so the label wraps at word boundaries; a Row would
             // squeeze it to near-zero width on a phone.
             subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: .start,
+              mainAxisSize: .min,
               children: [
                 Text.rich(
                   TextSpan(
@@ -634,7 +620,7 @@ class _ActiveDeviceRow extends StatelessWidget {
                       if (connectedRssi != null) ...[
                         const TextSpan(text: ' • '),
                         WidgetSpan(
-                          alignment: PlaceholderAlignment.middle,
+                          alignment: .middle,
                           child: RssiIndicator(
                             rssi: connectedRssi,
                             color: onContainer,
@@ -658,10 +644,7 @@ class _ActiveDeviceRow extends StatelessWidget {
               tile,
               Padding(
                 padding: const EdgeInsets.only(right: 24, bottom: 8),
-                child: Align(
-                  alignment: AlignmentDirectional.centerEnd,
-                  child: actions,
-                ),
+                child: Align(alignment: .centerEnd, child: actions),
               ),
             ],
           );

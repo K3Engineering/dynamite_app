@@ -16,7 +16,7 @@ import 'data_hub.dart';
 /// action row): a session that silently lost the paused span would be a
 /// dishonest artifact.
 class MonitorPause extends ChangeNotifier {
-  MonitorPause(this._hub) {
+  new(this._hub) {
     _hub.addEventListener(_onHubEvent);
   }
 

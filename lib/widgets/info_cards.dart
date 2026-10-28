@@ -7,7 +7,7 @@ import '../models/device_info.dart';
 /// read-only. The serial is always null on web (0x2A25 is blocklisted
 /// there) and renders as an em dash.
 class DeviceInfoCard extends StatelessWidget {
-  const DeviceInfoCard({super.key, required this.info});
+  const new({super.key, required this.info});
 
   final DeviceInfo info;
 
@@ -35,12 +35,7 @@ class DeviceInfoCard extends StatelessWidget {
 /// on this link. [mtu] is omitted entirely when null — web and the demo
 /// device never negotiate. Packet sizes dash until the first feed packet.
 class ConnectionInfoCard extends StatelessWidget {
-  const ConnectionInfoCard({
-    super.key,
-    this.mtu,
-    this.minPacketBytes,
-    this.maxPacketBytes,
-  });
+  const new({super.key, this.mtu, this.minPacketBytes, this.maxPacketBytes});
 
   final int? mtu;
   final int? minPacketBytes;
@@ -72,7 +67,7 @@ class ConnectionInfoCard extends StatelessWidget {
 Widget _infoRow(String label, String? value) => Padding(
   padding: const EdgeInsets.symmetric(vertical: 1),
   child: Row(
-    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    mainAxisAlignment: .spaceBetween,
     children: [
       Text(label),
       const SizedBox(width: 16),

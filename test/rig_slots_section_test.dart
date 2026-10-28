@@ -8,7 +8,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/rig_state.dart';
+
 import 'helpers/flash_docs.dart';
+
 import 'package:dynamite_app/widgets/rig_slots_section.dart';
 
 /// Widget tests for the rig slot section: rows from the device flash doc,

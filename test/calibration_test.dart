@@ -2,7 +2,9 @@ import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/models/load_cell.dart';
+
 import 'helpers/flash_docs.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 
 /// Pro-like test chain, reproducing the app's former compiled constants
@@ -374,12 +376,10 @@ END
     });
 
     test('board constants resolve into per-channel nominals', () {
-      final board =
-          boardFromDoc(
-                'adc_fsr=1.2,nominal\nexc=2.8,nominal\nafe_gain=1,nominal\n',
-                pgaGains: const [32, 32, 32, 32],
-              )
-              as ProvisionedBoardCalibration;
+      final board = boardFromDoc(
+        'adc_fsr=1.2,nominal\nexc=2.8,nominal\nafe_gain=1,nominal\n',
+        pgaGains: const [32, 32, 32, 32],
+      ) as ProvisionedBoardCalibration;
       final n = board.channels[0].nominals;
       expect(n.adcFsrV, 1.2);
       expect(n.afeGain, 1);
@@ -404,9 +404,10 @@ END
     });
 
     test('a provisioned board without cal data adopts the nominal chain', () {
-      final board =
-          boardFromDoc(testConstantKeys, pgaGains: testGains)
-              as ProvisionedBoardCalibration;
+      final board = boardFromDoc(
+        testConstantKeys,
+        pgaGains: testGains,
+      ) as ProvisionedBoardCalibration;
       expect(board.isCalibrated, isFalse);
     });
   });

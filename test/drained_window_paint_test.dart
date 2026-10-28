@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:dynamite_app/models/device_profile.dart';
-import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
@@ -42,7 +41,7 @@ void main() {
             child: GraphWorkspace(
               data: hub,
               ctrl: ctrl,
-              unit: DisplayUnit.raw,
+              unit: .raw,
               activeChannels: const [0],
               showDerivative: true,
             ),

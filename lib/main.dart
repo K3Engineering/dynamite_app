@@ -181,19 +181,19 @@ void main() async {
 }
 
 class _FatalErrorWidget extends StatelessWidget {
-  const _FatalErrorWidget();
+  const new();
 
   @override
   Widget build(BuildContext context) => const ColoredBox(
     color: Color(0xFF202124),
     child: Directionality(
-      textDirection: TextDirection.ltr,
+      textDirection: .ltr,
       child: Center(
         child: Padding(
           padding: EdgeInsets.all(24),
           child: Text(
             'Application error\nRestart Dynamite',
-            textAlign: TextAlign.center,
+            textAlign: .center,
             style: TextStyle(color: Color(0xFFFFFFFF), fontSize: 18),
           ),
         ),
@@ -203,7 +203,7 @@ class _FatalErrorWidget extends StatelessWidget {
 }
 
 class DynoApp extends StatelessWidget {
-  const DynoApp({super.key});
+  const new({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -306,7 +306,7 @@ class DynoApp extends StatelessWidget {
         labelTextStyle: WidgetStateProperty.resolveWith(
           (states) => TextStyle(
             fontSize: 12,
-            fontWeight: FontWeight.w500,
+            fontWeight: .w500,
             letterSpacing: 0.5,
             color: states.contains(WidgetState.disabled)
                 ? colors.onSurfaceVariant.withValues(alpha: 0.38)
@@ -320,7 +320,7 @@ class DynoApp extends StatelessWidget {
 
     return MaterialApp(
       title: 'Dynamite Sampler App',
-      themeMode: ThemeMode.system,
+      themeMode: .system,
       theme: ThemeData(
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF8F9FA),

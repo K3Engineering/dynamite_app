@@ -126,7 +126,7 @@ void main() {
       MaterialApp(
         home: Scaffold(
           body: Column(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize: .min,
             children: [
               GraphZoomControls(data: DataHub(), ctrl: GraphController()),
             ],

@@ -11,27 +11,20 @@ import 'package:meta/meta.dart';
 /// affordances (raw exports of whatever bytes exist, a user-gesture
 /// delete) and that's the only way out.
 @immutable
-class DamagedSession {
-  const DamagedSession({
-    required this.id,
-    required this.hasData,
-    required this.hasMeta,
-    required this.reason,
-  });
-
+class const DamagedSession({
   /// The directory name (a session id when parseable); every export
   /// artifact is named from it, not from the unreadable session name.
-  final String id;
+  required final String id,
 
   /// data.raw exists and has bytes — enables the raw-samples export
   /// (frame-positioned int32-LE counts for hand recovery).
-  final bool hasData;
+  required final bool hasData,
 
   /// The journal file exists and has bytes — enables the raw-metadata
   /// export (for eyeball recovery of calibration/tares).
-  final bool hasMeta;
+  required final bool hasMeta,
 
   /// Why the store flags it — display text for the list component, not
   /// state anything branches on.
-  final String reason;
-}
+  required final String reason,
+});

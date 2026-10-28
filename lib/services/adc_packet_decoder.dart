@@ -13,12 +13,9 @@ import '../utils/log.dart';
 /// counter's ~65.5 s wrap; beyond slack the clock is the authority. Loss is
 /// reported via [AdcSink.addDroppedFrames].
 class AdcPacketDecoder {
-  AdcPacketDecoder(
-    this.hub, {
-    Duration Function()? now,
-    bool Function()? isPaused,
-  }) : _now = now ?? (() => _clock.elapsed),
-       _isPaused = isPaused ?? (() => false) {
+  new(this.hub, {Duration Function()? now, bool Function()? isPaused})
+    : _now = now ?? (() => _clock.elapsed),
+      _isPaused = isPaused ?? (() => false) {
     // A sink clear means a new device stream: reset so its first packet isn't
     // diffed against the previous stream's counter.
     hub.addEventListener((event) {

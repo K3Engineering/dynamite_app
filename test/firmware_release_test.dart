@@ -23,9 +23,9 @@ void main() {
     test(
       'orders releases above their prereleases, prereleases among themselves',
       () {
-        int cmp(String a, String b) => FirmwareVersion.tryParse(
-          a,
-        )!.compareTo(FirmwareVersion.tryParse(b)!);
+        int cmp(String a, String b) =>
+            FirmwareVersion.tryParse(a)!
+                .compareTo(FirmwareVersion.tryParse(b)!);
         expect(cmp('v1.2.3', 'v1.2.3-beta.1'), greaterThan(0));
         expect(cmp('v1.2.3-beta.2', 'v1.2.3-beta.1'), greaterThan(0));
         expect(cmp('v1.2.3-beta.1', 'v1.2.2'), greaterThan(0));

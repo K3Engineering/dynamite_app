@@ -10,7 +10,7 @@ import 'data_hub.dart';
 /// port shape [FeedHealthTracker] uses (a notify source plus a poll
 /// closure), so it never depends on the link layer's concrete type.
 class StreamResetCoordinator {
-  StreamResetCoordinator({
+  new({
     required DataHub hub,
 
     /// Notifies when the stream's liveness may have changed; polled via

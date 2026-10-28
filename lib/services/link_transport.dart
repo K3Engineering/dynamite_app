@@ -93,7 +93,7 @@ abstract interface class LinkTransport {
 /// in one object created per connect. It also owns the KVS channel
 /// ([GattLinkBackend]) and the feed-pause hook the backend needs.
 class BleLinkTransport implements LinkTransport {
-  BleLinkTransport({
+  new({
     required this.deviceId,
     required this.displayName,
     required this.withFeedPaused,

@@ -5,10 +5,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:universal_ble/universal_ble.dart';
 
-import 'package:dynamite_app/models/bt_scan.dart';
 import 'package:dynamite_app/screens/live_tab.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
+
 import 'helpers/mockble.dart';
 
 /// Widget test for the Live status bar's RSSI readout against the mock BLE
@@ -46,7 +46,7 @@ void main() {
         child: const MaterialApp(
           home: Scaffold(
             body: LiveStatusBar(
-              linkState: BtLinkState.streaming,
+              linkState: .streaming,
               connectedDeviceName: 'K3',
               sampleRateHz: 1000,
             ),

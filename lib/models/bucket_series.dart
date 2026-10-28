@@ -48,7 +48,7 @@ class BucketAccumulator {
   /// board-map change makes already-aggregated sums stale, so armed
   /// accumulators disarm permanently on a vanished map (and the live hub
   /// disarms on a replaced map) -- never serving stale-mapped sums.
-  BucketAccumulator({
+  new({
     required this.bucketSize,
     required int numBuckets,
     double? Function(int raw)? mvVOf,
@@ -158,17 +158,11 @@ int ingestDiff({
 /// Per-sample ingest shared by live and session loading: applies the
 /// [ingestDiff] rule, feeds the value and diff accumulators, and tracks
 /// whole-ingest extremes. Raw storage stays with the caller.
-class ChannelIngest {
-  ChannelIngest({
-    required this.valueBuckets,
-    required this.diffBuckets,
-    required this.gaps,
-  });
-
-  final BucketAccumulator valueBuckets;
-  final BucketAccumulator diffBuckets;
-  final GapList gaps;
-
+class ChannelIngest({
+  required final BucketAccumulator valueBuckets,
+  required final BucketAccumulator diffBuckets,
+  required final GapList gaps,
+}) {
   int _min = 0;
   int _max = 0;
 
@@ -249,7 +243,7 @@ class EnvelopeSeries {
   ///  * [meanFromMvV], when present, must satisfy
   ///    `meanFromMvV(mean f_i) == mean(rawToDisplay(r_i))` for any sample
   ///    set (the affine-in-mV/V property in its doc).
-  const EnvelopeSeries.bucketed({
+  const new bucketed({
     required this.sampleAt,
     required this.buckets,
     required this.rawToDisplay,

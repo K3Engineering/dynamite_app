@@ -7,7 +7,7 @@ import 'package:meta/meta.dart';
 /// `Theme.of(context).extension<StatusColors>()!`.
 @immutable
 class StatusColors extends ThemeExtension<StatusColors> {
-  const StatusColors({
+  const new({
     required this.linkActive,
     required this.linkConnected,
     required this.onConnectedWarning,

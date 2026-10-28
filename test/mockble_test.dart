@@ -12,6 +12,7 @@ import 'package:dynamite_app/services/adc_packet_decoder.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/data_hub.dart';
+
 import 'helpers/flash_docs.dart';
 import 'helpers/mockble.dart';
 
@@ -156,36 +157,39 @@ void main() {
       });
     });
 
-    test('present-but-invalid Factory flash streams raw on an invalid board', () {
-      fakeAsync((async) {
-        // A corrupt board half: the app refuses to adopt it, but the device
-        // still connects and streams raw counts with an invalid-board marker
-        // (the banner names the reason) — never a soft-brick.
-        for (final doc in [
-          'adc_fsr=1.2,nominal\nexc=4.53,nominal', // afe_gain missing
-          'adc_fsr=1.2,nominal\nexc=soon\nafe_gain=101', // bad value
-          'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nch0.r=1,2,3,4,5,6', // no cal.date
-        ]) {
-          MockBlePlatform.instance.seedKvs(kvsFromDoc(doc));
-          final (hub, link, teardown) = wire(async: async);
+    test(
+      'present-but-invalid Factory flash streams raw on an invalid board',
+      () {
+        fakeAsync((async) {
+          // A corrupt board half: the app refuses to adopt it, but the device
+          // still connects and streams raw counts with an invalid-board marker
+          // (the banner names the reason) — never a soft-brick.
+          for (final doc in [
+            'adc_fsr=1.2,nominal\nexc=4.53,nominal', // afe_gain missing
+            'adc_fsr=1.2,nominal\nexc=soon\nafe_gain=101', // bad value
+            'adc_fsr=1.2\nexc=4.53\nafe_gain=101\nch0.r=1,2,3,4,5,6', // no cal.date
+          ]) {
+            MockBlePlatform.instance.seedKvs(kvsFromDoc(doc));
+            final (hub, link, teardown) = wire(async: async);
 
-          unawaited(link.connectToDevice(deviceId));
-          async.elapse(const Duration(seconds: 4));
+            unawaited(link.connectToDevice(deviceId));
+            async.elapse(const Duration(seconds: 4));
 
-          expect(link.isStreaming, isTrue, reason: doc);
-          expect(link.linkState, BtLinkState.streaming, reason: doc);
-          expect(
-            hub.boardCalibration,
-            isA<InvalidBoardCalibration>(),
-            reason: doc,
-          );
-          expect(hub.totalSamples, greaterThan(0), reason: doc);
+            expect(link.isStreaming, isTrue, reason: doc);
+            expect(link.linkState, BtLinkState.streaming, reason: doc);
+            expect(
+              hub.boardCalibration,
+              isA<InvalidBoardCalibration>(),
+              reason: doc,
+            );
+            expect(hub.totalSamples, greaterThan(0), reason: doc);
 
-          teardown();
-        }
-        addTearDown(() => MockBlePlatform.instance.resetKnobs());
-      });
-    });
+            teardown();
+          }
+          addTearDown(() => MockBlePlatform.instance.resetKnobs());
+        });
+      },
+    );
 
     test('a degenerate slot reads as empty; the connection succeeds', () {
       fakeAsync((async) {

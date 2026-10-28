@@ -15,11 +15,9 @@ import '../widgets/wide_layout.dart';
 /// flash completes. Every entry point (the Live and Devices update notices, the
 /// Settings firmware card) goes through here, so there is one push to change.
 void openFirmwareUpdate(BuildContext context, {required VoidCallback onDone}) {
-  unawaited(
-    Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (_) => FirmwareUpdateScreen(onDone: onDone),
-      ),
+  Navigator.of(context).push<void>(
+    MaterialPageRoute<void>(
+      builder: (_) => FirmwareUpdateScreen(onDone: onDone),
     ),
   );
 }
@@ -28,18 +26,18 @@ void openFirmwareUpdate(BuildContext context, {required VoidCallback onDone}) {
 /// page renders, so there is no "failed with no error" or "flashing with a
 /// stale progress" state.
 sealed class _Stage {
-  const _Stage();
+  const new();
 }
 
 /// Pick-a-release view; also where the failure page's Back button returns.
 final class _Overview extends _Stage {
-  const _Overview();
+  const new();
 }
 
 /// Image download in flight; [headline] names the asset so the page reads
 /// "Downloading foo.bin…".
 final class _Downloading extends _Stage {
-  const _Downloading(this.headline);
+  const new(this.headline);
 
   final String headline;
 }
@@ -47,19 +45,19 @@ final class _Downloading extends _Stage {
 /// Transfer to the device in flight. [progress] mutates in place; the
 /// progress callback re-reads it via setState.
 final class _Flashing extends _Stage {
-  _Flashing();
+  new();
 
   double progress = 0;
 }
 
 /// Image accepted; the device reboots on its own.
 final class _Done extends _Stage {
-  const _Done();
+  const new();
 }
 
 /// Flash failed; [error] is the thrown error, shown verbatim.
 final class _Failed extends _Stage {
-  const _Failed(this.error);
+  const new(this.error);
 
   final String error;
 }
@@ -75,7 +73,7 @@ final class _Failed extends _Stage {
 /// a taken flash is confirmed by the next check's [FirmwareFlashVerified], one
 /// that didn't re-flags the banner.
 class FirmwareUpdateScreen extends StatefulWidget {
-  const FirmwareUpdateScreen({super.key, required this.onDone});
+  const new({super.key, required this.onDone});
 
   /// Where "Done" goes once the screen pops: the app shell's Devices-tab
   /// jump. The device reboots into the flashed image, so the user re-finds
@@ -128,7 +126,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
 
   Future<void> _flashFromFile() async {
     final file = await FilePicker.pickFile(
-      type: FileType.custom,
+      type: .custom,
       allowedExtensions: ['bin'],
     );
     if (!mounted || file == null) return;
@@ -238,8 +236,8 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
                       vertical: 24,
                     ),
                     child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      mainAxisSize: .min,
+                      crossAxisAlignment: .stretch,
                       children: _buildProgress(),
                     ),
                   ),
@@ -275,7 +273,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
             'Image accepted — the device is rebooting. It should be back on '
             'the Devices tab in a few seconds.',
             style: theme.textTheme.titleMedium,
-            textAlign: TextAlign.center,
+            textAlign: .center,
           ),
           const SizedBox(height: 24),
           FilledButton(
@@ -293,7 +291,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
           Text(
             error,
             style: TextStyle(color: scheme.error),
-            textAlign: TextAlign.center,
+            textAlign: .center,
           ),
           const SizedBox(height: 24),
           OutlinedButton(
@@ -319,11 +317,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
   List<Widget> _transferPage(String headline, String step, double? value) {
     final theme = Theme.of(context);
     return [
-      Text(
-        headline,
-        style: theme.textTheme.titleMedium,
-        textAlign: TextAlign.center,
-      ),
+      Text(headline, style: theme.textTheme.titleMedium, textAlign: .center),
       const SizedBox(height: 24),
       // explicit track: the scheme's secondaryContainer declares no
       // separate tonal container (see main.dart), and the M3 default track
@@ -337,7 +331,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
       Text(
         'Keep this page open while the firmware transfers.',
         style: theme.textTheme.bodySmall,
-        textAlign: TextAlign.center,
+        textAlign: .center,
       ),
     ];
   }
@@ -384,7 +378,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+            crossAxisAlignment: .start,
             children: [
               Text(
                 _heroLine(service, linkUp: linkUp),
@@ -428,7 +422,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: .stretch,
             children: [
               FilledButton(
                 onPressed: canFlash && target != null

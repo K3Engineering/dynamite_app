@@ -60,9 +60,8 @@ void main() {
       expect(config.sampleRateHz, 64000);
       // TBM wins regardless of the OSR field's value.
       expect(
-        parseAdcConfig(
-          makeConfig(clock: 0x20 | (7 << 2), pga: 0),
-        )!.sampleRateHz,
+        parseAdcConfig(makeConfig(clock: 0x20 | (7 << 2), pga: 0))!
+            .sampleRateHz,
         64000,
       );
     });

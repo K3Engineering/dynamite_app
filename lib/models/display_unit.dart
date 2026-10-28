@@ -88,12 +88,7 @@ enum DisplayUnit {
   ),
   raw('Raw', 'ADC Counts', axisLadder: [(factor: 1.0, symbol: 'Raw')]);
 
-  const DisplayUnit(
-    this.symbol,
-    this.label, {
-    this.kgfFactor,
-    required this.axisLadder,
-  });
+  new(this.symbol, this.label, {this.kgfFactor, required this.axisLadder});
 
   final String symbol;
   final String label;
@@ -174,8 +169,8 @@ enum DisplayUnit {
   String _formatValue(double value, String suffix) {
     final sign = value < 0 ? '-' : '+';
     final decimals = switch (this) {
-      DisplayUnit.raw => 0,
-      DisplayUnit.mV || DisplayUnit.mVv => 4,
+      .raw => 0,
+      .mV || .mVv => 4,
       _ => 3,
     };
     final numStr = value.abs().toStringAsFixed(decimals);

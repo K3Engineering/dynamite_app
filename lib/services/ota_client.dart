@@ -6,7 +6,7 @@ import 'ota_protocol.dart';
 
 /// A flash session failure with plain-language copy for the UI.
 class OtaFlashException implements Exception {
-  const OtaFlashException(this.message);
+  const new(this.message);
 
   final String message;
 
@@ -29,7 +29,7 @@ class OtaFlashException implements Exception {
 ///  * The final DONE is written WITHOUT response — a with-response DONE
 ///    hangs. TODO: re-verify against current firmware; drop this if fixed.
 class OtaClient {
-  OtaClient({
+  new({
     required this.writeControl,
     required this.writeData,
     this.chunkSize = 244,

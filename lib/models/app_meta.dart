@@ -4,12 +4,10 @@ import 'package:meta/meta.dart';
 /// root (main.dart, via package_info_plus) and injected where displayed
 /// (the Settings About block) or stamped into exports.
 @immutable
-class AppMeta {
-  const AppMeta({required this.version, required this.buildNumber});
-
-  final String version;
-  final String buildNumber;
-
+class const AppMeta({
+  required final String version,
+  required final String buildNumber,
+}) {
   /// Value stamped into the dynamite-csv metadata's `generator` field.
   String get generator => 'dynamite-flutter $version';
 

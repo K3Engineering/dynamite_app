@@ -25,7 +25,7 @@ const int adcMinValue = -adcCountsPerPolarity;
 /// only (see [UnprovisionedBoardCalibration]).
 @immutable
 class ChannelNominals {
-  const ChannelNominals({
+  const new({
     required this.adcFsrV,
     required this.afeGain,
     required this.pgaGain,
@@ -60,7 +60,7 @@ class ChannelNominals {
 
   /// Strict inverse of [toJson]: every field must be present, finite and
   /// positive, else [FormatException].
-  factory ChannelNominals.fromJson(Map<String, dynamic> json) {
+  factory fromJson(Map<String, dynamic> json) {
     double pos(Object? v, String key) {
       final d = v is num ? v.toDouble() : double.nan;
       if (!d.isFinite || d <= 0) {
@@ -82,7 +82,7 @@ class ChannelNominals {
 /// and the provenance tags on the flash values.
 @immutable
 class BoardNominals {
-  const BoardNominals({
+  const new({
     required this.adcFsrV,
     required this.afeGain,
     required this.excitationV,
@@ -247,7 +247,7 @@ List<double> ladderSetpointsMvV(List<double> resistors) {
 /// `ChannelCalibration.board`, where only raw counts convert.
 @immutable
 sealed class ChannelBoardCalibration {
-  const ChannelBoardCalibration._();
+  const new _();
 
   /// The channel's resolved analog chain.
   ChannelNominals get nominals;
@@ -318,7 +318,7 @@ sealed class ChannelBoardCalibration {
   /// board data stores a null board), factory data optional, but
   /// present-but-malformed throws [FormatException]. Replay never substitutes
   /// guessed values.
-  factory ChannelBoardCalibration.fromJson(Map<String, dynamic> json) {
+  factory fromJson(Map<String, dynamic> json) {
     List<double>? numList(Object? v, int count, String key) {
       if (v == null) return null;
       if (v is! List || v.length != count) {
@@ -363,13 +363,13 @@ sealed class ChannelBoardCalibration {
 /// variant holding measured data; every measured member is non-null by
 /// construction.
 class CalibratedChannelBoard extends ChannelBoardCalibration {
-  CalibratedChannelBoard({
+  new({
     required List<double> resistors,
     required List<double> readings,
     required this.nominals,
   }) : assert(ChannelBoardCalibration.channelDataIsValid(resistors, readings)),
-       resistors = List.unmodifiable(resistors),
-       readings = List.unmodifiable(readings),
+       resistors = List.unmodifiableOf(resistors),
+       readings = List.unmodifiableOf(readings),
        super._() {
     // Storage order runs from +FS (k=0) to -FS (k=4), and channelDataIsValid
     // enforces strictly decreasing readings and positive resistors, so
@@ -497,7 +497,7 @@ class CalibratedChannelBoard extends ChannelBoardCalibration {
 /// A channel with resolved nominals but no factory data: the nominal chain is
 /// the map.
 class NominalChannelBoard extends ChannelBoardCalibration {
-  const NominalChannelBoard(this.nominals) : super._();
+  const new(this.nominals) : super._();
 
   @override
   final ChannelNominals nominals;
@@ -533,7 +533,7 @@ class NominalChannelBoard extends ChannelBoardCalibration {
 /// calibration to be in effect.
 @immutable
 class CalGroup {
-  const CalGroup({
+  const new({
     required this.date,
     required this.namespace,
     this.boardId,
@@ -637,7 +637,7 @@ CalGroup? parseCalGroup(Map<String, String> kv, CalNamespace namespace) {
 /// represents "couldn't read".
 @immutable
 sealed class BoardCalibration {
-  const BoardCalibration._();
+  const new _();
 
   /// Parse the board half of a flash document from the FACTORY key/value map
   /// and, optionally, the USER map holding a recalibration.
@@ -650,7 +650,7 @@ sealed class BoardCalibration {
   /// (unprovisioned → raw counts; constants without a cal group → nominal
   /// channels). Unknown keys are ignored. [DeviceFlash.fromKvs] turns this
   /// into an [InvalidBoardCalibration].
-  factory BoardCalibration.fromKv(
+  factory fromKv(
     Map<String, String> factory, {
     Map<String, String> user = const {},
     required List<double> pgaGains,
@@ -699,7 +699,7 @@ sealed class BoardCalibration {
 /// A board with resolved constants; no cal group means every channel uses the
 /// nominal chain.
 class ProvisionedBoardCalibration extends BoardCalibration {
-  ProvisionedBoardCalibration({required this.nominals, this.calGroup})
+  new({required this.nominals, this.calGroup})
     : channels = [
         for (int i = 0; i < kAdcChannelCount; ++i)
           switch (calGroup?.channelData[i]) {
@@ -742,14 +742,14 @@ class ProvisionedBoardCalibration extends BoardCalibration {
 /// A board with no board data in flash: a new or factory-reset unit. Streams
 /// raw counts only.
 class UnprovisionedBoardCalibration extends BoardCalibration {
-  const UnprovisionedBoardCalibration() : super._();
+  const new() : super._();
 }
 
 /// A board whose flash data the app refused to adopt (see
 /// [BoardCalibration.fromKv]); streams raw counts like
 /// [UnprovisionedBoardCalibration]. [detail] names the offending key.
 class InvalidBoardCalibration extends BoardCalibration {
-  const InvalidBoardCalibration(this.detail) : super._();
+  const new(this.detail) : super._();
 
   /// The parser's reason, e.g. `board constants: bad adc_fsr: "soon"`.
   final String detail;

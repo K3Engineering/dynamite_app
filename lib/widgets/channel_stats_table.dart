@@ -6,7 +6,7 @@ import 'channel_palette.dart';
 
 @immutable
 class ChannelStatsRow {
-  const ChannelStatsRow({
+  const new({
     required this.label,
     required this.values,
     this.emphasized = false,
@@ -29,7 +29,7 @@ class ChannelStatsRow {
 
 /// Tappable per-channel header; the owner decides what the toggle means.
 class ChannelStatsTable extends StatelessWidget {
-  ChannelStatsTable({
+  new({
     super.key,
     required this.labels,
     required this.activeChannels,
@@ -82,17 +82,13 @@ class ChannelStatsTable extends StatelessWidget {
   Widget build(BuildContext context) {
     final channelCount = labels.length;
     final staleColor = Theme.of(context).colorScheme.outline;
-    final headerStyle = Theme.of(
-      context,
-    ).textTheme.labelSmall?.copyWith(fontWeight: FontWeight.bold);
+    final headerStyle = Theme.of(context).textTheme.labelSmall
+        ?.copyWith(fontWeight: FontWeight.bold);
     const tabularFigures = [FontFeature.tabularFigures()];
-    final monoStyle = Theme.of(
-      context,
-    ).textTheme.bodySmall?.copyWith(fontFeatures: tabularFigures);
-    final emphasizedStyle = Theme.of(context).textTheme.titleMedium?.copyWith(
-      fontWeight: FontWeight.bold,
-      fontFeatures: tabularFigures,
-    );
+    final monoStyle = Theme.of(context).textTheme.bodySmall
+        ?.copyWith(fontFeatures: tabularFigures);
+    final emphasizedStyle = Theme.of(context).textTheme.titleMedium
+        ?.copyWith(fontWeight: .bold, fontFeatures: tabularFigures);
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -104,7 +100,7 @@ class ChannelStatsTable extends StatelessWidget {
               for (int i = 1; i <= channelCount; i++)
                 i: const FlexColumnWidth(),
             },
-            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            defaultVerticalAlignment: .middle,
             children: [
               TableRow(
                 children: [
@@ -117,7 +113,7 @@ class ChannelStatsTable extends StatelessWidget {
                         right: 4,
                       ),
                       child: Row(
-                        mainAxisAlignment: MainAxisAlignment.end,
+                        mainAxisAlignment: .end,
                         children: [
                           // Fixed-width slot so the label never reflows;
                           // outside the toggle so a tap shows the tooltip.
@@ -137,7 +133,7 @@ class ChannelStatsTable extends StatelessWidget {
                               onTap: () => onToggleChannel(i),
                               child: Text(
                                 labels[i],
-                                textAlign: TextAlign.right,
+                                textAlign: .right,
                                 style: Theme.of(context).textTheme.labelSmall
                                     ?.copyWith(
                                       color: activeChannels[i]
@@ -145,7 +141,7 @@ class ChannelStatsTable extends StatelessWidget {
                                           : staleColor.withValues(alpha: 0.5),
                                     ),
                                 maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                                overflow: .ellipsis,
                               ),
                             ),
                           ),
@@ -211,7 +207,7 @@ class ChannelStatsTable extends StatelessWidget {
 /// once clear, so a hovering rail reads as steady. The subtree unmounts when
 /// faded (an opacity-zero tooltip trigger would still answer pointer hits).
 class _ClipStatusIcon extends StatefulWidget {
-  const _ClipStatusIcon({required this.clipped, required this.channel});
+  const new({required this.clipped, required this.channel});
 
   /// Instantaneous rail flag.
   final bool clipped;
@@ -257,7 +253,7 @@ class _ClipStatusIconState extends State<_ClipStatusIcon> {
       child: Tooltip(
         message:
             '${rigSlotTitle(widget.channel)} is at the ADC rail. The reading is clipping.',
-        triggerMode: TooltipTriggerMode.tap,
+        triggerMode: .tap,
         child: Icon(
           Icons.warning_rounded,
           size: 14,
@@ -271,7 +267,7 @@ class _ClipStatusIconState extends State<_ClipStatusIcon> {
 /// Tap-target wrapper for a channel cell: pointer cursor, opaque hit testing,
 /// the toggle callback, and screen-reader semantics.
 class _TappableChannelCell extends StatelessWidget {
-  const _TappableChannelCell({
+  const new({
     required this.channel,
     required this.active,
     required this.onTap,
@@ -291,18 +287,14 @@ class _TappableChannelCell extends StatelessWidget {
         button: true,
         toggled: active,
         label: rigSlotTitle(channel),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          child: child,
-        ),
+        child: GestureDetector(behavior: .opaque, onTap: onTap, child: child),
       ),
     );
   }
 }
 
 class _TableCellValue extends StatelessWidget {
-  const _TableCellValue({
+  const new({
     required this.channel,
     required this.value,
     required this.unit,
@@ -342,10 +334,10 @@ class _TableCellValue extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 1, horizontal: 1),
         child: Text(
           displayText,
-          textAlign: TextAlign.right,
+          textAlign: .right,
           style: textStyle?.copyWith(color: color),
           maxLines: 1,
-          overflow: TextOverflow.visible,
+          overflow: .visible,
         ),
       ),
     );

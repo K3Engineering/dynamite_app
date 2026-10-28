@@ -2,7 +2,7 @@ import 'package:material_ui/material_ui.dart';
 
 /// Shared empty-state placeholder, so empty states look identical.
 class EmptyPlaceholder extends StatelessWidget {
-  const EmptyPlaceholder({
+  const new({
     super.key,
     required this.icon,
     required this.title,
@@ -26,15 +26,14 @@ class EmptyPlaceholder extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Center(
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: .min,
         children: [
           Icon(icon, size: 64, color: color ?? scheme.outline),
           const SizedBox(height: 16),
           Text(
             title,
-            style: Theme.of(
-              context,
-            ).textTheme.titleMedium?.copyWith(color: color ?? scheme.onSurface),
+            style: Theme.of(context).textTheme.titleMedium
+                ?.copyWith(color: color ?? scheme.onSurface),
           ),
           if (hint != null) ...[
             const SizedBox(height: 8),
@@ -44,7 +43,7 @@ class EmptyPlaceholder extends StatelessWidget {
             Text(
               hint!,
               style: TextStyle(color: color ?? scheme.onSurfaceVariant),
-              textAlign: TextAlign.center,
+              textAlign: .center,
             ),
           ],
           if (action != null) ...[const SizedBox(height: 8), action!],

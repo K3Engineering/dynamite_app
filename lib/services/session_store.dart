@@ -19,7 +19,7 @@ import 'session_store_backend.dart';
 /// model). Recording-side operations ([startSession], [finalizeSession],
 /// [createDataSink]) are RecordingController's.
 class SessionStore {
-  SessionStore._(Future<SessionFilesBackend> backend) : _backend = backend;
+  new _(Future<SessionFilesBackend> backend) : _backend = backend;
 
   static SessionStore? _instance;
 
@@ -34,13 +34,13 @@ class SessionStore {
 
   /// Wrap [backend] (a temp root in tests) instead of the platform default.
   @visibleForTesting
-  factory SessionStore.over(SessionFilesBackend backend) =>
+  factory over(SessionFilesBackend backend) =>
       SessionStore._(Future.value(backend));
 
   /// Wrap a backend future (a rejecting one exercises the construction-failure
   /// path).
   @visibleForTesting
-  factory SessionStore.overFuture(Future<SessionFilesBackend> backend) =>
+  factory overFuture(Future<SessionFilesBackend> backend) =>
       SessionStore._(backend);
 
   final Future<SessionFilesBackend> _backend;
@@ -538,14 +538,14 @@ class SessionStore {
 }
 
 sealed class _ListedEntry {
-  const _ListedEntry({required this.byteTotal});
+  const new({required this.byteTotal});
 
   /// The directory's bytes as the scan found them (data + journal).
   final int byteTotal;
 }
 
 final class _SessionEntry extends _ListedEntry {
-  const _SessionEntry({
+  const new({
     required this.id,
     required this.journal,
     required this.dataBytes,
@@ -563,20 +563,20 @@ final class _SessionEntry extends _ListedEntry {
 }
 
 final class _DamagedEntry extends _ListedEntry {
-  const _DamagedEntry(this.damaged, {required super.byteTotal});
+  const new(this.damaged, {required super.byteTotal});
   final DamagedSession damaged;
 }
 
 /// The store's in-flight recording dir, invisible to listings (its bytes come
 /// from the store's live total).
 final class _UnlistedEntry extends _ListedEntry {
-  const _UnlistedEntry() : super(byteTotal: 0);
+  const new() : super(byteTotal: 0);
 }
 
 /// A [SessionDataSink] wrapper reporting every ack's absolute data.raw length,
 /// so the store's live byte total tracks the recording.
 class NotifyingSessionDataSink implements SessionDataSink {
-  NotifyingSessionDataSink._(this.inner, this.onAppend);
+  new _(this.inner, this.onAppend);
 
   final SessionDataSink inner;
 

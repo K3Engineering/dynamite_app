@@ -12,7 +12,7 @@ import 'app_settings.dart';
 /// source plus a poll closure), so it never depends on the link layer's
 /// concrete type.
 class WakelockPolicy {
-  WakelockPolicy({
+  new({
     required AppSettings settings,
 
     /// Notifies when the stream's liveness may have changed; polled via

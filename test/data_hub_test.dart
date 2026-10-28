@@ -8,6 +8,7 @@ import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
+
 import 'helpers/flash_docs.dart';
 
 /// Unit tests for the hub's per-stream lifecycle (peaks, tare, reset). Uses
@@ -354,27 +355,24 @@ void main() {
       expect(hub.totalSamples, 20 + 1024);
     });
 
-    test(
-      'drops during a tare advance time and record gaps but never pollute the average',
-      () {
-        final hub = DataHub();
-        feed(hub, frameOf(1000), 100);
-        hub.requestTare();
-        hub.addDroppedFrames(20); // held at 1000, mid-tare
-        feed(hub, frameOf(500), 1024); // the 1024 REAL tare samples
+    test('drops during a tare advance time and record gaps but never pollute the average', () {
+      final hub = DataHub();
+      feed(hub, frameOf(1000), 100);
+      hub.requestTare();
+      hub.addDroppedFrames(20); // held at 1000, mid-tare
+      feed(hub, frameOf(500), 1024); // the 1024 REAL tare samples
 
-        expect(hub.taring, isFalse);
-        // Only real frames fed the average: exactly 500, despite 20 held
-        // 1000s inside the window.
-        expect(hub.tare[0], 500);
-        // The drop is ordinary timeline: gap range + held values + counted.
-        expect(hub.totalSamples, 100 + 20 + 1024);
-        expect(hub.gaps.contains(100), isTrue);
-        expect(hub.gaps.contains(119), isTrue);
-        expect(hub.gaps.contains(120), isFalse);
-        expect(hub.rawAt(0, 110), 1000); // held value inside the gap
-      },
-    );
+      expect(hub.taring, isFalse);
+      // Only real frames fed the average: exactly 500, despite 20 held
+      // 1000s inside the window.
+      expect(hub.tare[0], 500);
+      // The drop is ordinary timeline: gap range + held values + counted.
+      expect(hub.totalSamples, 100 + 20 + 1024);
+      expect(hub.gaps.contains(100), isTrue);
+      expect(hub.gaps.contains(119), isTrue);
+      expect(hub.gaps.contains(120), isFalse);
+      expect(hub.rawAt(0, 110), 1000); // held value inside the gap
+    });
 
     test('a re-tare holds the old offsets until the new average lands', () {
       final hub = DataHub();
@@ -461,29 +459,26 @@ void main() {
       expect(hub.tare[1], isNull);
     });
 
-    test(
-      'setTareOffset writes the offset absolutely and cancels the tare in flight',
-      () {
-        final hub = DataHub();
-        hub.setTareOffset(1, 1234);
-        expect(hub.tare[1], 1234);
-        expect(hub.tare[0], isNull);
+    test('setTareOffset writes the offset absolutely and cancels the tare in flight', () {
+      final hub = DataHub();
+      hub.setTareOffset(1, 1234);
+      expect(hub.tare[1], 1234);
+      expect(hub.tare[0], isNull);
 
-        // Absolute: replaces the offset regardless of the old value.
-        hub.setTareOffset(1, -50);
-        expect(hub.tare[1], -50);
+      // Absolute: replaces the offset regardless of the old value.
+      hub.setTareOffset(1, -50);
+      expect(hub.tare[1], -50);
 
-        hub.requestTare(channel: 2);
-        feed(hub, frameOf(1000), 500);
-        expect(hub.taring, isTrue);
-        hub.setTareOffset(1, 0);
-        expect(hub.taring, isFalse); // canceled
+      hub.requestTare(channel: 2);
+      feed(hub, frameOf(1000), 500);
+      expect(hub.taring, isTrue);
+      hub.setTareOffset(1, 0);
+      expect(hub.taring, isFalse); // canceled
 
-        // The canceled window must not commit later.
-        feed(hub, frameOf(1000), 1000);
-        expect(hub.tare[2], isNull);
-      },
-    );
+      // The canceled window must not commit later.
+      feed(hub, frameOf(1000), 1000);
+      expect(hub.tare[2], isNull);
+    });
 
     test(
       'every offset mutation bumps tareVersion; a bare request does not',
@@ -584,7 +579,7 @@ void main() {
         ),
         calGroup: CalGroup(
           date: '2026-01-01',
-          namespace: CalNamespace.factory,
+          namespace: .factory,
           channelData: [
             for (int i = 0; i < channels; ++i)
               (

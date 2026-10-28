@@ -12,11 +12,12 @@ import 'package:dynamite_app/services/ble_link_manager.dart';
 import 'package:dynamite_app/services/demo_device.dart';
 import 'package:dynamite_app/services/firmware_catalog.dart';
 import 'package:dynamite_app/services/firmware_update_service.dart';
+
 import 'helpers/mockble.dart';
 
 /// A catalog serving a fixed target, whatever the channel.
 class _FixedCatalog implements FirmwareCatalog {
-  _FixedCatalog(this.target);
+  new(this.target);
 
   final FirmwareRelease? target;
 

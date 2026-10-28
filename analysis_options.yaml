@@ -17,6 +17,8 @@ analyzer:
     - macos/**
     - linux/**
   language:
+    # Currently keeping these as analyzer errors and not the
+    # no_dynamic_casts / no_raw_types lint.
     strict-casts: true
     strict-inference: true
     strict-raw-types: true
@@ -24,31 +26,15 @@ analyzer:
 include: package:flutter_lints/flutter.yaml
     
 linter:
-  # The lint rules applied to this project can be customized in the
-  # section below to disable rules from the `package:flutter_lints/flutter.yaml`
-  # included above or to enable additional rules. A list of all available lints
-  # and their documentation is published at https://dart.dev/lints.
-  #
-  # Instead of disabling a lint rule for the entire project in the
-  # section below, it can also be suppressed for a single line of code
-  # or a specific dart file by using the `// ignore: name_of_lint` and
-  # `// ignore_for_file: name_of_lint` syntax on the line or in the file
-  # producing the lint.
   rules:
     # avoid_print: false  # Uncomment to disable the `avoid_print` rule
-    # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
     unawaited_futures: true
     discarded_futures: true
-    unnecessary_await_in_return: true
     prefer_const_constructors: true
     prefer_const_declarations: true
     prefer_const_literals_to_create_immutables: true
     prefer_final_locals: true
     prefer_final_in_for_each: true
-    # parameter_assignments (above) already bans reassigning parameters, so
-    # final would add no protection; enabling flags ~2.1k declarations
-    # (every method/override/callback parameter) for pure style.
-    #prefer_final_parameters: true
     avoid_dynamic_calls: true
     cancel_subscriptions: true
     only_throw_errors: true
@@ -85,12 +71,29 @@ linter:
     unnecessary_null_checks: true
     no_self_assignments: true
     require_trailing_commas: true
+    empty_container_bodies: true
+    initialize_in_field_declaration: true
+    simplify_variable_pattern: true
+    unnecessary_const_in_enum_constructor: true
+    unnecessary_primary_constructor_body: true
+    unnecessary_type_name_in_constructor: true
+    use_declaring_parameters: true
+    use_null_aware_elements: true
+    # The two halves of "no silent switch fallback": exhaustive_cases bans the
+    # `default:` shortcut on enumerable switches, and no_default_cases flags a
+    # `default:` in a switch whose cases already cover the enum — the one
+    # place a newly added value could be swallowed at runtime.
+    no_default_cases: true
+    exhaustive_cases: true
+    # Redundant on APIs annotated @awaitNotRequired (Navigator.push,
+    # showDialog); those already satisfy discarded_futures without it.
+    unnecessary_unawaited: true
+    simple_directive_paths: true
 
     # Enabled by proxy via package:flutter_lints (core+recommended at
-    # flutter_lints 6.0.0 / lints 6.1.0). Listed so the effective set is
-    # visible in one place; re-check on flutter_lints bumps, since rules
-    # move between sets over time (e.g. switch_on_type only entered core
-    # after lints 6.1.0).
+    # flutter_lints 6.0.0 / lints 6.1.0). Re-check on flutter_lints bumps, 
+    # since rules move between sets over time 
+    # (e.g. switch_on_type only entered core after lints 6.1.0).
     #   await_only_futures
     #   avoid_unnecessary_containers
     #   depend_on_referenced_packages

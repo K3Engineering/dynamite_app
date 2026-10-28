@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
-import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/models/device_profile.dart';
 import 'package:dynamite_app/services/data_hub.dart';
@@ -60,7 +59,7 @@ void main() {
         home: GraphWorkspace(
           data: hub,
           ctrl: ctrl,
-          unit: DisplayUnit.mVv,
+          unit: .mVv,
           activeChannels: [for (int i = 0; i < channels; i++) i],
         ),
       ),

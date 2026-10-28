@@ -9,7 +9,7 @@ import 'calibration_text.dart';
 /// and each channel's measured corrections. Renders the board it's handed —
 /// the per-device document gating is the caller's concern.
 class CalibrationView extends StatelessWidget {
-  const CalibrationView({super.key, required this.board});
+  const new({super.key, required this.board});
 
   /// The board calibration to render; null when the document is absent —
   /// reachable only if the link drops while this page is open (the Settings
@@ -59,7 +59,7 @@ class CalibrationView extends StatelessWidget {
         );
       case final ProvisionedBoardCalibration board:
         return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: .start,
           children: [
             _BoardCard(board: board),
             const SizedBox(height: 8),
@@ -76,7 +76,7 @@ class CalibrationView extends StatelessWidget {
 /// The board card: this unit's calibration identity, the trust statement,
 /// and the conversion chain.
 class _BoardCard extends StatelessWidget {
-  const _BoardCard({required this.board});
+  const new({required this.board});
 
   final ProvisionedBoardCalibration board;
 
@@ -106,7 +106,7 @@ class _BoardCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: .start,
           children: [
             Text(status, style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
@@ -155,7 +155,7 @@ class _BoardCard extends StatelessWidget {
 
 /// One channel's corrections
 class _ChannelCalCard extends StatelessWidget {
-  const _ChannelCalCard({required this.index, required this.channel});
+  const new({required this.index, required this.channel});
 
   final int index;
   final ChannelBoardCalibration channel;
@@ -168,7 +168,7 @@ class _ChannelCalCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: .start,
           children: [
             Text(rigSlotTitle(index), style: theme.textTheme.titleSmall),
             const SizedBox(height: 4),
@@ -266,7 +266,7 @@ class _ChannelCalCard extends StatelessWidget {
 Widget _row(String label, String value) => Padding(
   padding: const EdgeInsets.symmetric(vertical: 1),
   child: Row(
-    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    mainAxisAlignment: .spaceBetween,
     children: [
       Text(label),
       const SizedBox(width: 16),

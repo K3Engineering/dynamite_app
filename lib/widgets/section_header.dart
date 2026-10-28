@@ -3,7 +3,7 @@ import 'package:material_ui/material_ui.dart';
 /// Section header rendered as a label centered inside a divider line:
 /// ──────── label ────────
 class SectionHeader extends StatelessWidget {
-  const SectionHeader(this.label, {super.key});
+  const new(this.label, {super.key});
 
   final String label;
 
@@ -16,9 +16,8 @@ class SectionHeader extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 12),
           child: Text(
             label,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(
-              color: Theme.of(context).colorScheme.secondary,
-            ),
+            style: Theme.of(context).textTheme.titleSmall
+                ?.copyWith(color: Theme.of(context).colorScheme.secondary),
           ),
         ),
         const Expanded(child: Divider()),

@@ -28,7 +28,7 @@ import 'package:dynamite_app/widgets/graph_components.dart';
 typedef _Call = ({int start, int end, int texW, bool gap});
 
 class _Sim {
-  _Sim(this.seed) : rng = math.Random(seed * 7919 + 13) {
+  new(this.seed) : rng = math.Random(seed * 7919 + 13) {
     // Deterministic spikes near tooth crests give folds that jump when the
     // window moves.
     spikes = {for (var k = 0; k < 8; k++) 100 + rng.nextInt(3900): 3.0};

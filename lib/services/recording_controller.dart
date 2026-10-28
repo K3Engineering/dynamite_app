@@ -16,54 +16,54 @@ import '../utils/format.dart';
 /// Outcome of [RecordingController.startSession].
 @immutable
 sealed class StartSessionResult {
-  const StartSessionResult();
+  const new();
 }
 
 /// The session is recording.
 final class StartSessionOk extends StartSessionResult {
-  const StartSessionOk();
+  const new();
 }
 
 /// Refused: another lifecycle operation is already in flight (one outstanding
 /// operation at a time).
 final class StartSessionBusy extends StartSessionResult {
-  const StartSessionBusy();
+  const new();
 }
 
 /// Refused: a tare is still averaging, so recording now would freeze the
 /// pre-tare offsets for the session's lifetime. Transient.
 final class StartSessionTareInProgress extends StartSessionResult {
-  const StartSessionTareInProgress();
+  const new();
 }
 
 /// Refused: no decodable data is flowing (see [deriveFeedHealth]), so the
 /// session would record nothing. Transient.
 final class StartSessionNoData extends StartSessionResult {
-  const StartSessionNoData();
+  const new();
 }
 
 /// Outcome of [RecordingController.stopSession].
 @immutable
 sealed class StopSessionResult {
-  const StopSessionResult();
+  const new();
 }
 
 /// Refused: no recording was in progress.
 final class StopSessionRefused extends StopSessionResult {
-  const StopSessionRefused();
+  const new();
 }
 
 /// Finalized cleanly, but nothing was ever recorded (no session directory was
 /// created).
 final class StopSessionNothingRecorded extends StopSessionResult {
-  const StopSessionNothingRecorded(this.name);
+  const new(this.name);
 
   final String name;
 }
 
 /// Finalized cleanly to disk.
 final class StopSessionSaved extends StopSessionResult {
-  const StopSessionSaved(this.sessionId, this.name);
+  const new(this.sessionId, this.name);
 
   final String sessionId;
   final String name;
@@ -72,7 +72,7 @@ final class StopSessionSaved extends StopSessionResult {
 /// Finalization failed (a latched write error or a finalize-step throw); the
 /// session may be truncated. [sessionId] is null when no data reached storage.
 final class StopSessionFailed extends StopSessionResult {
-  const StopSessionFailed(this.error, this.name, {this.sessionId});
+  const new(this.error, this.name, {this.sessionId});
 
   final Object error;
   final String name;
@@ -85,15 +85,15 @@ final class StopSessionFailed extends StopSessionResult {
 /// The session payload exists only in [_Recording], so it can't be read or
 /// left dangling outside that state.
 sealed class _RecordingLifecycle {
-  const _RecordingLifecycle();
+  const new();
 }
 
 final class _Idle extends _RecordingLifecycle {
-  const _Idle();
+  const new();
 }
 
 final class _Recording extends _RecordingLifecycle {
-  const _Recording({
+  const new({
     required this.writer,
     required this.name,
     required this.startedAt,
@@ -111,7 +111,7 @@ final class _Recording extends _RecordingLifecycle {
 
 /// Finalization's async window; the payload lives in [stopSession]'s local.
 final class _Stopping extends _RecordingLifecycle {
-  const _Stopping();
+  const new();
 }
 
 /// Owns the recording session lifecycle start to finish.
@@ -125,32 +125,26 @@ final class _Stopping extends _RecordingLifecycle {
 /// local snackbar; a mid-recording storage failure is emitted as a
 /// [RecordingStorageError] on [AppEvents] from [stopSession].
 class RecordingController extends ChangeNotifier {
-  RecordingController({
-    required DataHub dataHub,
+  new({
+    required this._dataHub,
 
     /// Stream liveness source; a recording whose stream dies is auto-stopped.
     /// Same port shape as [FeedHealthTracker].
-    required Listenable streamingChanges,
-    required bool Function() streamingNow,
+    required this._streamingChanges,
+    required this._streamingNow,
 
     /// The connected device's identity, frozen onto the session at start.
-    required Map<String, Object?> Function() deviceMetadataSnapshot,
+    required this._deviceMetadataSnapshot,
 
     /// The raw device KVS, frozen onto the session at start.
-    required KvsSnapshot? Function() deviceKvsSnapshot,
+    required this._deviceKvsSnapshot,
 
     /// Marks a session boundary for packet continuity (the decoder's
     /// `resetContinuity`).
-    required void Function() onSessionBoundary,
+    required this._onSessionBoundary,
 
-    required AppEvents events,
-  }) : _dataHub = dataHub,
-       _streamingChanges = streamingChanges,
-       _streamingNow = streamingNow,
-       _deviceMetadataSnapshot = deviceMetadataSnapshot,
-       _deviceKvsSnapshot = deviceKvsSnapshot,
-       _onSessionBoundary = onSessionBoundary,
-       _events = events {
+    required this._events,
+  }) {
     _dataHub.addEventListener(_onHubEvent);
     _streamingChanges.addListener(_onStreamingChanged);
   }

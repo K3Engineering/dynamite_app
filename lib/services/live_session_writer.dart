@@ -16,7 +16,7 @@ import 'session_store_backend.dart';
 
 /// The codec for a session directory's data.raw.
 class SessionChunkCodec {
-  const SessionChunkCodec(this.channelCount);
+  const new(this.channelCount);
 
   final int channelCount;
 
@@ -178,7 +178,7 @@ SessionMeta sessionMetaFromHeader(SessionHeader header, int ssnOrigin) =>
 /// session's identity and persisted length. [LiveSessionWriter.closeSink]
 /// releases the handle but keeps the run.
 final class SessionRun {
-  SessionRun(this.sink, this.id, this.ackedLength);
+  new(this.sink, this.id, this.ackedLength);
 
   /// The open data sink handle.
   final SessionDataSink sink;
@@ -200,12 +200,12 @@ final class SessionRun {
 /// queue never sees overwritten ring slots. If storage falls a full ring
 /// behind, an error latches (see [appendData]).
 class LiveSessionWriter {
-  LiveSessionWriter(
+  new(
     this.header, {
     required this.sourceRingCapacity,
     required this.onWriteError,
-    required SessionSinkFactory sinkFactory,
-  }) : _sinkFactory = sinkFactory;
+    required this._sinkFactory,
+  });
 
   /// The journal-line-1 fields, carried until the first packet's write.
   final SessionHeader header;
@@ -337,5 +337,7 @@ class LiveSessionWriter {
 }
 
 /// The first write's factory: meta + first packet in, open sink out.
-typedef SessionSinkFactory =
-    Future<SessionDataSink> Function(SessionMeta meta, Uint8List firstData);
+typedef SessionSinkFactory = Future<SessionDataSink> Function(
+  SessionMeta meta,
+  Uint8List firstData,
+);

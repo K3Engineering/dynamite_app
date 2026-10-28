@@ -122,7 +122,7 @@ int joinBlockEnd(int end, int blockSize) =>
 /// materialized non-null here, so painters never re-ask availability.
 @immutable
 final class _ConvertedChannel {
-  const _ConvertedChannel._({
+  const new _({
     required this.channel,
     required this.tare,
     required this.netMap,
@@ -197,7 +197,7 @@ class _Minimap extends StatefulWidget {
   /// [_ConvertedChannel]).
   final List<_ConvertedChannel> channels;
 
-  const _Minimap({
+  const new({
     required this.dataSource,
     required this.unit,
     required this.graphCtrl,
@@ -276,7 +276,7 @@ class _MinimapState extends State<_Minimap> {
             label: 'Graph history overview',
             hint: 'Tap or drag to move the visible window',
             child: Listener(
-              behavior: HitTestBehavior.opaque,
+              behavior: .opaque,
               onPointerSignal: (e) => _handleGraphPointerScroll(
                 e,
                 widget.dataSource,
@@ -284,7 +284,7 @@ class _MinimapState extends State<_Minimap> {
                 graphWidth,
               ),
               child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
+                behavior: .opaque,
                 onTapDown: (d) => _onMinimapTap(d, graphWidth),
                 onHorizontalDragUpdate: (d) => _onMinimapDrag(d, graphWidth),
                 child: CustomPaint(
@@ -329,7 +329,7 @@ class _MinimapPainter extends CustomPainter {
   /// whose [GraphDataSource.repaint] never fires).
   final BakePump _bakePump;
 
-  _MinimapPainter(
+  new(
     this._data,
     this._unit,
     this._ctrl,
@@ -445,11 +445,7 @@ class _InteractiveGraphArea extends StatefulWidget {
   final GraphController ctrl;
   final Widget child;
 
-  const _InteractiveGraphArea({
-    required this.data,
-    required this.ctrl,
-    required this.child,
-  });
+  const new({required this.data, required this.ctrl, required this.child});
 
   @override
   State<_InteractiveGraphArea> createState() => _InteractiveGraphAreaState();
@@ -511,7 +507,7 @@ class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
       builder: (context, constraints) {
         final graphWidth = _graphPlotWidth(constraints.maxWidth);
         return Listener(
-          behavior: HitTestBehavior.opaque,
+          behavior: .opaque,
           onPointerSignal: (e) => _handleGraphPointerScroll(
             e,
             widget.data,
@@ -519,7 +515,7 @@ class _InteractiveGraphAreaState extends State<_InteractiveGraphArea> {
             graphWidth,
           ),
           child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
+            behavior: .opaque,
             onScaleStart: _onScaleStart,
             onScaleUpdate: (d) => _onScaleUpdate(d, graphWidth),
             child: widget.child,
@@ -552,7 +548,7 @@ class GraphWorkspace extends StatefulWidget {
   /// [GraphController.lockedLiveSpan] (rolling animation).
   final bool isLiveSource;
 
-  const GraphWorkspace({
+  const new({
     super.key,
     required this.data,
     required this.ctrl,
@@ -733,11 +729,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
 /// One interactive plot surface (gestures + the painted graph), shared by the
 /// force and derivative panes.
 class _GraphPane extends StatelessWidget {
-  const _GraphPane({
-    required this.data,
-    required this.ctrl,
-    required this.painter,
-  });
+  const new({required this.data, required this.ctrl, required this.painter});
 
   final GraphDataSource data;
   final GraphController ctrl;
@@ -755,7 +747,7 @@ class _GraphPane extends StatelessWidget {
 
 /// Return to the live edge of a live graph.
 class _LiveButton extends StatelessWidget {
-  const _LiveButton({required this.data, required this.ctrl});
+  const new({required this.data, required this.ctrl});
 
   final GraphDataSource data;
   final GraphController ctrl;
@@ -786,7 +778,7 @@ class _LiveButton extends StatelessWidget {
             style: FilledButton.styleFrom(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
               minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              tapTargetSize: .shrinkWrap,
             ),
           ),
         );
@@ -804,7 +796,7 @@ class _LiveButton extends StatelessWidget {
 /// rows never move, they only un-grey in place as a live stream grows.
 /// Row chrome below the graph (see `GraphViewControls`)
 class GraphZoomControls extends StatelessWidget {
-  const GraphZoomControls({super.key, required this.data, required this.ctrl});
+  const new({super.key, required this.data, required this.ctrl});
 
   final GraphDataSource data;
   final GraphController ctrl;
@@ -913,7 +905,7 @@ class GraphZoomControls extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: .min,
       children: [
         _zoomButton(
           label: 'Zoom out',
@@ -988,7 +980,7 @@ class GraphZoomControls extends StatelessWidget {
 /// numerically valid positive value — so the dialog has no error states at
 /// all: garbage is either untypeable or leaves the button greyed.
 class _CustomSpanDialog extends StatefulWidget {
-  const _CustomSpanDialog({required this.initialSec});
+  const new({required this.initialSec});
 
   /// Current window span in seconds; prefill (whole-value selected).
   final double initialSec;
@@ -1041,7 +1033,7 @@ class _CustomSpanDialogState extends State<_CustomSpanDialog> {
     return AlertDialog(
       title: const Text('Window span'),
       content: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: .min,
         children: [
           TextField(
             controller: _text,
@@ -1085,7 +1077,7 @@ class _CustomSpanDialogState extends State<_CustomSpanDialog> {
 
 /// The current zoom-window span (e.g. "800 ms", "12.4 s", "1:02:05").
 class _SpanReadout extends StatelessWidget {
-  const _SpanReadout({required this.data, required this.ctrl});
+  const new({required this.data, required this.ctrl});
 
   final GraphDataSource data;
   final GraphController ctrl;
@@ -1103,12 +1095,12 @@ class _SpanReadout extends StatelessWidget {
           // Wide enough for hours-folded spans ("1:00:00") in bold tabular
           // figures; replay windows can legitimately exceed an hour.
           width: 68,
-          alignment: Alignment.center,
+          alignment: .center,
           child: Text(
             formatWindowSpan((end - start) / data.sampleRate),
             style: TextStyle(
               color: Theme.of(context).colorScheme.onPrimary,
-              fontWeight: FontWeight.bold,
+              fontWeight: .bold,
               fontFeatures: const [ui.FontFeature.tabularFigures()],
             ),
           ),
@@ -1374,7 +1366,7 @@ int _timeDecimals(double step) =>
 /// One enumerated axis tick: its value on the absolute k*step grid, pixel
 /// position, prepared label paragraph, and major flag.
 class _AxisTick {
-  const _AxisTick(this.value, this.pos, this.par, this.major);
+  const new(this.value, this.pos, this.par, this.major);
   final double value;
   final double pos;
   final ui.Paragraph par;
@@ -1387,7 +1379,7 @@ class _AxisTick {
 /// window edges (enumSlack > 0); [_drawAxis] then clips labels to the label
 /// strip so slack labels don't bleed into the plot.
 class _AxisLines {
-  const _AxisLines(this.ticks, this.minorPos, {required this.clipLabels});
+  const new(this.ticks, this.minorPos, {required this.clipLabels});
   final List<_AxisTick> ticks;
   final Iterable<double> minorPos;
   final bool clipLabels;
@@ -1558,11 +1550,11 @@ void _drawAxis(
   void gridLine(double pos, {required bool major}) {
     final path = major ? gridMajor : gridMinor;
     switch (orientation) {
-      case _AxisOrientation.x:
+      case .x:
         path
           ..moveTo(pos, 0)
           ..lineTo(pos, graphSz.height);
-      case _AxisOrientation.y:
+      case .y:
         path
           ..moveTo(0, pos)
           ..lineTo(graphSz.width, pos);
@@ -1597,12 +1589,12 @@ void _drawAxis(
     }
     for (final t in lines.ticks) {
       switch (orientation) {
-        case _AxisOrientation.x:
+        case .x:
           canvas.drawParagraph(
             t.par,
             Offset(t.pos - t.par.longestLine / 2, graphSz.height + 2),
           );
-        case _AxisOrientation.y:
+        case .y:
           canvas.drawParagraph(
             t.par,
             Offset(graphSz.width + 4, t.pos - t.par.height / 2),
@@ -1717,7 +1709,7 @@ void _drawMissingDataHatching(
 /// required before a flush actually emits anything.
 @visibleForTesting
 class VertexBatcher {
-  VertexBatcher({
+  new({
     required this.preserveFloats,
     required this.drawThreshold,
     required this.onFlush,
@@ -1832,7 +1824,7 @@ void _drawChannelEnvelope(
   int avgAlpha = 255,
   int envAlpha = 60,
 }) {
-  final (avg: avg, env: env) = _envelopeBatchers(
+  final (:avg, :env) = _envelopeBatchers(
     canvas,
     avgColor: color.withAlpha(avgAlpha),
     avgStrokeWidth: avgStrokeWidth,
@@ -2262,11 +2254,11 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   /// [GraphDataSource.repaint] never fires).
   final BakePump bakePump;
 
-  _TimeSeriesGraphPainter(
+  new(
     this._data,
     this._ctrl, {
-    required DisplayUnit unit,
-    required List<_ConvertedChannel> channels,
+    required this._unit,
+    required this._channels,
     required Listenable vsync,
     required this.cache,
     required this.reductionCache,
@@ -2274,9 +2266,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     required this.dpr,
     required this.labels,
     required this.bakePump,
-  }) : _unit = unit,
-       _channels = channels,
-       super(
+  }) : super(
          repaint: Listenable.merge([_data.repaint, _ctrl, bakePump, vsync]),
        );
 
@@ -2422,7 +2412,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       gridMinor,
       gridMajor,
       graphSz,
-      orientation: _AxisOrientation.x,
+      orientation: .x,
       lines: xLines,
       showLabels: showXLabels,
     );
@@ -2431,7 +2421,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       gridMinor,
       gridMajor,
       graphSz,
-      orientation: _AxisOrientation.y,
+      orientation: .y,
       lines: _enumAxisLines(
         yRange.yMin,
         yRange.yMax,
@@ -2517,7 +2507,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   @override
   final bool showXLabels;
 
-  _ForceGraphPainter(
+  new(
     super.data,
     super.ctrl, {
     this.showXLabels = true,
@@ -2629,7 +2619,7 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
 /// Derivative graph: the first difference of each channel, scaled to display
 /// units per second.
 class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
-  _DerivativeGraphPainter(
+  new(
     super.data,
     super.ctrl, {
     required super.unit,

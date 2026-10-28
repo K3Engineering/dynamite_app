@@ -25,7 +25,7 @@ import '../widgets/graph_view_controls.dart';
 import '../widgets/snackbars.dart';
 
 class SessionDetailScreen extends StatefulWidget {
-  const SessionDetailScreen({super.key, required this.session});
+  const new({super.key, required this.session});
 
   final SessionSummary session;
 
@@ -163,7 +163,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 
     return SingleChildScrollView(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: .stretch,
         children: [
           if (session.interrupted) const _InterruptedBanner(),
           // Channel header (same tappable table as the live view; toggles
@@ -230,7 +230,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: .start,
               children: [
                 Text(
                   'Statistics',
@@ -257,7 +257,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: .start,
                 children: [
                   Text('Notes', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 8),
@@ -404,7 +404,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                   if (unit != null) setState(() => selected = unit);
                 },
                 child: Column(
-                  mainAxisSize: MainAxisSize.min,
+                  mainAxisSize: .min,
                   children: [
                     for (final u in DisplayUnit.values)
                       RadioListTile<DisplayUnit>(
@@ -436,7 +436,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
 /// Disclosure strip for a session whose recording never completed (crash,
 /// dead tab, failed finalize): the tail may be missing.
 class _InterruptedBanner extends StatelessWidget {
-  const _InterruptedBanner();
+  const new();
 
   @override
   Widget build(BuildContext context) {
@@ -465,21 +465,21 @@ class _InterruptedBanner extends StatelessWidget {
 
 /// Load state for the session's sample data: still loading, failed, or ready.
 sealed class _LoadState {
-  const _LoadState();
+  const new();
 }
 
 final class _Loading extends _LoadState {
-  const _Loading();
+  const new();
 }
 
 final class _Failed extends _LoadState {
-  const _Failed(this.error);
+  const new(this.error);
 
   final Object error;
 }
 
 final class _Ready extends _LoadState {
-  const _Ready(this.data);
+  const new(this.data);
 
   final SessionData data;
 }
@@ -487,7 +487,7 @@ final class _Ready extends _LoadState {
 // -- Stat row widget --
 
 class _StatRow extends StatelessWidget {
-  const _StatRow({required this.label, required this.value});
+  const new({required this.label, required this.value});
 
   final String label;
   final String value;
@@ -497,7 +497,7 @@ class _StatRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisAlignment: .spaceBetween,
         children: [
           Text(label, style: Theme.of(context).textTheme.bodyMedium),
           Text(value, style: const TextStyle(fontWeight: FontWeight.w500)),

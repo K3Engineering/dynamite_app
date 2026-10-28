@@ -37,8 +37,7 @@ abstract interface class FirmwareCatalog {
 /// the `github.com` path 1:1 and only accepts this repo's
 /// `/releases/download/` prefix. Every platform uses it — one path.
 class GithubReleaseCatalog implements FirmwareCatalog {
-  GithubReleaseCatalog({http.Client? client})
-    : _client = client ?? http.Client();
+  new({http.Client? client}) : _client = client ?? http.Client();
 
   // The firmware repo's releases are the single source of truth.
   static const _owner = 'K3Engineering';

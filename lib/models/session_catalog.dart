@@ -9,17 +9,17 @@ import 'session_summary.dart';
 /// lookup map; producers pass entries in any order.
 @immutable
 class SessionCatalog {
-  SessionCatalog({
+  new({
     required Iterable<SessionSummary> sessions,
     required Iterable<DamagedSession> damaged,
     required Map<String, int> byteSizes,
-  }) : sessions = List.unmodifiable(
+  }) : sessions = List.unmodifiableOf(
          <SessionSummary>[...sessions]..sort((a, b) => _desc(a.id, b.id)),
        ),
-       damaged = List.unmodifiable(
+       damaged = List.unmodifiableOf(
          <DamagedSession>[...damaged]..sort((a, b) => _desc(a.id, b.id)),
        ),
-       byteSizes = Map.unmodifiable(byteSizes) {
+       byteSizes = Map.unmodifiableOf(byteSizes) {
     _byId = {for (final session in this.sessions) session.id: session};
   }
 
@@ -50,21 +50,21 @@ class SessionCatalog {
 
 @immutable
 sealed class SessionCatalogState {
-  const SessionCatalogState();
+  const new();
 }
 
 final class SessionCatalogLoading extends SessionCatalogState {
-  const SessionCatalogLoading();
+  const new();
 }
 
 final class SessionCatalogReady extends SessionCatalogState {
-  const SessionCatalogReady(this.catalog);
+  const new(this.catalog);
 
   final SessionCatalog catalog;
 }
 
 final class SessionCatalogFailed extends SessionCatalogState {
-  const SessionCatalogFailed(this.error, this.stackTrace);
+  const new(this.error, this.stackTrace);
 
   final Object error;
   final StackTrace stackTrace;

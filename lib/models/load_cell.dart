@@ -32,8 +32,8 @@ String rigSlotTitle(int i) => i < kAdcChannelCount ? 'CH $i' : 'Slot $i';
 /// The device's load cell slots; identity is positional. Immutable.
 @immutable
 class RigSlots {
-  RigSlots(List<LoadCellProfile?> slots)
-    : slots = List.unmodifiable(
+  new(List<LoadCellProfile?> slots)
+    : slots = List.unmodifiableOf(
         slots.length == kRigSlotCount
             ? slots
             : throw ArgumentError('need $kRigSlotCount slots'),
@@ -42,7 +42,7 @@ class RigSlots {
   /// Each slot's cell, or null when the slot is empty.
   final List<LoadCellProfile?> slots;
 
-  factory RigSlots.empty() => RigSlots(List.filled(kRigSlotCount, null));
+  factory empty() => RigSlots(List.filled(kRigSlotCount, null));
 
   LoadCellProfile? operator [](int i) => slots[i];
 
@@ -90,7 +90,7 @@ class RigSlots {
   /// Parse the `lcN.*` keys (the User folder's slot document). A slot is
   /// populated iff `cap` and `sens` parse to positive finite numbers; anything
   /// else reads as empty (lenient: the app owns these keys and can repair them).
-  factory RigSlots.fromKv(Map<String, String> kv) {
+  factory fromKv(Map<String, String> kv) {
     double? num(String? v) => v == null ? null : double.tryParse(v);
     return RigSlots([
       for (int i = 0; i < kRigSlotCount; ++i)
@@ -148,20 +148,14 @@ LoadCellProfile? _rejectedSlot(int i, Map<String, String> kv) {
 /// A load cell: capacity plus the exact certificate sensitivity (e.g. 2.007
 /// mV/V, not a nominal class). Identity is positional, not an id.
 @immutable
-class LoadCellProfile {
-  const LoadCellProfile({
-    this.name = '',
-    required this.capacityKg,
-    required this.sensitivityMvV,
-  });
-
+class const LoadCellProfile({
   /// Display name. Empty means a generic profile — rendered from the values.
-  final String name;
-  final double capacityKg;
+  final String name = '',
+  required final double capacityKg,
 
   /// Exact mV/V at full capacity (the calibration-certificate value).
-  final double sensitivityMvV;
-
+  required final double sensitivityMvV,
+}) {
   /// kgf per mV/V of measured signal.
   double get kgfPerMvV => capacityKg / sensitivityMvV;
 
@@ -202,7 +196,7 @@ class LoadCellProfile {
   /// Strict parse: capacity and sensitivity must be positive finite, else
   /// [FormatException]. Unknown keys are ignored. The caller decides the damage
   /// policy.
-  factory LoadCellProfile.fromJson(Map<String, dynamic> json) {
+  factory fromJson(Map<String, dynamic> json) {
     double req(Object? v, String key) {
       final d = v is num ? v.toDouble() : double.nan;
       if (!d.isFinite || d <= 0) {

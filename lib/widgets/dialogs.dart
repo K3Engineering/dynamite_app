@@ -29,7 +29,7 @@ Future<String?> showTextPrompt(
 /// when the route pops, but the field stays attached through the exit
 /// transition, so disposing there would race a focus/selection change.
 class _TextPromptDialog extends StatefulWidget {
-  const _TextPromptDialog({
+  const new({
     required this.title,
     required this.label,
     required this.initial,

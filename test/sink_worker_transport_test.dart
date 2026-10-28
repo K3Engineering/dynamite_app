@@ -146,44 +146,41 @@ void main() {
     await pending;
   });
 
-  test(
-    'request timeout latches: terminate once, pending and future fail with the same error',
-    () {
-      fakeAsync((async) {
-        newTransport(requestTimeout: const Duration(seconds: 1));
-        late Object error1;
-        unawaited(
-          transport
-              .request('append')
-              .then<void>((_) {}, onError: (Object e) => error1 = e),
-        );
-        async.flushMicrotasks();
-        async.elapse(const Duration(seconds: 2));
-        async.flushMicrotasks();
-        expect(
-          error1,
-          isA<StateError>().having(
-            (e) => e.message,
-            'message',
-            contains('timed out'),
-          ),
-        );
-        expect(handle.terminates, 1);
+  test('request timeout latches: terminate once, pending and future fail with the same error', () {
+    fakeAsync((async) {
+      newTransport(requestTimeout: const Duration(seconds: 1));
+      late Object error1;
+      unawaited(
+        transport
+            .request('append')
+            .then<void>((_) {}, onError: (Object e) => error1 = e),
+      );
+      async.flushMicrotasks();
+      async.elapse(const Duration(seconds: 2));
+      async.flushMicrotasks();
+      expect(
+        error1,
+        isA<StateError>().having(
+          (e) => e.message,
+          'message',
+          contains('timed out'),
+        ),
+      );
+      expect(handle.terminates, 1);
 
-        // Future requests fail with the latched error without posting.
-        late Object error2;
-        unawaited(
-          transport
-              .request('append')
-              .then<void>((_) {}, onError: (Object e) => error2 = e),
-        );
-        async.flushMicrotasks();
-        expect(identical(error1, error2), isTrue);
-        expect(handle.posts, hasLength(1));
-        expect(handle.terminates, 1);
-      });
-    },
-  );
+      // Future requests fail with the latched error without posting.
+      late Object error2;
+      unawaited(
+        transport
+            .request('append')
+            .then<void>((_) {}, onError: (Object e) => error2 = e),
+      );
+      async.flushMicrotasks();
+      expect(identical(error1, error2), isTrue);
+      expect(handle.posts, hasLength(1));
+      expect(handle.terminates, 1);
+    });
+  });
 
   test('worker error event latches the transport', () async {
     final pending = transport.request('append');

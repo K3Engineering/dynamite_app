@@ -27,7 +27,7 @@ import 'calibration_screen.dart';
 import 'firmware_update_screen.dart';
 
 class SettingsTab extends StatefulWidget {
-  const SettingsTab({super.key, required this.onGoToDevices});
+  const new({super.key, required this.onGoToDevices});
 
   /// The "Connect" action shown while no device is linked.
   final VoidCallback onGoToDevices;
@@ -273,7 +273,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
 /// The OTA firmware card.
 class _FirmwareCard extends StatelessWidget {
-  const _FirmwareCard({required this.onGoToDevices});
+  const new({required this.onGoToDevices});
 
   /// Passed through to the update screen's "Done".
   final VoidCallback onGoToDevices;
@@ -317,7 +317,7 @@ class _FirmwareCard extends StatelessWidget {
 /// The device-name editor: an explicit save (not fire-on-change). Empty input
 /// reverts the device to its factory name.
 class _DeviceNameEditor extends StatefulWidget {
-  const _DeviceNameEditor({super.key, required this.storedName});
+  const new({super.key, required this.storedName});
 
   /// The device's stored name, null when unset.
   final String? storedName;
@@ -367,7 +367,7 @@ class _DeviceNameEditorState extends State<_DeviceNameEditor> {
     final dirty = trimmed != (widget.storedName ?? '');
     final invalid = trimmed.isNotEmpty && !isValidDeviceName(trimmed);
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: .start,
       children: [
         TextField(
           controller: _controller,
@@ -391,7 +391,7 @@ class _DeviceNameEditorState extends State<_DeviceNameEditor> {
           maintainAnimation: true,
           maintainState: true,
           child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+            mainAxisAlignment: .end,
             children: [
               TextButton(
                 key: const Key('device_name_revert'),
@@ -418,7 +418,7 @@ class _DeviceNameEditorState extends State<_DeviceNameEditor> {
 
 /// One unit family's row in the display-units picker.
 class _UnitGroup extends StatelessWidget {
-  const _UnitGroup({
+  const new({
     required this.label,
     required this.units,
     required this.selected,
@@ -440,7 +440,7 @@ class _UnitGroup extends StatelessWidget {
     // selection in.
     final settings = context.read<AppSettings>();
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: .start,
       children: [
         Text(label, style: Theme.of(context).textTheme.labelMedium),
         const SizedBox(height: 4),

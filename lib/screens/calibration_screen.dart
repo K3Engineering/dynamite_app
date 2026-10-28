@@ -16,7 +16,7 @@ import '../widgets/snackbars.dart';
 /// ([CalibrationView]) plus the export row for the plain-text calibration
 /// report.
 class CalibrationScreen extends StatelessWidget {
-  const CalibrationScreen({super.key, required this.deviceId});
+  const new({super.key, required this.deviceId});
 
   final String deviceId;
 

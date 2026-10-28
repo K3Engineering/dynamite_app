@@ -122,7 +122,7 @@ class KvsDeviceException implements Exception {
 
 /// One parsed KVS response (see [parseKvsResponse] for the frame layout).
 class KvsResponse {
-  const KvsResponse({required this.status, required this.payload});
+  const new({required this.status, required this.payload});
 
   /// The status byte the device answered with.
   final KvsStatus status;
@@ -134,12 +134,12 @@ class KvsResponse {
   /// Throws on [KvsStatus.busy] and [KvsStatus.error]; ok and rejected settle.
   void throwIfBusyOrError() {
     switch (status) {
-      case KvsStatus.ok:
-      case KvsStatus.rejected:
+      case .ok:
+      case .rejected:
         break;
-      case KvsStatus.busy:
+      case .busy:
         throw KvsBusyException();
-      case KvsStatus.error:
+      case .error:
         throw KvsDeviceException();
     }
   }

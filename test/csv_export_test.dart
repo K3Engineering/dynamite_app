@@ -812,9 +812,8 @@ ssn,ch0,ch1,ch0_kgf,ch1_kgf
         final reparsed = jsonDecode(commentLines[1].substring(2));
         final reloaded = plainYaml(
           loadYaml(
-            [
-              for (final line in commentLines.skip(2)) line.substring(2),
-            ].join('\n'),
+            [for (final line in commentLines.skip(2)) line.substring(2)]
+                .join('\n'),
           ),
         );
         expect(reloaded, reparsed);

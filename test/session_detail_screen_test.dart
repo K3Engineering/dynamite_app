@@ -8,7 +8,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/channel_calibration.dart';
-import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/session_catalog.dart';
 import 'package:dynamite_app/services/app_settings.dart';
 import 'package:dynamite_app/screens/session_detail_screen.dart';
@@ -61,7 +60,7 @@ void main() {
         ),
     ],
     visibleChannels: const [true, true, true, true],
-    displayUnit: DisplayUnit.kgf,
+    displayUnit: .kgf,
     deviceInfo: const {},
     recordedAt: '2026-07-29T14:05:32.000Z',
     ssnOrigin: 0,

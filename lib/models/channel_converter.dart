@@ -21,16 +21,14 @@ import 'display_unit.dart';
 /// and mV rests on [ChannelBoardCalibration.displayExcitationV] — the one
 /// conversion input the calibration never characterized.
 @immutable
-class ChannelConverter {
-  const ChannelConverter(this.calibration, this.tare);
-
-  final ChannelCalibration calibration;
+class const ChannelConverter(
+  final ChannelCalibration calibration,
 
   /// Tare offset in counts; null = no offset. Zero counts is not a
   /// meaningful anchor (the board's physical zero is its dead-short
   /// reading), so "untared" is null, never 0.
-  final double? tare;
-
+  final double? tare,
+) {
   /// The board map and the unit's per-mV/V scale, or null when the unit is
   /// unavailable on the channel. The one place the two are resolved
   /// together; every converted path starts here and raw paths skip it.

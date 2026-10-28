@@ -17,7 +17,7 @@ Future<SessionFilesBackend> createBackend() async {
 void terminateSinkWorker() {}
 
 class IoSessionFilesBackend implements SessionFilesBackend {
-  IoSessionFilesBackend(this.root);
+  new(this.root);
 
   /// Absolute path of the sessions root directory.
   final String root;
@@ -139,7 +139,7 @@ class IoSessionFilesBackend implements SessionFilesBackend {
 }
 
 class _IoSessionDataSink implements SessionDataSink {
-  _IoSessionDataSink(this.id, this._handle);
+  new(this.id, this._handle);
 
   @override
   final String id;

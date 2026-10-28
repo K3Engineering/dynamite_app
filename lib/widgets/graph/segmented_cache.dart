@@ -68,8 +68,12 @@ const FilterQuality kSegmentFilterQuality = FilterQuality.low;
 /// directly to the frame canvas. Returns the logical px the content occupies (x
 /// in [0, contentW) after the hPad translate); the blit's x-scale reference. At
 /// most the allocated texW.
-typedef SegmentRenderer =
-    double Function(Canvas canvas, int start, int end, int texW);
+typedef SegmentRenderer = double Function(
+  Canvas canvas,
+  int start,
+  int end,
+  int texW,
+);
 
 /// One frame of inputs for [SegmentedGraphCache.paint]: the core's [CacheConfig]
 /// plus the one impure input, the vector renderer.

@@ -10,7 +10,7 @@ import 'rig_state.dart';
 /// same narrow notify-plus-poll port as [FeedHealthTracker] and
 /// [StreamResetCoordinator].
 class RigLinkGuard {
-  RigLinkGuard({
+  new({
     required RigState rig,
     required Listenable linkChanges,
     required bool Function() linkUpNow,
