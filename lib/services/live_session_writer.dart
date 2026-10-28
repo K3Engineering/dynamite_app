@@ -5,6 +5,7 @@ import 'package:meta/meta.dart';
 
 import '../models/board_calibration.dart';
 import '../models/channel_calibration.dart';
+import '../models/derived_channel.dart';
 import '../models/device_flash.dart';
 import '../models/device_profile.dart';
 import '../models/display_unit.dart';
@@ -154,6 +155,7 @@ typedef SessionHeader = ({
   DisplayUnit displayUnit,
   Map<String, Object?> deviceInfo,
   KvsSnapshot? deviceKvs,
+  MathProfile mathProfile,
   String recordedAt,
 });
 
@@ -170,6 +172,7 @@ SessionMeta sessionMetaFromHeader(SessionHeader header, int ssnOrigin) =>
       displayUnit: header.displayUnit,
       deviceInfo: header.deviceInfo,
       deviceKvs: header.deviceKvs,
+      mathProfile: header.mathProfile,
       recordedAt: header.recordedAt,
       ssnOrigin: ssnOrigin,
     );
