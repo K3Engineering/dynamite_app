@@ -183,7 +183,7 @@ void main() {
     /// Bring up the demo link from the Devices tab (synchronous connect, so
     /// a single pump after the tap shows the active row).
     Future<void> connectDemo(WidgetTester tester) async {
-      await tester.tap(find.byType(NavigationDestination).at(2));
+      await tester.tap(find.byType(NavigationDestination).at(3));
       await tester.pump();
       await tester.pump(const Duration(seconds: 6));
       await tester.tap(
@@ -226,7 +226,7 @@ void main() {
       final link = await pumpApp(tester);
       await connectDemo(tester);
 
-      await tester.tap(find.byType(NavigationDestination).at(3));
+      await tester.tap(find.byType(NavigationDestination).at(4));
       await tester.pump();
 
       // The device section sits below the fold; the settings ListView
@@ -264,7 +264,7 @@ void main() {
       await connectDemo(tester);
       await tester.pump(const Duration(milliseconds: 50));
 
-      await tester.tap(find.byType(NavigationDestination).at(3));
+      await tester.tap(find.byType(NavigationDestination).at(4));
       await tester.pump();
       await tester.scrollUntilVisible(
         find.text('Connection info'),

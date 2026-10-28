@@ -7,7 +7,12 @@ import 'package:provider/provider.dart';
 
 import '../models/analysis_pane.dart';
 import '../models/app_meta.dart';
+import '../analysis/result_overlays.dart';
+import '../analysis/test_catalog.dart';
+import '../analysis/test_family.dart';
+import '../analysis/test_result.dart';
 import '../models/derived_channel.dart';
+import '../models/graph_overlays.dart';
 import '../models/session_catalog.dart';
 import '../services/app_settings.dart';
 import '../models/display_unit.dart';
@@ -20,6 +25,7 @@ import '../services/share_capability.dart';
 import '../utils/format.dart';
 import '../widgets/channel_stats_table.dart';
 import '../widgets/dialogs.dart';
+import '../widgets/metrics_table.dart';
 import '../widgets/session_flows.dart';
 import '../widgets/empty_placeholder.dart';
 import '../widgets/graph_components.dart';
@@ -163,6 +169,75 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
     },
   );
 
+  /// The per-test section for this session, if it has a test result: its
+  /// graph overlays plus the header/table block. The test definition comes
+  /// from the catalog (one source of truth for ids); unknown ids (written by
+  /// a newer build) get a count-only note rather than a crash.
+  ({GraphOverlays? overlays, Widget? section}) _testResultSection(
+    TestResult? result,
+    SessionData data,
+  ) {
+    final r = result;
+    if (r == null) return (overlays: null, section: null);
+
+    Widget section(String title, int repCount, Widget? table) => Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          Text(
+            '$repCount valid rep${repCount == 1 ? '' : 's'} · body weight '
+            '${r.bodyWeightKgf.toStringAsFixed(1)} kgf',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (table != null) ...[const SizedBox(height: 8), table],
+        ],
+      ),
+    );
+
+    final def = findTestDef(r.testId);
+    if (def == null) {
+      return (
+        overlays: null,
+        section: section('Test: ${r.testId}', r.reps.length, null),
+      );
+    }
+
+    final List<EvaluatedRep> reps;
+    try {
+      reps = evaluateTestResult(r, data, def);
+    } on TestResultUnreadable catch (e) {
+      // Loud, not degraded: a table covering fewer reps than the header
+      // claims would hide the loss. The session's graphs and CSV export stay
+      // available.
+      return (
+        overlays: null,
+        section: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: EmptyPlaceholder(
+            icon: Icons.warning_amber_outlined,
+            title: 'Test analysis unavailable',
+            hint:
+                '${e.message} The recording itself is intact — export the '
+                'CSV to read the raw data.',
+            color: Theme.of(context).colorScheme.error,
+          ),
+        ),
+      );
+    }
+    if (reps.isEmpty) return (overlays: null, section: null);
+    return (
+      overlays: mergeOverlays([for (final rep in reps) rep.overlays]),
+      section: section(
+        'Test: ${def.name}',
+        reps.length,
+        MetricsTable(spec: opsFor(def.family).table(reps)),
+      ),
+    );
+  }
+
   Widget _buildContent(
     AppSettings settings,
     SessionSummary session,
@@ -180,6 +255,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
         !_hiddenDerived.contains(i),
     ];
     final unit = settings.displayUnit.effective(data.unitAvailability);
+    final (overlays: testOverlays, section: testSection) = _testResultSection(
+      session.testResult,
+      data,
+    );
 
     // The app-wide on-screen family (see [AppSettings.channelFamily]):
     // [tableIds] for the header (inactive included, greyed), the filtered
@@ -277,6 +356,7 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                               ],
                               analysis: analysis,
                               isLiveSource: false,
+                              overlays: testOverlays,
                             ),
                     ),
                   ),
@@ -291,6 +371,11 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
               ),
             ),
           ),
+
+          if (testSection case final section?) ...[
+            const Divider(height: 24),
+            section,
+          ],
 
           const Divider(height: 24),
 
