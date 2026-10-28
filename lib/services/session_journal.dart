@@ -29,6 +29,7 @@ import 'dart:typed_data';
 
 import 'package:meta/meta.dart';
 
+import '../analysis/test_result.dart';
 import '../models/channel_calibration.dart';
 import '../models/derived_channel.dart';
 import '../models/device_flash.dart';
@@ -256,11 +257,16 @@ class SessionEdit {
     required this.name,
     required this.notes,
     required this.visibleChannels,
+    this.testResult,
   });
 
   final String name;
   final String notes;
   final List<bool> visibleChannels;
+
+  /// The guided-test analysis attached to this session, if any. Additive:
+  /// readers that predate it ignore the key.
+  final TestResult? testResult;
 
   /// The state to show when no edit line survives: the meta's recording-time
   /// values, with empty notes.
@@ -274,16 +280,19 @@ class SessionEdit {
     String? name,
     String? notes,
     List<bool>? visibleChannels,
+    TestResult? testResult,
   }) => SessionEdit(
     name: name ?? this.name,
     notes: notes ?? this.notes,
     visibleChannels: visibleChannels ?? this.visibleChannels,
+    testResult: testResult ?? this.testResult,
   );
 
   Map<String, dynamic> toJson() => {
     'name': name,
     'notes': notes,
     'visibleChannels': visibleChannels,
+    'testResult': ?testResult?.toJson(),
   };
 
   /// Strict against [channelCount]: a different channel layout is not an edit
@@ -303,6 +312,14 @@ class SessionEdit {
         'journal edit: visibleChannels must be a list of $channelCount bools',
       );
     }
+    final testResultJson = json['testResult'];
+    final testResult = testResultJson == null
+        ? null
+        : TestResult.fromJson(
+            testResultJson is Map
+                ? Map<String, dynamic>.from(testResultJson)
+                : throw const FormatException('journal edit: bad testResult'),
+          );
     return SessionEdit(
       name: name,
       notes: notes,
@@ -314,6 +331,7 @@ class SessionEdit {
                   'visibleChannels entries must be bools',
                 ),
       ]),
+      testResult: testResult,
     );
   }
 }
