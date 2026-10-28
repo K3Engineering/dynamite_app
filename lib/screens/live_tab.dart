@@ -41,7 +41,7 @@ import 'firmware_update_screen.dart';
 // ---------------------------------------------------------------------------
 
 class LiveTab extends StatefulWidget {
-  const LiveTab({super.key, required this.onGoToDevices});
+  const new({super.key, required this.onGoToDevices});
 
   /// The idle prompt's "Connect a device" action; the shell owns the tab index.
   final VoidCallback onGoToDevices;
@@ -316,7 +316,7 @@ class LiveStatusBar extends StatelessWidget {
   /// [FirmwareUpdateService] so this widget stays a pure readout.
   final Widget? firmwareNotice;
 
-  const LiveStatusBar({
+  const new({
     super.key,
     required this.linkState,
     required this.connectedDeviceName,
@@ -327,24 +327,22 @@ class LiveStatusBar extends StatelessWidget {
 
   void _showHealthDetails(BuildContext context, FeedHealth health) {
     final hub = context.read<DataHub>();
-    unawaited(
-      showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: Text(health.shortLabel!),
-          content: Text(
-            health.detail(
-              malformedLen: hub.lastMalformedPacketLen,
-              lastDataAt: hub.lastDataAt,
-            ),
+    showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(health.shortLabel!),
+        content: Text(
+          health.detail(
+            malformedLen: hub.lastMalformedPacketLen,
+            lastDataAt: hub.lastDataAt,
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('OK'),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('OK'),
+          ),
+        ],
       ),
     );
   }
@@ -373,7 +371,7 @@ class LiveStatusBar extends StatelessWidget {
                   : btLinkStateLabel(linkState)!,
               style: TextStyle(
                 color: scheme.onSurfaceVariant,
-                fontWeight: FontWeight.w500,
+                fontWeight: .w500,
               ),
             ),
           ],
@@ -401,14 +399,14 @@ class LiveStatusBar extends StatelessWidget {
             const SizedBox(width: 8),
             Expanded(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: .start,
+                mainAxisSize: .min,
                 children: [
                   Text(
                     'Connected: $connectedDeviceName',
                     style: TextStyle(
                       color: scheme.onPrimaryContainer,
-                      fontWeight: FontWeight.w500,
+                      fontWeight: .w500,
                     ),
                   ),
                   if (report)
@@ -456,7 +454,7 @@ class LiveStatusBar extends StatelessWidget {
 /// The connected device's live signal strength; a narrow select so RSSI polls
 /// rebuild only this indicator.
 class _ConnectedRssiIndicator extends StatelessWidget {
-  const _ConnectedRssiIndicator();
+  const new();
 
   @override
   Widget build(BuildContext context) {
@@ -498,7 +496,7 @@ class LiveStats extends StatelessWidget {
   /// gray out like a gap.
   final ValueListenable<FeedHealth?> healthListenable;
 
-  const LiveStats({
+  const new({
     super.key,
     required this.settings,
     required this.rig,
@@ -625,9 +623,8 @@ class LiveStats extends StatelessWidget {
                   padding: const EdgeInsets.only(bottom: 4),
                   child: Text(
                     '— $notice — raw counts only',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
+                    style: Theme.of(context).textTheme.labelSmall
+                        ?.copyWith(color: Theme.of(context).colorScheme.error),
                   ),
                 ),
             ],
@@ -645,7 +642,7 @@ class LiveStats extends StatelessWidget {
 /// Banner for an unreadable board calibration; the device streams raw counts
 /// underneath.
 class BoardFaultBanner extends StatelessWidget {
-  const BoardFaultBanner({super.key, required this.detail});
+  const new({super.key, required this.detail});
 
   /// The parser's reason.
   final String detail;
@@ -658,7 +655,7 @@ class BoardFaultBanner extends StatelessWidget {
       color: scheme.errorContainer,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: .start,
         children: [
           Icon(Icons.error_outline, size: 18, color: scheme.onErrorContainer),
           const SizedBox(width: 8),
@@ -679,7 +676,7 @@ class BoardFaultBanner extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class DisconnectedPrompt extends StatelessWidget {
-  const DisconnectedPrompt({
+  const new({
     super.key,
     required this.linkState,
     required this.deviceName,
@@ -748,7 +745,7 @@ class ActionButtons extends StatelessWidget {
   /// Opens the per-channel tare sheet; disabled while recording like TARE.
   final VoidCallback onTareSettings;
 
-  const ActionButtons({
+  const new({
     super.key,
     required this.isRecording,
     required this.isPaused,
@@ -771,11 +768,11 @@ class ActionButtons extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        mainAxisAlignment: .spaceEvenly,
         children: [
           Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: .min,
+            crossAxisAlignment: .start,
             children: [
               _ModeControl(
                 tooltip: isPaused ? 'Resume monitoring' : 'Pause monitoring',
@@ -804,7 +801,7 @@ class ActionButtons extends StatelessWidget {
             ],
           ),
           Row(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize: .min,
             children: [
               OutlinedButton.icon(
                 onPressed: isRecording || isPaused ? null : onTare,
@@ -845,7 +842,7 @@ class ActionButtons extends StatelessWidget {
 /// [backgroundColor]; the mutual exclusion guarantees a loud control is
 /// never the disabled one, so styled buttons need no disabled tokens.
 class _ModeControl extends StatelessWidget {
-  const _ModeControl({
+  const new({
     required this.tooltip,
     required this.icon,
     required this.caption,
@@ -898,7 +895,7 @@ class _ModeControl extends StatelessWidget {
                   ),
           );
     return Column(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: .min,
       children: [
         button,
         DefaultTextStyle(
@@ -913,7 +910,7 @@ class _ModeControl extends StatelessWidget {
 /// Centers [child] inside a box as wide as the widest string in [sizingTexts]
 /// under the ambient [DefaultTextStyle], without mounting extra [Text] widgets.
 class _FixedWidthText extends StatelessWidget {
-  const _FixedWidthText({required this.sizingTexts, required this.child});
+  const new({required this.sizingTexts, required this.child});
 
   final List<String> sizingTexts;
   final Widget child;
@@ -944,7 +941,7 @@ class _FixedWidthText extends StatelessWidget {
 /// The recording control's live `mm:ss` caption; rebuilds only when the
 /// whole second changes.
 class _RecordingElapsedText extends StatefulWidget {
-  const _RecordingElapsedText({required this.startTime});
+  const new({required this.startTime});
 
   final DateTime startTime;
 

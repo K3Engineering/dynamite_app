@@ -29,7 +29,7 @@ abstract interface class SinkWorkerHandle {
 /// One request to the worker: the named op with its scalar params and byte
 /// payloads (see the op table in sink_worker.js).
 final class SinkWorkerRequest {
-  const SinkWorkerRequest({
+  const new({
     required this.seq,
     required this.op,
     this.id,
@@ -49,10 +49,8 @@ final class SinkWorkerRequest {
 /// One ack from the worker: success (scalar result or a bytes payload) or an
 /// op error. An op error fails that request only; it is not the worker dying.
 final class SinkWorkerAck {
-  const SinkWorkerAck.ok(this.seq, {this.result, this.bytes}) : error = null;
-  const SinkWorkerAck.opError(this.seq, this.error)
-    : result = null,
-      bytes = null;
+  const new ok(this.seq, {this.result, this.bytes}) : error = null;
+  const new opError(this.seq, this.error) : result = null, bytes = null;
 
   final int seq;
 
@@ -70,7 +68,7 @@ final class SinkWorkerAck {
 /// terminated and every pending and future request fails with the same error
 /// — a wedged or dead sink never silently recovers.
 class SinkWorkerTransport {
-  SinkWorkerTransport(this._handle, {Duration? requestTimeout})
+  new(this._handle, {Duration? requestTimeout})
     : _requestTimeout = requestTimeout ?? const Duration(seconds: 30) {
     _handle.onMessage = _onAck;
     _handle.onError = () =>

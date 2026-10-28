@@ -11,7 +11,9 @@ import 'package:dynamite_app/services/report_export.dart';
 import 'package:dynamite_app/services/rig_state.dart';
 import 'package:dynamite_app/widgets/cal_deviation_plot.dart';
 import 'package:dynamite_app/widgets/calibration_text.dart';
+
 import 'helpers/flash_docs.dart';
+
 import 'package:dynamite_app/widgets/calibration_view.dart';
 
 /// Widget tests for the factory calibration view (the board calibration
@@ -86,9 +88,10 @@ void main() {
     // The fixture document calibrates all four channels, so every card
     // carries the plot and the table (calibration is board-uniform — see
     // BoardCalibration.fromKv).
-    final board =
-        boardFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1])
-            as ProvisionedBoardCalibration;
+    final board = boardFromDoc(
+      demoBoardCalibrationDoc,
+      pgaGains: const [1, 1, 1, 1],
+    ) as ProvisionedBoardCalibration;
     await pump(tester);
 
     // The titled nonlinearity plot, with its convention caption.
@@ -246,9 +249,10 @@ END
     await tester.pumpAndSettle();
 
     expect(find.text('Calibration report copied to clipboard'), findsOneWidget);
-    final board =
-        boardFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1])
-            as ProvisionedBoardCalibration;
+    final board = boardFromDoc(
+      demoBoardCalibrationDoc,
+      pgaGains: const [1, 1, 1, 1],
+    ) as ProvisionedBoardCalibration;
     // The device label is the name the flash read carried, not the id.
     expect(copied, calibrationReport(board, 'Bench unit'));
   });
@@ -274,9 +278,10 @@ END
 
   group('calibrationReport', () {
     test('mirrors the screen content as plain text', () {
-      final board =
-          boardFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1])
-              as ProvisionedBoardCalibration;
+      final board = boardFromDoc(
+        demoBoardCalibrationDoc,
+        pgaGains: const [1, 1, 1, 1],
+      ) as ProvisionedBoardCalibration;
       final report = calibrationReport(board, 'dev1');
 
       expect(report, contains('Device: dev1'));
@@ -371,9 +376,10 @@ END
     });
 
     test('calibrated: the document\'s date and its age', () {
-      final board =
-          boardFromDoc(demoBoardCalibrationDoc, pgaGains: const [1, 1, 1, 1])
-              as ProvisionedBoardCalibration;
+      final board = boardFromDoc(
+        demoBoardCalibrationDoc,
+        pgaGains: const [1, 1, 1, 1],
+      ) as ProvisionedBoardCalibration;
       expect(
         boardCalibrationStatusLine(board),
         startsWith('Calibrated 2026-07-20 ('),

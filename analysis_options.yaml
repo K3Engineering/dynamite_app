@@ -17,6 +17,9 @@ analyzer:
     - macos/**
     - linux/**
   language:
+    # Kept as analyzer errors, not the 3.13 no_dynamic_casts / no_raw_types
+    # lint replacements: the lints report the same implicit casts at info
+    # level, and these already fail the build.
     strict-casts: true
     strict-inference: true
     strict-raw-types: true
@@ -39,16 +42,14 @@ linter:
     # prefer_single_quotes: true  # Uncomment to enable the `prefer_single_quotes` rule
     unawaited_futures: true
     discarded_futures: true
-    unnecessary_await_in_return: true
     prefer_const_constructors: true
     prefer_const_declarations: true
     prefer_const_literals_to_create_immutables: true
     prefer_final_locals: true
     prefer_final_in_for_each: true
-    # parameter_assignments (above) already bans reassigning parameters, so
-    # final would add no protection; enabling flags ~2.1k declarations
-    # (every method/override/callback parameter) for pure style.
-    #prefer_final_parameters: true
+    # No prefer_final_parameters: parameter_assignments (above) already bans
+    # reassigning parameters, 3.13 rejects `final` on ordinary parameters,
+    # and the rule itself is deprecated.
     avoid_dynamic_calls: true
     cancel_subscriptions: true
     only_throw_errors: true
@@ -85,6 +86,27 @@ linter:
     unnecessary_null_checks: true
     no_self_assignments: true
     require_trailing_commas: true
+
+    # 3.13's language features, and the lints that keep them in view. All are
+    # clean on this tree, so they only fire on new code.
+    empty_container_bodies: true
+    initialize_in_field_declaration: true
+    simplify_variable_pattern: true
+    unnecessary_const_in_enum_constructor: true
+    unnecessary_primary_constructor_body: true
+    unnecessary_type_name_in_constructor: true
+    use_declaring_parameters: true
+    use_null_aware_elements: true
+    # The two halves of "no silent switch fallback": exhaustive_cases bans the
+    # `default:` shortcut on enumerable switches, and no_default_cases flags a
+    # `default:` in a switch whose cases already cover the enum — the one
+    # place a newly added value could be swallowed at runtime.
+    no_default_cases: true
+    exhaustive_cases: true
+    # Redundant on APIs annotated @awaitNotRequired (Navigator.push,
+    # showDialog); those already satisfy discarded_futures without it.
+    unnecessary_unawaited: true
+    simple_directive_paths: true
 
     # Enabled by proxy via package:flutter_lints (core+recommended at
     # flutter_lints 6.0.0 / lints 6.1.0). Listed so the effective set is

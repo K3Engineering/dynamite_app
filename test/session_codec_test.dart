@@ -101,15 +101,13 @@ void main() {
 
     test('a non-sentinel value outside the ADC range throws', () {
       final bytes = packFrames(frames);
-      ByteData.sublistView(
-        bytes,
-      ).setInt32(8, SessionChunkCodec.maxAdcValue + 1, Endian.little);
+      ByteData.sublistView(bytes)
+          .setInt32(8, SessionChunkCodec.maxAdcValue + 1, Endian.little);
       expect(() => codec.decodeWithGaps(bytes), throwsStateError);
 
       final bytes2 = packFrames(frames);
-      ByteData.sublistView(
-        bytes2,
-      ).setInt32(4, SessionChunkCodec.minAdcValue - 1, Endian.little);
+      ByteData.sublistView(bytes2)
+          .setInt32(4, SessionChunkCodec.minAdcValue - 1, Endian.little);
       expect(() => codec.decodeWithGaps(bytes2), throwsStateError);
     });
 
@@ -121,9 +119,8 @@ void main() {
 
     test('a frame mixing sentinel and real values throws', () {
       final bytes = packFrames(frames);
-      ByteData.sublistView(
-        bytes,
-      ).setInt32(0, SessionChunkCodec.gapSentinel, Endian.little);
+      ByteData.sublistView(bytes)
+          .setInt32(0, SessionChunkCodec.gapSentinel, Endian.little);
       expect(() => codec.decodeWithGaps(bytes), throwsStateError);
     });
 

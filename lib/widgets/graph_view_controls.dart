@@ -6,7 +6,7 @@ import 'graph_components.dart';
 /// The chrome row below a [GraphWorkspace]: the dF/dt pane toggle and the
 /// zoom-window controls. Shared by the live tab and session replay
 class GraphViewControls extends StatelessWidget {
-  const GraphViewControls({
+  const new({
     super.key,
     required this.showDerivative,
     required this.onToggleDerivative,
@@ -40,7 +40,7 @@ class GraphViewControls extends StatelessWidget {
             label: const Text('dF/dt'),
             selected: showDerivative,
             onSelected: (_) => onToggleDerivative(),
-            visualDensity: VisualDensity.compact,
+            visualDensity: .compact,
             labelStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
               color: showDerivative ? cs.onSecondaryContainer : null,
             ),

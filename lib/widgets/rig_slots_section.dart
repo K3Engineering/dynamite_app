@@ -21,7 +21,7 @@ const quickSensitivitiesMvV = <double>[1, 2, 3];
 /// writes explicit). Document and unsaved edits die with the link, so the
 /// parent mounts this only while streaming.
 class RigSlotsSection extends StatefulWidget {
-  const RigSlotsSection({super.key, required this.rig});
+  const new({super.key, required this.rig});
 
   /// The rig's slot state. Passed in (not reached through Provider) so this
   /// section renders without an app-wide provider above it.
@@ -91,7 +91,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
     final canSave = dirty && !_saving;
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: .start,
       children: [
         _StatusBar(
           dirty: dirty,
@@ -102,7 +102,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
         ),
         const SizedBox(height: 8),
         Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: .start,
           children: [
             // The gutter's top padding matches the card's default margin,
             // so the tags stay centered on the four channel rows.
@@ -112,7 +112,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
             ),
             Expanded(
               child: Card(
-                clipBehavior: Clip.antiAlias,
+                clipBehavior: .antiAlias,
                 child: LayoutBuilder(
                   builder: (context, constraints) {
                     final rowWidth = constraints.maxWidth;
@@ -133,9 +133,8 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
           'The top four slots are the channels — drag a cell onto another '
           'slot to swap them; swap a spare into the top four to put it on '
           'a channel.',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       ],
     );
@@ -191,7 +190,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
           final feedback = Material(
             elevation: 4,
             borderRadius: BorderRadius.circular(8),
-            clipBehavior: Clip.antiAlias,
+            clipBehavior: .antiAlias,
             child: SizedBox(
               width: rowWidth,
               child: ListTile(
@@ -215,9 +214,9 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
           tile = switch (defaultTargetPlatform) {
             TargetPlatform.android ||
             TargetPlatform.iOS ||
-            TargetPlatform.fuchsia => LongPressDraggable<int>(
+            .fuchsia => LongPressDraggable<int>(
               data: i,
-              axis: Axis.vertical,
+              axis: .vertical,
               maxSimultaneousDrags: _saving ? 0 : 1,
               onDragStarted: () => setState(() => _dragIndex = i),
               onDragEnd: (_) => setState(() => _dragIndex = null),
@@ -226,7 +225,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
             ),
             _ => Draggable<int>(
               data: i,
-              axis: Axis.vertical,
+              axis: .vertical,
               maxSimultaneousDrags: _saving ? 0 : 1,
               onDragStarted: () => setState(() => _dragIndex = i),
               onDragEnd: (_) => setState(() => _dragIndex = null),
@@ -283,7 +282,7 @@ class _RigSlotsSectionState extends State<RigSlotsSection> {
 /// markings annotate the list without being part of any row, and dragging
 /// a slot can never move them.
 class _ChannelGutter extends StatelessWidget {
-  const _ChannelGutter();
+  const new();
 
   @override
   Widget build(BuildContext context) {
@@ -308,7 +307,7 @@ class _ChannelGutter extends StatelessWidget {
                     rigSlotTitle(i),
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: .bold,
                     ),
                   ),
                 ),
@@ -325,7 +324,7 @@ class _ChannelGutter extends StatelessWidget {
 /// states — the buttons keep their space while hidden, so the bar (and the
 /// slot list below) never moves when the dirty state flips.
 class _StatusBar extends StatelessWidget {
-  const _StatusBar({
+  const new({
     required this.dirty,
     required this.saving,
     required this.canSave,
@@ -416,7 +415,7 @@ Future<void> showSlotEditor(BuildContext context, RigState rig, int slot) {
 /// [State], so they're disposed only when the route's pop animation finally
 /// unmounts the dialog.
 class _SlotEditorDialog extends StatefulWidget {
-  const _SlotEditorDialog({required this.rig, required this.slot});
+  const new({required this.rig, required this.slot});
 
   final RigState rig;
   final int slot;
@@ -525,8 +524,8 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
         width: 380,
         child: SingleChildScrollView(
           child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: .min,
+            crossAxisAlignment: .start,
             children: [
               _CellFields(
                 nameCtrl: nameCtrl,
@@ -571,7 +570,7 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
 /// [onChanged] fires after any field or chip change so the host dialog can
 /// re-validate its Save button.
 class _CellFields extends StatelessWidget {
-  const _CellFields({
+  const new({
     required this.nameCtrl,
     required this.capCtrl,
     required this.sensCtrl,
@@ -586,8 +585,8 @@ class _CellFields extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: .min,
+      crossAxisAlignment: .start,
       children: [
         TextField(
           controller: nameCtrl,

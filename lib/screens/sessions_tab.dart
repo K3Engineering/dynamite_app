@@ -19,7 +19,7 @@ import '../widgets/wide_layout.dart';
 import 'session_detail_screen.dart';
 
 class SessionsTab extends StatefulWidget {
-  const SessionsTab({super.key});
+  const new({super.key});
 
   @override
   State<SessionsTab> createState() => _SessionsTabState();
@@ -242,7 +242,7 @@ class _SessionsTabState extends State<SessionsTab> {
 }
 
 class _SessionCard extends StatelessWidget {
-  const _SessionCard({
+  const new({
     required this.session,
     required this.byteSize,
     required this.onTap,
@@ -266,9 +266,9 @@ class _SessionCard extends StatelessWidget {
 
     return Dismissible(
       key: ValueKey(session.id),
-      direction: DismissDirection.endToStart,
+      direction: .endToStart,
       background: Container(
-        alignment: Alignment.centerRight,
+        alignment: .centerRight,
         padding: const EdgeInsets.only(right: 16),
         color: Theme.of(context).colorScheme.error,
         child: Icon(Icons.delete, color: Theme.of(context).colorScheme.onError),
@@ -307,7 +307,7 @@ class _SessionCard extends StatelessWidget {
 /// can't load it, and the manual affordances its bytes still afford
 /// (raw exports whenever the file has any, delete behind confirmation).
 class _DamagedCard extends StatelessWidget {
-  const _DamagedCard({
+  const new({
     required this.damaged,
     required this.onExportSamples,
     required this.onExportMetadata,
@@ -326,7 +326,7 @@ class _DamagedCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: .start,
           children: [
             Row(
               children: [
@@ -340,7 +340,7 @@ class _DamagedCard extends StatelessWidget {
                   child: Text(
                     'Damaged session',
                     style: TextStyle(
-                      fontWeight: FontWeight.w500,
+                      fontWeight: .w500,
                       color: Theme.of(context).colorScheme.error,
                     ),
                   ),

@@ -38,7 +38,7 @@ const int sessionJournalVersion = 1;
 /// later recalibration or re-taring can't rewrite history.
 @immutable
 class SessionMeta {
-  const SessionMeta({
+  const new({
     required this.name,
     required this.sampleRate,
     required this.channelCount,
@@ -105,7 +105,7 @@ class SessionMeta {
   /// Strict inverse of [toJson]: wrong types, wrong list lengths against
   /// [channelCount], or a wrong version throw [FormatException]. Unknown keys
   /// are ignored (additive schema changes), a wrong version is not.
-  factory SessionMeta.fromJson(Map<String, dynamic> json) {
+  factory fromJson(Map<String, dynamic> json) {
     final version = json['version'];
     if (version is! int || version != sessionJournalVersion) {
       throw FormatException('journal header: bad version: $version');
@@ -191,7 +191,10 @@ class SessionMeta {
         'journal header: bad displayUnit: $displayUnitName',
       );
     }
-    final deviceInfo = req<Map<Object?, Object?>>('deviceInfo');
+    // Typed by key, not just by value: [Map.unmodifiableOf] copies with a
+    // checked cast, so a non-string key would otherwise surface as a
+    // TypeError here instead of the damaged-session verdict callers catch.
+    final deviceInfo = req<Map<String, Object?>>('deviceInfo');
     final deviceKvsJson = json['deviceKvs'];
     final deviceKvs = deviceKvsJson == null
         ? null
@@ -215,15 +218,15 @@ class SessionMeta {
       name: name,
       sampleRate: sampleRate,
       channelCount: channelCount,
-      channelLabels: List.unmodifiable(channelLabels),
-      tares: List.unmodifiable(tares),
-      calibration: List.unmodifiable(calibration),
+      channelLabels: List.unmodifiableOf(channelLabels),
+      tares: List.unmodifiableOf(tares),
+      calibration: List.unmodifiableOf(calibration),
       displayUnit: displayUnit,
-      deviceInfo: Map.unmodifiable(deviceInfo),
+      deviceInfo: Map.unmodifiableOf(deviceInfo),
       deviceKvs: deviceKvs,
       recordedAt: recordedAt,
       ssnOrigin: ssnOrigin,
-      visibleChannels: List.unmodifiable(visibleChannels),
+      visibleChannels: List.unmodifiableOf(visibleChannels),
     );
   }
 }
@@ -232,7 +235,7 @@ class SessionMeta {
 /// edit; the last complete one wins.
 @immutable
 class SessionEdit {
-  const SessionEdit({
+  const new({
     required this.name,
     required this.notes,
     required this.visibleChannels,
@@ -244,7 +247,7 @@ class SessionEdit {
 
   /// The state to show when no edit line survives: the meta's recording-time
   /// values, with empty notes.
-  factory SessionEdit.initial(SessionMeta meta) => SessionEdit(
+  factory initial(SessionMeta meta) => SessionEdit(
     name: meta.name,
     notes: '',
     visibleChannels: meta.visibleChannels,
@@ -268,7 +271,7 @@ class SessionEdit {
 
   /// Strict against [channelCount]: a different channel layout is not an edit
   /// of this session. Unknown keys are ignored.
-  factory SessionEdit.fromJson(Map<String, dynamic> json, int channelCount) {
+  factory fromJson(Map<String, dynamic> json, int channelCount) {
     final name = json['name'];
     if (name is! String) {
       throw FormatException('journal edit: bad name: $name');
@@ -286,7 +289,7 @@ class SessionEdit {
     return SessionEdit(
       name: name,
       notes: notes,
-      visibleChannels: List.unmodifiable([
+      visibleChannels: List.unmodifiableOf([
         for (final e in visible)
           e is bool
               ? e
@@ -301,7 +304,7 @@ class SessionEdit {
 /// The parsed content of a session journal.
 @immutable
 class SessionJournal {
-  const SessionJournal._({
+  const new _({
     required this.meta,
     required this.edit,
     required this.completeBytes,

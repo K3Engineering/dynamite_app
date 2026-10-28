@@ -35,23 +35,23 @@ enum ConnectFailureKind {
 /// one of the three can be recorded.
 @immutable
 sealed class DeviceOutcome {
-  const DeviceOutcome();
+  const new();
 }
 
 final class ConnectRefused extends DeviceOutcome {
-  const ConnectRefused(this.kind);
+  const new(this.kind);
 
   final ConnectFailureKind kind;
 }
 
 final class SetupFailed extends DeviceOutcome {
-  const SetupFailed(this.detail);
+  const new(this.detail);
 
   final String detail;
 }
 
 final class Disconnected extends DeviceOutcome {
-  const Disconnected(this.error);
+  const new(this.error);
 
   final String error;
 }
@@ -64,7 +64,7 @@ class LinkTelemetry {
 }
 
 class LinkInfo {
-  LinkInfo({
+  new({
     required this.transport,
     required this.storedName,
     required this.info,
@@ -84,7 +84,7 @@ class LinkInfo {
 }
 
 sealed class Link {
-  const Link();
+  const new();
 
   String get deviceId;
   LinkTransport? get transport;
@@ -115,7 +115,7 @@ sealed class Link {
 }
 
 final class NoLink extends Link {
-  const NoLink();
+  const new();
 
   @override
   String get deviceId => '';
@@ -134,7 +134,7 @@ final class NoLink extends Link {
 }
 
 final class Connecting extends Link {
-  const Connecting(this.transport);
+  const new(this.transport);
 
   @override
   final LinkTransport transport;
@@ -153,7 +153,7 @@ final class Connecting extends Link {
 }
 
 final class SettingUp extends Link {
-  SettingUp(this.transport, this.phase);
+  new(this.transport, this.phase);
 
   @override
   final LinkTransport transport;
@@ -190,7 +190,7 @@ final class SettingUp extends Link {
 }
 
 final class Ready extends Link {
-  Ready(this.info);
+  new(this.info);
 
   final LinkInfo info;
 
@@ -226,7 +226,7 @@ final class Ready extends Link {
 }
 
 final class Closing extends Link {
-  const Closing(this.transport);
+  const new(this.transport);
 
   @override
   final LinkTransport transport;
@@ -248,7 +248,7 @@ final class Closing extends Link {
 /// Goes stale when [BleLinkManager._supersedeSetupPasses] runs or the active
 /// link is a different device.
 class _SetupToken {
-  const _SetupToken(this._manager, this._epoch, this.deviceId);
+  const new(this._manager, this._epoch, this.deviceId);
 
   final BleLinkManager _manager;
   final int _epoch;
@@ -337,7 +337,7 @@ class BleLinkManager extends ChangeNotifier {
   BtAvailability get bluetoothState => _bluetoothState;
 
   final List<DiscoveredDevice> _devices = [];
-  List<DiscoveredDevice> get devices => List.unmodifiable(_devices);
+  List<DiscoveredDevice> get devices => List.unmodifiableOf(_devices);
 
   bool _isScanning = false;
   bool get isScanning => _isScanning;
@@ -508,7 +508,7 @@ class BleLinkManager extends ChangeNotifier {
     if (link is! Ready) return body();
     final transport = link.info.transport;
     await transport.unsubscribeFromAdcFeed();
-    await Future<void>.delayed(_feedPauseSettle);
+    await Future.pause(_feedPauseSettle);
     try {
       return await body();
     } finally {
@@ -571,16 +571,13 @@ class BleLinkManager extends ChangeNotifier {
     }
   }
 
-  BleLinkManager({
-    required AppEvents events,
+  new({
+    required this._events,
     required this.onDeviceFlash,
-    required void Function(Uint8List data) onAdcData,
-    required void Function(int sampleRateHz) onSampleRate,
-    LinkTransport? demo,
-  }) : _events = events,
-       _onAdcData = onAdcData,
-       _onSampleRate = onSampleRate,
-       _demo = demo {
+    required this._onAdcData,
+    required this._onSampleRate,
+    this._demo,
+  }) {
     // The package's default queue is `auto` (per-device on Android/Web/Linux,
     // parallel elsewhere). Explicit `perDevice` regardless: a command stuck
     // against a half-torn-down device (common on web when the user rapidly

@@ -13,7 +13,7 @@ import '../utils/nice_step.dart';
 /// [kCalPointCount] storage order (+FS … −FS). Pure presentation; the math
 /// lives in `CalibratedChannelBoard.deviationsUvV`.
 class CalDeviationPlot extends StatelessWidget {
-  const CalDeviationPlot({super.key, required this.deviationsUvV});
+  const new({super.key, required this.deviationsUvV});
 
   /// Deviation per cal point (storage order: +FS … −FS), in µV/V. The ±FS
   /// entries are 0 by construction.
@@ -68,7 +68,7 @@ String _fmtDeviation(double uvV) =>
     '${uvV > 0 ? '+' : ''}${uvV.toStringAsFixed(3)}';
 
 class _DeviationPainter extends CustomPainter {
-  _DeviationPainter(
+  new(
     this.deviations, {
     required this.lineColor,
     required this.axisColor,
@@ -130,7 +130,7 @@ class _DeviationPainter extends CustomPainter {
     void paintText(String text, Offset Function(double w, double h) at) {
       final tp = TextPainter(
         text: TextSpan(text: text, style: labelStyle),
-        textDirection: TextDirection.ltr,
+        textDirection: .ltr,
       )..layout();
       tp.paint(canvas, at(tp.width, tp.height));
     }

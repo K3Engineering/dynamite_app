@@ -9,7 +9,7 @@ import 'package:flutter/foundation.dart';
 /// Viewport state: following the live edge, or parked on a fixed window.
 @immutable
 sealed class GraphViewport {
-  const GraphViewport();
+  const new();
 }
 
 /// Following the live edge. [span] locks the visible window to a fixed sample
@@ -20,7 +20,7 @@ sealed class GraphViewport {
 /// data, which is what lets the painter pin the view instead of floating it
 /// on the live-edge estimate.
 final class GraphLive extends GraphViewport {
-  const GraphLive([this.span]);
+  const new([this.span]);
 
   final int? span;
 }
@@ -30,7 +30,7 @@ final class GraphLive extends GraphViewport {
 /// chased: the window may lie partly or wholly left of `oldestSample`, and
 /// the painters render that part blank (see [GraphController.effectiveRange]).
 final class GraphWindow extends GraphViewport {
-  const GraphWindow(this.start, this.end);
+  const new(this.start, this.end);
 
   final int start;
   final int end;
@@ -39,8 +39,7 @@ final class GraphWindow extends GraphViewport {
 class GraphController extends ChangeNotifier {
   final int minLiveSpan;
 
-  GraphController({this.minLiveSpan = 0})
-    : _viewport = _initialViewport(minLiveSpan);
+  new({this.minLiveSpan = 0}) : _viewport = _initialViewport(minLiveSpan);
 
   GraphViewport _viewport;
 

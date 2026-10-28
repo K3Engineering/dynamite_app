@@ -5,7 +5,7 @@ import 'dart:convert';
 /// values inside gaps, so nothing else in the pipeline needs to know about
 /// missing data.
 class GapList {
-  GapList();
+  new();
 
   /// Flat `[start0, end0, start1, end1, ...]` storage, sorted and disjoint.
   final List<int> _bounds = [];
@@ -88,7 +88,7 @@ class GapList {
   /// sorted-disjoint invariant [contains] binary-searches on, and silently
   /// degrading to "no gaps" would fabricate continuity. (Adjacent ranges
   /// are valid and merge on [append].)
-  factory GapList.fromJson(String json) {
+  factory fromJson(String json) {
     final gaps = GapList();
     final parsed = jsonDecode(json);
     if (parsed is! List) {

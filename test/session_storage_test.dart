@@ -64,7 +64,7 @@ void main() {
           for (int ch = 0; ch < channels; ch++) hub.calibrationFor(ch),
         ],
         visibleChannels: const [true, true, true, true],
-        displayUnit: DisplayUnit.kgf,
+        displayUnit: .kgf,
         deviceInfo: const {},
         deviceKvs: null,
         recordedAt: '2026-07-29T14:05:32.000Z',
@@ -84,7 +84,7 @@ void main() {
     tares: List<double?>.filled(channels, null),
     calibration: nominalCals(),
     visibleChannels: const [true, true, true, true],
-    displayUnit: DisplayUnit.kgf,
+    displayUnit: .kgf,
     deviceInfo: const {},
     deviceKvs: null,
     recordedAt: '2026-07-29T14:05:32.000Z',
@@ -98,7 +98,7 @@ void main() {
     tares: List<double?>.filled(channels, null),
     calibration: nominalCals(),
     visibleChannels: const [true, true, true, true],
-    displayUnit: DisplayUnit.kgf,
+    displayUnit: .kgf,
     deviceInfo: const {},
     recordedAt: '2026-07-29T14:05:32.000Z',
     ssnOrigin: 100,
@@ -582,7 +582,7 @@ void main() {
             ),
             calGroup: CalGroup(
               date: '2026-01-01',
-              namespace: CalNamespace.factory,
+              namespace: .factory,
               channelData: [
                 for (int i = 0; i < channels; ++i)
                   (
@@ -667,7 +667,7 @@ void main() {
           ),
           calGroup: CalGroup(
             date: '2026-01-15',
-            namespace: CalNamespace.factory,
+            namespace: .factory,
             tool: 'calibrate.py v3',
             channelData: [
               for (int i = 0; i < channels; ++i)
@@ -715,7 +715,7 @@ void main() {
                 const ChannelCalibration(board: null),
             ],
             visibleChannels: const [true, true, true],
-            displayUnit: DisplayUnit.kgf,
+            displayUnit: .kgf,
             deviceInfo: const {},
             deviceKvs: null,
             recordedAt: '2026-07-29T14:05:32.000Z',
@@ -1089,9 +1089,8 @@ void main() {
         ],
       );
       // Crash mid-append: six stray bytes — not enough to complete a frame.
-      final handle = await File(
-        '${tmp.path}/sessions/$id/data.raw',
-      ).open(mode: FileMode.append);
+      final handle = await File('${tmp.path}/sessions/$id/data.raw')
+          .open(mode: FileMode.append);
       await handle.writeFrom(Uint8List(6));
       await handle.close();
 
@@ -1123,9 +1122,8 @@ void main() {
             [6, 6, 6, 6],
           ],
         );
-        final handle = await File(
-          '${tmp.path}/sessions/$id/data.raw',
-        ).open(mode: FileMode.append);
+        final handle = await File('${tmp.path}/sessions/$id/data.raw')
+            .open(mode: FileMode.append);
         await handle.writeFrom(Uint8List(codec.frameBytes));
         await handle.close();
 
@@ -1171,9 +1169,8 @@ void main() {
       final data = codec.pack(2, (s, ch) => 5);
       // Frame 1 channel 0: above 2^23 - 1 (and not the sentinel) — the
       // encoder never emits one (codec.pack itself would throw).
-      ByteData.sublistView(
-        data,
-      ).setInt32(codec.frameBytes, 0x00800000, Endian.little);
+      ByteData.sublistView(data)
+          .setInt32(codec.frameBytes, 0x00800000, Endian.little);
       final sink = await backend.createSession(
         rawId,
         encodeSessionMeta(testMeta()),
@@ -1400,7 +1397,7 @@ void main() {
 
 /// Sink-seam double: collects appends, acks with the true cumulative length.
 class _CollectSink implements SessionDataSink {
-  _CollectSink(this.id);
+  new(this.id);
 
   @override
   final String id;
@@ -1422,7 +1419,7 @@ class _CollectSink implements SessionDataSink {
 /// Wraps a real sink, letting the test substitute the append ack or the
 /// close.
 class _WrapSink implements SessionDataSink {
-  _WrapSink(this.inner, {required this.onAppend, this.onClose});
+  new(this.inner, {required this.onAppend, this.onClose});
 
   final SessionDataSink inner;
   final Future<int> Function(Uint8List bytes) onAppend;
@@ -1439,7 +1436,7 @@ class _WrapSink implements SessionDataSink {
 }
 
 class _FaultBackend implements SessionFilesBackend {
-  _FaultBackend(this.inner);
+  new(this.inner);
 
   final SessionFilesBackend inner;
   bool failListings = false;

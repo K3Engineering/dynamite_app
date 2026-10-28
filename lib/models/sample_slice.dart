@@ -10,28 +10,23 @@ import 'device_profile.dart';
 /// computation. The writer never reads the live ring — everything it needs
 /// is copied here at snapshot time.
 @immutable
-class SampleSlice {
-  const SampleSlice({
-    required this.startIndex,
-    required this.channels,
-    required this.gapRanges,
-    required this.anchor,
-  }) : assert(channels.length == kAdcChannelCount);
-
+class const SampleSlice({
   /// Hub-logical index of the first sample in [channels].
-  final int startIndex;
+  required final int startIndex,
 
   /// Per-channel sample values, copied out of the ring; element s of
   /// channel ch is the sample at hub-logical index [startIndex] + s.
-  final List<Int32List> channels;
+  required final List<Int32List> channels,
 
   /// Dropped-sample ranges intersecting the span, hub-logical indices.
-  final List<(int, int)> gapRanges;
+  required final List<(int, int)> gapRanges,
 
   /// The packet-counter anchor at snapshot time (see
   /// `DataHub.notePacketCounter`). Non-null because the recording path only
   /// snapshots a flowing feed; [DataHub.snapshotRange] fails loud otherwise.
-  final ({int counter, int hubIndex}) anchor;
+  required final ({int counter, int hubIndex}) anchor,
+}) {
+  this : assert(channels.length == kAdcChannelCount);
 
   int get sampleCount => channels.first.length;
 }

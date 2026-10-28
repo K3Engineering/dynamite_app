@@ -12,30 +12,23 @@ const int kRecordingBytesPerSecond = 16000;
 /// a warning.
 @immutable
 sealed class StorageState {
-  const StorageState();
+  const new();
 }
 
 /// The web storage verdict: this origin's storage is best-effort, so the
 /// browser may evict stored sessions under disk pressure. Persistent
 /// storage (and unsupported/failed probes) report null instead — no
 /// warning needed.
-class StorageEvictable extends StorageState {
-  const StorageEvictable();
-}
+class const StorageEvictable() extends StorageState;
 
 /// The native storage verdict: how much the app is using and how much more
 /// it can expect to write. [usedBytes] comes from the session store's byte
 /// ledger (scan-seeded, delta-maintained); [availableBytes] is real free
 /// space on the volume.
-class StorageCapacity extends StorageState {
-  const StorageCapacity({
-    required this.usedBytes,
-    required this.availableBytes,
-  });
-
-  final int usedBytes;
-  final int availableBytes;
-
+class const StorageCapacity({
+  required final int usedBytes,
+  required final int availableBytes,
+}) extends StorageState {
   /// Bar fill for the strip: used over used+available (the app's share of
   /// remaining space on the volume).
   double get usedFraction {

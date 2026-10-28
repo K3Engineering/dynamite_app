@@ -10,21 +10,15 @@ import 'package:meta/meta.dart';
 /// `DataHub` itself (the live graphs want per-packet rebuilds).
 @immutable
 sealed class HubEvent {
-  const HubEvent();
+  const new();
 }
 
 /// [count] samples were appended starting at absolute index [startIdx] (one
 /// decoded packet's worth — emitted by `DataHub.commitBatch`).
-final class HubBatchAppended extends HubEvent {
-  const HubBatchAppended(this.startIdx, this.count);
-
-  final int startIdx;
-  final int count;
-}
+final class const HubBatchAppended(final int startIdx, final int count)
+    extends HubEvent;
 
 /// A new device stream just reset the hub (`DataHub.clear`): every per-stream
 /// accumulation restarted, so views must drop stale windows and protocol
 /// state must forget the previous stream's counters.
-final class HubCleared extends HubEvent {
-  const HubCleared();
-}
+final class const HubCleared() extends HubEvent;

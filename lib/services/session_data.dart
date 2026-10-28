@@ -60,7 +60,7 @@ class SessionData implements GraphDataSource {
   /// live hub uses.
   late final List<BucketAccumulator> _diffBuckets;
 
-  SessionData({
+  new({
     required this.channels,
     required this.sampleRate,
     required this.sampleCount,

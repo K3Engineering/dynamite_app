@@ -93,7 +93,7 @@ typedef _Column = ({
 /// `_csv.encoder` one row at a time (see SessionStore.loadSession's own
 /// materialization note).
 class SessionCsvExport {
-  SessionCsvExport(
+  new(
     this.data,
     this.unit, {
     required this.recordedAtIso,

@@ -227,16 +227,14 @@ void main() {
         acc.add(i, i);
       }
       final sums = acc.series.sumMvV!;
-      final expected = [
-        for (int j = 0; j < bs; j++) j * 0.5,
-      ].fold<double>(0, (a, b) => a + b);
+      final expected = [for (int j = 0; j < bs; j++) j * 0.5]
+          .fold<double>(0, (a, b) => a + b);
       expect(sums[0], closeTo(expected, 1e-9));
       expect(
         sums[1],
         closeTo(
-          [
-            for (int j = bs; j < 2 * bs; j++) j * 0.5,
-          ].fold<double>(0, (a, b) => a + b),
+          [for (int j = bs; j < 2 * bs; j++) j * 0.5]
+              .fold<double>(0, (a, b) => a + b),
           1e-9,
         ),
       );

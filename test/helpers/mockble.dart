@@ -23,7 +23,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   static const netDelay = Duration(seconds: 1);
   static const hwDelay = Duration(milliseconds: 200);
 
-  MockBlePlatform._() {
+  new _() {
     // Synthetic feed built synchronously so [connect] never blocks on file I/O.
     _mockData
       ..clear()
@@ -399,7 +399,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     String deviceId,
     String service,
     String characteristic, {
-    final Duration? timeout,
+    Duration? timeout,
   }) async {
     // Static strings, served synchronously, like KVS answers.
     final String? disValue = _disValues[characteristic];
@@ -480,7 +480,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     String service,
     String characteristic,
     String descriptor, {
-    final Duration? timeout,
+    Duration? timeout,
   }) => throw UnimplementedError('the mock device exposes no descriptors');
 
   @override
@@ -490,7 +490,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     String characteristic,
     String descriptor,
     Uint8List value, {
-    final Duration? timeout,
+    Duration? timeout,
   }) => throw UnimplementedError('the mock device exposes no descriptors');
 
   /// The firmware KVS command processor in miniature.

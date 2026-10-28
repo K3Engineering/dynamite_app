@@ -47,7 +47,7 @@ void terminateSinkWorker() {
 
 @JS('Worker')
 extension type _Worker._(JSObject _) implements JSObject {
-  external _Worker(String scriptURL);
+  external new(String scriptURL);
   external void postMessage(JSAny? message, [JSArray<JSAny>? transfer]);
   external void addEventListener(String type, JSFunction listener);
   external void terminate();
@@ -77,7 +77,7 @@ extension on JSUint8Array {
 /// Object-literal constructor: a null nullable field is omitted from the
 /// wire object entirely, and the worker reads absent as unset.
 extension type _Req._(JSObject _) implements JSObject {
-  external _Req({
+  external new({
     required int seq,
     required String op,
     String? id,
@@ -90,7 +90,7 @@ extension type _Req._(JSObject _) implements JSObject {
 /// The JS worker behind [SinkWorkerTransport]: converts acks and requests
 /// across the interop boundary and nothing else.
 class _JsSinkWorkerHandle implements SinkWorkerHandle {
-  _JsSinkWorkerHandle(String scriptURL) : _worker = _Worker(scriptURL) {
+  new(String scriptURL) : _worker = _Worker(scriptURL) {
     void onJsMessage(JSObject event) {
       final ack = _convertAck((event as _MessageEvent).data);
       if (ack != null) {
@@ -193,7 +193,7 @@ extension on SinkWorkerAck {
 }
 
 class _WebSessionFilesBackend implements SessionFilesBackend {
-  _WebSessionFilesBackend(this._transport);
+  new(this._transport);
 
   final SinkWorkerTransport _transport;
 
@@ -249,7 +249,7 @@ class _WebSessionFilesBackend implements SessionFilesBackend {
 }
 
 class _WebSessionDataSink implements SessionDataSink {
-  const _WebSessionDataSink(this.id, this._transport);
+  const new(this.id, this._transport);
 
   @override
   final String id;

@@ -14,8 +14,8 @@ enum FirmwareChannel {
   beta;
 
   String get label => switch (this) {
-    FirmwareChannel.stable => 'Stable',
-    FirmwareChannel.beta => 'Beta',
+    .stable => 'Stable',
+    .beta => 'Beta',
   };
 
   static FirmwareChannel fromName(String? name) =>
@@ -25,16 +25,13 @@ enum FirmwareChannel {
 /// A version parsed from a release tag (`v1.2.3`, `v1.2.3-beta.4`). The
 /// leading `v` is optional on parse, always rendered.
 @immutable
-class FirmwareVersion implements Comparable<FirmwareVersion> {
-  const FirmwareVersion(this.major, this.minor, this.patch, [this.prerelease]);
-
-  final int major;
-  final int minor;
-  final int patch;
-
-  /// The trailing prerelease (`beta.4`), or null for a release version.
-  final String? prerelease;
-
+class const FirmwareVersion(
+  final int major,
+  final int minor,
+  final int patch, [
+  // The trailing prerelease (`beta.4`); null for a release version.
+  final String? prerelease,
+]) implements Comparable<FirmwareVersion> {
   static FirmwareVersion? tryParse(String tag) {
     try {
       final v = semver.Version.parse(_stripV(tag.trim()));
@@ -63,44 +60,28 @@ class FirmwareVersion implements Comparable<FirmwareVersion> {
 
 /// The release a device should be running for its channel.
 @immutable
-class FirmwareRelease {
-  const FirmwareRelease({
-    required this.tag,
-    required this.version,
-    required this.assetName,
-    required this.size,
-    required this.downloadUrl,
-    required this.sha256Url,
-  });
-
+class const FirmwareRelease({
   /// The release tag as published, e.g. `0.4.0-beta.1`.
-  final String tag;
-  final FirmwareVersion version;
+  required final String tag,
+  required final FirmwareVersion version,
 
-  final String assetName;
-  final int size;
-  final Uri downloadUrl;
+  required final String assetName,
+  required final int size,
+  required final Uri downloadUrl,
 
   /// The `.sha256` sidecar asset; a release without one is not a candidate.
-  final Uri sha256Url;
-}
+  required final Uri sha256Url,
+});
 
 /// Minimal view of one GitHub release for selection.
 @immutable
-class GithubRelease {
-  const GithubRelease({
-    required this.tag,
-    required this.draft,
-    required this.prerelease,
-    required this.assets,
-  });
-
-  final String tag;
-  final bool draft;
-  final bool prerelease;
-  final List<GithubAsset> assets;
-
-  factory GithubRelease.fromJson(Map<String, Object?> json) {
+class const GithubRelease({
+  required final String tag,
+  required final bool draft,
+  required final bool prerelease,
+  required final List<GithubAsset> assets,
+}) {
+  factory fromJson(Map<String, Object?> json) {
     return GithubRelease(
       tag: json['tag_name']! as String,
       draft: json['draft']! as bool,
@@ -114,18 +95,12 @@ class GithubRelease {
 }
 
 @immutable
-class GithubAsset {
-  const GithubAsset({
-    required this.name,
-    required this.size,
-    required this.url,
-  });
-
-  final String name;
-  final int size;
-  final Uri url;
-
-  factory GithubAsset.fromJson(Map<String, Object?> json) {
+class const GithubAsset({
+  required final String name,
+  required final int size,
+  required final Uri url,
+}) {
+  factory fromJson(Map<String, Object?> json) {
     return GithubAsset(
       name: json['name']! as String,
       size: json['size']! as int,

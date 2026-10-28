@@ -17,10 +17,7 @@ import 'kvs_protocol.dart';
 /// byte-identical one settles the live command, safe because the wire has no
 /// transaction id and SET/DEL are idempotent.
 class KvsClient {
-  KvsClient({
-    required this.write,
-    this.commandTimeout = const Duration(seconds: 3),
-  });
+  new({required this.write, this.commandTimeout = const Duration(seconds: 3)});
 
   /// One command frame: a write to the link's KVS characteristic, supplied by
   /// the link manager (which owns the platform BLE call).
@@ -144,7 +141,7 @@ class KvsClient {
 }
 
 class _KvsCommand {
-  _KvsCommand(this.request);
+  new(this.request);
 
   final String request;
 

@@ -15,7 +15,7 @@ import 'link_backend.dart';
 /// streaming; the connect-time flash read runs before the feed subscription and
 /// passes through.
 class GattLinkBackend implements LinkBackend {
-  GattLinkBackend({required KvsClient client, required this.withFeedPaused})
+  new({required KvsClient client, required this.withFeedPaused})
     : _client = client,
       _transport = KvsFlashTransport(client);
 
@@ -63,7 +63,7 @@ class GattLinkBackend implements LinkBackend {
 /// This is the per-key engine behind the slot contract: `RigState` keeps
 /// working on slot maps and never sees the KVS command layer.
 class KvsFlashTransport {
-  KvsFlashTransport(this._client);
+  new(this._client);
 
   final KvsClient _client;
 

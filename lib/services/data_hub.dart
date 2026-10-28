@@ -178,7 +178,7 @@ class DataHub extends ChangeNotifier
     }
   }
 
-  DataHub() {
+  new() {
     clear();
   }
 
@@ -555,9 +555,8 @@ class DataHub extends ChangeNotifier
   /// [liveEdgeIsGap]). Null when the unit is unavailable.
   double? currentValue(int adcChannel, DisplayUnit unit) {
     _checkChannel(adcChannel);
-    return converterFor(
-      adcChannel,
-    ).net(unit, _currentRaw[adcChannel].toDouble());
+    return converterFor(adcChannel)
+        .net(unit, _currentRaw[adcChannel].toDouble());
   }
 
   /// The tare amount being zeroed out, in [unit]. Null when unavailable.
@@ -618,7 +617,7 @@ class DataHub extends ChangeNotifier
 /// commit; [length] is the window size, captured at request time. [deadline]
 /// abandons the window if it stops filling (see [DataHub.commitBatch]).
 class _PendingTare {
-  _PendingTare(this.length, this.channel, this.deadline) : remaining = length;
+  new(this.length, this.channel, this.deadline) : remaining = length;
 
   final int length;
   final int? channel;

@@ -98,7 +98,7 @@ final class SegmentMeta {
   final double hPad;
   final double vPad;
 
-  SegmentMeta({
+  new({
     required this.textureId,
     required this.start,
     required this.end,
@@ -152,7 +152,7 @@ final class CacheState {
   final List<Object?> destructiveKey;
   final List<Object?> remapKey;
 
-  const CacheState._({
+  const new _({
     required this.segments,
     required this.generation,
     required this.gh,
@@ -162,7 +162,7 @@ final class CacheState {
   });
 
   /// A cache that has never seen a frame: no segments, stamped from [c].
-  factory CacheState.fresh(CacheConfig c) => CacheState._(
+  factory fresh(CacheConfig c) => CacheState._(
     segments: const [],
     generation: c.generation,
     gh: c.gh,

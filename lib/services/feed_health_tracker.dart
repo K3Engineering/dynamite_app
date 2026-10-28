@@ -17,15 +17,13 @@ import '../utils/edge_watcher.dart';
 /// connect (the tracker and the reset coordinator react to the same edge,
 /// either order).
 class FeedHealthTracker {
-  FeedHealthTracker({
-    required FeedHealthSource hub,
+  new({
+    required this._hub,
     required Listenable streamingChanges,
     required bool Function() streamingNow,
-    Listenable? pauseChanges,
+    this._pauseChanges,
     bool Function()? pausedNow,
-  }) : _hub = hub,
-       _pauseChanges = pauseChanges,
-       _pausedNow = pausedNow ?? (() => false) {
+  }) : _pausedNow = pausedNow ?? (() => false) {
     _hub.addEventListener(_onHubEvent);
     _pauseChanges?.addListener(_onPauseEdge);
     _watcher = EdgeWatcher<bool>(

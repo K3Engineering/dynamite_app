@@ -19,13 +19,13 @@ typedef BtStatusVisual = ({
 /// and the Live tab's status bar, so the two can't phrase the same state
 /// differently.
 String? btLinkStateLabel(BtLinkState state) => switch (state) {
-  BtLinkState.disconnecting => 'Disconnecting…',
-  BtLinkState.streaming => 'Connected',
-  BtLinkState.connected => 'Setting up…',
-  BtLinkState.readingConstants => 'Reading board constants…',
-  BtLinkState.subscribing => 'Starting data stream…',
-  BtLinkState.connecting => 'Connecting…',
-  BtLinkState.idle => null,
+  .disconnecting => 'Disconnecting…',
+  .streaming => 'Connected',
+  .connected => 'Setting up…',
+  .readingConstants => 'Reading board constants…',
+  .subscribing => 'Starting data stream…',
+  .connecting => 'Connecting…',
+  .idle => null,
 };
 
 /// Map an active link state to its active-row visual.
@@ -81,7 +81,7 @@ BtStatusVisual btAdapterScanVisual({
       );
     }
     switch (availability) {
-      case BtAvailability.poweredOn:
+      case .poweredOn:
         // A previously-discovered device can remain connectable after a scan
         // stops, so surface that rather than implying a scan is required —
         // but only while a Connect action actually exists (see
@@ -95,15 +95,15 @@ BtStatusVisual btAdapterScanVisual({
         // with a link busy, the active row does. The indicator renders
         // icon-only for an empty label.
         return (Icons.bluetooth, connected, '');
-      case BtAvailability.poweredOff:
+      case .poweredOff:
         return (Icons.bluetooth_disabled, colors.outline, 'Bluetooth is off');
-      case BtAvailability.unknown:
+      case .unknown:
         return (Icons.question_mark, colors.outline, 'Starting up Bluetooth…');
-      case BtAvailability.resetting:
+      case .resetting:
         return (Icons.question_mark, active, 'Bluetooth resetting…');
-      case BtAvailability.unsupported:
+      case .unsupported:
         return (Icons.stop, colors.error, 'Bluetooth not supported');
-      case BtAvailability.unauthorized:
+      case .unauthorized:
         return (Icons.stop, colors.tertiary, 'Bluetooth permission needed');
     }
   }
@@ -161,11 +161,7 @@ class BluetoothIndicator extends StatelessWidget {
   /// How much of [visual] to draw (see [topIndicatorMode]).
   final TopIndicatorMode mode;
 
-  const BluetoothIndicator({
-    super.key,
-    required this.visual,
-    required this.mode,
-  });
+  const new({super.key, required this.visual, required this.mode});
 
   @override
   Widget build(BuildContext context) {
@@ -175,12 +171,12 @@ class BluetoothIndicator extends StatelessWidget {
     const double size = 32;
     final label = visual.label;
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: .min,
       children: [
         if (mode == TopIndicatorMode.iconAndLabel) ...[
           Stack(
-            clipBehavior: Clip.none,
-            alignment: Alignment.center,
+            clipBehavior: .none,
+            alignment: .center,
             children: [
               Icon(visual.icon, size: size, color: visual.color),
               if (visual.showSpinner)

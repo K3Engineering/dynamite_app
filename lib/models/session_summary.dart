@@ -9,7 +9,7 @@ import 'display_unit.dart';
 
 @immutable
 class SessionSummary {
-  SessionSummary({
+  new({
     required this.id,
     required this.name,
     required this.notes,
@@ -23,8 +23,8 @@ class SessionSummary {
     required this.interrupted,
     required List<String> channelLabels,
     required List<bool> visibleChannels,
-  }) : channelLabels = List.unmodifiable(channelLabels),
-       visibleChannels = List.unmodifiable(visibleChannels);
+  }) : channelLabels = List.unmodifiableOf(channelLabels),
+       visibleChannels = List.unmodifiableOf(visibleChannels);
 
   /// The session id — the session directory's name.
   final String id;

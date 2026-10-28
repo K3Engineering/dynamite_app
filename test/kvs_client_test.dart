@@ -9,6 +9,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:dynamite_app/services/bt_device_config.dart';
 import 'package:dynamite_app/services/kvs_client.dart';
 import 'package:dynamite_app/services/kvs_protocol.dart';
+
 import 'helpers/mockble.dart';
 
 /// Tests for [KvsClient] against [MockBlePlatform]'s KVS emulation, driven

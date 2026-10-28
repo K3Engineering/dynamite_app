@@ -11,14 +11,12 @@ import 'package:flutter/foundation.dart';
 /// seed is given (no [effect] fires until a later poll sees a change).
 /// [check] forces a poll, for state that changes without a notification.
 class EdgeWatcher<T> {
-  EdgeWatcher({
-    required List<Listenable> sources,
+  new({
+    required this._sources,
     required T Function() now,
-    required void Function(T value) effect,
+    required this._effect,
     T? seed,
-  }) : _sources = sources,
-       _now = now,
-       _effect = effect,
+  }) : _now = now,
        _last = seed ?? now() {
     for (final source in _sources) {
       source.addListener(check);

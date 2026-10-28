@@ -12,7 +12,7 @@ import 'firmware_catalog.dart';
 /// One release-check result against the connected device.
 @immutable
 class FirmwareCheck {
-  const FirmwareCheck({
+  const new({
     required this.board,
     required this.installedDescribe,
     required this.target,
@@ -39,32 +39,32 @@ class FirmwareCheck {
 /// [CheckOk] carries a result; a failed re-check blanks the prior target.
 @immutable
 sealed class FirmwareCheckState {
-  const FirmwareCheckState();
+  const new();
 }
 
 /// No check has produced a result for the current link (app start, the
 /// disconnect reset in [FirmwareUpdateService], or a firmware revision
 /// [FirmwareUpdateService.checkForUpdates] could not parse and skipped).
 class CheckNeverRan extends FirmwareCheckState {
-  const CheckNeverRan();
+  const new();
 }
 
 /// A check is fetching; its outcome replaces this state.
 class CheckRunning extends FirmwareCheckState {
-  const CheckRunning();
+  const new();
 }
 
 /// The check completed; [result] is the comparison of the device's
 /// installed firmware against the channel target.
 class CheckOk extends FirmwareCheckState {
-  const CheckOk(this.result);
+  const new(this.result);
   final FirmwareCheck result;
 }
 
 /// The check failed: fetch trouble (see
 /// [FirmwareUpdateService.checkForUpdates]).
 class CheckFailed extends FirmwareCheckState {
-  const CheckFailed(this.error);
+  const new(this.error);
   final Object error;
 }
 
@@ -75,14 +75,12 @@ class CheckFailed extends FirmwareCheckState {
 /// running?". [link] is listened to from the constructor — construction is the
 /// wiring.
 class FirmwareUpdateService extends ChangeNotifier {
-  FirmwareUpdateService({
-    required SharedPreferences prefs,
-    required BleLinkManager link,
-    required AppEvents events,
+  new({
+    required this._prefs,
+    required this._link,
+    required this._events,
     required this.catalog,
-  }) : _prefs = prefs,
-       _link = link,
-       _events = events {
+  }) {
     _channel = FirmwareChannel.fromName(_prefs.getString(_keyChannel));
     _link.addListener(_maybeAutoCheck);
   }

@@ -84,7 +84,7 @@ void main() {
       recording.startSession(
         channelLabels: const ['a', 'b', 'c', 'd'],
         visibleChannels: const [true, true, true, true],
-        displayUnit: DisplayUnit.kgf,
+        displayUnit: .kgf,
       );
 
   void feedFrames(DataHub hub, int n) {
@@ -152,7 +152,7 @@ void main() {
       final startResult = recording.startSession(
         channelLabels: const ['Load Cell 1', 'Load Cell 2', 'Ch 3', 'Ch 4'],
         visibleChannels: const [true, true, false, false],
-        displayUnit: DisplayUnit.kN,
+        displayUnit: .kN,
       );
       expect(startResult, isA<StartSessionOk>());
       expect(recording.sessionInProgress, isTrue);
@@ -172,9 +172,8 @@ void main() {
 
       // The saved session carries the auto-generated name, and stop hands it
       // back directly — the caller never re-queries the store for it.
-      final saved = _readyCatalog(
-        SessionStore.instance,
-      ).session(savedRun.sessionId)!;
+      final saved = _readyCatalog(SessionStore.instance)
+          .session(savedRun.sessionId)!;
       expect(
         saved.name,
         matches(RegExp(r'^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$')),
@@ -460,7 +459,7 @@ void main() {
       recordedAtIso: '2026-07-29T14:05:32.000Z',
       deviceInfo: const {},
       data: loaded,
-      unit: DisplayUnit.raw,
+      unit: .raw,
       appMeta: const AppMeta(version: '1.0.0', buildNumber: '1'),
     );
     final body = utf8
@@ -530,7 +529,7 @@ Future<_HoldCloseSink> _firstSink(_HoldCloseBackend held) async {
 /// finalization's async window (the controller's _Stopping state) open
 /// deterministically.
 class _HoldCloseBackend implements SessionFilesBackend {
-  _HoldCloseBackend(this._inner);
+  new(this._inner);
 
   final IoSessionFilesBackend _inner;
 
@@ -574,7 +573,7 @@ class _HoldCloseBackend implements SessionFilesBackend {
 }
 
 class _HoldCloseSink implements SessionDataSink {
-  _HoldCloseSink(this._inner);
+  new(this._inner);
 
   final SessionDataSink _inner;
 
@@ -609,7 +608,7 @@ class _HoldCloseSink implements SessionDataSink {
 /// An [IoSessionFilesBackend] whose data sinks throw on every append: the
 /// create (journal + first write) succeeds, then storage "dies".
 class _FailAppendBackend implements SessionFilesBackend {
-  _FailAppendBackend(this._inner);
+  new(this._inner);
 
   final IoSessionFilesBackend _inner;
 
@@ -646,7 +645,7 @@ class _FailAppendBackend implements SessionFilesBackend {
 }
 
 class _FailAppendSink implements SessionDataSink {
-  _FailAppendSink(this.id, this._inner);
+  new(this.id, this._inner);
 
   @override
   final String id;

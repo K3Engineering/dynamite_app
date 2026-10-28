@@ -52,10 +52,7 @@ void main() {
   });
 
   test('scanning outranks adapter status', () {
-    final v = adapterVisual(
-      isScanning: true,
-      availability: BtAvailability.poweredOff,
-    );
+    final v = adapterVisual(isScanning: true, availability: .poweredOff);
     expect(v.label, contains('Scanning'));
     expect(v.color, status.linkActive);
     expect(v.showSpinner, isTrue);

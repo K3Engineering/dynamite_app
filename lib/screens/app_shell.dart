@@ -20,7 +20,7 @@ import 'settings_tab.dart';
 /// poke lives here because the IndexedStack keeps every tab mounted, so a tab's
 /// own initState/dispose never sees visibility changes.
 class AppShell extends StatefulWidget {
-  const AppShell({super.key});
+  const new({super.key});
 
   @override
   State<AppShell> createState() => AppShellState();
@@ -117,7 +117,7 @@ class AppShellState extends State<AppShell> {
             NavigationRail(
               selectedIndex: _currentIndex,
               onDestinationSelected: switchToTab,
-              labelType: NavigationRailLabelType.all,
+              labelType: .all,
               destinations: [
                 for (final tab in _tabs)
                   NavigationRailDestination(
@@ -154,7 +154,7 @@ class AppShellState extends State<AppShell> {
 }
 
 class _TabDef {
-  const _TabDef({required this.icon, required this.label});
+  const new({required this.icon, required this.label});
   final IconData icon;
   final String label;
 }

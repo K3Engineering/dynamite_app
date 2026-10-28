@@ -7,7 +7,7 @@ import '../utils/format.dart';
 /// on their own (see `browserMayAutoDeleteSessions`). Non-dismissible: the
 /// risk is ongoing, and dismissal would be state to keep.
 class BrowserStorageWarning extends StatelessWidget {
-  const BrowserStorageWarning({super.key});
+  const new({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -21,7 +21,7 @@ class BrowserStorageWarning extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: .start,
         children: [
           Icon(Icons.warning_amber, size: 18, color: scheme.onErrorContainer),
           const SizedBox(width: 8),
@@ -30,9 +30,8 @@ class BrowserStorageWarning extends StatelessWidget {
               'This browser may automatically delete stored sessions after '
               'a period without use (Safari removes data after 7 days). '
               'Export important sessions to CSV to keep them safe.',
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: scheme.onErrorContainer),
+              style: Theme.of(context).textTheme.bodySmall
+                  ?.copyWith(color: scheme.onErrorContainer),
             ),
           ),
         ],
@@ -46,7 +45,7 @@ class BrowserStorageWarning extends StatelessWidget {
 /// `storage_capacity.dart`), so this line, shown whenever
 /// `navigator.storage.persisted()` is false, is all web gets.
 class StorageEvictionWarning extends StatelessWidget {
-  const StorageEvictionWarning({super.key});
+  const new({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -56,9 +55,8 @@ class StorageEvictionWarning extends StatelessWidget {
         'The browser may delete stored sessions when the device runs low on '
         'storage. Export important sessions to CSV to keep them safe. Install the native '
         'app for permanent storage.',
-        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-          color: Theme.of(context).colorScheme.error,
-        ),
+        style: Theme.of(context).textTheme.bodyMedium
+            ?.copyWith(color: Theme.of(context).colorScheme.error),
       ),
     );
   }
@@ -67,7 +65,7 @@ class StorageEvictionWarning extends StatelessWidget {
 /// The native capacity strip (Android/iOS): a bar of used/(used+available)
 /// and the usage/runway line.
 class StorageCapacityStrip extends StatelessWidget {
-  const StorageCapacityStrip({super.key, required this.capacity});
+  const new({super.key, required this.capacity});
 
   final StorageCapacity capacity;
 
@@ -82,7 +80,7 @@ class StorageCapacityStrip extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: .start,
         children: [
           ClipRRect(
             borderRadius: BorderRadius.circular(2),

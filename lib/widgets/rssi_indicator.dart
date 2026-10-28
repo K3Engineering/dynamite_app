@@ -16,12 +16,7 @@ int rssiLevel(int rssi) => rssi >= -55
 /// by BleLinkManager's RSSI polling. Renders nothing when [rssi] is null —
 /// before the first poll lands, or on platforms without readRssi (web).
 class RssiIndicator extends StatelessWidget {
-  const RssiIndicator({
-    required this.rssi,
-    this.color,
-    this.size = 16,
-    super.key,
-  });
+  const new({required this.rssi, this.color, this.size = 16, super.key});
 
   /// Latest polled RSSI (dBm); null hides the indicator entirely.
   final int? rssi;
@@ -45,7 +40,7 @@ class RssiIndicator extends StatelessWidget {
       _ => Icons.signal_cellular_0_bar,
     };
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: .min,
       children: [
         Icon(icon, size: size, color: color),
         const SizedBox(width: 4),

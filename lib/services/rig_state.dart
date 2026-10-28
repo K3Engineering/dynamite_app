@@ -15,17 +15,14 @@ import 'link_backend.dart';
 /// and the cross-device cell history. Unsaved edits die with a disconnect or
 /// a replaced document; typed-in cell values survive in [history].
 class RigState extends ChangeNotifier {
-  /// [backend] yields the active link's device operations; [prefs] is injected
+  /// [_backend] yields the active link's device operations; [_prefs] is injected
   /// so history loads synchronously in the constructor.
-  RigState({
-    required LinkBackend? Function() backend,
-    required String Function() connectedDeviceName,
-    required SharedPreferences prefs,
-    required AppEvents events,
-  }) : _backend = backend,
-       _connectedDeviceName = connectedDeviceName,
-       _prefs = prefs,
-       _events = events {
+  new({
+    required this._backend,
+    required this._connectedDeviceName,
+    required this._prefs,
+    required this._events,
+  }) {
     _loadHistory();
   }
 
@@ -73,7 +70,7 @@ class RigState extends ChangeNotifier {
   /// The connected device's display name, live off the link.
   String get connectedDeviceName => _connectedDeviceName();
 
-  List<RigHistoryEntry> get history => List.unmodifiable(_history);
+  List<RigHistoryEntry> get history => List.unmodifiableOf(_history);
 
   // -- Connection events ------------------------------------------------------
 
@@ -290,7 +287,7 @@ class RigState extends ChangeNotifier {
 /// transition, so identity comparison pins a state in time (see
 /// [RigState.saveToDevice]).
 sealed class _DocState {
-  const _DocState();
+  const new();
 
   /// The read document, when one exists.
   DeviceFlash? get flash;
@@ -299,7 +296,7 @@ sealed class _DocState {
 /// No flash document read yet, or it died with the link (see
 /// [RigState.onLinkDropped]).
 class _NoDoc extends _DocState {
-  const _NoDoc();
+  const new();
 
   @override
   Null get flash => null;
@@ -307,7 +304,7 @@ class _NoDoc extends _DocState {
 
 /// The flash document as read; no unsaved edits.
 class _Clean extends _DocState {
-  const _Clean(this.flash);
+  const new(this.flash);
 
   @override
   final DeviceFlash flash;
@@ -316,7 +313,7 @@ class _Clean extends _DocState {
 /// The flash document plus [slots], its unsaved edit buffer (seeded from the
 /// document by the first edit — see [RigState._edit]).
 class _Dirty extends _DocState {
-  const _Dirty(this.flash, this.slots);
+  const new(this.flash, this.slots);
 
   @override
   final DeviceFlash flash;
@@ -329,11 +326,7 @@ class _Dirty extends _DocState {
 /// app memory only; the device is the rig's truth. Identity is the profile
 /// value, so two physically distinct identical cells are one entry.
 class RigHistoryEntry {
-  RigHistoryEntry({
-    required this.cell,
-    required this.lastSeen,
-    required this.deviceName,
-  });
+  new({required this.cell, required this.lastSeen, required this.deviceName});
 
   final LoadCellProfile cell;
   DateTime lastSeen;
@@ -347,12 +340,11 @@ class RigHistoryEntry {
     'deviceName': deviceName,
   };
 
-  factory RigHistoryEntry.fromJson(Map<String, dynamic> json) =>
-      RigHistoryEntry(
-        cell: LoadCellProfile.fromJson(
-          Map<String, dynamic>.from(json['cell'] as Map),
-        ),
-        lastSeen: DateTime.fromMillisecondsSinceEpoch(json['lastSeen'] as int),
-        deviceName: json['deviceName'] as String? ?? '',
-      );
+  factory fromJson(Map<String, dynamic> json) => RigHistoryEntry(
+    cell: LoadCellProfile.fromJson(
+      Map<String, dynamic>.from(json['cell'] as Map),
+    ),
+    lastSeen: DateTime.fromMillisecondsSinceEpoch(json['lastSeen'] as int),
+    deviceName: json['deviceName'] as String? ?? '',
+  );
 }

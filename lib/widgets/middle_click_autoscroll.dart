@@ -9,11 +9,7 @@ import 'package:material_ui/material_ui.dart';
 /// reimplemented here. Tracked upstream:
 /// https://github.com/flutter/flutter/issues/66537
 class MiddleClickAutoscroll extends StatefulWidget {
-  const MiddleClickAutoscroll({
-    super.key,
-    required this.controller,
-    required this.child,
-  });
+  const new({super.key, required this.controller, required this.child});
 
   /// Must be the same instance attached to the child scrollable.
   final ScrollController controller;

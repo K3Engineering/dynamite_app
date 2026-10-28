@@ -8,18 +8,16 @@ import 'load_cell.dart';
 /// values are differences of the board map between a reading and the tare
 /// point, so piecewise nonlinearity is applied on both sides.
 @immutable
-class ChannelCalibration {
-  const ChannelCalibration({required this.board, this.loadCell});
-
+class const ChannelCalibration({
   /// The channel's board map; null when the board carries no data at all
   /// (an unprovisioned unit, or no connect-time read yet) — only raw
   /// counts convert then.
-  final ChannelBoardCalibration? board;
+  required final ChannelBoardCalibration? board,
 
   /// Assigned load cell; null means "electrical units only" — force
   /// conversions report unavailable and the UI shows '—'.
-  final LoadCellProfile? loadCell;
-
+  final LoadCellProfile? loadCell,
+}) {
   /// Session-snapshot serialization.
   Map<String, dynamic> toJson() => {
     'board': board?.toJson(),
@@ -31,7 +29,7 @@ class ChannelCalibration {
   /// only), but present-but-malformed entries throw [FormatException] —
   /// the caller decides the damage policy (the session catalog marks the
   /// session damaged).
-  factory ChannelCalibration.fromJson(Map<String, dynamic> json) {
+  factory fromJson(Map<String, dynamic> json) {
     final b = json['board'];
     final c = json['cell'];
     return ChannelCalibration(

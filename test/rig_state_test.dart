@@ -9,7 +9,9 @@ import 'package:dynamite_app/models/device_flash.dart';
 import 'package:dynamite_app/models/load_cell.dart';
 import 'package:dynamite_app/services/app_events.dart';
 import 'package:dynamite_app/services/link_backend.dart';
+
 import 'helpers/flash_docs.dart';
+
 import 'package:dynamite_app/services/rig_state.dart';
 
 /// Tests for [RigState]: flash reads, pending edits (which die with the

@@ -26,11 +26,9 @@ import 'load_cell.dart';
 /// conversions never consult them.
 @immutable
 class KvsSnapshot {
-  KvsSnapshot({
-    required Map<String, String> factory,
-    required Map<String, String> user,
-  }) : factory = Map.unmodifiable(SplayTreeMap.of(factory)),
-       user = Map.unmodifiable(SplayTreeMap.of(user));
+  new({required Map<String, String> factory, required Map<String, String> user})
+    : factory = Map.unmodifiableOf(SplayTreeMap.of(factory)),
+      user = Map.unmodifiableOf(SplayTreeMap.of(user));
 
   final Map<String, String> factory;
   final Map<String, String> user;
@@ -59,7 +57,7 @@ class KvsSnapshot {
   Map<String, Object?> toJson() => {'factory': factory, 'user': user};
 
   /// Strict inverse of [toJson]: every entry must be a string key/value.
-  factory KvsSnapshot.fromJson(Map<String, dynamic> json) {
+  factory fromJson(Map<String, dynamic> json) {
     Map<String, String> folder(String name) {
       final value = json[name];
       if (value is! Map) {
@@ -85,11 +83,7 @@ class KvsSnapshot {
 /// the app) plus the app-writable load cell slots.
 @immutable
 class DeviceFlash {
-  const DeviceFlash({
-    required this.board,
-    required this.slots,
-    required this.kvs,
-  });
+  const new({required this.board, required this.slots, required this.kvs});
 
   final BoardCalibration board;
   final RigSlots slots;
@@ -108,10 +102,7 @@ class DeviceFlash {
   /// GAIN-register readback for board-constant resolution — always present: an
   /// unreadable ADC config fails the connection upstream (see
   /// `BleLinkManager`).
-  factory DeviceFlash.fromKvs(
-    KvsSnapshot kvs, {
-    required List<double> pgaGains,
-  }) {
+  factory fromKvs(KvsSnapshot kvs, {required List<double> pgaGains}) {
     final BoardCalibration board;
     try {
       board = BoardCalibration.fromKv(

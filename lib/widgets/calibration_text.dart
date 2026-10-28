@@ -53,8 +53,8 @@ List<String> calProvenanceParts(CalGroup? group) => [
 /// namespace a group was read from. Null for the factory group, which is the
 /// unremarkable case.
 String? calSourceLabel(CalGroup? group) => switch (group?.namespace) {
-  CalNamespace.user => 'Recalibrated',
-  CalNamespace.factory || null => null,
+  .user => 'Recalibrated',
+  .factory || null => null,
 };
 
 /// The conversion chain, including where the nominal values were read from.

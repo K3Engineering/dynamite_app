@@ -47,24 +47,17 @@ enum BtAvailability {
 
 /// A scanned device: identity, name, and the freshest advert's RSSI and time.
 @immutable
-class DiscoveredDevice {
-  const DiscoveredDevice({
-    required this.deviceId,
-    this.name,
-    this.rssi,
-    this.timestamp,
-  });
-
-  final String deviceId;
+class const DiscoveredDevice({
+  required final String deviceId,
 
   /// Advertised name; null when no advert carried one (plain ADV packets
   /// often omit it — it may only ride in the SCAN_RSP).
-  final String? name;
+  final String? name,
 
   /// RSSI (dBm) of the freshest advert; null on web.
-  final int? rssi;
+  final int? rssi,
 
   /// Advert receipt time (ms since epoch), the freshness of [rssi]; null on
   /// web.
-  final int? timestamp;
-}
+  final int? timestamp,
+});

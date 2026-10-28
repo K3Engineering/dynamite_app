@@ -10,7 +10,7 @@ import '../status_colors.dart';
 /// row's subtitle. Renders nothing while the feed is healthy or the link
 /// isn't streaming.
 class FeedHealthIndicator extends StatelessWidget {
-  const FeedHealthIndicator({super.key, required this.health});
+  const new({super.key, required this.health});
 
   /// The live feed-health classification (see `FeedHealthTracker.health`).
   /// Passed in (not reached through Provider) so the indicator renders
@@ -24,9 +24,9 @@ class FeedHealthIndicator extends StatelessWidget {
       builder: (context, health, _) {
         final label = health?.shortLabel;
         if (label == null) return const SizedBox.shrink();
-        final color = Theme.of(
-          context,
-        ).extension<StatusColors>()!.onConnectedWarning;
+        final color = Theme.of(context)
+            .extension<StatusColors>()!
+            .onConnectedWarning;
         return Row(
           children: [
             Icon(Icons.error_outline, size: 14, color: color),
@@ -34,9 +34,8 @@ class FeedHealthIndicator extends StatelessWidget {
             Flexible(
               child: Text(
                 label,
-                style: Theme.of(
-                  context,
-                ).textTheme.labelSmall?.copyWith(color: color),
+                style: Theme.of(context).textTheme.labelSmall
+                    ?.copyWith(color: color),
               ),
             ),
           ],
