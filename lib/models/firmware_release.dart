@@ -10,7 +10,7 @@ enum FirmwareChannel {
   /// Published releases only.
   stable,
 
-  /// Everything [stable] sees, plus GitHub prereleases (`vX.Y.Z-beta.N`).
+  /// Everything [stable] sees, plus GitHub prereleases.
   beta;
 
   String get label => switch (this) {
@@ -58,12 +58,16 @@ class const FirmwareVersion(
   String toString() => label;
 }
 
-/// The release a device should be running for its channel.
+/// A flashable firmware release (carries both its `.bin` image and `.sha256`
+/// sidecar).
 @immutable
 class const FirmwareRelease({
-  /// The release tag as published, e.g. `0.4.0-beta.1`.
+  /// The release tag as published, e.g. `0.4.0`.
   required final String tag,
   required final FirmwareVersion version,
+
+  /// GitHub's "Set as a pre-release" flag; excluded on [FirmwareChannel.stable].
+  final bool prerelease = false,
 
   required final String assetName,
   required final int size,
@@ -133,49 +137,72 @@ String _stripV(String s) {
 String firmwareImageName(String tag) =>
     'dynamite-sampler-firmware-release-$tag.bin';
 
-/// Pick the release a device on [channel] should run: the semver-newest
-/// non-draft release (stable excludes prereleases) carrying both its image and
-/// `.sha256` assets. Null when nothing qualifies.
+/// The one release a device may flash, or null when this GitHub release is
+/// not a flash candidate: a draft, a tag that isn't semver, or (most often,
+/// right after tagging) a release whose image or `.sha256` sidecar is missing.
+FirmwareRelease? flashableRelease(GithubRelease release) {
+  if (release.draft) return null;
+  final version = FirmwareVersion.tryParse(release.tag);
+  if (version == null) return null;
+  final imageName = firmwareImageName(release.tag);
+  GithubAsset? image;
+  for (final asset in release.assets) {
+    if (asset.name == imageName) {
+      image = asset;
+      break;
+    }
+  }
+  if (image == null) return null;
+  for (final asset in release.assets) {
+    if (asset.name == '${image.name}.sha256') {
+      return FirmwareRelease(
+        tag: release.tag,
+        version: version,
+        prerelease: release.prerelease,
+        assetName: image.name,
+        size: image.size,
+        downloadUrl: image.url,
+        sha256Url: asset.url,
+      );
+    }
+  }
+  return null;
+}
+
+/// Every [flashableRelease] of [releases], newest first. The update screen's
+/// version picker renders this list and [selectFirmwareTarget] searches it, so
+/// "what the picker offers" and "what a channel can resolve to" cannot drift.
 ///
 /// TODO(runbook): tags are the version contract — never publish a backport
 /// for an older line once a newer release exists; under the
 /// direction-agnostic offer rule that would downgrade-offer the fleet.
+List<FirmwareRelease> flashableReleases(List<GithubRelease> releases) {
+  final out = <FirmwareRelease>[];
+  for (final release in releases) {
+    final r = flashableRelease(release);
+    if (r != null) out.add(r);
+  }
+  // [List.sort] is unstable and `v1.0.0` / `1.0.0` are two tags for one
+  // version, so ties break on the tag to keep the order total.
+  out.sort((a, b) {
+    final byVersion = b.version.compareTo(a.version);
+    return byVersion != 0 ? byVersion : a.tag.compareTo(b.tag);
+  });
+  return out;
+}
+
+/// Pick the release a device on [channel] should run: the semver-newest
+/// candidate (stable excludes [FirmwareRelease.prerelease]). Null when nothing
+/// qualifies.
 FirmwareRelease? selectFirmwareTarget(
-  List<GithubRelease> releases, {
+  List<FirmwareRelease> candidates, {
   required FirmwareChannel channel,
 }) {
   FirmwareRelease? best;
-  for (final release in releases) {
-    if (release.draft) continue;
+  for (final release in candidates) {
     if (channel == FirmwareChannel.stable && release.prerelease) continue;
-    final version = FirmwareVersion.tryParse(release.tag);
-    if (version == null) continue;
-    if (best != null && best.version.compareTo(version) >= 0) continue;
-    final imageName = firmwareImageName(release.tag);
-    GithubAsset? image;
-    for (final asset in release.assets) {
-      if (asset.name == imageName) {
-        image = asset;
-        break;
-      }
-    }
-    if (image == null) continue;
-    GithubAsset? sha256;
-    for (final asset in release.assets) {
-      if (asset.name == '${image.name}.sha256') {
-        sha256 = asset;
-        break;
-      }
-    }
-    if (sha256 == null) continue;
-    best = FirmwareRelease(
-      tag: release.tag,
-      version: version,
-      assetName: image.name,
-      size: image.size,
-      downloadUrl: image.url,
-      sha256Url: sha256.url,
-    );
+    if (best != null && best.version.compareTo(release.version) >= 0) continue;
+    best = release;
   }
   return best;
 }

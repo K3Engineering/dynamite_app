@@ -9,27 +9,27 @@ import '../models/firmware_release.dart';
 
 /// Where update checks and image downloads come from.
 abstract interface class FirmwareCatalog {
-  /// The channel's target release, or null when nothing qualifies. Throws
-  /// on fetch failures (network, API) — "couldn't check" is surfaced, never
-  /// silently treated as "up to date".
-  Future<FirmwareRelease?> latestFor({required FirmwareChannel channel});
+  /// Every flashable release, newest first (see [flashableReleases]); empty
+  /// when nothing qualifies. Throws on fetch failures (network, API) —
+  /// "couldn't check" is surfaced, never silently treated as "up to date".
+  Future<List<FirmwareRelease>> available();
 
   /// The release's image bytes, size-checked against the asset metadata and
-  /// SHA-256-verified when the release carries a sidecar. Throws
-  /// [StateError] on any mismatch — the app never flashes bytes that failed
-  /// the checks.
+  /// SHA-256-verified against the release's sidecar. Throws [StateError] on any
+  /// mismatch — the app never flashes bytes that failed the checks.
   Future<Uint8List> downloadImage(FirmwareRelease release);
 }
 
 /// GitHub Releases of the public firmware repo as the catalog. Selection
-/// (channels, semver max) is pure, in `models/firmware_release.dart`; this
+/// (channels, ordering) is pure, in `models/firmware_release.dart`; this
 /// class is the fetching.
 ///
 /// The raw releases list is used rather than the `/latest` endpoint:
 /// `/latest` is "most recently published", not "newest version", and the
 /// offer rule is direction-agnostic, so a backport flipping `/latest`
-/// backward would downgrade-offer every newer unit. List + semver-max has
-/// no such window.
+/// backward would downgrade-offer every newer unit. The whole list has no
+/// such window — and it is also what the update screen's version picker
+/// needs, so the two share one request shape.
 ///
 /// Asset bytes are fetched through our own proxy, not `github.com`
 /// directly: GitHub serves release downloads without CORS headers, so a
@@ -42,9 +42,13 @@ class GithubReleaseCatalog implements FirmwareCatalog {
   // The firmware repo's releases are the single source of truth.
   static const _owner = 'K3Engineering';
   static const _repo = 'dynamite-sampler-firmware';
+  // GitHub pages at 30 by default; asking for the maximum keeps the picker's
+  // history as deep as one request can be. There is no page-walking: a release
+  // beyond the hundredth is not a thing anyone needs to flash.
   static final _releasesUri = Uri.https(
     'api.github.com',
     '/repos/$_owner/$_repo/releases',
+    {'per_page': '100'},
   );
 
   static const _assetProxyHost = 'gh-proxy.k3engineering.com';
@@ -90,7 +94,7 @@ class GithubReleaseCatalog implements FirmwareCatalog {
   }
 
   @override
-  Future<FirmwareRelease?> latestFor({required FirmwareChannel channel}) async {
+  Future<List<FirmwareRelease>> available() async {
     final res = await _get(
       _releasesUri,
       headers: {'Accept': 'application/vnd.github+json'},
@@ -102,7 +106,7 @@ class GithubReleaseCatalog implements FirmwareCatalog {
     // One malformed release must not silently vanish from the candidate list:
     // a skipped entry can also be the NEWEST one, so the check would answer
     // "no update" (or offer an older release) with nothing to show for it.
-    // Name the offending entry and fail the check instead, like every other
+    // Name the offending entry and fail the fetch instead, like every other
     // malformed-response path here.
     final decoded = jsonDecode(res.body) as List<Object?>;
     final releases = <GithubRelease>[];
@@ -113,7 +117,7 @@ class GithubReleaseCatalog implements FirmwareCatalog {
         throw StateError('Release check failed: release #$i is malformed ($e)');
       }
     }
-    return selectFirmwareTarget(releases, channel: channel);
+    return flashableReleases(releases);
   }
 
   @override

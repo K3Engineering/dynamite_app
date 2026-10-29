@@ -9,6 +9,7 @@ import '../models/firmware_release.dart';
 import '../services/ble_link_manager.dart';
 import '../services/firmware_update_service.dart';
 import '../services/recording_controller.dart';
+import '../utils/format.dart';
 import '../widgets/wide_layout.dart';
 
 /// Push the OTA update screen; [onDone] is the shell jump it runs after a
@@ -348,7 +349,13 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         return 'Could not check for updates';
       case CheckOk(:final result):
         final target = result.target;
-        if (target == null) return 'No release available for this board';
+        if (target == null) {
+          return result.candidates.isEmpty
+              ? 'No release published yet'
+              // Only reachable on stable with prereleases published: the
+              // picker still offers them, one at a time.
+              : 'No release on this channel';
+        }
         return result.differsFromDevice
             ? '${result.installedDescribe}  ›  ${target.tag}'
             : '${result.installedDescribe} - up to date';
@@ -396,9 +403,8 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
                 ],
                 selected: {service.channel},
                 showSelectedIcon: false,
-                onSelectionChanged: running
-                    ? null
-                    : (set) => unawaited(service.setChannel(set.first)),
+                onSelectionChanged: (set) =>
+                    unawaited(service.setChannel(set.first)),
               ),
               const SizedBox(height: 16),
               if (state is CheckFailed)
@@ -430,6 +436,16 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
                     : null,
                 child: Text(flashLabel),
               ),
+              if (check != null && check.candidates.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: OutlinedButton(
+                    onPressed: canFlash
+                        ? () => unawaited(_pickVersion(check))
+                        : null,
+                    child: const Text('Choose another version…'),
+                  ),
+                ),
               if (simulated)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
@@ -463,5 +479,71 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
         ),
       ),
     ];
+  }
+
+  /// Offer the whole fetched release list and flash whichever row the user
+  /// taps. This is an action, not a setting: the channel stays the channel, so
+  /// a device flashed from here is simply "not the channel target" to the next
+  /// check (see [FirmwareCheck.differsFromDevice]) — and gets the nag.
+  Future<void> _pickVersion(FirmwareCheck check) async {
+    final release = await showDialog<FirmwareRelease>(
+      context: context,
+      builder: (_) =>
+          _ReleasePicker(candidates: check.candidates, target: check.target),
+    );
+    if (release == null || !mounted) return;
+    await _flashRelease(release);
+  }
+}
+
+/// The release picker: one row per flashable release, newest first, tagged with
+/// its stream and size so the list is readable without the channel context.
+/// Picking a row goes straight to [_FirmwareUpdateScreenState._flashRelease],
+/// whose confirm dialog names the tag before anything is downloaded.
+class _ReleasePicker extends StatelessWidget {
+  const new({required this.candidates, required this.target});
+
+  /// The check's list: every flashable release, newest first.
+  final List<FirmwareRelease> candidates;
+
+  /// The channel's target, marked in the list. Null on a stable channel with
+  /// only prereleases published.
+  final FirmwareRelease? target;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Choose a version'),
+      // Scrolls rather than grows: the list can be as deep as a GitHub page.
+      content: SizedBox(
+        width: 360,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: .min,
+            crossAxisAlignment: .stretch,
+            children: [
+              for (final release in candidates)
+                ListTile(
+                  title: Text(release.tag),
+                  subtitle: Text(
+                    [
+                      release.prerelease ? 'Beta' : 'Stable',
+                      formatBytes(release.size),
+                      if (release.tag == target?.tag) 'channel target',
+                    ].join(' · '),
+                  ),
+                  onTap: () => Navigator.of(context).pop(release),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+      ],
+    );
   }
 }

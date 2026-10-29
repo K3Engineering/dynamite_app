@@ -13,10 +13,14 @@ import 'firmware_catalog.dart';
 @immutable
 class FirmwareCheck {
   const new({
+    required this.channel,
     required this.board,
     required this.installedDescribe,
-    required this.target,
+    required this.candidates,
   });
+
+  /// The channel the check resolved for; its result is only valid for this one.
+  final FirmwareChannel channel;
 
   /// The board the check ran for (firmware-rev prefix).
   final String board;
@@ -24,14 +28,23 @@ class FirmwareCheck {
   /// The device's installed identity (git-describe from the DIS read).
   final String installedDescribe;
 
-  /// The channel's current target for this board; null when no release
-  /// applies (nothing published yet, or nothing for this board).
-  final FirmwareRelease? target;
+  /// Every flashable release the catalog offered at check time, newest first.
+  /// The update screen's version picker is this same list, so browsing "other
+  /// versions" costs no second fetch and can't show a release the channel
+  /// logic would refuse.
+  final List<FirmwareRelease> candidates;
+
+  /// The channel's target among [candidates]; null when the channel has
+  /// nothing (nothing published yet, or only prereleases on stable).
+  FirmwareRelease? get target =>
+      selectFirmwareTarget(candidates, channel: channel);
 
   /// An update (of any direction — the offer rule is "differs, flash the
   /// channel target") is worth offering.
-  bool get differsFromDevice =>
-      target != null && !describeMatchesTag(installedDescribe, target!.tag);
+  bool get differsFromDevice {
+    final target = this.target;
+    return target != null && !describeMatchesTag(installedDescribe, target.tag);
+  }
 }
 
 /// The release-check lifecycle. One state at a time, so illegal
@@ -128,16 +141,19 @@ class FirmwareUpdateService extends ChangeNotifier {
 
   Future<void> setChannel(FirmwareChannel channel) async {
     if (channel == _channel) return;
-    // A check's result is only valid for the channel it started on.
-    if (checkState is CheckRunning) {
-      throw StateError('Cannot switch channel while a check is running.');
-    }
     _channel = channel;
+    if (checkState case CheckOk(:final result)) {
+      checkState = CheckOk(
+        FirmwareCheck(
+          channel: channel,
+          board: result.board,
+          installedDescribe: result.installedDescribe,
+          candidates: result.candidates,
+        ),
+      );
+    }
     notifyListeners();
     await _prefs.setString(_keyChannel, channel.name);
-    // The channel is part of every check's input; a stale result for the
-    // other channel is worse than none.
-    if (_link.connectedDeviceInfo != null) unawaited(checkForUpdates());
   }
 
   /// Check the connected device against the release catalog. No-op while a
@@ -152,29 +168,23 @@ class FirmwareUpdateService extends ChangeNotifier {
     if (info == null) return;
     final rev = parseFirmwareRev(info.firmwareRev);
     if (rev == null) return;
-    // Snapshot inputs; the worker must not re-read fields after it suspends.
-    await _runCheck(channel: _channel, info: info, rev: rev);
+    // Snapshot link inputs; the worker must not re-read them after it suspends.
+    await _runCheck(info: info, rev: rev);
   }
 
   Future<void> _runCheck({
-    required FirmwareChannel channel,
     required DeviceInfo info,
     required ({String board, String describe}) rev,
   }) async {
     checkState = const CheckRunning();
     notifyListeners();
 
-    FirmwareCheckState outcome;
-    FirmwareCheck? check;
+    List<FirmwareRelease>? candidates;
+    Object? error;
     try {
-      check = FirmwareCheck(
-        board: rev.board,
-        installedDescribe: rev.describe,
-        target: await catalog.latestFor(channel: channel),
-      );
-      outcome = CheckOk(check);
+      candidates = await catalog.available();
     } catch (e) {
-      outcome = CheckFailed(e);
+      error = e;
     }
 
     // The link can drop mid-fetch; one DeviceInfo per connection means
@@ -182,14 +192,22 @@ class FirmwareUpdateService extends ChangeNotifier {
     // disconnect reset to [CheckNeverRan].
     if (!identical(_link.connectedDeviceInfo, info)) return;
 
-    checkState = outcome;
-    if (check != null) {
+    if (candidates != null) {
+      final check = FirmwareCheck(
+        channel: _channel,
+        board: rev.board,
+        installedDescribe: rev.describe,
+        candidates: candidates,
+      );
+      checkState = CheckOk(check);
       final pending = _pendingFlashTag;
       _pendingFlashTag = null;
       if (pending != null &&
           describeMatchesTag(check.installedDescribe, pending)) {
         _events.emit(FirmwareFlashVerified(check.installedDescribe));
       }
+    } else {
+      checkState = CheckFailed(error!);
     }
     notifyListeners();
   }

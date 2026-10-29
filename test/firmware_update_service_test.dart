@@ -15,16 +15,14 @@ import 'package:dynamite_app/services/firmware_update_service.dart';
 
 import 'helpers/mockble.dart';
 
-/// A catalog serving a fixed target, whatever the channel.
+/// A catalog serving a fixed list of releases, whatever the channel.
 class _FixedCatalog implements FirmwareCatalog {
-  new(this.target);
+  new(this.releases);
 
-  final FirmwareRelease? target;
+  final List<FirmwareRelease> releases;
 
   @override
-  Future<FirmwareRelease?> latestFor({
-    required FirmwareChannel channel,
-  }) async => target;
+  Future<List<FirmwareRelease>> available() async => releases;
 
   @override
   Future<Uint8List> downloadImage(FirmwareRelease release) =>
@@ -34,8 +32,7 @@ class _FixedCatalog implements FirmwareCatalog {
 /// A catalog whose check always fails (fetch trouble).
 class _ErrorCatalog implements FirmwareCatalog {
   @override
-  Future<FirmwareRelease?> latestFor({required FirmwareChannel channel}) =>
-      throw StateError('fetch failed');
+  Future<List<FirmwareRelease>> available() => throw StateError('fetch failed');
 
   @override
   Future<Uint8List> downloadImage(FirmwareRelease release) =>
@@ -88,7 +85,7 @@ void main() {
       prefs: prefs!,
       link: link,
       events: events,
-      catalog: _FixedCatalog(null),
+      catalog: _FixedCatalog(const []),
     );
     return (link, service, seen);
   }
@@ -103,7 +100,7 @@ void main() {
   test('a noted flash tag publishes a verified event on the next check', () {
     fakeAsync((async) {
       final (link, service, seen) = wire(async);
-      service.catalog = _FixedCatalog(_release('mock-1.0.0'));
+      service.catalog = _FixedCatalog([_release('mock-1.0.0')]);
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -132,7 +129,7 @@ void main() {
   test('a flash the device does not confirm leaves the check differing', () {
     fakeAsync((async) {
       final (link, service, seen) = wire(async);
-      service.catalog = _FixedCatalog(_release('v9.9.9'));
+      service.catalog = _FixedCatalog([_release('v9.9.9')]);
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
@@ -161,7 +158,7 @@ void main() {
   test('a failed re-check erases the previous result', () {
     fakeAsync((async) {
       final (link, service, seen) = wire(async);
-      service.catalog = _FixedCatalog(_release('mock-1.0.0'));
+      service.catalog = _FixedCatalog([_release('mock-1.0.0')]);
 
       unawaited(link.connectToDevice(deviceId));
       async.elapse(const Duration(seconds: 4));
