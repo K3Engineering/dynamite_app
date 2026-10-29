@@ -16,16 +16,14 @@ import 'package:dynamite_app/widgets/firmware_update_notice.dart';
 
 import 'helpers/mockble.dart';
 
-/// A catalog serving a fixed target, whatever the channel.
+/// A catalog serving a fixed list of releases, whatever the channel.
 class _FixedCatalog implements FirmwareCatalog {
-  new(this.target);
+  new(this.releases);
 
-  final FirmwareRelease? target;
+  final List<FirmwareRelease> releases;
 
   @override
-  Future<FirmwareRelease?> latestFor({
-    required FirmwareChannel channel,
-  }) async => target;
+  Future<List<FirmwareRelease>> available() async => releases;
 
   @override
   Future<Uint8List> downloadImage(FirmwareRelease release) =>
@@ -66,7 +64,7 @@ void main() {
       prefs: prefs,
       link: link,
       events: events,
-      catalog: _FixedCatalog(_release('v0.2.0')),
+      catalog: _FixedCatalog([_release('v0.2.0')]),
     );
     var reviewed = false;
 
@@ -102,7 +100,7 @@ void main() {
 
     // Point the catalog at the bits the device already runs and re-check
     // (UI-triggered checks always run): the line hides.
-    service.catalog = _FixedCatalog(_release('mock-1.0.0'));
+    service.catalog = _FixedCatalog([_release('mock-1.0.0')]);
     unawaited(service.checkForUpdates());
     await tester.pump(const Duration(seconds: 1));
     expect(find.textContaining('Firmware update available'), findsNothing);

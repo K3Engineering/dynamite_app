@@ -54,7 +54,7 @@ void main() {
     });
   });
 
-  group('selectFirmwareTarget', () {
+  group('flashableReleases', () {
     GithubRelease release(
       String tag, {
       bool draft = false,
@@ -77,74 +77,136 @@ void main() {
       ],
     );
 
-    test('stable picks the newest non-prerelease with an image asset', () {
-      final target = selectFirmwareTarget([
-        release('v0.4.0-beta.1', prerelease: true),
-        release('v0.3.1'),
-        release('v0.3.0'),
-      ], channel: FirmwareChannel.stable);
-      expect(target?.tag, 'v0.3.1');
-    });
+    List<String> tagsOf(List<GithubRelease> releases) => [
+      for (final r in flashableReleases(releases)) r.tag,
+    ];
 
-    test('beta includes prereleases and orders them below their release', () {
+    test('keeps every flashable release, newest first', () {
       expect(
-        selectFirmwareTarget([
-          release('v0.4.0-beta.2', prerelease: true),
-          release('v0.3.1'),
-        ], channel: FirmwareChannel.beta)?.tag,
-        'v0.4.0-beta.2',
-      );
-      expect(
-        selectFirmwareTarget([
-          release('v0.4.0-beta.2', prerelease: true),
-          release('v0.4.0'),
-        ], channel: FirmwareChannel.beta)?.tag,
-        'v0.4.0',
+        tagsOf([
+          release('0.3.0'),
+          release('0.4.0', prerelease: true),
+          release('0.2.0'),
+        ]),
+        ['0.4.0', '0.3.0', '0.2.0'],
       );
     });
 
     test('drafts, unparseable tags, and asset-less releases are skipped', () {
-      final target = selectFirmwareTarget([
-        release('v9.9.9', draft: true),
-        release('nightly'),
-        release('v0.5.0', assets: ['some_other_artifact.zip']),
-        release('v0.4.0'),
-      ], channel: FirmwareChannel.beta);
-      expect(target?.tag, 'v0.4.0');
-      expect(target?.assetName, 'dynamite-sampler-firmware-release-v0.4.0.bin');
-    });
-
-    test('returns null when nothing qualifies', () {
       expect(
-        selectFirmwareTarget([
-          release('v0.4.0-beta.1', prerelease: true),
-        ], channel: FirmwareChannel.stable),
-        isNull,
+        tagsOf([
+          release('v9.9.9', draft: true),
+          release('nightly'),
+          release('v0.5.0', assets: ['some_other_artifact.zip']),
+          release('v0.4.0'),
+        ]),
+        ['v0.4.0'],
       );
-      expect(selectFirmwareTarget([], channel: FirmwareChannel.beta), isNull);
+      final only = flashableReleases([release('v0.4.0')]).single;
+      expect(only.assetName, 'dynamite-sampler-firmware-release-v0.4.0.bin');
+      expect(only.sha256Url.path, endsWith('.bin.sha256'));
     });
 
     test('skips releases without the .sha256 sidecar', () {
-      final target = selectFirmwareTarget([
-        release('v0.5.0', assets: [firmwareImageName('v0.5.0')]),
-        release('v0.4.0'),
-      ], channel: FirmwareChannel.stable);
-      expect(target?.tag, 'v0.4.0');
-      expect(target?.sha256Url.path, endsWith('.bin.sha256'));
+      expect(
+        tagsOf([
+          release('v0.5.0', assets: [firmwareImageName('v0.5.0')]),
+          release('v0.4.0'),
+        ]),
+        ['v0.4.0'],
+      );
+    });
+
+    test('one version spelled two ways keeps a total order', () {
+      expect(tagsOf([release('v1.0.0'), release('1.0.0'), release('v0.9.0')]), [
+        '1.0.0',
+        'v1.0.0',
+        'v0.9.0',
+      ]);
     });
   });
 
-  group('GithubReleaseCatalog.latestFor', () {
+  group('selectFirmwareTarget', () {
+    FirmwareRelease release(String tag, {bool prerelease = false}) =>
+        flashableRelease(
+          GithubRelease(
+            tag: tag,
+            draft: false,
+            prerelease: prerelease,
+            assets: [
+              for (final name in [
+                firmwareImageName(tag),
+                '${firmwareImageName(tag)}.sha256',
+              ])
+                GithubAsset(
+                  name: name,
+                  size: 1024,
+                  url: Uri.https('x.test', '/$name'),
+                ),
+            ],
+          ),
+        )!;
+
+    test('stable skips GitHub prereleases, beta includes them', () {
+      final list = [
+        release('0.4.0', prerelease: true),
+        release('0.3.1'),
+        release('0.3.0'),
+      ];
+      expect(
+        selectFirmwareTarget(list, channel: FirmwareChannel.stable)?.tag,
+        '0.3.1',
+      );
+      expect(
+        selectFirmwareTarget(list, channel: FirmwareChannel.beta)?.tag,
+        '0.4.0',
+      );
+    });
+
+    test('newest is by version, not by list position', () {
+      final list = [
+        release('0.3.0'),
+        release('0.3.1'),
+        release('0.4.0', prerelease: true),
+      ];
+      expect(
+        selectFirmwareTarget(list, channel: FirmwareChannel.stable)?.tag,
+        '0.3.1',
+      );
+      expect(
+        selectFirmwareTarget(list, channel: FirmwareChannel.beta)?.tag,
+        '0.4.0',
+      );
+    });
+
+    test('returns null when the channel has nothing', () {
+      expect(
+        selectFirmwareTarget([
+          release('0.4.0', prerelease: true),
+        ], channel: FirmwareChannel.stable),
+        isNull,
+      );
+      expect(
+        selectFirmwareTarget(const [], channel: FirmwareChannel.beta),
+        isNull,
+      );
+    });
+  });
+
+  group('GithubReleaseCatalog.available', () {
     /// One well-formed GitHub release object, assets included.
-    Map<String, Object?> releaseJson(String tag) => {
+    Map<String, Object?> releaseJson(
+      String tag, {
+      List<String>? assets,
+      bool prerelease = false,
+    }) => {
       'tag_name': tag,
       'draft': false,
-      'prerelease': false,
+      'prerelease': prerelease,
       'assets': [
-        for (final name in [
-          firmwareImageName(tag),
-          '${firmwareImageName(tag)}.sha256',
-        ])
+        for (final name
+            in assets ??
+                [firmwareImageName(tag), '${firmwareImageName(tag)}.sha256'])
           {
             'name': name,
             'size': 1024,
@@ -172,7 +234,7 @@ void main() {
         {'tag_name': 42}, // malformed: tags are strings
       ]);
       await expectLater(
-        () => catalog.latestFor(channel: FirmwareChannel.stable),
+        catalog.available,
         throwsA(
           isA<StateError>().having(
             (e) => e.message,
@@ -183,14 +245,16 @@ void main() {
       );
     });
 
-    test('a well-formed list still selects the newest release', () async {
+    test('returns the flashable releases newest first', () async {
       final catalog = catalogReturning([
         releaseJson('v0.4.0'),
-        releaseJson('v0.5.0'),
+        releaseJson('v0.6.0-beta.1'),
+        releaseJson('v0.5.0', assets: const []),
+        releaseJson('v0.6.0'),
       ]);
       expect(
-        (await catalog.latestFor(channel: FirmwareChannel.stable))?.tag,
-        'v0.5.0',
+        [for (final r in await catalog.available()) r.tag],
+        ['v0.6.0', 'v0.6.0-beta.1', 'v0.4.0'],
       );
     });
   });
