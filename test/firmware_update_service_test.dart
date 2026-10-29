@@ -155,6 +155,33 @@ void main() {
     });
   });
 
+  test('a noted flash verifies only against the flashed device', () {
+    fakeAsync((async) {
+      final (link, service, seen) = wire(async);
+      service.catalog = _FixedCatalog([_release('mock-1.0.0')]);
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+
+      // Flashed '2', then a different board running the same release
+      // connects: no verification, and the pend survives.
+      service.noteFlashAccepted('mock-1.0.0');
+      disconnectElapse(async, link);
+      unawaited(link.connectToDevice('4'));
+      async.elapse(const Duration(seconds: 4));
+      expect(service.checkState, isA<CheckOk>());
+      expect(seen.whereType<FirmwareFlashVerified>(), isEmpty);
+
+      // The flashed board reconnects: verified once.
+      disconnectElapse(async, link);
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+      expect(seen.whereType<FirmwareFlashVerified>(), hasLength(1));
+
+      disconnectElapse(async, link);
+    });
+  });
+
   test('a failed re-check erases the previous result', () {
     fakeAsync((async) {
       final (link, service, seen) = wire(async);
