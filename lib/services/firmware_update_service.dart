@@ -124,19 +124,22 @@ class FirmwareUpdateService extends ChangeNotifier {
   /// always run.
   String? _checkedForDevice;
 
-  /// The release tag a just-completed flash claims to have installed, held
-  /// until the next successful check proves or disproves it (see
-  /// [noteFlashAccepted]).
-  String? _pendingFlashTag;
+  /// The release tag a just-completed flash claims to have installed and the
+  /// device it was flashed onto, held until a successful check of that device
+  /// proves or disproves it (see [noteFlashAccepted]).
+  ({String deviceId, String tag})? _pendingFlash;
 
-  /// Record that the device accepted a flash of [tag], set by the update screen
-  /// when its flash returns. The device reboots on its own, so the verdict
-  /// rides the next check (typically the reconnect's auto-check) rather than a
-  /// screen staying open: a match emits [FirmwareFlashVerified] and the pend is
-  /// consumed either way (a mismatch raises the update-available banner). A
-  /// from-file flash records nothing — no identity to compare.
+  /// Record that the connected device accepted a flash of [tag], set by the
+  /// update screen when its flash returns. The device reboots on its own, so
+  /// the verdict rides the next check of that device (typically the
+  /// reconnect's auto-check) rather than a screen staying open: a match emits
+  /// [FirmwareFlashVerified] and the pend is consumed either way (a mismatch
+  /// raises the update-available banner). The pend is keyed by device because
+  /// fleet boards tend to run the channel target, so a check of any OTHER
+  /// board would "verify" a flash it never saw. A from-file flash records
+  /// nothing — no identity to compare.
   void noteFlashAccepted(String tag) {
-    _pendingFlashTag = tag;
+    _pendingFlash = (deviceId: _link.connectedDeviceId, tag: tag);
   }
 
   Future<void> setChannel(FirmwareChannel channel) async {
@@ -169,12 +172,13 @@ class FirmwareUpdateService extends ChangeNotifier {
     final rev = parseFirmwareRev(info.firmwareRev);
     if (rev == null) return;
     // Snapshot link inputs; the worker must not re-read them after it suspends.
-    await _runCheck(info: info, rev: rev);
+    await _runCheck(info: info, rev: rev, deviceId: _link.connectedDeviceId);
   }
 
   Future<void> _runCheck({
     required DeviceInfo info,
     required ({String board, String describe}) rev,
+    required String deviceId,
   }) async {
     checkState = const CheckRunning();
     notifyListeners();
@@ -200,11 +204,12 @@ class FirmwareUpdateService extends ChangeNotifier {
         candidates: candidates,
       );
       checkState = CheckOk(check);
-      final pending = _pendingFlashTag;
-      _pendingFlashTag = null;
-      if (pending != null &&
-          describeMatchesTag(check.installedDescribe, pending)) {
-        _events.emit(FirmwareFlashVerified(check.installedDescribe));
+      final pending = _pendingFlash;
+      if (pending != null && pending.deviceId == deviceId) {
+        _pendingFlash = null;
+        if (describeMatchesTag(check.installedDescribe, pending.tag)) {
+          _events.emit(FirmwareFlashVerified(check.installedDescribe));
+        }
       }
     } else {
       checkState = CheckFailed(error!);

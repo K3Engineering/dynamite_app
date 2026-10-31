@@ -617,8 +617,15 @@ class MockBlePlatform extends UniversalBlePlatform {
     ];
   }
 
+  /// Devices that answer as a full sampler on connect (DIS identity, sampler
+  /// + KVS services); everything else is a bare-bones BLE peripheral. '4' is
+  /// deliberately NOT in [_generateDevices]: the scan mock emits from a seeded
+  /// RNG, so an extra scan result would reshuffle the sequence every
+  /// scan-based test sees — connect straight to it instead.
+  static const _samplerIds = {'2', '4'};
+
   static List<BleCharacteristic> _generateCharacteristics(String deviceId) {
-    if (deviceId == '2') {
+    if (_samplerIds.contains(deviceId)) {
       return ([
         BleCharacteristic(btChrAdcFeedId, [CharacteristicProperty.notify], []),
         BleCharacteristic(btChrAdcConfig, [CharacteristicProperty.read], []),
@@ -642,7 +649,7 @@ class MockBlePlatform extends UniversalBlePlatform {
   };
 
   static List<BleService> _generateServices(String deviceId) {
-    if (deviceId == '2') {
+    if (_samplerIds.contains(deviceId)) {
       return ([
         BleService('e1234567', _generateCharacteristics(deviceId)),
         BleService(btServiceId, _generateCharacteristics(deviceId)),
