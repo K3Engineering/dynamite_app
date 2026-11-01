@@ -44,6 +44,7 @@ void main() {
               events: AppEvents(),
             ),
             hub: hub,
+            channelIds: const [0, 1, 2, 3],
             ctrl: ctrl,
             unit: .raw,
             healthListenable: ValueNotifier<FeedHealth?>(null),

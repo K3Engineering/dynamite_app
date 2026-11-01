@@ -2,6 +2,7 @@ import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import 'package:dynamite_app/models/analysis_pane.dart';
 import 'package:dynamite_app/models/board_calibration.dart';
 import 'package:dynamite_app/models/display_unit.dart';
 import 'package:dynamite_app/models/graph_data_source.dart';
@@ -44,7 +45,7 @@ void main() {
       required GraphDataSource data,
       required List<int> activeChannels,
       bool isLiveSource = true,
-      bool showDerivative = false,
+      AnalysisPaneSelection analysis = const AnalysisPaneSelection(),
     }) => tester.pumpWidget(
       MaterialApp(
         home: GraphWorkspace(
@@ -53,7 +54,7 @@ void main() {
           unit: DisplayUnit.mVv.effective(data.unitAvailability),
           activeChannels: activeChannels,
           isLiveSource: isLiveSource,
-          showDerivative: showDerivative,
+          analysis: analysis,
         ),
       ),
     );
@@ -72,7 +73,7 @@ void main() {
       data: calibratedHub(),
       activeChannels: const [0, 1],
       isLiveSource: false,
-      showDerivative: true,
+      analysis: const AnalysisPaneSelection(kind: AnalysisPaneKind.derivative),
     );
     expect(
       find.bySemanticsLabel(
@@ -97,6 +98,22 @@ void main() {
     expect(
       find.bySemanticsLabel(
         'Live force graph. No channels plotted. Unit: mV/V.',
+      ),
+      findsOneWidget,
+    );
+
+    // Plate pane active: the label names the view below (the top graph
+    // keeps the selected channels — the plate transform is a channel set,
+    // not a top-graph swap).
+    await pumpGraph(
+      data: calibratedHub(),
+      activeChannels: const [0, 1, 2, 3],
+      analysis: const AnalysisPaneSelection(kind: AnalysisPaneKind.plate),
+    );
+    expect(
+      find.bySemanticsLabel(
+        'Live force graph. Channels: CH 0, CH 1, CH 2, CH 3. Unit: mV/V. '
+        'Two-axis position view below.',
       ),
       findsOneWidget,
     );
