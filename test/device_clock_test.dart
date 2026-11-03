@@ -56,7 +56,9 @@ void main() {
     nowMs = 20;
     clock.observe(40); // 20 ms of span: far under the fit minimum
     nowMs = 60;
-    expect(clock.projectedEndAt(1000), closeTo(80, 1e-6));
+    // Envelope at the nominal glide: the fresher observation wins with
+    // 40 + 40 ms at the slewed rate (1 - 0.004).
+    expect(clock.projectedEndAt(1000), closeTo(79.84, 1e-6));
   });
 
   test('fits a skewed oscillator and tracks within one slot of its lead', () {
@@ -69,11 +71,13 @@ void main() {
     // past a trivial margin of fit wobble.
     final truth = (nowMs + feedBase) * 1.0001;
     expect(total, inInclusiveRange(truth - 21, truth));
-    // The advance rate locks to the skewed oscillator, not the nominal one:
-    // one PC-second later the projection grew by ~1000.1 samples.
+    // The advance rate locks to the (slewed) skewed oscillator, not the
+    // nominal one: every envelope line shares one slope, so the growth over
+    // any observation-free interval is exactly slew * interval, no matter
+    // how the argmax moves around the ring.
     final before = clock.projectedEndAt(1000)!;
     nowMs += 1000;
-    expect(clock.projectedEndAt(1000)! - before, closeTo(1000.1, 2));
+    expect(clock.projectedEndAt(1000)! - before, closeTo(1000.1 * 0.996, 1));
   });
 
   test('a long delivery gap re-anchors on the fresh side', () {
@@ -85,11 +89,14 @@ void main() {
     const lastIndex = 2000;
     nowMs += 3000; // dead-air gap
     clock.observe(lastIndex + 20); // device time moved on, index didn't
-    // Ring was cleared by the gap, so the projection is a plain nominal
+    // Ring was cleared by the gap, so the projection is a slewed nominal
     // glide from the fresh observation -- no borrowed slope from across it.
     expect(clock.projectedEndAt(1000), closeTo(lastIndex + 20, 1e-6));
     nowMs += 10;
-    expect(clock.projectedEndAt(1000), closeTo(lastIndex + 30, 1e-6));
+    expect(
+      clock.projectedEndAt(1000),
+      closeTo(lastIndex + 20 + 10 * 0.996, 1e-6),
+    );
   });
 
   test('clear() forgets the fit', () {
