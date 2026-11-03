@@ -389,4 +389,75 @@ void main() {
       ]);
     });
   });
+
+  /// The decoder reports every packet's delivery gap (the input to
+  /// [GraphDataSource.peakDeliveryGapMs]) from its own arrival clock, gated
+  /// on the previous PACKET — not on the previous commit — so the monitoring
+  /// pause doesn't read as a link gap.
+  group('AdcPacketDecoder delivery-gap reporting', () {
+    test('the hub peak reflects the largest observed inter-packet gap', () {
+      var fakeUs = 0;
+      final d = AdcPacketDecoder(
+        hub,
+        now: () => Duration(microseconds: fakeUs),
+      );
+      expect(hub.peakDeliveryGapMs, isNull);
+
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+      fakeUs += 20000;
+      d.onDataPacket(makePacket(20, (s, c) => 2));
+      expect(hub.peakDeliveryGapMs, closeTo(20, 1));
+
+      fakeUs += 150000;
+      d.onDataPacket(makePacket(40, (s, c) => 3));
+      expect(hub.peakDeliveryGapMs, closeTo(150, 2));
+
+      fakeUs += 20000;
+      d.onDataPacket(makePacket(60, (s, c) => 4));
+      // A smaller gap does not lower the peak (it only decays with wall age).
+      expect(hub.peakDeliveryGapMs, greaterThan(100));
+    });
+
+    test('paused packets still feed the peak; the pause itself does not '
+        'pollute it', () {
+      var fakeUs = 0;
+      var paused = false;
+      final d = AdcPacketDecoder(
+        hub,
+        now: () => Duration(microseconds: fakeUs),
+        isPaused: () => paused,
+      );
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+      fakeUs += 20000;
+      d.onDataPacket(makePacket(20, (s, c) => 2));
+
+      // A long monitoring pause: packets keep arriving on the link (and the
+      // peak only sees their delivery gaps), while the hub freezes.
+      paused = true;
+      for (var i = 0; i < 100; i++) {
+        fakeUs += 20000;
+        d.onDataPacket(makePacket(40 + 20 * i, (s, c) => 1));
+      }
+      paused = false;
+      d.onDataPacket(makePacket(2040, (s, c) => 2));
+
+      // ~20 ms steady gaps, never the ~2 s pause.
+      expect(hub.peakDeliveryGapMs, lessThan(30));
+    });
+
+    test('a hub clear forgets the peak (the new stream re-measures)', () {
+      var fakeUs = 0;
+      final d = AdcPacketDecoder(
+        hub,
+        now: () => Duration(microseconds: fakeUs),
+      );
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+      fakeUs += 300000;
+      d.onDataPacket(makePacket(20, (s, c) => 2));
+      expect(hub.peakDeliveryGapMs, greaterThan(200));
+
+      hub.clear();
+      expect(hub.peakDeliveryGapMs, isNull);
+    });
+  });
 }

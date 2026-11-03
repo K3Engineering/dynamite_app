@@ -203,6 +203,127 @@ void main() {
     });
   });
 
+  /// The rolling view's right edge must glide at the sample rate and never
+  /// move left; [GraphController.rollingLiveEdge] implements that as an
+  /// inertial advance clamped into the confirmation band
+  /// `[totalSamples, totalSamples + cap]`. Clocks are injected (nowMs) so
+  /// the tests are deterministic.
+  group('GraphController.rollingLiveEdge', () {
+    double roll(
+      GraphController ctrl, {
+      required int total,
+      double elapsedMs = 0,
+      double capSamples = 40,
+      required double nowMs,
+      int gen = 1,
+    }) => ctrl.rollingLiveEdge(
+      totalSamples: total,
+      elapsedMs: elapsedMs,
+      capSamples: capSamples,
+      sampleRate: 1000,
+      dataGeneration: gen,
+      nowMs: nowMs,
+    );
+
+    test('glides at the sample rate inside the band', () {
+      final ctrl = GraphController();
+      expect(roll(ctrl, total: 1000, nowMs: 0), 1000);
+      expect(roll(ctrl, total: 1000, nowMs: 6.25), closeTo(1006.25, 1e-6));
+      expect(roll(ctrl, total: 1000, nowMs: 12.5), closeTo(1012.5, 1e-6));
+    });
+
+    test('pins the lower bound on init', () {
+      // First call with no memory: elapsed anchors the start, capped.
+      final ctrl = GraphController();
+      expect(roll(ctrl, total: 1000, elapsedMs: 30, nowMs: 0), 1030);
+    });
+
+    test('the cap is the only freeze (genuine stall)', () {
+      final ctrl = GraphController();
+      roll(ctrl, total: 1000, nowMs: 0);
+      // 100 ms with no data: advance stops at total + cap = 1040.
+      expect(roll(ctrl, total: 1000, nowMs: 100), 1040);
+      expect(roll(ctrl, total: 1000, nowMs: 200), 1040);
+    });
+
+    test('a backlog burst behind the gliding edge does not move it', () {
+      final ctrl = GraphController();
+      roll(ctrl, total: 1000, nowMs: 0);
+      // 37.5 ms since the last delivery: offset has glided to +37.5.
+      expect(roll(ctrl, total: 1000, nowMs: 37.5), 1037.5);
+      // First backlog packet lands carrying only 20 samples: old formula
+      // rewound the edge to ~1020; the band just shifts, the edge glides.
+      expect(roll(ctrl, total: 1020, nowMs: 43.75), closeTo(1043.75, 1e-6));
+      // The burst tail (+20) closes behind the edge too: still no step.
+      expect(roll(ctrl, total: 1040, nowMs: 50), 1050);
+    });
+
+    test('a delivery overtaking the edge nudges forward, never backward', () {
+      final ctrl = GraphController();
+      roll(ctrl, total: 1000, nowMs: 0);
+      expect(roll(ctrl, total: 1000, nowMs: 10), 1010);
+      // 120 samples confirm at once (a fresh burst): the edge must rise to
+      // show them (10→12 ms advances +2, then the lower clamp lifts to 1120).
+      expect(roll(ctrl, total: 1120, nowMs: 12), 1120);
+    });
+
+    test('never rewinds, never freezes across the live-link skip pattern', () {
+      // Replays the physics of the BLE link that produced the original
+      // flicker: the device produces a 20-sample packet every 20 ms; the
+      // radio delivers queued packets at 18.75 ms connection events, so
+      // ~1 in 7 events ships empty and ~2 packets land at the next one
+      // (~1 ms apart in-app). 1 kHz glide, 76 samples of cap (the adaptive
+      // lead's widened value), 6.25 ms frames.
+      final ctrl = GraphController();
+      var total = 1000;
+      var deliveredPackets = 0;
+      double prev = roll(ctrl, total: total, nowMs: 0, capSamples: 76);
+      var frame = 0;
+      var freezeFrames = 0;
+      var event = 0;
+      while (frame * 6.25 < 5000) {
+        frame++;
+        final nowMs = frame * 6.25;
+        // Deliver any connection event that falls in this frame.
+        while ((event + 1) * 18.75 <= nowMs) {
+          event++;
+          final duePackets = (event * 18.75) ~/ 20;
+          total += (duePackets - deliveredPackets) * 20;
+          deliveredPackets = duePackets;
+        }
+        final edge = roll(
+          ctrl,
+          total: total,
+          nowMs: nowMs,
+          capSamples: 76,
+        );
+        expect(edge, greaterThanOrEqualTo(prev));
+        if (edge == prev) freezeFrames++;
+        prev = edge;
+      }
+      expect(freezeFrames, 0);
+    });
+
+    test('a backwards clock read freezes the advance, not the edge', () {
+      final ctrl = GraphController();
+      roll(ctrl, total: 1000, nowMs: 10);
+      expect(roll(ctrl, total: 1000, nowMs: 5), 1000);
+    });
+
+    test('a new stream generation restarts from the data', () {
+      final ctrl = GraphController();
+      expect(roll(ctrl, total: 1000, nowMs: 0), 1000);
+      // Glide to offset +37.5.
+      expect(roll(ctrl, total: 1000, nowMs: 37.5), 1037.5);
+      // New stream from sample 0: no inherited offset. The init reads
+      // elapsed (40 ms worth, still within cap) rather than gliding.
+      expect(roll(ctrl, total: 0, elapsedMs: 40, nowMs: 40, gen: 2), 40);
+      // Data the init knew nothing about (20 samples) still lifts the edge
+      // via the lower clamp when the glide would fall behind.
+      expect(roll(ctrl, total: 100, elapsedMs: 0, nowMs: 46.25, gen: 2), 100);
+    });
+  });
+
   group('GraphController notifies listeners', () {
     test('every mutating call fires exactly once', () {
       final ctrl = GraphController();

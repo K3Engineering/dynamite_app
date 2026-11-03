@@ -22,6 +22,12 @@ abstract interface class AdcSink {
 
   void noteMalformedPacket(int length);
 
+  /// Note the wall gap since the previous packet's arrival (decoded delivery
+  /// side; called for every packet, including monitoring-paused ones, so the
+  /// sink's delivery-gap peak tracks the link and never the pause). Feeds
+  /// [GraphDataSource.peakDeliveryGapMs].
+  void notePacketGap(Duration gap);
+
   /// Inject [count] held-value samples for a detected packet gap, leaving room
   /// in the ring for [reserve] real samples of the same packet.
   void addDroppedFrames(int count, {int reserve = 0});

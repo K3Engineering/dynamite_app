@@ -2120,35 +2120,41 @@ Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
 // Windowed time-series graph painters (force, derivative)
 // ---------------------------------------------------------------------------
 
-/// Lead past the newest sample. Time it at two connection intervals
-/// Measured on a live board: 18.75 ms connection interval
-/// ~12% of intervals are skipped so the delayed packet lands at 37.5 ms.
-///  the tail is ~56 ms outliers.
-const double _kLiveEdgeLeadMs = 40;
+/// Lead floor past the newest sample, in arrival time: sized so the common
+/// link delays (one skipped connection event: ~37.5 ms on an 18.75 ms
+/// interval, measured on a live board) land inside the extrapolation and
+/// never freeze the view. The observed peak delivery gap
+/// ([GraphDataSource.peakDeliveryGapMs]) widens the floor beyond this when
+/// the link is actually worse; see [_leadCapMs].
+const double _kLiveEdgeLeadFloorMs = 40;
 
-/// Also cap the lead at this fraction of the visible span, so at narrow spans
-/// a full packet of lead can't detach the trace end from the plot's right edge.
+/// One packet period of margin above the peak delivery gap, so a gap that
+/// repeats at the observed worst case still fits inside the lead.
+const double _kLiveEdgeLeadMarginMs = 20;
+
+/// In steady scrolling the edge glides past the newest sample by up to the
+/// lead cap; at narrow spans a full lead would visibly detach the trace end
+/// from the plot's right edge, so the cap is also limited to this fraction
+/// of the span. (The edge itself is advanced in
+/// [GraphController.rollingLiveEdge]; this constant only shapes its band.)
 const double _kLiveEdgeLeadSpanFraction = 0.05;
 
 /// Stop the smooth-scroll ticker once the stream is this stale: past the worst
 /// normal inter-packet gap, so it never churns mid-stream.
 const int _kTickerStallMs = 100;
 
-/// The live-follow window's right edge in fractional samples: the newest
-/// sample count plus wall-clock elapsed since it landed, capped by
-/// [_kLiveEdgeLeadMs] and [_kLiveEdgeLeadSpanFraction] of [spanSamples].
-double _liveEdge(GraphDataSource data, int spanSamples) {
-  final int total = data.totalSamples;
-  final DateTime? last = data.lastDataAt;
-  if (last == null) return total.toDouble();
-  final double elapsedMs =
-      DateTime.now().difference(last).inMicroseconds / 1000.0;
-  final double leadCapMs = math.min(
-    _kLiveEdgeLeadMs,
-    _kLiveEdgeLeadSpanFraction * spanSamples / data.sampleRate * 1000.0,
-  );
-  return total + elapsedMs.clamp(0.0, leadCapMs) * data.sampleRate / 1000.0;
-}
+/// The rolling live edge's lead cap in milliseconds for [spanSamples]: the
+/// floor ([_kLiveEdgeLeadFloorMs] widened by the observed peak delivery gap
+/// plus [_kLiveEdgeLeadMarginMs]), limited to
+/// [_kLiveEdgeLeadSpanFraction] of the span, so at narrow spans the cap can't
+/// detach the trace end from the plot's right edge.
+double _leadCapMs(GraphDataSource data, double spanSamples) => math.min(
+  math.max(
+    _kLiveEdgeLeadFloorMs,
+    (data.peakDeliveryGapMs ?? 0) + _kLiveEdgeLeadMarginMs,
+  ),
+  _kLiveEdgeLeadSpanFraction * spanSamples / data.sampleRate * 1000.0,
+);
 
 /// Common painter prologue shared by the force and derivative graphs: translate
 /// into the plot area, compute the plot [Size], draw the frame border, and
@@ -2198,17 +2204,27 @@ _GraphLayout? _setupGraphFrame(
     data.totalSamples,
     data.oldestSample,
   );
-  // Rolling live windows anchor their right edge to the fractional live
-  // edge so the trace scrolls smoothly between packets. Data-pinned views
-  // (parked, or live "everything") keep their integer edges: they are pure
-  // functions of the data on hand, and floating them would let the lead's
-  // per-packet rewind shake every tick and label by the lead's pixel width
-  // (most visible at squeezed full-view spans, where nothing else moves).
+  // Rolling live windows get their right edge from the controller's
+  // inertial advance (see GraphController.rollingLiveEdge), so the trace
+  // scrolls smoothly between packets and never rewinds across them.
+  // Data-pinned views (parked, or live "everything") keep their integer
+  // edges: they are pure functions of the data on hand, and floating them
+  // would shake every tick and label by the lead's pixel width (most visible
+  // at squeezed full-view spans, where nothing else moves).
   final rollingSpan = ctrl.lockedLiveSpan;
   double viewStartF = viewStart.toDouble();
   double viewEndF = viewEnd.toDouble();
   if (rollingSpan != null) {
-    viewEndF = _liveEdge(data, rollingSpan);
+    final double leadCapMs = _leadCapMs(data, rollingSpan.toDouble());
+    viewEndF = ctrl.rollingLiveEdge(
+      totalSamples: data.totalSamples,
+      elapsedMs: data.lastDataAt == null
+          ? 0
+          : DateTime.now().difference(data.lastDataAt!).inMicroseconds / 1e3,
+      capSamples: leadCapMs * data.sampleRate / 1000.0,
+      sampleRate: data.sampleRate.toDouble(),
+      dataGeneration: data.dataGeneration,
+    );
     viewStartF = viewEndF - rollingSpan;
   }
   final viewSamples = viewEndF - viewStartF;
@@ -2397,7 +2413,9 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
     final endSec = viewEnd / sampleRate;
     double xToPx(double sec) =>
         (sec - startSec) * sampleRate * graphSz.width / viewSamples;
-    double xSlack(double step) => step + _kLiveEdgeLeadMs / 1000.0;
+    // Slack past the live edge so edge-adjacent ticks don't toggle per frame;
+    // sized to the same capped lead the window's right edge can reach.
+    double xSlack(double step) => step + _leadCapMs(_data, viewSamples) / 1000;
     final xLines = _fitTimeLines(
       startSec,
       endSec,
