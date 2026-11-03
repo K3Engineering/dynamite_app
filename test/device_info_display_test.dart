@@ -55,13 +55,13 @@ void main() {
           model: 'Dynamite Sampler Pro Mk1',
           serial: 'A4CF1208F51E',
           hardwareRev: 'v700P',
-          firmwareRev: 'v700P|v1.2.3',
+          firmwareRev: 'v1.2.3',
         ),
       );
 
       expect(find.text('Dynamite Sampler Pro Mk1'), findsOneWidget);
       expect(find.text('v700P'), findsOneWidget);
-      expect(find.text('v700P|v1.2.3'), findsOneWidget);
+      expect(find.text('v1.2.3'), findsOneWidget);
       expect(find.text('A4CF1208F51E'), findsOneWidget);
       expect(find.text('K3 Engineering'), findsOneWidget);
       expect(find.text('—'), findsNothing);
@@ -76,7 +76,7 @@ void main() {
           manufacturer: 'K3 Engineering',
           model: 'Dynamite Sampler Pro Mk1',
           hardwareRev: 'v700P',
-          firmwareRev: 'v700P|v1.2.3',
+          firmwareRev: 'v1.2.3',
         ),
       );
       expect(find.text('—'), findsOneWidget);
