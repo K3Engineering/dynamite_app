@@ -15,6 +15,7 @@ import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 import '../models/sample_slice.dart';
 import 'adc_sink.dart';
+import 'device_clock.dart';
 
 /// Storage and derived statistics for the live ADC stream.
 ///
@@ -178,7 +179,7 @@ class DataHub extends ChangeNotifier
     }
   }
 
-  new() {
+  new({Duration Function()? now}) : _deviceClock = DeviceClock(now: now) {
     clear();
   }
 
@@ -196,6 +197,7 @@ class DataHub extends ChangeNotifier
     streamStartedAt = DateTime.now();
     lastDataAt = null;
     packetAnchor = null;
+    _deviceClock.clear();
     gaps.clear();
     for (int i = 0; i < kAdcChannelCount; ++i) {
       tare[i] = null;
@@ -214,6 +216,18 @@ class DataHub extends ChangeNotifier
     lastMalformedPacketAt = DateTime.now();
     lastMalformedPacketLen = length;
   }
+
+  /// Delivery-fed sync of the PC clock to the device's sample oscillator
+  /// (see `DeviceClock`). Fed by [commitBatch] — the monitoring pause never
+  /// commits, so a paused span simply isn't in the fit, and the clock's own
+  /// gap handling re-anchors after it.
+  final DeviceClock _deviceClock;
+
+  /// The clock fit's estimate of the sample index the device is generating
+  /// right now; null before the stream's first batch. The shared chart
+  /// geometry floats on this (graph_components `_computeGeometry`).
+  @override
+  double? projectedEndAt() => _deviceClock.projectedEndAt(sampleRateHz);
 
   bool get taring => _pendingTare != null;
 
@@ -382,6 +396,9 @@ class DataHub extends ChangeNotifier
   @override
   void commitBatch(int startIdx) {
     lastDataAt = DateTime.now();
+    // Feed the device clock the confirmed end of the stream timeline and
+    // this instant on the PC clock — the sync's only observable.
+    _deviceClock.observe(totalSamples);
     final int count = totalSamples - startIdx;
     if (count > 0) {
       _emit(HubBatchAppended(startIdx, count));

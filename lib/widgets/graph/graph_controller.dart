@@ -16,9 +16,9 @@ sealed class GraphViewport {
 /// count; null means "show everything" (auto-expanding squeeze). The null
 /// lock is only reachable once the retained data exceeds
 /// [GraphController.minLiveSpan] (see [GraphController.goLive]), so its
-/// window always starts exactly at the oldest sample -- both edges sit on
-/// data, which is what lets the painter pin the view instead of floating it
-/// on the live-edge estimate.
+/// window always starts exactly at the oldest sample -- the painters pin
+/// that left edge to retention and float only the right one on the live-edge
+/// estimate.
 final class GraphLive extends GraphViewport {
   const new([this.span]);
 
@@ -50,10 +50,13 @@ class GraphController extends ChangeNotifier {
   bool get isLive => _viewport is GraphLive;
 
   /// The locked span when rolling on the live edge ([GraphLive] with a
-  /// span); null when parked or when live-showing everything. Only rolling
-  /// windows float on the fractional live-edge estimate; parked and
-  /// show-everything views are data-pinned, so nothing on screen moves
-  /// between packet arrivals.
+  /// span); null when parked or when live-showing everything. Live
+  /// viewports float their right edge on the fractional live-edge projection
+  /// (a rolling window floats both edges, "everything" only the right one);
+  /// parked windows are data-pinned, so nothing on screen moves between
+  /// packet arrivals there. The float itself is computed once per update
+  /// into a shared snapshot (graph_components `_GraphGeometry`), so all
+  /// chart surfaces agree on it exactly.
   int? get lockedLiveSpan => switch (_viewport) {
     GraphLive(:final span?) => span,
     _ => null,

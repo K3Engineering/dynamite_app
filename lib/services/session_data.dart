@@ -131,6 +131,10 @@ class SessionData implements GraphDataSource {
   @override
   DateTime? get lastDataAt => null;
 
+  /// Static data has no live device clock.
+  @override
+  double? projectedEndAt() => null;
+
   /// Session data is immutable after load; there is no "new stream".
   @override
   int get dataGeneration => 0;

@@ -142,6 +142,17 @@ abstract interface class GraphDataSource
   /// When the newest samples arrived (live sources); null for static sources.
   DateTime? get lastDataAt;
 
+  /// Estimated sample index the device is generating right now, extrapolated
+  /// from the source's delivery-side fit of the device oscillator (services
+  /// `DeviceClock`); null before a live stream's first batch, and forever
+  /// for static sources. The one time signal live chart geometry reads:
+  /// graph_components' `_GraphGeometry` floats every live surface's windows
+  /// on this plus a fixed lead, so the edge's advance rate locks to the
+  /// device's clock (crystal skew can't drift it) and per-packet delivery
+  /// jitter cancels in the fit instead of rewinding a packet-anchored
+  /// extrapolation.
+  double? projectedEndAt();
+
   /// Monotonic identity of the data stream; bumped on a reset for a NEW stream.
   /// Renderers mix it into segment-cache keys so baked content from a previous
   /// stream is dropped (both restart at absolute sample 0). Static sources
