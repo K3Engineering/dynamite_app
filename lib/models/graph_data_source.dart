@@ -144,11 +144,13 @@ abstract interface class GraphDataSource
 
   /// Estimated sample index the device is generating right now, extrapolated
   /// from the source's delivery-side fit of the device oscillator (services
-  /// `DeviceClock`); null for static sources and before a stream's first
-  /// batch. The rolling live edge floats on this plus a fixed lead, so the
-  /// edge's advance rate locks to the device's clock (crystal skew can't
-  /// drift it) and per-packet delivery jitter cancels in the fit instead of
-  /// rewinding a packet-anchored extrapolation.
+  /// `DeviceClock`); null before a live stream's first batch, and forever
+  /// for static sources. The one time signal live chart geometry reads:
+  /// graph_components' `_GraphGeometry` floats every live surface's windows
+  /// on this plus a fixed lead, so the edge's advance rate locks to the
+  /// device's clock (crystal skew can't drift it) and per-packet delivery
+  /// jitter cancels in the fit instead of rewinding a packet-anchored
+  /// extrapolation.
   double? projectedEndAt();
 
   /// Monotonic identity of the data stream; bumped on a reset for a NEW stream.

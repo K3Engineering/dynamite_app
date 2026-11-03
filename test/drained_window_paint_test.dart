@@ -26,10 +26,14 @@ void main() {
     final hub = DataHub();
     final frame = Int32List(channels)..fillRange(0, channels, 100);
     // Past the ring capacity the head of retention advances one per sample.
+    // commitBatch publishes the feed (repaints the painters); addSampleFrame
+    // only stages.
     void feed(int count) {
+      final start = hub.totalSamples;
       for (var i = 0; i < count; i++) {
         hub.addSampleFrame(frame);
       }
+      hub.commitBatch(start);
     }
 
     final ctrl = GraphController();

@@ -188,34 +188,15 @@ final class _ConvertedChannel {
 // Minimap
 // ---------------------------------------------------------------------------
 
-/// The minimap's sample window: the retained range (floored at
-/// [GraphController.minLiveSpan] for a young stream) with its right edge
-/// floated on the live-edge projection, so the map glides with the main
-/// graphs at display rate instead of stepping per packet delivery. Paint,
-/// tap and drag all read this, so gestures and ink cannot disagree about
-/// the map's scale.
-(double start, double span) _minimapWindow(
-  GraphDataSource data,
-  GraphController ctrl,
-) {
-  final int total = data.totalSamples;
-  final int oldest = data.oldestSample;
-  // Cap sized on the integer (pinned) span the window would have had.
-  final double mapEnd = _liveEdgeF(
-    data,
-    ctrl.defaultLiveSpan(total, oldest).toDouble(),
-  );
-  final double mapSpan = math.max(mapEnd - oldest, ctrl.minLiveSpan.toDouble());
-  return (mapEnd - mapSpan, mapSpan);
-}
-
 class _Minimap extends StatefulWidget {
   final GraphDataSource dataSource;
   final DisplayUnit unit;
   final GraphController graphCtrl;
 
-  /// Vsync driver for smooth live-edge scrolling (see [_GraphWorkspaceState]).
-  final Listenable vsync;
+  /// The shared window snapshot all chart surfaces paint from (see
+  /// [_GraphGeometry]); both the map window and the painter's window-change
+  /// repaints come from it, so the map cannot disagree with the main graphs.
+  final ValueListenable<_GraphGeometry> geometry;
 
   /// Channels to plot, bound to [unit] in the workspace (see
   /// [_ConvertedChannel]).
@@ -225,7 +206,7 @@ class _Minimap extends StatefulWidget {
     required this.dataSource,
     required this.unit,
     required this.graphCtrl,
-    required this.vsync,
+    required this.geometry,
     required this.channels,
   });
 
@@ -247,11 +228,14 @@ class _MinimapState extends State<_Minimap> {
 
   /// The minimap's window: `(totalSamples, (mapStart, mapSpan))` in
   /// fractional samples, or null when there is nothing to map (no data, or a
-  /// plot too narrow to divide by).
+  /// plot too narrow to divide by). The window is the same snapshot the
+  /// painter draws from (see [_GraphGeometry]), so a gesture maps onto
+  /// exactly the scale on screen.
   (int, (double, double))? _mapWindow(double graphWidth) {
     final totalSamples = widget.dataSource.totalSamples;
     if (totalSamples == 0 || graphWidth <= 0) return null;
-    return (totalSamples, _minimapWindow(widget.dataSource, widget.graphCtrl));
+    final geo = widget.geometry.value;
+    return (totalSamples, (geo.mapStart, geo.mapSpan));
   }
 
   void _onMinimapTap(TapDownDetails d, double graphWidth) {
@@ -311,8 +295,7 @@ class _MinimapState extends State<_Minimap> {
                   foregroundPainter: _MinimapPainter(
                     widget.dataSource,
                     widget.unit,
-                    widget.graphCtrl,
-                    widget.vsync,
+                    widget.geometry,
                     widget.channels,
                     colorScheme,
                     dpr,
@@ -334,7 +317,11 @@ class _MinimapState extends State<_Minimap> {
 class _MinimapPainter extends CustomPainter {
   final GraphDataSource _data;
   final DisplayUnit _unit;
-  final GraphController _ctrl;
+
+  /// The shared window snapshot (see [_GraphGeometry]): the map window and
+  /// the viewport box both come from it, and it drives repaints for window
+  /// changes; [_data].repaint covers the rest (new data, tare, calibration).
+  final ValueListenable<_GraphGeometry> _geo;
   final List<_ConvertedChannel> _channels;
   final ColorScheme _colorScheme;
   final double _dpr;
@@ -353,17 +340,14 @@ class _MinimapPainter extends CustomPainter {
   new(
     this._data,
     this._unit,
-    this._ctrl,
-    Listenable vsync,
+    this._geo,
     this._channels,
     this._colorScheme,
     this._dpr,
     this._cache,
     this._reductionCache,
     this._bakePump,
-  ) : super(
-        repaint: Listenable.merge([_data.repaint, _ctrl, _bakePump, vsync]),
-      );
+  ) : super(repaint: Listenable.merge([_data.repaint, _geo, _bakePump]));
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -382,7 +366,9 @@ class _MinimapPainter extends CustomPainter {
     if (totalSamples == 0) return;
 
     final oldestSample = _data.oldestSample;
-    final (mapStart, mapSpan) = _minimapWindow(_data, _ctrl);
+    final geo = _geo.value;
+    final mapStart = geo.mapStart;
+    final mapSpan = geo.mapSpan;
 
     // Bucket-folded extremes over the retained window, like the force
     // painter. The lifetime [GraphDataSource.channelExtremes] never shrink,
@@ -435,15 +421,15 @@ class _MinimapPainter extends CustomPainter {
     );
     if (workRemains) _bakePump.schedule();
 
-    // The viewport box reads the same fractional window the main graphs use
-    // (see [_viewWindowF]), so the box tracks the floated live edge instead
-    // of the packet-stepping confirmed end. A parked window stays pinned in
-    // absolute time as eviction passes it (see
+    // The viewport box is the main graphs' window from the same snapshot,
+    // so it sits exactly where the graphs' window sits. A parked window
+    // stays pinned in absolute time as eviction passes it (see
     // [GraphController.effectiveRange]), so the box slides off the left;
     // clamp it to the map or its border would draw into the Y-label gutter.
     // Fully off it collapses to a line on the left edge -- the main graph
     // shows the "beyond history" state.
-    final (viewStart, viewEnd) = _viewWindowF(_data, _ctrl);
+    final viewStart = geo.viewStart;
+    final viewEnd = geo.viewEnd;
     final double x1 = ((viewStart - mapStart) * gw / mapSpan).clamp(0.0, gw);
     final double x2 = ((viewEnd - mapStart) * gw / mapSpan).clamp(0.0, gw);
 
@@ -468,6 +454,12 @@ class _MinimapPainter extends CustomPainter {
 // Interactive Graph Area (handles gestures)
 // ---------------------------------------------------------------------------
 
+/// Pan/pinch handling for one plot surface. The px<->sample mapping reads
+/// the controller's INTEGER windows ([GraphController.effectiveRange]), not
+/// the floated paint window ([_GraphGeometry]): right-edge gestures snap to
+/// live ([GraphController.zoomTo]), so the only residual mismatch is a
+/// rolling view gliding under an in-flight gesture, bounded by the
+/// live-edge lead ([_kLiveEdgeCapMs]).
 class _InteractiveGraphArea extends StatefulWidget {
   final GraphDataSource data;
   final GraphController ctrl;
@@ -604,20 +596,25 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   final AxisLabelCache _forceLabels = AxisLabelCache();
   final AxisLabelCache _derivLabels = AxisLabelCache();
 
-  /// Vsync driver for smooth live-edge scrolling; the painters merge [_vsync]
-  /// into their repaint listenable.
+  /// The one window snapshot every chart surface paints from (see
+  /// [_GraphGeometry]); its notifier also drives the painters' repaints for
+  /// window changes (data content repaints ride [GraphDataSource.repaint]).
+  /// Recomputed once per geometry-relevant change: each vsync tick while
+  /// live (see [_syncTicker]), and synchronously when the data source or
+  /// controller notifies.
   late final Ticker _ticker;
-  final ValueNotifier<int> _vsync = ValueNotifier(0);
+  late final ValueNotifier<_GraphGeometry> _geometry;
 
   @override
   void initState() {
     super.initState();
+    _geometry = ValueNotifier(_computeGeometry(widget.data, widget.ctrl));
     _ticker = createTicker((_) {
-      _vsync.value++;
+      _updateGeometry();
       _syncTicker(); // a stalled stream stops the ticker from within
     });
-    widget.ctrl.addListener(_syncTicker);
-    widget.data.repaint.addListener(_syncTicker);
+    widget.ctrl.addListener(_onGeometrySourceChanged);
+    widget.data.repaint.addListener(_onGeometrySourceChanged);
     _syncTicker();
   }
 
@@ -625,12 +622,21 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
   void didUpdateWidget(GraphWorkspace oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.ctrl != widget.ctrl || oldWidget.data != widget.data) {
-      oldWidget.ctrl.removeListener(_syncTicker);
-      oldWidget.data.repaint.removeListener(_syncTicker);
-      widget.ctrl.addListener(_syncTicker);
-      widget.data.repaint.addListener(_syncTicker);
-      _syncTicker();
+      oldWidget.ctrl.removeListener(_onGeometrySourceChanged);
+      oldWidget.data.repaint.removeListener(_onGeometrySourceChanged);
+      widget.ctrl.addListener(_onGeometrySourceChanged);
+      widget.data.repaint.addListener(_onGeometrySourceChanged);
+      _onGeometrySourceChanged();
     }
+  }
+
+  void _updateGeometry() {
+    _geometry.value = _computeGeometry(widget.data, widget.ctrl);
+  }
+
+  void _onGeometrySourceChanged() {
+    _updateGeometry();
+    _syncTicker();
   }
 
   /// Runs only while a live viewport animates on a fresh stream; the next
@@ -653,10 +659,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
 
   @override
   void dispose() {
-    widget.ctrl.removeListener(_syncTicker);
-    widget.data.repaint.removeListener(_syncTicker);
+    widget.ctrl.removeListener(_onGeometrySourceChanged);
+    widget.data.repaint.removeListener(_onGeometrySourceChanged);
     _ticker.dispose();
-    _vsync.dispose();
+    _geometry.dispose();
     _bakePump.dispose();
     _forceCache.dispose();
     _derivCache.dispose();
@@ -704,11 +710,10 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                   ctrl: widget.ctrl,
                   painter: _ForceGraphPainter(
                     widget.data,
-                    widget.ctrl,
                     unit: unit,
                     channels: convertedChannels,
                     showXLabels: !widget.showDerivative,
-                    vsync: _vsync,
+                    geometry: _geometry,
                     cache: _forceCache,
                     reductionCache: _forceReductionCache,
                     colorScheme: colorScheme,
@@ -726,10 +731,9 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                     ctrl: widget.ctrl,
                     painter: _DerivativeGraphPainter(
                       widget.data,
-                      widget.ctrl,
                       unit: unit,
                       channels: convertedChannels,
-                      vsync: _vsync,
+                      geometry: _geometry,
                       cache: _derivCache,
                       reductionCache: _derivReductionCache,
                       colorScheme: colorScheme,
@@ -743,7 +747,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                 dataSource: widget.data,
                 unit: unit,
                 graphCtrl: widget.ctrl,
-                vsync: _vsync,
+                geometry: _geometry,
                 channels: convertedChannels,
               ),
             ],
@@ -1684,9 +1688,6 @@ void _drawMissingDataHatching(
   final viewSamples = viewEnd - viewStart;
   if (viewSamples <= 0) return;
 
-  double xOf(int sampleIdx) =>
-      (sampleIdx - viewStart) * graphSz.width / viewSamples;
-
   final hatchPen = Paint()
     ..color = color.withAlpha(60)
     ..style = PaintingStyle.stroke
@@ -1695,10 +1696,7 @@ void _drawMissingDataHatching(
     ..color = color.withAlpha(20)
     ..style = PaintingStyle.fill;
 
-  void drawHatchRegion(int startIdx, int endIdx) {
-    final xStart = xOf(startIdx);
-    final xEnd = xOf(endIdx);
-
+  void drawHatchRegion(double xStart, double xEnd) {
     const double spacing = 8.0;
 
     final cStart = xStart - graphSz.height;
@@ -1724,8 +1722,14 @@ void _drawMissingDataHatching(
     canvas.restore();
   }
 
-  for (final (gs, ge) in gaps.rangesIn(sScanStart, sScanEnd)) {
-    drawHatchRegion(gs, ge);
+  for (final (xStart, xEnd) in _gapSpansX(
+    gaps,
+    sScanStart,
+    sScanEnd,
+    viewStart,
+    graphSz.width / viewSamples,
+  )) {
+    drawHatchRegion(xStart, xEnd);
   }
 }
 
@@ -2117,13 +2121,35 @@ bool _paintEnvelopeDataLayer(
   return workRemains;
 }
 
+/// The gap ranges overlapping [start, end) as x-coordinate pairs under
+/// x = (s - originSamples) * pxPerSample. The single rasterization of "where
+/// the gaps are": the paint-time hatching ([_drawMissingDataHatching]) and
+/// the bake-time ink clip ([_gapClipPath]) both map through it, so they
+/// cannot disagree about a gap's edges.
+List<(double, double)> _gapSpansX(
+  GapList gaps,
+  int start,
+  int end,
+  double originSamples,
+  double pxPerSample,
+) => [
+  for (final (gs, ge) in gaps.rangesIn(start, end))
+    ((gs - originSamples) * pxPerSample, (ge - originSamples) * pxPerSample),
+];
+
 /// Everything-except-gaps clip for [start, end) under x = (s - start) *
 /// pxPerSample, or null when no gap overlaps (the common case). One huge rect
 /// with even-odd gap holes; ranges are disjoint.
 Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
   if (gaps.isEmpty) return null;
   Path? path;
-  for (final (gs, ge) in gaps.rangesIn(start, end)) {
+  for (final (x1, x2) in _gapSpansX(
+    gaps,
+    start,
+    end,
+    start.toDouble(),
+    pxPerSample,
+  )) {
     path ??= Path()
       ..fillType = PathFillType.evenOdd
       ..addRect(
@@ -2134,14 +2160,7 @@ Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
           _kUnbounded,
         ),
       );
-    path.addRect(
-      Rect.fromLTRB(
-        (gs - start) * pxPerSample,
-        -_kUnbounded,
-        (ge - start) * pxPerSample,
-        _kUnbounded,
-      ),
-    );
+    path.addRect(Rect.fromLTRB(x1, -_kUnbounded, x2, _kUnbounded));
   }
   return path;
 }
@@ -2177,49 +2196,82 @@ double _leadCapSamples(GraphDataSource data, double spanSamples) => math.min(
   _kLiveEdgeLeadSpanFraction * spanSamples,
 );
 
-/// The live edge in fractional samples: the device-clock projection
-/// ([GraphDataSource.projectedEndAt]) plus the display lead, clamped into
-/// [totalSamples, totalSamples + cap(span)]. A static source has no device
-/// clock; its edge pins to the confirmed end.
-double _liveEdgeF(GraphDataSource data, double spanSamples) {
-  final double total = data.totalSamples.toDouble();
-  if (data.lastDataAt == null) return total;
-  // Before the clock fit exists (a stream's first second), the projection
-  // falls back to the confirmed end: the lead holds statically, stepping
-  // with deliveries, until the fit takes over the glide.
-  final double proj = data.projectedEndAt() ?? total;
-  return (proj + _kLiveEdgeLeadMs * data.sampleRate / 1000.0).clamp(
-    total,
-    total + _leadCapSamples(data, spanSamples),
-  );
-}
+/// The fractional-sample window geometry every chart surface (both graphs,
+/// the minimap and its viewport box) paints from for one repaint round: the
+/// viewport window plus the minimap's map window, derived from ONE read of
+/// the device-clock projection. [_GraphWorkspaceState] recomputes it once
+/// per update and hands the value down; painters and gesture handlers read
+/// the snapshot instead of calling a window function themselves, so the
+/// surfaces agree exactly rather than approximately.
+///
+/// A record, not a class: structural equality makes the workspace's
+/// ValueNotifier fire only when the window numbers actually change (a
+/// stalled/clamped edge between packets produces no repaint). Repaints for
+/// data changes that leave the window untouched (tare, calibration) come
+/// from [GraphDataSource.repaint], merged into the painters separately.
+typedef _GraphGeometry = ({
+  /// The viewport window the force/derivative graphs draw.
+  double viewStart,
+  double viewEnd,
 
-/// The visible window in fractional samples. Live viewports float their
-/// right edge on the device-clock projection (see [_liveEdgeF]): a rolling
-/// window (both edges) and live "everything" (right edge only, the left is
-/// retention-pinned). Parked windows keep their integer edges. Every live
-/// surface (both graphs, the minimap and its viewport box) reads this one
-/// function, so they agree on the window by construction.
-(double start, double end) _viewWindowF(
-  GraphDataSource data,
-  GraphController ctrl,
-) {
-  final (viewStart, viewEnd) = ctrl.effectiveRange(
-    data.totalSamples,
-    data.oldestSample,
-  );
-  final int? span = ctrl.lockedLiveSpan;
-  if (span != null) {
-    final double end = _liveEdgeF(data, span.toDouble());
-    return (end - span, end);
-  }
-  if (ctrl.isLive) {
-    return (
-      viewStart.toDouble(),
-      _liveEdgeF(data, (viewEnd - viewStart).toDouble()),
+  /// The minimap's map window (the retained range, right edge floated).
+  double mapStart,
+  double mapSpan,
+});
+
+/// Derive one update's shared [_GraphGeometry]. Live viewports float their
+/// right edge on the device-clock projection ([GraphDataSource.projectedEndAt])
+/// plus the display lead, clamped into [totalSamples, totalSamples + cap]:
+/// the projection cancels per-packet delivery jitter, and both clamp bounds
+/// are monotone in totalSamples, so the edge can never rewind. A rolling
+/// window floats both edges; live "everything" floats only the right one
+/// (the left is retention-pinned); parked windows keep their integer edges.
+/// The minimap shows the retained range (floored at
+/// [GraphController.minLiveSpan] for a young stream) with its right edge
+/// floated on the same projection.
+_GraphGeometry _computeGeometry(GraphDataSource data, GraphController ctrl) {
+  final int totalInt = data.totalSamples;
+  final int oldestInt = data.oldestSample;
+  final double total = totalInt.toDouble();
+
+  // The update's single clock read. Null before a live stream's first batch
+  // (and forever for static sources): such edges pin to the confirmed end.
+  final double? proj = data.projectedEndAt();
+  double liveEdge(double spanSamples) {
+    if (proj == null) return total;
+    return (proj + _kLiveEdgeLeadMs * data.sampleRate / 1000.0).clamp(
+      total,
+      total + _leadCapSamples(data, spanSamples),
     );
   }
-  return (viewStart.toDouble(), viewEnd.toDouble());
+
+  final (viewStart, viewEnd) = ctrl.effectiveRange(totalInt, oldestInt);
+  final double vStart, vEnd;
+  final int? rollingSpan = ctrl.lockedLiveSpan;
+  if (rollingSpan != null) {
+    vEnd = liveEdge(rollingSpan.toDouble());
+    vStart = vEnd - rollingSpan;
+  } else if (ctrl.isLive) {
+    vStart = viewStart.toDouble();
+    vEnd = liveEdge((viewEnd - viewStart).toDouble());
+  } else {
+    vStart = viewStart.toDouble();
+    vEnd = viewEnd.toDouble();
+  }
+
+  final double mapEnd = liveEdge(
+    ctrl.defaultLiveSpan(totalInt, oldestInt).toDouble(),
+  );
+  final double mapSpan = math.max(
+    mapEnd - oldestInt,
+    ctrl.minLiveSpan.toDouble(),
+  );
+  return (
+    viewStart: vStart,
+    viewEnd: vEnd,
+    mapStart: mapEnd - mapSpan,
+    mapSpan: mapSpan,
+  );
 }
 
 /// Common painter prologue shared by the force and derivative graphs: translate
@@ -2241,7 +2293,7 @@ _GraphLayout? _setupGraphFrame(
   Canvas canvas,
   Size size,
   GraphDataSource data,
-  GraphController ctrl, {
+  _GraphGeometry geo, {
   required double topSpace,
   required double bottomSpace,
   required int minSamples,
@@ -2266,19 +2318,15 @@ _GraphLayout? _setupGraphFrame(
 
   if (data.totalSamples < minSamples) return null;
 
-  // Live viewports float on the device-clock projection (see [_viewWindowF]):
-  // the projection cancels per-packet delivery jitter, and both clamp bounds
-  // are monotone in totalSamples, so the edge can never rewind. Parked
-  // windows keep their integer edges: nothing on screen moves between
-  // packets there.
-  final (viewStartF, viewEndF) = _viewWindowF(data, ctrl);
-  final viewSamples = viewEndF - viewStartF;
+  // The visible window comes from the shared per-update snapshot (see
+  // [_GraphGeometry]) -- the painters never derive their own.
+  final viewSamples = geo.viewEnd - geo.viewStart;
   if (viewSamples < minSamples) return null;
 
   return (
     graphSz: graphSz,
-    viewStart: viewStartF,
-    viewEnd: viewEndF,
+    viewStart: geo.viewStart,
+    viewEnd: geo.viewEnd,
     viewSamples: viewSamples,
   );
 }
@@ -2293,7 +2341,11 @@ _GraphLayout? _setupGraphFrame(
 abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final GraphDataSource _data;
   final DisplayUnit _unit;
-  final GraphController _ctrl;
+
+  /// The shared window snapshot (see [_GraphGeometry]) the visible window
+  /// comes from; fires repaints for window changes, while [_data].repaint
+  /// covers the rest (new data, tare, calibration).
+  final ValueListenable<_GraphGeometry> geometry;
 
   /// Channels to plot, bound to [_unit] in the workspace (see
   /// [_ConvertedChannel]).
@@ -2318,20 +2370,17 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
   final BakePump bakePump;
 
   new(
-    this._data,
-    this._ctrl, {
+    this._data, {
+    required this.geometry,
     required this._unit,
     required this._channels,
-    required Listenable vsync,
     required this.cache,
     required this.reductionCache,
     required this.colorScheme,
     required this.dpr,
     required this.labels,
     required this.bakePump,
-  }) : super(
-         repaint: Listenable.merge([_data.repaint, _ctrl, bakePump, vsync]),
-       );
+  }) : super(repaint: Listenable.merge([_data.repaint, geometry, bakePump]));
 
   // --- Layout hooks --------------------------------------------------------
 
@@ -2395,7 +2444,7 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
       canvas,
       size,
       _data,
-      _ctrl,
+      geometry.value,
       topSpace: topSpace,
       bottomSpace: showXLabels ? _kGraphBottomSpace : 4,
       minSamples: 1 + firstSampleOffset,
@@ -2574,12 +2623,11 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
   final bool showXLabels;
 
   new(
-    super.data,
-    super.ctrl, {
+    super.data, {
     this.showXLabels = true,
+    required super.geometry,
     required super.unit,
     required super.channels,
-    required super.vsync,
     required super.cache,
     required super.reductionCache,
     required super.colorScheme,
@@ -2686,11 +2734,10 @@ class _ForceGraphPainter extends _TimeSeriesGraphPainter {
 /// units per second.
 class _DerivativeGraphPainter extends _TimeSeriesGraphPainter {
   new(
-    super.data,
-    super.ctrl, {
+    super.data, {
+    required super.geometry,
     required super.unit,
     required super.channels,
-    required super.vsync,
     required super.cache,
     required super.reductionCache,
     required super.colorScheme,

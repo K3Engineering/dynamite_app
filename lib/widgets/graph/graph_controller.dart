@@ -50,11 +50,13 @@ class GraphController extends ChangeNotifier {
   bool get isLive => _viewport is GraphLive;
 
   /// The locked span when rolling on the live edge ([GraphLive] with a
-  /// span); null when parked or when live-showing everything. The painters
-  /// float every live viewport's right edge on the fractional live-edge
-  /// estimate (a rolling window floats both edges, "everything" only the
-  /// right one); parked windows are data-pinned, so nothing on screen moves
-  /// between packet arrivals there.
+  /// span); null when parked or when live-showing everything. Live
+  /// viewports float their right edge on the fractional live-edge projection
+  /// (a rolling window floats both edges, "everything" only the right one);
+  /// parked windows are data-pinned, so nothing on screen moves between
+  /// packet arrivals there. The float itself is computed once per update
+  /// into a shared snapshot (graph_components `_GraphGeometry`), so all
+  /// chart surfaces agree on it exactly.
   int? get lockedLiveSpan => switch (_viewport) {
     GraphLive(:final span?) => span,
     _ => null,

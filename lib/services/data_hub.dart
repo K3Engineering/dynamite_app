@@ -224,8 +224,8 @@ class DataHub extends ChangeNotifier
   final DeviceClock _deviceClock;
 
   /// The clock fit's estimate of the sample index the device is generating
-  /// right now; null before the stream's first batch. The rolling live edge
-  /// floats on this (graph_components `_leadCapSamples` sizes the lead).
+  /// right now; null before the stream's first batch. The shared chart
+  /// geometry floats on this (graph_components `_computeGeometry`).
   @override
   double? projectedEndAt() => _deviceClock.projectedEndAt(sampleRateHz);
 

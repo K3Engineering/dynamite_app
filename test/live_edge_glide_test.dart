@@ -8,7 +8,7 @@ import 'package:dynamite_app/services/data_hub.dart';
 import 'package:dynamite_app/widgets/graph_components.dart';
 
 /// Paint smoke test for the device-clock-floated live views (graph_components
-/// `_viewWindowF` / `_minimapWindow`): rolling (locked-span), "everything"
+/// `_GraphGeometry` / `_computeGeometry`): rolling (locked-span), "everything"
 /// (squeeze) and parked viewports, fed at the real link's cadence -- the
 /// device makes one 20-sample batch per 20 ms of device time, surfaced at the
 /// 18.75 ms connection interval, so an event usually delivers one batch,
@@ -89,9 +89,7 @@ void main() {
     }
     expect(tester.takeException(), isNull);
     // The clock fit's edge runs at or ahead of the confirmed end.
-    final proj = hub.projectedEndAt();
-    expect(proj, isNotNull);
-    expect(proj!, greaterThanOrEqualTo(hub.totalSamples));
+    expect(hub.projectedEndAt(), greaterThanOrEqualTo(hub.totalSamples));
 
     ctrl.goLive(
       span: hub.totalSamples,
