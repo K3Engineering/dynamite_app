@@ -188,10 +188,34 @@ final class _ConvertedChannel {
 // Minimap
 // ---------------------------------------------------------------------------
 
+/// The minimap's sample window: the retained range (floored at
+/// [GraphController.minLiveSpan] for a young stream) with its right edge
+/// floated on the live-edge projection, so the map glides with the main
+/// graphs at display rate instead of stepping per packet delivery. Paint,
+/// tap and drag all read this, so gestures and ink cannot disagree about
+/// the map's scale.
+(double start, double span) _minimapWindow(
+  GraphDataSource data,
+  GraphController ctrl,
+) {
+  final int total = data.totalSamples;
+  final int oldest = data.oldestSample;
+  // Cap sized on the integer (pinned) span the window would have had.
+  final double mapEnd = _liveEdgeF(
+    data,
+    ctrl.defaultLiveSpan(total, oldest).toDouble(),
+  );
+  final double mapSpan = math.max(mapEnd - oldest, ctrl.minLiveSpan.toDouble());
+  return (mapEnd - mapSpan, mapSpan);
+}
+
 class _Minimap extends StatefulWidget {
   final GraphDataSource dataSource;
   final DisplayUnit unit;
   final GraphController graphCtrl;
+
+  /// Vsync driver for smooth live-edge scrolling (see [_GraphWorkspaceState]).
+  final Listenable vsync;
 
   /// Channels to plot, bound to [unit] in the workspace (see
   /// [_ConvertedChannel]).
@@ -201,6 +225,7 @@ class _Minimap extends StatefulWidget {
     required this.dataSource,
     required this.unit,
     required this.graphCtrl,
+    required this.vsync,
     required this.channels,
   });
 
@@ -220,18 +245,13 @@ class _MinimapState extends State<_Minimap> {
     super.dispose();
   }
 
-  /// The minimap's window in samples: `(totalSamples, (mapStart, mapSpan))`,
-  /// or null when there is nothing to map (no data, or a plot too narrow to
-  /// divide by). Tap and drag both read it, so the two gestures cannot
-  /// disagree about the map's scale.
-  (int, (int, int))? _mapWindow(double graphWidth) {
+  /// The minimap's window: `(totalSamples, (mapStart, mapSpan))` in
+  /// fractional samples, or null when there is nothing to map (no data, or a
+  /// plot too narrow to divide by).
+  (int, (double, double))? _mapWindow(double graphWidth) {
     final totalSamples = widget.dataSource.totalSamples;
     if (totalSamples == 0 || graphWidth <= 0) return null;
-    final mapSpan = widget.graphCtrl.defaultLiveSpan(
-      totalSamples,
-      widget.dataSource.oldestSample,
-    );
-    return (totalSamples, (totalSamples - mapSpan, mapSpan));
+    return (totalSamples, _minimapWindow(widget.dataSource, widget.graphCtrl));
   }
 
   void _onMinimapTap(TapDownDetails d, double graphWidth) {
@@ -243,7 +263,7 @@ class _MinimapState extends State<_Minimap> {
       1.0,
     );
     widget.graphCtrl.centerOn(
-      mapStart + (frac * mapSpan).round(),
+      (mapStart + frac * mapSpan).round(),
       totalSamples,
       widget.dataSource.oldestSample,
     );
@@ -292,6 +312,7 @@ class _MinimapState extends State<_Minimap> {
                     widget.dataSource,
                     widget.unit,
                     widget.graphCtrl,
+                    widget.vsync,
                     widget.channels,
                     colorScheme,
                     dpr,
@@ -333,13 +354,16 @@ class _MinimapPainter extends CustomPainter {
     this._data,
     this._unit,
     this._ctrl,
+    Listenable vsync,
     this._channels,
     this._colorScheme,
     this._dpr,
     this._cache,
     this._reductionCache,
     this._bakePump,
-  ) : super(repaint: Listenable.merge([_data.repaint, _ctrl, _bakePump]));
+  ) : super(
+        repaint: Listenable.merge([_data.repaint, _ctrl, _bakePump, vsync]),
+      );
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -358,14 +382,18 @@ class _MinimapPainter extends CustomPainter {
     if (totalSamples == 0) return;
 
     final oldestSample = _data.oldestSample;
-    final mapSpan = _ctrl.defaultLiveSpan(totalSamples, oldestSample);
-    final mapStart = totalSamples - mapSpan;
+    final (mapStart, mapSpan) = _minimapWindow(_data, _ctrl);
 
     // Bucket-folded extremes over the retained window, like the force
     // painter. The lifetime [GraphDataSource.channelExtremes] never shrink,
     // so after a ring wrap they would keep scaling Y by evicted samples the
     // minimap can no longer draw.
-    final ext = _foldNetExtremes(_data, _channels, mapStart, totalSamples);
+    final ext = _foldNetExtremes(
+      _data,
+      _channels,
+      mapStart.floor(),
+      totalSamples,
+    );
     if (ext == null) return;
     // Zero is a display-space anchor, so include it even when the data does
     // not cross it.
@@ -378,8 +406,8 @@ class _MinimapPainter extends CustomPainter {
     _drawMissingDataHatching(
       canvas,
       Size(gw, gh),
-      viewStart: mapStart.toDouble(),
-      viewEnd: (mapStart + mapSpan).toDouble(),
+      viewStart: mapStart,
+      viewEnd: mapStart + mapSpan,
       data: _data,
       color: _colorScheme.error,
     );
@@ -396,8 +424,8 @@ class _MinimapPainter extends CustomPainter {
       gw: gw,
       gh: gh,
       dpr: _dpr,
-      viewStart: mapStart.toDouble(),
-      viewSpan: mapSpan.toDouble(),
+      viewStart: mapStart,
+      viewSpan: mapSpan,
       yMin: yMin,
       yMax: yMax,
       firstUsableSample: oldestSample,
@@ -407,15 +435,15 @@ class _MinimapPainter extends CustomPainter {
     );
     if (workRemains) _bakePump.schedule();
 
-    final (viewStart, viewEnd) = _ctrl.effectiveRange(
-      totalSamples,
-      oldestSample,
-    );
-    // A parked window stays pinned in absolute time as eviction passes it
-    // (see [GraphController.effectiveRange]), so the box slides off the
-    // left; clamp it to the map or its border would draw into the Y-label
-    // gutter. Fully off it collapses to a line on the left edge -- the
-    // main graph shows the "beyond history" state.
+    // The viewport box reads the same fractional window the main graphs use
+    // (see [_viewWindowF]), so the box tracks the floated live edge instead
+    // of the packet-stepping confirmed end. A parked window stays pinned in
+    // absolute time as eviction passes it (see
+    // [GraphController.effectiveRange]), so the box slides off the left;
+    // clamp it to the map or its border would draw into the Y-label gutter.
+    // Fully off it collapses to a line on the left edge -- the main graph
+    // shows the "beyond history" state.
+    final (viewStart, viewEnd) = _viewWindowF(_data, _ctrl);
     final double x1 = ((viewStart - mapStart) * gw / mapSpan).clamp(0.0, gw);
     final double x2 = ((viewEnd - mapStart) * gw / mapSpan).clamp(0.0, gw);
 
@@ -605,16 +633,17 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
     }
   }
 
-  /// Runs only while a rolling live window animates on a fresh stream; the
-  /// next packet's repaint restarts it after a stall. Data-pinned views
-  /// (parked, or live "everything") don't tick: nothing on screen moves
-  /// between packets there, so the packet's own repaint suffices.
+  /// Runs only while a live viewport animates on a fresh stream; the next
+  /// packet's repaint restarts it after a stall. Parked windows don't tick:
+  /// nothing on screen moves between packets there, so the packet's own
+  /// repaint suffices. (A static source's [lastDataAt] is null, so it never
+  /// passes the freshness test.)
   void _syncTicker() {
     final DateTime? last = widget.data.lastDataAt;
     final bool fresh =
         last != null &&
         DateTime.now().difference(last).inMilliseconds < _kTickerStallMs;
-    final bool shouldTick = widget.ctrl.lockedLiveSpan != null && fresh;
+    final bool shouldTick = widget.ctrl.isLive && fresh;
     // isActive, not isTicking: start() throws on isActive, and a started
     // ticker is active before its first frame, so isTicking can't guard a
     // double start() (web delivers batches as in-frame microtasks).
@@ -714,6 +743,7 @@ class _GraphWorkspaceState extends State<GraphWorkspace>
                 dataSource: widget.data,
                 unit: unit,
                 graphCtrl: widget.ctrl,
+                vsync: _vsync,
                 channels: convertedChannels,
               ),
             ],
@@ -2147,6 +2177,51 @@ double _leadCapSamples(GraphDataSource data, double spanSamples) => math.min(
   _kLiveEdgeLeadSpanFraction * spanSamples,
 );
 
+/// The live edge in fractional samples: the device-clock projection
+/// ([GraphDataSource.projectedEndAt]) plus the display lead, clamped into
+/// [totalSamples, totalSamples + cap(span)]. A static source has no device
+/// clock; its edge pins to the confirmed end.
+double _liveEdgeF(GraphDataSource data, double spanSamples) {
+  final double total = data.totalSamples.toDouble();
+  if (data.lastDataAt == null) return total;
+  // Before the clock fit exists (a stream's first second), the projection
+  // falls back to the confirmed end: the lead holds statically, stepping
+  // with deliveries, until the fit takes over the glide.
+  final double proj = data.projectedEndAt() ?? total;
+  return (proj + _kLiveEdgeLeadMs * data.sampleRate / 1000.0).clamp(
+    total,
+    total + _leadCapSamples(data, spanSamples),
+  );
+}
+
+/// The visible window in fractional samples. Live viewports float their
+/// right edge on the device-clock projection (see [_liveEdgeF]): a rolling
+/// window (both edges) and live "everything" (right edge only, the left is
+/// retention-pinned). Parked windows keep their integer edges. Every live
+/// surface (both graphs, the minimap and its viewport box) reads this one
+/// function, so they agree on the window by construction.
+(double start, double end) _viewWindowF(
+  GraphDataSource data,
+  GraphController ctrl,
+) {
+  final (viewStart, viewEnd) = ctrl.effectiveRange(
+    data.totalSamples,
+    data.oldestSample,
+  );
+  final int? span = ctrl.lockedLiveSpan;
+  if (span != null) {
+    final double end = _liveEdgeF(data, span.toDouble());
+    return (end - span, end);
+  }
+  if (ctrl.isLive) {
+    return (
+      viewStart.toDouble(),
+      _liveEdgeF(data, (viewEnd - viewStart).toDouble()),
+    );
+  }
+  return (viewStart.toDouble(), viewEnd.toDouble());
+}
+
 /// Common painter prologue shared by the force and derivative graphs: translate
 /// into the plot area, compute the plot [Size], draw the frame border, and
 /// resolve the visible window.
@@ -2191,34 +2266,12 @@ _GraphLayout? _setupGraphFrame(
 
   if (data.totalSamples < minSamples) return null;
 
-  final (viewStart, viewEnd) = ctrl.effectiveRange(
-    data.totalSamples,
-    data.oldestSample,
-  );
-  // Rolling live windows float their right edge on the device-clock
-  // projection (GraphDataSource.projectedEndAt) plus the lead, clamped into
-  // [totalSamples, totalSamples + cap]: the projection cancels per-packet
-  // delivery jitter, and both clamp bounds are monotone in totalSamples, so
-  // the edge can never rewind. Both painters read the same pure projection,
-  // so they agree on the edge by construction. Data-pinned views (parked,
-  // or live "everything") keep their integer edges: floating them would
-  // shake every tick and label by the lead's pixel width (most visible at
-  // squeezed full-view spans, where nothing else moves).
-  final rollingSpan = ctrl.lockedLiveSpan;
-  double viewStartF = viewStart.toDouble();
-  double viewEndF = viewEnd.toDouble();
-  if (rollingSpan != null) {
-    final double total = data.totalSamples.toDouble();
-    // Before the clock fit exists (a stream's first second), the projection
-    // falls back to the confirmed end: the lead holds statically, stepping
-    // with deliveries, until the fit takes over the glide.
-    final double proj = data.projectedEndAt() ?? total;
-    viewEndF = (proj + _kLiveEdgeLeadMs * data.sampleRate / 1000.0).clamp(
-      total,
-      total + _leadCapSamples(data, rollingSpan.toDouble()),
-    );
-    viewStartF = viewEndF - rollingSpan;
-  }
+  // Live viewports float on the device-clock projection (see [_viewWindowF]):
+  // the projection cancels per-packet delivery jitter, and both clamp bounds
+  // are monotone in totalSamples, so the edge can never rewind. Parked
+  // windows keep their integer edges: nothing on screen moves between
+  // packets there.
+  final (viewStartF, viewEndF) = _viewWindowF(data, ctrl);
   final viewSamples = viewEndF - viewStartF;
   if (viewSamples < minSamples) return null;
 
