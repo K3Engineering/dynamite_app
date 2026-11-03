@@ -2229,10 +2229,9 @@ typedef _GraphGeometry = ({
 /// plus the display lead, clamped into [totalSamples, totalSamples + cap]:
 /// the projection is monotone and cancels per-packet delivery jitter, and
 /// both clamp bounds are monotone in totalSamples, so the edge can never
-/// rewind. A rolling
-/// window floats both edges; live "everything" floats only the right one
-/// (the left is retention-pinned); parked windows keep their integer edges.
-/// The minimap shows the retained range (floored at
+/// rewind. A rolling window floats both edges; live "everything" floats only
+/// the right one (the left is retention-pinned); parked windows keep their
+/// integer edges. The minimap shows the retained range (floored at
 /// [GraphController.minLiveSpan] for a young stream) with its right edge
 /// floated on the same projection.
 _GraphGeometry _computeGeometry(GraphDataSource data, GraphController ctrl) {

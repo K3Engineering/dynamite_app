@@ -11,14 +11,14 @@ import 'dart:math' as math;
 /// (arrival time, sample index) deliveries and projects a decaying UPPER
 /// ENVELOPE off them (see [projectedEndAt]) instead of re-anchoring per
 /// packet ("newest sample plus elapsed"), which is what made a naive edge
-/// rewind at multi-Hz on this link: a max of increasing affine functions
-/// is provably continuous and monotone, and it tracks the lowest-latency
-/// recent deliveries, so clumps and delayed packets demote themselves.
+/// rewind at multi-Hz on this link: at a given rate, a max of increasing
+/// affine functions is continuous and monotone, and it tracks the
+/// lowest-latency recent deliveries, so clumps and delayed packets demote
+/// themselves.
 ///
 /// Crystal skew (tens of ppm on cheap BLE crystals) is absorbed by the
 /// envelope's fitted rate, so the projection stays glued to the device
-/// indefinitely; a
-/// fixed-rate glide would drift by the skew times stream age.
+/// indefinitely; a fixed-rate glide would drift by the skew times stream age.
 ///
 /// Data path: [DataHub.commitBatch] calls [observe]; the graph painters read
 /// [projectedEndAt] per frame. Both directions use the class's one
