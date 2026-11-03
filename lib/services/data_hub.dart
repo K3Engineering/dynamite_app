@@ -15,6 +15,7 @@ import '../models/gap_list.dart';
 import '../models/graph_data_source.dart';
 import '../models/sample_slice.dart';
 import 'adc_sink.dart';
+import 'device_clock.dart';
 
 /// Storage and derived statistics for the live ADC stream.
 ///
@@ -178,7 +179,7 @@ class DataHub extends ChangeNotifier
     }
   }
 
-  new() {
+  new({Duration Function()? now}) : _deviceClock = DeviceClock(now: now) {
     clear();
   }
 
@@ -196,7 +197,7 @@ class DataHub extends ChangeNotifier
     streamStartedAt = DateTime.now();
     lastDataAt = null;
     packetAnchor = null;
-    _deliveryGapPeak.clear();
+    _deviceClock.clear();
     gaps.clear();
     for (int i = 0; i < kAdcChannelCount; ++i) {
       tare[i] = null;
@@ -216,23 +217,17 @@ class DataHub extends ChangeNotifier
     lastMalformedPacketLen = length;
   }
 
-  /// Peak of recent inter-packet delivery gaps, decaying so a noisy link
-  /// teaches the live-edge lead its environment and a later calm relaxes it
-  /// again. Decoder-stamped (delivery side), so recording-session boundaries
-  /// and the monitoring pause — both decoder-accurate — never leak in; a link
-  /// that stalls completely just stops updating the peak, which is what the
-  /// hub's own stream-staleness already treats as dead.
-  final _DecayPeak _deliveryGapPeak = _DecayPeak();
+  /// Delivery-fed sync of the PC clock to the device's sample oscillator
+  /// (see `DeviceClock`). Fed by [commitBatch] — the monitoring pause never
+  /// commits, so a paused span simply isn't in the fit, and the clock's own
+  /// gap handling re-anchors after it.
+  final DeviceClock _deviceClock;
 
-  /// The peak's age-weighted value right now; null before two packets have
-  /// ever arrived. Read by the live-edge lead policy
-  /// (graph_components `_liveEdge`).
+  /// The clock fit's estimate of the sample index the device is generating
+  /// right now; null before the stream's first batch. The rolling live edge
+  /// floats on this (graph_components `_leadCapSamples` sizes the lead).
   @override
-  double? get peakDeliveryGapMs => _deliveryGapPeak.valueAt(DateTime.now());
-
-  @override
-  void notePacketGap(Duration gap) =>
-      _deliveryGapPeak.observe(gap.inMicroseconds / 1e3);
+  double? projectedEndAt() => _deviceClock.projectedEndAt(sampleRateHz);
 
   bool get taring => _pendingTare != null;
 
@@ -401,6 +396,9 @@ class DataHub extends ChangeNotifier
   @override
   void commitBatch(int startIdx) {
     lastDataAt = DateTime.now();
+    // Feed the device clock the confirmed end of the stream timeline and
+    // this instant on the PC clock — the sync's only observable.
+    _deviceClock.observe(totalSamples);
     final int count = totalSamples - startIdx;
     if (count > 0) {
       _emit(HubBatchAppended(startIdx, count));
@@ -629,46 +627,6 @@ class DataHub extends ChangeNotifier
     final int prev = rawAt(idx, totalSamples - 1);
     _rawData[idx][totalSamples % maxDataSz] = val;
     _ingest[idx].add(totalSamples, val, prev);
-  }
-}
-
-/// A one-float sliding-window max: raises immediately to any new observation
-/// above the decayed peak and relaxes exponentially otherwise (half-life slow
-/// enough that repeat events always land inside a lead sized from the last
-/// one). Observation timestamps come from the observer; reads pass their own
-/// clock so decay costs no per-frame bookkeeping.
-class _DecayPeak {
-  /// Half-life of the decay. Live-link gap records recur on tens of seconds,
-  /// so 60 s keeps the peak covering them without making a transient burst
-  /// permanent.
-  static const int _halfLifeMs = 60000;
-
-  double? _peakMs;
-  DateTime? _peakAt;
-
-  double? valueAt(DateTime now) {
-    final double? peak = _peakMs;
-    final DateTime? at = _peakAt;
-    if (peak == null || at == null) return null;
-    final double age =
-        now.difference(at).inMicroseconds / 1e3 / _halfLifeMs;
-    return peak * math.pow(0.5, age);
-  }
-
-  /// Note one observation. The peak is stamped in wall time — decay math
-  /// only ever compares hub timestamps with hub reads.
-  void observe(double valueMs) {
-    final DateTime now = DateTime.now();
-    final double current = valueAt(now) ?? double.negativeInfinity;
-    if (valueMs > current) {
-      _peakMs = valueMs;
-      _peakAt = now;
-    }
-  }
-
-  void clear() {
-    _peakMs = null;
-    _peakAt = null;
   }
 }
 

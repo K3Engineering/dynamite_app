@@ -142,15 +142,14 @@ abstract interface class GraphDataSource
   /// When the newest samples arrived (live sources); null for static sources.
   DateTime? get lastDataAt;
 
-  /// Peak of recent delivery-side inter-packet gaps, age-decayed by the
-  /// source; null when unmeasured (static sources, streams with <2 packets).
-  /// The graph's live-edge lead policy widens its extrapolation cap with
-  /// this: packet-atomic delivery rewinds the wall-clock extrapolation by
-  /// whatever backlog outruns it (`GraphController.liveEdgeHold` covers the
-  /// rewind itself), and a lead sized to the observed environment makes that
-  /// rare without pinning the trace end far off the plot's right edge on a
-  /// calm link.
-  double? get peakDeliveryGapMs;
+  /// Estimated sample index the device is generating right now, extrapolated
+  /// from the source's delivery-side fit of the device oscillator (services
+  /// `DeviceClock`); null for static sources and before a stream's first
+  /// batch. The rolling live edge floats on this plus a fixed lead, so the
+  /// edge's advance rate locks to the device's clock (crystal skew can't
+  /// drift it) and per-packet delivery jitter cancels in the fit instead of
+  /// rewinding a packet-anchored extrapolation.
+  double? projectedEndAt();
 
   /// Monotonic identity of the data stream; bumped on a reset for a NEW stream.
   /// Renderers mix it into segment-cache keys so baked content from a previous

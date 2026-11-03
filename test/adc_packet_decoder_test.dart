@@ -390,74 +390,67 @@ void main() {
     });
   });
 
-  /// The decoder reports every packet's delivery gap (the input to
-  /// [GraphDataSource.peakDeliveryGapMs]) from its own arrival clock, gated
-  /// on the previous PACKET — not on the previous commit — so the monitoring
-  /// pause doesn't read as a link gap.
-  group('AdcPacketDecoder delivery-gap reporting', () {
-    test('the hub peak reflects the largest observed inter-packet gap', () {
-      var fakeUs = 0;
-      final d = AdcPacketDecoder(
-        hub,
-        now: () => Duration(microseconds: fakeUs),
-      );
-      expect(hub.peakDeliveryGapMs, isNull);
+  /// The hub's device clock feeds only on COMMITTED batches (see
+  /// [GraphDataSource.projectedEndAt]), so the monitoring pause -- whose
+  /// packets never commit -- simply isn't in the fit, and the clock's own
+  /// gap handling re-anchors after it. Hub and decoder share one fake clock
+  /// per test so their observation timestamps match.
+  group('DataHub device clock (delivery-fed)', () {
+    // Deterministic clock shared by hub and decoder (same idiom as the
+    // 'clock cross-check' group above): the timestamps must advance WHILE
+    // packets are fed, so the variable lives here in group scope.
+    var fakeUs = 0;
+    Duration clock() => Duration(microseconds: fakeUs);
 
-      d.onDataPacket(makePacket(0, (s, c) => 1));
-      fakeUs += 20000;
-      d.onDataPacket(makePacket(20, (s, c) => 2));
-      expect(hub.peakDeliveryGapMs, closeTo(20, 1));
-
-      fakeUs += 150000;
-      d.onDataPacket(makePacket(40, (s, c) => 3));
-      expect(hub.peakDeliveryGapMs, closeTo(150, 2));
-
-      fakeUs += 20000;
-      d.onDataPacket(makePacket(60, (s, c) => 4));
-      // A smaller gap does not lower the peak (it only decays with wall age).
-      expect(hub.peakDeliveryGapMs, greaterThan(100));
-    });
-
-    test('paused packets still feed the peak; the pause itself does not '
-        'pollute it', () {
-      var fakeUs = 0;
-      var paused = false;
-      final d = AdcPacketDecoder(
-        hub,
-        now: () => Duration(microseconds: fakeUs),
-        isPaused: () => paused,
-      );
-      d.onDataPacket(makePacket(0, (s, c) => 1));
-      fakeUs += 20000;
-      d.onDataPacket(makePacket(20, (s, c) => 2));
-
-      // A long monitoring pause: packets keep arriving on the link (and the
-      // peak only sees their delivery gaps), while the hub freezes.
-      paused = true;
-      for (var i = 0; i < 100; i++) {
+    /// Feed [packets] 20 ms apart, stamping each with the advancing clock.
+    void feed(AdcPacketDecoder d, int packets, int firstCounter) {
+      for (var i = 0; i < packets; i++) {
         fakeUs += 20000;
-        d.onDataPacket(makePacket(40 + 20 * i, (s, c) => 1));
+        d.onDataPacket(makePacket(firstCounter + 20 * i, (s, c) => 1));
       }
-      paused = false;
-      d.onDataPacket(makePacket(2040, (s, c) => 2));
+    }
 
-      // ~20 ms steady gaps, never the ~2 s pause.
-      expect(hub.peakDeliveryGapMs, lessThan(30));
+    setUp(() => fakeUs = 0);
+
+    test('null before the first batch', () {
+      expect(hub.projectedEndAt(), isNull);
     });
 
-    test('a hub clear forgets the peak (the new stream re-measures)', () {
-      var fakeUs = 0;
-      final d = AdcPacketDecoder(
-        hub,
-        now: () => Duration(microseconds: fakeUs),
-      );
-      d.onDataPacket(makePacket(0, (s, c) => 1));
-      fakeUs += 300000;
-      d.onDataPacket(makePacket(20, (s, c) => 2));
-      expect(hub.peakDeliveryGapMs, greaterThan(200));
+    test('tracks just ahead of the confirmed end once the fit is valid', () {
+      final h = DataHub(now: clock);
+      final d = AdcPacketDecoder(h, now: clock);
+      feed(d, 60, 0); // 1.2 s at the exact nominal rate
+      // Deliveries land on the device position itself here (no skew, no
+      // latency in the simulation), so the projection sits within one
+      // packet of the confirmed end.
+      final proj = h.projectedEndAt()!;
+      expect(proj, greaterThanOrEqualTo(h.totalSamples - 25));
+      expect(proj, lessThan(h.totalSamples + 40));
+    });
 
-      hub.clear();
-      expect(hub.peakDeliveryGapMs, isNull);
+    test('a monitoring pause is absent from the fit, not poison to it', () {
+      var paused = false;
+      final h = DataHub(now: clock);
+      final d = AdcPacketDecoder(h, now: clock, isPaused: () => paused);
+      feed(d, 60, 0); // establish the fit
+      // A long pause: packets keep arriving on the link but never commit,
+      // so the frozen hub timeline pays nothing for the discarded span.
+      paused = true;
+      feed(d, 100, 1200);
+      paused = false;
+      feed(d, 60, 3200); // resume; refit from fresh data
+      final proj = h.projectedEndAt()!;
+      expect(proj, greaterThanOrEqualTo(h.totalSamples - 25));
+      expect(proj, lessThan(h.totalSamples + 40));
+    });
+
+    test('a hub clear forgets the fit (the new stream re-measures)', () {
+      final h = DataHub(now: clock);
+      final d = AdcPacketDecoder(h, now: clock);
+      feed(d, 60, 0);
+      expect(h.projectedEndAt(), isNotNull);
+      h.clear();
+      expect(h.projectedEndAt(), isNull);
     });
   });
 }

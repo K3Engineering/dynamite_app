@@ -2120,40 +2120,31 @@ Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
 // Windowed time-series graph painters (force, derivative)
 // ---------------------------------------------------------------------------
 
-/// Lead floor past the newest sample, in arrival time: sized so the common
-/// link delays (one skipped connection event: ~37.5 ms on an 18.75 ms
-/// interval, measured on a live board) land inside the extrapolation and
-/// never freeze the view. The observed peak delivery gap
-/// ([GraphDataSource.peakDeliveryGapMs]) widens the floor beyond this when
-/// the link is actually worse; see [_leadCapMs].
-const double _kLiveEdgeLeadFloorMs = 40;
+/// Blank lead framed past the device's projected live end, in ms of samples
+/// (see [GraphDataSource.projectedEndAt] for the projection itself).
+const double _kLiveEdgeLeadMs = 40;
 
-/// One packet period of margin above the peak delivery gap, so a gap that
-/// repeats at the observed worst case still fits inside the lead.
-const double _kLiveEdgeLeadMarginMs = 20;
+/// How far the edge may run ahead of the newest CONFIRMED sample: the lead
+/// plus slack for delivery latency (a 20 ms batch plus a couple of skipped
+/// 18.75 ms connection events). Farther out the link is stalling, and the
+/// edge freezes there instead of gliding into unbounded extrapolation;
+/// catch-up re-tightens the band from below, which is the only freeze.
+const double _kLiveEdgeCapMs = _kLiveEdgeLeadMs + 80;
 
-/// In steady scrolling the edge glides past the newest sample by up to the
-/// lead cap; at narrow spans a full lead would visibly detach the trace end
-/// from the plot's right edge, so the cap is also limited to this fraction
-/// of the span. (The edge itself is advanced in
-/// [GraphController.rollingLiveEdge]; this constant only shapes its band.)
+/// Also cap the lead at this fraction of the visible span, so at narrow
+/// spans a full cap can't detach the trace end from the plot's right edge.
 const double _kLiveEdgeLeadSpanFraction = 0.05;
 
 /// Stop the smooth-scroll ticker once the stream is this stale: past the worst
 /// normal inter-packet gap, so it never churns mid-stream.
 const int _kTickerStallMs = 100;
 
-/// The rolling live edge's lead cap in milliseconds for [spanSamples]: the
-/// floor ([_kLiveEdgeLeadFloorMs] widened by the observed peak delivery gap
-/// plus [_kLiveEdgeLeadMarginMs]), limited to
-/// [_kLiveEdgeLeadSpanFraction] of the span, so at narrow spans the cap can't
-/// detach the trace end from the plot's right edge.
-double _leadCapMs(GraphDataSource data, double spanSamples) => math.min(
-  math.max(
-    _kLiveEdgeLeadFloorMs,
-    (data.peakDeliveryGapMs ?? 0) + _kLiveEdgeLeadMarginMs,
-  ),
-  _kLiveEdgeLeadSpanFraction * spanSamples / data.sampleRate * 1000.0,
+/// The rolling live edge's clamp band width in samples for [spanSamples]:
+/// [_kLiveEdgeCapMs] of data, limited to [_kLiveEdgeLeadSpanFraction] of the
+/// span (see that constant).
+double _leadCapSamples(GraphDataSource data, double spanSamples) => math.min(
+  _kLiveEdgeCapMs * data.sampleRate / 1000.0,
+  _kLiveEdgeLeadSpanFraction * spanSamples,
 );
 
 /// Common painter prologue shared by the force and derivative graphs: translate
@@ -2204,26 +2195,27 @@ _GraphLayout? _setupGraphFrame(
     data.totalSamples,
     data.oldestSample,
   );
-  // Rolling live windows get their right edge from the controller's
-  // inertial advance (see GraphController.rollingLiveEdge), so the trace
-  // scrolls smoothly between packets and never rewinds across them.
-  // Data-pinned views (parked, or live "everything") keep their integer
-  // edges: they are pure functions of the data on hand, and floating them
-  // would shake every tick and label by the lead's pixel width (most visible
-  // at squeezed full-view spans, where nothing else moves).
+  // Rolling live windows float their right edge on the device-clock
+  // projection (GraphDataSource.projectedEndAt) plus the lead, clamped into
+  // [totalSamples, totalSamples + cap]: the projection cancels per-packet
+  // delivery jitter, and both clamp bounds are monotone in totalSamples, so
+  // the edge can never rewind. Both painters read the same pure projection,
+  // so they agree on the edge by construction. Data-pinned views (parked,
+  // or live "everything") keep their integer edges: floating them would
+  // shake every tick and label by the lead's pixel width (most visible at
+  // squeezed full-view spans, where nothing else moves).
   final rollingSpan = ctrl.lockedLiveSpan;
   double viewStartF = viewStart.toDouble();
   double viewEndF = viewEnd.toDouble();
   if (rollingSpan != null) {
-    final double leadCapMs = _leadCapMs(data, rollingSpan.toDouble());
-    viewEndF = ctrl.rollingLiveEdge(
-      totalSamples: data.totalSamples,
-      elapsedMs: data.lastDataAt == null
-          ? 0
-          : DateTime.now().difference(data.lastDataAt!).inMicroseconds / 1e3,
-      capSamples: leadCapMs * data.sampleRate / 1000.0,
-      sampleRate: data.sampleRate.toDouble(),
-      dataGeneration: data.dataGeneration,
+    final double total = data.totalSamples.toDouble();
+    // Before the clock fit exists (a stream's first second), the projection
+    // falls back to the confirmed end: the lead holds statically, stepping
+    // with deliveries, until the fit takes over the glide.
+    final double proj = data.projectedEndAt() ?? total;
+    viewEndF = (proj + _kLiveEdgeLeadMs * data.sampleRate / 1000.0).clamp(
+      total,
+      total + _leadCapSamples(data, rollingSpan.toDouble()),
     );
     viewStartF = viewEndF - rollingSpan;
   }
@@ -2415,7 +2407,8 @@ abstract class _TimeSeriesGraphPainter extends CustomPainter {
         (sec - startSec) * sampleRate * graphSz.width / viewSamples;
     // Slack past the live edge so edge-adjacent ticks don't toggle per frame;
     // sized to the same capped lead the window's right edge can reach.
-    double xSlack(double step) => step + _leadCapMs(_data, viewSamples) / 1000;
+    double xSlack(double step) =>
+        step + _leadCapSamples(_data, viewSamples) / sampleRate;
     final xLines = _fitTimeLines(
       startSec,
       endSec,

@@ -43,14 +43,6 @@ class GraphController extends ChangeNotifier {
 
   GraphViewport _viewport;
 
-  /// The rolling live edge's inertial state: the last granted edge position
-  /// (fractional samples) and the wall time of that advance, with the
-  /// stream's `GraphDataSource.dataGeneration` they were computed from (the
-  /// state restarts on a new stream: the sample timeline restarts at 0).
-  double? _rollingEdge;
-  double? _rollingEdgeAtMs;
-  int _rollingGen = 0;
-
   static GraphViewport _initialViewport(int minLiveSpan) =>
       minLiveSpan > 0 ? GraphLive(minLiveSpan) : const GraphLive();
 
@@ -67,64 +59,10 @@ class GraphController extends ChangeNotifier {
     _ => null,
   };
 
-  /// The rolling window's right edge (fractional samples), advanced
-  /// inertially: previous edge plus wall-clock `sampleRate * dt`, then clamped
-  /// into `[totalSamples, totalSamples + capSamples]`. The edge is never
-  /// derived from the newest packet -- deliveries move the band, not the
-  /// position -- which is the core smoothness property:
-  ///
-  /// - A delayed backlog arrives behind the gliding edge: nothing happens on
-  ///   screen; the offset (edge minus total) silently shrinks. (The old
-  ///   anchor-reset formula rewound here -- the multi-Hz flicker measured on
-  ///   the BLE feed's packet-atomic delivery.)
-  /// - A delivery overshooting the gliding edge gets the forward clamp only:
-  ///   backward motion is impossible by construction, since both band bounds
-  ///   are monotonic in [totalSamples].
-  /// - A genuine stall freezes at the cap and resumes forward; that is the
-  ///   only remaining freeze.
-  ///
-  /// [elapsedMs] (time since the newest data) anchors only the very first
-  /// call of a stream/viewport; afterwards the stored edge is advanced from
-  /// itself. Both graph painters call this per frame: the second call sees a
-  /// ~zero dt, so they advance together and read the same edge.
-  double rollingLiveEdge({
-    required int totalSamples,
-    required double elapsedMs,
-    required double capSamples,
-    required double sampleRate,
-    required int dataGeneration,
-    double? nowMs,
-  }) {
-    final double t = nowMs ?? DateTime.now().microsecondsSinceEpoch / 1e3;
-    final double lo = totalSamples.toDouble();
-    final double hi = lo + capSamples;
-    final double? prev = _rollingEdge;
-    if (prev == null ||
-        dataGeneration != _rollingGen ||
-        _rollingEdgeAtMs == null) {
-      _rollingGen = dataGeneration;
-      _rollingEdgeAtMs = t;
-      final double initOffset = math.min(
-        elapsedMs * sampleRate / 1000.0,
-        capSamples,
-      );
-      return _rollingEdge = (lo + initOffset).clamp(lo, hi);
-    }
-    // Clock skew guard: a backwards read freezes the advance this call.
-    final double dt = math.max(0.0, t - _rollingEdgeAtMs!);
-    _rollingEdgeAtMs = t;
-    return _rollingEdge = (prev + dt * sampleRate / 1000.0).clamp(lo, hi);
-  }
-
-  /// A user-driven viewport change re-anchors the window; rolling state from
-  /// the old one has no meaning for the new.
-  void _dropRollingEdge() => _rollingEdge = null;
-
   /// Restore the initial state (a fresh stream erased the data: any pan/zoom
   /// window over the old trace is meaningless).
   void reset() {
     _viewport = _initialViewport(minLiveSpan);
-    _dropRollingEdge();
     notifyListeners();
   }
 
@@ -164,7 +102,6 @@ class GraphController extends ChangeNotifier {
       lockedSpan = null;
     }
     _viewport = GraphLive(lockedSpan);
-    _dropRollingEdge();
     notifyListeners();
   }
 
@@ -211,7 +148,6 @@ class GraphController extends ChangeNotifier {
       return;
     }
     _viewport = GraphWindow(start, start + span);
-    _dropRollingEdge();
     notifyListeners();
   }
 
@@ -258,7 +194,6 @@ class GraphController extends ChangeNotifier {
       return;
     }
     _viewport = GraphWindow(start, start + span);
-    _dropRollingEdge();
     notifyListeners();
   }
 

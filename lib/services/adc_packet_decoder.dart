@@ -80,12 +80,6 @@ class AdcPacketDecoder {
     final int count = data[0] + (data[1] << 8);
     final prev = _prev;
     _prev = (sampleCount: (count + n) & 0xFFFF, rxUs: rxUs);
-    // Delivery-gap telemetry stays ahead of the pause gate: paused packets
-    // keep [_prev] current, so the first post-resume gap spans packets, not
-    // the pause.
-    if (prev != null) {
-      hub.notePacketGap(Duration(microseconds: rxUs - prev.rxUs));
-    }
     if (_isPaused()) return;
 
     final int startIdx = hub.totalSamples;
