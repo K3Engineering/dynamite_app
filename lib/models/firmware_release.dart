@@ -113,13 +113,6 @@ class const GithubAsset({
   }
 }
 
-/// The firmware's `<board>|<git describe>` firmware-revision string.
-({String board, String describe})? parseFirmwareRev(String rev) {
-  final i = rev.indexOf('|');
-  if (i <= 0 || i >= rev.length - 1) return null;
-  return (board: rev.substring(0, i), describe: rev.substring(i + 1));
-}
-
 /// Whether the device is already running the bits of release [tag]. The
 /// git-describe string matches the tag for a properly flashed release. The
 /// comparison is direction-agnostic: only "matches the channel target" matters.

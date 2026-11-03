@@ -284,15 +284,19 @@ class _FirmwareCard extends StatelessWidget {
     final state = service.checkState;
     final updateAvailable = state is CheckOk && state.result.differsFromDevice;
     final scheme = Theme.of(context).colorScheme;
-    final String subtitle = switch (state) {
-      CheckNeverRan() => 'Tap to check for updates',
-      CheckRunning() => 'Checking for updates…',
-      CheckOk(:final result) when result.target == null =>
+    final (subtitle, failed) = switch (state) {
+      CheckNeverRan() => ('Tap to check for updates', false),
+      CheckRunning() => ('Checking for updates…', false),
+      CheckOk(:final result) when result.target == null => (
         'No release available',
-      CheckOk(:final result) when result.differsFromDevice =>
+        false,
+      ),
+      CheckOk(:final result) when result.differsFromDevice => (
         'Update available · ${result.target!.tag}',
-      CheckOk() => 'Up to date',
-      CheckFailed() => 'Check failed',
+        false,
+      ),
+      CheckOk() => ('Up to date', false),
+      CheckFailed() => ('Check failed — tap for details', true),
     };
     // Availability fills the card: the app's "device is in this state, act on
     // it" surface treatment (the connected row and the Live banner). Colors are
@@ -306,7 +310,10 @@ class _FirmwareCard extends StatelessWidget {
             ? Icon(Icons.system_update_alt, color: scheme.inversePrimary)
             : null,
         title: Text('Firmware', style: TextStyle(color: onContainer)),
-        subtitle: Text(subtitle, style: TextStyle(color: onContainer)),
+        subtitle: Text(
+          subtitle,
+          style: TextStyle(color: failed ? scheme.error : onContainer),
+        ),
         trailing: Icon(Icons.chevron_right, color: onContainer),
         onTap: () => openFirmwareUpdate(context, onDone: onGoToDevices),
       ),

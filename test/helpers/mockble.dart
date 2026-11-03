@@ -645,7 +645,7 @@ class MockBlePlatform extends UniversalBlePlatform {
     btChrDisModel: 'Dynamite Sampler Pro Mk1',
     btChrDisSerial: 'A4CF1208F51E',
     btChrDisHardwareRev: 'v700P',
-    btChrDisFirmwareRev: 'v700P|mock-1.0.0',
+    btChrDisFirmwareRev: 'mock-1.0.0',
   };
 
   static List<BleService> _generateServices(String deviceId) {

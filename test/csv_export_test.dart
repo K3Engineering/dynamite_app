@@ -52,7 +52,7 @@ void main() {
     model: 'Dynamite Sampler Pro Mk1',
     serial: 'A4CF1208F51E',
     hardwareRev: 'v700P',
-    firmwareRev: 'v700P|v1.2.3',
+    firmwareRev: 'v1.2.3',
   );
 
   /// Pro-like test chain, reproducing the app's former compiled constants.
@@ -124,7 +124,7 @@ void main() {
       // trailing-blank-line mutant dies here.
       const expected = '''
 # dynamite-csv 1
-# {"format":"dynamite-csv","version":1,"generator":"dynamite-flutter 1.0.0","recorded_at":"2026-07-29T14:05:32.000Z","recorded_unix":1785333932,"sample_rate_hz":1000,"ssn_origin":41230,"converted_unit":"kgf","device":{"name":null,"id":"A4CF1208F51E","model":"Dynamite Sampler Pro Mk1","hardware_rev":"v700P","firmware":"v700P|v1.2.3","manufacturer":"K3 Engineering","afe":{"adc_ref_v":1.2,"front_end_gain":101.0,"adc_gain":[1.0,1.0],"excitation_v":4.53},"kvs":null},"channels":[{"load_cell":null,"tare_raw":null,"board_cal":null},{"load_cell":null,"tare_raw":null,"board_cal":null}]}
+# {"format":"dynamite-csv","version":1,"generator":"dynamite-flutter 1.0.0","recorded_at":"2026-07-29T14:05:32.000Z","recorded_unix":1785333932,"sample_rate_hz":1000,"ssn_origin":41230,"converted_unit":"kgf","device":{"name":null,"id":"A4CF1208F51E","model":"Dynamite Sampler Pro Mk1","hardware_rev":"v700P","firmware":"v1.2.3","manufacturer":"K3 Engineering","afe":{"adc_ref_v":1.2,"front_end_gain":101.0,"adc_gain":[1.0,1.0],"excitation_v":4.53},"kvs":null},"channels":[{"load_cell":null,"tare_raw":null,"board_cal":null},{"load_cell":null,"tare_raw":null,"board_cal":null}]}
 # format: "dynamite-csv"
 # version: 1
 # generator: "dynamite-flutter 1.0.0"
@@ -138,7 +138,7 @@ void main() {
 #   id: "A4CF1208F51E"
 #   model: "Dynamite Sampler Pro Mk1"
 #   hardware_rev: "v700P"
-#   firmware: "v700P|v1.2.3"
+#   firmware: "v1.2.3"
 #   manufacturer: "K3 Engineering"
 #   afe:
 #     adc_ref_v: 1.2
@@ -210,7 +210,7 @@ ssn,ch0,ch1,ch0_kgf,ch1_kgf
           'id': 'A4CF1208F51E',
           'model': 'Dynamite Sampler Pro Mk1',
           'hardware_rev': 'v700P',
-          'firmware': 'v700P|v1.2.3',
+          'firmware': 'v1.2.3',
           'manufacturer': 'K3 Engineering',
           'afe': {
             'adc_ref_v': 1.2,
@@ -285,7 +285,7 @@ ssn,ch0,ch1,ch0_kgf,ch1_kgf
             'id': 'A4CF1208F51E',
             'model': 'Dynamite Sampler Pro Mk1',
             'hardware_rev': 'rev B',
-            'firmware': 'v700P|v1.2.3',
+            'firmware': 'v1.2.3',
             'manufacturer': 'K3 Engineering',
           },
         ).encode(),
@@ -296,7 +296,7 @@ ssn,ch0,ch1,ch0_kgf,ch1_kgf
         'id': 'A4CF1208F51E',
         'model': 'Dynamite Sampler Pro Mk1',
         'hardware_rev': 'rev B',
-        'firmware': 'v700P|v1.2.3',
+        'firmware': 'v1.2.3',
         'manufacturer': 'K3 Engineering',
         'afe': {
           'adc_ref_v': 1.2,

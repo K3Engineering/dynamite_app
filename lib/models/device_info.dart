@@ -24,6 +24,7 @@ class const DeviceInfo({
   /// Hardware Revision String (0x2A27) — the board name, e.g. "v700P".
   required final String hardwareRev,
 
-  /// Firmware Revision String (0x2A26) — `<board>|<git describe>`.
+  /// Firmware Revision String (0x2A26) — the build's git describe, as
+  /// published by the firmware's [onFwVer] (`v0.3.2`, `0.2.0-14-g8bfc247`).
   required final String firmwareRev,
 });

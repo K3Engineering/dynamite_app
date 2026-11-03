@@ -50,8 +50,8 @@ FirmwareRelease _release(String tag) => FirmwareRelease(
 
 /// Tests for [FirmwareUpdateService] against [MockBlePlatform], same
 /// fake-async harness as ble_link_manager_test. The mock device reports
-/// firmware `v700P|mock-1.0.0` (its DIS table), so every check compares
-/// against the describe `mock-1.0.0`.
+/// firmware `mock-1.0.0` (a plain git describe, what real firmware
+/// publishes), so every check compares against it.
 void main() {
   const deviceId = '2';
 
@@ -96,6 +96,25 @@ void main() {
     unawaited(link.disconnectSelectedDevice());
     async.elapse(const Duration(seconds: 4));
   }
+
+  test('a connect auto-check against a plain-describe device completes', () {
+    fakeAsync((async) {
+      final (link, service, seen) = wire(async);
+      service.catalog = _FixedCatalog([_release('mock-1.0.0')]);
+
+      unawaited(link.connectToDevice(deviceId));
+      async.elapse(const Duration(seconds: 4));
+
+      // The regression guard: a check used to park in CheckNeverRan when the
+      // firmware-revision string carried no `<board>|` prefix.
+      final state = service.checkState;
+      expect(state, isA<CheckOk>());
+      expect((state as CheckOk).result.installedDescribe, 'mock-1.0.0');
+      expect(seen, isEmpty);
+
+      disconnectElapse(async, link);
+    });
+  });
 
   test('a noted flash tag publishes a verified event on the next check', () {
     fakeAsync((async) {

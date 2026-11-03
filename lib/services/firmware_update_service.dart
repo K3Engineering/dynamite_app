@@ -14,7 +14,6 @@ import 'firmware_catalog.dart';
 class FirmwareCheck {
   const new({
     required this.channel,
-    required this.board,
     required this.installedDescribe,
     required this.candidates,
   });
@@ -22,10 +21,8 @@ class FirmwareCheck {
   /// The channel the check resolved for; its result is only valid for this one.
   final FirmwareChannel channel;
 
-  /// The board the check ran for (firmware-rev prefix).
-  final String board;
-
-  /// The device's installed identity (git-describe from the DIS read).
+  /// The device's installed identity: the DIS firmware-revision string as
+  /// reported (the build's git describe).
   final String installedDescribe;
 
   /// Every flashable release the catalog offered at check time, newest first.
@@ -55,9 +52,9 @@ sealed class FirmwareCheckState {
   const new();
 }
 
-/// No check has produced a result for the current link (app start, the
-/// disconnect reset in [FirmwareUpdateService], or a firmware revision
-/// [FirmwareUpdateService.checkForUpdates] could not parse and skipped).
+/// No check has produced a result for the current link (app start, or the
+/// disconnect reset in [FirmwareUpdateService]). With a link up this is only
+/// the transient window before the auto-check's DIS read lands.
 class CheckNeverRan extends FirmwareCheckState {
   const new();
 }
@@ -149,7 +146,6 @@ class FirmwareUpdateService extends ChangeNotifier {
       checkState = CheckOk(
         FirmwareCheck(
           channel: channel,
-          board: result.board,
           installedDescribe: result.installedDescribe,
           candidates: result.candidates,
         ),
@@ -161,23 +157,18 @@ class FirmwareUpdateService extends ChangeNotifier {
 
   /// Check the connected device against the release catalog. No-op while a
   /// check is running, on a simulated link (the demo device has no real
-  /// revision to parse), without a link, or when the revision does not parse
-  /// as `<board>|<version>` — that string is firmware-built, so a non-match
-  /// is a board this catalog knows nothing about, not a failure to surface.
+  /// revision), or without a link's DIS identity read.
   Future<void> checkForUpdates() async {
     if (checkState is CheckRunning) return;
     if (_link.linkIsSimulated) return;
     final info = _link.connectedDeviceInfo;
     if (info == null) return;
-    final rev = parseFirmwareRev(info.firmwareRev);
-    if (rev == null) return;
     // Snapshot link inputs; the worker must not re-read them after it suspends.
-    await _runCheck(info: info, rev: rev, deviceId: _link.connectedDeviceId);
+    await _runCheck(info: info, deviceId: _link.connectedDeviceId);
   }
 
   Future<void> _runCheck({
     required DeviceInfo info,
-    required ({String board, String describe}) rev,
     required String deviceId,
   }) async {
     checkState = const CheckRunning();
@@ -199,8 +190,7 @@ class FirmwareUpdateService extends ChangeNotifier {
     if (candidates != null) {
       final check = FirmwareCheck(
         channel: _channel,
-        board: rev.board,
-        installedDescribe: rev.describe,
+        installedDescribe: info.firmwareRev,
         candidates: candidates,
       );
       checkState = CheckOk(check);

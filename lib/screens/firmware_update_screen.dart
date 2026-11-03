@@ -208,6 +208,9 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     final recording = context.select<RecordingController, bool>(
       (r) => r.sessionInProgress,
     );
+    final hardwareRev = context.select<BleLinkManager, String?>(
+      (l) => l.connectedDeviceInfo?.hardwareRev,
+    );
     final inProgress = _stage is! _Overview;
 
     return PopScope(
@@ -251,6 +254,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
                   simulated: simulated,
                   linkUp: linkUp,
                   recording: recording,
+                  hardwareRev: hardwareRev,
                 ),
               );
             },
@@ -341,10 +345,11 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
   /// state when there is no comparison to draw.
   String _heroLine(FirmwareUpdateService service, {required bool linkUp}) {
     switch (service.checkState) {
+      // With a link up, "never ran" is only the transient window before the
+      // auto-check's DIS read lands — visually it is "checking".
       case CheckNeverRan():
-        return linkUp ? 'No release check yet' : 'No device connected';
       case CheckRunning():
-        return 'Checking…';
+        return linkUp ? 'Checking…' : 'No device connected';
       case CheckFailed():
         return 'Could not check for updates';
       case CheckOk(:final result):
@@ -367,6 +372,7 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
     required bool simulated,
     required bool linkUp,
     required bool recording,
+    required String? hardwareRev,
   }) {
     final theme = Theme.of(context);
     final state = service.checkState;
@@ -389,10 +395,17 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
             children: [
               Text(
                 _heroLine(service, linkUp: linkUp),
-                style: theme.textTheme.titleLarge,
+                style: theme.textTheme.titleLarge?.copyWith(
+                  color: state is CheckFailed ? theme.colorScheme.error : null,
+                ),
               ),
-              if (check != null)
-                Text('Board: ${check.board}', style: theme.textTheme.bodySmall),
+              if (state is CheckFailed)
+                Text(
+                  '${state.error}',
+                  style: TextStyle(color: theme.colorScheme.error),
+                ),
+              if (hardwareRev != null)
+                Text('Board: $hardwareRev', style: theme.textTheme.bodySmall),
               const SizedBox(height: 16),
               Text('Channel', style: theme.textTheme.titleSmall),
               const SizedBox(height: 8),
@@ -407,12 +420,6 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
                     unawaited(service.setChannel(set.first)),
               ),
               const SizedBox(height: 16),
-              if (state is CheckFailed)
-                Text(
-                  'Check failed: ${state.error}',
-                  style: TextStyle(color: theme.colorScheme.error),
-                ),
-              const SizedBox(height: 8),
               OutlinedButton(
                 onPressed: running || !linkUp
                     ? null
@@ -436,16 +443,15 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
                     : null,
                 child: Text(flashLabel),
               ),
-              if (check != null && check.candidates.isNotEmpty)
-                Padding(
-                  padding: const EdgeInsets.only(top: 8),
-                  child: OutlinedButton(
-                    onPressed: canFlash
-                        ? () => unawaited(_pickVersion(check))
-                        : null,
-                    child: const Text('Choose another version…'),
-                  ),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: OutlinedButton(
+                  onPressed: canFlash
+                      ? () => unawaited(_openVersions(service))
+                      : null,
+                  child: const Text('Choose another version…'),
                 ),
+              ),
               if (simulated)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
@@ -485,14 +491,44 @@ class _FirmwareUpdateScreenState extends State<FirmwareUpdateScreen> {
   /// taps. This is an action, not a setting: the channel stays the channel, so
   /// a device flashed from here is simply "not the channel target" to the next
   /// check (see [FirmwareCheck.differsFromDevice]) — and gets the nag.
-  Future<void> _pickVersion(FirmwareCheck check) async {
-    final release = await showDialog<FirmwareRelease>(
+  ///
+  /// With no candidate list (check in flight, failed, or an empty catalog)
+  /// the dialog explains why instead of listing — the button never hides.
+  Future<void> _openVersions(FirmwareUpdateService service) async {
+    final state = service.checkState;
+    if (state case CheckOk(:final result) when result.candidates.isNotEmpty) {
+      final release = await showDialog<FirmwareRelease>(
+        context: context,
+        builder: (_) => _ReleasePicker(
+          candidates: result.candidates,
+          target: result.target,
+        ),
+      );
+      if (release == null || !mounted) return;
+      await _flashRelease(release);
+      return;
+    }
+    final message = switch (state) {
+      CheckOk() => 'No flashable releases published yet.',
+      CheckFailed(:final error) =>
+        'No version list — the check failed.\n$error',
+      _ =>
+        'No version list yet — the release check has not produced one. '
+            'Tap "Check now" to retry.',
+    };
+    await showDialog<void>(
       context: context,
-      builder: (_) =>
-          _ReleasePicker(candidates: check.candidates, target: check.target),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Choose a version'),
+        content: SizedBox(width: 360, child: Text(message)),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('OK'),
+          ),
+        ],
+      ),
     );
-    if (release == null || !mounted) return;
-    await _flashRelease(release);
   }
 }
 

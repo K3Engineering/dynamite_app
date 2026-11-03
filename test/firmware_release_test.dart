@@ -36,16 +36,6 @@ void main() {
   });
 
   group('identity helpers', () {
-    test('parseFirmwareRev splits board and describe, rejects garbage', () {
-      expect(parseFirmwareRev('v700P|v0.2.0-3-g8623578'), isNotNull);
-      final rev = parseFirmwareRev('v700P|v0.2.0-3-g8623578')!;
-      expect(rev.board, 'v700P');
-      expect(rev.describe, 'v0.2.0-3-g8623578');
-      expect(parseFirmwareRev('v0.2.0'), isNull);
-      expect(parseFirmwareRev('v700P|'), isNull);
-      expect(parseFirmwareRev('|v0.2.0'), isNull);
-    });
-
     test('describeMatchesTag is the direction-agnostic identity check', () {
       expect(describeMatchesTag('v0.2.0', 'v0.2.0'), isTrue);
       expect(describeMatchesTag('0.2.0', 'v0.2.0'), isTrue);

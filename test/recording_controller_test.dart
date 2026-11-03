@@ -40,7 +40,7 @@ void main() {
     model: 'Dynamite Sampler Pro Mk1',
     serial: 'A4CF1208F51E',
     hardwareRev: 'v700P',
-    firmwareRev: 'v700P|v1.2.3',
+    firmwareRev: 'v1.2.3',
   );
 
   late Directory tmp;
@@ -197,7 +197,7 @@ void main() {
         'id': 'A4CF1208F51E',
         'model': 'Dynamite Sampler Pro Mk1',
         'hardware_rev': 'v700P',
-        'firmware': 'v700P|v1.2.3',
+        'firmware': 'v1.2.3',
         'manufacturer': 'K3 Engineering',
       });
       // Counts derive from the data, so the load is the truth.

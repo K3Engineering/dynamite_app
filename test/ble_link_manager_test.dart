@@ -135,7 +135,7 @@ void main() {
       expect(info.model, 'Dynamite Sampler Pro Mk1');
       expect(info.serial, 'A4CF1208F51E');
       expect(info.hardwareRev, 'v700P');
-      expect(info.firmwareRev, 'v700P|mock-1.0.0');
+      expect(info.firmwareRev, 'mock-1.0.0');
       expect(link.negotiatedMtu, 247);
       expect(link.minAdcPacketBytes, 242);
       expect(link.maxAdcPacketBytes, 242);
