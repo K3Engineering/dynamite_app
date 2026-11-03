@@ -2120,9 +2120,11 @@ Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
 // Windowed time-series graph painters (force, derivative)
 // ---------------------------------------------------------------------------
 
-/// Lead past the newest sample: one packet period, so arrival jitter reads as
-/// a brief freeze rather than a backward lurch.
-const double _kLiveEdgeLeadMs = 20;
+/// Lead past the newest sample. Time it at two connection intervals
+/// Measured on a live board: 18.75 ms connection interval
+/// ~12% of intervals are skipped so the delayed packet lands at 37.5 ms.
+///  the tail is ~56 ms outliers.
+const double _kLiveEdgeLeadMs = 40;
 
 /// Also cap the lead at this fraction of the visible span, so at narrow spans
 /// a full packet of lead can't detach the trace end from the plot's right edge.
