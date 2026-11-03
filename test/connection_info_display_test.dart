@@ -13,7 +13,6 @@ void main() {
     int? maxPacketBytes,
     Duration? uptime,
     int? lostSamples,
-    double? rateDeviationHz,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -24,7 +23,6 @@ void main() {
             maxPacketBytes: maxPacketBytes,
             uptime: uptime,
             lostSamples: lostSamples,
-            rateDeviationHz: rateDeviationHz,
           ),
         ),
       ),
@@ -41,11 +39,10 @@ void main() {
       'Max packet size',
       'Uptime',
       'Samples lost',
-      'Rate deviation',
     ]) {
       expect(find.text(label), findsOneWidget);
     }
-    expect(find.text('—'), findsNWidgets(5));
+    expect(find.text('—'), findsNWidgets(4));
   });
 
   testWidgets('shows ATT MTU and packet extremes when present', (tester) async {
@@ -54,7 +51,7 @@ void main() {
     expect(find.text('247'), findsOneWidget);
     expect(find.text('182 B'), findsOneWidget);
     expect(find.text('242 B'), findsOneWidget);
-    expect(find.text('—'), findsNWidgets(3));
+    expect(find.text('—'), findsNWidgets(2));
   });
 
   testWidgets('shows the stream stats when present', (tester) async {
@@ -62,11 +59,9 @@ void main() {
       tester,
       uptime: const Duration(minutes: 3, seconds: 12),
       lostSamples: 1040,
-      rateDeviationHz: -0.013,
     );
     expect(find.text('3m 12s'), findsOneWidget);
     expect(find.text('1,040'), findsOneWidget);
-    expect(find.text('-0.01 Hz'), findsOneWidget);
     expect(find.text('—'), findsNWidgets(2));
   });
 }

@@ -230,7 +230,6 @@ void main() {
     await tester.pump();
 
     expect(find.text('Connection info'), findsOneWidget);
-    expect(find.text('Rate deviation'), findsOneWidget);
     expect(find.text('Samples lost'), findsOneWidget);
     expect(find.text('Uptime'), findsOneWidget);
 

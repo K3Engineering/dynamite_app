@@ -34,11 +34,8 @@ class DeviceInfoCard extends StatelessWidget {
 /// Connection telemetry: the wire facts (negotiated ATT MTU — when the
 /// platform actually returns one; min/max ADC-feed notification sizes) and
 /// the stream's live stats (uptime since stream start, RF-loss sample
-/// total, the clock fit's rate deviation). [mtu] is omitted entirely when
-/// null — web and the demo device never negotiate. Everything else dashes:
-/// packet sizes until the first feed packet, uptime then too, the
-/// deviation before the rate fit has enough deliveries or while monitoring
-/// is paused.
+/// total). [mtu] is omitted entirely when null — web and the demo device
+/// never negotiate. Everything else dashes until the first feed packet.
 class ConnectionInfoCard extends StatelessWidget {
   const new({
     super.key,
@@ -47,7 +44,6 @@ class ConnectionInfoCard extends StatelessWidget {
     this.maxPacketBytes,
     this.uptime,
     this.lostSamples,
-    this.rateDeviationHz,
   });
 
   final int? mtu;
@@ -55,7 +51,6 @@ class ConnectionInfoCard extends StatelessWidget {
   final int? maxPacketBytes;
   final Duration? uptime;
   final int? lostSamples;
-  final double? rateDeviationHz;
 
   @override
   Widget build(BuildContext context) {
@@ -72,10 +67,6 @@ class ConnectionInfoCard extends StatelessWidget {
               'Samples lost',
               lostSamples == null ? null : formatThousands(lostSamples!),
             ),
-            infoRow(
-              'Rate deviation',
-              rateDeviationHz == null ? null : _hz(rateDeviationHz!),
-            ),
           ],
         ),
       ),
@@ -83,13 +74,6 @@ class ConnectionInfoCard extends StatelessWidget {
   }
 
   static String? _bytes(int? n) => n == null ? null : '$n B';
-
-  /// Signed hundredths: crystal skew is tens of ppm (hundredths of Hz at
-  /// 1 kHz), and the 5 s ring fit wobbles at roughly that scale (~±250 ppm
-  /// in the staircase simulator), so the value breathes a little. Finer
-  /// digits would be noise.
-  static String _hz(double deviation) =>
-      '${deviation >= 0 ? '+' : ''}${deviation.toStringAsFixed(2)} Hz';
 }
 
 /// One label/value line, shared by the info cards and matching the

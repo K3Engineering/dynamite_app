@@ -242,13 +242,6 @@ class DataHub extends ChangeNotifier
   double? projectedEndAt() =>
       _paused ? null : _deviceClock.projectedEndAt(sampleRateHz);
 
-  /// [DeviceClock]'s fit of the device's true sample rate (Hz); null before
-  /// the fit has enough deliveries and while paused, mirroring
-  /// [projectedEndAt]. Subtract [sampleRateHz] for the rate deviation: the
-  /// nominal rate is exact (the ADC clock divides evenly), so the deviation
-  /// is pure crystal skew.
-  double? measuredRateHz() => _paused ? null : _deviceClock.measuredRateHz();
-
   /// The monitoring pause (see `MonitorPause`): while true the edge pins to
   /// [totalSamples], like a loaded session, and [commitBatch] must not rerun
   /// the projection.

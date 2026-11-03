@@ -104,25 +104,4 @@ void main() {
     clock.clear();
     expect(clock.projectedEndAt(1000), isNull);
   });
-
-  test('measuredRateHz is null until the ring spans the fit minimum', () {
-    expect(clock.measuredRateHz(), isNull);
-    clock.observe(20);
-    nowMs = 20;
-    clock.observe(40); // 20 ms of span: far under the 1 s fit minimum
-    expect(clock.measuredRateHz(), isNull);
-  });
-
-  test("measuredRateHz locks to the crystal's sign, not its exact skew", () {
-    feedBlePattern(10000, deviceRateSkew: 100e-6); // +100 ppm at 1 kHz
-    // The staircase departure pattern phases against the connection grid and
-    // biases the 5 s fit by a few hundred ppm (+243 ppm measured here), so
-    // assert the ballpark, not the exact skew.
-    expect(clock.measuredRateHz(), inInclusiveRange(1000.05, 1000.35));
-  });
-
-  test('measuredRateHz reads the nominal rate for a skew-free device', () {
-    feedBlePattern(10000);
-    expect(clock.measuredRateHz(), closeTo(1000, 0.1));
-  });
 }

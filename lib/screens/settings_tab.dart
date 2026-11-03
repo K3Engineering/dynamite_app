@@ -273,7 +273,7 @@ class _SettingsTabState extends State<SettingsTab> {
 
 /// The "Connection info" card fed its live values: the wire facts arrive as
 /// constructor params (the tab rebuilds on link-manager notification), while
-/// the stream rows (uptime, samples lost, rate deviation) are read from
+/// the stream rows (uptime, samples lost) are read from
 /// [DataHub] on a 1 s ticker — the hub notifies at packet rate, far too hot
 /// for a settings page, and not at all while the monitoring pause freezes
 /// commits, which is exactly when uptime should keep counting.
@@ -309,10 +309,6 @@ class _LiveConnectionInfoCardState extends State<_LiveConnectionInfoCard> {
   @override
   Widget build(BuildContext context) {
     final hub = context.read<DataHub>();
-    final deviation = switch (hub.measuredRateHz()) {
-      final double measured => measured - hub.sampleRateHz,
-      null => null,
-    };
     final started = hub.streamStartedAt;
     return ConnectionInfoCard(
       mtu: widget.mtu,
@@ -320,7 +316,6 @@ class _LiveConnectionInfoCardState extends State<_LiveConnectionInfoCard> {
       maxPacketBytes: widget.maxPacketBytes,
       uptime: started == null ? null : DateTime.now().difference(started),
       lostSamples: hub.totalLostSamples,
-      rateDeviationHz: deviation,
     );
   }
 }
