@@ -32,6 +32,7 @@ class MonitorPause extends ChangeNotifier {
   /// live row as stale for the pause's duration) while staying sub-pixel.
   void pause() {
     if (_paused) return;
+    _hub.pauseLiveEdge();
     _paused = true;
     if (_hub.totalSamples > 0) _hub.addDroppedFrames(1);
     notifyListeners();
@@ -41,6 +42,7 @@ class MonitorPause extends ChangeNotifier {
   /// appends after the pause marker.
   void resume() {
     if (!_paused) return;
+    _hub.resumeLiveEdge();
     _paused = false;
     notifyListeners();
   }
