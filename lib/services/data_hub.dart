@@ -218,16 +218,34 @@ class DataHub extends ChangeNotifier
   }
 
   /// Delivery-fed sync of the PC clock to the device's sample oscillator
-  /// (see `DeviceClock`). Fed by [commitBatch] — the monitoring pause never
-  /// commits, so a paused span simply isn't in the fit, and the clock's own
+  /// (see [DeviceClock]). Fed by [commitBatch] — the monitoring pause never
+  /// commits, so a paused span simply isn't observed, and the clock's own
   /// gap handling re-anchors after it.
   final DeviceClock _deviceClock;
 
-  /// The clock fit's estimate of the sample index the device is generating
-  /// right now; null before the stream's first batch. The shared chart
-  /// geometry floats on this (graph_components `_computeGeometry`).
+  /// [DeviceClock]'s estimate of the sample index the device is generating
+  /// right now; null before the stream's first batch and while paused. The
+  /// shared chart geometry floats on this (`graph_components`
+  /// `_computeGeometry`).
   @override
-  double? projectedEndAt() => _deviceClock.projectedEndAt(sampleRateHz);
+  double? projectedEndAt() =>
+      _paused ? null : _deviceClock.projectedEndAt(sampleRateHz);
+
+  /// The monitoring pause (see `MonitorPause`): while true the edge pins to
+  /// [totalSamples], like a loaded session, and [commitBatch] must not rerun
+  /// the projection.
+  bool _paused = false;
+  void pauseLiveEdge() {
+    assert(!_paused);
+    _paused = true;
+    _deviceClock.clear();
+    notifyListeners();
+  }
+
+  void resumeLiveEdge() {
+    assert(_paused);
+    _paused = false;
+  }
 
   bool get taring => _pendingTare != null;
 

@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 /// Syncs the PC clock to the device's sample oscillator so the live graph
 /// can place its edge where the DEVICE is in time, not where the newest
 /// confirmed packet landed.
@@ -5,16 +7,18 @@
 /// The device sends 16-bit-counter-stamped batches; the counter gives every
 /// delivery an exact device-time position, so per-packet arrival jitter
 /// (packet-atomic delivery at 18.75 ms connection events, app scheduling) is
-/// zero-mean noise around a noiseless device axis. The clock therefore fits
-/// a line through recent (arrival time, sample index) deliveries
-/// (least-squares slope = the device's true rate in PC-clock units) and
-/// EXTRAPOLATES from it -- the jitter cancels in the fit instead of being
-/// re-anchored per packet, which is what made a naive "newest sample plus
-/// elapsed" edge rewind at multi-Hz on this link.
+/// zero-mean noise around a noiseless device axis. The clock keeps recent
+/// (arrival time, sample index) deliveries and projects a decaying UPPER
+/// ENVELOPE off them (see [projectedEndAt]) instead of re-anchoring per
+/// packet ("newest sample plus elapsed"), which is what made a naive edge
+/// rewind at multi-Hz on this link: at a given rate, a max of increasing
+/// affine functions is continuous and monotone, and it tracks the
+/// lowest-latency recent deliveries, so clumps and delayed packets demote
+/// themselves.
 ///
 /// Crystal skew (tens of ppm on cheap BLE crystals) is absorbed by the
-/// slope, so the projection stays glued to the device indefinitely; a
-/// fixed-rate glide would drift by the skew times stream age.
+/// envelope's fitted rate, so the projection stays glued to the device
+/// indefinitely; a fixed-rate glide would drift by the skew times stream age.
 ///
 /// Data path: [DataHub.commitBatch] calls [observe]; the graph painters read
 /// [projectedEndAt] per frame. Both directions use the class's one
@@ -28,9 +32,10 @@ class DeviceClock {
   final Duration Function() _now;
 
   /// Recent deliveries `(arrival ms, sample index)`. Sized for ~5 s of ~50 Hz
-  /// delivery: long enough that the fit's phase error sits below a graph
-  /// pixel, short enough to forget a transient quickly. Fits are recomputed
-  /// per read (O(capacity)), so the clock's only state is this ring.
+  /// delivery: long enough that the rate fit's phase error sits below a graph
+  /// pixel, short enough to forget a transient quickly. The envelope is
+  /// recomputed per read (O(capacity)), so the clock's only state is this
+  /// ring.
   final List<({double t, double x})> _obs = [];
   static const int _capacity = 256;
 
@@ -44,6 +49,16 @@ class DeviceClock {
   /// Shortest observation span trusted for a slope fit; shorter spans glide
   /// at the nominal rate (stream startup, the first second after a pause).
   static const double _minFitSpanMs = 1000;
+
+  /// Decay of each observation's claim on the envelope, as a fraction of the
+  /// rate per unit of age (see [projectedEndAt]). Sized so the decay over a
+  /// full ring span (~5 s, so 20 ms of samples) beats the worst arrival-
+  /// latency spread (~one 18.75 ms connection slot): then the oldest
+  /// observation can never hold the max when it is evicted, and the edge
+  /// stays continuous there. A single wildly-early delivery (a clock glitch,
+  /// not bounded BLE jitter) would hold the envelope high for its ring
+  /// lifetime; left loud on purpose.
+  static const double _kEnvelopeSlew = 0.004;
 
   /// Note one confirmed delivery of [sampleIndex] samples (the hub's
   /// `totalSamples` at batch commit). Index, not arrival count: injected
@@ -62,15 +77,35 @@ class DeviceClock {
   /// the first delivery of a stream. Runs AHEAD of the sink's `totalSamples`
   /// by the delivery latency (samples exist on the device before a packet
   /// confirms them), which is where the graph's blank lead budget lives.
+  ///
+  /// The value is an upper envelope over the ring: every delivery claims
+  /// "the device is now at least x_i + slew * (t - t_i)", and latency is
+  /// one-sided (a packet can only arrive after its samples exist), so the
+  /// max tracks the recent lowest-latency deliveries. Gliding at slew rather
+  /// than the full rate ([_kEnvelopeSlew]) costs a sub-pixel ~0.08 ms of
+  /// samples over a 20 ms inter-packet gap and buys continuity at ring
+  /// eviction; below the fit minimum the same expression runs with the
+  /// nominal rate (skew error over <1 s spans is sub-millisecond).
   double? projectedEndAt(int nominalRateHz) {
     if (_obs.isEmpty) return null;
     final double t = _now().inMicroseconds / 1e3;
-    final last = _obs.last;
-    if (last.t - _obs.first.t < _minFitSpanMs) {
-      return last.x + (t - last.t) * nominalRateHz / 1000;
+    // Samples/ms; span >= _minFitSpanMs guarantees the fit's varT > 0.
+    final double r = _obs.last.t - _obs.first.t < _minFitSpanMs
+        ? nominalRateHz / 1000
+        : _fitSlope();
+    final double slew = r * (1 - _kEnvelopeSlew);
+    double edge = double.negativeInfinity;
+    for (final o in _obs) {
+      edge = math.max(edge, o.x + slew * (t - o.t));
     }
-    // Least-squares line through the ring, extrapolated from its centroid;
-    // centering keeps the sums small (ms and sample counts are both ~1e7+).
+    return edge;
+  }
+
+  /// Least-squares slope of sample index on arrival time over the ring
+  /// (samples/ms) -- the device's true rate in PC-clock units. Centering on
+  /// the centroid keeps the sums small (ms and sample counts are both
+  /// ~1e7+).
+  double _fitSlope() {
     double tSum = 0, xSum = 0;
     for (final o in _obs) {
       tSum += o.t;
@@ -84,7 +119,6 @@ class DeviceClock {
       varT += dt * dt;
       covTX += dt * (o.x - xBar);
     }
-    // Slope in samples/ms; span >= _minFitSpanMs guarantees varT > 0.
-    return xBar + covTX / varT * (t - tBar);
+    return covTX / varT;
   }
 }

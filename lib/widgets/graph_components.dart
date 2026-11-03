@@ -2170,8 +2170,13 @@ Path? _gapClipPath(GapList gaps, int start, int end, double pxPerSample) {
 // ---------------------------------------------------------------------------
 
 /// Blank lead framed past the device's projected live end, in ms of samples
-/// (see [GraphDataSource.projectedEndAt] for the projection itself).
-const double _kLiveEdgeLeadMs = 40;
+/// (see [GraphDataSource.projectedEndAt] for the projection itself). The
+/// projection already sweeps the inter-packet gap at frame cadence, so this
+/// covers only its residual: envelope slew between packets (~0.1 ms) plus
+/// rate-fit noise. It also sets the minimum visible blank: right after a
+/// packet commits, the envelope passes through the fresh observation, and
+/// the gap is this lead plus that packet's flight time.
+const double _kLiveEdgeLeadMs = 5;
 
 /// How far the edge may run ahead of the newest CONFIRMED sample: the lead
 /// plus slack for delivery latency (a 20 ms batch plus a couple of skipped
@@ -2222,11 +2227,11 @@ typedef _GraphGeometry = ({
 /// Derive one update's shared [_GraphGeometry]. Live viewports float their
 /// right edge on the device-clock projection ([GraphDataSource.projectedEndAt])
 /// plus the display lead, clamped into [totalSamples, totalSamples + cap]:
-/// the projection cancels per-packet delivery jitter, and both clamp bounds
-/// are monotone in totalSamples, so the edge can never rewind. A rolling
-/// window floats both edges; live "everything" floats only the right one
-/// (the left is retention-pinned); parked windows keep their integer edges.
-/// The minimap shows the retained range (floored at
+/// the projection is monotone and cancels per-packet delivery jitter, and
+/// both clamp bounds are monotone in totalSamples, so the edge can never
+/// rewind. A rolling window floats both edges; live "everything" floats only
+/// the right one (the left is retention-pinned); parked windows keep their
+/// integer edges. The minimap shows the retained range (floored at
 /// [GraphController.minLiveSpan] for a young stream) with its right edge
 /// floated on the same projection.
 _GraphGeometry _computeGeometry(GraphDataSource data, GraphController ctrl) {
