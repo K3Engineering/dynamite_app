@@ -191,6 +191,7 @@ class DataHub extends ChangeNotifier
   void clear() {
     _pendingTare = null;
     totalSamples = 0;
+    totalLostSamples = 0;
     _generation++;
     lastMalformedPacketAt = null;
     lastMalformedPacketLen = null;
@@ -217,6 +218,16 @@ class DataHub extends ChangeNotifier
     lastMalformedPacketLen = length;
   }
 
+  /// Running total of samples lost on the link (decoder-detected packet
+  /// gaps), for the settings readout. Reset by [clear].
+  int totalLostSamples = 0;
+
+  /// Count RF loss into [totalLostSamples]; see [AdcSink.noteLostSamples]
+  /// for why this is a separate entry point from [addDroppedFrames]. Does
+  /// NOT notify, same reason as [noteMalformedPacket].
+  @override
+  void noteLostSamples(int count) => totalLostSamples += count;
+
   /// Delivery-fed sync of the PC clock to the device's sample oscillator
   /// (see [DeviceClock]). Fed by [commitBatch] — the monitoring pause never
   /// commits, so a paused span simply isn't observed, and the clock's own
@@ -230,6 +241,13 @@ class DataHub extends ChangeNotifier
   @override
   double? projectedEndAt() =>
       _paused ? null : _deviceClock.projectedEndAt(sampleRateHz);
+
+  /// [DeviceClock]'s fit of the device's true sample rate (Hz); null before
+  /// the fit has enough deliveries and while paused, mirroring
+  /// [projectedEndAt]. Subtract [sampleRateHz] for the rate deviation: the
+  /// nominal rate is exact (the ADC clock divides evenly), so the deviation
+  /// is pure crystal skew.
+  double? measuredRateHz() => _paused ? null : _deviceClock.measuredRateHz();
 
   /// The monitoring pause (see `MonitorPause`): while true the edge pins to
   /// [totalSamples], like a loaded session, and [commitBatch] must not rerun

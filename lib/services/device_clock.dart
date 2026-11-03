@@ -101,6 +101,17 @@ class DeviceClock {
     return edge;
   }
 
+  /// The ring's rate fit in Hz (_fitSlope in samples/ms), null when the fit
+  /// isn't running: before the first delivery, and until the ring spans
+  /// [_minFitSpanMs] (below that [projectedEndAt] glides at the nominal
+  /// rate, so there is no measured deviation to report).
+  double? measuredRateHz() {
+    if (_obs.isEmpty || _obs.last.t - _obs.first.t < _minFitSpanMs) {
+      return null;
+    }
+    return _fitSlope() * 1000;
+  }
+
   /// Least-squares slope of sample index on arrival time over the ring
   /// (samples/ms) -- the device's true rate in PC-clock units. Centering on
   /// the centroid keeps the sums small (ms and sample counts are both

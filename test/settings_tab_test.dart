@@ -217,6 +217,30 @@ void main() {
     await tester.pump(const Duration(seconds: 6));
   });
 
+  testWidgets('connected: the connection card reports the stream stats', (
+    tester,
+  ) async {
+    // A tall surface so the card is on screen without scrolling.
+    tester.view.physicalSize = const Size(1200, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    final link = await pump(tester);
+    await link.connectToDemoDevice();
+    await tester.pump();
+
+    expect(find.text('Connection info'), findsOneWidget);
+    expect(find.text('Rate deviation'), findsOneWidget);
+    expect(find.text('Samples lost'), findsOneWidget);
+    expect(find.text('Uptime'), findsOneWidget);
+
+    // Teardown: bring the demo link down so its feed timer and the card's
+    // ticker both stop, then drain the command-queue timeout.
+    await link.disconnectSelectedDevice();
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 6));
+  });
+
   testWidgets('invalid flash streams raw; the board row says unreadable', (
     tester,
   ) async {

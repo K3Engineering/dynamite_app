@@ -26,6 +26,13 @@ abstract interface class AdcSink {
   /// in the ring for [reserve] real samples of the same packet.
   void addDroppedFrames(int count, {int reserve = 0});
 
+  /// Count [count] link-lost samples into the stream's loss total. Separate
+  /// from [addDroppedFrames], which also takes synthetic injections (the
+  /// monitoring-pause seam marker) that are not RF loss; and from
+  /// [noteMalformedPacket], since undecodable packets are a different
+  /// failure than dropped ones.
+  void noteLostSamples(int count);
+
   /// Append one channel-count frame; the sink copies out of [values]
   /// synchronously, so the caller may reuse its buffer.
   void addSampleFrame(Int32List values);
