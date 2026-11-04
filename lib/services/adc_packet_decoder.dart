@@ -103,6 +103,10 @@ class AdcPacketDecoder {
           : elapsedSamples;
       if (loss > 0) {
         logTrace(() => '# lost $loss samples');
+        // Count the true loss here: [AdcSink.addDroppedFrames] may inject
+        // less than [loss] (its ring-capacity cap) and also serves synthetic
+        // gaps, so it's not a reliable loss counter.
+        hub.noteLostSamples(loss);
         // Report the dropped range to the sink before the packet's real
         // samples so [startIdx, totalSamples) spans the gap too.
         hub.addDroppedFrames(loss, reserve: n);

@@ -191,6 +191,7 @@ class DataHub extends ChangeNotifier
   void clear() {
     _pendingTare = null;
     totalSamples = 0;
+    totalLostSamples = 0;
     _generation++;
     lastMalformedPacketAt = null;
     lastMalformedPacketLen = null;
@@ -216,6 +217,16 @@ class DataHub extends ChangeNotifier
     lastMalformedPacketAt = DateTime.now();
     lastMalformedPacketLen = length;
   }
+
+  /// Running total of samples lost on the link (decoder-detected packet
+  /// gaps), for the settings readout. Reset by [clear].
+  int totalLostSamples = 0;
+
+  /// Count RF loss into [totalLostSamples]; see [AdcSink.noteLostSamples]
+  /// for why this is a separate entry point from [addDroppedFrames]. Does
+  /// NOT notify, same reason as [noteMalformedPacket].
+  @override
+  void noteLostSamples(int count) => totalLostSamples += count;
 
   /// Delivery-fed sync of the PC clock to the device's sample oscillator
   /// (see [DeviceClock]). Fed by [commitBatch] — the monitoring pause never

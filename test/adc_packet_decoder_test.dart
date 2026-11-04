@@ -243,6 +243,8 @@ void main() {
       expect(hub.totalSamples, frozen + defaultPacketSamples);
       expect(hub.gaps.contains(frozen), isFalse);
       expect(hub.rawAt(0, frozen), 4);
+      // The discarded pause span is not link loss.
+      expect(hub.totalLostSamples, 0);
     });
 
     test('paused packets leave the counter anchor and last-data stamp '
@@ -361,6 +363,23 @@ void main() {
 
       expect(hub.totalSamples, 2 * defaultPacketSamples);
       expect(hub.gaps.contains(defaultPacketSamples), isFalse);
+    });
+
+    test('link loss accumulates into the stream total; clear resets it, and '
+        'synthetic gap injections do not count', () {
+      final d = AdcPacketDecoder(hub, now: clock);
+      d.onDataPacket(makePacket(0, (s, c) => 1));
+      advanceMs(1040);
+      d.onDataPacket(makePacket(1040, (s, c) => 2));
+      expect(hub.totalLostSamples, 1020);
+
+      // The monitoring-pause seam marker (MonitorPause) injects through
+      // addDroppedFrames directly — a synthetic gap, not RF loss.
+      hub.addDroppedFrames(1);
+      expect(hub.totalLostSamples, 1020);
+
+      hub.clear();
+      expect(hub.totalLostSamples, 0);
     });
 
     test('a loss exceeding the ring capacity caps the injected gap at '

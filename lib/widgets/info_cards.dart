@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 
 import '../models/device_info.dart';
+import '../utils/format.dart';
 
 /// The connected sampler's static identity, read from the BLE Device
 /// Information service (0x180A) once per link at connect time. Purely
@@ -18,11 +19,11 @@ class DeviceInfoCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(
           children: [
-            _infoRow('Model', info.model),
-            _infoRow('Hardware', info.hardwareRev),
-            _infoRow('Firmware', info.firmwareRev),
-            _infoRow('Serial', info.serial),
-            _infoRow('Manufacturer', info.manufacturer),
+            infoRow('Model', info.model),
+            infoRow('Hardware', info.hardwareRev),
+            infoRow('Firmware', info.firmwareRev),
+            infoRow('Serial', info.serial),
+            infoRow('Manufacturer', info.manufacturer),
           ],
         ),
       ),
@@ -30,16 +31,26 @@ class DeviceInfoCard extends StatelessWidget {
   }
 }
 
-/// Per-link connection telemetry: negotiated ATT MTU (when the platform
-/// actually returns one) and the min/max ADC-feed notification sizes seen
-/// on this link. [mtu] is omitted entirely when null — web and the demo
-/// device never negotiate. Packet sizes dash until the first feed packet.
+/// Connection telemetry: the wire facts (negotiated ATT MTU — when the
+/// platform actually returns one; min/max ADC-feed notification sizes) and
+/// the stream's live stats (uptime since stream start, RF-loss sample
+/// total). [mtu] is omitted entirely when null — web and the demo device
+/// never negotiate. Everything else dashes until the first feed packet.
 class ConnectionInfoCard extends StatelessWidget {
-  const new({super.key, this.mtu, this.minPacketBytes, this.maxPacketBytes});
+  const new({
+    super.key,
+    this.mtu,
+    this.minPacketBytes,
+    this.maxPacketBytes,
+    this.uptime,
+    this.lostSamples,
+  });
 
   final int? mtu;
   final int? minPacketBytes;
   final int? maxPacketBytes;
+  final Duration? uptime;
+  final int? lostSamples;
 
   @override
   Widget build(BuildContext context) {
@@ -48,9 +59,14 @@ class ConnectionInfoCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         child: Column(
           children: [
-            if (mtu != null) _infoRow('ATT MTU', '$mtu'),
-            _infoRow('Min packet size', _bytes(minPacketBytes)),
-            _infoRow('Max packet size', _bytes(maxPacketBytes)),
+            if (mtu != null) infoRow('ATT MTU', '$mtu'),
+            infoRow('Min packet size', _bytes(minPacketBytes)),
+            infoRow('Max packet size', _bytes(maxPacketBytes)),
+            infoRow('Uptime', uptime == null ? null : formatDuration(uptime!)),
+            infoRow(
+              'Samples lost',
+              lostSamples == null ? null : formatThousands(lostSamples!),
+            ),
           ],
         ),
       ),
@@ -60,11 +76,11 @@ class ConnectionInfoCard extends StatelessWidget {
   static String? _bytes(int? n) => n == null ? null : '$n B';
 }
 
-/// One label/value line, shared by the cards above and matching the
+/// One label/value line, shared by the info cards and matching the
 /// calibration section's detail rows; a null value shows as an em dash.
 /// The value is Flexible so long firmware strings wrap instead of
 /// overflowing the row.
-Widget _infoRow(String label, String? value) => Padding(
+Widget infoRow(String label, String? value) => Padding(
   padding: const EdgeInsets.symmetric(vertical: 1),
   child: Row(
     mainAxisAlignment: .spaceBetween,

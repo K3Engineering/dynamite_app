@@ -205,7 +205,7 @@ class _SettingsTabState extends State<SettingsTab> {
                   style: Theme.of(context).textTheme.titleSmall,
                 ),
                 const SizedBox(height: 8),
-                ConnectionInfoCard(
+                _LiveConnectionInfoCard(
                   mtu: negotiatedMtu,
                   minPacketBytes: minPacketBytes,
                   maxPacketBytes: maxPacketBytes,
@@ -267,6 +267,55 @@ class _SettingsTabState extends State<SettingsTab> {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// The "Connection info" card fed its live values: the wire facts arrive as
+/// constructor params (the tab rebuilds on link-manager notification), while
+/// the stream rows (uptime, samples lost) are read from
+/// [DataHub] on a 1 s ticker — the hub notifies at packet rate, far too hot
+/// for a settings page, and not at all while the monitoring pause freezes
+/// commits, which is exactly when uptime should keep counting.
+class _LiveConnectionInfoCard extends StatefulWidget {
+  const new({this.mtu, this.minPacketBytes, this.maxPacketBytes});
+
+  final int? mtu;
+  final int? minPacketBytes;
+  final int? maxPacketBytes;
+
+  @override
+  State<_LiveConnectionInfoCard> createState() =>
+      _LiveConnectionInfoCardState();
+}
+
+class _LiveConnectionInfoCardState extends State<_LiveConnectionInfoCard> {
+  Timer? _ticker;
+
+  @override
+  void initState() {
+    super.initState();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hub = context.read<DataHub>();
+    final started = hub.streamStartedAt;
+    return ConnectionInfoCard(
+      mtu: widget.mtu,
+      minPacketBytes: widget.minPacketBytes,
+      maxPacketBytes: widget.maxPacketBytes,
+      uptime: started == null ? null : DateTime.now().difference(started),
+      lostSamples: hub.totalLostSamples,
     );
   }
 }
