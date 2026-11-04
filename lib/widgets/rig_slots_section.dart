@@ -548,9 +548,7 @@ class _SlotEditorDialogState extends State<_SlotEditorDialog> {
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Inverted'),
-                subtitle: const Text(
-                  'This cell reads negative under load — flip its sign',
-                ),
+                subtitle: const Text('Flip the sign of this cell\'s readings'),
                 value: inverted,
                 onChanged: (v) => setState(() => inverted = v),
               ),
